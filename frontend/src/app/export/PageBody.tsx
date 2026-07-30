@@ -465,10 +465,11 @@ function renderIndexHtml(posts: Post[], profile: UserDetail): string {
 
 async function fetchAllMyPosts(userId: string): Promise<Post[]> {
   const out: Post[] = [];
-  for (let offset = 0; offset < 200_000; offset += 200) {
+  let after: string | undefined;
+  for (;;) {
     const res = await withTooOftenRetry(() =>
       listPosts({
-        offset,
+        after,
         limit: 200,
         order: "desc",
         ownedBy: userId,
@@ -478,6 +479,7 @@ async function fetchAllMyPosts(userId: string): Promise<Post[]> {
     if (res.length === 0) break;
     out.push(...res.filter((p) => p.ownedBy === userId));
     if (res.length < 200) break;
+    after = res[res.length - 1].id;
   }
   const seen = new Set<string>();
   return out.filter((p) => {

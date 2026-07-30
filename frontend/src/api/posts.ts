@@ -6,6 +6,7 @@ function buildPostQuery(
     offset?: number;
     limit?: number;
     order?: "asc" | "desc";
+    after?: string;
     query?: string;
     ownedBy?: string;
     tag?: string;
@@ -16,6 +17,7 @@ function buildPostQuery(
   if (params.offset !== undefined) search.append("offset", String(params.offset));
   if (params.limit !== undefined) search.append("limit", String(params.limit));
   if (params.order) search.append("order", params.order);
+  if (params.after) search.append("after", params.after);
   if (params.query) search.append("query", params.query);
   if (params.ownedBy) search.append("ownedBy", params.ownedBy);
   if (params.tag) search.append("tag", params.tag);
@@ -104,6 +106,7 @@ export async function listPosts(
     offset?: number;
     limit?: number;
     order?: "asc" | "desc";
+    after?: string;
     query?: string;
     ownedBy?: string;
     tag?: string;

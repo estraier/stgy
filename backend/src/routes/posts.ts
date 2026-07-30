@@ -180,12 +180,27 @@ export default function createPostsRouter(
       typeof req.query.focusUserId === "string" && req.query.focusUserId.trim() !== ""
         ? req.query.focusUserId.trim()
         : undefined;
+    const afterRaw = req.query.after;
+    let after: string | undefined;
+    if (afterRaw !== undefined) {
+      if (
+        typeof afterRaw !== "string" ||
+        !/^(?:0x)?[0-9a-fA-F]{1,16}$/.test(afterRaw)
+      ) {
+        return res.status(400).json({ error: "invalid after" });
+      }
+      if (offset !== 0) {
+        return res.status(400).json({ error: "after requires offset=0" });
+      }
+      after = afterRaw;
+    }
     const watch = timerThrottleService.startWatch(loginUser);
     const posts = await postsService.listPosts(
       {
         offset,
         limit,
         order,
+        after,
         query,
         ownedBy,
         tag,

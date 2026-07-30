@@ -408,13 +408,14 @@ async function switchToUser(adminSessionCookie: string, userId: string): Promise
 
 async function fetchNextUsers(
   sessionCookie: string,
-  offset: number,
+  after: string | null,
   limit: number,
 ): Promise<AiUser[]> {
   const params = new URLSearchParams({
-    offset: String(offset),
+    order: "asc",
     limit: String(limit),
   });
+  if (after !== null) params.set("after", after);
   const res = await apiRequest(sessionCookie, `/ai-users?${params.toString()}`, { method: "GET" });
   const parsed = JSON.parse(res.body) as unknown;
   if (!Array.isArray(parsed)) return [];
@@ -2188,11 +2189,11 @@ async function processLoop(): Promise<void> {
       continue;
     }
     let needRelogin = false;
-    let offset = 0;
+    let after: string | null = null;
     while (lifecycle.isActive) {
       let users: AiUser[] = [];
       try {
-        users = await fetchNextUsers(adminSessionCookie, offset, Config.AI_USER_BATCH_SIZE);
+        users = await fetchNextUsers(adminSessionCookie, after, Config.AI_USER_BATCH_SIZE);
       } catch (e) {
         if (e instanceof UnauthorizedError) {
           needRelogin = true;
@@ -2227,7 +2228,7 @@ async function processLoop(): Promise<void> {
       }
       if (inflight.size > 0) await Promise.allSettled(Array.from(inflight));
       if (needRelogin) break;
-      offset += users.length;
+      after = users[users.length - 1].id;
       if (users.length < Config.AI_USER_BATCH_SIZE) break;
     }
     if (inflight.size > 0) await Promise.allSettled(Array.from(inflight));

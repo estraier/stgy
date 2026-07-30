@@ -126,7 +126,11 @@ CREATE TABLE search_indexing_tasks (
   body_text TEXT,
   locale VARCHAR(10)
 );
+CREATE INDEX idx_search_indexing_tasks_name_prefix_id
+ON search_indexing_tasks(name_prefix, id);
 ```
+
+posts用とusers用のワーカーは``name_prefix``を固定してID順にタスクを取得するため、``(name_prefix, id)``の複合インデックスを使う。別prefixのバックログを読み飛ばさずに、対象prefixの古いタスクから定数件を取得できる。
 
 ``name_prefix`` は ``posts`` または ``users`` である。``body_text`` がnullなら削除要求であり、nullでなければ追加または更新要求である。文書IDとタイムスタンプがあれば、削除対象のシャードを特定できる。
 

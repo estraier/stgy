@@ -212,10 +212,14 @@ export class PostsService {
     const offset = options?.offset ?? 0;
     const limit = options?.limit ?? 100;
     const order = (options?.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
+    const after = options?.after ? hexToDec(options.after) : null;
     const query = options?.query?.trim();
     const ownedBy = options?.ownedBy;
     const tag = options?.tag;
     const replyTo = options?.replyTo;
+    if (after !== null && offset !== 0) {
+      throw new Error("after requires offset=0");
+    }
     let sql = `
       SELECT
         p.id,
@@ -283,9 +287,19 @@ export class PostsService {
       where.push(`pc2.content ILIKE $${paramIdx++}`);
       params.push(`%${escapedQuery}%`);
     }
+    if (after !== null) {
+      const op = order === "ASC" ? ">" : "<";
+      where.push(`p.id ${op} $${paramIdx++}`);
+      params.push(after);
+    }
     if (where.length > 0) sql += " WHERE " + where.join(" AND ");
-    sql += ` ORDER BY p.id ${order} OFFSET $${paramIdx++} LIMIT $${paramIdx++}`;
-    params.push(offset, limit);
+    if (after === null) {
+      sql += ` ORDER BY p.id ${order} OFFSET $${paramIdx++} LIMIT $${paramIdx++}`;
+      params.push(offset, limit);
+    } else {
+      sql += ` ORDER BY p.id ${order} LIMIT $${paramIdx++}`;
+      params.push(limit);
+    }
     const res = await pgQuery(this.pgPool, sql, params);
     const posts = res.rows.map((r) => {
       r.id = decToHex(r.id);
@@ -739,7 +753,7 @@ export class PostsService {
     const sql = `
       WITH all_followers AS (
         SELECT followee_id FROM user_follows WHERE follower_id = $1
-        ${includeSelf ? "UNION ALL SELECT $1" : ""}
+        ${includeSelf ? "UNION SELECT $1" : ""}
       ),
       active_followers AS (
         SELECT af.followee_id AS owned_by, latest_post.id AS last_id

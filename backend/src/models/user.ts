@@ -44,7 +44,10 @@ export type UserPagination = {
 
 export type CountUsersInput = UserFilter;
 
-export type ListUsersInput = UserFilter & UserPagination;
+export type ListUsersInput = UserFilter &
+  UserPagination & {
+    after?: string;
+  };
 
 export type CreateUserInput = {
   id?: string;

@@ -43,6 +43,7 @@ export type PostPagination = {
   offset?: number;
   limit?: number;
   order?: "asc" | "desc";
+  after?: string;
 };
 
 export type CountPostsInput = PostFilter;

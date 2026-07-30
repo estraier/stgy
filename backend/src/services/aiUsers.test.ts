@@ -115,11 +115,13 @@ class MockPgPool {
         "SELECT u.id, u.nickname, u.is_admin, u.ai_model FROM users u WHERE u.ai_model IS NOT NULL",
       )
     ) {
-      const limit = (params?.[0] as number | undefined) ?? 50;
-      const offset = (params?.[1] as number | undefined) ?? 0;
+      const hasAfter = sql.includes("AND u.id > $1");
+      const after = hasAfter ? this.toNum(params?.[0]) : null;
+      const limit = ((hasAfter ? params?.[1] : params?.[0]) as number | undefined) ?? 50;
+      const offset = hasAfter ? 0 : ((params?.[1] as number | undefined) ?? 0);
       const asc = sql.includes("ORDER BY u.id ASC");
       const rows = this.users
-        .filter((u) => u.ai_model !== null)
+        .filter((u) => u.ai_model !== null && (after === null || u.id > after))
         .sort((a, b) => (asc ? a.id - b.id : b.id - a.id))
         .slice(offset, offset + limit)
         .map((u) => ({
@@ -507,6 +509,23 @@ describe("AiUsersService", () => {
     expect(p2).toHaveLength(1);
     expect(p2[0].nickname).toBe("BotTwo");
     expect(p2[0].id).toBe("00000000000003EA");
+  });
+
+  test("listAiUsers: keyset pagination after an AI user", async () => {
+    const out = await service.listAiUsers({
+      order: "asc",
+      limit: 10,
+      after: "00000000000003E9",
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0].nickname).toBe("BotTwo");
+    expect(out[0].id).toBe("00000000000003EA");
+  });
+
+  test("listAiUsers: after requires ascending order", async () => {
+    await expect(
+      service.listAiUsers({ limit: 10, after: "00000000000003E9" }),
+    ).rejects.toThrow("after is supported only with ascending order");
   });
 
   test("getAiUser: returns detail for AI user", async () => {

@@ -402,9 +402,18 @@ class MockPgClient {
         const pat = params[0].toLowerCase().replace(/%/g, "");
         list = list.filter((u) => u.nickname.toLowerCase().startsWith(pat));
       }
-      const offset = params[params.length - 2] || 0;
-      const limit = params[params.length - 1] || 100;
       const asc = n.includes("ORDER BY u.id ASC");
+      const hasAfter = n.includes("u.id > $") || n.includes("u.id < $");
+      if (hasAfter) {
+        const after = decToHex(params[params.length - 2]);
+        const afterValue = BigInt("0x" + after);
+        list = list.filter((u) => {
+          const value = BigInt("0x" + u.id);
+          return asc ? value > afterValue : value < afterValue;
+        });
+      }
+      const offset = hasAfter ? 0 : params[params.length - 2] || 0;
+      const limit = params[params.length - 1] || 100;
       list.sort((a, b) =>
         BigInt("0x" + a.id) > BigInt("0x" + b.id) ? (asc ? 1 : -1) : asc ? -1 : 1,
       );
@@ -1066,6 +1075,43 @@ describe("UsersService", () => {
     expect(carol.countPosts).toBe(0);
     expect(carol.isFollowedByFocusUser).toBe(false);
     expect(carol.isFollowingFocusUser).toBe(false);
+  });
+
+  test("listUsers supports an exclusive after cursor for ascending and descending ID order", async () => {
+    const asc = await service.listUsers({ order: "asc", after: ALICE, limit: 1 });
+    expect(asc.map((u) => u.id)).toEqual([BOB]);
+    expect(pg.lastSql).toContain("u.id > $1");
+    expect(pg.lastSql).toContain("ORDER BY u.id ASC LIMIT $2");
+    expect(pg.lastSql).not.toContain("OFFSET");
+
+    const desc = await service.listUsers({ order: "desc", after: CAROL, limit: 1 });
+    expect(desc.map((u) => u.id)).toEqual([BOB]);
+    expect(pg.lastSql).toContain("u.id < $1");
+    expect(pg.lastSql).toContain("ORDER BY u.id DESC LIMIT $2");
+    expect(pg.lastSql).not.toContain("OFFSET");
+
+    const filtered = await service.listUsers({
+      order: "asc",
+      nicknamePrefix: "b",
+      after: ALICE,
+      limit: 1,
+    });
+    expect(filtered.map((u) => u.id)).toEqual([BOB]);
+    expect(pg.lastSql).toContain("LOWER(u.nickname) LIKE $1 AND u.id > $2");
+    expect(pg.lastSql).toContain("ORDER BY u.id ASC LIMIT $3");
+  });
+
+  test("listUsers keeps offset paging and rejects incompatible after combinations", async () => {
+    const legacy = await service.listUsers({ order: "asc", offset: 1, limit: 1 });
+    expect(legacy.map((u) => u.id)).toEqual([BOB]);
+    expect(pg.lastSql).toContain("ORDER BY u.id ASC OFFSET $1 LIMIT $2");
+
+    await expect(
+      service.listUsers({ order: "social", after: ALICE, limit: 1 }, BOB),
+    ).rejects.toThrow("after is not supported with social order");
+    await expect(
+      service.listUsers({ order: "asc", after: ALICE, offset: 1, limit: 1 }),
+    ).rejects.toThrow("after requires offset=0");
   });
 
   test("createUser and getUser (detail includes email/locale/timezone)", async () => {

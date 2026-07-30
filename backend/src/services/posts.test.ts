@@ -631,9 +631,27 @@ class MockPgClientMain {
         return { rows: p ? [buildRow(p)] : [] };
       }
 
-      const offset = params && params.length >= 2 ? (params[params.length - 2] ?? 0) : 0;
-      const limit = params && params.length >= 1 ? (params[params.length - 1] ?? 100) : 100;
-      const rows = this.data.map(buildRow).slice(offset, offset + limit);
+      const afterMatch = sql.match(/p\.id\s*([<>])\s*\$(\d+)/i);
+      const after = afterMatch ? params![parseInt(afterMatch[2], 10) - 1] : null;
+      const offsetMatch = sql.match(/OFFSET\s+\$(\d+)/i);
+      const limitMatch = sql.match(/LIMIT\s+\$(\d+)/i);
+      const offset = offsetMatch ? (params![parseInt(offsetMatch[1], 10) - 1] ?? 0) : 0;
+      const limit = limitMatch ? (params![parseInt(limitMatch[1], 10) - 1] ?? 100) : 100;
+      const asc = /ORDER BY p\.id ASC/i.test(sql);
+      let pool = [...this.data];
+      if (afterMatch && after !== null) {
+        pool = pool.filter((p) =>
+          afterMatch[1] === ">" ? BigInt(p.id) > BigInt(after) : BigInt(p.id) < BigInt(after),
+        );
+      }
+      pool.sort((a, b) => {
+        const ai = BigInt(a.id);
+        const bi = BigInt(b.id);
+        if (ai === bi) return 0;
+        if (asc) return ai < bi ? -1 : 1;
+        return ai < bi ? 1 : -1;
+      });
+      const rows = pool.slice(offset, offset + limit).map(buildRow);
       return { rows };
     }
 
@@ -834,6 +852,58 @@ describe("posts service", () => {
     expect(posts[0].replyToOwnerId).toBeNull();
     expect(posts[0].tags).toContain("tag1");
     expect(posts[0].countLikes).toBeGreaterThanOrEqual(1);
+  });
+
+  test("listPosts supports an exclusive after cursor for ascending and descending ID order", async () => {
+    const ids = ["0000000000000001", "0000000000000002", "0000000000000003"];
+    pgClient.data = ids.map((id) => ({
+      ...postSample,
+      id: toDecStr(id),
+      ownedBy: toDecStr(user1Hex),
+      replyTo: null,
+      content: `post-${id}`,
+    }));
+
+    const asc = await postsService.listPosts({ order: "asc", after: ids[0], limit: 1 });
+    expect(asc.map((p) => p.id)).toEqual([ids[1]]);
+    expect(pgClient.lastSql).toContain("p.id > $1");
+    expect(pgClient.lastSql).toContain("ORDER BY p.id ASC LIMIT $2");
+    expect(pgClient.lastSql).not.toContain("OFFSET");
+
+    const desc = await postsService.listPosts({ order: "desc", after: ids[2], limit: 1 });
+    expect(desc.map((p) => p.id)).toEqual([ids[1]]);
+    expect(pgClient.lastSql).toContain("p.id < $1");
+    expect(pgClient.lastSql).toContain("ORDER BY p.id DESC LIMIT $2");
+    expect(pgClient.lastSql).not.toContain("OFFSET");
+
+    const filtered = await postsService.listPosts({
+      order: "desc",
+      ownedBy: user1Hex,
+      after: ids[2],
+      limit: 1,
+    });
+    expect(filtered.map((p) => p.id)).toEqual([ids[1]]);
+    expect(pgClient.lastSql).toContain("p.owned_by = $1 AND p.id < $2");
+    expect(pgClient.lastSql).toContain("ORDER BY p.id DESC LIMIT $3");
+  });
+
+  test("listPosts keeps offset paging and rejects offset with after", async () => {
+    const ids = ["0000000000000001", "0000000000000002", "0000000000000003"];
+    pgClient.data = ids.map((id) => ({
+      ...postSample,
+      id: toDecStr(id),
+      ownedBy: toDecStr(user1Hex),
+      replyTo: null,
+      content: `post-${id}`,
+    }));
+
+    const legacy = await postsService.listPosts({ order: "asc", offset: 1, limit: 1 });
+    expect(legacy.map((p) => p.id)).toEqual([ids[1]]);
+    expect(pgClient.lastSql).toContain("ORDER BY p.id ASC OFFSET $1 LIMIT $2");
+
+    await expect(
+      postsService.listPosts({ order: "asc", after: ids[0], offset: 1, limit: 1 }),
+    ).rejects.toThrow("after requires offset=0");
   });
 
   test("listPostsByIds: keeps input order and ignores missing", async () => {
@@ -1215,7 +1285,7 @@ describe("listPostsByFollowees", () => {
 
     await postsService.listPostsByFollowees(input);
 
-    expect(pgClient.lastSql).toContain("UNION ALL SELECT $1");
+    expect(pgClient.lastSql).toContain("UNION SELECT $1");
     expect(pgClient.lastSql).toContain(
       "FROM all_followers af JOIN LATERAL ( SELECT p2.id FROM posts p2 WHERE p2.owned_by = af.followee_id ORDER BY p2.id DESC LIMIT 1 ) AS latest_post ON TRUE",
     );

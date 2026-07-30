@@ -9,6 +9,8 @@ content:<<____EOF____
 
 本記事では、STGYの運用上でデータベースに発行されるクエリについて分析する。SQLの具体例を示し、その計算量を解析し、実際の実行計画を見て確認する。
 
+この精査で修正対象とするのは、元のSQLが意図した漸近計算量をSQLの形で保証していない箇所と、ページング結果を欠落させる箇所だけである。特定の検証データで実行時間やバッファ参照数を小さくするだけの書き換えは採用しない。
+
 以下の実行計画は、``npm run reset-data-volume-test``で作成した検証用データベースを対象にする。make-volume-test.pyは、既存の初期データに加えて、測定用ユーザ1人、ダミーユーザ30000人、投稿60002件、フォロー60000件、イイネ60000件、イベントログ1000件、通知30000件を、再現可能なIDと時刻で一括投入する。この時点でpostsの総件数は60017件である。全ダミーユーザに最低1投稿を持たせたまま、user00001には約15000件の投稿を集中させ、user00002から1番目のベンチマーク投稿への返信も約15000件作る。これにより、フォロイー全員の最新投稿を調べる経路と、reply_toとowned_byの複合条件を調べる経路を同じデータベースで検証できる。通知は測定用ユーザについて未読15000件、既読15000件を作る。最後にPostgreSQLの``ANALYZE``を実行するので、本記事のSQLはその直後にそのまま実行できる。測定用ユーザのIDは1853070350746583040で、ニックネームはuser00000である。短時間のOLTPクエリにJITコンパイル時間が混入する可能性がある測定では、セッションで``SET jit = off``を指定する。
 
 <!TOC!>
@@ -252,7 +254,12 @@ WHERE reply_to = ANY(
 ```
 
 ```:small
-★ここに結果を記載★
+ Index Only Scan using idx_posts_reply_to_owned_by on posts  (cost=0.29..120.46 rows=3706 width=8) (actual time=0.094..0.094 rows=0 loops=1)
+   Index Cond: ((reply_to = ANY ('{1855878856704991232,1855878856706039808}'::bigint[])) AND (owned_by = '1853160947712987136'::bigint))
+   Heap Fetches: 0
+   Buffers: shared hit=4
+ Planning Time: 0.313 ms
+ Execution Time: 0.132 ms
 ```
 
 reply_toとowned_byの両方がidx_posts_reply_to_owned_byのIndex Condに入ることを確認する。これにより、対象ユーザの全投稿、または対象投稿についた全返信を片側の条件だけで列挙してからFilterで捨てる処理を避けられる。
@@ -279,7 +286,19 @@ ROLLBACK;
 ```
 
 ```:small
-★ここに結果を記載★
+ Bitmap Heap Scan on posts  (cost=329.38..1474.12 rows=3706 width=8) (actual time=3.614..3.615 rows=0 loops=1)
+   Recheck Cond: (reply_to = ANY ('{1855878856704991232,1855878856706039808}'::bigint[]))
+   Filter: (owned_by = '1853160947712987136'::bigint)
+   Rows Removed by Filter: 15000
+   Heap Blocks: exact=248
+   Buffers: shared hit=309
+   ->  Bitmap Index Scan on idx_posts_reply_to_id  (cost=0.00..328.45 rows=14916 width=0) (actual time=1.407..1.407 rows=15000 loops=1)
+         Index Cond: (reply_to = ANY ('{1855878856704991232,1855878856706039808}'::bigint[]))
+         Buffers: shared hit=61
+ Planning:
+   Buffers: shared hit=4
+ Planning Time: 0.243 ms
+ Execution Time: 3.684 ms
 ```
 
 インデックスを外した計画では、idx_posts_owned_by_idまたはidx_posts_reply_to_idの片方から多数の候補を取得し、もう一方の条件をFilterで判定する可能性がある。実行時間だけでなく、Index CondとFilterのどちらに各条件が入り、何行をFilterで除外したかを見る必要がある。
@@ -295,7 +314,7 @@ all_followers AS (
   SELECT followee_id
   FROM user_follows
   WHERE follower_id = 1853070350746583040
-  UNION ALL
+  UNION
   SELECT 1853070350746583040
 ),
 active_followers AS (
@@ -356,7 +375,7 @@ ORDER BY t.id DESC;
 
 クエリが込み入っているので、部分ごとに解説しよう。
 
-- フォローしているユーザのIDと自分自身をall_followersというビューとして作る。自己フォローは禁止しているため、重複排除を行わないUNION ALLでよい。
+- フォローしているユーザのIDと自分自身をall_followersというビューとして作る。フォローしているユーザのIDへ自分自身をUNIONで加えた集合を作る。
 - all_followersの各ユーザについて、``(owned_by, id)``インデックスを末尾から引き、LIMIT 1で最新投稿だけを取得したactive_followersというビューを作る。
 - active_followersを最新投稿IDで並べ、最も最近に投稿したトップ20人のユーザIDをtop_followeesに残す。
 - top_followeesの各ユーザIDにJOIN LATERALして、各ユーザの最新投稿IDを3件ずつ取り出したcandidatesというビューを作る。
@@ -364,6 +383,8 @@ ORDER BY t.id DESC;
 - top_postsの各々のIDに対して、listPostsと同様に各種属性を肉付けする。
 
 返信を表示しない場合には、active_followersとcandidatesの両方へ``p2.reply_to IS NULL``が加わる。APIでは一人あたりの取得件数をlimitPerUserで指定でき、フロントエンドのデフォルトが3である。focusUserIdが指定された場合のブロック判定と、取得後のイイネ・返信状態の追加もlistPostsと同じである。
+
+以前のactive_followersは、対象フォロイーの投稿をまとめて読み、``DISTINCT ON (owned_by)``で各ユーザの最新投稿を選んでいた。そのSQLでは結合順と走査範囲をプランナに任せるため、選択されたフォロイーの投稿数が多いと、その投稿集合に比例して読む計画を取り得る。現行SQLはall_followersの各IDを外側に置き、``LIMIT 1``を持つLATERAL副問い合わせで索引検索を1回ずつ行うため、意図したフォロイー数Fに比例する計算量をSQLの形で保証する。
 
 これの計算量を考えよう。全投稿数をP、フォローしているユーザ数をFと置く。各フォロイーについて``(owned_by, id)``インデックスから最新投稿を1件取得する処理の支配項はO(F･log(P))である。トップ20人を選ぶ処理はF件からのtop-N選択なのでO(F･log(20))、すなわちO(F)と見なせる。その後の最大60投稿と最終20投稿の処理量は定数である。したがって全体の支配項はO(F･log(P))になる。投稿総数Pを一括走査しない一方で、処理量がFに比例する点は残る。
 
@@ -378,7 +399,7 @@ all_followers AS (
   SELECT followee_id
   FROM user_follows
   WHERE follower_id = 1853070350746583040
-  UNION ALL
+  UNION
   SELECT 1853070350746583040
 ),
 active_followers AS (
@@ -437,109 +458,55 @@ LEFT JOIN post_counts pc ON pc.post_id = p.id
 ORDER BY t.id DESC;
 ```
 
+
+検証途中には、自己IDを加える集合演算を``UNION ALL``へ変えた版でも実行計画を取得した。しかし、自己フォロー禁止という制約の下で重複が生じないことを利用した定数倍の変更であり、今回の計算量修正には不要なので最終版へ入れていない。その測定のうち、最終版と共通するactive_followersのLATERAL部分は以下のとおりだった。
+
 ```:small
- Nested Loop Left Join  (cost=131256.70..131577.36 rows=20 width=174) (actual time=54.652..55.068 rows=20 loops=1)
-   Buffers: shared hit=60406
-   ->  Nested Loop Left Join  (cost=131256.42..131432.47 rows=20 width=126) (actual time=54.351..54.440 rows=20 loops=1)
-         Buffers: shared hit=60294
-         ->  Nested Loop Left Join  (cost=131256.14..131425.58 rows=20 width=117) (actual time=54.345..54.419 rows=20 loops=1)
-               Buffers: shared hit=60285
-               ->  Nested Loop  (cost=131255.84..131424.35 rows=20 width=109) (actual time=54.331..54.388 rows=20 loops=1)
-                     Buffers: shared hit=60282
-                     ->  Nested Loop  (cost=131255.55..131417.46 rows=20 width=94) (actual time=54.302..54.331 rows=20 loops=1)
-                           Buffers: shared hit=60222
-                           ->  Limit  (cost=131255.26..131255.31 rows=20 width=8) (actual time=54.278..54.283 rows=20 loops=1)
-                                 Buffers: shared hit=60162
-                                 ->  Sort  (cost=131255.26..131255.36 rows=40 width=8) (actual time=54.276..54.279 rows=20 loops=1)
-                                       Sort Key: p_2.id DESC
-                                       Sort Method: quicksort  Memory: 25kB
-                                       Buffers: shared hit=60162
-                                       ->  Nested Loop  (cost=131087.33..131254.19 rows=40 width=8) (actual time=54.178..54.206 rows=40 loops=1)
-                                             Buffers: shared hit=60162
-                                             ->  Limit  (cost=131087.04..131087.09 rows=20 width=16) (actual time=54.145..54.149 rows=20 loops=1)
-                                                   Buffers: shared hit=60121
-                                                   ->  Sort  (cost=131087.04..131161.83 rows=29914 width=16) (actual time=54.145..54.147 rows=20 loops=1)
-                                                         Sort Key: p_1.id DESC
-                                                         Sort Method: top-N heapsort  Memory: 26kB
-                                                         Buffers: shared hit=60121
-                                                         ->  Nested Loop  (cost=0.58..130291.04 rows=29914 width=16) (actual time=0.233..48.438 rows=30001 loops=1)
-                                                               Buffers: shared hit=60121
-                                                               ->  Append  (cost=0.29..1137.35 rows=29914 width=8) (actual time=0.158..8.580 rows=30001 loops=1)
-                                                                     Buffers: shared hit=117
-                                                                     ->  Index Only Scan using user_follows_pkey on user_follows uf  (cost=0.29..987.77 rows=29913 width=8) (actual time=0.157..5.061 rows=30000 loops=1)
-                                                                           Index Cond: (follower_id = '1853070350746583040'::bigint)
-                                                                           Heap Fetches: 0
-                                                                           Buffers: shared hit=117
-                                                                     ->  Result  (cost=0.00..0.01 rows=1 width=8) (actual time=0.001..0.002 rows=1 loops=1)
-                                                               ->  Limit  (cost=0.29..4.31 rows=1 width=8) (actual time=0.001..0.001 rows=1 loops=30001)
-                                                                     Buffers: shared hit=60004
-                                                                     ->  Index Only Scan Backward using idx_posts_owned_by_id on posts p_1  (cost=0.29..8.32 rows=2 width=8) (actual time=0.001..0.001 rows=1 loops=30001)
-                                                                           Index Cond: (owned_by = uf.followee_id)
-                                                                           Heap Fetches: 1
-                                                                           Buffers: shared hit=60004
-                                             ->  Limit  (cost=0.29..8.32 rows=2 width=8) (actual time=0.002..0.002 rows=2 loops=20)
-                                                   Buffers: shared hit=41
-                                                   ->  Index Only Scan Backward using idx_posts_owned_by_id on posts p_2  (cost=0.29..8.32 rows=2 width=8) (actual time=0.002..0.002 rows=2 loops=20)
-                                                         Index Cond: (owned_by = uf.followee_id)
-                                                         Heap Fetches: 0
-                                                         Buffers: shared hit=41
-                           ->  Index Scan using posts_pkey on posts p  (cost=0.29..8.11 rows=1 width=86) (actual time=0.002..0.002 rows=1 loops=20)
-                                 Index Cond: (id = p_2.id)
-                                 Buffers: shared hit=60
-                     ->  Index Scan using users_pkey on users u  (cost=0.29..0.34 rows=1 width=23) (actual time=0.002..0.002 rows=1 loops=20)
-                           Index Cond: (id = p.owned_by)
-                           Buffers: shared hit=60
-               ->  Memoize  (cost=0.30..0.39 rows=1 width=16) (actual time=0.001..0.001 rows=0 loops=20)
-                     Cache Key: p.reply_to
-                     Cache Mode: logical
-                     Hits: 18  Misses: 2  Evictions: 0  Overflows: 0  Memory Usage: 1kB
-                     Buffers: shared hit=3
-                     ->  Index Scan using posts_pkey on posts pp  (cost=0.29..0.38 rows=1 width=16) (actual time=0.010..0.010 rows=0 loops=2)
-                           Index Cond: (id = p.reply_to)
-                           Buffers: shared hit=3
-         ->  Index Scan using users_pkey on users pu  (cost=0.29..0.34 rows=1 width=17) (actual time=0.001..0.001 rows=0 loops=20)
-               Index Cond: (id = pp.owned_by)
-               Buffers: shared hit=9
-   ->  Append  (cost=0.28..2.44 rows=8 width=16) (actual time=0.016..0.016 rows=1 loops=20)
-         Buffers: shared hit=51
-         ->  Index Scan using post_counts_p0_pkey on post_counts_p0 pc_1  (cost=0.28..0.30 rows=1 width=16) (actual time=0.010..0.010 rows=1 loops=4)
-               Index Cond: (post_id = p.id)
-               Buffers: shared hit=11
-         ->  Index Scan using post_counts_p1_pkey on post_counts_p1 pc_2  (cost=0.28..0.30 rows=1 width=16) (actual time=0.027..0.027 rows=0 loops=1)
-               Index Cond: (post_id = p.id)
-               Buffers: shared hit=2
-         ->  Index Scan using post_counts_p2_pkey on post_counts_p2 pc_3  (cost=0.28..0.30 rows=1 width=16) (actual time=0.014..0.014 rows=0 loops=2)
-               Index Cond: (post_id = p.id)
-               Buffers: shared hit=4
-         ->  Index Scan using post_counts_p3_pkey on post_counts_p3 pc_4  (cost=0.28..0.30 rows=1 width=16) (actual time=0.040..0.040 rows=1 loops=1)
-               Index Cond: (post_id = p.id)
-               Buffers: shared hit=3
-         ->  Index Scan using post_counts_p4_pkey on post_counts_p4 pc_5  (cost=0.28..0.30 rows=1 width=16) (actual time=0.010..0.010 rows=0 loops=4)
-               Index Cond: (post_id = p.id)
-               Buffers: shared hit=10
-         ->  Index Scan using post_counts_p5_pkey on post_counts_p5 pc_6  (cost=0.28..0.30 rows=1 width=16) (actual time=0.013..0.013 rows=1 loops=5)
-               Index Cond: (post_id = p.id)
-               Buffers: shared hit=13
-         ->  Index Scan using post_counts_p6_pkey on post_counts_p6 pc_7  (cost=0.28..0.30 rows=1 width=16) (actual time=0.011..0.011 rows=0 loops=2)
-               Index Cond: (post_id = p.id)
-               Buffers: shared hit=5
-         ->  Index Scan using post_counts_p7_pkey on post_counts_p7 pc_8  (cost=0.28..0.30 rows=1 width=16) (actual time=0.036..0.036 rows=1 loops=1)
-               Index Cond: (post_id = p.id)
-               Buffers: shared hit=3
-   SubPlan 1
-     ->  Index Only Scan using post_tags_pkey on post_tags pt  (cost=0.42..4.47 rows=3 width=8) (actual time=0.005..0.006 rows=3 loops=20)
-           Index Cond: (post_id = p.id)
-           Heap Fetches: 0
-           Buffers: shared hit=61
- Planning:
-   Buffers: shared hit=61
- Planning Time: 6.225 ms
- Execution Time: 56.096 ms
+ ->  Nested Loop  (actual time=0.233..48.438 rows=30001 loops=1)
+       ->  Append  (actual time=0.158..8.580 rows=30001 loops=1)
+             ->  Index Only Scan using user_follows_pkey on user_follows
+                   Index Cond: (follower_id = '1853070350746583040'::bigint)
+                   Heap Fetches: 0
+       ->  Limit  (actual time=0.001..0.001 rows=1 loops=30001)
+             ->  Index Only Scan Backward using idx_posts_owned_by_id on posts
+                   Index Cond: (owned_by = followee_id)
 ```
 
-実行計画では、フォロイー30000人と自分を合わせた30001人について、``idx_posts_owned_by_id``を逆方向に走査し、各々の最新投稿をLIMIT 1で取得している。その後はtop-N heapsortで20人へ絞り、その20人についてだけ最大3投稿を取得している。投稿60017件を一括走査する処理はない。
+フォロイー30000人と自分を合わせた30001人について、``idx_posts_owned_by_id``を逆方向に走査し、各々の最新投稿をLIMIT 1で取得する経路になっている。投稿60017件を一括走査する処理はない。最終版で再確認するときは、直前に掲載した``UNION``版のEXPLAIN文を使う。
 
-一方で、フォロイーごとの索引検索は30001回行われ、そこで60004バッファが参照されている。この測定では全てshared hitだったため56.096msで完了したが、索引の作業集合がメモリとOSのページキャッシュに収まらない規模では、ランダムI/Oの影響を受ける可能性がある。計算量の形が良いことと、Fが極端に大きい場合にも常に軽いことは別の話である。
+フォロイーごとの索引検索はF回行われる。索引の作業集合がメモリとOSのページキャッシュに収まらない規模ではランダムI/Oの影響を受けるが、それは意図したO(F･log(P))の計算量とは別の容量上の問題である。
+
+## BuildSearchSeedForUser
+
+AIユーザの興味を作るBuildSearchSeedForUserでも、フォロイーのうち最近活動したユーザを選ぶ。以前は対象フォロイーの投稿をまとめて読み、``DISTINCT ON (owned_by)``で各ユーザの最新投稿を選んでいたため、フォロイーが所有する投稿集合の大きさに比例する計画を取り得た。現在はlistPostsByFolloweesと同じ形で、各followee_idについて最新投稿を1件だけ索引検索する。
+
+```sql:small
+followees AS (
+  SELECT uf.followee_id
+  FROM user_follows uf
+  WHERE uf.follower_id = $1
+),
+active_followees AS (
+  SELECT f.followee_id AS owned_by, latest_post.id AS last_id
+  FROM followees f
+  JOIN LATERAL (
+    SELECT p2.id
+    FROM posts p2
+    WHERE p2.owned_by = f.followee_id
+    ORDER BY p2.id DESC
+    LIMIT 1
+  ) AS latest_post ON TRUE
+),
+top_followees AS (
+  SELECT owned_by AS followee_id
+  FROM active_followees
+  ORDER BY last_id DESC
+  LIMIT 25
+)
+```
+
+フォロイー数をF、投稿数をPとすると、active_followeesの支配項はO(F･log(P))である。その後に選ぶフォロイー数25件と、各フォロイーから読む投稿・イイネ件数には固定上限がある。ここでも必要な修正は``DISTINCT ON``からフォロイー別のLIMIT 1へ変えることだけであり、フォロイー集合の作り方などは変更していない。
+
 ## listPostsLikedByUser
 自分がイイネした投稿の一覧を得るには、以下のクエリが使われる。現在は投稿と著者だけでなく、ロケール、カウンタ、返信先所有者、タグも返す。
 
@@ -886,6 +853,8 @@ LEFT JOIN user_counts uc ON uc.user_id = u.id
 ORDER BY p.prio, p.nkey USING ~<~, u.id;
 ```
 
+以前のfolloweesはuser_followsとusersの通常JOINだったため、プランナはフォロイー側からF人を調べる計画だけでなく、ニックネーム索引側から一致ユーザを読み、各候補のフォロー関係を確認する計画も選べた。後者は一致候補数をMとすると最悪O(M･log(F))で、MがUに近い場合には意図したO(F･log(U))にならない。LATERAL副問い合わせでfollowee_idごとの主キー検索を明示したのは、この結合方向を固定するためである。
+
 自分の取得はusersの主キーでO(log(U))である。フォロイー数をFとすると、user_followsからF件を列挙し、その各々についてusersの主キーを引くので、followeesの支配項はO(F･log(U))である。ニックネーム前方一致の判定は主キーで取得した各フォロイー行に対して行う。Fに比例する処理は残るが、ニックネームに一致する全ユーザ数からフォロイーを探す方向にはしない。
 
 preferredだけでK件に達しなかった場合に限り、othersを実行する。idx_users_nickname_idは``LOWER(nickname) text_pattern_ops, id``の複合インデックスである。``ORDER BY lower(nickname) USING ~<~, u.id``と書くことで、そのインデックス順に候補を読み、必要件数が揃った時点で停止できる。候補が自分またはフォロイーなら除外するため、実際に確認する候補数は検索語の選択度とフォロー関係の分布にも依存する。
@@ -964,18 +933,84 @@ ORDER BY p.prio, p.nkey USING ~<~, u.id;
 ```
 
 ```:small
-★ここに結果を記載★
+ Nested Loop Left Join  (cost=149520.38..149690.17 rows=20 width=353) (actual time=73.386..73.439 rows=20 loops=1)
+   Buffers: shared hit=90515
+   CTE preferred
+     ->  Append  (cost=0.29..149211.27 rows=21 width=44) (actual time=0.081..48.716 rows=21 loops=1)
+           Buffers: shared hit=90386
+           ->  Index Scan using users_pkey on users u_2  (cost=0.29..8.31 rows=1 width=44) (actual time=0.081..0.082 rows=1 loops=1)
+                 Index Cond: (id = '1853070350746583040'::bigint)
+                 Filter: (lower((nickname)::text) ~~ 'user00%'::text)
+                 Buffers: shared hit=3
+           ->  Limit  (cost=149202.80..149202.85 rows=20 width=44) (actual time=48.629..48.632 rows=20 loops=1)
+                 Buffers: shared hit=90383
+                 ->  Sort  (cost=149202.80..149278.18 rows=30149 width=44) (actual time=48.627..48.628 rows=20 loops=1)
+                       Sort Key: (lower((u_3.nickname)::text)) USING ~<~, u_3.id
+                       Sort Method: top-N heapsort  Memory: 26kB
+                       Buffers: shared hit=90383
+                       ->  Nested Loop  (cost=0.30..148400.55 rows=30149 width=44) (actual time=0.030..48.461 rows=999 loops=1)
+                             Buffers: shared hit=90383
+                             ->  Seq Scan on user_follows f_1  (cost=0.00..1133.08 rows=30149 width=8) (actual time=0.010..3.556 rows=30000 loops=1)
+                                   Filter: (follower_id = '1853070350746583040'::bigint)
+                                   Rows Removed by Filter: 30006
+                                   Buffers: shared hit=383
+                             ->  Memoize  (cost=0.30..8.32 rows=1 width=40) (actual time=0.001..0.001 rows=0 loops=30000)
+                                   Cache Key: f_1.followee_id
+                                   Cache Mode: binary
+                                   Hits: 0  Misses: 30000  Evictions: 0  Overflows: 0  Memory Usage: 2159kB
+                                   Buffers: shared hit=90000
+                                   ->  Limit  (cost=0.29..8.31 rows=1 width=40) (actual time=0.001..0.001 rows=0 loops=30000)
+                                         Buffers: shared hit=90000
+                                         ->  Index Scan using users_pkey on users u_3  (cost=0.29..8.31 rows=1 width=40) (actual time=0.001..0.001 rows=0 loops=30000)
+                                               Index Cond: (id = f_1.followee_id)
+                                               Filter: ((id <> '1853070350746583040'::bigint) AND (lower((nickname)::text) ~~ 'user00%'::text))
+                                               Rows Removed by Filter: 1
+                                               Buffers: shared hit=90000
+   ->  Nested Loop  (cost=308.82..466.88 rows=20 width=333) (actual time=73.298..73.320 rows=20 loops=1)
+         Buffers: shared hit=90455
+         ->  Limit  (cost=308.53..308.58 rows=20 width=44) (actual time=73.289..73.292 rows=20 loops=1)
+               Buffers: shared hit=90395
+               ->  Sort  (cost=308.53..308.66 rows=51 width=44) (actual time=48.804..48.806 rows=20 loops=1)
+                     Sort Key: preferred.prio, preferred.nkey USING ~<~, preferred.id
+                     Sort Method: quicksort  Memory: 26kB
+                     Buffers: shared hit=90395
+                     ->  Append  (cost=0.00..307.18 rows=51 width=44) (actual time=0.087..48.754 rows=21 loops=1)
+                           Buffers: shared hit=90386
+                           ->  CTE Scan on preferred  (cost=0.00..0.42 rows=21 width=44) (actual time=0.086..48.726 rows=21 loops=1)
+                                 Buffers: shared hit=90386
+                           ->  Subquery Scan on others  (cost=1.06..306.50 rows=30 width=44) (actual time=0.025..0.026 rows=0 loops=1)
+                                 ->  Limit  (cost=1.06..306.20 rows=30 width=44) (actual time=0.024..0.025 rows=0 loops=1)
+                                       InitPlan 2 (returns $2)
+                                         ->  Aggregate  (cost=0.47..0.49 rows=1 width=8) (actual time=0.007..0.008 rows=1 loops=1)
+                                               ->  CTE Scan on preferred preferred_1  (cost=0.00..0.42 rows=21 width=0) (actual time=0.000..0.001 rows=21 loops=1)
+                                       ->  Nested Loop Anti Join  (cost=0.58..3041.78 rows=299 width=44) (never executed)
+                                             ->  Index Scan using idx_users_nickname_id on users u_1  (cost=0.29..1952.82 rows=909 width=17) (never executed)
+                                                   Index Cond: ((lower((nickname)::text) ~>=~ 'user00'::text) AND (lower((nickname)::text) ~<~ 'user01'::text))
+                                                   Filter: ((id <> '1853070350746583040'::bigint) AND (lower((nickname)::text) ~~ 'user00%'::text))
+                                             ->  Index Only Scan using user_follows_pkey on user_follows f  (cost=0.29..1.33 rows=1 width=8) (never executed)
+                                                   Index Cond: ((follower_id = '1853070350746583040'::bigint) AND (followee_id = u_1.id))
+                                                   Heap Fetches: 0
+         ->  Index Scan using users_pkey on users u  (cost=0.29..7.90 rows=1 width=297) (actual time=0.001..0.001 rows=1 loops=20)
+               Index Cond: (id = preferred.id)
+               Buffers: shared hit=60
+   ->  Index Scan using user_counts_pkey on user_counts uc  (cost=0.29..0.35 rows=1 width=20) (actual time=0.001..0.001 rows=1 loops=20)
+         Index Cond: (user_id = u.id)
+         Buffers: shared hit=60
+ Planning:
+   Buffers: shared hit=407
+ Planning Time: 3.695 ms
+ JIT:
+   Functions: 49
+   Options: Inlining false, Optimization false, Expressions true, Deforming true
+   Timing: Generation 2.170 ms, Inlining 0.000 ms, Optimization 0.907 ms, Emission 23.608 ms, Total 26.685 ms
+ Execution Time: 96.862 ms
 ```
 
 このケースでは、user_followsから30000人を列挙し、users_pkeyを30000回引くこと、preferredが20件を超えるためothersが実行されないことを確認する。
 
-フォロイーが1人のuser00001では、上記の全ての1853070350746583040を1853160947712987136へ置き換えて実行する。この場合はselfが1件、followeesが1件、othersが18件となる。
+この実行計画は、フォロイー30000人を列挙し、各followee_idについてusers_pkeyを引くという、意図したO(F･log(U))の経路を確認するためのものである。実行時間96.862msにはJITの26.685msが含まれるため、ここでは実行時間の大小ではなく、走査件数とIndex Condを評価する。
 
-```:small
-★ここに結果を記載★
-```
-
-このケースでは、followeesがuser_follows_pkeyから1件を取得してusers_pkeyを1回引くこと、othersがidx_users_nickname_idを順序付きで走査し、約20件を確認した時点で18件を返すことを確認する。ニックネームに一致する約1000人をBitmap Heap Scanで全件取得してソートする計画になっていないことが重要である。
+ニックネーム索引側から候補を読み、各候補についてフォロー関係を確認する通常JOIN案は、検索語とフォロー分布によって速くなる場合はある。しかし支配項が一致候補数Mに依存し、元の目標であるF起点の計算量を保証しないため採用しない。
 
 ## fetchBatch
 通知を作成するワーカーがイベントログを読み出す際には、以下のようなクエリが実行される。
@@ -1055,7 +1090,15 @@ LIMIT 50;
 ```
 
 ```:small
-★ここに結果を記載★
+ Limit  (cost=0.29..9.10 rows=50 width=70) (actual time=0.104..0.158 rows=50 loops=1)
+   Buffers: shared hit=4
+   ->  Index Scan Backward using notifications_p7_user_id_is_read_updated_at_idx on notifications_p7 notifications  (cost=0.29..2643.22 rows=15000 width=70) (actual time=0.101..0.148 rows=50 loops=1)
+         Index Cond: ((user_id = '1853070350746583040'::bigint) AND (is_read = false))
+         Buffers: shared hit=4
+ Planning:
+   Buffers: shared hit=235
+ Planning Time: 1.131 ms
+ Execution Time: 0.193 ms
 ```
 
 idx_notifications_user_read_tsのIndex Condにuser_idとis_readが入り、updated_atの逆順に50件を取得して別途Sortを行わないことを確認する。
@@ -1084,16 +1127,216 @@ LIMIT 1;
 ```
 
 ```:small
-★ここに結果を記載★
+ Limit  (cost=0.29..0.33 rows=1 width=4) (actual time=0.149..0.151 rows=1 loops=1)
+   Buffers: shared hit=3
+   ->  Index Only Scan using notifications_p7_user_id_is_read_updated_at_idx on notifications_p7 notifications  (cost=0.29..412.29 rows=9600 width=4) (actual time=0.147..0.148 rows=1 loops=1)
+         Index Cond: ((user_id = '1853070350746583040'::bigint) AND (is_read = false) AND (updated_at > '2026-07-01 03:00:00+00'::timestamp with time zone))
+         Heap Fetches: 0
+         Buffers: shared hit=3
+ Planning:
+   Buffers: shared hit=5
+ Planning Time: 0.373 ms
+ Execution Time: 0.178 ms
 ```
 
 3条件がidx_notifications_user_read_tsのIndex Condに入り、最初の1件で停止することを確認する。
 
+## 現状の計算量上の懸念と対策状況
+
+ここまでの個別クエリに加えて、コードベース全体を対象に、ユーザ数、投稿数、文書数、キュー滞留件数などの増加に対して処理量がどのように増えるかを確認した。ここで問題とするのは、単に実行時間や定数倍を短縮できるかではなく、元の用途に対して全件走査や二次時間が発生し、データ量の増加に伴って現実的に処理できなくなる経路である。
+
+### AIユーザワーカーの全件巡回
+
+AIユーザワーカーは、AIユーザを一定件数ずつ取得して全員を順番に処理する。従来は以下の形でOFFSETを増やしていた。
+
+```sql:small
+SELECT u.id, u.nickname, u.is_admin, u.ai_model
+FROM users u
+WHERE u.ai_model IS NOT NULL
+ORDER BY u.id ASC
+LIMIT 200 OFFSET 15000;
+```
+
+AIユーザ数をA、バッチサイズをBとすると、先頭から全件を巡回する間に読み飛ばす行数は``0 + B + 2B + ...``となる。そのため、索引探索を除いた行走査だけでも合計O(A² / B)になり、AIユーザが増えるほど一巡の処理量が二次的に増える。
+
+これを、直前のバッチで最後に取得したIDをカーソルとして渡すキーセットページングへ変更した。
+
+```sql:small
+SELECT u.id, u.nickname, u.is_admin, u.ai_model
+FROM users u
+WHERE u.ai_model IS NOT NULL
+  AND u.id > 1853160963440578560
+ORDER BY u.id ASC
+LIMIT 200;
+```
+
+``users``には``id WHERE ai_model IS NOT NULL``の部分インデックス``idx_users_ai_id``がある。各バッチはカーソル位置をB木から探して次のB件だけを読むので、全巡回で実際に通過するAIユーザ行はO(A)になる。バッチごとの探索を含めれば、全体は``O(A + (A / B)･log(A))``であり、従来の二次時間を避けられる。既存のOFFSETベースの一覧APIは互換性のため残し、AIユーザワーカーだけが``order=asc``と``after``を使う。
+
+検証用データのダミーユーザ30000人をトランザクション内だけAIユーザにして、従来の深いOFFSETと新しいキーセットページングを比較するには、以下を実行する。最後にROLLBACKするので、測定後は元のデータへ戻る。
+
+```sql:small
+BEGIN;
+
+SET LOCAL jit = off;
+
+UPDATE users
+SET ai_model = 'basic'
+WHERE id BETWEEN
+  1853160947712987136 AND
+  1853160979169218560;
+
+ANALYZE users;
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT u.id, u.nickname, u.is_admin, u.ai_model
+FROM users u
+WHERE u.ai_model IS NOT NULL
+ORDER BY u.id ASC
+LIMIT 200 OFFSET 15000;
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT u.id, u.nickname, u.is_admin, u.ai_model
+FROM users u
+WHERE u.ai_model IS NOT NULL
+  AND u.id > 1853160963440578560
+ORDER BY u.id ASC
+LIMIT 200;
+
+ROLLBACK;
+```
+
+```:small
+★ここに従来のOFFSET版の結果を貼り付け★
+```
+
+```:small
+★ここにキーセット版の結果を貼り付け★
+```
+
+従来版では``idx_users_ai_id``からOFFSETとLIMITの合計に相当する約15200件を読み、キーセット版では``id > ...``がIndex Condに入って約200件だけを読むことを確認する。実行時間だけでなく、索引ノードのactual rowsとBuffersを比較する。
+
+### 検索索引更新キュー
+
+検索索引更新ワーカーは、投稿用とユーザ用のループを独立して動かし、各々について次のクエリで古いタスクから定数件を取得する。
+
+```sql:small
+SELECT id, name_prefix, doc_id, body_text, locale, doc_timestamp
+FROM search_indexing_tasks
+WHERE name_prefix = 'posts'
+ORDER BY id ASC
+LIMIT 100;
+```
+
+従来は``id``の主キーしかなかった。そのため、別の``name_prefix``のタスクがID順の前方に大量に滞留すると、目的のタスクを見つけるまで最大でキュー総数Qに比例する行を調べる可能性があった。特に、対象prefixのタスクが存在しない空振りポーリングも最悪O(Q)になる。
+
+これを避けるため、以下の複合インデックスを追加した。
+
+```sql:small
+CREATE INDEX idx_search_indexing_tasks_name_prefix_id
+ON search_indexing_tasks(name_prefix, id);
+```
+
+これにより、対象prefixの先頭へO(log(Q))で移動し、そこから最大B件だけをID順に取得できる。1回の取得は``O(log(Q) + B)``となり、別prefixのバックログ量には比例しない。
+
+同じデータ分布について、複合インデックスがない場合とある場合を比較するには以下を実行する。既存タスクの削除、テストデータの投入、インデックスの削除と再作成は全てトランザクション内で行い、最後にROLLBACKする。
+
+```sql:small
+BEGIN;
+
+SET LOCAL jit = off;
+
+DELETE FROM search_indexing_tasks;
+
+INSERT INTO search_indexing_tasks (
+  id, name_prefix, doc_id, doc_timestamp, body_text, locale
+)
+SELECT
+  n,
+  'users',
+  'user-' || n,
+  n,
+  'user task ' || n,
+  'en-US'
+FROM generate_series(1, 30000) AS g(n);
+
+INSERT INTO search_indexing_tasks (
+  id, name_prefix, doc_id, doc_timestamp, body_text, locale
+)
+SELECT
+  30000 + n,
+  'posts',
+  'post-' || n,
+  30000 + n,
+  'post task ' || n,
+  'en-US'
+FROM generate_series(1, 100) AS g(n);
+
+ANALYZE search_indexing_tasks;
+
+DROP INDEX idx_search_indexing_tasks_name_prefix_id;
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT id, name_prefix, doc_id, body_text, locale, doc_timestamp
+FROM search_indexing_tasks
+WHERE name_prefix = 'posts'
+ORDER BY id ASC
+LIMIT 100;
+
+CREATE INDEX idx_search_indexing_tasks_name_prefix_id
+ON search_indexing_tasks(name_prefix, id);
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT id, name_prefix, doc_id, body_text, locale, doc_timestamp
+FROM search_indexing_tasks
+WHERE name_prefix = 'posts'
+ORDER BY id ASC
+LIMIT 100;
+
+ROLLBACK;
+```
+
+```:small
+★ここに複合インデックスなしの結果を貼り付け★
+```
+
+```:small
+★ここに複合インデックスありの結果を貼り付け★
+```
+
+複合インデックスなしでは、主キーのIndex ScanまたはテーブルのSequential Scanで多数の``users``タスクをFilterから除外する計画になる。複合インデックスありでは、``name_prefix = 'posts'``がIndex Condに入り、別prefixの30000件を読まずに100件を取得することを確認する。
+
+### 投稿エクスポートの全件巡回
+
+ユーザの全投稿をエクスポートするフロントエンド処理は、従来、``listPosts``のOFFSETを200件ずつ増やして最後まで巡回していた。ユーザの投稿数をN、バッチサイズをBとすると、読み飛ばす行数の合計は``0 + B + 2B + ...``となり、全件取得はO(N² / B)になる。
+
+``listPosts``へ後方互換性を保った``after``を追加し、降順では以下のように直前のバッチの最終投稿IDより小さい投稿を取得するようにした。
+
+```sql:small
+SELECT p.id
+FROM posts p
+WHERE p.owned_by = 1853070350746583040
+  AND p.id < 1855878856704991232
+ORDER BY p.id DESC
+LIMIT 200;
+```
+
+``posts``には``(owned_by, id)``の複合インデックス``idx_posts_owned_by_id``があるため、各バッチはカーソル位置へO(log(P))で移動して次のB件だけを読む。全巡回は``O(N + (N / B)･log(P))``となる。``order=asc``では``id > after``、``order=desc``では``id < after``を使い、既存クライアント向けのOFFSET経路も維持する。エクスポート処理は``order=desc``と``after``を使うよう変更した。
+
+### その他の懸念と現在の扱い
+
+* 一般の一覧APIにはOFFSETページングが残る。深いページではoffsetに比例して読み飛ばすが、通常UIで何千ページも順にめくる用途は現実的ではなく、全件巡回するワーカーとは性質が異なる。``listUsers``と``listPosts``には後方互換性を保ったまま``after``を追加し、``order=asc``では``id > after``、``order=desc``では``id < after``によるキーセットページングも選べるようにした。従来のOFFSETは既存クライアントのため維持する。フロントエンドのユーザ一覧では、``listUsers``を使うAllタブとニックネーム条件付き一覧について、次ページを取得するための直前ページ最終IDをセッション内に保存して``after``を使う。訪問履歴のないページ番号をURLから直接開いた場合など、対応するカーソルがない場合は従来のOFFSETへフォールバックする。全文検索は``searchUsers``、FolloweesとFollowersは別APIを使うので、この``after``の対象ではない。``listUsers``のsocial順はIDだけではカーソルを表現できないので``after``の対象外とする。他の一般一覧APIについては現時点では保留する。
+* PostgreSQLの``ILIKE '%...%'``による本文検索と正確な``COUNT(*)``は対象件数に比例する。ただし、現在はいずれも管理用途であり、公開の全文検索はTTTSへ分離しているため、現時点では保留する。
+* ユーザ名の入力補完では、候補数が多い``listUsers``のsocial順検索を使わず、専用の``listFriendsByNicknamePrefix``を使っている。したがって、広いsocial前方一致検索は通常UIの入力補完経路には残っていない。
+* ``listPostsByFollowees``、``BuildSearchSeedForUser``、``listFriendsByNicknamePrefix``のfollowees枝は、フォロイー数Fに比例する。これは全投稿または全ユーザを走査しないための現在の設計どおりであり、支配項はそれぞれO(F･log(P))またはO(F･log(U))である。Fが極端に増えた場合には、上限、重要フォロイーの事前選択、アクティブ集合や結果のキャッシュを検討する。
+* TTTSの検索は新しい時系列シャードから順に調べ、必要件数が揃った時点で停止する。深さ上限、timeout、Redisキャッシュも設けており、最悪時に複数シャードを調べることは仕様として受け入れている。現時点では変更しない。
+
+以上より、今回までに修正した計算量上の欠陥は、全AIユーザ巡回のOFFSET、検索索引更新キューの複合インデックス欠如、投稿エクスポートのOFFSETによる全件巡回の3件である。それ以外は、用途が限定された管理機能、通常UIだけで使う深いページング、または仕様として既知の線形性として整理し、実運用で問題が顕在化した時点で再検討する。
+
 ## 総評
 
-ここまで見てきたように、通常の一覧表示で記事IDやユーザIDの候補を取得する処理では、できる限りインデックスを使って返却対象を先に絞るように、スキーマとクエリを設計している。各々のインデックスがメモリ上にキャッシュされる範囲では、高速なランダムアクセスが期待できる。ただし、本文に対する``ILIKE '%...%'``、短いニックネーム前方一致のsocial順ソート、フォロイー全員を調べる処理など、ヒット件数やフォロイー数に比例する経路も残っている。公開の全文検索では外部検索サービスを使って、その負荷をPostgreSQLから分離している。
+ここまで見てきたように、通常の一覧表示で記事IDやユーザIDの候補を取得する処理では、できる限りインデックスを使って返却対象を先に絞るように、スキーマとクエリを設計している。各々のインデックスがメモリ上にキャッシュされる範囲では、高速なランダムアクセスが期待できる。ただし、本文に対する``ILIKE '%...%'``やフォロイー全員を調べる処理など、ヒット件数やフォロイー数に比例する経路も残っている。短いニックネーム前方一致のsocial順``listUsers``は入力補完では使わず、専用の``listFriendsByNicknamePrefix``へ置き換えている。公開の全文検索では外部検索サービスを使って、その負荷をPostgreSQLから分離している。
 
-全体の最新投稿を一覧で使うlistPostsは、通常のIDやタグなどの条件ではインデックスから定数件を取得できる。focusUserIdのイイネ済み判定はpost_likesの複合主キーを使い、返信済み判定はpostsのreply_toとowned_byの複合インデックスを使う。自分がフォローしているユーザの最新投稿を一覧で使うlistPostsByFolloweesの支配項はO(F･log(P))で、イイネした投稿の一覧で使うlistPostsLikedByUserもliked_byとcreated_atのインデックスから定数件を取得できる。listFriendsByNicknamePrefixのfollowees枝はフォロイーF人を列挙して各ユーザを主キーで調べるため、支配項はO(F･log(U))である。preferredで不足する場合のothers枝は、ニックネーム索引を順序付きで走査し、ページングに必要な件数が揃った時点で停止する。ただし、ILIKEによる本文検索や、候補数が多いsocial順のlistUsersは、全体件数に対して同じ保証を持たない。
+全体の最新投稿を一覧で使うlistPostsは、通常のIDやタグなどの条件ではインデックスから定数件を取得できる。全件エクスポートでは``after``と``idx_posts_owned_by_id``を使ってキーセットページングする。focusUserIdのイイネ済み判定はpost_likesの複合主キーを使い、返信済み判定はpostsのreply_toとowned_byの複合インデックスを使う。自分がフォローしているユーザの最新投稿を一覧で使うlistPostsByFolloweesと、AI検索シードを作るBuildSearchSeedForUserのactive_followeesは、どちらもフォロイー別に最新投稿を1件だけ索引検索するので支配項はO(F･log(P))である。イイネした投稿の一覧で使うlistPostsLikedByUserもliked_byとcreated_atのインデックスから定数件を取得できる。listFriendsByNicknamePrefixのfollowees枝はフォロイーF人を列挙して各ユーザを主キーで調べるため、支配項はO(F･log(U))である。preferredで不足する場合のothers枝は、ニックネーム索引を順序付きで走査し、ページングに必要な件数が揃った時点で停止する。ただし、ILIKEによる本文検索は全体件数に対して同じ保証を持たない。候補数が多いsocial順のlistUsersも同じ保証を持たないが、現在のユーザ名入力補完では使用していない。
 
 listPostsByFolloweesとlistFriendsByNicknamePrefixのfollowees枝は、いずれもフォロイー数Fに比例して索引を引く。現行実装ではフォロイー数を200人などに制限する上限は設けていない。listFriendsByNicknamePrefixのothers枝は早期終了できるが、短い検索語に多数が一致し、その中の自分やフォロイーが多い場合には、必要件数より多くの候補を確認する可能性がある。利用規模が大きくなってこれらが問題になった場合には、上限、対象フォロイーの事前選択、結果のキャッシュなどを検討する必要がある。
 
@@ -1153,12 +1396,20 @@ ORDER BY c.relname;
 ```
 
 ```:small
-★ここに結果を記載★
+                  name                  |  size   | pages_8k
+----------------------------------------+---------+----------
+ idx_posts_owned_by_id                  | 1916928 |      234
+ idx_posts_public_owned_by_published_at | 3424256 |      418
+ idx_posts_reply_to_id                  | 1916928 |      234
+ idx_posts_reply_to_owned_by            | 1171456 |      143
+ idx_posts_root_id                      | 1294336 |      158
+ idx_posts_root_owned_by_id             | 1441792 |      176
+ posts_pkey                             | 1302528 |      159
 ```
 
-7インデックスの合計をSバイトとすると、検証DBの投稿総数60017件に対する投稿1件あたりのインデックス容量は``S / 60017``で求められる。上の結果を更新した時点で、この値も実測値から計算し直す。
+7インデックスの合計は12468224バイト、約11.89MiBである。検証DBの投稿総数60017件で割ると、現在のデータ分布では投稿1件あたり約207.74バイトになる。
 
-仮に実メモリ16GiB、shared_buffers 4GiBとし、その半分をインデックス、その80%を投稿関係のインデックスへ使えると仮定すると、投稿インデックスへ使える容量は約1.6GiBである。1投稿あたりの実測容量をBバイトとすれば、単純な容量上の目安は``1.6GiB / B``で求められる。
+仮に実メモリ16GiB、shared_buffers 4GiBとし、その半分をインデックス、その80%を投稿関係のインデックスへ使えると仮定すると、投稿インデックスへ使える容量は約1.6GiBである。現在の実測比率をそのまま線形に延ばす単純計算では約827万投稿分、丸めて約830万投稿分になる。
 
 これは限界値ではなく、フェルミ推定級の目安に過ぎない。7インデックスは同じ行集合を対象にしておらず、データ分布、B木ページの充填率、更新と削除による膨張、VACUUMの状態によって投稿あたりの容量は変わる。実際のアクセスは新しい投稿に偏るため、全インデックスがキャッシュに入らなくても頻繁に使うページは残りやすい。OSのページキャッシュもある。一方で、listPostsByFolloweesのように多数のユーザについて索引をランダム参照するクエリは、作業集合が広がるほど物理I/Oの影響を受けやすい。
 

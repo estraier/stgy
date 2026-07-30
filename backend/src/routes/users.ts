@@ -234,9 +234,23 @@ export default function createUsersRouter(
       typeof req.query.focusUserId === "string" && req.query.focusUserId.trim() !== ""
         ? req.query.focusUserId.trim()
         : undefined;
+    const afterRaw = req.query.after;
+    let after: string | undefined;
+    if (afterRaw !== undefined) {
+      if (
+        typeof afterRaw !== "string" ||
+        !/^(?:0x)?[0-9a-fA-F]{1,16}$/.test(afterRaw)
+      ) {
+        return res.status(400).json({ error: "invalid after" });
+      }
+      if (order === "social" || offset !== 0) {
+        return res.status(400).json({ error: "after requires order=asc or desc and offset=0" });
+      }
+      after = afterRaw;
+    }
     const watch = timerThrottleService.startWatch(loginUser);
     let users = await usersService.listUsers(
-      { query, nickname, nicknamePrefix, offset, limit, order },
+      { query, nickname, nicknamePrefix, offset, limit, order, after },
       focusUserId,
     );
     watch.done();

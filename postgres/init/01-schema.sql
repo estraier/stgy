@@ -192,6 +192,8 @@ CREATE TABLE search_indexing_tasks (
   body_text TEXT,
   locale VARCHAR(10)
 );
+CREATE INDEX idx_search_indexing_tasks_name_prefix_id
+ON search_indexing_tasks(name_prefix, id);
 
 CREATE TABLE event_logs (
   partition_id SMALLINT NOT NULL,

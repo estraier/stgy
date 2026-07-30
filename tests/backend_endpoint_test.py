@@ -817,6 +817,32 @@ def test_users():
   users = res.json()
   admin_user = min((u for u in users), key=lambda u: u["id"])
   admin_id = admin_user["id"]
+  users_asc = sorted(users, key=lambda u: u["id"])
+  if len(users_asc) >= 2:
+    res = requests.get(
+      f"{BASE_URL}/users?order=asc&limit=1&after={users_asc[0]['id']}",
+      headers=headers,
+      cookies=cookies,
+    )
+    assert res.status_code == 200, res.text
+    assert [u["id"] for u in res.json()] == [users_asc[1]["id"]]
+    res = requests.get(
+      f"{BASE_URL}/users?order=desc&limit=1&after={users_asc[-1]['id']}",
+      headers=headers,
+      cookies=cookies,
+    )
+    assert res.status_code == 200, res.text
+    assert [u["id"] for u in res.json()] == [users_asc[-2]["id"]]
+  res = requests.get(
+    f"{BASE_URL}/users?order=social&after={admin_id}", headers=headers, cookies=cookies
+  )
+  assert res.status_code == 400, res.text
+  res = requests.get(
+    f"{BASE_URL}/users?order=asc&offset=1&after={admin_id}",
+    headers=headers,
+    cookies=cookies,
+  )
+  assert res.status_code == 400, res.text
   res = requests.get(f"{BASE_URL}/users/{admin_id}", headers=headers, cookies=cookies)
   got_admin_user = res.json()
   assert got_admin_user["id"] == admin_id
@@ -1006,6 +1032,30 @@ def test_posts():
   count = res.json()["count"]
   assert count >= 1
   print("[posts] count:", count)
+  res = requests.get(f"{BASE_URL}/posts?order=asc&limit=2000", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  posts_asc = sorted(res.json(), key=lambda p: p["id"])
+  if len(posts_asc) >= 2:
+    res = requests.get(
+      f"{BASE_URL}/posts?order=asc&limit=1&after={posts_asc[0]['id']}",
+      headers=headers,
+      cookies=cookies,
+    )
+    assert res.status_code == 200, res.text
+    assert [p["id"] for p in res.json()] == [posts_asc[1]["id"]]
+    res = requests.get(
+      f"{BASE_URL}/posts?order=desc&limit=1&after={posts_asc[-1]['id']}",
+      headers=headers,
+      cookies=cookies,
+    )
+    assert res.status_code == 200, res.text
+    assert [p["id"] for p in res.json()] == [posts_asc[-2]["id"]]
+  res = requests.get(f"{BASE_URL}/posts?order=asc&after=not-a-post-id", headers=headers, cookies=cookies)
+  assert res.status_code == 400, res.text
+  res = requests.get(
+    f"{BASE_URL}/posts?order=asc&offset=1&after={post_id}", headers=headers, cookies=cookies
+  )
+  assert res.status_code == 400, res.text
   res = requests.post(f"{BASE_URL}/posts/{post_id}/like", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   print("[posts] like: ok")

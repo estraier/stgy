@@ -228,9 +228,17 @@ export class UsersService {
     const offset = input?.offset ?? 0;
     const limit = input?.limit ?? 100;
     const order = input?.order ?? "desc";
+    const after = input?.after ? hexToDec(input.after) : null;
     const query = input?.query?.trim();
     const nickname = input?.nickname?.trim();
     const nicknamePrefix = input?.nicknamePrefix?.trim();
+
+    if (after !== null && order === "social") {
+      throw new Error("after is not supported with social order");
+    }
+    if (after !== null && offset !== 0) {
+      throw new Error("after requires offset=0");
+    }
 
     let baseSelect = `
       SELECT
@@ -270,6 +278,12 @@ export class UsersService {
       params.push(q);
     }
 
+    if (after !== null) {
+      const op = order === "asc" ? ">" : "<";
+      wheres.push(`u.id ${op} $${params.length + 1}`);
+      params.push(after);
+    }
+
     let orderClause = "";
     if (order === "social" && focusUserId) {
       baseSelect += `
@@ -295,8 +309,13 @@ export class UsersService {
 
     let sql = baseSelect;
     if (wheres.length > 0) sql += ` WHERE ${wheres.join(" AND ")}`;
-    sql += ` ${orderClause} OFFSET $${params.length + 1} LIMIT $${params.length + 2}`;
-    params.push(offset, limit);
+    if (after === null) {
+      sql += ` ${orderClause} OFFSET $${params.length + 1} LIMIT $${params.length + 2}`;
+      params.push(offset, limit);
+    } else {
+      sql += ` ${orderClause} LIMIT $${params.length + 1}`;
+      params.push(limit);
+    }
 
     const res = await pgQuery(this.pgPool, sql, params);
     const users = res.rows.map((row: Record<string, unknown>) => {

@@ -23,6 +23,7 @@ export async function listUsers(
     offset?: number;
     limit?: number;
     order?: "asc" | "desc" | "social";
+    after?: string;
     query?: string;
     nickname?: string;
     nicknamePrefix?: string;
@@ -33,6 +34,7 @@ export async function listUsers(
   if (params.offset !== undefined) search.append("offset", String(params.offset));
   if (params.limit !== undefined) search.append("limit", String(params.limit));
   if (params.order) search.append("order", params.order);
+  if (params.after) search.append("after", params.after);
   if (params.query) search.append("query", params.query);
   if (params.nickname) search.append("nickname", params.nickname);
   if (params.nicknamePrefix) search.append("nicknamePrefix", params.nicknamePrefix);

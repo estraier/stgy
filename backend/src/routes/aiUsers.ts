@@ -69,8 +69,22 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
       loginUser.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
       ["desc", "asc"] as const,
     );
+    const afterRaw = req.query.after;
+    let after: string | undefined;
+    if (afterRaw !== undefined) {
+      if (
+        typeof afterRaw !== "string" ||
+        !/^(?:0x)?[0-9a-fA-F]{1,16}$/.test(afterRaw)
+      ) {
+        return res.status(400).json({ error: "invalid after" });
+      }
+      if (order !== "asc" || offset !== 0) {
+        return res.status(400).json({ error: "after requires order=asc and offset=0" });
+      }
+      after = afterRaw;
+    }
     const watch = timerThrottleService.startWatch(loginUser);
-    const users = await aiUsersService.listAiUsers({ offset, limit, order });
+    const users = await aiUsersService.listAiUsers({ offset, limit, order, after });
     watch.done();
     res.json(users);
   });

@@ -19,6 +19,10 @@ export type AiUserPagination = {
   order?: "asc" | "desc";
 };
 
+export type ListAiUsersInput = AiUserPagination & {
+  after?: string;
+};
+
 export type ChatMessage = {
   role: "system" | "user" | "assistant";
   content: string;

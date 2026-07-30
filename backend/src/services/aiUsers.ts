@@ -8,7 +8,7 @@ import { encodeFeatures } from "../utils/vectorSpace";
 import type {
   AiUser,
   AiUserDetail,
-  AiUserPagination,
+  ListAiUsersInput,
   ChatRequest,
   ChatResponse,
   AiUserInterest,
@@ -90,18 +90,33 @@ export class AiUsersService {
     this.openai = new OpenAI({ apiKey: Config.OPENAI_API_KEY });
   }
 
-  async listAiUsers(input: AiUserPagination = {}): Promise<AiUser[]> {
+  async listAiUsers(input: ListAiUsersInput = {}): Promise<AiUser[]> {
     const offset = Math.max(0, input.offset ?? 0);
     const limit = Math.min(Math.max(1, input.limit ?? 50), 200);
     const order = (input.order ?? "desc") === "asc" ? "ASC" : "DESC";
-    const sql = `
-      SELECT u.id, u.nickname, u.is_admin, u.ai_model
-      FROM users u
-      WHERE u.ai_model IS NOT NULL
-      ORDER BY u.id ${order}
-      LIMIT $1 OFFSET $2
-    `;
-    const res = await pgQuery<RowList>(this.pgPool, sql, [limit, offset]);
+    const after = input.after ? hexToDec(input.after) : null;
+    if (after !== null && order !== "ASC") {
+      throw new Error("after is supported only with ascending order");
+    }
+    const sql =
+      after === null
+        ? `
+        SELECT u.id, u.nickname, u.is_admin, u.ai_model
+        FROM users u
+        WHERE u.ai_model IS NOT NULL
+        ORDER BY u.id ${order}
+        LIMIT $1 OFFSET $2
+        `
+        : `
+        SELECT u.id, u.nickname, u.is_admin, u.ai_model
+        FROM users u
+        WHERE u.ai_model IS NOT NULL
+          AND u.id > $1
+        ORDER BY u.id ASC
+        LIMIT $2
+        `;
+    const params = after === null ? [limit, offset] : [after, limit];
+    const res = await pgQuery<RowList>(this.pgPool, sql, params);
     return res.rows.map<AiUser>((r) => ({
       id: decToHex(String(r.id)),
       nickname: r.nickname,

@@ -14,6 +14,7 @@ const TAB_VALUES = ["followees", "followers", "all"] as const;
 const RESTORE_ID_KEY = "lastUserId";
 const RESTORE_PAGE_KEY = "lastUserPage";
 const MAX_SEARCH_PAGES = 10;
+const LIST_USERS_AFTER_STORAGE_PREFIX = "stgy:list-users-after";
 
 type UserSearchQuery = {
   query?: string;
@@ -54,6 +55,19 @@ export default function PageBody() {
   const isFullTextSearch = isSearchMode && !!searchQueryObj.query;
 
   const effectiveTab = isSearchMode ? "all" : tab;
+  const canUseListUsersAfter = effectiveTab === "all" && !isFullTextSearch;
+  const listUsersAfterStorageBase = useMemo(
+    () =>
+      userId
+        ? [
+            LIST_USERS_AFTER_STORAGE_PREFIX,
+            userId,
+            oldestFirst ? "asc" : "desc",
+            encodeURIComponent(qParam),
+          ].join(":")
+        : null,
+    [userId, oldestFirst, qParam],
+  );
 
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
@@ -88,19 +102,34 @@ export default function PageBody() {
     setLoading(true);
     setError(null);
 
+    const offset = (page - 1) * Config.USERS_PAGE_SIZE;
     const params: {
-      offset: number;
+      offset?: number;
       limit: number;
       order: "asc" | "desc";
+      after?: string;
       focusUserId?: string;
       query?: string;
       nickname?: string;
     } = {
-      offset: (page - 1) * Config.USERS_PAGE_SIZE,
       limit: Config.USERS_PAGE_SIZE + 1,
       order: oldestFirst ? "asc" : "desc",
       focusUserId: userId,
     };
+
+    if (canUseListUsersAfter && page > 1 && listUsersAfterStorageBase) {
+      try {
+        const after = window.sessionStorage.getItem(
+          `${listUsersAfterStorageBase}:page:${page}`,
+        );
+        if (after) params.after = after;
+        else params.offset = offset;
+      } catch {
+        params.offset = offset;
+      }
+    } else {
+      params.offset = offset;
+    }
 
     let fetcher: Promise<User[]>;
     if (isSearchMode) {
@@ -113,7 +142,7 @@ export default function PageBody() {
         }
         fetcher = searchUsers({
           query: searchQueryObj.query!,
-          offset: params.offset,
+          offset,
           limit: params.limit,
           locale: userLocale,
         });
@@ -124,14 +153,14 @@ export default function PageBody() {
       }
     } else if (effectiveTab === "followees") {
       fetcher = listFollowees(userId!, {
-        offset: params.offset,
+        offset,
         limit: params.limit,
         order: params.order,
         focusUserId: userId,
       });
     } else if (effectiveTab === "followers") {
       fetcher = listFollowers(userId!, {
-        offset: params.offset,
+        offset,
         limit: params.limit,
         order: params.order,
         focusUserId: userId,
@@ -181,6 +210,8 @@ export default function PageBody() {
     searchQueryObj,
     tabParamMissing,
     setQuery,
+    canUseListUsersAfter,
+    listUsersAfterStorageBase,
   ]);
 
   useEffect(() => {
@@ -249,6 +280,20 @@ export default function PageBody() {
   }
 
   function handlePageChange(nextPage: number) {
+    if (
+      canUseListUsersAfter &&
+      nextPage === page + 1 &&
+      users.length > 0 &&
+      listUsersAfterStorageBase
+    ) {
+      try {
+        window.sessionStorage.setItem(
+          `${listUsersAfterStorageBase}:page:${nextPage}`,
+          users[users.length - 1].id,
+        );
+      } catch {}
+    }
+
     setQuery({
       page: nextPage,
       ...(isSearchMode

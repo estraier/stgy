@@ -1280,6 +1280,12 @@ paths:
         - name: order
           in: query
           schema: { type: string, enum: [asc, desc, social], default: desc }
+        - name: after
+          in: query
+          schema:
+            type: string
+            pattern: '^(?:0x)?[0-9a-fA-F]{1,16}$'
+          description: Exclusive hexadecimal user ID cursor. Supported with order=asc or order=desc and offset=0. Ascending order returns IDs greater than after; descending order returns IDs less than after.
         - name: query
           in: query
           schema: { type: string }
@@ -1302,6 +1308,8 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/Error400"
         "401":
           $ref: "#/components/responses/Error401"
         "403":
@@ -1970,6 +1978,12 @@ paths:
         - name: order
           in: query
           schema: { type: string, enum: [asc, desc], default: desc }
+        - name: after
+          in: query
+          schema:
+            type: string
+            pattern: '^(?:0x)?[0-9a-fA-F]{1,16}$'
+          description: Exclusive hexadecimal post ID cursor. Supported with order=asc or order=desc and offset=0. Ascending order returns IDs greater than after; descending order returns IDs less than after.
         - name: query
           in: query
           schema: { type: string }
@@ -1998,6 +2012,8 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Post"
+        "400":
+          $ref: "#/components/responses/Error400"
         "401":
           $ref: "#/components/responses/Error401"
         "403":
@@ -2395,6 +2411,12 @@ paths:
         - name: order
           in: query
           schema: { type: string, enum: [asc, desc], default: desc }
+        - name: after
+          in: query
+          description: Hexadecimal user ID cursor. Requires order=asc and offset=0.
+          schema:
+            type: string
+            pattern: "^(?:0x)?[0-9a-fA-F]{1,16}$"
       responses:
         "200":
           description: AI users list
@@ -2404,6 +2426,8 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/AiUser"
+        "400":
+          $ref: "#/components/responses/Error400"
         "401":
           $ref: "#/components/responses/Error401"
         "403":
