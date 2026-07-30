@@ -1237,7 +1237,7 @@ paths:
 
   /users/count:
     get:
-      summary: Get total user count (with optional filters)
+      summary: (Admin only) Get total user count (with optional filters)
       security:
         - sessionCookie: []
       parameters:
@@ -1289,6 +1289,7 @@ paths:
         - name: query
           in: query
           schema: { type: string }
+          description: Admin-only PostgreSQL substring search filter. Use /users/search for normal full-text search.
         - name: nickname
           in: query
           schema: { type: string }
@@ -1940,7 +1941,7 @@ paths:
 
   /posts/count:
     get:
-      summary: Get post count
+      summary: (Admin only) Get post count
       security:
         - sessionCookie: []
       parameters:
@@ -1999,6 +2000,7 @@ paths:
         - name: query
           in: query
           schema: { type: string }
+          description: Admin-only PostgreSQL substring search filter. Use /posts/search for normal full-text search.
         - name: ownedBy
           in: query
           schema: { type: string }

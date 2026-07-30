@@ -119,8 +119,8 @@ export default function createUsersRouter(
   router.get("/count", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.requireLogin(req, res);
     if (!loginUser) return;
-    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
-      return res.status(403).json({ error: "too often operations" });
+    if (!loginUser.isAdmin) {
+      return res.status(403).json({ error: "admin only" });
     }
     const query =
       typeof req.query.query === "string" && req.query.query.trim() !== ""
@@ -210,6 +210,13 @@ export default function createUsersRouter(
   router.get("/", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.requireLogin(req, res);
     if (!loginUser) return;
+    const query =
+      typeof req.query.query === "string" && req.query.query.trim() !== ""
+        ? req.query.query.trim()
+        : undefined;
+    if (query && !loginUser.isAdmin) {
+      return res.status(403).json({ error: "admin only" });
+    }
     if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }
@@ -218,10 +225,6 @@ export default function createUsersRouter(
       loginUser.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
       ["desc", "asc", "social"] as const,
     );
-    const query =
-      typeof req.query.query === "string" && req.query.query.trim() !== ""
-        ? req.query.query.trim()
-        : undefined;
     const nickname =
       typeof req.query.nickname === "string" && req.query.nickname.trim() !== ""
         ? req.query.nickname.trim()

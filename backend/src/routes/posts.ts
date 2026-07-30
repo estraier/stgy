@@ -125,8 +125,8 @@ export default function createPostsRouter(
   router.get("/count", async (req, res) => {
     const loginUser = await authHelpers.requireLogin(req, res);
     if (!loginUser) return;
-    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
-      return res.status(403).json({ error: "too often operations" });
+    if (!loginUser.isAdmin) {
+      return res.status(403).json({ error: "admin only" });
     }
     const query =
       typeof req.query.query === "string" && req.query.query.trim() !== ""
@@ -155,6 +155,13 @@ export default function createPostsRouter(
   router.get("/", async (req, res) => {
     const loginUser = await authHelpers.requireLogin(req, res);
     if (!loginUser) return;
+    const query =
+      typeof req.query.query === "string" && req.query.query.trim() !== ""
+        ? req.query.query.trim()
+        : undefined;
+    if (query && !loginUser.isAdmin) {
+      return res.status(403).json({ error: "admin only" });
+    }
     if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }
@@ -163,10 +170,6 @@ export default function createPostsRouter(
       loginUser.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
       ["desc", "asc"] as const,
     );
-    const query =
-      typeof req.query.query === "string" && req.query.query.trim() !== ""
-        ? req.query.query.trim()
-        : undefined;
     const ownedBy =
       typeof req.query.ownedBy === "string" && req.query.ownedBy.trim() !== ""
         ? req.query.ownedBy.trim()
