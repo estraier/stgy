@@ -1249,17 +1249,18 @@ export class UsersService {
 
     ctes.push(`
       followees AS (
-        SELECT 1 AS prio, u.id, lower(u.nickname) AS nkey
-        FROM users u
-        WHERE u.id <> $2
-          AND lower(u.nickname) LIKE $1
-          AND EXISTS (
-            SELECT 1
-            FROM user_follows f
-            WHERE f.follower_id = $2
-              AND f.followee_id = u.id
-          )
-        ORDER BY lower(u.nickname) USING ~<~, u.id
+        SELECT 1 AS prio, fu.id, fu.nkey
+        FROM user_follows f
+        JOIN LATERAL (
+          SELECT u.id, lower(u.nickname) AS nkey
+          FROM users u
+          WHERE u.id = f.followee_id
+            AND u.id <> $2
+            AND lower(u.nickname) LIKE $1
+          LIMIT 1
+        ) AS fu ON TRUE
+        WHERE f.follower_id = $2
+        ORDER BY fu.nkey USING ~<~, fu.id
         LIMIT $5
       )
     `);

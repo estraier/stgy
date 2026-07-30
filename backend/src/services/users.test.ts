@@ -1296,7 +1296,12 @@ describe("UsersService", () => {
     expect(res.length).toBe(1);
     expect(res[0].id).toBe(BOB);
     expect(pg.lastSql).toContain("preferred AS MATERIALIZED");
+    expect(pg.lastSql).toContain("FROM user_follows f JOIN LATERAL");
+    expect(pg.lastSql).toContain("WHERE u.id = f.followee_id");
+    expect(pg.lastSql).toContain("LIMIT 1 ) AS fu ON TRUE");
+    expect(pg.lastSql).toContain("ORDER BY fu.nkey USING ~<~, fu.id");
     expect(pg.lastSql).toContain("ORDER BY lower(u.nickname) USING ~<~, u.id");
+    expect(pg.lastSql).not.toContain("AND EXISTS ( SELECT 1 FROM user_follows f");
     expect(pg.lastSql).toContain("NOT EXISTS");
     expect(pg.lastSql).not.toContain("DISTINCT ON");
   });

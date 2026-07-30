@@ -1327,6 +1327,30 @@ describe("AiPostsService BuildSearchSeedForUser", () => {
     expect(seeds).toEqual([]);
   });
 
+  test("gets each followee's latest post with a per-followee index lookup", async () => {
+    const querySpy = jest.spyOn(pgClient, "query");
+
+    await service.BuildSearchSeedForUser(hex(777), 3);
+
+    const seedQuery = querySpy.mock.calls
+      .map(([sql]) => normalizeSql(sql))
+      .find(
+        (sql) =>
+          sql.includes("self_posts AS") &&
+          sql.includes("active_followees AS") &&
+          sql.includes("SELECT post_id, weight FROM seed_posts"),
+      );
+
+    expect(seedQuery).toBeDefined();
+    expect(seedQuery).toContain(
+      "active_followees AS ( SELECT f.followee_id AS owned_by, latest_post.id AS last_id FROM followees f JOIN LATERAL ( SELECT p2.id FROM posts p2 WHERE p2.owned_by = f.followee_id ORDER BY p2.id DESC LIMIT 1 ) AS latest_post ON TRUE )",
+    );
+    expect(seedQuery).not.toContain("SELECT DISTINCT ON (p2.owned_by)");
+    expect(seedQuery).not.toContain(
+      "WHERE p2.owned_by IN (SELECT followee_id FROM followees)",
+    );
+  });
+
   test("does not throw when seed posts exist but all features are null", async () => {
     const selfUserHex = hex(777);
     const selfUserDec = toDecStr(selfUserHex);

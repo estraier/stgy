@@ -288,10 +288,15 @@ export class AiPostsService {
         WHERE uf.follower_id = $1
       ),
       active_followees AS (
-        SELECT DISTINCT ON (p2.owned_by) p2.owned_by, p2.id AS last_id
-        FROM posts p2
-        WHERE p2.owned_by IN (SELECT followee_id FROM followees)
-        ORDER BY p2.owned_by, p2.id DESC
+        SELECT f.followee_id AS owned_by, latest_post.id AS last_id
+        FROM followees f
+        JOIN LATERAL (
+          SELECT p2.id
+          FROM posts p2
+          WHERE p2.owned_by = f.followee_id
+          ORDER BY p2.id DESC
+          LIMIT 1
+        ) AS latest_post ON TRUE
       ),
       top_followees AS (
         SELECT owned_by AS followee_id
