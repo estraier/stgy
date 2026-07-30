@@ -112,7 +112,7 @@ FOR EACH ROW EXECUTE FUNCTION posts_reply_to_exists_fn();
 
 CREATE TABLE post_details (
   post_id BIGINT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
-  content VARCHAR(65535) NOT NULL
+  content VARCHAR(262143) NOT NULL
 );
 
 CREATE TABLE post_tags (

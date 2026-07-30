@@ -2079,7 +2079,7 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
                       schedulePreviewHighlight();
                       updateMediaLineState();
                     }}
-                    maxLength={65535}
+                    maxLength={262143}
                     rows={1}
                     style={{ resize: "none" }}
                     autoFocus={autoFocus}

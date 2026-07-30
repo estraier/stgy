@@ -2670,7 +2670,7 @@ export default function PostForm({
                 }
               }}
               onPaste={handlePasteToUpload}
-              maxLength={65535}
+              maxLength={262143}
               onFocus={handleFocus}
               rows={1}
               style={{ resize: "vertical" }}
@@ -3132,7 +3132,7 @@ export default function PostForm({
                           schedulePreviewHighlightRef.current();
                         }}
                         onPaste={handlePasteToUpload}
-                        maxLength={65535}
+                        maxLength={262143}
                         onFocus={handleFocus}
                         rows={1}
                         style={{ resize: "none" }}
