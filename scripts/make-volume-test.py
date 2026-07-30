@@ -9,9 +9,32 @@ import sys
 import textwrap
 
 NUM_DUMMY_USERS = 30000
-NUM_VOLUME_POSTS = 60000
-NUM_ROOT_VOLUME_POSTS = 45000
-NUM_REPLY_VOLUME_POSTS = 15000
+NUM_INACTIVE_USERS = 12000
+NUM_LIGHT_USERS = 12000
+NUM_REGULAR_USERS = 4500
+NUM_HEAVY_USERS = 1350
+NUM_CREATOR_USERS = 150
+NUM_ORDINARY_VOLUME_POSTS = 46500
+NUM_DENSE_ROOT_POSTS = 20000
+NUM_DENSE_REPLY_POSTS = 15000
+NUM_VOLUME_POSTS = (
+  NUM_ORDINARY_VOLUME_POSTS + NUM_DENSE_ROOT_POSTS + NUM_DENSE_REPLY_POSTS
+)
+BENCHMARK_FOLLOWEE_COUNT = 5000
+BENCHMARK_FOLLOWER_COUNT = 20000
+REGULAR_POPULAR_FOLLOWS = 4
+REGULAR_PEER_FOLLOWS = 8
+VIRAL_POST_LIKE_COUNT = 20000
+SEARCH_USER_TASK_COUNT = 30000
+SEARCH_POST_TASK_COUNT = 1000
+AI_USER_INTERVAL = 5
+AI_USER_COUNT = NUM_DUMMY_USERS // AI_USER_INTERVAL
+AI_OFFSET = AI_USER_COUNT // 2
+AI_AFTER_ORDINAL = AI_OFFSET * AI_USER_INTERVAL
+LIST_USERS_OFFSET = 10000
+LIST_USERS_AFTER_ORDINAL = NUM_DUMMY_USERS - LIST_USERS_OFFSET + 1
+LIST_POSTS_OFFSET = 10000
+LIST_POSTS_AFTER_DENSE_ORDINAL = NUM_DENSE_ROOT_POSTS - LIST_POSTS_OFFSET + 1
 NOTIFICATION_COUNT = 30000
 NOTIFICATION_UNREAD_COUNT = NOTIFICATION_COUNT // 2
 
@@ -27,6 +50,8 @@ DUMMY_POST_WORKER_ID = 243
 DENSE_POST_BASE_MS = 1768435200000  # 2026-01-15 00:00:00+00
 DENSE_ROOT_POST_WORKER_ID = 245
 DENSE_REPLY_POST_WORKER_ID = 246
+SEARCH_TASK_BASE_MS = 1784073600000  # 2026-07-15 00:00:00+00
+SEARCH_TASK_WORKER_ID = 247
 
 EVENT_LOG_PARTITIONS = 256
 EVENT_PARTITION_ID = BENCHMARK_USER_ID % EVENT_LOG_PARTITIONS
@@ -66,44 +91,53 @@ def build_sql() -> str:
   )
   first_event_id = snowflake_id(EVENT_BASE_MS, EVENT_WORKER_ID)
   last_event_id = snowflake_id(EVENT_BASE_MS + EVENT_COUNT - 1, EVENT_WORKER_ID)
+  first_search_task_id = snowflake_id(SEARCH_TASK_BASE_MS, SEARCH_TASK_WORKER_ID)
+  last_search_task_id = snowflake_id(
+    SEARCH_TASK_BASE_MS + SEARCH_USER_TASK_COUNT + SEARCH_POST_TASK_COUNT - 1,
+    SEARCH_TASK_WORKER_ID,
+  )
   first_dense_owner_id = first_dummy_user_id
   dense_reply_owner_id = snowflake_id(
     DUMMY_USER_BASE_MS + 1,
     DUMMY_USER_WORKER_ID,
   )
+  ai_after_id = snowflake_id(
+    DUMMY_USER_BASE_MS + AI_AFTER_ORDINAL - 1,
+    DUMMY_USER_WORKER_ID,
+  )
+  list_users_after_id = snowflake_id(
+    DUMMY_USER_BASE_MS + LIST_USERS_AFTER_ORDINAL - 1,
+    DUMMY_USER_WORKER_ID,
+  )
+  list_posts_after_id = snowflake_id(
+    DENSE_POST_BASE_MS + LIST_POSTS_AFTER_DENSE_ORDINAL - 1,
+    DENSE_ROOT_POST_WORKER_ID,
+  )
 
-  # Keep the original 1-to-3-post shape for user00001, user00002, and
-  # the latest 20 users so the existing list-query fixtures remain stable.
-  # Concentrate the remaining roots and replies into user00001 and user00002
-  # to make both sides of (reply_to, owned_by) independently high-cardinality.
-  preserved_multi_post_ordinals = {1, 2}
-  preserved_multi_post_ordinals.update(
-    range(NUM_DUMMY_USERS - 19, NUM_DUMMY_USERS + 1)
+  user_class_total = (
+    NUM_INACTIVE_USERS
+    + NUM_LIGHT_USERS
+    + NUM_REGULAR_USERS
+    + NUM_HEAVY_USERS
+    + NUM_CREATOR_USERS
   )
-  preserved_root_extras = 0
-  preserved_reply_extras = 0
-  for ordinal in preserved_multi_post_ordinals:
-    for post_number in range(2, 2 + (ordinal % 3)):
-      if post_number == 2 and ordinal % 2 == 0:
-        preserved_reply_extras += 1
-      else:
-        preserved_root_extras += 1
+  if user_class_total != NUM_DUMMY_USERS:
+    raise RuntimeError("user activity classes do not add up to NUM_DUMMY_USERS")
 
-  dense_root_posts = (
-    NUM_ROOT_VOLUME_POSTS - NUM_DUMMY_USERS - preserved_root_extras
+  ordinary_posts = (
+    NUM_LIGHT_USERS
+    + NUM_REGULAR_USERS * 3
+    + NUM_HEAVY_USERS * 10
+    + NUM_CREATOR_USERS * 50
   )
-  dense_reply_posts = NUM_REPLY_VOLUME_POSTS - preserved_reply_extras
-  generated_volume_posts = (
-    NUM_DUMMY_USERS
-    + preserved_root_extras
-    + preserved_reply_extras
-    + dense_root_posts
-    + dense_reply_posts
-  )
-  if generated_volume_posts != NUM_VOLUME_POSTS:
-    raise RuntimeError("volume post distribution does not match NUM_VOLUME_POSTS")
-  if dense_root_posts <= 0 or dense_reply_posts <= 0:
-    raise RuntimeError("dense volume post groups must be positive")
+  if ordinary_posts != NUM_ORDINARY_VOLUME_POSTS:
+    raise RuntimeError("ordinary post distribution does not match configured total")
+  if NUM_VOLUME_POSTS != 81500:
+    raise RuntimeError("volume post total changed unexpectedly")
+  if AI_AFTER_ORDINAL % AI_USER_INTERVAL != 0:
+    raise RuntimeError("AI cursor must point to an AI user")
+  if LIST_POSTS_AFTER_DENSE_ORDINAL <= 0:
+    raise RuntimeError("listPosts cursor ordinal must be positive")
 
   if EVENT_AFTER_ID != snowflake_id(
     EVENT_BASE_MS + EVENT_AFTER_ORDINAL - 1,
@@ -125,6 +159,11 @@ def build_sql() -> str:
         SELECT 1 FROM user_secrets WHERE user_id = {ADMIN_USER_ID}
       ) THEN
         RAISE EXCEPTION 'admin user secret is required before running make-volume-test.py';
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM ai_models WHERE label = 'basic'
+      ) THEN
+        RAISE EXCEPTION 'AI model basic is required before running make-volume-test.py';
       END IF;
     END
     $$;
@@ -195,7 +234,7 @@ def build_sql() -> str:
       NULL,
       vu.locale,
       vu.timezone,
-      NULL,
+      CASE WHEN vu.ordinal % {AI_USER_INTERVAL} = 0 THEN 'basic' ELSE NULL END,
       FALSE,
       vu.ordinal % 3 = 0
     FROM volume_users vu;
@@ -239,13 +278,49 @@ def build_sql() -> str:
       TIMESTAMPTZ '2026-03-01 00:00:00+00'
         + (vu.ordinal - 1) * INTERVAL '1 millisecond'
     FROM volume_users vu
+    WHERE vu.ordinal <= {BENCHMARK_FOLLOWEE_COUNT // 2}
+       OR vu.ordinal > {NUM_DUMMY_USERS - BENCHMARK_FOLLOWEE_COUNT // 2}
+
     UNION ALL
+
     SELECT
       vu.id,
       {BENCHMARK_USER_ID},
       TIMESTAMPTZ '2026-03-02 00:00:00+00'
         + (vu.ordinal - 1) * INTERVAL '1 millisecond'
-    FROM volume_users vu;
+    FROM volume_users vu
+    WHERE vu.ordinal <= {BENCHMARK_FOLLOWER_COUNT}
+
+    UNION ALL
+
+    SELECT
+      follower.id,
+      popular.id,
+      TIMESTAMPTZ '2026-03-03 00:00:00+00'
+        + ((follower.ordinal - 1)::bigint * {REGULAR_POPULAR_FOLLOWS} + j.n)
+          * INTERVAL '1 millisecond'
+    FROM volume_users follower
+    CROSS JOIN generate_series(1, {REGULAR_POPULAR_FOLLOWS}) AS j(n)
+    JOIN volume_users popular
+      ON popular.ordinal = ((follower.ordinal + j.n * 17 - 1) % 100) + 1
+    WHERE follower.id <> popular.id
+
+    UNION ALL
+
+    SELECT
+      follower.id,
+      peer.id,
+      TIMESTAMPTZ '2026-03-04 00:00:00+00'
+        + ((follower.ordinal - 1)::bigint * {REGULAR_PEER_FOLLOWS} + offsets.n)
+          * INTERVAL '1 millisecond'
+    FROM volume_users follower
+    CROSS JOIN (
+      VALUES (1), (2), (4), (8), (16), (32), (64), (128)
+    ) AS offsets(n)
+    JOIN volume_users peer
+      ON peer.ordinal = ((follower.ordinal - 1 + offsets.n) % {NUM_DUMMY_USERS}) + 1
+    WHERE follower.id <> peer.id
+    ON CONFLICT (follower_id, followee_id) DO NOTHING;
 
     INSERT INTO posts (
       id, owned_by, reply_to, published_at, updated_at, snippet, locale,
@@ -302,30 +377,34 @@ def build_sql() -> str:
       published_at, content, snippet, locale
     )
     SELECT
-      ((vu.ordinal - 1)::bigint * 3 + p.post_number),
+      ((vu.ordinal - 1)::bigint * 100 + p.post_number),
       vu.ordinal,
       p.post_number,
       ((({DUMMY_POST_BASE_MS}
-          + (vu.ordinal - 1)::bigint * 3
+          + (vu.ordinal - 1)::bigint * 100
           + p.post_number - 1) << 20)
         | ({DUMMY_POST_WORKER_ID}::bigint << 12)),
       vu.id,
       CASE
-        WHEN p.post_number = 2 AND vu.ordinal % 2 = 0
+        WHEN p.post_number > 1
+         AND (vu.ordinal + p.post_number) % 7 = 0
           THEN {BENCHMARK_POST2_ID}
         ELSE NULL
       END,
       TIMESTAMPTZ '2026-02-02 00:00:00+00'
-        + (((vu.ordinal - 1)::bigint * 3 + p.post_number - 1)
+        + (((vu.ordinal - 1)::bigint * 100 + p.post_number - 1)
           * INTERVAL '1 millisecond'),
       CASE
-        WHEN p.post_number = 2 AND vu.ordinal % 2 = 0
-          THEN 'Reply by ' || vu.nickname || '.'
+        WHEN p.post_number > 1
+         AND (vu.ordinal + p.post_number) % 7 = 0
+          THEN 'Reply ' || p.post_number || ' by ' || vu.nickname || '.'
         ELSE 'Post ' || p.post_number || ' by ' || vu.nickname || '.'
       END,
       CASE
-        WHEN p.post_number = 2 AND vu.ordinal % 2 = 0
-          THEN '[{{"T":"p","X":"Reply by ' || vu.nickname || '."}}]'
+        WHEN p.post_number > 1
+         AND (vu.ordinal + p.post_number) % 7 = 0
+          THEN '[{{"T":"p","X":"Reply ' || p.post_number
+            || ' by ' || vu.nickname || '."}}]'
         ELSE '[{{"T":"p","X":"Post ' || p.post_number
           || ' by ' || vu.nickname || '."}}]'
       END,
@@ -334,16 +413,18 @@ def build_sql() -> str:
     CROSS JOIN LATERAL generate_series(
       1,
       CASE
-        WHEN vu.ordinal <= 2 OR vu.ordinal > {NUM_DUMMY_USERS - 20}
-          THEN 1 + (vu.ordinal % 3)
-        ELSE 1
+        WHEN vu.ordinal <= {NUM_INACTIVE_USERS} THEN 0
+        WHEN vu.ordinal <= {NUM_INACTIVE_USERS + NUM_LIGHT_USERS} THEN 1
+        WHEN vu.ordinal <= {NUM_INACTIVE_USERS + NUM_LIGHT_USERS + NUM_REGULAR_USERS} THEN 3
+        WHEN vu.ordinal <= {NUM_INACTIVE_USERS + NUM_LIGHT_USERS + NUM_REGULAR_USERS + NUM_HEAVY_USERS} THEN 10
+        ELSE 50
       END
     ) AS p(post_number)
 
     UNION ALL
 
     SELECT
-      1000000::bigint + g.i,
+      10000000::bigint + g.i,
       1,
       100000 + g.i,
       ((({DENSE_POST_BASE_MS} + g.i - 1)::bigint << 20)
@@ -356,12 +437,12 @@ def build_sql() -> str:
       '[{{"T":"p","X":"Dense root post ' || g.i
         || ' by user00001."}}]',
       'en-US'
-    FROM generate_series(1, {dense_root_posts}) AS g(i)
+    FROM generate_series(1, {NUM_DENSE_ROOT_POSTS}) AS g(i)
 
     UNION ALL
 
     SELECT
-      2000000::bigint + g.i,
+      20000000::bigint + g.i,
       2,
       200000 + g.i,
       ((({DENSE_POST_BASE_MS} + g.i - 1)::bigint << 20)
@@ -374,7 +455,7 @@ def build_sql() -> str:
       '[{{"T":"p","X":"Dense reply ' || g.i
         || ' by user00002."}}]',
       'en-US'
-    FROM generate_series(1, {dense_reply_posts}) AS g(i);
+    FROM generate_series(1, {NUM_DENSE_REPLY_POSTS}) AS g(i);
 
     INSERT INTO posts (
       id, owned_by, reply_to, published_at, updated_at, snippet, locale,
@@ -416,7 +497,8 @@ def build_sql() -> str:
       vu.id,
       TIMESTAMPTZ '2026-04-01 00:00:00+00'
         + (vu.ordinal - 1) * INTERVAL '1 millisecond'
-    FROM volume_users vu;
+    FROM volume_users vu
+    WHERE vu.ordinal <= {VIRAL_POST_LIKE_COUNT};
 
     INSERT INTO post_likes (post_id, liked_by, created_at)
     SELECT
@@ -425,10 +507,13 @@ def build_sql() -> str:
       TIMESTAMPTZ '2026-04-02 00:00:00+00'
         + (latest.owner_ordinal - 1) * INTERVAL '1 millisecond'
     FROM (
-      SELECT DISTINCT ON (owned_by)
-        owned_by, owner_ordinal, id
-      FROM volume_posts
-      ORDER BY owned_by, id DESC
+      SELECT DISTINCT ON (vp.owned_by)
+        vp.owned_by, vp.owner_ordinal, vp.id
+      FROM volume_posts vp
+      JOIN user_follows uf
+        ON uf.follower_id = {BENCHMARK_USER_ID}
+       AND uf.followee_id = vp.owned_by
+      ORDER BY vp.owned_by, vp.id DESC
     ) latest;
 
     TRUNCATE user_counts;
@@ -554,6 +639,36 @@ def build_sql() -> str:
       last_event_id = EXCLUDED.last_event_id,
       updated_at = EXCLUDED.updated_at;
 
+    TRUNCATE search_indexing_tasks;
+
+    INSERT INTO search_indexing_tasks (
+      id, name_prefix, doc_id, doc_timestamp, body_text, locale
+    )
+    SELECT
+      ((({SEARCH_TASK_BASE_MS} + n - 1)::bigint << 20)
+        | ({SEARCH_TASK_WORKER_ID}::bigint << 12)),
+      'users',
+      'volume-user-' || n,
+      ((({DUMMY_USER_BASE_MS} + n - 1)::bigint << 20)
+        | ({DUMMY_USER_WORKER_ID}::bigint << 12)),
+      'Profile update for volume user ' || n,
+      CASE WHEN n % 5 = 0 THEN 'ja-JP' ELSE 'en-US' END
+    FROM generate_series(1, {SEARCH_USER_TASK_COUNT}) AS g(n);
+
+    INSERT INTO search_indexing_tasks (
+      id, name_prefix, doc_id, doc_timestamp, body_text, locale
+    )
+    SELECT
+      ((({SEARCH_TASK_BASE_MS} + {SEARCH_USER_TASK_COUNT} + n - 1)::bigint << 20)
+        | ({SEARCH_TASK_WORKER_ID}::bigint << 12)),
+      'posts',
+      'volume-post-' || n,
+      ((({DUMMY_POST_BASE_MS} + n - 1)::bigint << 20)
+        | ({DUMMY_POST_WORKER_ID}::bigint << 12)),
+      'Post update for volume post ' || n,
+      CASE WHEN n % 5 = 0 THEN 'ja-JP' ELSE 'en-US' END
+    FROM generate_series(1, {SEARCH_POST_TASK_COUNT}) AS g(n);
+
     COMMIT;
 
     ANALYZE;
@@ -561,18 +676,34 @@ def build_sql() -> str:
     SELECT 'benchmark_user_id' AS name, '{BENCHMARK_USER_ID}' AS value
     UNION ALL SELECT 'benchmark_user_hex', upper(lpad(to_hex({BENCHMARK_USER_ID}::bigint), 16, '0'))
     UNION ALL SELECT 'nickname_prefix', '{NICKNAME_PREFIX}%'
+    UNION ALL SELECT 'ai_user_count', '{AI_USER_COUNT}'
+    UNION ALL SELECT 'ai_offset', '{AI_OFFSET}'
+    UNION ALL SELECT 'ai_after_id', '{ai_after_id}'
+    UNION ALL SELECT 'list_users_offset', '{LIST_USERS_OFFSET}'
+    UNION ALL SELECT 'list_users_after_id', '{list_users_after_id}'
+    UNION ALL SELECT 'list_posts_owner_id', '{first_dense_owner_id}'
+    UNION ALL SELECT 'list_posts_offset', '{LIST_POSTS_OFFSET}'
+    UNION ALL SELECT 'list_posts_after_id', '{list_posts_after_id}'
     UNION ALL SELECT 'reply_state_focus_user_id', '{first_dense_owner_id}'
     UNION ALL SELECT 'reply_state_other_user_id', '{dense_reply_owner_id}'
     UNION ALL SELECT 'reply_state_target_post_id', '{BENCHMARK_POST1_ID}'
+    UNION ALL SELECT 'search_task_first_id', '{first_search_task_id}'
+    UNION ALL SELECT 'search_task_last_id', '{last_search_task_id}'
     UNION ALL SELECT 'event_partition_id', '{EVENT_PARTITION_ID}'
     UNION ALL SELECT 'event_after_id', '{EVENT_AFTER_ID}'
     UNION ALL SELECT 'notification_newer_than', '{NOTIFICATION_NEWER_THAN}';
 
     SELECT 'users' AS name, count(*)::bigint AS records FROM users
+    UNION ALL SELECT 'ai_users', count(*) FROM users WHERE ai_model IS NOT NULL
     UNION ALL SELECT 'posts', count(*) FROM posts
     UNION ALL SELECT 'user_follows', count(*) FROM user_follows
+    UNION ALL SELECT 'benchmark_followees', count(*) FROM user_follows WHERE follower_id = {BENCHMARK_USER_ID}
+    UNION ALL SELECT 'benchmark_followers', count(*) FROM user_follows WHERE followee_id = {BENCHMARK_USER_ID}
     UNION ALL SELECT 'post_likes', count(*) FROM post_likes
     UNION ALL SELECT 'post_tags', count(*) FROM post_tags
+    UNION ALL SELECT 'search_indexing_tasks', count(*) FROM search_indexing_tasks
+    UNION ALL SELECT 'search_user_tasks', count(*) FROM search_indexing_tasks WHERE name_prefix = 'users'
+    UNION ALL SELECT 'search_post_tasks', count(*) FROM search_indexing_tasks WHERE name_prefix = 'posts'
     UNION ALL SELECT 'event_logs_partition_{EVENT_PARTITION_ID}', count(*) FROM event_logs WHERE partition_id = {EVENT_PARTITION_ID}
     UNION ALL SELECT 'benchmark_notifications', count(*) FROM notifications WHERE user_id = {BENCHMARK_USER_ID}
     UNION ALL SELECT 'reply_state_focus_posts', count(*) FROM posts WHERE owned_by = {first_dense_owner_id}
@@ -622,6 +753,10 @@ def main(argv: list[str]) -> int:
   print(f"[volume-test] mode={args.mode}")
   print(f"[volume-test] dummy users={NUM_DUMMY_USERS}")
   print(f"[volume-test] volume posts={NUM_VOLUME_POSTS}")
+  print(f"[volume-test] AI users={AI_USER_COUNT}")
+  print(f"[volume-test] benchmark followees={BENCHMARK_FOLLOWEE_COUNT}")
+  print(f"[volume-test] benchmark followers={BENCHMARK_FOLLOWER_COUNT}")
+  print(f"[volume-test] search tasks={SEARCH_USER_TASK_COUNT + SEARCH_POST_TASK_COUNT}")
   print(f"[volume-test] notifications={NOTIFICATION_COUNT}")
   print(f"[volume-test] benchmark user={BENCHMARK_USER_ID}")
   print("[volume-test] loading deterministic rows and running ANALYZE")
