@@ -8,7 +8,7 @@ import secrets
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Optional
 from urllib.parse import unquote, urlsplit
 
 import requests
@@ -43,7 +43,7 @@ class ArchivePost:
     return str(self.data["id"])
 
   @property
-  def reply_to(self) -> str | None:
+  def reply_to(self) -> Optional[str]:
     value = self.data.get("replyTo")
     return value if isinstance(value, str) and value else None
 
@@ -67,8 +67,8 @@ class ImportPlan:
   image_paths: tuple[Path, ...]
   track_master_paths: tuple[Path, ...]
   track_preview_to_master: dict[Path, Path]
-  avatar_path: Path | None
-  pub_config: dict[str, Any] | None
+  avatar_path: Optional[Path]
+  pub_config: Optional[dict[str, Any]]
 
 
 class StgyClient:
@@ -93,7 +93,7 @@ class StgyClient:
       raise RuntimeError("the supplied account is not an administrator")
     return data
 
-  def get_user(self, user_id: str) -> dict[str, Any] | None:
+  def get_user(self, user_id: str) -> Optional[dict[str, Any]]:
     data = self._request("GET", f"/users/{user_id}", expected={200, 404})
     return None if data is None else require_dict(data, "user response")
 
@@ -117,7 +117,7 @@ class StgyClient:
       json_body=body,
     )
 
-  def get_post(self, post_id: str) -> dict[str, Any] | None:
+  def get_post(self, post_id: str) -> Optional[dict[str, Any]]:
     data = self._request("GET", f"/posts/{post_id}", expected={200, 404})
     return None if data is None else require_dict(data, "post response")
 
@@ -225,7 +225,7 @@ class StgyClient:
     path: str,
     *,
     expected: set[int],
-    json_body: dict[str, Any] | None = None,
+    json_body: Optional[dict[str, Any]] = None,
   ) -> Any:
     response = self.session.request(
       method,
@@ -341,7 +341,7 @@ def iter_embed_urls(text: str) -> Iterable[tuple[str, str]]:
     yield match.group("prefix")[0], match.group("url").strip()
 
 
-def split_track_embed_with_pins(url: str) -> tuple[list[str], int] | None:
+def split_track_embed_with_pins(url: str) -> Optional[tuple[list[str], int]]:
   blocks = url.split("|")
   if url.startswith("map://"):
     return blocks, 1
@@ -367,7 +367,7 @@ def iter_map_pin_image_urls(url: str) -> Iterable[str]:
       yield match.group(0)
 
 
-def resolve_archive_url(data_dir: Path, source_file: Path, url: str) -> Path | None:
+def resolve_archive_url(data_dir: Path, source_file: Path, url: str) -> Optional[Path]:
   parts = urlsplit(url)
   if parts.scheme or parts.netloc or url.startswith("//"):
     return None
@@ -489,7 +489,7 @@ def load_import_plan(data_dir: Path, no_reply: bool = False, publish: bool = Fal
 
   image_paths, track_master_paths, preview_to_master = collect_media_references(root, posts)
 
-  avatar_path: Path | None = None
+  avatar_path: Optional[Path] = None
   if profile.get("avatar"):
     candidate = root / "avatar.webp"
     if not candidate.is_file():
@@ -516,7 +516,7 @@ def rewrite_map_pin_image_urls(
   source_file: Path,
   data_dir: Path,
   image_urls: dict[Path, str],
-  track_urls_by_preview: dict[Path, str] | None = None,
+  track_urls_by_preview: Optional[dict[Path, str]] = None,
 ) -> str:
   split = split_track_embed_with_pins(url)
   if split is None:
@@ -594,7 +594,7 @@ def rewrite_embeds(
       )
 
     candidate = resolve_archive_url(data_dir, source_file, stripped_url)
-    replacement: str | None = None
+    replacement: Optional[str] = None
     if candidate is not None:
       if kind == "!":
         replacement = image_urls.get(candidate)
@@ -630,7 +630,7 @@ def sort_posts_for_restore(posts: Iterable[ArchivePost]) -> list[ArchivePost]:
   return ordered
 
 
-def build_user_body(profile: dict[str, Any], introduction: str, password: str | None) -> dict[str, Any]:
+def build_user_body(profile: dict[str, Any], introduction: str, password: Optional[str]) -> dict[str, Any]:
   body: dict[str, Any] = {
     "email": profile["email"],
     "nickname": profile["nickname"],
@@ -695,7 +695,7 @@ def validate_pub_config(data: dict[str, Any]) -> dict[str, Any]:
 def import_archive(
   plan: ImportPlan,
   client: StgyClient,
-  owner_override: str | None,
+  owner_override: Optional[str],
   publish: bool = False,
 ) -> None:
   profile_id = normalize_id(plan.profile["id"], "profile ID")
@@ -703,7 +703,7 @@ def import_archive(
   client.login()
 
   existing_owner = client.get_user(owner_id)
-  generated_password: str | None = None
+  generated_password: Optional[str] = None
   created_user = False
 
   if owner_override:
@@ -832,7 +832,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str]) -> int:
   args = parse_args(argv)
-  client: StgyClient | None = None
+  client: Optional[StgyClient] = None
   try:
     plan = load_import_plan(args.data_dir, args.no_reply, args.publish)
     client = StgyClient(args.stgy_base, args.admin_email, args.admin_password)

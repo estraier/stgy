@@ -4,7 +4,7 @@ import argparse
 import re
 import sys
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, Optional, TextIO
 from urllib.parse import urlsplit
 
 import requests
@@ -95,7 +95,7 @@ class StgyClient:
     path: str,
     *,
     expected: set[int],
-    json_body: dict[str, Any] | None = None,
+    json_body: Optional[dict[str, Any]] = None,
   ) -> Any:
     response = self.session.request(
       method,
@@ -216,7 +216,7 @@ def upload_and_rewrite(
   return rewrite_image_placeholders(text, data_dir, image_urls)
 
 
-def read_utf8(path: Path | None) -> str:
+def read_utf8(path: Optional[Path]) -> str:
   try:
     data = sys.stdin.buffer.read() if path is None else path.read_bytes()
   except OSError as exc:
@@ -229,7 +229,7 @@ def read_utf8(path: Path | None) -> str:
     raise ValueError(f"{source} is not valid UTF-8: {exc}") from exc
 
 
-def write_utf8(path: Path | None, text: str) -> None:
+def write_utf8(path: Optional[Path], text: str) -> None:
   data = text.encode("utf-8")
   try:
     if path is None:
@@ -277,7 +277,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str]) -> int:
   args = parse_args(argv)
-  client: StgyClient | None = None
+  client: Optional[StgyClient] = None
   try:
     data_dir = args.data_dir.expanduser().resolve()
     if not data_dir.is_dir():

@@ -771,7 +771,9 @@ def make_aliases(places: list[Place], grid_km: float, component_area_km2: float)
             mask = shapely.contains(place.projected_geometry, points)
             selected_x = flat_x[mask]
             selected_y = flat_y[mask]
-            for x, y in zip(selected_x, selected_y, strict=True):
+            if len(selected_x) != len(selected_y):
+                raise ValueError("selected coordinate arrays must have the same length")
+            for x, y in zip(selected_x, selected_y):
                 longitude, latitude = to_geographic.transform(float(x), float(y))
                 aliases.append(Alias(longitude, latitude, place.id, float(x), float(y), "grid"))
 

@@ -16,6 +16,7 @@ from collections import defaultdict
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Optional
 
 DEFAULT_OWNER = "0001000000000001"
 JST = timezone(timedelta(hours=9))
@@ -147,7 +148,7 @@ class StgyClient:
     self,
     method: str,
     path: str,
-    payload: dict | None,
+    payload: Optional[dict],
     expected_statuses: set[int],
   ) -> object:
     if self.use_curl:
@@ -190,7 +191,7 @@ class StgyClient:
     self,
     method: str,
     path: str,
-    payload: dict | None,
+    payload: Optional[dict],
     expected_statuses: set[int],
   ) -> object:
     url = self.api_base + path
@@ -774,7 +775,7 @@ def format_coordinate(value: float) -> str:
   return f"{value:.8f}".rstrip("0").rstrip(".")
 
 
-def parse_map_directive(line: str) -> tuple[str, list[str], str | None]:
+def parse_map_directive(line: str) -> tuple[str, list[str], Optional[str]]:
   match = re.fullmatch(r"\s*@maps?\s+(.+?)\s*", line)
   if not match:
     raise ValueError(f"invalid @map directive: {line!r}")
@@ -796,7 +797,7 @@ def parse_map_directive(line: str) -> tuple[str, list[str], str | None]:
   return center, via, float_dir
 
 
-def transform_map_directive(line: str, geocoder: YahooGeocoder | None) -> str:
+def transform_map_directive(line: str, geocoder: Optional[YahooGeocoder]) -> str:
   if geocoder is None:
     return f"```text\n{line.strip()}\n```"
   center, via, float_dir = parse_map_directive(line)
@@ -818,7 +819,7 @@ def transform_map_directive(line: str, geocoder: YahooGeocoder | None) -> str:
 
 def transform_body(
   lines: list[str],
-  geocoder: YahooGeocoder | None,
+  geocoder: Optional[YahooGeocoder],
   source_path: Path,
 ) -> str:
   output: list[str] = []
@@ -894,7 +895,7 @@ def transform_body(
 def parse_article(
   path: Path,
   output_dir: Path,
-  geocoder: YahooGeocoder | None,
+  geocoder: Optional[YahooGeocoder],
 ) -> Article:
   try:
     text = path.read_text(encoding="utf-8-sig")
@@ -903,8 +904,8 @@ def parse_article(
   except UnicodeError as exc:
     raise ValueError(f"{path}: input is not valid UTF-8") from exc
 
-  title: str | None = None
-  date_value: str | None = None
+  title: Optional[str] = None
+  date_value: Optional[str] = None
   tags: list[str] = []
   tags_seen = False
   body_lines: list[str] = []
@@ -1061,7 +1062,7 @@ def validate_stgy_args(args: argparse.Namespace) -> None:
 
 def main(argv: list[str]) -> int:
   args = parse_args(argv)
-  client: StgyClient | None = None
+  client: Optional[StgyClient] = None
   try:
     owner = normalize_owner(args.owner)
     validate_stgy_args(args)
