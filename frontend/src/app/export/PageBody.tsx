@@ -37,7 +37,7 @@ import {
   rewriteTrackObjectUrlsToRelative,
   type TrackArchiveEntry,
 } from "@/utils/exportTracks";
-import { HTML_STYLES_CSS } from "./exportStyles";
+import { buildHtmlStylesCss } from "./exportStyles";
 
 interface SaveFilePickerOptions {
   suggestedName?: string;
@@ -60,6 +60,7 @@ const EXPORT_API_PAGE_SIZE = 100;
 
 const TRACK_VIEWER_JS_URL = "/export-assets/track-viewer.js";
 const TRACK_VIEWER_CSS_URL = "/export-assets/track-viewer.css";
+const ARTICLE_CONTENT_CSS_URL = "/export-assets/article-content.css";
 
 const TRACK_EXPORT_BOOTSTRAP_JS = `(() => {
   const message =
@@ -753,7 +754,13 @@ export default function PageBody() {
       setExportProgress({ completed: 0, total: totalFiles });
       setExportPhase("exporting");
 
-      await addExportFile(`${base}style.css`, enc.encode(HTML_STYLES_CSS));
+      const articleContentCss = new TextDecoder().decode(
+        await fetchBytes(ARTICLE_CONTENT_CSS_URL, "article stylesheet", 0, 0),
+      );
+      await addExportFile(
+        `${base}style.css`,
+        enc.encode(buildHtmlStylesCss(articleContentCss)),
+      );
       await addExportFile(
         `${base}assets/track-viewer.css`,
         await fetchBytes(

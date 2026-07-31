@@ -7,6 +7,7 @@ import re
 import secrets
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional
 from urllib.parse import unquote, urlsplit
@@ -18,6 +19,8 @@ DEFAULT_STGY_BASE = "http://localhost:8080/"
 DEFAULT_ADMIN_EMAIL = os.environ.get("STGY_ADMIN_EMAIL", "admin@stgy.jp")
 DEFAULT_ADMIN_PASSWORD = os.environ.get("STGY_ADMIN_PASSWORD", "stgystgy")
 ID_RE = re.compile(r"^[0-9A-F]{16}$")
+SNOWFLAKE_TIMESTAMP_BITS = 43
+SNOWFLAKE_TIMESTAMP_SHIFT = 20
 EMBED_RE = re.compile(
   r"(?P<prefix>[!@]\[[^\]\r\n]*\]\(\s*)(?P<url>[^)\r\n]*?)(?P<suffix>\s*\))"
 )
@@ -285,6 +288,41 @@ def normalize_id(value: Any, label: str) -> str:
   if not ID_RE.fullmatch(text):
     raise ValueError(f"{label} must be a 16-digit hexadecimal STGY ID: {value!r}")
   return text
+
+
+def parse_created_at(value: Any, label: str) -> datetime:
+  if not isinstance(value, str) or not value.strip():
+    raise ValueError(f"{label} must be a non-empty ISO 8601 timestamp")
+  text = value.strip()
+  if text.endswith(("Z", "z")):
+    text = text[:-1] + "+00:00"
+  try:
+    parsed = datetime.fromisoformat(text)
+  except ValueError as exc:
+    raise ValueError(f"{label} must be a valid ISO 8601 timestamp: {value!r}") from exc
+  if parsed.tzinfo is None:
+    parsed = parsed.replace(tzinfo=timezone.utc)
+  return parsed
+
+
+def timestamp_milliseconds(value: datetime) -> int:
+  epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+  delta = value.astimezone(timezone.utc) - epoch
+  return (
+    delta.days * 86_400_000
+    + delta.seconds * 1000
+    + delta.microseconds // 1000
+  )
+
+
+def snowflake_id_from_created_at(value: Any, label: str) -> str:
+  created_at = parse_created_at(value, label)
+  milliseconds = timestamp_milliseconds(created_at)
+  if milliseconds < 0 or milliseconds >= (1 << SNOWFLAKE_TIMESTAMP_BITS):
+    raise ValueError(
+      f"{label} is outside the STGY Snowflake ID range: {created_at.isoformat()}"
+    )
+  return f"{milliseconds << SNOWFLAKE_TIMESTAMP_SHIFT:016X}"
 
 
 def load_json_object(path: Path) -> dict[str, Any]:
@@ -630,7 +668,12 @@ def sort_posts_for_restore(posts: Iterable[ArchivePost]) -> list[ArchivePost]:
   return ordered
 
 
-def build_user_body(profile: dict[str, Any], introduction: str, password: Optional[str]) -> dict[str, Any]:
+def build_user_body(
+  profile: dict[str, Any],
+  introduction: str,
+  password: Optional[str],
+  user_id: str,
+) -> dict[str, Any]:
   body: dict[str, Any] = {
     "email": profile["email"],
     "nickname": profile["nickname"],
@@ -643,7 +686,7 @@ def build_user_body(profile: dict[str, Any], introduction: str, password: Option
     "aiPersonality": profile.get("aiPersonality"),
   }
   if password is not None:
-    body["id"] = profile["id"]
+    body["id"] = user_id
     body["password"] = password
     body["avatar"] = None
   return body
@@ -651,7 +694,9 @@ def build_user_body(profile: dict[str, Any], introduction: str, password: Option
 
 def build_post_body(
   post: ArchivePost,
+  post_id: str,
   owner_id: str,
+  reply_to: Optional[str],
   content: str,
   include_id: bool,
   publish: bool,
@@ -664,7 +709,7 @@ def build_post_body(
   body: dict[str, Any] = {
     "content": content,
     "ownedBy": owner_id,
-    "replyTo": post.data.get("replyTo"),
+    "replyTo": reply_to,
     "locale": post.data.get("locale"),
     "publishedAt": published_at,
     "allowLikes": post.data["allowLikes"],
@@ -672,7 +717,7 @@ def build_post_body(
     "tags": post.data["tags"],
   }
   if include_id:
-    body["id"] = post.id
+    body["id"] = post_id
   return body
 
 
@@ -697,12 +742,40 @@ def import_archive(
   client: StgyClient,
   owner_override: Optional[str],
   publish: bool = False,
+  id_from_date: bool = False,
 ) -> None:
-  profile_id = normalize_id(plan.profile["id"], "profile ID")
+  if id_from_date:
+    profile_id = snowflake_id_from_created_at(
+      plan.profile.get("createdAt"),
+      f"{plan.data_dir / 'profile.json'}: createdAt",
+    )
+    post_ids = {
+      post.id: snowflake_id_from_created_at(
+        post.data.get("createdAt"),
+        f"{post.path}: createdAt",
+      )
+      for post in plan.posts
+    }
+    generated_post_ids = list(post_ids.values())
+    if len(generated_post_ids) != len(set(generated_post_ids)):
+      raise ValueError("duplicate post IDs generated from createdAt values")
+  else:
+    profile_id = normalize_id(plan.profile["id"], "profile ID")
+    post_ids = {post.id: post.id for post in plan.posts}
+
   owner_id = normalize_id(owner_override, "--owner") if owner_override else profile_id
   client.login()
 
   existing_owner = client.get_user(owner_id)
+  if id_from_date and not owner_override and existing_owner is not None:
+    raise ValueError(f"user ID generated from createdAt already exists: {owner_id}")
+
+  if id_from_date:
+    for post in plan.posts:
+      post_id = post_ids[post.id]
+      if client.get_post(post_id) is not None:
+        raise ValueError(f"post ID generated from createdAt already exists: {post_id}")
+
   generated_password: Optional[str] = None
   created_user = False
 
@@ -713,12 +786,22 @@ def import_archive(
   else:
     if existing_owner is None:
       generated_password = secrets.token_urlsafe(24)
-      client.create_user(build_user_body(plan.profile, plan.profile["introduction"], generated_password))
+      client.create_user(
+        build_user_body(
+          plan.profile,
+          plan.profile["introduction"],
+          generated_password,
+          owner_id,
+        )
+      )
       created_user = True
       print(f"[USER CREATED] {owner_id} nickname={plan.profile['nickname']}")
       print(f"[USER PASSWORD] {generated_password}")
     else:
-      client.update_user(owner_id, build_user_body(plan.profile, plan.profile["introduction"], None))
+      client.update_user(
+        owner_id,
+        build_user_body(plan.profile, plan.profile["introduction"], None, owner_id),
+      )
       print(f"[USER UPDATED] {owner_id} nickname={plan.profile['nickname']}")
 
   archive_post_ids = {post.id for post in plan.posts}
@@ -759,12 +842,15 @@ def import_archive(
       image_urls,
       track_urls_by_preview,
     )
-    client.update_user(owner_id, build_user_body(plan.profile, rewritten_intro, None))
+    client.update_user(
+      owner_id,
+      build_user_body(plan.profile, rewritten_intro, None, owner_id),
+    )
     if plan.avatar_path is not None:
       client.upload_avatar(owner_id, plan.avatar_path)
       print(f"[AVATAR] {plan.avatar_path.relative_to(plan.data_dir)}")
     elif existing_owner is not None and existing_owner.get("avatar") is not None:
-      body = build_user_body(plan.profile, rewritten_intro, None)
+      body = build_user_body(plan.profile, rewritten_intro, None, owner_id)
       body["avatar"] = None
       client.update_user(owner_id, body)
     if plan.pub_config is not None:
@@ -776,6 +862,10 @@ def import_archive(
   created = 0
   updated = 0
   for post in sort_posts_for_restore(plan.posts):
+    post_id = post_ids[post.id]
+    reply_to = post.reply_to
+    if reply_to in post_ids:
+      reply_to = post_ids[reply_to]
     rewritten_content = rewrite_embeds(
       post.content,
       post.path,
@@ -783,10 +873,12 @@ def import_archive(
       image_urls,
       track_urls_by_preview,
     )
-    existing_post = client.get_post(post.id)
+    existing_post = None if id_from_date else client.get_post(post_id)
     post_body = build_post_body(
       post,
+      post_id,
       owner_id,
+      reply_to,
       rewritten_content,
       existing_post is None,
       publish,
@@ -794,11 +886,11 @@ def import_archive(
     if existing_post is None:
       client.create_post(post_body)
       created += 1
-      print(f"[POST CREATED] {post.id}")
+      print(f"[POST CREATED] {post_id}")
     else:
-      client.update_post(post.id, post_body)
+      client.update_post(post_id, post_body)
       updated += 1
-      print(f"[POST UPDATED] {post.id}")
+      print(f"[POST UPDATED] {post_id}")
 
   print(
     "[SUMMARY] "
@@ -821,6 +913,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
   parser.add_argument("--admin-email", default=DEFAULT_ADMIN_EMAIL)
   parser.add_argument("--admin-password", default=DEFAULT_ADMIN_PASSWORD)
   parser.add_argument("--owner", help="restore posts and referenced media under an existing user ID")
+  parser.add_argument(
+    "--id-from-date",
+    action="store_true",
+    help="generate user and post IDs from createdAt with worker and sequence bits set to zero",
+  )
   parser.add_argument("--no-reply", action="store_true", help="do not import posts that are replies")
   parser.add_argument(
     "--publish",
@@ -836,7 +933,7 @@ def main(argv: list[str]) -> int:
   try:
     plan = load_import_plan(args.data_dir, args.no_reply, args.publish)
     client = StgyClient(args.stgy_base, args.admin_email, args.admin_password)
-    import_archive(plan, client, args.owner, args.publish)
+    import_archive(plan, client, args.owner, args.publish, args.id_from_date)
     return 0
   except (OSError, ValueError, RuntimeError, requests.RequestException) as exc:
     print(f"[ERROR] {exc}", file=sys.stderr)

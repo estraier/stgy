@@ -1,4 +1,4 @@
-import { mkdir, rm } from "node:fs/promises";
+import { copyFile, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
@@ -10,6 +10,11 @@ const outputDir = path.join(frontendDir, "public", "export-assets");
 
 await rm(outputDir, { recursive: true, force: true });
 await mkdir(outputDir, { recursive: true });
+
+await copyFile(
+  path.join(frontendDir, "src", "app", "article-content.css"),
+  path.join(outputDir, "article-content.css"),
+);
 
 await build({
   entryPoints: [path.join(repositoryDir, "packages", "track", "src", "browser.ts")],
