@@ -21,6 +21,7 @@ import createMediaRouter from "./routes/media";
 import createTracksRouter from "./routes/tracks";
 import createNotificationsRouter from "./routes/notifications";
 import createGeoRouter from "./routes/geo";
+import createLinkSnippetsRouter from "./routes/linkSnippets";
 import { getSampleAddr, connectPgWithRetry, connectRedisWithRetry } from "./utils/servers";
 
 const logger = createLogger({ file: "index" });
@@ -102,6 +103,7 @@ async function main() {
   app.use("/media", createTracksRouter(pgPool, redis, storageService, geoCoder));
   app.use("/notifications", createNotificationsRouter(pgPool, redis));
   app.use("/geo", createGeoRouter(pgPool, redis, geoCoder));
+  app.use("/link-snippets", createLinkSnippetsRouter(pgPool, redis));
 
   const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
     logger.error(`[error] ${req.method} ${req.path}: ${err}`);

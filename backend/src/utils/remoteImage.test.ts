@@ -41,6 +41,7 @@ describe("remoteImage helpers", () => {
   });
 
   test("blocks private and reserved addresses", () => {
+    expect(isBlockedRemoteAddress("0.1.2.3")).toBe(true);
     expect(isBlockedRemoteAddress("127.0.0.1")).toBe(true);
     expect(isBlockedRemoteAddress("10.0.0.8")).toBe(true);
     expect(isBlockedRemoteAddress("172.20.1.4")).toBe(true);

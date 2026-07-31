@@ -37,7 +37,7 @@ const DEFAULT_MAX_REDIRECTS = 5;
 
 function buildRemoteImageBlockList(): BlockList {
   const list = new BlockList();
-  list.addAddress("0.0.0.0", "ipv4");
+  list.addSubnet("0.0.0.0", 8, "ipv4");
   list.addSubnet("10.0.0.0", 8, "ipv4");
   list.addSubnet("100.64.0.0", 10, "ipv4");
   list.addSubnet("127.0.0.0", 8, "ipv4");

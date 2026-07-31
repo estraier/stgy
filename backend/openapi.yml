@@ -724,6 +724,23 @@ components:
               - $ref: "#/components/schemas/NotificationRecordPost"
       required: [slot, term, isRead, updatedAt, createdAt, records]
 
+    LinkSnippet:
+      type: object
+      properties:
+        url: { type: string, format: uri }
+        status:
+          type: string
+          enum: [ready, unavailable, fetch_failed, pending]
+        title: { type: string, nullable: true, maxLength: 120 }
+        description: { type: string, nullable: true, maxLength: 240 }
+        siteName: { type: string, nullable: true, maxLength: 80 }
+        fetchedAt: { type: string, format: date-time, nullable: true }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        stale: { type: boolean }
+        refreshing: { type: boolean }
+      required:
+        [url, status, title, description, siteName, fetchedAt, expiresAt, stale, refreshing]
+
     UserPubConfig:
       type: object
       properties:
@@ -779,6 +796,12 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+    Error429:
+      description: Too many requests
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
     Error500:
       description: Internal server error
       content:
@@ -787,6 +810,37 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
 
 paths:
+  /link-snippets/resolve:
+    post:
+      summary: Resolve a URL to a text link snippet
+      description: |
+        Returns a shared cached text snippet for an external URL. STGY frontend URLs
+        matching /users/{id}, /posts/{id}, or /pub/{id} are resolved from internal data
+        instead of being fetched over HTTP. /users and /posts require a valid session;
+        /pub and external URLs are publicly resolvable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                url: { type: string, format: uri }
+              required: [url]
+      responses:
+        "200":
+          description: Link snippet state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkSnippet"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "429":
+          $ref: "#/components/responses/Error429"
+        "500":
+          $ref: "#/components/responses/Error500"
+
   /health:
     get:
       summary: Health check
