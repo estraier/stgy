@@ -519,6 +519,41 @@ describe("parseMarkdown", () => {
     ]);
   });
 
+  it(
+    "inline track map accepts latitude-longitude order when suffixes identify axes",
+    () => {
+      const mdText = "@[Places](map://36.42688N, 138.20049E)";
+      const result = stripPos(parseMarkdown(mdText));
+      expect(result).toStrictEqual([
+        {
+          type: "element",
+          tag: "figure",
+          attrs: {
+            class: "stgy-track-map",
+            "data-lon": 138.20049,
+            "data-lat": 36.42688,
+            "data-zoom": 13,
+            "data-center-address": "Places",
+          },
+          children: [
+            {
+              type: "element",
+              tag: "div",
+              attrs: { class: "stgy-track-canvas" },
+              children: [],
+            },
+            {
+              type: "element",
+              tag: "figcaption",
+              attrs: { class: "stgy-track-caption" },
+              children: [{ type: "text", text: "Places" }],
+            },
+          ],
+        },
+      ]);
+    },
+  );
+
   it("inline track map uses default zoom when zoom is omitted", () => {
     const mdText = "@[](map://139.6444794,35.6595519){height=240}";
     const expected = [

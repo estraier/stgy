@@ -42,7 +42,73 @@ const formatHemisphereCoordinate = (
 ) => `${Math.abs(value).toFixed(5)}${value < 0 ? negativeHemisphere : positiveHemisphere}`;
 
 const formatCoordinatePopupText = (latitude: number, longitude: number) =>
-  `${formatHemisphereCoordinate(longitude, "E", "W")}, ${formatHemisphereCoordinate(latitude, "N", "S")}`;
+  `${formatHemisphereCoordinate(latitude, "N", "S")}, ${formatHemisphereCoordinate(longitude, "E", "W")}`;
+
+const formatMapCoordinateCopyText = (latitude: number, longitude: number) =>
+  `${longitude.toFixed(5)},${latitude.toFixed(5)}`;
+
+const COORDINATE_COPY_FEEDBACK_DURATION_MS = 1000;
+
+const copyTextToClipboard = async (text: string): Promise<void> => {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
+};
+
+const createCoordinateCopyButton = (text: string): HTMLButtonElement => {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "stgy-track-coordinate-copy";
+  button.setAttribute("aria-label", "Copy map coordinates");
+  button.title = "Copy map coordinates";
+
+  const svgNs = "http://www.w3.org/2000/svg";
+  const icon = document.createElementNS(svgNs, "svg");
+  icon.classList.add("stgy-track-coordinate-copy-icon");
+  icon.setAttribute("viewBox", "0 0 20 20");
+  icon.setAttribute("aria-hidden", "true");
+
+  const path = document.createElementNS(svgNs, "path");
+  path.setAttribute("d", "M7 7h9v9H7zM4 4h9v3M4 4v9h3");
+  icon.appendChild(path);
+  button.appendChild(icon);
+
+  const feedback = document.createElement("span");
+  feedback.className = "stgy-track-coordinate-copy-feedback";
+  feedback.textContent = "Copied";
+  feedback.hidden = true;
+  feedback.setAttribute("role", "status");
+  feedback.setAttribute("aria-live", "polite");
+  button.appendChild(feedback);
+
+  let feedbackTimeout: ReturnType<typeof setTimeout> | null = null;
+  button.addEventListener("click", () => {
+    void copyTextToClipboard(text)
+      .then(() => {
+        feedback.hidden = false;
+        if (feedbackTimeout !== null) {
+          clearTimeout(feedbackTimeout);
+        }
+        feedbackTimeout = setTimeout(() => {
+          feedback.hidden = true;
+          feedbackTimeout = null;
+        }, COORDINATE_COPY_FEEDBACK_DURATION_MS);
+      })
+      .catch(() => undefined);
+  });
+
+  return button;
+};
 
 const DEFAULT_SINGLE_POINT_ZOOM = 12;
 const ROUTE_VIEW_PADDING_RATIO = 0.05;
@@ -2776,9 +2842,18 @@ export class StgyTrackRenderer {
     map.on("contextmenu", (event: L.LeafletMouseEvent) => {
       const popupContent = document.createElement("span");
       popupContent.className = "stgy-track-coordinate-popup";
-      popupContent.textContent = formatCoordinatePopupText(
+
+      const coordinateText = document.createElement("span");
+      coordinateText.className = "stgy-track-coordinate-popup-text";
+      coordinateText.textContent = formatCoordinatePopupText(
         event.latlng.lat,
         event.latlng.lng,
+      );
+      popupContent.appendChild(coordinateText);
+      popupContent.appendChild(
+        createCoordinateCopyButton(
+          formatMapCoordinateCopyText(event.latlng.lat, event.latlng.lng),
+        ),
       );
       L.DomEvent.disableClickPropagation(popupContent);
 

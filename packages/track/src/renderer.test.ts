@@ -279,6 +279,7 @@ describe("StgyTrackRenderer", () => {
   });
 
   afterEach(() => {
+    jest.useRealTimers();
     isJapanSpy.mockRestore();
     jest.restoreAllMocks();
   });
@@ -394,7 +395,7 @@ describe("StgyTrackRenderer", () => {
     expect(height).toBeCloseTo(41 * 0.75);
   });
 
-  test("shows copyable coordinates on a map context click", () => {
+  test("shows copyable coordinates on a map context click", async () => {
     document.body.innerHTML = `
       <figure
         class="stgy-track-map"
@@ -405,6 +406,11 @@ describe("StgyTrackRenderer", () => {
       </figure>
     `;
 
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
     const disableClickPropagationSpy = jest.spyOn(
       L.DomEvent,
       "disableClickPropagation",
@@ -435,39 +441,92 @@ describe("StgyTrackRenderer", () => {
     const popupContent = popup.setContent.mock.calls[0][0] as HTMLElement;
     expect(popupContent).toBeInstanceOf(HTMLElement);
     expect(popupContent.className).toBe("stgy-track-coordinate-popup");
-    expect(popupContent.textContent).toBe("138.40028E, 36.40591N");
+    expect(
+      popupContent.querySelector(".stgy-track-coordinate-popup-text")
+        ?.textContent,
+    ).toBe("36.40591N, 138.40028E");
+
+    const copyButton = popupContent.querySelector(
+      ".stgy-track-coordinate-copy",
+    ) as HTMLButtonElement | null;
+    expect(copyButton).toBeInstanceOf(HTMLButtonElement);
+    expect(copyButton?.getAttribute("aria-label")).toBe("Copy map coordinates");
+    expect(
+      copyButton?.querySelector(".stgy-track-coordinate-copy-icon"),
+    ).not.toBeNull();
+    const copyFeedback = copyButton?.querySelector(
+      ".stgy-track-coordinate-copy-feedback",
+    ) as HTMLElement | null;
+    expect(copyFeedback?.textContent).toBe("Copied");
+    expect(copyFeedback?.hidden).toBe(true);
+
+    jest.useFakeTimers();
+    copyButton?.click();
+    expect(writeText).toHaveBeenCalledWith("138.40028,36.40591");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(copyFeedback?.hidden).toBe(false);
+    jest.advanceTimersByTime(1000);
+    expect(copyFeedback?.hidden).toBe(true);
+
     expect(disableClickPropagationSpy).toHaveBeenCalledWith(popupContent);
     expect(popup.openOn).toHaveBeenCalledWith(map);
+    jest.useRealTimers();
   });
 
-  test("formats western and southern coordinates with hemisphere suffixes", () => {
-    document.body.innerHTML = `
-      <figure
-        class="stgy-track-map"
-        data-lat="-36.40591"
-        data-lon="-138.40028"
-        data-controls="false">
-        <div class="stgy-track-canvas"></div>
-      </figure>
-    `;
+  test(
+    "formats western and southern coordinates with hemisphere suffixes",
+    async () => {
+      document.body.innerHTML = `
+        <figure
+          class="stgy-track-map"
+          data-lat="-36.40591"
+          data-lon="-138.40028"
+          data-controls="false">
+          <div class="stgy-track-canvas"></div>
+        </figure>
+      `;
 
-    renderer.hydrate(document.body);
+      const writeText = jest.fn().mockResolvedValue(undefined);
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: { writeText },
+      });
 
-    const map = (L.map as jest.Mock).mock.results[0].value as {
-      on: jest.Mock;
-    };
-    const contextMenuHandler = map.on.mock.calls.find(
-      (call: unknown[]) => call[0] === "contextmenu",
-    )?.[1] as ((event: { latlng: { lat: number; lng: number } }) => void) | undefined;
+      renderer.hydrate(document.body);
 
-    contextMenuHandler?.({
-      latlng: { lat: -36.40591, lng: -138.40028 },
-    });
+      const map = (L.map as jest.Mock).mock.results[0].value as {
+        on: jest.Mock;
+      };
+      const contextMenuHandler = map.on.mock.calls.find(
+        (call: unknown[]) => call[0] === "contextmenu",
+      )?.[1] as
+        | ((event: { latlng: { lat: number; lng: number } }) => void)
+        | undefined;
 
-    const popup = (L.popup as jest.Mock).mock.results[0].value;
-    const popupContent = popup.setContent.mock.calls[0][0] as HTMLElement;
-    expect(popupContent.textContent).toBe("138.40028W, 36.40591S");
-  });
+      contextMenuHandler?.({
+        latlng: { lat: -36.40591, lng: -138.40028 },
+      });
+
+      const popup = (L.popup as jest.Mock).mock.results[0].value;
+      const popupContent = popup.setContent.mock.calls[0][0] as HTMLElement;
+      expect(
+        popupContent.querySelector(".stgy-track-coordinate-popup-text")
+          ?.textContent,
+      ).toBe("36.40591S, 138.40028W");
+
+      const copyButton = popupContent.querySelector(
+        ".stgy-track-coordinate-copy",
+      ) as HTMLButtonElement | null;
+      jest.useFakeTimers();
+      copyButton?.click();
+      expect(writeText).toHaveBeenCalledWith("-138.40028,-36.40591");
+      await Promise.resolve();
+      await Promise.resolve();
+      jest.advanceTimersByTime(1000);
+      jest.useRealTimers();
+    },
+  );
 
   test("uses data-base-layer as the initial base layer", () => {
     document.body.innerHTML = `
