@@ -654,7 +654,18 @@ export default function PostForm({
   const pasteNodesRef = useRef<MdNode[] | null>(null);
   const pasteImageNodesRef = useRef<MdElementNode[] | null>(null);
   const pasteHasBlockRef = useRef<boolean>(false);
-  const importTargetRef = useRef<{ start: number; end: number; originalLine: string } | null>(null);
+  const importTargetRef = useRef<{
+    start: number;
+    end: number;
+    originalLine: string;
+    selectionStart: number;
+    selectionEnd: number;
+    textareaScrollTop: number;
+    textareaScrollLeft: number;
+    overlayScrollTop: number | null;
+    windowScrollX: number;
+    windowScrollY: number;
+  } | null>(null);
   const hydrateTrackMaps = useTrackMapHydrator({
     lazy: true,
     redrawDelayMs: TRACK_MAP_REDRAW_DELAY_MS,
@@ -1068,13 +1079,25 @@ export default function PostForm({
       const url = parsed.url.trim();
       if (!isAbsoluteHttpUrl(url)) return;
 
+      const importTarget = {
+        start,
+        end,
+        originalLine: line,
+        selectionStart: ta.selectionStart ?? pos,
+        selectionEnd: ta.selectionEnd ?? pos,
+        textareaScrollTop: ta.scrollTop,
+        textareaScrollLeft: ta.scrollLeft,
+        overlayScrollTop: overlayScrollRef.current?.scrollTop ?? null,
+        windowScrollX: window.scrollX,
+        windowScrollY: window.scrollY,
+      };
       setImportBusy(true);
       setImportError(null);
       try {
         const blob = await importRemoteImage(userId, url);
         const fileType = blob.type || "application/octet-stream";
         const file = new File([blob], importedImageFilename(fileType), { type: fileType });
-        importTargetRef.current = { start, end, originalLine: line };
+        importTargetRef.current = importTarget;
         setImportDialogFiles([
           {
             id: cryptoRandomId(),
@@ -2161,19 +2184,36 @@ export default function PostForm({
       requestAnimationFrame(() => {
         const ta = activeTextarea();
         if (!ta) return;
-        const pos = target.start + nextLine.length;
-        ta.focus();
-        ta.setSelectionRange(pos, pos);
-        centerTextareaCaret(ta);
-        caretRef.current = pos;
-        selStartRef.current = pos;
-        selEndRef.current = pos;
+        const replacedLength = target.end - target.start;
+        const delta = nextLine.length - replacedLength;
+        const restorePosition = (position: number): number => {
+          if (position <= target.start) return position;
+          if (position >= target.end) return position + delta;
+          return target.start + Math.min(position - target.start, nextLine.length);
+        };
+        const selectionStart = clamp(restorePosition(target.selectionStart), 0, nextText.length);
+        const selectionEnd = clamp(
+          restorePosition(target.selectionEnd),
+          selectionStart,
+          nextText.length,
+        );
+        if (overlayActive) resizeOverlayTextareaRef.current();
+        ta.focus({ preventScroll: true });
+        ta.setSelectionRange(selectionStart, selectionEnd);
+        ta.scrollTop = target.textareaScrollTop;
+        ta.scrollLeft = target.textareaScrollLeft;
+        if (target.overlayScrollTop != null && overlayScrollRef.current) {
+          overlayScrollRef.current.scrollTop = target.overlayScrollTop;
+        }
+        window.scrollTo(target.windowScrollX, target.windowScrollY);
+        caretRef.current = selectionEnd;
+        selStartRef.current = selectionStart;
+        selEndRef.current = selectionEnd;
         scheduleSyncRef.current();
         if (overlayActive) {
           scheduleEditorHighlightRef.current();
           schedulePreviewHighlightRef.current();
         }
-        if (overlayActive) resizeOverlayTextareaRef.current();
         updateMediaLineState();
       });
     },
