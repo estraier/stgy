@@ -515,6 +515,45 @@ function centerTextareaCaret(ta: HTMLTextAreaElement) {
   const maxScroll = Math.max(0, ta.scrollHeight - ta.clientHeight);
   ta.scrollTop = Math.min(maxScroll, desired);
 }
+function replaceTextareaSelectionWithNativeUndo(
+  ta: HTMLTextAreaElement,
+  text: string,
+  start: number,
+  end: number,
+): boolean {
+  if (typeof document === "undefined" || typeof document.execCommand !== "function") {
+    return false;
+  }
+
+  const scrollTop = ta.scrollTop;
+  const scrollLeft = ta.scrollLeft;
+  const windowScrollX = typeof window !== "undefined" ? window.scrollX : 0;
+  const windowScrollY = typeof window !== "undefined" ? window.scrollY : 0;
+
+  try {
+    ta.focus({ preventScroll: true });
+    ta.setSelectionRange(start, end);
+    const inserted = document.execCommand("insertText", false, text);
+    if (!inserted) return false;
+
+    const caret = start + text.length;
+    // Close this undo transaction so later typing is undone separately.
+    const boundaryPosition = caret > 0 ? caret - 1 : caret < ta.value.length ? caret + 1 : caret;
+    if (boundaryPosition !== caret) {
+      ta.setSelectionRange(boundaryPosition, boundaryPosition);
+    }
+    ta.setSelectionRange(caret, caret);
+
+    ta.scrollTop = scrollTop;
+    ta.scrollLeft = scrollLeft;
+    if (typeof window !== "undefined") {
+      window.scrollTo(windowScrollX, windowScrollY);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
 function buildMirrorFromTextarea(ta: HTMLTextAreaElement, mirror: HTMLDivElement) {
   const cs = getComputedStyle(ta);
   type StyleKey = Extract<keyof CSSStyleDeclaration, string>;
@@ -2049,11 +2088,19 @@ export default function PostForm({
       const needsPrefixNL = start > 0 && before[before.length - 1] !== "\n";
       const insert = (needsPrefixNL ? "\n" : "") + snippet;
       const next = before + insert + after;
-      setBody(next);
+      const insertedWithNativeUndo = replaceTextareaSelectionWithNativeUndo(
+        ta,
+        insert,
+        start,
+        end,
+      );
+      if (!insertedWithNativeUndo) {
+        setBody(next);
+      }
       requestAnimationFrame(() => {
         const pos = before.length + insert.length;
         ta.setSelectionRange(pos, pos);
-        centerTextareaCaret(ta);
+        if (!insertedWithNativeUndo) centerTextareaCaret(ta);
         caretRef.current = pos;
         selStartRef.current = pos;
         selEndRef.current = pos;
@@ -2093,11 +2140,19 @@ export default function PostForm({
       const before = text.slice(0, start);
       const after = text.slice(end);
       const next = before + snippet + after;
-      setBody(next);
+      const insertedWithNativeUndo = replaceTextareaSelectionWithNativeUndo(
+        ta,
+        snippet,
+        start,
+        end,
+      );
+      if (!insertedWithNativeUndo) {
+        setBody(next);
+      }
       requestAnimationFrame(() => {
         const pos = before.length + snippet.length;
         ta.setSelectionRange(pos, pos);
-        centerTextareaCaret(ta);
+        if (!insertedWithNativeUndo) centerTextareaCaret(ta);
         caretRef.current = pos;
         selStartRef.current = pos;
         selEndRef.current = pos;
