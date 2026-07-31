@@ -69,6 +69,15 @@ export async function fetchImageBinary(userId: string, restPath: string): Promis
   return res.blob();
 }
 
+export async function importRemoteImage(userId: string, url: string): Promise<Blob> {
+  const res = await apiFetch(`/media/${encodeURIComponent(userId)}/images/import`, {
+    method: "POST",
+    body: JSON.stringify({ url }),
+  });
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.blob();
+}
+
 export { uploadToPresigned } from "./storage";
 
 export async function presignProfileUpload(

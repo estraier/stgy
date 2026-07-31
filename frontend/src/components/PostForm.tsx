@@ -42,10 +42,12 @@ import {
   Sparkle as SparkleIcon,
   Layers as LayersIcon,
   ChartLine as GraphIcon,
+  ArrowDownToLine as ImportImageIcon,
 } from "lucide-react";
 import { structurizeHtml, parseHtml, mdRenderMarkdown, countHtmlElements } from "stgy-markdown";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import ImageUploadDialog, { DialogFileItem, UploadResult } from "@/components/ImageUploadDialog";
+import { importRemoteImage } from "@/api/media";
 import { Config } from "@/config";
 import {
   cycleTrackBaseOptions,
@@ -137,6 +139,34 @@ function buildImageMarkdownLine(match: ImageLineMatch, tokens: ImageOptionToken[
   const opts = buildImageOptions(tokens);
   const optionsPart = opts ? `{${opts}}` : "";
   return `${match.leading}![${match.alt}](${match.url})${optionsPart}${match.trailing}`;
+}
+
+function isAbsoluteHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value.trim());
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+const IMPORT_IMAGE_EXTENSIONS: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/gif": "gif",
+  "image/bmp": "bmp",
+  "image/tiff": "tiff",
+  "image/svg+xml": "svg",
+  "image/heic": "heic",
+  "image/heif": "heif",
+  "image/avif": "avif",
+};
+
+function importedImageFilename(contentType: string): string {
+  const key = contentType.trim().toLowerCase();
+  const ext = IMPORT_IMAGE_EXTENSIONS[key] ?? "bin";
+  return `imported-image.${ext}`;
 }
 
 function applyImageOptionFromTextarea(
@@ -613,11 +643,18 @@ export default function PostForm({
       : undefined;
   const userLocale =
     status.state === "authenticated" ? status.session.userLocale : undefined;
+  const isAdmin = status.state === "authenticated" && status.session.userIsAdmin;
   const [pasteDialogFiles, setPasteDialogFiles] = useState<DialogFileItem[] | null>(null);
+  const [importDialogFiles, setImportDialogFiles] = useState<DialogFileItem[] | null>(null);
   const [showPasteDialog, setShowPasteDialog] = useState(false);
+  const [showImportDialog, setShowImportDialog] = useState(false);
+  const [isExternalImageLine, setIsExternalImageLine] = useState(false);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
   const pasteNodesRef = useRef<MdNode[] | null>(null);
   const pasteImageNodesRef = useRef<MdElementNode[] | null>(null);
   const pasteHasBlockRef = useRef<boolean>(false);
+  const importTargetRef = useRef<{ start: number; end: number; originalLine: string } | null>(null);
   const hydrateTrackMaps = useTrackMapHydrator({
     lazy: true,
     redrawDelayMs: TRACK_MAP_REDRAW_DELAY_MS,
@@ -765,6 +802,7 @@ export default function PostForm({
     const youtubeLine = imageLine ? null : parseYouTubeMarkdownLine(line);
     const trackLine = imageLine || youtubeLine ? null : parseTrackMarkdownLine(line);
     setIsImageLine(imageLine != null);
+    setIsExternalImageLine(imageLine != null && isAbsoluteHttpUrl(imageLine.url));
     setIsYouTubeLine(youtubeLine != null);
     setIsTrackLine(trackLine != null);
     if (trackLine) {
@@ -787,6 +825,7 @@ export default function PostForm({
       textarea.style.height = `${minHeight}px`;
     }
     if (onErrorClear) onErrorClear();
+    setImportError(null);
     const s = textarea.selectionStart ?? 0;
     const e = textarea.selectionEnd ?? s;
     selStartRef.current = s;
@@ -1014,6 +1053,47 @@ export default function PostForm({
       updateMediaLineState();
     });
   };
+
+  const actImportRemoteImage = useCallback(
+    async (e: React.MouseEvent) => {
+      e.preventDefault();
+      const ta = activeTextarea();
+      if (!ta || !userId || !isAdmin) return;
+      const text = ta.value;
+      const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+      const { start, end } = getCurrentLineRange(text, pos);
+      const line = text.slice(start, end);
+      const parsed = parseImageMarkdownLine(line);
+      if (!parsed) return;
+      const url = parsed.url.trim();
+      if (!isAbsoluteHttpUrl(url)) return;
+
+      setImportBusy(true);
+      setImportError(null);
+      try {
+        const blob = await importRemoteImage(userId, url);
+        const fileType = blob.type || "application/octet-stream";
+        const file = new File([blob], importedImageFilename(fileType), { type: fileType });
+        importTargetRef.current = { start, end, originalLine: line };
+        setImportDialogFiles([
+          {
+            id: cryptoRandomId(),
+            file,
+            name: file.name,
+            type: file.type,
+            size: file.size,
+          },
+        ]);
+        setShowImportDialog(true);
+      } catch (err) {
+        const msg = err instanceof Error && err.message ? err.message : "error";
+        setImportError(`Failed to import image: ${msg}`);
+      } finally {
+        setImportBusy(false);
+      }
+    },
+    [activeTextarea, isAdmin, userId],
+  );
 
   const actYouTubeSize = (size: ImageSize) => (e: React.MouseEvent) => {
     e.preventDefault();
@@ -2053,6 +2133,59 @@ export default function PostForm({
     [insertAtCursor, insertInlineAtCursor],
   );
 
+  const handleImportUploadComplete = useCallback(
+    (results: UploadResult[]) => {
+      const target = importTargetRef.current;
+      setShowImportDialog(false);
+      setImportDialogFiles(null);
+      importTargetRef.current = null;
+      const first = results[0];
+      if (!first) return;
+      if (!first.ok) {
+        setImportError(`Failed to import image: ${first.error}`);
+        return;
+      }
+      if (!target) return;
+      const currentText = bodyLiveRef.current ?? "";
+      if (currentText.slice(target.start, target.end) !== target.originalLine) return;
+      const parsed = parseImageMarkdownLine(target.originalLine);
+      if (!parsed) return;
+      const nextLine = buildImageMarkdownLine(
+        { ...parsed, url: `/images/${first.objectKey}` },
+        parseImageOptions(parsed.options),
+      );
+      const nextText =
+        currentText.slice(0, target.start) + nextLine + currentText.slice(target.end);
+      setImportError(null);
+      setBody(nextText);
+      requestAnimationFrame(() => {
+        const ta = activeTextarea();
+        if (!ta) return;
+        const pos = target.start + nextLine.length;
+        ta.focus();
+        ta.setSelectionRange(pos, pos);
+        centerTextareaCaret(ta);
+        caretRef.current = pos;
+        selStartRef.current = pos;
+        selEndRef.current = pos;
+        scheduleSyncRef.current();
+        if (overlayActive) {
+          scheduleEditorHighlightRef.current();
+          schedulePreviewHighlightRef.current();
+        }
+        if (overlayActive) resizeOverlayTextareaRef.current();
+        updateMediaLineState();
+      });
+    },
+    [activeTextarea, overlayActive, setBody, updateMediaLineState],
+  );
+
+  const handleImportDialogClose = useCallback(() => {
+    setShowImportDialog(false);
+    setImportDialogFiles(null);
+    importTargetRef.current = null;
+  }, []);
+
   const handlePasteDialogClose = useCallback(() => {
     const nodes = pasteNodesRef.current;
     const imgs = pasteImageNodesRef.current || [];
@@ -2437,6 +2570,18 @@ export default function PostForm({
                     <SparkleIcon className="w-4 h-4 opacity-80 scale-90" aria-hidden />
                     <span className="sr-only">Featured</span>
                   </button>
+                  {isAdmin && isExternalImageLine && (
+                    <button
+                      type="button"
+                      onMouseDown={actImportRemoteImage}
+                      title={importBusy ? "Importing image" : "Import image"}
+                      disabled={importBusy}
+                      className={`inline-flex ${toolbarBtn}`}
+                    >
+                      <ImportImageIcon className="w-4 h-4 opacity-80" aria-hidden />
+                      <span className="sr-only">Import image</span>
+                    </button>
+                  )}
                 </>
               ) : isYouTubeLine ? (
                 youtubeToolbar
@@ -2681,6 +2826,7 @@ export default function PostForm({
         {hasFocusedOnce && (
           <div className="flex items-center gap-2">
             <div className="flex-1">
+              {importError && <div className="text-red-600 text-sm">{importError}</div>}
               {error && <div className="text-red-600 text-sm">{error}</div>}
               <div className="hidden group-focus-within:block">
                 <div
@@ -2905,6 +3051,18 @@ export default function PostForm({
                             <SparkleIcon className="w-4 h-4 opacity-80 scale-90" aria-hidden />
                             <span className="sr-only">Featured</span>
                           </button>
+                          {isAdmin && isExternalImageLine && (
+                            <button
+                              type="button"
+                              onMouseDown={actImportRemoteImage}
+                              title={importBusy ? "Importing image" : "Import image"}
+                              disabled={importBusy}
+                              className={`inline-flex ${toolbarBtn}`}
+                            >
+                              <ImportImageIcon className="w-4 h-4 opacity-80" aria-hidden />
+                              <span className="sr-only">Import image</span>
+                            </button>
+                          )}
                         </>
                       ) : isYouTubeLine ? (
                         youtubeToolbar
@@ -3150,6 +3308,7 @@ export default function PostForm({
                 >
                   <div className="mx-auto max-w-[85ex] w-full px-6 py-2 flex items-center gap-2">
                     <div className="flex-1">
+                      {importError && <div className="text-red-600 text-sm">{importError}</div>}
                       {error && <div className="text-red-600 text-sm">{error}</div>}
                       <div className="text-xs text-gray-400" role="status" aria-live="polite">
                         {contentLengthLimit != null
@@ -3320,6 +3479,16 @@ export default function PostForm({
           onComplete={handlePasteUploadComplete}
         />
       )}
+      {showImportDialog && importDialogFiles && userId && (
+        <ImageUploadDialog
+          userId={userId}
+          files={importDialogFiles}
+          maxCount={1}
+          onClose={handleImportDialogClose}
+          onComplete={handleImportUploadComplete}
+        />
+      )}
+
     </div>
   );
 }

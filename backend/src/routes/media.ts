@@ -8,6 +8,7 @@ import { UsersService } from "../services/users";
 import { AuthHelpers } from "./authHelpers";
 import { ThrottleService, DailyTimerThrottleService } from "../services/throttle";
 import { MediaService } from "../services/media";
+import { fetchRemoteImage } from "../utils/remoteImage";
 
 export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: StorageService) {
   const router = Router();
@@ -83,6 +84,32 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
         ...meta,
         publicUrl: storage.publicUrl({ bucket: meta.bucket, key: meta.key }),
       });
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message || "error" });
+    }
+  });
+
+  router.post("/:userId/images/import", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    const pathUserId = req.params.userId;
+    if (!loginUser.isAdmin) return res.status(403).json({ error: "admin only" });
+    if (loginUser.id !== pathUserId) return res.status(403).json({ error: "forbidden" });
+    try {
+      const watch = timerThrottleService.startWatch(loginUser);
+      const imported = await fetchRemoteImage(
+        typeof req.body.url === "string" ? req.body.url : "",
+        {
+          frontendOrigins: Config.FRONTEND_ORIGIN,
+          maxBytes: Config.MEDIA_IMAGE_BYTE_LIMIT,
+        },
+      );
+      watch.done();
+      res.setHeader("Content-Type", imported.contentType);
+      res.setHeader("Content-Length", String(imported.bytes.byteLength));
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.status(200).end(Buffer.from(imported.bytes));
     } catch (e) {
       res.status(400).json({ error: (e as Error).message || "error" });
     }
