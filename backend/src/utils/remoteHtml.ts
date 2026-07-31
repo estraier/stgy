@@ -39,6 +39,10 @@ type ContentResponse = {
   headers: IncomingHttpHeaders;
 };
 
+const REMOTE_HTML_USER_AGENT =
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 " +
+  "(KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36";
+
 function normalizeHostname(hostname: string): string {
   return hostname.trim().replace(/\.+$/u, "").toLowerCase();
 }
@@ -151,7 +155,8 @@ function requestRemoteUrl(
         headers: {
           Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.1",
           "Accept-Encoding": "identity",
-          "User-Agent": "STGY link snippet resolver",
+          "Accept-Language": "en-US,en;q=0.9",
+          "User-Agent": REMOTE_HTML_USER_AGENT,
         },
         lookup: createPinnedLookup(address),
         servername: url.protocol === "https:" ? url.hostname : undefined,
@@ -165,33 +170,49 @@ function requestRemoteUrl(
           return succeed({ kind: "redirect", location });
         }
         if (status < 200 || status >= 300) {
+          const diagnosticHeaders = [
+            ["server", firstHeaderValue(res.headers.server)],
+            ["x-cache", firstHeaderValue(res.headers["x-cache"])],
+            ["via", firstHeaderValue(res.headers.via)],
+          ]
+            .filter((entry): entry is [string, string] => typeof entry[1] === "string")
+            .map(([name, value]) => `${name}=${JSON.stringify(value)}`)
+            .join(" ");
           res.resume();
-          return fail(new Error(`remote server responded with HTTP ${status}`));
-        }
-
-        const lengthHeader = firstHeaderValue(res.headers["content-length"]);
-        if (lengthHeader && Number(lengthHeader) > maxBytes) {
-          res.resume();
-          return fail(new Error("remote response is too large"));
+          return fail(
+            new Error(
+              `remote server responded with HTTP ${status}${diagnosticHeaders ? ` (${diagnosticHeaders})` : ""}`,
+            ),
+          );
         }
 
         const chunks: Buffer[] = [];
         let total = 0;
         res.on("data", (chunk: Buffer) => {
-          total += chunk.length;
-          if (total > maxBytes) {
-            fail(new Error("remote response is too large"));
-            req.destroy();
-            res.destroy();
-            return;
+          if (settled) return;
+
+          const remaining = Math.max(0, maxBytes - total);
+          if (remaining > 0) {
+            const accepted = chunk.length <= remaining ? chunk : chunk.subarray(0, remaining);
+            chunks.push(accepted);
+            total += accepted.length;
           }
-          chunks.push(chunk);
+
+          const selected = selectRemoteHtmlPrefix(Buffer.concat(chunks, total), maxBytes);
+          if (selected.done) {
+            succeed({
+              kind: "content",
+              bytes: selected.bytes,
+              headers: res.headers,
+            });
+            res.destroy();
+          }
         });
         res.on("error", (error) => fail(error));
         res.on("end", () => {
           succeed({
             kind: "content",
-            bytes: new Uint8Array(Buffer.concat(chunks)),
+            bytes: new Uint8Array(Buffer.concat(chunks, total)),
             headers: res.headers,
           });
         });
@@ -248,6 +269,27 @@ function decodeHtml(bytes: Uint8Array, headers: IncomingHttpHeaders): string {
   } catch {
     return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
   }
+}
+
+function findHtmlHeadEnd(bytes: Uint8Array): number | null {
+  const lower = Buffer.from(bytes).toString("latin1").toLowerCase();
+  const closeStart = lower.indexOf("</head");
+  if (closeStart < 0) return null;
+  const closeEnd = lower.indexOf(">", closeStart + 6);
+  return closeEnd < 0 ? null : closeEnd + 1;
+}
+
+export function selectRemoteHtmlPrefix(
+  bytes: Uint8Array,
+  maxBytes: number,
+): { bytes: Uint8Array; done: boolean } {
+  const limit = Math.max(0, Math.min(bytes.byteLength, Math.floor(maxBytes)));
+  const capped = bytes.subarray(0, limit);
+  const headEnd = findHtmlHeadEnd(capped);
+  if (headEnd !== null) {
+    return { bytes: capped.subarray(0, headEnd), done: true };
+  }
+  return { bytes: capped, done: bytes.byteLength >= maxBytes };
 }
 
 function looksLikeHtml(bytes: Uint8Array): boolean {

@@ -221,19 +221,11 @@ function parseMdMapCoordinate(
   return direction === "W" || direction === "S" ? -magnitude : magnitude;
 }
 
-function parseMdMapLonLat(
-  raw: string,
-  allowLatitudeFirst = false,
-): { lon: number; lat: number } | null {
+function parseMdMapLonLat(raw: string): { lon: number; lat: number } | null {
   const parts = raw.split(",").map((part) => part.trim());
   if (parts.length < 2) return null;
-
-  const latitudeFirst =
-    allowLatitudeFirst && /[NS]$/i.test(parts[0]!) && /[EW]$/i.test(parts[1]!);
-  const lonRaw = latitudeFirst ? parts[1]! : parts[0]!;
-  const latRaw = latitudeFirst ? parts[0]! : parts[1]!;
-  const lon = parseMdMapCoordinate(lonRaw, "lon");
-  const lat = parseMdMapCoordinate(latRaw, "lat");
+  const lon = parseMdMapCoordinate(parts[0]!, "lon");
+  const lat = parseMdMapCoordinate(parts[1]!, "lat");
   if (lon === null || lat === null || !isFiniteMdMapCoordinate(lon, lat)) {
     return null;
   }
@@ -277,10 +269,7 @@ function parseMdMapUri(url: string): MdMapSpec | null {
   const centerParts = blocks[0]!.split(",").map((part) => part.trim());
   if (centerParts.length !== 2 && centerParts.length !== 3) return null;
 
-  const center = parseMdMapLonLat(
-    centerParts.slice(0, 2).join(","),
-    true,
-  );
+  const center = parseMdMapLonLat(centerParts.slice(0, 2).join(","));
   if (!center) return null;
   const { lon, lat } = center;
   const zoom =
@@ -555,6 +544,37 @@ function makeMdMapPinElement(
   );
 }
 
+function isSafeMdLinkSnippetUrl(value: string): boolean {
+  const url = value.trim();
+  return /^(?:https?:\/\/|\/(?!\/))/i.test(url);
+}
+
+function makeMdLinkSnippetElement(
+  caption: string,
+  url: string,
+  line?: number,
+  char?: number,
+): MdElementNode {
+  const normalizedUrl = url.trim();
+  const attrs: MdAttrs = { class: "stgy-link-snippet" };
+  if (caption) attrs["data-caption"] = caption;
+  return makeElement(
+    "div",
+    [
+      makeElement(
+        "a",
+        [{ type: "text", text: caption || normalizedUrl }],
+        { class: "stgy-link-snippet-link", href: normalizedUrl },
+        line,
+        char,
+      ),
+    ],
+    attrs,
+    line,
+    char,
+  );
+}
+
 function makeMdTrackMapElement(
   desc: string,
   url: string,
@@ -781,6 +801,7 @@ export function parseMarkdown(mdText: string): MdNode[] {
   }
   const imageMacroRe = /^!\[([^\]]*)\]\s*\(([^)]+)\)\s*(?:\{([^\}]*)\})?$/;
   const mapMacroRe = /^@\[([^\]]*)\]\s*\(([^)]+)\)\s*(?:\{([^\}]*)\})?$/;
+  const linkSnippetMacroRe = /^%\[([^\]]*)\]\s*\(([^)]+)\)\s*$/;
   const videoExts = /\.(mpg|mp4|m4a|mov|avi|wmv|webm)(\?.*)?$/i;
   for (let i = 0; i < lines.length; ++i) {
     const line = lines[i]!;
@@ -862,6 +883,22 @@ export function parseMarkdown(mdText: string): MdNode[] {
       const level = dashCount === 3 ? 1 : dashCount === 4 ? 2 : 3;
       nodes.push(
         makeElement("hr", [], { "hr-level": level }, i, lineCharStart),
+      );
+      continue;
+    }
+    const linkSnippet = line.match(linkSnippetMacroRe);
+    if (linkSnippet && isSafeMdLinkSnippetUrl(linkSnippet[2] || "")) {
+      flushPara();
+      flushList();
+      flushTable();
+      flushQuote();
+      nodes.push(
+        makeMdLinkSnippetElement(
+          linkSnippet[1] || "",
+          linkSnippet[2] || "",
+          i,
+          lineCharStart,
+        ),
       );
       continue;
     }
@@ -1535,6 +1572,25 @@ export function parseHtml(
     return e("figure", children, attrs);
   };
 
+  const parseLinkSnippet = (el: Element): MdElementNode | null => {
+    if (el.tagName.toLowerCase() !== "div") return null;
+    const classes = (el.getAttribute("class") || "").split(/\s+/);
+    if (!classes.includes("stgy-link-snippet")) return null;
+
+    const anchor = Array.from(el.children).find((child) => {
+      if (child.tagName.toLowerCase() !== "a") return false;
+      return (child.getAttribute("class") || "")
+        .split(/\s+/)
+        .includes("stgy-link-snippet-link");
+    }) as Element | undefined;
+    const href = anchor?.getAttribute("href") || "";
+    if (!isSafeMdLinkSnippetUrl(href)) return null;
+    const caption = el.hasAttribute("data-caption")
+      ? el.getAttribute("data-caption") || ""
+      : "";
+    return makeMdLinkSnippetElement(caption, href);
+  };
+
   const listAttrsFor = (listEl: Element): MdAttrs | undefined => {
     const tag = listEl.tagName.toLowerCase();
     const { bulletNone } = marksFromStyle(listEl.getAttribute("style"));
@@ -1734,6 +1790,14 @@ export function parseHtml(
         sink.push(e("hr", [], attrs));
         continue;
       }
+      if (tag === "div") {
+        const linkSnippet = parseLinkSnippet(el);
+        if (linkSnippet) {
+          flushInline();
+          sink.push(linkSnippet);
+          continue;
+        }
+      }
       if (
         tag === "div" ||
         tag === "section" ||
@@ -1920,6 +1984,14 @@ export function parseHtml(
               : undefined;
           sink.push(e("hr", [], attrs));
           continue;
+        }
+        if (tag === "div") {
+          const linkSnippet = parseLinkSnippet(el);
+          if (linkSnippet) {
+            flushInlineBufTo(sink, inlineBuf);
+            sink.push(linkSnippet);
+            continue;
+          }
         }
         if (
           tag === "div" ||
@@ -2673,6 +2745,24 @@ export function mdFilterForFeatured(nodes: MdNode[]): MdNode[] {
         const className = n.attrs?.class;
         const classes =
           typeof className === "string" ? className.split(/\s+/) : [];
+        if (n.tag === "div" && classes.includes("stgy-link-snippet")) {
+          const anchor = (n.children || []).find(
+            (child): child is MdElementNode =>
+              child.type === "element" && child.tag === "a",
+          );
+          if (anchor) {
+            out.push(
+              makeElement(
+                "p",
+                [{ ...anchor, attrs: { href: anchor.attrs?.href || "" } }],
+                undefined,
+                n.linePosition,
+                n.charPosition,
+              ),
+            );
+          }
+          continue;
+        }
         if (
           (n.tag === "figure" &&
             (classes.includes("image-block") ||
@@ -3203,6 +3293,14 @@ export function mdRenderText(nodes: MdNode[]): string {
       case "math": {
         const el = n as MdElementNode;
         out.push(String(el.attrs?.tex ?? ""));
+        return;
+      }
+      case "div": {
+        const className = n.attrs?.class;
+        const classes =
+          typeof className === "string" ? className.split(/\s+/) : [];
+        for (const child of n.children || []) walk(child, depth);
+        if (classes.includes("stgy-link-snippet")) out.push("\n\n");
         return;
       }
       default: {
@@ -3839,6 +3937,16 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
     const attrs = size ? `{size=${size}}` : "";
     return `@[${caption}](${sourceUrl})${attrs}`;
   };
+  const renderLinkSnippetMacro = (el: MdElementNode): string => {
+    const anchor = (el.children || []).find(
+      (child): child is MdElementNode =>
+        isElement(child, "a") && hasClass(child, "stgy-link-snippet-link"),
+    );
+    const href = getAttrStr(anchor?.attrs, "href") || "";
+    const caption = getAttrStr(el.attrs, "data-caption") || "";
+    return `%[${caption}](${sanitizeUrl(href)})`;
+  };
+
   const renderTrackFigureMacro = (fig: MdElementNode): string => {
     const caption = extractAltFromFigureOrImg(fig);
     const macro: string[] = [];
@@ -3996,6 +4104,9 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
     }
     const el = n as MdElementNode;
 
+    if (el.tag === "div" && hasClass(el, "stgy-link-snippet")) {
+      return renderLinkSnippetMacro(el);
+    }
     if (el.tag === "div" && hasClass(el, "image-grid")) {
       const lines: string[] = [];
       for (const c of el.children || []) {

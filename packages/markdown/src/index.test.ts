@@ -519,41 +519,6 @@ describe("parseMarkdown", () => {
     ]);
   });
 
-  it(
-    "inline track map accepts latitude-longitude order when suffixes identify axes",
-    () => {
-      const mdText = "@[Places](map://36.42688N, 138.20049E)";
-      const result = stripPos(parseMarkdown(mdText));
-      expect(result).toStrictEqual([
-        {
-          type: "element",
-          tag: "figure",
-          attrs: {
-            class: "stgy-track-map",
-            "data-lon": 138.20049,
-            "data-lat": 36.42688,
-            "data-zoom": 13,
-            "data-center-address": "Places",
-          },
-          children: [
-            {
-              type: "element",
-              tag: "div",
-              attrs: { class: "stgy-track-canvas" },
-              children: [],
-            },
-            {
-              type: "element",
-              tag: "figcaption",
-              attrs: { class: "stgy-track-caption" },
-              children: [{ type: "text", text: "Places" }],
-            },
-          ],
-        },
-      ]);
-    },
-  );
-
   it("inline track map uses default zoom when zoom is omitted", () => {
     const mdText = "@[](map://139.6444794,35.6595519){height=240}";
     const expected = [
@@ -3311,5 +3276,56 @@ describe("sliceByPseudoTokens", () => {
     expect(sliceByPseudoTokens(text, 0, 2)).toBe("A😊");
     expect(sliceByPseudoTokens(text, 1, 3)).toBe("😊");
     expect(sliceByPseudoTokens(text, 2, 4)).toBe("😊B");
+  });
+});
+
+describe("link snippet macro", () => {
+  it("renders an external link snippet with an explicit caption", () => {
+    expect(
+      makeHtml("%[External sample](https://example.com/foobar)"),
+    ).toBe(
+      '<div class="stgy-link-snippet" data-caption="External sample"><a class="stgy-link-snippet-link" href="https://example.com/foobar">External sample</a></div>',
+    );
+  });
+
+  it("uses the URL as fallback text when the caption is empty", () => {
+    expect(makeHtml("%[](/pub/12345)")).toBe(
+      '<div class="stgy-link-snippet"><a class="stgy-link-snippet-link" href="/pub/12345">/pub/12345</a></div>',
+    );
+  });
+
+  it("leaves unsafe schemes as ordinary text", () => {
+    expect(makeHtml("%[unsafe](javascript:alert(1))")).toBe(
+      "<p>%[unsafe](javascript:alert(1))</p>",
+    );
+  });
+
+  it("restores the original macro from hydrated HTML", () => {
+    const html =
+      '<div class="stgy-link-snippet" data-caption="My caption" data-status="ready"><a class="stgy-link-snippet-link" href="https://example.com/article"><span class="stgy-link-snippet-site-name">Example</span><span class="stgy-link-snippet-title">Fetched title</span><span class="stgy-link-snippet-description">Description</span></a></div>';
+    expect(makeMarkdownFromHtml(html)).toBe(
+      "%[My caption](https://example.com/article)\n",
+    );
+  });
+
+  it("preserves an empty caption when restoring hydrated HTML", () => {
+    const html =
+      '<div class="stgy-link-snippet" data-status="ready"><a class="stgy-link-snippet-link" href="/pub/12345"><span class="stgy-link-snippet-title">Fetched title</span></a></div>';
+    expect(makeMarkdownFromHtml(html)).toBe("%[](/pub/12345)\n");
+  });
+
+  it("renders link snippet text in plain text output", () => {
+    expect(makeText("before\n\n%[Sample](/posts/12345)\n\nafter")).toBe(
+      "before\n\nSample\n\nafter",
+    );
+  });
+
+  it("reduces link snippets to ordinary links for featured snippets", () => {
+    const filtered = mdFilterForFeatured(
+      parseMarkdown("%[Sample](/posts/12345)"),
+    );
+    expect(mdRenderHtml(filtered)).toBe(
+      '<p><a href="/posts/12345">Sample</a></p>',
+    );
   });
 });

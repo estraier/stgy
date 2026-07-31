@@ -1,7 +1,9 @@
 import {
+  classifyFrontendPath,
   classifyFrontendUrl,
   decodeHtmlEntities,
   extractLinkSnippetMetadata,
+  formatLinkSnippetDate,
   makeMarkdownLinkSnippetMetadata,
   normalizeLinkSnippetUrl,
   truncateSnippetText,
@@ -18,6 +20,15 @@ describe("link snippet URL handling", () => {
     expect(() => normalizeLinkSnippetUrl("ftp://example.com/a")).toThrow();
     expect(() => normalizeLinkSnippetUrl("https://user:pass@example.com/a")).toThrow();
     expect(() => normalizeLinkSnippetUrl("https://example.com:8443/a")).toThrow();
+  });
+
+  test("classifies supported relative frontend paths without an origin", () => {
+    expect(
+      classifyFrontendPath(new URL("/posts/19e9af4ccb800000", "https://stgy.invalid")),
+    ).toEqual({ kind: "internal", target: { kind: "post", id: "19E9AF4CCB800000" } });
+    expect(classifyFrontendPath(new URL("/admin", "https://stgy.invalid"))).toEqual({
+      kind: "unsupported_internal",
+    });
   });
 
   test("classifies only supported paths on the configured frontend origin", () => {
@@ -38,6 +49,12 @@ describe("link snippet URL handling", () => {
 });
 
 describe("link snippet text handling", () => {
+  test("formats PostgreSQL Date values and ISO strings for fallback titles", () => {
+    expect(formatLinkSnippetDate(new Date("2026-02-16T03:00:00.000Z"))).toBe("2026-02-16");
+    expect(formatLinkSnippetDate("2026-02-16T12:00:00+09:00")).toBe("2026-02-16");
+    expect(formatLinkSnippetDate("invalid")).toBeNull();
+  });
+
   test("truncates by grapheme cluster and includes the ellipsis in the limit", () => {
     expect(truncateSnippetText("A👨‍👩‍👧‍👦BC", 3)).toBe("A👨‍👩‍👧‍👦…");
     expect(truncateSnippetText("  A\n  B  ", 10)).toBe("A B");

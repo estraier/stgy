@@ -11,6 +11,7 @@ import React, {
 } from "react";
 import { makeArticleHtmlFromMarkdown } from "@/utils/article";
 import { destroyTrackMaps, useTrackMapHydrator } from "@/hooks/useTrackMapHydrator";
+import { useLinkSnippetHydrator } from "@/hooks/useLinkSnippetHydrator";
 import { reconcileTrackMapPreviews, TRACK_MAP_REDRAW_DELAY_MS } from "@/utils/liveTrackPreview";
 import { parseBodyAndTags } from "@/utils/parse";
 import { convertHtmlMathInline } from "@/utils/mathjax-inline";
@@ -515,45 +516,6 @@ function centerTextareaCaret(ta: HTMLTextAreaElement) {
   const maxScroll = Math.max(0, ta.scrollHeight - ta.clientHeight);
   ta.scrollTop = Math.min(maxScroll, desired);
 }
-function replaceTextareaSelectionWithNativeUndo(
-  ta: HTMLTextAreaElement,
-  text: string,
-  start: number,
-  end: number,
-): boolean {
-  if (typeof document === "undefined" || typeof document.execCommand !== "function") {
-    return false;
-  }
-
-  const scrollTop = ta.scrollTop;
-  const scrollLeft = ta.scrollLeft;
-  const windowScrollX = typeof window !== "undefined" ? window.scrollX : 0;
-  const windowScrollY = typeof window !== "undefined" ? window.scrollY : 0;
-
-  try {
-    ta.focus({ preventScroll: true });
-    ta.setSelectionRange(start, end);
-    const inserted = document.execCommand("insertText", false, text);
-    if (!inserted) return false;
-
-    const caret = start + text.length;
-    // Close this undo transaction so later typing is undone separately.
-    const boundaryPosition = caret > 0 ? caret - 1 : caret < ta.value.length ? caret + 1 : caret;
-    if (boundaryPosition !== caret) {
-      ta.setSelectionRange(boundaryPosition, boundaryPosition);
-    }
-    ta.setSelectionRange(caret, caret);
-
-    ta.scrollTop = scrollTop;
-    ta.scrollLeft = scrollLeft;
-    if (typeof window !== "undefined") {
-      window.scrollTo(windowScrollX, windowScrollY);
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
 function buildMirrorFromTextarea(ta: HTMLTextAreaElement, mirror: HTMLDivElement) {
   const cs = getComputedStyle(ta);
   type StyleKey = Extract<keyof CSSStyleDeclaration, string>;
@@ -693,22 +655,12 @@ export default function PostForm({
   const pasteNodesRef = useRef<MdNode[] | null>(null);
   const pasteImageNodesRef = useRef<MdElementNode[] | null>(null);
   const pasteHasBlockRef = useRef<boolean>(false);
-  const importTargetRef = useRef<{
-    start: number;
-    end: number;
-    originalLine: string;
-    selectionStart: number;
-    selectionEnd: number;
-    textareaScrollTop: number;
-    textareaScrollLeft: number;
-    overlayScrollTop: number | null;
-    windowScrollX: number;
-    windowScrollY: number;
-  } | null>(null);
+  const importTargetRef = useRef<{ start: number; end: number; originalLine: string } | null>(null);
   const hydrateTrackMaps = useTrackMapHydrator({
     lazy: true,
     redrawDelayMs: TRACK_MAP_REDRAW_DELAY_MS,
   });
+  const hydrateLinkSnippets = useLinkSnippetHydrator();
 
   function cryptoRandomId() {
     if (typeof crypto !== "undefined" && typeof (crypto as Crypto).randomUUID === "function") {
@@ -1118,25 +1070,13 @@ export default function PostForm({
       const url = parsed.url.trim();
       if (!isAbsoluteHttpUrl(url)) return;
 
-      const importTarget = {
-        start,
-        end,
-        originalLine: line,
-        selectionStart: ta.selectionStart ?? pos,
-        selectionEnd: ta.selectionEnd ?? pos,
-        textareaScrollTop: ta.scrollTop,
-        textareaScrollLeft: ta.scrollLeft,
-        overlayScrollTop: overlayScrollRef.current?.scrollTop ?? null,
-        windowScrollX: window.scrollX,
-        windowScrollY: window.scrollY,
-      };
       setImportBusy(true);
       setImportError(null);
       try {
         const blob = await importRemoteImage(userId, url);
         const fileType = blob.type || "application/octet-stream";
         const file = new File([blob], importedImageFilename(fileType), { type: fileType });
-        importTargetRef.current = importTarget;
+        importTargetRef.current = { start, end, originalLine: line };
         setImportDialogFiles([
           {
             id: cryptoRandomId(),
@@ -2002,6 +1942,7 @@ export default function PostForm({
       bodyRef.current = front;
       previewRenderedHtmlRef.current.set(front, previewHtml);
       hydrateTrackMaps(front);
+      hydrateLinkSnippets(front);
       rebuildAnchors();
       scheduleSyncRef.current();
       schedulePreviewHighlightRef.current();
@@ -2028,6 +1969,7 @@ export default function PostForm({
       previewRenderedHtmlRef.current.set(back, previewHtml);
       destroyTrackMaps(front);
       hydrateTrackMaps(back);
+      hydrateLinkSnippets(back);
       rebuildAnchors();
       scheduleSyncRef.current();
       schedulePreviewHighlightRef.current();
@@ -2041,6 +1983,7 @@ export default function PostForm({
     showPreview,
     overlayActive,
     hydrateTrackMaps,
+    hydrateLinkSnippets,
     rebuildAnchors,
     attachPreviewObservers,
     refreshGutterPins,
@@ -2088,19 +2031,11 @@ export default function PostForm({
       const needsPrefixNL = start > 0 && before[before.length - 1] !== "\n";
       const insert = (needsPrefixNL ? "\n" : "") + snippet;
       const next = before + insert + after;
-      const insertedWithNativeUndo = replaceTextareaSelectionWithNativeUndo(
-        ta,
-        insert,
-        start,
-        end,
-      );
-      if (!insertedWithNativeUndo) {
-        setBody(next);
-      }
+      setBody(next);
       requestAnimationFrame(() => {
         const pos = before.length + insert.length;
         ta.setSelectionRange(pos, pos);
-        if (!insertedWithNativeUndo) centerTextareaCaret(ta);
+        centerTextareaCaret(ta);
         caretRef.current = pos;
         selStartRef.current = pos;
         selEndRef.current = pos;
@@ -2140,19 +2075,11 @@ export default function PostForm({
       const before = text.slice(0, start);
       const after = text.slice(end);
       const next = before + snippet + after;
-      const insertedWithNativeUndo = replaceTextareaSelectionWithNativeUndo(
-        ta,
-        snippet,
-        start,
-        end,
-      );
-      if (!insertedWithNativeUndo) {
-        setBody(next);
-      }
+      setBody(next);
       requestAnimationFrame(() => {
         const pos = before.length + snippet.length;
         ta.setSelectionRange(pos, pos);
-        if (!insertedWithNativeUndo) centerTextareaCaret(ta);
+        centerTextareaCaret(ta);
         caretRef.current = pos;
         selStartRef.current = pos;
         selEndRef.current = pos;
@@ -2239,36 +2166,19 @@ export default function PostForm({
       requestAnimationFrame(() => {
         const ta = activeTextarea();
         if (!ta) return;
-        const replacedLength = target.end - target.start;
-        const delta = nextLine.length - replacedLength;
-        const restorePosition = (position: number): number => {
-          if (position <= target.start) return position;
-          if (position >= target.end) return position + delta;
-          return target.start + Math.min(position - target.start, nextLine.length);
-        };
-        const selectionStart = clamp(restorePosition(target.selectionStart), 0, nextText.length);
-        const selectionEnd = clamp(
-          restorePosition(target.selectionEnd),
-          selectionStart,
-          nextText.length,
-        );
-        if (overlayActive) resizeOverlayTextareaRef.current();
-        ta.focus({ preventScroll: true });
-        ta.setSelectionRange(selectionStart, selectionEnd);
-        ta.scrollTop = target.textareaScrollTop;
-        ta.scrollLeft = target.textareaScrollLeft;
-        if (target.overlayScrollTop != null && overlayScrollRef.current) {
-          overlayScrollRef.current.scrollTop = target.overlayScrollTop;
-        }
-        window.scrollTo(target.windowScrollX, target.windowScrollY);
-        caretRef.current = selectionEnd;
-        selStartRef.current = selectionStart;
-        selEndRef.current = selectionEnd;
+        const pos = target.start + nextLine.length;
+        ta.focus();
+        ta.setSelectionRange(pos, pos);
+        centerTextareaCaret(ta);
+        caretRef.current = pos;
+        selStartRef.current = pos;
+        selEndRef.current = pos;
         scheduleSyncRef.current();
         if (overlayActive) {
           scheduleEditorHighlightRef.current();
           schedulePreviewHighlightRef.current();
         }
+        if (overlayActive) resizeOverlayTextareaRef.current();
         updateMediaLineState();
       });
     },

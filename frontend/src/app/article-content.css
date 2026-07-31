@@ -802,3 +802,60 @@ span[aria-label="Identicon"] > svg {
   width: min(24rem, 50%);
   max-width: 100%;
 }
+
+.markdown-body .stgy-link-snippet {
+  width: 80%;
+  max-width: 100%;
+  margin: 0.75em auto;
+  font-size: 90%;
+}
+
+.markdown-body .stgy-link-snippet-link {
+  display: block;
+  padding: 0.65em 0.8em;
+  overflow: hidden;
+  color: inherit;
+  background: rgba(127, 127, 127, 0.04);
+  border: 1px solid rgba(127, 127, 127, 0.28);
+  border-radius: 0.35em;
+  overflow-wrap: anywhere;
+}
+
+.markdown-body .stgy-link-snippet-link:hover {
+  text-decoration: none;
+  background: rgba(127, 127, 127, 0.09);
+}
+
+.markdown-body .stgy-link-snippet-site-name,
+.markdown-body .stgy-link-snippet-title,
+.markdown-body .stgy-link-snippet-description {
+  display: block;
+}
+
+.markdown-body .stgy-link-snippet-site-name {
+  margin-bottom: 0.15em;
+  overflow: hidden;
+  font-size: 75%;
+  opacity: 0.65;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.markdown-body .stgy-link-snippet-title {
+  display: -webkit-box;
+  overflow: hidden;
+  font-weight: 600;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.markdown-body .stgy-link-snippet-description {
+  display: -webkit-box;
+  margin-top: 0.25em;
+  overflow: hidden;
+  font-size: 90%;
+  line-height: 1.45;
+  opacity: 0.75;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}

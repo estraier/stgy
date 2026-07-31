@@ -1,8 +1,17 @@
 "use client";
 
-import { memo, useEffect, useMemo, useRef } from "react";
+import { memo, useEffect, useMemo, useRef, type SyntheticEvent } from "react";
 import PrismHighlighter from "@/components/PrismHighlighter";
 import { stopTrackMapEvent, useTrackMapHydrator } from "@/hooks/useTrackMapHydrator";
+import { useLinkSnippetHydrator } from "@/hooks/useLinkSnippetHydrator";
+
+function stopMarkdownBodyEvent(event: SyntheticEvent): void {
+  stopTrackMapEvent(event);
+  const target = event.target;
+  if (target instanceof Element && target.closest(".stgy-link-snippet")) {
+    event.stopPropagation();
+  }
+}
 
 type MarkdownHtmlBodyProps = {
   html: string;
@@ -25,22 +34,33 @@ function MarkdownHtmlBodyImpl({
 }: MarkdownHtmlBodyProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const hydrateTrackMaps = useTrackMapHydrator();
+  const hydrateLinkSnippets = useLinkSnippetHydrator();
   const prismDeps = useMemo(() => [html], [html]);
   const hasTrackMap = hydrateMaps && html.includes("stgy-track-map");
+  const hasLinkSnippet = html.includes("stgy-link-snippet");
 
   useEffect(() => {
-    if (!hasTrackMap) return;
+    if (!hasTrackMap && !hasLinkSnippet) return;
     const root = rootRef.current;
     if (!root) return;
     let id2 = 0;
     const id1 = requestAnimationFrame(() => {
-      id2 = requestAnimationFrame(() => hydrateTrackMaps(root));
+      id2 = requestAnimationFrame(() => {
+        if (hasTrackMap) hydrateTrackMaps(root);
+        if (hasLinkSnippet) hydrateLinkSnippets(root);
+      });
     });
     return () => {
       cancelAnimationFrame(id1);
       if (id2) cancelAnimationFrame(id2);
     };
-  }, [html, hasTrackMap, hydrateTrackMaps]);
+  }, [
+    html,
+    hasTrackMap,
+    hasLinkSnippet,
+    hydrateTrackMaps,
+    hydrateLinkSnippets,
+  ]);
 
   return (
     <>
@@ -49,10 +69,10 @@ function MarkdownHtmlBodyImpl({
         lang={lang}
         className={className}
         style={{ minHeight, userSelect }}
-        onPointerDown={stopTrackMapEvent}
-        onTouchStart={stopTrackMapEvent}
-        onMouseDown={stopTrackMapEvent}
-        onClick={stopTrackMapEvent}
+        onPointerDown={stopMarkdownBodyEvent}
+        onTouchStart={stopMarkdownBodyEvent}
+        onMouseDown={stopMarkdownBodyEvent}
+        onClick={stopMarkdownBodyEvent}
         dangerouslySetInnerHTML={{ __html: html }}
       />
       {highlightCode && <PrismHighlighter root={rootRef.current} deps={prismDeps} />}

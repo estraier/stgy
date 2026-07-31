@@ -3,6 +3,7 @@
 import React from "react";
 import PrismHighlighter from "@/components/PrismHighlighter";
 import { ensureMathJaxReady, patchMathInlineInContainer } from "@/utils/mathjax-inline";
+import { useLinkSnippetHydrator } from "@/hooks/useLinkSnippetHydrator";
 
 type BaseProps = Omit<React.HTMLAttributes<HTMLElement>, "dangerouslySetInnerHTML">;
 
@@ -20,16 +21,18 @@ export default function ArticleWithDecoration({
   ...rest
 }: Props) {
   const ref = React.useRef<HTMLElement | null>(null);
+  const hydrateLinkSnippets = useLinkSnippetHydrator();
 
   React.useEffect(() => {
     const el = ref.current;
     if (!el) return;
+    hydrateLinkSnippets(el);
     ensureMathJaxReady().then(() => {
       const cur = ref.current;
       if (!cur) return;
       patchMathInlineInContainer(cur);
     });
-  });
+  }, [html, hydrateLinkSnippets]);
 
   const prismDeps = React.useMemo(() => [html], [html]);
   const Element = as;

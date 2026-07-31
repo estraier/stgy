@@ -7,19 +7,19 @@ import { PostsService } from "./posts";
 import { UsersService } from "./users";
 import { makeTextFromMarkdown } from "../utils/snippet";
 import {
+  classifyFrontendPath,
   classifyFrontendUrl,
   type InternalLinkTarget,
   extractLinkSnippetMetadata,
+  formatLinkSnippetDate,
   makeMarkdownLinkSnippetMetadata,
   normalizeLinkSnippetUrl,
   truncateSnippetText,
 } from "../utils/linkSnippet";
 import { fetchRemoteHtml } from "../utils/remoteHtml";
-import { createLogger } from "../utils/logger";
 
-const logger = createLogger({ file: "linkSnip" });
 const CACHE_PREFIX = "stgy:link-snippet:";
-const CACHE_VERSION = "v1";
+const CACHE_VERSION = "v3";
 const STGY_SITE_NAME = "STGY";
 
 type CachedLinkSnippetStatus = Exclude<LinkSnippetStatus, "pending">;
@@ -55,12 +55,36 @@ export class LinkSnippetsService {
     this.postsService = new PostsService(pgPool, redis);
   }
 
-  async resolve(urlText: string, actorKey: string, viewerUserId?: string): Promise<LinkSnippet> {
+  async resolve(
+    urlText: string,
+    actorKey: string,
+    viewerUserId?: string,
+  ): Promise<LinkSnippet> {
+    const trimmedUrl = urlText.trim();
+
+    if (/^\/(?!\/)/u.test(trimmedUrl)) {
+      const relativeUrl = new URL(trimmedUrl, "https://stgy.invalid");
+      relativeUrl.hash = "";
+      const classification = classifyFrontendPath(relativeUrl);
+      if (classification.kind === "unsupported_internal") {
+        throw new LinkSnippetInputError("self url path is not supported");
+      }
+      if (classification.kind === "internal") {
+        return this.resolveInternal(
+          `${relativeUrl.pathname}${relativeUrl.search}`,
+          classification.target,
+          viewerUserId,
+        );
+      }
+    }
+
     let url: URL;
     try {
-      url = normalizeLinkSnippetUrl(urlText);
+      url = normalizeLinkSnippetUrl(trimmedUrl);
     } catch (error) {
-      throw new LinkSnippetInputError(error instanceof Error ? error.message : "invalid url");
+      throw new LinkSnippetInputError(
+        error instanceof Error ? error.message : "invalid url",
+      );
     }
 
     const classification = classifyFrontendUrl(url, Config.FRONTEND_ORIGIN);
@@ -68,23 +92,32 @@ export class LinkSnippetsService {
       throw new LinkSnippetInputError("self url path is not supported");
     }
     if (classification.kind === "internal") {
-      return this.resolveInternal(url, classification.target, viewerUserId);
+      return this.resolveInternal(
+        url.toString(),
+        classification.target,
+        viewerUserId,
+      );
     }
     return this.resolveExternal(url, actorKey);
   }
 
   private async resolveInternal(
-    url: URL,
+    resolvedUrl: string,
     target: InternalLinkTarget,
     viewerUserId?: string,
   ): Promise<LinkSnippet> {
     const now = new Date().toISOString();
+
     const unavailable = (siteName = STGY_SITE_NAME): LinkSnippet => ({
-      url: url.toString(),
+      url: resolvedUrl,
       status: "unavailable",
       title: null,
       description: null,
-      siteName: truncateSnippetText(siteName, Config.LINK_SNIPPET_SITE_NAME_LENGTH_LIMIT) || null,
+      siteName:
+        truncateSnippetText(
+          siteName,
+          Config.LINK_SNIPPET_SITE_NAME_LENGTH_LIMIT,
+        ) || null,
       fetchedAt: now,
       expiresAt: null,
       stale: false,
@@ -93,15 +126,20 @@ export class LinkSnippetsService {
 
     if (target.kind === "user") {
       if (!viewerUserId) return unavailable();
+
       const user = await this.usersService.getUser(target.id, viewerUserId);
       if (!user || user.isBlockingFocusUser) return unavailable();
-      const title = truncateSnippetText(user.nickname, Config.LINK_SNIPPET_TITLE_LENGTH_LIMIT);
+
+      const title = truncateSnippetText(
+        user.nickname,
+        Config.LINK_SNIPPET_TITLE_LENGTH_LIMIT,
+      );
       const description = truncateSnippetText(
         makeTextFromMarkdown(user.introduction),
         Config.LINK_SNIPPET_DESCRIPTION_LENGTH_LIMIT,
       );
       return {
-        url: url.toString(),
+        url: resolvedUrl,
         status: title ? "ready" : "unavailable",
         title: title || null,
         description: description || null,
@@ -115,6 +153,7 @@ export class LinkSnippetsService {
 
     const isPublic = target.kind === "pub";
     if (!isPublic && !viewerUserId) return unavailable();
+
     const post = isPublic
       ? await this.postsService.getPubPost(target.id, now)
       : await this.postsService.getPost(target.id, viewerUserId);
@@ -124,12 +163,14 @@ export class LinkSnippetsService {
       title: Config.LINK_SNIPPET_TITLE_LENGTH_LIMIT,
       description: Config.LINK_SNIPPET_DESCRIPTION_LENGTH_LIMIT,
     });
-    const dateText = post.publishedAt ?? post.createdAt;
-    const fallbackTitle = `POST@${dateText.slice(0, 10)}`;
-    const title = extracted.title || truncateSnippetText(
-      fallbackTitle,
-      Config.LINK_SNIPPET_TITLE_LENGTH_LIMIT,
-    );
+    const postDate = formatLinkSnippetDate(post.publishedAt ?? post.createdAt);
+    const fallbackTitle = postDate ? `POST@${postDate}` : "POST";
+    const title =
+      extracted.title ||
+      truncateSnippetText(
+        fallbackTitle,
+        Config.LINK_SNIPPET_TITLE_LENGTH_LIMIT,
+      );
     let siteName = STGY_SITE_NAME;
     if (isPublic) {
       const pubConfig = await this.usersService.getPubConfig(post.ownedBy);
@@ -137,11 +178,15 @@ export class LinkSnippetsService {
     }
 
     return {
-      url: url.toString(),
+      url: resolvedUrl,
       status: title ? "ready" : "unavailable",
       title: title || null,
       description: extracted.description,
-      siteName: truncateSnippetText(siteName, Config.LINK_SNIPPET_SITE_NAME_LENGTH_LIMIT) || null,
+      siteName:
+        truncateSnippetText(
+          siteName,
+          Config.LINK_SNIPPET_SITE_NAME_LENGTH_LIMIT,
+        ) || null,
       fetchedAt: now,
       expiresAt: null,
       stale: false,
@@ -194,12 +239,8 @@ export class LinkSnippetsService {
     } finally {
       try {
         await this.releaseLock(keys.lock, lockToken);
-      } catch (releaseError) {
-        logger.warn(
-          `[link-snippet] failed to release resolve lock: ${
-            releaseError instanceof Error ? releaseError.message : String(releaseError)
-          }`,
-        );
+      } catch {
+        // Best-effort lock cleanup.
       }
     }
   }
@@ -212,25 +253,17 @@ export class LinkSnippetsService {
   ): Promise<void> {
     try {
       await this.refreshExternal(normalizedUrl, actorKey, keys, true);
-    } catch (error) {
+    } catch {
       try {
-        await this.handleBackgroundFailure(keys, error);
-      } catch (backoffError) {
-        logger.warn(
-          `[link-snippet] failed to record refresh backoff: ${
-            backoffError instanceof Error ? backoffError.message : String(backoffError)
-          }`,
-        );
+        await this.handleBackgroundFailure(keys);
+      } catch {
+        // The next request may retry the refresh.
       }
     } finally {
       try {
         await this.releaseLock(keys.lock, lockToken);
-      } catch (releaseError) {
-        logger.warn(
-          `[link-snippet] failed to release refresh lock: ${
-            releaseError instanceof Error ? releaseError.message : String(releaseError)
-          }`,
-        );
+      } catch {
+        // Best-effort lock cleanup.
       }
     }
   }
@@ -310,11 +343,6 @@ export class LinkSnippetsService {
       return record;
     } catch (error) {
       if (error instanceof LinkSnippetRateLimitError) throw error;
-      logger.warn(
-        `[link-snippet] fetch failed for ${initialUrl.hostname}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
       if (preserveExistingOnFailure) throw error;
       const record = this.makeCacheRecord(
         normalizedUrl,
@@ -331,10 +359,7 @@ export class LinkSnippetsService {
 
   private async handleBackgroundFailure(
     keys: LinkSnippetCacheKeys,
-    error: unknown,
   ): Promise<void> {
-    const message = error instanceof Error ? error.message : String(error);
-    logger.warn(`[link-snippet] background refresh skipped: ${message}`);
     await this.redis.setex(keys.backoff, Config.LINK_SNIPPET_FAILURE_TTL_SEC, "1");
   }
 

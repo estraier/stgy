@@ -65,19 +65,7 @@ export function normalizeLinkSnippetUrl(urlText: string): URL {
   return url;
 }
 
-export function classifyFrontendUrl(
-  url: URL,
-  frontendOrigins: string[],
-): FrontendUrlClassification {
-  const isFrontendOrigin = frontendOrigins.some((originText) => {
-    try {
-      return new URL(originText).origin === url.origin;
-    } catch {
-      return false;
-    }
-  });
-  if (!isFrontendOrigin) return { kind: "external" };
-
+export function classifyFrontendPath(url: URL): FrontendUrlClassification {
   const match = /^\/(users|posts|pub)\/([0-9a-fA-F]{16})\/?$/u.exec(url.pathname);
   if (!match) return { kind: "unsupported_internal" };
   const id = match[2]!.toUpperCase();
@@ -93,6 +81,21 @@ export function classifyFrontendUrl(
   }
 }
 
+export function classifyFrontendUrl(
+  url: URL,
+  frontendOrigins: string[],
+): FrontendUrlClassification {
+  const isFrontendOrigin = frontendOrigins.some((originText) => {
+    try {
+      return new URL(originText).origin === url.origin;
+    } catch {
+      return false;
+    }
+  });
+  if (!isFrontendOrigin) return { kind: "external" };
+  return classifyFrontendPath(url);
+}
+
 export function normalizeSnippetText(value: string): string {
   return value.replace(/\s+/gu, " ").trim();
 }
@@ -105,6 +108,27 @@ export function truncateSnippetText(value: string, maxLength: number): string {
   if (segments.length <= maxLength) return normalized;
   if (maxLength === 1) return "…";
   return `${segments.slice(0, maxLength - 1).join("")}…`;
+}
+
+export function formatLinkSnippetDate(value: unknown): string | null {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString().slice(0, 10);
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    const isoDate = /^(\d{4}-\d{2}-\d{2})/u.exec(trimmed)?.[1];
+    if (isoDate) return isoDate;
+    const parsed = new Date(trimmed);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10);
+  }
+
+  if (typeof value === "number") {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10);
+  }
+
+  return null;
 }
 
 export function decodeHtmlEntities(value: string): string {

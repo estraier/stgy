@@ -814,8 +814,8 @@ paths:
     post:
       summary: Resolve a URL to a text link snippet
       description: |
-        Returns a shared cached text snippet for an external URL. STGY frontend URLs
-        matching /users/{id}, /posts/{id}, or /pub/{id} are resolved from internal data
+        Returns a shared cached text snippet for an external URL. Relative STGY paths and
+        STGY frontend URLs matching /users/{id}, /posts/{id}, or /pub/{id} are resolved from internal data
         instead of being fetched over HTTP. /users and /posts require a valid session;
         /pub and external URLs are publicly resolvable.
       requestBody:
@@ -825,7 +825,9 @@ paths:
             schema:
               type: object
               properties:
-                url: { type: string, format: uri }
+                url:
+                  type: string
+                  description: An absolute HTTP(S) URL or a supported relative STGY path
               required: [url]
       responses:
         "200":

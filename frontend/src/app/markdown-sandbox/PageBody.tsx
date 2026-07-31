@@ -34,6 +34,7 @@ import {
 } from "stgy-markdown";
 import { convertHtmlMathInline } from "@/utils/mathjax-inline";
 import { destroyTrackMaps, useTrackMapHydrator } from "@/hooks/useTrackMapHydrator";
+import { useLinkSnippetHydrator } from "@/hooks/useLinkSnippetHydrator";
 import { reconcileTrackMapPreviews, TRACK_MAP_REDRAW_DELAY_MS } from "@/utils/liveTrackPreview";
 import {
   cycleTrackBaseOptions,
@@ -660,6 +661,7 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
     redrawDelayMs: TRACK_MAP_REDRAW_DELAY_MS,
     allowedImagePatterns: null,
   });
+  const hydrateLinkSnippets = useLinkSnippetHydrator();
 
   const caretMirrorRef = useRef<HTMLDivElement | null>(null);
   const highlightOverlayRef = useRef<HTMLDivElement | null>(null);
@@ -1292,6 +1294,7 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
       previewBodyRef.current = front;
       previewRenderedHtmlRef.current.set(front, renderedHtml);
       hydrateTrackMaps(front);
+      hydrateLinkSnippets(front);
       rebuildAnchors();
       scheduleSync();
       schedulePreviewHighlight();
@@ -1317,6 +1320,7 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
       previewRenderedHtmlRef.current.set(back, renderedHtml);
       destroyTrackMaps(front);
       hydrateTrackMaps(back);
+      hydrateLinkSnippets(back);
       rebuildAnchors();
       scheduleSync();
       schedulePreviewHighlight();
@@ -1328,6 +1332,7 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
     renderedHtml,
     mode,
     hydrateTrackMaps,
+    hydrateLinkSnippets,
     rebuildAnchors,
     scheduleSync,
     schedulePreviewHighlight,
