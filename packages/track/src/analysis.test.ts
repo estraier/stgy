@@ -27,24 +27,23 @@ import {
 import type { TrackPoint } from "./activity";
 
 describe("buildPowerBracketHistogram", () => {
-  test("uses timed durations and 25 W buckets", () => {
+  test("uses lower-inclusive timed durations and 25 W thresholds", () => {
     const points: TrackPoint[] = [
       { time: 0, speedMps: 5, powerW: 0 },
       { time: 10, speedMps: 5, powerW: 25 },
       { time: 20, speedMps: 5, powerW: 26 },
-      { time: 30, speedMps: 5, powerW: 2001 },
+      { time: 30, speedMps: 5, powerW: 2000 },
       { time: 40, speedMps: 5, powerW: 100 },
     ];
 
     expect(buildPowerBracketHistogram(points)).toEqual({
       bucketSizeW: 25,
-      maxBucketW: 2000,
+      overflowThresholdW: 2000,
       totalSeconds: 40,
       buckets: [
         { label: "0 W", seconds: 10 },
-        { label: "≤25 W", seconds: 10 },
-        { label: "≤50 W", seconds: 10 },
-        { label: ">2000 W", seconds: 10 },
+        { label: "≥25 W", seconds: 20 },
+        { label: "≥2000 W", seconds: 10 },
       ],
     });
   });
@@ -59,9 +58,9 @@ describe("buildPowerBracketHistogram", () => {
 
     expect(buildPowerBracketHistogram(points)).toEqual({
       bucketSizeW: 25,
-      maxBucketW: 2000,
+      overflowThresholdW: 2000,
       totalSeconds: 10,
-      buckets: [{ label: "≤125 W", seconds: 10 }],
+      buckets: [{ label: "≥125 W", seconds: 10 }],
     });
   });
 
@@ -74,9 +73,9 @@ describe("buildPowerBracketHistogram", () => {
 
     expect(buildPowerBracketHistogram(points)).toEqual({
       bucketSizeW: 25,
-      maxBucketW: 2000,
+      overflowThresholdW: 2000,
       totalSeconds: 10,
-      buckets: [{ label: "≤100 W", seconds: 10 }],
+      buckets: [{ label: "≥100 W", seconds: 10 }],
     });
   });
 
@@ -98,14 +97,14 @@ describe("buildPowerBracketHistogram", () => {
     ];
 
     expect(buildPowerBracketHistogram(points)?.buckets).toEqual([
-      { label: "≤25 W", seconds: 2 },
-      { label: "≤50 W", seconds: 1 },
+      { label: ">0 W", seconds: 1 },
+      { label: "≥25 W", seconds: 2 },
     ]);
   });
 });
 
 describe("buildHeartRateBracketHistogram", () => {
-  test("keeps leading 0, <=50, and 10 bpm buckets", () => {
+  test("keeps leading zero and lower-inclusive heart-rate thresholds", () => {
     const points: TrackPoint[] = [
       { speedMps: 5, heartRateBpm: 100 },
       { speedMps: 5, heartRateBpm: 120 },
@@ -113,26 +112,27 @@ describe("buildHeartRateBracketHistogram", () => {
 
     expect(buildHeartRateBracketHistogram(points)).toEqual({
       bucketSizeBpm: 10,
-      firstBucketMaxBpm: 50,
-      maxBucketBpm: 200,
+      firstThresholdBpm: 50,
+      overflowThresholdBpm: 200,
       totalSeconds: 2,
       buckets: [
         { label: "0 bpm", seconds: 0 },
-        { label: "≤50 bpm", seconds: 0 },
-        { label: "≤60 bpm", seconds: 0 },
-        { label: "≤70 bpm", seconds: 0 },
-        { label: "≤80 bpm", seconds: 0 },
-        { label: "≤90 bpm", seconds: 0 },
-        { label: "≤100 bpm", seconds: 1 },
-        { label: "≤110 bpm", seconds: 0 },
-        { label: "≤120 bpm", seconds: 1 },
+        { label: ">0 bpm", seconds: 0 },
+        { label: "≥50 bpm", seconds: 0 },
+        { label: "≥60 bpm", seconds: 0 },
+        { label: "≥70 bpm", seconds: 0 },
+        { label: "≥80 bpm", seconds: 0 },
+        { label: "≥90 bpm", seconds: 0 },
+        { label: "≥100 bpm", seconds: 1 },
+        { label: "≥110 bpm", seconds: 0 },
+        { label: "≥120 bpm", seconds: 1 },
       ],
     });
   });
 });
 
 describe("buildSpeedBracketHistogram", () => {
-  test("uses 0, <=5, 5 km/h buckets, and keeps leading buckets", () => {
+  test("uses lower-inclusive 5 km/h thresholds and keeps leading buckets", () => {
     const points: TrackPoint[] = [
       { speedMps: 5 / 3.6 },
       { speedMps: 12 / 3.6 },
@@ -140,20 +140,20 @@ describe("buildSpeedBracketHistogram", () => {
 
     expect(buildSpeedBracketHistogram(points)).toEqual({
       bucketSizeKph: 5,
-      maxBucketKph: 100,
+      overflowThresholdKph: 100,
       totalSeconds: 2,
       buckets: [
         { label: "0 km/h", seconds: 0 },
-        { label: "≤5 km/h", seconds: 1 },
-        { label: "≤10 km/h", seconds: 0 },
-        { label: "≤15 km/h", seconds: 1 },
+        { label: ">0 km/h", seconds: 0 },
+        { label: "≥5 km/h", seconds: 1 },
+        { label: "≥10 km/h", seconds: 1 },
       ],
     });
   });
 });
 
 describe("buildCadenceBracketHistogram", () => {
-  test("uses 0, <=10, 10 rpm buckets, and keeps leading buckets", () => {
+  test("uses lower-inclusive 10 rpm thresholds and keeps leading buckets", () => {
     const points: TrackPoint[] = [
       { speedMps: 5, cadenceRpm: 60 },
       { speedMps: 5, cadenceRpm: 80 },
@@ -161,18 +161,19 @@ describe("buildCadenceBracketHistogram", () => {
 
     expect(buildCadenceBracketHistogram(points)).toEqual({
       bucketSizeRpm: 10,
-      maxBucketRpm: 200,
+      overflowThresholdRpm: 200,
       totalSeconds: 2,
       buckets: [
         { label: "0 rpm", seconds: 0 },
-        { label: "≤10 rpm", seconds: 0 },
-        { label: "≤20 rpm", seconds: 0 },
-        { label: "≤30 rpm", seconds: 0 },
-        { label: "≤40 rpm", seconds: 0 },
-        { label: "≤50 rpm", seconds: 0 },
-        { label: "≤60 rpm", seconds: 1 },
-        { label: "≤70 rpm", seconds: 0 },
-        { label: "≤80 rpm", seconds: 1 },
+        { label: ">0 rpm", seconds: 0 },
+        { label: "≥10 rpm", seconds: 0 },
+        { label: "≥20 rpm", seconds: 0 },
+        { label: "≥30 rpm", seconds: 0 },
+        { label: "≥40 rpm", seconds: 0 },
+        { label: "≥50 rpm", seconds: 0 },
+        { label: "≥60 rpm", seconds: 1 },
+        { label: "≥70 rpm", seconds: 0 },
+        { label: "≥80 rpm", seconds: 1 },
       ],
     });
   });
@@ -185,15 +186,15 @@ describe("display analysis helpers", () => {
       histograms: {
         speedKph: {
           totalSeconds: 20,
-          buckets: [{ label: "≤20 km/h", seconds: 20 }],
+          buckets: [{ label: "≥20 km/h", seconds: 20 }],
         },
         heartRateBpm: {
           totalSeconds: 30,
-          buckets: [{ label: "≤120 bpm", seconds: 15 }],
+          buckets: [{ label: "≥120 bpm", seconds: 15 }],
         },
         powerW: {
           totalSeconds: 40,
-          buckets: [{ label: "≤200 W", seconds: 20 }],
+          buckets: [{ label: "≥200 W", seconds: 20 }],
         },
       },
     };
@@ -209,7 +210,7 @@ describe("display analysis helpers", () => {
       color: "#e14545",
       rows: [
         {
-          label: "≤120 bpm",
+          label: "≥120 bpm",
           seconds: 15,
           percentage: 50,
           color: "#e14545",
@@ -239,7 +240,7 @@ describe("display analysis helpers", () => {
       percentages: { z1: 50, z2: 50, z3: 0, z4: 0, z5: 0, z6: 0, z7: 0 },
     }, 200);
     expect(powerRows[0]).toEqual({
-      label: "Z1 ≤55% FTP, ≤110 W",
+      label: "Z1 <56% FTP, <112 W",
       seconds: 5,
       percentage: 50,
       color: "#6fd3ff",
@@ -251,7 +252,7 @@ describe("display analysis helpers", () => {
       percentages: { z1: 0, z2: 100, z3: 0, z4: 0, z5: 0 },
     }, 150);
     expect(heartRateRows[1]).toEqual({
-      label: "Z2 ≤89% LTHR, ≤133.5 bpm",
+      label: "Z2 ≥81% LTHR, ≥121.5 bpm",
       seconds: 10,
       percentage: 100,
       color: "#2fa84f",

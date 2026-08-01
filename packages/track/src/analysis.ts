@@ -7,14 +7,14 @@ import type {
 } from "./activity";
 
 export const POWER_BRACKET_HISTOGRAM_BUCKET_SIZE_W = 25;
-export const POWER_BRACKET_HISTOGRAM_MAX_BUCKET_W = 2000;
+export const POWER_BRACKET_HISTOGRAM_OVERFLOW_THRESHOLD_W = 2000;
 export const SPEED_BRACKET_HISTOGRAM_BUCKET_SIZE_KPH = 5;
-export const SPEED_BRACKET_HISTOGRAM_MAX_BUCKET_KPH = 100;
+export const SPEED_BRACKET_HISTOGRAM_OVERFLOW_THRESHOLD_KPH = 100;
 export const CADENCE_BRACKET_HISTOGRAM_BUCKET_SIZE_RPM = 10;
-export const CADENCE_BRACKET_HISTOGRAM_MAX_BUCKET_RPM = 200;
+export const CADENCE_BRACKET_HISTOGRAM_OVERFLOW_THRESHOLD_RPM = 200;
 export const HEART_RATE_BRACKET_HISTOGRAM_BUCKET_SIZE_BPM = 10;
-export const HEART_RATE_BRACKET_HISTOGRAM_FIRST_BUCKET_MAX_BPM = 50;
-export const HEART_RATE_BRACKET_HISTOGRAM_MAX_BUCKET_BPM = 200;
+export const HEART_RATE_BRACKET_HISTOGRAM_FIRST_THRESHOLD_BPM = 50;
+export const HEART_RATE_BRACKET_HISTOGRAM_OVERFLOW_THRESHOLD_BPM = 200;
 export const DEFAULT_SCATTER_SMOOTHING_SECONDS = 30;
 export const DEFAULT_SCATTER_MAX_POINTS = 1000;
 export const DEFAULT_SCATTER_TRIM_LOWER_PERCENTILE = 0.02;
@@ -44,29 +44,29 @@ export type TrackAnalysisHistogramBucket = {
 
 export type TrackPowerBracketHistogram = {
   bucketSizeW: number;
-  maxBucketW: number;
+  overflowThresholdW: number;
   totalSeconds: number;
   buckets: TrackAnalysisHistogramBucket[];
 };
 
 export type TrackSpeedBracketHistogram = {
   bucketSizeKph: number;
-  maxBucketKph: number;
+  overflowThresholdKph: number;
   totalSeconds: number;
   buckets: TrackAnalysisHistogramBucket[];
 };
 
 export type TrackCadenceBracketHistogram = {
   bucketSizeRpm: number;
-  maxBucketRpm: number;
+  overflowThresholdRpm: number;
   totalSeconds: number;
   buckets: TrackAnalysisHistogramBucket[];
 };
 
 export type TrackHeartRateBracketHistogram = {
   bucketSizeBpm: number;
-  firstBucketMaxBpm: number;
-  maxBucketBpm: number;
+  firstThresholdBpm: number;
+  overflowThresholdBpm: number;
   totalSeconds: number;
   buckets: TrackAnalysisHistogramBucket[];
 };
@@ -271,54 +271,54 @@ export function getPowerZoneDisplayRows(
   summary: TrackPowerZoneSummary,
   ftpW: number,
 ): TrackAnalysisDisplayRow[] {
-  const z1Max = ftpW * 0.55;
-  const z2Max = ftpW * 0.75;
-  const z3Max = ftpW * 0.9;
-  const z4Max = ftpW * 1.05;
-  const z5Max = ftpW * 1.2;
-  const z6Max = ftpW * 1.5;
+  const z2Min = ftpW * 0.56;
+  const z3Min = ftpW * 0.76;
+  const z4Min = ftpW * 0.91;
+  const z5Min = ftpW * 1.06;
+  const z6Min = ftpW * 1.21;
+  const z7Min = ftpW * 1.51;
 
   return [
     createZoneDisplayRow(
       summary,
       "z1",
-      `Z1 ≤55% FTP, ≤${formatZoneLimit(z1Max)} W`,
+      `Z1 <56% FTP, <${formatZoneLimit(z2Min)} W`,
       "#6fd3ff",
     ),
     createZoneDisplayRow(
       summary,
       "z2",
-      `Z2 ≤75% FTP, ≤${formatZoneLimit(z2Max)} W`,
+      `Z2 ≥56% FTP, ≥${formatZoneLimit(z2Min)} W`,
       "#2f7df6",
     ),
     createZoneDisplayRow(
       summary,
       "z3",
-      `Z3 ≤90% FTP, ≤${formatZoneLimit(z3Max)} W`,
+      `Z3 ≥76% FTP, ≥${formatZoneLimit(z3Min)} W`,
       "#2fa84f",
     ),
     createZoneDisplayRow(
       summary,
       "z4",
-      `Z4 ≤105% FTP, ≤${formatZoneLimit(z4Max)} W`,
+      `Z4 ≥91% FTP, ≥${formatZoneLimit(z4Min)} W`,
       "#f2d33b",
     ),
     createZoneDisplayRow(
       summary,
       "z5",
-      `Z5 ≤120% FTP, ≤${formatZoneLimit(z5Max)} W`,
+      `Z5 ≥106% FTP, ≥${formatZoneLimit(z5Min)} W`,
       "#f39c34",
     ),
     createZoneDisplayRow(
       summary,
       "z6",
-      `Z6 ≤150% FTP, ≤${formatZoneLimit(z6Max)} W`,
+      `Z6 ≥121% FTP, ≥${formatZoneLimit(z6Min)} W`,
       "#e14545",
     ),
     createZoneDisplayRow(
       summary,
       "z7",
-      `Z7 >150% FTP, >${formatZoneLimit(z6Max)} W`,
+      `Z7 ≥151% FTP, ≥${formatZoneLimit(z7Min)} W`,
       "#7a3db8",
     ),
   ];
@@ -328,40 +328,40 @@ export function getHeartRateZoneDisplayRows(
   summary: TrackHeartRateZoneSummary,
   lthrBpm: number,
 ): TrackAnalysisDisplayRow[] {
-  const z1Max = lthrBpm * 0.81;
-  const z2Max = lthrBpm * 0.89;
-  const z3Max = lthrBpm * 0.94;
-  const z4Max = lthrBpm;
+  const z2Min = lthrBpm * 0.81;
+  const z3Min = lthrBpm * 0.9;
+  const z4Min = lthrBpm * 0.94;
+  const z5Min = lthrBpm;
 
   return [
     createZoneDisplayRow(
       summary,
       "z1",
-      `Z1 ≤81% LTHR, ≤${formatZoneLimit(z1Max)} bpm`,
+      `Z1 <81% LTHR, <${formatZoneLimit(z2Min)} bpm`,
       "#2f7df6",
     ),
     createZoneDisplayRow(
       summary,
       "z2",
-      `Z2 ≤89% LTHR, ≤${formatZoneLimit(z2Max)} bpm`,
+      `Z2 ≥81% LTHR, ≥${formatZoneLimit(z2Min)} bpm`,
       "#2fa84f",
     ),
     createZoneDisplayRow(
       summary,
       "z3",
-      `Z3 ≤94% LTHR, ≤${formatZoneLimit(z3Max)} bpm`,
+      `Z3 ≥90% LTHR, ≥${formatZoneLimit(z3Min)} bpm`,
       "#f2d33b",
     ),
     createZoneDisplayRow(
       summary,
       "z4",
-      `Z4 ≤100% LTHR, ≤${formatZoneLimit(z4Max)} bpm`,
+      `Z4 ≥94% LTHR, ≥${formatZoneLimit(z4Min)} bpm`,
       "#f39c34",
     ),
     createZoneDisplayRow(
       summary,
       "z5",
-      `Z5 >100% LTHR, >${formatZoneLimit(z4Max)} bpm`,
+      `Z5 ≥100% LTHR, ≥${formatZoneLimit(z5Min)} bpm`,
       "#e14545",
     ),
   ];
@@ -536,7 +536,7 @@ export function buildPowerBracketHistogram(
 
   return {
     bucketSizeW: POWER_BRACKET_HISTOGRAM_BUCKET_SIZE_W,
-    maxBucketW: POWER_BRACKET_HISTOGRAM_MAX_BUCKET_W,
+    overflowThresholdW: POWER_BRACKET_HISTOGRAM_OVERFLOW_THRESHOLD_W,
     totalSeconds,
     buckets,
   };
@@ -568,7 +568,7 @@ export function buildSpeedBracketHistogram(
 
   return {
     bucketSizeKph: SPEED_BRACKET_HISTOGRAM_BUCKET_SIZE_KPH,
-    maxBucketKph: SPEED_BRACKET_HISTOGRAM_MAX_BUCKET_KPH,
+    overflowThresholdKph: SPEED_BRACKET_HISTOGRAM_OVERFLOW_THRESHOLD_KPH,
     totalSeconds,
     buckets: buildLeadingBracketHistogramBuckets(
       secondsByBucket,
@@ -603,7 +603,7 @@ export function buildCadenceBracketHistogram(
 
   return {
     bucketSizeRpm: CADENCE_BRACKET_HISTOGRAM_BUCKET_SIZE_RPM,
-    maxBucketRpm: CADENCE_BRACKET_HISTOGRAM_MAX_BUCKET_RPM,
+    overflowThresholdRpm: CADENCE_BRACKET_HISTOGRAM_OVERFLOW_THRESHOLD_RPM,
     totalSeconds,
     buckets: buildLeadingBracketHistogramBuckets(
       secondsByBucket,
@@ -638,8 +638,8 @@ export function buildHeartRateBracketHistogram(
 
   return {
     bucketSizeBpm: HEART_RATE_BRACKET_HISTOGRAM_BUCKET_SIZE_BPM,
-    firstBucketMaxBpm: HEART_RATE_BRACKET_HISTOGRAM_FIRST_BUCKET_MAX_BPM,
-    maxBucketBpm: HEART_RATE_BRACKET_HISTOGRAM_MAX_BUCKET_BPM,
+    firstThresholdBpm: HEART_RATE_BRACKET_HISTOGRAM_FIRST_THRESHOLD_BPM,
+    overflowThresholdBpm: HEART_RATE_BRACKET_HISTOGRAM_OVERFLOW_THRESHOLD_BPM,
     totalSeconds,
     buckets: buildLeadingBracketHistogramBuckets(
       secondsByBucket,
@@ -1068,7 +1068,7 @@ function createPowerBracketHistogramBuckets(): number[] {
   return Array.from(
     {
       length:
-        POWER_BRACKET_HISTOGRAM_MAX_BUCKET_W /
+        POWER_BRACKET_HISTOGRAM_OVERFLOW_THRESHOLD_W /
           POWER_BRACKET_HISTOGRAM_BUCKET_SIZE_W +
         2,
     },
@@ -1080,7 +1080,7 @@ function createSpeedBracketHistogramBuckets(): number[] {
   return Array.from(
     {
       length:
-        SPEED_BRACKET_HISTOGRAM_MAX_BUCKET_KPH /
+        SPEED_BRACKET_HISTOGRAM_OVERFLOW_THRESHOLD_KPH /
           SPEED_BRACKET_HISTOGRAM_BUCKET_SIZE_KPH +
         2,
     },
@@ -1092,7 +1092,7 @@ function createCadenceBracketHistogramBuckets(): number[] {
   return Array.from(
     {
       length:
-        CADENCE_BRACKET_HISTOGRAM_MAX_BUCKET_RPM /
+        CADENCE_BRACKET_HISTOGRAM_OVERFLOW_THRESHOLD_RPM /
           CADENCE_BRACKET_HISTOGRAM_BUCKET_SIZE_RPM +
         2,
     },
@@ -1104,8 +1104,8 @@ function createHeartRateBracketHistogramBuckets(): number[] {
   return Array.from(
     {
       length:
-        (HEART_RATE_BRACKET_HISTOGRAM_MAX_BUCKET_BPM -
-          HEART_RATE_BRACKET_HISTOGRAM_FIRST_BUCKET_MAX_BPM) /
+        (HEART_RATE_BRACKET_HISTOGRAM_OVERFLOW_THRESHOLD_BPM -
+          HEART_RATE_BRACKET_HISTOGRAM_FIRST_THRESHOLD_BPM) /
           HEART_RATE_BRACKET_HISTOGRAM_BUCKET_SIZE_BPM +
         3,
     },
@@ -1179,19 +1179,23 @@ function getPowerBracketHistogramBucketIndex(
     return undefined;
   }
 
-  if (powerW <= 0) {
+  if (powerW === 0) {
     return 0;
   }
 
-  if (powerW > POWER_BRACKET_HISTOGRAM_MAX_BUCKET_W) {
-    return (
-      POWER_BRACKET_HISTOGRAM_MAX_BUCKET_W /
-        POWER_BRACKET_HISTOGRAM_BUCKET_SIZE_W +
-      1
-    );
+  if (powerW >= POWER_BRACKET_HISTOGRAM_OVERFLOW_THRESHOLD_W) {
+    return getPowerBracketHistogramOverflowBucketIndex();
   }
 
-  return Math.ceil(powerW / POWER_BRACKET_HISTOGRAM_BUCKET_SIZE_W);
+  return Math.floor(powerW / POWER_BRACKET_HISTOGRAM_BUCKET_SIZE_W) + 1;
+}
+
+function getPowerBracketHistogramOverflowBucketIndex(): number {
+  return (
+    POWER_BRACKET_HISTOGRAM_OVERFLOW_THRESHOLD_W /
+      POWER_BRACKET_HISTOGRAM_BUCKET_SIZE_W +
+    1
+  );
 }
 
 function getPowerBracketHistogramBucketLabel(index: number): string {
@@ -1199,13 +1203,15 @@ function getPowerBracketHistogramBucketLabel(index: number): string {
     return "0 W";
   }
 
-  const maxIndex = POWER_BRACKET_HISTOGRAM_MAX_BUCKET_W /
-    POWER_BRACKET_HISTOGRAM_BUCKET_SIZE_W;
-  if (index > maxIndex) {
-    return `>${POWER_BRACKET_HISTOGRAM_MAX_BUCKET_W} W`;
+  if (index >= getPowerBracketHistogramOverflowBucketIndex()) {
+    return `≥${POWER_BRACKET_HISTOGRAM_OVERFLOW_THRESHOLD_W} W`;
   }
 
-  return `≤${index * POWER_BRACKET_HISTOGRAM_BUCKET_SIZE_W} W`;
+  if (index === 1) {
+    return ">0 W";
+  }
+
+  return `≥${(index - 1) * POWER_BRACKET_HISTOGRAM_BUCKET_SIZE_W} W`;
 }
 
 function getSpeedBracketHistogramBucketIndex(
@@ -1215,20 +1221,20 @@ function getSpeedBracketHistogramBucketIndex(
     return undefined;
   }
 
-  if (speedKph <= 0) {
+  if (speedKph === 0) {
     return 0;
   }
 
-  if (speedKph > SPEED_BRACKET_HISTOGRAM_MAX_BUCKET_KPH) {
+  if (speedKph >= SPEED_BRACKET_HISTOGRAM_OVERFLOW_THRESHOLD_KPH) {
     return getSpeedBracketHistogramOverflowBucketIndex();
   }
 
-  return Math.ceil(speedKph / SPEED_BRACKET_HISTOGRAM_BUCKET_SIZE_KPH);
+  return Math.floor(speedKph / SPEED_BRACKET_HISTOGRAM_BUCKET_SIZE_KPH) + 1;
 }
 
 function getSpeedBracketHistogramOverflowBucketIndex(): number {
   return (
-    SPEED_BRACKET_HISTOGRAM_MAX_BUCKET_KPH /
+    SPEED_BRACKET_HISTOGRAM_OVERFLOW_THRESHOLD_KPH /
       SPEED_BRACKET_HISTOGRAM_BUCKET_SIZE_KPH +
     1
   );
@@ -1240,10 +1246,14 @@ function getSpeedBracketHistogramBucketLabel(index: number): string {
   }
 
   if (index >= getSpeedBracketHistogramOverflowBucketIndex()) {
-    return `>${SPEED_BRACKET_HISTOGRAM_MAX_BUCKET_KPH} km/h`;
+    return `≥${SPEED_BRACKET_HISTOGRAM_OVERFLOW_THRESHOLD_KPH} km/h`;
   }
 
-  return `≤${index * SPEED_BRACKET_HISTOGRAM_BUCKET_SIZE_KPH} km/h`;
+  if (index === 1) {
+    return ">0 km/h";
+  }
+
+  return `≥${(index - 1) * SPEED_BRACKET_HISTOGRAM_BUCKET_SIZE_KPH} km/h`;
 }
 
 function getCadenceBracketHistogramBucketIndex(
@@ -1253,20 +1263,20 @@ function getCadenceBracketHistogramBucketIndex(
     return undefined;
   }
 
-  if (cadenceRpm <= 0) {
+  if (cadenceRpm === 0) {
     return 0;
   }
 
-  if (cadenceRpm > CADENCE_BRACKET_HISTOGRAM_MAX_BUCKET_RPM) {
+  if (cadenceRpm >= CADENCE_BRACKET_HISTOGRAM_OVERFLOW_THRESHOLD_RPM) {
     return getCadenceBracketHistogramOverflowBucketIndex();
   }
 
-  return Math.ceil(cadenceRpm / CADENCE_BRACKET_HISTOGRAM_BUCKET_SIZE_RPM);
+  return Math.floor(cadenceRpm / CADENCE_BRACKET_HISTOGRAM_BUCKET_SIZE_RPM) + 1;
 }
 
 function getCadenceBracketHistogramOverflowBucketIndex(): number {
   return (
-    CADENCE_BRACKET_HISTOGRAM_MAX_BUCKET_RPM /
+    CADENCE_BRACKET_HISTOGRAM_OVERFLOW_THRESHOLD_RPM /
       CADENCE_BRACKET_HISTOGRAM_BUCKET_SIZE_RPM +
     1
   );
@@ -1278,10 +1288,14 @@ function getCadenceBracketHistogramBucketLabel(index: number): string {
   }
 
   if (index >= getCadenceBracketHistogramOverflowBucketIndex()) {
-    return `>${CADENCE_BRACKET_HISTOGRAM_MAX_BUCKET_RPM} rpm`;
+    return `≥${CADENCE_BRACKET_HISTOGRAM_OVERFLOW_THRESHOLD_RPM} rpm`;
   }
 
-  return `≤${index * CADENCE_BRACKET_HISTOGRAM_BUCKET_SIZE_RPM} rpm`;
+  if (index === 1) {
+    return ">0 rpm";
+  }
+
+  return `≥${(index - 1) * CADENCE_BRACKET_HISTOGRAM_BUCKET_SIZE_RPM} rpm`;
 }
 
 function getHeartRateBracketHistogramBucketIndex(
@@ -1291,30 +1305,30 @@ function getHeartRateBracketHistogramBucketIndex(
     return undefined;
   }
 
-  if (heartRateBpm <= 0) {
+  if (heartRateBpm === 0) {
     return 0;
   }
 
-  if (heartRateBpm <= HEART_RATE_BRACKET_HISTOGRAM_FIRST_BUCKET_MAX_BPM) {
-    return 1;
-  }
-
-  if (heartRateBpm > HEART_RATE_BRACKET_HISTOGRAM_MAX_BUCKET_BPM) {
+  if (heartRateBpm >= HEART_RATE_BRACKET_HISTOGRAM_OVERFLOW_THRESHOLD_BPM) {
     return getHeartRateBracketHistogramOverflowBucketIndex();
   }
 
+  if (heartRateBpm < HEART_RATE_BRACKET_HISTOGRAM_FIRST_THRESHOLD_BPM) {
+    return 1;
+  }
+
   return (
-    Math.ceil(
-      (heartRateBpm - HEART_RATE_BRACKET_HISTOGRAM_FIRST_BUCKET_MAX_BPM) /
+    Math.floor(
+      (heartRateBpm - HEART_RATE_BRACKET_HISTOGRAM_FIRST_THRESHOLD_BPM) /
         HEART_RATE_BRACKET_HISTOGRAM_BUCKET_SIZE_BPM,
-    ) + 1
+    ) + 2
   );
 }
 
 function getHeartRateBracketHistogramOverflowBucketIndex(): number {
   return (
-    (HEART_RATE_BRACKET_HISTOGRAM_MAX_BUCKET_BPM -
-      HEART_RATE_BRACKET_HISTOGRAM_FIRST_BUCKET_MAX_BPM) /
+    (HEART_RATE_BRACKET_HISTOGRAM_OVERFLOW_THRESHOLD_BPM -
+      HEART_RATE_BRACKET_HISTOGRAM_FIRST_THRESHOLD_BPM) /
       HEART_RATE_BRACKET_HISTOGRAM_BUCKET_SIZE_BPM +
     2
   );
@@ -1325,18 +1339,18 @@ function getHeartRateBracketHistogramBucketLabel(index: number): string {
     return "0 bpm";
   }
 
-  if (index === 1) {
-    return `≤${HEART_RATE_BRACKET_HISTOGRAM_FIRST_BUCKET_MAX_BPM} bpm`;
+  if (index >= getHeartRateBracketHistogramOverflowBucketIndex()) {
+    return `≥${HEART_RATE_BRACKET_HISTOGRAM_OVERFLOW_THRESHOLD_BPM} bpm`;
   }
 
-  if (index >= getHeartRateBracketHistogramOverflowBucketIndex()) {
-    return `>${HEART_RATE_BRACKET_HISTOGRAM_MAX_BUCKET_BPM} bpm`;
+  if (index === 1) {
+    return ">0 bpm";
   }
 
   return (
-    `≤${
-      HEART_RATE_BRACKET_HISTOGRAM_FIRST_BUCKET_MAX_BPM +
-      (index - 1) * HEART_RATE_BRACKET_HISTOGRAM_BUCKET_SIZE_BPM
+    `≥${
+      HEART_RATE_BRACKET_HISTOGRAM_FIRST_THRESHOLD_BPM +
+      (index - 2) * HEART_RATE_BRACKET_HISTOGRAM_BUCKET_SIZE_BPM
     } bpm`
   );
 }

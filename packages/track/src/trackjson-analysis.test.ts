@@ -22,7 +22,7 @@ describe("getTrackJsonHistogramDisplays", () => {
               histograms: {
                 speedKph: {
                   bucketSizeKph: 5,
-                  maxBucketKph: 60,
+                  overflowThresholdKph: 60,
                   totalSeconds: 10,
                   buckets: [{ label: "metadata speed", seconds: 10 }],
                 },
@@ -47,7 +47,7 @@ describe("getTrackJsonHistogramDisplays", () => {
       expect.objectContaining({ label: "metadata speed", seconds: 10 }),
     ]);
     expect(displays[1].rows).toEqual(expect.arrayContaining([
-      expect.objectContaining({ label: "≤80 rpm", seconds: 10 }),
+      expect.objectContaining({ label: "≥80 rpm", seconds: 10 }),
     ]));
   });
 
@@ -90,15 +90,15 @@ describe("getTrackJsonHistogramDisplays", () => {
     expect(displays[2]).toEqual(expect.objectContaining({
       title: "Heart-rate histogram by LTHR 155 bpm",
       rows: expect.arrayContaining([
-        expect.objectContaining({ label: "Z1 ≤81%", seconds: 10 }),
-        expect.objectContaining({ label: "Z4 ≤100%", seconds: 10 }),
+        expect.objectContaining({ label: "Z1 <81%", seconds: 10 }),
+        expect.objectContaining({ label: "Z4 ≥94%", seconds: 10 }),
       ]),
     }));
     expect(displays[4]).toEqual(expect.objectContaining({
       title: "Power histogram by FTP 230 W",
       rows: expect.arrayContaining([
-        expect.objectContaining({ label: "Z1 ≤55%", seconds: 10 }),
-        expect.objectContaining({ label: "Z3 ≤90%", seconds: 10 }),
+        expect.objectContaining({ label: "Z1 <56%", seconds: 10 }),
+        expect.objectContaining({ label: "Z3 ≥76%", seconds: 10 }),
       ]),
     }));
   });

@@ -357,6 +357,10 @@ Common metadata fields:
 | `pedalingDynamics.leftRightBalance` | object | Left/right power balance percentages from FIT, when present |
 | `pedalingDynamics.torqueEffectiveness` | object | Left/right/combined torque effectiveness percentages from FIT, when present |
 | `pedalingDynamics.pedalSmoothness` | object | Left/right/combined pedal smoothness percentages from FIT, when present |
+| `histograms.speedKph` | object | Lower-bound speed brackets, with an exact-zero bucket |
+| `histograms.cadenceRpm` | object | Lower-bound cadence brackets, with an exact-zero bucket |
+| `histograms.powerW` | object | Lower-bound power brackets, with an exact-zero bucket |
+| `histograms.heartRateBpm` | object | Lower-bound heart-rate brackets, with an exact-zero bucket |
 
 Statistic objects use these fields.
 
@@ -380,6 +384,15 @@ changed later. Consumers should compute zones at analysis time from
 `coordinateProperties.powers`, `coordinateProperties.heartRates`, FTP, and LTHR.
 
 Metadata is optional. The viewer ignores unknown metadata fields.
+
+Histogram buckets use lower thresholds. Zero is kept as a separate exact-value
+bucket; the next bucket contains positive values below the first regular
+threshold. Subsequent buckets include their displayed threshold and exclude the
+next threshold. For example, speed labels `0 km/h`, `>0 km/h`, `>=5 km/h`, and
+`>=10 km/h` represent `{0}`, `(0, 5)`, `[5, 10)`, and `[10, 15)` respectively.
+The `overflowThreshold*` value is included in the final overflow bucket.
+Heart-rate histograms use `firstThresholdBpm` for the first regular lower
+threshold and `overflowThresholdBpm` for the final lower threshold.
 
 ## Numeric precision
 
@@ -611,28 +624,30 @@ Non-numeric or incomplete custom series may be ignored.
 
 Power and heart-rate zones are intentionally computed outside TrackJSON.
 
-Power zones should be calculated from FTP when needed. The recommended
-Coggan-style seven-zone split is:
+Power zones should be calculated from FTP when needed. Zone thresholds are
+lower-inclusive and upper-exclusive. The recommended Coggan-style seven-zone
+split is:
 
 | Zone | Power range |
 | --- | --- |
-| Z1 | <= 55% FTP |
-| Z2 | <= 75% FTP |
-| Z3 | <= 90% FTP |
-| Z4 | <= 105% FTP |
-| Z5 | <= 120% FTP |
-| Z6 | <= 150% FTP |
-| Z7 | > 150% FTP |
+| Z1 | < 56% FTP |
+| Z2 | >= 56% and < 76% FTP |
+| Z3 | >= 76% and < 91% FTP |
+| Z4 | >= 91% and < 106% FTP |
+| Z5 | >= 106% and < 121% FTP |
+| Z6 | >= 121% and < 151% FTP |
+| Z7 | >= 151% FTP |
 
-Heart-rate zones should be calculated from LTHR when needed.
+Heart-rate zones should be calculated from LTHR when needed. These thresholds
+use the same lower-inclusive, upper-exclusive rule.
 
 | Zone | Heart-rate range |
 | --- | --- |
-| Z1 | <= 81% LTHR |
-| Z2 | <= 89% LTHR |
-| Z3 | <= 94% LTHR |
-| Z4 | <= 100% LTHR |
-| Z5 | > 100% LTHR |
+| Z1 | < 81% LTHR |
+| Z2 | >= 81% and < 90% LTHR |
+| Z3 | >= 90% and < 94% LTHR |
+| Z4 | >= 94% and < 100% LTHR |
+| Z5 | >= 100% LTHR |
 
 ## Privacy obfuscation
 

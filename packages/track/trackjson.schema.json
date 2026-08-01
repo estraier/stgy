@@ -521,10 +521,12 @@
       "type": "object",
       "properties": {
         "bucketSizeKph": {
-          "type": "number"
+          "type": "number",
+          "description": "Distance between successive lower speed thresholds in km/h."
         },
-        "maxBucketKph": {
-          "type": "number"
+        "overflowThresholdKph": {
+          "type": "number",
+          "description": "Lower-inclusive threshold of the final speed bucket in km/h."
         },
         "totalSeconds": {
           "type": "number"
@@ -536,16 +538,24 @@
           }
         }
       },
-      "additionalProperties": true
+      "additionalProperties": true,
+      "required": [
+        "bucketSizeKph",
+        "overflowThresholdKph",
+        "totalSeconds",
+        "buckets"
+      ]
     },
     "cadenceHistogram": {
       "type": "object",
       "properties": {
         "bucketSizeRpm": {
-          "type": "number"
+          "type": "number",
+          "description": "Distance between successive lower cadence thresholds in rpm."
         },
-        "maxBucketRpm": {
-          "type": "number"
+        "overflowThresholdRpm": {
+          "type": "number",
+          "description": "Lower-inclusive threshold of the final cadence bucket in rpm."
         },
         "totalSeconds": {
           "type": "number"
@@ -557,16 +567,24 @@
           }
         }
       },
-      "additionalProperties": true
+      "additionalProperties": true,
+      "required": [
+        "bucketSizeRpm",
+        "overflowThresholdRpm",
+        "totalSeconds",
+        "buckets"
+      ]
     },
     "powerHistogram": {
       "type": "object",
       "properties": {
         "bucketSizeW": {
-          "type": "number"
+          "type": "number",
+          "description": "Distance between successive lower power thresholds in watts."
         },
-        "maxBucketW": {
-          "type": "number"
+        "overflowThresholdW": {
+          "type": "number",
+          "description": "Lower-inclusive threshold of the final power bucket in watts."
         },
         "totalSeconds": {
           "type": "number"
@@ -578,19 +596,28 @@
           }
         }
       },
-      "additionalProperties": true
+      "additionalProperties": true,
+      "required": [
+        "bucketSizeW",
+        "overflowThresholdW",
+        "totalSeconds",
+        "buckets"
+      ]
     },
     "heartRateHistogram": {
       "type": "object",
       "properties": {
         "bucketSizeBpm": {
-          "type": "number"
+          "type": "number",
+          "description": "Distance between successive regular lower heart-rate thresholds in bpm."
         },
-        "firstBucketMaxBpm": {
-          "type": "number"
+        "firstThresholdBpm": {
+          "type": "number",
+          "description": "First regular lower heart-rate threshold in bpm, after the exact-zero and positive-below-threshold buckets."
         },
-        "maxBucketBpm": {
-          "type": "number"
+        "overflowThresholdBpm": {
+          "type": "number",
+          "description": "Lower-inclusive threshold of the final heart-rate bucket in bpm."
         },
         "totalSeconds": {
           "type": "number"
@@ -602,7 +629,14 @@
           }
         }
       },
-      "additionalProperties": true
+      "additionalProperties": true,
+      "required": [
+        "bucketSizeBpm",
+        "firstThresholdBpm",
+        "overflowThresholdBpm",
+        "totalSeconds",
+        "buckets"
+      ]
     },
     "histogramBucket": {
       "type": "object",

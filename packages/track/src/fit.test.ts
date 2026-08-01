@@ -483,63 +483,65 @@ describe("parseFitBytes", () => {
     });
     expect(activity.metadata.histograms?.speedKph).toEqual({
       bucketSizeKph: 5,
-      maxBucketKph: 100,
+      overflowThresholdKph: 100,
       totalSeconds: 30,
       buckets: [
         { label: "0 km/h", seconds: 0 },
-        { label: "≤5 km/h", seconds: 0 },
-        { label: "≤10 km/h", seconds: 0 },
-        { label: "≤15 km/h", seconds: 0 },
-        { label: "≤20 km/h", seconds: 10 },
-        { label: "≤25 km/h", seconds: 10 },
-        { label: "≤30 km/h", seconds: 10 },
+        { label: ">0 km/h", seconds: 0 },
+        { label: "≥5 km/h", seconds: 0 },
+        { label: "≥10 km/h", seconds: 0 },
+        { label: "≥15 km/h", seconds: 10 },
+        { label: "≥20 km/h", seconds: 10 },
+        { label: "≥25 km/h", seconds: 10 },
       ],
     });
     expect(activity.metadata.histograms?.cadenceRpm).toEqual({
       bucketSizeRpm: 10,
-      maxBucketRpm: 200,
+      overflowThresholdRpm: 200,
       totalSeconds: 30,
       buckets: [
         { label: "0 rpm", seconds: 0 },
-        { label: "≤10 rpm", seconds: 0 },
-        { label: "≤20 rpm", seconds: 0 },
-        { label: "≤30 rpm", seconds: 0 },
-        { label: "≤40 rpm", seconds: 0 },
-        { label: "≤50 rpm", seconds: 0 },
-        { label: "≤60 rpm", seconds: 0 },
-        { label: "≤70 rpm", seconds: 0 },
-        { label: "≤80 rpm", seconds: 10 },
-        { label: "≤90 rpm", seconds: 10 },
-        { label: "≤100 rpm", seconds: 10 },
+        { label: ">0 rpm", seconds: 0 },
+        { label: "≥10 rpm", seconds: 0 },
+        { label: "≥20 rpm", seconds: 0 },
+        { label: "≥30 rpm", seconds: 0 },
+        { label: "≥40 rpm", seconds: 0 },
+        { label: "≥50 rpm", seconds: 0 },
+        { label: "≥60 rpm", seconds: 0 },
+        { label: "≥70 rpm", seconds: 0 },
+        { label: "≥80 rpm", seconds: 10 },
+        { label: "≥90 rpm", seconds: 10 },
+        { label: "≥100 rpm", seconds: 10 },
       ],
     });
     expect(activity.metadata.histograms?.powerW).toEqual({
       bucketSizeW: 25,
-      maxBucketW: 2000,
+      overflowThresholdW: 2000,
       totalSeconds: 30,
       buckets: [
-        { label: "≤100 W", seconds: 10 },
-        { label: "≤200 W", seconds: 10 },
-        { label: "≤300 W", seconds: 10 },
+        { label: "≥100 W", seconds: 10 },
+        { label: "≥200 W", seconds: 10 },
+        { label: "≥300 W", seconds: 10 },
       ],
     });
     expect(activity.metadata.histograms?.heartRateBpm).toEqual({
       bucketSizeBpm: 10,
-      firstBucketMaxBpm: 50,
-      maxBucketBpm: 200,
+      firstThresholdBpm: 50,
+      overflowThresholdBpm: 200,
       totalSeconds: 30,
       buckets: [
         { label: "0 bpm", seconds: 0 },
-        { label: "≤50 bpm", seconds: 0 },
-        { label: "≤60 bpm", seconds: 0 },
-        { label: "≤70 bpm", seconds: 0 },
-        { label: "≤80 bpm", seconds: 0 },
-        { label: "≤90 bpm", seconds: 0 },
-        { label: "≤100 bpm", seconds: 0 },
-        { label: "≤110 bpm", seconds: 0 },
-        { label: "≤120 bpm", seconds: 10 },
-        { label: "≤130 bpm", seconds: 10 },
-        { label: "≤140 bpm", seconds: 10 },
+        { label: ">0 bpm", seconds: 0 },
+        { label: "≥50 bpm", seconds: 0 },
+        { label: "≥60 bpm", seconds: 0 },
+        { label: "≥70 bpm", seconds: 0 },
+        { label: "≥80 bpm", seconds: 0 },
+        { label: "≥90 bpm", seconds: 0 },
+        { label: "≥100 bpm", seconds: 0 },
+        { label: "≥110 bpm", seconds: 0 },
+        { label: "≥120 bpm", seconds: 10 },
+        { label: "≥130 bpm", seconds: 10 },
+        { label: "≥140 bpm", seconds: 10 },
       ],
     });
     expect(activity.metadata.pedaling).toEqual({
@@ -894,11 +896,11 @@ describe("downsampleTrackActivity", () => {
     activity.metadata.histograms = {
       powerW: {
         bucketSizeW: 25,
-        maxBucketW: 2000,
+        overflowThresholdW: 2000,
         totalSeconds: 3,
         buckets: [
-          { label: "≤150 W", seconds: 1 },
-          { label: "≤175 W", seconds: 2 },
+          { label: "≥150 W", seconds: 1 },
+          { label: "≥175 W", seconds: 2 },
         ],
       },
     };
@@ -1730,32 +1732,32 @@ describe("trackActivityToTrackJson", () => {
     activity.metadata.histograms = {
       speedKph: {
         bucketSizeKph: 5,
-        maxBucketKph: 100,
+        overflowThresholdKph: 100,
         totalSeconds: 20,
         buckets: [
           { label: "0 km/h", seconds: 0 },
-          { label: "≤5 km/h", seconds: 2.24 },
-          { label: "≤10 km/h", seconds: 17.76 },
+          { label: ">0 km/h", seconds: 2.24 },
+          { label: "≥5 km/h", seconds: 17.76 },
         ],
       },
       cadenceRpm: {
         bucketSizeRpm: 10,
-        maxBucketRpm: 200,
+        overflowThresholdRpm: 200,
         totalSeconds: 20,
         buckets: [
           { label: "0 rpm", seconds: 0 },
-          { label: "≤10 rpm", seconds: 1.25 },
-          { label: "≤20 rpm", seconds: 18.75 },
+          { label: ">0 rpm", seconds: 1.25 },
+          { label: "≥10 rpm", seconds: 18.75 },
         ],
       },
       powerW: {
         bucketSizeW: 25,
-        maxBucketW: 2000,
+        overflowThresholdW: 2000,
         totalSeconds: 30.24,
         buckets: [
           { label: "0 W", seconds: 3 },
-          { label: "≤25 W", seconds: 10.24 },
-          { label: ">2000 W", seconds: 17 },
+          { label: ">0 W", seconds: 10.24 },
+          { label: "≥2000 W", seconds: 17 },
         ],
       },
     };
@@ -1810,32 +1812,32 @@ describe("trackActivityToTrackJson", () => {
     expect(metadata.histograms).toEqual({
       speedKph: {
         bucketSizeKph: 5,
-        maxBucketKph: 100,
+        overflowThresholdKph: 100,
         totalSeconds: 20,
         buckets: [
           { label: "0 km/h", seconds: 0 },
-          { label: "≤5 km/h", seconds: 2.2 },
-          { label: "≤10 km/h", seconds: 17.8 },
+          { label: ">0 km/h", seconds: 2.2 },
+          { label: "≥5 km/h", seconds: 17.8 },
         ],
       },
       cadenceRpm: {
         bucketSizeRpm: 10,
-        maxBucketRpm: 200,
+        overflowThresholdRpm: 200,
         totalSeconds: 20,
         buckets: [
           { label: "0 rpm", seconds: 0 },
-          { label: "≤10 rpm", seconds: 1.3 },
-          { label: "≤20 rpm", seconds: 18.8 },
+          { label: ">0 rpm", seconds: 1.3 },
+          { label: "≥10 rpm", seconds: 18.8 },
         ],
       },
       powerW: {
         bucketSizeW: 25,
-        maxBucketW: 2000,
+        overflowThresholdW: 2000,
         totalSeconds: 30.2,
         buckets: [
           { label: "0 W", seconds: 3 },
-          { label: "≤25 W", seconds: 10.2 },
-          { label: ">2000 W", seconds: 17 },
+          { label: ">0 W", seconds: 10.2 },
+          { label: "≥2000 W", seconds: 17 },
         ],
       },
     });
@@ -2059,27 +2061,27 @@ describe("trackActivityToTrackJson", () => {
 });
 
 describe("training zones", () => {
-  test("classifies Coggan-style power zones", () => {
-    expect(getPowerZone(110, 200)).toBe("z1");
-    expect(getPowerZone(110.1, 200)).toBe("z2");
-    expect(getPowerZone(150, 200)).toBe("z2");
-    expect(getPowerZone(150.1, 200)).toBe("z3");
-    expect(getPowerZone(180, 200)).toBe("z3");
-    expect(getPowerZone(210, 200)).toBe("z4");
-    expect(getPowerZone(240, 200)).toBe("z5");
-    expect(getPowerZone(300, 200)).toBe("z6");
-    expect(getPowerZone(300.1, 200)).toBe("z7");
+  test("classifies lower-inclusive Coggan-style power zones", () => {
+    expect(getPowerZone(111.9, 200)).toBe("z1");
+    expect(getPowerZone(112, 200)).toBe("z2");
+    expect(getPowerZone(151.9, 200)).toBe("z2");
+    expect(getPowerZone(152, 200)).toBe("z3");
+    expect(getPowerZone(181.9, 200)).toBe("z3");
+    expect(getPowerZone(182, 200)).toBe("z4");
+    expect(getPowerZone(212, 200)).toBe("z5");
+    expect(getPowerZone(242, 200)).toBe("z6");
+    expect(getPowerZone(302, 200)).toBe("z7");
   });
 
-  test("classifies LTHR-based heart-rate zones", () => {
-    expect(getHeartRateZone(129.6, 160)).toBe("z1");
-    expect(getHeartRateZone(129.7, 160)).toBe("z2");
-    expect(getHeartRateZone(142.4, 160)).toBe("z2");
-    expect(getHeartRateZone(142.5, 160)).toBe("z3");
-    expect(getHeartRateZone(150.4, 160)).toBe("z3");
-    expect(getHeartRateZone(150.5, 160)).toBe("z4");
-    expect(getHeartRateZone(160, 160)).toBe("z4");
-    expect(getHeartRateZone(160.1, 160)).toBe("z5");
+  test("classifies lower-inclusive LTHR-based heart-rate zones", () => {
+    expect(getHeartRateZone(129.59, 160)).toBe("z1");
+    expect(getHeartRateZone(129.6, 160)).toBe("z2");
+    expect(getHeartRateZone(143.99, 160)).toBe("z2");
+    expect(getHeartRateZone(144, 160)).toBe("z3");
+    expect(getHeartRateZone(150.39, 160)).toBe("z3");
+    expect(getHeartRateZone(150.4, 160)).toBe("z4");
+    expect(getHeartRateZone(159.99, 160)).toBe("z4");
+    expect(getHeartRateZone(160, 160)).toBe("z5");
   });
 
   test("computes timed power zone durations", () => {

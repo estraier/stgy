@@ -137,7 +137,7 @@ export type TrackActivityHistograms = {
 
 export type TrackPowerHistogram = {
   bucketSizeW: number;
-  maxBucketW: number;
+  overflowThresholdW: number;
   totalSeconds: number;
   buckets: TrackPowerHistogramBucket[];
 };
@@ -149,7 +149,7 @@ export type TrackPowerHistogramBucket = {
 
 export type TrackSpeedHistogram = {
   bucketSizeKph: number;
-  maxBucketKph: number;
+  overflowThresholdKph: number;
   totalSeconds: number;
   buckets: TrackSpeedHistogramBucket[];
 };
@@ -161,7 +161,7 @@ export type TrackSpeedHistogramBucket = {
 
 export type TrackCadenceHistogram = {
   bucketSizeRpm: number;
-  maxBucketRpm: number;
+  overflowThresholdRpm: number;
   totalSeconds: number;
   buckets: TrackCadenceHistogramBucket[];
 };
@@ -173,8 +173,8 @@ export type TrackCadenceHistogramBucket = {
 
 export type TrackHeartRateHistogram = {
   bucketSizeBpm: number;
-  firstBucketMaxBpm: number;
-  maxBucketBpm: number;
+  firstThresholdBpm: number;
+  overflowThresholdBpm: number;
   totalSeconds: number;
   buckets: TrackHeartRateHistogramBucket[];
 };
@@ -300,22 +300,22 @@ export function getPowerZone(
   }
 
   const ratio = powerW / ftpW;
-  if (isRatioAtMost(ratio, 0.55)) {
+  if (isRatioBelow(ratio, 0.56)) {
     return "z1";
   }
-  if (isRatioAtMost(ratio, 0.75)) {
+  if (isRatioBelow(ratio, 0.76)) {
     return "z2";
   }
-  if (isRatioAtMost(ratio, 0.9)) {
+  if (isRatioBelow(ratio, 0.91)) {
     return "z3";
   }
-  if (isRatioAtMost(ratio, 1.05)) {
+  if (isRatioBelow(ratio, 1.06)) {
     return "z4";
   }
-  if (isRatioAtMost(ratio, 1.2)) {
+  if (isRatioBelow(ratio, 1.21)) {
     return "z5";
   }
-  if (isRatioAtMost(ratio, 1.5)) {
+  if (isRatioBelow(ratio, 1.51)) {
     return "z6";
   }
 
@@ -332,16 +332,16 @@ export function getHeartRateZone(
   }
 
   const ratio = heartRateBpm / lthrBpm;
-  if (isRatioAtMost(ratio, 0.81)) {
+  if (isRatioBelow(ratio, 0.81)) {
     return "z1";
   }
-  if (isRatioAtMost(ratio, 0.89)) {
+  if (isRatioBelow(ratio, 0.9)) {
     return "z2";
   }
-  if (isRatioAtMost(ratio, 0.94)) {
+  if (isRatioBelow(ratio, 0.94)) {
     return "z3";
   }
-  if (isRatioAtMost(ratio, 1)) {
+  if (isRatioBelow(ratio, 1)) {
     return "z4";
   }
 
@@ -2459,6 +2459,6 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-function isRatioAtMost(value: number, maxInclusive: number): boolean {
-  return value <= maxInclusive + ZONE_RATIO_EPSILON;
+function isRatioBelow(value: number, lowerBoundInclusive: number): boolean {
+  return value + ZONE_RATIO_EPSILON < lowerBoundInclusive;
 }

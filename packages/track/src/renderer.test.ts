@@ -904,7 +904,7 @@ describe("StgyTrackRenderer", () => {
               histograms: {
                 speedKph: {
                   bucketSizeKph: 5,
-                  maxBucketKph: 60,
+                  overflowThresholdKph: 60,
                   totalSeconds: 10,
                   buckets: [{ label: "metadata speed", seconds: 10 }],
                 },
@@ -947,13 +947,13 @@ describe("StgyTrackRenderer", () => {
     expect(overlay?.textContent).toContain("Speed histogram");
     expect(overlay?.textContent).toContain("metadata speed");
     expect(overlay?.textContent).toContain("Cadence histogram");
-    expect(overlay?.textContent).toContain("≤80 rpm");
+    expect(overlay?.textContent).toContain("≥80 rpm");
     expect(overlay?.textContent).toContain(
       "Heart-rate histogram by LTHR 155 bpm",
     );
-    expect(overlay?.textContent).toContain("Z1 ≤81%");
+    expect(overlay?.textContent).toContain("Z1 <81%");
     expect(overlay?.textContent).toContain("Power histogram by FTP 230 W");
-    expect(overlay?.textContent).toContain("Z1 ≤55%");
+    expect(overlay?.textContent).toContain("Z1 <56%");
     expect(overlay?.querySelectorAll(".stgy-track-analysis-histogram")).toHaveLength(6);
     const histograms = Array.from(
       overlay?.querySelectorAll<HTMLElement>(".stgy-track-analysis-histogram") ?? [],

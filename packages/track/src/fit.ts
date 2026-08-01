@@ -1429,15 +1429,15 @@ function readTrackJsonPowerHistogram(
   }
 
   const bucketSizeW = toFiniteNumber(value.bucketSizeW);
-  const maxBucketW = toFiniteNumber(value.maxBucketW);
+  const overflowThresholdW = toFiniteNumber(value.overflowThresholdW);
   const totalSeconds = toFiniteNumber(value.totalSeconds);
   const bucketsValue = value.buckets;
 
   if (
     !isFiniteNumber(bucketSizeW) ||
     bucketSizeW <= 0 ||
-    !isFiniteNumber(maxBucketW) ||
-    maxBucketW <= 0 ||
+    !isFiniteNumber(overflowThresholdW) ||
+    overflowThresholdW <= 0 ||
     !isFiniteNumber(totalSeconds) ||
     totalSeconds <= 0 ||
     !Array.isArray(bucketsValue)
@@ -1455,7 +1455,7 @@ function readTrackJsonPowerHistogram(
 
   return {
     bucketSizeW,
-    maxBucketW,
+    overflowThresholdW,
     totalSeconds,
     buckets,
   };
@@ -1491,15 +1491,15 @@ function readTrackJsonSpeedHistogram(
   }
 
   const bucketSizeKph = toFiniteNumber(value.bucketSizeKph);
-  const maxBucketKph = toFiniteNumber(value.maxBucketKph);
+  const overflowThresholdKph = toFiniteNumber(value.overflowThresholdKph);
   const totalSeconds = toFiniteNumber(value.totalSeconds);
   const bucketsValue = value.buckets;
 
   if (
     !isFiniteNumber(bucketSizeKph) ||
     bucketSizeKph <= 0 ||
-    !isFiniteNumber(maxBucketKph) ||
-    maxBucketKph <= 0 ||
+    !isFiniteNumber(overflowThresholdKph) ||
+    overflowThresholdKph <= 0 ||
     !isFiniteNumber(totalSeconds) ||
     totalSeconds <= 0 ||
     !Array.isArray(bucketsValue)
@@ -1517,7 +1517,7 @@ function readTrackJsonSpeedHistogram(
 
   return {
     bucketSizeKph,
-    maxBucketKph,
+    overflowThresholdKph,
     totalSeconds,
     buckets,
   };
@@ -1531,15 +1531,15 @@ function readTrackJsonCadenceHistogram(
   }
 
   const bucketSizeRpm = toFiniteNumber(value.bucketSizeRpm);
-  const maxBucketRpm = toFiniteNumber(value.maxBucketRpm);
+  const overflowThresholdRpm = toFiniteNumber(value.overflowThresholdRpm);
   const totalSeconds = toFiniteNumber(value.totalSeconds);
   const bucketsValue = value.buckets;
 
   if (
     !isFiniteNumber(bucketSizeRpm) ||
     bucketSizeRpm <= 0 ||
-    !isFiniteNumber(maxBucketRpm) ||
-    maxBucketRpm <= 0 ||
+    !isFiniteNumber(overflowThresholdRpm) ||
+    overflowThresholdRpm <= 0 ||
     !isFiniteNumber(totalSeconds) ||
     totalSeconds <= 0 ||
     !Array.isArray(bucketsValue)
@@ -1557,7 +1557,7 @@ function readTrackJsonCadenceHistogram(
 
   return {
     bucketSizeRpm,
-    maxBucketRpm,
+    overflowThresholdRpm,
     totalSeconds,
     buckets,
   };
@@ -1571,18 +1571,18 @@ function readTrackJsonHeartRateHistogram(
   }
 
   const bucketSizeBpm = toFiniteNumber(value.bucketSizeBpm);
-  const firstBucketMaxBpm = toFiniteNumber(value.firstBucketMaxBpm);
-  const maxBucketBpm = toFiniteNumber(value.maxBucketBpm);
+  const firstThresholdBpm = toFiniteNumber(value.firstThresholdBpm);
+  const overflowThresholdBpm = toFiniteNumber(value.overflowThresholdBpm);
   const totalSeconds = toFiniteNumber(value.totalSeconds);
   const bucketsValue = value.buckets;
 
   if (
     !isFiniteNumber(bucketSizeBpm) ||
     bucketSizeBpm <= 0 ||
-    !isFiniteNumber(firstBucketMaxBpm) ||
-    firstBucketMaxBpm <= 0 ||
-    !isFiniteNumber(maxBucketBpm) ||
-    maxBucketBpm <= firstBucketMaxBpm ||
+    !isFiniteNumber(firstThresholdBpm) ||
+    firstThresholdBpm <= 0 ||
+    !isFiniteNumber(overflowThresholdBpm) ||
+    overflowThresholdBpm <= firstThresholdBpm ||
     !isFiniteNumber(totalSeconds) ||
     totalSeconds <= 0 ||
     !Array.isArray(bucketsValue)
@@ -1600,8 +1600,8 @@ function readTrackJsonHeartRateHistogram(
 
   return {
     bucketSizeBpm,
-    firstBucketMaxBpm,
-    maxBucketBpm,
+    firstThresholdBpm,
+    overflowThresholdBpm,
     totalSeconds,
     buckets,
   };
@@ -2216,7 +2216,10 @@ function buildTrackJsonSpeedHistogram(
 
   return {
     bucketSizeKph: roundNumber(histogram.bucketSizeKph, precision.metadata),
-    maxBucketKph: roundNumber(histogram.maxBucketKph, precision.metadata),
+    overflowThresholdKph: roundNumber(
+      histogram.overflowThresholdKph,
+      precision.metadata,
+    ),
     totalSeconds: roundNumber(histogram.totalSeconds, precision.metadata),
     buckets,
   };
@@ -2237,7 +2240,10 @@ function buildTrackJsonCadenceHistogram(
 
   return {
     bucketSizeRpm: roundNumber(histogram.bucketSizeRpm, precision.metadata),
-    maxBucketRpm: roundNumber(histogram.maxBucketRpm, precision.metadata),
+    overflowThresholdRpm: roundNumber(
+      histogram.overflowThresholdRpm,
+      precision.metadata,
+    ),
     totalSeconds: roundNumber(histogram.totalSeconds, precision.metadata),
     buckets,
   };
@@ -2280,7 +2286,10 @@ function buildTrackJsonPowerHistogram(
 
   return {
     bucketSizeW: roundNumber(histogram.bucketSizeW, precision.metadata),
-    maxBucketW: roundNumber(histogram.maxBucketW, precision.metadata),
+    overflowThresholdW: roundNumber(
+      histogram.overflowThresholdW,
+      precision.metadata,
+    ),
     totalSeconds: roundNumber(histogram.totalSeconds, precision.metadata),
     buckets,
   };
@@ -2302,11 +2311,14 @@ function buildTrackJsonHeartRateHistogram(
 
   return {
     bucketSizeBpm: roundNumber(histogram.bucketSizeBpm, precision.metadata),
-    firstBucketMaxBpm: roundNumber(
-      histogram.firstBucketMaxBpm,
+    firstThresholdBpm: roundNumber(
+      histogram.firstThresholdBpm,
       precision.metadata,
     ),
-    maxBucketBpm: roundNumber(histogram.maxBucketBpm, precision.metadata),
+    overflowThresholdBpm: roundNumber(
+      histogram.overflowThresholdBpm,
+      precision.metadata,
+    ),
     totalSeconds: roundNumber(histogram.totalSeconds, precision.metadata),
     buckets,
   };
