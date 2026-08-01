@@ -248,8 +248,24 @@ describe("display analysis helpers", () => {
 
     const heartRateRows = getHeartRateZoneDisplayRows({
       totalSeconds: 10,
-      durations: { z1: 0, z2: 10, z3: 0, z4: 0, z5: 0 },
-      percentages: { z1: 0, z2: 100, z3: 0, z4: 0, z5: 0 },
+      durations: {
+        z1: 0,
+        z2: 10,
+        z3: 0,
+        z4: 0,
+        z5a: 0,
+        z5b: 0,
+        z5c: 0,
+      },
+      percentages: {
+        z1: 0,
+        z2: 100,
+        z3: 0,
+        z4: 0,
+        z5a: 0,
+        z5b: 0,
+        z5c: 0,
+      },
     }, 150);
     expect(heartRateRows[1]).toEqual({
       label: "Z2 ≥81% LTHR, ≥121.5 bpm",
@@ -257,6 +273,11 @@ describe("display analysis helpers", () => {
       percentage: 100,
       color: "#2fa84f",
     });
+    expect(heartRateRows.slice(4).map((row) => row.label)).toEqual([
+      "Z5a ≥100% LTHR, ≥150 bpm",
+      "Z5b ≥103% LTHR, ≥154.5 bpm",
+      "Z5c ≥107% LTHR, ≥160.5 bpm",
+    ]);
   });
 
   test("formats metadata summary lines for reusable display", () => {

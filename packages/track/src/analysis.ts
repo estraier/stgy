@@ -331,7 +331,9 @@ export function getHeartRateZoneDisplayRows(
   const z2Min = lthrBpm * 0.81;
   const z3Min = lthrBpm * 0.9;
   const z4Min = lthrBpm * 0.94;
-  const z5Min = lthrBpm;
+  const z5aMin = lthrBpm;
+  const z5bMin = lthrBpm * 1.03;
+  const z5cMin = lthrBpm * 1.07;
 
   return [
     createZoneDisplayRow(
@@ -360,8 +362,20 @@ export function getHeartRateZoneDisplayRows(
     ),
     createZoneDisplayRow(
       summary,
-      "z5",
-      `Z5 ≥100% LTHR, ≥${formatZoneLimit(z5Min)} bpm`,
+      "z5a",
+      `Z5a ≥100% LTHR, ≥${formatZoneLimit(z5aMin)} bpm`,
+      "#e14545",
+    ),
+    createZoneDisplayRow(
+      summary,
+      "z5b",
+      `Z5b ≥103% LTHR, ≥${formatZoneLimit(z5bMin)} bpm`,
+      "#e14545",
+    ),
+    createZoneDisplayRow(
+      summary,
+      "z5c",
+      `Z5c ≥107% LTHR, ≥${formatZoneLimit(z5cMin)} bpm`,
       "#e14545",
     ),
   ];

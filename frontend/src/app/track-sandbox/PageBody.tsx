@@ -1152,7 +1152,7 @@ function ZoneBars({ title, rows }: { title: string; rows: ZoneRow[] }) {
 
 
 function formatZoneBarLabel(label: string): string {
-  const match = /^(Z\d+)\s+[^,]+,\s+([<≥].+)$/.exec(label);
+  const match = /^(Z\d+[abc]?)\s+[^,]+,\s+([<≥].+)$/.exec(label);
   return match ? `${match[1]}: ${match[2]}` : label;
 }
 

@@ -647,7 +647,9 @@ use the same lower-inclusive, upper-exclusive rule.
 | Z2 | >= 81% and < 90% LTHR |
 | Z3 | >= 90% and < 94% LTHR |
 | Z4 | >= 94% and < 100% LTHR |
-| Z5 | >= 100% LTHR |
+| Z5a | >= 100% and < 103% LTHR |
+| Z5b | >= 103% and < 107% LTHR |
+| Z5c | >= 107% LTHR |
 
 ## Privacy obfuscation
 

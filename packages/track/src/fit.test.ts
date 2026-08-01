@@ -2073,7 +2073,7 @@ describe("training zones", () => {
     expect(getPowerZone(302, 200)).toBe("z7");
   });
 
-  test("classifies lower-inclusive LTHR-based heart-rate zones", () => {
+  test("classifies lower-inclusive Friel LTHR heart-rate zones", () => {
     expect(getHeartRateZone(129.59, 160)).toBe("z1");
     expect(getHeartRateZone(129.6, 160)).toBe("z2");
     expect(getHeartRateZone(143.99, 160)).toBe("z2");
@@ -2081,7 +2081,11 @@ describe("training zones", () => {
     expect(getHeartRateZone(150.39, 160)).toBe("z3");
     expect(getHeartRateZone(150.4, 160)).toBe("z4");
     expect(getHeartRateZone(159.99, 160)).toBe("z4");
-    expect(getHeartRateZone(160, 160)).toBe("z5");
+    expect(getHeartRateZone(160, 160)).toBe("z5a");
+    expect(getHeartRateZone(164.79, 160)).toBe("z5a");
+    expect(getHeartRateZone(164.8, 160)).toBe("z5b");
+    expect(getHeartRateZone(171.19, 160)).toBe("z5b");
+    expect(getHeartRateZone(171.2, 160)).toBe("z5c");
   });
 
   test("computes timed power zone durations", () => {
@@ -2110,20 +2114,26 @@ describe("training zones", () => {
   test("computes timed heart-rate zone durations", () => {
     const points: TrackPoint[] = [
       { time: 0, speedMps: 5, heartRateBpm: 120 },
-      { time: 10, speedMps: 5, heartRateBpm: 140 },
-      { time: 20, speedMps: 5, heartRateBpm: 155 },
-      { time: 30, speedMps: 5, heartRateBpm: 170 },
+      { time: 10, speedMps: 5, heartRateBpm: 130 },
+      { time: 20, speedMps: 5, heartRateBpm: 145 },
+      { time: 30, speedMps: 5, heartRateBpm: 155 },
+      { time: 40, speedMps: 5, heartRateBpm: 160 },
+      { time: 50, speedMps: 5, heartRateBpm: 165 },
+      { time: 60, speedMps: 5, heartRateBpm: 172 },
+      { time: 70, speedMps: 5, heartRateBpm: 180 },
     ];
 
     const summary = computeHeartRateZoneSummary(points, 160);
 
-    expect(summary.totalSeconds).toBe(30);
+    expect(summary.totalSeconds).toBe(70);
     expect(summary.durations).toEqual({
       z1: 10,
       z2: 10,
-      z3: 0,
+      z3: 10,
       z4: 10,
-      z5: 0,
+      z5a: 10,
+      z5b: 10,
+      z5c: 10,
     });
   });
 });

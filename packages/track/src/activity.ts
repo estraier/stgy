@@ -34,7 +34,9 @@ const HEART_RATE_ZONE_KEYS: TrackHeartRateZoneKey[] = [
   "z2",
   "z3",
   "z4",
-  "z5",
+  "z5a",
+  "z5b",
+  "z5c",
 ];
 const ZONE_RATIO_EPSILON = 1e-12;
 const RESERVED_METRIC_NAMES = new Set([
@@ -211,7 +213,14 @@ export type TrackActivityPedalingSidePercentages = {
 };
 
 export type TrackPowerZoneKey = "z1" | "z2" | "z3" | "z4" | "z5" | "z6" | "z7";
-export type TrackHeartRateZoneKey = "z1" | "z2" | "z3" | "z4" | "z5";
+export type TrackHeartRateZoneKey =
+  | "z1"
+  | "z2"
+  | "z3"
+  | "z4"
+  | "z5a"
+  | "z5b"
+  | "z5c";
 
 export type TrackPowerZoneSummary = TrackZoneSummary<TrackPowerZoneKey>;
 export type TrackHeartRateZoneSummary = TrackZoneSummary<TrackHeartRateZoneKey>;
@@ -344,8 +353,14 @@ export function getHeartRateZone(
   if (isRatioBelow(ratio, 1)) {
     return "z4";
   }
+  if (isRatioBelow(ratio, 1.03)) {
+    return "z5a";
+  }
+  if (isRatioBelow(ratio, 1.07)) {
+    return "z5b";
+  }
 
-  return "z5";
+  return "z5c";
 }
 
 export function computePowerZoneSummary(

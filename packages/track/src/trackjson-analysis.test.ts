@@ -92,6 +92,9 @@ describe("getTrackJsonHistogramDisplays", () => {
       rows: expect.arrayContaining([
         expect.objectContaining({ label: "Z1 <81%", seconds: 10 }),
         expect.objectContaining({ label: "Z4 ≥94%", seconds: 10 }),
+        expect.objectContaining({ label: "Z5a ≥100%" }),
+        expect.objectContaining({ label: "Z5b ≥103%" }),
+        expect.objectContaining({ label: "Z5c ≥107%" }),
       ]),
     }));
     expect(displays[4]).toEqual(expect.objectContaining({

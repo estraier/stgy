@@ -233,8 +233,8 @@ describe("makePostIdFromDateString", () => {
     );
   });
 
-  test("returns null for an invalid or negative date", () => {
-    expect(makePostIdFromDateString("invalid")).toBe(null);
-    expect(makePostIdFromDateString("1900-01-01T00:00:00Z")).toBe(null);
+  test("returns undefined for an invalid or negative date", () => {
+    expect(makePostIdFromDateString("invalid")).toBeUndefined();
+    expect(makePostIdFromDateString("1900-01-01T00:00:00Z")).toBeUndefined();
   });
 });

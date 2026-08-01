@@ -184,13 +184,13 @@ export function parseBodyAndTags(body: string): {
   return { content, tags, attrs };
 }
 
-export function makePostIdFromDateString(str: string): string | null {
+export function makePostIdFromDateString(str: string): string | undefined {
   const date = parseDateString(str);
-  if (!date) return null;
+  if (!date) return undefined;
   const milliseconds = date.getTime();
-  if (!Number.isSafeInteger(milliseconds) || milliseconds < 0) return null;
+  if (!Number.isSafeInteger(milliseconds) || milliseconds < 0) return undefined;
   const id = BigInt(milliseconds) << BigInt(20);
-  if (id > BigInt("0xFFFFFFFFFFFFFFFF")) return null;
+  if (id > BigInt("0xFFFFFFFFFFFFFFFF")) return undefined;
   return id.toString(16).padStart(16, "0").toUpperCase();
 }
 

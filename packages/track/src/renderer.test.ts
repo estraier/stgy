@@ -952,6 +952,9 @@ describe("StgyTrackRenderer", () => {
       "Heart-rate histogram by LTHR 155 bpm",
     );
     expect(overlay?.textContent).toContain("Z1 <81%");
+    expect(overlay?.textContent).toContain("Z5a ≥100%");
+    expect(overlay?.textContent).toContain("Z5b ≥103%");
+    expect(overlay?.textContent).toContain("Z5c ≥107%");
     expect(overlay?.textContent).toContain("Power histogram by FTP 230 W");
     expect(overlay?.textContent).toContain("Z1 <56%");
     expect(overlay?.querySelectorAll(".stgy-track-analysis-histogram")).toHaveLength(6);
