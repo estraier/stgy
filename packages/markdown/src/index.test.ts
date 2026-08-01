@@ -2866,6 +2866,13 @@ describe("mdRenderMarkdown basics", () => {
 });
 
 describe("mdRenderMarkdown from HTML", () => {
+  it("restores an uncaptioned track map", () => {
+    const html =
+      '<figure class="stgy-track-map" data-src="/maps/ride.trjgz">' +
+      '<div class="stgy-track-canvas"></div></figure>';
+    expect(makeMarkdownFromHtml(html)).toBe("@[](/maps/ride.trjgz)\n");
+  });
+
   it("restores LTHR and FTP track options", () => {
     const html =
       '<figure class="stgy-track-map" data-src="/maps/ride.trjgz" ' +

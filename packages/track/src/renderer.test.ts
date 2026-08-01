@@ -895,6 +895,12 @@ describe("StgyTrackRenderer", () => {
           properties: {
             metadata: {
               totalDistanceM: 50,
+              bestEfforts: {
+                powerW: {
+                  5: 300,
+                  60: 220,
+                },
+              },
               histograms: {
                 speedKph: {
                   bucketSizeKph: 5,
@@ -965,6 +971,24 @@ describe("StgyTrackRenderer", () => {
     expect(
       overlay?.querySelector(".stgy-track-analysis-row")?.children,
     ).toHaveLength(4);
+    expect(overlay?.textContent).toContain("Power curve");
+    const powerCurve = overlay?.querySelector<SVGSVGElement>(
+      ".stgy-track-analysis-power-curve-svg",
+    );
+    expect(powerCurve).not.toBeNull();
+    expect(
+      powerCurve?.querySelector(".stgy-track-analysis-power-curve-line")
+        ?.getAttribute("points")
+        ?.trim()
+        .split(/\s+/),
+    ).toHaveLength(2);
+    expect(
+      powerCurve?.querySelectorAll(".stgy-track-analysis-power-curve-point"),
+    ).toHaveLength(2);
+    expect(
+      overlay?.querySelector(".stgy-track-analysis-track")?.lastElementChild
+        ?.classList.contains("stgy-track-analysis-power-curve"),
+    ).toBe(true);
 
     overlay
       ?.querySelector<HTMLButtonElement>(".stgy-track-analysis-close")

@@ -1,12 +1,15 @@
 import {
   getActivityHistogramDisplay,
+  getActivityPowerCurvePoints,
   getHeartRateZoneDisplayRows,
   getPowerZoneDisplayRows,
   type TrackAnalysisDisplayRow,
   type TrackHistogramDisplay,
   type TrackHistogramKey,
+  type TrackPowerCurvePoint,
 } from "./analysis";
 import {
+  buildActivityBestEfforts,
   buildActivityHistograms,
   computeHeartRateZoneSummary,
   computePowerZoneSummary,
@@ -31,6 +34,11 @@ export type TrackJsonAnalysisDisplay = {
   title: string;
   color: string;
   rows: TrackAnalysisDisplayRow[];
+};
+
+export type TrackJsonAnalysis = {
+  displays: TrackJsonAnalysisDisplay[];
+  powerCurve: TrackPowerCurvePoint[];
 };
 
 type JsonRecord = Record<string, unknown>;
@@ -226,19 +234,20 @@ const getPowerZoneDisplay = (
 };
 
 /**
- * Builds the compact analysis displays shown by the map renderer.
- * Existing TrackJSON metadata wins per standard histogram; only missing
- * histograms are recomputed from the (possibly downsampled) coordinate data.
+ * Builds the compact analysis shown by the map renderer. Existing TrackJSON
+ * metadata wins per standard histogram and for the power curve; only missing
+ * values are recomputed from the (possibly downsampled) coordinate data.
  * LTHR/FTP zone displays are always computed from the available timed points
  * because their thresholds are supplied by the embedding document.
  */
-export function getTrackJsonHistogramDisplays(
+export function getTrackJsonAnalysis(
   data: unknown,
   options: TrackJsonAnalysisOptions = {},
-): TrackJsonAnalysisDisplay[] {
+): TrackJsonAnalysis {
   const features = getLineStringFeatures(data);
   const metadata = getTrackJsonMetadata(data, features);
   const metadataDisplays = new Map<TrackHistogramKey, TrackHistogramDisplay>();
+  const metadataPowerCurve = getActivityPowerCurvePoints(metadata);
   const lthrBpm = toPositiveFiniteNumber(options.lthrBpm);
   const ftpW = toPositiveFiniteNumber(options.ftpW);
 
@@ -252,8 +261,12 @@ export function getTrackJsonHistogramDisplays(
   const needsComputedHistograms = HISTOGRAM_KEYS.some(
     (key) => !metadataDisplays.has(key),
   );
+  const needsComputedPowerCurve = metadataPowerCurve.length === 0;
   const needsPoints =
-    needsComputedHistograms || lthrBpm !== undefined || ftpW !== undefined;
+    needsComputedHistograms ||
+    needsComputedPowerCurve ||
+    lthrBpm !== undefined ||
+    ftpW !== undefined;
   const points = needsPoints ? getTrackJsonPoints(features) : [];
   const computedHistograms = needsComputedHistograms
     ? buildActivityHistograms(points)
@@ -282,5 +295,27 @@ export function getTrackJsonHistogramDisplays(
     }
   });
 
-  return displays;
+  const computedBestEfforts = needsComputedPowerCurve
+    ? buildActivityBestEfforts(points)
+    : undefined;
+  const powerCurve = metadataPowerCurve.length > 0
+    ? metadataPowerCurve
+    : getActivityPowerCurvePoints(
+      computedBestEfforts ? { bestEfforts: computedBestEfforts } : undefined,
+    );
+
+  return { displays, powerCurve };
+}
+
+export function getTrackJsonHistogramDisplays(
+  data: unknown,
+  options: TrackJsonAnalysisOptions = {},
+): TrackJsonAnalysisDisplay[] {
+  return getTrackJsonAnalysis(data, options).displays;
+}
+
+export function getTrackJsonPowerCurvePoints(
+  data: unknown,
+): TrackPowerCurvePoint[] {
+  return getTrackJsonAnalysis(data).powerCurve;
 }

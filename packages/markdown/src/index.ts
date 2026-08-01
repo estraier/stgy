@@ -2168,7 +2168,14 @@ export function parseHtml(
       kids = removeEmptyTextNodes(kids);
       let el = e(tag, kids, n.attrs);
       el = flattenSameMarksOnce(el);
-      if (isDroppableWhenEmpty(tag) && el.children.length === 0) {
+      const classNames = String(el.attrs?.class || "").split(/\s+/);
+      const isTrackFigure =
+        tag === "figure" && classNames.includes("stgy-track-map");
+      if (
+        isDroppableWhenEmpty(tag) &&
+        el.children.length === 0 &&
+        !isTrackFigure
+      ) {
         continue;
       }
       out.push(el);

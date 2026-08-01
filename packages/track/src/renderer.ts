@@ -4,8 +4,9 @@ import { TrackLoader } from "./loader";
 import { getTrackJsonDisplayMetadataLines } from "./metadata";
 import { getFiniteNumberRange } from "./numeric";
 import { getTrackJsonTitle } from "./trackjson";
+import type { TrackPowerCurvePoint } from "./analysis";
 import {
-  getTrackJsonHistogramDisplays,
+  getTrackJsonAnalysis,
   type TrackJsonAnalysisDisplay,
 } from "./trackjson-analysis";
 
@@ -228,6 +229,7 @@ type PreloadedTrackData = {
 type TrackAnalysisOverlaySection = {
   title?: string;
   displays: TrackJsonAnalysisDisplay[];
+  powerCurve: TrackPowerCurvePoint[];
 };
 
 type JsonRecord = Record<string, unknown>;
@@ -949,8 +951,8 @@ export class StgyTrackRenderer {
     options: { lthrBpm?: number; ftpW?: number } = {},
   ): TrackAnalysisOverlaySection[] {
     return loadedTracks.flatMap((loadedTrack, index) => {
-      const displays = getTrackJsonHistogramDisplays(loadedTrack.data, options);
-      if (displays.length === 0) {
+      const analysis = getTrackJsonAnalysis(loadedTrack.data, options);
+      if (analysis.displays.length === 0 && analysis.powerCurve.length === 0) {
         return [];
       }
 
@@ -958,9 +960,149 @@ export class StgyTrackRenderer {
         ...(loadedTracks.length > 1
           ? { title: getTrackJsonTitle(loadedTrack.data) || `Track ${index + 1}` }
           : {}),
-        displays,
+        displays: analysis.displays,
+        powerCurve: analysis.powerCurve,
       }];
     });
+  }
+
+  private formatAnalysisPowerCurveDuration(seconds: number): string {
+    if (seconds < 60) {
+      return `${Math.round(seconds)}s`;
+    }
+    if (seconds < 3600) {
+      const minutes = seconds / 60;
+      return `${Number.isInteger(minutes) ? minutes : minutes.toFixed(1)}m`;
+    }
+    const hours = seconds / 3600;
+    return `${Number.isInteger(hours) ? hours : hours.toFixed(1)}h`;
+  }
+
+  private createAnalysisPowerCurve(
+    points: TrackPowerCurvePoint[],
+  ): HTMLElement {
+    const section = document.createElement("section");
+    section.className = "stgy-track-analysis-power-curve";
+
+    const title = document.createElement("h4");
+    title.className = "stgy-track-analysis-title";
+    title.textContent = "Power curve";
+    section.appendChild(title);
+
+    const width = 480;
+    const height = 170;
+    const left = 38;
+    const right = 12;
+    const top = 12;
+    const bottom = 28;
+    const plotWidth = width - left - right;
+    const plotHeight = height - top - bottom;
+    const durations = points.map((point) => point.durationSeconds);
+    const minDuration = Math.max(1, Math.min(...durations));
+    const maxDuration = Math.max(minDuration + 1, Math.max(...durations));
+    const maxPower = Math.max(...points.map((point) => point.watts), 1);
+    const yMax = Math.max(50, Math.ceil(maxPower / 50) * 50);
+    const yTicks = Array.from(
+      { length: Math.max(1, Math.floor(yMax / 50)) },
+      (_, index) => (index + 1) * 50,
+    );
+    const minLog = Math.log10(minDuration);
+    const maxLog = Math.log10(maxDuration);
+    const xValue = (seconds: number) => {
+      const ratio = (Math.log10(seconds) - minLog) /
+        Math.max(0.001, maxLog - minLog);
+      return left + ratio * plotWidth;
+    };
+    const yValue = (watts: number) =>
+      top + plotHeight - (watts / yMax) * plotHeight;
+
+    const svgNs = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(svgNs, "svg");
+    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    svg.setAttribute("class", "stgy-track-analysis-power-curve-svg");
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", "Power curve chart");
+
+    const appendLine = (
+      x1: number,
+      y1: number,
+      x2: number,
+      y2: number,
+      className: string,
+    ) => {
+      const line = document.createElementNS(svgNs, "line");
+      line.setAttribute("class", className);
+      line.setAttribute("x1", `${x1}`);
+      line.setAttribute("y1", `${y1}`);
+      line.setAttribute("x2", `${x2}`);
+      line.setAttribute("y2", `${y2}`);
+      svg.appendChild(line);
+    };
+
+    const appendText = (
+      x: number,
+      y: number,
+      text: string,
+      anchor: "start" | "middle" | "end",
+    ) => {
+      const label = document.createElementNS(svgNs, "text");
+      label.setAttribute("class", "stgy-track-analysis-power-curve-label");
+      label.setAttribute("x", `${x}`);
+      label.setAttribute("y", `${y}`);
+      label.setAttribute("text-anchor", anchor);
+      label.textContent = text;
+      svg.appendChild(label);
+    };
+
+    yTicks.forEach((tick) => {
+      const y = yValue(tick);
+      appendLine(left, y, width - right, y,
+        "stgy-track-analysis-power-curve-grid");
+      appendText(left - 6, y + 3, `${tick}`, "end");
+    });
+
+    appendLine(left, top, left, top + plotHeight,
+      "stgy-track-analysis-power-curve-axis");
+    appendLine(left, top + plotHeight, width - right, top + plotHeight,
+      "stgy-track-analysis-power-curve-axis");
+
+    points.forEach((point) => {
+      const x = xValue(point.durationSeconds);
+      appendLine(x, top + plotHeight, x, top + plotHeight + 4,
+        "stgy-track-analysis-power-curve-axis");
+      appendText(
+        x,
+        height - 9,
+        this.formatAnalysisPowerCurveDuration(point.durationSeconds),
+        "middle",
+      );
+    });
+
+    const polyline = document.createElementNS(svgNs, "polyline");
+    polyline.setAttribute("class", "stgy-track-analysis-power-curve-line");
+    polyline.setAttribute(
+      "points",
+      points.map((point) =>
+        `${xValue(point.durationSeconds)},${yValue(point.watts)}`
+      ).join(" "),
+    );
+    svg.appendChild(polyline);
+
+    points.forEach((point) => {
+      const circle = document.createElementNS(svgNs, "circle");
+      circle.setAttribute("class", "stgy-track-analysis-power-curve-point");
+      circle.setAttribute("cx", `${xValue(point.durationSeconds)}`);
+      circle.setAttribute("cy", `${yValue(point.watts)}`);
+      circle.setAttribute("r", "2.5");
+      const tooltip = document.createElementNS(svgNs, "title");
+      tooltip.textContent =
+        `${this.formatAnalysisPowerCurveDuration(point.durationSeconds)} ${Math.round(point.watts)} W`;
+      circle.appendChild(tooltip);
+      svg.appendChild(circle);
+    });
+
+    section.appendChild(svg);
+    return section;
   }
 
   private createAnalysisOverlay(
@@ -1048,6 +1190,11 @@ export class StgyTrackRenderer {
       });
 
       trackSection.appendChild(grid);
+      if (analysisSection.powerCurve.length > 0) {
+        trackSection.appendChild(
+          this.createAnalysisPowerCurve(analysisSection.powerCurve),
+        );
+      }
       content.appendChild(trackSection);
     });
 

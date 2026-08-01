@@ -1,4 +1,7 @@
-import { getTrackJsonHistogramDisplays } from "./trackjson-analysis";
+import {
+  getTrackJsonAnalysis,
+  getTrackJsonHistogramDisplays,
+} from "./trackjson-analysis";
 
 describe("getTrackJsonHistogramDisplays", () => {
   test("prefers metadata histograms and computes only missing ones", () => {
@@ -98,6 +101,74 @@ describe("getTrackJsonHistogramDisplays", () => {
         expect.objectContaining({ label: "Z3 ≤90%", seconds: 10 }),
       ]),
     }));
+  });
+
+
+  test("prefers metadata power curve and recomputes it when missing", () => {
+    const metadataAnalysis = getTrackJsonAnalysis({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: [
+              [139, 35],
+              [139.001, 35.001],
+            ],
+          },
+          properties: {
+            metadata: {
+              bestEfforts: {
+                powerW: {
+                  5: 410,
+                  60: 300,
+                },
+              },
+            },
+            coordinateProperties: {
+              times: [0, 60],
+              speeds: [18, 18],
+              powers: [100, 100],
+            },
+          },
+        },
+      ],
+    });
+
+    expect(metadataAnalysis.powerCurve).toEqual([
+      { durationSeconds: 5, watts: 410 },
+      { durationSeconds: 60, watts: 300 },
+    ]);
+
+    const computedAnalysis = getTrackJsonAnalysis({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: [
+              [139, 35],
+              [139.001, 35.001],
+              [139.002, 35.002],
+            ],
+          },
+          properties: {
+            coordinateProperties: {
+              times: [0, 10, 20],
+              speeds: [18, 18, 18],
+              powers: [300, 200, 100],
+            },
+          },
+        },
+      ],
+    });
+
+    expect(computedAnalysis.powerCurve.length).toBeGreaterThan(0);
+    expect(computedAnalysis.powerCurve[0]).toEqual(
+      expect.objectContaining({ durationSeconds: 5 }),
+    );
   });
 
   test("does not add zone displays for invalid thresholds or missing measurements", () => {

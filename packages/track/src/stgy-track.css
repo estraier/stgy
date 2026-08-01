@@ -641,6 +641,52 @@
   text-align: right;
 }
 
+.stgy-track-analysis-power-curve {
+  width: 80%;
+  max-width: 100%;
+  margin: 18px auto 0;
+  padding: 10px 12px 12px;
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.stgy-track-analysis-power-curve-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.stgy-track-analysis-power-curve-axis {
+  stroke: rgba(255, 255, 255, 0.72);
+  stroke-width: 1;
+}
+
+.stgy-track-analysis-power-curve-grid {
+  stroke: rgba(255, 255, 255, 0.16);
+  stroke-width: 1;
+}
+
+.stgy-track-analysis-power-curve-label {
+  fill: rgba(255, 255, 255, 0.78);
+  font: 7px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+}
+
+.stgy-track-analysis-power-curve-line {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 2.6;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.stgy-track-analysis-power-curve-point {
+  fill: #fff;
+}
+
 @media (max-width: 640px) {
   .stgy-track-analysis-dialog {
     padding-right: 12px;
@@ -649,5 +695,9 @@
 
   .stgy-track-analysis-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .stgy-track-analysis-power-curve {
+    width: 100%;
   }
 }
