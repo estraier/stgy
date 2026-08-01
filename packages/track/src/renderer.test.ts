@@ -864,6 +864,106 @@ describe("StgyTrackRenderer", () => {
     expect(overlay?.hidden).toBe(true);
   });
 
+  test("shows compact analysis below Metadata and uses metadata before recomputation", async () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-src="#analysis-track">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    const controlContainer = document.createElement("div");
+    const controlList = document.createElement("section");
+    controlList.className = "leaflet-control-layers-list";
+    controlContainer.appendChild(controlList);
+    jest.spyOn(L.control, "layers").mockReturnValue({
+      addTo: jest.fn().mockReturnThis(),
+      getContainer: jest.fn().mockReturnValue(controlContainer),
+    } as unknown as L.Control.Layers);
+
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: [
+              [139, 35],
+              [139.001, 35.001],
+            ],
+          },
+          properties: {
+            metadata: {
+              totalDistanceM: 50,
+              histograms: {
+                speedKph: {
+                  bucketSizeKph: 5,
+                  maxBucketKph: 60,
+                  totalSeconds: 10,
+                  buckets: [{ label: "metadata speed", seconds: 10 }],
+                },
+              },
+            },
+            coordinateProperties: {
+              times: [0, 10],
+              distances: [0, 50],
+              speeds: [18, 18],
+              cadences: [80, 80],
+            },
+          },
+        },
+      ],
+    });
+
+    renderer.hydrate(document.body);
+    await flushPromises();
+
+    const actions = Array.from(
+      controlList.querySelectorAll<HTMLButtonElement>(
+        ".stgy-track-metadata-control, .stgy-track-analysis-control",
+      ),
+    );
+    expect(actions.map((button) => button.textContent)).toEqual([
+      "Metadata",
+      "Analysis",
+    ]);
+
+    const overlay = document.querySelector<HTMLElement>(
+      ".stgy-track-analysis-overlay",
+    );
+    expect(overlay?.hidden).toBe(true);
+
+    actions[1]?.click();
+
+    expect(overlay?.hidden).toBe(false);
+    expect(overlay?.textContent).toContain("Speed histogram");
+    expect(overlay?.textContent).toContain("metadata speed");
+    expect(overlay?.textContent).toContain("Cadence histogram");
+    expect(overlay?.textContent).toContain("≤80 rpm");
+    expect(overlay?.querySelectorAll(".stgy-track-analysis-histogram")).toHaveLength(2);
+    const histograms = Array.from(
+      overlay?.querySelectorAll<HTMLElement>(".stgy-track-analysis-histogram") ?? [],
+    );
+    expect(histograms[0]?.classList.contains("stgy-track-analysis-histogram")).toBe(true);
+    const barTracks = Array.from(
+      overlay?.querySelectorAll<HTMLElement>(".stgy-track-analysis-bar-track") ?? [],
+    );
+    expect(barTracks.length).toBeGreaterThan(1);
+    const bars = Array.from(
+      overlay?.querySelectorAll<HTMLElement>(".stgy-track-analysis-bar") ?? [],
+    );
+    expect(bars.length).toBeGreaterThan(1);
+    expect(bars[0]?.style.width).toBe("100%");
+    expect(
+      overlay?.querySelector(".stgy-track-analysis-row")?.children,
+    ).toHaveLength(4);
+
+    overlay
+      ?.querySelector<HTMLButtonElement>(".stgy-track-analysis-close")
+      ?.click();
+    expect(overlay?.hidden).toBe(true);
+  });
+
   test("does not add Metadata for TrackJSON without metadata", async () => {
     document.body.innerHTML = `
       <figure class="stgy-track-map" data-src="#plain-track">
@@ -881,6 +981,8 @@ describe("StgyTrackRenderer", () => {
 
     expect((L.control.layers as jest.Mock).mock.calls[0][1]).toBeUndefined();
     expect(document.querySelector(".stgy-track-metadata-overlay")).toBeNull();
+    expect(document.querySelector(".stgy-track-analysis-overlay")).toBeNull();
+    expect(document.querySelector(".stgy-track-analysis-control")).toBeNull();
   });
 
   test("uses data-src bounds for initial center and Japan tile selection", async () => {

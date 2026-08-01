@@ -420,6 +420,25 @@ def resolve_archive_url(data_dir: Path, source_file: Path, url: str) -> Optional
   return candidate
 
 
+def resolve_archive_image_reference(
+  data_dir: Path,
+  source_file: Path,
+  url: str,
+) -> Optional[Path]:
+  candidate = resolve_archive_url(data_dir, source_file, url)
+  if candidate is None:
+    return None
+  images_dir = (data_dir / "images").resolve()
+  try:
+    candidate.relative_to(images_dir)
+  except ValueError:
+    return None
+  if candidate.is_file() or candidate.suffix.lower() == ".webp":
+    return candidate
+  webp_candidate = candidate.with_suffix(".webp")
+  return webp_candidate if webp_candidate.is_file() else candidate
+
+
 def find_track_master(data_dir: Path, preview_path: Path) -> Path:
   previews_dir = (data_dir / "tracks" / "previews").resolve()
   masters_dir = (data_dir / "tracks" / "masters").resolve()
@@ -443,19 +462,14 @@ def collect_media_references(
   data_dir: Path,
   posts: Iterable[ArchivePost],
 ) -> tuple[tuple[Path, ...], tuple[Path, ...], dict[Path, Path]]:
-  images_dir = (data_dir / "images").resolve()
   previews_dir = (data_dir / "tracks" / "previews").resolve()
   image_paths: set[Path] = set()
   track_masters: set[Path] = set()
   preview_to_master: dict[Path, Path] = {}
 
   def add_image_reference(source_file: Path, url: str) -> None:
-    candidate = resolve_archive_url(data_dir, source_file, url)
+    candidate = resolve_archive_image_reference(data_dir, source_file, url)
     if candidate is None:
-      return
-    try:
-      candidate.relative_to(images_dir)
-    except ValueError:
       return
     if not candidate.is_file():
       raise ValueError(f"referenced image not found: {source_file}: {url}")
@@ -586,7 +600,7 @@ def rewrite_map_pin_image_urls(
     def replace_image_url(match: re.Match[str]) -> str:
       nonlocal field_changed
       image_url = match.group(0)
-      candidate = resolve_archive_url(data_dir, source_file, image_url)
+      candidate = resolve_archive_image_reference(data_dir, source_file, image_url)
       replacement = image_urls.get(candidate) if candidate is not None else None
       if replacement is None:
         return image_url
@@ -631,12 +645,14 @@ def rewrite_embeds(
         f"{match.group('suffix')}"
       )
 
-    candidate = resolve_archive_url(data_dir, source_file, stripped_url)
     replacement: Optional[str] = None
-    if candidate is not None:
-      if kind == "!":
+    if kind == "!":
+      candidate = resolve_archive_image_reference(data_dir, source_file, stripped_url)
+      if candidate is not None:
         replacement = image_urls.get(candidate)
-      elif kind == "@":
+    elif kind == "@":
+      candidate = resolve_archive_url(data_dir, source_file, stripped_url)
+      if candidate is not None:
         replacement = track_urls_by_preview.get(candidate)
     if replacement is None:
       return match.group(0)

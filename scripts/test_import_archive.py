@@ -99,6 +99,52 @@ class ImportArchiveMapPinImageTest(unittest.TestCase):
         rewritten,
       )
 
+  def test_uses_webp_when_referenced_image_is_missing(self) -> None:
+    with tempfile.TemporaryDirectory() as temporary_directory:
+      data_dir = Path(temporary_directory).resolve()
+      posts_dir = data_dir / "posts"
+      images_dir = data_dir / "images"
+      posts_dir.mkdir()
+      images_dir.mkdir()
+      post_path = posts_dir / "0001.json"
+      post_path.write_text("{}", encoding="utf-8")
+      webp_image = images_dir / "photo.webp"
+      webp_image.write_bytes(b"webp")
+      content = (
+        "![Photo](../images/photo.jpg)\n"
+        "@[Map](map://139,35,13|139,35;Photo;;;../images/photo.png)"
+      )
+      post = MODULE.ArchivePost(
+        path=post_path,
+        data={"id": "0000000000000001", "content": content},
+      )
+
+      image_paths, track_paths, preview_to_master = MODULE.collect_media_references(
+        data_dir,
+        [post],
+      )
+
+      self.assertEqual(image_paths, (webp_image,))
+      self.assertEqual(track_paths, ())
+      self.assertEqual(preview_to_master, {})
+
+      rewritten = MODULE.rewrite_embeds(
+        content,
+        post_path,
+        data_dir,
+        {webp_image: "/images/OWNER/masters/photo.webp"},
+        {},
+      )
+
+      self.assertIn(
+        "![Photo](/images/OWNER/masters/photo.webp)",
+        rewritten,
+      )
+      self.assertIn(
+        "139,35;Photo;;;/images/OWNER/masters/photo.webp",
+        rewritten,
+      )
+
   def test_collects_and_rewrites_track_source_with_pin_images(self) -> None:
     with tempfile.TemporaryDirectory() as temporary_directory:
       data_dir = Path(temporary_directory).resolve()

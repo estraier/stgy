@@ -4,6 +4,8 @@ import { TrackLoader } from "./loader";
 import { getTrackJsonDisplayMetadataLines } from "./metadata";
 import { getFiniteNumberRange } from "./numeric";
 import { getTrackJsonTitle } from "./trackjson";
+import { getTrackJsonHistogramDisplays } from "./trackjson-analysis";
+import type { TrackHistogramDisplay } from "./analysis";
 
 const DEFAULT_PIN_COLOR = "#3388ff";
 const DEFAULT_ROUTE_COLOR = "#0078A8";
@@ -48,6 +50,9 @@ const formatMapCoordinateCopyText = (latitude: number, longitude: number) =>
   `${longitude.toFixed(5)},${latitude.toFixed(5)}`;
 
 const COORDINATE_COPY_FEEDBACK_DURATION_MS = 1000;
+
+const ANALYSIS_BAR_COLUMNS = 20;
+
 
 const copyTextToClipboard = async (text: string): Promise<void> => {
   if (navigator.clipboard?.writeText) {
@@ -216,6 +221,11 @@ type AutoMapView = {
 type PreloadedTrackData = {
   source: string;
   data: unknown;
+};
+
+type TrackAnalysisOverlaySection = {
+  title?: string;
+  displays: TrackHistogramDisplay[];
 };
 
 type JsonRecord = Record<string, unknown>;
@@ -481,6 +491,7 @@ export class StgyTrackRenderer {
       this.removeGraphPanel(figure);
       this.removeGraphRestoreButton(figure);
       this.removeMetadataOverlay(figure);
+      this.removeAnalysisOverlay(figure);
       this.removeDownloadActions(figure);
       delete figure.dataset.stgyTrackInitialized;
     });
@@ -913,6 +924,182 @@ export class StgyTrackRenderer {
     });
 
     return sections.length > 0 ? sections.join("\n\n") : undefined;
+  }
+
+  private removeAnalysisOverlay(figure: HTMLElement) {
+    figure
+      .querySelectorAll(".stgy-track-analysis-overlay")
+      .forEach((node) => node.remove());
+  }
+
+  private buildAnalysisOverlaySections(
+    loadedTracks: PreloadedTrackData[],
+  ): TrackAnalysisOverlaySection[] {
+    return loadedTracks.flatMap((loadedTrack, index) => {
+      const displays = getTrackJsonHistogramDisplays(loadedTrack.data);
+      if (displays.length === 0) {
+        return [];
+      }
+
+      return [{
+        ...(loadedTracks.length > 1
+          ? { title: getTrackJsonTitle(loadedTrack.data) || `Track ${index + 1}` }
+          : {}),
+        displays,
+      }];
+    });
+  }
+
+  private createAnalysisOverlay(
+    canvas: HTMLElement,
+    sections: TrackAnalysisOverlaySection[],
+  ): HTMLElement {
+    canvas
+      .querySelectorAll(".stgy-track-analysis-overlay")
+      .forEach((node) => node.remove());
+
+    const overlay = document.createElement("div");
+    overlay.className = "stgy-track-analysis-overlay";
+    overlay.hidden = true;
+    overlay.setAttribute("aria-hidden", "true");
+
+    const dialog = document.createElement("div");
+    dialog.className = "stgy-track-analysis-dialog";
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+    dialog.setAttribute("aria-label", "Track analysis");
+
+    const closeButton = this.createGraphToggleButton(
+      "close",
+      "Close analysis",
+    );
+    closeButton.classList.add("stgy-track-analysis-close");
+
+    const content = document.createElement("div");
+    content.className = "stgy-track-analysis-content";
+
+    sections.forEach((analysisSection) => {
+      const trackSection = document.createElement("section");
+      trackSection.className = "stgy-track-analysis-track";
+
+      if (analysisSection.title) {
+        const trackTitle = document.createElement("h3");
+        trackTitle.className = "stgy-track-analysis-track-title";
+        trackTitle.textContent = analysisSection.title;
+        trackSection.appendChild(trackTitle);
+      }
+
+      const grid = document.createElement("div");
+      grid.className = "stgy-track-analysis-grid";
+
+      analysisSection.displays.forEach((display) => {
+        const histogram = document.createElement("section");
+        histogram.className = "stgy-track-analysis-histogram";
+
+        const title = document.createElement("h4");
+        title.className = "stgy-track-analysis-title";
+        title.textContent = display.title;
+        histogram.appendChild(title);
+
+        display.rows.forEach((row) => {
+          const item = document.createElement("div");
+          item.className = "stgy-track-analysis-row";
+
+          const label = document.createElement("span");
+          label.className = "stgy-track-analysis-label";
+          label.textContent = row.label;
+          label.title = row.label;
+
+          const barTrack = document.createElement("div");
+          barTrack.className = "stgy-track-analysis-bar-track";
+          barTrack.setAttribute("aria-hidden", "true");
+
+          const bar = document.createElement("div");
+          bar.className = "stgy-track-analysis-bar";
+          bar.style.width = `${Math.max(0, Math.min(100, row.percentage))}%`;
+          barTrack.appendChild(bar);
+
+          const percentage = document.createElement("span");
+          percentage.className = "stgy-track-analysis-percentage";
+          percentage.textContent = `${row.percentage.toFixed(1)}%`;
+
+          const duration = document.createElement("span");
+          duration.className = "stgy-track-analysis-duration";
+          duration.textContent = this.formatElapsedDuration(row.seconds);
+
+          item.append(label, barTrack, percentage, duration);
+          histogram.appendChild(item);
+        });
+
+        grid.appendChild(histogram);
+      });
+
+      trackSection.appendChild(grid);
+      content.appendChild(trackSection);
+    });
+
+    dialog.append(closeButton, content);
+    overlay.appendChild(dialog);
+    canvas.appendChild(overlay);
+
+    const close = () => this.setAnalysisOverlayOpen(overlay, false);
+    closeButton.addEventListener("click", close);
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) {
+        close();
+      }
+    });
+    overlay.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        close();
+      }
+    });
+
+    L.DomEvent.disableClickPropagation(dialog);
+    L.DomEvent.disableScrollPropagation(dialog);
+    return overlay;
+  }
+
+  private setAnalysisOverlayOpen(overlay: HTMLElement, open: boolean) {
+    overlay.hidden = !open;
+    overlay.setAttribute("aria-hidden", open ? "false" : "true");
+    if (open) {
+      overlay
+        .querySelector<HTMLButtonElement>(".stgy-track-analysis-close")
+        ?.focus();
+    }
+  }
+
+  private addAnalysisControlAction(
+    layerControl: L.Control.Layers,
+    analysisOverlay: HTMLElement,
+  ) {
+    const container = (layerControl as L.Control.Layers & {
+      getContainer?: () => HTMLElement | undefined;
+    }).getContainer?.();
+    const list = container?.querySelector<HTMLElement>(
+      ".leaflet-control-layers-list",
+    );
+    if (!list) {
+      return;
+    }
+
+    list
+      .querySelectorAll(".stgy-track-analysis-control")
+      .forEach((node) => node.remove());
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "stgy-track-analysis-control";
+    button.textContent = "Analysis";
+    button.setAttribute("aria-haspopup", "dialog");
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.setAnalysisOverlayOpen(analysisOverlay, true);
+    });
+
+    list.appendChild(button);
   }
 
   private removeGraphPanel(figure: HTMLElement) {
@@ -2795,6 +2982,12 @@ export class StgyTrackRenderer {
       ? this.createMetadataOverlay(canvas, metadataText)
       : null;
 
+    this.removeAnalysisOverlay(figure);
+    const analysisSections = this.buildAnalysisOverlaySections(preloadedTracks);
+    const analysisOverlay = analysisSections.length > 0
+      ? this.createAnalysisOverlay(canvas, analysisSections)
+      : null;
+
     this.removeGraphRestoreButton(figure);
     const graphRestoreButton = showGraph
       ? this.createGraphToggleButton("graph", "Show graph")
@@ -2810,6 +3003,9 @@ export class StgyTrackRenderer {
       layerControl.addTo(map);
       if (metadataOverlay) {
         this.addMetadataControlAction(layerControl, metadataOverlay);
+      }
+      if (analysisOverlay) {
+        this.addAnalysisControlAction(layerControl, analysisOverlay);
       }
     }
 
