@@ -137,6 +137,65 @@ describe("article utils (normal cases)", () => {
     expect(html).toContain('src="https://cdn.test/images-bkt/u2/thumbs/pic_image.webp"');
   });
 
+  test("makeHtmlFromJsonSnippet can move a leading featured image after h1", () => {
+    const nodes = [
+      {
+        type: "element" as const,
+        tag: "figure",
+        attrs: { class: "featured-block", "data-grid": "" },
+        children: [
+          {
+            type: "element" as const,
+            tag: "img",
+            attrs: { src: "/images/u2/masters/pic.jpg" },
+            children: [],
+          },
+        ],
+      },
+      {
+        type: "element" as const,
+        tag: "h1",
+        children: [{ type: "text" as const, text: "Heading" }],
+      },
+      {
+        type: "element" as const,
+        tag: "p",
+        children: [{ type: "text" as const, text: "Body" }],
+      },
+    ];
+    const snippet = serializeMdNodes(nodes);
+
+    const normalHtml = makeHtmlFromJsonSnippet(snippet, "normal-h");
+    expect(normalHtml.indexOf("<figure")).toBeLessThan(normalHtml.indexOf("<h1"));
+
+    const sidebarHtml = makeHtmlFromJsonSnippet(snippet, "sidebar-h", {
+      moveLeadingFeaturedAfterHeading: true,
+    });
+    expect(sidebarHtml.indexOf("<h1")).toBeLessThan(sidebarHtml.indexOf("<figure"));
+    expect(sidebarHtml.indexOf("<figure")).toBeLessThan(sidebarHtml.indexOf("<p>"));
+  });
+
+  test("makeHtmlFromJsonSnippet does not move other leading figures", () => {
+    const nodes = [
+      {
+        type: "element" as const,
+        tag: "figure",
+        attrs: { class: "image-block" },
+        children: [],
+      },
+      {
+        type: "element" as const,
+        tag: "h1",
+        children: [{ type: "text" as const, text: "Heading" }],
+      },
+    ];
+    const snippet = serializeMdNodes(nodes);
+    const html = makeHtmlFromJsonSnippet(snippet, "sidebar-h", {
+      moveLeadingFeaturedAfterHeading: true,
+    });
+    expect(html.indexOf("<figure")).toBeLessThan(html.indexOf("<h1"));
+  });
+
   test("makePubAttributesFromJsonSnippet", () => {
     const nodes = [
       {

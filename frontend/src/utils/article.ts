@@ -122,12 +122,42 @@ export function makePubAttributesFromJsonSnippet(snippet: string): {
   return { title, desc, metadata };
 }
 
-export function makeHtmlFromJsonSnippet(snippet: string, idPrefix?: string) {
+type JsonSnippetHtmlOptions = {
+  moveLeadingFeaturedAfterHeading?: boolean;
+};
+
+export function makeHtmlFromJsonSnippet(
+  snippet: string,
+  idPrefix?: string,
+  options?: JsonSnippetHtmlOptions,
+) {
   let nodes = deserializeMdNodes(snippet);
+  if (options?.moveLeadingFeaturedAfterHeading) {
+    nodes = moveLeadingFeaturedAfterHeading(nodes);
+  }
   nodes = rewriteMediaUrls(nodes, true);
   nodes = mdGroupImageGrid(nodes, { maxElements: 5 });
   nodes = mdGroupMapGrid(nodes, { maxElements: 5 });
   return mdRenderHtml(nodes, false, idPrefix);
+}
+
+function moveLeadingFeaturedAfterHeading(nodes: MdNode[]): MdNode[] {
+  if (nodes.length < 2) return nodes;
+
+  const featured = nodes[0];
+  const heading = nodes[1];
+  const featuredClass =
+    featured.type === "element" && typeof featured.attrs?.class === "string"
+      ? featured.attrs.class
+      : "";
+  const isLeadingFeatured =
+    featured.type === "element" &&
+    featured.tag === "figure" &&
+    featuredClass.split(/\s+/).includes("featured-block");
+  const isFollowingHeading = heading.type === "element" && heading.tag === "h1";
+
+  if (!isLeadingFeatured || !isFollowingHeading) return nodes;
+  return [heading, featured, ...nodes.slice(2)];
 }
 
 function rewriteMediaUrls(nodes: MdNode[], useThumbnail: boolean): MdNode[] {

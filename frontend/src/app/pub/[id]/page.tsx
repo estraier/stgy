@@ -228,7 +228,11 @@ export default async function PubPostPage({ params, searchParams }: Props) {
                       const postHref = `/pub/${r.id}${
                         design ? `?design=${encodeURIComponent(design)}` : ""
                       }`;
-                      const snippetHtml = makeHtmlFromJsonSnippet(r.snippet, `p${idx + 1}-h`);
+                      const snippetHtml = makeHtmlFromJsonSnippet(
+                        r.snippet,
+                        `p${idx + 1}-h`,
+                        { moveLeadingFeaturedAfterHeading: true },
+                      );
                       return (
                         <LinkDiv key={String(r.id)} href={postHref} className="link-div">
                           <ArticleWithDecoration
