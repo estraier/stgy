@@ -72,6 +72,7 @@ export default function PageBody() {
 
   const topTriangleRef = useRef<HTMLButtonElement | null>(null);
   const bottomTriangleRef = useRef<HTMLButtonElement | null>(null);
+  const scrollToTriangleRunRef = useRef(0);
   const [topInView, setTopInView] = useState(false);
   const [bottomInView, setBottomInView] = useState(false);
 
@@ -244,30 +245,107 @@ export default function PageBody() {
     };
   }, [postId, post]);
 
-  function scrollToTriangle(target: HTMLButtonElement | null) {
-    if (!target || typeof window === "undefined") return;
-
-    const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
-    const rect = target.getBoundingClientRect();
-    const currentY = window.scrollY || window.pageYOffset;
-    const desiredTop = viewportHeight * 0.4;
-    const targetY = Math.max(0, currentY + rect.top - desiredTop);
-    const startY = currentY;
-    const distance = targetY - startY;
-    const duration = 200;
-    const startTime = performance.now();
-
-    const step = (now: number) => {
-      const elapsed = now - startTime;
-      const t = elapsed >= duration ? 1 : elapsed / duration;
-      const eased = 1 - Math.pow(1 - t, 3);
-      window.scrollTo(0, startY + distance * eased);
-      if (t < 1) {
-        requestAnimationFrame(step);
+  useEffect(() => {
+    const cancelScrollRetries = () => {
+      scrollToTriangleRunRef.current += 1;
+    };
+    const cancelScrollRetriesOnKey = (event: KeyboardEvent) => {
+      if (
+        [
+          "ArrowUp",
+          "ArrowDown",
+          "PageUp",
+          "PageDown",
+          "Home",
+          "End",
+          " ",
+        ].includes(event.key)
+      ) {
+        cancelScrollRetries();
       }
     };
 
-    requestAnimationFrame(step);
+    window.addEventListener("wheel", cancelScrollRetries, { passive: true });
+    window.addEventListener("touchstart", cancelScrollRetries, { passive: true });
+    window.addEventListener("pointerdown", cancelScrollRetries, { passive: true });
+    window.addEventListener("keydown", cancelScrollRetriesOnKey);
+
+    return () => {
+      cancelScrollRetries();
+      window.removeEventListener("wheel", cancelScrollRetries);
+      window.removeEventListener("touchstart", cancelScrollRetries);
+      window.removeEventListener("pointerdown", cancelScrollRetries);
+      window.removeEventListener("keydown", cancelScrollRetriesOnKey);
+    };
+  }, []);
+
+  function scrollToTriangle(target: HTMLButtonElement | null) {
+    if (!target || typeof window === "undefined") return;
+
+    const runId = ++scrollToTriangleRunRef.current;
+    const retryDelays = [200, 400, 800, 1200, 1600];
+    const visibilityMargin = 8;
+
+    const isCurrentRun = () => scrollToTriangleRunRef.current === runId;
+
+    const isTargetVisible = () => {
+      if (!target.isConnected) return true;
+      const viewportHeight =
+        window.innerHeight || document.documentElement.clientHeight;
+      const rect = target.getBoundingClientRect();
+      return (
+        rect.top >= visibilityMargin &&
+        rect.bottom <= viewportHeight - visibilityMargin
+      );
+    };
+
+    const animateToTarget = (onComplete: () => void) => {
+      if (!isCurrentRun() || !target.isConnected) return;
+
+      const viewportHeight =
+        window.innerHeight || document.documentElement.clientHeight;
+      const rect = target.getBoundingClientRect();
+      const currentY = window.scrollY || window.pageYOffset;
+      const desiredTop = viewportHeight * 0.4;
+      const targetY = Math.max(0, currentY + rect.top - desiredTop);
+      const startY = currentY;
+      const distance = targetY - startY;
+      const duration = 200;
+      const startTime = performance.now();
+
+      const step = (now: number) => {
+        if (!isCurrentRun()) return;
+
+        const elapsed = now - startTime;
+        const t = elapsed >= duration ? 1 : elapsed / duration;
+        const eased = 1 - Math.pow(1 - t, 3);
+        window.scrollTo(0, startY + distance * eased);
+        if (t < 1) {
+          requestAnimationFrame(step);
+        } else {
+          onComplete();
+        }
+      };
+
+      requestAnimationFrame(step);
+    };
+
+    const scheduleRetry = (retryIndex: number) => {
+      if (retryIndex >= retryDelays.length || !isCurrentRun()) return;
+
+      window.setTimeout(() => {
+        if (!isCurrentRun() || !target.isConnected) return;
+
+        const continueRetries = () => scheduleRetry(retryIndex + 1);
+        if (isTargetVisible()) {
+          continueRetries();
+        } else {
+          animateToTarget(continueRetries);
+        }
+      }, retryDelays[retryIndex]);
+    };
+
+    animateToTarget(() => scheduleRetry(0));
   }
 
   async function handleLike(p: Post) {
