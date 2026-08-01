@@ -47,6 +47,7 @@ export async function searchPosts(params: {
 }
 
 export async function createPost(post: {
+  id?: string;
   content: string;
   tags: string[];
   allowLikes: boolean;

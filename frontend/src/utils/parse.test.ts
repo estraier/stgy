@@ -5,6 +5,7 @@ import {
   serializeUserSearchQuery,
   parseBodyAndTags,
   parseDateString,
+  makePostIdFromDateString,
 } from "./parse";
 
 describe("parsePostSearchQuery", () => {
@@ -164,6 +165,15 @@ describe("parseBodyAndTags", () => {
     expect(result.attrs).toEqual({ noLikes: true, noReplies: true });
   });
 
+  test("extracts locale and date attributes from trailing special tags", () => {
+    const input = "body\n#[locale=en], #[date=2026-08-01T22:33:44+09:00]";
+    expect(parseBodyAndTags(input)).toEqual({
+      content: "body",
+      tags: [],
+      attrs: { locale: "en", date: "2026-08-01T22:33:44+09:00" },
+    });
+  });
+
   test("inline # in the middle is not treated as trailing tag line", () => {
     const input = "line1\n#notatag\nend";
     const result = parseBodyAndTags(input);
@@ -213,5 +223,18 @@ describe("parseDateString", () => {
   test("invalid data", () => {
     expect(parseDateString("")).toBe(null);
     expect(parseDateString("abc")).toBe(null);
+  });
+});
+
+describe("makePostIdFromDateString", () => {
+  test("creates a lower-bound post ID from the specified instant", () => {
+    expect(makePostIdFromDateString("2026-08-01T22:33:44+09:00")).toBe(
+      "19FBD87D6C000000",
+    );
+  });
+
+  test("returns null for an invalid or negative date", () => {
+    expect(makePostIdFromDateString("invalid")).toBe(null);
+    expect(makePostIdFromDateString("1900-01-01T00:00:00Z")).toBe(null);
   });
 });

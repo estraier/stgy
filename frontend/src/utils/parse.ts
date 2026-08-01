@@ -167,8 +167,11 @@ export function parseBodyAndTags(body: string): {
   const tags: string[] = [];
   for (const t of collectedTags) {
     const localeMatch = t.match(/^\[locale=(.*)\]$/);
+    const dateMatch = t.match(/^\[date=(.*)\]$/);
     if (localeMatch) {
       attrs.locale = localeMatch[1];
+    } else if (dateMatch) {
+      attrs.date = dateMatch[1];
     } else if (t === "[nolikes]") {
       attrs.noLikes = true;
     } else if (t === "[noreplies]") {
@@ -179,6 +182,16 @@ export function parseBodyAndTags(body: string): {
   }
   const content = bodyLines.join("\n");
   return { content, tags, attrs };
+}
+
+export function makePostIdFromDateString(str: string): string | null {
+  const date = parseDateString(str);
+  if (!date) return null;
+  const milliseconds = date.getTime();
+  if (!Number.isSafeInteger(milliseconds) || milliseconds < 0) return null;
+  const id = BigInt(milliseconds) << BigInt(20);
+  if (id > BigInt("0xFFFFFFFFFFFFFFFF")) return null;
+  return id.toString(16).padStart(16, "0").toUpperCase();
 }
 
 export function parseDateString(str: string): Date | null {

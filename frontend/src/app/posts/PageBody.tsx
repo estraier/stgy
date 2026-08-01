@@ -16,7 +16,7 @@ import { listUsers } from "@/api/users";
 import type { Post } from "@/api/models";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
-import { parseBodyAndTags } from "@/utils/parse";
+import { makePostIdFromDateString, parseBodyAndTags } from "@/utils/parse";
 import { parsePostSearchQuery, serializePostSearchQuery } from "@/utils/parse";
 import PostCard from "@/components/PostCard";
 import PostForm from "@/components/PostForm";
@@ -393,7 +393,14 @@ export default function PageBody() {
       const allowLikes = attrs.noLikes === true ? false : true;
       const allowReplies = attrs.noReplies === true ? false : true;
       const locale = typeof attrs.locale === "string" ? attrs.locale : null;
-      await createPost({ content, tags, allowLikes, allowReplies, locale });
+      const id =
+        isAdmin && typeof attrs.date === "string"
+          ? makePostIdFromDateString(attrs.date)
+          : undefined;
+      if (isAdmin && typeof attrs.date === "string" && !id) {
+        throw new Error("Invalid date.");
+      }
+      await createPost({ id, content, tags, allowLikes, allowReplies, locale });
       setBody("");
       setQuery({
         tab: "following",
@@ -440,7 +447,14 @@ export default function PageBody() {
       const allowLikes = attrs.noLikes === true ? false : true;
       const allowReplies = attrs.noReplies === true ? false : true;
       const locale = typeof attrs.locale === "string" ? attrs.locale : null;
-      await createPost({ content, tags, replyTo, allowLikes, allowReplies, locale });
+      const id =
+        isAdmin && typeof attrs.date === "string"
+          ? makePostIdFromDateString(attrs.date)
+          : undefined;
+      if (isAdmin && typeof attrs.date === "string" && !id) {
+        throw new Error("Invalid date.");
+      }
+      await createPost({ id, content, tags, replyTo, allowLikes, allowReplies, locale });
       setReplyBody("");
       setReplyTo(null);
       setTimeout(() => fetchPostsRef.current && fetchPostsRef.current(), 100);

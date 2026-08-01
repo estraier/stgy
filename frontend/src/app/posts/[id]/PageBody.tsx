@@ -17,7 +17,7 @@ import { useRequireLogin } from "@/hooks/useRequireLogin";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import PostCard from "@/components/PostCard";
 import PostForm from "@/components/PostForm";
-import { parseBodyAndTags } from "@/utils/parse";
+import { makePostIdFromDateString, parseBodyAndTags } from "@/utils/parse";
 
 export default function PageBody() {
   const params = useParams();
@@ -513,7 +513,22 @@ export default function PageBody() {
       const allowLikes = attrs.noLikes === true ? false : true;
       const allowReplies = attrs.noReplies === true ? false : true;
       const locale = typeof attrs.locale === "string" ? attrs.locale : null;
-      await createPost({ content, tags, replyTo: replyingTo, allowLikes, allowReplies, locale });
+      const id =
+        isAdmin && typeof attrs.date === "string"
+          ? makePostIdFromDateString(attrs.date)
+          : undefined;
+      if (isAdmin && typeof attrs.date === "string" && !id) {
+        throw new Error("Invalid date.");
+      }
+      await createPost({
+        id,
+        content,
+        tags,
+        replyTo: replyingTo,
+        allowLikes,
+        allowReplies,
+        locale,
+      });
       setReplyBody("");
       setReplyingTo(null);
 

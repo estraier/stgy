@@ -11,7 +11,7 @@ import UserCard from "@/components/UserCard";
 import UserForm from "@/components/UserForm";
 import PostCard from "@/components/PostCard";
 import PostForm from "@/components/PostForm";
-import { parseBodyAndTags } from "@/utils/parse";
+import { makePostIdFromDateString, parseBodyAndTags } from "@/utils/parse";
 
 const TAB_VALUES = ["posts", "replies", "followers", "followees"] as const;
 
@@ -339,7 +339,14 @@ export default function PageBody() {
       const allowLikes = !(attrs && (attrs["noLikes"] === true || attrs["nolikes"] === true));
       const allowReplies = !(attrs && (attrs["noReplies"] === true || attrs["noreplies"] === true));
       const locale = typeof attrs.locale === "string" ? attrs.locale : null;
-      await createPost({ content, tags, replyTo, allowLikes, allowReplies, locale });
+      const id =
+        isAdmin && typeof attrs.date === "string"
+          ? makePostIdFromDateString(attrs.date)
+          : undefined;
+      if (isAdmin && typeof attrs.date === "string" && !id) {
+        throw new Error("Invalid date.");
+      }
+      await createPost({ id, content, tags, replyTo, allowLikes, allowReplies, locale });
       setReplyBody("");
       setReplyTo(null);
       setTimeout(() => {
