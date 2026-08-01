@@ -48,6 +48,91 @@ describe("getTrackJsonHistogramDisplays", () => {
     ]));
   });
 
+  test("adds LTHR and FTP zone displays after their standard histograms", () => {
+    const displays = getTrackJsonHistogramDisplays({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: [
+              [139, 35],
+              [139.001, 35.001],
+              [139.002, 35.002],
+            ],
+          },
+          properties: {
+            coordinateProperties: {
+              times: [0, 10, 20],
+              speeds: [18, 18, 18],
+              heartRates: [120, 150, 160],
+              powers: [100, 200, 300],
+            },
+          },
+        },
+      ],
+    }, {
+      lthrBpm: 155,
+      ftpW: 230,
+    });
+
+    expect(displays.map((display) => display.key)).toEqual([
+      "speedKph",
+      "heartRateBpm",
+      "heartRateZones",
+      "powerW",
+      "powerZones",
+    ]);
+    expect(displays[2]).toEqual(expect.objectContaining({
+      title: "Heart-rate histogram by LTHR 155 bpm",
+      rows: expect.arrayContaining([
+        expect.objectContaining({ label: "Z1 ≤81%", seconds: 10 }),
+        expect.objectContaining({ label: "Z4 ≤100%", seconds: 10 }),
+      ]),
+    }));
+    expect(displays[4]).toEqual(expect.objectContaining({
+      title: "Power histogram by FTP 230 W",
+      rows: expect.arrayContaining([
+        expect.objectContaining({ label: "Z1 ≤55%", seconds: 10 }),
+        expect.objectContaining({ label: "Z3 ≤90%", seconds: 10 }),
+      ]),
+    }));
+  });
+
+  test("does not add zone displays for invalid thresholds or missing measurements", () => {
+    const data = {
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: [
+              [139, 35],
+              [139.001, 35.001],
+            ],
+          },
+          properties: {
+            coordinateProperties: {
+              times: [0, 10],
+              speeds: [18, 18],
+            },
+          },
+        },
+      ],
+    };
+
+    expect(getTrackJsonHistogramDisplays(data, {
+      lthrBpm: -1,
+      ftpW: Number.NaN,
+    }).map((display) => display.key)).toEqual(["speedKph"]);
+    expect(getTrackJsonHistogramDisplays(data, {
+      lthrBpm: 155,
+      ftpW: 230,
+    }).map((display) => display.key)).toEqual(["speedKph"]);
+  });
+
   test("returns no displays without supported measurements or metadata", () => {
     expect(getTrackJsonHistogramDisplays({
       type: "FeatureCollection",

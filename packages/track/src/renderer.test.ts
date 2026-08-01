@@ -866,7 +866,7 @@ describe("StgyTrackRenderer", () => {
 
   test("shows compact analysis below Metadata and uses metadata before recomputation", async () => {
     document.body.innerHTML = `
-      <figure class="stgy-track-map" data-src="#analysis-track">
+      <figure class="stgy-track-map" data-src="#analysis-track" data-lthr-bpm="155" data-ftp-w="230">
         <div class="stgy-track-canvas"></div>
       </figure>
     `;
@@ -909,6 +909,8 @@ describe("StgyTrackRenderer", () => {
               distances: [0, 50],
               speeds: [18, 18],
               cadences: [80, 80],
+              heartRates: [120, 150],
+              powers: [100, 200],
             },
           },
         },
@@ -940,7 +942,13 @@ describe("StgyTrackRenderer", () => {
     expect(overlay?.textContent).toContain("metadata speed");
     expect(overlay?.textContent).toContain("Cadence histogram");
     expect(overlay?.textContent).toContain("≤80 rpm");
-    expect(overlay?.querySelectorAll(".stgy-track-analysis-histogram")).toHaveLength(2);
+    expect(overlay?.textContent).toContain(
+      "Heart-rate histogram by LTHR 155 bpm",
+    );
+    expect(overlay?.textContent).toContain("Z1 ≤81%");
+    expect(overlay?.textContent).toContain("Power histogram by FTP 230 W");
+    expect(overlay?.textContent).toContain("Z1 ≤55%");
+    expect(overlay?.querySelectorAll(".stgy-track-analysis-histogram")).toHaveLength(6);
     const histograms = Array.from(
       overlay?.querySelectorAll<HTMLElement>(".stgy-track-analysis-histogram") ?? [],
     );

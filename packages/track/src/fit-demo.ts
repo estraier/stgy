@@ -531,6 +531,16 @@ function renderTrackJson(
   figure.style.height = "500px";
   figure.dataset.src = trackJsonUrl;
 
+  const lthrBpm = getPositiveNumber(elements.lthrInput);
+  if (lthrBpm !== undefined) {
+    figure.dataset.lthrBpm = String(lthrBpm);
+  }
+
+  const ftpW = getPositiveNumber(elements.ftpInput);
+  if (ftpW !== undefined) {
+    figure.dataset.ftpW = String(ftpW);
+  }
+
   const canvas = document.createElement("div");
   canvas.className = "stgy-track-canvas";
   canvas.textContent = "Map loading...";

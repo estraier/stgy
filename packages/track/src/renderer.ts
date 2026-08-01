@@ -4,8 +4,10 @@ import { TrackLoader } from "./loader";
 import { getTrackJsonDisplayMetadataLines } from "./metadata";
 import { getFiniteNumberRange } from "./numeric";
 import { getTrackJsonTitle } from "./trackjson";
-import { getTrackJsonHistogramDisplays } from "./trackjson-analysis";
-import type { TrackHistogramDisplay } from "./analysis";
+import {
+  getTrackJsonHistogramDisplays,
+  type TrackJsonAnalysisDisplay,
+} from "./trackjson-analysis";
 
 const DEFAULT_PIN_COLOR = "#3388ff";
 const DEFAULT_ROUTE_COLOR = "#0078A8";
@@ -225,7 +227,7 @@ type PreloadedTrackData = {
 
 type TrackAnalysisOverlaySection = {
   title?: string;
-  displays: TrackHistogramDisplay[];
+  displays: TrackJsonAnalysisDisplay[];
 };
 
 type JsonRecord = Record<string, unknown>;
@@ -356,6 +358,16 @@ const getFeatureProperties = (feature: GeoJsonFeatureLike | null | undefined): J
 
 const getFiniteNumber = (value: unknown, fallback: number): number => {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+};
+
+const parsePositiveDatasetNumber = (
+  value: string | undefined,
+): number | undefined => {
+  if (!value) {
+    return undefined;
+  }
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : undefined;
 };
 
 const normalizeMapColor = (value: unknown): string | null => {
@@ -934,9 +946,10 @@ export class StgyTrackRenderer {
 
   private buildAnalysisOverlaySections(
     loadedTracks: PreloadedTrackData[],
+    options: { lthrBpm?: number; ftpW?: number } = {},
   ): TrackAnalysisOverlaySection[] {
     return loadedTracks.flatMap((loadedTrack, index) => {
-      const displays = getTrackJsonHistogramDisplays(loadedTrack.data);
+      const displays = getTrackJsonHistogramDisplays(loadedTrack.data, options);
       if (displays.length === 0) {
         return [];
       }
@@ -2849,6 +2862,8 @@ export class StgyTrackRenderer {
     const showOverlay = figure.dataset.showOverlay !== "false";
     const showGraph = figure.dataset.showGraph !== "false";
     const controls = figure.dataset.controls !== "false";
+    const lthrBpm = parsePositiveDatasetNumber(figure.dataset.lthrBpm);
+    const ftpW = parsePositiveDatasetNumber(figure.dataset.ftpW);
     const graphPanel = showGraph ? this.createGraphPanel(figure) : null;
     if (!showGraph) {
       this.removeGraphPanel(figure);
@@ -2983,7 +2998,10 @@ export class StgyTrackRenderer {
       : null;
 
     this.removeAnalysisOverlay(figure);
-    const analysisSections = this.buildAnalysisOverlaySections(preloadedTracks);
+    const analysisSections = this.buildAnalysisOverlaySections(preloadedTracks, {
+      lthrBpm,
+      ftpW,
+    });
     const analysisOverlay = analysisSections.length > 0
       ? this.createAnalysisOverlay(canvas, analysisSections)
       : null;

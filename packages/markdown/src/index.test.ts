@@ -2497,6 +2497,20 @@ describe("mdRenderHtml basics", () => {
     );
   });
 
+  it("track map passes LTHR and FTP analysis parameters", () => {
+    const mdText = "@[](/maps/ride.trjgz){lthr=155,ftp=230}";
+    expect(makeHtml(mdText)).toBe(
+      '<figure class="stgy-track-map" data-ftp-w="230" data-lthr-bpm="155" data-src="/maps/ride.trjgz"><div class="stgy-track-canvas"></div></figure>',
+    );
+  });
+
+  it("track map ignores invalid LTHR and FTP analysis parameters", () => {
+    const mdText = "@[](/maps/ride.trjgz){lthr=0,ftp=invalid}";
+    expect(makeHtml(mdText)).toBe(
+      '<figure class="stgy-track-map" data-src="/maps/ride.trjgz"><div class="stgy-track-canvas"></div></figure>',
+    );
+  });
+
   it("track map source with pins", () => {
     const mdText =
       "@[Ride](/maps/ride.trjgz|" +
@@ -2852,6 +2866,16 @@ describe("mdRenderMarkdown basics", () => {
 });
 
 describe("mdRenderMarkdown from HTML", () => {
+  it("restores LTHR and FTP track options", () => {
+    const html =
+      '<figure class="stgy-track-map" data-src="/maps/ride.trjgz" ' +
+      'data-lthr-bpm="155" data-ftp-w="230">' +
+      '<div class="stgy-track-canvas"></div></figure>';
+    expect(makeMarkdownFromHtml(html)).toBe(
+      "@[](/maps/ride.trjgz){lthr=155, ftp=230}\n",
+    );
+  });
+
   it("track map source with pins", () => {
     const html =
       '<figure class="stgy-track-map" data-src="/maps/ride.trjgz">' +

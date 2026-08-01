@@ -1,10 +1,15 @@
 import {
   getActivityHistogramDisplay,
+  getHeartRateZoneDisplayRows,
+  getPowerZoneDisplayRows,
+  type TrackAnalysisDisplayRow,
   type TrackHistogramDisplay,
   type TrackHistogramKey,
 } from "./analysis";
 import {
   buildActivityHistograms,
+  computeHeartRateZoneSummary,
+  computePowerZoneSummary,
   type TrackActivityHistograms,
   type TrackPoint,
 } from "./activity";
@@ -16,6 +21,18 @@ const HISTOGRAM_KEYS: TrackHistogramKey[] = [
   "powerW",
 ];
 
+export type TrackJsonAnalysisOptions = {
+  lthrBpm?: number;
+  ftpW?: number;
+};
+
+export type TrackJsonAnalysisDisplay = {
+  key: TrackHistogramKey | "heartRateZones" | "powerZones";
+  title: string;
+  color: string;
+  rows: TrackAnalysisDisplayRow[];
+};
+
 type JsonRecord = Record<string, unknown>;
 
 const isRecord = (value: unknown): value is JsonRecord =>
@@ -23,6 +40,11 @@ const isRecord = (value: unknown): value is JsonRecord =>
 
 const toFiniteNumber = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isFinite(value) ? value : undefined;
+
+const toPositiveFiniteNumber = (value: unknown): number | undefined => {
+  const number = toFiniteNumber(value);
+  return number !== undefined && number > 0 ? number : undefined;
+};
 
 const getRecordProperty = (
   value: JsonRecord | undefined,
@@ -158,17 +180,67 @@ const getComputedHistogramDisplay = (
   );
 };
 
+const compactZoneLabel = (label: string): string =>
+  label.replace(/\s+(?:LTHR|FTP),.*$/, "");
+
+const formatThreshold = (value: number): string => String(value);
+
+const getHeartRateZoneDisplay = (
+  points: TrackPoint[],
+  lthrBpm: number,
+): TrackJsonAnalysisDisplay | undefined => {
+  const summary = computeHeartRateZoneSummary(points, lthrBpm);
+  if (summary.totalSeconds <= 0) {
+    return undefined;
+  }
+
+  return {
+    key: "heartRateZones",
+    title: `Heart-rate histogram by LTHR ${formatThreshold(lthrBpm)} bpm`,
+    color: "#fff",
+    rows: getHeartRateZoneDisplayRows(summary, lthrBpm).map((row) => ({
+      ...row,
+      label: compactZoneLabel(row.label),
+    })),
+  };
+};
+
+const getPowerZoneDisplay = (
+  points: TrackPoint[],
+  ftpW: number,
+): TrackJsonAnalysisDisplay | undefined => {
+  const summary = computePowerZoneSummary(points, ftpW);
+  if (summary.totalSeconds <= 0) {
+    return undefined;
+  }
+
+  return {
+    key: "powerZones",
+    title: `Power histogram by FTP ${formatThreshold(ftpW)} W`,
+    color: "#fff",
+    rows: getPowerZoneDisplayRows(summary, ftpW).map((row) => ({
+      ...row,
+      label: compactZoneLabel(row.label),
+    })),
+  };
+};
+
 /**
- * Builds the four compact analysis histograms shown by the map renderer.
- * Existing TrackJSON metadata wins per histogram; only missing histograms are
- * recomputed from the (possibly downsampled) coordinate data.
+ * Builds the compact analysis displays shown by the map renderer.
+ * Existing TrackJSON metadata wins per standard histogram; only missing
+ * histograms are recomputed from the (possibly downsampled) coordinate data.
+ * LTHR/FTP zone displays are always computed from the available timed points
+ * because their thresholds are supplied by the embedding document.
  */
 export function getTrackJsonHistogramDisplays(
   data: unknown,
-): TrackHistogramDisplay[] {
+  options: TrackJsonAnalysisOptions = {},
+): TrackJsonAnalysisDisplay[] {
   const features = getLineStringFeatures(data);
   const metadata = getTrackJsonMetadata(data, features);
   const metadataDisplays = new Map<TrackHistogramKey, TrackHistogramDisplay>();
+  const lthrBpm = toPositiveFiniteNumber(options.lthrBpm);
+  const ftpW = toPositiveFiniteNumber(options.ftpW);
 
   HISTOGRAM_KEYS.forEach((key) => {
     const display = getActivityHistogramDisplay(metadata, key);
@@ -180,13 +252,35 @@ export function getTrackJsonHistogramDisplays(
   const needsComputedHistograms = HISTOGRAM_KEYS.some(
     (key) => !metadataDisplays.has(key),
   );
+  const needsPoints =
+    needsComputedHistograms || lthrBpm !== undefined || ftpW !== undefined;
+  const points = needsPoints ? getTrackJsonPoints(features) : [];
   const computedHistograms = needsComputedHistograms
-    ? buildActivityHistograms(getTrackJsonPoints(features))
+    ? buildActivityHistograms(points)
     : undefined;
+  const displays: TrackJsonAnalysisDisplay[] = [];
 
-  return HISTOGRAM_KEYS.flatMap((key) => {
+  HISTOGRAM_KEYS.forEach((key) => {
     const display = metadataDisplays.get(key) ||
       getComputedHistogramDisplay(computedHistograms, key);
-    return display ? [display] : [];
+    if (display) {
+      displays.push(display);
+    }
+
+    if (key === "heartRateBpm" && lthrBpm !== undefined) {
+      const zoneDisplay = getHeartRateZoneDisplay(points, lthrBpm);
+      if (zoneDisplay) {
+        displays.push(zoneDisplay);
+      }
+    }
+
+    if (key === "powerW" && ftpW !== undefined) {
+      const zoneDisplay = getPowerZoneDisplay(points, ftpW);
+      if (zoneDisplay) {
+        displays.push(zoneDisplay);
+      }
+    }
   });
+
+  return displays;
 }

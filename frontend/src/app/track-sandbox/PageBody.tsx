@@ -510,7 +510,7 @@ export default function TrackSandbox() {
                   </div>
                   <MapPinned className="h-5 w-5 text-sky-700" />
                 </div>
-                <TrackMap trackJson={result.trackJson} />
+                <TrackMap trackJson={result.trackJson} ftpW={ftpW} lthrBpm={lthrBpm} />
               </section>
 
               <section className="space-y-4">
@@ -589,7 +589,15 @@ export default function TrackSandbox() {
   );
 }
 
-function TrackMap({ trackJson }: { trackJson: string }) {
+function TrackMap({
+  trackJson,
+  ftpW,
+  lthrBpm,
+}: {
+  trackJson: string;
+  ftpW: number;
+  lthrBpm: number;
+}) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const reactId = useId();
   const sourceId = useMemo(() => {
@@ -642,7 +650,7 @@ function TrackMap({ trackJson }: { trackJson: string }) {
       disposed = true;
       root.querySelectorAll(".stgy-track-graph").forEach((node) => node.remove());
     };
-  }, [sourceId, trackJson]);
+  }, [sourceId, trackJson, ftpW, lthrBpm]);
 
   return (
     <div ref={rootRef}>
@@ -653,6 +661,8 @@ function TrackMap({ trackJson }: { trackJson: string }) {
         data-base-layer="cyclosm"
         data-show-graph="true"
         data-show-overlay="true"
+        data-ftp-w={ftpW}
+        data-lthr-bpm={lthrBpm}
       >
         <div
           className="stgy-track-canvas w-full bg-slate-100"

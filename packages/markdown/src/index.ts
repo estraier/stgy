@@ -166,6 +166,15 @@ function macroBooleanValue(
   return undefined;
 }
 
+function normalizeMdPositiveNumber(
+  value: string | boolean | undefined,
+): string | undefined {
+  const raw = macroStringValue(value);
+  if (!raw) return undefined;
+  const number = Number(raw);
+  return Number.isFinite(number) && number > 0 ? String(number) : undefined;
+}
+
 function normalizeMdMapCssLength(
   value: string | boolean | undefined,
 ): string | undefined {
@@ -457,6 +466,16 @@ function applyMdTrackMapOptions(attrs: MdAttrs, macro: MdMacroOptions) {
       const controls = macroBooleanValue(value);
       if (controls !== undefined)
         attrs["data-controls"] = controls ? "true" : "false";
+      continue;
+    }
+    if (key === "lthr") {
+      const lthrBpm = normalizeMdPositiveNumber(value);
+      if (lthrBpm) attrs["data-lthr-bpm"] = lthrBpm;
+      continue;
+    }
+    if (key === "ftp") {
+      const ftpW = normalizeMdPositiveNumber(value);
+      if (ftpW) attrs["data-ftp-w"] = ftpW;
       continue;
     }
     attrs[`data-${key}`] = value === true ? "true" : String(value);
@@ -1469,6 +1488,8 @@ export function parseHtml(
       "data-show-graph",
       "data-show-overlay",
       "data-controls",
+      "data-lthr-bpm",
+      "data-ftp-w",
       "style",
     ]) {
       const value = el.getAttribute(name);
@@ -3961,6 +3982,8 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
     addOpt("graph", dataAttr("show-graph"));
     addOpt("overlay", dataAttr("show-overlay"));
     addOpt("controls", dataAttr("controls"));
+    addOpt("lthr", normalizeMdPositiveNumber(dataAttr("lthr-bpm")));
+    addOpt("ftp", normalizeMdPositiveNumber(dataAttr("ftp-w")));
 
     const style = getAttrStr(fig.attrs, "style") || "";
     const height = /(?:^|;)\s*height\s*:\s*([^;]+)/i.exec(style)?.[1]?.trim();
