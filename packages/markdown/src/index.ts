@@ -29,6 +29,107 @@ function makeElement(
   return el;
 }
 
+const MD_VERBATIM_TEXT_TAGS = new Set([
+  "pre",
+  "code",
+  "kbd",
+  "samp",
+  "var",
+  "math",
+  "textarea",
+  "script",
+  "style",
+  "template",
+]);
+
+function convertAsciiToFullwidth(text: string): string {
+  let result = "";
+  for (const ch of text) {
+    const code = ch.charCodeAt(0);
+    if (code === 0x20) {
+      result += "\u3000";
+    } else if (code >= 0x21 && code <= 0x7e) {
+      result += String.fromCharCode(code + 0xfee0);
+    } else {
+      result += ch;
+    }
+  }
+  return result;
+}
+
+function isUrlLikeIdentifier(text: string): boolean {
+  const value = text.trim();
+  return (
+    value.length > 0 &&
+    !/\s/.test(value) &&
+    (/^(?:[a-z][a-z0-9+.-]*:|\/\/|\/|\.{1,2}\/|[?#]|www\.)/i.test(value) ||
+      /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value) ||
+      /^(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d+)?(?:[/?#].*)?$/i.test(value))
+  );
+}
+
+function isLinkIdentifier(href: string, visibleText: string): boolean {
+  if (visibleText === href || isUrlLikeIdentifier(visibleText)) return true;
+  if (
+    href.startsWith("mailto:") &&
+    visibleText === href.slice("mailto:".length)
+  ) {
+    return true;
+  }
+  if (href.startsWith("tel:") && visibleText === href.slice("tel:".length)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Converts printable ASCII characters only in text that is rendered as prose
+ * to their fullwidth forms. Element attributes, verbatim elements, and links
+ * whose visible text is a URL-like identifier are preserved. The input tree
+ * is not mutated.
+ */
+export function mdConvertAsciiToFullwidth(nodes: MdNode[]): MdNode[] {
+  const collectText = (children: MdNode[]): string => {
+    let out = "";
+    const walk = (node: MdNode) => {
+      if (node.type === "text") {
+        out += node.text;
+        return;
+      }
+      for (const child of node.children || []) walk(child);
+    };
+    for (const child of children) walk(child);
+    return out;
+  };
+
+  const clone = (node: MdNode, convertText: boolean): MdNode => {
+    if (node.type === "text") {
+      return {
+        ...node,
+        text: convertText ? convertAsciiToFullwidth(node.text) : node.text,
+      };
+    }
+
+    const tag = node.tag.toLowerCase();
+    const href = typeof node.attrs?.href === "string" ? node.attrs.href : null;
+    const visibleText = tag === "a" ? collectText(node.children) : "";
+    const preserveChildren =
+      !convertText ||
+      MD_VERBATIM_TEXT_TAGS.has(tag) ||
+      (tag === "a" && href !== null && isLinkIdentifier(href, visibleText));
+    const cloned: MdElementNode = {
+      ...node,
+      children: node.children.map((child) =>
+        clone(child, convertText && !preserveChildren),
+      ),
+    };
+    if (node.attrs) cloned.attrs = { ...node.attrs };
+    return cloned;
+  };
+
+  return nodes.map((node) => clone(node, true));
+}
+
 const BLOCK_TAGS = new Set<string>([
   "p",
   "div",

@@ -13,6 +13,7 @@ import {
   mdAnnotateElements,
   mdStripRubyElements,
   mdCutOff,
+  mdConvertAsciiToFullwidth,
   mdRenderHtml,
   mdRenderText,
   mdSeparateTitle,
@@ -40,9 +41,14 @@ export function makeArticleTextFromMarkdown(mdText: string) {
   return mdRenderText(mdStripRubyElements(nodes));
 }
 
+export type MarkdownDisplayOptions = {
+  writingMode?: "horizontal" | "vertical";
+};
+
 export function makePubArticleHtmlFromMarkdown(
   mdText: string,
   idPrefix?: string,
+  options?: MarkdownDisplayOptions,
 ): {
   html: string;
   title: string | null;
@@ -63,6 +69,7 @@ export function makePubArticleHtmlFromMarkdown(
   nodes = mdGroupImageGrid(nodes, { maxElements: 5 });
   nodes = mdGroupMapGrid(nodes, { maxElements: 5 });
   nodes = mdAnnotateElements(nodes);
+  nodes = transformDisplayedText(nodes, options);
   const html = mdRenderHtml(nodes, false, idPrefix);
   let featured: string | null = null;
   const featuredNode = mdFindFeatured(nodes);
@@ -80,7 +87,11 @@ export function makePubArticleHtmlFromMarkdown(
   return { html, title, desc, featured, metadata };
 }
 
-export function makeSnippetHtmlFromMarkdown(mdText: string, idPrefix?: string) {
+export function makeSnippetHtmlFromMarkdown(
+  mdText: string,
+  idPrefix?: string,
+  options?: MarkdownDisplayOptions,
+) {
   const maxLen = Config.SNIPPET_MAX_LENGTH;
   const maxHeight = Config.SNIPPET_MAX_HEIGHT;
   const imgLen = Config.SNIPPET_MAX_LENGTH / 4;
@@ -91,6 +102,7 @@ export function makeSnippetHtmlFromMarkdown(mdText: string, idPrefix?: string) {
   nodes = mdCutOff(nodes, { maxLen, maxHeight, imgLen, imgHeight, cutOnHr: true });
   nodes = mdGroupImageGrid(nodes, { maxElements: 5 });
   nodes = mdGroupMapGrid(nodes, { maxElements: 5 });
+  nodes = transformDisplayedText(nodes, options);
   return mdRenderHtml(nodes, false, idPrefix);
 }
 
@@ -106,12 +118,16 @@ export function makeTextFromJsonSnippet(snippet: string) {
   return mdRenderText(mdStripRubyElements(nodes)).slice(0, 50);
 }
 
-export function makePubAttributesFromJsonSnippet(snippet: string): {
+export function makePubAttributesFromJsonSnippet(
+  snippet: string,
+  options?: MarkdownDisplayOptions,
+): {
   title: string | null;
   desc: string;
   metadata: Record<string, string>;
 } {
-  const nodes = deserializeMdNodes(snippet);
+  let nodes = deserializeMdNodes(snippet);
+  nodes = transformDisplayedText(nodes, options);
   const { title, otherNodes: nodesWithoutTitle } = mdSeparateTitle(nodes);
   const { metadata, otherNodes: nodesWithoutMeta } = mdSeparateMetadata(nodesWithoutTitle);
   let desc = mdRenderText(mdStripRubyElements(nodesWithoutMeta));
@@ -119,10 +135,22 @@ export function makePubAttributesFromJsonSnippet(snippet: string): {
   if (desc.length > 150) {
     desc = desc.substring(0, 150) + "...";
   }
-  return { title, desc, metadata };
+  if (options?.writingMode !== "vertical") {
+    return { title, desc, metadata };
+  }
+  return {
+    title: title === null ? null : restoreFullwidthSpaces(title),
+    desc: restoreFullwidthSpaces(desc),
+    metadata: Object.fromEntries(
+      Object.entries(metadata).map(([key, value]) => [
+        key,
+        restoreFullwidthSpaces(value),
+      ]),
+    ),
+  };
 }
 
-type JsonSnippetHtmlOptions = {
+type JsonSnippetHtmlOptions = MarkdownDisplayOptions & {
   moveLeadingFeaturedAfterHeading?: boolean;
 };
 
@@ -138,7 +166,21 @@ export function makeHtmlFromJsonSnippet(
   nodes = rewriteMediaUrls(nodes, true);
   nodes = mdGroupImageGrid(nodes, { maxElements: 5 });
   nodes = mdGroupMapGrid(nodes, { maxElements: 5 });
+  nodes = transformDisplayedText(nodes, options);
   return mdRenderHtml(nodes, false, idPrefix);
+}
+
+function transformDisplayedText(
+  nodes: MdNode[],
+  options?: MarkdownDisplayOptions,
+): MdNode[] {
+  return options?.writingMode === "vertical"
+    ? mdConvertAsciiToFullwidth(nodes)
+    : nodes;
+}
+
+function restoreFullwidthSpaces(text: string): string {
+  return text.replace(/ /g, "\u3000");
 }
 
 function moveLeadingFeaturedAfterHeading(nodes: MdNode[]): MdNode[] {

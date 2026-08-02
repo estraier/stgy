@@ -94,6 +94,87 @@ describe("article utils (normal cases)", () => {
     expect(html).toContain('src="https://cdn.test/images-bkt/u1/thumbs/folder/pic_image.webp"');
   });
 
+  test("vertical public rendering converts displayed ASCII to fullwidth", () => {
+    const md = [
+      "# TITLE 2026",
+      "本文 ABC 123! [Link A1](/posts/123) [/posts/A1](/posts/A1) ``CODE 9``",
+      "-@author Author A1",
+    ].join("\n\n");
+
+    const normal = makePubArticleHtmlFromMarkdown(md);
+    const horizontal = makePubArticleHtmlFromMarkdown(md, undefined, {
+      writingMode: "horizontal",
+    });
+    const vertical = makePubArticleHtmlFromMarkdown(md, undefined, {
+      writingMode: "vertical",
+    });
+
+    expect(horizontal).toStrictEqual(normal);
+    expect(normal.html).toContain("TITLE 2026");
+    expect(vertical.html).toContain("ＴＩＴＬＥ　２０２６");
+    expect(vertical.html).toContain("本文　ＡＢＣ　１２３！");
+    expect(vertical.html).toContain('href="/pub/123"');
+    expect(vertical.html).toContain(">Ｌｉｎｋ　Ａ１</a>");
+    expect(vertical.html).toContain('href="/pub/A1">/posts/A1</a>');
+    expect(vertical.html).toContain("<code>CODE 9</code>");
+    expect(vertical.title).toBe("TITLE 2026");
+    expect(vertical.metadata.author).toBe("Author A1");
+    expect(vertical.desc).toContain("本文 ABC 123");
+  });
+
+  test("vertical public profile snippet uses the same displayed-text conversion", () => {
+    const html = makeSnippetHtmlFromMarkdown("Profile ABC 123", undefined, {
+      writingMode: "vertical",
+    });
+    expect(html).toContain("Ｐｒｏｆｉｌｅ　ＡＢＣ　１２３");
+  });
+
+  test("vertical rich post snippet converts text and preserves attributes", () => {
+    const snippet = serializeMdNodes([
+      {
+        type: "element",
+        tag: "a",
+        attrs: { href: "https://example.com/ABC123" },
+        children: [{ type: "text", text: "Display ABC 123" }],
+      },
+    ]);
+    const html = makeHtmlFromJsonSnippet(snippet, undefined, {
+      writingMode: "vertical",
+    });
+    expect(html).toBe(
+      '<a href="https://example.com/ABC123">Ｄｉｓｐｌａｙ　ＡＢＣ　１２３</a>',
+    );
+  });
+
+  test("vertical plain post snippet uses the same conversion", () => {
+    const snippet = serializeMdNodes([
+      {
+        type: "element",
+        tag: "h1",
+        children: [{ type: "text", text: "Title A1" }],
+      },
+      {
+        type: "element",
+        tag: "li",
+        attrs: { meta: "author" },
+        children: [{ type: "text", text: "Author B2" }],
+      },
+      {
+        type: "element",
+        tag: "p",
+        children: [{ type: "text", text: "Body C3" }],
+      },
+    ]);
+    const attrs = makePubAttributesFromJsonSnippet(snippet, {
+      writingMode: "vertical",
+    });
+    expect(attrs).toStrictEqual({
+      title: "Ｔｉｔｌｅ　Ａ１",
+      desc: "Ｂｏｄｙ　Ｃ３",
+      metadata: { author: "Ａｕｔｈｏｒ　Ｂ２" },
+    });
+  });
+
   test("makeSnippetTextFromMarkdown", () => {
     const md =
       "**Bold** text with some  \nnewlines and   extra   spaces. " +

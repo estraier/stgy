@@ -3072,6 +3072,49 @@ html:has(.site-container) {
   }
 }
 
+/* Vertical /sites rich snippets: keep featured media compact while preserving
+   the normal featured-image float.  The physical and logical size limits below
+   prevent the floated media from extending into the snippet text. */
+.pub-theme-dir-vert
+  .site-container
+  .site-recent
+  .markdown-body.post-content-excerpt
+  > figure.featured-block {
+  float: right !important;
+  inline-size: auto !important;
+  block-size: auto !important;
+  max-inline-size: 7em !important;
+  max-block-size: 10em !important;
+  width: auto !important;
+  height: auto !important;
+  max-width: 10em !important;
+  max-height: 7em !important;
+  margin: 0.5em 0 0 0.5em !important;
+}
+
+.pub-theme-dir-vert
+  .site-container
+  .site-recent
+  .markdown-body.post-content-excerpt
+  > figure.featured-block
+  > img,
+.pub-theme-dir-vert
+  .site-container
+  .site-recent
+  .markdown-body.post-content-excerpt
+  > figure.featured-block
+  > video {
+  inline-size: auto !important;
+  block-size: auto !important;
+  max-inline-size: 7em !important;
+  max-block-size: 10em !important;
+  width: auto !important;
+  height: auto !important;
+  max-width: 10em !important;
+  max-height: 7em !important;
+  object-fit: contain;
+}
+
 /* Vertical size scale:
    Heights stay xsmall=18em, small=24em, medium/default=30em, large=35em,
    xlarge=40em. Widths use a wider 4:3-oriented scale where the viewport allows. */

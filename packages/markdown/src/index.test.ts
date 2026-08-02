@@ -13,6 +13,7 @@ import {
   mdAnnotateElements,
   mdStripRubyElements,
   mdCutOff,
+  mdConvertAsciiToFullwidth,
   mdRenderText,
   mdRenderHtml,
   mdRenderMarkdown,
@@ -22,6 +23,7 @@ import {
   deserializeMdNodes,
   countPseudoTokens,
   sliceByPseudoTokens,
+  MdNode,
 } from "./index";
 
 function stripPos<T>(val: T): T {
@@ -56,6 +58,121 @@ function makeMarkdownFromHtml(html: string) {
   const nodes = parseHtml(html);
   return mdRenderMarkdown(nodes);
 }
+
+describe("mdConvertAsciiToFullwidth", () => {
+  it("converts only displayed printable ASCII characters", () => {
+    const verbatimTags = [
+      "pre",
+      "code",
+      "kbd",
+      "samp",
+      "var",
+      "math",
+      "textarea",
+      "script",
+      "style",
+      "template",
+    ];
+    const nodes: MdNode[] = [
+      {
+        type: "element",
+        tag: "p",
+        attrs: {
+          id: "ID123",
+          "data-src": "https://example.com/ABC123",
+        },
+        charPosition: 12,
+        linePosition: 3,
+        children: [
+          { type: "text", text: "本文 ABCabc012!@" },
+          {
+            type: "element",
+            tag: "a",
+            attrs: { href: "https://example.com/ABC123" },
+            children: [{ type: "text", text: "Link ABC123" }],
+          },
+          {
+            type: "element",
+            tag: "a",
+            attrs: { href: "https://example.com/ABC123" },
+            children: [{ type: "text", text: "https://example.com/ABC123" }],
+          },
+          {
+            type: "element",
+            tag: "a",
+            attrs: { href: "/pub/ABC123" },
+            children: [{ type: "text", text: "/posts/ABC123" }],
+          },
+          {
+            type: "element",
+            tag: "a",
+            attrs: { href: "mailto:user@example.com" },
+            children: [{ type: "text", text: "user@example.com" }],
+          },
+          {
+            type: "element",
+            tag: "a",
+            attrs: { href: "https://example.com/path" },
+            children: [{ type: "text", text: "example.com/path" }],
+          },
+          ...verbatimTags.map(
+            (tag): MdNode => ({
+              type: "element",
+              tag,
+              ...(tag === "math" ? { attrs: { tex: "A+1" } } : {}),
+              children: [{ type: "text", text: "KEEP ABC123" }],
+            }),
+          ),
+        ],
+      },
+    ];
+    const original = JSON.parse(JSON.stringify(nodes)) as MdNode[];
+
+    const converted = mdConvertAsciiToFullwidth(nodes);
+    const paragraph = converted[0] as Extract<MdNode, { type: "element" }>;
+
+    expect(nodes).toStrictEqual(original);
+    expect(converted).not.toBe(nodes);
+    expect(paragraph).not.toBe(nodes[0]);
+    expect(paragraph.attrs).toStrictEqual(
+      original[0]?.type === "element" ? original[0].attrs : {},
+    );
+    expect(paragraph.attrs).not.toBe(
+      nodes[0]?.type === "element" ? nodes[0].attrs : undefined,
+    );
+    expect(paragraph.charPosition).toBe(12);
+    expect(paragraph.linePosition).toBe(3);
+    expect(paragraph.children[0]).toStrictEqual({
+      type: "text",
+      text: "本文　ＡＢＣａｂｃ０１２！＠",
+    });
+    expect(paragraph.children[1]).toMatchObject({
+      attrs: { href: "https://example.com/ABC123" },
+      children: [{ type: "text", text: "Ｌｉｎｋ　ＡＢＣ１２３" }],
+    });
+    expect(paragraph.children[2]).toMatchObject({
+      attrs: { href: "https://example.com/ABC123" },
+      children: [{ type: "text", text: "https://example.com/ABC123" }],
+    });
+    expect(paragraph.children[3]).toMatchObject({
+      attrs: { href: "/pub/ABC123" },
+      children: [{ type: "text", text: "/posts/ABC123" }],
+    });
+    expect(paragraph.children[4]).toMatchObject({
+      attrs: { href: "mailto:user@example.com" },
+      children: [{ type: "text", text: "user@example.com" }],
+    });
+    expect(paragraph.children[5]).toMatchObject({
+      attrs: { href: "https://example.com/path" },
+      children: [{ type: "text", text: "example.com/path" }],
+    });
+    for (const child of paragraph.children.slice(6)) {
+      expect(child).toMatchObject({
+        children: [{ type: "text", text: "KEEP ABC123" }],
+      });
+    }
+  });
+});
 
 describe("parseMarkdown", () => {
   it("empty body", () => {

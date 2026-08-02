@@ -114,7 +114,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
   const oldestFirst = oldestFirstRaw === "1";
 
   try {
-    const { pubcfg, intro } = await getPubSiteData(id);
+    const { pubcfg, intro: horizontalIntro } = await getPubSiteData(id);
     const baseTheme = Config.PUB_DESIGN_THEMES.includes(pubcfg.designTheme ?? "")
       ? pubcfg.designTheme
       : "default";
@@ -122,6 +122,15 @@ export default async function PubSitePage({ params, searchParams }: Props) {
       typeof design === "string" && Config.PUB_DESIGN_THEMES.includes(design) ? design : baseTheme;
     const themeDir = Config.PUB_DESIGN_VERTICAL_THEMES.includes(theme) ? "vert" : "norm";
     const themeTone = Config.PUB_DESIGN_DARK_THEMES.includes(theme) ? "dark" : "light";
+    const writingMode = themeDir === "vert" ? "vertical" : "horizontal";
+    const intro =
+      writingMode === "vertical"
+        ? makePubArticleHtmlFromMarkdown(
+            pubcfg.introduction.trim() || "my publications",
+            undefined,
+            { writingMode },
+          )
+        : horizontalIntro;
     const order = oldestFirst ? "asc" : "desc";
     const page_size =
       tabMode === "plain" ? Config.PUB_POSTS_PLAIN_PAGE_SIZE : Config.PUB_POSTS_RICH_PAGE_SIZE;
@@ -238,7 +247,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
                         design ? `?design=${encodeURIComponent(design)}` : ""
                       }`;
                       const publishedAtDate = new Date(r.publishedAt ?? "");
-                      const attrs = makePubAttributesFromJsonSnippet(r.snippet);
+                      const attrs = makePubAttributesFromJsonSnippet(r.snippet, { writingMode });
                       return (
                         <li
                           key={String(r.id)}
@@ -269,7 +278,9 @@ export default async function PubSitePage({ params, searchParams }: Props) {
                     const postHref = `/pub/${r.id}${
                       design ? `?design=${encodeURIComponent(design)}` : ""
                     }`;
-                    const snippetHtml = makeHtmlFromJsonSnippet(r.snippet, `p${idx + 1}-h`);
+                    const snippetHtml = makeHtmlFromJsonSnippet(r.snippet, `p${idx + 1}-h`, {
+                      writingMode,
+                    });
                     const publishedAtDate = new Date(r.publishedAt ?? "");
                     return (
                       <LinkDiv

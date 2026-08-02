@@ -116,7 +116,7 @@ export default async function PubPostPage({ params, searchParams }: Props) {
   const design = Array.isArray(designRaw) ? designRaw[0] : designRaw;
 
   try {
-    const { post, pubcfg, article } = await getPubPageData(id);
+    const { post, pubcfg, article: horizontalArticle } = await getPubPageData(id);
     const baseTheme = Config.PUB_DESIGN_THEMES.includes(pubcfg.designTheme ?? "")
       ? pubcfg.designTheme
       : "default";
@@ -124,8 +124,15 @@ export default async function PubPostPage({ params, searchParams }: Props) {
       typeof design === "string" && Config.PUB_DESIGN_THEMES.includes(design) ? design : baseTheme;
     const themeDir = Config.PUB_DESIGN_VERTICAL_THEMES.includes(theme) ? "vert" : "norm";
     const themeTone = Config.PUB_DESIGN_DARK_THEMES.includes(theme) ? "dark" : "light";
+    const writingMode = themeDir === "vert" ? "vertical" : "horizontal";
+    const article =
+      writingMode === "vertical"
+        ? makePubArticleHtmlFromMarkdown(post.content, undefined, { writingMode })
+        : horizontalArticle;
     const siteIntroHtml = makeSnippetHtmlFromMarkdown(
       pubcfg.introduction.trim() || "my publications",
+      undefined,
+      { writingMode },
     );
     let recent: Awaited<ReturnType<typeof listPubPostsByUser>> = [];
     if (pubcfg.showSideRecent) {
@@ -231,7 +238,10 @@ export default async function PubPostPage({ params, searchParams }: Props) {
                       const snippetHtml = makeHtmlFromJsonSnippet(
                         r.snippet,
                         `p${idx + 1}-h`,
-                        { moveLeadingFeaturedAfterHeading: true },
+                        {
+                          moveLeadingFeaturedAfterHeading: true,
+                          writingMode,
+                        },
                       );
                       return (
                         <LinkDiv key={String(r.id)} href={postHref} className="link-div">
