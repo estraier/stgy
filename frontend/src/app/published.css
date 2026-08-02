@@ -3759,10 +3759,367 @@ html:has(.site-container) {
       > .stgy-track-graph:not([hidden])
     ) {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, auto) auto auto;
+    grid-template-rows: auto auto auto;
     grid-template-areas:
       "map"
-      "graph"
-      "caption";
+      "caption"
+      "graph";
   }
+}
+
+/* Vertical public non-grid track maps.
+   Keep horizontal public themes and track grids unchanged.  Scale every non-grid
+   map canvas to 90% of its former width and height. */
+.pub-theme-dir-vert
+  .pub-main
+  .markdown-body:not(.excerpt)
+  > figure.stgy-track-map {
+  --stgy-pub-nongrid-map-width: min(36em, calc(90svw - 1.8rem));
+  --stgy-pub-nongrid-map-height: min(27em, calc(90svh - 3.6rem));
+  --stgy-pub-nongrid-stack-height: 40em;
+}
+
+.pub-theme-dir-vert
+  .pub-main
+  .markdown-body:not(.excerpt)
+  > figure.stgy-track-map[data-size="xsmall"] {
+  --stgy-pub-nongrid-map-width: min(21.6em, calc(90svw - 1.8rem));
+  --stgy-pub-nongrid-map-height: min(16.2em, calc(90svh - 3.6rem));
+  --stgy-pub-nongrid-stack-height: 24em;
+}
+
+.pub-theme-dir-vert
+  .pub-main
+  .markdown-body:not(.excerpt)
+  > figure.stgy-track-map[data-size="small"] {
+  --stgy-pub-nongrid-map-width: min(28.8em, calc(90svw - 1.8rem));
+  --stgy-pub-nongrid-map-height: min(21.6em, calc(90svh - 3.6rem));
+  --stgy-pub-nongrid-stack-height: 32em;
+}
+
+.pub-theme-dir-vert
+  .pub-main
+  .markdown-body:not(.excerpt)
+  > figure.stgy-track-map[data-size="medium"] {
+  --stgy-pub-nongrid-map-width: min(36em, calc(90svw - 1.8rem));
+  --stgy-pub-nongrid-map-height: min(27em, calc(90svh - 3.6rem));
+  --stgy-pub-nongrid-stack-height: 40em;
+}
+
+.pub-theme-dir-vert
+  .pub-main
+  .markdown-body:not(.excerpt)
+  > figure.stgy-track-map[data-size="large"] {
+  --stgy-pub-nongrid-map-width: min(36em, calc(90svw - 1.8rem));
+  --stgy-pub-nongrid-map-height: min(31.5em, calc(90svh - 3.6rem));
+}
+
+.pub-theme-dir-vert
+  .pub-main
+  .markdown-body:not(.excerpt)
+  > figure.stgy-track-map[data-size="xlarge"] {
+  --stgy-pub-nongrid-map-width: min(36em, calc(90svw - 1.8rem));
+  --stgy-pub-nongrid-map-height: min(36em, calc(90svh - 3.6rem));
+}
+
+.pub-theme-dir-vert
+  .pub-main
+  .markdown-body:not(.excerpt)
+  > figure.stgy-track-map
+  > .stgy-track-canvas {
+  width: var(--stgy-pub-nongrid-map-width) !important;
+  max-width: 100% !important;
+  height: var(--stgy-pub-nongrid-map-height) !important;
+  min-height: var(--stgy-pub-nongrid-map-height) !important;
+  max-height: var(--stgy-pub-nongrid-map-height) !important;
+}
+
+.pub-theme-dir-vert
+  .pub-main
+  .markdown-body:not(.excerpt)
+  > figure.stgy-track-map:not(:has(> .stgy-track-graph:not([hidden]))) {
+  width: var(--stgy-pub-nongrid-map-width) !important;
+  max-width: var(--stgy-pub-nongrid-map-width) !important;
+}
+
+
+/* A graph must never be physically wider than the map canvas paired with it. */
+.pub-theme-dir-vert
+  .pub-main
+  .markdown-body:not(.excerpt)
+  > figure.stgy-track-map
+  > .stgy-track-graph {
+  box-sizing: border-box;
+  max-width: min(100%, var(--stgy-pub-nongrid-map-width)) !important;
+}
+
+.pub-theme-dir-vert
+  .pub-main
+  .markdown-body:not(.excerpt)
+  > figure.stgy-track-map
+  > .stgy-track-graph
+  > svg,
+.pub-theme-dir-vert
+  .pub-main
+  .markdown-body:not(.excerpt)
+  > figure.stgy-track-map
+  > .stgy-track-graph
+  > canvas {
+  max-width: 100% !important;
+}
+
+/* In vertical public articles, the default/medium, small, and xsmall non-floated
+   map-with-graph layout follows the horizontal reading order: map, caption, graph.
+   This applies at every viewport width. */
+.pub-theme-dir-vert
+  .pub-main
+  .markdown-body:not(.excerpt)
+  > figure.stgy-track-map:not([data-float]):is(
+    :not([data-size]),
+    [data-size="xsmall"],
+    [data-size="small"],
+    [data-size="medium"]
+  ):has(> .stgy-track-graph:not([hidden])) {
+  width: var(--stgy-pub-nongrid-map-width) !important;
+  max-width: var(--stgy-pub-nongrid-map-width) !important;
+  /* 100% resolves against the article content box here.  Subtract the
+     figure's physical top/bottom margins (0.55em each), so its margin box can
+     never be taller than the article content area. */
+  height: min(var(--stgy-pub-nongrid-stack-height), calc(100% - 1.1em)) !important;
+  max-height: min(var(--stgy-pub-nongrid-stack-height), calc(100% - 1.1em)) !important;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, var(--stgy-pub-nongrid-map-height)) auto minmax(1.8em, 1fr);
+  grid-template-areas:
+    "map"
+    "caption"
+    "graph";
+  column-gap: 0;
+  row-gap: 0;
+}
+
+/* The map row may have to become shorter when the article itself is shorter
+   than the preferred map height.  Remove the earlier fixed minimum in this
+   stacked graph layout so the canvas stays inside the already bounded figure. */
+.pub-theme-dir-vert
+  .pub-main
+  .markdown-body:not(.excerpt)
+  > figure.stgy-track-map:not([data-float]):is(
+    :not([data-size]),
+    [data-size="xsmall"],
+    [data-size="small"],
+    [data-size="medium"]
+  ):has(> .stgy-track-graph:not([hidden]))
+  > .stgy-track-canvas {
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: 100% !important;
+}
+
+.pub-theme-dir-vert
+  .pub-main
+  .markdown-body:not(.excerpt)
+  > figure.stgy-track-map:not([data-float]):is(
+    :not([data-size]),
+    [data-size="xsmall"],
+    [data-size="small"],
+    [data-size="medium"]
+  ):has(> .stgy-track-graph:not([hidden]))
+  > .stgy-track-graph {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: 100% !important;
+  max-width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: 100% !important;
+  margin: 0;
+  padding: 0.25em;
+  overflow: hidden;
+}
+
+.pub-theme-dir-vert
+  .pub-main
+  .markdown-body:not(.excerpt)
+  > figure.stgy-track-map:not([data-float]):is(
+    :not([data-size]),
+    [data-size="xsmall"],
+    [data-size="small"],
+    [data-size="medium"]
+  ):has(> .stgy-track-graph:not([hidden]))
+  > .stgy-track-graph
+  > .stgy-track-graph-controls {
+  gap: 0.25em;
+  margin-bottom: 0.15em;
+}
+
+.pub-theme-dir-vert
+  .pub-main
+  .markdown-body:not(.excerpt)
+  > figure.stgy-track-map:not([data-float]):is(
+    :not([data-size]),
+    [data-size="xsmall"],
+    [data-size="small"],
+    [data-size="medium"]
+  ):has(> .stgy-track-graph:not([hidden]))
+  > .stgy-track-graph
+  > svg {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  max-height: 100%;
+}
+
+/* large and xlarge retain the existing side-by-side graph layout.  Their figure
+   width is reduced only by the map column's 40em -> 36em change. */
+.pub-theme-dir-vert
+  .pub-main
+  .markdown-body:not(.excerpt)
+  > figure.stgy-track-map:not([data-float]):is(
+    [data-size="large"],
+    [data-size="xlarge"]
+  ):has(> .stgy-track-graph:not([hidden])) {
+  width: min(60.35em, calc(100svw - 2rem)) !important;
+  max-width: min(60.35em, calc(100svw - 2rem)) !important;
+}
+
+@media (max-width: 800px) {
+  .pub-theme-dir-vert
+    .pub-main
+    .markdown-body:not(.excerpt)
+    > figure.stgy-track-map:has(> .stgy-track-graph:not([hidden])) {
+    width: var(--stgy-pub-nongrid-map-width) !important;
+    max-width: var(--stgy-pub-nongrid-map-width) !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .pub-theme-dir-vert
+    .pub-main
+    .markdown-body:not(.excerpt)
+    > figure.stgy-track-map {
+    --stgy-pub-nongrid-map-width: min(36em, calc(90svw - 0.9rem));
+  }
+
+  .pub-theme-dir-vert
+    .pub-main
+    .markdown-body:not(.excerpt)
+    > figure.stgy-track-map[data-size="xsmall"] {
+    --stgy-pub-nongrid-map-width: min(21.6em, calc(90svw - 0.9rem));
+  }
+
+  .pub-theme-dir-vert
+    .pub-main
+    .markdown-body:not(.excerpt)
+    > figure.stgy-track-map[data-size="small"] {
+    --stgy-pub-nongrid-map-width: min(28.8em, calc(90svw - 0.9rem));
+  }
+
+  .pub-theme-dir-vert
+    .pub-main
+    .markdown-body:not(.excerpt)
+    > figure.stgy-track-map[data-size="medium"] {
+    --stgy-pub-nongrid-map-width: min(36em, calc(90svw - 0.9rem));
+  }
+
+  .pub-theme-dir-vert
+    .pub-main
+    .markdown-body:not(.excerpt)
+    > figure.stgy-track-map[data-size="large"],
+  .pub-theme-dir-vert
+    .pub-main
+    .markdown-body:not(.excerpt)
+    > figure.stgy-track-map[data-size="xlarge"] {
+    --stgy-pub-nongrid-map-width: min(36em, calc(90svw - 0.9rem));
+  }
+}
+
+
+/* Vertical public non-grid track map width alignment.
+   For stacked xsmall/small/medium maps, the figure itself must have exactly the
+   same physical width as the map canvas.  Constrain both logical and physical
+   inline dimensions so graph controls cannot enlarge the grid container. */
+.pub-theme-dir-vert
+  .pub-main
+  .markdown-body:not(.excerpt)
+  figure.stgy-track-map:not(.stgy-track-grid > figure.stgy-track-map):not([data-float]):is(
+    :not([data-size]),
+    [data-size="xsmall"],
+    [data-size="small"],
+    [data-size="medium"]
+  ):has(> .stgy-track-graph:not([hidden])) {
+  box-sizing: border-box;
+  width: var(--stgy-pub-nongrid-map-width) !important;
+  min-width: var(--stgy-pub-nongrid-map-width) !important;
+  max-width: var(--stgy-pub-nongrid-map-width) !important;
+  inline-size: var(--stgy-pub-nongrid-map-width) !important;
+  min-inline-size: var(--stgy-pub-nongrid-map-width) !important;
+  max-inline-size: var(--stgy-pub-nongrid-map-width) !important;
+  grid-template-columns: minmax(0, 100%) !important;
+  justify-items: stretch;
+}
+
+.pub-theme-dir-vert
+  .pub-main
+  .markdown-body:not(.excerpt)
+  figure.stgy-track-map:not(.stgy-track-grid > figure.stgy-track-map):not([data-float]):is(
+    :not([data-size]),
+    [data-size="xsmall"],
+    [data-size="small"],
+    [data-size="medium"]
+  ):has(> .stgy-track-graph:not([hidden]))
+  > .stgy-track-canvas,
+.pub-theme-dir-vert
+  .pub-main
+  .markdown-body:not(.excerpt)
+  figure.stgy-track-map:not(.stgy-track-grid > figure.stgy-track-map):not([data-float]):is(
+    :not([data-size]),
+    [data-size="xsmall"],
+    [data-size="small"],
+    [data-size="medium"]
+  ):has(> .stgy-track-graph:not([hidden]))
+  > .stgy-track-graph {
+  box-sizing: border-box;
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  inline-size: 100% !important;
+  min-inline-size: 0 !important;
+  max-inline-size: 100% !important;
+}
+
+/* For every vertical non-grid size, a graph may be narrower than its map but
+   never wider.  This also covers the side-by-side large/xlarge layout. */
+.pub-theme-dir-vert
+  .pub-main
+  .markdown-body:not(.excerpt)
+  figure.stgy-track-map:not(.stgy-track-grid > figure.stgy-track-map)
+  > .stgy-track-graph {
+  width: min(100%, var(--stgy-pub-nongrid-map-width)) !important;
+  min-width: 0 !important;
+  max-width: var(--stgy-pub-nongrid-map-width) !important;
+  min-inline-size: 0 !important;
+  max-inline-size: var(--stgy-pub-nongrid-map-width) !important;
+}
+
+.pub-theme-dir-vert
+  .pub-main
+  .markdown-body:not(.excerpt)
+  figure.stgy-track-map:not(.stgy-track-grid > figure.stgy-track-map)
+  > .stgy-track-graph
+  > .stgy-track-graph-controls,
+.pub-theme-dir-vert
+  .pub-main
+  .markdown-body:not(.excerpt)
+  figure.stgy-track-map:not(.stgy-track-grid > figure.stgy-track-map)
+  > .stgy-track-graph
+  > svg,
+.pub-theme-dir-vert
+  .pub-main
+  .markdown-body:not(.excerpt)
+  figure.stgy-track-map:not(.stgy-track-grid > figure.stgy-track-map)
+  > .stgy-track-graph
+  > canvas {
+  box-sizing: border-box;
+  min-width: 0 !important;
+  max-width: 100% !important;
 }
