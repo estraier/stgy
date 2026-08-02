@@ -24,6 +24,7 @@ import createGeoRouter from "./routes/geo";
 import createLinkSnippetsRouter from "./routes/linkSnippets";
 import createAgreementTermsRouter from "./routes/agreementTerms";
 import { getSampleAddr, connectPgWithRetry, connectRedisWithRetry } from "./utils/servers";
+import { redactConfigValue } from "./utils/configLog";
 
 const logger = createLogger({ file: "index" });
 
@@ -48,10 +49,7 @@ async function main() {
   printMemoryUsage();
 
   Object.entries(Config).forEach(([key, value]) => {
-    if (key.endsWith("_PASSWORD") || key.endsWith("_API_KEY")) {
-      value = "*".repeat(value.length);
-    }
-    logger.info(`[config] ${key}: ${JSON.stringify(value)}`);
+    logger.info(`[config] ${key}: ${JSON.stringify(redactConfigValue(key, value))}`);
   });
 
   const geoCoder = new GeoCoder([Config.GEO_STATIC_JSON_FILE]);
