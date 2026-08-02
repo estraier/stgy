@@ -1795,6 +1795,87 @@ html:has(.site-container) {
     .image-grid[data-cols="1"]:has(figure.image-block:not(.expanded)[data-size="xlarge"]) {
     height: 95%;
   }
+
+  /* In vertical article flow, a one-item image grid is sized primarily by its
+     physical height. Reduce that dimension to 80% so landscape images also
+     occupy about 80% of their previous physical width. The explicit grid row
+     prevents very wide media from expanding past the independent width cap. */
+  .pub-theme-dir-vert
+    .pub-main
+    .markdown-body:not(.excerpt)
+    .image-grid[data-cols="1"]:not(:has(figure.image-block.expanded)) {
+    height: 48%;
+    max-width: calc(80svw - 1.6rem) !important;
+    min-width: 0;
+    grid-template-rows: minmax(0, 1fr);
+  }
+  .pub-theme-dir-vert
+    .pub-main
+    .markdown-body:not(.excerpt)
+    .image-grid[data-cols="1"]:not(:has(figure.image-block.expanded)):has(
+      figure.image-block:not(.expanded)[data-size="xsmall"]
+    ) {
+    height: 28%;
+  }
+  .pub-theme-dir-vert
+    .pub-main
+    .markdown-body:not(.excerpt)
+    .image-grid[data-cols="1"]:not(:has(figure.image-block.expanded)):has(
+      figure.image-block:not(.expanded)[data-size="small"]
+    ) {
+    height: 36.8%;
+  }
+  .pub-theme-dir-vert
+    .pub-main
+    .markdown-body:not(.excerpt)
+    .image-grid[data-cols="1"]:not(:has(figure.image-block.expanded)):has(
+      figure.image-block:not(.expanded)[data-size="large"]
+    ) {
+    height: 58.4%;
+  }
+  .pub-theme-dir-vert
+    .pub-main
+    .markdown-body:not(.excerpt)
+    .image-grid[data-cols="1"]:not(:has(figure.image-block.expanded)):has(
+      figure.image-block:not(.expanded)[data-size="xlarge"]
+    ) {
+    height: 76%;
+  }
+  .pub-theme-dir-vert
+    .pub-main
+    .markdown-body:not(.excerpt)
+    .image-grid[data-cols="1"]
+    figure.image-block:not(.expanded) {
+    box-sizing: border-box;
+    min-width: 0;
+    max-width: 100% !important;
+  }
+  .pub-theme-dir-vert
+    .pub-main
+    .markdown-body:not(.excerpt)
+    .image-grid[data-cols="1"]
+    figure.image-block:not(.expanded)
+    > img,
+  .pub-theme-dir-vert
+    .pub-main
+    .markdown-body:not(.excerpt)
+    .image-grid[data-cols="1"]
+    figure.image-block:not(.expanded)
+    > video {
+    box-sizing: border-box;
+    min-width: 0;
+    max-width: 100% !important;
+    max-height: 100% !important;
+    object-fit: contain;
+  }
+  @media (max-width: 480px) {
+    .pub-theme-dir-vert
+      .pub-main
+      .markdown-body:not(.excerpt)
+      .image-grid[data-cols="1"]:not(:has(figure.image-block.expanded)) {
+      max-width: calc(80svw - 0.8rem) !important;
+    }
+  }
   .pub-theme-dir-vert .markdown-body .image-grid figure.image-block.expanded {
     inline-size: 98%;
     block-size: auto;
