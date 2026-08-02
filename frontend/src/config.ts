@@ -122,15 +122,15 @@ export class Config {
   static readonly PUB_DESIGN_DARK_THEMES = ["dark", "blackboard", "kokuban"];
   static readonly PUB_POSTS_RICH_PAGE_SIZE = normNum(
     process.env.NEXT_PUBLIC_PUB_POSTS_RICH_PAGE_SIZE,
-    10,
+    20,
   );
   static readonly PUB_POSTS_PLAIN_PAGE_SIZE = normNum(
     process.env.NEXT_PUBLIC_PUB_POSTS_PLAIN_PAGE_SIZE,
-    100,
+    200,
   );
   static readonly PUB_SIDE_RECENT_POSTS_SIZE = normNum(
     process.env.NEXT_PUBLIC_PUB_SIDE_RECENT_POSTS_SIZE,
-    5,
+    10,
   );
   static readonly AI_SUMMARY_POST_SKIP_LATEST_MS = normNum(
     process.env.NEXT_PUBLIC_AI_SUMMARY_POST_SKIP_LATEST_MS,
