@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { Config } from "@/config";
-import type { SessionInfo } from "@/api/models";
+import { getSessionInfo } from "@/api/auth";
+import { makeAgreementPageUrl, needsAgreement } from "@/utils/agreement";
 
 type Phase = "checking" | "guest" | "redirecting";
 
@@ -18,47 +19,44 @@ export default function HomePageClient() {
 
     (async () => {
       try {
-        const res = await fetch("/backend/auth", {
-          credentials: "include",
-          cache: "no-store",
-        });
-        const s: SessionInfo | null = res.ok ? await res.json() : null;
+        const s = await getSessionInfo();
         if (aborted) return;
 
-        if (s) {
-          const now = Date.now();
-          const regTs = Date.parse(s.userCreatedAt || "");
-          const isNewbie = Number.isFinite(regTs) && now - regTs <= 12 * 60 * 60 * 1000;
-
-          let shouldWelcome = isNewbie;
-          if (shouldWelcome) {
-            try {
-              const seen = localStorage.getItem(WELCOME_ONCE_KEY) === "1";
-              if (seen) {
-                shouldWelcome = false;
-              } else {
-                try {
-                  localStorage.setItem(WELCOME_ONCE_KEY, "1");
-                } catch {}
-              }
-            } catch {}
-          }
-
-          const target = shouldWelcome ? Config.WELCOME_PAGE_PATH : "/posts";
-
+        if (needsAgreement(s)) {
           setPhase("redirecting");
-
-          setTimeout(() => {
-            if (location.pathname === "/" || location.pathname === "") {
-              location.replace(target);
-            } else {
-              location.href = target;
-            }
-          }, 120);
+          location.replace(makeAgreementPageUrl("/"));
           return;
         }
 
-        setPhase("guest");
+        const now = Date.now();
+        const regTs = Date.parse(s.userCreatedAt || "");
+        const isNewbie = Number.isFinite(regTs) && now - regTs <= 12 * 60 * 60 * 1000;
+
+        let shouldWelcome = isNewbie;
+        if (shouldWelcome) {
+          try {
+            const seen = localStorage.getItem(WELCOME_ONCE_KEY) === "1";
+            if (seen) {
+              shouldWelcome = false;
+            } else {
+              try {
+                localStorage.setItem(WELCOME_ONCE_KEY, "1");
+              } catch {}
+            }
+          } catch {}
+        }
+
+        const target = shouldWelcome ? Config.WELCOME_PAGE_PATH : "/posts";
+
+        setPhase("redirecting");
+
+        setTimeout(() => {
+          if (location.pathname === "/" || location.pathname === "") {
+            location.replace(target);
+          } else {
+            location.href = target;
+          }
+        }, 120);
       } catch {
         if (!aborted) {
           setPhase("guest");

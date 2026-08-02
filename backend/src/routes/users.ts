@@ -6,6 +6,7 @@ import crypto from "crypto";
 import type { GeoCoder } from "stgy-geocoder";
 import type { StorageService } from "../services/storage";
 import { UsersService } from "../services/users";
+import { AgreementTermsService } from "../services/agreementTerms";
 import { MediaService } from "../services/media";
 import { TracksService } from "../services/tracks";
 import { AuthService } from "../services/auth";
@@ -24,6 +25,7 @@ import {
   normalizeMultiLines,
   normalizeLocale,
   parseBoolean,
+  hexToDec,
   maskEmailByHash,
 } from "../utils/format";
 
@@ -36,6 +38,7 @@ export default function createUsersRouter(
 ) {
   const router = Router();
   const usersService = new UsersService(pgPool, redis, eventLogService);
+  const agreementTermsService = new AgreementTermsService(pgPool);
   const mediaService = new MediaService(storageService, redis);
   const tracksService = new TracksService(storageService, geoCoder);
   const authService = new AuthService(pgPool, redis);
@@ -174,6 +177,28 @@ export default function createUsersRouter(
     } catch (e: unknown) {
       res.status(400).json({ error: (e as Error).message || "list friends failed" });
     }
+  });
+
+  router.post("/agreement/:id", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    try {
+      hexToDec(req.params.id);
+    } catch {
+      return res.status(400).json({ error: "invalid id" });
+    }
+    const agreed = await agreementTermsService.agreeToLatestAgreementTerm(
+      loginUser.id,
+      req.params.id,
+    );
+    if (!agreed) {
+      return res.status(409).json({ error: "agreement term is not latest" });
+    }
+    const sessionId = authHelpers.getSessionId(req);
+    if (sessionId) {
+      await authService.clearRequiredAgreementTermId(sessionId);
+    }
+    res.json({ result: "ok" });
   });
 
   router.get("/:id/lite", async (req: Request, res: Response) => {

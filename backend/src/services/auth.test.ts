@@ -48,7 +48,9 @@ describe("AuthService class", () => {
 
   test("login: success", async () => {
     const dbIdDec = "1234567890123456";
+    const latestTermDec = "2234567890123456";
     const userIdHex = decToHex(dbIdDec);
+    const latestTermHex = decToHex(latestTermDec);
     (pgClient.query as jest.Mock).mockResolvedValueOnce({
       rows: [
         {
@@ -61,6 +63,8 @@ describe("AuthService class", () => {
           password: new Uint8Array([1, 2, 3]),
           locale: "ja-JP",
           timezone: "Asia/Tokyo",
+          user_agreement_term_id: null,
+          latest_agreement_term_id: latestTermDec,
         },
       ],
       rowCount: 1,
@@ -84,6 +88,33 @@ describe("AuthService class", () => {
     expect(session.userLocale).toBe("ja-JP");
     expect(session.userTimezone).toBe("Asia/Tokyo");
     expect(session.loggedInAt).toBeDefined();
+    expect(session.requiredAgreementTermId).toBe(latestTermHex);
+  });
+
+  test("login: no agreement required when the latest terms are already accepted", async () => {
+    const dbIdDec = "1234567890123456";
+    const termIdDec = "2234567890123456";
+    (pgClient.query as jest.Mock).mockResolvedValueOnce({
+      rows: [
+        {
+          id: dbIdDec,
+          email: "test@example.com",
+          nickname: "TestNick",
+          is_admin: false,
+          created_at: "2025-07-20T00:00:00Z",
+          updated_at: null,
+          password: new Uint8Array([1, 2, 3]),
+          locale: "ja-JP",
+          timezone: "Asia/Tokyo",
+          user_agreement_term_id: termIdDec,
+          latest_agreement_term_id: termIdDec,
+        },
+      ],
+      rowCount: 1,
+    });
+    const result = await authService.login("test@example.com", "password");
+    const session = JSON.parse(redis.store[`session:${result.sessionId}`]);
+    expect(session.requiredAgreementTermId).toBeNull();
   });
 
   test("login: fail", async () => {
@@ -107,6 +138,8 @@ describe("AuthService class", () => {
           updated_at: null,
           locale: "ja-JP",
           timezone: "Asia/Tokyo",
+          user_agreement_term_id: null,
+          latest_agreement_term_id: null,
         },
       ],
       rowCount: 1,
@@ -117,7 +150,7 @@ describe("AuthService class", () => {
     const [sqlText, sqlParams] = (pgClient.query as jest.Mock).mock.calls[0];
     const normalized = String(sqlText).replace(/\s+/g, " ").trim();
     expect(normalized).toBe(
-      "SELECT u.id, s.email, u.nickname, u.is_admin, id_to_timestamp(u.id) AS created_at, u.updated_at, u.locale, u.timezone FROM users u JOIN user_secrets s ON s.user_id = u.id ORDER BY u.id ASC LIMIT 1",
+      "SELECT u.id, s.email, u.nickname, u.is_admin, id_to_timestamp(u.id) AS created_at, u.updated_at, u.locale, u.timezone, s.user_agreement_term_id, ( SELECT id FROM user_agreement_terms ORDER BY id DESC LIMIT 1 ) AS latest_agreement_term_id FROM users u JOIN user_secrets s ON s.user_id = u.id ORDER BY u.id ASC LIMIT 1",
     );
     expect(sqlParams).toEqual([]);
     expect(redis.set).toHaveBeenCalled();
@@ -131,6 +164,7 @@ describe("AuthService class", () => {
     expect(stored.userLocale).toBe("ja-JP");
     expect(stored.userTimezone).toBe("Asia/Tokyo");
     expect(stored.loggedInAt).toBeDefined();
+    expect(stored.requiredAgreementTermId).toBeNull();
   });
 
   test("loginAsAdmin: admin not found", async () => {
@@ -150,6 +184,8 @@ describe("AuthService class", () => {
           updated_at: null,
           locale: "ja-JP",
           timezone: "Asia/Tokyo",
+          user_agreement_term_id: null,
+          latest_agreement_term_id: null,
         },
       ],
       rowCount: 1,
@@ -160,7 +196,10 @@ describe("AuthService class", () => {
 
   test("switchUser: success", async () => {
     const dbIdDec = "9876543210000000";
+    const acceptedTermDec = "100";
+    const latestTermDec = "200";
     const userHex = decToHex(dbIdDec);
+    const latestTermHex = decToHex(latestTermDec);
     (pgClient.query as jest.Mock).mockResolvedValueOnce({
       rows: [
         {
@@ -172,6 +211,8 @@ describe("AuthService class", () => {
           updated_at: "2025-07-21T01:02:03Z",
           locale: "en-US",
           timezone: "America/Los_Angeles",
+          user_agreement_term_id: acceptedTermDec,
+          latest_agreement_term_id: latestTermDec,
         },
       ],
       rowCount: 1,
@@ -190,6 +231,7 @@ describe("AuthService class", () => {
     expect(stored.userLocale).toBe("en-US");
     expect(stored.userTimezone).toBe("America/Los_Angeles");
     expect(stored.loggedInAt).toBeDefined();
+    expect(stored.requiredAgreementTermId).toBe(latestTermHex);
   });
 
   test("switchUser: user not found", async () => {
@@ -218,6 +260,7 @@ describe("AuthService class", () => {
     expect(session?.userCreatedAt).toBe("2025-07-01T00:00:00Z");
     expect(session?.userUpdatedAt).toBe("2025-07-12T00:00:00Z");
     expect(session?.loggedInAt).toBe("2025-07-13T00:00:00Z");
+    expect(session?.requiredAgreementTermId).toBeNull();
   });
 
   test("getSessionInfo: not exists", async () => {
@@ -244,6 +287,7 @@ describe("AuthService class", () => {
       userCreatedAt: "2025-07-04T00:00:00Z",
       userUpdatedAt: "2025-07-10T00:00:00Z",
       loggedInAt: "2025-07-13T00:00:00Z",
+      requiredAgreementTermId: decToHex("3003"),
     };
     redis.store[`session:${sessionId}`] = JSON.stringify(original);
     (pgClient.query as jest.Mock).mockResolvedValueOnce({
@@ -278,6 +322,28 @@ describe("AuthService class", () => {
     expect(stored.userLocale).toBe("en-GB");
     expect(stored.userTimezone).toBe("Europe/London");
     expect(stored.loggedInAt).toBe(original.loggedInAt);
+    expect(stored.requiredAgreementTermId).toBe(original.requiredAgreementTermId);
+  });
+
+  test("clearRequiredAgreementTermId: clears only the current session value", async () => {
+    const sessionId = "agreement-session";
+    redis.store[`session:${sessionId}`] = JSON.stringify({
+      userId: decToHex("1"),
+      userEmail: "e@example.com",
+      userNickname: "TestNick",
+      userIsAdmin: false,
+      userCreatedAt: "2025-07-01T00:00:00Z",
+      userUpdatedAt: null,
+      userLocale: "en",
+      userTimezone: "UTC",
+      loggedInAt: "2025-07-13T00:00:00Z",
+      requiredAgreementTermId: decToHex("4004"),
+    });
+    const updated = await authService.clearRequiredAgreementTermId(sessionId);
+    expect(updated?.requiredAgreementTermId).toBeNull();
+    const stored = JSON.parse(redis.store[`session:${sessionId}`]);
+    expect(stored.requiredAgreementTermId).toBeNull();
+    expect(stored.userEmail).toBe("e@example.com");
   });
 
   test("refreshSessionInfo: returns null when session not found", async () => {

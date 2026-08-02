@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
-import { login } from "@/api/auth";
+import { getSessionInfo, login } from "@/api/auth";
+import { makeAgreementPageUrl, needsAgreement } from "@/utils/agreement";
 
 function isAllowedPath(p: string): boolean {
   const s = p.startsWith("/") ? p : `/${p}`;
@@ -45,10 +46,16 @@ export default function PageBody() {
     setError(null);
     try {
       await login(email, password);
+      const session = await getSessionInfo();
       if (typeof window !== "undefined") {
         localStorage.setItem("lastLoginEmail", email);
       }
-      router.push(redirectTo ?? "/");
+      const target = redirectTo ?? "/";
+      if (needsAgreement(session)) {
+        router.replace(makeAgreementPageUrl(target));
+      } else {
+        router.replace(target);
+      }
     } catch (err: unknown) {
       setError(err ? String(err) : "Invalid email or password.");
     }

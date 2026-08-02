@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { getSessionInfo } from "@/api/auth";
 import type { SessionInfo } from "@/api/models";
+import { makeAgreementPageUrl, needsAgreement } from "@/utils/agreement";
 
 type RequireLoginStatus =
   | { state: "loading" }
@@ -12,16 +13,26 @@ type RequireLoginStatus =
 
 export function useRequireLogin() {
   const router = useRouter();
+  const pathname = usePathname();
   const [status, setStatus] = useState<RequireLoginStatus>({ state: "loading" });
 
   useEffect(() => {
     getSessionInfo()
-      .then((session) => setStatus({ state: "authenticated", session }))
+      .then((session) => {
+        if (needsAgreement(session)) {
+          const returnPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+          window.location.replace(
+            makeAgreementPageUrl(returnPath),
+          );
+          return;
+        }
+        setStatus({ state: "authenticated", session });
+      })
       .catch(() => {
         setStatus({ state: "unauthenticated" });
         router.replace("/error?page=login-required");
       });
-  }, [router]);
+  }, [pathname, router]);
 
   return status;
 }

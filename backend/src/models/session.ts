@@ -8,4 +8,5 @@ export type SessionInfo = {
   userLocale: string;
   userTimezone: string;
   loggedInAt: string;
+  requiredAgreementTermId: string | null;
 };

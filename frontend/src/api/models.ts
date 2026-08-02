@@ -8,6 +8,17 @@ export type SessionInfo = {
   userLocale: string;
   userTimezone: string;
   loggedInAt: string;
+  requiredAgreementTermId: string | null;
+};
+
+export type AgreementTermContent = {
+  locale: string;
+  text: string;
+};
+
+export type AgreementTerm = {
+  id: string;
+  contents: AgreementTermContent[];
 };
 
 export type LinkSnippetStatus =

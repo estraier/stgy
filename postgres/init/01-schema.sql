@@ -15,6 +15,11 @@ CREATE TABLE ai_models (
   feature_model VARCHAR(50) NOT NULL
 );
 
+CREATE TABLE user_agreement_terms (
+  id BIGINT PRIMARY KEY,
+  contents VARCHAR(262144) NOT NULL
+);
+
 CREATE TABLE users (
   id BIGINT PRIMARY KEY,
   updated_at TIMESTAMPTZ,
@@ -32,6 +37,7 @@ CREATE INDEX idx_users_ai_id ON users (id) WHERE ai_model IS NOT NULL;
 
 CREATE TABLE user_secrets (
   user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  user_agreement_term_id BIGINT REFERENCES user_agreement_terms(id) ON DELETE SET NULL,
   email VARCHAR(100) NOT NULL UNIQUE,
   password BYTEA NOT NULL
 );

@@ -37,6 +37,10 @@ def get_session(session_id):
   assert "userCreatedAt" in data
   assert "userUpdatedAt" in data
   assert "loggedInAt" in data
+  assert "requiredAgreementTermId" in data
+  assert data["requiredAgreementTermId"] is None or isinstance(
+    data["requiredAgreementTermId"], str
+  )
   return data
 
 def logout(session_id):
@@ -104,6 +108,188 @@ def test_auth():
   logout(su_session_id)
   logout(session_id)
   print("[test_auth] OK")
+
+def test_agreement_terms():
+  print("[agreement_terms] public reads and admin writes")
+  now_ms = int(time.time() * 1000)
+  base = (now_ms << 20) | (0xFE << 12)
+  term_id1 = f"{base | 1:016X}"
+  term_id2 = f"{base | 2:016X}"
+  contents1 = [
+    {"locale": "en", "text": "agreement endpoint test version 1"},
+    {"locale": "ja", "text": "利用規約エンドポイント試験1"},
+  ]
+  contents1_updated = [
+    {"locale": "en", "text": "agreement endpoint test version 1 updated"},
+    {"locale": "ja-JP", "text": "利用規約エンドポイント試験1更新"},
+  ]
+  contents2 = [
+    {"locale": "en", "text": "agreement endpoint test version 2"},
+  ]
+
+  admin_session = login()
+  admin_cookies = {"session_id": admin_session}
+  user_session = None
+  admin_agreement_sessions = []
+  user_id = None
+  try:
+    res = requests.get(f"{BASE_URL}/agreement-terms")
+    assert res.status_code == 200, res.text
+    assert isinstance(res.json(), list), res.text
+
+    res = requests.post(f"{BASE_URL}/agreement-terms/{term_id1}", json=contents1)
+    assert res.status_code == 403, res.text
+
+    user_email = f"agreement-user+{now_ms}@stgy.xyz"
+    user_password = "agreement-test-password"
+    res = requests.post(
+      f"{BASE_URL}/users",
+      json={
+        "email": user_email,
+        "nickname": f"agreement-user-{now_ms}",
+        "password": user_password,
+        "isAdmin": False,
+        "blockStrangers": False,
+        "locale": "en",
+        "timezone": "UTC",
+        "introduction": "agreement endpoint test user",
+        "avatar": None,
+        "aiModel": None,
+        "aiPersonality": None,
+      },
+      cookies=admin_cookies,
+    )
+    assert res.status_code == 201, res.text
+    user_id = res.json()["id"]
+    res = requests.post(
+      f"{BASE_URL}/auth",
+      json={"email": user_email, "password": user_password},
+    )
+    assert res.status_code == 200, res.text
+    user_session = res.cookies.get("session_id")
+    assert user_session
+    user_cookies = {"session_id": user_session}
+    res = requests.post(
+      f"{BASE_URL}/agreement-terms/{term_id1}",
+      json=contents1,
+      cookies=user_cookies,
+    )
+    assert res.status_code == 403, res.text
+
+    res = requests.post(
+      f"{BASE_URL}/agreement-terms/{term_id1}",
+      json=[{"locale": "ja", "text": "English fallback is missing"}],
+      cookies=admin_cookies,
+    )
+    assert res.status_code == 400, res.text
+
+    res = requests.post(
+      f"{BASE_URL}/agreement-terms/{term_id1}",
+      json=contents1,
+      cookies=admin_cookies,
+    )
+    assert res.status_code == 200, res.text
+    assert res.json() == {"id": term_id1, "contents": contents1}
+
+    res = requests.get(f"{BASE_URL}/agreement-terms/{term_id1}")
+    assert res.status_code == 200, res.text
+    assert res.json() == {"id": term_id1, "contents": contents1}
+
+    res = requests.post(f"{BASE_URL}/users/agreement/{term_id1}")
+    assert res.status_code == 401, res.text
+
+    # The existing session is not re-evaluated when a new agreement version is created.
+    existing_admin_required = get_session(admin_session)["requiredAgreementTermId"]
+    assert existing_admin_required != term_id1
+
+    admin_agreement_session1 = login()
+    admin_agreement_sessions.append(admin_agreement_session1)
+    admin_agreement_cookies1 = {"session_id": admin_agreement_session1}
+    assert get_session(admin_agreement_session1)["requiredAgreementTermId"] == term_id1
+    res = requests.post(
+      f"{BASE_URL}/users/agreement/{term_id1}",
+      cookies=admin_agreement_cookies1,
+    )
+    assert res.status_code == 200, res.text
+    assert res.json() == {"result": "ok"}
+    assert get_session(admin_agreement_session1)["requiredAgreementTermId"] is None
+    assert get_session(admin_session)["requiredAgreementTermId"] == existing_admin_required
+
+    res = requests.post(
+      f"{BASE_URL}/agreement-terms/{term_id1}",
+      json=contents1_updated,
+      cookies=admin_cookies,
+    )
+    assert res.status_code == 200, res.text
+    assert res.json() == {"id": term_id1, "contents": contents1_updated}
+
+    res = requests.post(
+      f"{BASE_URL}/agreement-terms/{term_id2}",
+      json=contents2,
+      cookies=admin_cookies,
+    )
+    assert res.status_code == 200, res.text
+    assert res.json() == {"id": term_id2, "contents": contents2}
+
+    res = requests.get(f"{BASE_URL}/agreement-terms")
+    assert res.status_code == 200, res.text
+    ids = res.json()
+    assert term_id1 in ids and term_id2 in ids, ids
+    assert ids.index(term_id2) < ids.index(term_id1), ids
+
+    res = requests.get(f"{BASE_URL}/agreement-terms/latest")
+    assert res.status_code == 200, res.text
+    assert res.json() == {"id": term_id2, "contents": contents2}
+
+    # A logged-in session remains accepted until a new session is created.
+    assert get_session(admin_agreement_session1)["requiredAgreementTermId"] is None
+
+    admin_agreement_session2 = login()
+    admin_agreement_sessions.append(admin_agreement_session2)
+    admin_agreement_cookies2 = {"session_id": admin_agreement_session2}
+    assert get_session(admin_agreement_session2)["requiredAgreementTermId"] == term_id2
+    res = requests.post(
+      f"{BASE_URL}/users/agreement/{term_id1}",
+      cookies=admin_agreement_cookies2,
+    )
+    assert res.status_code == 409, res.text
+    assert get_session(admin_agreement_session2)["requiredAgreementTermId"] == term_id2
+    res = requests.post(
+      f"{BASE_URL}/users/agreement/{term_id2}",
+      cookies=admin_agreement_cookies2,
+    )
+    assert res.status_code == 200, res.text
+    assert res.json() == {"result": "ok"}
+    assert get_session(admin_agreement_session2)["requiredAgreementTermId"] is None
+
+    res = requests.delete(
+      f"{BASE_URL}/agreement-terms/{term_id2}",
+      cookies=user_cookies,
+    )
+    assert res.status_code == 403, res.text
+
+    res = requests.delete(
+      f"{BASE_URL}/agreement-terms/{term_id2}",
+      cookies=admin_cookies,
+    )
+    assert res.status_code == 200, res.text
+    assert res.json() == {"result": "ok"}
+    res = requests.get(f"{BASE_URL}/agreement-terms/{term_id2}")
+    assert res.status_code == 404, res.text
+    print("[agreement_terms] OK")
+  finally:
+    for term_id in (term_id2, term_id1):
+      requests.delete(
+        f"{BASE_URL}/agreement-terms/{term_id}",
+        cookies=admin_cookies,
+      )
+    if user_session:
+      logout(user_session)
+    for session_id in admin_agreement_sessions:
+      logout(session_id)
+    if user_id:
+      requests.delete(f"{BASE_URL}/users/{user_id}", cookies=admin_cookies)
+    logout(admin_session)
 
 def test_geo():
   def address_by_locale(place, locale):

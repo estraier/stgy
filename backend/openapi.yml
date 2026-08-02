@@ -23,6 +23,38 @@ components:
         error: { type: string }
       required: [error]
 
+    AgreementTermContent:
+      type: object
+      additionalProperties: false
+      properties:
+        locale: { type: string }
+        text:
+          type: string
+          description: Plain text agreement terms for the locale
+      required: [locale, text]
+
+    AgreementTermContents:
+      type: array
+      minItems: 1
+      items:
+        $ref: "#/components/schemas/AgreementTermContent"
+
+    AgreementTerm:
+      type: object
+      properties:
+        id:
+          type: string
+          pattern: '^[0-9A-F]{16}$'
+        contents:
+          $ref: "#/components/schemas/AgreementTermContents"
+      required: [id, contents]
+
+    AgreementTermIds:
+      type: array
+      items:
+        type: string
+        pattern: '^[0-9A-F]{16}$'
+
     GeoAddress:
       type: object
       properties:
@@ -66,6 +98,10 @@ components:
         userLocale: { type: string }
         userTimezone: { type: string }
         loggedInAt: { type: string, format: date-time }
+        requiredAgreementTermId:
+          type: string
+          nullable: true
+          description: Latest agreement term ID required by this login session, or null
       required:
         [
           userId,
@@ -77,6 +113,7 @@ components:
           userLocale,
           userTimezone,
           loggedInAt,
+          requiredAgreementTermId,
         ]
 
     QueryStats:
@@ -796,6 +833,12 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+    Error409:
+      description: Conflict
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
     Error429:
       description: Too many requests
       content:
@@ -1258,6 +1301,123 @@ paths:
           $ref: "#/components/responses/Error400"
         "403":
           $ref: "#/components/responses/Error403"
+
+  /agreement-terms/latest:
+    get:
+      summary: Get the latest user agreement terms
+      responses:
+        "200":
+          description: Latest agreement terms
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgreementTerm"
+        "404":
+          $ref: "#/components/responses/Error404"
+
+  /agreement-terms:
+    get:
+      summary: List user agreement term version IDs
+      responses:
+        "200":
+          description: Agreement term IDs in descending order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgreementTermIds"
+
+  /agreement-terms/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: '^[0-9A-F]{16}$'
+    get:
+      summary: Get a specific version of the user agreement terms
+      responses:
+        "200":
+          description: Agreement terms
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgreementTerm"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "404":
+          $ref: "#/components/responses/Error404"
+    post:
+      summary: (Admin only) Create or replace a version of the user agreement terms
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgreementTermContents"
+      responses:
+        "200":
+          description: Agreement terms created or replaced
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgreementTerm"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "403":
+          $ref: "#/components/responses/Error403"
+    delete:
+      summary: (Admin only) Delete a version of the user agreement terms
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Agreement terms deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result: { type: string }
+                required: [result]
+        "400":
+          $ref: "#/components/responses/Error400"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+
+  /users/agreement/{id}:
+    post:
+      summary: Agree to the latest user agreement terms
+      description: The requested version must be the current latest version. On success, requiredAgreementTermId is cleared in the current session.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9A-F]{16}$'
+      responses:
+        "200":
+          description: Agreement recorded for the current user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result: { type: string }
+                required: [result]
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "409":
+          $ref: "#/components/responses/Error409"
 
   /users/search:
     get:

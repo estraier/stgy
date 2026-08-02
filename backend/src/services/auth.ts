@@ -18,6 +18,8 @@ type LoginRow = {
   password: Uint8Array;
   locale: string;
   timezone: string;
+  user_agreement_term_id: string | null;
+  latest_agreement_term_id: string | null;
 };
 
 type SessionRefreshRow = {
@@ -39,6 +41,8 @@ type SwitchUserRow = {
   updated_at: string | null;
   locale: string;
   timezone: string;
+  user_agreement_term_id: string | null;
+  latest_agreement_term_id: string | null;
 };
 
 export class AuthService {
@@ -63,7 +67,14 @@ export class AuthService {
         u.updated_at,
         s.password,
         u.locale,
-        u.timezone
+        u.timezone,
+        s.user_agreement_term_id,
+        (
+          SELECT id
+          FROM user_agreement_terms
+          ORDER BY id DESC
+          LIMIT 1
+        ) AS latest_agreement_term_id
       FROM users u
       JOIN user_secrets s ON s.user_id = u.id
       WHERE s.email = $1
@@ -83,6 +94,8 @@ export class AuthService {
       updated_at: userUpdatedAt,
       locale: userLocale,
       timezone: userTimezone,
+      user_agreement_term_id: userAgreementTermId,
+      latest_agreement_term_id: latestAgreementTermId,
     } = row;
     const userId = decToHex(id);
     const sessionId = crypto.randomBytes(32).toString("hex");
@@ -96,6 +109,10 @@ export class AuthService {
       userLocale,
       userTimezone,
       loggedInAt: new Date().toISOString(),
+      requiredAgreementTermId: getRequiredAgreementTermId(
+        userAgreementTermId,
+        latestAgreementTermId,
+      ),
     };
     await this.redis.set(
       `session:${sessionId}`,
@@ -118,7 +135,14 @@ export class AuthService {
         id_to_timestamp(u.id) AS created_at,
         u.updated_at,
         u.locale,
-        u.timezone
+        u.timezone,
+        s.user_agreement_term_id,
+        (
+          SELECT id
+          FROM user_agreement_terms
+          ORDER BY id DESC
+          LIMIT 1
+        ) AS latest_agreement_term_id
       FROM users u
       JOIN user_secrets s ON s.user_id = u.id
       ORDER BY u.id ASC
@@ -136,6 +160,8 @@ export class AuthService {
       updated_at: userUpdatedAt,
       locale: userLocale,
       timezone: userTimezone,
+      user_agreement_term_id: userAgreementTermId,
+      latest_agreement_term_id: latestAgreementTermId,
     } = result.rows[0];
     if (!userIsAdmin) throw new Error("first user is not admin");
     const sessionId = crypto.randomBytes(32).toString("hex");
@@ -149,6 +175,10 @@ export class AuthService {
       userLocale,
       userTimezone,
       loggedInAt: new Date().toISOString(),
+      requiredAgreementTermId: getRequiredAgreementTermId(
+        userAgreementTermId,
+        latestAgreementTermId,
+      ),
     };
     await this.redis.set(
       `session:${sessionId}`,
@@ -171,7 +201,14 @@ export class AuthService {
         id_to_timestamp(u.id) AS created_at,
         u.updated_at,
         u.locale,
-        u.timezone
+        u.timezone,
+        s.user_agreement_term_id,
+        (
+          SELECT id
+          FROM user_agreement_terms
+          ORDER BY id DESC
+          LIMIT 1
+        ) AS latest_agreement_term_id
       FROM users u
       JOIN user_secrets s ON s.user_id = u.id
       WHERE u.id = $1
@@ -188,6 +225,8 @@ export class AuthService {
       updated_at: userUpdatedAt,
       locale: userLocale,
       timezone: userTimezone,
+      user_agreement_term_id: userAgreementTermId,
+      latest_agreement_term_id: latestAgreementTermId,
     } = result.rows[0];
     const sessionId = crypto.randomBytes(32).toString("hex");
     const sessionInfo: SessionInfo = {
@@ -200,6 +239,10 @@ export class AuthService {
       userLocale,
       userTimezone,
       loggedInAt: new Date().toISOString(),
+      requiredAgreementTermId: getRequiredAgreementTermId(
+        userAgreementTermId,
+        latestAgreementTermId,
+      ),
     };
     await this.redis.set(
       `session:${sessionId}`,
@@ -219,7 +262,11 @@ export class AuthService {
     );
     if (!value) return null;
     try {
-      return JSON.parse(value) as SessionInfo;
+      const sessionInfo = JSON.parse(value) as SessionInfo;
+      if (sessionInfo.requiredAgreementTermId === undefined) {
+        sessionInfo.requiredAgreementTermId = null;
+      }
+      return sessionInfo;
     } catch {
       return null;
     }
@@ -266,6 +313,24 @@ export class AuthService {
       userLocale,
       userTimezone,
       loggedInAt: current.loggedInAt,
+      requiredAgreementTermId: current.requiredAgreementTermId,
+    };
+    await this.redis.set(
+      `session:${sessionId}`,
+      JSON.stringify(next),
+      "EX",
+      Config.SESSION_TTL,
+    );
+    return next;
+  }
+
+  async clearRequiredAgreementTermId(sessionId: string): Promise<SessionInfo | null> {
+    if (!sessionId) return null;
+    const current = await this.getSessionInfo(sessionId);
+    if (!current) return null;
+    const next: SessionInfo = {
+      ...current,
+      requiredAgreementTermId: null,
     };
     await this.redis.set(
       `session:${sessionId}`,
@@ -281,4 +346,13 @@ export class AuthService {
       await this.redis.del(`session:${sessionId}`);
     }
   }
+}
+
+function getRequiredAgreementTermId(
+  userAgreementTermId: string | null | undefined,
+  latestAgreementTermId: string | null | undefined,
+): string | null {
+  if (latestAgreementTermId === null || latestAgreementTermId === undefined) return null;
+  if (userAgreementTermId === latestAgreementTermId) return null;
+  return decToHex(latestAgreementTermId);
 }
