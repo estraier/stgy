@@ -1,4 +1,4 @@
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 WORKDIR /app
 COPY package.json package-lock.json .npmrc ./
 COPY backend/package.json backend/package.json
@@ -14,7 +14,7 @@ COPY packages/geocoder ./packages/geocoder
 RUN npm run packages:build && npm run backend:build
 RUN npm prune --omit=dev --workspaces --include-workspace-root
 
-FROM node:20-alpine AS runner
+FROM node:24-alpine AS runner
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=builder /app/node_modules ./node_modules

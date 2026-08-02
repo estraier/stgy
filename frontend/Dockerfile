@@ -1,4 +1,4 @@
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 WORKDIR /app
 COPY package.json package-lock.json .npmrc ./
 COPY frontend/package.json frontend/package.json
@@ -21,7 +21,7 @@ ENV NEXT_PUBLIC_STORAGE_S3_BUCKET_PREFIX=${NEXT_PUBLIC_STORAGE_S3_BUCKET_PREFIX}
 ENV NEXT_PUBLIC_STORAGE_S3_PUBLIC_URL_PREFIX=${NEXT_PUBLIC_STORAGE_S3_PUBLIC_URL_PREFIX}
 RUN npm run packages:build && npm run frontend:build
 
-FROM node:20-alpine AS runner
+FROM node:24-alpine AS runner
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 WORKDIR /app

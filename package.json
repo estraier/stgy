@@ -10,6 +10,9 @@
     "backend",
     "frontend"
   ],
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "docker:init": "docker compose down -v --rmi all --remove-orphans || true ; bash -lc 'ids=$(docker ps -aq); [ -n \"$ids\" ] && docker rm -f $ids; docker system prune -a --volumes -f; (docker buildx version >/dev/null 2>&1 && docker buildx prune -a -f || true)'",
     "docker:reset": "docker compose down --rmi all --remove-orphans && docker compose build --no-cache && docker compose create",

@@ -20,13 +20,13 @@
     "decode": "npm run build --silent && node dist/cli.js decode",
     "fmt": "prettier --write .",
     "lint": "eslint src --ext .ts",
-    "clean": "rm -rf node_modules dist && find source-data -type f -name '*.zip' -delete",
+    "clean": "rm -rf node_modules dist && { [ ! -d source-data ] || find source-data -type f -name '*.zip' -delete; }",
     "generate:japan": "./scripts/generate-japan.sh",
     "validate:data": "./scripts/validate-generated.py data/geo-japan.ndjson"
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",
-    "@types/node": "^20.11.19",
+    "@types/node": "^24.3.1",
     "@typescript-eslint/eslint-plugin": "^8",
     "@typescript-eslint/parser": "^8",
     "eslint": "^9",

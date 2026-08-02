@@ -58,7 +58,7 @@ docker compose version
 docker run --rm hello-world
 ```
 
-Node.jsの動作確認をする。それぞれ、「v24.4.0」と「11.4.2」的な文字列が表示されれば成功。
+Node.jsの動作確認をする。それぞれ、「v24.x.x」と「11.x.x」的な文字列が表示されれば成功。
 
 ```:small
 node -v
@@ -363,14 +363,14 @@ docker compose version
 docker run --rm hello-world
 ```
 
-Node.jsとjqをインストールする。Ubuntuのデフォルト設定で入るNode.jsは古いので、NodeSourceのリポジトリからNode 22系を導入する。NodeSourceのnodejsパッケージにはnpmも含まれるため、Ubuntu標準のnpmパッケージを別途指定する必要はない。
+Node.jsとjqをインストールする。Ubuntuのデフォルト設定で入るNode.jsは古いので、NodeSourceのリポジトリからNode 24系を導入する。NodeSourceのnodejsパッケージにはnpmも含まれるため、Ubuntu標準のnpmパッケージを別途指定する必要はない。
 
 ```:small
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
 sudo apt install nodejs jq
 ```
 
-Node.jsの動作確認をする。それぞれ、「v22.23.1」と「10.9.8」的な文字列が表示されれば成功。
+Node.jsの動作確認をする。それぞれ、「v24.x.x」と「11.x.x」的な文字列が表示されれば成功。
 
 ```:small
 node -v

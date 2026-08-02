@@ -1,4 +1,4 @@
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 WORKDIR /app
 COPY package.json package-lock.json .npmrc ./
 COPY ttts/package.json ttts/package.json
@@ -7,7 +7,7 @@ COPY ttts ./ttts
 RUN npm run build --workspace ttts
 RUN npm prune --omit=dev --workspaces --include-workspace-root
 
-FROM node:20-alpine AS runner
+FROM node:24-alpine AS runner
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=builder /app/node_modules ./node_modules
