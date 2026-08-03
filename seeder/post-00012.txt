@@ -543,7 +543,7 @@ cp env.vps.txt .env
 npm run vps:docker:up
 ```
 
-Docker版のCaddyは、IP単位のレート制限モジュールを組み込んだ独自イメージとして自動的にビルドされる。STGY本体のCGI以外のリクエストは、既定で1 IPあたり5分間120リクエストまでに制限し、env.vps.txtのSTGY_CADDY_RATE_LIMIT_EVENTSとSTGY_CADDY_RATE_LIMIT_WINDOWで変更できる。これとは別に、パスが.cgiで終わるリクエストと.cgiの後ろにPATH_INFOが続くリクエストは、ホスト名と接続元IPアドレスの組み合わせごとに1時間100リクエストまでに制限する。制限超過は以下のログで確認できる。
+Docker版のCaddyは、IP単位のレート制限モジュールを組み込んだ独自イメージとして自動的にビルドされる。STGY本体のCGI以外のリクエストは、既定でIPあたり10分間100リクエストまでに制限し、env.vps.txtのSTGY_CADDY_RATE_LIMIT_EVENTSとSTGY_CADDY_RATE_LIMIT_WINDOWで変更できる。これとは別に、パスが.cgiで終わるリクエストと.cgiの後ろにPATH_INFOが続くリクエストは、ホスト名と接続元IPアドレスの組み合わせごとに1時間100リクエストまでに制限する。制限超過は以下のログで確認できる。
 
 ```:small
 docker compose -f docker-compose.yml -f docker-compose.vps.yml logs caddy
@@ -922,8 +922,8 @@ https://stgy.jp {
         not path_regexp stgy_cgi_path ^.*\.cgi(/.*)?$
       }
       key {remote_host}
-      events 120
-      window 5m
+      events 100
+      window 10m
     }
     log_key
   }
