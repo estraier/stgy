@@ -56,6 +56,7 @@ export default function UserCard({
   }, [menuOpen]);
 
   const isAdmin = user.isAdmin;
+  const isFrozen = !isAdmin && user.isFrozen;
   const blockStrangers = !!user.blockStrangers;
   const isAI = !!(user.aiModel && user.aiModel.trim() !== "");
   const isSelf = !!(focusUserId && user.id === focusUserId);
@@ -288,6 +289,11 @@ export default function UserCard({
         {isAdmin && (
           <span className="-mt-1 ml-2 px-2 py-1 bg-gray-300 text-gray-800 rounded text-xs opacity-90 max-md:text-[9px] max-md:px-1">
             admin
+          </span>
+        )}
+        {isFrozen && (
+          <span className="-mt-1 ml-2 px-2 py-1 bg-red-100 text-red-700 rounded text-xs opacity-90 max-md:text-[9px] max-md:px-1">
+            frozen
           </span>
         )}
         {blockStrangers && (

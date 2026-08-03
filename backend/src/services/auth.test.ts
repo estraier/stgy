@@ -29,9 +29,21 @@ class MockRedis {
   getex: jest.Mock<Promise<string | undefined>, any[]> = jest.fn((key: string, ..._args: any[]) =>
     Promise.resolve(this.store[key]),
   );
-  del: jest.Mock<Promise<number>, any[]> = jest.fn((key: string) => {
-    delete this.store[key];
-    return Promise.resolve(1);
+  mget: jest.Mock<Promise<Array<string | null>>, any[]> = jest.fn((...keys: string[]) =>
+    Promise.resolve(keys.map((key) => this.store[key] ?? null)),
+  );
+  scan: jest.Mock<Promise<[string, string[]]>, any[]> = jest.fn(
+    (_cursor: string, ..._args: any[]) => Promise.resolve(["0", Object.keys(this.store)]),
+  );
+  del: jest.Mock<Promise<number>, any[]> = jest.fn((...keys: string[]) => {
+    let count = 0;
+    for (const key of keys) {
+      if (key in this.store) {
+        delete this.store[key];
+        count += 1;
+      }
+    }
+    return Promise.resolve(count);
   });
 }
 
@@ -58,6 +70,8 @@ describe("AuthService class", () => {
           email: "test@example.com",
           nickname: "TestNick",
           is_admin: true,
+          is_frozen: false,
+          ai_model: null,
           created_at: "2025-07-20T00:00:00Z",
           updated_at: null,
           password: new Uint8Array([1, 2, 3]),
@@ -83,6 +97,7 @@ describe("AuthService class", () => {
     expect(session.userEmail).toBe("test@example.com");
     expect(session.userNickname).toBe("TestNick");
     expect(session.userIsAdmin).toBe(true);
+    expect(session.userIsFrozen).toBe(false);
     expect(session.userCreatedAt).toBe("2025-07-20T00:00:00.000Z");
     expect(session.userUpdatedAt).toBe(null);
     expect(session.userLocale).toBe("ja-JP");
@@ -101,6 +116,8 @@ describe("AuthService class", () => {
           email: "test@example.com",
           nickname: "TestNick",
           is_admin: false,
+          is_frozen: true,
+          ai_model: "basic",
           created_at: "2025-07-20T00:00:00Z",
           updated_at: null,
           password: new Uint8Array([1, 2, 3]),
@@ -134,6 +151,8 @@ describe("AuthService class", () => {
           email: "admin@example.com",
           nickname: "admin",
           is_admin: true,
+          is_frozen: false,
+          ai_model: null,
           created_at: "2025-07-01T02:03:04Z",
           updated_at: null,
           locale: "ja-JP",
@@ -150,7 +169,7 @@ describe("AuthService class", () => {
     const [sqlText, sqlParams] = (pgClient.query as jest.Mock).mock.calls[0];
     const normalized = String(sqlText).replace(/\s+/g, " ").trim();
     expect(normalized).toBe(
-      "SELECT u.id, s.email, u.nickname, u.is_admin, id_to_timestamp(u.id) AS created_at, u.updated_at, u.locale, u.timezone, s.user_agreement_term_id, ( SELECT id FROM user_agreement_terms ORDER BY id DESC LIMIT 1 ) AS latest_agreement_term_id FROM users u JOIN user_secrets s ON s.user_id = u.id ORDER BY u.id ASC LIMIT 1",
+      "SELECT u.id, s.email, u.nickname, u.is_admin, u.is_frozen, id_to_timestamp(u.id) AS created_at, u.updated_at, u.locale, u.timezone, s.user_agreement_term_id, ( SELECT id FROM user_agreement_terms ORDER BY id DESC LIMIT 1 ) AS latest_agreement_term_id FROM users u JOIN user_secrets s ON s.user_id = u.id ORDER BY u.id ASC LIMIT 1",
     );
     expect(sqlParams).toEqual([]);
     expect(redis.set).toHaveBeenCalled();
@@ -159,6 +178,7 @@ describe("AuthService class", () => {
     expect(stored.userEmail).toBe("admin@example.com");
     expect(stored.userNickname).toBe("admin");
     expect(stored.userIsAdmin).toBe(true);
+    expect(stored.userIsFrozen).toBe(false);
     expect(stored.userCreatedAt).toBe("2025-07-01T02:03:04.000Z");
     expect(stored.userUpdatedAt).toBe(null);
     expect(stored.userLocale).toBe("ja-JP");
@@ -180,6 +200,8 @@ describe("AuthService class", () => {
           email: "user@example.com",
           nickname: "user",
           is_admin: false,
+          is_frozen: true,
+          ai_model: "basic",
           created_at: "2025-07-01T02:03:04Z",
           updated_at: null,
           locale: "ja-JP",
@@ -207,6 +229,8 @@ describe("AuthService class", () => {
           email: "switch@example.com",
           nickname: "Switcher",
           is_admin: false,
+          is_frozen: true,
+          ai_model: "basic",
           created_at: "2025-07-01T02:03:04Z",
           updated_at: "2025-07-21T01:02:03Z",
           locale: "en-US",
@@ -226,6 +250,7 @@ describe("AuthService class", () => {
     expect(stored.userEmail).toBe("switch@example.com");
     expect(stored.userNickname).toBe("Switcher");
     expect(stored.userIsAdmin).toBe(false);
+    expect(stored.userIsFrozen).toBe(true);
     expect(stored.userCreatedAt).toBe("2025-07-01T02:03:04.000Z");
     expect(stored.userUpdatedAt).toBe("2025-07-21T01:02:03.000Z");
     expect(stored.userLocale).toBe("en-US");
@@ -257,6 +282,7 @@ describe("AuthService class", () => {
     expect(session?.userEmail).toBe("e@example.com");
     expect(session?.userNickname).toBe("TestNick");
     expect(session?.userIsAdmin).toBe(true);
+    expect(session?.userIsFrozen).toBe(false);
     expect(session?.userCreatedAt).toBe("2025-07-01T00:00:00Z");
     expect(session?.userUpdatedAt).toBe("2025-07-12T00:00:00Z");
     expect(session?.loggedInAt).toBe("2025-07-13T00:00:00Z");
@@ -266,6 +292,21 @@ describe("AuthService class", () => {
   test("getSessionInfo: not exists", async () => {
     const session = await authService.getSessionInfo("notfound");
     expect(session).toBeNull();
+  });
+
+  test("deleteUserSessions removes only sessions for the target user", async () => {
+    const target = decToHex("10");
+    const other = decToHex("20");
+    redis.store["session:a"] = JSON.stringify({ userId: target });
+    redis.store["session:b"] = JSON.stringify({ userId: other });
+    redis.store["session:c"] = JSON.stringify({ userId: target });
+    redis.store["other:key"] = "value";
+
+    await expect(authService.deleteUserSessions(target)).resolves.toBe(2);
+    expect(redis.store["session:a"]).toBeUndefined();
+    expect(redis.store["session:c"]).toBeUndefined();
+    expect(redis.store["session:b"]).toBeDefined();
+    expect(redis.store["other:key"]).toBe("value");
   });
 
   test("logout", async () => {
@@ -296,6 +337,8 @@ describe("AuthService class", () => {
           email: "new@example.com",
           nickname: "NewNick",
           is_admin: true,
+          is_frozen: false,
+          ai_model: null,
           created_at: "2025-07-05T08:09:10Z",
           updated_at: "2025-07-20T10:20:30Z",
           locale: "en-GB",
@@ -309,7 +352,7 @@ describe("AuthService class", () => {
     const [sqlText, sqlParams] = (pgClient.query as jest.Mock).mock.calls[0];
     const normalized = String(sqlText).replace(/\s+/g, " ").trim();
     expect(normalized).toBe(
-      "SELECT s.email, u.nickname, u.is_admin, id_to_timestamp(u.id) AS created_at, u.updated_at, u.locale, u.timezone FROM users u JOIN user_secrets s ON s.user_id = u.id WHERE u.id = $1",
+      "SELECT s.email, u.nickname, u.is_admin, u.is_frozen, id_to_timestamp(u.id) AS created_at, u.updated_at, u.locale, u.timezone FROM users u JOIN user_secrets s ON s.user_id = u.id WHERE u.id = $1",
     );
     expect(sqlParams).toEqual([hexToDec(userHex)]);
     const stored = JSON.parse(redis.store[`session:${sessionId}`]);
@@ -317,6 +360,7 @@ describe("AuthService class", () => {
     expect(stored.userEmail).toBe("new@example.com");
     expect(stored.userNickname).toBe("NewNick");
     expect(stored.userIsAdmin).toBe(true);
+    expect(stored.userIsFrozen).toBe(false);
     expect(stored.userCreatedAt).toBe("2025-07-05T08:09:10.000Z");
     expect(stored.userUpdatedAt).toBe("2025-07-20T10:20:30.000Z");
     expect(stored.userLocale).toBe("en-GB");

@@ -3,6 +3,7 @@ email: traveler@stgy.jp
 nickname: Traveler
 password: *
 isAdmin: false
+isFrozen: false
 blockStrangers: false
 locale: ja-JP
 timezone: Asia/Tokyo

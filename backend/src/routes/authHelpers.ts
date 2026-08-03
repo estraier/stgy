@@ -1,8 +1,7 @@
 import { Request, Response } from "express";
 import { AuthService } from "../services/auth";
 import { UsersService } from "../services/users";
-import { SessionInfo } from "../models/session";
-import { UserLite } from "../models/user";
+import type { AuthenticatedUser, SessionInfo } from "../models/session";
 
 export class AuthHelpers {
   private authService: AuthService;
@@ -23,35 +22,40 @@ export class AuthHelpers {
     return await this.authService.getSessionInfo(sessionId);
   }
 
-  async getCurrentUser(req: Request): Promise<UserLite | null> {
+  async getCurrentUser(req: Request): Promise<AuthenticatedUser | null> {
     const sessionInfo = await this.getSessionInfo(req);
-    if (!sessionInfo || !sessionInfo.userId) return null;
-    return await this.usersService.getUserLite(sessionInfo.userId);
+    if (!sessionInfo?.userId) return null;
+    return {
+      id: sessionInfo.userId,
+      isAdmin: sessionInfo.userIsAdmin,
+      isFrozen: sessionInfo.userIsFrozen,
+    };
   }
 
-  async requireLogin(req: Request, res: Response): Promise<UserLite | null> {
+  async requireLogin(req: Request, res: Response): Promise<AuthenticatedUser | null> {
     const loginUser = await this.getCurrentUser(req);
     if (!loginUser) {
       res.status(401).json({ error: "login required" });
       return null;
     }
-    return loginUser as UserLite;
+    return loginUser;
   }
 
-  makeDummyUser(): UserLite {
+  async requireWritableUser(req: Request, res: Response): Promise<AuthenticatedUser | null> {
+    const loginUser = await this.requireLogin(req, res);
+    if (!loginUser) return null;
+    if (!loginUser.isAdmin && loginUser.isFrozen) {
+      res.status(403).json({ error: "user is frozen" });
+      return null;
+    }
+    return loginUser;
+  }
+
+  makeDummyUser(): AuthenticatedUser {
     return {
       id: "0000000000000000",
-      nickname: "dummy-user",
-      aiModel: null,
       isAdmin: false,
-      blockStrangers: false,
-      createdAt: "",
-      updatedAt: null,
-      countFollowers: 0,
-      countFollowees: 0,
-      countPosts: 0,
-      isBlockedByFocusUser: false,
-      isBlockingFocusUser: false,
+      isFrozen: false,
     };
   }
 

@@ -1,6 +1,5 @@
 import { apiFetch, extractError } from "./client";
 import {
-  AgreementTermsApiError,
   agreeToAgreementTerm,
   getAgreementTerm,
   getLatestAgreementTerm,

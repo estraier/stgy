@@ -35,6 +35,7 @@ class MockPgPool {
     id: number;
     nickname: string;
     is_admin: boolean;
+    is_frozen: boolean;
     ai_model: string | null;
     updated_at?: Date | null;
   }[] = [];
@@ -112,7 +113,7 @@ class MockPgPool {
 
     if (
       sql.startsWith(
-        "SELECT u.id, u.nickname, u.is_admin, u.ai_model FROM users u WHERE u.ai_model IS NOT NULL",
+        "SELECT u.id, u.nickname, u.is_admin, u.ai_model FROM users u WHERE u.ai_model IS NOT NULL AND u.is_frozen = FALSE",
       )
     ) {
       const hasAfter = sql.includes("AND u.id > $1");
@@ -121,7 +122,7 @@ class MockPgPool {
       const offset = hasAfter ? 0 : ((params?.[1] as number | undefined) ?? 0);
       const asc = sql.includes("ORDER BY u.id ASC");
       const rows = this.users
-        .filter((u) => u.ai_model !== null && (after === null || u.id > after))
+        .filter((u) => !u.is_frozen && u.ai_model !== null && (after === null || u.id > after))
         .sort((a, b) => (asc ? a.id - b.id : b.id - a.id))
         .slice(offset, offset + limit)
         .map((u) => ({
@@ -456,12 +457,13 @@ describe("AiUsersService", () => {
     mockEmbeddingsCreate.mockReset();
 
     pgPool.users.push(
-      { id: 1000, nickname: "Human", is_admin: false, ai_model: null, updated_at: null },
-      { id: 1001, nickname: "BotOne", is_admin: false, ai_model: "balanced", updated_at: null },
+      { id: 1000, nickname: "Human", is_admin: false, is_frozen: false, ai_model: null, updated_at: null },
+      { id: 1001, nickname: "BotOne", is_admin: false, is_frozen: false, ai_model: "balanced", updated_at: null },
       {
         id: 1002,
         nickname: "BotTwo",
         is_admin: true,
+        is_frozen: false,
         ai_model: "balanced",
         updated_at: new Date("2025-02-02T00:00:00Z"),
       },
@@ -498,6 +500,21 @@ describe("AiUsersService", () => {
     expect(out[0].isAdmin).toBe(true);
     expect(out[1].isAdmin).toBe(false);
     expect(out[0].aiModel).toBe("balanced");
+  });
+
+  test("listAiUsers: excludes frozen AI users", async () => {
+    pgPool.users.push({
+      id: 1003,
+      nickname: "FrozenBot",
+      is_admin: false,
+      is_frozen: true,
+      ai_model: "balanced",
+      updated_at: null,
+    });
+
+    const out = await service.listAiUsers({ limit: 10, offset: 0 });
+
+    expect(out.map((user) => user.nickname)).toEqual(["BotTwo", "BotOne"]);
   });
 
   test("listAiUsers: asc and pagination", async () => {
@@ -544,7 +561,7 @@ describe("AiUsersService", () => {
 
   test("getAiUser: ai_personality null becomes empty string", async () => {
     const uid = 2001;
-    pgPool.users.push({ id: uid, nickname: "BotNull", is_admin: false, ai_model: "balanced" });
+    pgPool.users.push({ id: uid, nickname: "BotNull", is_admin: false, is_frozen: false, ai_model: "balanced" });
     pgPool.user_secrets.push({ user_id: uid, email: "botnull@example.com" });
     pgPool.user_details.push({ user_id: uid, introduction: "intro", ai_personality: null });
     const hexId = BigInt(uid).toString(16).toUpperCase();

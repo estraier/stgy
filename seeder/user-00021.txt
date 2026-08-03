@@ -3,6 +3,7 @@ email: hirarin@gmail.com
 nickname: mikio
 password: *
 isAdmin: true
+isFrozen: false
 blockStrangers: false
 locale: ja-JP
 timezone: Asia/Tokyo

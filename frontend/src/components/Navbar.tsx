@@ -126,17 +126,17 @@ export default function Navbar() {
         </form>
 
         {nickname && (
-          <span
+          <Link
+            href={`/users/${userId}`}
             className="
               hidden sm:block text-sm text-gray-700 max-w-[18ch]
-              truncate text-ellipsis text-right min-w-0
+              truncate text-ellipsis text-right min-w-0 hover:text-blue-600
             "
             title={nickname}
           >
             {nickname}
-          </span>
+          </Link>
         )}
-
         {userId && <NotificationBell userId={userId} intervalMs={30_000} />}
 
         <button

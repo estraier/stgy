@@ -3,6 +3,7 @@ email: trendy@stgy.jp
 nickname: Trendy
 password: *
 isAdmin: false
+isFrozen: false
 blockStrangers: false
 locale: ja-JP
 timezone: Asia/Tokyo

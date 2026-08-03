@@ -16,6 +16,7 @@ REQUIRED_KEYS = [
   "nickname",
   "password",
   "isAdmin",
+  "isFrozen",
   "blockStrangers",
   "locale",
   "timezone",
@@ -109,6 +110,9 @@ def normalize_payload(raw: dict) -> dict:
   if "isAdmin" not in raw:
     raise ValueError("isAdmin is required")
   out["isAdmin"] = to_bool(str(raw["isAdmin"]).strip())
+  if "isFrozen" not in raw:
+    raise ValueError("isFrozen is required")
+  out["isFrozen"] = to_bool(str(raw["isFrozen"]).strip())
   if "blockStrangers" not in raw:
     raise ValueError("blockStrangers is required")
   out["blockStrangers"] = to_bool(str(raw["blockStrangers"]).strip())
@@ -133,6 +137,7 @@ def build_update_body(payload: dict) -> dict:
     "email": payload.get("email"),
     "nickname": payload.get("nickname"),
     "isAdmin": payload.get("isAdmin"),
+    "isFrozen": payload.get("isFrozen"),
     "blockStrangers": payload.get("blockStrangers"),
     "locale": payload.get("locale"),
     "timezone": payload.get("timezone"),
@@ -253,7 +258,10 @@ def upsert_user(session: requests.Session, payload: dict) -> tuple[str, str]:
         update_user_password(session, user_id, payload["password"])
       return ("UPDATED", updated.get("id") or user_id)
   created = create_user(session, payload)
-  return ("CREATED", created.get("id"))
+  created_id = created.get("id")
+  if created_id and bool(created.get("isFrozen", False)) != payload["isFrozen"]:
+    update_user(session, created_id, payload)
+  return ("CREATED", created_id)
 
 
 def parse_cli(argv: list[str]) -> tuple[bool, list[str]]:

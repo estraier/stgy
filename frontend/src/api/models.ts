@@ -3,6 +3,7 @@ export type SessionInfo = {
   userEmail: string;
   userNickname: string;
   userIsAdmin: boolean;
+  userIsFrozen: boolean;
   userCreatedAt: string;
   userUpdatedAt: string | null;
   userLocale: string;
@@ -62,6 +63,7 @@ export type User = {
   aiModel: string | null;
   snippet: string;
   isAdmin: boolean;
+  isFrozen: boolean;
   blockStrangers: boolean;
   createdAt: string;
   updatedAt: string | null;

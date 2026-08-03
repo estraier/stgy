@@ -3,6 +3,7 @@ email: stgy03@stgy.jp
 nickname: STGY TEST 03
 password: *
 isAdmin: false
+isFrozen: false
 blockStrangers: true
 locale: en-US
 timezone: America/New_York

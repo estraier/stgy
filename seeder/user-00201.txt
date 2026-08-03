@@ -3,6 +3,7 @@ email: greek@stgy.jp
 nickname: ΑΒΓΔΕ
 password: *
 isAdmin: false
+isFrozen: false
 blockStrangers: false
 locale: el
 timezone: UTC

@@ -13,6 +13,7 @@ type LoginRow = {
   email: string;
   nickname: string;
   is_admin: boolean;
+  is_frozen: boolean;
   created_at: string;
   updated_at: string | null;
   password: Uint8Array;
@@ -26,6 +27,7 @@ type SessionRefreshRow = {
   email: string;
   nickname: string;
   is_admin: boolean;
+  is_frozen: boolean;
   created_at: string;
   updated_at: string | null;
   locale: string;
@@ -37,6 +39,7 @@ type SwitchUserRow = {
   email: string;
   nickname: string;
   is_admin: boolean;
+  is_frozen: boolean;
   created_at: string;
   updated_at: string | null;
   locale: string;
@@ -63,6 +66,7 @@ export class AuthService {
         s.email,
         u.nickname,
         u.is_admin,
+        u.is_frozen,
         id_to_timestamp(u.id) AS created_at,
         u.updated_at,
         s.password,
@@ -90,6 +94,7 @@ export class AuthService {
       email: userEmail,
       nickname: userNickname,
       is_admin: userIsAdmin,
+      is_frozen: userIsFrozen,
       created_at: userCreatedAt,
       updated_at: userUpdatedAt,
       locale: userLocale,
@@ -104,6 +109,7 @@ export class AuthService {
       userEmail,
       userNickname,
       userIsAdmin: !!userIsAdmin,
+      userIsFrozen: !!userIsFrozen,
       userCreatedAt: new Date(userCreatedAt).toISOString(),
       userUpdatedAt: userUpdatedAt ? new Date(userUpdatedAt).toISOString() : null,
       userLocale,
@@ -132,6 +138,7 @@ export class AuthService {
         s.email,
         u.nickname,
         u.is_admin,
+        u.is_frozen,
         id_to_timestamp(u.id) AS created_at,
         u.updated_at,
         u.locale,
@@ -156,6 +163,7 @@ export class AuthService {
       email: userEmail,
       nickname: userNickname,
       is_admin: userIsAdmin,
+      is_frozen: userIsFrozen,
       created_at: userCreatedAt,
       updated_at: userUpdatedAt,
       locale: userLocale,
@@ -170,6 +178,7 @@ export class AuthService {
       userEmail,
       userNickname,
       userIsAdmin: !!userIsAdmin,
+      userIsFrozen: !!userIsFrozen,
       userCreatedAt: new Date(userCreatedAt).toISOString(),
       userUpdatedAt: userUpdatedAt ? new Date(userUpdatedAt).toISOString() : null,
       userLocale,
@@ -198,6 +207,7 @@ export class AuthService {
         s.email,
         u.nickname,
         u.is_admin,
+        u.is_frozen,
         id_to_timestamp(u.id) AS created_at,
         u.updated_at,
         u.locale,
@@ -221,6 +231,7 @@ export class AuthService {
       email: userEmail,
       nickname: userNickname,
       is_admin: userIsAdmin,
+      is_frozen: userIsFrozen,
       created_at: userCreatedAt,
       updated_at: userUpdatedAt,
       locale: userLocale,
@@ -234,6 +245,7 @@ export class AuthService {
       userEmail,
       userNickname,
       userIsAdmin: !!userIsAdmin,
+      userIsFrozen: !!userIsFrozen,
       userCreatedAt: new Date(userCreatedAt).toISOString(),
       userUpdatedAt: userUpdatedAt ? new Date(userUpdatedAt).toISOString() : null,
       userLocale,
@@ -266,6 +278,9 @@ export class AuthService {
       if (sessionInfo.requiredAgreementTermId === undefined) {
         sessionInfo.requiredAgreementTermId = null;
       }
+      if (sessionInfo.userIsFrozen === undefined) {
+        sessionInfo.userIsFrozen = false;
+      }
       return sessionInfo;
     } catch {
       return null;
@@ -283,6 +298,7 @@ export class AuthService {
         s.email,
         u.nickname,
         u.is_admin,
+        u.is_frozen,
         id_to_timestamp(u.id) AS created_at,
         u.updated_at,
         u.locale,
@@ -298,6 +314,7 @@ export class AuthService {
       email: userEmail,
       nickname: userNickname,
       is_admin: userIsAdmin,
+      is_frozen: userIsFrozen,
       created_at: userCreatedAt,
       updated_at: userUpdatedAt,
       locale: userLocale,
@@ -308,6 +325,7 @@ export class AuthService {
       userEmail,
       userNickname,
       userIsAdmin: !!userIsAdmin,
+      userIsFrozen: !!userIsFrozen,
       userCreatedAt: new Date(userCreatedAt).toISOString(),
       userUpdatedAt: userUpdatedAt ? new Date(userUpdatedAt).toISOString() : null,
       userLocale,
@@ -339,6 +357,38 @@ export class AuthService {
       Config.SESSION_TTL,
     );
     return next;
+  }
+
+  async deleteUserSessions(userId: string): Promise<number> {
+    if (!userId) return 0;
+    let cursor = "0";
+    const targets: string[] = [];
+    do {
+      const [nextCursor, keys] = await this.redis.scan(
+        cursor,
+        "MATCH",
+        "session:*",
+        "COUNT",
+        100,
+      );
+      cursor = nextCursor;
+      if (keys.length === 0) continue;
+      const values = await this.redis.mget(...keys);
+      for (let i = 0; i < keys.length; i += 1) {
+        const value = values[i];
+        if (!value) continue;
+        try {
+          const sessionInfo = JSON.parse(value) as Partial<SessionInfo>;
+          if (sessionInfo.userId === userId) targets.push(keys[i]);
+        } catch {}
+      }
+    } while (cursor !== "0");
+
+    let deleted = 0;
+    for (let i = 0; i < targets.length; i += 100) {
+      deleted += await this.redis.del(...targets.slice(i, i + 100));
+    }
+    return deleted;
   }
 
   async logout(sessionId: string): Promise<void> {

@@ -87,8 +87,11 @@ export default function createTracksRouter(
   async function requireAuthorized(
     req: Request,
     res: Response,
+    writable = false,
   ): Promise<AuthorizedRequest | null> {
-    const loginUser = await authHelpers.requireLogin(req, res);
+    const loginUser = writable
+      ? await authHelpers.requireWritableUser(req, res)
+      : await authHelpers.requireLogin(req, res);
     if (!loginUser) {
       return null;
     }
@@ -103,7 +106,7 @@ export default function createTracksRouter(
   }
 
   router.post("/:userId/tracks/presigned", async (req: Request, res: Response) => {
-    const auth = await requireAuthorized(req, res);
+    const auth = await requireAuthorized(req, res, true);
     if (!auth) {
       return;
     }
@@ -131,7 +134,7 @@ export default function createTracksRouter(
   });
 
   router.post("/:userId/tracks/finalize", async (req: Request, res: Response) => {
-    const auth = await requireAuthorized(req, res);
+    const auth = await requireAuthorized(req, res, true);
     if (!auth) {
       return;
     }
@@ -225,7 +228,7 @@ export default function createTracksRouter(
   });
 
   router.delete("/:userId/tracks/*rest", async (req: Request, res: Response) => {
-    const auth = await requireAuthorized(req, res);
+    const auth = await requireAuthorized(req, res, true);
     if (!auth) {
       return;
     }

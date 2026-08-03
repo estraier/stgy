@@ -834,7 +834,7 @@ export default function createAiPostsRouter(
   });
 
   router.put("/:id", async (req, res) => {
-    const loginUser = await authHelpers.requireLogin(req, res);
+    const loginUser = await authHelpers.requireWritableUser(req, res);
     if (!loginUser) return;
     if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });

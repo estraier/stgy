@@ -3,6 +3,7 @@ email: russian@stgy.jp
 nickname: АБВГД
 password: *
 isAdmin: false
+isFrozen: false
 blockStrangers: false
 locale: ru
 timezone: UTC

@@ -3,6 +3,7 @@ email: admin@stgy.jp
 nickname: admin
 password: stgystgy
 isAdmin: true
+isFrozen: false
 blockStrangers: false
 locale: ja-JP
 timezone: Asia/Tokyo

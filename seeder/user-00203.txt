@@ -3,6 +3,7 @@ email: japanese@stgy.jp
 nickname: あいうえお
 password: *
 isAdmin: false
+isFrozen: false
 blockStrangers: false
 locale: ja
 timezone: UTC

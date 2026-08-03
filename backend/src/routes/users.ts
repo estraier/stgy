@@ -316,7 +316,7 @@ export default function createUsersRouter(
   });
 
   router.put("/:id", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.requireLogin(req, res);
+    const loginUser = await authHelpers.requireWritableUser(req, res);
     if (!loginUser) return;
     if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
@@ -327,11 +327,17 @@ export default function createUsersRouter(
     if (!loginUser.isAdmin && req.body.isAdmin !== undefined) {
       return res.status(403).json({ error: "forbidden to change isAdmin" });
     }
+    if (!loginUser.isAdmin && req.body.isFrozen !== undefined) {
+      return res.status(403).json({ error: "forbidden to change isFrozen" });
+    }
     if (!loginUser.isAdmin && req.body.aiModel !== undefined) {
       return res.status(403).json({ error: "forbidden to change aiModel" });
     }
-    if (!loginUser.isAdmin && !loginUser.aiModel && req.body.aiPersonality !== undefined) {
-      return res.status(403).json({ error: "forbidden to change aiPersonality" });
+    if (!loginUser.isAdmin && req.body.aiPersonality !== undefined) {
+      const currentUser = await usersService.getUserLite(loginUser.id);
+      if (!currentUser?.aiModel) {
+        return res.status(403).json({ error: "forbidden to change aiPersonality" });
+      }
     }
     let dataSize = 0;
     let email;
@@ -374,11 +380,17 @@ export default function createUsersRouter(
       return res.status(403).json({ error: "too often updates" });
     }
     try {
+      const authenticationStateInput =
+        req.body.isAdmin !== undefined || req.body.isFrozen !== undefined;
+      const previousUser = authenticationStateInput
+        ? await usersService.getUserLite(req.params.id)
+        : null;
       const input: UpdateUserInput = {
         id: req.params.id,
         email: email,
         nickname: nickname,
-        isAdmin: req.body.isAdmin === undefined ? undefined : req.body.isAdmin,
+        isAdmin: req.body.isAdmin === undefined ? undefined : !!req.body.isAdmin,
+        isFrozen: req.body.isFrozen === undefined ? undefined : !!req.body.isFrozen,
         blockStrangers: req.body.blockStrangers === undefined ? undefined : req.body.blockStrangers,
         locale: locale,
         timezone: timezone,
@@ -391,7 +403,13 @@ export default function createUsersRouter(
       const updated = await usersService.updateUser(input);
       watch.done();
       if (!updated) return res.status(404).json({ error: "not found" });
-      if (loginUser.id === req.params.id) {
+      const authenticationStateChanged =
+        previousUser !== null &&
+        (previousUser.isAdmin !== updated.isAdmin ||
+          previousUser.isFrozen !== updated.isFrozen);
+      if (authenticationStateChanged) {
+        await authService.deleteUserSessions(req.params.id);
+      } else if (loginUser.id === req.params.id) {
         const sessionId = authHelpers.getSessionId(req);
         if (sessionId) {
           await authService.refreshSessionInfo(sessionId);
@@ -407,7 +425,7 @@ export default function createUsersRouter(
   });
 
   router.post("/:id/email/start", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.requireLogin(req, res);
+    const loginUser = await authHelpers.requireWritableUser(req, res);
     if (!loginUser) return;
     if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
@@ -438,7 +456,7 @@ export default function createUsersRouter(
   });
 
   router.post("/:id/email/verify", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.requireLogin(req, res);
+    const loginUser = await authHelpers.requireWritableUser(req, res);
     if (!loginUser) return;
     if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
@@ -504,7 +522,7 @@ export default function createUsersRouter(
   });
 
   router.put("/:id/password", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.requireLogin(req, res);
+    const loginUser = await authHelpers.requireWritableUser(req, res);
     if (!loginUser) return;
     if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
@@ -530,13 +548,14 @@ export default function createUsersRouter(
   });
 
   router.delete("/:id", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.requireLogin(req, res);
+    const loginUser = await authHelpers.requireWritableUser(req, res);
     if (!loginUser) return;
     if (!(loginUser.isAdmin || loginUser.id === req.params.id)) {
       return res.status(403).json({ error: "forbidden" });
     }
     try {
       await usersService.deleteUser(req.params.id);
+      await authService.deleteUserSessions(req.params.id);
       await mediaService.deleteAllImagesAndProfiles(req.params.id);
       await tracksService.deleteAllTracks(req.params.id);
       res.json({ result: "ok" });
@@ -548,7 +567,7 @@ export default function createUsersRouter(
   });
 
   router.post("/:id/follow", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.requireLogin(req, res);
+    const loginUser = await authHelpers.requireWritableUser(req, res);
     if (!loginUser) return;
     if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
@@ -578,7 +597,7 @@ export default function createUsersRouter(
   });
 
   router.delete("/:id/follow", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.requireLogin(req, res);
+    const loginUser = await authHelpers.requireWritableUser(req, res);
     if (!loginUser) return;
     if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
@@ -653,7 +672,7 @@ export default function createUsersRouter(
   });
 
   router.post("/:id/block", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.requireLogin(req, res);
+    const loginUser = await authHelpers.requireWritableUser(req, res);
     if (!loginUser) return;
     if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
@@ -680,7 +699,7 @@ export default function createUsersRouter(
   });
 
   router.delete("/:id/block", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.requireLogin(req, res);
+    const loginUser = await authHelpers.requireWritableUser(req, res);
     if (!loginUser) return;
     if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
@@ -742,7 +761,7 @@ export default function createUsersRouter(
   });
 
   router.put("/:id/pub-config", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.requireLogin(req, res);
+    const loginUser = await authHelpers.requireWritableUser(req, res);
     if (!loginUser) return;
     if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });

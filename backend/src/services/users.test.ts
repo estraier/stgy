@@ -54,6 +54,7 @@ type MockUser = {
   id: string;
   nickname: string;
   isAdmin: boolean;
+  isFrozen: boolean;
   blockStrangers: boolean;
   snippet: string;
   avatar: string | null;
@@ -87,10 +88,10 @@ const SQL_SELECT_PUBCONFIG =
   "SELECT upc.site_name, upc.subtitle, upc.author, upc.introduction, upc.design_theme, upc.show_service_header, upc.show_site_name, upc.show_pagenation, upc.show_side_profile, upc.show_side_recent, u.locale FROM user_pub_configs upc LEFT JOIN users u ON u.id = upc.user_id WHERE upc.user_id = $1 LIMIT 1";
 
 const SQL_LIST_BLOCKEES_DESC =
-  "SELECT u.id, u.updated_at, u.snippet, u.nickname, u.avatar, u.ai_model, u.is_admin, u.block_strangers, id_to_timestamp(u.id) AS created_at, COALESCE(uc.follower_count, 0) AS count_followers, COALESCE(uc.followee_count, 0) AS count_followees, COALESCE(uc.post_count, 0) AS count_posts FROM user_blocks b JOIN users u ON b.blockee_id = u.id LEFT JOIN user_counts uc ON uc.user_id = u.id WHERE b.blocker_id = $1 ORDER BY b.created_at DESC, b.blockee_id DESC OFFSET $2 LIMIT $3";
+  "SELECT u.id, u.updated_at, u.snippet, u.nickname, u.avatar, u.ai_model, u.is_admin, u.is_frozen, u.block_strangers, id_to_timestamp(u.id) AS created_at, COALESCE(uc.follower_count, 0) AS count_followers, COALESCE(uc.followee_count, 0) AS count_followees, COALESCE(uc.post_count, 0) AS count_posts FROM user_blocks b JOIN users u ON b.blockee_id = u.id LEFT JOIN user_counts uc ON uc.user_id = u.id WHERE b.blocker_id = $1 ORDER BY b.created_at DESC, b.blockee_id DESC OFFSET $2 LIMIT $3";
 
 const SQL_LIST_BLOCKEES_ASC =
-  "SELECT u.id, u.updated_at, u.snippet, u.nickname, u.avatar, u.ai_model, u.is_admin, u.block_strangers, id_to_timestamp(u.id) AS created_at, COALESCE(uc.follower_count, 0) AS count_followers, COALESCE(uc.followee_count, 0) AS count_followees, COALESCE(uc.post_count, 0) AS count_posts FROM user_blocks b JOIN users u ON b.blockee_id = u.id LEFT JOIN user_counts uc ON uc.user_id = u.id WHERE b.blocker_id = $1 ORDER BY b.created_at ASC, b.blockee_id ASC OFFSET $2 LIMIT $3";
+  "SELECT u.id, u.updated_at, u.snippet, u.nickname, u.avatar, u.ai_model, u.is_admin, u.is_frozen, u.block_strangers, id_to_timestamp(u.id) AS created_at, COALESCE(uc.follower_count, 0) AS count_followers, COALESCE(uc.followee_count, 0) AS count_followees, COALESCE(uc.post_count, 0) AS count_posts FROM user_blocks b JOIN users u ON b.blockee_id = u.id LEFT JOIN user_counts uc ON uc.user_id = u.id WHERE b.blocker_id = $1 ORDER BY b.created_at ASC, b.blockee_id ASC OFFSET $2 LIMIT $3";
 
 class MockPgClient {
   lastSql = "";
@@ -122,6 +123,7 @@ class MockPgClient {
         id: ALICE,
         nickname: "Alice",
         isAdmin: false,
+        isFrozen: false,
         blockStrangers: false,
         snippet: "introA",
         avatar: null,
@@ -136,6 +138,7 @@ class MockPgClient {
         id: BOB,
         nickname: "Bob",
         isAdmin: false,
+        isFrozen: false,
         blockStrangers: false,
         snippet: "introB",
         avatar: null,
@@ -150,6 +153,7 @@ class MockPgClient {
         id: CAROL,
         nickname: "Carol",
         isAdmin: false,
+        isFrozen: false,
         blockStrangers: false,
         snippet: "introC",
         avatar: null,
@@ -214,6 +218,7 @@ class MockPgClient {
       id: hexToDec(u.id),
       nickname: u.nickname,
       is_admin: u.isAdmin,
+      is_frozen: u.isFrozen,
       block_strangers: u.blockStrangers,
       snippet: u.snippet,
       avatar: u.avatar,
@@ -238,10 +243,21 @@ class MockPgClient {
 
     if (n === "BEGIN" || n === "COMMIT" || n === "ROLLBACK") return { rows: [] };
 
-    if (n === "SELECT user_id AS id FROM user_secrets WHERE email = $1") {
+    if (
+      n ===
+      "SELECT s.user_id AS id FROM user_secrets s JOIN users u ON u.id = s.user_id WHERE s.email = $1 AND u.is_frozen = FALSE"
+    ) {
       const email = params[0];
-      const found = Object.entries(this.userSecrets).find(([, v]) => v.email === email);
+      const found = Object.entries(this.userSecrets).find(([id, v]) => {
+        const user = this.users.find((u) => u.id === id);
+        return v.email === email && user?.isFrozen === false;
+      });
       return found ? { rows: [{ id: hexToDec(found[0]) }] } : { rows: [] };
+    }
+
+    if (n === "SELECT is_frozen FROM users WHERE id = $1") {
+      const user = this.users.find((u) => u.id === decToHex(params[0]));
+      return { rows: user ? [{ is_frozen: user.isFrozen }] : [] };
     }
 
     if (n === "SELECT 1 FROM user_details WHERE user_id = $1 LIMIT 1") {
@@ -345,7 +361,7 @@ class MockPgClient {
 
     if (
       n ===
-      "SELECT u.id, u.updated_at, u.snippet, u.nickname, u.avatar, u.ai_model, u.is_admin, u.block_strangers, id_to_timestamp(u.id) AS created_at, COALESCE(uc.follower_count, 0) AS count_followers, COALESCE(uc.followee_count, 0) AS count_followees, COALESCE(uc.post_count, 0) AS count_posts FROM user_follows f JOIN users u ON f.followee_id = u.id LEFT JOIN user_counts uc ON uc.user_id = u.id WHERE f.follower_id = $1 ORDER BY f.created_at DESC, f.followee_id DESC OFFSET $2 LIMIT $3"
+      "SELECT u.id, u.updated_at, u.snippet, u.nickname, u.avatar, u.ai_model, u.is_admin, u.is_frozen, u.block_strangers, id_to_timestamp(u.id) AS created_at, COALESCE(uc.follower_count, 0) AS count_followers, COALESCE(uc.followee_count, 0) AS count_followees, COALESCE(uc.post_count, 0) AS count_posts FROM user_follows f JOIN users u ON f.followee_id = u.id LEFT JOIN user_counts uc ON uc.user_id = u.id WHERE f.follower_id = $1 ORDER BY f.created_at DESC, f.followee_id DESC OFFSET $2 LIMIT $3"
     ) {
       const followerId = decToHex(params[0]);
       const offset = params[1] || 0;
@@ -361,7 +377,7 @@ class MockPgClient {
 
     if (
       n ===
-      "SELECT u.id, u.updated_at, u.snippet, u.nickname, u.avatar, u.ai_model, u.is_admin, u.block_strangers, id_to_timestamp(u.id) AS created_at, COALESCE(uc.follower_count, 0) AS count_followers, COALESCE(uc.followee_count, 0) AS count_followees, COALESCE(uc.post_count, 0) AS count_posts FROM user_follows f JOIN users u ON f.follower_id = u.id LEFT JOIN user_counts uc ON uc.user_id = u.id WHERE f.followee_id = $1 ORDER BY f.created_at DESC, f.follower_id DESC OFFSET $2 LIMIT $3"
+      "SELECT u.id, u.updated_at, u.snippet, u.nickname, u.avatar, u.ai_model, u.is_admin, u.is_frozen, u.block_strangers, id_to_timestamp(u.id) AS created_at, COALESCE(uc.follower_count, 0) AS count_followers, COALESCE(uc.followee_count, 0) AS count_followees, COALESCE(uc.post_count, 0) AS count_posts FROM user_follows f JOIN users u ON f.follower_id = u.id LEFT JOIN user_counts uc ON uc.user_id = u.id WHERE f.followee_id = $1 ORDER BY f.created_at DESC, f.follower_id DESC OFFSET $2 LIMIT $3"
     ) {
       const followeeId = decToHex(params[0]);
       const offset = params[1] || 0;
@@ -488,10 +504,15 @@ class MockPgClient {
         vals[c] = params[i + 1];
       });
       const createdAt = new Date().toISOString();
+      if (n.includes("is_admin, is_frozen, block_strangers") && n.includes("$8, FALSE, $9")) {
+        vals["is_frozen"] = false;
+        vals["block_strangers"] = params[8];
+      }
       const user: MockUser = {
         id: idHex,
         nickname: vals["nickname"] ?? "",
         isAdmin: !!vals["is_admin"],
+        isFrozen: !!vals["is_frozen"],
         blockStrangers: !!vals["block_strangers"],
         snippet: vals["snippet"] ?? "",
         avatar: vals["avatar"] ?? null,
@@ -524,6 +545,7 @@ class MockPgClient {
         id: idHex,
         nickname,
         isAdmin: !!isAdmin,
+        isFrozen: false,
         blockStrangers: !!blockStrangers,
         snippet,
         avatar,
@@ -556,6 +578,7 @@ class MockPgClient {
         id: idHex,
         nickname,
         isAdmin: !!isAdmin,
+        isFrozen: false,
         blockStrangers: !!blockStrangers,
         snippet,
         avatar,
@@ -584,6 +607,7 @@ class MockPgClient {
         id: idHex,
         nickname,
         isAdmin,
+        isFrozen: false,
         blockStrangers,
         snippet,
         avatar,
@@ -745,20 +769,34 @@ class MockPgClient {
       const idHex = decToHex(params[params.length - 1]);
       const u = this.users.find((x) => x.id === idHex);
       if (!u) return { rowCount: 0, rows: [] };
-      const setSeg = n.slice("UPDATE users SET ".length, n.indexOf(" WHERE id = $")).trim();
-      const parts = setSeg.split(",").map((s) => s.trim());
-      let idx = 0;
-      for (const p of parts) {
-        if (p.startsWith("nickname = $")) u.nickname = params[idx++] as string;
-        else if (p.startsWith("is_admin = $")) u.isAdmin = !!params[idx++];
-        else if (p.startsWith("block_strangers = $")) u.blockStrangers = !!params[idx++];
-        else if (p.startsWith("avatar = $")) u.avatar = params[idx++] ?? null;
-        else if (p.startsWith("ai_model = $")) u.aiModel = params[idx++] ?? null;
-        else if (p.startsWith("snippet = $")) u.snippet = params[idx++] as string;
-        else if (p.startsWith("updated_at = now()")) {
-        } else {
-          idx++;
-        }
+      const valueFor = (pattern: RegExp): any => {
+        const match = pattern.exec(n);
+        return match ? params[Number(match[1]) - 1] : undefined;
+      };
+      const nickname = valueFor(/nickname = \$(\d+)/);
+      if (nickname !== undefined) u.nickname = nickname;
+      const avatar = valueFor(/avatar = \$(\d+)/);
+      if (avatar !== undefined) u.avatar = avatar ?? null;
+      const aiModel = valueFor(/ai_model = \$(\d+)/);
+      if (aiModel !== undefined) u.aiModel = aiModel ?? null;
+      const snippet = valueFor(/snippet = \$(\d+)/);
+      if (snippet !== undefined) u.snippet = snippet;
+      const blockStrangers = valueFor(/block_strangers = \$(\d+)/);
+      if (blockStrangers !== undefined) u.blockStrangers = !!blockStrangers;
+
+      const adminMatch = /is_admin = COALESCE\(\$(\d+), is_admin\)/.exec(n);
+      const frozenMatch = /is_frozen = CASE WHEN COALESCE\(\$(\d+), is_admin\) THEN FALSE ELSE COALESCE\(\$(\d+), is_frozen\) END/.exec(n);
+      if (adminMatch || frozenMatch) {
+        const adminValue = adminMatch ? params[Number(adminMatch[1]) - 1] : null;
+        const frozenValue = frozenMatch ? params[Number(frozenMatch[2]) - 1] : null;
+        const nextAdmin = adminValue === null || adminValue === undefined ? u.isAdmin : !!adminValue;
+        const nextFrozen = nextAdmin
+          ? false
+          : frozenValue === null || frozenValue === undefined
+            ? u.isFrozen
+            : !!frozenValue;
+        u.isAdmin = nextAdmin;
+        u.isFrozen = nextFrozen;
       }
       u.updatedAt = new Date().toISOString();
       return { rowCount: 1, rows: [] };
@@ -1132,6 +1170,7 @@ describe("UsersService", () => {
       aiModel: "gpt-4.1",
       aiPersonality: "D",
     });
+    expect(user.isFrozen).toBe(false);
     expect(pg.userSecrets[user.id]?.email).toBe("dan@example.com");
     const detail = await service.getUser(user.id);
     expect((detail as any).email).toBe("dan@example.com");
@@ -1154,6 +1193,7 @@ describe("UsersService", () => {
       email: "alice2@example.com",
       nickname: "Alice2",
       isAdmin: true,
+      isFrozen: true,
       blockStrangers: true,
       locale: "ja-JP",
       timezone: "Asia/Tokyo",
@@ -1163,6 +1203,7 @@ describe("UsersService", () => {
       aiPersonality: "X",
     });
     expect(updated?.isAdmin).toBe(true);
+    expect(updated?.isFrozen).toBe(false);
     expect(updated?.blockStrangers).toBe(true);
     const detail = await service.getUser(ALICE);
     expect((detail as any).email).toBe("alice2@example.com");
@@ -1176,6 +1217,16 @@ describe("UsersService", () => {
     expect(callArgs.id).toBe(ALICE);
     expect(callArgs.bodyText).toContain("Alice2");
     expect(callArgs.bodyText).toContain("introX");
+  });
+
+  test("updateUser can freeze a non-admin user and making the user admin clears frozen", async () => {
+    const frozen = await service.updateUser({ id: BOB, isFrozen: true });
+    expect(frozen?.isAdmin).toBe(false);
+    expect(frozen?.isFrozen).toBe(true);
+
+    const admin = await service.updateUser({ id: BOB, isAdmin: true });
+    expect(admin?.isAdmin).toBe(true);
+    expect(admin?.isFrozen).toBe(false);
   });
 
   test("startUpdateEmail stores verification info in Redis and queues mail", async () => {
@@ -1239,6 +1290,21 @@ describe("UsersService", () => {
         (q) => q.queue === "mail-queue" && q.val.includes(email) && q.val.includes(stored.mailCode),
       ),
     ).toBe(true);
+  });
+
+  test("password reset is unavailable for a frozen user", async () => {
+    pg.users.find((user) => user.id === ALICE)!.isFrozen = true;
+    await expect(service.startResetPassword("alice@example.com")).rejects.toThrow(/User not found/i);
+  });
+
+  test("password reset verification fails if the user is frozen after starting", async () => {
+    const email = "alice@example.com";
+    const { resetPasswordId, webCode } = await service.startResetPassword(email);
+    const stored = redis.store[`resetPassword:${resetPasswordId}`];
+    pg.users.find((user) => user.id === ALICE)!.isFrozen = true;
+    await expect(
+      service.verifyResetPassword(email, resetPasswordId, webCode, stored.mailCode, "newsecurepass"),
+    ).rejects.toThrow(/User is frozen/i);
   });
 
   test("fakeResetPassword makes a dummy session object", async () => {
@@ -1410,6 +1476,7 @@ describe("UsersService", () => {
       id: daveId,
       nickname: "Dave",
       isAdmin: false,
+      isFrozen: false,
       blockStrangers: false,
       snippet: "introD",
       avatar: null,

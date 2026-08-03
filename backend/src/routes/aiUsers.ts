@@ -58,6 +58,11 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
     Config.DAILY_DB_TIMER_LIMIT_MS,
   );
 
+  async function getLoginUserAiModel(userId: string): Promise<string | null> {
+    const user = await usersService.getUserLite(userId);
+    return user?.aiModel ?? null;
+  }
+
   router.get("/", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.requireLogin(req, res);
     if (!loginUser) return;
@@ -104,13 +109,14 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
       return res.status(400).json({ error: "invalid body" });
     }
     const body = bodyRaw as Record<string, unknown>;
+    const loginUserAiModel = await getLoginUserAiModel(loginUser.id);
     let modelToUse: string;
     if (loginUser.isAdmin) {
       const modelRaw = typeof body["model"] === "string" ? body["model"] : "";
       if (modelRaw && modelRaw.trim() !== "") {
         modelToUse = modelRaw;
-      } else if (loginUser.aiModel && loginUser.aiModel.trim() !== "") {
-        modelToUse = loginUser.aiModel;
+      } else if (loginUserAiModel && loginUserAiModel.trim() !== "") {
+        modelToUse = loginUserAiModel;
       } else {
         return res.status(400).json({ error: "model is required" });
       }
@@ -119,10 +125,10 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
       if (modelRaw) {
         return res.status(403).json({ error: "model override not allowed" });
       }
-      if (!loginUser.aiModel || loginUser.aiModel.trim() === "") {
+      if (!loginUserAiModel || loginUserAiModel.trim() === "") {
         return res.status(403).json({ error: "no model configured for this user" });
       }
-      modelToUse = loginUser.aiModel;
+      modelToUse = loginUserAiModel;
     }
     let responseFormat: "text" | "json" = body["responseFormat"] === "json" ? "json" : "text";
     const messagesRaw = body["messages"];
@@ -163,14 +169,15 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
       return res.status(400).json({ error: "invalid body" });
     }
     const body = bodyRaw as Record<string, unknown>;
+    const loginUserAiModel = await getLoginUserAiModel(loginUser.id);
 
     let modelToUse: string;
     if (loginUser.isAdmin) {
       const modelRaw = typeof body["model"] === "string" ? body["model"] : "";
       if (modelRaw && modelRaw.trim() !== "") {
         modelToUse = modelRaw;
-      } else if (loginUser.aiModel && loginUser.aiModel.trim() !== "") {
-        modelToUse = loginUser.aiModel;
+      } else if (loginUserAiModel && loginUserAiModel.trim() !== "") {
+        modelToUse = loginUserAiModel;
       } else {
         return res.status(400).json({ error: "model is required" });
       }
@@ -179,10 +186,10 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
       if (modelRaw) {
         return res.status(403).json({ error: "model override not allowed" });
       }
-      if (!loginUser.aiModel || loginUser.aiModel.trim() === "") {
+      if (!loginUserAiModel || loginUserAiModel.trim() === "") {
         return res.status(403).json({ error: "no model configured for this user" });
       }
-      modelToUse = loginUser.aiModel;
+      modelToUse = loginUserAiModel;
     }
 
     const input = typeof body["input"] === "string" ? body["input"] : "";
@@ -234,7 +241,7 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
   });
 
   router.post("/:id/interests", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.requireLogin(req, res);
+    const loginUser = await authHelpers.requireWritableUser(req, res);
     if (!loginUser) return;
     if (!loginUser.isAdmin && loginUser.id !== req.params.id) {
       return res.status(403).json({ error: "forbidden" });
@@ -272,6 +279,7 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
           watch.done();
           return res.status(400).json({ error: "features is required" });
         }
+        const loginUserAiModel = await getLoginUserAiModel(loginUser.id);
         let modelToUse: string;
         const modelOverride =
           typeof body["model"] === "string" && body["model"].trim() !== ""
@@ -280,8 +288,8 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
         if (loginUser.isAdmin) {
           if (modelOverride) {
             modelToUse = modelOverride;
-          } else if (loginUser.aiModel && loginUser.aiModel.trim() !== "") {
-            modelToUse = loginUser.aiModel;
+          } else if (loginUserAiModel && loginUserAiModel.trim() !== "") {
+            modelToUse = loginUserAiModel;
           } else {
             watch.done();
             return res.status(400).json({ error: "model is required" });
@@ -291,11 +299,11 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
             watch.done();
             return res.status(403).json({ error: "model override not allowed" });
           }
-          if (!loginUser.aiModel || loginUser.aiModel.trim() === "") {
+          if (!loginUserAiModel || loginUserAiModel.trim() === "") {
             watch.done();
             return res.status(403).json({ error: "no model configured for this user" });
           }
-          modelToUse = loginUser.aiModel;
+          modelToUse = loginUserAiModel;
         }
         const input = buildInterestFeaturesInput(interestRaw, tags);
         const out = await aiUsersService.generateFeatures({ model: modelToUse, input });
@@ -379,7 +387,7 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
   });
 
   router.post("/:id/peer-impressions", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.requireLogin(req, res);
+    const loginUser = await authHelpers.requireWritableUser(req, res);
     if (!loginUser) return;
     if (!loginUser.isAdmin && loginUser.id !== req.params.id) {
       return res.status(403).json({ error: "forbidden" });
@@ -470,7 +478,7 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
   });
 
   router.post("/:id/post-impressions", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.requireLogin(req, res);
+    const loginUser = await authHelpers.requireWritableUser(req, res);
     if (!loginUser) return;
     if (!loginUser.isAdmin && loginUser.id !== req.params.id) {
       return res.status(403).json({ error: "forbidden" });

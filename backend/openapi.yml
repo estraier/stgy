@@ -93,6 +93,7 @@ components:
         userEmail: { type: string }
         userNickname: { type: string }
         userIsAdmin: { type: boolean }
+        userIsFrozen: { type: boolean }
         userCreatedAt: { type: string, format: date-time }
         userUpdatedAt: { type: string, format: date-time, nullable: true }
         userLocale: { type: string }
@@ -108,6 +109,7 @@ components:
           userEmail,
           userNickname,
           userIsAdmin,
+          userIsFrozen,
           userCreatedAt,
           userUpdatedAt,
           userLocale,
@@ -155,6 +157,7 @@ components:
         aiModel: { type: string, nullable: true }
         snippet: { type: string }
         isAdmin: { type: boolean }
+        isFrozen: { type: boolean }
         blockStrangers: { type: boolean }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time, nullable: true }
@@ -181,6 +184,7 @@ components:
           aiModel,
           snippet,
           isAdmin,
+          isFrozen,
           blockStrangers,
           createdAt,
           updatedAt,
@@ -208,6 +212,7 @@ components:
         nickname: { type: string }
         aiModel: { type: string, nullable: true }
         isAdmin: { type: boolean }
+        isFrozen: { type: boolean }
         blockStrangers: { type: boolean }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time, nullable: true }
@@ -226,6 +231,7 @@ components:
           nickname,
           aiModel,
           isAdmin,
+          isFrozen,
           blockStrangers,
           createdAt,
           updatedAt,
@@ -1645,6 +1651,7 @@ paths:
                 email: { type: string }
                 nickname: { type: string }
                 isAdmin: { type: boolean }
+                isFrozen: { type: boolean }
                 blockStrangers: { type: boolean }
                 locale: { type: string }
                 timezone: { type: string }

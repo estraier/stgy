@@ -34,6 +34,8 @@ def get_session(session_id):
   assert "userId" in data
   assert "userNickname" in data
   assert "userIsAdmin" in data
+  assert "userIsFrozen" in data
+  assert isinstance(data["userIsFrozen"], bool)
   assert "userCreatedAt" in data
   assert "userUpdatedAt" in data
   assert "loggedInAt" in data
@@ -986,6 +988,7 @@ def test_users():
   assert res.status_code == 201, res.text
   user1 = res.json()
   user1_id = user1["id"]
+  assert user1["isFrozen"] is False
   print("[users] created:", user1)
   res = requests.post(f"{BASE_URL}/auth", json={"email": user_input["email"], "password": user_input["password"]})
   assert res.status_code == 200, res.text
@@ -1180,6 +1183,83 @@ def test_users():
   res = requests.get(user1_track["previewUrl"], cookies=user1_cookies)
   assert res.status_code == 200, res.text
   print("[users] user1 track uploaded before deletion")
+
+  # Freezing invalidates all existing sessions for the target user.
+  res = requests.put(
+    f"{BASE_URL}/users/{user1_id}",
+    json={"isFrozen": True},
+    headers=headers,
+    cookies=cookies,
+  )
+  assert res.status_code == 200, res.text
+  frozen_user = res.json()
+  assert frozen_user["isAdmin"] is False
+  assert frozen_user["isFrozen"] is True
+  res = requests.get(f"{BASE_URL}/auth", cookies=user1_cookies)
+  assert res.status_code == 401, res.text
+
+  res = requests.post(
+    f"{BASE_URL}/auth",
+    json={"email": user_input["email"], "password": user_input["password"]},
+  )
+  assert res.status_code == 200, res.text
+  frozen_session = res.cookies.get("session_id")
+  assert frozen_session
+  frozen_cookies = {"session_id": frozen_session}
+  res = requests.get(f"{BASE_URL}/auth", cookies=frozen_cookies)
+  assert res.status_code == 200, res.text
+  assert res.json()["userIsFrozen"] is True
+
+  # Read operations remain available, but state-changing operations are rejected.
+  res = requests.get(f"{BASE_URL}/users/{user1_id}", cookies=frozen_cookies)
+  assert res.status_code == 200, res.text
+  res = requests.put(
+    f"{BASE_URL}/users/{user1_id}/pub-config",
+    json={"siteName": "must not change"},
+    headers=headers,
+    cookies=frozen_cookies,
+  )
+  assert res.status_code == 403, res.text
+  assert res.json() == {"error": "user is frozen"}
+  res = requests.post(
+    f"{BASE_URL}/posts",
+    json={"content": "must not be created", "replyTo": None, "tags": []},
+    headers=headers,
+    cookies=frozen_cookies,
+  )
+  assert res.status_code == 403, res.text
+  assert res.json() == {"error": "user is frozen"}
+
+  # Unfreezing also invalidates existing sessions, and the next login is writable again.
+  res = requests.put(
+    f"{BASE_URL}/users/{user1_id}",
+    json={"isFrozen": False},
+    headers=headers,
+    cookies=cookies,
+  )
+  assert res.status_code == 200, res.text
+  assert res.json()["isFrozen"] is False
+  res = requests.get(f"{BASE_URL}/auth", cookies=frozen_cookies)
+  assert res.status_code == 401, res.text
+  res = requests.post(
+    f"{BASE_URL}/auth",
+    json={"email": user_input["email"], "password": user_input["password"]},
+  )
+  assert res.status_code == 200, res.text
+  unfrozen_session = res.cookies.get("session_id")
+  assert unfrozen_session
+  unfrozen_cookies = {"session_id": unfrozen_session}
+  res = requests.get(f"{BASE_URL}/auth", cookies=unfrozen_cookies)
+  assert res.status_code == 200, res.text
+  assert res.json()["userIsFrozen"] is False
+  res = requests.put(
+    f"{BASE_URL}/users/{user1_id}/pub-config",
+    json={"siteName": "site after unfreeze"},
+    headers=headers,
+    cookies=unfrozen_cookies,
+  )
+  assert res.status_code == 200, res.text
+  print("[users] frozen session invalidation and write blocking OK")
 
   res = requests.delete(f"{BASE_URL}/users/{user1_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text

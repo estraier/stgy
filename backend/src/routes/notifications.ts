@@ -44,7 +44,7 @@ export default function createNotificationRouter(pgPool: Pool, redis: Redis) {
   });
 
   router.post("/mark", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.requireLogin(req, res);
+    const loginUser = await authHelpers.requireWritableUser(req, res);
     if (!loginUser) return;
     if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
@@ -66,7 +66,7 @@ export default function createNotificationRouter(pgPool: Pool, redis: Redis) {
   });
 
   router.post("/mark-all", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.requireLogin(req, res);
+    const loginUser = await authHelpers.requireWritableUser(req, res);
     if (!loginUser) return;
     if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });

@@ -207,7 +207,7 @@ def build_sql() -> str:
 
     INSERT INTO users (
       id, updated_at, snippet, nickname, avatar, locale, timezone,
-      ai_model, is_admin, block_strangers
+      ai_model, is_admin, is_frozen, block_strangers
     ) VALUES (
       {BENCHMARK_USER_ID},
       TIMESTAMPTZ '2026-01-01 00:00:00+00',
@@ -218,12 +218,13 @@ def build_sql() -> str:
       'Asia/Tokyo',
       NULL,
       FALSE,
+      FALSE,
       FALSE
     );
 
     INSERT INTO users (
       id, updated_at, snippet, nickname, avatar, locale, timezone,
-      ai_model, is_admin, block_strangers
+      ai_model, is_admin, is_frozen, block_strangers
     )
     SELECT
       vu.id,
@@ -235,6 +236,7 @@ def build_sql() -> str:
       vu.locale,
       vu.timezone,
       CASE WHEN vu.ordinal % {AI_USER_INTERVAL} = 0 THEN 'basic' ELSE NULL END,
+      FALSE,
       FALSE,
       vu.ordinal % 3 = 0
     FROM volume_users vu;

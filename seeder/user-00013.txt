@@ -3,6 +3,7 @@ email: charlie@stgy.jp
 nickname: Charlie
 password: *
 isAdmin: false
+isFrozen: false
 blockStrangers: false
 locale: ja-JP
 timezone: Asia/Tokyo

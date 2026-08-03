@@ -994,6 +994,7 @@ export class PostsService {
         s.email,
         u.nickname,
         u.is_admin,
+        u.is_frozen,
         u.block_strangers,
         u.snippet,
         u.avatar,

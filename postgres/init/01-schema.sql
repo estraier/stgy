@@ -30,6 +30,7 @@ CREATE TABLE users (
   timezone VARCHAR(50) NOT NULL,
   ai_model VARCHAR(50) REFERENCES ai_models(label) ON DELETE SET NULL,
   is_admin BOOLEAN NOT NULL,
+  is_frozen BOOLEAN NOT NULL,
   block_strangers BOOLEAN NOT NULL
 );
 CREATE INDEX idx_users_nickname_id ON users(LOWER(nickname) text_pattern_ops, id);

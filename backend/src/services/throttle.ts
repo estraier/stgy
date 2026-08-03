@@ -1,7 +1,7 @@
 import { Config } from "../config";
 import type Redis from "ioredis";
 import { formatDateInTz } from "../utils/format";
-import { UserLite } from "../models/user";
+import type { AuthenticatedUser } from "../models/session";
 
 export class ThrottleService {
   private redis: Redis;
@@ -114,7 +114,7 @@ export class DailyTimerThrottleService {
     await this.redis.multi().incrby(key, inc).expire(key, RETENTION_SEC).exec();
   }
 
-  startWatch(user: UserLite) {
+  startWatch(user: Pick<AuthenticatedUser, "id" | "isAdmin">) {
     const isAdmin = !!user.isAdmin;
     const userId = user.id;
     const t0 = globalThis.performance.now();

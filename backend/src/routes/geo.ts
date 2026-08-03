@@ -7,7 +7,7 @@ import { AuthService } from "../services/auth";
 import { UsersService } from "../services/users";
 import { DailyTimerThrottleService } from "../services/throttle";
 import { AuthHelpers } from "./authHelpers";
-import type { UserLite } from "../models/user";
+import type { AuthenticatedUser } from "../models/session";
 
 export default function createGeoRouter(pgPool: Pool, redis: Redis, geoCoder: GeoCoder) {
   const router = Router();
@@ -75,7 +75,7 @@ async function getGeoUser(
   req: Request,
   res: Response,
   authHelpers: AuthHelpers,
-): Promise<UserLite | null> {
+): Promise<AuthenticatedUser | null> {
   if (!authHelpers.getSessionId(req)) {
     return authHelpers.makeDummyUser();
   }

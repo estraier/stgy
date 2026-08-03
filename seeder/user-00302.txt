@@ -3,6 +3,7 @@ email: hideo@stgy.jp
 nickname: hideo
 password: *
 isAdmin: false
+isFrozen: false
 blockStrangers: false
 locale: ja
 timezone: Asia/Tokyo

@@ -3,6 +3,7 @@ email: eve@stgy.jp
 nickname: Eve
 password: *
 isAdmin: false
+isFrozen: true
 blockStrangers: true
 locale: ja-JP
 timezone: Asia/Tokyo

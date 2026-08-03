@@ -1,4 +1,5 @@
 type PrismNS = typeof import("prismjs");
+type LanguageLoader = () => Promise<unknown>;
 
 let prismPromise: Promise<PrismNS> | null = null;
 
@@ -28,36 +29,81 @@ export function mapLang(raw?: string | null): string {
   return ALIASES[k] || k;
 }
 
+const CORE_LANGUAGES = new Set(["markup", "css", "clike", "javascript"]);
+
+const LANGUAGE_DEPENDENCIES: Record<string, readonly string[]> = {
+  typescript: ["javascript"],
+  jsx: ["markup", "javascript"],
+  tsx: ["jsx", "typescript"],
+  ruby: ["clike"],
+  go: ["clike"],
+  java: ["clike"],
+  c: ["clike"],
+  cpp: ["c"],
+  markdown: ["markup"],
+};
+
+const LANGUAGE_LOADERS: Record<string, LanguageLoader> = {
+  typescript: () => import("prismjs/components/prism-typescript"),
+  jsx: () => import("prismjs/components/prism-jsx"),
+  tsx: () => import("prismjs/components/prism-tsx"),
+  json: () => import("prismjs/components/prism-json"),
+  yaml: () => import("prismjs/components/prism-yaml"),
+  bash: () => import("prismjs/components/prism-bash"),
+  sql: () => import("prismjs/components/prism-sql"),
+  python: () => import("prismjs/components/prism-python"),
+  ruby: () => import("prismjs/components/prism-ruby"),
+  rust: () => import("prismjs/components/prism-rust"),
+  go: () => import("prismjs/components/prism-go"),
+  lua: () => import("prismjs/components/prism-lua"),
+  perl: () => import("prismjs/components/prism-perl"),
+  java: () => import("prismjs/components/prism-java"),
+  c: () => import("prismjs/components/prism-c"),
+  cpp: () => import("prismjs/components/prism-cpp"),
+  diff: () => import("prismjs/components/prism-diff"),
+  docker: () => import("prismjs/components/prism-docker"),
+  makefile: () => import("prismjs/components/prism-makefile"),
+  graphql: () => import("prismjs/components/prism-graphql"),
+  http: () => import("prismjs/components/prism-http"),
+  ini: () => import("prismjs/components/prism-ini"),
+  toml: () => import("prismjs/components/prism-toml"),
+  markdown: () => import("prismjs/components/prism-markdown"),
+};
+
 const SUPPORTED = new Set<string>([
-  "markup",
-  "css",
-  "clike",
-  "javascript",
-  "typescript",
-  "jsx",
-  "tsx",
-  "json",
-  "yaml",
-  "bash",
-  "sql",
-  "python",
-  "ruby",
-  "rust",
-  "go",
-  "lua",
-  "perl",
-  "java",
-  "c",
-  "cpp",
-  "diff",
-  "docker",
-  "makefile",
-  "graphql",
-  "http",
-  "ini",
-  "toml",
-  "markdown",
+  ...CORE_LANGUAGES,
+  ...Object.keys(LANGUAGE_LOADERS),
 ]);
+
+const languagePromises = new Map<string, Promise<void>>();
+
+async function loadLanguage(lang: string): Promise<void> {
+  if (CORE_LANGUAGES.has(lang)) return;
+
+  const existing = languagePromises.get(lang);
+  if (existing) {
+    await existing;
+    return;
+  }
+
+  const loader = LANGUAGE_LOADERS[lang];
+  if (!loader) throw new Error(`unsupported Prism language: ${lang}`);
+
+  const promise = (async () => {
+    for (const dependency of LANGUAGE_DEPENDENCIES[lang] || []) {
+      await loadLanguage(dependency);
+    }
+    await loader();
+  })();
+
+  languagePromises.set(lang, promise);
+  try {
+    await promise;
+  } catch (error) {
+    languagePromises.delete(lang);
+    throw error;
+  }
+}
 
 export function resolveHighlightLang(raw?: string | null): string | null {
   const lang = mapLang(raw);
@@ -68,7 +114,6 @@ export function resolveHighlightLang(raw?: string | null): string | null {
 
 export async function ensureLanguage(lang: string): Promise<{ Prism: PrismNS; lang: string }> {
   const Prism = await getPrism();
-  const { default: loadLanguages } = await import("prismjs/components/");
-  loadLanguages([lang]);
+  await loadLanguage(lang);
   return { Prism, lang };
 }

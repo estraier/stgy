@@ -3,6 +3,7 @@ email: hiroyuki@stgy.jp
 nickname: Hiroyuki
 password: *
 isAdmin: false
+isFrozen: false
 blockStrangers: false
 locale: ja-JP
 timezone: Europe/Paris

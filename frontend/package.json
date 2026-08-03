@@ -5,7 +5,7 @@
   "author": "Mikio Hirabayashi",
   "license": "MIT",
   "scripts": {
-    "build": "next build",
+    "build": "NODE_OPTIONS=\"${NODE_OPTIONS:+$NODE_OPTIONS }--disable-warning=DEP0205\" next build",
     "start": "next start",
     "dev": "next dev --turbopack",
     "test": "jest",

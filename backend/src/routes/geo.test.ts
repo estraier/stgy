@@ -7,26 +7,18 @@ import type { GeoCoder, GeoPlace } from "stgy-geocoder";
 import createGeoRouter from "./geo";
 import { AuthHelpers } from "./authHelpers";
 import { DailyTimerThrottleService } from "../services/throttle";
-import type { UserLite } from "../models/user";
+import type { AuthenticatedUser } from "../models/session";
 
-const loginUser = {
+const loginUser: AuthenticatedUser = {
   id: "user-1",
   isAdmin: false,
-} as UserLite;
+  isFrozen: false,
+};
 
-const dummyUser: UserLite = {
+const dummyUser: AuthenticatedUser = {
   id: "0000000000000000",
-  nickname: "dummy-user",
-  aiModel: null,
   isAdmin: false,
-  blockStrangers: false,
-  createdAt: "",
-  updatedAt: null,
-  countFollowers: 0,
-  countFollowees: 0,
-  countPosts: 0,
-  isBlockedByFocusUser: false,
-  isBlockingFocusUser: false,
+  isFrozen: false,
 };
 
 const place: GeoPlace = {

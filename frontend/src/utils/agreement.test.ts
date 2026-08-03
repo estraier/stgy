@@ -12,6 +12,7 @@ function session(overrides: Partial<SessionInfo> = {}): SessionInfo {
     userEmail: "user@example.com",
     userNickname: "user",
     userIsAdmin: false,
+    userIsFrozen: false,
     userCreatedAt: "2026-01-01T00:00:00.000Z",
     userUpdatedAt: null,
     userLocale: "ja-JP",

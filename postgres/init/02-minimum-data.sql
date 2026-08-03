@@ -15,6 +15,7 @@ INSERT INTO users (
   ai_model,
   snippet,
   is_admin,
+  is_frozen,
   block_strangers
 )
 VALUES
@@ -28,6 +29,7 @@ VALUES
   NULL,
   $$[{"T":"p","X":"I am the administrator of STGY. I notify reports and issues on operation."}]$$,
   TRUE,
+  FALSE,
   FALSE
 );
 

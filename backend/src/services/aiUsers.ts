@@ -104,6 +104,7 @@ export class AiUsersService {
         SELECT u.id, u.nickname, u.is_admin, u.ai_model
         FROM users u
         WHERE u.ai_model IS NOT NULL
+          AND u.is_frozen = FALSE
         ORDER BY u.id ${order}
         LIMIT $1 OFFSET $2
         `
@@ -111,6 +112,7 @@ export class AiUsersService {
         SELECT u.id, u.nickname, u.is_admin, u.ai_model
         FROM users u
         WHERE u.ai_model IS NOT NULL
+          AND u.is_frozen = FALSE
           AND u.id > $1
         ORDER BY u.id ASC
         LIMIT $2

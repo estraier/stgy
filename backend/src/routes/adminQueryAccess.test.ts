@@ -6,7 +6,7 @@ import type Redis from "ioredis";
 import type { GeoCoder } from "stgy-geocoder";
 import type { StorageService } from "../services/storage";
 import type { EventLogService } from "../services/eventLog";
-import type { UserLite } from "../models/user";
+import type { AuthenticatedUser } from "../models/session";
 import { AuthHelpers } from "./authHelpers";
 import { DailyTimerThrottleService } from "../services/throttle";
 import { PostsService } from "../services/posts";
@@ -14,20 +14,22 @@ import { UsersService } from "../services/users";
 import createPostsRouter from "./posts";
 import createUsersRouter from "./users";
 
-const nonAdminUser = {
+const nonAdminUser: AuthenticatedUser = {
   id: "0001000000000001",
   isAdmin: false,
-} as UserLite;
+  isFrozen: false,
+};
 
-const adminUser = {
+const adminUser: AuthenticatedUser = {
   id: "0001000000000002",
   isAdmin: true,
-} as UserLite;
+  isFrozen: false,
+};
 
 describe("admin-only count and direct query list routes", () => {
   let server: Server;
   let baseUrl: string;
-  let currentUser: UserLite;
+  let currentUser: AuthenticatedUser;
   let canDo: jest.SpyInstance;
   let countPosts: jest.SpyInstance;
   let listPosts: jest.SpyInstance;

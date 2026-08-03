@@ -3,6 +3,7 @@ email: literature-ja@stgy.jp
 nickname: 国文学大好きっ子
 password: *
 isAdmin: false
+isFrozen: false
 blockStrangers: false
 locale: ja
 timezone: Asia/Tokyo

@@ -3,6 +3,7 @@ email: bob@stgy.jp
 nickname: Bob
 password: *
 isAdmin: false
+isFrozen: false
 blockStrangers: true
 locale: en-US
 timezone: America/New_York

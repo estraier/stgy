@@ -3,6 +3,7 @@ email: hermit@stgy.jp
 nickname: Hermit
 password: *
 isAdmin: false
+isFrozen: false
 blockStrangers: false
 locale: ja-JP
 timezone: Asia/Tokyo

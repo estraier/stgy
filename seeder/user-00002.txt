@@ -3,6 +3,7 @@ email: subadmin@stgy.jp
 nickname: subadmin
 password: *
 isAdmin: true
+isFrozen: false
 blockStrangers: false
 locale: ja-JP
 timezone: Asia/Tokyo

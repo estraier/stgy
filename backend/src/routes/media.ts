@@ -37,7 +37,7 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
   }
 
   router.post("/:userId/images/presigned", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.requireLogin(req, res);
+    const loginUser = await authHelpers.requireWritableUser(req, res);
     if (!loginUser) return;
     const pathUserId = req.params.userId;
     if (!(loginUser.isAdmin || loginUser.id === pathUserId))
@@ -61,7 +61,7 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
   });
 
   router.post("/:userId/images/finalize", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.requireLogin(req, res);
+    const loginUser = await authHelpers.requireWritableUser(req, res);
     if (!loginUser) return;
     const pathUserId = req.params.userId;
     if (!(loginUser.isAdmin || loginUser.id === pathUserId))
@@ -90,7 +90,7 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
   });
 
   router.post("/:userId/images/import", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.requireLogin(req, res);
+    const loginUser = await authHelpers.requireWritableUser(req, res);
     if (!loginUser) return;
     const pathUserId = req.params.userId;
     if (!loginUser.isAdmin) return res.status(403).json({ error: "admin only" });
@@ -196,7 +196,7 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
   });
 
   router.delete("/:userId/images/*rest", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.requireLogin(req, res);
+    const loginUser = await authHelpers.requireWritableUser(req, res);
     if (!loginUser) return;
     const pathUserId = req.params.userId;
     if (!(loginUser.isAdmin || loginUser.id === pathUserId))
@@ -219,7 +219,7 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
   });
 
   router.post("/:userId/profiles/:slot/presigned", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.requireLogin(req, res);
+    const loginUser = await authHelpers.requireWritableUser(req, res);
     if (!loginUser) return;
     const pathUserId = req.params.userId;
     const slot = req.params.slot;
@@ -246,7 +246,7 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
   });
 
   router.post("/:userId/profiles/:slot/finalize", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.requireLogin(req, res);
+    const loginUser = await authHelpers.requireWritableUser(req, res);
     if (!loginUser) return;
     const pathUserId = req.params.userId;
     const slot = req.params.slot;
@@ -307,7 +307,7 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
   });
 
   router.delete("/:userId/profiles/:slot", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.requireLogin(req, res);
+    const loginUser = await authHelpers.requireWritableUser(req, res);
     if (!loginUser) return;
     const pathUserId = req.params.userId;
     const slot = req.params.slot;

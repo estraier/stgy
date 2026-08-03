@@ -5,6 +5,7 @@ export type User = {
   aiModel: string | null;
   snippet: string;
   isAdmin: boolean;
+  isFrozen: boolean;
   blockStrangers: boolean;
   createdAt: string;
   updatedAt: string | null;
@@ -73,6 +74,7 @@ export type UpdateUserInput = {
   locale?: string;
   timezone?: string;
   isAdmin?: boolean;
+  isFrozen?: boolean;
   blockStrangers?: boolean;
   introduction?: string;
   aiPersonality?: string | null;

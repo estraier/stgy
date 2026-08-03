@@ -109,7 +109,7 @@ export async function createUser(user: {
 
 type UpdatableFields = Pick<
   User,
-  "nickname" | "isAdmin" | "blockStrangers" | "avatar" | "aiModel"
+  "nickname" | "isAdmin" | "isFrozen" | "blockStrangers" | "avatar" | "aiModel"
 > &
   Pick<UserDetail, "introduction" | "aiPersonality" | "locale" | "timezone"> & {
     email?: string;

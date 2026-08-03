@@ -107,6 +107,7 @@ export class UsersService {
           u.avatar,
           u.ai_model,
           u.is_admin,
+          u.is_frozen,
           u.block_strangers,
           id_to_timestamp(u.id) AS created_at,
           COALESCE(uc.follower_count, 0) AS count_followers,
@@ -167,6 +168,7 @@ export class UsersService {
           u.timezone,
           u.ai_model,
           u.is_admin,
+          u.is_frozen,
           u.block_strangers,
           id_to_timestamp(u.id) AS created_at,
           COALESCE(uc.follower_count, 0) AS count_followers,
@@ -249,6 +251,7 @@ export class UsersService {
         u.avatar,
         u.ai_model,
         u.is_admin,
+        u.is_frozen,
         u.block_strangers,
         id_to_timestamp(u.id) AS created_at,
         COALESCE(uc.follower_count, 0) AS count_followers,
@@ -426,9 +429,10 @@ export class UsersService {
             timezone,
             ai_model,
             is_admin,
+            is_frozen,
             block_strangers
           )
-          VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, $9)
+          VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, FALSE, $9)
         `,
         [
           hexToDec(id),
@@ -475,6 +479,7 @@ export class UsersService {
             u.avatar,
             u.ai_model,
             u.is_admin,
+            u.is_frozen,
             u.block_strangers,
             id_to_timestamp(u.id) AS created_at,
             COALESCE(uc.follower_count, 0) AS count_followers,
@@ -547,9 +552,14 @@ export class UsersService {
       const snippet = makeSnippetJsonFromMarkdown(input.introduction).slice(0, 4096);
       userVals.push(snippet);
     }
-    if (input.isAdmin !== undefined) {
-      userCols.push(`is_admin = $${uidx++}`);
-      userVals.push(input.isAdmin);
+    if (input.isAdmin !== undefined || input.isFrozen !== undefined) {
+      const adminIndex = uidx++;
+      const frozenIndex = uidx++;
+      userVals.push(input.isAdmin ?? null, input.isFrozen ?? null);
+      userCols.push(`is_admin = COALESCE($${adminIndex}, is_admin)`);
+      userCols.push(
+        `is_frozen = CASE WHEN COALESCE($${adminIndex}, is_admin) THEN FALSE ELSE COALESCE($${frozenIndex}, is_frozen) END`,
+      );
     }
     if (input.blockStrangers !== undefined) {
       userCols.push(`block_strangers = $${uidx++}`);
@@ -609,6 +619,7 @@ export class UsersService {
           u.avatar,
           u.ai_model,
           u.is_admin,
+          u.is_frozen,
           u.block_strangers,
           id_to_timestamp(u.id) AS created_at,
           COALESCE(uc.follower_count, 0) AS count_followers,
@@ -767,9 +778,11 @@ export class UsersService {
     const res = await pgQuery(
       this.pgPool,
       `
-        SELECT user_id AS id
-        FROM user_secrets
-        WHERE email = $1
+        SELECT s.user_id AS id
+        FROM user_secrets s
+        JOIN users u ON u.id = s.user_id
+        WHERE s.email = $1
+          AND u.is_frozen = FALSE
       `,
       [email],
     );
@@ -823,6 +836,13 @@ export class UsersService {
     if (data.mailCode !== mailCode) throw new Error("Mail verification code mismatch");
     if (!newPassword || newPassword.trim().length < 6)
       throw new Error("Password must be at least 6 characters");
+
+    const state = await pgQuery<{ is_frozen: boolean }>(
+      this.pgPool,
+      `SELECT is_frozen FROM users WHERE id = $1`,
+      [hexToDec(data.userId)],
+    );
+    if (!state.rows[0] || state.rows[0].is_frozen) throw new Error("User is frozen");
 
     const passwordHash = await generatePasswordHash(newPassword);
     const res = await pgQuery(
@@ -902,6 +922,7 @@ export class UsersService {
         u.avatar,
         u.ai_model,
         u.is_admin,
+        u.is_frozen,
         u.block_strangers,
         id_to_timestamp(u.id) AS created_at,
         COALESCE(uc.follower_count, 0) AS count_followers,
@@ -1001,6 +1022,7 @@ export class UsersService {
         u.avatar,
         u.ai_model,
         u.is_admin,
+        u.is_frozen,
         u.block_strangers,
         id_to_timestamp(u.id) AS created_at,
         COALESCE(uc.follower_count, 0) AS count_followers,
@@ -1172,6 +1194,7 @@ export class UsersService {
         u.avatar,
         u.ai_model,
         u.is_admin,
+        u.is_frozen,
         u.block_strangers,
         id_to_timestamp(u.id) AS created_at,
         COALESCE(uc.follower_count, 0) AS count_followers,
@@ -1395,6 +1418,7 @@ export class UsersService {
         u.avatar,
         u.ai_model,
         u.is_admin,
+        u.is_frozen,
         u.block_strangers,
         id_to_timestamp(u.id) AS created_at,
         COALESCE(uc.follower_count, 0) AS count_followers,
