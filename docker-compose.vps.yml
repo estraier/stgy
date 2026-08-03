@@ -48,7 +48,7 @@ services:
       - "443:443"
     environment:
       STGY_CADDY_RATE_LIMIT_EVENTS: ${STGY_CADDY_RATE_LIMIT_EVENTS:-120}
-      STGY_CADDY_RATE_LIMIT_WINDOW: ${STGY_CADDY_RATE_LIMIT_WINDOW:-1m}
+      STGY_CADDY_RATE_LIMIT_WINDOW: ${STGY_CADDY_RATE_LIMIT_WINDOW:-5m}
     volumes:
       - ./caddy/Caddyfile.vps:/etc/caddy/Caddyfile:ro
 

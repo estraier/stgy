@@ -6,7 +6,7 @@
       }
       key {http.request.host}:{remote_host}
       events 100
-      window 10m
+      window 1h
     }
     log_key
   }
@@ -23,10 +23,11 @@ https://stgy.jp {
     zone stgy_per_ip {
       match {
         not path /_next/static/*
+        not path_regexp stgy_cgi_path ^.*\.cgi(/.*)?$
       }
       key {remote_host}
       events {$STGY_CADDY_RATE_LIMIT_EVENTS:120}
-      window {$STGY_CADDY_RATE_LIMIT_WINDOW:1m}
+      window {$STGY_CADDY_RATE_LIMIT_WINDOW:5m}
     }
     log_key
   }

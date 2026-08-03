@@ -543,7 +543,7 @@ cp env.vps.txt .env
 npm run vps:docker:up
 ```
 
-Docker版のCaddyは、IP単位のレート制限モジュールを組み込んだ独自イメージとして自動的にビルドされる。STGY本体の既定値は1 IPあたり1分間120リクエストで、env.vps.txtのSTGY_CADDY_RATE_LIMIT_EVENTSとSTGY_CADDY_RATE_LIMIT_WINDOWで変更できる。これとは別に、パスが.cgiで終わるリクエストと.cgiの後ろにPATH_INFOが続くリクエストは、ホスト名と接続元IPアドレスの組み合わせごとに10分間100リクエストまでに制限する。制限超過は以下のログで確認できる。
+Docker版のCaddyは、IP単位のレート制限モジュールを組み込んだ独自イメージとして自動的にビルドされる。STGY本体のCGI以外のリクエストは、既定で1 IPあたり5分間120リクエストまでに制限し、env.vps.txtのSTGY_CADDY_RATE_LIMIT_EVENTSとSTGY_CADDY_RATE_LIMIT_WINDOWで変更できる。これとは別に、パスが.cgiで終わるリクエストと.cgiの後ろにPATH_INFOが続くリクエストは、ホスト名と接続元IPアドレスの組み合わせごとに1時間100リクエストまでに制限する。制限超過は以下のログで確認できる。
 
 ```:small
 docker compose -f docker-compose.yml -f docker-compose.vps.yml logs caddy
@@ -585,7 +585,7 @@ import extra-sites/*.caddy
 import extra-sites/test.caddy
 ```
 
-caddy/Caddyfile.vpsには、CGIへのアクセスをホスト名と接続元IPアドレスの組み合わせごとに10分間100リクエストまでに制限するcgi_rate_limitスニペットも定義してある。追加サイトでCGIを公開する場合は、そのサイトブロック内で以下のように読み込む。
+caddy/Caddyfile.vpsには、CGIへのアクセスをホスト名と接続元IPアドレスの組み合わせごとに1時間100リクエストまでに制限するcgi_rate_limitスニペットも定義してある。追加サイトでCGIを公開する場合は、そのサイトブロック内で以下のように読み込む。
 
 ```:small
 import cgi_rate_limit
@@ -888,7 +888,7 @@ sudo chown -R prod:prod /var/caddy
 
 Caddy自体の設定は/etc/caddy/Caddyfileで行う。典型的には以下のように書く。証明書はワイルドカード方式にせず、Caddyfileに列挙したホスト名ごとに個別に取得する。mail.stgy.jpはPostfixで使う証明書を取得・更新するために定義し、Webアクセスには404を返す。S3にはホットリンク防止のRefererの制限をかけている。STGYサービスの配信に加えて、/home/www以下のファイルを通常のWebサーバとして配信し、その中のprivate/配下にはBasic認証をかけるものとする。
 
-stgy.jpには、接続元IPアドレスごとに1分間120リクエストのレート制限をかける。Next.jsの静的ファイルである/_next/static/以下は、通常のページ表示で多数のリクエストが発生する一方、アプリケーション処理の負荷にはなりにくいので対象外にする。また、CGIを公開するサイトではcgi_rate_limitスニペットを読み込み、パスが.cgiで終わるリクエストと.cgiの後ろにPATH_INFOが続くリクエストを、ホスト名と接続元IPアドレスの組み合わせごとに10分間100リクエストまでに制限する。制限を超えたリクエストにはHTTP 429とRetry-Afterが返り、Caddyのログには対象IPアドレスが記録される。
+stgy.jpでは、CGI以外のリクエストに接続元IPアドレスごとに5分間120リクエストのレート制限をかける。Next.jsの静的ファイルである/_next/static/以下は、通常のページ表示で多数のリクエストが発生する一方、アプリケーション処理の負荷にはなりにくいので対象外にする。また、CGIを公開するサイトではcgi_rate_limitスニペットを読み込み、パスが.cgiで終わるリクエストと.cgiの後ろにPATH_INFOが続くリクエストを、ホスト名と接続元IPアドレスの組み合わせごとに1時間100リクエストまでに制限する。制限を超えたリクエストにはHTTP 429とRetry-Afterが返り、Caddyのログには対象IPアドレスが記録される。
 
 
 ```:small
@@ -906,7 +906,7 @@ stgy.jpには、接続元IPアドレスごとに1分間120リクエストのレ�
       }
       key {http.request.host}:{remote_host}
       events 100
-      window 10m
+      window 1h
     }
     log_key
   }
@@ -919,10 +919,11 @@ https://stgy.jp {
     zone stgy_per_ip {
       match {
         not path /_next/static/*
+        not path_regexp stgy_cgi_path ^.*\.cgi(/.*)?$
       }
       key {remote_host}
       events 120
-      window 1m
+      window 5m
     }
     log_key
   }
@@ -1029,7 +1030,7 @@ SocketGroup=prod
 sudo systemctl daemon-reload
 ```
 
-そのうえで、Caddyfileのwww.stgy.jpのディレクティブの中に以下の設定を書くと、.cgi拡張子のファイルがCGIスクリプトとして実行されるようになる。前掲の設定例ではcgi_rate_limitも読み込んでいるため、これらのリクエストには10分間100回の制限がかかる。ディレクティブは上から評価されるので、file_serverディレクティブより上に置くことが重要である。
+そのうえで、Caddyfileのwww.stgy.jpのディレクティブの中に以下の設定を書くと、.cgi拡張子のファイルがCGIスクリプトとして実行されるようになる。前掲の設定例ではcgi_rate_limitも読み込んでいるため、これらのリクエストには1時間100回の制限がかかる。ディレクティブは上から評価されるので、file_serverディレクティブより上に置くことが重要である。
 
 ```:small
   @cgi path_regexp cgi ^(.+\.cgi)(/.*)?$
