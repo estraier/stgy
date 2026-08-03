@@ -1251,8 +1251,25 @@ export function parseHtml(
   html: string,
   opts?: { baseFontSizePt?: number },
 ): MdNode[] {
-  const basePt = opts?.baseFontSizePt ?? 11;
-  const { root } = getDomRootOrThrow(html);
+  const { document: doc, root } = getDomRootOrThrow(html);
+  const isWordHtml = Array.from(doc.querySelectorAll("meta")).some((meta) => {
+    const name = (meta.getAttribute("name") || "").toLowerCase();
+    const content = (meta.getAttribute("content") || "").toLowerCase();
+    return name === "generator" && content.includes("microsoft word");
+  });
+  const wordBaseFontSizePt = (() => {
+    if (!isWordHtml) return null;
+    const css = Array.from(doc.querySelectorAll("style"))
+      .map((style) => style.textContent || "")
+      .join("\n");
+    const rule = /p\.MsoNormal\b[^{}]*\{([^{}]*)\}/i.exec(css);
+    if (!rule) return null;
+    const size = /font-size\s*:\s*([0-9.]+)\s*pt/i.exec(rule[1]!);
+    if (!size) return null;
+    const value = parseFloat(size[1]!);
+    return Number.isFinite(value) ? value : null;
+  })();
+  const basePt = opts?.baseFontSizePt ?? wordBaseFontSizePt ?? 11;
   const result: MdNode[] = [];
   const isHidden = (tag: string) =>
     tag === "head" ||
@@ -1333,10 +1350,28 @@ export function parseHtml(
     if (td.includes("underline")) marks.u = true;
     const ff = (s["font-family"] || "").toLowerCase();
     if (ff.includes("monospace")) marks.code = true;
-    const bg = s["background-color"];
-    if (bg && !isWhiteLike(bg)) marks.mark = true;
+    const backgrounds = [
+      s["background-color"],
+      s["background"],
+      s["mso-highlight"],
+    ].filter((value): value is string => typeof value === "string");
+    if (
+      backgrounds.some((value) => {
+        const normalized = value.trim().toLowerCase();
+        return (
+          !isWhiteLike(value) &&
+          normalized !== "none" &&
+          normalized !== "auto"
+        );
+      })
+    ) {
+      marks.mark = true;
+    }
     const fz = ptFromCss(s["font-size"]);
-    if (fz !== null && fz <= basePt * 0.85) marks.small = true;
+    if (fz !== null) {
+      if (isWordHtml && fz < basePt - 0.01) marks.small = true;
+      else if (!isWordHtml && fz <= basePt * 0.85) marks.small = true;
+    }
     const ta = (s["text-align"] || "").toLowerCase();
     if (ta === "center") marks.align = "center";
     if (ta === "right") marks.align = "right";
@@ -1457,7 +1492,15 @@ export function parseHtml(
     const nodes = Array.from(el.childNodes);
     for (const n of nodes) {
       if (n.nodeType === 3) {
-        const text = (n as Text).nodeValue ?? "";
+        let text = (n as Text).nodeValue ?? "";
+        const previous = out[out.length - 1];
+        if (
+          isWordHtml &&
+          previous?.type === "element" &&
+          previous.tag === "br"
+        ) {
+          text = text.replace(/^(?:\r\n?|\n)+[ \t]*/, "");
+        }
         if (text.length) out.push(t(text));
       } else if (n.nodeType === 1) {
         const x = n as Element;
@@ -2311,6 +2354,126 @@ export function structurizeHtml(
     while (el.firstChild) parent.insertBefore(el.firstChild, el);
     parent.removeChild(el);
   };
+  type WordListParagraphInfo = {
+    level: number;
+    listKey: string;
+    ordered: boolean;
+  };
+  const wordListParagraphInfo = (el: Element): WordListParagraphInfo | null => {
+    if (el.tagName.toLowerCase() !== "p") return null;
+    const className = el.getAttribute("class") || "";
+    if (!/\bMsoListParagraph(?:CxSp(?:First|Middle|Last))?\b/i.test(className)) {
+      return null;
+    }
+    const style = el.getAttribute("style") || "";
+    const list = /\bmso-list\s*:\s*([^\s;]+)\s+level(\d+)\s+(lfo\d+)/i.exec(
+      style,
+    );
+    if (!list) return null;
+    const marker = Array.from(el.querySelectorAll("span")).find((span) =>
+      /\bmso-list\s*:\s*Ignore\b/i.test(span.getAttribute("style") || ""),
+    );
+    const markerText = (marker?.textContent || "")
+      .replace(/\u00a0/g, " ")
+      .replace(/\s+/g, "")
+      .trim();
+    return {
+      level: Math.max(1, parseInt(list[2]!, 10)),
+      listKey: `${list[1]!.toLowerCase()}:${list[3]!.toLowerCase()}`,
+      ordered: /^(?:\d+|[a-z]+|[ivxlcdm]+)[.)]$/i.test(markerText),
+    };
+  };
+  const removeWordListMarker = (p: Element) => {
+    const markerSpans = Array.from(p.querySelectorAll("span")).filter((span) =>
+      /\bmso-list\s*:\s*Ignore\b/i.test(span.getAttribute("style") || ""),
+    );
+    for (const marker of markerSpans) marker.remove();
+    for (const child of Array.from(p.querySelectorAll("*"))) {
+      if (child.tagName.toLowerCase() === "o:p") child.remove();
+    }
+  };
+  const stage0NormalizeWordLists = (rootEl: Element) => {
+    const candidates = Array.from(rootEl.querySelectorAll("p")) as Element[];
+    const consumed = new Set<Element>();
+    const isIgnorableSibling = (node: Node): boolean =>
+      node.nodeType === Node.COMMENT_NODE ||
+      (node.nodeType === Node.TEXT_NODE &&
+        !/\S/.test((node as Text).data || ""));
+
+    for (const first of candidates) {
+      if (consumed.has(first) || !first.parentNode) continue;
+      const firstInfo = wordListParagraphInfo(first);
+      if (!firstInfo) continue;
+
+      const group: Array<{ p: Element; info: WordListParagraphInfo }> = [];
+      let cursor: Node | null = first;
+      while (cursor) {
+        if (isIgnorableSibling(cursor)) {
+          cursor = cursor.nextSibling;
+          continue;
+        }
+        if (cursor.nodeType !== Node.ELEMENT_NODE) break;
+        const paragraph = cursor as Element;
+        const info = wordListParagraphInfo(paragraph);
+        if (!info || info.listKey !== firstInfo.listKey) break;
+        group.push({ p: paragraph, info });
+        consumed.add(paragraph);
+        cursor = cursor.nextSibling;
+      }
+
+      const parent = first.parentNode;
+      const baseLevel = group[0]!.info.level;
+      const stack: Array<{
+        list: Element;
+        lastLi: Element | null;
+        ordered: boolean;
+      }> = [];
+
+      const appendListAtLevel = (level: number, ordered: boolean): Element => {
+        const list = doc.createElement(ordered ? "ol" : "ul");
+        if (level === 1) {
+          parent.insertBefore(list, first);
+        } else {
+          const parentEntry = stack[level - 2];
+          if (!parentEntry) {
+            parent.insertBefore(list, first);
+          } else {
+            let parentLi = parentEntry.lastLi;
+            if (!parentLi) {
+              parentLi = doc.createElement("li");
+              parentEntry.list.appendChild(parentLi);
+              parentEntry.lastLi = parentLi;
+            }
+            parentLi.appendChild(list);
+          }
+        }
+        return list;
+      };
+
+      for (const { p, info } of group) {
+        const level = Math.max(1, info.level - baseLevel + 1);
+        while (stack.length > level) stack.pop();
+        while (stack.length < level) {
+          const nextLevel = stack.length + 1;
+          const list = appendListAtLevel(nextLevel, info.ordered);
+          stack.push({ list, lastLi: null, ordered: info.ordered });
+        }
+        if (stack[level - 1]!.ordered !== info.ordered) {
+          stack.length = level - 1;
+          const list = appendListAtLevel(level, info.ordered);
+          stack.push({ list, lastLi: null, ordered: info.ordered });
+        }
+
+        removeWordListMarker(p);
+        const li = doc.createElement("li");
+        while (p.firstChild) li.appendChild(p.firstChild);
+        stack[level - 1]!.list.appendChild(li);
+        stack[level - 1]!.lastLi = li;
+      }
+
+      for (const { p } of group) p.remove();
+    }
+  };
   const stage1UnwrapInlineContainingBlocks = (rootEl: Element) => {
     const candidates = Array.from(rootEl.querySelectorAll("*")) as Element[];
     const toUnwrap: Element[] = [];
@@ -2456,17 +2619,31 @@ export function structurizeHtml(
     if (child.tagName.toLowerCase() !== "span") return null;
     return child as HTMLSpanElement;
   };
+  const isWordTitleP = (el: Element): boolean => {
+    if (el.tagName.toLowerCase() !== "p") return false;
+    return (el.getAttribute("class") || "")
+      .split(/\s+/)
+      .some((className) => className.toLowerCase() === "msotitle");
+  };
   const pickTitleCandidateP = (
     bodyEl: Element,
     minPtLocal: number,
     titleCandidates?: Set<Element>,
   ): Element | null => {
     let seenP = 0;
-    for (let i = 0; i < bodyEl.childNodes.length && seenP < 5; i++) {
+    let seenTopLevelP = 0;
+    for (
+      let i = 0;
+      i < bodyEl.childNodes.length && (seenP < 5 || seenTopLevelP < 5);
+      i++
+    ) {
       const n = bodyEl.childNodes[i];
       if (n.nodeType !== Node.ELEMENT_NODE) continue;
       const el = n as Element;
       if (el.tagName.toLowerCase() !== "p") continue;
+      seenTopLevelP++;
+      if (seenTopLevelP <= 5 && isWordTitleP(el)) return el;
+      if (seenP >= 5) continue;
       if (titleCandidates && !titleCandidates.has(el)) continue;
       seenP++;
       const span = isSingleSpanP(el);
@@ -2553,6 +2730,7 @@ export function structurizeHtml(
       return div;
     }
   })();
+  stage0NormalizeWordLists(workBody);
   const psInsideInline = markPsInInlineAncestors(workBody);
   stage1UnwrapInlineContainingBlocks(workBody);
   stage3PromoteTitleAndDemoteHeadings(workBody, minPt, psInsideInline);

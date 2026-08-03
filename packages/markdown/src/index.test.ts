@@ -3193,6 +3193,82 @@ def
   });
 });
 
+describe("copy-paste from Microsoft Word", () => {
+  it("promotes a Word title near the beginning and demotes headings", () => {
+    const html = `<html><head><meta name="Generator" content="Microsoft Word 15"></head><body>
+<p class="MsoTitle">title<o:p></o:p></p>
+<p class="MsoSubtitle">subtitle<o:p></o:p></p>
+<h1>head1<o:p></o:p></h1>
+<h2>head2<o:p></o:p></h2>
+</body></html>`;
+    expect(makeMarkdownFromHtml(structurizeHtml(html))).toBe(`# title
+
+subtitle
+
+## head1
+
+### head2
+`);
+  });
+
+  it("does not promote a Word title after the first five paragraphs", () => {
+    const html = `<body>
+<p>one</p><p>two</p><p>three</p><p>four</p><p>five</p>
+<p class="MsoTitle">title<o:p></o:p></p>
+<h1>head1<o:p></o:p></h1>
+</body>`;
+    expect(makeMarkdownFromHtml(structurizeHtml(html))).toBe(`one
+
+two
+
+three
+
+four
+
+five
+
+title
+
+# head1
+`);
+  });
+
+  it("normalizes Word paragraph lists", () => {
+    const html = `<html><head><meta name="Generator" content="Microsoft Word 15"></head><body>
+<p class="MsoListParagraphCxSpFirst" style="text-indent:-18.0pt;mso-list:l0 level1 lfo1"><span style="mso-list:Ignore">·<span>&nbsp;&nbsp;</span></span>list item 1<o:p></o:p></p>
+<p class="MsoListParagraphCxSpMiddle" style="margin-left:72.0pt;text-indent:-18.0pt;mso-list:l0 level2 lfo1"><span style="mso-list:Ignore">o<span>&nbsp;&nbsp;</span></span>nested<o:p></o:p></p>
+<p class="MsoListParagraphCxSpLast" style="text-indent:-18.0pt;mso-list:l0 level1 lfo1"><span style="mso-list:Ignore">·<span>&nbsp;&nbsp;</span></span>list item 2<o:p></o:p></p>
+<p class="MsoNormal"><o:p>&nbsp;</o:p></p>
+<p class="MsoListParagraphCxSpFirst" style="text-indent:-18.0pt;mso-list:l1 level1 lfo2"><span style="mso-list:Ignore">1.<span>&nbsp;&nbsp;</span></span>number item 1<o:p></o:p></p>
+<p class="MsoListParagraphCxSpMiddle" style="margin-left:72.0pt;text-indent:-18.0pt;mso-list:l1 level2 lfo2"><span style="mso-list:Ignore">a.<span>&nbsp;&nbsp;</span></span>nested number<o:p></o:p></p>
+<p class="MsoListParagraphCxSpLast" style="text-indent:-18.0pt;mso-list:l1 level1 lfo2"><span style="mso-list:Ignore">2.<span>&nbsp;&nbsp;</span></span>number item 2<o:p></o:p></p>
+</body></html>`;
+    expect(makeMarkdownFromHtml(structurizeHtml(html))).toBe(`- list item 1
+  - nested
+- list item 2
+
+-+ number item 1
+  -+ nested number
+-+ number item 2
+`);
+  });
+
+  it("recognizes Word highlight and smaller text without supporting big text", () => {
+    const html = `<html><head>
+<meta name="Generator" content="Microsoft Word 15">
+<style>p.MsoNormal { font-size:12.0pt; }</style>
+</head><body>
+<p class="MsoNormal">plain<br>
+<span style="background:yellow;mso-highlight:yellow">highlight</span>
+<span style="font-size:14.0pt;line-height:115%">big</span>
+<span style="font-size:11.0pt;line-height:115%">small</span><o:p></o:p></p>
+</body></html>`;
+    expect(makeMarkdownFromHtml(html)).toBe(
+      "plain\n@@highlight@@ big %%small%%\n",
+    );
+  });
+});
+
 describe("copy-paste from gdocs", () => {
   it("typical setting", () => {
     const html =

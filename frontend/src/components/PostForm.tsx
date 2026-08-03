@@ -2215,21 +2215,6 @@ export default function PostForm({
     (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
       const dt = e.clipboardData;
       if (!dt) return;
-      const imageFiles: File[] = [];
-      for (let i = 0; i < dt.items.length; i++) {
-        const it = dt.items[i];
-        if (it && it.kind === "file") {
-          const f = it.getAsFile();
-          if (f && f.type && f.type.startsWith("image/")) {
-            imageFiles.push(f);
-          }
-        }
-      }
-      if (imageFiles.length > 0) {
-        e.preventDefault();
-        uploadBtnRef.current?.openWithFiles(imageFiles);
-        return;
-      }
       const htmlRaw = dt.getData("text/html");
       if (htmlRaw) {
         const { countBlockElements, countInlineElements } = countHtmlElements(htmlRaw);
@@ -2307,6 +2292,21 @@ export default function PostForm({
           else insertInlineAtCursor(md);
         }
         return;
+      }
+
+      const imageFiles: File[] = [];
+      for (let i = 0; i < dt.items.length; i++) {
+        const it = dt.items[i];
+        if (it && it.kind === "file") {
+          const f = it.getAsFile();
+          if (f && f.type && f.type.startsWith("image/")) {
+            imageFiles.push(f);
+          }
+        }
+      }
+      if (imageFiles.length > 0) {
+        e.preventDefault();
+        uploadBtnRef.current?.openWithFiles(imageFiles);
       }
     },
     [dataUrlToFile, insertAtCursor, insertInlineAtCursor, userId],
