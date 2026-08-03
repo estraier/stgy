@@ -6,6 +6,17 @@ export type TrackArchiveEntry = {
   previewFilename: string;
 };
 
+export type TrackReferenceSource = {
+  label: string;
+  text: string;
+};
+
+export type UnexportedTrackReference = {
+  reference: string;
+  sources: string[];
+  reason: "owned-by-another-user" | "not-in-track-storage";
+};
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -79,6 +90,67 @@ export function filterReferencedTrackArchiveEntries(
     managedTrackPaths(entry).some((source) => {
       const sourceWithoutQuery = String(source || "").replace(/[?#].*$/, "");
       return sourceWithoutQuery !== "" && contents.some((text) => text.includes(sourceWithoutQuery));
+    }),
+  );
+}
+
+const STGY_TRACK_PATH_PATTERN =
+  /\/tracks\/([^/\s"'<>|)]+)\/(?:masters|previews)\/\d{6}\/[0-9a-f]{16}\.(?:fit|trjgz)/gi;
+
+export function collectUnexportedTrackReferences(
+  sources: Iterable<TrackReferenceSource>,
+  entries: TrackArchiveEntry[],
+  currentUserId: string,
+): UnexportedTrackReference[] {
+  const exportedPaths = new Set(
+    entries.flatMap((entry) => [
+      `/tracks/${entry.track.key}`.toLowerCase(),
+      `/tracks/${entry.track.previewKey}`.toLowerCase(),
+    ]),
+  );
+  const normalizedCurrentUserId = currentUserId.toLowerCase();
+  const unresolved = new Map<
+    string,
+    {
+      reference: string;
+      sources: Set<string>;
+      reason: UnexportedTrackReference["reason"];
+    }
+  >();
+
+  for (const source of sources) {
+    const text = String(source.text || "");
+    STGY_TRACK_PATH_PATTERN.lastIndex = 0;
+    for (const match of text.matchAll(STGY_TRACK_PATH_PATTERN)) {
+      const reference = match[0];
+      const normalized = reference.toLowerCase();
+      const ownerId = match[1].toLowerCase();
+      const reason: UnexportedTrackReference["reason"] =
+        ownerId !== normalizedCurrentUserId
+          ? "owned-by-another-user"
+          : "not-in-track-storage";
+
+      if (reason === "not-in-track-storage" && exportedPaths.has(normalized)) continue;
+
+      const current = unresolved.get(normalized);
+      if (current) {
+        current.sources.add(source.label);
+      } else {
+        unresolved.set(normalized, {
+          reference,
+          sources: new Set([source.label]),
+          reason,
+        });
+      }
+    }
+  }
+
+  return Array.from(
+    unresolved.values(),
+    ({ reference, sources: labels, reason }) => ({
+      reference,
+      sources: Array.from(labels),
+      reason,
     }),
   );
 }

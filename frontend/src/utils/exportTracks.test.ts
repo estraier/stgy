@@ -1,5 +1,6 @@
 import type { TrackObject } from "@/api/models";
 import {
+  collectUnexportedTrackReferences,
   filterReferencedTrackArchiveEntries,
   makeTrackArchiveEntries,
   rewriteTrackObjectUrlsToRelative,
@@ -112,3 +113,103 @@ describe("filterReferencedTrackArchiveEntries", () => {
     expect(filterReferencedTrackArchiveEntries(["No maps here"], entries)).toEqual([]);
   });
 });
+
+describe("collectUnexportedTrackReferences", () => {
+  const entries = makeTrackArchiveEntries([makeTrack()], "u1");
+
+  test("reports STGY track paths that are not exportable", () => {
+    expect(
+      collectUnexportedTrackReferences(
+        [
+          {
+            label: "Post p1 content",
+            text: [
+              "@[](/tracks/u1/previews/797392/01234567deadbeef.trjgz)",
+              "@[](/tracks/u2/previews/797391/11234567cafebabe.trjgz?x=1)",
+            ].join("\n"),
+          },
+        ],
+        entries,
+        "u1",
+      ),
+    ).toEqual([
+      {
+        reference: "/tracks/u2/previews/797391/11234567cafebabe.trjgz",
+        sources: ["Post p1 content"],
+        reason: "owned-by-another-user",
+      },
+    ]);
+  });
+
+  test("reports a missing track owned by the current user", () => {
+    expect(
+      collectUnexportedTrackReferences(
+        [
+          {
+            label: "Post p1 content",
+            text: "@[](/tracks/u1/previews/797391/11234567cafebabe.trjgz)",
+          },
+        ],
+        entries,
+        "u1",
+      ),
+    ).toEqual([
+      {
+        reference: "/tracks/u1/previews/797391/11234567cafebabe.trjgz",
+        sources: ["Post p1 content"],
+        reason: "not-in-track-storage",
+      },
+    ]);
+  });
+
+  test("reports a track owned by another STGY user", () => {
+    expect(
+      collectUnexportedTrackReferences(
+        [
+          {
+            label: "Post 19F3FC04CB800000 content",
+            text: "@[](/tracks/0001000000000001/previews/797391/9e0a5a40d5c85370.trjgz){base=cycle,lthr=151,ftp=223}",
+          },
+        ],
+        [],
+        "0001000000000021",
+      ),
+    ).toEqual([
+      {
+        reference:
+          "/tracks/0001000000000001/previews/797391/9e0a5a40d5c85370.trjgz",
+        sources: ["Post 19F3FC04CB800000 content"],
+        reason: "owned-by-another-user",
+      },
+    ]);
+  });
+
+  test("combines duplicate references and ignores unrelated external URLs", () => {
+    expect(
+      collectUnexportedTrackReferences(
+        [
+          {
+            label: "Post p1 content",
+            text: "@[](/tracks/u2/previews/797391/11234567cafebabe.trjgz)",
+          },
+          {
+            label: "Post p1 snippet",
+            text: [
+              "/tracks/u2/previews/797391/11234567cafebabe.trjgz",
+              "https://example.com/ride.trjgz",
+            ].join("\n"),
+          },
+        ],
+        entries,
+        "u1",
+      ),
+    ).toEqual([
+      {
+        reference: "/tracks/u2/previews/797391/11234567cafebabe.trjgz",
+        sources: ["Post p1 content", "Post p1 snippet"],
+        reason: "owned-by-another-user",
+      },
+    ]);
+  });
+});
+

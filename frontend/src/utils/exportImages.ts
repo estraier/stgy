@@ -4,6 +4,17 @@ export function restoreImageFilename(rev6: string, time8: string, hash8: string,
   return `${String(r1).padStart(6, "0")}${r2.toString(16).padStart(8, "0")}${hash8}.${ext}`;
 }
 
+export type ImageReferenceSource = {
+  label: string;
+  text: string;
+};
+
+export type UnexportedImageReference = {
+  reference: string;
+  sources: string[];
+  reason: "owned-by-another-user" | "not-in-image-storage";
+};
+
 const STGY_MASTER_IMAGE_URL_RE =
   /\/images\/([^/?#]+)\/(?:masters|thumbs|master|thumb)\/(\d{6})\/([0-9a-f]{8})([0-9a-f]{8})\.([A-Za-z0-9]{1,5})(?:[?#][^)|\s"'<>]*)?/gi;
 
@@ -31,6 +42,74 @@ export function collectOwnedImageFilenames(
   }
 
   return filenames;
+}
+
+export function collectUnexportedImageReferences(
+  sources: Iterable<ImageReferenceSource>,
+  exportedFilenames: ReadonlySet<string>,
+  currentUserId: string,
+): UnexportedImageReference[] {
+  const normalizedExportedFilenames = new Set(
+    Array.from(exportedFilenames, (filename) => filename.toLowerCase()),
+  );
+  const normalizedCurrentUserId = currentUserId.toLowerCase();
+  const unresolved = new Map<
+    string,
+    {
+      reference: string;
+      sources: Set<string>;
+      reason: UnexportedImageReference["reason"];
+    }
+  >();
+
+  for (const source of sources) {
+    const pattern = new RegExp(STGY_MASTER_IMAGE_URL_RE.source, STGY_MASTER_IMAGE_URL_RE.flags);
+    for (const match of String(source.text || "").matchAll(pattern)) {
+      const [, rawOwnerId, rev6, time8, hash8, ext] = match;
+      let ownerId: string;
+      try {
+        ownerId = decodeURIComponent(rawOwnerId);
+      } catch {
+        ownerId = rawOwnerId;
+      }
+
+      const reference = match[0].replace(/[?#].*$/, "");
+      const reason: UnexportedImageReference["reason"] =
+        ownerId.toLowerCase() !== normalizedCurrentUserId
+          ? "owned-by-another-user"
+          : "not-in-image-storage";
+
+      if (
+        reason === "not-in-image-storage" &&
+        normalizedExportedFilenames.has(
+          restoreImageFilename(rev6, time8, hash8, ext).toLowerCase(),
+        )
+      ) {
+        continue;
+      }
+
+      const normalized = reference.toLowerCase();
+      const current = unresolved.get(normalized);
+      if (current) {
+        current.sources.add(source.label);
+      } else {
+        unresolved.set(normalized, {
+          reference,
+          sources: new Set([source.label]),
+          reason,
+        });
+      }
+    }
+  }
+
+  return Array.from(
+    unresolved.values(),
+    ({ reference, sources: labels, reason }) => ({
+      reference,
+      sources: Array.from(labels),
+      reason,
+    }),
+  );
 }
 
 export function rewriteOwnedImageObjectUrlsToRelative(

@@ -28,10 +28,12 @@ import { Config } from "@/config";
 import { formatBytes } from "@/utils/format";
 import {
   collectOwnedImageFilenames,
+  collectUnexportedImageReferences,
   restoreImageFilename,
   rewriteOwnedImageObjectUrlsToRelative,
 } from "@/utils/exportImages";
 import {
+  collectUnexportedTrackReferences,
   filterReferencedTrackArchiveEntries,
   makeTrackArchiveEntries,
   rewriteTrackObjectUrlsToRelative,
@@ -610,6 +612,8 @@ export default function PageBody() {
     null,
   );
   const [error, setError] = useState<string | null>(null);
+  const [exportErrors, setExportErrors] = useState<string[]>([]);
+  const [showExportErrors, setShowExportErrors] = useState(false);
   const [done, setDone] = useState<{
     beforeBytes: number;
     afterBytes: number;
@@ -654,6 +658,8 @@ export default function PageBody() {
     if (loading || exporting || !userId || !profile) return;
 
     setError(null);
+    setExportErrors([]);
+    setShowExportErrors(false);
     setDone(null);
 
     try {
@@ -707,17 +713,35 @@ export default function PageBody() {
         await sleep(postBaseSleepMs);
       }
 
-      const referenceTexts = [
-        profile.introduction,
-        profile.snippet,
-        ...postDetails.flatMap((post) => [post.content, post.snippet]),
+      const referenceSources = [
+        { label: "Profile introduction", text: profile.introduction },
+        { label: "Profile snippet", text: profile.snippet },
+        ...postDetails.flatMap((post) => [
+          { label: `Post ${post.id} content`, text: post.content },
+          { label: `Post ${post.id} snippet`, text: post.snippet },
+        ]),
       ];
+      const referenceTexts = referenceSources.map((source) => source.text);
 
       const tracks = await fetchAllMyTracks(userId);
       const allTrackEntries = makeTrackArchiveEntries(tracks, userId);
       const trackEntries = includeUnreferencedResources
         ? allTrackEntries
         : filterReferencedTrackArchiveEntries(referenceTexts, allTrackEntries);
+      const unexportedTrackReferences = collectUnexportedTrackReferences(
+        referenceSources,
+        trackEntries,
+        userId,
+      );
+      const trackExportErrors = unexportedTrackReferences.map(
+        ({ reference, sources, reason }) => {
+          const detail =
+            reason === "owned-by-another-user"
+              ? "the track belongs to another user"
+              : "the track is not in your track storage";
+          return `${sources.join(", ")}: Track was not exported because ${detail}: ${reference}`;
+        },
+      );
       const exportProfile = rewriteProfileIntroductionAndSnippet(profile, userId, trackEntries);
 
       const images = await fetchAllMyImages(userId);
@@ -733,6 +757,22 @@ export default function PageBody() {
           if (referencedImageFilenames && !referencedImageFilenames.has(fname)) return;
           if (!masterByFilename.has(fname)) masterByFilename.set(fname, it);
         });
+
+      const unexportedImageReferences = collectUnexportedImageReferences(
+        referenceSources,
+        new Set(masterByFilename.keys()),
+        userId,
+      );
+      const imageExportErrors = unexportedImageReferences.map(
+        ({ reference, sources, reason }) => {
+          const detail =
+            reason === "owned-by-another-user"
+              ? "the image belongs to another user"
+              : "the image is not in your image storage";
+          return `${sources.join(", ")}: Image was not exported because ${detail}: ${reference}`;
+        },
+      );
+      setExportErrors([...trackExportErrors, ...imageExportErrors]);
 
       const totalFiles =
         9 +
@@ -873,10 +913,29 @@ export default function PageBody() {
         ? `${exportPhase === "finalizing" ? "Finalizing" : "Exporting"}… ${exportProgress.completed} / ${exportProgress.total}`
         : "Exporting…";
 
+  const exportErrorIndicator =
+    exporting || done ? (
+      exportErrors.length > 0 ? (
+        <button
+          type="button"
+          className="text-sm text-red-700 underline underline-offset-2 cursor-pointer"
+          onClick={() => setShowExportErrors(true)}
+        >
+          Errors: {exportErrors.length}
+        </button>
+      ) : (
+        <span className="text-sm text-gray-500">Errors: 0</span>
+      )
+    ) : null;
+
   return (
     <main className="max-w-2xl mx-auto mt-12 p-4 bg-white shadow border rounded">
       <h1 className="text-2xl font-bold mb-6">Exporting all data</h1>
-      <form onSubmit={handleExport} className="flex flex-col gap-6">
+      <form
+        onSubmit={handleExport}
+        className="flex flex-col gap-6"
+        inert={showExportErrors ? true : undefined}
+      >
         <section className="text-sm text-gray-700 leading-relaxed">
           <p>
             You can download your STGY data in one ZIP archive here. By default, images and tracks
@@ -976,6 +1035,7 @@ export default function PageBody() {
               Source data size (before ZIP): {formatBytes(done.beforeBytes)}
             </div>
             <div className="text-sm">ZIP archive size (after ZIP): {formatBytes(done.afterBytes)}</div>
+            <div className="mt-1">{exportErrorIndicator}</div>
           </div>
         )}
         {!done && (
@@ -987,6 +1047,7 @@ export default function PageBody() {
             >
               {exportButtonLabel}
             </button>
+            {exportErrorIndicator}
             <label className="flex items-center gap-2 text-sm text-gray-700">
               <input
                 type="checkbox"
@@ -999,6 +1060,49 @@ export default function PageBody() {
           </div>
         )}
       </form>
+      {showExportErrors && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setShowExportErrors(false);
+          }}
+        >
+          <section
+            className="w-full max-w-2xl max-h-[80vh] overflow-auto rounded bg-white p-5 shadow-xl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="export-errors-title"
+            onKeyDown={(event) => {
+              if (event.key === "Escape") setShowExportErrors(false);
+            }}
+          >
+            <div className="flex items-center justify-between gap-4">
+              <h2 id="export-errors-title" className="text-xl font-bold">
+                Export errors ({exportErrors.length})
+              </h2>
+              <button
+                type="button"
+                className="rounded border border-gray-300 px-3 py-1 hover:bg-gray-100"
+                onClick={() => setShowExportErrors(false)}
+                autoFocus
+              >
+                Close
+              </button>
+            </div>
+            <p className="mt-3 text-sm text-gray-700">
+              The export continued without these resources. Their original references remain in the
+              exported profile or posts.
+            </p>
+            <ol className="mt-4 list-decimal space-y-3 pl-6 text-sm">
+              {exportErrors.map((message) => (
+                <li key={message} className="break-words">
+                  {message}
+                </li>
+              ))}
+            </ol>
+          </section>
+        </div>
+      )}
     </main>
   );
 }
