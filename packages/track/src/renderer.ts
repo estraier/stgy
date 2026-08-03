@@ -54,9 +54,6 @@ const formatMapCoordinateCopyText = (latitude: number, longitude: number) =>
 
 const COORDINATE_COPY_FEEDBACK_DURATION_MS = 1000;
 
-const ANALYSIS_BAR_COLUMNS = 20;
-
-
 const copyTextToClipboard = async (text: string): Promise<void> => {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text);
