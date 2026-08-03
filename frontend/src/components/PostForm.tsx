@@ -2478,7 +2478,7 @@ export default function PostForm({
         onSubmit={handleSubmit}
         className={className + " flex flex-col gap-2"}
         onClick={(e) => e.stopPropagation()}
-        aria-hidden={overlayActive ? true : undefined}
+        inert={overlayActive ? true : undefined}
       >
         <div className="hidden group-focus-within:flex absolute left-0 right-0 top-0 -translate-y-full z-20">
           <div className="w-full px-1.5 text-gray-600 backdrop-blur-sm flex items-center justify-between">
@@ -2862,7 +2862,7 @@ export default function PostForm({
             <button
               type="button"
               className="bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1 rounded border border-gray-300 cursor-pointer transition"
-              onClick={() => {
+              onClick={(e) => {
                 const ta = activeTextarea();
                 const s = ta ? (ta.selectionStart ?? selStartRef.current) : selStartRef.current;
                 const ed = ta ? (ta.selectionEnd ?? selEndRef.current) : selEndRef.current;
@@ -2870,11 +2870,13 @@ export default function PostForm({
                 selEndRef.current = ed;
                 caretRef.current = ed;
                 const willShow = !showPreview;
+                if (willShow) e.currentTarget.blur();
                 setShowPreview(willShow);
                 if (willShow) {
                   afterNextPaint(() => {
                     const t = activeTextarea();
                     if (t) {
+                      t.focus({ preventScroll: true });
                       const len = t.value.length;
                       const s2 = clamp(selStartRef.current, 0, len);
                       const e2 = clamp(selEndRef.current, s2, len);
@@ -3349,6 +3351,7 @@ export default function PostForm({
                         afterNextPaint(() => {
                           const t = activeTextarea();
                           if (t) {
+                            t.focus({ preventScroll: true });
                             const len = t.value.length;
                             const s2 = clamp(selStartRef.current, 0, len);
                             const e2 = clamp(selEndRef.current, s2, len);
@@ -3404,6 +3407,7 @@ export default function PostForm({
                     afterNextPaint(() => {
                       const t = activeTextarea();
                       if (t) {
+                        t.focus({ preventScroll: true });
                         const len = t.value.length;
                         const s2 = clamp(selStartRef.current, 0, len);
                         const e2 = clamp(selEndRef.current, s2, len);
