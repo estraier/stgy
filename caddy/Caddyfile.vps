@@ -1,7 +1,35 @@
+(cgi_rate_limit) {
+  rate_limit {
+    zone cgi_per_ip {
+      match {
+        path_regexp cgi_rate_limit_path ^.*\.cgi(/.*)?$
+      }
+      key {http.request.host}:{remote_host}
+      events 100
+      window 10m
+    }
+    log_key
+  }
+}
+
 import extra-sites/*.caddy
 
 https://stgy.jp {
   encode zstd gzip
+
+  import cgi_rate_limit
+
+  rate_limit {
+    zone stgy_per_ip {
+      match {
+        not path /_next/static/*
+      }
+      key {remote_host}
+      events {$STGY_CADDY_RATE_LIMIT_EVENTS:120}
+      window {$STGY_CADDY_RATE_LIMIT_WINDOW:1m}
+    }
+    log_key
+  }
 
   import site_test
 

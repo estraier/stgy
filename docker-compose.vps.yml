@@ -39,11 +39,18 @@ services:
         condition: service_started
 
   caddy:
+    image: stgy-caddy:2.11.3-ratelimit
+    build:
+      context: .
+      dockerfile: caddy/Dockerfile
     ports: !override
       - "80:80"
       - "443:443"
+    environment:
+      STGY_CADDY_RATE_LIMIT_EVENTS: ${STGY_CADDY_RATE_LIMIT_EVENTS:-120}
+      STGY_CADDY_RATE_LIMIT_WINDOW: ${STGY_CADDY_RATE_LIMIT_WINDOW:-1m}
     volumes:
-      - ./Caddyfile.vps:/etc/caddy/Caddyfile:ro
+      - ./caddy/Caddyfile.vps:/etc/caddy/Caddyfile:ro
 
 volumes:
   postfix_queue:
