@@ -24,7 +24,6 @@ try:
     from pyproj import CRS, Transformer
     from scipy.spatial import cKDTree
     from shapely.geometry import MultiPolygon, Point, Polygon
-    from shapely.ops import transform as transform_geometry
 except ImportError as exc:  # pragma: no cover - command-line dependency check
     raise SystemExit(
         "generate-geo-static.py requires geopandas, numpy, pandas, shapely, pyproj and scipy"
@@ -585,7 +584,7 @@ def make_places(
         geometry = polygonal_only(geometry)
         if geometry is None or geometry.is_empty:
             return None
-        projected = transform_geometry(to_projected.transform, geometry)
+        projected = shapely.transform(geometry, to_projected.transform, interleaved=False)
         if fixed_coordinates is None:
             point = largest_component(projected).representative_point()
             longitude, latitude = to_geographic.transform(point.x, point.y)
