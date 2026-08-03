@@ -772,7 +772,7 @@ usersテーブルを操作するusersServiceという実装にも各種メソッ
 ```sql:small
 SELECT
   u.id, u.updated_at, u.snippet, u.nickname, u.avatar,
-  u.ai_model, u.is_admin, u.block_strangers,
+  u.ai_model, u.is_admin, u.is_frozen, u.block_strangers,
   id_to_timestamp(u.id) AS created_at,
   COALESCE(uc.follower_count, 0) AS count_followers,
   COALESCE(uc.followee_count, 0) AS count_followees,
@@ -801,7 +801,7 @@ LIKE演算子による前方一致は、LOWER(nickname) text_pattern_opsのイ�
 EXPLAIN (ANALYZE, BUFFERS)
 SELECT
   u.id, u.updated_at, u.snippet, u.nickname, u.avatar,
-  u.ai_model, u.is_admin, u.block_strangers,
+  u.ai_model, u.is_admin, u.is_frozen, u.block_strangers,
   id_to_timestamp(u.id) AS created_at,
   COALESCE(uc.follower_count, 0) AS count_followers,
   COALESCE(uc.followee_count, 0) AS count_followees,
@@ -821,59 +821,59 @@ ORDER BY
 ```
 
 ```:small
- Limit  (cost=4845.50..4850.80 rows=20 width=320) (actual time=26.028..26.071 rows=20 loops=1)
-   Buffers: shared hit=511 read=6
-   ->  Result  (cost=4845.50..5086.65 rows=910 width=320) (actual time=26.025..26.066 rows=20 loops=1)
-         Buffers: shared hit=511 read=6
-         ->  Sort  (cost=4845.50..4847.77 rows=910 width=312) (actual time=25.881..25.887 rows=20 loops=1)
+ Limit  (cost=4850.02..4855.32 rows=20 width=321) (actual time=15.929..15.967 rows=20 loops=1)
+   Buffers: shared hit=492 read=28
+   ->  Result  (cost=4850.02..5091.17 rows=910 width=321) (actual time=15.926..15.962 rows=20 loops=1)
+         Buffers: shared hit=492 read=28
+         ->  Sort  (cost=4850.02..4852.29 rows=910 width=313) (actual time=15.726..15.735 rows=20 loops=1)
                Sort Key: ((u.id = '1853070350746583040'::bigint)) DESC, ((f1.follower_id IS NOT NULL)) DESC, ((f2.follower_id IS NOT NULL)) DESC, u.id
                Sort Method: top-N heapsort  Memory: 27kB
-               Buffers: shared hit=511 read=6
-               ->  Hash Right Join  (cost=2042.68..4821.28 rows=910 width=312) (actual time=18.187..25.133 rows=1000 loops=1)
+               Buffers: shared hit=492 read=28
+               ->  Hash Right Join  (cost=2044.86..4825.80 rows=910 width=313) (actual time=11.209..15.216 rows=1000 loops=1)
                      Hash Cond: (f2.follower_id = u.id)
-                     Buffers: shared hit=506 read=6
-                     ->  Bitmap Heap Scan on user_follows f2  (cost=575.80..3272.97 rows=19533 width=8) (actual time=0.859..4.603 rows=20000 loops=1)
+                     Buffers: shared hit=484 read=28
+                     ->  Bitmap Heap Scan on user_follows f2  (cost=576.90..3275.82 rows=19674 width=8) (actual time=1.078..2.971 rows=20000 loops=1)
                            Recheck Cond: (followee_id = '1853070350746583040'::bigint)
                            Heap Blocks: exact=129
                            Buffers: shared hit=208
-                           ->  Bitmap Index Scan on idx_user_follows_followee_created_at  (cost=0.00..570.92 rows=19533 width=0) (actual time=0.823..0.824 rows=20000 loops=1)
+                           ->  Bitmap Index Scan on idx_user_follows_followee_created_at  (cost=0.00..571.98 rows=19674 width=0) (actual time=1.048..1.049 rows=20000 loops=1)
                                  Index Cond: (followee_id = '1853070350746583040'::bigint)
                                  Buffers: shared hit=79
-                     ->  Hash  (cost=1455.50..1455.50 rows=910 width=317) (actual time=17.317..17.320 rows=1000 loops=1)
+                     ->  Hash  (cost=1456.59..1456.59 rows=910 width=318) (actual time=10.109..10.114 rows=1000 loops=1)
                            Buckets: 1024  Batches: 1  Memory Usage: 143kB
-                           Buffers: shared hit=298 read=6
-                           ->  Hash Right Join  (cost=1235.62..1455.50 rows=910 width=317) (actual time=15.136..16.942 rows=1000 loops=1)
+                           Buffers: shared hit=276 read=28
+                           ->  Hash Right Join  (cost=1235.62..1456.59 rows=910 width=318) (actual time=7.965..9.808 rows=1000 loops=1)
                                  Hash Cond: (f1.followee_id = u.id)
-                                 Buffers: shared hit=298 read=6
-                                 ->  Index Only Scan using user_follows_pkey on user_follows f1  (cost=0.42..200.01 rows=5005 width=16) (actual time=0.023..0.839 rows=5000 loops=1)
+                                 Buffers: shared hit=276 read=28
+                                 ->  Index Only Scan using user_follows_pkey on user_follows f1  (cost=0.42..200.90 rows=5056 width=16) (actual time=0.134..1.101 rows=5000 loops=1)
                                        Index Cond: (follower_id = '1853070350746583040'::bigint)
                                        Heap Fetches: 0
-                                       Buffers: shared hit=23
-                                 ->  Hash  (cost=1223.83..1223.83 rows=910 width=309) (actual time=15.097..15.099 rows=1000 loops=1)
-                                       Buckets: 1024  Batches: 1  Memory Usage: 134kB
+                                       Buffers: shared hit=1 read=22
+                                 ->  Hash  (cost=1223.83..1223.83 rows=910 width=310) (actual time=7.812..7.816 rows=1000 loops=1)
+                                       Buckets: 1024  Batches: 1  Memory Usage: 135kB
                                        Buffers: shared hit=275 read=6
-                                       ->  Hash Right Join  (cost=588.01..1223.83 rows=910 width=309) (actual time=2.162..14.652 rows=1000 loops=1)
+                                       ->  Hash Right Join  (cost=588.01..1223.83 rows=910 width=310) (actual time=1.317..7.550 rows=1000 loops=1)
                                              Hash Cond: (uc.user_id = u.id)
                                              Buffers: shared hit=275 read=6
-                                             ->  Seq Scan on user_counts uc  (cost=0.00..557.04 rows=30004 width=20) (actual time=0.016..5.749 rows=30004 loops=1)
+                                             ->  Seq Scan on user_counts uc  (cost=0.00..557.04 rows=30004 width=20) (actual time=0.007..2.842 rows=30004 loops=1)
                                                    Buffers: shared hit=257
-                                             ->  Hash  (cost=576.64..576.64 rows=910 width=297) (actual time=2.133..2.134 rows=1000 loops=1)
-                                                   Buckets: 1024  Batches: 1  Memory Usage: 113kB
+                                             ->  Hash  (cost=576.64..576.64 rows=910 width=298) (actual time=1.284..1.285 rows=1000 loops=1)
+                                                   Buckets: 1024  Batches: 1  Memory Usage: 122kB
                                                    Buffers: shared hit=18 read=6
-                                                   ->  Bitmap Heap Scan on users u  (cost=29.44..576.64 rows=910 width=297) (actual time=0.430..1.718 rows=1000 loops=1)
+                                                   ->  Bitmap Heap Scan on users u  (cost=29.44..576.64 rows=910 width=298) (actual time=0.375..0.973 rows=1000 loops=1)
                                                          Filter: (lower((nickname)::text) ~~ 'user00%'::text)
                                                          Heap Blocks: exact=18
                                                          Buffers: shared hit=18 read=6
-                                                         ->  Bitmap Index Scan on idx_users_nickname_id  (cost=0.00..29.21 rows=892 width=0) (actual time=0.242..0.242 rows=1000 loops=1)
+                                                         ->  Bitmap Index Scan on idx_users_nickname_id  (cost=0.00..29.21 rows=892 width=0) (actual time=0.234..0.234 rows=1000 loops=1)
                                                                Index Cond: ((lower((nickname)::text) ~>=~ 'user00'::text) AND (lower((nickname)::text) ~<~ 'user01'::text))
                                                                Buffers: shared read=6
  Planning:
-   Buffers: shared hit=125 read=8
- Planning Time: 1.967 ms
- Execution Time: 26.152 ms
+   Buffers: shared hit=427 read=10
+ Planning Time: 4.358 ms
+ Execution Time: 16.127 ms
 ```
 
-実測では、``idx_users_nickname_id``から前方一致する1000人を取得し、測定用ユーザのフォロイー5000件とフォロワー20000件をそれぞれ索引から読み、social順にtop-N heapsortして20件を返した。``user_counts``は30004件をSequential ScanしてHash Joinしており、全体で517バッファ、26.152msだった。この結果は、広い前方一致のsocial順では一致候補数と関係数に比例するという解説どおりである。この経路は現在のユーザ名入力補完には使われず、投稿検索での完全一致ニックネーム解決など候補が極小の用途に残しているため、今回の要件では修正対象にしない。
+実測では、``idx_users_nickname_id``からニックネーム前方一致の1000人をBitmap Heap Scanで取得し、測定用ユーザのフォロイー5000件とフォロワー20000件をそれぞれ索引から読み、Hash Joinでsocial順の判定材料を付加した。その1000候補をtop-N heapsortで並べ、先頭20件だけを返している。``is_frozen``の追加は返却行の幅を増やしただけで、検索条件や走査方向には影響していない。``user_counts``は30004件をSeq ScanしてHash Joinしているが、これは現行SQLが件数情報をLIMIT前に結合する形であるためで、今回の列追加によるデグレではない。参照バッファは520ページ、実行時間は16.127msであり、広い前方一致の候補数と対象ユーザのフォロー関係数に応じて処理する、想定どおりの計画である。
 
 なお、LIKE演算子による前方一致検索を効率的に動かすには、DBのコレーションとインデックスの演算子クラスに注意する必要がある。現在はnicknameのインデックスを``LOWER(nickname) text_pattern_ops``として小文字に正規化したものにしている。小文字に正規化した式インデックスを働かせるには、クエリ側の条件も``LOWER(nickname)``と同じ式にする必要がある。
 
@@ -988,7 +988,7 @@ page AS (
 )
 SELECT
   u.id, u.updated_at, u.snippet, u.nickname, u.avatar,
-  u.ai_model, u.is_admin, u.block_strangers,
+  u.ai_model, u.is_admin, u.is_frozen, u.block_strangers,
   id_to_timestamp(u.id) AS created_at,
   COALESCE(uc.follower_count, 0) AS count_followers,
   COALESCE(uc.followee_count, 0) AS count_followees,
@@ -1069,7 +1069,7 @@ page AS (
 )
 SELECT
   u.id, u.updated_at, u.snippet, u.nickname, u.avatar,
-  u.ai_model, u.is_admin, u.block_strangers,
+  u.ai_model, u.is_admin, u.is_frozen, u.block_strangers,
   id_to_timestamp(u.id) AS created_at,
   COALESCE(uc.follower_count, 0) AS count_followers,
   COALESCE(uc.followee_count, 0) AS count_followees,
@@ -1081,76 +1081,76 @@ ORDER BY p.prio, p.nkey USING ~<~, u.id;
 ```
 
 ```:small
- Nested Loop Left Join  (cost=38404.50..38574.28 rows=20 width=353) (actual time=18.148..18.253 rows=20 loops=1)
+ Nested Loop Left Join  (cost=38633.27..38803.05 rows=20 width=354) (actual time=7.114..7.162 rows=20 loops=1)
    Buffers: shared hit=15152
    CTE preferred
-     ->  Append  (cost=0.29..37860.18 rows=21 width=44) (actual time=0.015..17.952 rows=21 loops=1)
+     ->  Append  (cost=0.29..38088.24 rows=21 width=44) (actual time=0.022..7.043 rows=21 loops=1)
            Buffers: shared hit=15026
-           ->  Index Scan using users_pkey on users u_2  (cost=0.29..8.31 rows=1 width=44) (actual time=0.015..0.016 rows=1 loops=1)
+           ->  Index Scan using users_pkey on users u_2  (cost=0.29..8.31 rows=1 width=44) (actual time=0.022..0.022 rows=1 loops=1)
                  Index Cond: (id = '1853070350746583040'::bigint)
                  Filter: (lower((nickname)::text) ~~ 'user00%'::text)
                  Buffers: shared hit=3
-           ->  Limit  (cost=37851.71..37851.76 rows=20 width=44) (actual time=17.926..17.932 rows=20 loops=1)
+           ->  Limit  (cost=38079.77..38079.82 rows=20 width=44) (actual time=7.016..7.019 rows=20 loops=1)
                  Buffers: shared hit=15023
-                 ->  Sort  (cost=37851.71..37864.22 rows=5005 width=44) (actual time=17.926..17.929 rows=20 loops=1)
+                 ->  Sort  (cost=38079.77..38092.41 rows=5056 width=44) (actual time=7.016..7.017 rows=20 loops=1)
                        Sort Key: (lower((u_3.nickname)::text)) USING ~<~, u_3.id
                        Sort Method: top-N heapsort  Memory: 26kB
                        Buffers: shared hit=15023
-                       ->  Nested Loop  (cost=0.72..37718.53 rows=5005 width=44) (actual time=0.028..17.624 rows=999 loops=1)
+                       ->  Nested Loop  (cost=0.72..37945.23 rows=5056 width=44) (actual time=0.021..6.915 rows=999 loops=1)
                              Buffers: shared hit=15023
-                             ->  Index Only Scan using user_follows_pkey on user_follows f_1  (cost=0.42..200.01 rows=5005 width=8) (actual time=0.015..0.905 rows=5000 loops=1)
+                             ->  Index Only Scan using user_follows_pkey on user_follows f_1  (cost=0.42..200.90 rows=5056 width=8) (actual time=0.013..0.375 rows=5000 loops=1)
                                    Index Cond: (follower_id = '1853070350746583040'::bigint)
                                    Heap Fetches: 0
                                    Buffers: shared hit=23
-                             ->  Memoize  (cost=0.30..8.32 rows=1 width=40) (actual time=0.003..0.003 rows=0 loops=5000)
+                             ->  Memoize  (cost=0.30..8.32 rows=1 width=40) (actual time=0.001..0.001 rows=0 loops=5000)
                                    Cache Key: f_1.followee_id
                                    Cache Mode: binary
                                    Hits: 0  Misses: 5000  Evictions: 0  Overflows: 0  Memory Usage: 401kB
                                    Buffers: shared hit=15000
-                                   ->  Limit  (cost=0.29..8.31 rows=1 width=40) (actual time=0.002..0.002 rows=0 loops=5000)
+                                   ->  Limit  (cost=0.29..8.31 rows=1 width=40) (actual time=0.001..0.001 rows=0 loops=5000)
                                          Buffers: shared hit=15000
-                                         ->  Index Scan using users_pkey on users u_3  (cost=0.29..8.31 rows=1 width=40) (actual time=0.002..0.002 rows=0 loops=5000)
+                                         ->  Index Scan using users_pkey on users u_3  (cost=0.29..8.31 rows=1 width=40) (actual time=0.001..0.001 rows=0 loops=5000)
                                                Index Cond: (id = f_1.followee_id)
                                                Filter: ((id <> '1853070350746583040'::bigint) AND (lower((nickname)::text) ~~ 'user00%'::text))
                                                Rows Removed by Filter: 1
                                                Buffers: shared hit=15000
-   ->  Nested Loop  (cost=544.03..702.09 rows=20 width=333) (actual time=18.027..18.067 rows=20 loops=1)
+   ->  Nested Loop  (cost=544.74..702.81 rows=20 width=334) (actual time=7.078..7.097 rows=20 loops=1)
          Buffers: shared hit=15092
-         ->  Limit  (cost=543.74..543.79 rows=20 width=44) (actual time=18.018..18.024 rows=20 loops=1)
+         ->  Limit  (cost=544.46..544.51 rows=20 width=44) (actual time=7.074..7.077 rows=20 loops=1)
                Buffers: shared hit=15032
-               ->  Sort  (cost=543.74..543.99 rows=97 width=44) (actual time=18.016..18.020 rows=20 loops=1)
+               ->  Sort  (cost=544.46..544.70 rows=97 width=44) (actual time=7.073..7.075 rows=20 loops=1)
                      Sort Key: preferred.prio, preferred.nkey USING ~<~, preferred.id
                      Sort Method: quicksort  Memory: 26kB
                      Buffers: shared hit=15032
-                     ->  Append  (cost=0.00..541.16 rows=97 width=44) (actual time=0.021..17.982 rows=21 loops=1)
+                     ->  Append  (cost=0.00..541.88 rows=97 width=44) (actual time=0.026..7.057 rows=21 loops=1)
                            Buffers: shared hit=15026
-                           ->  CTE Scan on preferred  (cost=0.00..0.42 rows=21 width=44) (actual time=0.020..17.962 rows=21 loops=1)
+                           ->  CTE Scan on preferred  (cost=0.00..0.42 rows=21 width=44) (actual time=0.026..7.048 rows=21 loops=1)
                                  Buffers: shared hit=15026
-                           ->  Subquery Scan on others  (cost=1.20..540.26 rows=76 width=44) (actual time=0.015..0.016 rows=0 loops=1)
-                                 ->  Limit  (cost=1.20..539.50 rows=76 width=44) (actual time=0.014..0.015 rows=0 loops=1)
+                           ->  Subquery Scan on others  (cost=1.20..540.97 rows=76 width=44) (actual time=0.006..0.006 rows=0 loops=1)
+                                 ->  Limit  (cost=1.20..540.21 rows=76 width=44) (actual time=0.005..0.006 rows=0 loops=1)
                                        InitPlan 2 (returns $2)
-                                         ->  Aggregate  (cost=0.47..0.49 rows=1 width=8) (actual time=0.011..0.011 rows=1 loops=1)
-                                               ->  CTE Scan on preferred preferred_1  (cost=0.00..0.42 rows=21 width=0) (actual time=0.000..0.003 rows=21 loops=1)
-                                       ->  Nested Loop Anti Join  (cost=0.71..5362.46 rows=757 width=44) (never executed)
+                                         ->  Aggregate  (cost=0.47..0.49 rows=1 width=8) (actual time=0.004..0.005 rows=1 loops=1)
+                                               ->  CTE Scan on preferred preferred_1  (cost=0.00..0.42 rows=21 width=0) (actual time=0.000..0.001 rows=21 loops=1)
+                                       ->  Nested Loop Anti Join  (cost=0.71..5362.47 rows=756 width=44) (never executed)
                                              ->  Index Scan using idx_users_nickname_id on users u_1  (cost=0.29..1964.82 rows=909 width=17) (never executed)
                                                    Index Cond: ((lower((nickname)::text) ~>=~ 'user00'::text) AND (lower((nickname)::text) ~<~ 'user01'::text))
                                                    Filter: ((id <> '1853070350746583040'::bigint) AND (lower((nickname)::text) ~~ 'user00%'::text))
                                              ->  Index Only Scan using user_follows_pkey on user_follows f  (cost=0.42..3.73 rows=1 width=8) (never executed)
                                                    Index Cond: ((follower_id = '1853070350746583040'::bigint) AND (followee_id = u_1.id))
                                                    Heap Fetches: 0
-         ->  Index Scan using users_pkey on users u  (cost=0.29..7.90 rows=1 width=297) (actual time=0.001..0.001 rows=1 loops=20)
+         ->  Index Scan using users_pkey on users u  (cost=0.29..7.90 rows=1 width=298) (actual time=0.001..0.001 rows=1 loops=20)
                Index Cond: (id = preferred.id)
                Buffers: shared hit=60
    ->  Index Scan using user_counts_pkey on user_counts uc  (cost=0.29..0.35 rows=1 width=20) (actual time=0.001..0.001 rows=1 loops=20)
          Index Cond: (user_id = u.id)
          Buffers: shared hit=60
  Planning:
-   Buffers: shared hit=37
- Planning Time: 1.245 ms
- Execution Time: 18.350 ms
+   Buffers: shared hit=40
+ Planning Time: 0.790 ms
+ Execution Time: 7.261 ms
 ```
 
-実測では、``user_follows_pkey``からフォロイー5000人をIndex Only Scanし、各``followee_id``について``users_pkey``を5000回引いた。前方一致したフォロイーは999人で、その集合をtop-N heapsortして20人を選び、自分を含む``preferred``は21件になった。このため``others``の必要件数は0となり、ニックネーム索引側からその他候補を探す枝は``never executed``だった。最後に選ばれた20人だけについてusersとuser_countsを主キー検索し、全体で15152バッファ、18.350msだった。
+実測では、``user_follows_pkey``からフォロイー5000件をIndex Only Scanし、その各``followee_id``について``users_pkey``を5000回引いた。ニックネームに一致したフォロイーは999人であり、そこからtop-N heapsortで20人を選んでいる。自分1人とフォロイー20人で``preferred``が21件になったため、``others``側の``idx_users_nickname_id``とフォロー確認は``never executed``となった。最後に20件だけを``users_pkey``と``user_counts_pkey``で取得し、参照バッファは15152ページ、実行時間は7.261msだった。``is_frozen``の追加は返却列だけであり、ニックネームに一致する全ユーザを起点にせず、フォロイーF人を起点に各ユーザを主キーで調べる、意図した``O(F･log(U))``の走査方向が維持されている。
 
 したがって、ニックネームに一致する全ユーザMを起点にフォロー関係を調べるのではなく、フォロイーF人を起点に各ユーザを主キーで調べるという、意図した``O(F･log(U))``の走査方向が実際に維持されている。通常JOIN案はこのデータでは速くなる可能性があっても、支配項をMへ戻すため採用しない。
 
@@ -1291,17 +1291,18 @@ LIMIT 1;
 
 ### AIユーザワーカーの全件巡回
 
-AIユーザワーカーは、AIユーザを一定件数ずつ取得して全員を順番に処理する。従来は以下の形でOFFSETを増やしていた。
+AIユーザワーカーは、凍結されていないAIユーザを一定件数ずつ取得して順番に処理する。従来は以下の形でOFFSETを増やしていた。
 
 ```sql:small
 SELECT u.id, u.nickname, u.is_admin, u.ai_model
 FROM users u
 WHERE u.ai_model IS NOT NULL
+  AND u.is_frozen = FALSE
 ORDER BY u.id ASC
 LIMIT 200 OFFSET 15000;
 ```
 
-AIユーザ数をA、バッチサイズをBとすると、先頭から全件を巡回する間に読み飛ばす行数は``0 + B + 2B + ...``となる。そのため、索引探索を除いた行走査だけでも合計O(A² / B)になり、AIユーザが増えるほど一巡の処理量が二次的に増える。
+ai_modelが設定された全ユーザ数をA、バッチサイズをBとすると、凍結ユーザを結果から除外しても、先頭から全件を巡回する間に読み飛ばす行数は``0 + B + 2B + ...``となる。そのため、索引探索を除いた行走査だけでも合計O(A² / B)になり、AIユーザが増えるほど一巡の処理量が二次的に増える。
 
 これを、直前のバッチで最後に取得したIDをカーソルとして渡すキーセットページングへ変更した。
 
@@ -1309,14 +1310,15 @@ AIユーザ数をA、バッチサイズをBとすると、先頭から全件を�
 SELECT u.id, u.nickname, u.is_admin, u.ai_model
 FROM users u
 WHERE u.ai_model IS NOT NULL
+  AND u.is_frozen = FALSE
   AND u.id > 1853160963440578560
 ORDER BY u.id ASC
 LIMIT 200;
 ```
 
-``users``には``id WHERE ai_model IS NOT NULL``の部分インデックス``idx_users_ai_id``がある。各バッチはカーソル位置をB木から探して次のB件だけを読むので、全巡回で実際に通過するAIユーザ行はO(A)になる。バッチごとの探索を含めれば、全体は``O(A + (A / B)･log(A))``であり、従来の二次時間を避けられる。既存のOFFSETベースの一覧APIは互換性のため残し、AIユーザワーカーだけが``order=asc``と``after``を使う。
+``users``には``id WHERE ai_model IS NOT NULL``の部分インデックス``idx_users_ai_id``がある。is_frozenはインデックス条件には含まれないため、凍結されたAIユーザも索引上では通過してFilterで除外されるが、各バッチはカーソル位置をB木から探して先へ進むので、全巡回で実際に通過するAIユーザ行はO(A)になる。バッチごとの探索を含めれば、全体は``O(A + (A / B)･log(A))``であり、従来の二次時間を避けられる。既存のOFFSETベースの一覧APIは互換性のため残し、AIユーザワーカーだけが``order=asc``と``after``を使う。
 
-検証用データにはAIユーザが6000人含まれる。従来の深いOFFSETと新しいキーセットページングを比較するには、以下を実行する。初期データにも少数のAIユーザがあるため、両クエリが返すページは厳密には数件ずれる可能性があるが、比較対象は返却内容ではなく、目的位置までに索引から通過する行数である。
+検証用データにはAIユーザが6000人含まれ、全員のis_frozenは偽である。従来の深いOFFSETと新しいキーセットページングを比較するには、以下を実行する。初期データにも少数のAIユーザがあるため、両クエリが返すページは厳密には数件ずれる可能性があるが、比較対象は返却内容ではなく、目的位置までに索引から通過する行数である。
 
 ```sql:small
 SET jit = off;
@@ -1325,19 +1327,19 @@ EXPLAIN (ANALYZE, BUFFERS)
 SELECT u.id, u.nickname, u.is_admin, u.ai_model
 FROM users u
 WHERE u.ai_model IS NOT NULL
+  AND u.is_frozen = FALSE
 ORDER BY u.id ASC
 LIMIT 200 OFFSET 3000;
 ```
 
 ```:small
- Limit  (cost=136.75..145.85 rows=200 width=24) (actual time=3.518..3.745 rows=200 loops=1)
+ Limit  (cost=136.78..145.88 rows=200 width=24) (actual time=4.213..4.561 rows=200 loops=1)
    Buffers: shared hit=287
-   ->  Index Scan using idx_users_ai_id on users u  (cost=0.28..273.31 rows=6002 width=24) (actual time=0.059..3.514 rows=3200 loops=1)
+   ->  Index Scan using idx_users_ai_id on users u  (cost=0.28..273.28 rows=6000 width=24) (actual time=0.027..4.361 rows=3200 loops=1)
+         Filter: (NOT is_frozen)
          Buffers: shared hit=287
- Planning:
-   Buffers: shared hit=6
- Planning Time: 0.194 ms
- Execution Time: 3.797 ms
+ Planning Time: 0.125 ms
+ Execution Time: 4.601 ms
 ```
 
 ```sql:small
@@ -1345,22 +1347,26 @@ EXPLAIN (ANALYZE, BUFFERS)
 SELECT u.id, u.nickname, u.is_admin, u.ai_model
 FROM users u
 WHERE u.ai_model IS NOT NULL
+  AND u.is_frozen = FALSE
   AND u.id > 1853160963440578560
 ORDER BY u.id ASC
 LIMIT 200;
 ```
 
 ```:small
- Limit  (cost=0.28..10.12 rows=200 width=24) (actual time=0.043..0.226 rows=200 loops=1)
+ Limit  (cost=0.28..10.12 rows=200 width=24) (actual time=0.028..0.244 rows=200 loops=1)
    Buffers: shared hit=20
-   ->  Index Scan using idx_users_ai_id on users u  (cost=0.28..147.77 rows=2999 width=24) (actual time=0.041..0.200 rows=200 loops=1)
+   ->  Index Scan using idx_users_ai_id on users u  (cost=0.28..147.77 rows=2999 width=24) (actual time=0.026..0.224 rows=200 loops=1)
          Index Cond: (id > '1853160963440578560'::bigint)
+         Filter: (NOT is_frozen)
          Buffers: shared hit=20
- Planning Time: 0.177 ms
- Execution Time: 0.269 ms
+ Planning:
+   Buffers: shared hit=3
+ Planning Time: 0.214 ms
+ Execution Time: 0.277 ms
 ```
 
-実測では、OFFSET版は``idx_users_ai_id``から3200件を通過し、287バッファ、3.797msを要した。キーセット版では``id > ...``が``Index Cond``に入り、200件だけを読み、20バッファ、0.269msで終了した。実行時間はこの測定で約14分の1、バッファ参照は約14分の1だが、重要なのはバッチ位置に比例して増える通過行数が200件に固定されたことである。
+実測では、OFFSET版は``idx_users_ai_id``を先頭から3200行走査して3000行を読み飛ばし、200件を返した。``is_frozen = FALSE``は``Filter``として評価され、参照バッファは287ページ、実行時間は4.601msだった。キーセット版では``id > ...``が同じ索引の``Index Cond``に入り、200行を取得した時点で停止している。凍結判定は同様に``Filter``だが、参照バッファは20ページ、実行時間は0.277msだった。検証データのAIユーザは全員非凍結なので除外行はなく、今回追加した条件によって索引利用は損なわれていない。OFFSET版がカーソル位置までの行数に比例して走査する一方、キーセット版がバッチ件数で停止するという、期待した差が確認できた。
 
 ### 検索索引更新キュー
 
