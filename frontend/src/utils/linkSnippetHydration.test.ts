@@ -10,6 +10,7 @@ function readySnippet(overrides: Partial<LinkSnippet> = {}): LinkSnippet {
     title: "Fetched title",
     description: "Fetched description",
     siteName: "Example",
+    imageUrl: null,
     fetchedAt: "2026-08-01T00:00:00.000Z",
     expiresAt: "2026-08-02T00:00:00.000Z",
     stale: false,
@@ -45,6 +46,29 @@ describe("link snippet hydration", () => {
     expect(snippet.querySelector(".stgy-link-snippet-description")?.textContent).toBe(
       "Fetched description",
     );
+  });
+
+  test("hotlinks an allowed image without sending a referrer", async () => {
+    document.body.innerHTML =
+      '<div class="stgy-link-snippet"><a class="stgy-link-snippet-link" href="https://example.com/article">example</a></div>';
+    const hydrate = createLinkSnippetHydrator(async () =>
+      readySnippet({ imageUrl: "https://cdn.example.com/card.webp" }),
+    );
+
+    hydrate(document.body);
+    await flushPromises();
+
+    const anchor = document.querySelector<HTMLAnchorElement>(
+      ".stgy-link-snippet-link",
+    )!;
+    const image = anchor.querySelector<HTMLImageElement>(
+      ".stgy-link-snippet-image",
+    )!;
+    expect(anchor.classList).toContain("stgy-link-snippet-link-with-image");
+    expect(image.src).toBe("https://cdn.example.com/card.webp");
+    expect(image.referrerPolicy).toBe("no-referrer");
+    expect(image.loading).toBe("lazy");
+    expect(image.decoding).toBe("async");
   });
 
   test("keeps an explicit caption as the title", async () => {

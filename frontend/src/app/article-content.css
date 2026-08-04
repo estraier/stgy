@@ -821,6 +821,29 @@ span[aria-label="Identicon"] > svg {
   overflow-wrap: anywhere;
 }
 
+.markdown-body .stgy-link-snippet-link-with-image {
+  display: grid;
+  grid-template-columns: minmax(6em, 30%) minmax(0, 1fr);
+  gap: 0.75em;
+  align-items: stretch;
+}
+
+.markdown-body .stgy-link-snippet-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 5.5em;
+  max-height: 9em;
+  object-fit: cover;
+  border-radius: 0.25em;
+}
+
+.markdown-body .stgy-link-snippet-body {
+  display: block;
+  min-width: 0;
+  align-self: center;
+}
+
 .markdown-body .stgy-link-snippet-link:hover {
   text-decoration: none;
   background: rgba(127, 127, 127, 0.09);

@@ -777,12 +777,13 @@ components:
         title: { type: string, nullable: true, maxLength: 120 }
         description: { type: string, nullable: true, maxLength: 240 }
         siteName: { type: string, nullable: true, maxLength: 80 }
+        imageUrl: { type: string, format: uri, nullable: true }
         fetchedAt: { type: string, format: date-time, nullable: true }
         expiresAt: { type: string, format: date-time, nullable: true }
         stale: { type: boolean }
         refreshing: { type: boolean }
       required:
-        [url, status, title, description, siteName, fetchedAt, expiresAt, stale, refreshing]
+        [url, status, title, description, siteName, imageUrl, fetchedAt, expiresAt, stale, refreshing]
 
     UserPubConfig:
       type: object
@@ -861,9 +862,10 @@ components:
 paths:
   /link-snippets/resolve:
     post:
-      summary: Resolve a URL to a text link snippet
+      summary: Resolve a URL to a link snippet
       description: |
-        Returns a shared cached text snippet for an external URL. Relative STGY paths and
+        Returns shared cached metadata for an external URL. Allowed OGP image URLs are returned
+        for direct browser loading; the backend does not fetch the image body. Relative STGY paths and
         STGY frontend URLs matching /users/{id}, /posts/{id}, or /pub/{id} are resolved from internal data
         instead of being fetched over HTTP. /users and /posts require a valid session;
         /pub and external URLs are publicly resolvable.

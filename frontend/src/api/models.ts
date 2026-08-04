@@ -34,6 +34,7 @@ export type LinkSnippet = {
   title: string | null;
   description: string | null;
   siteName: string | null;
+  imageUrl: string | null;
   fetchedAt: string | null;
   expiresAt: string | null;
   stale: boolean;

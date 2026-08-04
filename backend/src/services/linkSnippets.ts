@@ -12,6 +12,7 @@ import {
   type InternalLinkTarget,
   extractLinkSnippetMetadata,
   formatLinkSnippetDate,
+  makeMarkdownLinkSnippetImageUrl,
   makeMarkdownLinkSnippetMetadata,
   normalizeLinkSnippetUrl,
   truncateSnippetText,
@@ -19,7 +20,7 @@ import {
 import { fetchRemoteHtml } from "../utils/remoteHtml";
 
 const CACHE_PREFIX = "stgy:link-snippet:";
-const CACHE_VERSION = "v3";
+const CACHE_VERSION = "v4";
 const STGY_SITE_NAME = "STGY";
 
 type CachedLinkSnippetStatus = Exclude<LinkSnippetStatus, "pending">;
@@ -36,6 +37,7 @@ type CachedLinkSnippet = {
   title: string | null;
   description: string | null;
   siteName: string | null;
+  imageUrl: string | null;
   fetchedAt: string;
   expiresAt: string;
 };
@@ -118,6 +120,7 @@ export class LinkSnippetsService {
           siteName,
           Config.LINK_SNIPPET_SITE_NAME_LENGTH_LIMIT,
         ) || null,
+      imageUrl: null,
       fetchedAt: now,
       expiresAt: null,
       stale: false,
@@ -144,6 +147,7 @@ export class LinkSnippetsService {
         title: title || null,
         description: description || null,
         siteName: STGY_SITE_NAME,
+        imageUrl: null,
         fetchedAt: now,
         expiresAt: null,
         stale: false,
@@ -177,6 +181,12 @@ export class LinkSnippetsService {
       siteName = pubConfig.siteName.trim() || STGY_SITE_NAME;
     }
 
+    const imageUrl = makeMarkdownLinkSnippetImageUrl(
+      post.content,
+      Config.STORAGE_S3_PUBLIC_URL_PREFIX,
+      Config.MEDIA_BUCKET_IMAGES,
+    );
+
     return {
       url: resolvedUrl,
       status: title ? "ready" : "unavailable",
@@ -187,6 +197,7 @@ export class LinkSnippetsService {
           siteName,
           Config.LINK_SNIPPET_SITE_NAME_LENGTH_LIMIT,
         ) || null,
+      imageUrl,
       fetchedAt: now,
       expiresAt: null,
       stale: false,
@@ -226,6 +237,7 @@ export class LinkSnippetsService {
         title: null,
         description: null,
         siteName: truncateSnippetText(url.hostname, Config.LINK_SNIPPET_SITE_NAME_LENGTH_LIMIT) || null,
+        imageUrl: null,
         fetchedAt: null,
         expiresAt: null,
         stale: false,
@@ -319,12 +331,21 @@ export class LinkSnippetsService {
         siteName: Config.LINK_SNIPPET_SITE_NAME_LENGTH_LIMIT,
       };
       const metadata = fetched.html
-        ? extractLinkSnippetMetadata(fetched.html, fetched.finalUrl.hostname, limits)
+        ? extractLinkSnippetMetadata(
+            fetched.html,
+            fetched.finalUrl,
+            limits,
+            {
+              frontendOrigins: Config.FRONTEND_ORIGIN,
+              storagePublicUrlPrefix: Config.STORAGE_S3_PUBLIC_URL_PREFIX,
+            },
+          )
         : {
             title: null,
             description: null,
             siteName:
               truncateSnippetText(fetched.finalUrl.hostname, limits.siteName) || null,
+            imageUrl: null,
           };
       const record = this.makeCacheRecord(
         normalizedUrl,
@@ -332,6 +353,7 @@ export class LinkSnippetsService {
         metadata.title,
         metadata.description,
         metadata.siteName,
+        metadata.imageUrl,
         Config.LINK_SNIPPET_TTL_SEC,
       );
       await this.writeCache(
@@ -350,6 +372,7 @@ export class LinkSnippetsService {
         null,
         null,
         truncateSnippetText(initialUrl.hostname, Config.LINK_SNIPPET_SITE_NAME_LENGTH_LIMIT) || null,
+        null,
         Config.LINK_SNIPPET_FAILURE_TTL_SEC,
       );
       await this.writeCache(keys.cache, record, Config.LINK_SNIPPET_FAILURE_TTL_SEC);
@@ -369,6 +392,7 @@ export class LinkSnippetsService {
     title: string | null,
     description: string | null,
     siteName: string | null,
+    imageUrl: string | null,
     ttlSec: number,
   ): CachedLinkSnippet {
     const now = Date.now();
@@ -378,6 +402,7 @@ export class LinkSnippetsService {
       title,
       description,
       siteName,
+      imageUrl,
       fetchedAt: new Date(now).toISOString(),
       expiresAt: new Date(now + Math.max(1, ttlSec) * 1000).toISOString(),
     };
@@ -424,6 +449,7 @@ export class LinkSnippetsService {
         title: typeof value.title === "string" ? value.title : null,
         description: typeof value.description === "string" ? value.description : null,
         siteName: typeof value.siteName === "string" ? value.siteName : null,
+        imageUrl: typeof value.imageUrl === "string" ? value.imageUrl : null,
         fetchedAt: value.fetchedAt,
         expiresAt: value.expiresAt,
       };

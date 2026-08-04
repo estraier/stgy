@@ -45,17 +45,43 @@ function renderReadySnippet(element: HTMLElement, snippet: LinkSnippet): void {
   const title = explicitCaption ?? snippet.title;
 
   anchor.replaceChildren();
+  anchor.classList.toggle(
+    "stgy-link-snippet-link-with-image",
+    snippet.imageUrl !== null,
+  );
+  if (snippet.imageUrl) {
+    const image = document.createElement("img");
+    image.className = "stgy-link-snippet-image";
+    image.src = snippet.imageUrl;
+    image.alt = "";
+    image.loading = "lazy";
+    image.decoding = "async";
+    image.referrerPolicy = "no-referrer";
+    image.addEventListener(
+      "error",
+      () => {
+        image.remove();
+        anchor.classList.remove("stgy-link-snippet-link-with-image");
+      },
+      { once: true },
+    );
+    anchor.appendChild(image);
+  }
+
+  const body = document.createElement("span");
+  body.className = "stgy-link-snippet-body";
+  anchor.appendChild(body);
   if (snippet.siteName) {
     appendTextElement(
-      anchor,
+      body,
       "stgy-link-snippet-site-name",
       snippet.siteName,
     );
   }
-  appendTextElement(anchor, "stgy-link-snippet-title", title);
+  appendTextElement(body, "stgy-link-snippet-title", title);
   if (snippet.description) {
     appendTextElement(
-      anchor,
+      body,
       "stgy-link-snippet-description",
       snippet.description,
     );

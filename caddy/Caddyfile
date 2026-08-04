@@ -3,22 +3,31 @@ import extra-sites/test.caddy
 http://:8080 {
   encode zstd gzip
 
-  import site_test
-
-  redir /backend /backend/
-  handle_path /backend/* {
-    reverse_proxy http://backend:3100 http://host.docker.internal:3100 {
-      lb_policy first
-      health_uri /health
-      header_up Host {http.request.host}
-    }
+  @unexpected_image_request {
+    header Sec-Fetch-Dest image
+    not path /_next/image /_next/static/* /apple-touch-icon.png /data/* /favicon.ico /favicon.svg /icons/*
   }
 
-  handle {
-    reverse_proxy http://frontend:3000 http://host.docker.internal:3000 {
-      lb_policy first
-      health_uri /
-      header_up Host {http.request.host}
+  route {
+    respond @unexpected_image_request 404
+
+    import site_test
+
+    redir /backend /backend/
+    handle_path /backend/* {
+      reverse_proxy http://backend:3100 http://host.docker.internal:3100 {
+        lb_policy first
+        health_uri /health
+        header_up Host {http.request.host}
+      }
+    }
+
+    handle {
+      reverse_proxy http://frontend:3000 http://host.docker.internal:3000 {
+        lb_policy first
+        health_uri /
+        header_up Host {http.request.host}
+      }
     }
   }
 }

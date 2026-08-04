@@ -4,10 +4,17 @@ import {
   decodeHtmlEntities,
   extractLinkSnippetMetadata,
   formatLinkSnippetDate,
+  makeMarkdownLinkSnippetImageUrl,
   makeMarkdownLinkSnippetMetadata,
+  normalizeLinkSnippetImageUrl,
   normalizeLinkSnippetUrl,
   truncateSnippetText,
 } from "./linkSnippet";
+
+const imagePolicy = {
+  frontendOrigins: ["https://stgy.jp"],
+  storagePublicUrlPrefix: "https://s3.stgy.jp/{bucket}/",
+};
 
 describe("link snippet URL handling", () => {
   test("normalizes URL and removes fragment", () => {
@@ -73,15 +80,21 @@ describe("link snippet text handling", () => {
       </head></html>
     `;
     expect(
-      extractLinkSnippetMetadata(html, "example.com", {
-        title: 120,
-        description: 240,
-        siteName: 80,
-      }),
+      extractLinkSnippetMetadata(
+        html,
+        new URL("https://example.com/article"),
+        {
+          title: 120,
+          description: 240,
+          siteName: 80,
+        },
+        imagePolicy,
+      ),
     ).toEqual({
       title: "Normal & useful title",
       description: "A normal > meta description",
       siteName: "Example App",
+      imageUrl: null,
     });
   });
 
@@ -94,16 +107,128 @@ describe("link snippet text handling", () => {
       <meta property='og:site_name' content='OG site'>
     `;
     expect(
-      extractLinkSnippetMetadata(html, "example.com", {
-        title: 120,
-        description: 240,
-        siteName: 80,
-      }),
+      extractLinkSnippetMetadata(
+        html,
+        new URL("https://example.com/article"),
+        {
+          title: 120,
+          description: 240,
+          siteName: 80,
+        },
+        imagePolicy,
+      ),
     ).toEqual({
       title: "OG title",
       description: "Description from normal meta",
       siteName: "OG site",
+      imageUrl: null,
     });
+  });
+
+  test("extracts and resolves an allowed OGP image URL", () => {
+    const html = `
+      <title>Image article</title>
+      <meta property="og:image" content="/images/card.jpg?x=1&amp;y=2#fragment">
+    `;
+    expect(
+      extractLinkSnippetMetadata(
+        html,
+        new URL("https://example.com/posts/1"),
+        {
+          title: 120,
+          description: 240,
+          siteName: 80,
+        },
+        imagePolicy,
+      ),
+    ).toEqual({
+      title: "Image article",
+      description: null,
+      siteName: "example.com",
+      imageUrl: "https://example.com/images/card.jpg?x=1&y=2",
+    });
+  });
+
+  test("allows the configured S3 origin and rejects other STGY hosts", () => {
+    const pageUrl = new URL("https://example.com/article");
+    expect(
+      normalizeLinkSnippetImageUrl(
+        "https://s3.stgy.jp/stgy-images/example.webp",
+        pageUrl,
+        imagePolicy,
+      ),
+    ).toBe("https://s3.stgy.jp/stgy-images/example.webp");
+    expect(
+      normalizeLinkSnippetImageUrl(
+        "https://stgy.jp/search?q=expensive",
+        pageUrl,
+        imagePolicy,
+      ),
+    ).toBeNull();
+    expect(
+      normalizeLinkSnippetImageUrl(
+        "https://s3-console.stgy.jp/",
+        pageUrl,
+        imagePolicy,
+      ),
+    ).toBeNull();
+  });
+
+  test("rejects ordinary HTTP image URLs but permits the configured local S3 origin", () => {
+    const pageUrl = new URL("https://example.com/article");
+    expect(
+      normalizeLinkSnippetImageUrl("http://example.com/image.jpg", pageUrl, imagePolicy),
+    ).toBeNull();
+    expect(
+      normalizeLinkSnippetImageUrl(
+        "http://s3.localhost:8080/stgy-images/example.webp",
+        pageUrl,
+        {
+          frontendOrigins: ["http://localhost:8080"],
+          storagePublicUrlPrefix: "http://s3.localhost:8080/{bucket}/",
+        },
+      ),
+    ).toBe("http://s3.localhost:8080/stgy-images/example.webp");
+  });
+
+  test("builds the public thumbnail URL for the featured uploaded image", () => {
+    const markdown = `![first](/images/0001000000000021/masters/797491/11111111aaaaaaaa.jpg)
+
+![chosen](/images/0001000000000021/masters/797491/22222222bbbbbbbb.png){featured}
+`;
+    expect(
+      makeMarkdownLinkSnippetImageUrl(
+        markdown,
+        "https://s3.stgy.jp/{bucket}/",
+        "stgy-images",
+      ),
+    ).toBe(
+      "https://s3.stgy.jp/stgy-images/0001000000000021/thumbs/797491/22222222bbbbbbbb_image.webp",
+    );
+  });
+
+  test("uses the first eligible uploaded image when no image is explicitly featured", () => {
+    const markdown = `![first](/images/0001000000000021/masters/797491/11111111aaaaaaaa.webp)
+`;
+    expect(
+      makeMarkdownLinkSnippetImageUrl(
+        markdown,
+        "http://s3.localhost:8080/{bucket}/",
+        "stgy-images",
+      ),
+    ).toBe(
+      "http://s3.localhost:8080/stgy-images/0001000000000021/thumbs/797491/11111111aaaaaaaa_image.webp",
+    );
+  });
+
+  test("does not expose non-uploaded featured media as an internal snippet image", () => {
+    expect(
+      makeMarkdownLinkSnippetImageUrl(
+        "![static](/data/logo.png)",
+        "https://s3.stgy.jp/{bucket}/",
+        "stgy-images",
+      ),
+    ).toBeNull();
   });
 
   test("extracts STGY Markdown title and excludes metadata from description", () => {

@@ -17,6 +17,11 @@ import extra-sites/*.caddy
 https://stgy.jp {
   encode zstd gzip
 
+  @unexpected_image_request {
+    header Sec-Fetch-Dest image
+    not path /_next/image /_next/static/* /apple-touch-icon.png /data/* /favicon.ico /favicon.svg /icons/*
+  }
+
   import cgi_rate_limit
 
   rate_limit {
@@ -32,27 +37,29 @@ https://stgy.jp {
     log_key
   }
 
-  import site_test
-
   @deny_backend_metrics path /backend/metrics /backend/metrics/
-  handle @deny_backend_metrics {
-    respond 404
-  }
+  route {
+    respond @unexpected_image_request 404
 
-  redir /backend /backend/
-  handle_path /backend/* {
-    reverse_proxy http://backend:3100 {
-      lb_policy first
-      health_uri /health
-      header_up Host {http.request.host}
+    import site_test
+
+    respond @deny_backend_metrics 404
+
+    redir /backend /backend/
+    handle_path /backend/* {
+      reverse_proxy http://backend:3100 {
+        lb_policy first
+        health_uri /health
+        header_up Host {http.request.host}
+      }
     }
-  }
 
-  handle {
-    reverse_proxy http://frontend:3000 {
-      lb_policy first
-      health_uri /
-      header_up Host {http.request.host}
+    handle {
+      reverse_proxy http://frontend:3000 {
+        lb_policy first
+        health_uri /
+        header_up Host {http.request.host}
+      }
     }
   }
 }

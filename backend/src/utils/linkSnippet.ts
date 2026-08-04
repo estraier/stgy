@@ -1,4 +1,5 @@
 import {
+  mdFindFeatured,
   mdRenderText,
   mdSeparateMetadata,
   mdSeparateTitle,
@@ -10,6 +11,12 @@ export type LinkSnippetMetadata = {
   title: string | null;
   description: string | null;
   siteName: string | null;
+  imageUrl: string | null;
+};
+
+export type LinkSnippetImageUrlPolicy = {
+  frontendOrigins: string[];
+  storagePublicUrlPrefix: string;
 };
 
 export type InternalLinkTarget =
@@ -157,6 +164,65 @@ function cleanHtmlText(value: string): string {
   return normalizeSnippetText(decodeHtmlEntities(stripHtmlTags(value)));
 }
 
+function normalizeHostname(value: string): string {
+  return value.trim().toLowerCase().replace(/\.$/u, "");
+}
+
+function isSameHostOrSubdomain(hostname: string, parentHostname: string): boolean {
+  return hostname === parentHostname || hostname.endsWith(`.${parentHostname}`);
+}
+
+function getStorageOrigin(storagePublicUrlPrefix: string): string | null {
+  try {
+    const url = new URL(storagePublicUrlPrefix.replace(/\{bucket\}/gu, "bucket"));
+    url.hostname = normalizeHostname(url.hostname);
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+export function normalizeLinkSnippetImageUrl(
+  value: string,
+  pageUrl: URL,
+  policy: LinkSnippetImageUrlPolicy,
+): string | null {
+  let url: URL;
+  try {
+    url = new URL(decodeHtmlEntities(value).trim(), pageUrl);
+  } catch {
+    return null;
+  }
+
+  if (url.username || url.password) return null;
+
+  const hostname = normalizeHostname(url.hostname);
+  if (!hostname) return null;
+  url.hostname = hostname;
+
+  const storageOrigin = getStorageOrigin(policy.storagePublicUrlPrefix);
+  if (storageOrigin !== null && url.origin === storageOrigin) {
+    url.hash = "";
+    return url.toString();
+  }
+
+  if (url.protocol !== "https:") return null;
+  if (url.port && url.port !== "443") return null;
+
+  const denied = policy.frontendOrigins.some((originText) => {
+    try {
+      const frontendHostname = normalizeHostname(new URL(originText).hostname);
+      return frontendHostname !== "" && isSameHostOrSubdomain(hostname, frontendHostname);
+    } catch {
+      return false;
+    }
+  });
+  if (denied) return null;
+
+  url.hash = "";
+  return url.toString();
+}
+
 function parseTagAttributes(tagText: string): Record<string, string> {
   const attrs: Record<string, string> = {};
   const body = tagText.replace(/^<\s*\/?\s*[a-z0-9:-]+/iu, "").replace(/\/?\s*>$/u, "");
@@ -204,8 +270,9 @@ function findStartTags(html: string, tagName: string): string[] {
 
 export function extractLinkSnippetMetadata(
   html: string,
-  fallbackSiteName: string,
+  pageUrl: URL,
   limits: { title: number; description: number; siteName: number },
+  imagePolicy: LinkSnippetImageUrlPolicy,
 ): LinkSnippetMetadata {
   const metadata = new Map<string, string>();
   for (const tag of findStartTags(html, "meta")) {
@@ -228,12 +295,50 @@ export function extractLinkSnippetMetadata(
     metadata.get("description") ||
     "";
   const siteNameCandidate =
-    metadata.get("og:site_name") || metadata.get("application-name") || fallbackSiteName;
+    metadata.get("og:site_name") || metadata.get("application-name") || pageUrl.hostname;
+  const imageCandidate =
+    metadata.get("og:image:secure_url") ||
+    metadata.get("og:image") ||
+    metadata.get("og:image:url") ||
+    metadata.get("twitter:image") ||
+    metadata.get("twitter:image:src") ||
+    "";
 
   const title = truncateSnippetText(titleCandidate, limits.title) || null;
   const description = truncateSnippetText(descriptionCandidate, limits.description) || null;
   const siteName = truncateSnippetText(siteNameCandidate, limits.siteName) || null;
-  return { title, description, siteName };
+  const imageUrl = imageCandidate
+    ? normalizeLinkSnippetImageUrl(imageCandidate, pageUrl, imagePolicy)
+    : null;
+  return { title, description, siteName, imageUrl };
+}
+
+export function makeMarkdownLinkSnippetImageUrl(
+  markdown: string,
+  storagePublicUrlPrefix: string,
+  imagesBucket: string,
+): string | null {
+  const featured = mdFindFeatured(parseMarkdown(markdown));
+  if (!featured) return null;
+
+  let src: string | null = null;
+  for (const child of featured.children) {
+    if (child.type !== "element" || child.tag !== "img") continue;
+    const candidate = child.attrs?.src;
+    if (typeof candidate === "string") src = candidate;
+    break;
+  }
+  if (src === null) return null;
+
+  const match =
+    /^\/images\/([^\/?#]+)\/masters\/((?:[^\/?#]+\/)*)([^\/?#]+?)(?:\.[^\/?#]+)?(?:[?#].*)?$/u.exec(
+      src,
+    );
+  if (!match || !storagePublicUrlPrefix.includes("{bucket}")) return null;
+
+  const key = `${match[1]}/thumbs/${match[2]}${match[3]}_image.webp`;
+  const prefix = storagePublicUrlPrefix.replace(/\{bucket\}/gu, imagesBucket);
+  return `${prefix}${key.split("/").map(encodeURIComponent).join("/")}`;
 }
 
 export function makeMarkdownLinkSnippetMetadata(
