@@ -20,6 +20,13 @@ import { makePostIdFromDateString, parseBodyAndTags } from "@/utils/parse";
 import { parsePostSearchQuery, serializePostSearchQuery } from "@/utils/parse";
 import PostCard from "@/components/PostCard";
 import PostForm from "@/components/PostForm";
+import { useEditingHistory } from "@/hooks/useEditingHistory";
+import {
+  createEditingHistoryDraftId,
+  migrateEditingHistoryDraftToPost,
+  readEditingHistoryContent,
+  saveSavedEditingHistorySnapshot,
+} from "@/utils/editingHistory";
 
 const TAB_VALUES = ["following", "liked", "all"] as const;
 
@@ -44,6 +51,7 @@ export default function PageBody() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [body, setBody] = useState("");
+  const [draftId, setDraftId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [hasNext, setHasNext] = useState(false);
   const [replyTo, setReplyTo] = useState<string | null>(null);
@@ -54,6 +62,7 @@ export default function PageBody() {
   const [pendingRestore, setPendingRestore] = useState<{ postId: string; page: number } | null>(
     null,
   );
+  const restoredSnapshotRef = useRef<string | null>(null);
 
   function getQueryParams() {
     const sp = searchParams;
@@ -82,7 +91,53 @@ export default function PageBody() {
   const userId = status.state === "authenticated" ? status.session.userId : undefined;
   const userUpdatedAt = status.state === "authenticated" ? status.session.userUpdatedAt : null;
   const userLocale = status.state === "authenticated" ? status.session.userLocale : "en";
+  const userTimezone =
+    status.state === "authenticated" ? status.session.userTimezone : undefined;
   const hasTabParam = searchParams.has("tab");
+  const restoreSnapshotId = searchParams.get("restore");
+  const editingHistory = useEditingHistory({
+    ownerUserId: userId,
+    target: draftId ? { type: "draft", id: draftId } : undefined,
+    content: body,
+  });
+
+  useEffect(() => {
+    if (!userId) return;
+    if (!restoreSnapshotId) {
+      setDraftId((current) => current ?? createEditingHistoryDraftId());
+      return;
+    }
+    if (restoredSnapshotRef.current === restoreSnapshotId) return;
+    restoredSnapshotRef.current = restoreSnapshotId;
+
+    let canceled = false;
+    readEditingHistoryContent(restoreSnapshotId, userId)
+      .then(({ snapshot, content }) => {
+        if (snapshot.targetType !== "draft") {
+          throw new Error("The selected history entry is not a draft.");
+        }
+        if (canceled) return;
+        setBody(content);
+        setDraftId(snapshot.targetId);
+      })
+      .catch((caught: unknown) => {
+        if (canceled) return;
+        setError(caught instanceof Error ? caught.message : "Failed to restore editing history.");
+        setDraftId(createEditingHistoryDraftId());
+      })
+      .finally(() => {
+        if (canceled) return;
+        const sp = new URLSearchParams(window.location.search);
+        sp.delete("restore");
+        router.replace(`${pathname}${sp.toString() ? `?${sp.toString()}` : ""}`, {
+          scroll: false,
+        });
+      });
+
+    return () => {
+      canceled = true;
+    };
+  }, [userId, restoreSnapshotId, pathname, router]);
 
   const isSearchMode = isSimilarMode
     ? true
@@ -370,12 +425,15 @@ export default function PageBody() {
 
   function clearError() {
     if (error) setError(null);
+    editingHistory.clearError();
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSubmitting(true);
     setError(null);
+    editingHistory.clearError();
+    await editingHistory.flush().catch(() => undefined);
     try {
       const { content, tags, attrs } = parseBodyAndTags(body);
       if (!content.trim()) {
@@ -400,8 +458,43 @@ export default function PageBody() {
       if (isAdmin && typeof attrs.date === "string" && !id) {
         throw new Error("Invalid date.");
       }
-      await createPost({ id, content, tags, allowLikes, allowReplies, locale });
+      const submittedBody = body;
+      const createdPost = await createPost({ id, content, tags, allowLikes, allowReplies, locale });
+      const historyErrors: string[] = [];
+      if (userId && draftId) {
+        try {
+          await migrateEditingHistoryDraftToPost({
+            ownerUserId: userId,
+            draftId,
+            postId: createdPost.id,
+          });
+        } catch (caught: unknown) {
+          historyErrors.push(
+            caught instanceof Error
+              ? caught.message
+              : "Local editing history could not be associated with the new post.",
+          );
+        }
+      }
+      if (userId) {
+        try {
+          await saveSavedEditingHistorySnapshot({
+            ownerUserId: userId,
+            postId: createdPost.id,
+            content: submittedBody,
+            savedTimezone: userTimezone,
+          });
+        } catch (caught: unknown) {
+          historyErrors.push(
+            caught instanceof Error
+              ? caught.message
+              : "The successful save could not be added to local editing history.",
+          );
+        }
+      }
+      editingHistory.finish();
       setBody("");
+      setDraftId(createEditingHistoryDraftId());
       setQuery({
         tab: "following",
         includingReplies: undefined,
@@ -411,6 +504,9 @@ export default function PageBody() {
         q: undefined,
       });
       setTimeout(() => fetchPostsRef.current && fetchPostsRef.current(), 100);
+      if (historyErrors.length > 0) {
+        setError(`Post was created, but ${historyErrors.join(" ")}`);
+      }
     } catch (err: unknown) {
       if (err instanceof Error) {
         setError(err.message || "Failed to post.");
@@ -513,15 +609,21 @@ export default function PageBody() {
 
   return (
     <main className="max-w-3xl mx-auto mt-4 p-1 sm:p-4" onClick={clearError}>
-      <PostForm
-        body={body}
-        setBody={setBody}
-        onSubmit={handleSubmit}
-        submitting={submitting}
-        error={error}
-        onErrorClear={clearError}
-        contentLengthLimit={isAdmin ? undefined : Config.CONTENT_LENGTH_LIMIT}
-      />
+      {draftId ? (
+        <PostForm
+          body={body}
+          setBody={setBody}
+          onSubmit={handleSubmit}
+          submitting={submitting}
+          error={error ?? editingHistory.error}
+          onErrorClear={clearError}
+          contentLengthLimit={isAdmin ? undefined : Config.CONTENT_LENGTH_LIMIT}
+        />
+      ) : (
+        <div className="text-gray-500">
+          {restoreSnapshotId ? "Restoring editing history…" : "Preparing editor…"}
+        </div>
+      )}
       <div className="h-6" />
       <div className="flex gap-1 mb-2">
         {TAB_VALUES.map((t) => (

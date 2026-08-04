@@ -18,6 +18,11 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import PostCard from "@/components/PostCard";
 import PostForm from "@/components/PostForm";
 import { makePostIdFromDateString, parseBodyAndTags } from "@/utils/parse";
+import { useEditingHistory } from "@/hooks/useEditingHistory";
+import {
+  readEditingHistoryContent,
+  saveSavedEditingHistorySnapshot,
+} from "@/utils/editingHistory";
 
 export default function PageBody() {
   const params = useParams();
@@ -30,6 +35,8 @@ export default function PageBody() {
   const userId = status.state === "authenticated" ? status.session.userId : undefined;
   const isAdmin = status.state === "authenticated" && status.session.userIsAdmin;
   const updatedAt = status.state === "authenticated" ? status.session.userUpdatedAt : null;
+  const userTimezone =
+    status.state === "authenticated" ? status.session.userTimezone : undefined;
 
   const replyPage = useMemo(() => {
     const raw = searchParams.get("replyPage");
@@ -43,6 +50,7 @@ export default function PageBody() {
   );
 
   const isEditModeFromQuery = useMemo(() => searchParams.get("mode") === "edit", [searchParams]);
+  const restoreSnapshotId = searchParams.get("restore");
 
   const [post, setPost] = useState<PostDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -52,6 +60,8 @@ export default function PageBody() {
   const [editBody, setEditBody] = useState("");
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  const [localHistoryError, setLocalHistoryError] = useState<string | null>(null);
+  const [restoringHistory, setRestoringHistory] = useState(() => Boolean(restoreSnapshotId));
 
   const [likers, setLikers] = useState<User[]>([]);
   const [likerAll, setLikerAll] = useState(false);
@@ -69,6 +79,15 @@ export default function PageBody() {
 
   const editFormWrapperRef = useRef<HTMLDivElement | null>(null);
   const editInitializedFromQueryRef = useRef(false);
+  const restoredSnapshotRef = useRef<string | null>(null);
+  const editingHistory = useEditingHistory({
+    ownerUserId: userId,
+    target:
+      editing && !restoringHistory && !loading && post?.id === postId
+        ? { type: "post", id: postId }
+        : undefined,
+    content: editBody,
+  });
 
   const topTriangleRef = useRef<HTMLButtonElement | null>(null);
   const bottomTriangleRef = useRef<HTMLButtonElement | null>(null);
@@ -82,6 +101,7 @@ export default function PageBody() {
       sp.set("mode", "edit");
     } else {
       sp.delete("mode");
+      sp.delete("restore");
     }
     router.replace(`?${sp.toString()}`, { scroll: false });
   }
@@ -115,6 +135,54 @@ export default function PageBody() {
   }, [postId, userId, isAdmin, isEditModeFromQuery]);
 
   useEffect(() => {
+    if (!restoreSnapshotId || !userId || !post) return;
+    if (restoredSnapshotRef.current === restoreSnapshotId) return;
+    restoredSnapshotRef.current = restoreSnapshotId;
+    setRestoringHistory(true);
+
+    let canceled = false;
+    const canRestore = isAdmin || post.ownedBy === userId;
+    const removeRestoreParameter = () => {
+      const sp = new URLSearchParams(window.location.search);
+      sp.delete("restore");
+      sp.set("mode", "edit");
+      router.replace(`?${sp.toString()}`, { scroll: false });
+    };
+
+    if (!canRestore) {
+      setEditError("You cannot edit this post.");
+      setRestoringHistory(false);
+      removeRestoreParameter();
+      return;
+    }
+
+    readEditingHistoryContent(restoreSnapshotId, userId)
+      .then(({ snapshot, content }) => {
+        if (snapshot.targetType !== "post" || snapshot.targetId !== postId) {
+          throw new Error("The selected history entry does not belong to this post.");
+        }
+        if (canceled) return;
+        setEditBody(content);
+        setEditing(true);
+        editInitializedFromQueryRef.current = true;
+      })
+      .catch((caught: unknown) => {
+        if (canceled) return;
+        setEditError(caught instanceof Error ? caught.message : "Failed to restore editing history.");
+      })
+      .finally(() => {
+        if (canceled) return;
+        setRestoringHistory(false);
+        removeRestoreParameter();
+      });
+
+    return () => {
+      canceled = true;
+    };
+  }, [restoreSnapshotId, userId, post, postId, isAdmin, router]);
+
+  useEffect(() => {
+    if (restoringHistory) return;
     if (!editing) return;
     if (!isEditModeFromQuery) return;
     if (!editInitializedFromQueryRef.current) return;
@@ -145,7 +213,7 @@ export default function PageBody() {
     });
 
     return () => cancelAnimationFrame(id);
-  }, [editing, isEditModeFromQuery]);
+  }, [editing, isEditModeFromQuery, restoringHistory]);
 
   useEffect(() => {
     if (!post) return;
@@ -427,10 +495,18 @@ export default function PageBody() {
     }
   }
 
+  function clearEditError() {
+    if (editError) setEditError(null);
+    editingHistory.clearError();
+  }
+
   async function handleEditSubmit(e: React.FormEvent) {
     e.preventDefault();
     setEditSubmitting(true);
     setEditError(null);
+    setLocalHistoryError(null);
+    editingHistory.clearError();
+    await editingHistory.flush().catch(() => undefined);
     try {
       const { content, tags, attrs } = parseBodyAndTags(editBody);
       if (!content.trim()) {
@@ -458,11 +534,32 @@ export default function PageBody() {
         allowReplies: attrs.noReplies === true ? false : true,
         locale: typeof attrs.locale === "string" ? attrs.locale : null,
       };
+      const submittedBody = editBody;
       await updatePost(postId, patch);
+      let historyError: string | null = null;
+      if (userId) {
+        try {
+          await saveSavedEditingHistorySnapshot({
+            ownerUserId: userId,
+            postId,
+            content: submittedBody,
+            savedTimezone: userTimezone,
+          });
+        } catch (caught: unknown) {
+          historyError =
+            caught instanceof Error
+              ? caught.message
+              : "The successful save could not be added to local editing history.";
+        }
+      }
+      editingHistory.finish();
       updateEditModeInUrl(false);
       setEditing(false);
       editInitializedFromQueryRef.current = false;
       getPost(postId, userId).then(setPost);
+      if (historyError) {
+        setLocalHistoryError(`Post was updated, but ${historyError}`);
+      }
     } catch (err: unknown) {
       if (err instanceof Error) {
         setEditError(err.message ?? "Failed to update post.");
@@ -477,7 +574,9 @@ export default function PageBody() {
   async function handleDelete() {
     if (!post) return;
     try {
+      await editingHistory.flush().catch(() => undefined);
       await deletePost(postId);
+      editingHistory.finish();
       router.push("/posts");
     } catch (err: unknown) {
       if (err instanceof Error) {
@@ -613,6 +712,9 @@ export default function PageBody() {
 
   return (
     <main className="max-w-3xl mx-auto mt-8 p-1 sm:p-4">
+      {localHistoryError && (
+        <div className="mb-4 text-red-600">{localHistoryError}</div>
+      )}
       <div className="relative">
         <button
           type="button"
@@ -754,24 +856,31 @@ export default function PageBody() {
       )}
       {editing && (
         <div className="mb-4" ref={editFormWrapperRef}>
-          <PostForm
-            body={editBody}
-            setBody={setEditBody}
-            onSubmit={handleEditSubmit}
-            submitting={editSubmitting}
-            error={editError}
-            onCancel={() => {
-              setEditing(false);
-              editInitializedFromQueryRef.current = false;
-              updateEditModeInUrl(false);
-            }}
-            buttonLabel="Save"
-            placeholder="Edit your post"
-            deletable={true}
-            isEdit={true}
-            onDelete={handleDelete}
-            autoFocus
-          />
+          {restoringHistory ? (
+            <div className="text-gray-500">Restoring editing history…</div>
+          ) : (
+            <PostForm
+              body={editBody}
+              setBody={setEditBody}
+              onSubmit={handleEditSubmit}
+              submitting={editSubmitting}
+              error={editError ?? editingHistory.error}
+              onErrorClear={clearEditError}
+              onCancel={async () => {
+                await editingHistory.flush().catch(() => undefined);
+                editingHistory.finish();
+                setEditing(false);
+                editInitializedFromQueryRef.current = false;
+                updateEditModeInUrl(false);
+              }}
+              buttonLabel="Save"
+              placeholder="Edit your post"
+              deletable={true}
+              isEdit={true}
+              onDelete={handleDelete}
+              autoFocus
+            />
+          )}
         </div>
       )}
 
