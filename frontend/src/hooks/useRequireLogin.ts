@@ -20,17 +20,18 @@ export function useRequireLogin() {
     getSessionInfo()
       .then((session) => {
         if (needsAgreement(session)) {
-          const returnPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-          window.location.replace(
-            makeAgreementPageUrl(returnPath),
-          );
+          const returnPath =
+            `${window.location.pathname}${window.location.search}${window.location.hash}`;
+          window.location.replace(makeAgreementPageUrl(returnPath));
           return;
         }
         setStatus({ state: "authenticated", session });
       })
       .catch(() => {
         setStatus({ state: "unauthenticated" });
-        router.replace("/error?page=login-required");
+        const returnPath =
+          `${window.location.pathname}${window.location.search}${window.location.hash}`;
+        router.replace(`/login?next=${encodeURIComponent(returnPath)}`);
       });
   }, [pathname, router]);
 

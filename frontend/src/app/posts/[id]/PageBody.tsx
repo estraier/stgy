@@ -216,6 +216,20 @@ export default function PageBody() {
   }, [editing, isEditModeFromQuery, restoringHistory]);
 
   useEffect(() => {
+    if (!post || typeof window === "undefined") return;
+
+    const targetId = window.location.hash.slice(1);
+    if (targetId !== "replies" && targetId !== "liked-by") return;
+    if (targetId === "liked-by" && replyLoading) return;
+
+    const frameId = requestAnimationFrame(() => {
+      document.getElementById(targetId)?.scrollIntoView();
+    });
+
+    return () => cancelAnimationFrame(frameId);
+  }, [post, replyLoading]);
+
+  useEffect(() => {
     if (!post) return;
     if (!post.allowLikes) {
       setLikers([]);
@@ -886,7 +900,7 @@ export default function PageBody() {
 
       {post.allowReplies ? (
         <>
-          <div className="mt-8 mb-2 flex items-center gap-2">
+          <div id="replies" className="mt-8 mb-2 flex items-center gap-2">
             <span className="font-bold text-lg">Replies</span>
             <label className="flex items-center gap-1 text-sm cursor-pointer ml-4">
               <input
@@ -967,7 +981,9 @@ export default function PageBody() {
       <div className="my-6">
         {post.allowLikes ? (
           <>
-            <div className="font-bold mb-2 flex items-center gap-2">Liked by</div>
+            <div id="liked-by" className="font-bold mb-2 flex items-center gap-2">
+              Liked by
+            </div>
             <div className="flex flex-wrap gap-2">
               {likerLoading ? (
                 <span>Loading…</span>

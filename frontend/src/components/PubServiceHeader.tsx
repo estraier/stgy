@@ -59,6 +59,9 @@ export default function PubServiceHeader({
   const loginHref = addNext("/login", next);
   const signupHref = addNext("/signup", next);
   const viewHref = viewAsHref ?? "/posts";
+  const logoHref = post ? viewHref : "/";
+  const likedByHref = `${viewHref}#liked-by`;
+  const repliesHref = `${viewHref}#replies`;
 
   let countLikes = 0;
   let countReplies = 0;
@@ -68,21 +71,29 @@ export default function PubServiceHeader({
   }
   return (
     <nav className="sh-nav w-full h-10 flex items-center px-3">
-      <Link href="/" className="sh-logo">
+      <Link href={logoHref} className="sh-logo">
         STGY
       </Link>
       <div className="counts flex gap-2 ml-6">
         {countLikes > 0 && (
-          <div className="count-likes flex gap-1 items-center">
+          <Link
+            href={likedByHref}
+            className="count-likes flex gap-1 items-center"
+            aria-label={`Liked by ${countLikes} users`}
+          >
             <Heart size={12} />
             <span>{countLikes}</span>
-          </div>
+          </Link>
         )}
         {countReplies > 0 && (
-          <div className="count-replies flex gap-1 items-center">
+          <Link
+            href={repliesHref}
+            className="count-replies flex gap-1 items-center"
+            aria-label={`${countReplies} replies`}
+          >
             <MessageCircle size={12} />
             <span>{countReplies}</span>
-          </div>
+          </Link>
         )}
       </div>
       <div className="sh-notes ml-auto flex items-center gap-2">
