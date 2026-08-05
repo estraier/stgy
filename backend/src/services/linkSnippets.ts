@@ -20,7 +20,7 @@ import {
 import { fetchRemoteHtml } from "../utils/remoteHtml";
 
 const CACHE_PREFIX = "stgy:link-snippet:";
-const CACHE_VERSION = "v4";
+const CACHE_VERSION = "v5";
 const STGY_SITE_NAME = "STGY";
 
 type CachedLinkSnippetStatus = Exclude<LinkSnippetStatus, "pending">;
@@ -338,6 +338,8 @@ export class LinkSnippetsService {
             {
               frontendOrigins: Config.FRONTEND_ORIGIN,
               storagePublicUrlPrefix: Config.STORAGE_S3_PUBLIC_URL_PREFIX,
+              imagesBucket: Config.MEDIA_BUCKET_IMAGES,
+              profilesBucket: Config.MEDIA_BUCKET_PROFILES,
             },
           )
         : {

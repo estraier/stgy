@@ -17,6 +17,8 @@ export type LinkSnippetMetadata = {
 export type LinkSnippetImageUrlPolicy = {
   frontendOrigins: string[];
   storagePublicUrlPrefix: string;
+  imagesBucket: string;
+  profilesBucket: string;
 };
 
 export type InternalLinkTarget =
@@ -172,14 +174,125 @@ function isSameHostOrSubdomain(hostname: string, parentHostname: string): boolea
   return hostname === parentHostname || hostname.endsWith(`.${parentHostname}`);
 }
 
-function getStorageOrigin(storagePublicUrlPrefix: string): string | null {
+type StoragePublicObject = {
+  bucket: string;
+  objectKey: string;
+};
+
+const STORAGE_BUCKET_MARKER = "stgybucketmarker";
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+function decodeStorageComponent(value: string): string | null {
   try {
-    const url = new URL(storagePublicUrlPrefix.replace(/\{bucket\}/gu, "bucket"));
-    url.hostname = normalizeHostname(url.hostname);
-    return url.origin;
+    return decodeURIComponent(value);
   } catch {
     return null;
   }
+}
+
+function matchStoragePublicObject(
+  url: URL,
+  storagePublicUrlPrefix: string,
+): StoragePublicObject | null {
+  if (!storagePublicUrlPrefix.includes("{bucket}")) return null;
+
+  let template: URL;
+  try {
+    template = new URL(
+      storagePublicUrlPrefix.replace(/\{bucket\}/gu, STORAGE_BUCKET_MARKER),
+    );
+  } catch {
+    return null;
+  }
+  if (template.username || template.password || template.search || template.hash) return null;
+
+  const markerOffset = template.href.indexOf(STORAGE_BUCKET_MARKER);
+  if (markerOffset < 0) return null;
+  const beforeBucket = template.href.slice(0, markerOffset);
+  const afterBucket = template.href.slice(markerOffset + STORAGE_BUCKET_MARKER.length);
+  const pattern = new RegExp(
+    `^${escapeRegExp(beforeBucket)}([^/?#]+)${escapeRegExp(afterBucket)}(.*)$`,
+    "u",
+  );
+
+  const normalizedUrl = new URL(url);
+  normalizedUrl.search = "";
+  normalizedUrl.hash = "";
+  const match = pattern.exec(normalizedUrl.href);
+  if (!match) return null;
+
+  const bucket = decodeStorageComponent(match[1] ?? "");
+  if (!bucket) return null;
+
+  const decodedSegments: string[] = [];
+  for (const segment of (match[2] ?? "").replace(/^\/+/, "").split("/")) {
+    if (segment === "") continue;
+    const decoded = decodeStorageComponent(segment);
+    if (
+      decoded === null ||
+      decoded === "." ||
+      decoded === ".." ||
+      decoded.includes("/") ||
+      decoded.includes("\\")
+    ) {
+      return null;
+    }
+    decodedSegments.push(decoded);
+  }
+
+  return {
+    bucket,
+    objectKey: decodedSegments.join("/"),
+  };
+}
+
+function makeStoragePublicUrl(
+  storagePublicUrlPrefix: string,
+  bucket: string,
+  objectKey: string,
+): string | null {
+  if (!storagePublicUrlPrefix.includes("{bucket}")) return null;
+  const prefix = storagePublicUrlPrefix.replace(/\{bucket\}/gu, bucket);
+  const separator = prefix.endsWith("/") || objectKey === "" ? "" : "/";
+  return `${prefix}${separator}${objectKey
+    .split("/")
+    .map(encodeURIComponent)
+    .join("/")}`;
+}
+
+function rewriteStorageMasterImageUrl(
+  storageObject: StoragePublicObject,
+  policy: LinkSnippetImageUrlPolicy,
+): string | null {
+  if (storageObject.bucket === policy.imagesBucket) {
+    const match =
+      /^([^/]+)\/masters\/((?:[^/]+\/)*)([^/.]+)\.[^/]+$/u.exec(
+        storageObject.objectKey,
+      );
+    if (!match) return null;
+    return makeStoragePublicUrl(
+      policy.storagePublicUrlPrefix,
+      storageObject.bucket,
+      `${match[1]}/thumbs/${match[2]}${match[3]}_image.webp`,
+    );
+  }
+
+  if (storageObject.bucket === policy.profilesBucket) {
+    const match = /^([^/]+)\/masters\/([^/.]+)\.[^/]+$/u.exec(
+      storageObject.objectKey,
+    );
+    if (!match) return null;
+    return makeStoragePublicUrl(
+      policy.storagePublicUrlPrefix,
+      storageObject.bucket,
+      `${match[1]}/thumbs/${match[2]}_icon.webp`,
+    );
+  }
+
+  return null;
 }
 
 export function normalizeLinkSnippetImageUrl(
@@ -200,8 +313,13 @@ export function normalizeLinkSnippetImageUrl(
   if (!hostname) return null;
   url.hostname = hostname;
 
-  const storageOrigin = getStorageOrigin(policy.storagePublicUrlPrefix);
-  if (storageOrigin !== null && url.origin === storageOrigin) {
+  const storageObject = matchStoragePublicObject(
+    url,
+    policy.storagePublicUrlPrefix,
+  );
+  if (storageObject !== null) {
+    const thumbnailUrl = rewriteStorageMasterImageUrl(storageObject, policy);
+    if (thumbnailUrl !== null) return thumbnailUrl;
     url.hash = "";
     return url.toString();
   }

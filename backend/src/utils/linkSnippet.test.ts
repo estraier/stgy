@@ -14,6 +14,8 @@ import {
 const imagePolicy = {
   frontendOrigins: ["https://stgy.jp"],
   storagePublicUrlPrefix: "https://s3.stgy.jp/{bucket}/",
+  imagesBucket: "stgy-images",
+  profilesBucket: "stgy-profiles",
 };
 
 describe("link snippet URL handling", () => {
@@ -174,6 +176,82 @@ describe("link snippet text handling", () => {
     ).toBeNull();
   });
 
+  test("rejects the configured frontend domain and its subdomains on custom deployments", () => {
+    const pageUrl = new URL("https://outside.example/article");
+    const policy = {
+      frontendOrigins: ["https://social.example.net"],
+      storagePublicUrlPrefix: "https://media.example.net/{bucket}/",
+      imagesBucket: "stgy-images",
+      profilesBucket: "stgy-profiles",
+    };
+    expect(
+      normalizeLinkSnippetImageUrl(
+        "https://social.example.net/search?q=expensive",
+        pageUrl,
+        policy,
+      ),
+    ).toBeNull();
+    expect(
+      normalizeLinkSnippetImageUrl(
+        "https://api.social.example.net/search?q=expensive",
+        pageUrl,
+        policy,
+      ),
+    ).toBeNull();
+  });
+
+  test("rewrites configured S3 image masters to thumbnails without a fixed hostname", () => {
+    const pageUrl = new URL("https://example.com/article");
+    expect(
+      normalizeLinkSnippetImageUrl(
+        "https://media.example.net/stgy-images/0001000000000021/masters/797491/abcdef0123456789.jpg?download=1",
+        pageUrl,
+        {
+          frontendOrigins: ["https://social.example.net"],
+          storagePublicUrlPrefix: "https://media.example.net/{bucket}/",
+          imagesBucket: "stgy-images",
+          profilesBucket: "stgy-profiles",
+        },
+      ),
+    ).toBe(
+      "https://media.example.net/stgy-images/0001000000000021/thumbs/797491/abcdef0123456789_image.webp",
+    );
+  });
+
+  test("rewrites configured S3 profile masters to icon thumbnails", () => {
+    const pageUrl = new URL("https://example.com/article");
+    expect(
+      normalizeLinkSnippetImageUrl(
+        "https://assets.example.net/stgy-profiles/0001000000000021/masters/avatar.png",
+        pageUrl,
+        {
+          frontendOrigins: ["https://service.example.net"],
+          storagePublicUrlPrefix: "https://assets.example.net/{bucket}/",
+          imagesBucket: "stgy-images",
+          profilesBucket: "stgy-profiles",
+        },
+      ),
+    ).toBe(
+      "https://assets.example.net/stgy-profiles/0001000000000021/thumbs/avatar_icon.webp",
+    );
+  });
+
+  test("keeps non-master objects on the configured S3 service unchanged", () => {
+    const pageUrl = new URL("https://example.com/article");
+    expect(
+      normalizeLinkSnippetImageUrl(
+        "https://media.example.net/other-bucket/path/object.webp?version=1#part",
+        pageUrl,
+        {
+          frontendOrigins: ["https://social.example.net"],
+          storagePublicUrlPrefix: "https://media.example.net/{bucket}/",
+          imagesBucket: "images",
+          profilesBucket: "profiles",
+        },
+      ),
+    ).toBe("https://media.example.net/other-bucket/path/object.webp?version=1");
+  });
+
   test("rejects ordinary HTTP image URLs but permits the configured local S3 origin", () => {
     const pageUrl = new URL("https://example.com/article");
     expect(
@@ -186,6 +264,8 @@ describe("link snippet text handling", () => {
         {
           frontendOrigins: ["http://localhost:8080"],
           storagePublicUrlPrefix: "http://s3.localhost:8080/{bucket}/",
+          imagesBucket: "stgy-images",
+          profilesBucket: "stgy-profiles",
         },
       ),
     ).toBe("http://s3.localhost:8080/stgy-images/example.webp");
