@@ -41,6 +41,13 @@ export function makeArticleTextFromMarkdown(mdText: string) {
   return mdRenderText(mdStripRubyElements(nodes));
 }
 
+export function makeReplyDigestTextFromMarkdown(mdText: string) {
+  const flat = makeArticleTextFromMarkdown(mdText).replace(/\s+/gu, " ").trim();
+  const characters = Array.from(flat);
+  if (characters.length < 200) return flat;
+  return characters.slice(0, 200).join("") + "…";
+}
+
 export type MarkdownDisplayOptions = {
   writingMode?: "horizontal" | "vertical";
 };

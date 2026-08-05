@@ -15,7 +15,11 @@ import type {
   User,
   UserDetail,
 } from "@/api/models";
-import { makeArticleHtmlFromMarkdown, makePubAttributesFromJsonSnippet } from "@/utils/article";
+import {
+  makeArticleHtmlFromMarkdown,
+  makePubAttributesFromJsonSnippet,
+  makeReplyDigestTextFromMarkdown,
+} from "@/utils/article";
 import { sliceByPseudoTokens } from "stgy-markdown";
 import { convertHtmlMathInline } from "@/utils/mathjax-inline";
 import {
@@ -161,6 +165,20 @@ const ONE_MB = 1024 * 1024;
 
 const TOO_OFTEN_WAIT_MS = 600_000;
 const TOO_OFTEN_MAX_RETRY = 10;
+
+type ReplyDigest = {
+  id: string;
+  ownedBy: string;
+  createdAt: string;
+  updatedAt: string | null;
+  ownerNickname: string;
+  locale: string | null;
+  text: string;
+};
+
+type ExportPostDetail = PostDetail & {
+  replyDigests: ReplyDigest[];
+};
 
 function sleep(ms: number): Promise<void> {
   const n = Math.max(0, ms | 0);
@@ -368,7 +386,25 @@ function renderProfileHtml(profile: UserDetail): string {
 `;
 }
 
-function renderPostHtml(post: Post | PostDetail): string {
+function renderReplyDigests(post: ExportPostDetail): string {
+  if (post.replyDigests.length === 0) return String(post.countReplies);
+
+  return `<div class="reply-digests">
+    ${post.replyDigests
+      .map(
+        (reply) => `<div class="reply-digest">
+          <div class="reply-digest-meta">
+            <span class="reply-digest-owner">${escapeHtml(reply.ownerNickname)}</span>
+            <time datetime="${escapeHtml(reply.createdAt)}">${escapeHtml(reply.createdAt)}</time>
+          </div>
+          <div class="reply-digest-text">${escapeHtml(reply.text)}</div>
+        </div>`,
+      )
+      .join("")}
+  </div>`;
+}
+
+function renderPostHtml(post: ExportPostDetail): string {
   const postId = post.id;
   const postDate = post.createdAt;
   const postLang = post.ownerLocale || post.locale || "en";
@@ -408,7 +444,7 @@ function renderPostHtml(post: Post | PostDetail): string {
         ${post.updatedAt ? `<tr><th>Updated at</th><td>${escapeHtml(post.updatedAt)}</td></tr>` : ""}
         ${post.publishedAt ? `<tr><th>Published at</th><td>${escapeHtml(post.publishedAt)}</td></tr>` : ""}
         <tr><th>Likes</th><td>${post.countLikes}</td></tr>
-        <tr><th>Replies</th><td>${post.countReplies}</td></tr>
+        <tr><th>Replies</th><td>${renderReplyDigests(post)}</td></tr>
       </table>
     </div>
   </main>
@@ -490,6 +526,48 @@ async function fetchAllMyPosts(userId: string): Promise<Post[]> {
     seen.add(p.id);
     return true;
   });
+}
+
+async function fetchAllReplyDigests(
+  postId: string,
+  focusUserId: string,
+  postBaseSleepMs: number,
+): Promise<ReplyDigest[]> {
+  const replies: Post[] = [];
+  let after: string | undefined;
+  for (;;) {
+    const res = await withTooOftenRetry(() =>
+      listPosts({
+        after,
+        limit: EXPORT_API_PAGE_SIZE,
+        order: "asc",
+        replyTo: postId,
+        focusUserId,
+      }),
+    );
+    if (res.length === 0) break;
+    replies.push(...res.filter((reply) => reply.replyTo === postId));
+    after = res[res.length - 1].id;
+  }
+
+  const seen = new Set<string>();
+  const replyDigests: ReplyDigest[] = [];
+  for (const reply of replies) {
+    if (seen.has(reply.id)) continue;
+    seen.add(reply.id);
+    const detail = await withTooOftenRetry(() => getPost(reply.id, focusUserId));
+    replyDigests.push({
+      id: detail.id,
+      ownedBy: detail.ownedBy,
+      createdAt: detail.createdAt,
+      updatedAt: detail.updatedAt,
+      ownerNickname: detail.ownerNickname,
+      locale: detail.locale,
+      text: makeReplyDigestTextFromMarkdown(detail.content),
+    });
+    await sleep(postBaseSleepMs);
+  }
+  return replyDigests;
 }
 
 async function fetchAllMyImages(userId: string): Promise<MediaObject[]> {
@@ -707,10 +785,15 @@ export default function PageBody() {
       ]);
 
       const posts = await fetchAllMyPosts(userId);
-      const postDetails: PostDetail[] = [];
+      const postDetails: ExportPostDetail[] = [];
       for (const post of posts) {
-        postDetails.push(await withTooOftenRetry(() => getPost(post.id, userId)));
+        const detail = await withTooOftenRetry(() => getPost(post.id, userId));
         await sleep(postBaseSleepMs);
+        const replyDigests =
+          detail.countReplies > 0
+            ? await fetchAllReplyDigests(detail.id, userId, postBaseSleepMs)
+            : [];
+        postDetails.push({ ...detail, replyDigests });
       }
 
       const referenceSources = [

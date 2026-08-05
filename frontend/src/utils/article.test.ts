@@ -12,6 +12,7 @@ jest.mock("@/config", () => ({
 import {
   makeArticleHtmlFromMarkdown,
   makeArticleTextFromMarkdown,
+  makeReplyDigestTextFromMarkdown,
   makePubArticleHtmlFromMarkdown,
   makeSnippetHtmlFromMarkdown,
   makeSnippetTextFromMarkdown,
@@ -69,6 +70,20 @@ describe("article utils (normal cases)", () => {
     const md = "# Hello World\n- I am Nancy.";
     const text = makeArticleTextFromMarkdown(md);
     expect(text).toBe("Hello World\n\n- I am Nancy.");
+  });
+
+  test("makeReplyDigestTextFromMarkdown", () => {
+    const md = "# Hello\n\nfirst\tsecond\r\nthird\u00a0fourth\u3000{{五|ご}}";
+    expect(makeReplyDigestTextFromMarkdown(md)).toBe(
+      "Hello first second third fourth 五",
+    );
+    expect(makeReplyDigestTextFromMarkdown("a".repeat(199))).toBe("a".repeat(199));
+    expect(makeReplyDigestTextFromMarkdown("a".repeat(200))).toBe(
+      "a".repeat(200) + "…",
+    );
+    expect(makeReplyDigestTextFromMarkdown("😀".repeat(201))).toBe(
+      "😀".repeat(200) + "…",
+    );
   });
 
   test("makePubArticleHtmlFromMarkdown", () => {

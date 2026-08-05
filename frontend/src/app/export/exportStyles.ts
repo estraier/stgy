@@ -126,6 +126,30 @@ html {
   font-weight: 600;
 }
 
+:where(body.stgy-export) .reply-digests {
+  font-size: 85%;
+}
+
+:where(body.stgy-export) .reply-digest + .reply-digest {
+  margin-top: 1em;
+}
+
+:where(body.stgy-export) .reply-digest-meta {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 1.5em;
+  color: #6b7280;
+}
+
+:where(body.stgy-export) .reply-digest-owner {
+  color: #111827;
+  font-weight: 600;
+}
+
+:where(body.stgy-export) .reply-digest-text {
+  margin-top: 0.15em;
+}
+
 :where(body.stgy-export) code {
   font-family: "Inconsolata", "Source Code Pro", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 0.95em;
