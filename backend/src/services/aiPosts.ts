@@ -663,6 +663,8 @@ export class AiPostsService {
       table_count: number;
       is_root: boolean;
       user_id: string;
+      owner_is_frozen: boolean;
+      owner_blocks_self: boolean;
     };
     type RecommendRecordLocal = {
       postId: bigint;
@@ -670,11 +672,26 @@ export class AiPostsService {
       tableCount: number;
       isRoot: boolean;
       userId: string;
+      ownerIsFrozen: boolean;
+      ownerBlocksSelf: boolean;
     };
-    type RecommendCandidateLocal = { postId: bigint; features: Int8Array | null };
-    type RecommendPostFeaturesRowLocal = { post_id: string; features: Buffer | null };
+    type RecommendCandidateLocal = {
+      postId: bigint;
+      features: Int8Array | null;
+      recommendationPenalty: number;
+    };
+    type RecommendPostFeaturesRowLocal = {
+      post_id: string;
+      features: Buffer | null;
+      owner_is_frozen?: boolean;
+      owner_blocks_self?: boolean;
+    };
     type RecommendPostLikesCountRowLocal = { post_id: string; count_likes: number };
     type RecommendPostKeywordHashesRowLocal = { post_id: string; hashes: Buffer | null };
+    const getRecommendationPenalty = (
+      ownerIsFrozen: boolean,
+      ownerBlocksSelf: boolean,
+    ): number => (ownerIsFrozen ? 0.1 : 1) * (ownerBlocksSelf ? 0.1 : 1);
     const buildParamKeywordHashCounts = (keywordHashes: unknown): Map<number, number> => {
       const m = new Map<number, number>();
       if (!Array.isArray(keywordHashes)) return m;
@@ -791,11 +808,17 @@ export class AiPostsService {
             GROUP BY tag, post_id
           )
           SELECT a.post_id, a.tag, a.table_count, (p.reply_to IS NULL) AS is_root,
-                 p.owned_by AS user_id
+                 p.owned_by AS user_id,
+                 owner.is_frozen AS owner_is_frozen,
+                 (ub.blocker_id IS NOT NULL) AS owner_blocks_self
           FROM agg a
           JOIN posts p ON p.id = a.post_id
+          JOIN users owner ON owner.id = p.owned_by
+          LEFT JOIN user_blocks ub
+            ON ub.blocker_id = p.owned_by
+           AND ub.blockee_id = $3::bigint
         `,
-        [tags, Config.AI_POST_RECOMMEND_TAG_CANDIDATES],
+        [tags, Config.AI_POST_RECOMMEND_TAG_CANDIDATES, selfUserIdDec],
       );
       const out = res.rows.map((r) => ({
         postId: BigInt(r.post_id),
@@ -803,6 +826,8 @@ export class AiPostsService {
         tableCount: r.table_count,
         isRoot: r.is_root,
         userId: r.user_id,
+        ownerIsFrozen: r.owner_is_frozen,
+        ownerBlocksSelf: r.owner_blocks_self,
       }));
       return selfUserIdDec ? out.filter((r) => r.userId !== selfUserIdDec) : out;
     };
@@ -835,7 +860,15 @@ export class AiPostsService {
     }
     if (records.length === 0) return [];
     const tagTableCountsByPostId = new Map<bigint, Map<string, number>>();
-    const metaByPostId = new Map<bigint, { isRoot: boolean; userId: string }>();
+    const metaByPostId = new Map<
+      bigint,
+      {
+        isRoot: boolean;
+        userId: string;
+        ownerIsFrozen: boolean;
+        ownerBlocksSelf: boolean;
+      }
+    >();
     for (const r of records) {
       let m = tagTableCountsByPostId.get(r.postId);
       if (!m) {
@@ -844,7 +877,12 @@ export class AiPostsService {
       }
       m.set(r.tag, r.tableCount);
       if (!metaByPostId.has(r.postId))
-        metaByPostId.set(r.postId, { isRoot: r.isRoot, userId: r.userId });
+        metaByPostId.set(r.postId, {
+          isRoot: r.isRoot,
+          userId: r.userId,
+          ownerIsFrozen: r.ownerIsFrozen,
+          ownerBlocksSelf: r.ownerBlocksSelf,
+        });
     }
     const sortedTagPosts = Array.from(tagTableCountsByPostId.entries()).sort((a, b) =>
       compareBigIntDesc(a[0], b[0]),
@@ -944,7 +982,12 @@ export class AiPostsService {
         }
       }
       const combined = tagScore + keywordScore;
-      const postFinalScore = combined * rankScore * rootScore * socialScore;
+      const recommendationPenalty = getRecommendationPenalty(
+        meta.ownerIsFrozen,
+        meta.ownerBlocksSelf,
+      );
+      const postFinalScore =
+        combined * rankScore * rootScore * socialScore * recommendationPenalty;
       postFinalScores.set(postId, postFinalScore);
     }
     const scored = Array.from(postFinalScores.entries())
@@ -975,9 +1018,13 @@ export class AiPostsService {
       for (const c of chunk) {
         const row = byId.get(c.postId.toString());
         if (!row) continue;
+        const meta = metaByPostId.get(c.postId);
         universe.push({
           postId: c.postId,
           features: row.features ? bufferToInt8Array(row.features) : null,
+          recommendationPenalty: meta
+            ? getRecommendationPenalty(meta.ownerIsFrozen, meta.ownerBlocksSelf)
+            : 1,
         });
         if (universe.length >= Config.AI_POST_RECOMMEND_VEC_CANDIDATES) break;
       }
@@ -996,16 +1043,30 @@ export class AiPostsService {
         const r = await pgQuery<RecommendPostFeaturesRowLocal>(
           this.pgPool,
           `
-            SELECT post_id, features
-            FROM ai_post_summaries
-            WHERE post_id = ANY($1::bigint[])
-              AND features IS NOT NULL
+            SELECT aps.post_id, aps.features,
+                   owner.is_frozen AS owner_is_frozen,
+                   (ub.blocker_id IS NOT NULL) AS owner_blocks_self
+            FROM ai_post_summaries aps
+            JOIN posts p ON p.id = aps.post_id
+            JOIN users owner ON owner.id = p.owned_by
+            LEFT JOIN user_blocks ub
+              ON ub.blocker_id = p.owned_by
+             AND ub.blockee_id = $2::bigint
+            WHERE aps.post_id = ANY($1::bigint[])
+              AND aps.features IS NOT NULL
           `,
-          [needFetch],
+          [needFetch, selfUserIdDec],
         );
         for (const row of r.rows) {
           if (!row.features) continue;
-          universe.push({ postId: BigInt(row.post_id), features: bufferToInt8Array(row.features) });
+          universe.push({
+            postId: BigInt(row.post_id),
+            features: bufferToInt8Array(row.features),
+            recommendationPenalty: getRecommendationPenalty(
+              row.owner_is_frozen === true,
+              row.owner_blocks_self === true,
+            ),
+          });
         }
       }
     }
@@ -1042,7 +1103,8 @@ export class AiPostsService {
         if (!vec || vec.length !== qVec.length) baseScore = Number.NEGATIVE_INFINITY;
         else {
           const simRaw = cosineSimilarity(qVec, vec);
-          baseScore = sigmoidalContrast((simRaw + 1) / 2, 5, 0.75);
+          baseScore =
+            sigmoidalContrast((simRaw + 1) / 2, 5, 0.75) * c.recommendationPenalty;
         }
       }
       candidates.push({ postId: c.postId, vec, baseScore, coarseRank, socialRank: 0 });

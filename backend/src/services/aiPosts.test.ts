@@ -73,6 +73,7 @@ type MockPostRow = {
 };
 
 type MockFollowRow = { followerId: string; followeeId: string };
+type MockUserBlockRow = { blockerId: string; blockeeId: string };
 
 type MockPostLikeRow = {
   postId: string;
@@ -88,6 +89,8 @@ class MockPgClient {
   postTags: MockPostTagRow[] = [];
   posts: MockPostRow[] = [];
   follows: MockFollowRow[] = [];
+  blocks: MockUserBlockRow[] = [];
+  frozenUserIds = new Set<string>();
   likes: MockPostLikeRow[] = [];
   queries: string[] = [];
 
@@ -468,6 +471,7 @@ class MockPgClient {
     ) {
       const tagArray = (params?.[0] as string[]) ?? [];
       const limitPerTag = typeof params?.[1] === "number" ? (params?.[1] as number) : 100;
+      const selfUserId = params?.[2] === null || params?.[2] === undefined ? null : String(params[2]);
 
       const postIndex = new Map<string, MockPostRow>();
       for (const p of this.posts) postIndex.set(p.postId, p);
@@ -508,6 +512,8 @@ class MockPgClient {
         table_count: number;
         is_root: boolean;
         user_id: string;
+        owner_is_frozen: boolean;
+        owner_blocks_self: boolean;
       }[] = [];
       for (const [key, srcs] of srcByKey.entries()) {
         const [tag, postId] = key.split("\t");
@@ -519,6 +525,10 @@ class MockPgClient {
           table_count: srcs.size,
           is_root: p.replyTo === null,
           user_id: p.userId,
+          owner_is_frozen: this.frozenUserIds.has(p.userId),
+          owner_blocks_self:
+            selfUserId !== null &&
+            this.blocks.some((b) => b.blockerId === p.userId && b.blockeeId === selfUserId),
         });
       }
 
@@ -539,6 +549,39 @@ class MockPgClient {
           if (!s) return null;
           if (requireNotNull && !s.hashes) return null;
           return { post_id: id, hashes: s.hashes };
+        })
+        .filter((x): x is NonNullable<typeof x> => x !== null);
+      return { rows };
+    }
+
+    if (
+      sql.startsWith("SELECT aps.post_id, aps.features") &&
+      sql.includes("FROM ai_post_summaries aps") &&
+      sql.includes("JOIN posts p ON p.id = aps.post_id") &&
+      sql.includes("JOIN users owner ON owner.id = p.owned_by") &&
+      sql.includes("LEFT JOIN user_blocks ub") &&
+      sql.includes("WHERE aps.post_id = ANY($1::bigint[])")
+    ) {
+      const arrParam = (params ?? []).find((p) => Array.isArray(p)) as unknown[] | undefined;
+      const ids = arrParam ? arrParam.map((x) => String(x)) : [];
+      const selfUserId = params?.[1] === null || params?.[1] === undefined ? null : String(params[1]);
+      const postIndex = new Map<string, MockPostRow>();
+      for (const post of this.posts) postIndex.set(post.postId, post);
+      const rows = ids
+        .map((id) => {
+          const summary = this.summaries.find((r) => r.postId === id);
+          const post = postIndex.get(id);
+          if (!summary?.features || !post) return null;
+          return {
+            post_id: id,
+            features: summary.features,
+            owner_is_frozen: this.frozenUserIds.has(post.userId),
+            owner_blocks_self:
+              selfUserId !== null &&
+              this.blocks.some(
+                (block) => block.blockerId === post.userId && block.blockeeId === selfUserId,
+              ),
+          };
         })
         .filter((x): x is NonNullable<typeof x> => x !== null);
       return { rows };
@@ -1196,6 +1239,78 @@ describe("AiPostsService RecommendPosts", () => {
       : [];
     expect(result.length).toBeGreaterThan(0);
     expect(result[0]).toBe(hex(121));
+  });
+
+  test("demotes posts whose owner blocks self or is frozen, including vector reranking", async () => {
+    const localPg = new MockPgClient();
+    const localService = new AiPostsService(localPg as unknown as Pool);
+    const selfUserHex = toHexStrFromDec(dec(777));
+    const selfUserDec = toDecStr(selfUserHex);
+    const ownerNormal = dec(900);
+    const ownerBlocked = dec(901);
+    const ownerFrozen = dec(902);
+    const ownerBoth = dec(903);
+    const candidates = [
+      { postId: dec(300), owner: ownerNormal },
+      { postId: dec(301), owner: ownerBlocked },
+      { postId: dec(302), owner: ownerFrozen },
+      { postId: dec(303), owner: ownerBoth },
+    ];
+
+    for (const candidate of candidates) {
+      localPg.posts.push({
+        postId: candidate.postId,
+        replyTo: null,
+        userId: candidate.owner,
+        publishedAt: "2025-01-01T00:00:00Z",
+      });
+      localPg.postTags.push({ postId: candidate.postId, name: "tech" });
+      localPg.summaries.push({
+        postId: candidate.postId,
+        summary: "s",
+        hashes: null,
+        features: Buffer.from(new Int8Array([10, 0, 0])),
+        sourceUpdatedAt: "2025-01-01T00:00:00Z",
+      });
+    }
+    localPg.blocks.push(
+      { blockerId: ownerBlocked, blockeeId: selfUserDec },
+      { blockerId: ownerBoth, blockeeId: selfUserDec },
+    );
+    localPg.frozenUserIds.add(ownerFrozen);
+    localPg.frozenUserIds.add(ownerBoth);
+
+    const input: RecommendPostsInput = {
+      tags: [seed("tech")],
+      keywordHashes: [],
+      selfUserId: selfUserHex,
+      limit: 20,
+      order: "desc",
+    };
+    const coarseResult = await localService.RecommendPosts(input);
+    const vectorResult = await localService.RecommendPosts({
+      ...input,
+      features: new Int8Array([10, 0, 0]),
+    });
+
+    for (const result of [coarseResult, vectorResult]) {
+      expect(result[0]).toBe(toHexStrFromDec(dec(300)));
+      expect(result.indexOf(toHexStrFromDec(dec(303)))).toBeGreaterThan(
+        result.indexOf(toHexStrFromDec(dec(301))),
+      );
+      expect(result.indexOf(toHexStrFromDec(dec(303)))).toBeGreaterThan(
+        result.indexOf(toHexStrFromDec(dec(302))),
+      );
+    }
+    expect(
+      localPg.queries.some(
+        (query) =>
+          query.includes("JOIN users owner ON owner.id = p.owned_by") &&
+          query.includes("LEFT JOIN user_blocks ub") &&
+          query.includes("ub.blocker_id = p.owned_by") &&
+          query.includes("ub.blockee_id = $3::bigint"),
+      ),
+    ).toBe(true);
   });
 
   test("promotionByLikesAlpha improves rank for liked post (relative)", async () => {

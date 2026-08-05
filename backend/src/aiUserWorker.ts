@@ -2,7 +2,7 @@ import { Config } from "./config";
 import { createLogger } from "./utils/logger";
 import { readPrompt, evaluateChatResponseAsJson } from "./utils/prompt";
 import { AuthService } from "./services/auth";
-import { connectPgWithRetry, connectRedisWithRetry } from "./utils/servers";
+import { connectPgWithRetry, connectRedisWithRetry, pgQuery } from "./utils/servers";
 import {
   decodeFeatures,
   encodeFeatures,
@@ -38,6 +38,7 @@ import type { UserLite, UserDetail } from "./models/user";
 import type { Post, PostDetail } from "./models/post";
 import type { Notification, NotificationPostRecord } from "./models/notification";
 import { WorkerLifecycle, runIfMain } from "./utils/workerRunner";
+import { hexToDec } from "./utils/format";
 
 const logger = createLogger({ file: "aiUserWorker" });
 export const lifecycle = new WorkerLifecycle();
@@ -710,7 +711,11 @@ async function fetchLatestPosts(sessionCookie: string): Promise<Post[]> {
   return parsed as Post[];
 }
 
-async function fetchPeerLatestPosts(sessionCookie: string, peerId: string): Promise<PostDetail[]> {
+async function fetchPeerLatestPosts(
+  sessionCookie: string,
+  aiUserId: string,
+  peerId: string,
+): Promise<PostDetail[]> {
   const params = new URLSearchParams();
   params.set("offset", "0");
   params.set("limit", String(Config.AI_USER_READ_PEER_POST_LIMIT));
@@ -723,8 +728,9 @@ async function fetchPeerLatestPosts(sessionCookie: string, peerId: string): Prom
   const ids = list
     .map((p) => p.id)
     .filter((id): id is string => typeof id === "string" && id.trim() !== "");
+  const viewableIds = await filterAiViewablePostIds(aiUserId, ids);
   const result: PostDetail[] = [];
-  for (const id of ids) {
+  for (const id of viewableIds) {
     try {
       const detail = await fetchPostById(sessionCookie, id);
       result.push(detail);
@@ -804,6 +810,70 @@ async function fetchPostById(sessionCookie: string, postId: string): Promise<Pos
     method: "GET",
   });
   return JSON.parse(res.body) as PostDetail;
+}
+
+type AiViewablePostRow = { post_id: string };
+
+async function filterAiViewablePostIds(
+  aiUserId: string,
+  postIds: readonly string[],
+): Promise<string[]> {
+  if (postIds.length === 0) return [];
+  if (!pgPool) throw new Error("PostgreSQL is not initialized");
+
+  const originalIdByDec = new Map<string, string>();
+  const postIdsDec: string[] = [];
+  for (const postId of postIds) {
+    try {
+      const dec = hexToDec(postId);
+      if (originalIdByDec.has(dec)) continue;
+      originalIdByDec.set(dec, postId);
+      postIdsDec.push(dec);
+    } catch {
+      logger.info(`Skip invalid post id while filtering AI view candidates postId=${postId}`);
+    }
+  }
+  if (postIdsDec.length === 0) return [];
+
+  const res = await pgQuery<AiViewablePostRow>(
+    pgPool,
+    `
+      SELECT candidate.post_id::text AS post_id
+      FROM unnest($1::bigint[]) WITH ORDINALITY AS candidate(post_id, ord)
+      JOIN posts p ON p.id = candidate.post_id
+      JOIN users owner ON owner.id = p.owned_by
+      LEFT JOIN user_blocks ub
+        ON ub.blocker_id = p.owned_by
+       AND ub.blockee_id = $2::bigint
+      WHERE owner.is_frozen = FALSE
+        AND ub.blocker_id IS NULL
+      ORDER BY candidate.ord
+    `,
+    [postIdsDec, hexToDec(aiUserId)],
+  );
+
+  return res.rows
+    .map((row) => originalIdByDec.get(row.post_id))
+    .filter((postId): postId is string => postId !== undefined);
+}
+
+async function fetchRecentPostIdsByOwner(
+  sessionCookie: string,
+  ownerId: string,
+  limit: number,
+): Promise<string[]> {
+  const params = new URLSearchParams();
+  params.set("offset", "0");
+  params.set("limit", String(limit));
+  params.set("order", "desc");
+  params.set("ownedBy", ownerId);
+  const res = await apiRequest(sessionCookie, `/posts?${params.toString()}`, { method: "GET" });
+  const parsed = JSON.parse(res.body) as unknown;
+  if (!Array.isArray(parsed)) return [];
+  return (parsed as Post[])
+    .map((post) => post.id)
+    .filter((postId): postId is string => typeof postId === "string" && postId.trim() !== "")
+    .slice(0, limit);
 }
 
 async function fetchOwnRecentPosts(
@@ -924,14 +994,12 @@ async function fetchFollowerRecentRandomPostIds(
   const postIds: string[] = [];
   for (const followerId of shuffledFollowerIds) {
     try {
-      const posts = await fetchOwnRecentPosts(
+      const ids = await fetchRecentPostIdsByOwner(
         sessionCookie,
         followerId,
         Config.AI_USER_READ_POST_LIMIT,
       );
-      for (const post of posts.slice(0, 3)) {
-        postIds.push(post.id);
-      }
+      postIds.push(...ids.slice(0, 3));
     } catch (e) {
       logger.info(
         `Failed to fetch recent posts followerId=${followerId} of userId=${userId}: ${e}`,
@@ -1044,9 +1112,11 @@ async function fetchPostsToRead(
       weightByPost.set(postId, weight);
     }
   }
+  const viewablePostIds = await filterAiViewablePostIds(userId, [...weightByPost.keys()]);
+  const viewablePostIdSet = new Set(viewablePostIds);
   const scoresByPost = new Map<string, number>();
   for (const [postId, weight] of weightByPost.entries()) {
-    if (weight <= 0) continue;
+    if (!viewablePostIdSet.has(postId) || weight <= 0) continue;
     scoresByPost.set(postId, Math.random() * weight);
   }
   const rankedByScore = [...scoresByPost.entries()].sort((a, b) => b[1] - a[1]);
@@ -1421,7 +1491,7 @@ async function createPeerImpression(
     }
   }
   const introText = truncateText(peer.introduction, Config.AI_USER_INTRO_TEXT_LIMIT);
-  const peerPosts = await fetchPeerLatestPosts(userSessionCookie, peer.id);
+  const peerPosts = await fetchPeerLatestPosts(userSessionCookie, profile.id, peer.id);
   const posts: { locale: string; summary: string; impression: string; tags: string[] }[] = [];
   for (const p of peerPosts) {
     const postLocale = p.locale || peer.locale;
@@ -1634,7 +1704,14 @@ async function createInterest(
     impression: string;
     tags: string[];
   }[] = [];
+  const viewablePostIds = new Set(
+    await filterAiViewablePostIds(
+      profile.id,
+      postImps.map((imp) => imp.postId),
+    ),
+  );
   for (const imp of postImps) {
+    if (!viewablePostIds.has(imp.postId)) continue;
     try {
       const post = await fetchPostById(userSessionCookie, imp.postId);
       const postLocale = (post.locale || post.ownerLocale || profile.locale).replaceAll(/_/g, "-");
