@@ -65,7 +65,7 @@ export default function PubServiceHeader({
 
   let countLikes = 0;
   let countReplies = 0;
-  if (post && session) {
+  if (post) {
     countLikes = post.countLikes;
     countReplies = post.countReplies;
   }
