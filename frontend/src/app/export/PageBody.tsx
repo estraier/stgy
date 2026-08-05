@@ -387,7 +387,7 @@ function renderProfileHtml(profile: UserDetail): string {
 }
 
 function renderReplyDigests(post: ExportPostDetail): string {
-  if (post.replyDigests.length === 0) return String(post.countReplies);
+  if (post.replyDigests.length === 0) return "";
 
   return `<div class="reply-digests">
     ${post.replyDigests
@@ -444,7 +444,12 @@ function renderPostHtml(post: ExportPostDetail): string {
         ${post.updatedAt ? `<tr><th>Updated at</th><td>${escapeHtml(post.updatedAt)}</td></tr>` : ""}
         ${post.publishedAt ? `<tr><th>Published at</th><td>${escapeHtml(post.publishedAt)}</td></tr>` : ""}
         <tr><th>Likes</th><td>${post.countLikes}</td></tr>
-        <tr><th>Replies</th><td>${renderReplyDigests(post)}</td></tr>
+        <tr><th>Replies</th><td>${post.countReplies}</td></tr>
+        ${
+          post.replyDigests.length > 0
+            ? `<tr><td class="reply-digests-cell" colspan="2">${renderReplyDigests(post)}</td></tr>`
+            : ""
+        }
       </table>
     </div>
   </main>
