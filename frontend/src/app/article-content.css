@@ -811,6 +811,7 @@ span[aria-label="Identicon"] > svg {
 }
 
 .markdown-body .stgy-link-snippet-link {
+  position: relative;
   display: block;
   padding: 0.65em 0.8em;
   overflow: hidden;
@@ -836,6 +837,18 @@ span[aria-label="Identicon"] > svg {
   max-height: 9em;
   object-fit: cover;
   border-radius: 0.25em;
+}
+
+.markdown-body .stgy-link-snippet-image-pending {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  min-height: 0;
+  max-height: none;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .markdown-body .stgy-link-snippet-body {

@@ -45,27 +45,31 @@ function renderReadySnippet(element: HTMLElement, snippet: LinkSnippet): void {
   const title = explicitCaption ?? snippet.title;
 
   anchor.replaceChildren();
-  anchor.classList.toggle(
-    "stgy-link-snippet-link-with-image",
-    snippet.imageUrl !== null,
-  );
+  anchor.classList.remove("stgy-link-snippet-link-with-image");
   if (snippet.imageUrl) {
     const image = document.createElement("img");
-    image.className = "stgy-link-snippet-image";
-    image.src = snippet.imageUrl;
+    image.className =
+      "stgy-link-snippet-image stgy-link-snippet-image-pending";
     image.alt = "";
     image.loading = "lazy";
     image.decoding = "async";
     image.referrerPolicy = "no-referrer";
+
     image.addEventListener(
-      "error",
+      "load",
       () => {
-        image.remove();
-        anchor.classList.remove("stgy-link-snippet-link-with-image");
+        image.classList.remove("stgy-link-snippet-image-pending");
+        anchor.classList.add("stgy-link-snippet-link-with-image");
       },
       { once: true },
     );
+    image.addEventListener("error", () => {
+      image.remove();
+      anchor.classList.remove("stgy-link-snippet-link-with-image");
+    });
+
     anchor.appendChild(image);
+    image.src = snippet.imageUrl;
   }
 
   const body = document.createElement("span");

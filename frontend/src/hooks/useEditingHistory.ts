@@ -33,6 +33,8 @@ export function useEditingHistory(params: {
   content: string;
 }) {
   const { ownerUserId, target, content } = params;
+  const targetType = target?.type;
+  const targetId = target?.id;
   const contentRef = useRef(content);
   contentRef.current = content;
   const sessionRef = useRef<EditingHistorySession | null>(null);
@@ -127,11 +129,11 @@ export function useEditingHistory(params: {
   }, []);
 
   useEffect(() => {
-    if (!ownerUserId || !target) return;
+    if (!ownerUserId || !targetType || !targetId) return;
 
     const session: EditingHistorySession = {
       ownerUserId,
-      target,
+      target: { type: targetType, id: targetId },
       openedAt: Date.now(),
       initialHashPromise: hashEditingHistoryContent(contentRef.current),
       lastSavedAt: null,
@@ -151,7 +153,7 @@ export function useEditingHistory(params: {
         void enqueuePersist(session, value, false).catch(() => undefined);
       }
     };
-  }, [ownerUserId, target?.type, target?.id, enqueuePersist, reportError]);
+  }, [ownerUserId, targetType, targetId, enqueuePersist, reportError]);
 
   useEffect(() => {
     const session = sessionRef.current;
@@ -193,7 +195,7 @@ export function useEditingHistory(params: {
         session.timer = null;
       }
     };
-  }, [content, ownerUserId, target?.type, target?.id, enqueuePersist]);
+  }, [content, ownerUserId, targetType, targetId, enqueuePersist]);
 
   useEffect(() => {
     const saveForDeparture = () => {

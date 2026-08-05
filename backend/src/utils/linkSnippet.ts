@@ -313,11 +313,15 @@ export function extractLinkSnippetMetadata(
   return { title, description, siteName, imageUrl };
 }
 
-export function makeMarkdownLinkSnippetImageUrl(
+export type MarkdownLinkSnippetImageUrls = {
+  imageUrl: string;
+};
+
+export function makeMarkdownLinkSnippetImageUrls(
   markdown: string,
   storagePublicUrlPrefix: string,
   imagesBucket: string,
-): string | null {
+): MarkdownLinkSnippetImageUrls | null {
   const featured = mdFindFeatured(parseMarkdown(markdown));
   if (!featured) return null;
 
@@ -331,14 +335,16 @@ export function makeMarkdownLinkSnippetImageUrl(
   if (src === null) return null;
 
   const match =
-    /^\/images\/([^\/?#]+)\/masters\/((?:[^\/?#]+\/)*)([^\/?#]+?)(?:\.[^\/?#]+)?(?:[?#].*)?$/u.exec(
+    /^\/images\/([^/?#]+)\/masters\/((?:[^/?#]+\/)*)([^/?#]+?)(\.[^/?#]+)(?:[?#].*)?$/u.exec(
       src,
     );
   if (!match || !storagePublicUrlPrefix.includes("{bucket}")) return null;
 
-  const key = `${match[1]}/thumbs/${match[2]}${match[3]}_image.webp`;
   const prefix = storagePublicUrlPrefix.replace(/\{bucket\}/gu, imagesBucket);
-  return `${prefix}${key.split("/").map(encodeURIComponent).join("/")}`;
+  const makePublicUrl = (key: string): string =>
+    `${prefix}${key.split("/").map(encodeURIComponent).join("/")}`;
+  const thumbnailKey = `${match[1]}/thumbs/${match[2]}${match[3]}_image.webp`;
+  return { imageUrl: makePublicUrl(thumbnailKey) };
 }
 
 export function makeMarkdownLinkSnippetMetadata(

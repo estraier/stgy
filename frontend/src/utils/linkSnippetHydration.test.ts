@@ -64,11 +64,40 @@ describe("link snippet hydration", () => {
     const image = anchor.querySelector<HTMLImageElement>(
       ".stgy-link-snippet-image",
     )!;
-    expect(anchor.classList).toContain("stgy-link-snippet-link-with-image");
+    expect(anchor.classList).not.toContain("stgy-link-snippet-link-with-image");
+    expect(image.classList).toContain("stgy-link-snippet-image-pending");
     expect(image.src).toBe("https://cdn.example.com/card.webp");
     expect(image.referrerPolicy).toBe("no-referrer");
     expect(image.loading).toBe("lazy");
     expect(image.decoding).toBe("async");
+
+    image.dispatchEvent(new Event("load"));
+    expect(anchor.classList).toContain("stgy-link-snippet-link-with-image");
+    expect(image.classList).not.toContain("stgy-link-snippet-image-pending");
+  });
+
+  test("keeps the text-only layout when the image fails", async () => {
+    document.body.innerHTML =
+      '<div class="stgy-link-snippet"><a class="stgy-link-snippet-link" href="/posts/1234567890ABCDEF">post</a></div>';
+    const hydrate = createLinkSnippetHydrator(async () =>
+      readySnippet({
+        imageUrl: "https://s3.stgy.jp/stgy-images/u1/thumbs/photo_image.webp",
+      }),
+    );
+
+    hydrate(document.body);
+    await flushPromises();
+
+    const anchor = document.querySelector<HTMLAnchorElement>(
+      ".stgy-link-snippet-link",
+    )!;
+    const image = anchor.querySelector<HTMLImageElement>(
+      ".stgy-link-snippet-image",
+    )!;
+    image.dispatchEvent(new Event("error"));
+
+    expect(anchor.querySelector(".stgy-link-snippet-image")).toBeNull();
+    expect(anchor.classList).not.toContain("stgy-link-snippet-link-with-image");
   });
 
   test("keeps an explicit caption as the title", async () => {

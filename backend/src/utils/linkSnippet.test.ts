@@ -4,7 +4,7 @@ import {
   decodeHtmlEntities,
   extractLinkSnippetMetadata,
   formatLinkSnippetDate,
-  makeMarkdownLinkSnippetImageUrl,
+  makeMarkdownLinkSnippetImageUrls,
   makeMarkdownLinkSnippetMetadata,
   normalizeLinkSnippetImageUrl,
   normalizeLinkSnippetUrl,
@@ -197,33 +197,35 @@ describe("link snippet text handling", () => {
 ![chosen](/images/0001000000000021/masters/797491/22222222bbbbbbbb.png){featured}
 `;
     expect(
-      makeMarkdownLinkSnippetImageUrl(
+      makeMarkdownLinkSnippetImageUrls(
         markdown,
         "https://s3.stgy.jp/{bucket}/",
         "stgy-images",
       ),
-    ).toBe(
-      "https://s3.stgy.jp/stgy-images/0001000000000021/thumbs/797491/22222222bbbbbbbb_image.webp",
-    );
+    ).toEqual({
+      imageUrl:
+        "https://s3.stgy.jp/stgy-images/0001000000000021/thumbs/797491/22222222bbbbbbbb_image.webp",
+    });
   });
 
   test("uses the first eligible uploaded image when no image is explicitly featured", () => {
     const markdown = `![first](/images/0001000000000021/masters/797491/11111111aaaaaaaa.webp)
 `;
     expect(
-      makeMarkdownLinkSnippetImageUrl(
+      makeMarkdownLinkSnippetImageUrls(
         markdown,
         "http://s3.localhost:8080/{bucket}/",
         "stgy-images",
       ),
-    ).toBe(
-      "http://s3.localhost:8080/stgy-images/0001000000000021/thumbs/797491/11111111aaaaaaaa_image.webp",
-    );
+    ).toEqual({
+      imageUrl:
+        "http://s3.localhost:8080/stgy-images/0001000000000021/thumbs/797491/11111111aaaaaaaa_image.webp",
+    });
   });
 
   test("does not expose non-uploaded featured media as an internal snippet image", () => {
     expect(
-      makeMarkdownLinkSnippetImageUrl(
+      makeMarkdownLinkSnippetImageUrls(
         "![static](/data/logo.png)",
         "https://s3.stgy.jp/{bucket}/",
         "stgy-images",

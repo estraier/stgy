@@ -12,7 +12,7 @@ import {
   type InternalLinkTarget,
   extractLinkSnippetMetadata,
   formatLinkSnippetDate,
-  makeMarkdownLinkSnippetImageUrl,
+  makeMarkdownLinkSnippetImageUrls,
   makeMarkdownLinkSnippetMetadata,
   normalizeLinkSnippetUrl,
   truncateSnippetText,
@@ -148,7 +148,7 @@ export class LinkSnippetsService {
         description: description || null,
         siteName: STGY_SITE_NAME,
         imageUrl: null,
-        fetchedAt: now,
+          fetchedAt: now,
         expiresAt: null,
         stale: false,
         refreshing: false,
@@ -181,7 +181,7 @@ export class LinkSnippetsService {
       siteName = pubConfig.siteName.trim() || STGY_SITE_NAME;
     }
 
-    const imageUrl = makeMarkdownLinkSnippetImageUrl(
+    const imageUrls = makeMarkdownLinkSnippetImageUrls(
       post.content,
       Config.STORAGE_S3_PUBLIC_URL_PREFIX,
       Config.MEDIA_BUCKET_IMAGES,
@@ -197,7 +197,7 @@ export class LinkSnippetsService {
           siteName,
           Config.LINK_SNIPPET_SITE_NAME_LENGTH_LIMIT,
         ) || null,
-      imageUrl,
+      imageUrl: imageUrls?.imageUrl ?? null,
       fetchedAt: now,
       expiresAt: null,
       stale: false,
@@ -238,7 +238,7 @@ export class LinkSnippetsService {
         description: null,
         siteName: truncateSnippetText(url.hostname, Config.LINK_SNIPPET_SITE_NAME_LENGTH_LIMIT) || null,
         imageUrl: null,
-        fetchedAt: null,
+          fetchedAt: null,
         expiresAt: null,
         stale: false,
         refreshing: true,
