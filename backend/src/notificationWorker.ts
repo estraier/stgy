@@ -2,19 +2,12 @@ import { Config } from "./config";
 import { createLogger } from "./utils/logger";
 import { Pool, PoolClient } from "pg";
 import { IdIssueService } from "./services/idIssue";
-import type {
-  AnyEventPayload,
-  FollowEventPayload,
-  LikeEventPayload,
-  ReplyEventPayload,
-  MentionEventPayload,
-} from "./models/eventLog";
+import type { AnyEventPayload } from "./models/eventLog";
 import { connectPgWithRetry, connectRedisWithRetry } from "./utils/servers";
 import { NotificationPostRecord, NotificationUserRecord } from "./models/notification";
 import { makeTextFromJsonSnippet } from "./utils/snippet";
 import { EventLogService } from "./services/eventLog";
 import { NotificationsService } from "./services/notifications";
-import { UsersService } from "./services/users";
 import { hexToDec, decToHex, formatDateInTz } from "./utils/format";
 import Redis from "ioredis";
 import { WorkerLifecycle, runIfMain } from "./utils/workerRunner";
@@ -23,11 +16,15 @@ const logger = createLogger({ file: "notificationWorker" });
 export const lifecycle = new WorkerLifecycle();
 const CONSUMER = "notification";
 let purgeScore = 0;
+let notificationPurgeInFlight = false;
 
 let lockPool: Pool | null = null;
 let lockClient: PoolClient | null = null;
 let globalPgPool: Pool | null = null;
 let globalRedisSub: Redis | null = null;
+let globalContext: WorkerContext | null = null;
+let flushTimer: NodeJS.Timeout | null = null;
+let shutdownPromise: Promise<void> | null = null;
 
 async function acquireSingletonLock(): Promise<{ pool: Pool; client: PoolClient }> {
   const pool = await connectPgWithRetry();
@@ -54,36 +51,22 @@ function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
 }
 
-function isSelfInteraction(payload: AnyEventPayload, recipientUserId: string): boolean {
+function eventActorUserId(payload: AnyEventPayload): string | null {
   switch (payload.type) {
     case "follow":
-      return payload.followerId === recipientUserId;
+      return payload.followerId;
     case "like":
-      return payload.userId === recipientUserId;
     case "reply":
-      return payload.userId === recipientUserId;
     case "mention":
-      return payload.userId === recipientUserId;
+      return payload.userId;
     default:
-      return false;
+      return null;
   }
 }
 
-async function getUserNickname(db: PoolClient, userIdHex: string): Promise<string> {
-  const u = await db.query<{ nickname: string }>(`SELECT nickname FROM users WHERE id = $1`, [
-    hexToDec(userIdHex),
-  ]);
-  return u.rows[0]?.nickname ?? "";
-}
-
-async function getPostSnippet(db: PoolClient, postId: string): Promise<string> {
-  const pres = await db.query<{ snippet: string }>(`SELECT snippet FROM posts WHERE id = $1`, [
-    hexToDec(postId),
-  ]);
-  const snippetJson = pres.rows[0]?.snippet ?? "";
-  return typeof snippetJson === "string" && snippetJson.length > 0
-    ? makeTextFromJsonSnippet(snippetJson)
-    : "";
+function isSelfInteraction(payload: AnyEventPayload, recipientUserId: string): boolean {
+  const actorUserId = eventActorUserId(payload);
+  return actorUserId !== null && actorUserId === recipientUserId;
 }
 
 function dedupeFollow(records: NotificationUserRecord[], cap: number): NotificationUserRecord[] {
@@ -198,419 +181,764 @@ function parseMentionPayload(raw: unknown): MentionPayload {
   return { countUsers, countPosts, records };
 }
 
+type FollowBufferEntry = { userId: string; ts: number };
+type PostBufferEntry = { userId: string; postId: string; ts: number };
+
+type BufferedFollow = {
+  type: "follow";
+  recipientUserId: string;
+  slot: "follow";
+  term: string;
+  latestEventMs: number;
+  entries: Map<string, FollowBufferEntry>;
+};
+
+type BufferedLike = {
+  type: "like";
+  recipientUserId: string;
+  slot: string;
+  term: string;
+  postId: string;
+  latestEventMs: number;
+  entries: Map<string, FollowBufferEntry>;
+};
+
+type BufferedReply = {
+  type: "reply";
+  recipientUserId: string;
+  slot: string;
+  term: string;
+  replyToPostId: string;
+  latestEventMs: number;
+  entries: Map<string, PostBufferEntry>;
+};
+
+type BufferedMention = {
+  type: "mention";
+  recipientUserId: string;
+  slot: string;
+  term: string;
+  postId: string;
+  latestEventMs: number;
+  entries: Map<string, PostBufferEntry>;
+};
+
+type BufferedNotification = BufferedFollow | BufferedLike | BufferedReply | BufferedMention;
+
+type PreparedEvent = {
+  payload: AnyEventPayload;
+  recipientUserId: string;
+  eventMs: number;
+  term: string;
+};
+
+type PartitionState = {
+  partitionId: number;
+  // This cursor may run ahead of the durable cursor while events remain buffered.
+  fetchCursor: bigint | null;
+  lastBufferedEventId: bigint | null;
+  bufferedEventCount: number;
+  firstBufferedAt: number | null;
+  notifications: Map<string, BufferedNotification>;
+  queue: Promise<void>;
+};
+
+type WorkerContext = {
+  pgPool: Pool;
+  eventLogService: EventLogService;
+  notificationsService: NotificationsService;
+};
+
+const partitionStates = new Map<number, PartitionState>();
+
+function getPartitionState(partitionId: number): PartitionState {
+  let state = partitionStates.get(partitionId);
+  if (!state) {
+    state = {
+      partitionId,
+      fetchCursor: null,
+      lastBufferedEventId: null,
+      bufferedEventCount: 0,
+      firstBufferedAt: null,
+      notifications: new Map(),
+      queue: Promise.resolve(),
+    };
+    partitionStates.set(partitionId, state);
+  }
+  return state;
+}
+
+function enqueuePartition<T>(state: PartitionState, task: () => Promise<T>): Promise<T> {
+  const run = state.queue.then(task, task);
+  state.queue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+function bufferKey(recipientUserId: string, slot: string, term: string): string {
+  return `${recipientUserId}|${slot}|${term}`;
+}
+
+function replaceLatest<T extends { ts: number }>(map: Map<string, T>, key: string, value: T): void {
+  const current = map.get(key);
+  if (!current || value.ts >= current.ts) map.set(key, value);
+}
+
+function addPreparedEvent(state: PartitionState, event: PreparedEvent): void {
+  const { payload, recipientUserId, eventMs, term } = event;
+  const ts = Math.floor(eventMs / 1000);
+
+  if (payload.type === "follow") {
+    const slot = "follow" as const;
+    const key = bufferKey(recipientUserId, slot, term);
+    let buffered = state.notifications.get(key) as BufferedFollow | undefined;
+    if (!buffered) {
+      buffered = {
+        type: "follow",
+        recipientUserId,
+        slot,
+        term,
+        latestEventMs: eventMs,
+        entries: new Map(),
+      };
+      state.notifications.set(key, buffered);
+    }
+    buffered.latestEventMs = Math.max(buffered.latestEventMs, eventMs);
+    replaceLatest(buffered.entries, payload.followerId, { userId: payload.followerId, ts });
+    return;
+  }
+
+  if (payload.type === "like") {
+    const slot = `like:${payload.postId}`;
+    const key = bufferKey(recipientUserId, slot, term);
+    let buffered = state.notifications.get(key) as BufferedLike | undefined;
+    if (!buffered) {
+      buffered = {
+        type: "like",
+        recipientUserId,
+        slot,
+        term,
+        postId: payload.postId,
+        latestEventMs: eventMs,
+        entries: new Map(),
+      };
+      state.notifications.set(key, buffered);
+    }
+    buffered.latestEventMs = Math.max(buffered.latestEventMs, eventMs);
+    replaceLatest(buffered.entries, payload.userId, { userId: payload.userId, ts });
+    return;
+  }
+
+  if (payload.type === "reply") {
+    const slot = `reply:${payload.replyToPostId}`;
+    const key = bufferKey(recipientUserId, slot, term);
+    let buffered = state.notifications.get(key) as BufferedReply | undefined;
+    if (!buffered) {
+      buffered = {
+        type: "reply",
+        recipientUserId,
+        slot,
+        term,
+        replyToPostId: payload.replyToPostId,
+        latestEventMs: eventMs,
+        entries: new Map(),
+      };
+      state.notifications.set(key, buffered);
+    }
+    buffered.latestEventMs = Math.max(buffered.latestEventMs, eventMs);
+    const entry = { userId: payload.userId, postId: payload.postId, ts };
+    replaceLatest(buffered.entries, `${entry.userId}|${entry.postId}`, entry);
+    return;
+  }
+
+  if (payload.type === "mention") {
+    const slot = `mention:${payload.postId}`;
+    const key = bufferKey(recipientUserId, slot, term);
+    let buffered = state.notifications.get(key) as BufferedMention | undefined;
+    if (!buffered) {
+      buffered = {
+        type: "mention",
+        recipientUserId,
+        slot,
+        term,
+        postId: payload.postId,
+        latestEventMs: eventMs,
+        entries: new Map(),
+      };
+      state.notifications.set(key, buffered);
+    }
+    buffered.latestEventMs = Math.max(buffered.latestEventMs, eventMs);
+    const entry = { userId: payload.userId, postId: payload.postId, ts };
+    replaceLatest(buffered.entries, `${entry.userId}|${entry.postId}`, entry);
+  }
+}
+
+async function queryAiUserIds(db: Pool, userIds: ReadonlySet<string>): Promise<Set<string>> {
+  if (userIds.size === 0) return new Set();
+  const ids = Array.from(userIds, hexToDec);
+  const res = await db.query<{ id: string }>(
+    `SELECT id
+       FROM users
+      WHERE id = ANY($1::bigint[])
+        AND ai_model IS NOT NULL`,
+    [ids],
+  );
+  return new Set(res.rows.map((row: { id: string }) => decToHex(row.id)));
+}
+
+async function queryPostOwners(db: Pool, postIds: ReadonlySet<string>): Promise<Map<string, string>> {
+  if (postIds.size === 0) return new Map();
+  const ids = Array.from(postIds, hexToDec);
+  const res = await db.query<{ id: string; owned_by: string }>(
+    `SELECT id, owned_by
+       FROM posts
+      WHERE id = ANY($1::bigint[])`,
+    [ids],
+  );
+  return new Map(res.rows.map((row: { id: string; owned_by: string }) => [decToHex(row.id), decToHex(row.owned_by)]));
+}
+
+async function queryUserTimezones(
+  db: Pool,
+  userIds: ReadonlySet<string>,
+): Promise<Map<string, string>> {
+  if (userIds.size === 0) return new Map();
+  const ids = Array.from(userIds, hexToDec);
+  const res = await db.query<{ id: string; timezone: string }>(
+    `SELECT id, timezone
+       FROM users
+      WHERE id = ANY($1::bigint[])`,
+    [ids],
+  );
+  return new Map(res.rows.map((row: { id: string; timezone: string }) => [decToHex(row.id), row.timezone]));
+}
+
+async function prepareBatch(
+  db: Pool,
+  rows: Array<{ event_id: string; payload: AnyEventPayload }>,
+): Promise<PreparedEvent[]> {
+  const actorIds = new Set<string>();
+  for (const row of rows) {
+    const actorUserId = eventActorUserId(row.payload);
+    if (actorUserId) actorIds.add(actorUserId);
+  }
+  const aiUserIds = await queryAiUserIds(db, actorIds);
+
+  const postIds = new Set<string>();
+  for (const row of rows) {
+    const actorUserId = eventActorUserId(row.payload);
+    if (!actorUserId || aiUserIds.has(actorUserId)) continue;
+    if (row.payload.type === "like") postIds.add(row.payload.postId);
+    if (row.payload.type === "reply") postIds.add(row.payload.replyToPostId);
+  }
+  const postOwners = await queryPostOwners(db, postIds);
+
+  const pending: Array<{
+    row: { event_id: string; payload: AnyEventPayload };
+    recipientUserId: string;
+  }> = [];
+  const recipientIds = new Set<string>();
+
+  for (const row of rows) {
+    const payload = row.payload;
+    const actorUserId = eventActorUserId(payload);
+    if (!actorUserId) {
+      logger.warn(
+        `[notificationworker] unknown payload type: ${(payload as { type?: string }).type}`,
+      );
+      continue;
+    }
+    if (aiUserIds.has(actorUserId)) continue;
+
+    let recipientUserId: string | undefined;
+    if (payload.type === "follow") recipientUserId = payload.followeeId;
+    else if (payload.type === "mention") recipientUserId = payload.mentionedUserId;
+    else if (payload.type === "like") recipientUserId = postOwners.get(payload.postId);
+    else if (payload.type === "reply") recipientUserId = postOwners.get(payload.replyToPostId);
+
+    if (!recipientUserId || isSelfInteraction(payload, recipientUserId)) continue;
+    pending.push({ row, recipientUserId });
+    recipientIds.add(recipientUserId);
+  }
+
+  const timezones = await queryUserTimezones(db, recipientIds);
+  return pending.map(({ row, recipientUserId }) => {
+    const eventMs = eventMsFromId(row.event_id);
+    const timezone = timezones.get(recipientUserId) ?? Config.DEFAULT_TIMEZONE;
+    return {
+      payload: row.payload,
+      recipientUserId,
+      eventMs,
+      term: formatDateInTz(eventMs, timezone),
+    };
+  });
+}
+
+async function bufferBatch(
+  state: PartitionState,
+  db: Pool,
+  rows: Array<{ event_id: string; payload: AnyEventPayload }>,
+): Promise<void> {
+  if (rows.length === 0) return;
+  const prepared = await prepareBatch(db, rows);
+  const lastEventId = BigInt(rows[rows.length - 1].event_id);
+
+  if (state.firstBufferedAt === null) state.firstBufferedAt = Date.now();
+  state.fetchCursor = lastEventId;
+  state.lastBufferedEventId = lastEventId;
+  state.bufferedEventCount += rows.length;
+  for (const event of prepared) addPreparedEvent(state, event);
+}
+
+async function loadNicknames(
+  db: PoolClient,
+  notifications: Iterable<BufferedNotification>,
+): Promise<Map<string, string>> {
+  const userIds = new Set<string>();
+  for (const notification of notifications) {
+    for (const entry of notification.entries.values()) userIds.add(entry.userId);
+  }
+  if (userIds.size === 0) return new Map();
+  const ids = Array.from(userIds, hexToDec);
+  const res = await db.query<{ id: string; nickname: string }>(
+    `SELECT id, nickname
+       FROM users
+      WHERE id = ANY($1::bigint[])`,
+    [ids],
+  );
+  return new Map(res.rows.map((row: { id: string; nickname: string }) => [decToHex(row.id), row.nickname]));
+}
+
+async function loadPostSnippets(
+  db: PoolClient,
+  notifications: Iterable<BufferedNotification>,
+): Promise<Map<string, string>> {
+  const postIds = new Set<string>();
+  for (const notification of notifications) {
+    if (notification.type === "like") postIds.add(notification.postId);
+    else if (notification.type === "reply") postIds.add(notification.replyToPostId);
+    else if (notification.type === "mention") postIds.add(notification.postId);
+  }
+  if (postIds.size === 0) return new Map();
+  const ids = Array.from(postIds, hexToDec);
+  const res = await db.query<{ id: string; snippet: string }>(
+    `SELECT id, snippet
+       FROM posts
+      WHERE id = ANY($1::bigint[])`,
+    [ids],
+  );
+  return new Map(
+    res.rows.map((row: { id: string; snippet: string }) => {
+      const snippet =
+        typeof row.snippet === "string" && row.snippet.length > 0
+          ? makeTextFromJsonSnippet(row.snippet)
+          : "";
+      return [decToHex(row.id), snippet];
+    }),
+  );
+}
+
 async function upsertFollow(
   db: PoolClient,
-  recipientUserIdHex: string,
-  term: string,
-  eventMs: number,
-  entry: { userId: string; ts: number },
+  notification: BufferedFollow,
+  nicknames: ReadonlyMap<string, string>,
 ): Promise<void> {
   const sel = await db.query<{ payload: unknown }>(
     `SELECT payload::json AS payload FROM notifications
       WHERE user_id = $1 AND slot = 'follow' AND term = $2
       FOR UPDATE`,
-    [hexToDec(recipientUserIdHex), term],
+    [hexToDec(notification.recipientUserId), notification.term],
   );
-  const updatedAtISO = new Date(eventMs).toISOString();
+  const updatedAtISO = new Date(notification.latestEventMs).toISOString();
   const cap = Config.NOTIFICATION_PAYLOAD_RECORDS;
+  const incoming = Array.from(notification.entries.values()).map<NotificationUserRecord>((entry) => ({
+    userId: entry.userId,
+    userNickname: nicknames.get(entry.userId) ?? "",
+    ts: entry.ts,
+  }));
 
   if (sel.rows.length === 0) {
-    const nick = await getUserNickname(db, entry.userId);
-    const rec: NotificationUserRecord = { userId: entry.userId, userNickname: nick, ts: entry.ts };
-    const payload: FollowPayload = { countUsers: 1, records: [rec] };
+    const payload: FollowPayload = {
+      countUsers: new Set(incoming.map((entry) => entry.userId)).size,
+      records: dedupeFollow(incoming, cap),
+    };
     await db.query(
       `INSERT INTO notifications (user_id, slot, term, is_read, payload, updated_at)
        VALUES ($1, 'follow', $2, FALSE, $3, $4)`,
-      [hexToDec(recipientUserIdHex), term, JSON.stringify(payload), updatedAtISO],
+      [
+        hexToDec(notification.recipientUserId),
+        notification.term,
+        JSON.stringify(payload),
+        updatedAtISO,
+      ],
     );
     return;
   }
 
   const current = parseFollowPayload(sel.rows[0].payload);
-  const existing = current.records.find((r) => r.userId === entry.userId);
-  const userNickname = existing ? existing.userNickname : await getUserNickname(db, entry.userId);
-  const rec: NotificationUserRecord = {
-    userId: entry.userId,
-    userNickname: userNickname,
-    ts: entry.ts,
-  };
-  const isNewUser = !existing;
-  const nextRecords = dedupeFollow([...current.records, rec], cap);
-  const nextPayload: FollowPayload = {
-    countUsers:
-      (current.countUsers ?? new Set(current.records.map((r) => r.userId)).size) +
-      (isNewUser ? 1 : 0),
-    records: nextRecords,
+  const existingUsers = new Set(current.records.map((record) => record.userId));
+  const addedUsers = new Set(
+    incoming.filter((record) => !existingUsers.has(record.userId)).map((record) => record.userId),
+  );
+  const payload: FollowPayload = {
+    countUsers: Math.max(current.countUsers, existingUsers.size) + addedUsers.size,
+    records: dedupeFollow([...current.records, ...incoming], cap),
   };
   await db.query(
     `UPDATE notifications
        SET is_read = FALSE, payload = $3, updated_at = $4
      WHERE user_id = $1 AND slot = 'follow' AND term = $2`,
-    [hexToDec(recipientUserIdHex), term, JSON.stringify(nextPayload), updatedAtISO],
+    [
+      hexToDec(notification.recipientUserId),
+      notification.term,
+      JSON.stringify(payload),
+      updatedAtISO,
+    ],
   );
 }
 
 async function upsertLike(
   db: PoolClient,
-  recipientUserIdHex: string,
-  postId: string,
-  term: string,
-  eventMs: number,
-  entry: { userId: string; ts: number },
+  notification: BufferedLike,
+  nicknames: ReadonlyMap<string, string>,
+  snippets: ReadonlyMap<string, string>,
 ): Promise<void> {
-  const slot = `like:${postId}`;
   const sel = await db.query<{ payload: unknown }>(
     `SELECT payload::json AS payload FROM notifications
       WHERE user_id = $1 AND slot = $2 AND term = $3
       FOR UPDATE`,
-    [hexToDec(recipientUserIdHex), slot, term],
+    [hexToDec(notification.recipientUserId), notification.slot, notification.term],
   );
-  const updatedAtISO = new Date(eventMs).toISOString();
+  const updatedAtISO = new Date(notification.latestEventMs).toISOString();
   const cap = Config.NOTIFICATION_PAYLOAD_RECORDS;
+  const current = sel.rows.length > 0 ? parseLikePayload(sel.rows[0].payload) : null;
+  const postSnippet = current?.records[0]?.postSnippet ?? snippets.get(notification.postId) ?? "";
+  const incoming = Array.from(notification.entries.values()).map<NotificationPostRecord>((entry) => ({
+    userId: entry.userId,
+    userNickname: nicknames.get(entry.userId) ?? "",
+    postId: notification.postId,
+    postSnippet,
+    ts: entry.ts,
+  }));
 
-  if (sel.rows.length === 0) {
-    const nick = await getUserNickname(db, entry.userId);
-    const snippet = await getPostSnippet(db, postId);
-    const rec: NotificationPostRecord = {
-      userId: entry.userId,
-      userNickname: nick,
-      postId,
-      postSnippet: snippet,
-      ts: entry.ts,
+  if (!current) {
+    const payload: LikePayload = {
+      countUsers: new Set(incoming.map((entry) => entry.userId)).size,
+      records: dedupePerPost(incoming, cap),
     };
-    const payload: LikePayload = { countUsers: 1, records: [rec] };
     await db.query(
       `INSERT INTO notifications (user_id, slot, term, is_read, payload, updated_at)
        VALUES ($1, $2, $3, FALSE, $4, $5)`,
-      [hexToDec(recipientUserIdHex), slot, term, JSON.stringify(payload), updatedAtISO],
+      [
+        hexToDec(notification.recipientUserId),
+        notification.slot,
+        notification.term,
+        JSON.stringify(payload),
+        updatedAtISO,
+      ],
     );
     return;
   }
 
-  const current = parseLikePayload(sel.rows[0].payload);
-  const records = current.records;
-  const existingUser = records.find((r) => r.userId === entry.userId);
-  const userNickname = existingUser
-    ? existingUser.userNickname
-    : await getUserNickname(db, entry.userId);
-  const postSnippet = records[0]?.postSnippet ?? (await getPostSnippet(db, postId));
-  const rec: NotificationPostRecord = {
-    userId: entry.userId,
-    userNickname,
-    postId,
-    postSnippet,
-    ts: entry.ts,
-  };
-  const isNewUser = !existingUser;
-  const nextRecords = dedupePerPost([...records, rec], cap);
-  const nextPayload: LikePayload = {
-    countUsers:
-      (current.countUsers ?? new Set(records.map((r) => r.userId)).size) + (isNewUser ? 1 : 0),
-    records: nextRecords,
+  const existingUsers = new Set(current.records.map((record) => record.userId));
+  const addedUsers = new Set(
+    incoming.filter((record) => !existingUsers.has(record.userId)).map((record) => record.userId),
+  );
+  const payload: LikePayload = {
+    countUsers: Math.max(current.countUsers, existingUsers.size) + addedUsers.size,
+    records: dedupePerPost([...current.records, ...incoming], cap),
   };
   await db.query(
     `UPDATE notifications
        SET is_read = FALSE, payload = $4, updated_at = $5
      WHERE user_id = $1 AND slot = $2 AND term = $3`,
-    [hexToDec(recipientUserIdHex), slot, term, JSON.stringify(nextPayload), updatedAtISO],
+    [
+      hexToDec(notification.recipientUserId),
+      notification.slot,
+      notification.term,
+      JSON.stringify(payload),
+      updatedAtISO,
+    ],
   );
 }
 
 async function upsertReply(
   db: PoolClient,
-  recipientUserIdHex: string,
-  replyToPostId: string,
-  term: string,
-  eventMs: number,
-  entry: { userId: string; postId: string; ts: number },
+  notification: BufferedReply,
+  nicknames: ReadonlyMap<string, string>,
+  snippets: ReadonlyMap<string, string>,
 ): Promise<void> {
-  const slot = `reply:${replyToPostId}`;
   const sel = await db.query<{ payload: unknown }>(
     `SELECT payload::json AS payload FROM notifications
       WHERE user_id = $1 AND slot = $2 AND term = $3
       FOR UPDATE`,
-    [hexToDec(recipientUserIdHex), slot, term],
+    [hexToDec(notification.recipientUserId), notification.slot, notification.term],
   );
-  const updatedAtISO = new Date(eventMs).toISOString();
+  const updatedAtISO = new Date(notification.latestEventMs).toISOString();
   const cap = Config.NOTIFICATION_PAYLOAD_RECORDS;
+  const current = sel.rows.length > 0 ? parseReplyPayload(sel.rows[0].payload) : null;
+  const postSnippet =
+    current?.records[0]?.postSnippet ?? snippets.get(notification.replyToPostId) ?? "";
+  const incoming = Array.from(notification.entries.values()).map<NotificationPostRecord>((entry) => ({
+    userId: entry.userId,
+    userNickname: nicknames.get(entry.userId) ?? "",
+    postId: entry.postId,
+    postSnippet,
+    ts: entry.ts,
+  }));
 
-  if (sel.rows.length === 0) {
-    const nick = await getUserNickname(db, entry.userId);
-    const snippet = await getPostSnippet(db, replyToPostId);
-    const rec: NotificationPostRecord = {
-      userId: entry.userId,
-      userNickname: nick,
-      postId: entry.postId,
-      postSnippet: snippet,
-      ts: entry.ts,
+  if (!current) {
+    const payload: ReplyPayload = {
+      countUsers: new Set(incoming.map((entry) => entry.userId)).size,
+      countPosts: new Set(incoming.map((entry) => entry.postId)).size,
+      records: dedupePerPost(incoming, cap),
     };
-    const payload: ReplyPayload = { countUsers: 1, countPosts: 1, records: [rec] };
     await db.query(
       `INSERT INTO notifications (user_id, slot, term, is_read, payload, updated_at)
        VALUES ($1, $2, $3, FALSE, $4, $5)`,
-      [hexToDec(recipientUserIdHex), slot, term, JSON.stringify(payload), updatedAtISO],
+      [
+        hexToDec(notification.recipientUserId),
+        notification.slot,
+        notification.term,
+        JSON.stringify(payload),
+        updatedAtISO,
+      ],
     );
     return;
   }
 
-  const current = parseReplyPayload(sel.rows[0].payload);
-  const records = current.records;
-  const existingUser = records.find((r) => r.userId === entry.userId);
-  const userNickname = existingUser
-    ? existingUser.userNickname
-    : await getUserNickname(db, entry.userId);
-  const postSnippet = records[0]?.postSnippet ?? (await getPostSnippet(db, replyToPostId));
-
-  const rec: NotificationPostRecord = {
-    userId: entry.userId,
-    userNickname,
-    postId: entry.postId,
-    postSnippet,
-    ts: entry.ts,
-  };
-
-  const userSet = new Set(records.map((r) => r.userId));
-  const postSet = new Set(records.map((r) => r.postId));
-  const isNewUser = !userSet.has(entry.userId);
-  const isNewPost = !postSet.has(entry.postId);
-
-  const nextRecords = dedupePerPost([...records, rec], cap);
-  const nextPayload: ReplyPayload = {
-    countUsers: (current.countUsers ?? userSet.size) + (isNewUser ? 1 : 0),
-    countPosts: (current.countPosts ?? postSet.size) + (isNewPost ? 1 : 0),
-    records: nextRecords,
+  const existingUsers = new Set(current.records.map((record) => record.userId));
+  const existingPosts = new Set(current.records.map((record) => record.postId));
+  const addedUsers = new Set(
+    incoming.filter((record) => !existingUsers.has(record.userId)).map((record) => record.userId),
+  );
+  const addedPosts = new Set(
+    incoming.filter((record) => !existingPosts.has(record.postId)).map((record) => record.postId),
+  );
+  const payload: ReplyPayload = {
+    countUsers: Math.max(current.countUsers, existingUsers.size) + addedUsers.size,
+    countPosts: Math.max(current.countPosts, existingPosts.size) + addedPosts.size,
+    records: dedupePerPost([...current.records, ...incoming], cap),
   };
   await db.query(
     `UPDATE notifications
        SET is_read = FALSE, payload = $4, updated_at = $5
      WHERE user_id = $1 AND slot = $2 AND term = $3`,
-    [hexToDec(recipientUserIdHex), slot, term, JSON.stringify(nextPayload), updatedAtISO],
+    [
+      hexToDec(notification.recipientUserId),
+      notification.slot,
+      notification.term,
+      JSON.stringify(payload),
+      updatedAtISO,
+    ],
   );
 }
 
 async function upsertMention(
   db: PoolClient,
-  recipientUserIdHex: string,
-  postId: string,
-  term: string,
-  eventMs: number,
-  entry: { userId: string; ts: number },
+  notification: BufferedMention,
+  nicknames: ReadonlyMap<string, string>,
+  snippets: ReadonlyMap<string, string>,
 ): Promise<void> {
-  const slot = `mention:${postId}`;
   const sel = await db.query<{ payload: unknown }>(
     `SELECT payload::json AS payload FROM notifications
       WHERE user_id = $1 AND slot = $2 AND term = $3
       FOR UPDATE`,
-    [hexToDec(recipientUserIdHex), slot, term],
+    [hexToDec(notification.recipientUserId), notification.slot, notification.term],
   );
-  const updatedAtISO = new Date(eventMs).toISOString();
+  const updatedAtISO = new Date(notification.latestEventMs).toISOString();
   const cap = Config.NOTIFICATION_PAYLOAD_RECORDS;
+  const current = sel.rows.length > 0 ? parseMentionPayload(sel.rows[0].payload) : null;
+  const postSnippet = current?.records[0]?.postSnippet ?? snippets.get(notification.postId) ?? "";
+  const incoming = Array.from(notification.entries.values()).map<NotificationPostRecord>((entry) => ({
+    userId: entry.userId,
+    userNickname: nicknames.get(entry.userId) ?? "",
+    postId: entry.postId,
+    postSnippet,
+    ts: entry.ts,
+  }));
 
-  if (sel.rows.length === 0) {
-    const nick = await getUserNickname(db, entry.userId);
-    const snippet = await getPostSnippet(db, postId);
-    const rec: NotificationPostRecord = {
-      userId: entry.userId,
-      userNickname: nick,
-      postId,
-      postSnippet: snippet,
-      ts: entry.ts,
+  if (!current) {
+    const payload: MentionPayload = {
+      countUsers: new Set(incoming.map((entry) => entry.userId)).size,
+      countPosts: new Set(incoming.map((entry) => entry.postId)).size,
+      records: dedupePerPost(incoming, cap),
     };
-    const payload: MentionPayload = { countUsers: 1, countPosts: 1, records: [rec] };
     await db.query(
       `INSERT INTO notifications (user_id, slot, term, is_read, payload, updated_at)
        VALUES ($1, $2, $3, FALSE, $4, $5)`,
-      [hexToDec(recipientUserIdHex), slot, term, JSON.stringify(payload), updatedAtISO],
+      [
+        hexToDec(notification.recipientUserId),
+        notification.slot,
+        notification.term,
+        JSON.stringify(payload),
+        updatedAtISO,
+      ],
     );
     return;
   }
 
-  const current = parseMentionPayload(sel.rows[0].payload);
-  const records = current.records;
-  const existingUser = records.find((r) => r.userId === entry.userId);
-
-  const userNickname = existingUser
-    ? existingUser.userNickname
-    : await getUserNickname(db, entry.userId);
-  const postSnippet = records[0]?.postSnippet ?? (await getPostSnippet(db, postId));
-
-  const rec: NotificationPostRecord = {
-    userId: entry.userId,
-    userNickname,
-    postId,
-    postSnippet,
-    ts: entry.ts,
+  const existingUsers = new Set(current.records.map((record) => record.userId));
+  const existingPosts = new Set(current.records.map((record) => record.postId));
+  const addedUsers = new Set(
+    incoming.filter((record) => !existingUsers.has(record.userId)).map((record) => record.userId),
+  );
+  const addedPosts = new Set(
+    incoming.filter((record) => !existingPosts.has(record.postId)).map((record) => record.postId),
+  );
+  const payload: MentionPayload = {
+    countUsers: Math.max(current.countUsers, existingUsers.size) + addedUsers.size,
+    countPosts: Math.max(current.countPosts, existingPosts.size) + addedPosts.size,
+    records: dedupePerPost([...current.records, ...incoming], cap),
   };
-
-  const userSet = new Set(records.map((r) => r.userId));
-  const postSet = new Set(records.map((r) => r.postId));
-  const isNewUser = !userSet.has(entry.userId);
-  const isNewPost = !postSet.has(postId);
-
-  const nextRecords = dedupePerPost([...records, rec], cap);
-  const nextPayload: MentionPayload = {
-    countUsers: (current.countUsers ?? userSet.size) + (isNewUser ? 1 : 0),
-    countPosts: (current.countPosts ?? postSet.size) + (isNewPost ? 1 : 0),
-    records: nextRecords,
-  };
-
   await db.query(
     `UPDATE notifications
        SET is_read = FALSE, payload = $4, updated_at = $5
      WHERE user_id = $1 AND slot = $2 AND term = $3`,
-    [hexToDec(recipientUserIdHex), slot, term, JSON.stringify(nextPayload), updatedAtISO],
+    [
+      hexToDec(notification.recipientUserId),
+      notification.slot,
+      notification.term,
+      JSON.stringify(payload),
+      updatedAtISO,
+    ],
   );
 }
 
-async function resolveRecipientUserId(
-  db: PoolClient,
-  payload: AnyEventPayload,
-): Promise<string | null> {
-  if (payload.type === "follow") return payload.followeeId;
+async function flushPartition(context: WorkerContext, state: PartitionState): Promise<number> {
+  const lastEventId = state.lastBufferedEventId;
+  if (lastEventId === null || state.bufferedEventCount === 0) return 0;
 
-  if (payload.type === "like") {
-    const res = await db.query<{ owned_by: string }>(`SELECT owned_by FROM posts WHERE id = $1`, [
-      hexToDec(payload.postId),
-    ]);
-    return res.rows[0]?.owned_by ? (decToHex(res.rows[0].owned_by) as string) : null;
+  const notifications = Array.from(state.notifications.values());
+  const client = await context.pgPool.connect();
+  try {
+    await client.query("BEGIN");
+    const nicknames = await loadNicknames(client, notifications);
+    const snippets = await loadPostSnippets(client, notifications);
+
+    for (const notification of notifications) {
+      if (notification.type === "follow") {
+        await upsertFollow(client, notification, nicknames);
+      } else if (notification.type === "like") {
+        await upsertLike(client, notification, nicknames, snippets);
+      } else if (notification.type === "reply") {
+        await upsertReply(client, notification, nicknames, snippets);
+      } else {
+        await upsertMention(client, notification, nicknames, snippets);
+      }
+    }
+
+    await context.eventLogService.saveCursor(
+      client,
+      CONSUMER,
+      state.partitionId,
+      lastEventId,
+    );
+    await client.query("COMMIT");
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {}
+    throw error;
+  } finally {
+    client.release();
   }
 
-  if (payload.type === "reply") {
-    const res = await db.query<{ owned_by: string }>(`SELECT owned_by FROM posts WHERE id = $1`, [
-      hexToDec(payload.replyToPostId),
-    ]);
-    return res.rows[0]?.owned_by ? (decToHex(res.rows[0].owned_by) as string) : null;
-  }
-
-  if (payload.type === "mention") {
-    return payload.mentionedUserId;
-  }
-
-  return null;
+  // Clear only after both notification updates and the durable cursor have committed.
+  const committed = state.bufferedEventCount;
+  state.lastBufferedEventId = null;
+  state.bufferedEventCount = 0;
+  state.firstBufferedAt = null;
+  state.notifications.clear();
+  return committed;
 }
 
-async function processFollowEvent(
-  db: PoolClient,
-  recipientUserId: string,
-  payload: FollowEventPayload,
-  eventMs: number,
-  term: string,
-): Promise<void> {
-  await upsertFollow(db, recipientUserId, term, eventMs, {
-    userId: payload.followerId,
-    ts: Math.floor(eventMs / 1000),
-  });
+function isFlushDue(state: PartitionState, now: number = Date.now()): boolean {
+  if (state.bufferedEventCount === 0) return false;
+  if (state.bufferedEventCount >= Config.NOTIFICATION_BUFFER_MAX_EVENTS) return true;
+  return (
+    state.firstBufferedAt !== null &&
+    now - state.firstBufferedAt >= Config.NOTIFICATION_BUFFER_FLUSH_MS
+  );
 }
 
-async function processLikeEvent(
-  db: PoolClient,
-  recipientUserId: string,
-  payload: LikeEventPayload,
-  eventMs: number,
-  term: string,
-): Promise<void> {
-  await upsertLike(db, recipientUserId, payload.postId, term, eventMs, {
-    userId: payload.userId,
-    ts: Math.floor(eventMs / 1000),
-  });
-}
-
-async function processReplyEvent(
-  db: PoolClient,
-  recipientUserId: string,
-  payload: ReplyEventPayload,
-  eventMs: number,
-  term: string,
-): Promise<void> {
-  await upsertReply(db, recipientUserId, payload.replyToPostId, term, eventMs, {
-    userId: payload.userId,
-    postId: payload.postId,
-    ts: Math.floor(eventMs / 1000),
-  });
-}
-
-async function processMentionEvent(
-  db: PoolClient,
-  recipientUserId: string,
-  payload: MentionEventPayload,
-  eventMs: number,
-  term: string,
-): Promise<void> {
-  await upsertMention(db, recipientUserId, payload.postId, term, eventMs, {
-    userId: payload.userId,
-    ts: Math.floor(eventMs / 1000),
-  });
-}
-
-async function processPartition(
-  eventLogService: EventLogService,
-  usersService: UsersService,
-  pgPool: Pool,
+async function runPostFlushMaintenance(
+  context: WorkerContext,
   partitionId: number,
-): Promise<number> {
-  const cursor = await eventLogService.loadCursor(CONSUMER, partitionId);
-  const batch = await eventLogService.fetchBatch(
-    partitionId,
-    cursor,
-    Config.NOTIFICATION_BATCH_SIZE,
-  );
-  if (batch.length === 0) {
-    return 0;
+  committed: number,
+): Promise<void> {
+  if (committed <= 0) return;
+  purgeScore += committed;
+  try {
+    await context.eventLogService.purgeOldRecords(partitionId);
+  } catch (error) {
+    logger.error(`[notificationworker] purge event logs error (p=${partitionId}): ${error}`);
   }
 
-  logger.info(
-    `[notificationworker] processing: p=${partitionId}, c=${cursor}, count=${batch.length}`,
-  );
+  if (purgeScore < 1000 || notificationPurgeInFlight) return;
+  purgeScore = 0;
+  notificationPurgeInFlight = true;
+  try {
+    await context.notificationsService.purgeOldRecords();
+  } catch (error) {
+    logger.error(`[notificationworker] purge notifications error: ${error}`);
+  } finally {
+    notificationPurgeInFlight = false;
+  }
+}
 
-  let processed = 0;
+async function flushPartitionAndMaintain(
+  context: WorkerContext,
+  state: PartitionState,
+): Promise<number> {
+  const committed = await flushPartition(context, state);
+  await runPostFlushMaintenance(context, state.partitionId, committed);
+  return committed;
+}
 
-  for (const row of batch) {
+async function ensureFetchCursor(context: WorkerContext, state: PartitionState): Promise<void> {
+  if (state.fetchCursor !== null) return;
+  state.fetchCursor = await context.eventLogService.loadCursor(CONSUMER, state.partitionId);
+}
+
+async function drainPartition(context: WorkerContext, state: PartitionState): Promise<number> {
+  await ensureFetchCursor(context, state);
+  let read = 0;
+
+  for (;;) {
     if (!lifecycle.isActive) break;
 
-    const eid = BigInt(row.event_id);
-    const client = await pgPool.connect();
-    try {
-      await client.query("BEGIN");
-      const payload = row.payload;
-      const recipient = await resolveRecipientUserId(client, payload);
+    if (isFlushDue(state)) {
+      await flushPartitionAndMaintain(context, state);
+    }
+    if (state.bufferedEventCount >= Config.NOTIFICATION_BUFFER_MAX_EVENTS) break;
 
-      if (!recipient || isSelfInteraction(payload, recipient)) {
-        await eventLogService.saveCursor(client, CONSUMER, partitionId, eid);
-        await client.query("COMMIT");
-        processed++;
-        continue;
-      }
+    const batch = await context.eventLogService.fetchBatch(
+      state.partitionId,
+      state.fetchCursor ?? 0n,
+      Config.NOTIFICATION_BATCH_SIZE,
+    );
+    if (batch.length === 0) break;
 
-      const ms = eventMsFromId(eid);
-      const tz = (await usersService.getUserTimezone(recipient)) ?? Config.DEFAULT_TIMEZONE;
-      const term = formatDateInTz(ms, tz);
+    logger.info(
+      `[notificationworker] buffering: p=${state.partitionId}, c=${state.fetchCursor}, count=${batch.length}`,
+    );
+    await bufferBatch(state, context.pgPool, batch);
+    read += batch.length;
 
-      if (payload.type === "reply") {
-        await processReplyEvent(client, recipient, payload, ms, term);
-      } else if (payload.type === "like") {
-        await processLikeEvent(client, recipient, payload, ms, term);
-      } else if (payload.type === "follow") {
-        await processFollowEvent(client, recipient, payload, ms, term);
-      } else if (payload.type === "mention") {
-        await processMentionEvent(client, recipient, payload, ms, term);
-      } else {
-        logger.warn(
-          `[notificationworker] unknown payload type: ${(payload as { type?: string }).type}`,
-        );
-      }
-
-      await eventLogService.saveCursor(client, CONSUMER, partitionId, eid);
-      await client.query("COMMIT");
-      processed++;
-    } catch (e) {
-      await client.query("ROLLBACK");
-      throw e;
-    } finally {
-      client.release();
+    if (isFlushDue(state)) {
+      await flushPartitionAndMaintain(context, state);
     }
   }
 
-  return processed;
+  return read;
+}
+
+async function drain(context: WorkerContext, partitionId: number): Promise<number> {
+  const state = getPartitionState(partitionId);
+  return enqueuePartition(state, () => drainPartition(context, state));
 }
 
 function assignedPartitions(workerIndex: number): number[] {
@@ -621,50 +949,44 @@ function assignedPartitions(workerIndex: number): number[] {
   return out;
 }
 
-async function drain(
-  eventLogService: EventLogService,
-  pgPool: Pool,
-  partitionId: number,
-  notificationsService: NotificationsService,
-  usersService: UsersService,
-): Promise<void> {
-  for (;;) {
-    if (!lifecycle.isActive) break;
-    const n = await processPartition(eventLogService, usersService, pgPool, partitionId);
-    if (n === 0) break;
-    purgeScore += n;
-    try {
-      await eventLogService.purgeOldRecords(partitionId);
-    } catch (e) {
-      logger.error(`[notificationworker] purge event logs error (p=${partitionId}): ${e}`);
-    }
+async function flushDueBuffers(context: WorkerContext): Promise<void> {
+  const now = Date.now();
+  const tasks: Promise<unknown>[] = [];
+  for (const state of partitionStates.values()) {
+    if (!isFlushDue(state, now)) continue;
+    tasks.push(
+      enqueuePartition(state, () => flushPartitionAndMaintain(context, state)).catch((error) => {
+        logger.error(
+          `[notificationworker] periodic flush error (p=${state.partitionId}): ${error}`,
+        );
+      }),
+    );
   }
-  if (purgeScore >= 1000) {
-    purgeScore = 0;
-    try {
-      await notificationsService.purgeOldRecords();
-    } catch (e) {
-      logger.error(`[notificationworker] purge notifications error: ${e}`);
-    }
-  }
+  await Promise.all(tasks);
+}
+
+async function flushAllBuffers(context: WorkerContext): Promise<void> {
+  const tasks = Array.from(partitionStates.values(), (state) =>
+    enqueuePartition(state, () => flushPartitionAndMaintain(context, state)).catch((error) => {
+      logger.error(`[notificationworker] final flush error (p=${state.partitionId}): ${error}`);
+    }),
+  );
+  await Promise.all(tasks);
 }
 
 async function runWorker(
   workerIndex: number,
-  pgPool: Pool,
   redisSub: Redis,
-  eventLogService: EventLogService,
-  notificationsService: NotificationsService,
-  usersService: UsersService,
+  context: WorkerContext,
 ): Promise<void> {
   logger.info(`STGY notification worker ${workerIndex} started`);
 
   const parts = assignedPartitions(workerIndex);
-  for (const p of parts) {
+  for (const partitionId of parts) {
     try {
-      await drain(eventLogService, pgPool, p, notificationsService, usersService);
-    } catch (e) {
-      logger.error(`[notificationworker] drain error: ${e}`);
+      await drain(context, partitionId);
+    } catch (error) {
+      logger.error(`[notificationworker] drain error: ${error}`);
     }
   }
 
@@ -674,26 +996,26 @@ async function runWorker(
 
   await redisSub.subscribe(channel);
 
-  redisSub.on("message", async (chan, msg) => {
-    if (chan !== channel) return;
-    const p = Number.parseInt(String(msg), 10);
-    if (!Number.isInteger(p)) return;
-    if (!parts.includes(p)) return;
-    if (inFlight.has(p)) {
-      pending.add(p);
+  redisSub.on("message", async (chan: string, msg: string) => {
+    if (chan !== channel || !lifecycle.isActive) return;
+    const partitionId = Number.parseInt(String(msg), 10);
+    if (!Number.isInteger(partitionId) || !parts.includes(partitionId)) return;
+    if (inFlight.has(partitionId)) {
+      pending.add(partitionId);
       return;
     }
-    inFlight.add(p);
-    (async () => {
+    inFlight.add(partitionId);
+    void (async () => {
       try {
         for (;;) {
           if (!lifecycle.isActive) break;
-          await drain(eventLogService, pgPool, p, notificationsService, usersService);
-          if (!pending.delete(p)) break;
+          await drain(context, partitionId);
+          if (!pending.delete(partitionId)) break;
         }
-      } catch {
+      } catch (error) {
+        logger.error(`[notificationworker] drain error (p=${partitionId}): ${error}`);
       } finally {
-        inFlight.delete(p);
+        inFlight.delete(partitionId);
       }
     })();
   });
@@ -711,46 +1033,67 @@ export async function startNotificationWorker() {
 
   const eventLogService = new EventLogService(globalPgPool, globalRedisSub);
   const notificationsService = new NotificationsService(globalPgPool);
-  const usersService = new UsersService(globalPgPool, globalRedisSub);
+  globalContext = {
+    pgPool: globalPgPool,
+    eventLogService,
+    notificationsService,
+  };
+
+  const flushInterval = Math.max(100, Config.NOTIFICATION_BUFFER_FLUSH_MS);
+  flushTimer = setInterval(() => {
+    if (!globalContext) return;
+    void flushDueBuffers(globalContext).catch((error) => {
+      logger.error(`[notificationworker] flush timer error: ${error}`);
+    });
+  }, flushInterval);
 
   const runners: Promise<void>[] = [];
   for (let i = 0; i < Config.NOTIFICATION_WORKERS; i++) {
-    runners.push(
-      runWorker(
-        i,
-        globalPgPool,
-        globalRedisSub,
-        eventLogService,
-        notificationsService,
-        usersService,
-      ),
-    );
+    runners.push(runWorker(i, globalRedisSub, globalContext));
   }
 
   await Promise.all(runners);
   logger.info("STGY notification worker initial drain complete, listening for events.");
 }
 
+async function shutdownNotificationWorker(): Promise<void> {
+  if (shutdownPromise) return shutdownPromise;
+  shutdownPromise = (async () => {
+    if (flushTimer) {
+      clearInterval(flushTimer);
+      flushTimer = null;
+    }
+
+    if (globalContext) {
+      await flushAllBuffers(globalContext);
+      globalContext = null;
+    }
+
+    if (globalRedisSub) {
+      await globalRedisSub.quit().catch(() => {});
+      globalRedisSub = null;
+    }
+    if (globalPgPool) {
+      await globalPgPool.end().catch(() => {});
+      globalPgPool = null;
+    }
+    if (lockClient) {
+      lockClient.release();
+      lockClient = null;
+    }
+    if (lockPool) {
+      await lockPool.end().catch(() => {});
+      lockPool = null;
+    }
+  })();
+  return shutdownPromise;
+}
+
 const originalStop = lifecycle.stop.bind(lifecycle);
 lifecycle.stop = async () => {
   originalStop();
   logger.info("Stopping notification worker...");
-  if (globalRedisSub) {
-    await globalRedisSub.quit().catch(() => {});
-    globalRedisSub = null;
-  }
-  if (globalPgPool) {
-    await globalPgPool.end().catch(() => {});
-    globalPgPool = null;
-  }
-  if (lockClient) {
-    lockClient.release();
-    lockClient = null;
-  }
-  if (lockPool) {
-    await lockPool.end().catch(() => {});
-    lockPool = null;
-  }
+  await shutdownNotificationWorker();
 };
 
-runIfMain(module, startNotificationWorker, logger, lifecycle);
+runIfMain(module, startNotificationWorker, logger, lifecycle, shutdownNotificationWorker);
