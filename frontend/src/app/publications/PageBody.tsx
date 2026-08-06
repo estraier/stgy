@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { PubConfig, PubViewStats } from "@/api/models";
 import { getSessionInfo } from "@/api/auth";
 import { getPubConfig, getPubStats, setPubConfig } from "@/api/users";
@@ -27,8 +28,17 @@ const emptyCfg: PubConfig = {
 };
 
 const emptyStats: PubViewStats = { totalPv: 0, entries: [] };
+const STATS_PAGE_SIZE = 50;
 
 export default function PageBody() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const requestedPage = useMemo(() => {
+    const value = Number(searchParams.get("page"));
+    return Number.isInteger(value) && value > 0 ? value : 1;
+  }, [searchParams]);
+
   const [tab, setTab] = useState<Tab>("stats");
   const [userId, setUserId] = useState<string | null>(null);
   const [cfg, setCfg] = useState<PubConfig>(emptyCfg);
@@ -95,6 +105,31 @@ export default function PageBody() {
     return entries;
   }, [sortDirection, sortKey, stats.entries]);
 
+  const totalPages = Math.ceil(sortedEntries.length / STATS_PAGE_SIZE);
+  const currentPage = totalPages > 0 ? Math.min(requestedPage, totalPages) : 1;
+  const pageEntries = useMemo(() => {
+    const start = (currentPage - 1) * STATS_PAGE_SIZE;
+    return sortedEntries.slice(start, start + STATS_PAGE_SIZE);
+  }, [currentPage, sortedEntries]);
+
+  const replacePage = useCallback(
+    (page: number) => {
+      const next = new URLSearchParams(searchParams);
+      if (page <= 1) next.delete("page");
+      else next.set("page", String(page));
+      router.replace(`${pathname}${next.toString() ? `?${next.toString()}` : ""}`, {
+        scroll: false,
+      });
+    },
+    [pathname, router, searchParams],
+  );
+
+  useEffect(() => {
+    if (!loading && tab === "stats" && requestedPage !== currentPage) {
+      replacePage(currentPage);
+    }
+  }, [currentPage, loading, replacePage, requestedPage, tab]);
+
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -121,6 +156,7 @@ export default function PageBody() {
   }
 
   function toggleSort(nextKey: SortKey) {
+    replacePage(1);
     if (sortKey === nextKey) {
       setSortDirection((current) => (current === "asc" ? "desc" : "asc"));
       return;
@@ -227,7 +263,7 @@ export default function PageBody() {
                 </tr>
               </thead>
               <tbody>
-                {sortedEntries.map((entry) => (
+                {pageEntries.map((entry) => (
                   <tr key={entry.id} className="border-b last:border-b-0 align-top">
                     <td className="px-2 sm:px-3 py-2">
                       <div className="font-mono break-all">
@@ -259,6 +295,35 @@ export default function PageBody() {
               </tbody>
             </table>
           </div>
+
+          {sortedEntries.length > 0 && (
+            <div className="mt-4 flex items-center justify-between gap-3 text-sm">
+              <div className="text-gray-600">
+                {sortedEntries.length} {sortedEntries.length === 1 ? "entry" : "entries"}
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  disabled={currentPage <= 1}
+                  className="px-3 py-1 rounded border bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  onClick={() => replacePage(currentPage - 1)}
+                >
+                  Previous
+                </button>
+                <span className="whitespace-nowrap">
+                  Page {currentPage} of {totalPages}
+                </span>
+                <button
+                  type="button"
+                  disabled={currentPage >= totalPages}
+                  className="px-3 py-1 rounded border bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  onClick={() => replacePage(currentPage + 1)}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
         </section>
       )}
 
