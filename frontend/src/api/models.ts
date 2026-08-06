@@ -121,9 +121,7 @@ export type PubViewStatEntry = {
   pv: number;
 };
 
-export type PubPopularEntry = PubViewStatEntry & {
-  snippet: string;
-};
+export type PubPopularEntry = Post & { pv: number };
 
 export type PubViewStats = {
   totalPv: number;

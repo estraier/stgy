@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import type Redis from "ioredis";
 import { Config } from "../config";
-import type { PubPopularEntry, PubViewStatEntry, PubViewStats } from "../models/post";
+import type { PubViewStatEntry, PubViewStats } from "../models/post";
 
 const DAYS = 10;
 const TOP_LIMIT = 1000;
@@ -9,7 +9,7 @@ const LRU_CAPACITY = 150;
 const FINGERPRINT_BYTES = 4;
 const LRU_TTL_SECONDS = 11 * 24 * 60 * 60;
 const META_TTL_SECONDS = 11 * 24 * 60 * 60;
-const RANKING_CACHE_TTL_SECONDS = 5 * 60;
+const CACHE_TTL_SECONDS = 5 * 60;
 
 const RECORD_VIEW_LUA = `
 local value = redis.call("GET", KEYS[1]) or ""
@@ -53,8 +53,9 @@ end
 return 0
 `;
 
-type HeapEntry = { id: string; pv: number };
-type StoredMeta = { publishedAt: string; digest: string; snippet?: string };
+type RankEntry = { id: string; pv: number };
+type Ranking = { totalPv: number; entries: RankEntry[] };
+type StoredMeta = { publishedAt: string; digest: string };
 
 type RedisWithPubViews = Redis & {
   stgyRecordPubView(
@@ -113,12 +114,16 @@ function rankingKey(ownerId: string): string {
   return `stgy:pub-views:ranking:${ownerId}`;
 }
 
-function compareRank(a: HeapEntry, b: HeapEntry): number {
+function statsKey(ownerId: string): string {
+  return `stgy:pub-views:stats:${ownerId}`;
+}
+
+function compareRank(a: RankEntry, b: RankEntry): number {
   if (a.pv !== b.pv) return a.pv - b.pv;
   return b.id.localeCompare(a.id);
 }
 
-function heapPush(heap: HeapEntry[], value: HeapEntry): void {
+function heapPush(heap: RankEntry[], value: RankEntry): void {
   heap.push(value);
   let index = heap.length - 1;
   while (index > 0) {
@@ -129,7 +134,7 @@ function heapPush(heap: HeapEntry[], value: HeapEntry): void {
   }
 }
 
-function heapReplaceRoot(heap: HeapEntry[], value: HeapEntry): void {
+function heapReplaceRoot(heap: RankEntry[], value: RankEntry): void {
   heap[0] = value;
   let index = 0;
   for (;;) {
@@ -148,8 +153,8 @@ function heapReplaceRoot(heap: HeapEntry[], value: HeapEntry): void {
   }
 }
 
-function selectTopEntries(counts: Map<string, number>, limit: number): HeapEntry[] {
-  const heap: HeapEntry[] = [];
+function selectTopEntries(counts: Map<string, number>, limit: number): RankEntry[] {
+  const heap: RankEntry[] = [];
   for (const [id, pv] of counts) {
     if (pv <= 0) continue;
     const entry = { id, pv };
@@ -160,6 +165,25 @@ function selectTopEntries(counts: Map<string, number>, limit: number): HeapEntry
     }
   }
   return heap.sort((a, b) => b.pv - a.pv || a.id.localeCompare(b.id));
+}
+
+function parseCachedRanking(raw: string | null): Ranking | null {
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw) as Ranking;
+    if (!Number.isFinite(value.totalPv) || !Array.isArray(value.entries)) return null;
+    if (
+      value.entries.some(
+        (entry) =>
+          typeof entry?.id !== "string" || !Number.isFinite(entry?.pv) || entry.pv <= 0,
+      )
+    ) {
+      return null;
+    }
+    return value;
+  } catch {
+    return null;
+  }
 }
 
 function parseCachedStats(raw: string | null): PubViewStats | null {
@@ -205,7 +229,6 @@ export class PubViewsService {
     postId: string;
     publishedAt: string;
     digest: string;
-    snippet: string;
     fingerprintHex: string;
     now?: Date;
   }): Promise<boolean> {
@@ -219,7 +242,6 @@ export class PubViewsService {
     const meta: StoredMeta = {
       publishedAt: input.publishedAt,
       digest: input.digest,
-      snippet: input.snippet,
     };
 
     const redis = configureRedis(this.redis);
@@ -238,9 +260,9 @@ export class PubViewsService {
     return Number(result) === 1;
   }
 
-  async getStats(ownerId: string, now = new Date()): Promise<PubViewStats> {
+  private async getRanking(ownerId: string, now = new Date()): Promise<Ranking> {
     const cacheKey = rankingKey(ownerId);
-    const cached = parseCachedStats(await this.redis.get(cacheKey));
+    const cached = parseCachedRanking(await this.redis.get(cacheKey));
     if (cached && cached.totalPv > 0) return cached;
 
     const dates = Array.from({ length: DAYS }, (_, i) => utcDateAtOffset(now, -i));
@@ -262,53 +284,54 @@ export class PubViewsService {
       }
     }
 
-    const ranked = selectTopEntries(totals, TOP_LIMIT);
+    const ranking: Ranking = {
+      totalPv,
+      entries: selectTopEntries(totals, TOP_LIMIT),
+    };
+    if (totalPv > 0) {
+      await this.redis.setex(cacheKey, CACHE_TTL_SECONDS, JSON.stringify(ranking));
+    }
+    return ranking;
+  }
+
+  async getStats(ownerId: string, now = new Date()): Promise<PubViewStats> {
+    const cacheKey = statsKey(ownerId);
+    const cached = parseCachedStats(await this.redis.get(cacheKey));
+    if (cached && cached.totalPv > 0) return cached;
+
+    const ranking = await this.getRanking(ownerId, now);
     const metaValues =
-      ranked.length > 0
-        ? await this.redis.mget(...ranked.map((entry) => metaKey(ownerId, entry.id)))
+      ranking.entries.length > 0
+        ? await this.redis.mget(
+            ...ranking.entries.map((entry) => metaKey(ownerId, entry.id)),
+          )
         : [];
     const entries: PubViewStatEntry[] = [];
-    for (let i = 0; i < ranked.length; i++) {
+    for (let i = 0; i < ranking.entries.length; i++) {
       const rawMeta = metaValues[i];
       if (!rawMeta) continue;
       try {
         const meta = JSON.parse(rawMeta) as StoredMeta;
         if (typeof meta.publishedAt !== "string" || typeof meta.digest !== "string") continue;
         entries.push({
-          id: ranked[i].id,
+          id: ranking.entries[i].id,
           publishedAt: meta.publishedAt,
           digest: meta.digest,
-          pv: ranked[i].pv,
+          pv: ranking.entries[i].pv,
         });
       } catch {}
     }
 
-    const stats: PubViewStats = { totalPv, entries };
-    if (totalPv > 0) {
-      await this.redis.setex(cacheKey, RANKING_CACHE_TTL_SECONDS, JSON.stringify(stats));
+    const stats: PubViewStats = { totalPv: ranking.totalPv, entries };
+    if (ranking.totalPv > 0) {
+      await this.redis.setex(cacheKey, CACHE_TTL_SECONDS, JSON.stringify(stats));
     }
     return stats;
   }
 
-  async getPopular(ownerId: string, limit: number): Promise<PubPopularEntry[]> {
+  async getPopular(ownerId: string, limit: number): Promise<RankEntry[]> {
     if (!Number.isInteger(limit) || limit <= 0) return [];
-    const stats = await this.getStats(ownerId);
-    const selected = stats.entries.slice(0, Math.min(limit, TOP_LIMIT));
-    if (selected.length === 0) return [];
-
-    const metaValues = await this.redis.mget(
-      ...selected.map((entry) => metaKey(ownerId, entry.id)),
-    );
-    return selected.map((entry, index) => {
-      let snippet = "";
-      const rawMeta = metaValues[index];
-      if (rawMeta) {
-        try {
-          const meta = JSON.parse(rawMeta) as StoredMeta;
-          if (typeof meta.snippet === "string") snippet = meta.snippet;
-        } catch {}
-      }
-      return { ...entry, snippet };
-    });
+    const ranking = await this.getRanking(ownerId);
+    return ranking.entries.slice(0, Math.min(limit, TOP_LIMIT));
   }
 }

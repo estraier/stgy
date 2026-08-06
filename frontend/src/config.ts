@@ -128,10 +128,7 @@ export class Config {
     process.env.NEXT_PUBLIC_PUB_POSTS_PLAIN_PAGE_SIZE,
     200,
   );
-  static readonly PUB_SIDE_RECENT_POSTS_SIZE = normNum(
-    process.env.NEXT_PUBLIC_PUB_SIDE_RECENT_POSTS_SIZE,
-    10,
-  );
+  static readonly PUB_SIDE_POSTS_MAX = 20;
   static readonly AI_SUMMARY_POST_SKIP_LATEST_MS = normNum(
     process.env.NEXT_PUBLIC_AI_SUMMARY_POST_SKIP_LATEST_MS,
     300 * 1000,

@@ -262,10 +262,20 @@ class MockPgClientMain {
       const focusUserId = includeBlocking && params && params.length >= 2 ? params[0] : undefined;
       const ids = (includeBlocking ? params?.[1] : params?.[0]) as unknown[];
       const idList = Array.isArray(ids) ? ids.map((v) => String(v)) : [];
+      const publicOwnerId = sql.includes("WHERE p.owned_by = $2") ? params?.[1] : undefined;
+      const publishedUntil = sql.includes("p.published_at <= $3") ? params?.[2] : undefined;
       const rows = idList
         .map((id) => {
           const p = this.data.find((x) => x.id === id);
           if (!p) return null;
+          if (
+            publicOwnerId !== undefined &&
+            (p.ownedBy !== publicOwnerId ||
+              !p.publishedAt ||
+              (publishedUntil !== undefined && p.publishedAt > publishedUntil))
+          ) {
+            return null;
+          }
           const replyToPost = this.data.find((pp) => pp.id === p.replyTo);
           const reply_to_owner_nickname = replyToPost
             ? (this.users.find((u) => u.id === replyToPost.ownedBy)?.nickname ?? null)
@@ -1932,6 +1942,51 @@ describe("public posts (getPubPost / listPubPostsByUser)", () => {
     const post = await postsService.getPubPost(currentId, publishedAt);
     expect(post?.olderPostId).toBe(olderId);
     expect(post?.newerPostId).toBe(newerId);
+  });
+
+  test("listPubPostsByIds keeps Redis rank order and filters non-public posts", async () => {
+    const publishedId = "0000000000001100";
+    const futureId = "0000000000002200";
+    const otherOwnerId = "0000000000003300";
+    const base = {
+      replyTo: null,
+      allowLikes: true,
+      allowReplies: true,
+      createdAt: "2024-01-01T00:00:00Z",
+      updatedAt: null,
+      content: "",
+      locale: "ja-JP",
+    };
+    pgClient.data.push(
+      {
+        ...base,
+        id: toDecStr(publishedId),
+        ownedBy: toDecStr(alice),
+        publishedAt: "2024-01-02T00:00:00Z",
+      },
+      {
+        ...base,
+        id: toDecStr(futureId),
+        ownedBy: toDecStr(alice),
+        publishedAt: "2024-01-04T00:00:00Z",
+      },
+      {
+        ...base,
+        id: toDecStr(otherOwnerId),
+        ownedBy: toDecStr(bob),
+        publishedAt: "2024-01-01T00:00:00Z",
+      },
+    );
+
+    const posts = await postsService.listPubPostsByIds(
+      alice,
+      [futureId, otherOwnerId, publishedId],
+      "2024-01-03T00:00:00Z",
+    );
+
+    expect(posts.map((post) => post.id)).toEqual([publishedId]);
+    expect(pgClient.lastSql).toContain("WHERE p.owned_by = $2");
+    expect(pgClient.lastSql).toContain("p.published_at <= $3");
   });
 
   test("listPubPostsByUser includes equality (<=) and honors order asc", async () => {

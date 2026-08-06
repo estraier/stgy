@@ -191,25 +191,29 @@ export default async function PubPostPage({ params, searchParams }: Props) {
       undefined,
       { writingMode },
     );
-    let recent: Awaited<ReturnType<typeof listPubPostsByUser>> = [];
-    const recentCount = Math.max(0, Math.trunc(pubcfg.showSideRecent));
-    if (recentCount > 0) {
-      recent = await listPubPostsByUser(post.ownedBy, {
-        offset: 0,
-        limit: recentCount + 1,
-        order: "desc",
-      });
-      recent = recent.filter((r) => String(r.id) !== String(post.id)).slice(0, recentCount);
-    }
-    let popular: Awaited<ReturnType<typeof listPubPopular>> = [];
-    const popularCount = Math.max(0, Math.min(1000, Math.trunc(pubcfg.showSidePopular)));
-    if (popularCount > 0) {
-      try {
-        popular = await listPubPopular(post.ownedBy, popularCount);
-      } catch {
-        popular = [];
-      }
-    }
+    const recentCount = Math.max(
+      0,
+      Math.min(Config.PUB_SIDE_POSTS_MAX, Math.trunc(pubcfg.showSideRecent)),
+    );
+    const popularCount = Math.max(
+      0,
+      Math.min(Config.PUB_SIDE_POSTS_MAX, Math.trunc(pubcfg.showSidePopular)),
+    );
+    const [recentRaw, popular] = await Promise.all([
+      recentCount > 0
+        ? listPubPostsByUser(post.ownedBy, {
+            offset: 0,
+            limit: recentCount + 1,
+            order: "desc",
+          })
+        : Promise.resolve([]),
+      popularCount > 0
+        ? listPubPopular(post.ownedBy, popularCount).catch(() => [])
+        : Promise.resolve([]),
+    ]);
+    const recent = recentRaw
+      .filter((r) => String(r.id) !== String(post.id))
+      .slice(0, recentCount);
     const siteHrefBase = `/sites/${post.ownedBy}`;
     const siteHref = design ? `${siteHrefBase}?design=${encodeURIComponent(design)}` : siteHrefBase;
     const siteHrefWithRichTab = `${siteHref}#pub-post-list`;
@@ -335,25 +339,21 @@ export default async function PubPostPage({ params, searchParams }: Props) {
                       const postHref = `/pub/${entry.id}${
                         design ? `?design=${encodeURIComponent(design)}` : ""
                       }`;
-                      const snippetHtml = entry.snippet
-                        ? makeHtmlFromJsonSnippet(entry.snippet, `pp${idx + 1}-h`, {
-                            moveLeadingFeaturedAfterHeading: true,
-                            writingMode,
-                          })
-                        : null;
+                      const snippetHtml = makeHtmlFromJsonSnippet(
+                        entry.snippet,
+                        `pp${idx + 1}-h`,
+                        {
+                          moveLeadingFeaturedAfterHeading: true,
+                          writingMode,
+                        },
+                      );
                       return (
                         <LinkDiv key={entry.id} href={postHref} className="link-div">
-                          {snippetHtml ? (
-                            <ArticleWithDecoration
-                              lang={pubcfg.locale || locale}
-                              className="markdown-body post-content-excerpt"
-                              html={snippetHtml}
-                            />
-                          ) : (
-                            <article className="markdown-body post-content-excerpt">
-                              <p>{convertForDirection(entry.digest, themeDir)}</p>
-                            </article>
-                          )}
+                          <ArticleWithDecoration
+                            lang={entry.locale || pubcfg.locale || locale}
+                            className="markdown-body post-content-excerpt"
+                            html={snippetHtml}
+                          />
                         </LinkDiv>
                       );
                     })}

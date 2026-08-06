@@ -1087,6 +1087,65 @@ export class PostsService {
     return snakeToCamel<PostDetail>(row);
   }
 
+  async listPubPostsByIds(
+    userId: string,
+    ids: string[],
+    publishedUntil: string,
+  ): Promise<Post[]> {
+    const validIds = ids.filter(
+      (id) => typeof id === "string" && /^[0-9a-fA-F]{16}$/.test(id),
+    );
+    if (validIds.length === 0) return [];
+
+    const sql = `
+      WITH req AS (
+        SELECT id, ord
+        FROM unnest($1::bigint[]) WITH ORDINALITY AS t(id, ord)
+      )
+      SELECT
+        p.id,
+        p.owned_by,
+        p.reply_to,
+        p.published_at,
+        p.updated_at,
+        p.snippet,
+        p.locale,
+        p.allow_likes,
+        p.allow_replies,
+        id_to_timestamp(p.id) AS created_at,
+        u.nickname AS owner_nickname,
+        u.locale AS owner_locale,
+        pp.owned_by AS reply_to_owner_id,
+        pu.nickname AS reply_to_owner_nickname,
+        COALESCE(pc.reply_count,0) AS count_replies,
+        COALESCE(pc.like_count,0) AS count_likes,
+        ARRAY(SELECT pt.name FROM post_tags pt WHERE pt.post_id = p.id ORDER BY pt.name) AS tags
+      FROM req r
+      JOIN posts p ON p.id = r.id
+      JOIN users u ON p.owned_by = u.id
+      LEFT JOIN posts pp ON p.reply_to = pp.id
+      LEFT JOIN users pu ON pp.owned_by = pu.id
+      LEFT JOIN post_counts pc ON pc.post_id = p.id
+      WHERE p.owned_by = $2
+        AND p.published_at <= $3
+      ORDER BY r.ord
+    `;
+    const res = await pgQuery(this.pgPool, sql, [
+      hexArrayToDec(validIds),
+      hexToDec(userId),
+      publishedUntil,
+    ]);
+    const rows = res.rows.map((r) => {
+      r.id = decToHex(r.id);
+      r.owned_by = decToHex(r.owned_by);
+      r.reply_to = r.reply_to == null ? null : decToHex(r.reply_to);
+      r.reply_to_owner_id =
+        r.reply_to_owner_id == null ? null : decToHex(r.reply_to_owner_id);
+      return r;
+    });
+    return snakeToCamel<Post[]>(rows);
+  }
+
   async listPubPostsByUser(
     userId: string,
     publishedUntil: string,

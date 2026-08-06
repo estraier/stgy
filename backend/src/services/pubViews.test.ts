@@ -6,14 +6,15 @@ import {
 } from "./pubViews";
 
 class FakeRedis {
-  cached: string | null = null;
+  cache = new Map<string, string>();
   daily: Record<string, string>[] = [];
   metas = new Map<string, string>();
   commandArgs: unknown[] | null = null;
-  storedCache: { key: string; ttl: number; value: string } | null = null;
+  storedCaches: Array<{ key: string; ttl: number; value: string }> = [];
+  mgetCalls = 0;
 
-  async get(): Promise<string | null> {
-    return this.cached;
+  async get(key: string): Promise<string | null> {
+    return this.cache.get(key) ?? null;
   }
 
   pipeline() {
@@ -28,11 +29,13 @@ class FakeRedis {
   }
 
   async mget(...keys: string[]): Promise<Array<string | null>> {
+    this.mgetCalls++;
     return keys.map((key) => this.metas.get(key) ?? null);
   }
 
   async setex(key: string, ttl: number, value: string): Promise<"OK"> {
-    this.storedCache = { key, ttl, value };
+    this.cache.set(key, value);
+    this.storedCaches.push({ key, ttl, value });
     return "OK";
   }
 
@@ -66,7 +69,6 @@ describe("PubViewsService", () => {
       postId: "post-a",
       publishedAt: "2026-08-01T00:00:00.000Z",
       digest: "digest",
-      snippet: '[{"type":"text","text":"snippet"}]',
       fingerprintHex: "01020304",
       now: new Date("2026-08-06T12:00:00.000Z"),
     });
@@ -82,7 +84,6 @@ describe("PubViewsService", () => {
     expect(JSON.parse(String(args[5]))).toEqual({
       publishedAt: "2026-08-01T00:00:00.000Z",
       digest: "digest",
-      snippet: '[{"type":"text","text":"snippet"}]',
     });
     expect(args.at(-1)).toBe("600");
   });
@@ -98,7 +99,6 @@ describe("PubViewsService", () => {
         JSON.stringify({
           publishedAt: "2026-08-01T00:00:00.000Z",
           digest: id,
-          snippet: `[${id}]`,
         }),
       );
     }
@@ -116,19 +116,22 @@ describe("PubViewsService", () => {
     expect(stats.entries.some((entry) => entry.id === "post-0998")).toBe(false);
     expect(stats.entries.some((entry) => entry.id === "post-1000")).toBe(true);
     expect(stats.entries.some((entry) => entry.id === "post-1001")).toBe(true);
-    expect(redis.storedCache?.ttl).toBe(300);
+    expect(redis.storedCaches).toHaveLength(2);
+    expect(redis.storedCaches.every((entry) => entry.ttl === 300)).toBe(true);
   });
 
   test("does not let an empty ranking cache hide a newly recorded daily view", async () => {
     const redis = new FakeRedis();
-    redis.cached = JSON.stringify({ totalPv: 0, entries: [] });
+    redis.cache.set(
+      "stgy:pub-views:ranking:owner-a",
+      JSON.stringify({ totalPv: 0, entries: [] }),
+    );
     redis.daily = [{ "post-a": "1" }];
     redis.metas.set(
       "stgy:pub-views:meta:owner-a:post-a",
       JSON.stringify({
         publishedAt: "2026-08-01T00:00:00.000Z",
         digest: "digest",
-        snippet: "snippet",
       }),
     );
 
@@ -148,35 +151,14 @@ describe("PubViewsService", () => {
     });
   });
 
-  test("getPopular adds the stored JSON snippet only to requested popular entries", async () => {
+  test("getPopular returns ranked IDs without loading stats metadata", async () => {
     const redis = new FakeRedis();
     redis.daily = [{ "post-a": "2", "post-b": "1" }];
-    redis.metas.set(
-      "stgy:pub-views:meta:owner-a:post-a",
-      JSON.stringify({
-        publishedAt: "2026-08-01T00:00:00.000Z",
-        digest: "digest-a",
-        snippet: "snippet-a",
-      }),
-    );
-    redis.metas.set(
-      "stgy:pub-views:meta:owner-a:post-b",
-      JSON.stringify({
-        publishedAt: "2026-08-02T00:00:00.000Z",
-        digest: "digest-b",
-        snippet: "snippet-b",
-      }),
-    );
 
     const service = new PubViewsService(asRedis(redis));
     await expect(service.getPopular("owner-a", 1)).resolves.toEqual([
-      {
-        id: "post-a",
-        publishedAt: "2026-08-01T00:00:00.000Z",
-        digest: "digest-a",
-        snippet: "snippet-a",
-        pv: 2,
-      },
+      { id: "post-a", pv: 2 },
     ]);
+    expect(redis.mgetCalls).toBe(0);
   });
 });

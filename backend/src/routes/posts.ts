@@ -316,12 +316,25 @@ export default function createPostsRouter(
     if (!/^(?:0x)?[0-9a-fA-F]{1,16}$/.test(req.params.userId)) {
       return res.status(400).json({ error: "invalid userId" });
     }
-    const limit = Number(req.query.limit ?? 5);
-    if (!Number.isInteger(limit) || limit < 0 || limit > 1000) {
+    const requestedLimit = Number(req.query.limit ?? 5);
+    if (!Number.isInteger(requestedLimit) || requestedLimit < 0) {
       return res.status(400).json({ error: "invalid limit" });
     }
+    const limit = Math.min(requestedLimit, Config.PUB_SIDE_POSTS_MAX);
     try {
-      res.json(await pubViewsService.getPopular(req.params.userId, limit));
+      const ranked = await pubViewsService.getPopular(req.params.userId, limit);
+      const posts = await postsService.listPubPostsByIds(
+        req.params.userId,
+        ranked.map((entry) => entry.id),
+        new Date().toISOString(),
+      );
+      const pvById = new Map(ranked.map((entry) => [entry.id, entry.pv]));
+      res.json(
+        posts.flatMap((post) => {
+          const pv = pvById.get(post.id);
+          return pv === undefined ? [] : [{ ...post, pv }];
+        }),
+      );
     } catch (e) {
       res.status(500).json({ error: (e as Error).message || "failed to get popular posts" });
     }
@@ -342,7 +355,6 @@ export default function createPostsRouter(
             postId: post.id,
             publishedAt: post.publishedAt,
             digest: makePlainTextDigestFromJsonSnippet(post.snippet),
-            snippet: post.snippet,
             fingerprintHex: fingerprint,
           });
         } catch (e) {

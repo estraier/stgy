@@ -828,11 +828,11 @@ components:
 
     PubPopularEntry:
       allOf:
-        - $ref: "#/components/schemas/PubViewStatEntry"
+        - $ref: "#/components/schemas/Post"
         - type: object
           properties:
-            snippet: { type: string }
-          required: [snippet]
+            pv: { type: integer, minimum: 1 }
+          required: [pv]
 
     PubViewStats:
       type: object
@@ -4102,7 +4102,8 @@ paths:
           schema: { type: string }
         - name: limit
           in: query
-          schema: { type: integer, minimum: 0, maximum: 1000, default: 5 }
+          description: Values above the configured sidebar maximum are capped.
+          schema: { type: integer, minimum: 0, default: 5 }
       responses:
         "200":
           description: Popular public posts

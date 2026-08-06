@@ -1439,7 +1439,13 @@ def test_posts():
 
   res = requests.get(f"{BASE_URL}/posts/pub-popular/{user_id}?limit=5")
   assert res.status_code == 200, res.text
-  assert any(entry["id"] == post_id for entry in res.json())
+  popular_entry = next((entry for entry in res.json() if entry["id"] == post_id), None)
+  assert popular_entry is not None
+  assert popular_entry["pv"] == 2
+  assert isinstance(popular_entry.get("snippet"), str)
+  res = requests.get(f"{BASE_URL}/posts/pub-popular/{user_id}?limit=1000")
+  assert res.status_code == 200, res.text
+  assert len(res.json()) <= 20
 
   res = requests.get(f"{BASE_URL}/posts/pub-by-user/{user_id}?limit=2000&order=desc")
   assert res.status_code == 200, res.text

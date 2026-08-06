@@ -363,7 +363,10 @@ export default function PageBody() {
                   className="border px-2 py-1 rounded w-24"
                   disabled={saving}
                 />
-                <span>Recent posts in the sidebar (0 or less to hide)</span>
+                <span>
+                  Recent posts in the sidebar (maximum {Config.PUB_SIDE_POSTS_MAX}; 0 or less
+                  to hide)
+                </span>
               </label>
               <label className="flex flex-wrap items-center gap-2">
                 <input
@@ -374,7 +377,10 @@ export default function PageBody() {
                   className="border px-2 py-1 rounded w-24"
                   disabled={saving}
                 />
-                <span>Popular entries in the sidebar (0 or less to hide)</span>
+                <span>
+                  Popular entries in the sidebar (maximum {Config.PUB_SIDE_POSTS_MAX}; 0 or
+                  less to hide)
+                </span>
               </label>
             </div>
           </section>

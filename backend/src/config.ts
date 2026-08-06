@@ -147,6 +147,7 @@ export class Config {
   static readonly DEFAULT_LOCALE = envStr("STGY_DEFAULT_LOCALE", "ja-JP");
   static readonly DEFAULT_TIMEZONE = envStr("STGY_DEFAULT_TIMEZONE", "Asia/Tokyo");
   static readonly MAX_PAGE_LIMIT = envNum("STGY_MAX_PAGE_LIMIT", 100);
+  static readonly PUB_SIDE_POSTS_MAX = 20;
   static readonly SEARCH_LIMIT_MAX = envNum("STGY_SEARCH_LIMIT_MAX", 1001);
   static readonly SEARCH_CACHE_TTL_SEC = envNum("STGY_SEARCH_CACHE_TTL_SEC", 600);
   static readonly LINK_SNIPPET_TTL_SEC = envNum("STGY_LINK_SNIPPET_TTL_SEC", 24 * 3600);
