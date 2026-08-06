@@ -147,7 +147,7 @@ export default function PageBody() {
   const sortButton = "inline-flex items-center gap-1 font-medium whitespace-nowrap";
 
   return (
-    <main className="max-w-5xl mx-auto mt-12 p-4 bg-white shadow border rounded">
+    <main className="max-w-3xl mx-auto mt-12 p-4 bg-white shadow border rounded">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <h1 className="text-2xl font-bold">Publications</h1>
         <div className="flex items-center gap-2" role="tablist" aria-label="Publication pages">
@@ -208,7 +208,7 @@ export default function PageBody() {
                       <span className="font-mono">{sortMark("publishedAt")}</span>
                     </button>
                   </th>
-                  <th className="text-left px-3 py-2 border-b">Digest</th>
+                  <th className="text-left px-3 py-2 border-b">Content</th>
                   <th className="text-right px-3 py-2 border-b">
                     <button
                       type="button"

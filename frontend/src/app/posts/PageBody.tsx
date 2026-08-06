@@ -52,6 +52,7 @@ export default function PageBody() {
   const [error, setError] = useState<string | null>(null);
   const [body, setBody] = useState("");
   const [draftId, setDraftId] = useState<string | null>(null);
+  const [focusRestoredDraft, setFocusRestoredDraft] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [hasNext, setHasNext] = useState(false);
   const [replyTo, setReplyTo] = useState<string | null>(null);
@@ -119,10 +120,12 @@ export default function PageBody() {
         if (canceled) return;
         setBody(content);
         setDraftId(snapshot.targetId);
+        setFocusRestoredDraft(true);
       })
       .catch((caught: unknown) => {
         if (canceled) return;
         setError(caught instanceof Error ? caught.message : "Failed to restore editing history.");
+        setFocusRestoredDraft(false);
         setDraftId(createEditingHistoryDraftId());
       })
       .finally(() => {
@@ -618,6 +621,7 @@ export default function PageBody() {
           error={error ?? editingHistory.error}
           onErrorClear={clearError}
           contentLengthLimit={isAdmin ? undefined : Config.CONTENT_LENGTH_LIMIT}
+          autoFocus={focusRestoredDraft}
         />
       ) : (
         <div className="text-gray-500">

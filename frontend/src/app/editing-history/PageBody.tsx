@@ -129,8 +129,8 @@ export default function PageBody() {
   if (status.state !== "authenticated") return null;
 
   return (
-    <main className="max-w-4xl mx-auto mt-8 p-2 sm:p-4">
-      <h1 className="text-2xl font-bold mb-3">Editing history</h1>
+    <main className="max-w-3xl mx-auto mt-12 p-4 bg-white shadow border rounded">
+      <h1 className="text-2xl font-bold mb-6">Editing history</h1>
       <p className="mb-3 text-sm text-gray-600">
         Editing history is stored only in this browser. It is not synchronized with the server or
         other devices and may be removed by browser settings. Periodic snapshots are retained for
@@ -155,14 +155,12 @@ export default function PageBody() {
         <div className="text-gray-500">No editing history.</div>
       ) : (
         <>
-          <div className="overflow-x-auto border rounded bg-white">
-            <table className="w-full text-sm border-collapse">
+          <div className="overflow-hidden border rounded bg-white">
+            <table className="w-full table-fixed text-xs sm:text-sm border-collapse">
               <thead className="bg-gray-50 text-left">
                 <tr>
-                  <th className="px-3 py-2 border-b whitespace-nowrap">Type</th>
-                  <th className="px-3 py-2 border-b whitespace-nowrap">Post / draft ID</th>
-                  <th className="px-3 py-2 border-b whitespace-nowrap">Saved at</th>
-                  <th className="px-3 py-2 border-b">Content</th>
+                  <th className="w-[34%] px-2 sm:px-3 py-2 border-b">Metadata</th>
+                  <th className="w-[66%] px-2 sm:px-3 py-2 border-b">Content</th>
                 </tr>
               </thead>
               <tbody>
@@ -179,16 +177,18 @@ export default function PageBody() {
                       }
                     }}
                   >
-                    <td className="px-3 py-2 border-b capitalize whitespace-nowrap">
-                      {snapshot.targetType}
+                    <td className="px-2 sm:px-3 py-2 border-b align-top">
+                      <div className="break-all">
+                        <span className="font-medium">
+                          {snapshot.targetType === "post" ? "Post" : "Draft"}:
+                        </span>{" "}
+                        <span className="font-mono">{snapshot.targetId}</span>
+                      </div>
+                      <div className="mt-1 text-gray-600 break-words">
+                        {formatDateTime(new Date(snapshot.timestamp), timezone, true)}
+                      </div>
                     </td>
-                    <td className="px-3 py-2 border-b font-mono whitespace-nowrap">
-                      {snapshot.targetId}
-                    </td>
-                    <td className="px-3 py-2 border-b whitespace-nowrap">
-                      {formatDateTime(new Date(snapshot.timestamp), timezone, true)}
-                    </td>
-                    <td className="px-3 py-2 border-b min-w-[24rem]">
+                    <td className="px-2 sm:px-3 py-2 border-b align-top break-words">
                       {previewText(snapshot.preview)}
                     </td>
                   </tr>
