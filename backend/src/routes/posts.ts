@@ -21,6 +21,8 @@ import {
   normalizeMultiLines,
   normalizeLocale,
   parseBoolean,
+  decToHex,
+  hexToDec,
 } from "../utils/format";
 
 const logger = createLogger({ file: "posts-route" });
@@ -321,18 +323,24 @@ export default function createPostsRouter(
       return res.status(400).json({ error: "invalid limit" });
     }
     const limit = Math.min(requestedLimit, Config.PUB_SIDE_POSTS_MAX);
+    const userId = decToHex(hexToDec(req.params.userId));
     try {
-      const ranked = await pubViewsService.getPopular(req.params.userId, limit);
-      const posts = await postsService.listPubPostsByIds(
-        req.params.userId,
-        ranked.map((entry) => entry.id),
-        new Date().toISOString(),
-      );
+      const ranked = await pubViewsService.getPopular(userId, limit);
+      const posts = await postsService.listPostsByIds(ranked.map((entry) => entry.id));
+      const publishedUntil = new Date().toISOString();
       const pvById = new Map(ranked.map((entry) => [entry.id, entry.pv]));
       res.json(
         posts.flatMap((post) => {
           const pv = pvById.get(post.id);
-          return pv === undefined ? [] : [{ ...post, pv }];
+          if (
+            pv === undefined ||
+            post.ownedBy !== userId ||
+            post.publishedAt === null ||
+            post.publishedAt > publishedUntil
+          ) {
+            return [];
+          }
+          return [{ ...post, pv }];
         }),
       );
     } catch (e) {
