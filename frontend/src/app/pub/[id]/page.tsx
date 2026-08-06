@@ -1,9 +1,12 @@
 import { cache } from "react";
+import crypto from "crypto";
+import net from "net";
 import Link from "next/link";
+import { headers } from "next/headers";
 import { Config } from "@/config";
 import { HeadLangPatcher } from "@/components/HeadLangPatcher";
 import PubServiceHeader from "@/components/PubServiceHeader";
-import { getPubPost, listPubPostsByUser } from "@/api/posts";
+import { getPubPost, listPubPopular, listPubPostsByUser } from "@/api/posts";
 import { getPubConfig } from "@/api/users";
 import {
   makePubArticleHtmlFromMarkdown,
@@ -21,12 +24,66 @@ import type { Metadata } from "next";
 
 type PageParams = { id: string };
 
-const getPubPageData = cache(async (id: string) => {
-  const post = await getPubPost(id);
+const SELF_IDENTIFIED_BOT_USER_AGENT =
+  /(?:bot\b|crawler|spider|slurp|facebookexternalhit|bingpreview|google-inspection-tool|googleother)/iu;
+
+function normalizeClientIp(raw: string): string | null {
+  let value = raw.trim();
+  if (!value) return null;
+  if (value.startsWith("[")) {
+    const end = value.indexOf("]");
+    if (end > 0) value = value.slice(1, end);
+  } else if (value.includes(".") && /:\d+$/.test(value)) {
+    value = value.replace(/:\d+$/, "");
+  }
+  const zone = value.indexOf("%");
+  if (zone >= 0) value = value.slice(0, zone);
+  return net.isIP(value) ? value : null;
+}
+
+async function getPubViewHeaders(postId: string): Promise<{
+  fingerprint: string;
+  signature: string;
+} | null> {
+  const requestHeaders = await headers();
+  const userAgent = requestHeaders.get("user-agent") ?? "";
+  if (SELF_IDENTIFIED_BOT_USER_AGENT.test(userAgent)) return null;
+
+  const forwarded = requestHeaders.get("x-forwarded-for")?.split(",")[0] ?? "";
+  const clientIp =
+    normalizeClientIp(forwarded) ??
+    normalizeClientIp(requestHeaders.get("x-real-ip") ?? "") ??
+    normalizeClientIp(requestHeaders.get("cf-connecting-ip") ?? "");
+  if (!clientIp) return null;
+
+  const secret = process.env.STGY_REDIS_PASSWORD || "*";
+  const fingerprint = crypto
+    .createHmac("sha256", secret)
+    .update(clientIp)
+    .digest()
+    .subarray(0, 4)
+    .toString("hex");
+  const signature = crypto
+    .createHmac("sha256", secret)
+    .update(`${postId.toUpperCase()}\n${fingerprint}`)
+    .digest("hex");
+  return { fingerprint, signature };
+}
+
+const getPubPageData = cache(async (id: string, fingerprint: string, signature: string) => {
+  const post = await getPubPost(
+    id,
+    fingerprint && signature ? { fingerprint, signature } : undefined,
+  );
   const pubcfg = await getPubConfig(post.ownedBy);
   const article = makePubArticleHtmlFromMarkdown(post.content);
   return { post, pubcfg, article };
 });
+
+async function loadPubPageData(id: string) {
+  const view = await getPubViewHeaders(id);
+  return getPubPageData(id, view?.fingerprint ?? "", view?.signature ?? "");
+}
 
 export async function generateMetadata({
   params,
@@ -35,7 +92,7 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { id } = await params;
   try {
-    const { post, pubcfg, article } = await getPubPageData(id);
+    const { post, pubcfg, article } = await loadPubPageData(id);
     const locale = post.locale || pubcfg.locale || "und";
     const artTitle =
       article.title || "POST@" + new Date(post.publishedAt ?? "").toISOString().slice(0, 10);
@@ -116,7 +173,7 @@ export default async function PubPostPage({ params, searchParams }: Props) {
   const design = Array.isArray(designRaw) ? designRaw[0] : designRaw;
 
   try {
-    const { post, pubcfg, article: horizontalArticle } = await getPubPageData(id);
+    const { post, pubcfg, article: horizontalArticle } = await loadPubPageData(id);
     const baseTheme = Config.PUB_DESIGN_THEMES.includes(pubcfg.designTheme ?? "")
       ? pubcfg.designTheme
       : "default";
@@ -135,14 +192,23 @@ export default async function PubPostPage({ params, searchParams }: Props) {
       { writingMode },
     );
     let recent: Awaited<ReturnType<typeof listPubPostsByUser>> = [];
-    if (pubcfg.showSideRecent) {
-      const desired = Config.PUB_SIDE_RECENT_POSTS_SIZE;
+    const recentCount = Math.max(0, Math.trunc(pubcfg.showSideRecent));
+    if (recentCount > 0) {
       recent = await listPubPostsByUser(post.ownedBy, {
         offset: 0,
-        limit: desired + 1,
+        limit: recentCount + 1,
         order: "desc",
       });
-      recent = recent.filter((r) => String(r.id) !== String(post.id)).slice(0, desired);
+      recent = recent.filter((r) => String(r.id) !== String(post.id)).slice(0, recentCount);
+    }
+    let popular: Awaited<ReturnType<typeof listPubPopular>> = [];
+    const popularCount = Math.max(0, Math.min(1000, Math.trunc(pubcfg.showSidePopular)));
+    if (popularCount > 0) {
+      try {
+        popular = await listPubPopular(post.ownedBy, popularCount);
+      } catch {
+        popular = [];
+      }
     }
     const siteHrefBase = `/sites/${post.ownedBy}`;
     const siteHref = design ? `${siteHrefBase}?design=${encodeURIComponent(design)}` : siteHrefBase;
@@ -214,7 +280,7 @@ export default async function PubPostPage({ params, searchParams }: Props) {
                 </nav>
               )}
             </section>
-            {(pubcfg.showSideProfile || recent.length > 0) && (
+            {(pubcfg.showSideProfile || recent.length > 0 || popular.length > 0) && (
               <aside className="pub-sidebar">
                 {pubcfg.showSideProfile && (
                   <section className="pub-side-profile">
@@ -258,6 +324,39 @@ export default async function PubPostPage({ params, searchParams }: Props) {
                         {convertForDirection("more", themeDir)}
                       </a>
                     </nav>
+                  </section>
+                )}
+                {popular.length > 0 && (
+                  <section className="pub-side-recent pub-side-popular">
+                    <h2 className="side-header">
+                      {convertForDirection("Popular entries", themeDir)}
+                    </h2>
+                    {popular.map((entry, idx) => {
+                      const postHref = `/pub/${entry.id}${
+                        design ? `?design=${encodeURIComponent(design)}` : ""
+                      }`;
+                      const snippetHtml = entry.snippet
+                        ? makeHtmlFromJsonSnippet(entry.snippet, `pp${idx + 1}-h`, {
+                            moveLeadingFeaturedAfterHeading: true,
+                            writingMode,
+                          })
+                        : null;
+                      return (
+                        <LinkDiv key={entry.id} href={postHref} className="link-div">
+                          {snippetHtml ? (
+                            <ArticleWithDecoration
+                              lang={pubcfg.locale || locale}
+                              className="markdown-body post-content-excerpt"
+                              html={snippetHtml}
+                            />
+                          ) : (
+                            <article className="markdown-body post-content-excerpt">
+                              <p>{convertForDirection(entry.digest, themeDir)}</p>
+                            </article>
+                          )}
+                        </LinkDiv>
+                      );
+                    })}
                   </section>
                 )}
               </aside>

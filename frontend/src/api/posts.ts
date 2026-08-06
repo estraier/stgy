@@ -1,4 +1,4 @@
-import type { Post, PostDetail, User } from "./models";
+import type { Post, PostDetail, PubPopularEntry, User } from "./models";
 import { apiFetch, extractError } from "./client";
 
 function buildPostQuery(
@@ -209,8 +209,17 @@ export async function countPosts(
   return (await res.json()).count;
 }
 
-export async function getPubPost(postId: string): Promise<PostDetail> {
-  const res = await apiFetch(`/posts/pub/${postId}`, { method: "GET" });
+export async function getPubPost(
+  postId: string,
+  view?: { fingerprint: string; signature: string },
+): Promise<PostDetail> {
+  const headers = view
+    ? {
+        "x-stgy-pub-view-fingerprint": view.fingerprint,
+        "x-stgy-pub-view-signature": view.signature,
+      }
+    : undefined;
+  const res = await apiFetch(`/posts/pub/${postId}`, { method: "GET", headers });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();
 }
@@ -225,6 +234,18 @@ export async function listPubPostsByUser(
   if (params.order) search.append("order", params.order);
   const q = search.toString();
   const res = await apiFetch(`/posts/pub-by-user/${userId}${q ? `?${q}` : ""}`, { method: "GET" });
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
+}
+
+export async function listPubPopular(
+  userId: string,
+  limit: number,
+): Promise<PubPopularEntry[]> {
+  const search = new URLSearchParams({ limit: String(limit) });
+  const res = await apiFetch(`/posts/pub-popular/${userId}?${search.toString()}`, {
+    method: "GET",
+  });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();
 }

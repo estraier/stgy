@@ -11,14 +11,19 @@ import { SearchService } from "../services/search";
 import { ThrottleService, DailyTimerThrottleService } from "../services/throttle";
 import { AuthHelpers } from "./authHelpers";
 import { EventLogService } from "../services/eventLog";
+import { PubViewsService, verifyPubViewSignature } from "../services/pubViews";
 import { CreatePostInput, UpdatePostInput } from "../models/post";
 import { SearchCacheEntry } from "../models/search";
+import { makePlainTextDigestFromJsonSnippet } from "../utils/snippet";
+import { createLogger } from "../utils/logger";
 import {
   normalizeOneLiner,
   normalizeMultiLines,
   normalizeLocale,
   parseBoolean,
 } from "../utils/format";
+
+const logger = createLogger({ file: "posts-route" });
 
 export default function createPostsRouter(
   pgPool: Pool,
@@ -29,6 +34,7 @@ export default function createPostsRouter(
   const router = Router();
   const postsService = new PostsService(pgPool, redis, eventLogService);
   const usersService = new UsersService(pgPool, redis, eventLogService);
+  const pubViewsService = new PubViewsService(redis);
   const authService = new AuthService(pgPool, redis);
   const searchService = new SearchService(pgPool, "posts");
   const timerThrottleService = new DailyTimerThrottleService(
@@ -306,11 +312,44 @@ export default function createPostsRouter(
     res.json(result);
   });
 
+  router.get("/pub-popular/:userId", async (req, res) => {
+    if (!/^(?:0x)?[0-9a-fA-F]{1,16}$/.test(req.params.userId)) {
+      return res.status(400).json({ error: "invalid userId" });
+    }
+    const limit = Number(req.query.limit ?? 5);
+    if (!Number.isInteger(limit) || limit < 0 || limit > 1000) {
+      return res.status(400).json({ error: "invalid limit" });
+    }
+    try {
+      res.json(await pubViewsService.getPopular(req.params.userId, limit));
+    } catch (e) {
+      res.status(500).json({ error: (e as Error).message || "failed to get popular posts" });
+    }
+  });
+
   router.get("/pub/:id", async (req, res) => {
     try {
       const publishedUntil = new Date().toISOString();
       const post = await postsService.getPubPost(req.params.id, publishedUntil);
       if (!post) return res.status(404).json({ error: "not found" });
+
+      const fingerprint = req.get("x-stgy-pub-view-fingerprint") ?? "";
+      const signature = req.get("x-stgy-pub-view-signature") ?? "";
+      if (post.publishedAt && verifyPubViewSignature(post.id, fingerprint, signature)) {
+        try {
+          await pubViewsService.recordView({
+            ownerId: post.ownedBy,
+            postId: post.id,
+            publishedAt: post.publishedAt,
+            digest: makePlainTextDigestFromJsonSnippet(post.snippet),
+            snippet: post.snippet,
+            fingerprintHex: fingerprint,
+          });
+        } catch (e) {
+          logger.warn({ err: e, postId: post.id }, "failed to record public post view");
+        }
+      }
+
       res.json(post);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message || "invalid request" });

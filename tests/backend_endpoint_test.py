@@ -6,12 +6,15 @@ import sys
 import time
 import base64
 import gzip
+import hashlib
+import hmac
 import json
 
 
 ADMIN_EMAIL = os.environ.get("STGY_ADMIN_EMAIL", "admin@stgy.jp")
 ADMIN_PASSWORD = os.environ.get("STGY_ADMIN_PASSWORD", "stgystgy")
 TEST_SIGNUP_CODE = os.environ.get("STGY_TEST_SIGNUP_CODE", "000000")
+REDIS_PASSWORD = os.environ.get("STGY_REDIS_PASSWORD", "stgystgy")
 BASE_URL = os.environ.get("STGY_BACKEND_API_BASE_URL", "http://localhost:3100");
 
 def login():
@@ -1121,7 +1124,8 @@ def test_users():
   assert cfg["showSiteName"] is True
   assert cfg["showPagenation"] is True
   assert cfg["showSideProfile"] is True
-  assert cfg["showSideRecent"] is True
+  assert cfg["showSideRecent"] == 5
+  assert cfg["showSidePopular"] == 5
   update1 = {
     "siteName": "site1",
     "subtitle": "subtitle1",
@@ -1132,7 +1136,8 @@ def test_users():
     "showSiteName": False,
     "showPagenation": False,
     "showSideProfile": False,
-    "showSideRecent": True,
+    "showSideRecent": 7,
+    "showSidePopular": 3,
   }
   res = requests.put(f"{BASE_URL}/users/{user1_id}/pub-config", json=update1, headers=headers, cookies=user1_cookies)
   assert res.status_code == 200, res.text
@@ -1147,7 +1152,8 @@ def test_users():
   assert saved1["showSiteName"] is False
   assert saved1["showPagenation"] is False
   assert saved1["showSideProfile"] is False
-  assert saved1["showSideRecent"] is True
+  assert saved1["showSideRecent"] == 7
+  assert saved1["showSidePopular"] == 3
   res = requests.get(f"{BASE_URL}/users/{user1_id}/pub-config", headers=headers, cookies=user1_cookies)
   assert res.status_code == 200, res.text
   got1 = res.json()
@@ -1170,7 +1176,8 @@ def test_users():
   assert saved2["showSiteName"] is False
   assert saved2["showPagenation"] is False
   assert saved2["showSideProfile"] is False
-  assert saved2["showSideRecent"] is True
+  assert saved2["showSideRecent"] == 7
+  assert saved2["showSidePopular"] == 3
   res = requests.get(f"{BASE_URL}/users/{user1_id}/pub-config", headers=headers, cookies=user1_cookies)
   assert res.status_code == 200, res.text
   got2 = res.json()
@@ -1401,6 +1408,39 @@ def test_posts():
   pub_post = res.json()
   assert pub_post["id"] == post_id
   assert isinstance(pub_post.get("publishedAt"), str) and len(pub_post["publishedAt"]) > 0
+
+  def pub_view_headers(fingerprint):
+    message = f"{post_id}\n{fingerprint}".encode("utf-8")
+    signature = hmac.new(REDIS_PASSWORD.encode("utf-8"), message, hashlib.sha256).hexdigest()
+    return {
+      "x-stgy-pub-view-fingerprint": fingerprint,
+      "x-stgy-pub-view-signature": signature,
+    }
+
+  for fingerprint in ("01020304", "01020304", "05060708"):
+    res = requests.get(
+      f"{BASE_URL}/posts/pub/{post_id}",
+      headers=pub_view_headers(fingerprint),
+    )
+    assert res.status_code == 200, res.text
+
+  res = requests.get(
+    f"{BASE_URL}/users/{user_id}/pub-stats",
+    headers=headers,
+    cookies=cookies,
+  )
+  assert res.status_code == 200, res.text
+  pub_stats = res.json()
+  stat_entry = next((entry for entry in pub_stats["entries"] if entry["id"] == post_id), None)
+  assert stat_entry is not None
+  assert stat_entry["pv"] == 2
+  assert pub_stats["totalPv"] >= 2
+  assert len(stat_entry["digest"]) <= 150
+
+  res = requests.get(f"{BASE_URL}/posts/pub-popular/{user_id}?limit=5")
+  assert res.status_code == 200, res.text
+  assert any(entry["id"] == post_id for entry in res.json())
+
   res = requests.get(f"{BASE_URL}/posts/pub-by-user/{user_id}?limit=2000&order=desc")
   assert res.status_code == 200, res.text
   pub_list = res.json()

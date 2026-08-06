@@ -1455,6 +1455,7 @@ export class UsersService {
         upc.show_pagenation,
         upc.show_side_profile,
         upc.show_side_recent,
+        upc.show_side_popular,
         u.locale
       FROM user_pub_configs upc
       LEFT JOIN users u ON u.id = upc.user_id
@@ -1485,7 +1486,8 @@ export class UsersService {
         showSiteName: true,
         showPagenation: true,
         showSideProfile: true,
-        showSideRecent: true,
+        showSideRecent: 5,
+        showSidePopular: 5,
         locale,
       };
     }
@@ -1508,9 +1510,10 @@ export class UsersService {
         show_site_name,
         show_pagenation,
         show_side_profile,
-        show_side_recent
+        show_side_recent,
+        show_side_popular
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       ON CONFLICT (user_id) DO UPDATE SET
         site_name           = EXCLUDED.site_name,
         subtitle            = EXCLUDED.subtitle,
@@ -1521,7 +1524,8 @@ export class UsersService {
         show_site_name      = EXCLUDED.show_site_name,
         show_pagenation     = EXCLUDED.show_pagenation,
         show_side_profile   = EXCLUDED.show_side_profile,
-        show_side_recent    = EXCLUDED.show_side_recent
+        show_side_recent    = EXCLUDED.show_side_recent,
+        show_side_popular   = EXCLUDED.show_side_popular
       RETURNING
         site_name,
         subtitle,
@@ -1532,7 +1536,8 @@ export class UsersService {
         show_site_name,
         show_pagenation,
         show_side_profile,
-        show_side_recent
+        show_side_recent,
+        show_side_popular
     `,
       [
         hexToDec(userId),
@@ -1546,6 +1551,7 @@ export class UsersService {
         cfg.showPagenation,
         cfg.showSideProfile,
         cfg.showSideRecent,
+        cfg.showSidePopular,
       ],
     );
 

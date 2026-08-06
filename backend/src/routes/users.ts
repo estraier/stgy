@@ -15,6 +15,7 @@ import { SearchService } from "../services/search";
 import { AuthHelpers } from "./authHelpers";
 import { EventLogService } from "../services/eventLog";
 import { SendMailService } from "../services/sendMail";
+import { PubViewsService } from "../services/pubViews";
 import { CreateUserInput, UpdateUserInput, UpdatePasswordInput, UserLite } from "../models/user";
 import { SearchCacheEntry } from "../models/search";
 import {
@@ -57,6 +58,22 @@ export default function createUsersRouter(
   );
   const authHelpers = new AuthHelpers(authService, usersService);
   const sendMailService = new SendMailService(redis);
+  const pubViewsService = new PubViewsService(redis);
+
+  function parseSidebarCount(value: unknown): number | undefined {
+    if (value === undefined) return undefined;
+    if (typeof value !== "number" && typeof value !== "string") {
+      throw new Error("invalid sidebar count");
+    }
+    if (typeof value === "string" && !/^-?\d+$/.test(value.trim())) {
+      throw new Error("invalid sidebar count");
+    }
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < -2147483648 || parsed > 2147483647) {
+      throw new Error("invalid sidebar count");
+    }
+    return parsed;
+  }
 
   router.get("/search", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.requireLogin(req, res);
@@ -751,6 +768,19 @@ export default function createUsersRouter(
     res.json(users);
   });
 
+  router.get("/:id/pub-stats", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!(loginUser.isAdmin || loginUser.id === req.params.id)) {
+      return res.status(403).json({ error: "forbidden" });
+    }
+    try {
+      res.json(await pubViewsService.getStats(req.params.id));
+    } catch (e: unknown) {
+      res.status(500).json({ error: (e as Error).message || "get pub-stats failed" });
+    }
+  });
+
   router.get("/:id/pub-config", async (req: Request, res: Response) => {
     try {
       const cfg = await usersService.getPubConfig(req.params.id);
@@ -814,9 +844,13 @@ export default function createUsersRouter(
     if (req.body.showSideProfile !== undefined) {
       showSideProfile = parseBoolean(String(req.body.showSideProfile), true);
     }
-    let showSideRecent: boolean | undefined;
-    if (req.body.showSideRecent !== undefined) {
-      showSideRecent = parseBoolean(String(req.body.showSideRecent), true);
+    let showSideRecent: number | undefined;
+    let showSidePopular: number | undefined;
+    try {
+      showSideRecent = parseSidebarCount(req.body.showSideRecent);
+      showSidePopular = parseSidebarCount(req.body.showSidePopular);
+    } catch (e: unknown) {
+      return res.status(400).json({ error: (e as Error).message });
     }
     if (!loginUser.isAdmin && !(await updatesThrottleService.canDo(loginUser.id, dataSize))) {
       return res.status(403).json({ error: "too often updates" });
@@ -834,6 +868,7 @@ export default function createUsersRouter(
         showPagenation: showPagenation ?? current.showPagenation,
         showSideProfile: showSideProfile ?? current.showSideProfile,
         showSideRecent: showSideRecent ?? current.showSideRecent,
+        showSidePopular: showSidePopular ?? current.showSidePopular,
       };
       const watch = timerThrottleService.startWatch(loginUser);
       const saved = await usersService.setPubConfig(req.params.id, next);

@@ -1,6 +1,7 @@
 import {
   makeSnippetJsonFromMarkdown,
   makeTextFromJsonSnippet,
+  makePlainTextDigestFromJsonSnippet,
   makeTextFromMarkdown,
   getMentionsFromMarkdown,
 } from "./snippet";
@@ -36,6 +37,13 @@ describe("makeTextFromJsonSnippet", () => {
     const snippet = '[{"T":"p","X":"hello world"}]';
     const expected = "hello world";
     expect(makeTextFromJsonSnippet(snippet)).toStrictEqual(expected);
+  });
+});
+
+describe("makePlainTextDigestFromJsonSnippet", () => {
+  it("flattens whitespace and limits Unicode characters", () => {
+    const snippet = '[{"T":"p","X":"hello\\n  world あいうえお"}]';
+    expect(makePlainTextDigestFromJsonSnippet(snippet, 13)).toBe("hello world あ");
   });
 });
 

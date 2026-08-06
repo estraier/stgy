@@ -749,6 +749,7 @@ def validate_pub_config(data: dict[str, Any]) -> dict[str, Any]:
     "showPagenation",
     "showSideProfile",
     "showSideRecent",
+    "showSidePopular",
   }
   return {key: value for key, value in data.items() if key in allowed}
 

@@ -32,6 +32,22 @@ export type PostDetail = Post & {
   newerPostId: string | null;
 };
 
+export type PubViewStatEntry = {
+  id: string;
+  publishedAt: string;
+  digest: string;
+  pv: number;
+};
+
+export type PubPopularEntry = PubViewStatEntry & {
+  snippet: string;
+};
+
+export type PubViewStats = {
+  totalPv: number;
+  entries: PubViewStatEntry[];
+};
+
 export type PostFilter = {
   query?: string;
   ownedBy?: string;

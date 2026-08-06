@@ -35,7 +35,10 @@ PUBCONFIG_BOOL_KEYS = [
   "pubConfigShowSiteName",
   "pubConfigShowPagenation",
   "pubConfigShowSideProfile",
+]
+PUBCONFIG_INT_KEYS = [
   "pubConfigShowSideRecent",
+  "pubConfigShowSidePopular",
 ]
 
 
@@ -46,6 +49,13 @@ def to_bool(s: str) -> bool:
   if v in ("false", "0", "no", "n", "off"):
     return False
   raise ValueError(f"must be boolean, got: {s!r}")
+
+
+def to_int(s: str) -> int:
+  try:
+    return int(s.strip(), 10)
+  except ValueError as e:
+    raise ValueError(f"must be integer, got: {s!r}") from e
 
 
 def parse_kv_file(path: str) -> dict:
@@ -129,6 +139,9 @@ def normalize_payload(raw: dict) -> dict:
   for k in PUBCONFIG_BOOL_KEYS:
     if k in raw and str(raw[k]).strip() != "":
       out[k] = to_bool(str(raw[k]).strip())
+  for k in PUBCONFIG_INT_KEYS:
+    if k in raw and str(raw[k]).strip() != "":
+      out[k] = to_int(str(raw[k]).strip())
   return out
 
 
@@ -153,6 +166,9 @@ def has_pub_config(payload: dict) -> bool:
     if k in payload:
       return True
   for k in PUBCONFIG_BOOL_KEYS:
+    if k in payload:
+      return True
+  for k in PUBCONFIG_INT_KEYS:
     if k in payload:
       return True
   return False
@@ -180,6 +196,8 @@ def build_pub_config_body(payload: dict) -> dict:
     body["showSideProfile"] = payload["pubConfigShowSideProfile"]
   if "pubConfigShowSideRecent" in payload:
     body["showSideRecent"] = payload["pubConfigShowSideRecent"]
+  if "pubConfigShowSidePopular" in payload:
+    body["showSidePopular"] = payload["pubConfigShowSidePopular"]
   return body
 
 

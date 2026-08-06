@@ -797,7 +797,8 @@ components:
         showSiteName: { type: boolean }
         showPagenation: { type: boolean }
         showSideProfile: { type: boolean }
-        showSideRecent: { type: boolean }
+        showSideRecent: { type: integer, default: 5 }
+        showSidePopular: { type: integer, default: 5 }
         locale:
           type: string
           description: Optional locale hint for public site rendering.
@@ -813,7 +814,36 @@ components:
           showPagenation,
           showSideProfile,
           showSideRecent,
+          showSidePopular,
         ]
+
+    PubViewStatEntry:
+      type: object
+      properties:
+        id: { type: string }
+        publishedAt: { type: string, format: date-time }
+        digest: { type: string, maxLength: 150 }
+        pv: { type: integer, minimum: 1 }
+      required: [id, publishedAt, digest, pv]
+
+    PubPopularEntry:
+      allOf:
+        - $ref: "#/components/schemas/PubViewStatEntry"
+        - type: object
+          properties:
+            snippet: { type: string }
+          required: [snippet]
+
+    PubViewStats:
+      type: object
+      properties:
+        totalPv: { type: integer, minimum: 0 }
+        entries:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: "#/components/schemas/PubViewStatEntry"
+      required: [totalPv, entries]
 
   responses:
     Error400:
@@ -4062,6 +4092,51 @@ paths:
         "400":
           $ref: "#/components/responses/Error400"
 
+  /posts/pub-popular/{userId}:
+    get:
+      summary: Get popular public posts from the last 10 days
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 1000, default: 5 }
+      responses:
+        "200":
+          description: Popular public posts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PubPopularEntry"
+        "400":
+          $ref: "#/components/responses/Error400"
+
+  /users/{id}/pub-stats:
+    get:
+      summary: Get the user's public post PV statistics
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Public post PV statistics for the last 10 days
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PubViewStats"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+
   /users/{id}/pub-config:
     get:
       summary: Get user's public site config
@@ -4106,7 +4181,8 @@ paths:
                 showSiteName: { type: boolean }
                 showPagenation: { type: boolean }
                 showSideProfile: { type: boolean }
-                showSideRecent: { type: boolean }
+                showSideRecent: { type: integer }
+                showSidePopular: { type: integer }
               description: |
                 Note: current server implementation does NOT accept/handle "locale" in this request.
       responses:

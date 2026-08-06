@@ -26,6 +26,12 @@ export function makeTextFromJsonSnippet(snippet: string) {
   return sliceByPseudoTokens(mdRenderText(nodes), 0, 50);
 }
 
+export function makePlainTextDigestFromJsonSnippet(snippet: string, maxLength = 150) {
+  const nodes = deserializeMdNodes(snippet);
+  const flat = mdRenderText(nodes).replace(/\s+/gu, " ").trim();
+  return Array.from(flat).slice(0, maxLength).join("");
+}
+
 export function makeTextFromMarkdown(content: string) {
   return mdRenderText(parseMarkdown(content));
 }

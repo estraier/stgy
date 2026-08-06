@@ -78,7 +78,8 @@ CREATE TABLE user_pub_configs (
   show_site_name BOOLEAN NOT NULL DEFAULT TRUE,
   show_pagenation BOOLEAN NOT NULL DEFAULT TRUE,
   show_side_profile BOOLEAN NOT NULL DEFAULT TRUE,
-  show_side_recent BOOLEAN NOT NULL DEFAULT TRUE
+  show_side_recent INTEGER NOT NULL DEFAULT 5,
+  show_side_popular INTEGER NOT NULL DEFAULT 5
 );
 
 CREATE TABLE posts (

@@ -128,6 +128,7 @@ export type PubConfig = {
   showSiteName: boolean;
   showPagenation: boolean;
   showSideProfile: boolean;
-  showSideRecent: boolean;
+  showSideRecent: number;
+  showSidePopular: number;
   locale?: string;
 };

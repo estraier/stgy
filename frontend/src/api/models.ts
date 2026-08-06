@@ -114,6 +114,22 @@ export type PostDetail = Post & {
   newerPostId: string | null;
 };
 
+export type PubViewStatEntry = {
+  id: string;
+  publishedAt: string;
+  digest: string;
+  pv: number;
+};
+
+export type PubPopularEntry = PubViewStatEntry & {
+  snippet: string;
+};
+
+export type PubViewStats = {
+  totalPv: number;
+  entries: PubViewStatEntry[];
+};
+
 export type AiPostSummary = {
   postId: string;
   sourceUpdatedAt: string;
@@ -230,6 +246,7 @@ export type PubConfig = {
   showSiteName: boolean;
   showPagenation: boolean;
   showSideProfile: boolean;
-  showSideRecent: boolean;
+  showSideRecent: number;
+  showSidePopular: number;
   locale?: string;
 };
