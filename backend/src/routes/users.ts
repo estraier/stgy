@@ -26,6 +26,7 @@ import {
   normalizeMultiLines,
   normalizeLocale,
   parseBoolean,
+  decToHex,
   hexToDec,
   maskEmailByHash,
 } from "../utils/format";
@@ -766,6 +767,23 @@ export default function createUsersRouter(
     );
     watch.done();
     res.json(users);
+  });
+
+  router.get("/:id/pub-ranking", async (req: Request, res: Response) => {
+    if (!/^(?:0x)?[0-9a-fA-F]{1,16}$/.test(req.params.id)) {
+      return res.status(400).json({ error: "invalid id" });
+    }
+    const requestedLimit = Number(req.query.limit ?? 5);
+    if (!Number.isInteger(requestedLimit) || requestedLimit < 0) {
+      return res.status(400).json({ error: "invalid limit" });
+    }
+    const limit = Math.min(requestedLimit, Config.PUB_SIDE_POSTS_MAX);
+    const userId = decToHex(hexToDec(req.params.id));
+    try {
+      res.json(await pubViewsService.getRankingEntries(userId, limit));
+    } catch (e: unknown) {
+      res.status(500).json({ error: (e as Error).message || "get pub-ranking failed" });
+    }
   });
 
   router.get("/:id/pub-stats", async (req: Request, res: Response) => {

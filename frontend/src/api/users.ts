@@ -1,4 +1,4 @@
-import type { User, UserDetail, PubConfig, PubViewStats } from "./models";
+import type { User, UserDetail, PubConfig, PubViewRankEntry, PubViewStats } from "./models";
 import { apiFetch, extractError } from "./client";
 
 export async function searchUsers(params: {
@@ -296,6 +296,16 @@ export async function countUsers(
 
 export async function getPubConfig(id: string): Promise<PubConfig> {
   const res = await apiFetch(`/users/${id}/pub-config`, { method: "GET" });
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
+}
+
+export async function getPubRanking(
+  id: string,
+  limit: number,
+): Promise<PubViewRankEntry[]> {
+  const search = new URLSearchParams({ limit: String(limit) });
+  const res = await apiFetch(`/users/${id}/pub-ranking?${search.toString()}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();
 }

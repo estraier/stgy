@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import type Redis from "ioredis";
 import { Config } from "../config";
-import type { PubViewStatEntry, PubViewStats } from "../models/post";
+import type { PubViewRankEntry, PubViewStatEntry, PubViewStats } from "../models/post";
 
 const DAYS = 10;
 const TOP_LIMIT = 1000;
@@ -53,8 +53,7 @@ end
 return 0
 `;
 
-type RankEntry = { id: string; pv: number };
-type Ranking = { totalPv: number; entries: RankEntry[] };
+type Ranking = { totalPv: number; entries: PubViewRankEntry[] };
 type StoredMeta = { publishedAt: string; digest: string };
 
 type RedisWithPubViews = Redis & {
@@ -118,12 +117,12 @@ function statsKey(ownerId: string): string {
   return `stgy:pub-views:stats:${ownerId}`;
 }
 
-function compareRank(a: RankEntry, b: RankEntry): number {
+function compareRank(a: PubViewRankEntry, b: PubViewRankEntry): number {
   if (a.pv !== b.pv) return a.pv - b.pv;
   return b.id.localeCompare(a.id);
 }
 
-function heapPush(heap: RankEntry[], value: RankEntry): void {
+function heapPush(heap: PubViewRankEntry[], value: PubViewRankEntry): void {
   heap.push(value);
   let index = heap.length - 1;
   while (index > 0) {
@@ -134,7 +133,7 @@ function heapPush(heap: RankEntry[], value: RankEntry): void {
   }
 }
 
-function heapReplaceRoot(heap: RankEntry[], value: RankEntry): void {
+function heapReplaceRoot(heap: PubViewRankEntry[], value: PubViewRankEntry): void {
   heap[0] = value;
   let index = 0;
   for (;;) {
@@ -153,8 +152,11 @@ function heapReplaceRoot(heap: RankEntry[], value: RankEntry): void {
   }
 }
 
-function selectTopEntries(counts: Map<string, number>, limit: number): RankEntry[] {
-  const heap: RankEntry[] = [];
+function selectTopEntries(
+  counts: Map<string, number>,
+  limit: number,
+): PubViewRankEntry[] {
+  const heap: PubViewRankEntry[] = [];
   for (const [id, pv] of counts) {
     if (pv <= 0) continue;
     const entry = { id, pv };
@@ -329,7 +331,7 @@ export class PubViewsService {
     return stats;
   }
 
-  async getPopular(ownerId: string, limit: number): Promise<RankEntry[]> {
+  async getRankingEntries(ownerId: string, limit: number): Promise<PubViewRankEntry[]> {
     if (!Number.isInteger(limit) || limit <= 0) return [];
     const ranking = await this.getRanking(ownerId);
     return ranking.entries.slice(0, Math.min(limit, TOP_LIMIT));

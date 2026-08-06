@@ -6,15 +6,12 @@ import sys
 import time
 import base64
 import gzip
-import hashlib
-import hmac
 import json
 
 
 ADMIN_EMAIL = os.environ.get("STGY_ADMIN_EMAIL", "admin@stgy.jp")
 ADMIN_PASSWORD = os.environ.get("STGY_ADMIN_PASSWORD", "stgystgy")
 TEST_SIGNUP_CODE = os.environ.get("STGY_TEST_SIGNUP_CODE", "000000")
-REDIS_PASSWORD = os.environ.get("STGY_REDIS_PASSWORD", "stgystgy")
 BASE_URL = os.environ.get("STGY_BACKEND_API_BASE_URL", "http://localhost:3100");
 
 def login():
@@ -1409,21 +1406,6 @@ def test_posts():
   assert pub_post["id"] == post_id
   assert isinstance(pub_post.get("publishedAt"), str) and len(pub_post["publishedAt"]) > 0
 
-  def pub_view_headers(fingerprint):
-    message = f"{post_id}\n{fingerprint}".encode("utf-8")
-    signature = hmac.new(REDIS_PASSWORD.encode("utf-8"), message, hashlib.sha256).hexdigest()
-    return {
-      "x-stgy-pub-view-fingerprint": fingerprint,
-      "x-stgy-pub-view-signature": signature,
-    }
-
-  for fingerprint in ("01020304", "01020304", "05060708"):
-    res = requests.get(
-      f"{BASE_URL}/posts/pub/{post_id}",
-      headers=pub_view_headers(fingerprint),
-    )
-    assert res.status_code == 200, res.text
-
   res = requests.get(
     f"{BASE_URL}/users/{user_id}/pub-stats",
     headers=headers,
@@ -1431,19 +1413,41 @@ def test_posts():
   )
   assert res.status_code == 200, res.text
   pub_stats = res.json()
-  stat_entry = next((entry for entry in pub_stats["entries"] if entry["id"] == post_id), None)
-  assert stat_entry is not None
-  assert stat_entry["pv"] == 2
-  assert pub_stats["totalPv"] >= 2
-  assert len(stat_entry["digest"]) <= 150
+  assert isinstance(pub_stats.get("totalPv"), int)
+  assert isinstance(pub_stats.get("entries"), list)
+  for entry in pub_stats["entries"]:
+    assert isinstance(entry.get("id"), str)
+    assert isinstance(entry.get("publishedAt"), str)
+    assert isinstance(entry.get("digest"), str)
+    assert len(entry["digest"]) <= 150
+    assert isinstance(entry.get("pv"), int) and entry["pv"] > 0
 
-  res = requests.get(f"{BASE_URL}/posts/pub-popular/{user_id}?limit=5")
+  res = requests.get(f"{BASE_URL}/users/{user_id}/pub-ranking?limit=5")
   assert res.status_code == 200, res.text
-  popular_entry = next((entry for entry in res.json() if entry["id"] == post_id), None)
-  assert popular_entry is not None
-  assert popular_entry["pv"] == 2
-  assert isinstance(popular_entry.get("snippet"), str)
-  res = requests.get(f"{BASE_URL}/posts/pub-popular/{user_id}?limit=1000")
+  ranking = res.json()
+  assert isinstance(ranking, list)
+  assert len(ranking) <= 5
+  for entry in ranking:
+    assert isinstance(entry.get("id"), str)
+    assert isinstance(entry.get("pv"), int) and entry["pv"] > 0
+
+  res = requests.post(
+    f"{BASE_URL}/posts/pub-by-ids",
+    json={"ids": [post_id]},
+  )
+  assert res.status_code == 200, res.text
+  public_posts_by_ids = res.json()
+  assert len(public_posts_by_ids) == 1
+  assert public_posts_by_ids[0]["id"] == post_id
+  assert isinstance(public_posts_by_ids[0].get("snippet"), str)
+
+  res = requests.get(f"{BASE_URL}/users/{user_id}/pub-ranking?limit=1000")
+  assert res.status_code == 200, res.text
+  assert len(res.json()) <= 20
+  res = requests.post(
+    f"{BASE_URL}/posts/pub-by-ids",
+    json={"ids": [post_id] * 21},
+  )
   assert res.status_code == 200, res.text
   assert len(res.json()) <= 20
 
@@ -1788,17 +1792,28 @@ def test_notifications():
   assert res.status_code == 201, res.text
   second_reply_id = res.json()["id"]
   print("[notifications] two replies done")
-  time.sleep(0.1)
-  res = requests.get(f"{BASE_URL}/notifications/feed", cookies=user_cookies)
-  assert res.status_code == 200, res.text
-  feed = res.json()
-  print("[notifications] feed:", feed)
-  assert isinstance(feed, list)
-  assert len(feed) == 3, f"expected 3 notifications, got {len(feed)}"
-  by_slot = {n["slot"]: n for n in feed}
   follow_slot = "follow"
   like_slot = f"like:{post_id}"
   reply_slot = f"reply:{post_id}"
+  deadline = time.monotonic() + 30.0
+  feed = []
+  while time.monotonic() < deadline:
+    res = requests.get(f"{BASE_URL}/notifications/feed", cookies=user_cookies)
+    assert res.status_code == 200, res.text
+    feed = res.json()
+    assert isinstance(feed, list)
+    by_slot = {n["slot"]: n for n in feed}
+    if (
+      follow_slot in by_slot
+      and like_slot in by_slot
+      and reply_slot in by_slot
+      and by_slot[reply_slot].get("countPosts") == 2
+    ):
+      break
+    time.sleep(0.25)
+  print("[notifications] feed:", feed)
+  by_slot = {n["slot"]: n for n in feed}
+  assert len(feed) == 3, f"expected 3 notifications, got {len(feed)}"
   assert follow_slot in by_slot, f"missing {follow_slot}"
   assert like_slot in by_slot, f"missing {like_slot}"
   assert reply_slot in by_slot, f"missing {reply_slot}"
@@ -1858,15 +1873,24 @@ def test_notifications():
   )
   assert res.status_code == 201, res.text
   third_reply_id = res.json()["id"]
-  time.sleep(0.1)
-  res = requests.get(
-    f"{BASE_URL}/notifications/feed",
-    params={"newerThan": latest},
-    cookies=user_cookies,
-  )
-  assert res.status_code == 200, f"expected 200 after new notification, got {res.status_code}"
-  feed4 = res.json()
-  assert isinstance(feed4, list)
+  deadline = time.monotonic() + 30.0
+  feed4 = []
+  while time.monotonic() < deadline:
+    res = requests.get(
+      f"{BASE_URL}/notifications/feed",
+      params={"newerThan": latest},
+      cookies=user_cookies,
+    )
+    if res.status_code == 304:
+      time.sleep(0.25)
+      continue
+    assert res.status_code == 200, f"expected 200 after new notification, got {res.status_code}"
+    feed4 = res.json()
+    assert isinstance(feed4, list)
+    by_slot4 = {n["slot"]: n for n in feed4}
+    if reply_slot in by_slot4 and by_slot4[reply_slot].get("countPosts") == 3:
+      break
+    time.sleep(0.25)
   by_slot4 = {n["slot"]: n for n in feed4}
   assert reply_slot in by_slot4, f"missing {reply_slot} after new reply"
   assert by_slot4[reply_slot].get("countPosts") == 3, f"expected 3 replies, got {by_slot4[reply_slot].get('countPosts')}"

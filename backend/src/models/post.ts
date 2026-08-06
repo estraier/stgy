@@ -39,7 +39,10 @@ export type PubViewStatEntry = {
   pv: number;
 };
 
-export type PubPopularEntry = Post & { pv: number };
+export type PubViewRankEntry = {
+  id: string;
+  pv: number;
+};
 
 export type PubViewStats = {
   totalPv: number;

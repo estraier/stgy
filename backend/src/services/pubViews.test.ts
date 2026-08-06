@@ -151,12 +151,12 @@ describe("PubViewsService", () => {
     });
   });
 
-  test("getPopular returns ranked IDs without loading stats metadata", async () => {
+  test("getRankingEntries returns ranked IDs without loading stats metadata", async () => {
     const redis = new FakeRedis();
     redis.daily = [{ "post-a": "2", "post-b": "1" }];
 
     const service = new PubViewsService(asRedis(redis));
-    await expect(service.getPopular("owner-a", 1)).resolves.toEqual([
+    await expect(service.getRankingEntries("owner-a", 1)).resolves.toEqual([
       { id: "post-a", pv: 2 },
     ]);
     expect(redis.mgetCalls).toBe(0);

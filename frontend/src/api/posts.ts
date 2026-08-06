@@ -1,4 +1,4 @@
-import type { Post, PostDetail, PubPopularEntry, User } from "./models";
+import type { Post, PostDetail, User } from "./models";
 import { apiFetch, extractError } from "./client";
 
 function buildPostQuery(
@@ -238,13 +238,10 @@ export async function listPubPostsByUser(
   return res.json();
 }
 
-export async function listPubPopular(
-  userId: string,
-  limit: number,
-): Promise<PubPopularEntry[]> {
-  const search = new URLSearchParams({ limit: String(limit) });
-  const res = await apiFetch(`/posts/pub-popular/${userId}?${search.toString()}`, {
-    method: "GET",
+export async function listPubPostsByIds(ids: string[]): Promise<Post[]> {
+  const res = await apiFetch("/posts/pub-by-ids", {
+    method: "POST",
+    body: JSON.stringify({ ids }),
   });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();

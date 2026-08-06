@@ -826,13 +826,20 @@ components:
         pv: { type: integer, minimum: 1 }
       required: [id, publishedAt, digest, pv]
 
-    PubPopularEntry:
-      allOf:
-        - $ref: "#/components/schemas/Post"
-        - type: object
-          properties:
-            pv: { type: integer, minimum: 1 }
-          required: [pv]
+    PubViewRankEntry:
+      type: object
+      properties:
+        id: { type: string }
+        pv: { type: integer, minimum: 1 }
+      required: [id, pv]
+
+    PubPostIdsRequest:
+      type: object
+      properties:
+        ids:
+          type: array
+          items: { type: string }
+      required: [ids]
 
     PubViewStats:
       type: object
@@ -4092,27 +4099,49 @@ paths:
         "400":
           $ref: "#/components/responses/Error400"
 
-  /posts/pub-popular/{userId}:
-    get:
-      summary: Get popular public posts from the last 10 days
-      parameters:
-        - name: userId
-          in: path
-          required: true
-          schema: { type: string }
-        - name: limit
-          in: query
-          description: Values above the configured sidebar maximum are capped.
-          schema: { type: integer, minimum: 0, default: 5 }
+  /posts/pub-by-ids:
+    post:
+      summary: Get public posts by ID in the requested order
+      description: The request is capped at the configured public sidebar maximum. Missing, unpublished, and future-published posts are omitted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PubPostIdsRequest"
       responses:
         "200":
-          description: Popular public posts
+          description: Public posts in requested ID order
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/PubPopularEntry"
+                  $ref: "#/components/schemas/Post"
+        "400":
+          $ref: "#/components/responses/Error400"
+
+  /users/{id}/pub-ranking:
+    get:
+      summary: Get public post PV ranking for the last 10 days
+      description: Returns only post IDs and PV counts. Values above the configured public sidebar maximum are capped.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 0, default: 5 }
+      responses:
+        "200":
+          description: Public post PV ranking
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PubViewRankEntry"
         "400":
           $ref: "#/components/responses/Error400"
 

@@ -77,6 +77,7 @@ export STGY_LOG_FORMAT="simple"
 if [ "${OVERRIDING_OPENAI_API_KEY}" != "-" ]; then
   export STGY_OPENAI_API_KEY="${OVERRIDING_OPENAI_API_KEY}"
 fi
+export STGY_NOTIFICATION_BUFFER_FLUSH_MS=500
 
 declare -a WORKER_PIDS=()
 

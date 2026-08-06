@@ -314,37 +314,32 @@ export default function createPostsRouter(
     res.json(result);
   });
 
-  router.get("/pub-popular/:userId", async (req, res) => {
-    if (!/^(?:0x)?[0-9a-fA-F]{1,16}$/.test(req.params.userId)) {
-      return res.status(400).json({ error: "invalid userId" });
+  router.post("/pub-by-ids", async (req, res) => {
+    if (!Array.isArray(req.body?.ids)) {
+      return res.status(400).json({ error: "ids must be an array" });
     }
-    const requestedLimit = Number(req.query.limit ?? 5);
-    if (!Number.isInteger(requestedLimit) || requestedLimit < 0) {
-      return res.status(400).json({ error: "invalid limit" });
+    const rawIds = req.body.ids.slice(0, Config.PUB_SIDE_POSTS_MAX);
+    if (
+      rawIds.some(
+        (id: unknown) =>
+          typeof id !== "string" || !/^(?:0x)?[0-9a-fA-F]{1,16}$/.test(id),
+      )
+    ) {
+      return res.status(400).json({ error: "invalid id" });
     }
-    const limit = Math.min(requestedLimit, Config.PUB_SIDE_POSTS_MAX);
-    const userId = decToHex(hexToDec(req.params.userId));
+    const ids = rawIds.map((id: string) => decToHex(hexToDec(id)));
     try {
-      const ranked = await pubViewsService.getPopular(userId, limit);
-      const posts = await postsService.listPostsByIds(ranked.map((entry) => entry.id));
-      const publishedUntil = new Date().toISOString();
-      const pvById = new Map(ranked.map((entry) => [entry.id, entry.pv]));
+      const posts = await postsService.listPostsByIds(ids);
+      const publishedUntilMs = Date.now();
       res.json(
-        posts.flatMap((post) => {
-          const pv = pvById.get(post.id);
-          if (
-            pv === undefined ||
-            post.ownedBy !== userId ||
-            post.publishedAt === null ||
-            post.publishedAt > publishedUntil
-          ) {
-            return [];
-          }
-          return [{ ...post, pv }];
+        posts.filter((post) => {
+          if (post.publishedAt === null) return false;
+          const publishedAtMs = new Date(post.publishedAt).getTime();
+          return Number.isFinite(publishedAtMs) && publishedAtMs <= publishedUntilMs;
         }),
       );
     } catch (e) {
-      res.status(500).json({ error: (e as Error).message || "failed to get popular posts" });
+      res.status(500).json({ error: (e as Error).message || "failed to get public posts" });
     }
   });
 

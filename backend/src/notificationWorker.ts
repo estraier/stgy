@@ -1039,7 +1039,7 @@ export async function startNotificationWorker() {
     notificationsService,
   };
 
-  const flushInterval = Math.max(100, Config.NOTIFICATION_BUFFER_FLUSH_MS);
+  const flushInterval = Math.max(100, Math.min(1000, Config.NOTIFICATION_BUFFER_FLUSH_MS));
   flushTimer = setInterval(() => {
     if (!globalContext) return;
     void flushDueBuffers(globalContext).catch((error) => {

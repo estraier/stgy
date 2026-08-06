@@ -6,8 +6,8 @@ import { headers } from "next/headers";
 import { Config } from "@/config";
 import { HeadLangPatcher } from "@/components/HeadLangPatcher";
 import PubServiceHeader from "@/components/PubServiceHeader";
-import { getPubPost, listPubPopular, listPubPostsByUser } from "@/api/posts";
-import { getPubConfig } from "@/api/users";
+import { getPubPost, listPubPostsByIds, listPubPostsByUser } from "@/api/posts";
+import { getPubConfig, getPubRanking } from "@/api/users";
 import {
   makePubArticleHtmlFromMarkdown,
   makeHtmlFromJsonSnippet,
@@ -20,6 +20,7 @@ import { parseDateString } from "@/utils/parse";
 import PubImageBlockBinder from "@/components/PubImageBlockBinder";
 import PubScrollAction from "@/components/PubScrollAction";
 import PubTrackMapHydrator from "@/components/PubTrackMapHydrator";
+import type { Post } from "@/api/models";
 import type { Metadata } from "next";
 
 type PageParams = { id: string };
@@ -79,6 +80,12 @@ const getPubPageData = cache(async (id: string, fingerprint: string, signature: 
   const article = makePubArticleHtmlFromMarkdown(post.content);
   return { post, pubcfg, article };
 });
+
+async function listPopularPosts(userId: string, limit: number): Promise<Post[]> {
+  const ranking = await getPubRanking(userId, limit);
+  if (ranking.length === 0) return [];
+  return listPubPostsByIds(ranking.map((entry) => entry.id));
+}
 
 async function loadPubPageData(id: string) {
   const view = await getPubViewHeaders(id);
@@ -208,7 +215,7 @@ export default async function PubPostPage({ params, searchParams }: Props) {
           })
         : Promise.resolve([]),
       popularCount > 0
-        ? listPubPopular(post.ownedBy, popularCount).catch(() => [])
+        ? listPopularPosts(post.ownedBy, popularCount).catch(() => [])
         : Promise.resolve([]),
     ]);
     const recent = recentRaw
