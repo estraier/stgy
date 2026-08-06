@@ -35,6 +35,7 @@ import {
 import { convertHtmlMathInline } from "@/utils/mathjax-inline";
 import { destroyTrackMaps, useTrackMapHydrator } from "@/hooks/useTrackMapHydrator";
 import { useLinkSnippetHydrator } from "@/hooks/useLinkSnippetHydrator";
+import { reconcileLinkSnippetPreviews } from "@/utils/linkSnippetHydration";
 import { reconcileTrackMapPreviews, TRACK_MAP_REDRAW_DELAY_MS } from "@/utils/liveTrackPreview";
 import {
   cycleTrackBaseOptions,
@@ -1313,6 +1314,7 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
     back.innerHTML = renderedHtml;
     const frame = requestAnimationFrame(() => {
       reconcileTrackMapPreviews(front, back);
+      reconcileLinkSnippetPreviews(front, back);
       front.style.display = "none";
       back.style.display = "block";
       previewHtmlFrontIsARef.current = back === a;

@@ -686,6 +686,25 @@ export default function PageBody() {
     }
   }
 
+  const renderedPostCard = useMemo(() => {
+    if (!post || !userId) return null;
+    return (
+      <PostCard
+        post={post}
+        avatarVersion={post.ownedBy === userId ? (updatedAt ?? undefined) : undefined}
+        truncated={false}
+        showActions={true}
+        onLike={() => handleLike(post)}
+        onReply={() => setReplyingTo(post.id)}
+        isReplying={replyingTo === post.id}
+        clickable={false}
+        className="mb-8"
+        focusUserId={userId}
+        focusUserIsAdmin={!!isAdmin}
+      />
+    );
+  }, [post, userId, updatedAt, isAdmin, replyingTo]);
+
   const canEdit = isAdmin || (post && post.ownedBy === userId);
 
   if (!userId) return null;
@@ -770,19 +789,7 @@ export default function PageBody() {
         >
           ▷
         </button>
-        <PostCard
-          post={post}
-          avatarVersion={post.ownedBy === userId ? (updatedAt ?? undefined) : undefined}
-          truncated={false}
-          showActions={true}
-          onLike={() => handleLike(post)}
-          onReply={() => setReplyingTo(post.id)}
-          isReplying={replyingTo === post.id}
-          clickable={false}
-          className="mb-8"
-          focusUserId={userId}
-          focusUserIsAdmin={!!isAdmin}
-        />
+        {renderedPostCard}
         <button
           type="button"
           disabled={!post.olderPostId}

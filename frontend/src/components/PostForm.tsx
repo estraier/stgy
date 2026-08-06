@@ -12,6 +12,7 @@ import React, {
 import { makeArticleHtmlFromMarkdown } from "@/utils/article";
 import { destroyTrackMaps, useTrackMapHydrator } from "@/hooks/useTrackMapHydrator";
 import { useLinkSnippetHydrator } from "@/hooks/useLinkSnippetHydrator";
+import { reconcileLinkSnippetPreviews } from "@/utils/linkSnippetHydration";
 import { reconcileTrackMapPreviews, TRACK_MAP_REDRAW_DELAY_MS } from "@/utils/liveTrackPreview";
 import { parseBodyAndTags } from "@/utils/parse";
 import { convertHtmlMathInline } from "@/utils/mathjax-inline";
@@ -1962,6 +1963,7 @@ export default function PostForm({
     back.innerHTML = previewHtml;
     const frame = requestAnimationFrame(() => {
       reconcileTrackMapPreviews(front, back);
+      reconcileLinkSnippetPreviews(front, back);
       front.style.display = "none";
       back.style.display = "block";
       frontIsARef.current = back === a;

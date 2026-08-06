@@ -92,6 +92,75 @@ function renderReadySnippet(element: HTMLElement, snippet: LinkSnippet): void {
   }
 }
 
+export type LinkSnippetReusePlan = Array<number | null>;
+
+function linkSnippetSourceKey(element: HTMLElement): string | null {
+  const anchor = findDirectLink(element);
+  if (!anchor) return null;
+  const href = anchor.getAttribute("href")?.trim() || anchor.href;
+  if (!href) return null;
+  const caption = element.hasAttribute("data-caption")
+    ? element.getAttribute("data-caption") || ""
+    : null;
+  return JSON.stringify([href, caption]);
+}
+
+export function planLinkSnippetReuse(
+  previousKeys: Array<string | null>,
+  nextKeys: Array<string | null>,
+): LinkSnippetReusePlan {
+  const queues = new Map<string, number[]>();
+  previousKeys.forEach((key, index) => {
+    if (key === null) return;
+    const queue = queues.get(key);
+    if (queue) queue.push(index);
+    else queues.set(key, [index]);
+  });
+
+  return nextKeys.map((key) => {
+    if (key === null) return null;
+    const queue = queues.get(key);
+    if (!queue || queue.length === 0) return null;
+    return queue.shift() ?? null;
+  });
+}
+
+export function reconcileLinkSnippetPreviews(
+  previousRoot: HTMLElement,
+  nextRoot: HTMLElement,
+): number {
+  const previous = findLinkSnippetElements(previousRoot).filter(
+    (element) => element.dataset.hydrated === "true",
+  );
+  const next = findLinkSnippetElements(nextRoot);
+  const plan = planLinkSnippetReuse(
+    previous.map(linkSnippetSourceKey),
+    next.map(linkSnippetSourceKey),
+  );
+  let reused = 0;
+
+  next.forEach((nextElement, nextIndex) => {
+    const previousIndex = plan[nextIndex];
+    if (previousIndex == null) return;
+    const previousElement = previous[previousIndex];
+    const previousAnchor = findDirectLink(previousElement);
+    const nextAnchor = findDirectLink(nextElement);
+    if (!previousAnchor || !nextAnchor) return;
+
+    nextAnchor.replaceWith(previousAnchor);
+    nextElement.dataset.hydrated = "true";
+    delete nextElement.dataset.hydrating;
+    if (previousElement.dataset.status) {
+      nextElement.dataset.status = previousElement.dataset.status;
+    } else {
+      delete nextElement.dataset.status;
+    }
+    reused += 1;
+  });
+
+  return reused;
+}
+
 export function createLinkSnippetHydrator(
   resolver: LinkSnippetResolver = resolveLinkSnippet,
 ): LinkSnippetHydrator {

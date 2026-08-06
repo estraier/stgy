@@ -1,7 +1,11 @@
 /** @jest-environment jsdom */
 
 import type { LinkSnippet } from "@/api/models";
-import { createLinkSnippetHydrator } from "./linkSnippetHydration";
+import {
+  createLinkSnippetHydrator,
+  planLinkSnippetReuse,
+  reconcileLinkSnippetPreviews,
+} from "./linkSnippetHydration";
 
 function readySnippet(overrides: Partial<LinkSnippet> = {}): LinkSnippet {
   return {
@@ -145,5 +149,49 @@ describe("link snippet hydration", () => {
 
     expect(resolver).toHaveBeenCalledTimes(1);
     expect(document.querySelectorAll(".stgy-link-snippet-title")).toHaveLength(2);
+  });
+});
+
+
+describe("link snippet preview reuse", () => {
+  test("matches unchanged snippets in occurrence order", () => {
+    expect(
+      planLinkSnippetReuse(
+        ["a", "same", "same"],
+        ["same", "a", "same", "new"],
+      ),
+    ).toEqual([1, 0, 2, null]);
+  });
+
+  test("moves a rendered snippet into the next preview when source is unchanged", () => {
+    document.body.innerHTML =
+      '<div id="old"><div class="stgy-link-snippet" data-caption="Caption" data-hydrated="true" data-status="ready"><a class="stgy-link-snippet-link stgy-link-snippet-link-with-image" href="https://example.com/article"><img class="stgy-link-snippet-image" src="https://cdn.example.com/card.webp"><span class="stgy-link-snippet-body"><span class="stgy-link-snippet-title">Fixed title</span></span></a></div></div>' +
+      '<div id="next"><p>changed text</p><div class="stgy-link-snippet" data-caption="Caption"><a class="stgy-link-snippet-link" href="https://example.com/article">Caption</a></div></div>';
+    const oldRoot = document.getElementById("old")!;
+    const nextRoot = document.getElementById("next")!;
+    const oldAnchor = oldRoot.querySelector<HTMLAnchorElement>(".stgy-link-snippet-link")!;
+
+    expect(reconcileLinkSnippetPreviews(oldRoot, nextRoot)).toBe(1);
+    expect(nextRoot.querySelector(".stgy-link-snippet-link")).toBe(oldAnchor);
+    expect(nextRoot.querySelector(".stgy-link-snippet-title")?.textContent).toBe(
+      "Fixed title",
+    );
+    expect(
+      nextRoot.querySelector<HTMLElement>(".stgy-link-snippet")?.dataset.hydrated,
+    ).toBe("true");
+  });
+
+  test("does not reuse a snippet when its caption or URL changes", () => {
+    document.body.innerHTML =
+      '<div id="old"><div class="stgy-link-snippet" data-caption="Old" data-hydrated="true" data-status="ready"><a class="stgy-link-snippet-link" href="https://example.com/old"><span class="stgy-link-snippet-title">Old title</span></a></div></div>' +
+      '<div id="next"><div class="stgy-link-snippet" data-caption="New"><a class="stgy-link-snippet-link" href="https://example.com/new">New</a></div></div>';
+
+    expect(
+      reconcileLinkSnippetPreviews(
+        document.getElementById("old")!,
+        document.getElementById("next")!,
+      ),
+    ).toBe(0);
+    expect(document.querySelector("#next .stgy-link-snippet-title")).toBeNull();
   });
 });
