@@ -188,28 +188,33 @@ export default function PageBody() {
             <div className="text-3xl font-bold tabular-nums">{stats.totalPv.toLocaleString()}</div>
           </div>
 
-          <div className="overflow-x-auto border rounded">
-            <table className="w-full min-w-[52rem] border-collapse text-sm">
+          <div className="overflow-hidden border rounded">
+            <table className="w-full table-fixed border-collapse text-xs sm:text-sm">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="text-left px-3 py-2 border-b">
-                    <button type="button" className={sortButton} onClick={() => toggleSort("id")}>
-                      <span>ID</span>
-                      <span className="font-mono">{sortMark("id")}</span>
-                    </button>
+                  <th className="w-[28%] text-left px-2 sm:px-3 py-2 border-b">
+                    <div className="flex flex-wrap items-center gap-x-1">
+                      <button
+                        type="button"
+                        className={sortButton}
+                        onClick={() => toggleSort("id")}
+                      >
+                        <span>ID</span>
+                        <span className="font-mono">{sortMark("id")}</span>
+                      </button>
+                      <span aria-hidden="true">/</span>
+                      <button
+                        type="button"
+                        className={sortButton}
+                        onClick={() => toggleSort("publishedAt")}
+                      >
+                        <span>Date</span>
+                        <span className="font-mono">{sortMark("publishedAt")}</span>
+                      </button>
+                    </div>
                   </th>
-                  <th className="text-left px-3 py-2 border-b">
-                    <button
-                      type="button"
-                      className={sortButton}
-                      onClick={() => toggleSort("publishedAt")}
-                    >
-                      <span>Published at</span>
-                      <span className="font-mono">{sortMark("publishedAt")}</span>
-                    </button>
-                  </th>
-                  <th className="text-left px-3 py-2 border-b">Content</th>
-                  <th className="text-right px-3 py-2 border-b">
+                  <th className="w-[62%] text-left px-2 sm:px-3 py-2 border-b">Content</th>
+                  <th className="w-[10%] text-right px-2 sm:px-3 py-2 border-b">
                     <button
                       type="button"
                       className={`${sortButton} justify-end w-full`}
@@ -224,25 +229,29 @@ export default function PageBody() {
               <tbody>
                 {sortedEntries.map((entry) => (
                   <tr key={entry.id} className="border-b last:border-b-0 align-top">
-                    <td className="px-3 py-2 font-mono whitespace-nowrap">
-                      <Link href={`/posts/${entry.id}`} className="hover:underline">
-                        {entry.id}
-                      </Link>
+                    <td className="px-2 sm:px-3 py-2">
+                      <div className="font-mono break-all">
+                        <Link href={`/posts/${entry.id}`} className="hover:underline">
+                          {entry.id}
+                        </Link>
+                      </div>
+                      <div className="mt-1 text-gray-600 break-words">
+                        <Link href={`/pub/${entry.id}`} className="hover:underline">
+                          {formatDateTime(new Date(entry.publishedAt))}
+                        </Link>
+                      </div>
                     </td>
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      <Link href={`/pub/${entry.id}`} className="hover:underline">
-                        {formatDateTime(new Date(entry.publishedAt))}
-                      </Link>
+                    <td className="px-2 sm:px-3 py-2 whitespace-normal break-words">
+                      {entry.digest}
                     </td>
-                    <td className="px-3 py-2 whitespace-normal break-words">{entry.digest}</td>
-                    <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">
+                    <td className="px-2 sm:px-3 py-2 text-right tabular-nums break-words">
                       {entry.pv.toLocaleString()}
                     </td>
                   </tr>
                 ))}
                 {sortedEntries.length === 0 && (
                   <tr>
-                    <td colSpan={4} className="px-3 py-8 text-center text-gray-500">
+                    <td colSpan={3} className="px-3 py-8 text-center text-gray-500">
                       No page views recorded.
                     </td>
                   </tr>
