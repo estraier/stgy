@@ -4166,3 +4166,173 @@ html:has(.site-container) {
   min-width: 0 !important;
   max-width: 100% !important;
 }
+
+/* Final viewport guard for vertical public articles.
+   published.css is loaded after globals.css and contains later, sometimes
+   !important, physical/logical size rules.  Repeat the viewport bound here by
+   combining it with each existing public-article limit rather than replacing
+   that limit. */
+.pub-theme-dir-vert .markdown-body figure.image-block:not(.expanded)[data-float="left"],
+.pub-theme-dir-vert .markdown-body figure.image-block:not(.expanded)[data-float="right"] {
+  height: min(17.5em, 50%, var(--stgy-article-viewport-max-height)) !important;
+}
+
+.pub-theme-dir-vert
+  .markdown-body:not(.excerpt)
+  figure.image-block:not(.expanded):not([data-grid]) {
+  max-width: min(20em, 100vw);
+  max-height: min(20em, 100%, var(--stgy-article-viewport-max-height));
+}
+
+.pub-theme-dir-vert
+  .markdown-body:not(.excerpt)
+  figure.image-block:not(.expanded):not([data-grid])[data-size="xsmall"] {
+  max-width: min(13em, 100vw);
+  max-height: min(13em, 32%, var(--stgy-article-viewport-max-height));
+}
+
+.pub-theme-dir-vert
+  .markdown-body:not(.excerpt)
+  figure.image-block:not(.expanded):not([data-grid])[data-size="small"] {
+  max-width: min(16em, 100vw);
+  max-height: min(16em, 40%, var(--stgy-article-viewport-max-height));
+}
+
+.pub-theme-dir-vert
+  .markdown-body:not(.excerpt)
+  figure.image-block:not(.expanded):not([data-grid])[data-size="medium"] {
+  max-width: min(20em, 100vw);
+  max-height: min(20em, 50%, var(--stgy-article-viewport-max-height));
+}
+
+.pub-theme-dir-vert
+  .markdown-body:not(.excerpt)
+  figure.image-block:not(.expanded):not([data-grid])[data-size="large"] {
+  max-width: min(27em, 100vw);
+  max-height: min(27em, 60%, var(--stgy-article-viewport-max-height));
+}
+
+.pub-theme-dir-vert
+  .markdown-body:not(.excerpt)
+  figure.image-block:not(.expanded):not([data-grid])[data-size="xlarge"] {
+  max-width: min(35em, 100vw);
+  max-height: min(35em, 70%, var(--stgy-article-viewport-max-height));
+}
+
+.pub-theme-dir-vert .pub-main .markdown-body .featured-block,
+.pub-theme-dir-vert .site-main .markdown-body .featured-block,
+.pub-theme-dir-vert .pub-main .markdown-body .featured-block img,
+.pub-theme-dir-vert .pub-main .markdown-body .featured-block video,
+.pub-theme-dir-vert .site-main .markdown-body .featured-block img,
+.pub-theme-dir-vert .site-main .markdown-body .featured-block video {
+  max-inline-size: min(15em, var(--stgy-article-viewport-max-height)) !important;
+  max-block-size: min(15em, 100vw) !important;
+}
+
+.pub-theme-dir-vert .pub-sidebar .markdown-body .featured-block img,
+.pub-theme-dir-vert .pub-sidebar .markdown-body .featured-block video {
+  max-width: min(10em, 100vw) !important;
+  max-height: min(7em, var(--stgy-article-viewport-max-height)) !important;
+}
+
+.pub-theme-dir-vert .markdown-body .image-grid figure.image-block,
+.pub-theme-dir-vert .markdown-body .image-grid figure.image-block[data-size],
+.pub-theme-dir-vert .markdown-body .image-grid figure.image-block img,
+.pub-theme-dir-vert .markdown-body .image-grid figure.image-block video {
+  max-inline-size: min(100%, var(--stgy-article-viewport-max-height)) !important;
+  max-block-size: min(100%, 100vw) !important;
+}
+
+/* Preserve the existing vertical-map size for every size class, but prevent
+   its fixed minimum height from defeating the 90% viewport cap. */
+.pub-theme-dir-vert
+  .markdown-body
+  figure.stgy-track-map:not(.stgy-track-grid > figure.stgy-track-map)
+  .stgy-track-canvas {
+  width: min(40em, calc(100svw - 2rem), 100vw) !important;
+  max-width: min(100%, 100vw) !important;
+  height: min(30em, calc(100svh - 4rem), var(--stgy-article-viewport-max-height)) !important;
+  min-height: min(30em, calc(100svh - 4rem), var(--stgy-article-viewport-max-height)) !important;
+  max-height: min(30em, calc(100svh - 4rem), var(--stgy-article-viewport-max-height)) !important;
+}
+
+.pub-theme-dir-vert
+  .markdown-body
+  figure.stgy-track-map[data-size="xsmall"]:not(.stgy-track-grid > figure.stgy-track-map)
+  .stgy-track-canvas {
+  width: min(24em, calc(100svw - 2rem), 100vw) !important;
+  height: min(18em, calc(100svh - 4rem), var(--stgy-article-viewport-max-height)) !important;
+  min-height: min(18em, calc(100svh - 4rem), var(--stgy-article-viewport-max-height)) !important;
+  max-height: min(18em, calc(100svh - 4rem), var(--stgy-article-viewport-max-height)) !important;
+}
+
+.pub-theme-dir-vert
+  .markdown-body
+  figure.stgy-track-map[data-size="small"]:not(.stgy-track-grid > figure.stgy-track-map)
+  .stgy-track-canvas {
+  width: min(32em, calc(100svw - 2rem), 100vw) !important;
+  height: min(24em, calc(100svh - 4rem), var(--stgy-article-viewport-max-height)) !important;
+  min-height: min(24em, calc(100svh - 4rem), var(--stgy-article-viewport-max-height)) !important;
+  max-height: min(24em, calc(100svh - 4rem), var(--stgy-article-viewport-max-height)) !important;
+}
+
+.pub-theme-dir-vert
+  .markdown-body
+  figure.stgy-track-map[data-size="medium"]:not(.stgy-track-grid > figure.stgy-track-map)
+  .stgy-track-canvas {
+  width: min(40em, calc(100svw - 2rem), 100vw) !important;
+  height: min(30em, calc(100svh - 4rem), var(--stgy-article-viewport-max-height)) !important;
+  min-height: min(30em, calc(100svh - 4rem), var(--stgy-article-viewport-max-height)) !important;
+  max-height: min(30em, calc(100svh - 4rem), var(--stgy-article-viewport-max-height)) !important;
+}
+
+.pub-theme-dir-vert
+  .markdown-body
+  figure.stgy-track-map[data-size="large"]:not(.stgy-track-grid > figure.stgy-track-map)
+  .stgy-track-canvas {
+  width: min(40em, calc(100svw - 2rem), 100vw) !important;
+  height: min(35em, calc(100svh - 4rem), var(--stgy-article-viewport-max-height)) !important;
+  min-height: min(35em, calc(100svh - 4rem), var(--stgy-article-viewport-max-height)) !important;
+  max-height: min(35em, calc(100svh - 4rem), var(--stgy-article-viewport-max-height)) !important;
+}
+
+.pub-theme-dir-vert
+  .markdown-body
+  figure.stgy-track-map[data-size="xlarge"]:not(.stgy-track-grid > figure.stgy-track-map)
+  .stgy-track-canvas {
+  width: min(40em, calc(100svw - 2rem), 100vw) !important;
+  height: min(40em, calc(100svh - 4rem), var(--stgy-article-viewport-max-height)) !important;
+  min-height: min(40em, calc(100svh - 4rem), var(--stgy-article-viewport-max-height)) !important;
+  max-height: min(40em, calc(100svh - 4rem), var(--stgy-article-viewport-max-height)) !important;
+}
+
+/* The final non-grid public-map variables are more specific than the generic
+   size rules above.  Keep those exact preferred values and add only the same
+   viewport ceiling. */
+.pub-theme-dir-vert
+  .pub-main
+  .markdown-body:not(.excerpt)
+  > figure.stgy-track-map
+  > .stgy-track-canvas {
+  width: min(var(--stgy-pub-nongrid-map-width), 100vw) !important;
+  max-width: min(100%, 100vw) !important;
+  height: min(var(--stgy-pub-nongrid-map-height), var(--stgy-article-viewport-max-height)) !important;
+  min-height: min(var(--stgy-pub-nongrid-map-height), var(--stgy-article-viewport-max-height)) !important;
+  max-height: min(var(--stgy-pub-nongrid-map-height), var(--stgy-article-viewport-max-height)) !important;
+}
+
+.pub-theme-dir-vert
+  .markdown-body:not(.excerpt)
+  .stgy-track-grid
+  > figure.stgy-track-map
+  .stgy-track-canvas,
+.pub-theme-dir-vert
+  .markdown-body:not(.excerpt)
+  .stgy-track-grid
+  > figure.stgy-track-map
+  .leaflet-container {
+  width: min(100%, 100vw) !important;
+  max-width: min(100%, 100vw) !important;
+  height: min(100%, var(--stgy-article-viewport-max-height)) !important;
+  max-height: min(100%, var(--stgy-article-viewport-max-height)) !important;
+}

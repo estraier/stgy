@@ -90,3 +90,71 @@ body {
     min-height: 180px;
   }
 }
+
+/* Final viewport guard for media embedded in articles.
+   These rules preserve every existing size, float, grid, and writing-mode
+   constraint.  They only add the viewport as one more upper bound. */
+:root {
+  --stgy-article-viewport-max-height: 90vh;
+}
+
+@supports (height: 100dvh) {
+  :root {
+    --stgy-article-viewport-max-height: 90dvh;
+  }
+}
+
+.markdown-body img,
+.markdown-body video,
+.markdown-body figure.image-block,
+.markdown-body figure.featured-block,
+.markdown-body figure.stgy-track-map,
+.markdown-body figure.stgy-track-map .stgy-track-canvas,
+.markdown-body figure.stgy-track-map .leaflet-container {
+  max-width: min(100%, 100vw);
+}
+
+/* Preserve the normal image limits while adding the viewport-height cap. */
+.markdown-body figure.image-block {
+  max-height: min(20em, var(--stgy-article-viewport-max-height));
+}
+
+.markdown-body figure.image-block.expanded {
+  max-height: min(40em, var(--stgy-article-viewport-max-height));
+}
+
+.markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="xsmall"] {
+  max-height: min(13em, var(--stgy-article-viewport-max-height));
+}
+
+.markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="small"] {
+  max-height: min(16em, var(--stgy-article-viewport-max-height));
+}
+
+.markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="medium"] {
+  max-height: min(20em, var(--stgy-article-viewport-max-height));
+}
+
+.markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="large"] {
+  max-height: min(27.5em, var(--stgy-article-viewport-max-height));
+}
+
+.markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="xlarge"] {
+  max-height: min(35em, var(--stgy-article-viewport-max-height));
+}
+
+.markdown-body:not(.excerpt) .image-grid figure.image-block,
+.markdown-body:not(.excerpt) .image-grid figure.image-block[data-size] {
+  max-height: var(--stgy-article-viewport-max-height);
+}
+
+.markdown-body figure.featured-block {
+  max-height: min(12em, var(--stgy-article-viewport-max-height));
+}
+
+/* Leaflet still receives the existing explicit canvas height.  max-height
+   only reduces that height when the viewport is shorter. */
+.markdown-body figure.stgy-track-map .stgy-track-canvas,
+.markdown-body figure.stgy-track-map .leaflet-container {
+  max-height: var(--stgy-article-viewport-max-height);
+}
