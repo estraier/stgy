@@ -1,7 +1,7 @@
 "use client";
 
 import { Config } from "@/config";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   getPost,
   listLikers,
@@ -430,44 +430,47 @@ export default function PageBody() {
     animateToTarget(() => scheduleRetry(0));
   }
 
-  async function handleLike(p: Post) {
-    if (!userId || !post) return;
-    if (!post.allowLikes) return;
+  const handleLike = useCallback(
+    async (p: Post) => {
+      if (!userId || !post) return;
+      if (!post.allowLikes) return;
 
-    const oldLiked = post.isLikedByFocusUser;
-    const oldCount = Number(post.countLikes ?? 0);
+      const oldLiked = post.isLikedByFocusUser;
+      const oldCount = Number(post.countLikes ?? 0);
 
-    setPost((prev) =>
-      prev
-        ? {
-            ...prev,
-            isLikedByFocusUser: !oldLiked,
-            countLikes: oldCount + (oldLiked ? -1 : 1),
-          }
-        : prev,
-    );
-
-    try {
-      if (oldLiked) {
-        await removeLike(p.id);
-      } else {
-        await addLike(p.id);
-      }
-    } catch {
       setPost((prev) =>
         prev
           ? {
               ...prev,
-              allowLikes: false,
-              isLikedByFocusUser: false,
-              countLikes: oldCount,
+              isLikedByFocusUser: !oldLiked,
+              countLikes: oldCount + (oldLiked ? -1 : 1),
             }
           : prev,
       );
-    } finally {
-      setLikerAll(false);
-    }
-  }
+
+      try {
+        if (oldLiked) {
+          await removeLike(p.id);
+        } else {
+          await addLike(p.id);
+        }
+      } catch {
+        setPost((prev) =>
+          prev
+            ? {
+                ...prev,
+                allowLikes: false,
+                isLikedByFocusUser: false,
+                countLikes: oldCount,
+              }
+            : prev,
+        );
+      } finally {
+        setLikerAll(false);
+      }
+    },
+    [post, userId],
+  );
 
   async function handleReplyLike(reply: Post) {
     if (!userId) return;
@@ -703,7 +706,7 @@ export default function PageBody() {
         focusUserIsAdmin={!!isAdmin}
       />
     );
-  }, [post, userId, updatedAt, isAdmin, replyingTo]);
+  }, [post, userId, updatedAt, isAdmin, replyingTo, handleLike]);
 
   const canEdit = isAdmin || (post && post.ownedBy === userId);
 

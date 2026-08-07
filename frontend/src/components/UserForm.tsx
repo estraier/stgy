@@ -10,7 +10,6 @@ import {
   finalizeProfile,
   getProfileUrl,
   deleteProfile,
-  fetchProfileBinary,
 } from "@/api/media";
 import Link from "next/link";
 import { Config } from "@/config";
@@ -222,20 +221,6 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
     }
   }
 
-  async function waitForAvatarReady(maxMs = 5000) {
-    const start = Date.now();
-    let attempt = 0;
-    while (Date.now() - start < maxMs) {
-      try {
-        const blob = await fetchProfileBinary(user.id, "avatar");
-        if (blob && blob.size > 0) return;
-      } catch {}
-      attempt += 1;
-      const delay = Math.min(1000, 150 * Math.pow(1.5, attempt));
-      await new Promise((r) => setTimeout(r, delay));
-    }
-  }
-
   function handleChooseFile() {
     setAvatarError(null);
     fileInputRef.current?.click();
@@ -270,9 +255,8 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
       formData.append("file", new File([blob], fileName, { type: blob.type || "image/webp" }));
       const resp = await fetch(url, { method: "POST", body: formData });
       if (!resp.ok) throw new Error("Upload failed");
-      await finalizeProfile(user.id, "avatar", objectKey);
-      await waitForAvatarReady(5000);
-      setAvatarUrl(`${getProfileUrl(user.id, "avatar")}?v=${Date.now()}`);
+      const finalized = await finalizeProfile(user.id, "avatar", objectKey);
+      setAvatarUrl(`${finalized.publicUrl}?v=${Date.now()}`);
       setAvatarError(null);
     } catch (err) {
       setAvatarError(err instanceof Error ? err.message : "Failed to upload avatar.");

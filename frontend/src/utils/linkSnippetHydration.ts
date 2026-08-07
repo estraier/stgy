@@ -1,5 +1,6 @@
 import { resolveLinkSnippet } from "@/api/linkSnippets";
 import type { LinkSnippet } from "@/api/models";
+import { applyImageFallback } from "@/utils/imageFallback";
 
 export type LinkSnippetResolver = (url: string) => Promise<LinkSnippet>;
 export type LinkSnippetHydrator = (root: HTMLElement) => void;
@@ -63,10 +64,13 @@ function renderReadySnippet(element: HTMLElement, snippet: LinkSnippet): void {
       },
       { once: true },
     );
-    image.addEventListener("error", () => {
-      image.remove();
-      anchor.classList.remove("stgy-link-snippet-link-with-image");
-    });
+    image.addEventListener(
+      "error",
+      () => {
+        applyImageFallback(image);
+      },
+      { once: true },
+    );
 
     anchor.appendChild(image);
     image.src = snippet.imageUrl;

@@ -80,7 +80,7 @@ describe("link snippet hydration", () => {
     expect(image.classList).not.toContain("stgy-link-snippet-image-pending");
   });
 
-  test("keeps the text-only layout when the image fails", async () => {
+  test("shows the no-image fallback when the image fails", async () => {
     document.body.innerHTML =
       '<div class="stgy-link-snippet"><a class="stgy-link-snippet-link" href="/posts/1234567890ABCDEF">post</a></div>';
     const hydrate = createLinkSnippetHydrator(async () =>
@@ -100,8 +100,12 @@ describe("link snippet hydration", () => {
     )!;
     image.dispatchEvent(new Event("error"));
 
-    expect(anchor.querySelector(".stgy-link-snippet-image")).toBeNull();
+    expect(image.getAttribute("src")).toBe("/data/no-image.svg");
+    expect(anchor.querySelector(".stgy-link-snippet-image")).toBe(image);
     expect(anchor.classList).not.toContain("stgy-link-snippet-link-with-image");
+
+    image.dispatchEvent(new Event("load"));
+    expect(anchor.classList).toContain("stgy-link-snippet-link-with-image");
   });
 
   test("keeps an explicit caption as the title", async () => {

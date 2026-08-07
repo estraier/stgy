@@ -4,6 +4,7 @@ import "leaflet/dist/leaflet.css";
 import "stgy-track/track-viewer.css";
 import type { Metadata, Viewport } from "next";
 import SessionAgreementGuard from "@/components/SessionAgreementGuard";
+import ImageFallbackBinder from "@/components/ImageFallbackBinder";
 
 export const metadata: Metadata = {
   title: "STGY",
@@ -53,6 +54,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link href={GOOGLE_FONTS_HREF} rel="stylesheet" />
       </head>
       <body lang="en" className="min-h-screen bg-white text-slate-900">
+        <ImageFallbackBinder />
         <SessionAgreementGuard />
         {children}
       </body>
