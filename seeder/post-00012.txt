@@ -610,10 +610,10 @@ STGY以外の仮想ホストを同じVPSで運用する場合は、caddy/extra-s
 
 STGYとは別のWebサイトを同一ホストで運用する場合、STGYのCaddyでデータを配信してもよいが、CGI等の込み入ったことをしたい場合には、lighttpdの別サービスを立てた方が良い。ここでは、ネイティブサービスとしてlighttpdを使うとして、prodユーザで起動して、ポート8123番で待ち受け、/home/prod/dbmx-public以下のデータを配信し、また*.cgiのファイルをCGIスクリプトとして実行する。
 
-lighttpdをインストールする。
+lighttpdをインストールする。dbmx.netではCAPTCHAを使うので、そのためのLuaモジュールもここで入れておく。
 
 ```:small
-sudo apt install -y lighttpd
+sudo apt install -y lighttpd lighttpd-modules-lua
 ```
 
 パッケージ導入によって起動した標準サービスを停止し、自動起動も無効化する。

@@ -16,6 +16,15 @@ describe("applyImageFallback", () => {
     expect(image.dataset.stgyImageFallback).toBe("true");
   });
 
+  test("does not replace images with an explicit fallback", () => {
+    const image = document.createElement("img");
+    image.src = "https://example.com/avatar.webp";
+    image.dataset.stgyNoImageFallback = "true";
+
+    expect(applyImageFallback(image)).toBe(false);
+    expect(image.getAttribute("src")).toBe("https://example.com/avatar.webp");
+  });
+
   test("does not recursively replace the fallback itself", () => {
     const image = document.createElement("img");
     image.src = NO_IMAGE_URL;

@@ -11,7 +11,11 @@ function isNoImageUrl(src: string): boolean {
 
 export function applyImageFallback(image: HTMLImageElement): boolean {
   const src = image.currentSrc || image.getAttribute("src") || "";
-  if (image.dataset.stgyImageFallback === "true" || isNoImageUrl(src)) {
+  if (
+    image.dataset.stgyNoImageFallback === "true" ||
+    image.dataset.stgyImageFallback === "true" ||
+    isNoImageUrl(src)
+  ) {
     return false;
   }
 

@@ -4,7 +4,6 @@ import { Config } from "@/config";
 import React, { useState } from "react";
 import Image from "next/image";
 import Identicon from "@/components/Identicon";
-import { NO_IMAGE_URL } from "@/utils/imageFallback";
 
 type Props = {
   userId: string;
@@ -35,7 +34,7 @@ export default function AvatarImg({
     ? `${prefix}${encodeURIComponent(userId)}/thumbs/avatar_icon.webp${suffix}`
     : "";
 
-  if (!hasAvatar || !src) {
+  if (!hasAvatar || error || !src) {
     return (
       <Identicon
         value={`${userId}:${nickname}`}
@@ -47,16 +46,15 @@ export default function AvatarImg({
 
   return (
     <Image
-      src={error ? NO_IMAGE_URL : src}
+      src={src}
       width={size}
       height={size}
       alt={`${nickname}'s avatar`}
       className={`rounded-lg border border-gray-300 object-cover ${className || ""}`}
       unoptimized
       priority
-      onError={() => {
-        if (!error) setError(true);
-      }}
+      data-stgy-no-image-fallback="true"
+      onError={() => setError(true)}
     />
   );
 }
