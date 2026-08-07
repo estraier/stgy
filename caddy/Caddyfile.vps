@@ -5,7 +5,7 @@
         path_regexp cgi_rate_limit_path ^.*\.cgi(/.*)?$
       }
       key {http.request.host}:{remote_host}
-      events 100
+      events 120
       window 1h
     }
     log_key
@@ -87,4 +87,3 @@ https://s3-console.stgy.jp {
 
   reverse_proxy http://minio:9001
 }
-
