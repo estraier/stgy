@@ -221,7 +221,9 @@ export default function PageBody() {
           )}
           <div className="mb-5">
             <div className="text-sm text-gray-600">Total PV in the last 10 days</div>
-            <div className="text-3xl font-bold tabular-nums">{stats.totalPv.toLocaleString()}</div>
+            <div className="text-3xl font-bold tabular-nums ml-2">
+              {stats.totalPv.toLocaleString()}
+            </div>
           </div>
 
           <div className="overflow-hidden border rounded">
@@ -308,7 +310,7 @@ export default function PageBody() {
                   className="px-3 py-1 rounded border bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                   onClick={() => replacePage(currentPage - 1)}
                 >
-                  Previous
+                  Prev
                 </button>
                 <span className="whitespace-nowrap">
                   Page {currentPage} of {totalPages}
