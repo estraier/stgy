@@ -116,8 +116,8 @@ const createCoordinateCopyButton = (text: string): HTMLButtonElement => {
 };
 
 const DEFAULT_SINGLE_POINT_ZOOM = 12;
-const ROUTE_VIEW_PADDING_RATIO = 0.05;
-const PIN_VIEW_PADDING_RATIO = 0.15;
+const ROUTE_VIEW_PADDING_RATIO = 0.04;
+const PIN_VIEW_PADDING_RATIO = 0.08;
 const FALLBACK_MAX_AUTO_ZOOM = 20;
 const TRACK_GRAPH_SMOOTHING_WINDOWS = [
   1,
