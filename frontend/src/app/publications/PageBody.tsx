@@ -43,13 +43,15 @@ function DailyPvChart({
   data: PubViewDailyStatEntry[];
   ariaLabel?: string;
 }) {
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+
   if (data.length === 0) return null;
 
   const width = 680;
   const height = 190;
   const left = 54;
   const right = 12;
-  const top = 12;
+  const top = 26;
   const bottom = 30;
   const plotWidth = width - left - right;
   const plotHeight = height - top - bottom;
@@ -66,6 +68,20 @@ function DailyPvChart({
         index === 0 || index === data.length - 1 || index % labelStep === 0,
     );
 
+  function handlePointerMove(event: React.PointerEvent<SVGSVGElement>) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const svgX = ((event.clientX - rect.left) / rect.width) * width;
+    if (data.length <= 1) {
+      setHoveredIndex(0);
+      return;
+    }
+    const ratio = Math.max(0, Math.min(1, (svgX - left) / plotWidth));
+    setHoveredIndex(Math.round(ratio * (data.length - 1)));
+  }
+
+  const hoveredEntry = hoveredIndex === null ? null : data[hoveredIndex];
+
   return (
     <div className="mt-3">
       <svg
@@ -73,6 +89,8 @@ function DailyPvChart({
         className="block w-full h-auto"
         role="img"
         aria-label={ariaLabel ?? `Daily page views for the last ${data.length} days`}
+        onPointerMove={handlePointerMove}
+        onPointerLeave={() => setHoveredIndex(null)}
       >
         {[0, 0.5, 1].map((ratio) => {
           const yy = top + plotHeight * ratio;
@@ -113,13 +131,26 @@ function DailyPvChart({
             key={entry.date}
             cx={x(index)}
             cy={y(entry.pv)}
-            r="2.5"
+            r={hoveredIndex === index ? 4 : 2.5}
             fill="currentColor"
             className="text-gray-800"
           >
             <title>{`${entry.date}: ${entry.pv.toLocaleString()} PV`}</title>
           </circle>
         ))}
+        {hoveredEntry && hoveredIndex !== null && (
+          <text
+            x={x(hoveredIndex)}
+            y={y(hoveredEntry.pv) - 9}
+            textAnchor="middle"
+            className="fill-gray-900 text-[12px] font-medium tabular-nums"
+            stroke="white"
+            strokeWidth="3"
+            paintOrder="stroke"
+          >
+            {hoveredEntry.pv.toLocaleString()}
+          </text>
+        )}
         {labelIndexes.map((index) => (
           <text
             key={data[index].date}
