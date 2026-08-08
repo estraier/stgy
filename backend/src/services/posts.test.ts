@@ -1124,6 +1124,11 @@ describe("posts service", () => {
 
     await postsService.updatePost({ id: postSample.id, ownedBy: user2Hex });
 
+    expect(
+      pgClient.queries.some((sql) =>
+        sql.startsWith("UPDATE post_pub_access_counts SET owner_id = $1 WHERE post_id = $2"),
+      ),
+    ).toBe(true);
     expect(mockEnqueueAddDocument).toHaveBeenCalledTimes(1);
     expect(mockEnqueueAddDocument).toHaveBeenCalledWith(
       expect.objectContaining({

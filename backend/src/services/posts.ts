@@ -630,6 +630,15 @@ export class PostsService {
           return null;
         }
       }
+      if (input.ownedBy !== undefined) {
+        await pgQuery(
+          client,
+          `UPDATE post_pub_access_counts
+           SET owner_id = $1
+           WHERE post_id = $2 AND owner_id IS DISTINCT FROM $1`,
+          [hexToDec(input.ownedBy), hexToDec(input.id)],
+        );
+      }
       if (input.replyTo !== undefined && input.tags === undefined) {
         const isRoot = input.replyTo == null;
         await pgQuery(

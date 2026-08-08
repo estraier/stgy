@@ -100,6 +100,16 @@ CREATE INDEX idx_posts_root_id ON posts (id) WHERE reply_to IS NULL;
 CREATE INDEX idx_posts_root_owned_by_id ON posts (owned_by, id) WHERE reply_to IS NULL;
 CREATE INDEX idx_posts_public_owned_by_published_at ON posts (owned_by, published_at, id) WHERE published_at IS NOT NULL;
 
+CREATE TABLE post_pub_access_counts (
+  post_id BIGINT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  owner_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  target_date DATE NOT NULL,
+  count INTEGER NOT NULL,
+  PRIMARY KEY (post_id, target_date)
+);
+CREATE INDEX idx_post_pub_access_counts_owner_date ON post_pub_access_counts (owner_id, target_date);
+CREATE INDEX idx_post_pub_access_counts_target_date ON post_pub_access_counts (target_date);
+
 CREATE OR REPLACE FUNCTION posts_reply_to_exists_fn()
 RETURNS TRIGGER AS $$
 BEGIN

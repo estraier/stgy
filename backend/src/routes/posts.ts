@@ -36,7 +36,7 @@ export default function createPostsRouter(
   const router = Router();
   const postsService = new PostsService(pgPool, redis, eventLogService);
   const usersService = new UsersService(pgPool, redis, eventLogService);
-  const pubViewsService = new PubViewsService(redis);
+  const pubViewsService = new PubViewsService(pgPool, redis);
   const authService = new AuthService(pgPool, redis);
   const searchService = new SearchService(pgPool, "posts");
   const timerThrottleService = new DailyTimerThrottleService(

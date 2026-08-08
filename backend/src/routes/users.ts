@@ -59,7 +59,7 @@ export default function createUsersRouter(
   );
   const authHelpers = new AuthHelpers(authService, usersService);
   const sendMailService = new SendMailService(redis);
-  const pubViewsService = new PubViewsService(redis);
+  const pubViewsService = new PubViewsService(pgPool, redis);
 
   function parseSidebarCount(value: unknown): number | undefined {
     if (value === undefined) return undefined;
