@@ -189,7 +189,6 @@ type BufferedFollow = {
   recipientUserId: string;
   slot: "follow";
   term: string;
-  latestEventMs: number;
   entries: Map<string, FollowBufferEntry>;
 };
 
@@ -199,7 +198,6 @@ type BufferedLike = {
   slot: string;
   term: string;
   postId: string;
-  latestEventMs: number;
   entries: Map<string, FollowBufferEntry>;
 };
 
@@ -209,7 +207,6 @@ type BufferedReply = {
   slot: string;
   term: string;
   replyToPostId: string;
-  latestEventMs: number;
   entries: Map<string, PostBufferEntry>;
 };
 
@@ -219,7 +216,6 @@ type BufferedMention = {
   slot: string;
   term: string;
   postId: string;
-  latestEventMs: number;
   entries: Map<string, PostBufferEntry>;
 };
 
@@ -250,6 +246,52 @@ type WorkerContext = {
 };
 
 const partitionStates = new Map<number, PartitionState>();
+
+// Notification rows for one recipient can be produced by different event-log partitions.
+// Serialize only flushes that touch the same recipient so updated_at remains a valid
+// per-user polling watermark even when partitions are drained concurrently.
+type RecipientFlushLock = {
+  userId: string;
+  tail: Promise<void>;
+  release: () => void;
+};
+
+const recipientFlushLocks = new Map<string, Promise<void>>();
+let lastNotificationUpdatedAtMs = Date.now();
+
+async function acquireRecipientFlushLocks(
+  userIds: Iterable<string>,
+): Promise<() => void> {
+  const uniqueUserIds = Array.from(new Set(userIds)).sort();
+  const held: RecipientFlushLock[] = [];
+
+  for (const userId of uniqueUserIds) {
+    const previous = recipientFlushLocks.get(userId) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = previous.then(() => gate);
+    recipientFlushLocks.set(userId, tail);
+    await previous;
+    held.push({ userId, tail, release });
+  }
+
+  return () => {
+    for (let i = held.length - 1; i >= 0; i -= 1) {
+      const lock = held[i]!;
+      lock.release();
+      if (recipientFlushLocks.get(lock.userId) === lock.tail) {
+        recipientFlushLocks.delete(lock.userId);
+      }
+    }
+  };
+}
+
+function nextNotificationUpdatedAtISO(): string {
+  lastNotificationUpdatedAtMs = Math.max(Date.now(), lastNotificationUpdatedAtMs + 1);
+  return new Date(lastNotificationUpdatedAtMs).toISOString();
+}
 
 function getPartitionState(partitionId: number): PartitionState {
   let state = partitionStates.get(partitionId);
@@ -300,12 +342,10 @@ function addPreparedEvent(state: PartitionState, event: PreparedEvent): void {
         recipientUserId,
         slot,
         term,
-        latestEventMs: eventMs,
         entries: new Map(),
       };
       state.notifications.set(key, buffered);
     }
-    buffered.latestEventMs = Math.max(buffered.latestEventMs, eventMs);
     replaceLatest(buffered.entries, payload.followerId, { userId: payload.followerId, ts });
     return;
   }
@@ -321,12 +361,10 @@ function addPreparedEvent(state: PartitionState, event: PreparedEvent): void {
         slot,
         term,
         postId: payload.postId,
-        latestEventMs: eventMs,
         entries: new Map(),
       };
       state.notifications.set(key, buffered);
     }
-    buffered.latestEventMs = Math.max(buffered.latestEventMs, eventMs);
     replaceLatest(buffered.entries, payload.userId, { userId: payload.userId, ts });
     return;
   }
@@ -342,12 +380,10 @@ function addPreparedEvent(state: PartitionState, event: PreparedEvent): void {
         slot,
         term,
         replyToPostId: payload.replyToPostId,
-        latestEventMs: eventMs,
         entries: new Map(),
       };
       state.notifications.set(key, buffered);
     }
-    buffered.latestEventMs = Math.max(buffered.latestEventMs, eventMs);
     const entry = { userId: payload.userId, postId: payload.postId, ts };
     replaceLatest(buffered.entries, `${entry.userId}|${entry.postId}`, entry);
     return;
@@ -364,12 +400,10 @@ function addPreparedEvent(state: PartitionState, event: PreparedEvent): void {
         slot,
         term,
         postId: payload.postId,
-        latestEventMs: eventMs,
         entries: new Map(),
       };
       state.notifications.set(key, buffered);
     }
-    buffered.latestEventMs = Math.max(buffered.latestEventMs, eventMs);
     const entry = { userId: payload.userId, postId: payload.postId, ts };
     replaceLatest(buffered.entries, `${entry.userId}|${entry.postId}`, entry);
   }
@@ -544,6 +578,7 @@ async function upsertFollow(
   db: PoolClient,
   notification: BufferedFollow,
   nicknames: ReadonlyMap<string, string>,
+  updatedAtISO: string,
 ): Promise<void> {
   const sel = await db.query<{ payload: unknown }>(
     `SELECT payload::json AS payload FROM notifications
@@ -551,7 +586,6 @@ async function upsertFollow(
       FOR UPDATE`,
     [hexToDec(notification.recipientUserId), notification.term],
   );
-  const updatedAtISO = new Date(notification.latestEventMs).toISOString();
   const cap = Config.NOTIFICATION_PAYLOAD_RECORDS;
   const incoming = Array.from(notification.entries.values()).map<NotificationUserRecord>((entry) => ({
     userId: entry.userId,
@@ -604,6 +638,7 @@ async function upsertLike(
   notification: BufferedLike,
   nicknames: ReadonlyMap<string, string>,
   snippets: ReadonlyMap<string, string>,
+  updatedAtISO: string,
 ): Promise<void> {
   const sel = await db.query<{ payload: unknown }>(
     `SELECT payload::json AS payload FROM notifications
@@ -611,7 +646,6 @@ async function upsertLike(
       FOR UPDATE`,
     [hexToDec(notification.recipientUserId), notification.slot, notification.term],
   );
-  const updatedAtISO = new Date(notification.latestEventMs).toISOString();
   const cap = Config.NOTIFICATION_PAYLOAD_RECORDS;
   const current = sel.rows.length > 0 ? parseLikePayload(sel.rows[0].payload) : null;
   const postSnippet = current?.records[0]?.postSnippet ?? snippets.get(notification.postId) ?? "";
@@ -669,6 +703,7 @@ async function upsertReply(
   notification: BufferedReply,
   nicknames: ReadonlyMap<string, string>,
   snippets: ReadonlyMap<string, string>,
+  updatedAtISO: string,
 ): Promise<void> {
   const sel = await db.query<{ payload: unknown }>(
     `SELECT payload::json AS payload FROM notifications
@@ -676,7 +711,6 @@ async function upsertReply(
       FOR UPDATE`,
     [hexToDec(notification.recipientUserId), notification.slot, notification.term],
   );
-  const updatedAtISO = new Date(notification.latestEventMs).toISOString();
   const cap = Config.NOTIFICATION_PAYLOAD_RECORDS;
   const current = sel.rows.length > 0 ? parseReplyPayload(sel.rows[0].payload) : null;
   const postSnippet =
@@ -741,6 +775,7 @@ async function upsertMention(
   notification: BufferedMention,
   nicknames: ReadonlyMap<string, string>,
   snippets: ReadonlyMap<string, string>,
+  updatedAtISO: string,
 ): Promise<void> {
   const sel = await db.query<{ payload: unknown }>(
     `SELECT payload::json AS payload FROM notifications
@@ -748,7 +783,6 @@ async function upsertMention(
       FOR UPDATE`,
     [hexToDec(notification.recipientUserId), notification.slot, notification.term],
   );
-  const updatedAtISO = new Date(notification.latestEventMs).toISOString();
   const cap = Config.NOTIFICATION_PAYLOAD_RECORDS;
   const current = sel.rows.length > 0 ? parseMentionPayload(sel.rows[0].payload) : null;
   const postSnippet = current?.records[0]?.postSnippet ?? snippets.get(notification.postId) ?? "";
@@ -812,21 +846,26 @@ async function flushPartition(context: WorkerContext, state: PartitionState): Pr
   if (lastEventId === null || state.bufferedEventCount === 0) return 0;
 
   const notifications = Array.from(state.notifications.values());
-  const client = await context.pgPool.connect();
+  const releaseRecipientLocks = await acquireRecipientFlushLocks(
+    notifications.map((notification) => notification.recipientUserId),
+  );
+  let client: PoolClient | null = null;
   try {
+    client = await context.pgPool.connect();
     await client.query("BEGIN");
     const nicknames = await loadNicknames(client, notifications);
     const snippets = await loadPostSnippets(client, notifications);
+    const updatedAtISO = nextNotificationUpdatedAtISO();
 
     for (const notification of notifications) {
       if (notification.type === "follow") {
-        await upsertFollow(client, notification, nicknames);
+        await upsertFollow(client, notification, nicknames, updatedAtISO);
       } else if (notification.type === "like") {
-        await upsertLike(client, notification, nicknames, snippets);
+        await upsertLike(client, notification, nicknames, snippets, updatedAtISO);
       } else if (notification.type === "reply") {
-        await upsertReply(client, notification, nicknames, snippets);
+        await upsertReply(client, notification, nicknames, snippets, updatedAtISO);
       } else {
-        await upsertMention(client, notification, nicknames, snippets);
+        await upsertMention(client, notification, nicknames, snippets, updatedAtISO);
       }
     }
 
@@ -838,12 +877,15 @@ async function flushPartition(context: WorkerContext, state: PartitionState): Pr
     );
     await client.query("COMMIT");
   } catch (error) {
-    try {
-      await client.query("ROLLBACK");
-    } catch {}
+    if (client) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {}
+    }
     throw error;
   } finally {
-    client.release();
+    client?.release();
+    releaseRecipientLocks();
   }
 
   // Clear only after both notification updates and the durable cursor have committed.

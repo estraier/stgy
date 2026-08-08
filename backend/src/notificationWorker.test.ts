@@ -29,6 +29,10 @@ mockFetchBatch.mockResolvedValueOnce([
     event_id: "1005",
     payload: { type: "mention", userId: aiUserId, postId, mentionedUserId: recipientUserId },
   },
+  {
+    event_id: "1006",
+    payload: { type: "mention", userId: humanUserId, postId, mentionedUserId: recipientUserId },
+  },
 ]);
 mockFetchBatch.mockResolvedValueOnce([]);
 const mockPurgeEventLogs = jest.fn(async () => 0);
@@ -100,7 +104,7 @@ jest.mock("./config", () => ({
     NOTIFICATION_WORKERS: 1,
     NOTIFICATION_BATCH_SIZE: 100,
     NOTIFICATION_BUFFER_FLUSH_MS: 60_000,
-    NOTIFICATION_BUFFER_MAX_EVENTS: 6,
+    NOTIFICATION_BUFFER_MAX_EVENTS: 7,
     NOTIFICATION_PAYLOAD_RECORDS: 10,
   },
 }));
@@ -142,26 +146,47 @@ jest.mock("./utils/logger", () => ({
 import { lifecycle, startNotificationWorker } from "./notificationWorker";
 
 describe("notificationWorker buffering", () => {
-  test("aggregates one notification write and excludes every AI actor event type", async () => {
+  test("writes human mentions and excludes every AI actor event type", async () => {
     await startNotificationWorker();
 
     const inserts = transactionQueries.filter(([sql]) => /INSERT INTO notifications/i.test(sql));
-    expect(inserts).toHaveLength(1);
+    expect(inserts).toHaveLength(2);
 
-    const insertParams = inserts[0][1] as unknown[];
-    const payload = JSON.parse(String(insertParams[3])) as {
+    const likeInsert = inserts.find(([, params]) => params?.[1] === `like:${postId}`);
+    expect(likeInsert).toBeDefined();
+    const likeParams = likeInsert![1] as unknown[];
+    const likePayload = JSON.parse(String(likeParams[3])) as {
       countUsers: number;
       records: Array<{ userId: string }>;
     };
-    expect(payload.countUsers).toBe(2);
-    expect(payload.records.map((record) => record.userId).sort()).toEqual(
+    expect(likePayload.countUsers).toBe(2);
+    expect(likePayload.records.map((record) => record.userId).sort()).toEqual(
       [humanUserId, otherHumanUserId].sort(),
     );
-    expect(payload.records.some((record) => record.userId === aiUserId)).toBe(false);
+    expect(likePayload.records.some((record) => record.userId === aiUserId)).toBe(false);
+
+    const mentionInsert = inserts.find(([, params]) => params?.[1] === `mention:${postId}`);
+    expect(mentionInsert).toBeDefined();
+    const mentionParams = mentionInsert![1] as unknown[];
+    const mentionPayload = JSON.parse(String(mentionParams[3])) as {
+      countUsers: number;
+      countPosts: number;
+      records: Array<{ userId: string; postId: string }>;
+    };
+    expect(mentionPayload.countUsers).toBe(1);
+    expect(mentionPayload.countPosts).toBe(1);
+    expect(mentionPayload.records).toEqual([
+      expect.objectContaining({ userId: humanUserId, postId }),
+    ]);
+    expect(mentionPayload.records.some((record) => record.userId === aiUserId)).toBe(false);
+
+    const updatedAtValues = inserts.map(([, params]) => String(params?.[4]));
+    expect(new Set(updatedAtValues).size).toBe(1);
+    expect(Date.parse(updatedAtValues[0]!)).toBeGreaterThan(1_000_000_000_000);
 
     expect(mockSaveCursor).toHaveBeenCalledTimes(1);
     expect(mockSaveCursor.mock.calls[0][2]).toBe(0);
-    expect(mockSaveCursor.mock.calls[0][3]).toBe(1005n);
+    expect(mockSaveCursor.mock.calls[0][3]).toBe(1006n);
 
     await lifecycle.stop();
   });
