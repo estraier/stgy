@@ -253,7 +253,7 @@ describe("PubViewsService", () => {
     );
     expect(rangeQuery?.params).toEqual([
       "281474976710658",
-      "2026-07-28",
+      "2026-07-23",
       "2026-08-06",
     ]);
 
@@ -272,7 +272,7 @@ describe("PubViewsService", () => {
       "91",
     ]);
     expect(Number(redis.maxCommandCalls[0]?.[3])).toBe(
-      Math.floor(Date.parse("2026-08-13T00:00:00.000Z") / 1000),
+      Math.floor(Date.parse("2026-08-18T00:00:00.000Z") / 1000),
     );
   });
 
@@ -386,9 +386,11 @@ describe("PubViewsService", () => {
       now: new Date("2026-08-09T12:00:00.000Z"),
     });
 
-    expect(
-      pg.queries.filter((q) => /DELETE FROM post_pub_access_counts/i.test(q.sql)),
-    ).toHaveLength(1);
+    const cleanupQueries = pg.queries.filter((q) =>
+      /DELETE FROM post_pub_access_counts/i.test(q.sql),
+    );
+    expect(cleanupQueries).toHaveLength(1);
+    expect(cleanupQueries[0]?.params).toEqual(["2026-08-09", 14]);
   });
 
   test("getStats totals all rows and keeps only the exact top 1000", async () => {
@@ -503,7 +505,7 @@ describe("PubViewsService", () => {
     expect(checkpointQuery?.sql).not.toMatch(/JOIN\s+posts/i);
     expect(checkpointQuery?.params).toEqual([
       "281474976710657",
-      "2026-07-28",
+      "2026-07-23",
       "2026-08-06",
     ]);
 

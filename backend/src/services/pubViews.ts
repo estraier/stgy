@@ -8,12 +8,11 @@ import { pgQuery } from "../utils/servers";
 import { makePlainTextDigestFromJsonSnippet } from "../utils/snippet";
 import type { PubViewRankEntry, PubViewStatEntry, PubViewStats } from "../models/post";
 
-const DAYS = 10;
+const RETENTION_DAYS = Config.PUB_VIEW_RETENTION_DAYS;
 const TOP_LIMIT = 1000;
 const LRU_CAPACITY = 150;
 const FINGERPRINT_BYTES = 4;
-const LRU_TTL_SECONDS = 11 * 24 * 60 * 60;
-const META_TTL_SECONDS = 11 * 24 * 60 * 60;
+const RETENTION_TTL_SECONDS = (RETENTION_DAYS + 1) * 24 * 60 * 60;
 const CACHE_TTL_SECONDS = 5 * 60;
 const MAX_ACCESS_COUNT = 2_147_483_647;
 
@@ -342,7 +341,7 @@ export class PubViewsService {
         dailyKey(input.ownerId, input.date),
         input.postId,
         String(dbCount),
-        String(Math.floor(utcDateAtOffset(input.date, 11).getTime() / 1000)),
+        String(Math.floor(utcDateAtOffset(input.date, RETENTION_DAYS + 1).getTime() / 1000)),
       );
     } else if (input.count > dbCount) {
       await this.upsertCheckpoints({
@@ -358,7 +357,7 @@ export class PubViewsService {
     postId: string;
     date: Date;
   }): Promise<void> {
-    const dates = Array.from({ length: DAYS }, (_, i) => utcDateAtOffset(input.date, -i));
+    const dates = Array.from({ length: RETENTION_DAYS }, (_, i) => utcDateAtOffset(input.date, -i));
     const pipeline = this.redis.pipeline();
     for (const date of dates) pipeline.hget(dailyKey(input.ownerId, date), input.postId);
     const replies = await pipeline.exec();
@@ -400,7 +399,7 @@ export class PubViewsService {
           dailyKey(input.ownerId, dates[i]),
           input.postId,
           String(dbCount),
-          String(Math.floor(utcDateAtOffset(dates[i], 11).getTime() / 1000)),
+          String(Math.floor(utcDateAtOffset(dates[i], RETENTION_DAYS + 1).getTime() / 1000)),
         );
       } else if (normalizedRedisCount > dbCount) {
         rowsToUpsert.push({ targetDate, count: normalizedRedisCount });
@@ -427,8 +426,8 @@ export class PubViewsService {
     const cleanup = (async () => {
       await pgQuery(
         this.pgPool,
-        `DELETE FROM post_pub_access_counts WHERE target_date < $1::date - 9`,
-        [targetDate],
+        `DELETE FROM post_pub_access_counts WHERE target_date < $1::date - $2::integer`,
+        [targetDate, RETENTION_DAYS - 1],
       );
       lastPubAccessCleanupDate = targetDate;
     })();
@@ -456,7 +455,7 @@ export class PubViewsService {
 
     const now = input.now ?? new Date();
     const today = utcDateAtOffset(now, 0);
-    const expiresAt = Math.floor(utcDateAtOffset(now, 11).getTime() / 1000);
+    const expiresAt = Math.floor(utcDateAtOffset(now, RETENTION_DAYS + 1).getTime() / 1000);
     const meta: StoredMeta = {
       publishedAt: input.publishedAt,
       digest: input.digest,
@@ -470,8 +469,8 @@ export class PubViewsService {
       fingerprint,
       input.postId,
       JSON.stringify(meta),
-      String(LRU_TTL_SECONDS),
-      String(META_TTL_SECONDS),
+      String(RETENTION_TTL_SECONDS),
+      String(RETENTION_TTL_SECONDS),
       String(expiresAt),
       String(LRU_CAPACITY * FINGERPRINT_BYTES),
     );
@@ -498,7 +497,7 @@ export class PubViewsService {
     const cached = parseCachedRanking(await this.redis.get(cacheKey));
     if (cached && cached.totalPv > 0) return cached;
 
-    const dates = Array.from({ length: DAYS }, (_, i) => utcDateAtOffset(now, -i));
+    const dates = Array.from({ length: RETENTION_DAYS }, (_, i) => utcDateAtOffset(now, -i));
     const pipeline = this.redis.pipeline();
     for (const date of dates) pipeline.hgetall(dailyKey(ownerId, date));
     const replies = await pipeline.exec();
@@ -532,7 +531,7 @@ export class PubViewsService {
     const cached = parseCachedStats(await this.redis.get(cacheKey));
     if (cached && cached.totalPv > 0) return cached;
 
-    const dates = Array.from({ length: DAYS }, (_, i) => utcDateAtOffset(now, -i));
+    const dates = Array.from({ length: RETENTION_DAYS }, (_, i) => utcDateAtOffset(now, -i));
     const pipeline = this.redis.pipeline();
     for (const date of dates) pipeline.hgetall(dailyKey(ownerId, date));
     const replies = await pipeline.exec();
