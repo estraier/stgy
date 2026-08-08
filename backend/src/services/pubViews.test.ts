@@ -413,10 +413,18 @@ describe("PubViewsService", () => {
     const service = new PubViewsService(asPool(new FakePgPool()), asRedis(redis));
     const stats = await service.getStats(OWNER_ID, new Date("2026-08-06T12:00:00.000Z"));
 
+    expect(stats.retentionDays).toBe(15);
     expect(stats.totalPv).toBe(1006);
+    expect(stats.dailyPv).toHaveLength(15);
+    expect(stats.dailyPv.slice(-2)).toEqual([
+      { date: "2026-08-05", pv: 2 },
+      { date: "2026-08-06", pv: 1004 },
+    ]);
     expect(stats.entries).toHaveLength(1000);
     expect(stats.entries[0]).toMatchObject({ id: "post-1000", pv: 3 });
+    expect(stats.entries[0]?.dailyPv.slice(-2)).toEqual([2, 1]);
     expect(stats.entries[1]).toMatchObject({ id: "post-1001", pv: 3 });
+    expect(stats.entries[1]?.dailyPv.slice(-2)).toEqual([0, 3]);
     expect(stats.entries.some((entry) => entry.id === "post-0997")).toBe(true);
     expect(stats.entries.some((entry) => entry.id === "post-0998")).toBe(false);
     expect(stats.entries.some((entry) => entry.id === "post-1000")).toBe(true);
@@ -447,13 +455,32 @@ describe("PubViewsService", () => {
     const stats = await service.getStats(OWNER_ID, new Date("2026-08-06T12:00:00.000Z"));
 
     expect(stats).toEqual({
+      retentionDays: 15,
       totalPv: 1,
+      dailyPv: [
+        { date: "2026-07-23", pv: 0 },
+        { date: "2026-07-24", pv: 0 },
+        { date: "2026-07-25", pv: 0 },
+        { date: "2026-07-26", pv: 0 },
+        { date: "2026-07-27", pv: 0 },
+        { date: "2026-07-28", pv: 0 },
+        { date: "2026-07-29", pv: 0 },
+        { date: "2026-07-30", pv: 0 },
+        { date: "2026-07-31", pv: 0 },
+        { date: "2026-08-01", pv: 0 },
+        { date: "2026-08-02", pv: 0 },
+        { date: "2026-08-03", pv: 0 },
+        { date: "2026-08-04", pv: 0 },
+        { date: "2026-08-05", pv: 0 },
+        { date: "2026-08-06", pv: 1 },
+      ],
       entries: [
         {
           id: "post-a",
           publishedAt: "2026-08-01T00:00:00.000Z",
           digest: "digest",
           pv: 1,
+          dailyPv: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
         },
       ],
     });
@@ -509,19 +536,27 @@ describe("PubViewsService", () => {
       "2026-08-06",
     ]);
 
+    expect(stats.retentionDays).toBe(15);
     expect(stats.totalPv).toBe(186);
+    expect(stats.dailyPv).toHaveLength(15);
+    expect(stats.dailyPv.slice(-2)).toEqual([
+      { date: "2026-08-05", pv: 86 },
+      { date: "2026-08-06", pv: 100 },
+    ]);
     expect(stats.entries).toEqual([
       {
         id: POST_ID,
         publishedAt: "2026-08-01T00:00:00.000Z",
         digest: "redis digest",
         pv: 154,
+        dailyPv: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 54, 100],
       },
       {
         id: "0001000000000003",
         publishedAt: "2026-08-02T00:00:00.000Z",
         digest: "db post",
         pv: 32,
+        dailyPv: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 32, 0],
       },
     ]);
   });

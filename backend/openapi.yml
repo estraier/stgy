@@ -824,7 +824,11 @@ components:
         publishedAt: { type: string, format: date-time }
         digest: { type: string, maxLength: 150 }
         pv: { type: integer, minimum: 1 }
-      required: [id, publishedAt, digest, pv]
+        dailyPv:
+          type: array
+          description: Daily PV values in ascending date order, aligned by index with PubViewStats.dailyPv.
+          items: { type: integer, minimum: 0 }
+      required: [id, publishedAt, digest, pv, dailyPv]
 
     PubViewRankEntry:
       type: object
@@ -841,16 +845,32 @@ components:
           items: { type: string }
       required: [ids]
 
+    PubViewDailyStatEntry:
+      type: object
+      properties:
+        date: { type: string, format: date }
+        pv: { type: integer, minimum: 0 }
+      required: [date, pv]
+
     PubViewStats:
       type: object
       properties:
+        retentionDays:
+          type: integer
+          minimum: 1
+          description: Number of UTC days included in the statistics, as configured by the backend.
         totalPv: { type: integer, minimum: 0 }
+        dailyPv:
+          type: array
+          description: Daily PV totals in ascending date order over the configured retention period.
+          items:
+            $ref: "#/components/schemas/PubViewDailyStatEntry"
         entries:
           type: array
           maxItems: 1000
           items:
             $ref: "#/components/schemas/PubViewStatEntry"
-      required: [totalPv, entries]
+      required: [retentionDays, totalPv, dailyPv, entries]
 
   responses:
     Error400:
@@ -4123,7 +4143,7 @@ paths:
 
   /users/{id}/pub-ranking:
     get:
-      summary: Get public post PV ranking for the last 10 days
+      summary: Get public post PV ranking for the configured retention period
       description: Returns only post IDs and PV counts. Values above the configured public sidebar maximum are capped.
       parameters:
         - name: id
@@ -4157,7 +4177,7 @@ paths:
           schema: { type: string }
       responses:
         "200":
-          description: Public post PV statistics for the last 10 days
+          description: Public post PV statistics for the configured retention period
           content:
             application/json:
               schema:

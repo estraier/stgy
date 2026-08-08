@@ -6,7 +6,12 @@ import { decToHex, hexToDec } from "../utils/format";
 import { createLogger } from "../utils/logger";
 import { pgQuery } from "../utils/servers";
 import { makePlainTextDigestFromJsonSnippet } from "../utils/snippet";
-import type { PubViewRankEntry, PubViewStatEntry, PubViewStats } from "../models/post";
+import type {
+  PubViewDailyStatEntry,
+  PubViewRankEntry,
+  PubViewStatEntry,
+  PubViewStats,
+} from "../models/post";
 
 const RETENTION_DAYS = Config.PUB_VIEW_RETENTION_DAYS;
 const TOP_LIMIT = 1000;
@@ -260,7 +265,32 @@ function parseCachedStats(raw: string | null): PubViewStats | null {
   if (!raw) return null;
   try {
     const value = JSON.parse(raw) as PubViewStats;
-    if (!Number.isFinite(value.totalPv) || !Array.isArray(value.entries)) return null;
+    if (
+      value.retentionDays !== RETENTION_DAYS ||
+      !Number.isFinite(value.totalPv) ||
+      !Array.isArray(value.dailyPv) ||
+      value.dailyPv.length !== RETENTION_DAYS ||
+      !value.dailyPv.every(
+        (entry) =>
+          typeof entry?.date === "string" &&
+          Number.isFinite(entry.pv) &&
+          entry.pv >= 0,
+      ) ||
+      !Array.isArray(value.entries) ||
+      !value.entries.every(
+        (entry) =>
+          typeof entry?.id === "string" &&
+          typeof entry.publishedAt === "string" &&
+          typeof entry.digest === "string" &&
+          Number.isFinite(entry.pv) &&
+          entry.pv > 0 &&
+          Array.isArray(entry.dailyPv) &&
+          entry.dailyPv.length === RETENTION_DAYS &&
+          entry.dailyPv.every((pv) => Number.isFinite(pv) && pv >= 0),
+      )
+    ) {
+      return null;
+    }
     return value;
   } catch {
     return null;
@@ -575,11 +605,17 @@ export class PubViewsService {
 
     const totals = new Map<string, number>();
     let totalPv = 0;
-    for (const counts of dailyCounts.values()) {
+    const dailyPv: PubViewDailyStatEntry[] = [];
+    for (const date of [...dates].reverse()) {
+      const targetDate = sqlDate(date);
+      const counts = dailyCounts.get(targetDate) ?? new Map<string, number>();
+      let pvForDay = 0;
       for (const [postId, pv] of counts) {
-        totalPv += pv;
+        pvForDay += pv;
         totals.set(postId, (totals.get(postId) ?? 0) + pv);
       }
+      totalPv += pvForDay;
+      dailyPv.push({ date: targetDate, pv: pvForDay });
     }
     const ranking = selectTopEntries(totals, TOP_LIMIT);
     const metaValues =
@@ -638,10 +674,18 @@ export class PubViewsService {
         publishedAt: meta.publishedAt,
         digest: meta.digest,
         pv: ranked.pv,
+        dailyPv: dailyPv.map(
+          (day) => dailyCounts.get(day.date)?.get(ranked.id) ?? 0,
+        ),
       });
     }
 
-    const stats: PubViewStats = { totalPv, entries };
+    const stats: PubViewStats = {
+      retentionDays: RETENTION_DAYS,
+      totalPv,
+      dailyPv,
+      entries,
+    };
     if (totalPv > 0) {
       await this.redis.setex(cacheKey, CACHE_TTL_SECONDS, JSON.stringify(stats));
     }

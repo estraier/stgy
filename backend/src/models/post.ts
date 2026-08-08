@@ -37,6 +37,7 @@ export type PubViewStatEntry = {
   publishedAt: string;
   digest: string;
   pv: number;
+  dailyPv: number[];
 };
 
 export type PubViewRankEntry = {
@@ -44,8 +45,15 @@ export type PubViewRankEntry = {
   pv: number;
 };
 
+export type PubViewDailyStatEntry = {
+  date: string;
+  pv: number;
+};
+
 export type PubViewStats = {
+  retentionDays: number;
   totalPv: number;
+  dailyPv: PubViewDailyStatEntry[];
   entries: PubViewStatEntry[];
 };
 

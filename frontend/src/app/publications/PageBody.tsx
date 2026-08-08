@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import type { PubConfig, PubViewStats } from "@/api/models";
+import type { PubConfig, PubViewDailyStatEntry, PubViewStats } from "@/api/models";
 import { getSessionInfo } from "@/api/auth";
 import { getPubConfig, getPubStats, setPubConfig } from "@/api/users";
 import { Config } from "@/config";
@@ -27,8 +27,143 @@ const emptyCfg: PubConfig = {
   showSidePopular: 5,
 };
 
-const emptyStats: PubViewStats = { totalPv: 0, entries: [] };
+const emptyStats: PubViewStats = { retentionDays: 0, totalPv: 0, dailyPv: [], entries: [] };
 const STATS_PAGE_SIZE = 50;
+
+function formatChartDate(date: string): string {
+  const parts = date.split("-");
+  if (parts.length !== 3) return date;
+  return `${Number(parts[1])}/${Number(parts[2])}`;
+}
+
+function DailyPvChart({
+  data,
+  ariaLabel,
+}: {
+  data: PubViewDailyStatEntry[];
+  ariaLabel?: string;
+}) {
+  if (data.length === 0) return null;
+
+  const width = 680;
+  const height = 190;
+  const left = 54;
+  const right = 12;
+  const top = 12;
+  const bottom = 30;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  const maxPv = Math.max(1, ...data.map((entry) => entry.pv));
+  const x = (index: number) =>
+    left + (data.length <= 1 ? plotWidth / 2 : (index * plotWidth) / (data.length - 1));
+  const y = (pv: number) => top + plotHeight - (pv / maxPv) * plotHeight;
+  const points = data.map((entry, index) => `${x(index)},${y(entry.pv)}`).join(" ");
+  const labelStep = Math.max(1, Math.ceil(data.length / 8));
+  const labelIndexes = data
+    .map((_, index) => index)
+    .filter(
+      (index) =>
+        index === 0 || index === data.length - 1 || index % labelStep === 0,
+    );
+
+  return (
+    <div className="mt-3">
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="block w-full h-auto"
+        role="img"
+        aria-label={ariaLabel ?? `Daily page views for the last ${data.length} days`}
+      >
+        {[0, 0.5, 1].map((ratio) => {
+          const yy = top + plotHeight * ratio;
+          const value = Math.round(maxPv * (1 - ratio));
+          return (
+            <g key={ratio}>
+              <line
+                x1={left}
+                x2={width - right}
+                y1={yy}
+                y2={yy}
+                stroke="currentColor"
+                className="text-gray-200"
+                strokeWidth="1"
+              />
+              <text
+                x={left - 8}
+                y={yy + 4}
+                textAnchor="end"
+                className="fill-gray-500 text-[11px]"
+              >
+                {value.toLocaleString()}
+              </text>
+            </g>
+          );
+        })}
+        <polyline
+          points={points}
+          fill="none"
+          stroke="currentColor"
+          className="text-gray-800"
+          strokeWidth="2"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+        {data.map((entry, index) => (
+          <circle
+            key={entry.date}
+            cx={x(index)}
+            cy={y(entry.pv)}
+            r="2.5"
+            fill="currentColor"
+            className="text-gray-800"
+          >
+            <title>{`${entry.date}: ${entry.pv.toLocaleString()} PV`}</title>
+          </circle>
+        ))}
+        {labelIndexes.map((index) => (
+          <text
+            key={data[index].date}
+            x={x(index)}
+            y={height - 8}
+            textAnchor={index === 0 ? "start" : index === data.length - 1 ? "end" : "middle"}
+            className="fill-gray-500 text-[11px]"
+          >
+            {formatChartDate(data[index].date)}
+          </text>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
+function ChartToggleIcon({ expanded }: { expanded: boolean }) {
+  if (expanded) {
+    return (
+      <svg viewBox="0 0 20 20" className="h-4 w-4" aria-hidden="true">
+        <path
+          d="M5 12.5 10 7.5l5 5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.7"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 20 20" className="h-4 w-4" aria-hidden="true">
+      <path
+        d="M3.5 15.5V4.5M3.5 15.5h13M6 12l3-3 2.5 2 4-5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
 
 export default function PageBody() {
   const router = useRouter();
@@ -50,6 +185,7 @@ export default function PageBody() {
   const [saved, setSaved] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>("pv");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+  const [expandedEntryIds, setExpandedEntryIds] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
     let canceled = false;
@@ -170,6 +306,15 @@ export default function PageBody() {
     return sortDirection === "asc" ? "▲" : "▼";
   }
 
+  function toggleEntryChart(id: string) {
+    setExpandedEntryIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   const themeOptions =
     Array.isArray(Config.PUB_DESIGN_THEMES) && Config.PUB_DESIGN_THEMES.length > 0
       ? [...Config.PUB_DESIGN_THEMES]
@@ -220,10 +365,15 @@ export default function PageBody() {
             </div>
           )}
           <div className="mb-5">
-            <div className="text-sm text-gray-600">Total PV in the last 10 days</div>
+            <div className="text-sm text-gray-600">
+              {stats.retentionDays > 0
+                ? `Total PV in the last ${stats.retentionDays} days`
+                : "Total PV"}
+            </div>
             <div className="text-3xl font-bold tabular-nums ml-2">
               {stats.totalPv.toLocaleString()}
             </div>
+            <DailyPvChart data={stats.dailyPv} />
           </div>
 
           <div className="overflow-hidden border rounded">
@@ -265,28 +415,59 @@ export default function PageBody() {
                 </tr>
               </thead>
               <tbody>
-                {pageEntries.map((entry) => (
-                  <tr key={entry.id} className="border-b last:border-b-0 align-top">
-                    <td className="px-2 sm:px-3 py-2">
-                      <div className="font-mono break-all">
-                        <Link href={`/posts/${entry.id}`} className="hover:underline">
-                          {entry.id}
-                        </Link>
-                      </div>
-                      <div className="mt-1 text-gray-600 break-words">
-                        <Link href={`/pub/${entry.id}`} className="hover:underline">
-                          {formatDateTime(new Date(entry.publishedAt))}
-                        </Link>
-                      </div>
-                    </td>
-                    <td className="px-2 sm:px-3 py-2 whitespace-normal break-words">
-                      {entry.digest}
-                    </td>
-                    <td className="px-2 sm:px-3 py-2 text-right tabular-nums break-words">
-                      {entry.pv.toLocaleString()}
-                    </td>
-                  </tr>
-                ))}
+                {pageEntries.map((entry) => {
+                  const expanded = expandedEntryIds.has(entry.id);
+                  const chartData = expanded
+                    ? stats.dailyPv.map((day, index) => ({
+                        date: day.date,
+                        pv: entry.dailyPv[index] ?? 0,
+                      }))
+                    : [];
+                  return (
+                    <Fragment key={entry.id}>
+                      <tr className="border-b align-top">
+                        <td className="relative px-2 sm:px-3 py-2 pb-8">
+                          <div className="font-mono break-all">
+                            <Link href={`/posts/${entry.id}`} className="hover:underline">
+                              {entry.id}
+                            </Link>
+                          </div>
+                          <div className="mt-1 text-gray-600 break-words">
+                            <Link href={`/pub/${entry.id}`} className="hover:underline">
+                              {formatDateTime(new Date(entry.publishedAt))}
+                            </Link>
+                          </div>
+                          <button
+                            type="button"
+                            className="absolute left-2 sm:left-3 bottom-2 inline-flex items-center justify-center text-gray-500 hover:text-gray-900"
+                            aria-expanded={expanded}
+                            aria-label={expanded ? "Hide page view graph" : "Show page view graph"}
+                            title={expanded ? "Hide graph" : "Show graph"}
+                            onClick={() => toggleEntryChart(entry.id)}
+                          >
+                            <ChartToggleIcon expanded={expanded} />
+                          </button>
+                        </td>
+                        <td className="px-2 sm:px-3 py-2 whitespace-normal break-words">
+                          {entry.digest}
+                        </td>
+                        <td className="px-2 sm:px-3 py-2 text-right tabular-nums break-words">
+                          {entry.pv.toLocaleString()}
+                        </td>
+                      </tr>
+                      {expanded && (
+                        <tr className="border-b">
+                          <td colSpan={3} className="px-2 sm:px-3 py-2 bg-gray-50">
+                            <DailyPvChart
+                              data={chartData}
+                              ariaLabel={`Daily page views for post ${entry.id} over the last ${stats.retentionDays} days`}
+                            />
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
                 {sortedEntries.length === 0 && (
                   <tr>
                     <td colSpan={3} className="px-3 py-8 text-center text-gray-500">
