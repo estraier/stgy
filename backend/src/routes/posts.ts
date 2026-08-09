@@ -26,6 +26,7 @@ import {
 } from "../utils/format";
 
 const logger = createLogger({ file: "posts-route" });
+const PUBLIC_POST_LIST_MAX_LIMIT = 1000;
 
 export default function createPostsRouter(
   pgPool: Pool,
@@ -379,10 +380,11 @@ export default function createPostsRouter(
     if (!userId) {
       return res.status(400).json({ error: "userId is required" });
     }
-    const { offset, limit, order } = AuthHelpers.getPageParams(req, Config.MAX_PAGE_LIMIT, [
-      "desc",
-      "asc",
-    ] as const);
+    const { offset, limit, order } = AuthHelpers.getPageParams(
+      req,
+      Math.max(Config.MAX_PAGE_LIMIT, PUBLIC_POST_LIST_MAX_LIMIT),
+      ["desc", "asc"] as const,
+    );
     try {
       const publishedUntil = new Date().toISOString();
       const posts = await postsService.listPubPostsByUser(userId, publishedUntil, {

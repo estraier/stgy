@@ -223,7 +223,7 @@ export default async function PubPostPage({ params, searchParams }: Props) {
       .slice(0, recentCount);
     const siteHrefBase = `/sites/${post.ownedBy}`;
     const siteHref = design ? `${siteHrefBase}?design=${encodeURIComponent(design)}` : siteHrefBase;
-    const siteHrefWithRichTab = `${siteHref}#pub-post-list`;
+    const siteHrefWithPostsControls = `${siteHref}#pub-posts-controls`;
     const locale = post.locale || pubcfg.locale || "und";
     const newerHref = post.newerPostId
       ? `/pub/${post.newerPostId}${design ? `?design=${encodeURIComponent(design)}` : ""}`
@@ -331,7 +331,7 @@ export default async function PubPostPage({ params, searchParams }: Props) {
                       );
                     })}
                     <nav className="recent-nav">
-                      <a className="pager-btn" href={siteHrefWithRichTab}>
+                      <a className="pager-btn" href={siteHrefWithPostsControls}>
                         {convertForDirection("more", themeDir)}
                       </a>
                     </nav>

@@ -214,7 +214,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
                   html={siteIntroHtml}
                 />
               </section>
-              <nav className="site-posts-controls">
+              <nav className="site-posts-controls" id="pub-posts-controls">
                 <div className="posts-controls-row">
                   <span className="posts-label">{convertForDirection("Posts:", themeDir)}</span>
                   <div className="posts-tabs">
