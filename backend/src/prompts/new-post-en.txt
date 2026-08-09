@@ -20,7 +20,9 @@ Write the output in JSON format.
         - Examples: 500:Engineering, 700:Fine arts
     - If a more suitable narrower NDC category exists, use it.
       - Examples: 140:Psychology, 007:Information science, 240:History of Africa, 326:Criminal law
-    - Do not use decimal subdivisions such as "007.11:Information science--Information theory--Cybernetics". Instead, use a free-text tag such as "Cybernetics" as described below.
+    - If a more suitable decimal subdivision exists, use it and write only its final label after the colon.
+      - Example: 007.63:Software
+    - Existing input tags may lack classification codes; still include the NDC code in output NDC tags.
   - For the remaining tags, freely write suitable search terms.
     - Examples: Dhalsim, Shinjuku, bubble tea, cybernetics
 - Output only the JSON data; omit formatting, acknowledgements, and explanatory text.

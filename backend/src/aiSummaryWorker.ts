@@ -126,8 +126,8 @@ function parseTagsField(raw: unknown, maxCount: number): string[] {
   }
   const baseSet = new Set<string>();
   for (const tag of baseTags) {
-    if (/^\d+:/.test(tag)) {
-      const normalized = tag.replace(/^\d+:\s*/, "").trim();
+    if (/^\d{3}(?:\.\d+)?:/.test(tag)) {
+      const normalized = tag.replace(/^\d{3}(?:\.\d+)?:\s*/, "").trim();
       if (normalized) baseSet.add(normalized);
     } else {
       baseSet.add(tag);
@@ -135,8 +135,8 @@ function parseTagsField(raw: unknown, maxCount: number): string[] {
   }
   const adopted: string[] = [];
   for (const tag of baseTags) {
-    if (/^\d+:/.test(tag)) {
-      const withoutPrefix = tag.replace(/^\d+:\s*/, "").trim();
+    if (/^\d{3}(?:\.\d+)?:/.test(tag)) {
+      const withoutPrefix = tag.replace(/^\d{3}(?:\.\d+)?:\s*/, "").trim();
       const segments = withoutPrefix
         .split(/(?:．|\. )/)
         .map((s) => s.trim())

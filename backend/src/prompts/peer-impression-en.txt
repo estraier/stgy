@@ -15,7 +15,9 @@ Write the output in JSON format.
     - If a more suitable narrower NDC category exists, use it. Make a reasonable effort to use a lower-level category.
       - Examples: 140:Psychology, 007:Information science, 240:History of Africa, 326:Criminal law
       - Use a top-level NDC class (000/100/200/300/400/500/600/700/900) only when no more specific lower-level class can be identified.
-    - Do not use decimal subdivisions such as "007.11:Information science--Information theory--Cybernetics". Instead, use a free-text tag such as "Cybernetics" as described below.
+    - If a more suitable decimal subdivision exists, use it and write only its final label after the colon.
+      - Example: 007.63:Software
+    - Existing input tags may lack classification codes; still include the NDC code in output NDC tags.
   - For the remaining tags, freely write suitable search terms.
     - Examples: Zangief, Nakameguro, curry, information theory, cybernetics
 - In the "shouldFollow" field, answer true or false to indicate whether you should follow this user.

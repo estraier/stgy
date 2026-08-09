@@ -18,7 +18,8 @@ Output must be in JSON format.
     - If more suitable narrower categories exist, use them; Avoid the top categories if possible.
       - Examples: 140:Psychology, 007:Information Science, 240:History of Africa, 326:Criminal Law
       - The top-level NDC classes (000/100/200/300/400/500/600/700/900) should be used only when it is not possible to identify a more specific lower-level class.
-    - Do not use subdivisions with decimals such as "007.11:...". Instead, use a free-text tag such as "Cybernetics" in the free-text tags below.
+    - If a more suitable decimal subdivision exists, use it and write only its final label after the colon.
+      - Example: 007.63:Software
   - For the remaining tags, freely write suitable search keywords as free-text tags.
     - Examples: Akuma, Shibuya, Ramen, Information theory, Cybernetics
 - Put keywords from the post as free-form text in the "keywords" field.
