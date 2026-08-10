@@ -8,5 +8,55 @@ tags: stgy-help
 content:<<____EOF____
 # STGY Architecture
 
-Placeholder for the English version. The full text will be written later.
+This article explains the implementation of STGY. STGY was built as a system for the developer to study [TypeScript](wiki-en) and [Node.js](wiki-en), and both the backend and frontend aim for textbook-style design and implementation. Although STGY is an SNS, I hope that much of its design and implementation can be reused in many other projects.
+
+<!TOC!>
+
+## Architecture
+
+The architecture of STGY is shown in the following diagram. Roughly speaking, it is a three-layer architecture: the database is at the bottom, a backend server forms the business-logic layer that operates on the database, and a user-interface layer calls the backend endpoints. The system is designed to be easy to operate both on premises and in the cloud.
+
+![Architecture diagram](/data/help-architecture.png){grid,size=large}
+
+JavaScript is effectively the only choice of implementation language for a web frontend, and once a project reaches a certain size, using TypeScript becomes essential for maintainability. I also wanted to write the backend in the same language, so TypeScript runs on Node.js there as well. Express is used as the backend framework, while [Next.js](wiki-en) and [React](wiki-en) are used for the frontend.
+
+[PostgreSQL](wiki-en) was chosen as the database server. MySQL would also have worked, but PostgreSQL was selected because its administrative commands are convenient to use. [Redis](wiki-en) is used for caching, MinIO for file storage, TTTS for full-text search, Mailpit for mail delivery in the development environment, Postfix for mail delivery on the VPS, and Caddy as the reverse proxy. When these components are replaced with managed services on AWS, RDS corresponds to PostgreSQL, ElastiCache to Redis, S3 to MinIO, SES to mail delivery, and ALB to Caddy.
+
+There are also several worker processes separated from the backend service. They handle operations that take too long to perform within backend requests. Mail delivery and thumbnail generation use Redis queues. Notification generation processes an event log in PostgreSQL and uses Redis Pub/Sub as a wake-up signal. Full-text-search index updates poll a PostgreSQL task table and apply changes to TTTS. AI summarization of posts and AI-user activity periodically query the backend API to obtain work items. In production, these six workers are started within a single integrated worker process.
+
+Next.js by itself does not provide HTTPS (SSL), so a reverse proxy must be placed in front of it in production to terminate HTTPS. Next.js alone also runs only on a single thread, so to increase throughput one would run as many Next.js processes as there are CPU cores, or run them on multiple hosts. The reverse proxy in front also serves as the load balancer in that case. A CDN layer for cached content distribution can be placed in front of the reverse proxy as well; CloudFront provides that role on AWS, although it is probably unnecessary for this project for now.
+
+The architecture diagram above depicts the frontend as running inside the hosting site, but in practice most frontend functionality is implemented with client-side rendering, and Next.js primarily sends JavaScript to the client. It is more accurate to think of the JavaScript running in the browser as carrying out processing while calling backend endpoints. Therefore, backend endpoints must be designed and implemented on the assumption that malicious requests will arrive.
+
+## Minimum Configuration
+
+Suppose STGY is operated on AWS with everything placed on a single EC2 instance. A t4g.small EC2 instance (2 CPU cores, 2 GB memory) costs about $7, 8 GB of EBS storage about $1, 10 GB of data transfer about $1, and roughly 32 GB of data in S3 about $1. If it is operated without a NAT for a public subdomain, the total would be around $10 per month. That should be sufficient for a private SNS with roughly 1,000 active users.
+
+A VPS is also sufficient for a medium-sized site with fewer than about 10,000 active users, and offers better cost performance. For example, Sakura VPS's 4 GB plan (4 CPU cores, 4 GB memory, 200 GB SSD) costs 3,227 yen per month, and the SSD can be expanded to 400 GB for an additional initial fee of 4,400 yen. PostgreSQL, MinIO, and all the other services can run together on a single host without difficulty. It is much more powerful than an EC2 t4g.small and provides far more storage, making operation comparatively comfortable. Most importantly, because the price is fixed, a sudden increase in popularity or abuse will not lead directly to a large unexpected bill.
+
+For a serious commercial service, however, one would probably operate on a cloud platform such as AWS, place each server on a separate instance, divide the network into subnets, add a NAT, and establish monitoring, replication, and backup mechanisms. If availability requirements exist, deployment and data replication across availability zones would also be configured. The cost would become substantial, but if the service has grown that far, it should also be possible to recover that cost somehow.
+
+## Required Computing Resources
+
+Assume the following daily behavior for an average active user. Each person views the post-list screen 10 times, a post-detail screen 10 times, a user-list screen 5 times, and a user-detail screen 5 times. The user also publishes two 500-character posts and uploads one image. Assume each original image is 500 KB and each thumbnail is 100 KB. A post-list screen contains snippets for 20 posts, with an average of 10 thumbnails in total.
+
+For database read queries, assume that list views and detail views impose roughly the same load when search and data retrieval are considered together. These queries are issued 10+10+5+5=30 times per user per day. Therefore, the QPS per 10,000 users is 30/86400*10000=3.472. At peak time, assume roughly three times that amount, or about 10 QPS. Update QPS per 10,000 users is 2/86400*10000=0.23, and at peak time about three times that, or roughly 0.7 QPS. Including likes, perhaps it would be around 1 QPS.
+
+For images, one user downloads 10*20=200 thumbnails through list views each day, along with 5 original images through post-detail views. Because thumbnails benefit from caching, assume that only 100 are actually transferred. At 100*100 KB, that is 10 MB of transfer. Five original images at 500 KB each add 2.5 MB. Avatar images are ignored here on the assumption that they are almost always cached. Total transfer is therefore 12.5 MB per user. For 10,000 users, that is 125 GB, or 1,000 Gb, requiring an average throughput of 11.57 Mbps. At peak time, roughly three times that, or about 35 Mbps, can be expected.
+
+In other words, the database load leaves plenty of headroom at 10,000 users and could probably tolerate 100,000 users, while network transfer is likely to become the bottleneck first. On AWS, for example, at $0.114/GB, 10,000 users would cost $8.55 per day in data transfer. Sakura VPS includes network traffic in a fixed price, but the line is a shared 100 Mbps connection, so it would not be surprising if usage restrictions were applied at around 10 Mbps. Therefore, image distribution will probably need a CDN before the service reaches 10,000 users.
+
+## Development Approach
+
+The architecture described throughout this series is optimized up to, but not including, horizontal distribution (scale-out). In other words, the system starts in a state where it can run on one host, and the same implementation should continue to work when the database server and storage server are separated and their replication is used to distribute load. A scale-up-only strategy without horizontal distribution will probably reach its limit at around 100,000 users. If the service can grow that far, it can reasonably be considered successful.
+
+It is not realistic to operate a system capable of serving one million users from the outset. Even after a large initial investment, there is no guarantee that the service will ever grow that far. It is also difficult to obtain, from the beginning, personnel with the skills required to develop and operate a large-scale site. A better approach is to build an implementation that can serve 100,000 users with sufficient effort, begin operating it with a relatively small initial investment, and let the team accumulate experience through real-world operation and ongoing improvement. During the time before the service reaches 100,000 users, identify system problems, formulate a scale-out strategy based on them, and then carry it out. It is not enough for the system itself to scale; the organization must also scale so that the development and operations structures can keep up.
+
+To achieve the present goal of becoming a full-stack developer, one million users are unnecessary. If the objective is simply to gain development and operations experience with real end users, even 1,000 users are enough. The first goal is to build a simple and robust backend that can withstand 100,000 users, and then pursue a UX capable of attracting that many users.
+
+From the perspective of AI-assisted development, it is desirable to record specifications in as much detail as possible. This is sometimes called specification-driven development: feed the specifications to AI, have it generate a prototype of the system, and then refine that prototype. Defining specifications at the necessary and sufficient level of detail improves the accuracy of the generated prototype and minimizes the cost of corrections. In this project, this blog series itself serves as the specification. The articles will be written with the goal that simply having an AI read the series should allow it to generate a system almost identical to Fakebook. Current AI models have more knowledge than humans about many general development techniques, but that is not necessarily true for knowledge specific to an individual domain. By supplying my own experience-based knowledge, I can compensate for that gap.
+
+It is important to distinguish between general knowledge that is obvious to AI and knowledge that AI is unlikely to know, and to describe the latter in detail. I wrote that AI is comparatively weak in domain-specific knowledge, but something it is even worse at—or fundamentally cannot do—is predict what the user actually wants to accomplish. Naturally, information about a particular user does not exist in the training data. Therefore, clarifying what the user wants to do is itself the most important part.
+
+Next: [STGY Installation](/posts/0000000000010102)
 ____EOF____

@@ -1,12 +1,614 @@
 id: 0000000000010103
 ownedBy: 0000000000010001
 publishedAt: 2025-01-01 00:01:03+00
-locale: en-US
 allowLikes: false
 allowReplies: false
 tags: stgy-help
+locale: en-US
 content:<<____EOF____
 # STGY Database
 
-Placeholder for the English version. The full text will be written later.
+This article explains the configuration and schema of the STGY database. STGY manages user and post data in PostgreSQL.
+
+<!TOC!>
+
+## Overview and Design Policy
+
+The ER diagram for the database schema is shown below. There are three principal tables: the users table, which manages users; the posts table, which manages posts created by each user; and the notifications table, which manages notifications. The remaining tables were separated from those three during normalization and performance optimization, or support asynchronous processing for full-text search and AI agents.
+
+![ER diagram](/data/help-schema-er.png){grid,size=large}
+
+When designing a database schema, it is necessary to understand and distinguish normalization from performance optimization. The purpose of normalization is to avoid managing the same data in multiple places—in other words, to centralize the single source of truth—and thereby reduce the chance of inconsistencies. Greater normalization often improves database maintainability, but it does not necessarily improve performance and can sometimes make it worse. Performance optimization, on the other hand, changes the schema to make the queries actually executed more efficient, and may result in a schema that violates a normal form. Excessive duplication becomes a breeding ground for bugs, while pursuing perfect centralization can produce performance that is unusable in practice. The important thing is to balance the two.
+
+In the context of an SNS, database queries can broadly be divided into two kinds: list queries and operations on individual records. List operations are the expensive ones and determine scalability, so database design should focus on making list queries efficient. In this example, data referenced by user-list views is gathered in the users table, while data shown only on user-detail screens is moved to user_details. Likewise, data referenced by post-list views is gathered in posts, while data shown only on post-detail screens is moved to post_details. Keeping the tables read by list queries small improves locality of reference, reduces the amount of data transferred to and from the storage layer, makes caches at each layer more effective, and consequently improves performance.
+
+Once the tables have been divided appropriately, the remaining task is to add indexes that match the queries. Every filtering operation in a list query should be designed to consult only indexes. Indexes have high locality of reference, whereas the main tables have relatively low locality even after the optimization above. Therefore, the main table should be accessed only after filtering is complete, and only for the records that will actually be displayed. Queries that violate this policy are potential bottlenecks, so it is important to inspect the execution plan of each query and make sure this does not happen.
+
+## PostgreSQL vs MySQL
+
+As of 2025, PostgreSQL and MySQL can be regarded as the two dominant open-source database systems. I debated which one to use for this project. Both provide enough functionality and performance to implement a scalable SNS. They support standard SQL and stored procedures, provide sufficient data types, allow appropriate indexes, have trigger functionality, support replication, provide backup and other tools, and run on multiple platforms. Both also have excellent deployment track records. Having pursued the features and performance commonly demanded in practice, the two have undergone a kind of convergent evolution to the point where neither can simply be declared better in functionality or performance.
+
+The same applies to robustness and availability. PostgreSQL's append-oriented architecture clearly makes data corruption less likely, but InnoDB also guarantees ACID properties with undo and redo logs, so absent bugs both can be regarded as sufficiently robust. Neither can withstand hardware failure on its own, but both support replication and can therefore provide practical availability in production.
+
+Nor can one simply say that either is better for scalability. As discussed later, the limiting factor for scalability is the space efficiency of indexes, and PostgreSQL and MySQL achieve comparable space efficiency. Once the system grows beyond the point where indexes fit in cache, hardware performance becomes the bottleneck, and that is not determined by which of the two DBMSs is used.
+
+To be frank, I cannot decide whether MySQL or PostgreSQL is better. I continue to use PostgreSQL simply because it was the one I tried first. I was able to define the schema, add indexes, define stored procedures and triggers, write queries, and run everything without problems. When I analyzed queries with EXPLAIN, I obtained the execution plans I wanted. I found it convenient that the optimizer correctly used partial indexes and that complex queries using WITH clauses and JOIN LATERAL were available. MySQL can do almost the same things with somewhat different syntax, so this is not an argument that MySQL is inadequate. I simply have no motivation to migrate because rewriting and reanalyzing the queries would be tedious.
+
+A clear disadvantage of PostgreSQL is that its append-oriented architecture gives poor space and time efficiency for updates. As discussed later, because it has no in-place update, changing a like count causes the entire record to be copied. The database does the copying internally and autovacuum automatically reclaims wasted space, so this behavior normally requires no attention from users. But for data such as like counts that are updated at extremely high frequency, the update cost can become non-negligible. MySQL (InnoDB) has in-place updates and therefore does not have that particular problem. However, counters such as like counts are cache-like data outside the relational model, and a standard optimization is eventually to move them to a dedicated KVS. It would not be fair to judge an RDBMS primarily by how well it handles counters.
+
+A MySQL (InnoDB) main table has a structure called a clustered index. Roughly speaking, it is a B+ tree KVS whose key is the primary key and whose value is a serialization of all other columns. Therefore, locality of reference in the main table is determined by primary-key order. PostgreSQL's main table, by contrast, is a flat structure called a heap. Records are placed in pages in insertion order. A B-tree index containing the primary key and record address (page number and offset within the page) is used to locate rows in the main table. Locality of reference is therefore determined by insertion order.
+
+When physically arranging main-table data, which gives better locality: MySQL, which effectively orders by creation time when time-ordered IDs are used, or PostgreSQL, which orders by insertion time? If the simple model is that newer creation times imply higher access frequency, MySQL has the advantage. If the model is that newer creation or update times imply higher access frequency, PostgreSQL has the advantage. In other words, if one accepts the empirical tendency that "a recently updated post remains more frequently accessed for a while," PostgreSQL is advantageous; if not, MySQL is advantageous. In any case, because most SNS activity consists of new posts, the difference is small.
+
+If one absolutely wants to settle which is superior, one must define a concrete use case, rigorously specify test data and access patterns, write queries that produce the best possible execution plans, and then run benchmark tests in an environment equivalent to production. Every other comparison is meaningless. About ninety percent of articles found by searching for things like "MySQL PostgreSQL comparison" are garbage and should not be trusted.
+
+That said, it is not realistic to create test data and refine query execution plans before choosing a DBMS. Therefore, the practical choice is to give up trying to prove an absolute winner. If an approach that should work for the use case appears feasible with one product, adopt it provisionally; if the full scenario works, adopt it formally. I chose PostgreSQL because I judged that the present use case could be implemented and operated with it. I believe MySQL would also be entirely feasible, but cannot say so with certainty without writing a prototype. Proving which is optimal would require a substantial validation effort, and whether that effort is worthwhile depends on the requirements. If I were a database researcher I might write a paper about it, but I am not, so I omit that exercise.
+
+## Complexity of Append-Style Updates and VACUUM
+
+One can view PostgreSQL's append-oriented design as making update operations inefficient in both space and time. That view is half right and half wrong. With in-place updates such as MySQL's, before a row area is overwritten the old data is written to an undo log so the change can be rolled back, and the entire update operation is written to a redo log so the transaction can be replayed, after which the actual row data is updated. The rule that logs must be written before data is called WAL (Write Ahead Logging). After the transaction completes, no-longer-needed log data is discarded. If append-style updates are understood by analogy with in-place updates, the pre-update row itself functions as the undo log. Append-style operation can be thought of as deleting undo logs in batches through VACUUM. The structure—write rollback information before the update and remove it afterward—is common to both approaches. The number of log reads and writes is proportional to the number N of row updates, so the time complexity is O(N).
+
+It is true that append-style updates accumulate old data (dead tuples). When dead tuples reach roughly 20% of the table size, autovacuum automatically triggers VACUUM. Live row data is compacted toward the beginning of pages and space occupied by dead tuples becomes reusable free space. Because the cost of VACUUM depends on table size, one might worry that the total cost over N updates becomes O(N^2). Amortized analysis shows that it remains O(N). As the table grows, each VACUUM creates more free space and the next VACUUM becomes less likely. Over the long term, the amount of data read and written by VACUUM converges to a constant multiple of the amount of row data, so the complexity is O(N). Understanding the algorithms behind vector or stringstream is one way to become familiar with amortized complexity.
+
+The difference between VACUUM and VACUUM FULL is that VACUUM compacts data only within pages, while VACUUM FULL repacks rows across pages. Pages that contain only free space after VACUUM FULL can be returned to the OS, reducing the database file size. Some people think VACUUM FULL must be run periodically, but that is unnecessary. Trust amortized behavior and operate with ordinary autovacuum-driven VACUUM. If storage would run out without VACUUM FULL, it will eventually run out again even after VACUUM FULL, so the only real solution is to add storage capacity.
+
+VACUUM reads all relevant pages of the target table and updates them as necessary, so it is not a trivial operation. For the storage device, however, it is essentially one sequential pass in block units rather than a huge amount of random I/O. Compared with the random accesses caused by ordinary queries, it is relatively benign. MySQL's in-place updates can accumulate fragmentation as row sizes change, so OPTIMIZE sometimes becomes necessary; that operation is broadly similar to VACUUM. In other words, both in-place and append-style systems occasionally require an operation equivalent to VACUUM, although append-style systems tend to run it more frequently.
+
+Moreover, in a real SNS workload, VACUUM operates very efficiently because old posts are rarely updated. For a while after a database page is created, it contains relatively new posts. Those posts are occasionally updated, producing dead tuples, and newer posts can then be written into free space reclaimed by VACUUM. After enough time passes, every post on the page is old and no new dead tuples are generated. A page whose data area is full and contains no dead tuples is marked all-visible. VACUUM scans a bitmap called the Visibility Map and processes only pages that are not marked all-visible. Thus, most old pages are not even read by VACUUM. Consequently, even after years of operation and growth in post count, VACUUM load on post-related tables can remain roughly constant. The same temporal skew applies to users: long-time users do not change profiles very often, and inactive users do not change them at all. VACUUM load on user-related tables can therefore also remain roughly constant.
+
+Declarative partitioning, discussed later, can transparently divide a table horizontally, causing VACUUM to run on the smaller child tables separately and distribute its load over time. Vertical partitioning also makes individual tables smaller and can spread VACUUM load. It has the further benefit of slowing the accumulation of dead tuples, making updates more efficient. However, excessive vertical partitioning increases the number of JOINs required by reads and can reduce efficiency, so the trade-off must be considered.
+
+## Snowflake ID
+
+Before explaining individual table schemas, it is useful to understand how record IDs are assigned. STGY uses a variant of [Snowflake ID](wiki-en), originally developed by Twitter. Specifically, it is a 64-bit value consisting of a sign bit fixed to 0, followed by a 43-bit millisecond timestamp, an 8-bit worker ID, and a 12-bit sequence number. Represented as a hexadecimal string, it has 16 characters, for example ``198C2E846EE00000``.
+
+By prefixing a fixed-width timestamp, numeric comparison orders IDs in the same order as issuance time. When represented as fixed-width decimal or hexadecimal strings, lexicographic order likewise matches chronological order. UUIDv7 has the same property, but Snowflake IDs are more space-efficient. A Snowflake ID occupies 8 bytes as a number and 17 bytes as a string (16 characters plus 1 byte of VARLENA metadata). A [UUID](wiki-en) occupies 16 bytes as a binary value and 37 bytes as a string (36 characters plus 1 byte of VARLENA metadata).
+
+In this Snowflake-ID variant, a single generator can issue 4,096 IDs in the same millisecond, and up to 256 generators can operate simultaneously, making the practical collision risk effectively zero. Because primary-key order matches chronological order, queries can be ordered without consulting a dependent attribute such as created_at, which allows more efficient query design.
+
+The advantages of UUIDs are that uniqueness can be guaranteed without a coordinated allocator and that the unpredictable random component can also be used as secret information. Conversely, when coordinated allocation is possible and IDs are public information, UUIDs are not necessary. Their disadvantages are that their string representation is long and looks unattractive when it appears in a browser address bar. Aesthetics, not just efficiency, were a significant reason for choosing Snowflake IDs.
+
+For database efficiency, IDs are better handled as numeric values. IDs are often stored in indexes, and the smaller the index, the more records fit in cache. For example, a composite index containing an average 10-byte nickname and an 8-byte numeric ID requires at least 18 bytes per record, while using a 16-byte string ID raises that minimum to 26 bytes. Metadata and padding mean the actual ratio is not exactly 18/26=70%, but numeric IDs are clearly more space-efficient. Numeric comparisons are also more CPU-efficient.
+
+Even so, index data is much smaller than the main table, and the CPU cost of comparison functions is rarely the bottleneck. There are reasonable arguments for treating IDs as strings. TypeScript's number type has only 53 bits of integer precision, so a 64-bit value requires bigint. Strings avoid bugs caused by differences between numeric types and are easy to put into JSON. They also make a future migration to a different ID scheme easier.
+
+In this implementation, IDs are numeric inside the database, but the service-layer methods that encapsulate database operations always represent IDs as 16-character hexadecimal strings at their inputs and outputs. This captures the advantages of both approaches. Code that must care about numeric types is hidden inside the service layer, while upper API layers handle strings when constructing JSON, so inconsistencies cannot arise. Even if the allocation scheme changes later, hiding that change inside the service layer avoids the need to change the API.
+
+The original Snowflake ID uses 41 bits for the timestamp and therefore overflows 2^41 milliseconds (=69.681 years) after its epoch. Twitter's epoch is 2010-11-04T01:42:54, so its format would overflow in June 2080—the so-called year-2080 problem. The variant used here has a 43-bit timestamp, giving it four times the lifetime, or 278.729 years. With 1970-00-00T00:00:00 as the stated epoch, it can be used until September 2248. Because the most significant bit is currently fixed to 0, the lifetime could be doubled to June 2527 by declaring that bit part of the timestamp. At that point, however, BIGINT values inside the database would become negative, so the schema would first need to migrate to NUMERIC or VARCHAR.
+
+A table whose primary key is a Snowflake ID can omit a created_at column entirely because the timestamp can be calculated from the ID. Removing created_at makes each main-table row 8 bytes smaller and therefore improves performance slightly. Main-table space efficiency matters less than index space efficiency, but smaller is still better. Furthermore, if a Snowflake ID is viewed as a composite key of timestamp, worker ID, and sequence ID, then storing created_at—which depends on one component of that key—can be regarded as a violation of second normal form. In other words, allowing created_at to change without changing the ID creates a potential inconsistency. Eliminating that redundancy improves maintainability as well as performance. Application code becomes slightly more complex, but a function like the following, which converts a Snowflake ID to a timestamp, solves the problem and lets the database behave as though a created_at column existed.
+
+```sql:small
+CREATE OR REPLACE FUNCTION id_to_timestamp(id BIGINT)
+RETURNS timestamptz
+LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+AS $$
+  SELECT timestamptz 'epoch'
+       + (id >> 20) * interval '1 millisecond';
+$$;
+
+SELECT
+  id, id_to_timestamp(id) AS created_at
+FROM users;
+```
+
+The created_at value generated above should not be used in an ORDER BY clause. To obtain stable ordering when multiple records have the same value, it would have to be combined with a unique attribute such as the primary key, in which case the query should simply order by the primary key. Ordering by a combination not fully covered by an index requires fetching all matching records and sorting them, which does not scale. One could add a composite index on created_at and the primary key, but that would completely duplicate the function of the primary-key index. A Snowflake ID can therefore be regarded as a strict improvement over created_at for ordering because it is both chronological and unique.
+
+## The user_agreement_terms Table
+
+Because terms of service may change in the future, they are managed by version in the user_agreement_terms table rather than in application code or configuration files.
+
+```sql:small
+CREATE TABLE user_agreement_terms (
+  id BIGINT PRIMARY KEY,
+  contents VARCHAR(262144) NOT NULL
+);
+```
+
+id is a Snowflake ID and serves both as the registration time and version order of the terms. The latest version can be obtained with ``ORDER BY id DESC LIMIT 1``. contents stores a JSON string containing an array of locale/plain-text pairs, for example ``[{"locale":"en","text":"hello world"},{"locale":"ja","text":"こんにちは"}]``. VARCHAR is used rather than JSONB, and the backend service layer validates the JSON structure, locale validity, duplicates, presence of an English version, and maximum text length.
+
+## The users Table
+
+Now consider the users table that manages users. Its actual schema is shown below.
+
+```sql:small
+CREATE TABLE users (
+  id BIGINT PRIMARY KEY,
+  updated_at TIMESTAMPTZ,
+  snippet VARCHAR(4096) NOT NULL,
+  nickname VARCHAR(50) NOT NULL,
+  avatar VARCHAR(100),
+  locale VARCHAR(50) NOT NULL,
+  timezone VARCHAR(50) NOT NULL,
+  ai_model VARCHAR(50) REFERENCES ai_models(label) ON DELETE SET NULL,
+  is_admin BOOLEAN NOT NULL,
+  is_frozen BOOLEAN NOT NULL,
+  block_strangers BOOLEAN NOT NULL
+);
+CREATE INDEX idx_users_nickname_id ON users(LOWER(nickname) text_pattern_ops, id);
+CREATE INDEX idx_users_ai_id ON users (id) WHERE ai_model IS NOT NULL;
+```
+
+The primary key id is a Snowflake ID. Login is performed with the email address supplied at registration, but every subsequent user identity reference uses id. The email address and password are separated into the user_secrets table.
+
+nickname has no UNIQUE constraint, so multiple users may have the same nickname. This differs deliberately from Twitter-style handles and avoids competition over names. Because users can be searched by nickname, nickname is indexed. To make case-insensitive search efficient, index values are normalized to lowercase. The index is also composite with id. Search always has an ordering requirement, so including id—the ordering key—in the index makes the search efficient; otherwise all matching rows would have to be sorted afterward.
+
+ai_model is used by an AI agent to determine its behavior pattern. It references the ai_models table, from which per-model settings are obtained. To retrieve a list of AI agents, a partial index is provided that efficiently returns the IDs of users for whom ai_model is set.
+
+is_admin indicates whether the user is an administrator, while is_frozen indicates a frozen user whose update operations have been disabled because of a terms violation or similar reason. State determination gives is_admin priority: if is_admin is true the user is an administrator; otherwise, if is_frozen is true the user is frozen; if both are false the user is ordinary. is_frozen is always false when a user is created, and if an update makes is_admin true the application corrects is_frozen back to false. There is no database-level constraint forbidding both values from being true.
+
+A serious commercial service might divide privileges much more finely, but that also creates a risk that authorization itself becomes unmanageable. Having become weary of role management in AWS and GCP, I deliberately chose the opposite approach: just three states—administrator, frozen user, and ordinary user. Administrators can do anything; ordinary users can manipulate only their own resources; frozen users may log in and read but may perform no updates. When an administrator changes is_admin or is_frozen, all existing sessions for the target user are deleted so that the new state is reflected in the next login session.
+
+block_strangers is a flag that rejects likes and replies from anyone the user does not follow. The feature exists to reduce SNS fatigue caused by excessive interaction from strangers. I considered managing the flag per post, but changing it across old posts would be cumbersome and even automating that work would be expensive, so it is managed per account.
+
+The remaining attributes are for display or user settings. updated_at is the time the user was last updated. snippet is a JSON string representing a snippet of the user's Markdown introduction after parsing. avatar indicates where the avatar image (icon) is stored, normally a path on S3. locale is the default locale used for posts, and timezone is used for notification slots and similar functions. There is no created_at column for the user creation time, but an equivalent value can be extracted with an expression such as ``id_to_timestamp(id) AS created_at``.
+
+Attributes shown on the user-list screen, authorization and frozen state, and the frequently referenced locale and timezone are kept in users. Login email/password and the state of agreement to the terms are moved to user_secrets, while attributes shown only on the user-detail screen are moved to user_details.
+
+The schema of user_secrets is as follows.
+
+```sql:small
+CREATE TABLE user_secrets (
+  user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  user_agreement_term_id BIGINT REFERENCES user_agreement_terms(id) ON DELETE SET NULL,
+  email VARCHAR(100) NOT NULL UNIQUE,
+  password BYTEA NOT NULL
+);
+```
+
+email is the email address. Because it has a UNIQUE constraint, only one user can be registered with a given address. A UNIQUE constraint automatically creates an index, making lookup by email efficient. Most mail services treat the local part case-insensitively in practice, so email is normalized to lowercase before storage. A user whose mail service truly distinguishes uppercase addresses cannot use such an address here because verification mail would not arrive, but this is an accepted limitation. If case differences were allowed, servers that ignore case could otherwise be used to create many accounts with effectively the same address. RFC 5321 allows an address of up to 320 characters (64-character local part, @, and 255-character domain), but STGY limits it to 100 characters.
+
+user_agreement_term_id records the version of the terms of service to which the user agreed. If no terms exist, agreement is not required. If terms do exist, the user is considered to have agreed only when this value matches the ID of the latest version. NULL or an older ID means agreement to the latest version is required. If a terms version is deleted, ON DELETE SET NULL returns affected users to the unagreed state.
+
+password stores the hashed password. A stored hash is sufficient to perform login without retaining the password itself: apply the same hash function to the entered password and compare the result. Maintainability is better when the application calls an arbitrary hash function rather than delegating this to a database-specific feature. The value is stored as BYTEA binary data for space efficiency. Binary data is less readable in administration tools, but readability provides no value for password hashes.
+
+The schema of user_details is as follows.
+
+```sql:small
+CREATE TABLE user_details (
+  user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  introduction VARCHAR(65535) NOT NULL,
+  ai_personality VARCHAR(65535)
+);
+```
+
+introduction stores the full Markdown self-introduction. ai_personality stores plain text describing the AI personality. Both attributes can become large, so separating them helps keep users performance stable.
+
+## The posts Table
+
+Now consider the posts table that manages published posts. Its actual schema is shown below.
+
+```sql:small
+CREATE TABLE posts (
+  id BIGINT PRIMARY KEY,
+  owned_by BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reply_to BIGINT,
+  published_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ,
+  snippet VARCHAR(4096) NOT NULL,
+  locale VARCHAR(50),
+  allow_likes BOOLEAN NOT NULL,
+  allow_replies BOOLEAN NOT NULL
+);
+CREATE INDEX idx_posts_owned_by_id ON posts(owned_by, id);
+CREATE INDEX idx_posts_reply_to_id ON posts(reply_to, id);
+CREATE INDEX idx_posts_reply_to_owned_by ON posts(reply_to, owned_by);
+CREATE INDEX idx_posts_root_id ON posts (id) WHERE reply_to IS NULL;
+CREATE INDEX idx_posts_root_owned_by_id ON posts (owned_by, id) WHERE reply_to IS NULL;
+CREATE INDEX idx_posts_public_owned_by_published_at ON posts (owned_by, published_at, id) WHERE published_at IS NOT NULL;
+```
+
+The primary key id is a Snowflake ID. As with users, every query that returns a list uses ``ORDER BY id``, and it is convenient that this order is chronological.
+
+owned_by is the ID of the user who wrote the post. Naturally, it must be indexed to support queries listing posts by user. Because those results are also returned in ID order, the index should be composite on owned_by and id.
+
+reply_to is the ID of the post being replied to. Non-reply posts have NULL in reply_to. It deliberately has no ordinary foreign-key constraint because the parent post may later be deleted. ON DELETE SET NULL could clear reply_to when the parent disappears, but treating the child as no longer being a reply would be semantically wrong, so the value is retained. When a post is created or updated, the application verifies that the reply target exists and accepts replies; at the database level, the deferrable constraint trigger posts_reply_to_exists guarantees that the target exists at the time the constraint is checked. If the parent is deleted later, reply_to remains unchanged. To list replies to each post, reply_to needs a composite index with id. Post-list queries also determine in bulk whether the logged-in user has already replied to each displayed post; that operation specifies reply_to and owned_by together, so another composite index covers that combination. Finally, the default logged-in UI lists only non-reply posts, so a partial composite index restricted to NULL reply_to values makes that query efficient.
+
+allow_likes and allow_replies indicate whether likes and replies are accepted. Help articles may be viewed by many users and can attract spam likes or replies, so the ability to disable both on arbitrary pages is essential.
+
+The remaining attributes are for display. locale records the locale of each post. snippet is a JSON string representing a parsed snippet of the post's Markdown body. There is no created_at column for post creation time; as with users, it is generated dynamically with id_to_timestamp. published_at is the external publication time. If it is non-NULL and the current time has passed it, the post may be externally published. updated_at is the last update time. Showing creation time is obviously useful, but update time matters as well: rewriting content after it has accumulated likes or replies can enable abuse or unintended misunderstanding, so at minimum readers should be warned that an update occurred.
+
+All attributes displayed on the post-list screen are in posts, while attributes shown only on the post-detail screen are moved to post_details. Its schema is as follows.
+
+```sql:small
+CREATE TABLE post_details (
+  post_id BIGINT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
+  content VARCHAR(262143) NOT NULL
+);
+```
+
+content is the full Markdown body of the post. At present that is the only column here. Since this value can become large, separating it keeps posts performance stable.
+
+## Choosing Between Markdown and JSON
+
+User introductions and post bodies are written in Markdown. Producing snippets from them is actually a surprisingly complicated problem. Simply taking the first N characters can cut through Markdown markup and break the structure; counting markup symbols as visible characters also cuts at the wrong displayed length. Therefore, STGY represents Markdown as an AST (abstract syntax tree) and counts characters while traversing it. When truncation occurs inside a node, only the text inside that node is shortened while the node itself remains. To display the result as HTML, the AST is converted to HTML. The same AST-based procedure is used when converting the complete body. This makes it possible to produce a snippet from Markdown without ever breaking its rendered structure.
+
+When the full body is stored in the database, the Markdown string is stored as-is. The AST could be stored as JSON instead, but editing would then require a perfectly reversible conversion from JSON back to Markdown, which is difficult to guarantee. Storing Markdown directly is also smaller.
+
+For snippets, on the other hand, the AST is stored as JSON. Converting a snippet back to Markdown was considered, but keeping it as an AST is safer because a perfectly reversible mapping is difficult to guarantee and snippets are never edited. Storing verbose JSON such as ``{"type":"element","tag":"p","text":"Hello World"}`` directly would be inefficient, so the JSON-shaped representation is compressed. For example, structure and attribute names are dictionary-compressed into a form such as ``{"T":"p","X":"Hello World"}``. This is lossless compression and therefore cannot alter rendering.
+
+Another design choice is not to model structures such as a post title in the database schema. A Markdown body may contain a title (an H1 heading), or it may not; in practice, most probably do not. Avoiding structural constraints improves maintainability and also works well with full-text search. postsService.listPosts still contains an internal substring search over the body (``content ILIKE '%xxx%'``), but the public post-search and user-search APIs use the external search service.
+
+Whenever a post or user is created, updated, or deleted, the required search-index update is recorded in search_indexing_tasks. searchIndexWorker reads those tasks in order, requests addition or deletion from the external post or user search service, and removes successfully completed tasks from the database. The API search endpoints first obtain matching IDs from the external search service and then fetch display attributes from PostgreSQL.
+
+Running the external search engine in another process or host isolates the SNS's main functions from expensive index updates or searches for extremely common terms such as "the". Search-index updates are asynchronous, so there can be a short delay between completion of a PostgreSQL update and its appearance in search results. Because the simple internal ILIKE query remains available as well, the two approaches can be chosen according to purpose.
+
+## Locales and Time Zones
+
+At user registration, the browser's locale setting and the system time-zone setting are implicitly sent to the backend and stored in the locale and timezone attributes of users. Both values can later be changed from the user profile screen. Locale is used mainly to specify post language, while timezone is used to manage slots for notifications and similar functions. These values are copied from the client environment to the server, despite the resulting duplication, because their roles are different. The client locale controls the UI display language and formatting and may differ from the language in which the user writes. Likewise, the client's current time zone may represent a temporary travel location rather than the user's home region.
+
+Requiring users to specify a locale every time they write a post would be far too cumbersome, and many users do not even know the concept of a locale, so STGY allows posting without thinking about it at all. In that case the post's locale is NULL and the user's locale is used when displaying it—ultimately falling back to the browser-derived locale. A post-specific language can nevertheless be specified by placing something like ``#[locale=en-US]`` at the end of the body. User locale and post locale are independent attributes, not a denormalization caused by performance requirements; there is simply a fallback from NULL post locale to user locale. Automatically detecting a post locale from its content was considered, but language detection can be inaccurate and is inherently difficult for short posts, so the current implementation avoids that complexity.
+
+In regions where multilingualism is normal, per-post locale configuration is essential. When a post is rendered, its locale is placed in the HTML lang attribute. This information is essential for screen readers because they cannot read text correctly without knowing the language. It is also important for SEO when posts are published externally.
+
+The locale information here is a string conforming to BCP 47 (Best Current Practice 47), such as "en-US" (US English), "ja-JP" (Japanese as used in Japan), or "zh-CN" (Chinese as used in mainland China). Language-only forms such as "en", "ja", or "zh" are also valid. If a user wants to distinguish US English from British English, they can specify "en-US" and "en-GB"; if indicating only English is enough, they can specify "en". Likewise, "zh-CN" and "zh-TW" can distinguish mainland and Taiwan Chinese, while "zh" simply indicates Chinese. HTML guidance generally recommends omitting the region subtag unless there is a specific reason to include it, but it would be presumptuous for the service to decide whether such a reason exists. Some may consider "ja-JP" redundant, but a user might intentionally need to distinguish something such as "ja-TW" or "ja-x-osaka". Therefore, STGY outputs exactly the locale the user specified. Per-post locale is not exposed as a dropdown because it is a specialized feature used mainly by multilingual users: this avoids increasing cognitive load for everyone while still permitting free-form values that a fixed list cannot express.
+
+It is useful to distinguish three kinds of locale in a multilingual SNS: the locale configured in the user's browser, the locale in which the user writes content, and the locales of content written by other users that the user reads. For example, a native Japanese speaker may configure the browser language as Japanese but usually post in English, while having many Russian friends and frequently reading Russian posts. That user's browser language is "ja", the account's posting locale is "en", and posts appearing in the timeline may be "ru", "ja", or "en". The important point is that the service's posting locale "en" and the browser language setting "ja" are independent. The UI would normally be localized according to the browser language; currently the UI parts themselves are not localized, so the site's own lang attribute is fixed to "en". But the locale of user-authored posts is bound neither to the site locale nor to the browser locale. It is determined only by the user's account locale or a locale explicitly specified when posting. Likewise, each post by another user is bound to the locale chosen by its own author. Locale is set by the author of content, not by the viewer.
+
+Care is required in understanding the relationship between time zones and PostgreSQL's TIMESTAMPTZ type. Internally, TIMESTAMPTZ is a signed 64-bit count of microseconds relative to January 1, 2000; despite the TZ suffix, it does not store time-zone information itself. It merely has the behavior that SELECT converts the value into a date-time string according to the database server's or session's time zone. Application code that depends on the database time-zone setting is a common source of bugs, so it is better to set the database server to UTC, leave the session time zone unspecified, and always handle timestamps as UTC. Send UTC values to the client and let the client convert them for display according to the browser's time-zone setting. The server needs to know the user's time zone here because notification cards are grouped by calendar date and that grouping must use the user's local date. A Japan-only service could fix the entire system to Japan time, but an open-source system distributed worldwide cannot. Even within a single country, a fixed time zone would fail in places such as the United States or Russia.
+
+As an aside, a typical Japanese systems-integration project often assumes Japanese and Japan Standard Time (JST) exclusively, which is unfortunate from an internationalization perspective. Even a service based in Japan may have users overseas or users who write in languages other than Japanese, and that proportion continues to grow. Locale and time-zone handling are foundational to internationalization, so it is better to design backend information properly before spending effort on translating frontend UI elements.
+
+## The user_follows and user_blocks Tables
+
+Now consider the user_follows table that manages follow relationships between users. Its actual schema is shown below.
+
+```sql:small
+CREATE TABLE user_follows (
+  follower_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  followee_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (follower_id, followee_id)
+);
+CREATE INDEX idx_user_follows_follower_created_at ON user_follows (follower_id, created_at);
+CREATE INDEX idx_user_follows_followee_created_at ON user_follows (followee_id, created_at);
+```
+
+This table is needed to list followees (users I follow) and followers (users who follow me). It would technically be possible to put follower and followee arrays directly in users, but operating with a structure that violates first normal form would inevitably break down, so the relationship must be separated into its own table. The follower/followee pair is the primary key and therefore guarantees uniqueness. Composite indexes with created_at are also provided to efficiently list followees and followers in chronological order.
+
+There is also a feature for blocking likes and replies from specific users. This likewise stores pairs of blocker (the user doing the blocking) and blockee (the blocked user), with indexes arranged so lists can be retrieved efficiently from either side.
+
+```sql:small
+CREATE TABLE user_blocks (
+  blocker_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  blockee_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (blocker_id, blockee_id)
+);
+CREATE INDEX idx_user_blocks_blocker_created_at ON user_blocks (blocker_id, created_at);
+CREATE INDEX idx_user_blocks_blockee_created_at ON user_blocks (blockee_id, created_at);
+```
+
+Even after blocking a persistent harasser, the block feature alone cannot prevent attacks from newly created accounts. There is no fundamental solution to that problem. Until things settle down, it may be desirable to reject likes and replies from anyone other than one's followees, which is why users has block_strangers. Per-user blocking and the account-level stranger-blocking flag complement each other.
+
+A blocked user can still read your posts. This is the same behavior as Twitter, and it should be stated explicitly that blocking does not provide information secrecy. Twitter's change allowing blocked users to read posts was controversial at times, but I consider this behavior reasonable. One should not rely on a secrecy mechanism that can be trivially bypassed by creating another account or asking a third party to copy text or take screenshots. Content that must not be seen by a specific person should not be shown to an indefinite public audience in the first place.
+
+In user_follows and user_blocks, created_at is stored separately even though user IDs are Snowflake IDs containing timestamps, because the time at which a relationship is established is independent of either user's creation time. Lists are shown with newly created relationships first. More generally, ordering by TIMESTAMPTZ does not provide stable ordering for records created in the same millisecond, while a Snowflake ID could solve that problem. But duplicate created_at values for rows involving the same user in user_follows or user_blocks are extremely unlikely. Even if one occurred, only the relative display order might change, so that is accepted and TIMESTAMPTZ is retained. Follows and blocks occur more frequently than user creation, and I also want to avoid increasing the number of Snowflake-ID generators merely to keep up with them. post_likes uses TIMESTAMPTZ for the same reason.
+
+## The post_tags Table
+
+Now consider the post_tags table that manages tags attached to posts. Its actual schema is shown below.
+
+```sql:small
+CREATE TABLE post_tags (
+  post_id BIGINT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  name VARCHAR(50) NOT NULL,
+  is_root BOOLEAN NOT NULL,
+  PRIMARY KEY (post_id, name)
+);
+CREATE INDEX idx_post_tags_name_post_id ON post_tags(name, post_id);
+CREATE INDEX idx_post_tags_root_name_post_id ON post_tags(name, post_id) WHERE is_root;
+```
+
+There is a recurring question of whether articles should be classified with categories or tags. Both concepts are somewhat ambiguous, but the distinction matters. Generally, a category classifies an article like a folder: if categories exist, every article must belong to exactly one. Articles with no obvious category are placed in something like "Other", and articles that seem to fit several categories are assigned one representative category for convenience. This naturally requires defining the category set in advance and making authors choose one while writing. Tags, by contrast, are invented as needed when a post is created. A post may have no tags or many tags. In an SNS where an unspecified number of users publish without a central editor, categories are difficult to operate, so tags are the better fit. Twitter probably uses tags for the same reason.
+
+Tags are not predefined entities but attributes of posts. Nevertheless, to satisfy first normal form and make tags searchable, they must be separated into their own table. Because a tag itself is not treated as an entity, it has no metadata such as an ID or creation time. The primary key is therefore the pair of post_id and name.
+
+There is an is_root flag indicating a root post rather than a reply. It is true when posts.reply_to is NULL, which means it functionally depends on post_id, part of the primary key, and therefore violates second normal form. That is aesthetically unpleasant because every application update to posts must also update post_tags.is_root. Unfortunately, without it the index described below cannot be created efficiently, so the redundancy is accepted.
+
+A composite index on name and post_id makes queries listing posts by tag efficient. post_id is included so ordering by post_id can also be satisfied by the index. Without it, all posts matching a name would have to be retrieved and sorted, which would quickly become untenable for common tags.
+
+A separate partial index restricted to root posts is also created so that tag search retains logarithmic complexity when the UI is configured to show root posts only. Most tagged posts are root posts, so filtering through the ordinary index is usually fast. But if a tag used only in replies became extremely common, the query could otherwise scan every occurrence of that tag; if such a thread went viral, that could become a serious bottleneck, so the dedicated index is necessary.
+
+## The post_likes Table
+
+Now consider the post_likes table that manages likes attached to posts. Its actual schema is shown below.
+
+```sql:small
+CREATE TABLE post_likes (
+  post_id BIGINT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  liked_by BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (post_id, liked_by)
+);
+CREATE INDEX idx_post_likes_post_id_created_at ON post_likes(post_id, created_at);
+CREATE INDEX idx_post_likes_liked_by_created_at ON post_likes(liked_by, created_at);
+```
+
+A composite index on post_id and created_at efficiently lists the users who liked a given post; again, it exists to avoid a separate sort. It is also convenient to list posts that the current user has liked, effectively using likes as bookmarks, so liked_by and created_at have another composite index for that query. created_at is stored separately from post_id because the post creation time and like creation time are different.
+
+## Counter Tables
+
+User-list views display each user's follower count, followee count, and post count. Post-list views display each post's like count and reply count. These values could be obtained with subqueries that issue SELECTs against user_follows, posts, and post_likes. However, recomputing them every time a query runs would not provide acceptable performance, so this is one place where denormalization is unavoidable. Written straightforwardly, the schema looks like the following.
+
+```sql:small
+CREATE TABLE users {
+  ...
+  count_followers INT NOT NULL,
+  count_followees INT NOT NULL,
+  count_posts INT NOT NULL
+};
+
+CREATE TABLE posts {
+  ...
+  count_likes INT NOT NULL,
+  count_replies INT NOT NULL
+};
+```
+
+Because values derivable from other tables are now managed redundantly, inconsistency becomes a concern. These attributes have transitive dependencies on aggregation results over other tables. Even if this does not violate any rule through fifth normal form, it violates domain-key normal form in the broader sense. However, if PostgreSQL stored functions update the counters automatically, consistency can be preserved within the same transaction without requiring complicated application-side logic.
+
+This exposes a PostgreSQL-specific problem: PostgreSQL's append-oriented storage is a poor fit for counters. Updating even one column appends a copy of the entire row. Suppose a page in posts contains a single row, simplified here to just ID, snippet, like count, and reply count. Updating the like count from 3 to 4 means copying the whole row, changing only the like-count portion, and writing that copy immediately afterward.
+
+```
+[0x12345|I'm Nancy. Nice to meet you. This is a pen.|3|0]
+[0x12345|I'm Nancy. Nice to meet you. This is a pen.|4|0]
+```
+
+Because the full post body has been separated into post_details, a posts row is at most roughly 600 bytes. Even so, consuming another 600 bytes for every like is expensive. Without the split into post_details, it would be much worse.
+
+In PostgreSQL, frequently updated attributes should be vertically partitioned. In particular, attributes that update frequently should be separated from attributes that update rarely but are large. Counters are the canonical frequently updated attributes, so they are separated. For posts, a post_counts table stores the like count and reply count.
+
+```sql:small
+CREATE TABLE post_counts (
+  post_id BIGINT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
+  like_count INT NOT NULL DEFAULT 0,
+  reply_count INT NOT NULL DEFAULT 0
+);
+```
+
+For the same reason that post_counts is separated for posts, user_counts is separated for users. With tables this lightweight, even if a like or follow-related count is updated repeatedly from 3 to 4 to 5 to 6, growth in data size remains gradual.
+
+```
+[0x12345|3|0]
+[0x12345|4|0]
+[0x12345|5|0]
+[0x12345|6|0]
+```
+
+One could go further and split the counters into tables such as post_like_counts and post_reply_counts, but overall that would do more harm than good. More tables mean more JOINs in read queries and therefore worse time efficiency. Each table also needs its own primary-key index, reducing space efficiency. Adding one more counter to a row costs only 4 bytes, whereas turning it into a separate row consumes both a main-table footprint and an index footprint. Unnecessary vertical partitioning should be avoided.
+
+When a row moves, every index normally has to be updated. But if only HOT-eligible columns are changed and the new tuple can remain on the same page, PostgreSQL can use HOT (Heap-Only Tuple) optimization: the page records the new location without rewriting indexes. The "offset within the page" stored by an index is actually an index into the page's line-pointer array, so changing only the referenced line pointer can avoid changing the index itself. To increase the probability of HOT updates, a fillfactor of around 75% is appropriate. The default main-table fillfactor is 100%, meaning INSERT and VACUUM pack row data up to the page's capacity. If an existing row is then updated, there is little chance that the new tuple will fit on the same page. With fillfactor 75%, 25% of the page is reserved for updates, so updated tuples can often remain on-page. Too low a fillfactor wastes space; too high reduces update efficiency, so roughly 75% is a reasonable balance. At the same time, lower the VACUUM trigger threshold to 0.1 so it runs more readily, and raise the ANALYZE threshold to 0.3 so it runs less readily.
+
+The actual post_counts is a partitioned parent table described later, so these settings are applied not to the parent but to each of its eight child tables. For example, the first child is configured as follows. notifications is configured the same way for each child table.
+
+```sql:small
+ALTER TABLE post_counts_p0
+  SET (fillfactor=75,
+       autovacuum_vacuum_scale_factor=0.1, autovacuum_vacuum_threshold=1000,
+       autovacuum_analyze_scale_factor=0.3, autovacuum_analyze_threshold=1000);
+```
+
+Even if this is far better than allowing posts itself to bloat, post_counts still grows rapidly. With in-place updates it would need to hold only the latest value, and the table would not even need to be separated in the first place—an obvious inefficiency. But viewed calmly, the growth of the separated counter table is modest compared with post_likes, the table being counted. post_likes continually appends tuples of post ID, user ID, and event time, and old data cannot simply be removed. user_follows is the same. Even in an in-place database those tables must grow by appending rows. Compared with the cost of managing post_likes and user_follows, the cost of a counter table that VACUUM can compact is secondary.
+
+PostgreSQL is clearly not ideal for counter management, but for the reasons above the counter workload is relatively small and may not become a visible problem for a long time. If it does, a KVS dedicated to counters should be considered. LMDB and RocksDB are standard choices; my own Tkrzw and Tkrzw-RPC are alternatives. They provide excellent time and space efficiency, atomic increment, and compare-and-swap operations. Redis, already used as a cache, could also be used. However, cache data can disappear, so if a corresponding counter is missing, post_likes would have to be scanned to reconstruct the count. Preserving atomicity during that recovery is awkward.
+
+In practice, if a KVS is introduced, moving post_likes itself rather than only the counters may be the more likely scenario. Whether a like exists and the exact like count can tolerate slight inconsistency, and even accidental loss would not threaten the survival of the service. Therefore, moving the whole feature to a fast, inexpensive, scalable KVS, even with somewhat weaker robustness or consistency, can be a practical decision.
+
+## Declarative Partitioning
+
+PostgreSQL has a mechanism called declarative partitioning for transparently partitioning a table. Transparent means that the external interface does not change: existing queries continue to work and return the same results while gaining the intended benefit. Once partitioning is declared on a table, it becomes a parent table and delegates actual storage and processing to child tables according to partition rules. Indexes continue to work in the same way as before, so SQL statements need not change at all. At the same time, VACUUM now runs separately for each child table, which is one of the major benefits of splitting the table.
+
+Counter tables should be vacuumed frequently, but it is preferable to run smaller VACUUM operations more often and distribute the load over time. This spreads CPU and I/O load. Pages read or written by VACUUM do not enter PostgreSQL's shared buffer in the same way as ordinary query data, but they do affect the OS page cache, and distributing the work helps there as well. Even so, this design applies declarative partitioning only to post_counts, which contains like counts, because likes can occur orders of magnitude more frequently than follows, new posts, or replies.
+
+```sql:small
+CREATE TABLE post_counts (
+  post_id BIGINT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
+  like_count INT NOT NULL DEFAULT 0,
+  reply_count INT NOT NULL DEFAULT 0
+) PARTITION BY HASH (post_id);
+
+DO $$
+DECLARE
+  parts int := 8;
+  i int;
+BEGIN
+  FOR i IN 0..parts-1 LOOP
+    EXECUTE format(
+      'CREATE TABLE IF NOT EXISTS %I PARTITION OF %I
+         FOR VALUES WITH (MODULUS %s, REMAINDER %s);',
+      'post_counts_p' || i, 'post_counts', parts, i
+    );
+    EXECUTE format(
+      'ALTER TABLE %I SET (
+         fillfactor=75,
+         autovacuum_vacuum_scale_factor=0.1, autovacuum_vacuum_threshold=1000,
+         autovacuum_analyze_scale_factor=0.3, autovacuum_analyze_threshold=1000
+       );',
+      'post_counts_p' || i
+    );
+  END LOOP;
+END$$;
+```
+
+There are eight partitions. Compared with an unpartitioned table, the expected duration of one VACUUM is one eighth while its frequency is eight times higher. The worst-case ratio of dead tuples to table size remains 0.1 and the expected ratio remains 0.05, but variance is reduced by averaging across partitions. The number could be 16 or 32 instead, but adding more partitions has diminishing returns and worsens the side effects described below.
+
+Once one sees the benefit of spreading VACUUM load over time, it is tempting to partition every table. That should not be done. Declarative partitioning increases the number of tables that every query may need to read or write. Data in different tables resides on different pages, so more target tables mean more pages. SNS queries have strong locality toward recent data, and excessive partitioning weakens that advantage.
+
+Whether queries against a partitioned table are efficient depends on partition pruning: can PostgreSQL determine from the query predicate and the partitioning rule which partition contains the row? In the present use, list queries have joins such as ``LEFT JOIN post_counts pc ON pc.post_id = p.id``, a complete equality match on the primary key. Updates similarly use ``WHERE post_id = ?``. Hash partitioning supports pruning for exact equality. Would hashing then improve time efficiency by limiting the search space and eliminating log2(8)=3 comparisons in the primary-key B-tree? Probably not. The cost of the hash function likely cancels the saving of three comparisons. B-trees are multiway trees, so their depth changes little, and spreading references across more pages can reduce CPU L3 cache hit rate. Thus, even when pruning works, the partitioned version is probably slightly slower, though by an amount too small to measure reliably.
+
+If partitioning is by primary key, predicates on other columns cannot use partition pruning. For example, a nickname prefix match on users or an exact owned_by match on posts would not prune partitions. PostgreSQL would have to search the index of every partition and merge the results, which is unacceptable in production. Therefore, even without considering reference locality, declarative partitioning should not be applied to tables that receive important queries whose predicates cannot prune partitions.
+
+## The event_logs and notifications Tables
+
+STGY notifies a user when they are followed, when one of their posts receives a like or reply, or when they are mentioned. Notifying every individual event would be annoying, so notifications are grouped by date and resource. A card might say: "18 people including Alice, Bob, Nancy have given likes to your post \"...\" (2025-08-22)." When the user clicks an individual notification card, it changes from unread to read.
+
+To implement these requirements, follow, like, reply, and mention events are first written to event_logs. Its schema is as follows.
+
+```sql:small
+CREATE TABLE event_logs (
+  partition_id SMALLINT NOT NULL,
+  event_id BIGINT NOT NULL,
+  payload VARCHAR(65535) NOT NULL,
+  PRIMARY KEY (partition_id, event_id)
+);
+CREATE INDEX event_logs_event_id_hash ON event_logs USING HASH (event_id);
+```
+
+partition_id is the selected resource ID for each event type modulo 256 by default. follow uses followeeId, mention uses mentionedUserId, like uses postId, and reply uses replyToPostId. With the default configuration it is in [0,255], and the partition count can be changed with STGY_EVENT_LOG_PARTITIONS. event_id is a Snowflake ID based on event time. The composite key of partition_id and event_id is the primary key and therefore automatically indexed. Queries that retrieve records for a given partition_id in ascending event_id order are consequently efficient.
+
+It is worth noting that event_id has a hash index. Ordinary queries do not use it; it exists so that event-log analysis can efficiently look up a specific event ID. A UNIQUE constraint on event_id would also create an index and make the lookup searchable, but that would create a B-tree index. In testing, the optimizer sometimes chose that B-tree for inefficient execution plans, so a hash index was used instead. It is unfortunate that PostgreSQL has no MySQL-style USE INDEX statement.
+
+payload contains JSON describing the event. For example:
+
+```:xsmall
+{"type": "follow", "followeeId": "9901000000000001", "followerId": "0000000000020002"}
+{"type": "like", "postId": "9902500000001000", "userId": "0000000000020002"}
+{"type": "reply", "postId": "198D9E3364600000", "userId": "0000000000020501", "replyToPostId": "9902500000001000"}
+{"type":"mention", "postId":"0000000000020803", "userId":"0000000000020101", "mentionedUserId":"0000000000020702"}
+```
+
+Only one notification-worker process runs at a time, enforced by a PostgreSQL advisory lock. Within that process are multiple logical workers. Each logical worker knows the set of partition_id values it owns and monitors the corresponding Redis notification channels. The default number of logical workers is two and can be changed with STGY_NOTIFICATION_WORKERS. Whenever an event-log insertion is signaled, each worker reads at most 100 events from the relevant partitions. Therefore, event_log_cursors records the last ID read from each partition.
+
+```sql:small
+CREATE TABLE event_log_cursors (
+  consumer VARCHAR(50) NOT NULL,
+  partition_id SMALLINT NOT NULL,
+  last_event_id BIGINT NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (consumer, partition_id)
+);
+```
+
+consumer identifies the worker type; currently the only value is "notification". Together with partition_id it forms the primary key, so specifying both retrieves a row efficiently. The important value is last_event_id: it records the most recently processed event_id, so processing can resume from events with greater IDs. updated_at is merely tracking metadata.
+
+Read events are grouped into notification records by user, resource, and local-calendar day. Those records are stored in notifications.
+
+```sql:small
+CREATE TABLE notifications (
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  slot VARCHAR(50) NOT NULL,
+  term VARCHAR(50) NOT NULL,
+  is_read BOOLEAN NOT NULL DEFAULT FALSE,
+  payload VARCHAR(65535) NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, slot, term)
+) PARTITION BY HASH (user_id);
+CREATE INDEX idx_notifications_user_read_ts ON notifications(user_id, is_read, updated_at);
+CREATE INDEX idx_notifications_created_at ON notifications(created_at);
+```
+
+Like post_counts, notifications is divided into eight declarative partitions and also uses fillfactor 75%. event_logs receives only INSERT and DELETE, whereas notifications is updated frequently and therefore accumulates dead tuples. notifications may be the table with the heaviest update workload. Declarative partitioning is therefore valuable for smoothing VACUUM load. Most queries can prune by user_id, so the performance cost of partitioning is negligible.
+
+Because many updates to the same notification record in a short period would create many dead tuples, the notification worker aggregates read events in memory by user_id, slot, and term. By default it flushes them to notifications every 10 seconds or when 10,000 unapplied events have accumulated. Notification records and event_log_cursors are updated in the same transaction, so notifications are not lost if processing stops partway through. Follows, likes, replies, and mentions generated by AI users are excluded from notification generation.
+
+A user is identified by user_id. slot represents the resource type: for follows, where the user themselves is the target, it is the fixed value "follow"; for posts it takes a form such as "like:{postId}" or "reply:{postId}". term is the local-time date. The schema permits an arbitrary period label rather than requiring an actual date. is_read tracks unread/read state, while updated_at and created_at are update and creation times. A composite index on user_id, is_read, and updated_at makes it efficient to retrieve each user's read or unread notifications.
+
+The notification payload is JSON containing the number of users or posts related to the notification together with the most recent 10 history records. An example follows. record elements may include additional attributes such as userNickname or postSnippet.
+
+```:xsmall
+follow => {"records": [{"ts": 1756002248514, "userId": "0000000000020501"}, {"ts": 1756002138545, "userId": "0000000000020002"}], "countUsers": 2}
+like => {"records": [{"ts": 1756002187871, "userId": "0000000000020501"}, {"ts": 1756002077724, "userId": "0000000000020002"}], "countUsers": 2}
+reply => {"records": [{"ts": 1756002203216, "postId": "198D9E3364600000", "userId": "0000000000020501"}, {"ts": 1756002097802, "postId": "198D9E19A8700000", "userId": "0000000000020002"}, {"ts": 1756002094769, "postId": "198D9E18EAE00000", "userId": "0000000000020002"}], "countPosts": 3, "countUsers": 2}
+mention => {"records": [{"ts": 1764465975, "postId": "0000000000020803", "userId": "0000000000020101"}], "countUsers": 1, "countPosts": 1}
+```
+
+Because event_logs and notifications grow rapidly, old records must be deleted periodically. The notification worker performs this cleanup. For event_logs, after processing events in each partition it derives dates from event_id and deletes records older than the retention period. For notifications, whenever the cumulative number of processed events reaches 1,000, it deletes records whose created_at precedes the retention period. Both retention periods default to 31 days. created_at is indexed to make notification cleanup efficient. Partition pruning does not help this operation, but cleanup is deliberately meant to cover all partitions, so selecting one partition is unnecessary.
+
+The notification feature could be implemented synchronously by updating notifications directly whenever a relevant event occurs. It should nevertheless use a queue and worker for three reasons. First is maintainability: separating the complex logic that builds notification cards from the backend server makes the code easier to understand and update. Second is performance: queries needed to build notification cards should not delay API responses. Third is avoidance of race conditions: notification processing reads an existing card and writes it back, so simultaneous updates could create inconsistencies. The current design limits notification-worker execution to one process with an advisory lock, then processes partitions sequentially inside it. In addition, each notification-card update locks the target row with SELECT ... FOR UPDATE. Because different event types use different IDs for partitioning, events for the same user do not necessarily enter the same partition, but row locking prevents concurrent updates of the same notification card.
+
+Consider notification spam. Follow, like, and reply notifications concern operations on resources owned by the recipient, so the blocking system can deal with them: block unwanted users individually or enable block_strangers. Mentions are different because the post containing the mention is not owned by the recipient. Imposing restrictions on another person's post content would be unacceptable both as system design and from a free-expression perspective, so mentioning itself cannot be prohibited. Moreover, notifying popular users about mentions from complete strangers would make notifications unusably large. Therefore, mention notifications are generated only when the recipient follows the author of the post.
+
+## Other Tables
+
+user_pub_configs manages the name, description, design theme, and displayed items of each user's externally published site. These attributes are unnecessary in user-list views and are used only when rendering external sites, so they are separated from users. search_indexing_tasks is the update queue for the external search index described above.
+
+ai_models manages a label, service name, and model name for each AI model used by AI agents. Because AI models change frequently, users does not store concrete model names directly. Instead it refers to ai_models through labels such as "advanced", "balanced", and "basic". Specific service and model names are centralized and hidden in ai_models, making model updates easier to follow. Each label maps both to a conversational-chat model and to a feature-vector extraction model. Other tables manage AI-generated summaries, tags, interests, and impressions; those are discussed in a separate article.
+
+## Deletion
+
+There are two general ways to delete users or posts: physical deletion, which removes the record itself from the database, and logical deletion, which marks it as deleted with a flag. Each has advantages and disadvantages, and the choice should depend on the nature of the data and operational policy. Physical deletion reduces storage usage by the size of deleted records and lets users control their own information, but mistakenly deleted data cannot be restored. Logical deletion can be reversed simply by clearing the flag, but it does not reduce storage and leaves information the user asked to delete inside the database. The content could be overwritten with meaningless data, but the fact that a post existed and any replies to it remain.
+
+This design physically deletes all data. Few SNS users deliberately go around deleting all their old posts, so the storage-saving effect is usually small. Physical deletion is useful for reclaiming space when abuse creates large amounts of data, but that can be handled as a special case and should not be confused with the desired form of ordinary operation. Even so, I do not want to keep data after a user has decided to delete it, so I prefer to remove it cleanly. Once it is gone, there is also no temptation to promise a troublesome recovery feature.
+
+Physical deletion does, however, require careful design around foreign-key constraints. Deleting a user also deletes that user's posts through ON DELETE CASCADE, along with follow relationships, block relationships, and likes attached to those posts. If a popular user had 1,000 posts and each received about 1,000 likes, one million rows could be deleted at once. Deletion mostly marks rows as dead tuples, but those marks still require writes to the affected pages and can suddenly pollute caches. Related indexes must also rewrite nodes, adding non-negligible load. The only way to mitigate this is to perform deletion gradually as asynchronous work: store the user ID to delete in a dedicated table, let a worker periodically remove a bounded number of related resources, and delete the user only when everything else is gone. Such asynchronous deletion, however, does not need to be introduced until the service has grown substantially.
+
+The absence of a foreign-key constraint on posts.reply_to, and the decision not to update replies automatically when their parent post is deleted, also reduces the cost of deleting users. It may be unavoidable to dirty the 1,000 posts belonging to a popular user, but if each had an average of 100 replies, automatically changing reply_to would update another 100,000 rows in posts. That is an update, not a delete; in an append-oriented system an update creates a copy, so suddenly duplicating 100,000 posts rows would be seriously undesirable.
+
+Depending on the business model and operational requirements, the service might automatically delete old data to keep total storage bounded. In that case physical deletion is essential. Every table has either a Snowflake ID or timestamp information, so implementing a worker that removes data older than a fixed age is straightforward.
+
+## VARCHAR vs TEXT
+
+In PostgreSQL's serialization of main-table rows, variable-length byte strings use a family of internal formats collectively called VARLENA (variable-length array). Data of 126 bytes or less is stored with 1 byte of metadata describing its size; longer data uses 4 bytes of size metadata. VARCHAR, TEXT, BYTEA, JSONB, and similar types are all serialized as VARLENA.
+
+There is debate over whether VARCHAR or TEXT should be used, but their space efficiency and processing performance are the same, so either is reasonable. VARCHAR has a character-count limit while TEXT does not. Every input stored in a database should have a size limit; whether VARCHAR or TEXT is preferable depends on where that limit is enforced. If the application layer already limits length, adding a second VARCHAR limit can be considered duplicate management, making TEXT attractive. Another approach is to perform no length checking in the application and let only the database enforce the limit.
+
+This project takes a compromise: VARCHAR is used in many places while the application layer also enforces data-size limits. The application is the primary enforcement point, but looser database limits exist so that forgetting an application check does not become a critical security hole. One can call this duplicate management, but the maintenance cost is accepted in exchange for reducing the risk of service outages caused by accidental oversized data: post bodies use VARCHAR(262143), while many other long-text attributes use VARCHAR(65535).
+
+There is, however, a space-efficiency difference between storing JSON in VARCHAR/TEXT and using JSONB. VARCHAR stores the JSON text itself, whereas JSONB parses the JSON as an object and then stores a binary serialization. JSONB deserializes faster and is advantageous when fields inside the object are used in query predicates or indexes. But textual JSON is usually more space-efficient, so if the contents are not searched, it is better to keep JSON as text. And if a field needs to be a query predicate frequently enough to matter, it is often better to promote that field to its own relational column.
+
+## Password Hash Functions
+
+Storing plaintext passwords would turn any database leak into an immediate disaster. STGY posts and profile data are largely intended to be public information, so leakage of those is comparatively limited in harm, but exposing a password that a user may have reused on other services would be ethically unacceptable. I also find it uncomfortable that an operator could ever be in a position to read someone else's password. Therefore, passwords must be hashed, and the choice of hash function matters. Fast general-purpose hashes such as MD5 and the SHA family are nearly useless for password storage today. They are deliberately designed to compute quickly with little memory, which makes them vulnerable to massively parallel GPU brute-force attacks; weak passwords that are short or follow common patterns can be recovered in minutes or hours. Reused passwords are especially likely to be weak, so leaking a fast-hash value can be nearly as damaging as leaking plaintext.
+
+Modern sites therefore commonly use password-hashing functions such as Argon2, scrypt, or bcrypt that are intentionally expensive in time and memory. If one evaluation requires hundreds of milliseconds and several megabytes of working memory, GPU parallelism becomes much harder. The server pays that cost at login, but logins are infrequent while a session remains valid. Cost parameters are chosen so the burden is acceptable to the defender but impractical for an attacker performing large-scale guessing.
+
+STGY uses scrypt for password hashing. A 20-byte hash and 12-byte salt are concatenated and stored as a 32-byte binary value in the database. A 20-byte hash has collision probability 1/(2^160), effectively zero. The salt collision probability is 1/(2^96), so even if databases from every service in the world leaked, finding the same salt would remain extraordinarily unlikely. This is sufficient strength for the present.
+
+Technology advances, however, so strength that is sufficient today is not guaranteed forever. It is sometimes recommended to store a self-contained value that includes the hash function's cost parameters, but this implementation does not. Storing the same parameters in every record is redundant, so they are kept in configuration instead to improve space efficiency. Even if circumstances someday require replacing the hash algorithm, old and new values can still be distinguished. During migration, try both algorithms; if the old algorithm verifies the password, generate and store the new value. Using different output sizes can distinguish formats without executing either hash. In practice, users migrated to the new scheme would probably be tracked with a flag, and users not yet migrated near the end of the transition would be notified. Since a flag is needed anyway, making each hash value fully self-contained provides relatively little benefit here.
+
+## Alignment
+
+PostgreSQL aligns values when laying out rows in the main table. Rows normally begin on an 8-byte boundary. Numeric types inside a row are also aligned according to their type: 8-byte BIGINT and TIMESTAMPTZ values use 8-byte boundaries; 4-byte INT and REAL use 4-byte boundaries; 2-byte SMALLINT uses 2-byte alignment. VARLENA types such as VARCHAR and TEXT normally have 4-byte alignment because their headers contain a length value. This ensures that after a row is loaded into memory, numeric values are aligned at addresses the CPU can evaluate directly. A short VARLENA value of 126 bytes or less uses a 1-byte length header and therefore does not require the usual alignment.
+
+Padding is inserted to satisfy alignment. For example, if a row begins with SMALLINT followed by INT, 2 bytes of padding are placed after the SMALLINT so the INT begins on a 4-byte boundary. Thus ``SMALLINT, SMALLINT, INT`` consumes 8 bytes, while ``SMALLINT, INT, SMALLINT`` consumes 10 bytes.
+
+Before alignment optimization, the columns of posts were ordered as follows. Consider the resulting alignment.
+
+- id BIGINT : 8-byte boundary (no padding required)
+- locale VARCHAR : short, so no alignment (no padding required)
+- snippet VARCHAR : 4-byte boundary (up to 3 bytes of padding)
+- owned_by BIGINT : 8-byte boundary (up to 7 bytes of padding)
+- reply_to BIGINT : 8-byte boundary (no padding required)
+- allow_likes BOOLEAN : no alignment (no padding required)
+- allow_replies BOOLEAN : no alignment (no padding required)
+- published_at TIMESTAMPTZ : 8-byte boundary (exactly 6 bytes of padding)
+- updated_at TIMESTAMPTZ : 8-byte boundary (no padding required)
+
+Because locale is variable-length, padding may be inserted before the following snippet. snippet is also variable-length, so padding may be inserted before owned_by. After reply_to establishes an 8-byte boundary, allow_likes and allow_replies consume 2 bytes, so exactly 6 bytes of padding are needed before published_at. For variable padding, half the maximum is a reasonable average. The total is therefore 3/2 + 7/2 + 6 = 11 bytes of padding on average.
+
+The columns were reordered as follows to reduce padding. Padding becomes unnecessary, saving 11 bytes per row.
+
+- id BIGINT : 8-byte boundary (no padding required)
+- owned_by BIGINT : 8-byte boundary (no padding required)
+- reply_to BIGINT : 8-byte boundary (no padding required)
+- published_at TIMESTAMPTZ : 8-byte boundary (no padding required)
+- updated_at TIMESTAMPTZ : 8-byte boundary (no padding required)
+- snippet VARCHAR : 4-byte boundary (no padding required)
+- locale VARCHAR : short, so no alignment (no padding required)
+- allow_likes BOOLEAN : no alignment (no padding required)
+- allow_replies BOOLEAN : no alignment (no padding required)
+
+In databases with in-place updates, padding has a small potential benefit: growth in a record may fit inside existing padding and thereby increase the chance that an update can remain in place. PostgreSQL does not perform in-place row updates, so padding provides no such benefit here.
+
+Simply reordering columns improves space efficiency, but a non-logical column order can reduce readability, so alignment optimization by reordering should be applied cautiously. In posts, the record count is large, access frequency is high, and better space efficiency clearly contributes to performance. The optimized order also remains reasonably readable. Flags such as is_violative may be added in the future; placing them at the end preserves both readability and space efficiency. I therefore judged the optimization worthwhile and applied the same treatment to users. Other tables may also have optimization opportunities, but their cost-benefit ratio is too low to justify changing them.
+
+Changing published_at and updated_at from 8-byte TIMESTAMPTZ values to 4-byte INT values could save another 8 bytes. Millisecond precision is unnecessary for publication or update time, so TIMESTAMPTZ is arguably over-specified. But UNIX time in a signed 32-bit INT overflows in 2038, requiring tricks such as moving the epoch into the future or dividing the value by 60 and accepting minute precision. Saving 8 bytes is attractive, but the maintainability cost is too high, so this optimization was rejected.
+
+## Seeder
+
+A feature commonly called a seeder is needed to register initial database data. It is typical to have one mode that loads data required when production operation begins and another that loads test data for development. The simplest seeder connects directly to the database and executes SQL. At minimum, bootstrap procedures such as schema definition are most straightforward that way. After bootstrap, however, data registration should use application-server endpoints: log in as an administrator and use the normal administrative APIs to create users and posts.
+
+The administrator account itself is most straightforwardly created in the SQL bootstrap, but this raises the problem of setting its password. Password-hashing logic exists only on the application-server side, so if a hash literal is to be written into SQL, an application utility is needed that prints the hash of an arbitrary input string. One could define a special case where an empty or NULL password allows login with a dummy password, but that would create a potential security hole. Writing the proper utility is better.
+
+The ability to create test data is also important. System tests and user tests of frontend pagination require datasets large enough to span multiple pages. Query analysis and load testing require large volumes of data approximating production. The seeder should reproduce not only user and post creation but also many update operations such as follows, likes, and blocks. Building this capability early in development makes later stages much easier.
+
+## Consistency Validation and Recovery
+
+In this schema, only a limited number of attributes violate domain-key normal form: counter attributes such as followee_count in user_counts and like_count in post_counts, and snippets in users and posts. Counters are updated by database triggers inside the same transaction as their source tables, and snippets are generated by the application as part of the same update that changes the full body, so inconsistencies should not occur in normal operation. Bugs or mistaken administrative operations can still create abnormal states. Even then, the result is only an incorrect count or malformed snippet rather than a service-threatening failure, but the operator should at least be prepared to correct such issues when users report them.
+
+At present there is no dedicated validate_user or validate_post validation/recovery utility. If inconsistency is suspected, aggregate the source tables such as user_follows, posts, and post_likes, compare the results with user_counts and post_counts, and repair only the necessary records through administrative operations. Dedicated utilities or administrative endpoints can be added when real operations demonstrate a need for them.
+
+Next: [STGY Major Query Analysis](/posts/0000000000010104)
 ____EOF____

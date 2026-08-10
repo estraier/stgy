@@ -1,12 +1,310 @@
 id: 0000000000010105
 ownedBy: 0000000000010001
 publishedAt: 2025-01-01 00:01:05+00
-locale: en-US
 allowLikes: false
 allowReplies: false
 tags: stgy-help
+locale: en-US
 content:<<____EOF____
 # STGY Media Storage
 
-Placeholder for the English version. The full text will be written later.
+This article explains how STGY manages media data such as images. It describes how to build simple and robust data management using the API of Amazon S3 or the S3-compatible system MinIO.
+
+<!TOC!>
+
+![Image list screen](/data/help-images-list.png){float=right}
+
+## Prerequisites
+
+When handling media data such as images, storing binaries in a database or files directly on a filesystem makes operation troublesome because availability, capacity limits, and backups require custom procedures. It is generally easier to use so-called cloud storage instead.
+
+STGY uses Amazon S3 (Simple Storage Service) as its storage service, and during development runs a MinIO Docker instance to emulate S3. This section outlines data management under that configuration and also covers construction and operation in development and production environments.
+
+## Overview of Data Management in S3
+
+S3 stores arbitrarily named objects inside units called buckets. In other words, each bucket can be viewed as a key-value store where the key is a filename-like string and the value is the object's binary data. It is customary to use slash-separated strings that resemble a directory hierarchy, but ``/`` has no special semantic meaning in S3. Objects are identified by exact key matches, and the service merely provides list operations based on key prefixes.
+
+Images embedded in posts are stored in the ``stgy-images`` bucket. Objects are arranged as follows. Original images are uploaded directly by clients, while thumbnails are generated automatically by the system.
+
+- {userId}/masters/{revYYYYMM}/{time8}{hash8}.{ext}
+- {userId}/thumbs/{revYYYYMM}/{time8}{hash8}_image.webp
+
+``{userId}`` is the user ID. ``{revYYYYMM}`` is 999999 minus the YYYYMM value of the creation date. ``{time8}`` is an eight-digit hexadecimal value obtained by subtracting the timestamp within the month from its maximum value. ``{hash8}`` is an eight-digit hexadecimal collision-avoidance value. An example is shown below. ``{ext}`` is the extension corresponding to the image format.
+
+- 0000000000020001/masters/797491/892af0b246bf3ec1.jpg
+- 0000000000020001/thumbs/797491/892af0b246bf3ec1_image.webp
+
+S3 orders keys lexicographically. Because prefix searches are available, prefixing keys with the user ID makes it possible to search objects per user. Appending a fixed-length date then places each user's objects in date order. There is no API for traversing in reverse order, so to list newest objects first, use a value obtained by subtracting the current date from a maximum date value. Using YYYYMM as a unit also groups objects by month, allowing monthly quota management.
+
+The {revYYYYMM} prefix can also be used for year- or month-range searches. For example, to restrict results to objects posted in 2025, 999999-202400=797600, so a prefix search for ``0000000000020001/masters/7976`` is sufficient. For a monthly range, use the entire month prefix in the same way as when calculating the monthly quota. The UI could accept YYYY/MM directly, display a calendar-like selector, or let the user choose a year and then aggregate object counts by month for drill-down. The important point is to avoid aggregating the entire dataset. Since the number of objects in a month or year is bounded in practice, this can effectively be treated as O(1).
+
+Profile-related images such as avatars, of which each user has only one per type, are stored in the ``stgy-profiles`` bucket. Objects are arranged as follows. Original images are uploaded directly by clients and thumbnails are generated automatically by the system.
+
+- {userId}/masters/{type}.{ext}
+- {userId}/thumbs/{type}_icon.webp
+
+``{userId}`` is the user ID. ``{type}`` identifies the data type; currently only ``avatar`` exists. ``{ext}`` is the extension corresponding to the image format. An example is shown below.
+
+- 0000000000020001/masters/avatar.png
+- 0000000000020001/thumbs/avatar_icon.webp
+
+Because profile images are unique per user and type, only the size of each individual image is limited; no quota is applied.
+
+With these naming rules, media data can be managed entirely by the storage service without maintaining keys or metadata in the database.
+
+## S3-Only Management vs. Database Metadata
+
+If metadata describing which user registered which file were stored in a database table, there would be no need to work around S3's limitation to prefix-based key searches. However, unless there is a compelling reason to do so, STGY avoids database metadata because maintaining transactional consistency across S3 and the database is surprisingly cumbersome. For example, registering a new object would require reserving metadata in the database, creating the S3 object based on that reservation, and finalizing the metadata only after success. A system crash can occur at any intermediate state, so garbage collection is also required to delete S3 objects corresponding to abandoned reservations or to delete stale reserved metadata. With S3 alone there is no such cross-system intermediate state, making management simpler. S3 itself guarantees atomicity for object creation, replacement, and deletion. If consistency with other data need not be maintained, complicated multi-layer commit-like processing and explicit garbage collection are unnecessary.
+
+Scalability and deployment and maintenance costs should also be considered. With S3-only operation, paying for the service buys essentially unlimited scale and managed availability without designing them yourself. Because only simple queries are accepted, there is no need for concepts such as query-plan analysis. Introducing a database solely for metadata, on the other hand, makes that database a scalability bottleneck. You must define schemas, optimize queries, provide availability through replication, manage backups, and eventually perform your own vertical or horizontal partitioning as the service grows. That gives up a substantial part of the benefit of using S3.
+
+Operating only on S3 also means accepting S3's weak search capabilities. List views can be provided only in a single predetermined order. STGY deliberately offers only a newest-first file list. Finding old files requires paging through thumbnails. The original local filenames of uploaded data are discarded, so files cannot be searched by filename either.
+
+For image storage in an SNS, STGY considers S3 alone sufficient. Images are normally uploaded while composing an article, and at that moment a marker referencing the image is embedded in the article, so there is little need to search for an image independently. The article itself can be searched instead. Most users attach images to articles much as they attach files to email or messaging apps, let the relevant people view the article, and then forget about those images after the article has lost its relevance. Reusing an old image in a newly written article is likely to be uncommon. Even after deleting an article, few users will diligently delete every image that appeared in it. Therefore it is enough to list images newest first and enforce per-user capacity limits, both of which can be implemented with S3 alone.
+
+It is technically possible to keep the local filename as S3 metadata. Even without metadata search, displaying the original filename might sometimes be useful. After consideration, however, this feature was intentionally excluded because it creates a potential security risk. If someone carelessly uploads an image named something like ``trash-customer.jpg``, that string could appear in HTTP headers and become visible to other users. Similar risks exist with EXIF comments, but users who deliberately write EXIF comments can be expected to have at least some awareness of metadata. Everyone must use filenames, so exposing them in an SNS used by an unspecified public audience was judged too risky.
+
+## Image Upload Processing
+
+Uploading images to S3 requires a controlled protocol. For large data, STGY does not want the backend server to receive the full payload first and then forward it to S3. Clients therefore upload directly to S3, but they cannot be allowed to upload arbitrary data to arbitrary locations.
+
+STGY therefore uses presigned POST. First, the backend decides what kind of data may be uploaded to which key and asks S3 to issue a presign that describes that permission. In practice, the presign authorizes an upload into a staging area. The presign is returned to the client, which uses its token to perform the permitted POST upload directly to S3. After completion, the backend is responsible for moving the data from staging into the production area. The concrete flow is as follows.
+
+- The user selects the file to upload from the local filesystem.
+- The client sends information about the file to the backend.
+- The backend obtains presigned POST information from S3 and returns it to the client. As preprocessing, it performs the following checks:
+  - Verify that the individual file size is at or below the limit (20 MB).
+  - Verify that the new file plus all files registered in the current month remains within the monthly quota (100 MB).
+  - Verify that the MIME type corresponding to the extension is JPEG, PNG, or WEBP.
+- Based on the signed information, the client uploads directly into the S3 staging area.
+- The client reports completion to the backend.
+- The backend performs the finalize operation, moving the data from staging into the production area. As preprocessing, it performs the following checks:
+  - Verify that the path belongs to the staging area.
+  - Recheck that the individual data size and monthly quota remain within the limits.
+  - Inspect the beginning of the file and determine its actual format.
+    - Verify that the MIME reported by the client, the MIME implied by the extension, and the MIME detected from the file contents all agree.
+  - If any error is found, delete the staging data and stop.
+- The backend registers a Redis job to create a thumbnail for the newly registered image.
+- The media worker consumes the job asynchronously and generates the thumbnail.
+
+Avatar images support the same formats as ordinary images, such as JPEG and PNG, but the individual size limit is 1 MB. Each user has only one avatar. When a new avatar is registered, the old one is deleted, so no quota accounting is necessary.
+
+## Thumbnail Generation
+
+Thumbnail generation is handled by a separate process named mediaWorker, or by a thread in oneWorker. mediaWorker watches a Redis queue and, immediately after a new ordinary image or avatar is registered, reads the job and generates a thumbnail at the corresponding location. Ordinary-image thumbnails are 512×512, while avatar thumbnails are 128×128. If the input is not square, it is reduced so that the longer side reaches the limit. Output is WEBP. Input images are limited to 50 megapixels.
+
+Avatars shown in post and user lists are rendered at 32×32, and avatars on user-detail screens at 64×64, yet thumbnails are still generated at 128×128. Modern high-resolution environments often use display scale factors of 1.5, 2, or more, so even when CSS specifies 64×64, a 128×128 source appears sharper. The browser chooses the interpolation algorithm, but in general an integer reduction ratio tends to produce less blur.
+
+Thumbnail generation uses the Sharp library. Node.js itself is single-threaded, but Sharp performs work in native threads internally through libvips, with actual parallelism depending on the environment and configuration. At the application level, the worker also processes multiple queue jobs asynchronously at the same time; the default concurrency is 2. Because the Redis queue can be monitored by multiple processes or hosts, the number of workers can be increased as needed to raise total parallelism.
+
+When generating a thumbnail, the image is converted into the sRGB color space by transforming each pixel's RGB values and the ICC profile is then removed. Therefore, colors in a master image with a gamut wider than sRGB are clipped to the sRGB gamut and may change slightly. Because the coordinate transformation is performed properly, however, the severe color shifts caused by merely stripping an ICC profile do not occur.
+
+Thumbnail jobs exist only in Redis. Therefore, if the backend server or Redis dies after an image has been uploaded but before the corresponding thumbnail job has been accepted by a worker, the thumbnail may never be created. The same applies if the worker dies while generating it. STGY deliberately provides no special recovery mechanism. If thumbnail creation very rarely fails, the user can simply upload the image again. Even if the user has deleted the local file, the master remains on the server and can be downloaded and uploaded again.
+
+## Other Operations
+
+Deleting an image removes both the master image and its thumbnail. Deleting a user removes all images owned by that user.
+
+To list images, retrieve objects by the ``{userId}/masters/`` prefix. S3's object-list API, ListObjectsV2Command, accepts a maximum result count (MaxKeys) and a continuation token (ContinuationToken). To display page 2, the interface expects the continuation token returned while displaying page 1. Therefore, jumping directly to page 2 or later requires implicitly repeating list requests for the preceding pages.
+
+During ordinary operation, object creation is performed by the client communicating directly with S3 through presigned POST, and object data is fetched by the client communicating directly with S3 through public URLs. For administration, however, APIs are also provided for the backend to store and retrieve data directly from S3.
+
+## Security Measures
+
+Because arbitrary image files uploaded by one user are displayed in other users' browsers, measures are needed to prevent malicious browser-crashing content. SVG is not accepted from users because it leaves room for scripting attacks that can force browsers into expensive computation. JPEG, PNG, and WEBP do not have the same scripting problem, but very large pixel dimensions can still consume excessive memory. Therefore, in addition to the 20 MB file-size limit, STGY limits total pixels to 50 MP and the maximum length of either side to 10,000 pixels.
+
+The final inspection of an uploaded image occurs during finalize. The backend examines S3 metadata for the staging object to verify that the individual file size is within the limit and the month's total size remains within the quota. It then reads the first 512 KB to identify the actual file format. The MIME type in S3 metadata, the MIME type implied by the extension, and the MIME type detected from the file contents must all agree. The binary is also interpreted according to format-specific rules to determine width, height, and total pixel count.
+
+If a violation is detected during inspection, the staging object is deleted before the error is reported. Thus, in normal operation, only files currently being processed remain in staging. If the service dies during processing, however, garbage can remain there. S3 Lifecycle rules handle this by deleting old staging files.
+
+## Abuse Prevention
+
+With the default settings, each account may register a total of 100 MB of image files in S3 per month. An account can be created with nothing more than an email address, and aliases such as Gmail's ``+xxx`` suffix make effectively unlimited addresses possible, so without additional constraints the service could be abused as an unlimited-capacity file server.
+
+The first line of defense is ordinary limits: maximum individual file size, monthly quota, maximum number of registrations per hour, and an allowlist of file formats. In addition, Referer restrictions are applied on the S3 side so that STGY media is displayable only when embedded in an article on STGY. Referer restrictions are merely conventions that major browsers such as Chrome voluntarily follow, so they do not stop a user agent that forges Referer. In fact, anyone motivated enough to forge Referer could simply log in and download through the legitimate route, so no such measure can fully prevent access. The purpose of the Referer restriction is to prevent casual use of STGY URLs as the ``src`` of ``img`` elements on unrelated sites. Production S3 configuration is described in more detail in the production-environment article.
+
+Consider the worst case. An attacker might create 10,000 user accounts, store 100 MB through each one, and consume 1 TB within a few hours. The operator would then owe Amazon for that usage. Restrictions by email domain or source IP can only react after the abuse has begun. A multilayer abuse-detection system comparable to those of large services might resist this, but building and operating it also costs money.
+
+No measure can eliminate abuse completely, but the service can be made less attractive by making abuse less cost-effective than on alternatives. For example, if total S3 capacity is capped at 300 GB, worst-case expenditure is bounded there. Once the cap is reached, uploads by every user will fail temporarily, but that may be an acceptable emergency state. The operator can detect it, delete abusive data, and block abusive IPs or domains. From the attacker's perspective, if all that effort yields only 300 GB, there is less incentive to persist and another service may be a more attractive target. A serious production service, however, cannot tolerate global upload stoppage, so in practice it would eventually operate multiple layers of abuse detection.
+
+Another possible prank is to embed an enormous number of images in post bodies in order to freeze users' browsers and increase transfer volume. As mitigation, image elements use lazy and async-related loading behavior, and the number of images per article is limited. An attacker could still operate just below thresholds across multiple articles and accounts. Harassment by determined vandals cannot be eliminated, but minimum safeguards are in place so that it does not immediately cause a total outage or catastrophic cost increase.
+
+## Client-Side Optimization Option
+
+With a 20 MB per-file limit and a 100 MB monthly quota, it is impractical to store many modern high-resolution camera images unchanged, and doing so wastes network bandwidth. In a web browser, excessive resolution only gets scaled down for display. Requiring users to manually resize images in an editor is also too burdensome. Therefore the upload UI provides an option to optimize images automatically for the web.
+
+When an image is uploaded, the browser uses Canvas to generate a web-optimized version automatically. It is encoded as WEBP, reduced to at most 4.5 MP with a longest side no greater than 2400 pixels. Most images end up around 500 KB. The color space is normalized to sRGB and ICC profiles are removed. The optimized image is selected by default if the original exceeds 2 MB, exceeds 6 MP in total pixels, has a longest side above 2800 pixels, or if the optimized byte size is at most half the original. The user can clear the checkbox to upload the original instead.
+
+The backend accepts JPEG, PNG, and WEBP, while the file selector also supports HEIC, TIFF, GIF, BMP, and SVG. To prioritize interoperability across browsers, any input format other than JPEG, PNG, or WEBP is forced through the optimization path before upload.
+
+Avatar images are similarly converted to WEBP and resized so that the longest side is at most 1200 pixels. Clicking an avatar on the user-detail screen opens an enlarged view, so the system allows an uploaded image substantially larger than the icon size to preserve detail there.
+
+Browser Canvas cannot decode TIFF directly, so STGY preprocesses TIFF using the UTIF library. UTIF does not handle ICC profiles, so a TIFF carrying an ICC profile may exhibit color shifts. TIFF input is therefore best prepared in the sRGB color space, or an ICC-profiled PNG can be used instead.
+
+## Storage-Service Wrapper
+
+STGY assumes the use of S3 or an S3-compatible service such as MinIO. That is straightforward when production runs on AWS, but less convenient on GCP. The storage layer is therefore abstracted so that GCS (Google Cloud Storage) could be supported with relatively small changes.
+
+```typescript:xsmall
+// src/models/storage.ts -- other structures are also defined
+export type PresignedPostRequest = {
+  bucket: string;
+  key: string;
+  contentTypeWhitelist: string;
+  maxBytes?: number;
+  expiresInSec?: number;
+};
+
+export type PresignedPostResult = {
+  url: string;
+  fields: Record<string, string>;
+  objectKey: string;
+  maxBytes: number;
+  expiresInSec: number;
+};
+
+export type StorageObjectId = {
+  bucket: string;
+  key: string;
+};
+
+// src/services/storage.ts
+export interface StorageService {
+  createPresignedPost(req: PresignedPostRequest): Promise<PresignedPostResult>;
+
+  headObject(objId: StorageObjectId): Promise<StorageObjectMetadata>;
+
+  publicUrl(objId: StorageObjectId): string;
+
+  listObjects(objId: StorageObjectId, range?: StorageObjectListRange):
+    Promise<StorageObjectMetadata[]>;
+
+  loadObject(objId: StorageObjectId, range?: StorageObjectDataRange):
+    Promise<Uint8Array>;
+
+  saveObject(objId: StorageObjectId, content: Uint8Array, contentType?: string):
+    Promise<void>;
+
+  copyObject(srcId: StorageObjectId, dstId: StorageObjectId): Promise<void>;
+
+  moveObject(srcId: StorageObjectId, dstId: StorageObjectId): Promise<void>;
+
+  deleteObject(objId: StorageObjectId): Promise<void>;
+}
+
+// src/services/storageFactory.ts
+export function makeStorageService(driver: string): StorageService { ... }
+```
+
+makeStorageService returns an object whose class implements the StorageService interface. Currently only StorageServiceS3, which uses the S3 API, is supported. If an implementation such as StorageServiceGcp were added using the GCS API and returned here, the rest of the system could support it without any other changes.
+
+## S3 Pricing
+
+Assume the AWS Tokyo region (ap-northeast-1). Storing 1 GB in S3 costs $0.025 per GB per month for the first 50 TB. GET requests cost $0.0004 per 1,000 requests, methods other than GET cost $0.005 per 1,000 requests, and data transfer costs $0.114 per GB.
+
+Assume average user behavior as follows. Each active user adds ten 1 MB images per month, receives 1,000 thumbnails, and receives 200 original images. Actual thumbnail views may be far higher, but assume cache hits absorb the difference. Requests for existing-image lists during article composition and image management are small enough to ignore.
+
+Uploading one image performs one presigned POST to staging and one COPY from staging to permanent storage. Repeating that ten times per month costs (0.005*2*10/1000) = $0.0001. Each thumbnail and original-image retrieval causes a GET, so 0.0004*(1000+200)/1000 = $0.00048. The total operation cost is therefore $0.00058 per active user, or $5.8 per 10,000 active users per month. If one thumbnail is 100 KB and one original image 500 KB, thumbnail transfer is 100 MB and original-image transfer is another 100 MB, totaling 0.2 GB, so 0.2*0.114 = $0.0228 per active user. That means $228 of transfer cost per 10,000 active users per month. For storage capacity, if the service currently retains 1 TB, 1000*0.025 = $25 per month.
+
+Now simulate steady growth. Assume the service starts with zero active users and gains 1,000 each month, and consider how monthly operating cost grows. The first month costs only about $23, but the cost steadily rises with net user growth and exceeds $1,000 per month after three years.
+
+|=Month=|=Users=|=Storage capacity=|=Storage cost=|=Operation cost=|=Transfer volume=|=Transfer cost=|=Total cost=|
+|1|1000|11|0.28|0.58|195.3|22.27|23.12|
+|2|2000|33|0.83|1.16|390.6|44.53|46.52|
+|3|3000|66|1.65|1.74|585.9|66.80|70.19|
+|4|4000|110|2.75|2.32|781.2|89.06|94.13|
+|5|5000|165|4.12|2.90|976.6|111.33|118.35|
+|6|6000|231|5.78|3.48|1171.9|133.59|142.85|
+|7|7000|308|7.70|4.06|1367.2|155.86|167.62|
+|8|8000|396|9.90|4.64|1562.5|178.12|192.66|
+|9|9000|495|12.38|5.22|1757.8|200.39|217.99|
+|10|10000|605|15.12|5.80|1953.1|222.66|243.58|
+|11|11000|726|18.15|6.38|2148.4|244.92|269.45|
+|12|12000|858|21.45|6.96|2343.8|267.19|295.60|
+|13|13000|1001|25.03|7.54|2539.1|289.45|322.02|
+|14|14000|1155|28.88|8.12|2734.4|311.72|348.71|
+|15|15000|1320|33.00|8.70|2929.7|333.98|375.68|
+|16|16000|1496|37.40|9.28|3125.0|356.25|402.93|
+|17|17000|1683|42.08|9.86|3320.3|378.52|430.45|
+|18|18000|1881|47.03|10.44|3515.6|400.78|458.25|
+|19|19000|2090|52.25|11.02|3710.9|423.05|486.32|
+|20|20000|2310|57.75|11.60|3906.2|445.31|514.66|
+|21|21000|2541|63.53|12.18|4101.6|467.58|543.28|
+|22|22000|2783|69.58|12.76|4296.9|489.84|572.18|
+|23|23000|3036|75.90|13.34|4492.2|512.11|601.35|
+|24|24000|3300|82.50|13.92|4687.5|534.38|630.79|
+|25|25000|3575|89.38|14.50|4882.8|556.64|660.52|
+|26|26000|3861|96.53|15.08|5078.1|578.91|690.51|
+|27|27000|4158|103.95|15.66|5273.4|601.17|720.78|
+|28|28000|4466|111.65|16.24|5468.8|623.44|751.33|
+|29|29000|4785|119.62|16.82|5664.1|645.70|782.15|
+|30|30000|5115|127.88|17.40|5859.4|667.97|813.24|
+|31|31000|5456|136.40|17.98|6054.7|690.23|844.61|
+|32|32000|5808|145.20|18.56|6250.0|712.50|876.26|
+|33|33000|6171|154.28|19.14|6445.3|734.77|908.18|
+|34|34000|6545|163.62|19.72|6640.6|757.03|940.38|
+|35|35000|6930|173.25|20.30|6835.9|779.30|972.85|
+|36|36000|7326|183.15|20.88|7031.2|801.56|1005.59|
+
+The table immediately shows that transfer cost is the largest component. CloudFront does not fundamentally change this. Transfer between S3 and CloudFront is free, but transfer from CloudFront to the Internet costs the same $0.114/GB as direct S3 delivery, so cache hits on CloudFront do not solve the underlying egress-cost problem.
+
+The cumulatively growing storage cost also matters. S3 offers Intelligent-Tiering, which can move old, infrequently accessed data to slower, cheaper storage. Enabling it helps somewhat: the infrequent-access tier costs $0.0138/GB per month, roughly half, and the archive-access tier costs $0.005/GB per month, about 25% of the standard price. Nevertheless, storage cost remains cumulative, so doing nothing will eventually become unsustainable. At some point the service must either delete old data, charge based on capacity, or adopt another policy.
+
+A system does not truly scale unless its cost model matches its business model. Transfer cost is proportional to active users, so a business model that earns revenue in proportion to active users can in principle cover it. However, S3 transfer is expensive, and $0.228 per user is a significant burden. A realistic mitigation is to move to a cheaper S3-compatible service such as Cloudflare R2 or Backblaze B2. Because they offer S3-compatible APIs, STGY can use them without fundamentally changing its architecture. Given the operational effort required for migration, it may even be preferable to choose a cheaper compatible service from the beginning.
+
+## Track Data Management
+
+STGY also stores track data such as FIT, GPX, and TrackJSON in S3. The destination is the ``stgy-tracks`` bucket. The user-ID-prefixed key naming scheme, reverse date representation that places newer data first, S3-only management without database metadata, direct upload into a staging area through presigned POST, revalidation during finalize, listing, deletion, and bulk deletion on user removal all follow the same principles as image storage.
+
+Track data also has a 10 MB limit per uploaded object and a monthly quota of 100 MB per user. For tracks, however, both the master data and the preview data described below count toward the monthly quota.
+
+Track objects are arranged as follows. The master-data extension is either .fit or .trjgz.
+
+- {userId}/masters/{revYYYYMM}/{time8}{hash8}.{ext}
+- {userId}/preview/{revYYYYMM}/{time8}{hash8}_image.{trjgz}
+
+Image storage keeps an original and a thumbnail; track storage keeps a master and a preview. The master is used for download and reuse, while the preview is optimized for fast rendering in embedded maps and the track-list screen.
+
+A preview uses TrackJSON uniformly downsampled to at most 3,000 track points and gzip-compressed into TRJGZ. The start and end points are always preserved. Even if an original track contains tens or hundreds of thousands of points, an ordinary map display does not need all of them. Keeping display data small reduces transfer volume, JSON parsing time, and Leaflet rendering load.
+
+Image thumbnails are generated asynchronously by a worker through a Redis job queue, but track previews are generated synchronously during finalize because the ability to parse the track is itself part of file validation. If preview generation fails, the data is not accepted as a valid track. If storing the preview fails after the master has been stored, the master is deleted as well so that only one side cannot remain.
+
+The upload screen accepts FIT, GPX, TRJ, and TRJGZ. However, the master stored in S3 is always either FIT or TRJGZ. FIT is normally preserved as FIT so that manufacturer-specific messages and similar data can remain intact. TRJGZ is stored as-is. GPX and uncompressed TrackJSON (TRJ), on the other hand, are normalized to TrackJSON in the browser, gzip-compressed into TRJGZ, and then uploaded. Thus, when GPX or TRJ is selected, the original local file itself is not stored in S3. The individual file-size limit is applied to the TRJGZ actually uploaded rather than to the source GPX or TRJ before conversion.
+
+This conversion allows the backend to accept only two master formats, FIT and TRJGZ. Differences in GPX XML representation or TrackJSON formatting are not carried beyond upload, and the map-rendering side can always work with the same TrackJSON representation.
+
+The track upload flow is as follows.
+
+- The client parses the selected file and displays a map preview, start time, distance, and elapsed time.
+- For GPX or TRJ, the client converts it to TRJGZ.
+- The client sends the actual upload filename and size to the backend.
+- The backend checks the individual size and monthly quota and issues a presigned POST for the staging area.
+- The client uploads directly into the S3 staging area.
+- The client requests finalize from the backend.
+- The backend validates size, Content-Type, leading file signature, and data structure.
+- The backend generates a preview with the track reduced to at most 3,000 points.
+- The backend rechecks the monthly quota including the combined size of the master and preview.
+- If everything is valid, the master is moved into the permanent area and the corresponding preview is stored.
+
+Image validation checks that the extension, Content-Type, and image format detected from the file header agree and also checks pixel dimensions. Track validation instead checks FIT or gzip signatures and then actually parses the entire file.
+
+For TRJGZ, merely being decompressible as gzip is not enough. The decompressed TrackJSON must be no larger than 10 MB. It is further limited to at most 100 Features, 100,000 track points, 1,000,000 total property values, and JSON depth 32. These limits prevent attacks that consume excessive CPU or memory using extremely large JSON, excessively deep nesting, or pathological compression ratios. FIT is likewise not accepted merely from its header; internal messages are parsed and the backend verifies that a TrackJSON preview can actually be generated. If validation or preview generation fails, the staging object is deleted and registration is aborted.
+
+Track data may include sensitive locations such as a home or workplace. Therefore, FIT upload offers an option to obfuscate coordinates near the start and end of the route. The default is 1,000 m at each end, capped at 5% of total route length on each side so that a short route is not destroyed entirely. Rather than deleting records within the protected ranges, the operation collapses their coordinates onto the range-boundary coordinate. Timestamps, heart rate, cadence, power, and manufacturer-specific FIT metadata are preserved. Processing occurs in the browser before upload, so when obfuscation is enabled, a FIT containing the original unmodified coordinates is never sent to S3.
+
+To list tracks, masters are enumerated by the ``{userId}/masters/`` prefix just as for images. The corresponding preview key is derived mechanically by replacing ``masters`` with ``previews`` in the master key and changing the extension to ``.trjgz``. Therefore the master-preview relationship does not need to be stored in a database.
+
+Deleting a track removes both the master and its corresponding preview. Deleting a user removes that user's masters, previews, and any staging objects still being processed. As with image storage, original local filenames are not retained.
+
+## Summary
+
+For media data such as images, object storage such as S3 is the conventional solution. Its API resembles a key-value store more than a filesystem, so managing large numbers of records requires a carefully designed key naming scheme. To separate files by user, calculate monthly quotas, and list records newest first, it is useful to concatenate the user ID with reverse-order labels for the month and timestamp.
+
+Uploads should use presigned POST so that clients send data directly to S3 while the backend verifies file format and policy. Quota management, Referer restrictions, and similar safeguards are also needed to resist various forms of abuse by malicious users.
+
+Using an abstract storage API that can support services other than S3 makes it easier to run the same architecture on platforms such as GCP.
+
+The largest operational problem with S3 is cost, especially data-transfer cost. It is important to simulate charges in advance based on expected service growth and user behavior, and in some cases to consider compatible services other than S3.
+
+Next: [STGY Full-Text Search](/posts/0000000000010106)
 ____EOF____

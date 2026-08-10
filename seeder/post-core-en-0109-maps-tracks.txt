@@ -1,12 +1,531 @@
 id: 0000000000010109
 ownedBy: 0000000000010001
 publishedAt: 2025-01-01 00:01:06+00
-locale: en-US
 allowLikes: false
 allowReplies: false
 tags: stgy-help
+locale: en-US
 content:<<____EOF____
 # STGY Maps and Tracks
 
-Placeholder for the English version. The full text will be written later.
+This article explains STGY's functions for embedding maps and routes in articles, analyzing track data such as FIT and GPX, and converting between place names and coordinates. The central components are ``packages/track``, which converts, analyzes, and renders track data, and ``packages/geocoder``, which provides static geocoding and reverse geocoding.
+
+Displaying a map alone would require little more than passing coordinates to Leaflet. Treating track data as an SNS feature, however, means considering differences among input formats, tens of thousands of samples, sensor values, statistics, privacy, storage capacity, rendering speed, and place-name search together. STGY therefore separates input-format-specific processing from the common representation used for display and storage, and keeps place-name processing in its own package.
+
+<!TOC!>
+
+## Overall Architecture
+
+The main components involved in maps and tracks are as follows.
+
+```text:small
+FIT / GPX / TrackJSON
+  ↓
+packages/track
+  ├─ 入力形式の解析
+  ├─ TrackActivityへの正規化
+  ├─ 統計・分析値の計算
+  ├─ TrackJSONへの変換
+  └─ Leafletによる描画
+  ↓
+packages/geocoder
+  ├─ 地名から代表座標を検索
+  └─ 座標から市区町村名を検索
+  ↓
+backend / frontend / packages/markdown
+  ├─ 経路データのアップロードとプレビュー生成
+  ├─ 記事内の地図記法のHTML化
+  ├─ 経路一覧と元データ表示
+  └─ 地図入力補助とPOIへの地名付与
+```
+
+``packages/track`` is not merely a package for drawing map tiles. It converts input data such as FIT and GPX into a common intermediate representation, organizes distance, time, elevation, heart rate, cadence, power, and other values, and produces TrackJSON suitable for Web display.
+
+``packages/geocoder``, on the other hand, knows nothing about the contents of track data. It simply receives a place name and returns representative coordinates, or receives coordinates and returns the nearest administrative area. After ``packages/track`` generates the start, end, center, and furthest points, ``packages/geocoder`` can attach place names to them. This separation allows track conversion to work even where the geocoder is unavailable, and allows the geocoder to be reused for map-input assistance outside the track feature.
+
+## Unifying Input Formats with TrackActivity
+
+FIT, GPX, and GeoJSON can all represent the same GPS route, but their internal structures differ greatly. FIT is a binary format that can record heart rate, cadence, power, device information, sport type, and more in addition to GPS coordinates. GPX is XML and is widely used for exchanging routes and waypoints. GeoJSON is a general JSON representation of geographic shapes but defines no standard way to store sensor values.
+
+If display processing were implemented separately for each input format, distance calculation, downsampling, graph rendering, and statistics would be duplicated for FIT, GPX, and TrackJSON. ``packages/track`` therefore converts input data into ``TrackActivity`` first.
+
+```ts:small
+export type TrackActivity = {
+  schemaVersion: 1;
+  metadata: TrackActivityMetadata;
+  points: TrackPoint[];
+  pins?: TrackActivityPin[];
+  warnings: TrackWarning[];
+};
+```
+
+Each sample is represented as a ``TrackPoint``.
+
+```ts:small
+export type TrackPoint = {
+  time?: number;
+  lat?: number;
+  lon?: number;
+  distanceM?: number;
+  altitudeM?: number;
+  heartRateBpm?: number;
+  cadenceRpm?: number;
+  powerW?: number;
+  speedMps?: number;
+  temperatureC?: number;
+  metrics?: Record<string, number>;
+};
+```
+
+Fields without values remain ``undefined``. A GPX containing only GPS coordinates and a FIT containing many sensor measurements can therefore be handled as the same array type. Device-specific numerical series can be retained in ``metrics``.
+
+Garmin FIT SDK is used to parse FIT, but its output is not passed directly to the screen. Messages and fields are read, units normalized, and time, distance, and sensor values converted into ``TrackActivity``. GPX is converted to the same intermediate representation. Subsequent downsampling, statistics, and TrackJSON generation therefore do not need to know the original input format.
+
+## TrackJSON
+
+STGY's display format for tracks is TrackJSON. TrackJSON is based on GeoJSON ``FeatureCollection`` and adds per-route presentation properties, sample series, and activity metadata. The uncompressed extension is ``.trj`` and the gzip-compressed extension is ``.trjgz``.
+
+A simplified example follows.
+
+```json:small
+{
+  "type": "FeatureCollection",
+  "bbox": [138.29, 36.35, 138.34, 36.38],
+  "poi": [
+    {
+      "role": "start",
+      "coordinates": [138.2933, 36.37194],
+      "label": "日本長野県東御市"
+    },
+    {
+      "role": "end",
+      "coordinates": [138.33058, 36.35977],
+      "label": "日本長野県東御市"
+    }
+  ],
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [138.2933, 36.37194],
+          [138.2941, 36.3715]
+        ]
+      },
+      "properties": {
+        "title": "Cycling",
+        "coordinateProperties": {
+          "times": [1780643064, 1780643065],
+          "distances": [0, 83.4],
+          "altitudes": [632.1, 630.8],
+          "heartRates": [121, 123],
+          "cadences": [78, 81],
+          "powers": [148, 165],
+          "speeds": [23.4, 24.1]
+        }
+      }
+    }
+  ]
+}
+```
+
+Coordinate order follows GeoJSON: ``[longitude, latitude]``, not latitude then longitude. Each array in ``coordinateProperties`` uses the same index as the route coordinates. Pointing at one sample on the map can therefore retrieve the time, distance, elevation, heart rate, and other values at that location simultaneously.
+
+At the TrackJSON root, ``bbox`` can store the bounding extent of the entire route and ``poi`` can store representative points. The current generator creates the following five types of POI.
+
+- ``start``: first coordinate
+- ``end``: last coordinate
+- ``midway``: coordinate at the midpoint
+- ``centroid``: spherical center weighted by route length
+- ``furthest``: route point farthest from the start on the sphere
+
+POI coordinates can be calculated entirely by ``packages/track``. ``label`` is optional and can be added later by a backend or frontend that has access to the geocoder.
+
+## Track Statistics and Analysis
+
+FIT may contain statistics calculated by the recording device, but the available fields vary by input format and device. ``packages/track`` preserves source data while also calculating values that can be derived under common rules.
+
+The main metadata includes the following.
+
+- Start and end time
+- Elapsed time and timer time
+- Total distance
+- Elevation gain and descent
+- Average, median, and maximum speed, cadence, heart rate, power, and temperature
+- Normalized Power, total work, and calories
+- Histograms of speed, cadence, heart rate, and power
+- Power curve
+- Pedaling time and various averages during pedaling
+- Left/right balance, torque efficiency, and pedaling smoothness
+- Recording device and software information
+
+A segment is considered moving when both the current and previous samples have speed of at least 3 km/h. Pedaling statistics use conditions of speed at least 3 km/h, cadence at least 10 rpm, and power at least 20 W. This avoids blindly mixing stopped heart rate or zero power at traffic lights into riding averages.
+
+The analysis screen can generate scatter plots from combinations of speed, cadence, heart rate, power, torque, grade, elevation, and other measurements. It normally uses a 30-second moving average, limits the number of points to 1,000, and determines display ranges after removing extreme outliers. Cardio efficiency, calculated as power divided by heart rate, and the averages of left/right torque efficiency and pedaling smoothness can also be plotted.
+
+These analysis values are kept separately from the number of route points used for display. Even when tens of thousands of route points are reduced to 3,000 for map rendering, total distance and averages calculated from the original data are preserved.
+
+## Downsampling and Numeric Compression
+
+When a GPS device records every second, an activity lasting several hours produces tens of thousands of points. Sending every point to an article map increases not only transfer volume but also JSON parsing, Leaflet route rendering, and graph-rendering cost.
+
+``packages/track`` provides two ways to reduce route points.
+
+- ``uniform``: select samples at uniform intervals from the source
+- ``aggregate``: create a representative point for each interval and average sensor values
+
+With ``preserveEndpoints`` enabled, the original first and last samples are always retained. STGY preview data uses the simple ``uniform`` method, which avoids unnecessarily altering route shape, and reduces the route to at most 3,000 points.
+
+When TrackJSON is stored, decimal precision of coordinates and measurements is also rounded according to use. Retaining more positional digits than needed does little for display accuracy and only increases file size. Finally, gzip-compressing the data as ``.trjgz`` further reduces transfer volume for article display.
+
+## Privacy Protection
+
+Cycling and running logs often record a home or workplace as the route's start or end. The upload screen therefore provides a function to obfuscate the beginning and end of the route.
+
+The default is 1,000 m at both the start and end. An upper bound based on total route length prevents a short route from being erased almost entirely. For FIT, coordinates inside the binary are rewritten and the CRC updated; GPX and TrackJSON are first converted into common data and then their coordinates are modified.
+
+Obfuscation happens in the browser before upload. When a user enables the feature, the raw source data containing unmodified coordinates is not sent to the server first and hidden afterward. Privacy protection is applied to the stored data itself rather than being merely a post-storage display setting.
+
+## Map Rendering with Leaflet
+
+TrackJSON is rendered with Leaflet. ``StgyTrackRenderer`` finds ``figure.stgy-track-map`` elements in HTML and initializes routes, pins, background maps, graphs, and measurement displays.
+
+The background map can be selected from the following layers.
+
+- GSI Pale Map
+- GSI Standard Map
+- GSI Aerial Photograph
+- CyclOSM
+- OpenStreetMap
+- OpenTopoMap
+
+If no initial layer is specified, GSI Pale Map is used when the display extent is in Japan; outside Japan, CyclOSM is used. This avoids depending on only one external map service and permits switching according to purpose.
+
+If a route contains sample series, a graph is displayed below the map. The horizontal axis can be distance, time, or sample number. The vertical axis can be elevation, heart rate, cadence, power, speed, torque efficiency, pedaling smoothness, or other numerical series. The position on the route and position on the graph are linked, allowing measurements at the pointer position to be inspected.
+
+Context-clicking the map displays the coordinate at that location in the following format.
+
+```text:small
+138.40028E, 36.40591N
+```
+
+The text in the popup can be selected and copied, and the popup closes when another location on the map is clicked. This is useful for manually adjusting maps and pins embedded in articles.
+
+## Embedding Maps from Markdown
+
+In STGY articles, a map is embedded using a form of image syntax whose leading ``!`` is replaced by ``@``.
+
+```text:small
+@[サイクリング記録](/data/demo-toumi.trj)
+```
+
+When a track file is specified, ``packages/markdown`` converts the notation into HTML containing ``figure.stgy-track-map``, and the frontend initializes ``StgyTrackRenderer``.
+
+Display options can also be specified inside Markdown.
+
+```text:small
+@[サイクリング記録](/data/demo-toumi.trj){base=photo,graph=true,size=large}
+```
+
+The main options are as follows.
+
+- ``base``: background map
+- ``graph``: graph display
+- ``overlay``: measurement overlay display
+- ``controls``: zoom and layer-switch controls
+- ``float``: left/right wrapping
+- ``size``: map size
+- ``grid``: grid layout for consecutive maps
+
+In the post editor, the map toolbar appears only when the cursor is on a map-notation line. Maps are distinguished from ordinary images and YouTube embeds so that background map, graph, size, and layout can be edited appropriately.
+
+## Simple Maps with map://
+
+A map can be created from center coordinates and zoom even without a track file.
+
+```text:small
+@[東京都世田谷区赤堤](map://139.6444794,35.6595519,15)
+```
+
+The syntax is as follows.
+
+```text:small
+map://経度,緯度,ズーム
+```
+
+If zoom is omitted, it defaults to 13. Coordinates may be signed numbers or use ``N``, ``S``, ``E``, and ``W`` suffixes.
+
+Any number of pins can be appended after the center specification, separated by ``|``.
+
+```text:small
+@[散歩メモ](map://139.6444794,35.6595519,15|139.6444772,35.6595498;パン屋;美味い|139.6460,35.6600;公園;休憩)
+```
+
+Each pin can have a title, description, link, and uploaded image. The same pin syntax can also be appended to a track-file URL to place photos and notes on a recorded route.
+
+``map://`` is a compact human-oriented notation for short map notes. Large route coordinate sets and sensor values should be stored in TrackJSON and referenced from the article as a file.
+
+## Static Geocoder
+
+Creating a map from a place name requires converting the name into representative coordinates. Displaying a human-readable name for a track's start or end requires the opposite conversion from coordinates to a place name. ``packages/geocoder`` was created for these purposes.
+
+The package does not call external APIs such as Google Maps at runtime. It loads NDJSON place-name data at startup and performs all subsequent searches using in-memory indexes.
+
+```ts:small
+import { GeoCoder } from "stgy-geocoder";
+
+const geoCoder = new GeoCoder([
+  "packages/geocoder/data/geo-japan.ndjson",
+]);
+
+console.log(geoCoder.encode("埼玉県所沢市", "ja-JP"));
+console.log(geoCoder.decode(139.46, 35.80, "ja-JP"));
+```
+
+As a Web API, it exposes the following two operations.
+
+```text:small
+GET /geo/encode?query=埼玉県所沢市&locale=ja-JP
+GET /geo/decode?longitude=139.46&latitude=35.80&locale=ja-JP
+```
+
+``encode`` returns representative coordinates from a place name, while ``decode`` returns the nearest administrative area and its parent hierarchy for a coordinate.
+
+## Geographic Hierarchy and Multilingual Addresses
+
+A place record's ``level`` is its depth with the country as level 1, while ``kind`` identifies the type of administrative unit.
+
+|level|kind|Japanese example|English example|
+|---:|---|---|---|
+|1|country|日本|Japan|
+|2|prefecture|日本神奈川県|Kanagawa, Japan|
+|3|municipality|日本神奈川県横浜市|Yokohama, Kanagawa, Japan|
+|3|special-ward|日本東京都世田谷区|Setagaya, Tokyo, Japan|
+|4|designated-city-ward|日本神奈川県横浜市鶴見区|Tsurumi, Yokohama, Kanagawa, Japan|
+
+The Japan country record uses ISO 3166-1 numeric code 392, and its representative point is the Japanese geodetic origin at Azabudai, Minato, Tokyo.
+
+Each address has complete ``elements`` from the country down to the target location.
+
+```json:small
+{
+  "locale": "ja",
+  "label": "日本神奈川県横浜市鶴見区",
+  "elements": ["日本", "神奈川県", "横浜市", "鶴見区"],
+  "aliases": ["鶴見"]
+}
+```
+
+```json:small
+{
+  "locale": "en",
+  "label": "Tsurumi, Yokohama, Kanagawa, Japan",
+  "elements": ["Japan", "Kanagawa", "Yokohama", "Tsurumi"],
+  "aliases": [
+    "Tsurumi ward",
+    "Yokohama Tsurumi",
+    "Yokohama Tsurumi ward"
+  ]
+}
+```
+
+When building the search index, not only full addresses but also forms with leading hierarchy levels removed one by one are registered automatically. Therefore all of the following can find the same administrative ward.
+
+```text:small
+日本神奈川県横浜市鶴見区
+神奈川県横浜市鶴見区
+横浜市鶴見区
+鶴見区
+鶴見
+```
+
+Forms such as ``鶴見区`` and ``横浜市鶴見区`` that can be produced merely by omitting hierarchy levels are not duplicated in ``aliases``. ``aliases`` contains only forms that cannot be built by simple concatenation of address elements, such as ``鶴見`` or ``Tsurumi ward``.
+
+English search keys are normalized to lowercase, so search is case-insensitive.
+
+```text:small
+Tsurumi, Yokohama
+tsurumi, yokohama
+TSURUMI, YOKOHAMA
+```
+
+These all produce the same search. Matching is exact against a registered search key or alias, not substring matching.
+
+## Locale Resolution
+
+When loading data, ``packages/geocoder`` examines all addresses and treats every locale that occurs at least once as supported. The current Japan dataset provides ``en`` and ``ja``.
+
+The default locale is ``Config.DEFAULT_LOCALE``, currently ``en``. After normalizing forms such as ``ja_JP`` to ``ja-JP``, the requested locale is resolved in the following order.
+
+1. Full locale such as ``ja-JP``
+2. Base language such as ``ja``
+3. ``Config.DEFAULT_LOCALE``
+
+Thus, with the current data, specifying ``ja-JP`` resolves to ``ja``. An unknown locale or omitted locale falls back to English.
+
+When a locale other than English is resolved, ``encode`` searches both that locale's search space and the default English search space. This allows English place names to be entered even in a Japanese environment.
+
+Every returned place record includes the default English address. If Japanese is requested and the record has a Japanese address, the Japanese address is returned after the English one. Other locales are omitted from the result.
+
+## Generating Japanese Place-Name Data
+
+Japan place-name data is generated from the Ministry of Land, Infrastructure, Transport and Tourism's National Land Numerical Information N03 administrative-area data and the Digital Agency's Address Base Registry.
+
+```text:small
+N03行政区域ポリゴン
+  ├─ 都道府県
+  ├─ 市町村
+  ├─ 東京都特別区
+  └─ 政令指定都市区
+
+アドレス・ベース・レジストリ
+  └─ 都道府県・市区町村・行政区の英語名
+```
+
+The generation command is as follows.
+
+```sh:small
+npm run generate:japan --workspace packages/geocoder
+```
+
+Administrative areas and local-government codes are read from N03 and matched with Japanese names from ABR to assign English addresses. Retrieving public ABR data does not require an API key. Records for which an English name cannot be matched keep only the Japanese address and emit a warning during generation.
+
+Representative points for municipalities and administrative wards are guaranteed to lie inside their largest component polygon. A simple geometric centroid can fall outside a curved area or a region composed of multiple islands.
+
+## Auxiliary Points for Reverse Geocoding
+
+Nearest-neighbor search using only representative points such as city halls produces more mistakes for large municipalities and complex boundaries. Loading all administrative polygons nationwide at runtime and performing containment tests every time, however, would consume substantially more memory and processing.
+
+Therefore, auxiliary points are placed inside administrative areas on a 2 km grid during data generation. Rather than adding fixed longitude/latitude increments, administrative areas are transformed to projected meter-based coordinates and a nationwide common grid is generated. A grid point is stored with the municipality or ward ID only when it lies inside the polygon.
+
+Small islands and narrow detached enclaves may contain no 2 km grid point. For a component with area at least 0.25 km² that has neither a representative point nor a grid point, one additional interior point is added.
+
+Auxiliary points in the NDJSON are simple records like the following.
+
+```json:small
+{"longitude":139.450742,"latitude":35.794495,"belongTo":11208}
+```
+
+After loading, auxiliary points are not retained as JavaScript objects. Longitudes and latitudes are stored in ``Float32Array`` and destination IDs in ``Uint16Array`` or ``Uint32Array``. With no polygons or large numbers of strings, tens of thousands of auxiliary points can be held in little memory.
+
+Representative and auxiliary points are sorted by latitude. ``decode`` uses binary search to cut out only candidates within 10 km north/south latitude of the requested coordinate and calculates spherical distance for that subset. If the nearest point is more than 10 km away, there is no match.
+
+Country and prefecture are not searched independently by nearest neighbor. The most specific municipality, special ward, or designated-city ward is selected, and prefecture and country are reconstructed from that record's address elements. This prevents inconsistent combinations in which municipality and prefecture are selected from different hierarchy branches.
+
+## Attaching Place Names to Track POIs
+
+At the moment ``packages/track`` generates TrackJSON, POIs are valid with coordinates alone. When the backend generates a preview, it passes those coordinates to ``GeoCoder.decode`` and assigns the most specific place-name label to each POI.
+
+```text:small
+TrackJSONのPOI座標
+  ↓
+GeoCoder.decode
+  ↓
+最も具体的な地名レコード
+  ↓
+POIのlabelへ設定
+```
+
+The backend's track-preview generation explicitly requests Japanese, so the stored label has the following form.
+
+```json:small
+"poi": [
+  {
+    "role": "start",
+    "coordinates": [138.2933, 36.37194],
+    "label": "日本長野県東御市"
+  },
+  {
+    "role": "furthest",
+    "coordinates": [138.33407, 36.35316],
+    "label": "日本長野県上田市"
+  }
+]
+```
+
+``track-sandbox`` does not assume login and therefore uses the browser's ``navigator.languages`` or ``navigator.language``. In an English environment, labels look like ``Tomi, Nagano, Japan``.
+
+This behavior is not built directly into ``packages/track``. ``applyTrackJsonPoiLabels`` merely accepts coordinate-to-label mappings and assigns a label to a POI whose coordinates match. A standalone TrackJSON conversion tool without place-name data can therefore still use ``packages/track``.
+
+## Place-Name Assistance for Map Input
+
+In the search dialog opened by the “@” button in the post editor, an input beginning with ``%`` performs place-name search.
+
+```text:small
+%埼玉県所沢市
+```
+
+The frontend passes the logged-in user's locale to ``/geo/encode``. It obtains representative coordinates from a result and inserts ``map://`` notation like the following into the article body.
+
+```text:small
+@[日本埼玉県所沢市](map://139.461129,35.803146)
+```
+
+The user can preview the inserted map, zoom toward the desired location, and context-click to inspect a finer coordinate. Combining a municipality-level geocoder with coordinate picking on the map provides useful input assistance without maintaining town-name or facility-level data.
+
+## Relationship to Track Storage
+
+Track data is stored in S3 or compatible object storage. FIT or TRJGZ is kept as the master, while a separate TRJGZ preview reduced to at most 3,000 points is created for article display. GPX and uncompressed TRJ are normalized to TRJGZ in the browser before upload.
+
+Storage key design, presigned POST, monthly quotas, finalize-time validation, and the master-preview relationship are described in [STGY Media Storage](/posts/0000000000010105). For this article, it is enough to understand that ``packages/track`` handles data analysis and display before and after storage, while ``packages/geocoder`` attaches place names to preview POIs.
+
+## Development Screens and Commands
+
+``packages/track`` includes ``fit-demo.html``, which loads FIT and TrackJSON in a browser and lets developers inspect conversion results. The frontend provides ``/track-sandbox`` using the same conversion functions. Selecting a file displays the route, metadata, graphs, analysis results, and generated TrackJSON.
+
+The main package-level commands are as follows.
+
+```sh:small
+npm run build --workspace packages/track
+npm run test --workspace packages/track
+npm run check --workspace packages/track
+npm run lint --workspace packages/track
+npm run bundle --workspace packages/track
+```
+
+The geocoder can also be checked from the command line.
+
+```sh:small
+npm run encode --workspace packages/geocoder -- "埼玉県所沢市" ja-JP
+npm run decode --workspace packages/geocoder -- 139.46 35.80 ja-JP
+```
+
+To regenerate and validate Japan data, use the following.
+
+```sh:small
+npm run generate:japan --workspace packages/geocoder
+npm run validate:data --workspace packages/geocoder
+```
+
+Ordinary users use the generated NDJSON included in the repository and do not need to regenerate it themselves from N03 and ABR.
+
+## Current Limitations
+
+The maps and tracks feature has the following limitations.
+
+- TrackJSON is a custom extension based on GeoJSON, so not every GIS program understands its sensor series and metadata.
+- Not every device-specific FIT message is copied into TrackJSON. For reuse, the FIT master is normally preserved as FIT.
+- Display previews are reduced to at most 3,000 points, so fine meanders or short changes can be omitted.
+- Reverse geocoding is nearest-neighbor search using representative and auxiliary points, not exact polygon containment against administrative boundaries.
+- The geocoder covers country, prefecture, municipality, special ward, and designated-city ward, but not town names, street numbers, or buildings.
+- Although a country record has been introduced into the geographic hierarchy, the current generation and hierarchy reconstruction assume Japanese data.
+- ``map://`` prioritizes concise human notation and is not a replacement for complex GeoJSON.
+- Map tiles are delivered by external services; STGY does not host the tile infrastructure entirely itself.
+
+These tradeoffs fit the intended use: attaching routes to SNS articles and viewing everyday map notes or activities. Exact geocoding down to towns and buildings or large-scale GIS analysis should use dedicated datasets or external services alongside STGY.
+
+## Summary
+
+In STGY's maps and tracks feature, ``packages/track`` handles input parsing, normalization into a common representation, statistics, TrackJSON generation, and Leaflet rendering. Converting FIT, GPX, TRJ, and TRJGZ into the same ``TrackActivity`` separates input-format-specific handling from the display layer.
+
+Display TrackJSON is based on GeoJSON and associates route coordinates with series such as time, distance, elevation, heart rate, cadence, power, and speed. It also preserves route-wide metadata and POIs for start, end, center, and furthest point. In the browser, Leaflet maps are linked with measurement graphs and can be embedded in articles through Markdown ``@[caption](URL)`` notation or ``map://``.
+
+``packages/geocoder`` loads static NDJSON generated from N03 and the Address Base Registry at startup and performs place-name search and reverse geocoding entirely in memory. It supports Japanese and English addresses, locale fallback, case-insensitive search, and hierarchical search with country names omitted. Reverse geocoding stores 2 km-grid auxiliary points in TypedArrays, narrows candidates by latitude with binary search, and finds the nearest point.
+
+The two packages do not directly depend on each other; place names are attached to TrackJSON POI coordinates as postprocessing. This separation allows track conversion, map rendering, and place-name search to be used independently while integrating them on STGY for article input, track upload, list display, and place-labeled metadata.
+
+Maps and tracks are not the central function of an SNS, but they are useful for recording “where something happened” when text and images alone are insufficient. Rather than embedding a general-purpose GIS, STGY limits supported input formats, analysis fields, and administrative precision, combining static data and browser rendering to keep the feature practical on a single host.
+
+Next: [STGY External Publication](/posts/0000000000010110)
 ____EOF____

@@ -1,12 +1,560 @@
 id: 0000000000010110
 ownedBy: 0000000000010001
 publishedAt: 2025-01-01 00:01:06+00
-locale: en-US
 allowLikes: false
 allowReplies: false
 tags: stgy-help
+locale: en-US
 content:<<____EOF____
 # STGY External Publication
 
-Placeholder for the English version. The full text will be written later.
+This article explains how STGY publishes posts externally to viewers who are not logged in, and the access counter that counts page views for those published posts. Rather than copying SNS post data into separate blog data, external publication selects the same posts by publication date and displays them in a blog-like layout. The access counter does not accumulate individual access records in PostgreSQL; it rapidly updates daily counters in Redis as the primary counters and stores only sparse checkpoints in PostgreSQL. The Publications Stats view reconciles the two sources by date and aggregates the most recent 15 days.
+
+The internal SNS post screen is designed around the author, likes, replies, tags, editing operations, and similar functions. An externally published page, on the other hand, needs a site name, article title, publication date, previous and next articles, profile, recent articles, popular articles, OGP metadata, and so on. STGY shares the canonical post data and Markdown conversion process between the two views, while separating the retrieval APIs and display components for internal and external pages.
+
+The access counter likewise does not store each access individually with its timestamp, URL, IP address, User-Agent, referrer, and other attributes as a general-purpose analytics service would. What is needed is for the owner of a public site to understand recent readership and to show Popular entries in the sidebar of published pages. By limiting the purpose to those needs, STGY keeps both storage and aggregation costs small.
+
+<!TOC!>
+
+## Canonical Publication State
+
+A post's external publication state is managed solely by ``posts.published_at``.
+
+```sql:small
+CREATE TABLE posts (
+  id BIGINT PRIMARY KEY,
+  owned_by BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reply_to BIGINT,
+  published_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ,
+  snippet VARCHAR(4096) NOT NULL,
+  locale VARCHAR(50),
+  allow_likes BOOLEAN NOT NULL,
+  allow_replies BOOLEAN NOT NULL
+);
+```
+
+If ``published_at`` is null, the post is not externally published. If it has a value in the future, the post is scheduled for publication and is not yet returned by the public APIs. Only posts whose publication time is at or before the current time are treated as published.
+
+```text:small
+published_at = NULL       → 非公開
+published_at > 現在時刻   → 予約公開
+published_at <= 現在時刻  → 公開中
+```
+
+The External publication dialog in the post-list menu lets the user enable or disable Publish this post and set the publication date and time. Disabling publication sets ``published_at`` back to null. Because no separate table of published articles or static HTML files is created, editing the post body after publication immediately changes the externally published page as well. This is not a snapshot-at-publication model; it displays the current contents of the SNS post externally.
+
+The publication date is independent of the post ID. An older post can be published as a new article, and arbitrary publication ordering can be assigned to multiple articles. The order of publication lists and previous/next navigation is determined by the pair of ``published_at`` and post ID. Even if two posts have the same publication time, using the post ID as the secondary key makes the order unique.
+
+## External Page Structure
+
+External publication has a site page for each user and an article page for each post.
+
+```text:small
+/sites/{userId}  公開記事の一覧とサイト紹介
+/pub/{postId}    一つの公開記事
+```
+
+The site page retrieves published posts in publication-date order. Rich view renders each post's JSON snippet in an article-like form, while Plain view presents the publication date, title, author, and description in a compact list. The order can be switched between newest-first and oldest-first, and Rich and Plain views have separate page-size settings.
+
+The article page converts the Markdown body to HTML for external publication and adds the publication date, previous/next articles, and a sidebar. Depending on the settings, the sidebar can display the following elements.
+
+- Site profile
+- Recently published articles
+- Popular entries over the most recent 15 days
+
+Recent posts and Popular entries are limited to at most 20 items. The value stored in the database is not modified; instead, retrieval and rendering clamp it with ``Config.PUB_SIDE_POSTS_MAX``. This prevents a mistakenly huge setting from causing unbounded database queries or HTML generation on public pages.
+
+Public pages can use ordinary horizontal writing, newspaper-style, whiteboard-style, and dark themes, as well as vertical-writing themes. The Markdown body itself is shared, but vertical-writing themes pass the writing mode into Markdown conversion so that expressions that depend on text direction can be transformed appropriately. Images and track maps embedded in an article are first emitted as basic HTML on the server and then upgraded into interactive displays by dedicated browser-side components.
+
+## Public Site Settings
+
+Per-user external-publication settings are stored in ``user_pub_configs``.
+
+```sql:small
+CREATE TABLE user_pub_configs (
+  user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  site_name VARCHAR(50) NOT NULL DEFAULT '',
+  subtitle VARCHAR(50) NOT NULL DEFAULT '',
+  author VARCHAR(50) NOT NULL DEFAULT '',
+  introduction VARCHAR(1000) NOT NULL DEFAULT '',
+  design_theme VARCHAR(50) NOT NULL DEFAULT '',
+  show_service_header BOOLEAN NOT NULL DEFAULT TRUE,
+  show_site_name BOOLEAN NOT NULL DEFAULT TRUE,
+  show_pagenation BOOLEAN NOT NULL DEFAULT TRUE,
+  show_side_profile BOOLEAN NOT NULL DEFAULT TRUE,
+  show_side_recent INTEGER NOT NULL DEFAULT 5,
+  show_side_popular INTEGER NOT NULL DEFAULT 5
+);
+```
+
+In addition to the site name, subtitle, default author name, introduction, and design theme, the user can toggle display of the service header, site name, previous/next articles, and profile. Recent posts and Popular entries are specified as counts rather than Booleans; a value of zero or less hides them.
+
+The settings UI is the Settings tab of the Publications page. Reading these settings is also required by externally published pages, so the read API is public, but updates are permitted only to the user themself or an administrator. If no settings row exists yet, defaults are returned, so a row does not have to be created explicitly before external publication begins.
+
+## APIs for Retrieving Published Posts
+
+The normal post APIs handle relationships with the logged-in user, block state, like state, reply state, and similar information. External publication must work without authentication, while never returning unpublished posts. The retrieval path for published posts is therefore explicitly separated.
+
+The main APIs are as follows.
+
+|*API*|*Purpose*|
+| ``GET /posts/pub/{id}`` | Retrieve one published article and the IDs of its previous and next articles |
+| ``GET /posts/pub-by-user/{userId}`` | Retrieve a user's published articles in publication-date order |
+| ``POST /posts/pub-by-ids`` | Retrieve published articles in the specified ID order |
+| ``GET /users/{id}/pub-config`` | Retrieve public-site settings |
+| ``GET /users/{id}/pub-ranking`` | Retrieve IDs and PVs for Popular entries |
+| ``GET /users/{id}/pub-stats`` | Retrieve detailed statistics for the owner |
+
+``GET /posts/pub/{id}`` requires the target post to satisfy ``published_at <= current time``. Among published posts owned by the same user, it finds one previous article and one next article using the publication date and ID.
+
+```sql:small
+WHERE p.id = $1
+  AND p.published_at <= $2
+```
+
+Conceptually, the previous and next articles are obtained with conditions like the following.
+
+```sql:small
+(published_at, id) < (current_published_at, current_id)  -- older
+(published_at, id) > (current_published_at, current_id)  -- newer
+```
+
+``GET /posts/pub-by-user/{userId}`` is used for the site listing and Recent posts. Filtering and ordering are completed in PostgreSQL.
+
+```sql:small
+WHERE p.owned_by = $1
+  AND p.published_at <= $2
+ORDER BY p.published_at DESC, p.id DESC
+OFFSET $3
+LIMIT $4
+```
+
+``POST /posts/pub-by-ids`` is a general-purpose API, not one dedicated to Popular entries. It can obtain displayable post data from an array of post IDs selected by another process such as search, recommendation, or ranking. Internally it uses the existing ``PostsService.listPostsByIds`` and preserves input order with PostgreSQL ``WITH ORDINALITY``.
+
+```sql:small
+WITH req AS (
+  SELECT id, ord
+  FROM unnest($1::bigint[]) WITH ORDINALITY AS t(id, ord)
+)
+SELECT ...
+FROM req r
+JOIN posts p ON p.id = r.id
+ORDER BY r.ord
+```
+
+After retrieval, the API removes unpublished and future-scheduled posts and limits the input to at most 20 IDs. Instead of creating a post-retrieval API specifically for Popular entries, the ranking path returns only IDs and PVs, and post-data retrieval is consolidated into this general-purpose path.
+
+```text:small
+Redisで人気順のIDを取得
+  ↓
+[idA, idZ, idB]
+  ↓ POST /posts/pub-by-ids
+同じ順序の公開Post[]を取得
+  ↓
+Recent postsと同じスニペット描画
+```
+
+If a post that remains in a ranking is later unpublished or deleted, it naturally disappears from the result of ``pub-by-ids``.
+
+## Server-Side Rendering and Metadata
+
+``/sites`` and ``/pub`` are rendered as Next.js Server Components. Instead of fetching the body only after JavaScript starts in the browser, the first HTTP response already contains the article HTML. This allows article content and basic navigation to be returned to visitors and search crawlers without assuming a login.
+
+Article-page metadata is generated by combining the title, description, author, date, and featured image extracted from Markdown with the public-site settings. The main outputs are as follows.
+
+- HTML title and description
+- canonical URL
+- Open Graph Protocol title, description, site name, locale, publication date, and image
+- Twitter Card
+- author
+- Dublin Core-style title and date
+
+The canonical URL is ``/pub/{postId}``. This serves a different presentation purpose from the internal SNS ``/posts/{postId}``, so the externally shared URL is fixed to a single form.
+
+Next.js needs the same article data both for rendering the page and for generating metadata. STGY uses React ``cache`` to share retrieval of a published article within the same render. This avoids calling the backend public-post API twice for metadata generation and page generation and, consequently, double-counting the same access.
+
+## Access Counter Requirements
+
+For the most recent 15 days, the access counter provides the following.
+
+The retention period is controlled by ``Config.PUB_VIEW_RETENTION_DAYS`` and can be changed with the ``STGY_PUB_VIEW_RETENTION_DAYS`` environment variable. The current default is 15 days.
+
+- Total PVs for the public site
+- Top 1000 posts by PV
+- Popular entries in published-article sidebars
+
+The following information, on the other hand, is not stored.
+
+- Individual access timestamps
+- Raw IP addresses
+- User-Agent history
+- Referrer URLs
+- Per-viewer behavioral history
+
+Storing each access record in PostgreSQL would cause a persistent write every time a public page is displayed, while the history table would grow in proportion to the number of views. STGY does not need full-featured access analytics, so ordinary PV updates are aggregated directly into daily counters in Redis.
+
+Relying only on Redis, however, would mean losing the most recent 15 days of PVs if Redis data were lost. STGY therefore saves a daily counter to PostgreSQL ``post_pub_access_counts`` only when the PV reaches a designated checkpoint. PostgreSQL stores no individual access history, only aggregated values for each post and date.
+
+Redis handles high-frequency updates, while PostgreSQL holds sparse recovery checkpoints. Publications Stats compares the two values date by date and uses the larger one. Published-page Popular entries, on the other hand, build rankings from Redis alone so that rendering does not incur additional database load.
+
+## Bot Exclusion
+
+If PV were incremented every time a search engine or social-network link preview fetched an article, the count would diverge substantially from human readership. The Frontend serving the public page therefore excludes clients that identify themselves as bots in the User-Agent before the request reaches Redis.
+
+The current checks include strings such as ``bot``, ``crawler``, ``spider``, ``slurp``, ``facebookexternalhit``, and ``bingpreview``. When a client is classified as a bot, the Frontend does not send the PV-recording headers to the Backend. The article body and OGP metadata are still returned normally, so search indexing and link previews are not blocked.
+
+This mechanism excludes well-behaved bots. It does not attempt to rigorously identify clients that disguise their User-Agent as a normal browser. Because the counter is intended for the site owner to observe trends rather than for billing or advertising settlement, STGY does not introduce a complex bot-detection infrastructure.
+
+## IP Address Fingerprinting
+
+To avoid incrementing PV on every reload by the same viewer, STGY deduplicates each combination of post and IP address. Raw IP addresses, however, are not stored in Redis.
+
+The Frontend obtains the client IP from ``X-Forwarded-For``, ``X-Real-IP``, and ``CF-Connecting-IP`` in that order. After normalizing IPv4 or IPv6, it computes HMAC-SHA256 with a shared secret and uses only the first four bytes as the fingerprint.
+
+```text:small
+client IP
+  ↓ HMAC-SHA256(shared secret)
+32 bytes
+  ↓ 先頭4 bytes
+32-bit fingerprint
+```
+
+With an unkeyed hash, the original IPv4 address could be guessed by brute-forcing the candidate address space. HMAC makes it difficult to calculate the corresponding IP from the Redis value alone. Truncating the result to four bytes prioritizes memory use over strict uniqueness. Two different IPs can collide on the same 32-bit value, but in that case the only effect is undercounting PV by one; it does not affect the safety of post data.
+
+The Frontend also attaches an HMAC signature to the concatenation of the post ID and fingerprint.
+
+```text:small
+HMAC-SHA256(shared secret, POST_ID + "\n" + fingerprint)
+```
+
+The Backend records a PV only when the signature verifies. This makes it difficult for a client calling the public Backend API directly to fabricate large numbers of arbitrary fingerprints and inflate the counter. The current implementation uses ``STGY_REDIS_PASSWORD`` as the shared secret.
+
+Because forwarded-IP headers are treated as the canonical client address, production deployment assumes that a trusted reverse proxy such as Caddy sets these headers and does not pass through spoofed values supplied by external clients unchanged.
+
+## Per-Post LRU Deduplication
+
+For each post, STGY retains at most 150 recently seen fingerprints. The Redis String value is the direct concatenation of four-byte values.
+
+```text:small
+古い ← [4 bytes][4 bytes][4 bytes] ... [4 bytes] → 新しい
+```
+
+The maximum size is therefore as follows.
+
+```text:small
+4 bytes × 150 = 600 bytes / post
+```
+
+When the same fingerprint appears again, it is removed from its existing position and moved to the end, but PV is not incremented. A new fingerprint is appended, the oldest bytes beyond 150 entries are discarded from the front, and PV is incremented by one.
+
+This does not strictly remember every IP seen over 15 days. If a post is accessed from more than 150 distinct IPs, old fingerprints are evicted and a later revisit from such an IP is counted as a new PV. A revisit after the LRU key expires is also counted as new. This is an approximation for observing popularity trends with little memory.
+
+The LRU TTL is one day longer than the retention period. With the current defaults it is 16 days, and it is refreshed on every access. If a post receives no access for a long time, its deduplication data disappears automatically.
+
+## Redis Data Structures
+
+The main Redis keys used for PV aggregation are as follows.
+
+### Daily Per-Post PV
+
+```text:small
+stgy:pub-views:daily:{ownerId}:{YYYYMMDD}
+```
+
+One Hash is created for each owner and UTC date. The field is the post ID and the value is the deduplicated PV for that day.
+
+```text:small
+19FD706DCB600000 -> 138
+19FD705B39100000 -> 42
+```
+
+Because this is not a record per access, even one million PVs increase only the integer value of one Hash field for that post on that day. The daily-key TTL is also one day longer than the retention period, so with the current defaults it expires on day 16.
+
+### Per-Post LRU
+
+```text:small
+stgy:pub-views:lru:{ownerId}:{postId}
+```
+
+The value is a fingerprint sequence of at most 600 bytes.
+
+### Metadata for Stats
+
+```text:small
+stgy:pub-views:meta:{ownerId}:{postId}
+```
+
+The value stores the publication date and a 150-character plain-text digest as JSON.
+
+```json:small
+{
+  "publishedAt": "2026-08-06T12:22:58.000Z",
+  "digest": "STGYの記事外部公開機能では、公開日時を正本として…"
+}
+```
+
+The digest is generated from the JSON snippet already stored with the post. It is the minimal information needed to avoid reading up to 1000 articles from PostgreSQL every time Stats is displayed. Metadata is refreshed on every signed access, so publication time and digest can be updated to current contents even when a duplicate access from the same IP does not increase PV.
+
+Rich snippets for Popular entries are not stored in Redis. Redis supplies only ranked IDs and PVs; at display time, the ID array is passed to ``POST /posts/pub-by-ids`` to retrieve normal Post data from PostgreSQL in one batch. This separates the small metadata needed by Stats from the canonical post data used to render published pages.
+
+### Aggregation Cache
+
+```text:small
+stgy:pub-views:ranking:{ownerId}
+stgy:pub-views:stats:{ownerId}
+```
+
+Ranking and Stats results are cached for five minutes. Invalidating the cache on every access would cause more re-aggregation as popular articles receive more traffic, so STGY accepts up to five minutes of display latency. An empty zero-PV result is not cached, preventing the system from continuing to show a stale empty cache immediately after the first access arrives.
+
+## Atomic Updates with Lua
+
+If the Backend performs ``GET``, a decision, ``SET``, and ``HINCRBY`` separately when multiple accesses arrive at the same post concurrently, races can occur. Two requests could read the same old LRU, both decide that the fingerprint is new, and increment PV twice.
+
+The following operations are therefore executed in a single Redis Lua script.
+
+1. Read the per-post LRU.
+2. If the value is not a multiple of four bytes or exceeds the limit, discard it as corrupted.
+3. Remove the target fingerprint from the existing sequence.
+4. Append it to the end.
+5. Discard bytes from the front that exceed 600 bytes.
+6. Save the LRU and metadata with TTLs.
+7. Only if the fingerprint was not already present, increment the daily Hash with ``HINCRBY``.
+8. Set the expiry on the daily Hash.
+9. For a new PV, return the counter value after ``HINCRBY``; for a duplicate, return 0.
+
+```text:small
+LRU更新
+＋ 重複判定
+＋ 日次PV加算
+＋ TTL設定
+＋ メタデータ更新
+       ↓
+一回のLua実行
+       ↓
+新しいPVカウンタ値
+```
+
+Redis executes one Lua script without interleaving other commands, preserving consistency between the LRU and PV. ``HINCRBY`` itself atomically performs the increment and returns the value after incrementing, so, for example, only one request receives the return value 4 when the count changes from 3 to 4. No additional module is required; the command is registered and invoked through ioredis ``defineCommand`` when needed.
+
+## PostgreSQL PV Checkpoints
+
+To prepare for loss of Redis data, STGY stores PV checkpoints in PostgreSQL for each post and UTC date.
+
+```sql:small
+CREATE TABLE post_pub_access_counts (
+  post_id BIGINT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  owner_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  target_date DATE NOT NULL,
+  count INTEGER NOT NULL,
+  PRIMARY KEY (post_id, target_date)
+);
+
+CREATE INDEX idx_post_pub_access_counts_owner_date
+  ON post_pub_access_counts (owner_id, target_date);
+
+CREATE INDEX idx_post_pub_access_counts_target_date
+  ON post_pub_access_counts (target_date);
+```
+
+The primary key ``(post_id, target_date)`` is used both to retrieve the checkpoint for a particular article on one day and to retrieve that article's range over the most recent 15 days. ``(owner_id, target_date)`` is the index used by Publications Stats to retrieve only a particular user's most recent 15 days. The index on ``target_date`` alone is used by cleanup to delete rows older than 15 days regardless of owner.
+
+``owner_id`` is denormalized into the checkpoint table so that Stats retrieval does not have to scan all ``posts`` by owner. If a post's owner changes, the ``owner_id`` of that post's checkpoint rows is updated in the same PostgreSQL transaction as the post update.
+
+The counter UPSERT performs an UPDATE only if the incoming value is greater than the existing value.
+
+```sql:small
+ON CONFLICT (post_id, target_date)
+DO UPDATE SET count = EXCLUDED.count
+WHERE post_pub_access_counts.count < EXCLUDED.count
+```
+
+As a result, the counter never decreases even if the same synchronization runs multiple times, and no actual UPDATE occurs when the value is unchanged.
+
+## Checkpoints and Redis Recovery
+
+Node.js determines whether the new PV counter returned by Lua is a checkpoint. Through 32 PV, checkpoints are multiples of four: ``4, 8, 12, 16, 20, 24, 28, 32``. Beyond 32 PV, they are the rounded values of ``32 × 2^(n/4)`` for ``n = 1, 2, ...``.
+
+```text:small
+4, 8, 12, 16,
+20, 24, 28, 32,
+38, 45, 54, 64,
+76, 91, 108, 128, ...
+```
+
+At an ordinary checkpoint, only the current day for that article is compared between PostgreSQL and Redis. If Redis is larger, PostgreSQL is monotonically increased with an UPSERT; if PostgreSQL is larger, Redis is raised to that value. The two values are never added together.
+
+The first checkpoint, 4 PV, is handled specially. For that article, Redis fields for the most recent 15 days including today are read in a pipeline, and PostgreSQL retrieves the same article's 15-day range in one query. For each day, the larger value is selected; days where Redis is larger are UPSERTed into PostgreSQL as a batch, while days where PostgreSQL is larger raise the Redis value.
+
+```text:small
+4PV到達
+  ↓
+同じ記事の直近15日
+  ↓
+日ごとに max(Redis, PostgreSQL)
+  ├─ Redisが大きい → PostgreSQLへ単調増加UPSERT
+  └─ DBが大きい    → Redisをその値まで引き上げる
+```
+
+This means that even a day with fewer than 4 PV can later be saved to PostgreSQL if, while that low-PV day is still within the 15-day retention period, the same article reaches 4 PV on another day. Checkpoints from 8 PV onward do not resynchronize past days and process only the current day.
+
+If Redis is lost completely, the current day's counter starts again from zero. When it again reaches 4 PV, the 15-day synchronization runs and values retained in PostgreSQL are restored to Redis. Because the database value and post-restart Redis PV are not added together, however, several PVs that occurred before reaching the first checkpoint after restart can be lost. Accepting that error avoids inflation from double addition even if Redis is lost multiple times.
+
+At the end of the 15-day synchronization at 4 PV, cleanup also attempts to delete checkpoints satisfying ``target_date < today - 14 days``. The Backend process remembers the UTC date of the last cleanup and, in principle, performs the DELETE at most once per day within that process. If cleanup fails, a warning is logged and the date is not advanced, so the next opportunity retries it. No dedicated worker or scheduled job is used, so if no article reaches 4 PV on a given day, old rows remain until the next cleanup opportunity.
+
+## Aggregating the Most Recent 15 Days
+
+The ranking for Popular entries is calculated from Redis alone. If no ranking cache exists, the daily Hashes for the most recent 15 days including today are read with 15 ``HGETALL`` operations grouped into a Redis pipeline. The fields from each day are accumulated into a Map by post ID.
+
+```text:small
+Redis日次Hash 1 ┐
+Redis日次Hash 2 ├─ 投稿IDごとに合算 ─→ 15日間PV
+        ...       │
+Redis日次Hash 15┘
+```
+
+Only the top 1000 posts are needed, so there is no need to fully sort all posts. A min-heap of size 1000 retains only the current top 1000 entries.
+
+```text:small
+N = 15個の日次Hashにあるfield数の合計
+U = 異なる投稿数
+K = 1000
+```
+
+The computational complexity is as follows.
+
+```text:small
+日次カウンタの合算  O(N)
+上位K件の選択       O(U log K)
+上位K件の整列       O(K log K)
+```
+
+Because K is the fixed value 1000, the overall cost is effectively proportional to the number of fields in the daily Hashes, not to the PV count itself. Even if one post receives one million PVs in a day, it occupies only one field in that day's Hash.
+
+This Redis-only ranking is used for Popular entries on published pages. Publications Stats must also reflect recovery checkpoints, so it aggregates both Redis and PostgreSQL through the separate path described in the next section.
+
+## Publications Stats
+
+The Stats tab of the Publications page uses ``GET /users/{id}/pub-stats``, which can be retrieved only by the logged-in user themself or an administrator. It is separated from the Popular ranking required by public pages so that detailed statistics containing 150-character digests are not exposed without restriction to third parties.
+
+Stats aggregation first fetches the daily Redis Hashes for the most recent 15 days including today in a pipeline. It then uses the PostgreSQL ``(owner_id, target_date)`` index to retrieve only the same owner's checkpoints for the same 15 days. For each post/date pair, the larger of the Redis and PostgreSQL values is selected as that day's PV, and only then are the 15 days summed.
+
+```text:small
+(post A, 8/7)  Redis 103 / DB 91  → 103
+(post A, 8/6)  Redis   0 / DB 54  → 54
+(post B, 8/6)  Redis  32 / DB 32  → 32
+                         ↓
+              投稿ごとに15日分を合算
+```
+
+Thus, when Redis is healthy its current values are used as-is, while after Redis loss a checkpoint already stored in PostgreSQL, or a value forced into PostgreSQL during a 4-PV synchronization, can still be used. The 15-day Redis and database totals are not merely compared at the end; ``max`` is always taken for each post/date pair.
+
+Stats displays the following.
+
+- Total page views for the most recent 15 days
+- Post ID and publication date
+- Plain-text digest of Content
+- PV by post
+
+The per-post list retrieves the top 1000 after aggregation once, then lets the Frontend switch ordering by ID, publication date, or PV. Sorting does not re-aggregate Redis or PostgreSQL. The table is paginated at 50 rows per page, with the page number kept in the URL ``?page=``.
+
+Publication dates and digests for the top 1000 are first retrieved from Redis ``meta`` keys with ``MGET``. For posts whose metadata is absent because of Redis loss or TTL expiry, only the missing post IDs are looked up by primary key in PostgreSQL ``posts``. Because this is limited to at most the top 1000 ranked posts, it does not scan all posts owned by the user.
+
+Total page views includes posts that did not make the top 1000. Only the per-post listing is capped at 1000, so Publications Total page views is the sum of all counters from the most recent 15 days after Redis and PostgreSQL have been merged by day. The entire Stats result is cached in Redis for five minutes.
+
+## Popular entries
+
+For Popular entries, the Frontend first calls the following public API.
+
+```text:small
+GET /users/{ownerId}/pub-ranking?limit=5
+```
+
+It returns only IDs and PVs.
+
+```json:small
+[
+  { "id": "19FD706DCB600000", "pv": 138 },
+  { "id": "19FD705B39100000", "pv": 42 }
+]
+```
+
+This ranking does not consult PostgreSQL checkpoints; it is calculated only from the most recent 15 days of Redis daily Hashes. This avoids reading the database statistics table every time a published page is rendered. Immediately after Redis is lost, the ranking can temporarily be distorted, but each time an article reaches 4 PV, the 15-day synchronization restores saved checkpoints to Redis and that article's ranking gradually recovers.
+
+The resulting ID array is passed to ``POST /posts/pub-by-ids`` to retrieve published Posts while preserving input order. Both Recent posts and Popular entries on the article page ultimately use the same Post type and the same JSON-snippet rendering. Only the method used to select the posts differs.
+
+```text:small
+Recent posts
+  PostgreSQLのpublished_at順で選ぶ
+
+Popular entries
+  RedisのPV順でIDを選ぶ
+
+共通部分
+  Post.snippetを記事スニペットとして描画する
+```
+
+Recent posts and Popular entries are independent, so a published-article page retrieves them in parallel. Even if retrieval of the Popular ranking fails, the article body and Recent posts are still displayed; only Popular entries is left empty.
+
+## Load and Storage Volume
+
+The principal PV-recording operations that always occur for one published-article view are as follows.
+
+```text:small
+Frontend
+  User-Agent判定
+  IPのHMACと署名生成
+
+Backend
+  署名検証
+  Redis Luaを1回実行
+```
+
+Within Lua, the per-post LRU scans at most 600 bytes, and a new view increments one field in the daily Hash. No individual access record is INSERTed into PostgreSQL. Additional database access occurs only when the new PV counter value matches a checkpoint.
+
+At 4 PV, the article's most recent 15 days are synchronized: on the Redis side, 15 ``HGET`` operations are grouped into one pipeline, while PostgreSQL uses the primary key ``(post_id, target_date)`` to read the same article's 15-day range in one query. Even if multiple days must be written to the database, they are combined into one multi-row UPSERT. Checkpoints from 8 PV onward compare only one row for the current day. Ordinary accesses whose PV is not a checkpoint perform no PostgreSQL query for this statistics persistence.
+
+Redis storage volume is determined approximately by the following elements.
+
+- At most 600 bytes of LRU data plus key overhead for each viewed post
+- Publication date and short digest for each viewed post
+- One daily-Hash field for each combination of owner, date, and viewed post
+- Five-minute ranking cache and Stats cache for each owner
+
+PostgreSQL ``post_pub_access_counts`` contains one row for each post/date pair saved by a checkpoint or by forced synchronization at 4 PV. Rows older than 15 days are deleted by opportunistic cleanup at 4 PV. Because individual accesses are not stored, increasing PV on the same post does not make Redis memory or database row count grow in proportion to the number of PVs. Storage is driven mainly by the number of posts viewed recently and the number of posts receiving PV on each day.
+
+## Limitations and Deliberate Tradeoffs
+
+The current external-publication and access-counter implementation has the following limitations.
+
+- External publication displays the current contents of a post and does not preserve the version that existed at publication time. Edits after publication are reflected immediately.
+- Setting ``published_at`` back to null makes the post unavailable externally, but historical PVs in Redis and PostgreSQL can remain until their retention period expires.
+- PV retention defaults to the most recent 15 days; cumulative lifetime PV is not stored permanently.
+- PostgreSQL stores sparse checkpoints, not individual access records.
+- Losing Redis temporarily disrupts the Popular entries ranking. Publications Stats can fall back to stored database checkpoints, but PVs since the most recent synchronization can be lost.
+- After Redis restarts, the database value and new Redis value are not added together; only the larger is used, so several PVs before the first 4-PV checkpoint can be lost.
+- Same-IP detection remembers only the most recent 150 fingerprints per post and is not a strict unique-viewer count.
+- A collision in the 32-bit fingerprint can cause different IPs to be treated as the same.
+- After more than 150 distinct accesses or after the LRU expires, the same IP can be counted again.
+- Bots that spoof a normal browser User-Agent are counted as ordinary accesses.
+- Rankings and Stats are cached for five minutes, so newly recorded PVs appear with some delay.
+- Old PostgreSQL checkpoints are deleted opportunistically at 4 PV, so rows older than 15 days can temporarily remain during periods in which no article reaches 4 PV.
+- Forwarded client-IP headers must be set correctly by a trusted reverse proxy.
+- Referrers, geographic location, device information, navigation paths, and other data needed for advanced analytics are not recorded.
+
+These are deliberate tradeoffs rather than defects. They allow STGY to provide Popular entries and short-term Stats at low cost without permanently storing access history. Deployments that require advertising settlement, strict unique-user counts, or long-term analysis should use a dedicated analytics platform separately.
+
+## Summary
+
+STGY's external-publication feature uses ``posts.published_at`` as the canonical publication state and displays internal SNS posts in blog-like form at ``/sites/{userId}`` and ``/pub/{postId}`` without copying them into separate data. Public-post APIs return only posts whose publication time has arrived, with separate paths for site listings, article details, previous/next articles, and retrieval by an ID set. Markdown bodies and JSON snippets are shared with internal display, while external pages combine site settings, design themes, OGP, pagination, profiles, and Recent posts.
+
+The access counter stores neither raw IP addresses nor individual access histories. The Frontend excludes self-declared bots, converts the IP into a 32-bit fingerprint using a keyed hash, and the Backend verifies its signature. A Redis Lua script updates the per-post LRU, performs deduplication, increments the daily PV, sets TTLs, and refreshes Stats metadata in one atomic operation, then returns the post-increment counter value to Node.js.
+
+Ordinary PV updates complete entirely in Redis, synchronizing to PostgreSQL only at sparse checkpoints such as ``4, 8, 12, 16, 20, 24, 28, 32, 38, ...``. At 4 PV, the article's most recent 15 days are max-synchronized bidirectionally in one batch so that low-PV past days can also be finalized where possible. Later checkpoints process only the current day. The database uses monotonically increasing UPSERTs and Redis likewise uses monotonically increasing max updates; the values are never added, avoiding double counting during retries or recovery after Redis loss.
+
+Publications Stats merges Redis and PostgreSQL per post and date before aggregating 15 days, then selects the top posts with a fixed-size min-heap of 1000 entries. If Redis lacks Stats metadata, only the top IDs are supplemented from PostgreSQL. Published-page Popular entries, by contrast, rank from Redis alone to minimize rendering load, then pass the resulting IDs to the general-purpose ``pub-by-ids`` endpoint to retrieve canonical Post data in one batch.
+
+The canonical post bodies and publication settings reside in PostgreSQL; high-frequency short-term counters are processed in Redis; and only the minimal aggregate values needed for recovery are sparsely retained in PostgreSQL. This architecture provides Popular entries and 15-day Stats without permanently storing large access histories, while limiting the impact of Redis data loss.
+
+Next: [Other STGY Features](/posts/0000000000010111)
 ____EOF____

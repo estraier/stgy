@@ -892,13 +892,13 @@ describe("AiUsersService", () => {
       { id: peer2Id, nickname: "Peer Two", is_admin: false, is_frozen: false, ai_model: null },
     );
     pgPool.posts.push(
-      { id: post1Id, owned_by: peer1Id, snippet: '[{"type":"text","text":"Post one"}]' },
+      { id: post1Id, owned_by: peer1Id, snippet: '[{"T":"p","X":"Post one"}]' },
       {
         id: post2Id,
         owned_by: peer2Id,
-        snippet: JSON.stringify([{ type: "text", text: "x".repeat(151) }]),
+        snippet: JSON.stringify([{ T: "p", X: "x".repeat(151) }]),
       },
-      { id: post3Id, owned_by: peer1Id, snippet: '[{"type":"text","text":"Post three"}]' },
+      { id: post3Id, owned_by: peer1Id, snippet: '[{"T":"p","X":"Post three"}]' },
     );
 
     const user1Hex = BigInt(user1Id).toString(16).toUpperCase();
@@ -964,7 +964,7 @@ describe("AiUsersService", () => {
     pgPool.posts.push({
       id: post1Id,
       owned_by: peer1Id,
-      snippet: '[{"type":"text","text":"Post one"}]',
+      snippet: '[{"T":"p","X":"Post one"}]',
     });
 
     const byPeer1 = await service.listAiPostImpressions({ peerId: peer1Hex, limit: 10, offset: 0 });
