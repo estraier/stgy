@@ -1,6 +1,7 @@
 import { Config } from "../config";
 import { Pool } from "pg";
 import { pgQuery } from "../utils/servers";
+import { makePlainTextDigestFromJsonSnippet } from "../utils/snippet";
 import Redis from "ioredis";
 import { decToHex, hexToDec, bufferToInt8Array, int8ArrayToBuffer } from "../utils/format";
 import OpenAI from "openai";
@@ -70,6 +71,18 @@ type RowAiPostImpression = {
   peer_nickname: string | null;
   post_snippet: string | null;
 };
+
+const AI_POST_IMPRESSION_DIGEST_MAX_LENGTH = 150;
+
+function makeAiPostImpressionDigest(snippet: string): string {
+  const digest = makePlainTextDigestFromJsonSnippet(
+    snippet,
+    AI_POST_IMPRESSION_DIGEST_MAX_LENGTH + 1,
+  );
+  const chars = Array.from(digest);
+  if (chars.length <= AI_POST_IMPRESSION_DIGEST_MAX_LENGTH) return digest;
+  return `${chars.slice(0, AI_POST_IMPRESSION_DIGEST_MAX_LENGTH).join("")}...`;
+}
 
 function uniqKeepOrder(xs: string[]): string[] {
   const seen = new Set<string>();
@@ -521,7 +534,10 @@ export class AiUsersService {
         updatedAt: updatedAtISO,
         payload: row.payload,
         peerNickname: typeof row.peer_nickname === "string" ? row.peer_nickname : null,
-        postSnippet: typeof row.post_snippet === "string" ? row.post_snippet : null,
+        postSnippet:
+          typeof row.post_snippet === "string"
+            ? makeAiPostImpressionDigest(row.post_snippet)
+            : null,
       };
     });
   }

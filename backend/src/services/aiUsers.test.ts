@@ -893,7 +893,11 @@ describe("AiUsersService", () => {
     );
     pgPool.posts.push(
       { id: post1Id, owned_by: peer1Id, snippet: '[{"type":"text","text":"Post one"}]' },
-      { id: post2Id, owned_by: peer2Id, snippet: '[{"type":"text","text":"Post two"}]' },
+      {
+        id: post2Id,
+        owned_by: peer2Id,
+        snippet: JSON.stringify([{ type: "text", text: "x".repeat(151) }]),
+      },
       { id: post3Id, owned_by: peer1Id, snippet: '[{"type":"text","text":"Post three"}]' },
     );
 
@@ -931,7 +935,11 @@ describe("AiUsersService", () => {
     expect(byPost1[0].postId).toBe(expectedPost1Hex);
     expect(byPost1[0].payload).toBe("u1 p1 o1");
     expect(byPost1[0].peerNickname).toBe("Peer One");
-    expect(byPost1[0].postSnippet).toBe('[{"type":"text","text":"Post one"}]');
+    expect(byPost1[0].postSnippet).toBe("Post one");
+
+    const byPost2 = await service.listAiPostImpressions({ postId: post2Hex, limit: 10, offset: 0 });
+    expect(byPost2).toHaveLength(1);
+    expect(byPost2[0].postSnippet).toBe(`${"x".repeat(150)}...`);
 
     pgPool.users = pgPool.users.filter((u) => u.id !== peer1Id);
     pgPool.posts = pgPool.posts.filter((post) => post.id !== post1Id);

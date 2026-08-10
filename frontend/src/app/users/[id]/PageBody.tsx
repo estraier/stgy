@@ -13,7 +13,6 @@ import UserForm from "@/components/UserForm";
 import PostCard from "@/components/PostCard";
 import PostForm from "@/components/PostForm";
 import { makePostIdFromDateString, parseBodyAndTags } from "@/utils/parse";
-import { makeTextFromJsonSnippet } from "@/utils/article";
 import { formatDateTime } from "@/utils/format";
 
 const TAB_VALUES = ["posts", "replies", "followers", "followees"] as const;
@@ -616,7 +615,7 @@ export default function PageBody() {
 
   function handleViewAiImpressions(target: User | UserDetail) {
     const targetPath = `/users/${target.id}`;
-    const sp = target.id === user.id ? new URLSearchParams(searchParams) : new URLSearchParams();
+    const sp = target.id === user?.id ? new URLSearchParams(searchParams) : new URLSearchParams();
     sp.set("view", "ai-impressions");
     sp.set("aiTab", "posts");
     sp.set("aiPage", "1");
@@ -733,44 +732,38 @@ export default function PageBody() {
                 {aiPostImpressions.length === 0 && (
                   <li className="text-gray-400 text-center">No post impressions found.</li>
                 )}
-                {aiPostImpressions.map((item) => {
-                  const snippet =
-                    item.postSnippet !== null && item.postSnippet !== undefined
-                      ? makeTextFromJsonSnippet(item.postSnippet)
-                      : null;
-                  return (
-                    <li key={`${item.peerId}:${item.postId}`}>
-                      <div className="rounded border bg-white p-3 shadow-sm">
-                        <div className="flex items-start gap-2 text-sm">
-                          <div className="min-w-0 flex-1">
-                            <a
-                              href={`/users/${item.peerId}`}
-                              className="font-semibold text-blue-700 hover:underline"
-                            >
-                              {item.peerNickname || item.peerId}
-                            </a>
-                            <div className="mt-1">
-                              {snippet !== null ? (
-                                <a
-                                  href={`/posts/${item.postId}`}
-                                  className="text-gray-600 whitespace-pre-wrap hover:underline"
-                                >
-                                  {snippet}
-                                </a>
-                              ) : (
-                                <span className="text-gray-400">deleted</span>
-                              )}
-                            </div>
-                          </div>
-                          <span className="shrink-0 text-xs text-gray-400">
-                            {formatDateTime(new Date(item.updatedAt))}
-                          </span>
+                {aiPostImpressions.map((item) => (
+                  <li key={`${item.peerId}:${item.postId}`}>
+                    <div className="rounded border bg-white p-3 shadow-sm">
+                      <div className="flex items-start gap-2 text-sm">
+                        <div className="min-w-0 flex-1">
+                          <a
+                            href={`/users/${item.peerId}`}
+                            className="font-semibold text-black hover:underline"
+                          >
+                            {item.peerNickname || item.peerId}
+                          </a>
                         </div>
-                        <ImpressionPayloadView payload={item.payload} kind="posts" />
+                        <span className="shrink-0 text-xs text-gray-400">
+                          {formatDateTime(new Date(item.updatedAt))}
+                        </span>
                       </div>
-                    </li>
-                  );
-                })}
+                      {item.postSnippet !== null && item.postSnippet !== undefined ? (
+                        <a
+                          href={`/posts/${item.postId}`}
+                          className="mt-2 block rounded border border-gray-300 bg-gray-50 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                        >
+                          {item.postSnippet}
+                        </a>
+                      ) : (
+                        <div className="mt-2 rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-400">
+                          deleted
+                        </div>
+                      )}
+                      <ImpressionPayloadView payload={item.payload} kind="posts" />
+                    </div>
+                  </li>
+                ))}
               </ul>
             )}
             {aiMode && aiTab === "users" && (
@@ -784,7 +777,7 @@ export default function PageBody() {
                       <div className="flex items-start gap-2 text-sm">
                         <a
                           href={`/users/${item.peerId}`}
-                          className="min-w-0 flex-1 font-semibold text-blue-700 hover:underline"
+                          className="min-w-0 flex-1 font-semibold text-black hover:underline"
                         >
                           {item.peerNickname || item.peerId}
                         </a>
