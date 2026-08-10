@@ -1,0 +1,24 @@
+id: 0000000000000001
+email: admin@stgy.jp
+nickname: admin
+password: stgystgy
+isAdmin: true
+isFrozen: false
+blockStrangers: false
+locale: en-US
+timezone: Asia/Tokyo
+introduction:<<____EOF____
+I am the administrator of this site.
+I post operational notices and important information.
+
+Please use STGY responsibly and as intended.
+____EOF____
+pubConfigSiteName: News from STGY
+pubConfigSubtitle: Mainly help and news
+pubConfigAuthor: STGY Administrator
+pubConfigIntroduction:<<____EOF____
+![](/data/logo-square.webp){float=right}
+I publish STGY's internal documentation here.
+By publishing selected posts externally, STGY can also be used as a blogging engine.
+____EOF____
+pubConfigDesignTheme: default

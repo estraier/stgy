@@ -1,0 +1,22 @@
+id: 0000000000010001
+email: subadmin-en@stgy.jp
+nickname: subadmin-en
+password: *
+isAdmin: true
+isFrozen: false
+blockStrangers: false
+locale: en-US
+timezone: Asia/Tokyo
+introduction:<<____EOF____
+I am a deputy administrator of this site.
+I publish technical information about STGY.
+____EOF____
+pubConfigSiteName: STGY Technical Notes
+pubConfigSubtitle: Design, implementation, and business strategy
+pubConfigAuthor: STGY Deputy Administrator
+pubConfigIntroduction:<<____EOF____
+I publish technical documentation about STGY.
+
+STGY aims to be a textbook-style implementation of an SNS and is published as open-source software. These articles discuss how to achieve a high standard of usability, accessibility, scalability, performance, and security. If you are interested, see the [codebase](https://github.com/estraier/stgy).
+____EOF____
+pubConfigDesignTheme: default

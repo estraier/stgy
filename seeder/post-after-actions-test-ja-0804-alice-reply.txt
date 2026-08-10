@@ -1,0 +1,12 @@
+id: 0000000000020804
+ownedBy: 0000000000020101
+replyTo: 0000000000020501
+locale: ja-JP
+allowLikes: true
+allowReplies: true
+tags: sample
+content:<<____EOF____
+[@Alice](/users/0000000000020503), [@Bob](/users/0000000000020504)
+これって、そんなに面白いの？
+今度遊びに行った時に、文庫本貸してね。
+____EOF____

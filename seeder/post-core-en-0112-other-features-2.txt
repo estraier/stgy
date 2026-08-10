@@ -1,0 +1,12 @@
+id: 0000000000010112
+ownedBy: 0000000000010001
+publishedAt: 2025-01-01 00:01:06+00
+locale: en-US
+allowLikes: false
+allowReplies: false
+tags: stgy-help
+content:<<____EOF____
+# STGY Other Features II
+
+Placeholder for the English version. The full text will be written later.
+____EOF____

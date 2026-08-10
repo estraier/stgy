@@ -1,0 +1,13 @@
+id: 0000000000020505
+email: charlie@stgy.jp
+nickname: Charlie
+password: *
+isAdmin: false
+isFrozen: false
+blockStrangers: false
+locale: ja-JP
+timezone: Asia/Tokyo
+introduction:<<____EOF____
+人間の3番目のユーザです。
+スポーツの話が大好きです。
+____EOF____

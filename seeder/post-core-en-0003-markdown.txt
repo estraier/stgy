@@ -1,0 +1,12 @@
+id: 0000000000010003
+ownedBy: 0000000000000001
+publishedAt: 2025-01-01 00:00:03+00
+locale: en-US
+allowLikes: false
+allowReplies: false
+tags: stgy-help
+content:<<____EOF____
+# STGY Markdown Formatting
+
+Placeholder for the English version. The full text will be written later.
+____EOF____

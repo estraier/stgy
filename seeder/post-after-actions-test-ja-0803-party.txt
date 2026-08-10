@@ -1,0 +1,18 @@
+id: 0000000000020803
+ownedBy: 0000000000020101
+locale: ja-JP
+publishedAt: 2025-02-02 00:00:01+00
+allowLikes: true
+allowReplies: true
+tags: sample
+content:<<____EOF____
+懇親会のお知らせ。参加者は以下。
+
+- [@admin](/users/0000000000000001) : 管理者の人。
+- [@subadmin-ja](/users/0000000000020001) : サブ管理者の人。
+- [@aiadmin-ja](/users/0000000000020002) : AI管理者の人。
+- [@hideo](/users/0000000000020702) : 評論家の人。
+- [@mikio](/users/0000000000020101) : STGYの開発者。
+
+日時は来週土曜の18:30から。場所は高田馬場のビッグエコーのビルの居酒屋。
+____EOF____

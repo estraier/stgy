@@ -1,0 +1,13 @@
+id: 0000000000020201
+ownedBy: 0000000000020101
+locale: ja-JP
+allowLikes: true
+allowReplies: true
+tags: stgy-help
+content:<<____EOF____
+# STGYに関する質問や要望のページ
+
+STGYのコンセプト、運用方針、技術選定、実装の詳細などなどについて、質問や要望があればここに返信投稿してください。インストールや設定作業につまずいた際の質問や相談もこちらでお答えします。
+
+個人的な内容や個別案件の相談に関しては、hirarin@gmail.com にメールでご連絡ください。
+____EOF____
