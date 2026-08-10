@@ -168,10 +168,17 @@ minio_cmd() {
   fi
 }
 
-# Validate the timestamp before doing anything destructive to the previous carryover schema.
-run_psql -At -v since="$SINCE" -c "SELECT :'since'::timestamptz;" >/dev/null
+run_psql_since_scalar() {
+  # psql variable interpolation is performed for SQL read from stdin.  Do not
+  # use -c here: some psql versions pass :'since' through to PostgreSQL
+  # unchanged when processing a -c argument.
+  printf '%s\n' "$1" | run_psql -At -v since="$SINCE"
+}
 
-USER_COUNT="$(run_psql -At -v since="$SINCE" -c \
+# Validate the timestamp before doing anything destructive to the previous carryover schema.
+run_psql_since_scalar "SELECT :'since'::timestamptz;" >/dev/null
+
+USER_COUNT="$(run_psql_since_scalar \
   "SELECT count(*) FROM public.users WHERE id >= public.timestamp_to_id_min(:'since'::timestamptz);")"
 
 if [ -n "$EXPECT_USERS" ] && [ "$USER_COUNT" -ne "$EXPECT_USERS" ]; then
@@ -183,9 +190,9 @@ if [ "$USER_COUNT" -eq 0 ]; then
   exit 1
 fi
 
-SECRET_COUNT="$(run_psql -At -v since="$SINCE" -c \
+SECRET_COUNT="$(run_psql_since_scalar \
   "SELECT count(*) FROM public.user_secrets s JOIN public.users u ON u.id = s.user_id WHERE u.id >= public.timestamp_to_id_min(:'since'::timestamptz);")"
-DETAIL_COUNT="$(run_psql -At -v since="$SINCE" -c \
+DETAIL_COUNT="$(run_psql_since_scalar \
   "SELECT count(*) FROM public.user_details d JOIN public.users u ON u.id = d.user_id WHERE u.id >= public.timestamp_to_id_min(:'since'::timestamptz);")"
 if [ "$SECRET_COUNT" -ne "$USER_COUNT" ] || [ "$DETAIL_COUNT" -ne "$USER_COUNT" ]; then
   echo "Refusing to export: selected users do not have a complete user_secrets/user_details row set." >&2
@@ -193,7 +200,7 @@ if [ "$SECRET_COUNT" -ne "$USER_COUNT" ] || [ "$DETAIL_COUNT" -ne "$USER_COUNT" 
   exit 1
 fi
 
-POST_COUNT="$(run_psql -At -v since="$SINCE" -c \
+POST_COUNT="$(run_psql_since_scalar \
   "SELECT count(*) FROM public.posts p JOIN public.users u ON u.id = p.owned_by WHERE u.id >= public.timestamp_to_id_min(:'since'::timestamptz);")"
 if [ "$POST_COUNT" -ne 0 ] && [ "$ALLOW_POSTS" != true ]; then
   echo "Refusing to export: selected users own $POST_COUNT post(s), but this tool carries user information only." >&2
