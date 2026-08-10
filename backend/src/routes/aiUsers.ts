@@ -224,6 +224,9 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
   router.get("/:id/interests", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.requireLogin(req, res);
     if (!loginUser) return;
+    if (!loginUser.isAdmin && loginUser.id !== req.params.id) {
+      return res.status(403).json({ error: "forbidden" });
+    }
     if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }
@@ -336,6 +339,9 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
   router.get("/:id/peer-impressions", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.requireLogin(req, res);
     if (!loginUser) return;
+    if (!loginUser.isAdmin && loginUser.id !== req.params.id) {
+      return res.status(403).json({ error: "forbidden" });
+    }
     if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }
@@ -363,6 +369,9 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
   router.head("/:id/peer-impressions/:peerId", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.requireLogin(req, res);
     if (!loginUser) return;
+    if (!loginUser.isAdmin && loginUser.id !== req.params.id) {
+      return res.status(403).json({ error: "forbidden" });
+    }
     if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }
@@ -376,6 +385,9 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
   router.get("/:id/peer-impressions/:peerId", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.requireLogin(req, res);
     if (!loginUser) return;
+    if (!loginUser.isAdmin && loginUser.id !== req.params.id) {
+      return res.status(403).json({ error: "forbidden" });
+    }
     if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }
@@ -422,6 +434,9 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
   router.get("/:id/post-impressions", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.requireLogin(req, res);
     if (!loginUser) return;
+    if (!loginUser.isAdmin && loginUser.id !== req.params.id) {
+      return res.status(403).json({ error: "forbidden" });
+    }
     if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }
@@ -454,6 +469,9 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
   router.head("/:id/post-impressions/:postId", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.requireLogin(req, res);
     if (!loginUser) return;
+    if (!loginUser.isAdmin && loginUser.id !== req.params.id) {
+      return res.status(403).json({ error: "forbidden" });
+    }
     if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }
@@ -467,6 +485,9 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
   router.get("/:id/post-impressions/:postId", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.requireLogin(req, res);
     if (!loginUser) return;
+    if (!loginUser.isAdmin && loginUser.id !== req.params.id) {
+      return res.status(403).json({ error: "forbidden" });
+    }
     if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }

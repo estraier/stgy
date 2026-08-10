@@ -58,6 +58,7 @@ type RowAiPeerImpression = {
   peer_id: string;
   updated_at: Date | string;
   payload: string;
+  peer_nickname: string | null;
 };
 
 type RowAiPostImpression = {
@@ -66,6 +67,8 @@ type RowAiPostImpression = {
   post_id: string;
   updated_at: Date | string;
   payload: string;
+  peer_nickname: string | null;
+  post_snippet: string | null;
 };
 
 function uniqKeepOrder(xs: string[]): string[] {
@@ -350,23 +353,29 @@ export class AiUsersService {
     const hasUserId = typeof input.userId === "string" && input.userId.trim() !== "";
     const hasPeerId = typeof input.peerId === "string" && input.peerId.trim() !== "";
     if (hasUserId) {
-      where.push(`user_id = $${idx}`);
+      where.push(`api.user_id = $${idx}`);
       params.push(hexToDec(input.userId as string));
       idx++;
     }
     if (hasPeerId) {
-      where.push(`peer_id = $${idx}`);
+      where.push(`api.peer_id = $${idx}`);
       params.push(hexToDec(input.peerId as string));
       idx++;
     }
     let sql = `
-      SELECT user_id, peer_id, updated_at, payload
-      FROM ai_peer_impressions
+      SELECT
+        api.user_id,
+        api.peer_id,
+        api.updated_at,
+        api.payload,
+        peer.nickname AS peer_nickname
+      FROM ai_peer_impressions api
+      LEFT JOIN users peer ON peer.id = api.peer_id
     `;
     if (where.length > 0) sql += ` WHERE ${where.join(" AND ")}`;
-    const orderKeys: string[] = ["updated_at"];
-    if (!hasUserId) orderKeys.push("user_id");
-    if (!hasPeerId) orderKeys.push("peer_id");
+    const orderKeys: string[] = ["api.updated_at"];
+    if (!hasUserId) orderKeys.push("api.user_id");
+    if (!hasPeerId) orderKeys.push("api.peer_id");
     sql += ` ORDER BY ${orderKeys.map((k) => `${k} ${order}`).join(", ")}`;
     sql += ` LIMIT $${idx} OFFSET $${idx + 1}`;
     params.push(limit, offset);
@@ -381,6 +390,7 @@ export class AiUsersService {
         peerId: decToHex(String(row.peer_id)),
         updatedAt: updatedAtISO,
         payload: row.payload,
+        peerNickname: typeof row.peer_nickname === "string" ? row.peer_nickname : null,
       };
     });
   }
@@ -463,29 +473,38 @@ export class AiUsersService {
     const hasPeerId = !!input.peerId;
     const hasPostId = !!input.postId;
     if (hasUserId) {
-      where.push(`user_id = $${idx}`);
+      where.push(`api.user_id = $${idx}`);
       params.push(hexToDec(input.userId as string));
       idx++;
     }
     if (hasPeerId) {
-      where.push(`peer_id = $${idx}`);
+      where.push(`api.peer_id = $${idx}`);
       params.push(hexToDec(input.peerId as string));
       idx++;
     }
     if (hasPostId) {
-      where.push(`post_id = $${idx}`);
+      where.push(`api.post_id = $${idx}`);
       params.push(hexToDec(input.postId as string));
       idx++;
     }
     let sql = `
-      SELECT user_id, peer_id, post_id, updated_at, payload
-      FROM ai_post_impressions
+      SELECT
+        api.user_id,
+        api.peer_id,
+        api.post_id,
+        api.updated_at,
+        api.payload,
+        peer.nickname AS peer_nickname,
+        p.snippet AS post_snippet
+      FROM ai_post_impressions api
+      LEFT JOIN users peer ON peer.id = api.peer_id
+      LEFT JOIN posts p ON p.id = api.post_id
     `;
     if (where.length > 0) sql += ` WHERE ${where.join(" AND ")}`;
-    const orderKeys: string[] = ["updated_at"];
-    if (!hasUserId) orderKeys.push("user_id");
-    if (!hasPeerId) orderKeys.push("peer_id");
-    if (!hasPostId) orderKeys.push("post_id");
+    const orderKeys: string[] = ["api.updated_at"];
+    if (!hasUserId) orderKeys.push("api.user_id");
+    if (!hasPeerId) orderKeys.push("api.peer_id");
+    if (!hasPostId) orderKeys.push("api.post_id");
     sql += ` ORDER BY ${orderKeys.map((k) => `${k} ${order}`).join(", ")}`;
     sql += ` LIMIT $${idx} OFFSET $${idx + 1}`;
     params.push(limit, offset);
@@ -501,6 +520,8 @@ export class AiUsersService {
         postId: decToHex(String(row.post_id)),
         updatedAt: updatedAtISO,
         payload: row.payload,
+        peerNickname: typeof row.peer_nickname === "string" ? row.peer_nickname : null,
+        postSnippet: typeof row.post_snippet === "string" ? row.post_snippet : null,
       };
     });
   }

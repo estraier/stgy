@@ -56,7 +56,7 @@ class MockPgPool {
     payload: string;
   }[] = [];
 
-  posts: { id: number; owned_by: number }[] = [];
+  posts: { id: number; owned_by: number; snippet?: string }[] = [];
 
   private nowMs = Date.parse("2025-01-01T00:00:00.000Z");
   private tick(): Date {
@@ -220,7 +220,10 @@ class MockPgPool {
       return { rows: [], rowCount: 0 };
     }
 
-    if (sql.startsWith("SELECT user_id, peer_id, updated_at, payload FROM ai_peer_impressions")) {
+    if (
+      sql.includes("FROM ai_peer_impressions api") ||
+      sql.startsWith("SELECT user_id, peer_id, updated_at, payload FROM ai_peer_impressions")
+    ) {
       if (sql.includes("ORDER BY")) {
         const ps = params ?? [];
         const limit = (ps[ps.length - 2] as number | undefined) ?? 50;
@@ -228,21 +231,21 @@ class MockPgPool {
 
         let filtered = this.ai_peer_impressions.slice();
 
-        const userMatch = sql.match(/user_id\s*=\s*\$(\d+)/);
+        const userMatch = sql.match(/(?:api\.)?user_id\s*=\s*\$(\d+)/);
         if (userMatch) {
           const idx = Number(userMatch[1]) - 1;
           const uid = this.toNum(ps[idx]);
           filtered = filtered.filter((r) => r.user_id === uid);
         }
 
-        const peerMatch = sql.match(/peer_id\s*=\s*\$(\d+)/);
+        const peerMatch = sql.match(/(?:api\.)?peer_id\s*=\s*\$(\d+)/);
         if (peerMatch) {
           const idx = Number(peerMatch[1]) - 1;
           const pid = this.toNum(ps[idx]);
           filtered = filtered.filter((r) => r.peer_id === pid);
         }
 
-        const asc = sql.includes("ORDER BY user_id ASC");
+        const asc = sql.includes(" ASC");
         const sorted = filtered.sort((a, b) => {
           const cmpUser = a.user_id - b.user_id;
           if (cmpUser !== 0) return asc ? cmpUser : -cmpUser;
@@ -255,6 +258,7 @@ class MockPgPool {
           peer_id: String(r.peer_id),
           updated_at: r.updated_at,
           payload: r.payload,
+          peer_nickname: this.users.find((u) => u.id === r.peer_id)?.nickname ?? null,
         }));
         return { rows: sliced, rowCount: sliced.length };
       }
@@ -320,6 +324,7 @@ class MockPgPool {
     }
 
     if (
+      sql.includes("FROM ai_post_impressions api") ||
       sql.startsWith(
         "SELECT user_id, peer_id, post_id, updated_at, payload FROM ai_post_impressions",
       )
@@ -330,21 +335,21 @@ class MockPgPool {
         const offset = (ps[ps.length - 1] as number | undefined) ?? 0;
         let filtered = this.ai_post_impressions.slice();
 
-        const userMatch = sql.match(/user_id\s*=\s*\$(\d+)/);
+        const userMatch = sql.match(/(?:api\.)?user_id\s*=\s*\$(\d+)/);
         if (userMatch) {
           const idx = Number(userMatch[1]) - 1;
           const uid = this.toNum(ps[idx]);
           filtered = filtered.filter((r) => r.user_id === uid);
         }
 
-        const peerMatch = sql.match(/peer_id\s*=\s*\$(\d+)/);
+        const peerMatch = sql.match(/(?:api\.)?peer_id\s*=\s*\$(\d+)/);
         if (peerMatch) {
           const idx = Number(peerMatch[1]) - 1;
           const oid = this.toNum(ps[idx]);
           filtered = filtered.filter((r) => r.peer_id === oid);
         }
 
-        const postMatch = sql.match(/post_id\s*=\s*\$(\d+)/);
+        const postMatch = sql.match(/(?:api\.)?post_id\s*=\s*\$(\d+)/);
         if (postMatch) {
           const idx = Number(postMatch[1]) - 1;
           const pid = this.toNum(ps[idx]);
@@ -375,6 +380,8 @@ class MockPgPool {
           post_id: String(r.post_id),
           updated_at: r.updated_at,
           payload: r.payload,
+          peer_nickname: this.users.find((u) => u.id === r.peer_id)?.nickname ?? null,
+          post_snippet: this.posts.find((post) => post.id === r.post_id)?.snippet ?? null,
         }));
         return { rows: sliced, rowCount: sliced.length };
       }
@@ -760,10 +767,16 @@ describe("AiUsersService", () => {
 
   test("listAiPeerImpressions: list and filter by peerId", async () => {
     const userHex = BigInt(1001).toString(16).toUpperCase();
-    const peer1Hex = BigInt(1002).toString(16).toUpperCase();
-    const peer2Hex = BigInt(1000).toString(16).toUpperCase();
-    const expectedPeer1Hex = BigInt(1002).toString(16).toUpperCase().padStart(16, "0");
-    const expectedPeer2Hex = BigInt(1000).toString(16).toUpperCase().padStart(16, "0");
+    const peer1Id = 4002;
+    const peer2Id = 4000;
+    const peer1Hex = BigInt(peer1Id).toString(16).toUpperCase();
+    const peer2Hex = BigInt(peer2Id).toString(16).toUpperCase();
+    const expectedPeer1Hex = BigInt(peer1Id).toString(16).toUpperCase().padStart(16, "0");
+    const expectedPeer2Hex = BigInt(peer2Id).toString(16).toUpperCase().padStart(16, "0");
+    pgPool.users.push(
+      { id: peer1Id, nickname: "Peer One", is_admin: false, is_frozen: false, ai_model: null },
+      { id: peer2Id, nickname: "Peer Two", is_admin: false, is_frozen: false, ai_model: null },
+    );
 
     await service.setAiPeerImpression({ userId: userHex, peerId: peer1Hex, payload: "Peer one" });
     await service.setAiPeerImpression({ userId: userHex, peerId: peer2Hex, payload: "Peer two" });
@@ -786,8 +799,20 @@ describe("AiUsersService", () => {
     expect(filtered).toHaveLength(1);
     expect(filtered[0].peerId).toBe(expectedPeer1Hex);
     expect(filtered[0].payload).toBe("Peer one");
+    expect(filtered[0].peerNickname).toBe("Peer One");
     expect(typeof filtered[0].updatedAt).toBe("string");
     expect(filtered[0].updatedAt.length).toBeGreaterThan(0);
+
+    pgPool.users = pgPool.users.filter((u) => u.id !== peer1Id);
+    const missingPeer = await service.listAiPeerImpressions({
+      userId: userHex,
+      peerId: peer1Hex,
+      limit: 10,
+      offset: 0,
+    });
+    expect(missingPeer).toHaveLength(1);
+    expect(missingPeer[0].peerId).toBe(expectedPeer1Hex);
+    expect(missingPeer[0].peerNickname).toBeNull();
   });
 
   test("getAiPostImpression: returns null when not set", async () => {
@@ -862,10 +887,14 @@ describe("AiUsersService", () => {
     const post2Id = 5002;
     const post3Id = 5003;
 
+    pgPool.users.push(
+      { id: peer1Id, nickname: "Peer One", is_admin: false, is_frozen: false, ai_model: null },
+      { id: peer2Id, nickname: "Peer Two", is_admin: false, is_frozen: false, ai_model: null },
+    );
     pgPool.posts.push(
-      { id: post1Id, owned_by: peer1Id },
-      { id: post2Id, owned_by: peer2Id },
-      { id: post3Id, owned_by: peer1Id },
+      { id: post1Id, owned_by: peer1Id, snippet: '[{"type":"text","text":"Post one"}]' },
+      { id: post2Id, owned_by: peer2Id, snippet: '[{"type":"text","text":"Post two"}]' },
+      { id: post3Id, owned_by: peer1Id, snippet: '[{"type":"text","text":"Post three"}]' },
     );
 
     const user1Hex = BigInt(user1Id).toString(16).toUpperCase();
@@ -901,6 +930,34 @@ describe("AiUsersService", () => {
     expect(byPost1[0].peerId).toBe(expectedPeer1Hex);
     expect(byPost1[0].postId).toBe(expectedPost1Hex);
     expect(byPost1[0].payload).toBe("u1 p1 o1");
+    expect(byPost1[0].peerNickname).toBe("Peer One");
+    expect(byPost1[0].postSnippet).toBe('[{"type":"text","text":"Post one"}]');
+
+    pgPool.users = pgPool.users.filter((u) => u.id !== peer1Id);
+    pgPool.posts = pgPool.posts.filter((post) => post.id !== post1Id);
+    const missingDisplayData = await service.listAiPostImpressions({
+      postId: post1Hex,
+      limit: 10,
+      offset: 0,
+    });
+    expect(missingDisplayData).toHaveLength(1);
+    expect(missingDisplayData[0].peerId).toBe(expectedPeer1Hex);
+    expect(missingDisplayData[0].postId).toBe(expectedPost1Hex);
+    expect(missingDisplayData[0].peerNickname).toBeNull();
+    expect(missingDisplayData[0].postSnippet).toBeNull();
+
+    pgPool.users.push({
+      id: peer1Id,
+      nickname: "Peer One",
+      is_admin: false,
+      is_frozen: false,
+      ai_model: null,
+    });
+    pgPool.posts.push({
+      id: post1Id,
+      owned_by: peer1Id,
+      snippet: '[{"type":"text","text":"Post one"}]',
+    });
 
     const byPeer1 = await service.listAiPostImpressions({ peerId: peer1Hex, limit: 10, offset: 0 });
     expect(byPeer1).toHaveLength(2);

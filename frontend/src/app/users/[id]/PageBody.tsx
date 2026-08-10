@@ -4,7 +4,8 @@ import { Config } from "@/config";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { getUser, listFollowers, listFollowees } from "@/api/users";
 import { listPosts, addLike, removeLike, createPost } from "@/api/posts";
-import type { User, UserDetail, Post } from "@/api/models";
+import { listAiPeerImpressions, listAiPostImpressions } from "@/api/aiUser";
+import type { AiPeerImpression, AiPostImpression, User, UserDetail, Post } from "@/api/models";
 import { notFound, useParams, useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import UserCard from "@/components/UserCard";
@@ -12,8 +13,82 @@ import UserForm from "@/components/UserForm";
 import PostCard from "@/components/PostCard";
 import PostForm from "@/components/PostForm";
 import { makePostIdFromDateString, parseBodyAndTags } from "@/utils/parse";
+import { makeTextFromJsonSnippet } from "@/utils/article";
+import { formatDateTime } from "@/utils/format";
 
 const TAB_VALUES = ["posts", "replies", "followers", "followees"] as const;
+const AI_TAB_VALUES = ["posts", "users"] as const;
+
+type ParsedImpressionPayload = {
+  impression: string | null;
+  tags: string[];
+  shouldFollow?: boolean;
+  shouldLike?: boolean;
+  shouldReply?: boolean;
+};
+
+function parseImpressionPayload(payload: string): ParsedImpressionPayload | null {
+  try {
+    const value = JSON.parse(payload) as unknown;
+    if (!value || typeof value !== "object") return null;
+    const obj = value as Record<string, unknown>;
+    return {
+      impression: typeof obj.impression === "string" ? obj.impression : null,
+      tags: Array.isArray(obj.tags)
+        ? obj.tags.filter((tag): tag is string => typeof tag === "string")
+        : [],
+      ...(typeof obj.shouldFollow === "boolean" ? { shouldFollow: obj.shouldFollow } : {}),
+      ...(typeof obj.shouldLike === "boolean" ? { shouldLike: obj.shouldLike } : {}),
+      ...(typeof obj.shouldReply === "boolean" ? { shouldReply: obj.shouldReply } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function ImpressionPayloadView({
+  payload,
+  kind,
+}: {
+  payload: string;
+  kind: "posts" | "users";
+}) {
+  const parsed = parseImpressionPayload(payload);
+  if (!parsed) {
+    return <div className="mt-2 whitespace-pre-wrap text-sm text-gray-700">{payload}</div>;
+  }
+  const decisions: Array<[string, boolean | undefined]> =
+    kind === "posts"
+      ? [
+          ["like", parsed.shouldLike],
+          ["reply", parsed.shouldReply],
+        ]
+      : [["follow", parsed.shouldFollow]];
+  return (
+    <div className="mt-2">
+      {parsed.impression && (
+        <div className="whitespace-pre-wrap text-sm text-gray-800">{parsed.impression}</div>
+      )}
+      {(parsed.tags.length > 0 || decisions.some(([, value]) => typeof value === "boolean")) && (
+        <div className="mt-2 flex flex-wrap gap-1.5 text-xs">
+          {parsed.tags.map((tag) => (
+            <span key={tag} className="rounded bg-gray-100 px-2 py-0.5 text-blue-700">
+              #{tag}
+            </span>
+          ))}
+          {decisions.map(([label, value]) =>
+            typeof value === "boolean" ? (
+              <span key={String(label)} className="rounded bg-slate-100 px-2 py-0.5 text-slate-600">
+                {String(label)}: {value ? "yes" : "no"}
+              </span>
+            ) : null,
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 const RESTORE_POST_ID_KEY = "lastPostId";
 const RESTORE_POST_PAGE_KEY = "lastPostPage";
@@ -40,6 +115,7 @@ export default function PageBody() {
   const [editing, setEditing] = useState(false);
 
   const tabsRef = useRef<HTMLDivElement | null>(null);
+  const pendingTabScrollRef = useRef(false);
 
   const scrollTabsToViewportTop10 = useCallback(() => {
     const el = tabsRef.current;
@@ -73,23 +149,52 @@ export default function PageBody() {
     [router, pathname, searchParams],
   );
 
+  const setAiQuery = useCallback(
+    (updates: Partial<{ aiTab: string; aiPage: number; aiOldestFirst: string | undefined }>) => {
+      const sp = new URLSearchParams(searchParams);
+      sp.set("view", "ai-impressions");
+      for (const key of ["aiTab", "aiPage", "aiOldestFirst"]) {
+        const v = updates[key as keyof typeof updates];
+        if (v !== undefined && v !== null && v !== "") {
+          sp.set(key, String(v));
+        } else {
+          sp.delete(key);
+        }
+      }
+      router.push(`${pathname}?${sp.toString()}`, { scroll: false });
+    },
+    [router, pathname, searchParams],
+  );
+
   function getQuery() {
+    const aiTabParam = searchParams.get("aiTab");
     return {
       tab: (searchParams.get("tab") as (typeof TAB_VALUES)[number]) || "posts",
       oldestFirst: searchParams.get("oldestFirst") === "1",
       page: Math.max(Number(searchParams.get("page")) || 1, 1),
+      requestedAiMode: searchParams.get("view") === "ai-impressions",
+      aiTab: AI_TAB_VALUES.includes(aiTabParam as (typeof AI_TAB_VALUES)[number])
+        ? (aiTabParam as (typeof AI_TAB_VALUES)[number])
+        : "posts",
+      aiOldestFirst: searchParams.get("aiOldestFirst") === "1",
+      aiPage: Math.max(Number(searchParams.get("aiPage")) || 1, 1),
     };
   }
-  const { tab, oldestFirst, page } = getQuery();
+  const { tab, oldestFirst, page, requestedAiMode, aiTab, aiOldestFirst, aiPage } = getQuery();
 
   const [posts, setPosts] = useState<Post[]>([]);
   const [followers, setFollowers] = useState<User[]>([]);
   const [followees, setFollowees] = useState<User[]>([]);
+  const [aiPeerImpressions, setAiPeerImpressions] = useState<AiPeerImpression[]>([]);
+  const [aiPostImpressions, setAiPostImpressions] = useState<AiPostImpression[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [hasNext, setHasNext] = useState(false);
 
   const isSelf = !!(user && userId && user.id === userId);
+  const isAI = !!(user?.aiModel && user.aiModel.trim() !== "");
+  const canViewAiImpressions = isAI && (isSelf || !!isAdmin);
+  const aiMode = requestedAiMode && canViewAiImpressions;
   const canEdit = isSelf || isAdmin;
 
   const [replyTo, setReplyTo] = useState<string | null>(null);
@@ -139,6 +244,43 @@ export default function PageBody() {
     if (!user || !user.id) return;
     setListLoading(true);
     setListError(null);
+
+    if (aiMode) {
+      if (aiTab === "posts") {
+        listAiPostImpressions(user.id, {
+          offset: (aiPage - 1) * Config.POSTS_PAGE_SIZE,
+          limit: Config.POSTS_PAGE_SIZE + 1,
+          order: aiOldestFirst ? "asc" : "desc",
+        })
+          .then((data) => {
+            setAiPostImpressions(data.slice(0, Config.POSTS_PAGE_SIZE));
+            setHasNext(data.length > Config.POSTS_PAGE_SIZE);
+          })
+          .catch((err: unknown) => {
+            if (err instanceof Error)
+              setListError(err.message || "Failed to fetch post impressions.");
+            else setListError(String(err) || "Failed to fetch post impressions.");
+          })
+          .finally(() => setListLoading(false));
+      } else {
+        listAiPeerImpressions(user.id, {
+          offset: (aiPage - 1) * Config.USERS_PAGE_SIZE,
+          limit: Config.USERS_PAGE_SIZE + 1,
+          order: aiOldestFirst ? "asc" : "desc",
+        })
+          .then((data) => {
+            setAiPeerImpressions(data.slice(0, Config.USERS_PAGE_SIZE));
+            setHasNext(data.length > Config.USERS_PAGE_SIZE);
+          })
+          .catch((err: unknown) => {
+            if (err instanceof Error)
+              setListError(err.message || "Failed to fetch user impressions.");
+            else setListError(String(err) || "Failed to fetch user impressions.");
+          })
+          .finally(() => setListLoading(false));
+      }
+      return;
+    }
 
     if (tab === "posts" || tab === "replies") {
       const params: {
@@ -200,7 +342,18 @@ export default function PageBody() {
         })
         .finally(() => setListLoading(false));
     }
-  }, [tab, user?.id, page, oldestFirst, userId, user]);
+  }, [
+    aiMode,
+    aiTab,
+    aiPage,
+    aiOldestFirst,
+    tab,
+    user?.id,
+    page,
+    oldestFirst,
+    userId,
+    user,
+  ]);
 
   useEffect(() => {
     function handler(e: MouseEvent) {
@@ -218,6 +371,18 @@ export default function PageBody() {
   }, []);
 
   useEffect(() => {
+    if (!aiMode) return;
+    requestAnimationFrame(() => requestAnimationFrame(scrollTabsToViewportTop10));
+  }, [aiMode, user?.id, scrollTabsToViewportTop10]);
+
+  useEffect(() => {
+    if (!pendingTabScrollRef.current) return;
+    pendingTabScrollRef.current = false;
+    requestAnimationFrame(() => requestAnimationFrame(scrollTabsToViewportTop10));
+  }, [tab, aiTab, aiMode, scrollTabsToViewportTop10]);
+
+  useEffect(() => {
+    if (aiMode) return;
     try {
       const st = window.history.state as Record<string, unknown> | null;
       const pid =
@@ -252,10 +417,10 @@ export default function PageBody() {
         setPendingRestore({ kind: "user", id: uid, page: Math.max(1, (upg as number) || 1) });
       }
     } catch {}
-  }, [tab]);
+  }, [tab, aiMode]);
 
   useEffect(() => {
-    if (!pendingRestore) return;
+    if (aiMode || !pendingRestore) return;
     if (pendingRestore.page !== page) {
       setQuery({ page: pendingRestore.page, tab, oldestFirst: oldestFirst ? "1" : undefined });
       return;
@@ -279,7 +444,7 @@ export default function PageBody() {
       delete rest[RESTORE_USER_PAGE_KEY];
       window.history.replaceState(rest, "");
     } catch {}
-  }, [pendingRestore, page, listLoading, oldestFirst, tab, setQuery]);
+  }, [aiMode, pendingRestore, page, listLoading, oldestFirst, tab, setQuery]);
 
   async function handleLike(post: Post) {
     const postId = post.id;
@@ -396,11 +561,15 @@ export default function PageBody() {
   }
 
   function handleTabChange(nextTab: (typeof TAB_VALUES)[number]) {
+    const tabChanged = nextTab !== tab;
+    if (tabChanged) pendingTabScrollRef.current = true;
     setQuery({ tab: nextTab, page: 1, oldestFirst: undefined }, { scroll: false });
     setReplyTo(null);
     setReplyBody("");
     setReplyError(null);
-    requestAnimationFrame(() => requestAnimationFrame(scrollTabsToViewportTop10));
+    if (!tabChanged) {
+      requestAnimationFrame(() => requestAnimationFrame(scrollTabsToViewportTop10));
+    }
   }
 
   function handleOldestFirstToggle(checked: boolean) {
@@ -411,9 +580,60 @@ export default function PageBody() {
     requestAnimationFrame(() => requestAnimationFrame(scrollTabsToViewportTop10));
   }
 
+  function handleAiPageChange(nextPage: number) {
+    setAiQuery({
+      aiTab,
+      aiPage: nextPage,
+      aiOldestFirst: aiOldestFirst ? "1" : undefined,
+    });
+    requestAnimationFrame(() => requestAnimationFrame(scrollTabsToViewportTop10));
+  }
+
+  function handleAiTabChange(nextTab: (typeof AI_TAB_VALUES)[number]) {
+    const tabChanged = nextTab !== aiTab;
+    if (tabChanged) pendingTabScrollRef.current = true;
+    setAiQuery({ aiTab: nextTab, aiPage: 1, aiOldestFirst: undefined });
+    if (!tabChanged) {
+      requestAnimationFrame(() => requestAnimationFrame(scrollTabsToViewportTop10));
+    }
+  }
+
+  function handleAiOldestFirstToggle(checked: boolean) {
+    setAiQuery({ aiTab, aiPage: 1, aiOldestFirst: checked ? "1" : undefined });
+    requestAnimationFrame(() => requestAnimationFrame(scrollTabsToViewportTop10));
+  }
+
+  function handleCloseAiImpressions() {
+    const sp = new URLSearchParams(searchParams);
+    sp.delete("view");
+    sp.delete("aiTab");
+    sp.delete("aiPage");
+    sp.delete("aiOldestFirst");
+    const q = sp.toString();
+    router.push(q ? `${pathname}?${q}` : pathname, { scroll: false });
+    requestAnimationFrame(() => requestAnimationFrame(scrollTabsToViewportTop10));
+  }
+
+  function handleViewAiImpressions(target: User | UserDetail) {
+    const targetPath = `/users/${target.id}`;
+    const sp = target.id === user.id ? new URLSearchParams(searchParams) : new URLSearchParams();
+    sp.set("view", "ai-impressions");
+    sp.set("aiTab", "posts");
+    sp.set("aiPage", "1");
+    sp.delete("aiOldestFirst");
+    router.push(`${targetPath}?${sp.toString()}`, { scroll: false });
+  }
+
   return (
     <main className="max-w-3xl mx-auto mt-8 p-1 sm:p-4">
-      <UserCard user={user} truncated={false} focusUserId={userId} clickable={false} />
+      <UserCard
+        user={user}
+        truncated={false}
+        focusUserId={userId}
+        focusUserIsAdmin={!!isAdmin}
+        onViewAiImpressions={handleViewAiImpressions}
+        clickable={false}
+      />
 
       {canEdit && !editing && (
         <div className="mt-4 flex justify-end">
@@ -440,29 +660,67 @@ export default function PageBody() {
         </div>
       )}
 
-      <div ref={tabsRef} className="flex gap-1 mt-6 mb-2">
-        {TAB_VALUES.map((t) => (
-          <button
-            key={t}
-            className={`px-3 max-md:px-1 py-1 rounded-t min-w-0 sm:min-w-[110px] text-sm font-normal cursor-pointer
-              ${tab === t ? "bg-blue-100 text-gray-800" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
-            onClick={() => handleTabChange(t)}
-          >
-            {tabLabel(t)}
-          </button>
-        ))}
-        <label className="flex items-center gap-1 text-sm text-gray-700 cursor-pointer ml-4 max-md:ml-1">
-          <input
-            type="checkbox"
-            checked={oldestFirst}
-            onChange={(e) => handleOldestFirstToggle(e.target.checked)}
-            className="cursor-pointer"
-          />
-          <span className="hidden md:inline">Oldest first</span>
-          <span className="md:hidden scale-x-80 -ml-1" aria-hidden>
-            Oldest
-          </span>
-        </label>
+      <div ref={tabsRef} className="flex gap-1 mt-6 mb-2 items-center">
+        {aiMode ? (
+          <>
+            {AI_TAB_VALUES.map((t) => (
+              <button
+                key={t}
+                className={`px-3 max-md:px-1 py-1 rounded-t min-w-0 sm:min-w-[110px] text-sm font-normal cursor-pointer
+                  ${aiTab === t ? "bg-blue-100 text-gray-800" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
+                onClick={() => handleAiTabChange(t)}
+              >
+                {t === "posts" ? "Posts" : "Users"}
+              </button>
+            ))}
+            <label className="flex items-center gap-1 text-sm text-gray-700 cursor-pointer ml-4 max-md:ml-1">
+              <input
+                type="checkbox"
+                checked={aiOldestFirst}
+                onChange={(e) => handleAiOldestFirstToggle(e.target.checked)}
+                className="cursor-pointer"
+              />
+              <span className="hidden md:inline">Oldest first</span>
+              <span className="md:hidden scale-x-80 -ml-1" aria-hidden>
+                Oldest
+              </span>
+            </label>
+            <button
+              type="button"
+              className="ml-auto px-2 py-1 text-lg leading-none text-gray-500 hover:text-gray-800"
+              onClick={handleCloseAiImpressions}
+              aria-label="Close AI impressions"
+              title="Close"
+            >
+              ×
+            </button>
+          </>
+        ) : (
+          <>
+            {TAB_VALUES.map((t) => (
+              <button
+                key={t}
+                className={`px-3 max-md:px-1 py-1 rounded-t min-w-0 sm:min-w-[110px] text-sm font-normal cursor-pointer
+                  ${tab === t ? "bg-blue-100 text-gray-800" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
+                onClick={() => handleTabChange(t)}
+              >
+                {tabLabel(t)}
+              </button>
+            ))}
+            <label className="flex items-center gap-1 text-sm text-gray-700 cursor-pointer ml-4 max-md:ml-1">
+              <input
+                type="checkbox"
+                checked={oldestFirst}
+                onChange={(e) => handleOldestFirstToggle(e.target.checked)}
+                className="cursor-pointer"
+              />
+              <span className="hidden md:inline">Oldest first</span>
+              <span className="md:hidden scale-x-80 -ml-1" aria-hidden>
+                Oldest
+              </span>
+            </label>
+          </>
+        )}
       </div>
 
       <div>
@@ -470,7 +728,77 @@ export default function PageBody() {
         {listError && <div className="text-red-600">{listError}</div>}
         {!listLoading && !listError && (
           <>
-            {(tab === "posts" || tab === "replies") && (
+            {aiMode && aiTab === "posts" && (
+              <ul className="space-y-3">
+                {aiPostImpressions.length === 0 && (
+                  <li className="text-gray-400 text-center">No post impressions found.</li>
+                )}
+                {aiPostImpressions.map((item) => {
+                  const snippet =
+                    item.postSnippet !== null && item.postSnippet !== undefined
+                      ? makeTextFromJsonSnippet(item.postSnippet)
+                      : null;
+                  return (
+                    <li key={`${item.peerId}:${item.postId}`}>
+                      <div className="rounded border bg-white p-3 shadow-sm">
+                        <div className="flex items-start gap-2 text-sm">
+                          <div className="min-w-0 flex-1">
+                            <a
+                              href={`/users/${item.peerId}`}
+                              className="font-semibold text-blue-700 hover:underline"
+                            >
+                              {item.peerNickname || item.peerId}
+                            </a>
+                            <div className="mt-1">
+                              {snippet !== null ? (
+                                <a
+                                  href={`/posts/${item.postId}`}
+                                  className="text-gray-600 whitespace-pre-wrap hover:underline"
+                                >
+                                  {snippet}
+                                </a>
+                              ) : (
+                                <span className="text-gray-400">deleted</span>
+                              )}
+                            </div>
+                          </div>
+                          <span className="shrink-0 text-xs text-gray-400">
+                            {formatDateTime(new Date(item.updatedAt))}
+                          </span>
+                        </div>
+                        <ImpressionPayloadView payload={item.payload} kind="posts" />
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            {aiMode && aiTab === "users" && (
+              <ul className="space-y-3">
+                {aiPeerImpressions.length === 0 && (
+                  <li className="text-gray-400 text-center">No user impressions found.</li>
+                )}
+                {aiPeerImpressions.map((item) => (
+                  <li key={item.peerId}>
+                    <div className="rounded border bg-white p-3 shadow-sm">
+                      <div className="flex items-start gap-2 text-sm">
+                        <a
+                          href={`/users/${item.peerId}`}
+                          className="min-w-0 flex-1 font-semibold text-blue-700 hover:underline"
+                        >
+                          {item.peerNickname || item.peerId}
+                        </a>
+                        <span className="shrink-0 text-xs text-gray-400">
+                          {formatDateTime(new Date(item.updatedAt))}
+                        </span>
+                      </div>
+                      <ImpressionPayloadView payload={item.payload} kind="users" />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {!aiMode && (tab === "posts" || tab === "replies") && (
               <ul className="space-y-4">
                 {posts.length === 0 && (
                   <li className="text-gray-400 text-center">
@@ -527,7 +855,7 @@ export default function PageBody() {
                 ))}
               </ul>
             )}
-            {tab === "followers" && (
+            {!aiMode && tab === "followers" && (
               <ul className="space-y-4">
                 {followers.length === 0 && (
                   <li className="text-gray-400 text-center">No followers found.</li>
@@ -549,6 +877,8 @@ export default function PageBody() {
                     <UserCard
                       user={u}
                       focusUserId={userId}
+                      focusUserIsAdmin={!!isAdmin}
+                      onViewAiImpressions={handleViewAiImpressions}
                       onClick={() => router.push(`/users/${u.id}`)}
                       idPrefix={`f${idx + 1}-h`}
                     />
@@ -556,7 +886,7 @@ export default function PageBody() {
                 ))}
               </ul>
             )}
-            {tab === "followees" && (
+            {!aiMode && tab === "followees" && (
               <ul className="space-y-4">
                 {followees.length === 0 && (
                   <li className="text-gray-400 text-center">No followees found.</li>
@@ -578,6 +908,8 @@ export default function PageBody() {
                     <UserCard
                       user={u}
                       focusUserId={userId}
+                      focusUserIsAdmin={!!isAdmin}
+                      onViewAiImpressions={handleViewAiImpressions}
                       onClick={() => router.push(`/users/${u.id}`)}
                       idPrefix={`f${idx + 1}-h`}
                     />
@@ -592,15 +924,23 @@ export default function PageBody() {
           <div className="mt-6 flex justify-center gap-4">
             <button
               className="px-3 py-1 rounded border text-gray-800 bg-blue-100 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-              onClick={() => handlePageChange(Math.max(1, page - 1))}
-              disabled={page === 1}
+              onClick={() =>
+                aiMode
+                  ? handleAiPageChange(Math.max(1, aiPage - 1))
+                  : handlePageChange(Math.max(1, page - 1))
+              }
+              disabled={(aiMode ? aiPage : page) === 1}
             >
               Prev
             </button>
-            <span className="text-gray-800">Page {page}</span>
+            <span className="text-gray-800">Page {aiMode ? aiPage : page}</span>
             <button
               className="px-3 py-1 rounded border text-gray-800 bg-blue-100 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-              onClick={() => handlePageChange(hasNext ? page + 1 : page)}
+              onClick={() =>
+                aiMode
+                  ? handleAiPageChange(hasNext ? aiPage + 1 : aiPage)
+                  : handlePageChange(hasNext ? page + 1 : page)
+              }
               disabled={!hasNext}
             >
               Next

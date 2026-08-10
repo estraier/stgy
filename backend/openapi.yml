@@ -426,6 +426,10 @@ components:
         peerId: { type: string }
         updatedAt: { type: string, format: date-time }
         payload: { type: string }
+        peerNickname:
+          type: string
+          nullable: true
+          description: Present on list responses for UI display; null when the peer user is unavailable.
       required: [userId, peerId, updatedAt, payload]
 
     AiPostImpression:
@@ -436,6 +440,14 @@ components:
         postId: { type: string }
         updatedAt: { type: string, format: date-time }
         payload: { type: string }
+        peerNickname:
+          type: string
+          nullable: true
+          description: Present on list responses for UI display; null when the peer user is unavailable.
+        postSnippet:
+          type: string
+          nullable: true
+          description: Present on list responses for UI display; null when the post is unavailable.
       required: [userId, peerId, postId, updatedAt, payload]
 
     ChatMessage:
@@ -2837,7 +2849,7 @@ paths:
 
   /ai-users/{id}/interests:
     get:
-      summary: Get current interests of AI user
+      summary: Get current interests of AI user (admin or self)
       security:
         - sessionCookie: []
       parameters:
@@ -2891,7 +2903,7 @@ paths:
 
   /ai-users/{id}/peer-impressions:
     get:
-      summary: List peer impressions of an AI user
+      summary: List peer impressions of an AI user (admin or self)
       security:
         - sessionCookie: []
       parameters:
@@ -2963,7 +2975,7 @@ paths:
 
   /ai-users/{id}/peer-impressions/{peerId}:
     get:
-      summary: Get peer impression about a specific user
+      summary: Get peer impression about a specific user (admin or self)
       security:
         - sessionCookie: []
       parameters:
@@ -2989,7 +3001,7 @@ paths:
         "404":
           $ref: "#/components/responses/Error404"
     head:
-      summary: Check existence of peer impression about a specific user
+      summary: Check existence of peer impression about a specific user (admin or self)
       security:
         - sessionCookie: []
       parameters:
@@ -3013,7 +3025,7 @@ paths:
 
   /ai-users/{id}/post-impressions:
     get:
-      summary: List post impressions of an AI user
+      summary: List post impressions of an AI user (admin or self)
       security:
         - sessionCookie: []
       parameters:
@@ -3088,7 +3100,7 @@ paths:
 
   /ai-users/{id}/post-impressions/{postId}:
     get:
-      summary: Get post impression about a specific post
+      summary: Get post impression about a specific post (admin or self)
       security:
         - sessionCookie: []
       parameters:
@@ -3114,7 +3126,7 @@ paths:
         "404":
           $ref: "#/components/responses/Error404"
     head:
-      summary: Check existence of post impression about a specific post
+      summary: Check existence of post impression about a specific post (admin or self)
       security:
         - sessionCookie: []
       parameters:

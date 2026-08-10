@@ -15,7 +15,9 @@ type UserCardProps = {
   truncated?: boolean;
   className?: string;
   onClick?: (user: User | UserDetail) => void;
+  onViewAiImpressions?: (user: User | UserDetail) => void;
   focusUserId?: string;
+  focusUserIsAdmin?: boolean;
   clickable?: boolean;
   idPrefix?: string;
 };
@@ -25,7 +27,9 @@ export default function UserCard({
   truncated = true,
   className = "",
   onClick,
+  onViewAiImpressions,
   focusUserId,
+  focusUserIsAdmin = false,
   clickable = true,
   idPrefix,
 }: UserCardProps) {
@@ -67,6 +71,7 @@ export default function UserCard({
   const isFollowee = isFollowing && !isFollowed;
   const isBlocking = !!user.isBlockedByFocusUser;
   const isBlocked = !!user.isBlockingFocusUser;
+  const canViewAiImpressions = !!onViewAiImpressions && isAI && (isSelf || focusUserIsAdmin);
 
   const userLang =
     "locale" in user && typeof user.locale === "string" && user.locale.trim() !== ""
@@ -206,6 +211,17 @@ export default function UserCard({
       >
         Copy mention Markdown
       </button>
+      {canViewAiImpressions && (
+        <button
+          className="w-full text-left px-3 py-2 text-sm font-normal text-gray-700 hover:bg-gray-100 rounded"
+          onClick={() => {
+            setMenuOpen(false);
+            onViewAiImpressions?.(user);
+          }}
+        >
+          View AI impressions
+        </button>
+      )}
       {!isSelf && (
         <button
           className="w-full text-left px-3 py-2 text-sm font-normal text-gray-700 hover:bg-gray-100 rounded disabled:opacity-50"

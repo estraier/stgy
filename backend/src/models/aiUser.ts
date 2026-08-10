@@ -84,6 +84,7 @@ export type AiPeerImpression = {
   peerId: string;
   updatedAt: string;
   payload: string;
+  peerNickname?: string | null;
 };
 
 export type AiPeerImpressionFilter = {
@@ -105,6 +106,8 @@ export type AiPostImpression = {
   postId: string;
   updatedAt: string;
   payload: string;
+  peerNickname?: string | null;
+  postSnippet?: string | null;
 };
 
 export type AiPostImpressionFilter = {

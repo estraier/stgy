@@ -664,6 +664,16 @@ def test_ai_users():
   assert "updatedAt" in got
   sess = get_session(session_id)
   admin_id = sess["userId"]
+  res = requests.post(
+    f"{BASE_URL}/auth/switch-user",
+    json={"id": ai_user_id},
+    headers=headers,
+    cookies=cookies,
+  )
+  assert res.status_code == 200, res.text
+  ai_session_id = res.cookies.get("session_id")
+  assert ai_session_id, "switch-user did not return session_id"
+  ai_cookies = {"session_id": ai_session_id}
   chat_body = {"model": ai_model_label, "messages": [{"role": "user", "content": "Just echo back 'Hello World'."}]}
   res = requests.post(f"{BASE_URL}/ai-users/chat", json=chat_body, headers=headers, cookies=cookies)
   if res.status_code == 501:
@@ -690,6 +700,8 @@ def test_ai_users():
     assert all(isinstance(x, int) and -128 <= x <= 127 for x in xs)
   res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/interests", headers=headers, cookies=cookies)
   assert res.status_code == 404, res.text
+  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/interests", headers=headers, cookies=ai_cookies)
+  assert res.status_code == 404, res.text
   interest_text = "I am currently interested in integration tests"
   interest_tags = ["integration", "tests"]
   feats = [((i * 17 + 3) % 255 - 127) for i in range(256)]
@@ -706,16 +718,22 @@ def test_ai_users():
   assert b64_to_int8_list(saved_interest["features"]) == feats_i8
   res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/interests", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
+  assert res.json() == saved_interest
+  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/interests", headers=headers, cookies=ai_cookies)
+  assert res.status_code == 200, res.text
   got_interest = res.json()
   assert got_interest == saved_interest
   res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions?limit=10&offset=0&order=desc", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
+  assert res.json() == []
+  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions?limit=10&offset=0&order=desc", headers=headers, cookies=ai_cookies)
+  assert res.status_code == 200, res.text
   peer_impressions = res.json()
   assert isinstance(peer_impressions, list)
   assert len(peer_impressions) == 0
-  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions/{admin_id}", headers=headers, cookies=cookies)
+  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions/{admin_id}", headers=headers, cookies=ai_cookies)
   assert res.status_code == 404, res.text
-  res = requests.head(f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions/{admin_id}", headers=headers, cookies=cookies)
+  res = requests.head(f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions/{admin_id}", headers=headers, cookies=ai_cookies)
   assert res.status_code == 404, res.text
   peer_body = {"peerId": admin_id, "payload": "admin user looks reliable"}
   res = requests.post(f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions", json=peer_body, headers=headers, cookies=cookies)
@@ -726,18 +744,23 @@ def test_ai_users():
   assert saved_peer["payload"] == peer_body["payload"]
   if "updatedAt" in saved_peer:
     assert isinstance(saved_peer["updatedAt"], str) and len(saved_peer["updatedAt"]) > 0
+  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions/{admin_id}", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  assert res.json()["payload"] == peer_body["payload"]
   res = requests.head(f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions/{admin_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
-  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions?limit=10&offset=0&order=desc", headers=headers, cookies=cookies)
+  res = requests.head(f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions/{admin_id}", headers=headers, cookies=ai_cookies)
+  assert res.status_code == 200, res.text
+  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions?limit=10&offset=0&order=desc", headers=headers, cookies=ai_cookies)
   assert res.status_code == 200, res.text
   peer_impressions = res.json()
   assert any(p["peerId"] == admin_id for p in peer_impressions)
-  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions?limit=10&offset=0&order=desc&peerId={admin_id}", headers=headers, cookies=cookies)
+  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions?limit=10&offset=0&order=desc&peerId={admin_id}", headers=headers, cookies=ai_cookies)
   assert res.status_code == 200, res.text
   filtered_peer_impressions = res.json()
   assert len(filtered_peer_impressions) == 1
   assert filtered_peer_impressions[0]["peerId"] == admin_id
-  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions/{admin_id}", headers=headers, cookies=cookies)
+  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions/{admin_id}", headers=headers, cookies=ai_cookies)
   assert res.status_code == 200, res.text
   got_peer = res.json()
   assert got_peer["peerId"] == admin_id
@@ -751,12 +774,15 @@ def test_ai_users():
   print(f"[ai_users] created post for impression test: {post}")
   res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions?limit=10&offset=0&order=desc", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
+  assert res.json() == []
+  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions?limit=10&offset=0&order=desc", headers=headers, cookies=ai_cookies)
+  assert res.status_code == 200, res.text
   post_impressions = res.json()
   assert isinstance(post_impressions, list)
   assert len(post_impressions) == 0
-  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions/{post_id}", headers=headers, cookies=cookies)
+  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions/{post_id}", headers=headers, cookies=ai_cookies)
   assert res.status_code == 404, res.text
-  res = requests.head(f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions/{post_id}", headers=headers, cookies=cookies)
+  res = requests.head(f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions/{post_id}", headers=headers, cookies=ai_cookies)
   assert res.status_code == 404, res.text
   post_imp_body = {"postId": post_id, "payload": "this post looks great"}
   res = requests.post(f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions", json=post_imp_body, headers=headers, cookies=cookies)
@@ -768,31 +794,36 @@ def test_ai_users():
   assert saved_post_imp["payload"] == post_imp_body["payload"]
   if "updatedAt" in saved_post_imp:
     assert isinstance(saved_post_imp["updatedAt"], str) and len(saved_post_imp["updatedAt"]) > 0
+  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions/{post_id}", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  assert res.json()["payload"] == post_imp_body["payload"]
   res = requests.head(f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions/{post_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
-  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions?limit=10&offset=0&order=desc", headers=headers, cookies=cookies)
+  res = requests.head(f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions/{post_id}", headers=headers, cookies=ai_cookies)
+  assert res.status_code == 200, res.text
+  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions?limit=10&offset=0&order=desc", headers=headers, cookies=ai_cookies)
   assert res.status_code == 200, res.text
   post_impressions = res.json()
   assert any(p["postId"] == post_id and p["peerId"] == owner_id for p in post_impressions)
-  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions?limit=10&offset=0&order=desc&postId={post_id}", headers=headers, cookies=cookies)
+  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions?limit=10&offset=0&order=desc&postId={post_id}", headers=headers, cookies=ai_cookies)
   assert res.status_code == 200, res.text
   filtered_post_impressions = res.json()
   assert len(filtered_post_impressions) == 1
   assert filtered_post_impressions[0]["postId"] == post_id
   assert filtered_post_impressions[0]["peerId"] == owner_id
-  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions?limit=10&offset=0&order=desc&peerId={owner_id}", headers=headers, cookies=cookies)
+  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions?limit=10&offset=0&order=desc&peerId={owner_id}", headers=headers, cookies=ai_cookies)
   assert res.status_code == 200, res.text
   by_peer = res.json()
   assert len(by_peer) >= 1
   assert any(p["postId"] == post_id and p["peerId"] == owner_id for p in by_peer)
-  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions?limit=10&offset=0&order=desc&peerId={owner_id}&postId={post_id}", headers=headers, cookies=cookies)
+  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions?limit=10&offset=0&order=desc&peerId={owner_id}&postId={post_id}", headers=headers, cookies=ai_cookies)
   assert res.status_code == 200, res.text
   by_peer_and_post = res.json()
   assert len(by_peer_and_post) == 1
   assert by_peer_and_post[0]["userId"] == ai_user_id
   assert by_peer_and_post[0]["peerId"] == owner_id
   assert by_peer_and_post[0]["postId"] == post_id
-  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions/{post_id}", headers=headers, cookies=cookies)
+  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions/{post_id}", headers=headers, cookies=ai_cookies)
   assert res.status_code == 200, res.text
   got_post_imp = res.json()
   assert got_post_imp["postId"] == post_id
@@ -801,6 +832,7 @@ def test_ai_users():
   res = requests.delete(f"{BASE_URL}/posts/{post_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   print("[ai_users] cleanup post deleted")
+  logout(ai_session_id)
   res = requests.delete(f"{BASE_URL}/users/{ai_user_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   print("[ai_users] cleanup user deleted")

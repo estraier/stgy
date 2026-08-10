@@ -43,6 +43,8 @@ export default function PageBody() {
   );
 
   const userId = status.state === "authenticated" ? status.session.userId : undefined;
+  const focusUserIsAdmin =
+    status.state === "authenticated" && status.session.userIsAdmin;
   const userLocale = status.state === "authenticated" ? status.session.userLocale : "en";
 
   const isSearchMode = useMemo(
@@ -367,6 +369,13 @@ export default function PageBody() {
               <UserCard
                 user={user}
                 focusUserId={userId}
+                focusUserIsAdmin={focusUserIsAdmin}
+                onViewAiImpressions={(target) =>
+                  router.push(
+                    `/users/${target.id}?view=ai-impressions&aiTab=posts&aiPage=1`,
+                    { scroll: false },
+                  )
+                }
                 onClick={() => location.assign(`/users/${user.id}`)}
                 idPrefix={`u${idx + 1}-h`}
               />
