@@ -903,14 +903,13 @@ export default function createUsersRouter(
   return router;
 }
 
-function maskUserSensitiveInfo<T extends { id: string; email: string }>(
-  user: T,
-  isAdmin: boolean,
-  loginUserId: string,
-): T {
+function maskUserSensitiveInfo<
+  T extends { id: string; email: string; aiPersonality: string | null },
+>(user: T, isAdmin: boolean, loginUserId: string): T {
   if (!user) return user;
   if (isAdmin || user.id === loginUserId) return user;
   const masked = { ...user };
   masked.email = maskEmailByHash(user.email);
+  if (user.aiPersonality !== null) masked.aiPersonality = "";
   return masked;
 }

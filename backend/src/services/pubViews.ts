@@ -24,9 +24,9 @@ const MAX_ACCESS_COUNT = 2_147_483_647;
 const logger = createLogger({ file: "pub-views-service" });
 
 const PUB_ACCESS_CHECKPOINTS = (() => {
-  const checkpoints = new Set<number>([4, 8, 12]);
-  for (let n = 0; ; n++) {
-    const count = Math.round(16 * Math.pow(2, n / 4));
+  const checkpoints = new Set<number>([4, 8, 12, 16, 20, 24, 28, 32]);
+  for (let n = 1; ; n++) {
+    const count = Math.round(32 * Math.pow(2, n / 4));
     if (count > MAX_ACCESS_COUNT) break;
     checkpoints.add(count);
   }

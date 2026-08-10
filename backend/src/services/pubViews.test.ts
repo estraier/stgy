@@ -211,6 +211,40 @@ describe("PubViewsService", () => {
     });
 
     expect(pg2.queries).toHaveLength(0);
+
+    for (const count of [20, 24, 28, 32, 38, 45, 54, 64]) {
+      const pgN = new FakePgPool();
+      const redisN = new FakeRedis();
+      redisN.recordResult = count;
+      const serviceN = new PubViewsService(asPool(pgN), asRedis(redisN));
+      await serviceN.recordView({
+        ownerId: OWNER_ID,
+        postId: POST_ID,
+        publishedAt: "2026-08-01T00:00:00.000Z",
+        digest: "digest",
+        fingerprintHex: "090a0b0c",
+        now: new Date("2026-08-06T12:00:00.000Z"),
+      });
+      expect(
+        pgN.queries.some((q) => /INSERT INTO post_pub_access_counts/i.test(q.sql)),
+      ).toBe(true);
+    }
+
+    for (const count of [19, 23, 27]) {
+      const pgN = new FakePgPool();
+      const redisN = new FakeRedis();
+      redisN.recordResult = count;
+      const serviceN = new PubViewsService(asPool(pgN), asRedis(redisN));
+      await serviceN.recordView({
+        ownerId: OWNER_ID,
+        postId: POST_ID,
+        publishedAt: "2026-08-01T00:00:00.000Z",
+        digest: "digest",
+        fingerprintHex: "0d0e0f10",
+        now: new Date("2026-08-06T12:00:00.000Z"),
+      });
+      expect(pgN.queries).toHaveLength(0);
+    }
   });
 
   test("the first checkpoint synchronizes all available Redis days for the post", async () => {

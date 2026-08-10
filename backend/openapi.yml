@@ -198,11 +198,16 @@ components:
         - $ref: "#/components/schemas/User"
         - type: object
           properties:
-            email: { type: string }
+            email:
+              type: string
+              description: GET /users/{id} may return a masked value when the viewer is neither admin nor self.
             locale: { type: string }
             timezone: { type: string }
             introduction: { type: string }
-            aiPersonality: { type: string, nullable: true }
+            aiPersonality:
+              type: string
+              nullable: true
+              description: AI personality. GET /users/{id} returns an empty string when set and the viewer is neither admin nor self.
           required: [email, locale, timezone, introduction, aiPersonality]
 
     UserLite:
@@ -370,11 +375,15 @@ components:
         - $ref: "#/components/schemas/AiUser"
         - type: object
           properties:
-            email: { type: string }
+            email:
+              type: string
+              description: GET /ai-users/{id} may return a masked value when the viewer is neither admin nor self.
             createdAt: { type: string, format: date-time }
             updatedAt: { type: string, format: date-time, nullable: true }
             introduction: { type: string }
-            aiPersonality: { type: string }
+            aiPersonality:
+              type: string
+              description: AI personality. GET /ai-users/{id} returns an empty string when the viewer is neither admin nor self.
           required: [email, createdAt, updatedAt, introduction, aiPersonality]
 
     AiUserInterest:
@@ -1691,7 +1700,7 @@ paths:
           schema: { type: string }
       responses:
         "200":
-          description: User info (email may be masked if not admin and not self)
+          description: User info (email may be masked and aiPersonality is blank when the viewer is neither admin nor self)
           content:
             application/json:
               schema:
@@ -2760,7 +2769,7 @@ paths:
           schema: { type: string }
       responses:
         "200":
-          description: AI user detail
+          description: AI user detail (email may be masked and aiPersonality is blank when the viewer is neither admin nor self)
           content:
             application/json:
               schema:

@@ -7,7 +7,7 @@ import { UsersService } from "../services/users";
 import { AuthService } from "../services/auth";
 import { DailyTimerThrottleService } from "../services/throttle";
 import { AuthHelpers } from "./authHelpers";
-import { int8ToBase64, base64ToInt8 } from "../utils/format";
+import { int8ToBase64, base64ToInt8, maskEmailByHash } from "../utils/format";
 import type { ChatRequest } from "../models/aiUser";
 import { createLogger } from "../utils/logger";
 
@@ -215,9 +215,10 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
       return res.status(403).json({ error: "too often operations" });
     }
     const watch = timerThrottleService.startWatch(loginUser);
-    const user = await aiUsersService.getAiUser(req.params.id);
+    let user = await aiUsersService.getAiUser(req.params.id);
     watch.done();
     if (!user) return res.status(404).json({ error: "not found" });
+    user = maskAiUserSensitiveInfo(user, loginUser.isAdmin, loginUser.id);
     res.json(user);
   });
 
@@ -532,4 +533,15 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
   });
 
   return router;
+}
+
+function maskAiUserSensitiveInfo<
+  T extends { id: string; email: string; aiPersonality: string },
+>(user: T, isAdmin: boolean, loginUserId: string): T {
+  if (isAdmin || user.id === loginUserId) return user;
+  return {
+    ...user,
+    email: maskEmailByHash(user.email),
+    aiPersonality: "",
+  };
 }

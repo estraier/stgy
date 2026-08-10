@@ -72,6 +72,7 @@ export default function UserCard({
   const isBlocking = !!user.isBlockedByFocusUser;
   const isBlocked = !!user.isBlockingFocusUser;
   const canViewAiImpressions = !!onViewAiImpressions && isAI && (isSelf || focusUserIsAdmin);
+  const canViewAiPersonality = isSelf || focusUserIsAdmin;
 
   const userLang =
     "locale" in user && typeof user.locale === "string" && user.locale.trim() !== ""
@@ -400,6 +401,7 @@ export default function UserCard({
       )}
 
       {!truncated &&
+        canViewAiPersonality &&
         "aiPersonality" in user &&
         user.aiPersonality &&
         user.aiPersonality.trim() !== "" && (
