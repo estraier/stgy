@@ -25,12 +25,12 @@ while [ "$#" -gt 0 ]; do
       shift
       ;;
     -h|--help)
-      echo "Usage: $0 [--mode docker|native] [--insecure-password]"
+      echo "Usage: $0 [--mode docker|native] [--core-only] [--insecure-password]"
       exit 0
       ;;
     *)
       echo "Unknown option: $1" >&2
-      echo "Usage: $0 [--mode docker|native] [--insecure-password]" >&2
+      echo "Usage: $0 [--mode docker|native] [--core-only] [--insecure-password]" >&2
       exit 2
       ;;
   esac
@@ -52,20 +52,23 @@ cd "$PROJECT_ROOT"
 ./scripts/reset-minio-data.sh --mode "$MODE"
 ./scripts/reset-ttts-data.sh --mode "$MODE"
 
-INSECURE_OPTTONS=""
-if [ "$INSECURE_PASSWORD" = true ]; then
-  INSECURE_OPTTONS="--insecure-password"
-  ./scripts/edit-users.py seeder/user-0*.txt
-fi
+edit_users() {
+  if [ "$INSECURE_PASSWORD" = true ]; then
+    ./scripts/edit-users.py --insecure-password "$@"
+  else
+    ./scripts/edit-users.py "$@"
+  fi
+}
+
 if [ "$CORE_ONLY" = true ]; then
-  ./scripts/edit-users.py $INSECURE_OPTTONS seeder/user-000[0-2]*.txt
-  ./scripts/edit-agreement.py seeder/agreement-*.json
-  ./scripts/edit-posts.py seeder/post-000[0-4]*.txt
-  ./scripts/user-actions.py seeder/action-00001.txt
+  edit_users seeder/user-core-*.txt
+  ./scripts/edit-agreement.py seeder/agreement-core-*.json
+  ./scripts/edit-posts.py seeder/post-core-*.txt
+  ./scripts/user-actions.py seeder/action-core-*.txt
 else
-  ./scripts/edit-users.py $INSECURE_OPTTONS seeder/user-0*.txt
-  ./scripts/edit-agreement.py seeder/agreement-*.json
-  ./scripts/edit-posts.py seeder/post-0*.txt
-  ./scripts/user-actions.py seeder/action-*.txt
-  ./scripts/edit-posts.py seeder/post-x0*.txt
+  edit_users seeder/user-core-*.txt seeder/user-test-*.txt
+  ./scripts/edit-agreement.py seeder/agreement-core-*.json
+  ./scripts/edit-posts.py seeder/post-core-*.txt seeder/post-test-*.txt
+  ./scripts/user-actions.py seeder/action-core-*.txt seeder/action-test*.txt
+  ./scripts/edit-posts.py seeder/post-after-actions-*.txt
 fi

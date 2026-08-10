@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-DEFAULT_OWNER = "0001000000000001"
+DEFAULT_OWNER = "0000000000000001"
 JST = timezone(timedelta(hours=9))
 IMAGE_URL_PREFIX = "https://dbmx.net/hourou/data/"
 HEREDOC_BASE = "____EOF____"

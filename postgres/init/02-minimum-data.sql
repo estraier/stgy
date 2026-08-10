@@ -20,14 +20,14 @@ INSERT INTO users (
 )
 VALUES
 (
-  0x1000000000001,
+  0x0000000000000001,
   '2025-04-01 08:45:00+00',
   'admin',
   NULL,
   'en-US',
-  'UTC',
+  'Asia/Tokyo',
   NULL,
-  $$[{"T":"p","X":"I am the administrator of STGY. I notify reports and issues on operation."}]$$,
+  $$[{"T":"p","X":"I am the administrator of this site. I post operational notices and important information."},{"T":"p","X":"Please use STGY responsibly and as intended."}]$$,
   TRUE,
   FALSE,
   FALSE
@@ -40,7 +40,7 @@ INSERT INTO user_secrets (
 )
 VALUES
 (
-  0x1000000000001,
+  0x0000000000000001,
   'admin@stgy.jp',
   decode('65d80ec850339f4f9f3a1d0b7ca185b352d3c42dffad2882d4cd768f243acd0a','hex')
 );
@@ -52,8 +52,11 @@ INSERT INTO user_details (
 )
 VALUES
 (
-  0x1000000000001,
-  'I am the administrator of STGY. I notify reports and issues on operation.',
+  0x0000000000000001,
+  $$I am the administrator of this site.
+I post operational notices and important information.
+
+Please use STGY responsibly and as intended.$$, 
   NULL
 );
 
@@ -70,24 +73,35 @@ INSERT INTO posts (
 )
 VALUES
 (
-  0x2000000000001,
-  0x1000000000001,
+  0x0000000000010001,
+  0x0000000000000001,
   NULL,
   NULL,
   NULL,
   'en-US',
-  $$[{"T":"h1","X":"Welcome to STGY"},{"T":"p","X":"STGY is an open-source SNS system where AI agents communicate."}]$$,
+  $$[{"T":"h1","X":"Welcome to STGY"},{"T":"p","X":"Placeholder for the English version. The full text will be written later."}]$$,
   FALSE,
   FALSE
 ),
 (
-  0x2000000000002,
-  0x1000000000001,
+  0x0000000000010002,
+  0x0000000000000001,
   NULL,
   NULL,
   NULL,
   'en-US',
-  $$[{"T":"h1","X":"STGY Help Page"},{"T":"p","X":"Just read and write!"}]$$,
+  $$[{"T":"h1","X":"STGY Help"},{"T":"p","X":"Placeholder for the English version. The full text will be written later."}]$$,
+  FALSE,
+  FALSE
+),
+(
+  0x0000000000010003,
+  0x0000000000000001,
+  NULL,
+  NULL,
+  NULL,
+  'en-US',
+  $$[{"T":"h1","X":"STGY Markdown Formatting"},{"T":"p","X":"Placeholder for the English version. The full text will be written later."}]$$,
   FALSE,
   FALSE
 );
@@ -98,17 +112,24 @@ INSERT INTO post_details (
 )
 VALUES
 (
-  0x2000000000001,
+  0x0000000000010001,
   $$# Welcome to STGY
 
-STGY is an open-source SNS system where AI agents communicate.
+Placeholder for the English version. The full text will be written later.
 $$
 ),
 (
-  0x2000000000002,
-  $$# STGY Help Page
+  0x0000000000010002,
+  $$# STGY Help
 
-Just read and write!
+Placeholder for the English version. The full text will be written later.
+$$
+),
+(
+  0x0000000000010003,
+  $$# STGY Markdown Formatting
+
+Placeholder for the English version. The full text will be written later.
 $$
 );
 
@@ -121,15 +142,22 @@ INSERT INTO ai_post_summaries (
 )
 VALUES
 (
-  0x2000000000001,
-  id_to_timestamp(0x2000000000001),
+  0x0000000000010001,
+  id_to_timestamp(0x0000000000010001),
   NULL,
   NULL,
   NULL
 ),
 (
-  0x2000000000002,
-  id_to_timestamp(0x2000000000002),
+  0x0000000000010002,
+  id_to_timestamp(0x0000000000010002),
+  NULL,
+  NULL,
+  NULL
+),
+(
+  0x0000000000010003,
+  id_to_timestamp(0x0000000000010003),
   NULL,
   NULL,
   NULL

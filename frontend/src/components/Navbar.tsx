@@ -14,6 +14,7 @@ export default function Navbar() {
   const [nickname, setNickname] = useState<string>("");
   const [userId, setUserId] = useState<string>("");
   const [isAdmin, setIsAdmin] = useState(false);
+  const [userLocale, setUserLocale] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchValue, setSearchValue] = useState("");
   const router = useRouter();
@@ -29,6 +30,7 @@ export default function Navbar() {
           setNickname(user.userNickname || "");
           setUserId(user.userId || "");
           setIsAdmin(!!user.userIsAdmin);
+          setUserLocale(user.userLocale || "");
         }
       })
       .catch(() => {
@@ -37,6 +39,7 @@ export default function Navbar() {
           setNickname("");
           setUserId("");
           setIsAdmin(false);
+          setUserLocale("");
         }
       });
     return () => {
@@ -220,7 +223,7 @@ export default function Navbar() {
               </Link>
             )}
             <Link
-              href={Config.HELP_PAGE_PATH}
+              href={Config.helpPagePath(userLocale)}
               className="block w-full px-4 py-2 text-left hover:bg-gray-100"
               onClick={() => setMenuOpen(false)}
             >
@@ -235,6 +238,7 @@ export default function Navbar() {
                 setNickname("");
                 setUserId("");
                 setIsAdmin(false);
+                setUserLocale("");
                 window.location.href = "/";
               }}
             >

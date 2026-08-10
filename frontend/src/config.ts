@@ -105,8 +105,16 @@ export class Config {
     ".fit,.gpx,.trj,.trjgz,application/vnd.ant.fit,application/gpx+xml," +
     "application/json,application/geo+json,application/octet-stream," +
     "application/gzip,application/x-gzip";
-  static readonly WELCOME_PAGE_PATH = "/posts/0002000000000001";
-  static readonly HELP_PAGE_PATH = "/posts/0002000000000002";
+  static welcomePagePath(locale?: string | null): string {
+    return locale?.toLowerCase().startsWith("ja")
+      ? "/posts/0000000000020001"
+      : "/posts/0000000000010001";
+  }
+  static helpPagePath(locale?: string | null): string {
+    return locale?.toLowerCase().startsWith("ja")
+      ? "/posts/0000000000020002"
+      : "/posts/0000000000010002";
+  }
   static readonly PUB_DESIGN_THEMES = [
     "default",
     "newspaper",

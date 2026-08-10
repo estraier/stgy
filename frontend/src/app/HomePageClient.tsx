@@ -46,7 +46,7 @@ export default function HomePageClient() {
           } catch {}
         }
 
-        const target = shouldWelcome ? Config.WELCOME_PAGE_PATH : "/posts";
+        const target = shouldWelcome ? Config.welcomePagePath(s.userLocale) : "/posts";
 
         setPhase("redirecting");
 
