@@ -112,6 +112,12 @@ function truncateText(text: string, max: number): string {
   return sliceByPseudoTokens(text, 0, max) + "…";
 }
 
+function fluctuatePostLength(baseLength: number): number {
+  const ratio = Config.AI_USER_POST_LENGTH_FLUCTUATION_RATIO;
+  const factor = Math.exp((Math.random() * 2 - 1) * Math.log(ratio));
+  return baseLength * factor;
+}
+
 function parseDateMs(s: string): number | null {
   const ms = Date.parse(s);
   if (!Number.isFinite(ms)) return null;
@@ -1259,7 +1265,7 @@ async function replyToPost(
     peerImpression: peerImpressionText,
   };
   const postJson = JSON.stringify(postExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
-  let maxChars = Config.AI_USER_NEW_POST_LENGTH;
+  let maxChars = fluctuatePostLength(Config.AI_USER_REPLY_LENGTH);
   let tagChars = Config.AI_TAG_MAX_LENGTH;
   let tagNum = Math.max(2, Config.AI_USER_NEW_POST_TAGS);
   tagNum = Math.min(tagNum, Config.AI_TAG_MAX_COUNT);
@@ -1271,9 +1277,10 @@ async function replyToPost(
     locale === "ko" ||
     locale.startsWith("ko-")
   ) {
-    maxChars = Math.ceil(maxChars * 0.5);
+    maxChars *= 0.5;
     tagChars = Math.ceil(tagChars * 0.5);
   }
+  maxChars = Math.round(maxChars / 50) * 50;
   let localeText = locale;
   if (locale === "en" || locale.startsWith("en-")) localeText = `English (${locale})`;
   if (locale === "ja" || locale.startsWith("ja-")) localeText = `日本語（${locale}）`;
@@ -1896,7 +1903,7 @@ async function createNewPost(
   }
   const postExcerpt = { posts };
   const postJson = JSON.stringify(postExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
-  let maxChars = Config.AI_USER_NEW_POST_LENGTH;
+  let maxChars = fluctuatePostLength(Config.AI_USER_NEW_POST_LENGTH);
   let tagChars = Config.AI_TAG_MAX_LENGTH;
   const tagNum = Math.min(Config.AI_USER_NEW_POST_TAGS, Config.AI_TAG_MAX_COUNT);
   if (
@@ -1907,9 +1914,10 @@ async function createNewPost(
     locale === "ko" ||
     locale.startsWith("ko-")
   ) {
-    maxChars = Math.ceil(maxChars * 0.5);
+    maxChars *= 0.5;
     tagChars = Math.ceil(tagChars * 0.5);
   }
+  maxChars = Math.round(maxChars / 100) * 100;
   let localeText = locale;
   if (locale === "en" || locale.startsWith("en-")) localeText = `English (${locale})`;
   if (locale === "ja" || locale.startsWith("ja-")) localeText = `日本語（${locale}）`;

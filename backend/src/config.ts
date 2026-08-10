@@ -278,6 +278,11 @@ export class Config {
     0.5,
   );
   static readonly AI_USER_NEW_POST_LENGTH = envNum("STGY_AI_USER_NEW_POST_LENGTH", 2000);
+  static readonly AI_USER_REPLY_LENGTH = envNum("STGY_AI_USER_REPLY_LENGTH", 1000);
+  static readonly AI_USER_POST_LENGTH_FLUCTUATION_RATIO = envNum(
+    "STGY_AI_USER_POST_LENGTH_FLUCTUATION_RATIO",
+    2,
+  );
   static readonly AI_USER_NEW_POST_TAGS = envNum("STGY_AI_USER_NEW_POST_TAGS", 3);
   static readonly AI_USER_OUTPUT_TEXT_LIMIT = envNum("STGY_AI_USER_OUTPUT_TEXT_LIMIT", 10000);
   static readonly AI_USER_FOLLOWEES_LIMIT = envNum("STGY_AI_USER_FOLLOWEES_LIMIT", 30);
