@@ -266,31 +266,35 @@ export default function PageBody() {
     }
   }
 
-  async function onFreezeUsers() {
+  async function onToggleFrozenUsers() {
     const ids = Array.from(selectedUsers);
     if (ids.length === 0 || busy) return;
-    if (!window.confirm(`Freeze ${ids.length} selected ${plural(ids.length, "user")}?`)) return;
+    const selectedRows = users.filter((user) => selectedUsers.has(user.id));
+    const unfreeze = selectedRows.length === ids.length && selectedRows.every((user) => user.isFrozen);
+    const action = unfreeze ? "Unfreeze" : "Freeze";
+    if (!window.confirm(`${action} ${ids.length} selected ${plural(ids.length, "user")}?`)) return;
+
     const selfId = session?.userId;
-    const orderedIds = selfId && ids.includes(selfId)
+    const orderedIds = !unfreeze && selfId && ids.includes(selfId)
       ? [...ids.filter((id) => id !== selfId), selfId]
       : ids;
     setBusy(true);
     setError(null);
     try {
       for (const id of orderedIds) {
-        const updated = await updateUser(id, { isFrozen: true });
-        if (!updated.isFrozen) {
-          throw new Error(`User ${id} was not frozen.`);
+        const updated = await updateUser(id, { isFrozen: !unfreeze });
+        if (updated.isFrozen === unfreeze) {
+          throw new Error(`User ${id} was not ${unfreeze ? "unfrozen" : "frozen"}.`);
         }
       }
       setSelectedUsers(new Set());
-      if (selfId && ids.includes(selfId)) {
+      if (!unfreeze && selfId && ids.includes(selfId)) {
         window.location.assign("/");
         return;
       }
       await loadUsersFromStart(Math.max(PAGE_SIZE, users.length));
     } catch (e) {
-      setError(e ? String(e) : "Failed to freeze users.");
+      setError(e ? String(e) : `Failed to ${unfreeze ? "unfreeze" : "freeze"} users.`);
       setSelectedUsers(new Set());
       try {
         await loadUsersFromStart(Math.max(PAGE_SIZE, users.length));
@@ -446,6 +450,9 @@ export default function PageBody() {
   const selectedUsersContainSelf = Boolean(
     session && selectedUsers.has(session.userId),
   );
+  const allSelectedUsersFrozen = selectedUsers.size > 0 &&
+    users.filter((user) => selectedUsers.has(user.id)).length === selectedUsers.size &&
+    users.filter((user) => selectedUsers.has(user.id)).every((user) => user.isFrozen);
 
   const postDigests = useMemo(
     () => new Map(posts.map((post) => [post.id, makeDigest(post.snippet)])),
@@ -780,9 +787,9 @@ export default function PageBody() {
                     type="button"
                     className={neutralButton}
                     disabled={busy || selectedUsers.size === 0}
-                    onClick={() => void onFreezeUsers()}
+                    onClick={() => void onToggleFrozenUsers()}
                   >
-                    Freeze
+                    {allSelectedUsersFrozen ? "Unfreeze" : "Freeze"}
                   </button>
                   <button
                     type="button"
