@@ -29,7 +29,7 @@ If a reply intentionally has no stable ID and its ID is generated at import time
 - `...0001-0099`: administrators
 - `...0101-0499`: fixed users
 - `...0501-0599`: ordinary test users
-- `...0601-0699`: AI test users
+- `...0601-0699`: AI users (core or test depending on the persona)
 - `...0701-0799`: publication/demo users
 - `...0801-0899`: special-purpose tests
 
