@@ -1,4 +1,4 @@
-id: 0000000000010111
+id: 0000000000010113
 ownedBy: 0000000000010001
 publishedAt: 2025-01-01 00:01:06+00
 allowLikes: false
@@ -10,5 +10,4 @@ content:<<____EOF____
 
 To be written.
 
-Next: [Other STGY Features](/posts/0000000000010112)
 ____EOF____

@@ -1,13 +1,13 @@
-id: 0000000000010112
-ownedBy: 0000000000010001
+id: 0000000000020113
+ownedBy: 0000000000020001
 publishedAt: 2025-01-01 00:01:06+00
 allowLikes: false
 allowReplies: false
 tags: stgy-help
-locale: en-US
+locale: ja-JP
 content:<<____EOF____
-# Other STGY Features
+# STGYのその他の機能
 
-To be written.
+今後書きます。
 
 ____EOF____

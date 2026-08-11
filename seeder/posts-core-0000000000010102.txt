@@ -111,6 +111,10 @@ All STGY-related packages are stored in a single repository, in what is commonly
 - minio/ : Directory containing MinIO configuration
 - postfix/ : Directory containing configuration for Postfix running in Docker
 - seeder/ : Directory containing initial seed data
+  - users-core-<ID>.txt, users-test-<ID>.txt : Users
+  - posts-core-<ID>.txt, posts-test-<ID>.txt, posts-after-actions-<ID>.txt : Posts
+  - agreements-core-<ID>.json : Terms of use
+  - actions/ : Seed data for follow, block, like, and similar actions
 
 Package management is handled with NPM, with its configuration in package.json. Docker is managed by running the script commands defined there. The repository uses workspaces, and the package.json files under packages/*, ttts, backend, and frontend are managed by the root workspace configuration. Each subpackage contains the following common files and directories.
 
@@ -1542,9 +1546,11 @@ curl -i http://localhost:3000/health
 Load the initial data with the following command.
 
 ```:small
-./scripts/edit-users.py seeder/user-0*.txt
-./scripts/edit-posts.py seeder/post-0*.txt
-./scripts/user-actions.py seeder/action-*.txt
+./scripts/edit-users.py seeder/users-core-*.txt seeder/users-test-*.txt
+./scripts/edit-agreement.py seeder/agreements-core-*.json
+./scripts/edit-posts.py seeder/posts-core-*.txt seeder/posts-test-*.txt
+./scripts/user-actions.py seeder/actions-core.txt seeder/actions-test.txt
+./scripts/edit-posts.py seeder/posts-after-actions-*.txt
 ```
 
 It is important that deploy-backend.sh and deploy-frontend.sh are self-contained: they embed the deployment-time environment configuration into the generated artifacts. Services should always run stably with the configuration that was present when they were deployed. deploy-backend.sh gives STGY_* environment variables set at deployment time priority over its defaults and embeds those values into start.sh. Changing .env or external environment variables after deployment does not alter service behavior unless the service is redeployed. These two scripts are groundwork for CI/CD. STGY is distributed as open-source software and therefore assumes no particular deployment method, but it is at least designed to be easy to deploy with GitHub Actions. In practice, CD can be achieved simply by having a GitHub Actions workflow run the scripts in the repository. Passwords and other secrets can be injected as deployment-time environment variables from repository secrets. For CI, a workflow can simply run npm test in the test environment. The quality then depends on whether the tests invoked there are substantial enough to deserve being called integration tests.

@@ -204,24 +204,6 @@ export default function Navbar() {
             >
               Export data
             </Link>
-            {isAdmin && (
-              <Link
-                href="/dash-endpoints"
-                className="block w-full px-4 py-2 text-left hover:bg-gray-100"
-                onClick={() => setMenuOpen(false)}
-              >
-                @ Endpoints
-              </Link>
-            )}
-            {isAdmin && (
-              <Link
-                href="/dash-database"
-                className="block w-full px-4 py-2 text-left hover:bg-gray-100"
-                onClick={() => setMenuOpen(false)}
-              >
-                @ Database
-              </Link>
-            )}
             <Link
               href={Config.helpPagePath(userLocale)}
               className="block w-full px-4 py-2 text-left hover:bg-gray-100"
@@ -244,6 +226,33 @@ export default function Navbar() {
             >
               Log out
             </button>
+            {isAdmin && (
+              <Link
+                href="/dash-endpoints"
+                className="block w-full px-4 py-2 text-left hover:bg-gray-100"
+                onClick={() => setMenuOpen(false)}
+              >
+                @ Endpoints
+              </Link>
+            )}
+            {isAdmin && (
+              <Link
+                href="/dash-database"
+                className="block w-full px-4 py-2 text-left hover:bg-gray-100"
+                onClick={() => setMenuOpen(false)}
+              >
+                @ Database
+              </Link>
+            )}
+            {isAdmin && (
+              <Link
+                href="/dash-contents"
+                className="block w-full px-4 py-2 text-left hover:bg-gray-100"
+                onClick={() => setMenuOpen(false)}
+              >
+                @ Contents
+              </Link>
+            )}
           </div>
         )}
       </div>

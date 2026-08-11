@@ -111,6 +111,10 @@ STGYの関連パッケージは全て単一のリポジトリに収められて�
 - minio/ : MinIOの設定一式のディレクトリ
 - postfix/ : Dockerで動かすPostfixの設定一式のディレクトリ
 - seeder/ : 初期登録データ一式のディレクトリ
+  - users-core-<ID>.txt, users-test-<ID>.txt : ユーザ
+  - posts-core-<ID>.txt, posts-test-<ID>.txt, posts-after-actions-<ID>.txt : 投稿
+  - agreements-core-<ID>.json : 利用規約
+  - actions/ : follow、block、likeなどの投入データ
 
 パッケージ管理はNPMで行っており、その設定はpackage.jsonに書いてある。Dockerの管理はそこにあるスクリプトコマンドを叩いて行う。ワークスペース構成を取っていて、packages/*とtttsとbackendとfrontendの下にあるpackage.jsonはその管理下にある。それぞれのサブパッケージには、以下の共通したファイルやディレクトリが格納されている。
 
@@ -1542,9 +1546,11 @@ curl -i http://localhost:3000/health
 以下のコマンドで初期データの投入を行う。
 
 ```:small
-./scripts/edit-users.py seeder/user-0*.txt
-./scripts/edit-posts.py seeder/post-0*.txt
-./scripts/user-actions.py seeder/action-*.txt
+./scripts/edit-users.py seeder/users-core-*.txt seeder/users-test-*.txt
+./scripts/edit-agreement.py seeder/agreements-core-*.json
+./scripts/edit-posts.py seeder/posts-core-*.txt seeder/posts-test-*.txt
+./scripts/user-actions.py seeder/actions-core.txt seeder/actions-test.txt
+./scripts/edit-posts.py seeder/posts-after-actions-*.txt
 ```
 
 deploy-backend.shとdeploy-frontend.shが、デプロイ時の環境設定を生成物へ焼き込むself-containedな実装になっているのは重要である。デプロイした時の環境設定で常にサービスが安定稼働するべきだからだ。deploy-backend.shはデプロイ実行時に設定されたSTGY_*環境変数を初期値より優先し、その値をstart.shへ焼き込む。デプロイ後に.envや外部の環境変数を変えても、再デプロイしない限りサービスの挙動は変化しない。二つのスクリプトはCI/CDへの布石である。STGYはOSS製品として頒布するので特定のデプロイ方式を前提としないが、少なくともGitHub Actionsでデプロイしやすいようには設計している。実際、GitHub Actionsのワークフローでリポジトリ内のスクリプトを実行するだけで、CDは達成できる。パスワード等はリポジトリのシークレットからデプロイ時の環境変数として注入する。CIに関しては、単にテスト環境でnpm testを呼ぶワークフローを仕掛ければ良い。そこで呼ばれるテストが統合テストと呼ぶに足るものであるかどうかが品質を左右することになる。

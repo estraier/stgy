@@ -556,5 +556,5 @@ Publications Stats merges Redis and PostgreSQL per post and date before aggregat
 
 The canonical post bodies and publication settings reside in PostgreSQL; high-frequency short-term counters are processed in Redis; and only the minimal aggregate values needed for recovery are sparsely retained in PostgreSQL. This architecture provides Popular entries and 15-day Stats without permanently storing large access histories, while limiting the impact of Redis data loss.
 
-Next: [Other STGY Features](/posts/0000000000010111)
+Next: [STGY Administration Features](/posts/0000000000010111)
 ____EOF____

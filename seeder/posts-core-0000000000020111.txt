@@ -1,0 +1,271 @@
+id: 0000000000020111
+ownedBy: 0000000000020001
+publishedAt: 2025-01-01 00:01:06+00
+allowLikes: false
+allowReplies: false
+tags: stgy-help
+locale: ja-JP
+content:<<____EOF____
+# STGYの管理機能
+
+STGYには、一般ユーザ向けの投稿・検索・公開機能とは別に、サービス運用者が状態を確認し、投稿やユーザを管理するための管理機能がある。管理画面は通常の利用画面とは分離し、管理者だけがナビゲーションから到達できる。さらに、画面を隠すだけではなく、管理操作に使うBackend APIでも管理者権限を確認する。
+
+現在の管理ダッシュボードは ``@ Endpoints``、``@ Database``、``@ Contents`` の3つである。前二者は主としてサービス状態の観測と診断、``@ Contents`` は投稿とユーザの管理を担当する。Navbarでは通常のメニュー項目の後、Log outの下にこれらをまとめて表示する。
+
+管理機能では、専用の特権APIを必要以上に増やさないことも重要な方針である。例えばContents Dashboardから複数投稿を削除する場合でも、「複数投稿をまとめて削除する新API」を作らず、既存の単体削除APIを選択されたIDへ順番に適用する。同じサービス処理を通すことで、通常の削除処理が持つ認可、参照整合性、後処理を管理画面でも共有できる。
+
+<!TOC!>
+
+## 管理者権限
+
+ユーザが管理者かどうかは ``users.is_admin`` で管理する。Frontendはセッション情報の ``userIsAdmin`` を参照し、管理者だけにダッシュボードへのリンクを表示する。各ダッシュボード自身もセッションを確認し、管理者でなければ内容を表示しない。
+
+ただし、Frontendの表示制御は利便性のためのもので、セキュリティ境界ではない。投稿削除、ユーザ作成、ユーザ状態変更、他ユーザのパスワード変更など、権限を必要とするAPIではBackend側でもログインユーザを確認する。URLを直接入力したりHTTPリクエストを直接送ったりしても、Frontendの表示条件を迂回しただけで管理操作ができる設計にはしない。
+
+管理者状態と凍結状態には一つ制約がある。管理者は凍結状態にならない。ユーザ更新時には、管理者である限り ``is_frozen`` をfalseへ保つ。
+
+```sql:small
+is_frozen = CASE
+  WHEN is_admin THEN FALSE
+  ELSE requested_is_frozen
+END
+```
+
+したがって、管理者権限を持つアカウントを停止したい場合は、先に管理者権限を外す必要がある。
+
+## Endpoints Dashboard
+
+``@ Endpoints`` は、BackendのHTTP endpointとNode.jsプロセスの稼働状態を見るための画面である。Backendが公開するPrometheus形式のmetricsを集約し、endpoint単位のリクエスト回数、HTTP status codeの内訳、処理時間のhistogramなどを表示する。
+
+同じBackendを複数workerで動かしている場合は、各nodeのmetricsを集めて一つの一覧へ統合する。endpoint名、呼び出し回数、status code、latencyの分布などから、負荷が集中しているAPIや異常な応答が増えているAPIを見つけられる。
+
+画面には集約結果を見るSummaryと、生のmetricsを見るRawがある。Node.js側についても、プロセスが応答しているか、event loopの遅延やメモリ等のruntime metricsがどうなっているかを確認できる。必要に応じてmetricsをclearし、ある操作を行った後の挙動だけを測り直すこともできる。
+
+この画面はendpointを編集するためのものではない。OpenAPIの定義を変更したりrouteを追加したりするのではなく、現在動いているBackendを観測するためのdashboardである。
+
+## Database Dashboard
+
+``@ Database`` はPostgreSQLのquery統計を見るための画面である。主に ``pg_stat_statements`` を利用し、実際に発行されたSQLをquery単位で集計する。
+
+画面から統計取得をEnable / Disableでき、蓄積済みの統計をClearできる。Enable中は、queryごとに例えば次の情報を確認できる。
+
+- 呼び出し回数
+- 合計実行時間
+- 平均実行時間
+- SQL本文
+- execution plan
+
+一覧は実行時間を基準に調査しやすい形で取得し、各queryのExplainボタンから実行計画を表示できる。通常の機能試験で「画面は動くが何となく遅い」という場合、Endpoints Dashboardで遅いAPIを特定し、Database DashboardでそのAPIが発行するSQLを見る、という順で切り分けられる。
+
+統計値は本番データそのものではないためClearしても投稿やユーザは消えない。ただし、Enable中はquery統計を収集するため、常時必要でなければ調査目的に応じて有効化する。
+
+## Contents Dashboard
+
+``@ Contents`` は、投稿とユーザを管理するための画面である。``Posts`` と ``Users`` の2つのtabを持つ。
+
+大量のデータを一度にブラウザへ送らないよう、両方とも初期表示は新しい順に最大100件とする。さらにデータがあれば ``more`` を表示し、押すたびに次の最大100件を同じ表へ追加する。ページ番号によるoffset paginationではなく、最後に取得したIDを ``after`` cursorとして既存一覧APIへ渡す。
+
+表はdashboard全体ではなく表の中身だけをscrollさせる。大量に読み込んでも操作ボタンやtabが画面外へ大きく流れないようにするためである。
+
+## 投稿の管理
+
+Posts tabの各行には次を表示する。
+
+|*項目*|*内容*|
+| Post ID | 16進表記の投稿ID。クリックすると投稿詳細へ移動する |
+| Created at | 投稿日時 |
+| User ID | 投稿者のユーザID |
+| Nickname | 投稿者のnickname |
+| Digest | JSON snippetをplain text化した先頭150文字 |
+| checkbox | 管理操作の対象選択 |
+
+Digestは投稿本文を改めて全文取得して作るのではなく、一覧APIが返すsnippetを利用する。改行や連続空白を一つの空白へ整理し、150文字を超える場合だけ末尾を省略する。
+
+一件以上を選ぶとDeleteが有効になる。実行前には例えば次の確認を出す。
+
+```text:small
+Delete 3 selected posts?
+```
+
+OKした場合、Frontendは選択された投稿へ既存の ``DELETE /posts/{id}`` を順番に実行する。専用のbulk-delete APIは持たない。途中で失敗した場合でも、それまで成功した削除は取り消さず、一覧を再取得して現在のDB状態を表示する。
+
+削除後は、もともと表示していた件数を目安に先頭から再取得する。単にブラウザ上の行だけ消すと、削除によって空いた分が補充されず、``more`` の境界も不正確になるためである。
+
+## ユーザ一覧
+
+Users tabの各行には次を表示する。
+
+|*項目*|*内容*|
+| User ID | 16進表記のユーザID。クリックするとユーザ詳細へ移動する |
+| Registered at | 登録日時 |
+| Nickname | nickname |
+| Flags | Admin / AI / Frozenのbadge |
+| Profile | introductionのsnippetをplain text化した先頭150文字 |
+| checkbox | 管理操作の対象選択 |
+
+AI badgeはAI modelが設定されているユーザ、Frozen badgeは凍結中のユーザへ表示する。Admin、AI、Frozenは互いに同じ意味ではないので、それぞれ独立した小さなbadgeとして並べる。ただし前述のとおりAdminとFrozenだけは同時には成立しない。
+
+Users tabでは、選択したユーザへDelete、Freeze、Reset passwordを実行できる。また、右端のCreateから新しいユーザを登録できる。
+
+## ユーザ作成
+
+Createを押すと通常のユーザ表を隠し、新規ユーザ登録formへ切り替える。入力項目は次の4つに絞っている。
+
+- ID
+- Email address
+- Password
+- Introduction
+
+IDは空なら通常どおりBackendで自動採番する。手動指定する場合は16桁の16進数だけを受け付ける。Frontendでも書式を検査するが、重複しているかどうかはBackendとPostgreSQLへ任せる。
+
+Email addressもFrontendで基本的な書式を確認し、送信時には小文字へ正規化する。Nicknameは独立した入力欄を設けず、email addressの ``@`` より前を初期nicknameとして使う。
+
+PasswordにはGenerateボタンがあり、ブラウザの暗号学的乱数生成器を利用して20文字のランダム文字列を作る。似た文字を避けた英数字集合から生成し、管理者が読み写す場合の取り違えを減らす。
+
+Introductionの初期値は次の通りである。
+
+```text:small
+brand new user
+```
+
+空文字列や空白だけのIntroductionは送信しない。その他の非表示項目は管理画面用の既定値を使う。新規作成されるユーザは管理者でもAIユーザでもなく、localeとtimezoneは作成操作をしている管理者のセッション値を初期値として利用する。
+
+Createが成功したらformを閉じ、Users一覧を再取得する。失敗した場合はformを残してエラー内容を表示する。Cancelでは作成せず一覧へ戻る。
+
+## ユーザの凍結
+
+Freezeは、アカウントを削除せず利用を停止するための操作である。選択したユーザへ既存の ``PUT /users/{id}`` を使い、``isFrozen: true`` を設定する。
+
+```json:small
+{
+  "isFrozen": true
+}
+```
+
+管理者は凍結できないため、選択中にAdminが一人でも含まれている場合はFreezeを無効にし、``Administrators cannot be frozen.`` と表示する。Frontend側だけでなくBackendでも、管理者の ``is_frozen`` はfalseへ強制される。
+
+認証状態であるAdmin/Frozenが変わった場合、Backendはそのユーザのsessionを削除する。したがって、通常ユーザをFreezeすると、すでにログインしているsessionもそのまま使い続けることはできない。
+
+凍結はデータを残したままアクセスを止めたい場合に使い、削除とは区別する。
+
+## ユーザのパスワードリセット
+
+一人以上を選択するとReset passwordを実行できる。実行前には次のような確認を表示する。
+
+```text:small
+Reset passwords for 3 selected users?
+```
+
+OKすると、選択ユーザごとに20文字のランダムpasswordを生成し、既存の ``PUT /users/{id}/password`` で設定する。処理後は通常のUsers表を一時的に隠し、次の結果表へ切り替える。
+
+|*User ID*|*E-mail address*|*Nickname*|*New password*|
+| ``0000000000020501`` | ``alice@example.com`` | ``alice`` | ``...`` |
+
+各行にはCopyボタンがあり、押すと次の形式をclipboardへ入れる。最後にも改行を一つ付ける。
+
+```text:small
+User ID: 0000000000020501
+E-mail address: alice@example.com
+Nickname: alice
+New password: xxxxxxxxxxxxxxxxxxxx
+
+```
+
+管理者はこの文字列を安全な経路で本人へ渡す。OKを押すと結果表を破棄し、通常のUsers一覧へ戻る。新passwordはDBにはhashとして保存されるため、結果画面を閉じた後に同じ平文をDBから再取得することはできない。
+
+現在のpassword変更APIはpassword hashを変更する操作であり、それ自体では既存sessionを削除しない。既にログインしている利用者のアクセスも直ちに止める必要がある場合は、Freezeを併用する。
+
+## ユーザ削除
+
+一人以上を選択するとDeleteを実行できる。ただし、現在ログインしている管理者自身が選択に含まれている場合、Contents DashboardではDeleteを無効にして ``You cannot delete yourself.`` と表示する。管理作業中に自分自身のアカウントを誤って消し、残りの作業を継続できなくなる事故を防ぐためである。
+
+削除確認後は、選択ユーザへ既存の ``DELETE /users/{id}`` を順番に実行する。このrouteは単に ``users`` の一行だけを消すのではなく、既存のユーザ削除処理を通した後、対象ユーザのsession、profile画像等のmedia、trackも削除する。PostgreSQL上の関連データはschemaで定義したforeign keyと ``ON DELETE CASCADE`` に従って整理される。
+
+ユーザを削除すると、そのユーザが所有していた投稿も消える。そのためUsers tabで削除した後はPosts tabのcacheを破棄し、次にPostsへ戻った時に改めて一覧を取得する。
+
+このように、管理画面からSQLで直接 ``DELETE`` するのではなく、通常の削除APIを利用することで、DB以外の後処理を落とさないようにしている。
+
+## 一括操作と既存APIの再利用
+
+Contents Dashboardでは複数行を選択できるが、Backendに次のような管理画面専用bulk APIは作っていない。
+
+```text:small
+POST /posts/admin/delete
+POST /users/admin/delete
+POST /users/admin/freeze
+```
+
+代わりに既存APIを順番に呼ぶ。
+
+```text:small
+選択した投稿
+  ↓
+DELETE /posts/{id}
+  ↓
+DELETE /posts/{id}
+  ↓
+...
+
+選択したユーザ
+  ↓
+PUT /users/{id}
+DELETE /users/{id}
+PUT /users/{id}/password
+```
+
+これは単にAPI数を減らすためだけではない。単体APIにすでに含まれている認可、入力検証、session処理、media削除等を一括操作でもそのまま利用するためである。
+
+一括処理の途中で一件が失敗した場合、それ以前に成功した操作をrollbackする分散transactionは行わない。成功済みの変更は残し、エラーを表示して一覧を再取得する。管理画面のbulk操作は、複数の独立した既存操作を連続実行するものとして扱う。
+
+## seedデータとデータ初期化
+
+開発環境では、固定のseedデータを使ってサービス状態を再現できる。
+
+```console:small
+npm run reset-data
+npm run reset-data-test
+npm run reset-data-volume-test
+```
+
+``reset-data`` はcoreデータだけを投入する。``reset-data-test`` は通常のテストユーザや投稿も含める。``reset-data-volume-test`` はcore状態を作った後、大量データを追加してqueryやUIの負荷試験に使う。
+
+VPSでは次を利用する。
+
+```console:small
+npm run vps:reset-data
+```
+
+resetはテスト用の「データ追加」ではなく、サービスデータを初期状態へ戻す破壊的操作である。本番で実ユーザが存在する状態に対して無条件に実行してはならない。
+
+現在のseed IDは、global、English、Japanese、i18nを見分けられる固定範囲に整理している。例えば管理用の技術文書はEnglishを ``00000000000101xx``、Japaneseを ``00000000000201xx`` に置く。この種の固定IDはseed内部の参照を安定させるためのもので、通常のユーザや投稿は自動採番を使う。
+
+## 本番ユーザを保持したまま初期化する場合
+
+本番データを初期化する必要があるが、既存の実ユーザを残したい場合には ``export-live-users.sh`` と ``import-live-users.sh`` を使える。
+
+```console:small
+./scripts/export-live-users.sh
+npm run vps:reset-data
+./scripts/import-live-users.sh backup/live-users-YYYYMMDD-HHMMSS
+```
+
+exportは、指定時刻以降に登録されたユーザについて、ID、email、password hash、profile情報、publication設定、同意している利用規約などを退避する。``--since`` を省略した場合の既定値は ``2000-01-01 00:00:00`` である。profile画像はresetで消える通常bucketとは別のcarryover bucketへ退避する。
+
+この仕組みはユーザアカウントを持ち越すためのものであり、投稿やfollow、like、notification等の活動データは自動では持ち越さない。対象ユーザが投稿を所有している場合、exportは既定では停止する。投稿を捨ててもよいことを明示する場合だけ ``--allow-posts`` を使う。
+
+importは同じID、email、password hashを復元し、profile画像を元のbucketへ戻す。最後にユーザ全文検索indexも再構築する。passwordを平文へ戻して再設定するのではなく、既存hashを保持するため、復元されたユーザは従来のpasswordでログインできる。
+
+本番のresetでは、「何を初期化し、何を残すか」を先に決めることが重要である。管理dashboardは日常的な個別管理、reset scriptは環境全体を作り直す運用であり、同じ管理機能でも破壊範囲が大きく異なる。
+
+## まとめ
+
+STGYの管理機能は、観測用のEndpoints Dashboard、SQL診断用のDatabase Dashboard、投稿とユーザを操作するContents Dashboardに分かれている。Navbarでは管理者だけに表示し、Backendでも管理操作ごとに権限を確認する。
+
+Contents Dashboardは、新しい順の100件取得とcursorによる追加読み込みを基本とし、投稿削除、ユーザ削除、凍結、password reset、ユーザ作成を提供する。複数選択UIを持つが、専用bulk APIは増やさず、既存の単体APIを順番に呼ぶ。これにより通常の認可や後処理を管理操作でも共有する。
+
+AdminとFrozenは同時に成立せず、管理者は凍結できない。Contents Dashboardでは自分自身の削除も禁止する。password resetは新しい平文passwordを一度だけ結果表に表示し、copy用の定型文を生成する。ユーザ削除ではDBだけでなくsession、media、track等の既存削除経路も利用する。
+
+環境全体を初期化する ``reset-data`` 系は日常のContents操作よりはるかに破壊範囲が広い。本番ユーザを保持してresetする場合は、事前にlive userを退避し、初期化後に復元する。管理UIと運用scriptの双方で、既存の正規処理を再利用し、管理専用の別経路を増やしすぎないことがSTGYの管理機能の基本方針である。
+
+Next: [STGYのその他の機能](/posts/0000000000020112)
+____EOF____

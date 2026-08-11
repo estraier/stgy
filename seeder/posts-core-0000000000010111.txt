@@ -1,0 +1,271 @@
+id: 0000000000010111
+ownedBy: 0000000000010001
+publishedAt: 2025-01-01 00:01:06+00
+allowLikes: false
+allowReplies: false
+tags: stgy-help
+locale: en-US
+content:<<____EOF____
+# STGY Administration Features
+
+STGY provides administrative features for service operators to inspect system status and manage posts and users, separately from the posting, search, and publication features used by ordinary users. Administration pages are separated from normal user-facing pages and can be reached from the navigation menu only by administrators. In addition to hiding the UI from non-administrators, the Backend APIs used for administrative operations also verify administrator privileges.
+
+The current administration dashboards are ``@ Endpoints``, ``@ Database``, and ``@ Contents``. The first two are mainly for observing and diagnosing service status, while ``@ Contents`` is used to manage posts and users. In the Navbar, these items are grouped after the normal menu entries, below Log out.
+
+Another important policy of STGY administration is to avoid adding privileged APIs unless they are actually necessary. For example, even when multiple posts are deleted from the Contents Dashboard, STGY does not add a new API that deletes multiple posts in one request. Instead, the existing single-post deletion API is applied sequentially to the selected IDs. By using the same service path, the administration UI shares the authorization checks, referential-integrity handling, and post-processing already performed by the normal deletion path.
+
+<!TOC!>
+
+## Administrator privileges
+
+Whether a user is an administrator is stored in ``users.is_admin``. The Frontend reads ``userIsAdmin`` from the session information and shows dashboard links only to administrators. Each dashboard also checks the session itself and does not show its contents to a non-administrator.
+
+Frontend visibility control is only a usability feature, however, not a security boundary. APIs that require privileges, such as deleting posts, creating users, changing another user's state, or changing another user's password, also verify the logged-in user on the Backend. Directly entering an administration URL or sending an HTTP request must not make it possible to perform an administrative operation merely by bypassing Frontend visibility conditions.
+
+There is one constraint between administrator and frozen states. An administrator cannot be frozen. When a user is updated, ``is_frozen`` remains false for as long as the user is an administrator.
+
+```sql:small
+is_frozen = CASE
+  WHEN is_admin THEN FALSE
+  ELSE requested_is_frozen
+END
+```
+
+Therefore, if an administrator account needs to be disabled, its administrator privilege must first be removed.
+
+## Endpoints Dashboard
+
+``@ Endpoints`` is used to inspect the operating state of Backend HTTP endpoints and Node.js processes. It aggregates Prometheus-format metrics exposed by the Backend and displays information such as request counts by endpoint, the breakdown of HTTP status codes, and request-duration histograms.
+
+When the same Backend is running with multiple workers, metrics from the individual nodes are collected and combined into one view. Endpoint names, call counts, status codes, and latency distributions make it possible to identify APIs receiving unusually high load or APIs whose error responses are increasing.
+
+The page provides a Summary view for aggregated results and a Raw view for the underlying metrics. For the Node.js processes, it is also possible to verify whether each process is responding and inspect runtime metrics such as event-loop delay and memory usage. Metrics can be cleared when necessary so that behavior after a particular operation can be measured from a fresh baseline.
+
+This page is not an endpoint editor. It does not modify the OpenAPI definition or add routes; it is a dashboard for observing the Backend that is currently running.
+
+## Database Dashboard
+
+``@ Database`` is used to inspect PostgreSQL query statistics. It mainly uses ``pg_stat_statements`` to aggregate actually executed SQL by query.
+
+Statistics collection can be Enabled or Disabled from the page, and accumulated statistics can be Cleared. While collection is enabled, information such as the following can be inspected for each query.
+
+- Number of calls
+- Total execution time
+- Mean execution time
+- SQL text
+- Execution plan
+
+The list is retrieved in a form that makes expensive queries easy to investigate, and the execution plan for an individual query can be displayed with its Explain button. When a normal feature test shows that a page works but feels unexpectedly slow, one possible investigation flow is to identify the slow API in the Endpoints Dashboard and then inspect the SQL issued by that API in the Database Dashboard.
+
+The collected statistics are not the production data itself, so clearing them does not delete posts or users. However, query statistics are collected while the feature is enabled, so it should be enabled according to the needs of an investigation rather than left on without purpose.
+
+## Contents Dashboard
+
+``@ Contents`` is the page for managing posts and users. It contains two tabs: ``Posts`` and ``Users``.
+
+To avoid sending a large amount of data to the browser at once, both tabs initially display at most 100 records in newest-first order. If more data exists, a ``more`` button is shown, and each press appends up to another 100 records to the same table. Instead of page-number-based offset pagination, the ID of the last retrieved record is passed as an ``after`` cursor to the existing list API.
+
+Only the contents of the table are scrolled, rather than the entire dashboard. This keeps the operation buttons and tabs from being pushed far off screen even after many records have been loaded.
+
+## Managing posts
+
+Each row in the Posts tab displays the following information.
+
+|*Field*|*Description*|
+| Post ID | Post ID in hexadecimal notation. Clicking it opens the post detail page |
+| Created at | Post creation time |
+| User ID | User ID of the post owner |
+| Nickname | Nickname of the post owner |
+| Digest | First 150 characters of the JSON snippet converted to plain text |
+| checkbox | Selects the row for an administrative operation |
+
+The Digest is not generated by retrieving the complete post body again. Instead, it uses the snippet already returned by the list API. Line breaks and runs of whitespace are collapsed into a single space, and the text is truncated only when it exceeds 150 characters.
+
+Selecting one or more rows enables Delete. Before execution, a confirmation such as the following is shown.
+
+```text:small
+Delete 3 selected posts?
+```
+
+If OK is selected, the Frontend sequentially calls the existing ``DELETE /posts/{id}`` endpoint for the selected posts. There is no dedicated bulk-delete API. If an operation fails partway through, deletions that have already succeeded are not rolled back. The list is reloaded so that the current database state is displayed.
+
+After deletion, the Frontend reloads records from the beginning, aiming to restore approximately the number of rows that had been visible before the operation. Simply removing rows from the browser would leave gaps after deletion and would also make the boundary represented by ``more`` inaccurate.
+
+## User list
+
+Each row in the Users tab displays the following information.
+
+|*Field*|*Description*|
+| User ID | User ID in hexadecimal notation. Clicking it opens the user detail page |
+| Registered at | Registration time |
+| Nickname | Nickname |
+| Flags | Admin / AI / Frozen badges |
+| Profile | First 150 characters of the introduction snippet converted to plain text |
+| checkbox | Selects the row for an administrative operation |
+
+The AI badge is shown for a user with an AI model configured, and the Frozen badge is shown for a frozen user. Admin, AI, and Frozen do not represent the same concept, so they are displayed as independent small badges. As described above, only Admin and Frozen are mutually exclusive.
+
+From the Users tab, Delete, Freeze, and Reset password can be applied to selected users. A new user can also be registered from Create on the right side of the operation row.
+
+## Creating a user
+
+Pressing Create hides the normal user table and switches to a new-user registration form. The form is deliberately limited to the following four fields.
+
+- ID
+- Email address
+- Password
+- Introduction
+
+If ID is empty, the Backend assigns an ID normally. If an ID is specified manually, only a 16-digit hexadecimal value is accepted. The Frontend validates the format, but uniqueness is left to the Backend and PostgreSQL.
+
+The Frontend also performs basic validation of the email address and normalizes it to lowercase before submission. There is no separate Nickname field; the portion of the email address before ``@`` is used as the initial nickname.
+
+The Password field has a Generate button. It uses the browser's cryptographically secure random-number generator to produce a 20-character random string. The alphabet avoids easily confused characters so that transcription errors are less likely when an administrator needs to copy the password manually.
+
+The initial Introduction is:
+
+```text:small
+brand new user
+```
+
+An empty or whitespace-only Introduction is not submitted. Other fields that are not shown in the form use administration defaults. A newly created user is neither an administrator nor an AI user, and the locale and timezone from the administrator's current session are used as the initial values.
+
+If Create succeeds, the form is closed and the Users list is reloaded. If creation fails, the form remains open and the error is displayed. Cancel returns to the list without creating a user.
+
+## Freezing a user
+
+Freeze is used to disable an account without deleting it. For each selected user, the existing ``PUT /users/{id}`` endpoint is called with ``isFrozen: true``.
+
+```json:small
+{
+  "isFrozen": true
+}
+```
+
+Administrators cannot be frozen. If even one Admin is included in the current selection, Freeze is disabled and ``Administrators cannot be frozen.`` is displayed. This restriction does not exist only in the Frontend: the Backend also forces ``is_frozen`` to false for an administrator.
+
+When the authentication-related Admin/Frozen state changes, the Backend deletes that user's sessions. Therefore, after a normal user is frozen, an already established login session cannot simply continue to be used.
+
+Freezing is intended for stopping access while preserving the user's data, and is distinct from deletion.
+
+## Resetting user passwords
+
+Reset password becomes available when one or more users are selected. A confirmation such as the following is displayed before execution.
+
+```text:small
+Reset passwords for 3 selected users?
+```
+
+After OK is selected, a random 20-character password is generated for each selected user and set through the existing ``PUT /users/{id}/password`` endpoint. When processing finishes, the normal Users table is temporarily hidden and replaced by a result table like this one.
+
+|*User ID*|*E-mail address*|*Nickname*|*New password*|
+| ``0000000000010501`` | ``alice@example.com`` | ``alice`` | ``...`` |
+
+Each row has a Copy button. Pressing it copies text in the following format to the clipboard, including one trailing newline after the final line.
+
+```text:small
+User ID: 0000000000010501
+E-mail address: alice@example.com
+Nickname: alice
+New password: xxxxxxxxxxxxxxxxxxxx
+
+```
+
+The administrator then delivers this text to the user through an appropriate secure channel. Pressing OK discards the result table and returns to the normal Users list. The new password is stored in the database as a hash, so the same plaintext value cannot be retrieved from the database after the result page has been closed.
+
+The current password-change API changes the password hash but does not itself delete existing sessions. If access by a user who is already logged in must also be stopped immediately, Freeze can be used in combination with the password reset.
+
+## Deleting a user
+
+Delete can be executed when one or more users are selected. However, if the currently logged-in administrator is included in the selection, the Contents Dashboard disables Delete and displays ``You cannot delete yourself.``. This prevents an administrator from accidentally deleting the account being used for the current administration session and losing the ability to finish the remaining work.
+
+After deletion is confirmed, the existing ``DELETE /users/{id}`` endpoint is executed sequentially for the selected users. This route does not simply delete one row from ``users``. It goes through the existing user-deletion path and then removes the target user's sessions, profile images and other media, and tracks. Related PostgreSQL data is cleaned up according to foreign keys and ``ON DELETE CASCADE`` rules defined by the schema.
+
+Deleting a user also removes posts owned by that user. Therefore, after a deletion from the Users tab, the Posts-tab cache is discarded so that the post list is fetched again the next time Posts is opened.
+
+By using the normal deletion API instead of issuing a direct SQL ``DELETE`` from the administration screen, STGY avoids skipping cleanup outside the database.
+
+## Bulk operations and reuse of existing APIs
+
+The Contents Dashboard allows multiple rows to be selected, but the Backend does not provide administration-specific bulk APIs such as the following.
+
+```text:small
+POST /posts/admin/delete
+POST /users/admin/delete
+POST /users/admin/freeze
+```
+
+Instead, existing APIs are called sequentially.
+
+```text:small
+Selected posts
+  ↓
+DELETE /posts/{id}
+  ↓
+DELETE /posts/{id}
+  ↓
+...
+
+Selected users
+  ↓
+PUT /users/{id}
+DELETE /users/{id}
+PUT /users/{id}/password
+```
+
+This is not only about keeping the number of APIs small. It also lets bulk operations reuse the authorization checks, input validation, session handling, media cleanup, and other behavior already implemented in the single-item APIs.
+
+If one operation in a batch fails, STGY does not attempt a distributed transaction that rolls back operations that previously succeeded. Successful changes remain in place, an error is displayed, and the list is reloaded. A bulk operation in the administration UI is therefore treated as a sequence of independent existing operations.
+
+## Seed data and data reset
+
+In a development environment, fixed seed data can be used to reproduce a known service state.
+
+```console:small
+npm run reset-data
+npm run reset-data-test
+npm run reset-data-volume-test
+```
+
+``reset-data`` loads only core data. ``reset-data-test`` also loads ordinary test users and posts. ``reset-data-volume-test`` first creates the core state and then adds a large data set for query and UI load testing.
+
+On a VPS, use:
+
+```console:small
+npm run vps:reset-data
+```
+
+A reset is not a test-data append operation. It is a destructive operation that returns service data to an initial state. It must not be run unconditionally in production while real users exist.
+
+Current seed IDs are organized into fixed ranges that make global, English, Japanese, and i18n data distinguishable. For example, administration-oriented technical documents use ``00000000000101xx`` for English and ``00000000000201xx`` for Japanese. These fixed IDs stabilize references inside seed data; normal users and posts use automatic ID assignment.
+
+## Resetting while preserving production users
+
+If production data must be reset while existing real user accounts need to be preserved, ``export-live-users.sh`` and ``import-live-users.sh`` can be used.
+
+```console:small
+./scripts/export-live-users.sh
+npm run vps:reset-data
+./scripts/import-live-users.sh backup/live-users-YYYYMMDD-HHMMSS
+```
+
+For users registered at or after a specified time, export saves the ID, email address, password hash, profile information, publication settings, accepted agreement terms, and related account data. If ``--since`` is omitted, the default is ``2000-01-01 00:00:00``. Profile images are copied to a carryover bucket separate from the normal buckets that are deleted during reset.
+
+This mechanism is intended to carry over user accounts; it does not automatically preserve activity data such as posts, follows, likes, or notifications. If a target user owns posts, export stops by default. ``--allow-posts`` must be specified only when it is explicitly acceptable to discard those posts.
+
+Import restores the same ID, email address, and password hash and copies profile images back to the normal bucket. It also rebuilds the user full-text search index at the end. Because the existing hash is preserved instead of converting the password back to plaintext and setting a new one, a restored user can log in with the previous password.
+
+Before a production reset, it is important to decide explicitly what will be initialized and what will be preserved. Administration dashboards are intended for routine, individual management operations, while reset scripts rebuild the state of the environment as a whole. Their destructive scope is therefore very different even though both are administrative functions.
+
+## Summary
+
+STGY administration is divided among the Endpoints Dashboard for observation, the Database Dashboard for SQL diagnostics, and the Contents Dashboard for managing posts and users. Dashboard links are shown only to administrators in the Navbar, and the Backend also checks privileges for each administrative operation.
+
+The Contents Dashboard is based on newest-first retrieval of up to 100 records at a time with cursor-based incremental loading. It provides post deletion, user deletion, freezing, password reset, and user creation. Although the UI supports selecting multiple records, it does not add dedicated bulk APIs; instead, it calls the existing single-item APIs sequentially. This lets administrative operations share the same authorization checks and cleanup paths as normal operations.
+
+Admin and Frozen cannot coexist, so an administrator cannot be frozen. The Contents Dashboard also prevents deletion of the administrator's own account. Password reset displays the new plaintext password only once in a result table and produces a standard block of text for copying. User deletion uses the existing deletion path for sessions, media, tracks, and related data rather than deleting only the database row.
+
+The ``reset-data`` family of commands has a much larger destructive scope than routine Contents operations. When a production reset must preserve real users, live users are exported before reset and restored afterward. Across both the administration UI and operational scripts, the basic STGY policy is to reuse established processing paths and avoid creating unnecessary administration-specific alternatives.
+
+Next: [Other STGY Features](/posts/0000000000010112)
+____EOF____

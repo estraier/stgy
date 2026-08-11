@@ -556,5 +556,5 @@ PublicationsのStatsはRedisとPostgreSQLを投稿・日付単位で統合して
 
 投稿本文と公開設定の正本はPostgreSQLに置き、高頻度の短期カウンタはRedisで処理し、復旧に必要な最小限の集約値だけをPostgreSQLへ疎に残す。アクセス履歴を大量に永続化せず、Redis消失時の影響も限定しながら、Popular entriesと直近15日Statsを提供する構成である。
 
-Next: [STGYのその他の機能](/posts/0000000000020111)
+Next: [STGYの管理機能](/posts/0000000000020111)
 ____EOF____

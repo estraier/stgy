@@ -61,14 +61,14 @@ edit_users() {
 }
 
 if [ "$CORE_ONLY" = true ]; then
-  edit_users seeder/user-core-*.txt
-  ./scripts/edit-agreement.py seeder/agreement-core-*.json
-  ./scripts/edit-posts.py seeder/post-core-*.txt
-  ./scripts/user-actions.py seeder/action-core-*.txt
+  edit_users seeder/users-core-*.txt
+  ./scripts/edit-agreement.py seeder/agreements-core-*.json
+  ./scripts/edit-posts.py seeder/posts-core-*.txt
+  ./scripts/user-actions.py seeder/actions-core.txt
 else
-  edit_users seeder/user-core-*.txt seeder/user-test-*.txt
-  ./scripts/edit-agreement.py seeder/agreement-core-*.json
-  ./scripts/edit-posts.py seeder/post-core-*.txt seeder/post-test-*.txt
-  ./scripts/user-actions.py seeder/action-core-*.txt seeder/action-test*.txt
-  ./scripts/edit-posts.py seeder/post-after-actions-*.txt
+  edit_users seeder/users-core-*.txt seeder/users-test-*.txt
+  ./scripts/edit-agreement.py seeder/agreements-core-*.json
+  ./scripts/edit-posts.py seeder/posts-core-*.txt seeder/posts-test-*.txt
+  ./scripts/user-actions.py seeder/actions-core.txt seeder/actions-test.txt
+  ./scripts/edit-posts.py seeder/posts-after-actions-*.txt
 fi
