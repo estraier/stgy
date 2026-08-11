@@ -75,8 +75,18 @@ class ImportPlan:
 
 
 class StgyClient:
-  def __init__(self, stgy_base: str, admin_email: str, admin_password: str):
-    self.api_base = normalize_stgy_api_base(stgy_base)
+  def __init__(
+    self,
+    stgy_base: str,
+    admin_email: str,
+    admin_password: str,
+    backend_api_base: Optional[str] = None,
+  ):
+    self.api_base = (
+      normalize_backend_api_base(backend_api_base)
+      if backend_api_base is not None
+      else normalize_stgy_api_base(stgy_base)
+    )
     self.admin_email = admin_email
     self.admin_password = admin_password
     self.session = requests.Session()
@@ -269,6 +279,18 @@ def normalize_stgy_api_base(value: str) -> str:
   if parsed.query or parsed.fragment:
     raise ValueError("--stgy-base must not contain a query or fragment")
   return raw if parsed.path.rstrip("/").endswith("/backend") else raw + "/backend"
+
+
+def normalize_backend_api_base(value: str) -> str:
+  raw = value.strip().rstrip("/")
+  if not raw:
+    raise ValueError("--backend-api-base is empty")
+  parsed = urlsplit(raw)
+  if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    raise ValueError("--backend-api-base must be an absolute http or https URL")
+  if parsed.query or parsed.fragment:
+    raise ValueError("--backend-api-base must not contain a query or fragment")
+  return raw
 
 
 def require_dict(value: Any, label: str) -> dict[str, Any]:
@@ -927,6 +949,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     default=DEFAULT_STGY_BASE,
     help=f"STGY site base URL (default: {DEFAULT_STGY_BASE})",
   )
+  parser.add_argument(
+    "--backend-api-base",
+    help=(
+      "Backend API base URL used as-is instead of --stgy-base; "
+      "for VPS-local imports, use http://127.0.0.1:3100"
+    ),
+  )
   parser.add_argument("--admin-email", default=DEFAULT_ADMIN_EMAIL)
   parser.add_argument("--admin-password", default=DEFAULT_ADMIN_PASSWORD)
   parser.add_argument("--owner", help="restore posts and referenced media under an existing user ID")
@@ -949,7 +978,12 @@ def main(argv: list[str]) -> int:
   client: Optional[StgyClient] = None
   try:
     plan = load_import_plan(args.data_dir, args.no_reply, args.publish)
-    client = StgyClient(args.stgy_base, args.admin_email, args.admin_password)
+    client = StgyClient(
+      args.stgy_base,
+      args.admin_email,
+      args.admin_password,
+      args.backend_api_base,
+    )
     import_archive(plan, client, args.owner, args.publish, args.id_from_date)
     return 0
   except (OSError, ValueError, RuntimeError, requests.RequestException) as exc:

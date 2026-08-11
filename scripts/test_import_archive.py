@@ -18,6 +18,7 @@ class ImportArchiveMapPinImageTest(unittest.TestCase):
   def test_stgy_base_defaults_and_normalizes_to_backend_api(self) -> None:
     args = MODULE.parse_args(["--data-dir", "."])
     self.assertEqual(args.stgy_base, "http://localhost:8080/")
+    self.assertIsNone(args.backend_api_base)
     self.assertFalse(args.id_from_date)
     self.assertTrue(
       MODULE.parse_args(["--data-dir", ".", "--id-from-date"]).id_from_date
@@ -34,12 +35,38 @@ class ImportArchiveMapPinImageTest(unittest.TestCase):
       MODULE.normalize_stgy_api_base("https://stgy.jp/backend/"),
       "https://stgy.jp/backend",
     )
+    backend_args = MODULE.parse_args(
+      ["--data-dir", ".", "--backend-api-base", "http://127.0.0.1:3100/"]
+    )
+    self.assertEqual(backend_args.backend_api_base, "http://127.0.0.1:3100/")
+    self.assertEqual(
+      MODULE.normalize_backend_api_base("http://127.0.0.1:3100/"),
+      "http://127.0.0.1:3100",
+    )
 
   def test_rejects_invalid_stgy_base(self) -> None:
     for value in ["", "localhost:8080", "ftp://localhost/", "http://localhost/#fragment"]:
       with self.subTest(value=value):
         with self.assertRaisesRegex(ValueError, "--stgy-base"):
           MODULE.normalize_stgy_api_base(value)
+
+  def test_rejects_invalid_backend_api_base(self) -> None:
+    for value in ["", "127.0.0.1:3100", "ftp://127.0.0.1/", "http://127.0.0.1/#fragment"]:
+      with self.subTest(value=value):
+        with self.assertRaisesRegex(ValueError, "--backend-api-base"):
+          MODULE.normalize_backend_api_base(value)
+
+  def test_backend_api_base_bypasses_backend_suffix(self) -> None:
+    client = MODULE.StgyClient(
+      "https://stgy.jp/",
+      "admin@stgy.jp",
+      "password",
+      "http://127.0.0.1:3100/",
+    )
+    try:
+      self.assertEqual(client.api_base, "http://127.0.0.1:3100")
+    finally:
+      client.close()
 
   def test_collects_and_rewrites_local_map_pin_images(self) -> None:
     with tempfile.TemporaryDirectory() as temporary_directory:
