@@ -1569,7 +1569,7 @@ To initialize Redis as well, explicitly specify the mode as follows.
 npm run reset-cache -- --mode native
 ```
 
-The individual reset scripts can also switch their connection target with `--mode docker` or `--mode native`.
+The individual reset scripts can also switch their connection target with ``--mode docker`` or ``--mode native``.
 
 
 ## Running Only the Frontend, Backend, and Worker in Docker
@@ -1713,19 +1713,19 @@ Search remains available while search indexes are being rebuilt. During rebuildi
 
 ## Export and Import
 
-The frontend export feature allows data to be downloaded on a per-user basis. Importing it creates the corresponding user and uploads the profile, avatar image, posts, images, and tracks. User IDs and post IDs are preserved. Only images and tracks actually referenced from posts are re-uploaded, and their object IDs are reassigned. If the exported zip file has already been extracted, it can be imported with a command like the following.
+The frontend export feature allows data to be downloaded on a per-user basis. Importing it creates the corresponding user and uploads the profile, avatar image, posts, images, and tracks. User IDs and post IDs are preserved. Only images and tracks actually referenced from posts are re-uploaded, and their object IDs are reassigned. When an exported zip file is extracted and imported on the VPS, connect directly to the backend port exposed on the host loopback instead of using the public URL. This bypasses Caddy, so the import is not subject to Caddy's rate limit. Specify the backend directly with ``--backend-api-base`` as follows.
 
 ```:small
-./scripts/import-archive.py --stgy-base https://stgy.jp/ --data-dir stgy-export-0000000000020101-20260722140653 --admin-email admin@stgy.jp --admin-password stgystgy
+./scripts/import-archive.py --backend-api-base http://127.0.0.1:3100 --data-dir stgy-export-0000000000020101-20260722140653 --admin-email admin@stgy.jp --admin-password stgystgy
 ```
 
 To import post data and its associated images and tracks as resources owned by an existing user, use the --owner option.
 
 ```:small
-./scripts/import-archive.py --stgy-base https://stgy.jp/ --data-dir stgy-export-0000000000020101-20260722140653 --admin-email admin@stgy.jp --admin-password stgystgy --owner 1234567890ABCDEF
+./scripts/import-archive.py --backend-api-base http://127.0.0.1:3100 --data-dir stgy-export-0000000000020101-20260722140653 --admin-email admin@stgy.jp --admin-password stgystgy --owner 1234567890ABCDEF
 ```
 
-Add --no-reply to exclude reply posts. Add --publish to publish every imported post.
+When running the importer from outside the VPS through the public URL, the existing ``--stgy-base https://stgy.jp/`` option can still be used; that path goes through Caddy. Add --no-reply to exclude reply posts. Add --publish to publish every imported post.
 
 When writing a post containing many local images, it is convenient to prepare arbitrary text containing paths to local image files and use a script that uploads the files while replacing the local paths with their post-upload URLs. First, prepare a file like the following.
 
