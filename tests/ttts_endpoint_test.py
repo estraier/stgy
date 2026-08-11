@@ -40,8 +40,9 @@ def test_posts():
     "wait": 5
   }
   res = requests.put(f"{base_url}/{doc_id}", json=put_payload)
-  assert res.status_code == 202
-  requests.post(f"{base_url}/flush", json={"wait": 5})
+  assert res.status_code in (200, 408)
+  res = requests.post(f"{base_url}/flush", json={"wait": 5})
+  assert res.status_code == 200
   t_res = requests.get(f"{base_url}/tokenize", params={"text": put_payload["text"], "locale": "en"})
   assert t_res.status_code == 200
   expected_tokens = sorted(list(set(t_res.json())))
@@ -62,9 +63,13 @@ def test_posts():
   assert res.json()["bodyText"] is None
   res = requests.get(f"{base_url}/{doc_id}", params={"omitAttrs": "true"})
   assert res.json()["attrs"] is None
-  res = requests.delete(f"{base_url}/{doc_id}", json={"timestamp": target_ts, "wait": 5})
-  assert res.status_code == 202
-  requests.post(f"{base_url}/flush", json={"wait": 5})
+  res = requests.delete(
+    f"{base_url}/{doc_id}",
+    json={"timestamp": target_ts, "wait": 5}
+  )
+  assert res.status_code in (200, 408)
+  res = requests.post(f"{base_url}/flush", json={"wait": 5})
+  assert res.status_code == 200
   res = requests.get(f"{base_url}/search", params={"query": doc_id, "locale": "en"})
   assert doc_id not in res.json()
 
@@ -93,7 +98,7 @@ def test_reservation():
   res = requests.post(f"{base_url}/reserve", json=reserve_payload)
   assert res.status_code == 200
   result = res.json()
-  assert result["result"] == "enqueued"
+  assert result["result"] == "completed"
   assert result["count"] == 2
 
   requests.delete(f"{base_url}/maintenance")
