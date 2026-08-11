@@ -3,19 +3,18 @@
 set -euo pipefail
 
 MODE=docker
-SINCE='2026-01-01T00:00:00+09:00'
+SINCE='2000-01-01 00:00:00'
 OUTPUT=''
-EXPECT_USERS=''
 ALLOW_POSTS=false
 CARRYOVER_SCHEMA='stgy_user_carryover'
 CARRYOVER_BUCKET='stgy-live-user-carryover'
 
 usage() {
   cat <<__EOF__
-Usage: $0 [--mode docker|native] [--since TIMESTAMP] [--output DIR] [--expect-users N] [--allow-posts]
+Usage: $0 [--mode docker|native] [--since TIMESTAMP] [--output DIR] [--allow-posts]
 
 Exports users registered on or after TIMESTAMP so they can be restored after
-reset-service-data.sh. The default TIMESTAMP is 2026-01-01T00:00:00+09:00.
+reset-service-data.sh. The default TIMESTAMP is 2000-01-01 00:00:00.
 
 The export contains users, user_secrets (including password hashes),
 user_details, user_pub_configs, and the agreement terms referenced by those
@@ -27,7 +26,6 @@ Options:
   --mode docker|native   Database/MinIO access mode (default: docker)
   --since TIMESTAMP     Registration cutoff (default: $SINCE)
   --output DIR          Output directory (default: backup/live-users-YYYYMMDD-HHMMSS)
-  --expect-users N      Refuse to continue unless exactly N users match
   --allow-posts         Allow selected users to own posts (posts are still NOT exported)
   -h, --help            Show this help
 __EOF__
@@ -62,15 +60,6 @@ while [ "$#" -gt 0 ]; do
       OUTPUT="${1#*=}"
       shift
       ;;
-    --expect-users)
-      [ "$#" -ge 2 ] || { echo "Missing value for --expect-users" >&2; exit 2; }
-      EXPECT_USERS="$2"
-      shift 2
-      ;;
-    --expect-users=*)
-      EXPECT_USERS="${1#*=}"
-      shift
-      ;;
     --allow-posts)
       ALLOW_POSTS=true
       shift
@@ -94,11 +83,6 @@ case "$MODE" in
     exit 2
     ;;
 esac
-
-if [ -n "$EXPECT_USERS" ] && ! printf '%s' "$EXPECT_USERS" | grep -Eq '^[0-9]+$'; then
-  echo "Invalid --expect-users: $EXPECT_USERS" >&2
-  exit 2
-fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$SCRIPT_DIR/.."
@@ -181,14 +165,7 @@ run_psql_since_scalar "SELECT :'since'::timestamptz;" >/dev/null
 USER_COUNT="$(run_psql_since_scalar \
   "SELECT count(*) FROM public.users WHERE id >= public.timestamp_to_id_min(:'since'::timestamptz);")"
 
-if [ -n "$EXPECT_USERS" ] && [ "$USER_COUNT" -ne "$EXPECT_USERS" ]; then
-  echo "Expected $EXPECT_USERS users since $SINCE, found $USER_COUNT. Nothing was exported." >&2
-  exit 1
-fi
-if [ "$USER_COUNT" -eq 0 ]; then
-  echo "No users found since $SINCE. Nothing was exported." >&2
-  exit 1
-fi
+printf 'Found %s user(s) registered since %s.\n' "$USER_COUNT" "$SINCE"
 
 SECRET_COUNT="$(run_psql_since_scalar \
   "SELECT count(*) FROM public.user_secrets s JOIN public.users u ON u.id = s.user_id WHERE u.id >= public.timestamp_to_id_min(:'since'::timestamptz);")"
