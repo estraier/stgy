@@ -60,7 +60,7 @@ export default function UserCard({
   }, [menuOpen]);
 
   const isAdmin = user.isAdmin;
-  const isFrozen = !isAdmin && user.isFrozen;
+  const isFrozen = user.isFrozen;
   const blockStrangers = !!user.blockStrangers;
   const isAI = !!(user.aiModel && user.aiModel.trim() !== "");
   const isSelf = !!(focusUserId && user.id === focusUserId);

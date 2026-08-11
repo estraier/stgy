@@ -84,7 +84,7 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
   const [aiPersonality, setAIPersonality] = useState(user.aiPersonality ?? "");
   const [aiModel, setAIModel] = useState(user.aiModel ?? "");
   const [admin, setIsAdmin] = useState(user.isAdmin ?? false);
-  const [frozen, setIsFrozen] = useState(user.isAdmin ? false : (user.isFrozen ?? false));
+  const [frozen, setIsFrozen] = useState(user.isFrozen ?? false);
   const [blockStrangers, setBlockStrangers] = useState(user.blockStrangers ?? false);
   const [locale, setLocale] = useState(user.locale || "en-US");
   const [timezone, setTimezone] = useState(user.timezone || "UTC");
@@ -200,7 +200,7 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
       if (isAdmin) {
         input.email = email;
         input.isAdmin = admin;
-        input.isFrozen = admin ? false : frozen;
+        input.isFrozen = frozen;
         input.aiModel = aiModel || null;
       }
       if (aiModel) {
@@ -210,6 +210,12 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
       if (timezone !== user.timezone) input.timezone = timezone;
 
       await updateUser(user.id, input);
+      const authenticationStateChanged =
+        isAdmin && (admin !== user.isAdmin || frozen !== user.isFrozen);
+      if (isSelf && authenticationStateChanged) {
+        window.location.assign("/");
+        return;
+      }
       const updatedUser = await getUser(user.id, user.id);
       if (onUpdated) {
         await onUpdated(updatedUser);
@@ -511,11 +517,7 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
               type="checkbox"
               id="isAdmin"
               checked={admin}
-              onChange={(e) => {
-                const checked = e.target.checked;
-                setIsAdmin(checked);
-                if (checked) setIsFrozen(false);
-              }}
+              onChange={(e) => setIsAdmin(e.target.checked)}
               className="mr-2 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
               disabled={isSelf}
             />
@@ -538,16 +540,11 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
               checked={frozen}
               onChange={(e) => setIsFrozen(e.target.checked)}
               className="mr-2 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
-              disabled={admin || submitting}
+              disabled={submitting}
             />
             <label htmlFor="isFrozen" className="font-semibold text-sm">
               Frozen
             </label>
-            {admin && (
-              <span className="text-xs text-gray-400 ml-1">
-                (Administrators cannot be frozen)
-              </span>
-            )}
           </div>
         )}
 

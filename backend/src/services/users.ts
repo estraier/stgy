@@ -552,14 +552,13 @@ export class UsersService {
       const snippet = makeSnippetJsonFromMarkdown(input.introduction).slice(0, 4096);
       userVals.push(snippet);
     }
-    if (input.isAdmin !== undefined || input.isFrozen !== undefined) {
-      const adminIndex = uidx++;
-      const frozenIndex = uidx++;
-      userVals.push(input.isAdmin ?? null, input.isFrozen ?? null);
-      userCols.push(`is_admin = COALESCE($${adminIndex}, is_admin)`);
-      userCols.push(
-        `is_frozen = CASE WHEN COALESCE($${adminIndex}, is_admin) THEN FALSE ELSE COALESCE($${frozenIndex}, is_frozen) END`,
-      );
+    if (input.isAdmin !== undefined) {
+      userCols.push(`is_admin = $${uidx++}`);
+      userVals.push(input.isAdmin);
+    }
+    if (input.isFrozen !== undefined) {
+      userCols.push(`is_frozen = $${uidx++}`);
+      userVals.push(input.isFrozen);
     }
     if (input.blockStrangers !== undefined) {
       userCols.push(`block_strangers = $${uidx++}`);
@@ -782,7 +781,7 @@ export class UsersService {
         FROM user_secrets s
         JOIN users u ON u.id = s.user_id
         WHERE s.email = $1
-          AND u.is_frozen = FALSE
+          AND (u.is_admin = TRUE OR u.is_frozen = FALSE)
       `,
       [email],
     );
@@ -837,12 +836,13 @@ export class UsersService {
     if (!newPassword || newPassword.trim().length < 6)
       throw new Error("Password must be at least 6 characters");
 
-    const state = await pgQuery<{ is_frozen: boolean }>(
+    const state = await pgQuery<{ is_admin: boolean; is_frozen: boolean }>(
       this.pgPool,
-      `SELECT is_frozen FROM users WHERE id = $1`,
+      `SELECT is_admin, is_frozen FROM users WHERE id = $1`,
       [hexToDec(data.userId)],
     );
-    if (!state.rows[0] || state.rows[0].is_frozen) throw new Error("User is frozen");
+    if (!state.rows[0]) throw new Error("User not found");
+    if (!state.rows[0].is_admin && state.rows[0].is_frozen) throw new Error("User is frozen");
 
     const passwordHash = await generatePasswordHash(newPassword);
     const res = await pgQuery(

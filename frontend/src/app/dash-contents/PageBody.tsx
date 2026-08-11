@@ -269,22 +269,25 @@ export default function PageBody() {
   async function onFreezeUsers() {
     const ids = Array.from(selectedUsers);
     if (ids.length === 0 || busy) return;
-    const selected = users.filter((user) => selectedUsers.has(user.id));
-    if (selected.some((user) => user.isAdmin)) {
-      setError("Administrators cannot be frozen.");
-      return;
-    }
     if (!window.confirm(`Freeze ${ids.length} selected ${plural(ids.length, "user")}?`)) return;
+    const selfId = session?.userId;
+    const orderedIds = selfId && ids.includes(selfId)
+      ? [...ids.filter((id) => id !== selfId), selfId]
+      : ids;
     setBusy(true);
     setError(null);
     try {
-      for (const id of ids) {
+      for (const id of orderedIds) {
         const updated = await updateUser(id, { isFrozen: true });
         if (!updated.isFrozen) {
           throw new Error(`User ${id} was not frozen.`);
         }
       }
       setSelectedUsers(new Set());
+      if (selfId && ids.includes(selfId)) {
+        window.location.assign("/");
+        return;
+      }
       await loadUsersFromStart(Math.max(PAGE_SIZE, users.length));
     } catch (e) {
       setError(e ? String(e) : "Failed to freeze users.");
@@ -440,9 +443,6 @@ export default function PageBody() {
     }
   }
 
-  const selectedUsersContainAdmin = users.some(
-    (user) => selectedUsers.has(user.id) && user.isAdmin,
-  );
   const selectedUsersContainSelf = Boolean(
     session && selectedUsers.has(session.userId),
   );
@@ -779,9 +779,8 @@ export default function PageBody() {
                   <button
                     type="button"
                     className={neutralButton}
-                    disabled={busy || selectedUsers.size === 0 || selectedUsersContainAdmin}
+                    disabled={busy || selectedUsers.size === 0}
                     onClick={() => void onFreezeUsers()}
-                    title={selectedUsersContainAdmin ? "Administrators cannot be frozen." : undefined}
                   >
                     Freeze
                   </button>
@@ -796,11 +795,9 @@ export default function PageBody() {
                   <span className="text-xs text-gray-500">
                     {selectedUsersContainSelf
                       ? "You cannot delete yourself."
-                      : selectedUsersContainAdmin
-                        ? "Administrators cannot be frozen."
-                        : selectedUsers.size > 0
-                          ? `${selectedUsers.size} selected`
-                          : `${users.length} shown`}
+                      : selectedUsers.size > 0
+                        ? `${selectedUsers.size} selected`
+                        : `${users.length} shown`}
                   </span>
                   <button
                     type="button"

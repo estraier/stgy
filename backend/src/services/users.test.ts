@@ -246,19 +246,21 @@ class MockPgClient {
 
     if (
       n ===
-      "SELECT s.user_id AS id FROM user_secrets s JOIN users u ON u.id = s.user_id WHERE s.email = $1 AND u.is_frozen = FALSE"
+      "SELECT s.user_id AS id FROM user_secrets s JOIN users u ON u.id = s.user_id WHERE s.email = $1 AND (u.is_admin = TRUE OR u.is_frozen = FALSE)"
     ) {
       const email = params[0];
       const found = Object.entries(this.userSecrets).find(([id, v]) => {
         const user = this.users.find((u) => u.id === id);
-        return v.email === email && user?.isFrozen === false;
+        return v.email === email && !!user && (user.isAdmin || !user.isFrozen);
       });
       return found ? { rows: [{ id: hexToDec(found[0]) }] } : { rows: [] };
     }
 
-    if (n === "SELECT is_frozen FROM users WHERE id = $1") {
+    if (n === "SELECT is_admin, is_frozen FROM users WHERE id = $1") {
       const user = this.users.find((u) => u.id === decToHex(params[0]));
-      return { rows: user ? [{ is_frozen: user.isFrozen }] : [] };
+      return {
+        rows: user ? [{ is_admin: user.isAdmin, is_frozen: user.isFrozen }] : [],
+      };
     }
 
     if (n === "SELECT 1 FROM user_details WHERE user_id = $1 LIMIT 1") {
@@ -785,20 +787,10 @@ class MockPgClient {
       const blockStrangers = valueFor(/block_strangers = \$(\d+)/);
       if (blockStrangers !== undefined) u.blockStrangers = !!blockStrangers;
 
-      const adminMatch = /is_admin = COALESCE\(\$(\d+), is_admin\)/.exec(n);
-      const frozenMatch = /is_frozen = CASE WHEN COALESCE\(\$(\d+), is_admin\) THEN FALSE ELSE COALESCE\(\$(\d+), is_frozen\) END/.exec(n);
-      if (adminMatch || frozenMatch) {
-        const adminValue = adminMatch ? params[Number(adminMatch[1]) - 1] : null;
-        const frozenValue = frozenMatch ? params[Number(frozenMatch[2]) - 1] : null;
-        const nextAdmin = adminValue === null || adminValue === undefined ? u.isAdmin : !!adminValue;
-        const nextFrozen = nextAdmin
-          ? false
-          : frozenValue === null || frozenValue === undefined
-            ? u.isFrozen
-            : !!frozenValue;
-        u.isAdmin = nextAdmin;
-        u.isFrozen = nextFrozen;
-      }
+      const admin = valueFor(/is_admin = \$(\d+)/);
+      if (admin !== undefined) u.isAdmin = !!admin;
+      const frozen = valueFor(/is_frozen = \$(\d+)/);
+      if (frozen !== undefined) u.isFrozen = !!frozen;
       u.updatedAt = new Date().toISOString();
       return { rowCount: 1, rows: [] };
     }
@@ -1206,7 +1198,7 @@ describe("UsersService", () => {
       aiPersonality: "X",
     });
     expect(updated?.isAdmin).toBe(true);
-    expect(updated?.isFrozen).toBe(false);
+    expect(updated?.isFrozen).toBe(true);
     expect(updated?.blockStrangers).toBe(true);
     const detail = await service.getUser(ALICE);
     expect((detail as any).email).toBe("alice2@example.com");
@@ -1222,14 +1214,18 @@ describe("UsersService", () => {
     expect(callArgs.bodyText).toContain("introX");
   });
 
-  test("updateUser can freeze a non-admin user and making the user admin clears frozen", async () => {
+  test("updateUser keeps isAdmin and isFrozen independent", async () => {
     const frozen = await service.updateUser({ id: BOB, isFrozen: true });
     expect(frozen?.isAdmin).toBe(false);
     expect(frozen?.isFrozen).toBe(true);
 
     const admin = await service.updateUser({ id: BOB, isAdmin: true });
     expect(admin?.isAdmin).toBe(true);
-    expect(admin?.isFrozen).toBe(false);
+    expect(admin?.isFrozen).toBe(true);
+
+    const unfrozen = await service.updateUser({ id: BOB, isFrozen: false });
+    expect(unfrozen?.isAdmin).toBe(true);
+    expect(unfrozen?.isFrozen).toBe(false);
   });
 
   test("startUpdateEmail stores verification info in Redis and queues mail", async () => {
@@ -1308,6 +1304,24 @@ describe("UsersService", () => {
     await expect(
       service.verifyResetPassword(email, resetPasswordId, webCode, stored.mailCode, "newsecurepass"),
     ).rejects.toThrow(/User is frozen/i);
+  });
+
+  test("password reset remains available for an administrator with the frozen bit set", async () => {
+    const user = pg.users.find((candidate) => candidate.id === ALICE)!;
+    user.isAdmin = true;
+    user.isFrozen = true;
+
+    const email = "alice@example.com";
+    const { resetPasswordId, webCode } = await service.startResetPassword(email);
+    const stored = redis.store[`resetPassword:${resetPasswordId}`];
+    await service.verifyResetPassword(
+      email,
+      resetPasswordId,
+      webCode,
+      stored.mailCode,
+      "newsecurepass",
+    );
+    expect(pg.passwords[ALICE]).toBe(md5("newsecurepass"));
   });
 
   test("fakeResetPassword makes a dummy session object", async () => {

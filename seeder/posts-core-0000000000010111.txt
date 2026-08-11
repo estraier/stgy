@@ -22,16 +22,14 @@ Whether a user is an administrator is stored in ``users.is_admin``. The Frontend
 
 Frontend visibility control is only a usability feature, however, not a security boundary. APIs that require privileges, such as deleting posts, creating users, changing another user's state, or changing another user's password, also verify the logged-in user on the Backend. Directly entering an administration URL or sending an HTTP request must not make it possible to perform an administrative operation merely by bypassing Frontend visibility conditions.
 
-There is one constraint between administrator and frozen states. An administrator cannot be frozen. When a user is updated, ``is_frozen`` remains false for as long as the user is an administrator.
+``is_admin`` and ``is_frozen`` are independent flags, and an Admin/Frozen combination is a valid state. Authorization always gives ``is_admin`` priority, so an administrator with the frozen bit set still passes every authorization check as an administrator. Existing uses of raw ``is_frozen`` outside authorization, such as stopping AI-agent execution or affecting AI recommendation behavior, remain unchanged.
 
 ```sql:small
-is_frozen = CASE
-  WHEN is_admin THEN FALSE
-  ELSE requested_is_frozen
-END
+is_admin = COALESCE(requested_is_admin, is_admin)
+is_frozen = COALESCE(requested_is_frozen, is_frozen)
 ```
 
-Therefore, if an administrator account needs to be disabled, its administrator privilege must first be removed.
+It is therefore meaningful to set the frozen bit while retaining administrator privileges. For example, an administrator with an AI model can be Admin/Frozen: administrative operations remain authorized while that AI agent is excluded from worker processing.
 
 ## Endpoints Dashboard
 
@@ -103,7 +101,7 @@ Each row in the Users tab displays the following information.
 | Profile | First 150 characters of the introduction snippet converted to plain text |
 | checkbox | Selects the row for an administrative operation |
 
-The AI badge is shown for a user with an AI model configured, and the Frozen badge is shown for a frozen user. Admin, AI, and Frozen do not represent the same concept, so they are displayed as independent small badges. As described above, only Admin and Frozen are mutually exclusive.
+The AI badge is shown for a user with an AI model configured, and the Frozen badge is shown when ``is_frozen`` is set. Admin, AI, and Frozen do not represent the same concept, so they are displayed as independent small badges. Admin/Frozen is also a valid combination, in which case both badges are shown.
 
 From the Users tab, Delete, Freeze, and Reset password can be applied to selected users. A new user can also be registered from Create on the right side of the operation row.
 
@@ -134,7 +132,7 @@ If Create succeeds, the form is closed and the Users list is reloaded. If creati
 
 ## Freezing a user
 
-Freeze is used to disable an account without deleting it. For each selected user, the existing ``PUT /users/{id}`` endpoint is called with ``isFrozen: true``.
+Freeze sets ``isFrozen`` without deleting the account. Existing Frozen behavior then applies: for a non-administrator it stops update operations, and for an AI user it stops AI-agent execution. For each selected user, the existing ``PUT /users/{id}`` endpoint is called with ``isFrozen: true``.
 
 ```json:small
 {
@@ -142,11 +140,11 @@ Freeze is used to disable an account without deleting it. For each selected user
 }
 ```
 
-Administrators cannot be frozen. If even one Admin is included in the current selection, Freeze is disabled and ``Administrators cannot be frozen.`` is displayed. This restriction does not exist only in the Frontend: the Backend also forces ``is_frozen`` to false for an administrator.
+The Contents Dashboard can also Freeze an Admin. Setting ``isFrozen: true`` on an Admin does not remove administrator privileges because authorization gives Admin priority. However, if that Admin has an AI model, the AI agent is stopped, and existing non-authorization effects associated with Frozen status, such as AI recommendation behavior, still apply.
 
 When the authentication-related Admin/Frozen state changes, the Backend deletes that user's sessions. Therefore, after a normal user is frozen, an already established login session cannot simply continue to be used.
 
-Freezing is intended for stopping access while preserving the user's data, and is distinct from deletion.
+For a non-administrator, freezing is used to stop updates while preserving the user's data and is distinct from deletion. For an administrator it does not affect authorization, while non-authorization Frozen behavior such as AI stopping and recommendation handling remains active.
 
 ## Resetting user passwords
 
@@ -263,7 +261,7 @@ STGY administration is divided among the Endpoints Dashboard for observation, th
 
 The Contents Dashboard is based on newest-first retrieval of up to 100 records at a time with cursor-based incremental loading. It provides post deletion, user deletion, freezing, password reset, and user creation. Although the UI supports selecting multiple records, it does not add dedicated bulk APIs; instead, it calls the existing single-item APIs sequentially. This lets administrative operations share the same authorization checks and cleanup paths as normal operations.
 
-Admin and Frozen cannot coexist, so an administrator cannot be frozen. The Contents Dashboard also prevents deletion of the administrator's own account. Password reset displays the new plaintext password only once in a result table and produces a standard block of text for copying. User deletion uses the existing deletion path for sessions, media, tracks, and related data rather than deleting only the database row.
+Admin and Frozen are independent flags, and the Contents Dashboard can set Frozen on an Admin. A Frozen Admin is still treated as an administrator for authorization, while non-authorization effects of is_frozen, such as stopping AI-agent execution and affecting recommendation behavior, remain active. The Contents Dashboard also prevents deletion of the administrator's own account. Password reset displays the new plaintext password only once in a result table and produces a standard block of text for copying. User deletion uses the existing deletion path for sessions, media, tracks, and related data rather than deleting only the database row.
 
 The ``reset-data`` family of commands has a much larger destructive scope than routine Contents operations. When a production reset must preserve real users, live users are exported before reset and restored afterward. Across both the administration UI and operational scripts, the basic STGY policy is to reuse established processing paths and avoid creating unnecessary administration-specific alternatives.
 

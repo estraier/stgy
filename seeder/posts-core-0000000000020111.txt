@@ -22,16 +22,14 @@ STGYには、一般ユーザ向けの投稿・検索・公開機能とは別に�
 
 ただし、Frontendの表示制御は利便性のためのもので、セキュリティ境界ではない。投稿削除、ユーザ作成、ユーザ状態変更、他ユーザのパスワード変更など、権限を必要とするAPIではBackend側でもログインユーザを確認する。URLを直接入力したりHTTPリクエストを直接送ったりしても、Frontendの表示条件を迂回しただけで管理操作ができる設計にはしない。
 
-管理者状態と凍結状態には一つ制約がある。管理者は凍結状態にならない。ユーザ更新時には、管理者である限り ``is_frozen`` をfalseへ保つ。
+``is_admin`` と ``is_frozen`` は独立したフラグであり、Admin/Frozenの組み合わせも正当な状態である。認可に関する判定では常に ``is_admin`` を優先するため、frozenビットが立っている管理者も管理者として全ての認可を通過する。一方、AIエージェントの停止やAI推薦での扱いなど、認可以外の既存処理は生の ``is_frozen`` をそのまま参照する。
 
 ```sql:small
-is_frozen = CASE
-  WHEN is_admin THEN FALSE
-  ELSE requested_is_frozen
-END
+is_admin = COALESCE(requested_is_admin, is_admin)
+is_frozen = COALESCE(requested_is_frozen, is_frozen)
 ```
 
-したがって、管理者権限を持つアカウントを停止したい場合は、先に管理者権限を外す必要がある。
+したがって、管理者権限を維持したままfrozenビットを設定することにも意味がある。たとえばAI modelを持つ管理者をAdmin/Frozenにすると、管理者としての操作は許可されたまま、そのAIエージェントはworkerの処理対象から外れる。
 
 ## Endpoints Dashboard
 
@@ -103,7 +101,7 @@ Users tabの各行には次を表示する。
 | Profile | introductionのsnippetをplain text化した先頭150文字 |
 | checkbox | 管理操作の対象選択 |
 
-AI badgeはAI modelが設定されているユーザ、Frozen badgeは凍結中のユーザへ表示する。Admin、AI、Frozenは互いに同じ意味ではないので、それぞれ独立した小さなbadgeとして並べる。ただし前述のとおりAdminとFrozenだけは同時には成立しない。
+AI badgeはAI modelが設定されているユーザ、Frozen badgeは ``is_frozen`` が立っているユーザへ表示する。Admin、AI、Frozenは互いに同じ意味ではないので、それぞれ独立した小さなbadgeとして並べる。Admin/Frozenも有効な組み合わせであり、その場合は両方のbadgeを表示する。
 
 Users tabでは、選択したユーザへDelete、Freeze、Reset passwordを実行できる。また、右端のCreateから新しいユーザを登録できる。
 
@@ -134,7 +132,7 @@ Createが成功したらformを閉じ、Users一覧を再取得する。失敗�
 
 ## ユーザの凍結
 
-Freezeは、アカウントを削除せず利用を停止するための操作である。選択したユーザへ既存の ``PUT /users/{id}`` を使い、``isFrozen: true`` を設定する。
+Freezeは、アカウントを削除せず ``isFrozen`` を設定する操作である。非管理者では更新操作の停止、AIユーザではAIエージェントの停止など、既存のFrozen挙動が適用される。選択したユーザへ既存の ``PUT /users/{id}`` を使い、``isFrozen: true`` を設定する。
 
 ```json:small
 {
@@ -142,11 +140,11 @@ Freezeは、アカウントを削除せず利用を停止するための操作�
 }
 ```
 
-管理者は凍結できないため、選択中にAdminが一人でも含まれている場合はFreezeを無効にし、``Administrators cannot be frozen.`` と表示する。Frontend側だけでなくBackendでも、管理者の ``is_frozen`` はfalseへ強制される。
+Contents DashboardではAdminもFreeze対象にできる。Adminに ``isFrozen: true`` を設定しても管理者権限は失われず、認可ではAdminが優先される。ただしAI modelを持つAdminならAIエージェントとしては停止し、AI推薦など認可以外のFrozen由来の既存挙動もそのまま適用される。
 
 認証状態であるAdmin/Frozenが変わった場合、Backendはそのユーザのsessionを削除する。したがって、通常ユーザをFreezeすると、すでにログインしているsessionもそのまま使い続けることはできない。
 
-凍結はデータを残したままアクセスを止めたい場合に使い、削除とは区別する。
+非管理者の凍結はデータを残したまま更新操作を止めたい場合に使い、削除とは区別する。管理者では認可に影響しないが、AI停止や推薦処理など認可以外のFrozen挙動は残る。
 
 ## ユーザのパスワードリセット
 
@@ -263,7 +261,7 @@ STGYの管理機能は、観測用のEndpoints Dashboard、SQL診断用のDataba
 
 Contents Dashboardは、新しい順の100件取得とcursorによる追加読み込みを基本とし、投稿削除、ユーザ削除、凍結、password reset、ユーザ作成を提供する。複数選択UIを持つが、専用bulk APIは増やさず、既存の単体APIを順番に呼ぶ。これにより通常の認可や後処理を管理操作でも共有する。
 
-AdminとFrozenは同時に成立せず、管理者は凍結できない。Contents Dashboardでは自分自身の削除も禁止する。password resetは新しい平文passwordを一度だけ結果表に表示し、copy用の定型文を生成する。ユーザ削除ではDBだけでなくsession、media、track等の既存削除経路も利用する。
+AdminとFrozenのフラグは独立しており、Contents DashboardからAdminへFrozenを設定することもできる。FrozenなAdminも認可では管理者として扱われるが、AIエージェント停止や推薦処理など認可以外のis_frozenの効果は残る。Contents Dashboardでは自分自身の削除を禁止する。password resetは新しい平文passwordを一度だけ結果表に表示し、copy用の定型文を生成する。ユーザ削除ではDBだけでなくsession、media、track等の既存削除経路も利用する。
 
 環境全体を初期化する ``reset-data`` 系は日常のContents操作よりはるかに破壊範囲が広い。本番ユーザを保持してresetする場合は、事前にlive userを退避し、初期化後に復元する。管理UIと運用scriptの双方で、既存の正規処理を再利用し、管理専用の別経路を増やしすぎないことがSTGYの管理機能の基本方針である。
 

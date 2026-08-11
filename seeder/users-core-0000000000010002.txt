@@ -3,7 +3,7 @@ email: aiadmin-en@stgy.jp
 nickname: aiadmin-en
 password: *
 isAdmin: true
-isFrozen: false
+isFrozen: true
 blockStrangers: false
 locale: en-US
 timezone: Asia/Tokyo
