@@ -236,7 +236,9 @@ Several design themes are available, and the vertical-writing themes (tagegaki a
 
 # Exporting data
 
-Select "Export data" from the navigation menu to open the bulk data export page. Press "Export all data" to download a ZIP archive containing all data you have stored on STGY. Exporting takes some time, so keep the window open until the message "Download finished" appears. Extracting the saved archive produces the following files:
+Select "Export data" from the navigation menu to open the bulk data export page. Press "Export all data" to download a ZIP archive containing your profile and posts together with images and tracks referenced by them. To include images and tracks that are not referenced by a post or profile, select "include unreferenced resources". Exporting takes some time, so keep the window open until the message "Download finished" appears. Extracting the ZIP creates a directory named ``stgy-export-USERID`` containing the following files:
+
+If you keep a previous export locally, you can export only the changes. Select "incremental export" to show the manifest selector, then choose ``export-manifest.json`` from the existing ``stgy-export-USERID`` directory. The new ZIP contains posts, images, and tracks that are new or changed since the previous export, together with index and other files that are regenerated every time. The top-level directory name inside the ZIP stays the same, so extracting it in the same parent directory as the previous export and overwriting existing files updates the incremental backup. Files deleted from STGY are not deleted from the local backup.
 
 - ./profile.json : user profile data in JSON
 - ./profile.html : user profile data in HTML
@@ -250,6 +252,8 @@ Select "Export data" from the navigation menu to open the bulk data export page.
 - ./relations.json : follow, block, and like data in JSON
 - ./index.html : index of all HTML files
 - ./style.css : stylesheet for the HTML files
+- ./README.txt : overview and viewing instructions for the exported data
+- ./export-manifest.json : file inventory and metadata used for incremental exports
 
 Open index.html to browse profiles and posts like a local website. Image links inside posts are rewritten for local use. The JSON and HTML versions of profile and post data contain the same information. When importing into another system, choose whichever format is closer to the form you need and transform it as appropriate.
 

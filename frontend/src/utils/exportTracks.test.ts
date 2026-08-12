@@ -1,5 +1,6 @@
 import type { TrackObject } from "@/api/models";
 import {
+  collectOwnedTrackKeys,
   collectUnexportedTrackReferences,
   filterReferencedTrackArchiveEntries,
   makeTrackArchiveEntries,
@@ -111,6 +112,26 @@ describe("filterReferencedTrackArchiveEntries", () => {
 
   test("omits unreferenced tracks", () => {
     expect(filterReferencedTrackArchiveEntries(["No maps here"], entries)).toEqual([]);
+  });
+});
+
+describe("collectOwnedTrackKeys", () => {
+  test("collects owned master and preview keys only", () => {
+    expect(
+      Array.from(
+        collectOwnedTrackKeys(
+          [
+            "@[](/tracks/u1/previews/797392/01234567deadbeef.trjgz)",
+            "/tracks/u1/masters/797391/11234567cafebabe.fit",
+            "/tracks/u2/previews/797390/21234567feedface.trjgz",
+          ],
+          "u1",
+        ),
+      ),
+    ).toEqual([
+      "u1/previews/797392/01234567deadbeef.trjgz",
+      "u1/masters/797391/11234567cafebabe.fit",
+    ]);
   });
 });
 

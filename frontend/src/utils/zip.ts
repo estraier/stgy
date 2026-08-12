@@ -1,6 +1,7 @@
 export type ZipInputFile = {
   name: string;
   data: Uint8Array;
+  modifiedAt: Date;
 };
 
 export interface IZipWriter {
@@ -169,13 +170,11 @@ export class InMemoryZipWriter implements IZipWriter {
     this.fileName = fileName;
   }
 
-  async addFile(name: string, data: Uint8Array, _now: Date) {
-    this.files.push({ name, data });
+  async addFile(name: string, data: Uint8Array, now: Date) {
+    this.files.push({ name, data, modifiedAt: now });
   }
 
   async finalize() {
-    const now = new Date();
-    const { time, date } = toDosTimeDate(now);
     const enc = new TextEncoder();
 
     const entries: Array<{
@@ -191,6 +190,7 @@ export class InMemoryZipWriter implements IZipWriter {
 
     for (const f of this.files) {
       const nameBytes = enc.encode(f.name);
+      const { time, date } = toDosTimeDate(f.modifiedAt);
       const c = crc32(f.data);
       const size = f.data.length;
       const local = concat([

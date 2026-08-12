@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { getSessionInfo } from "@/api/auth";
 import { getPubConfig, getUser, listBlockees, listFollowees } from "@/api/users";
 import { getPost, listPosts, listPostsLikedByUser } from "@/api/posts";
@@ -37,13 +37,26 @@ import {
   rewriteOwnedImageObjectUrlsToRelative,
 } from "@/utils/exportImages";
 import {
+  collectOwnedTrackKeys,
   collectUnexportedTrackReferences,
-  filterReferencedTrackArchiveEntries,
   makeTrackArchiveEntries,
   rewriteTrackObjectUrlsToRelative,
   type TrackArchiveEntry,
 } from "@/utils/exportTracks";
 import { buildHtmlStylesCss } from "./exportStyles";
+import {
+  EXPORTER_VERSION,
+  EXPORT_MANIFEST_FILENAME,
+  EXPORT_MANIFEST_FORMAT,
+  EXPORT_MANIFEST_VERSION,
+  makeManifestFileEntry,
+  makePostSourceFingerprint,
+  parseExportManifest,
+  type ExportManifest,
+  type ExportManifestFile,
+  type ExportManifestPost,
+  type ExportManifestTrack,
+} from "@/utils/exportManifest";
 
 interface SaveFilePickerOptions {
   suggestedName?: string;
@@ -111,8 +124,8 @@ const TRACK_EXPORT_BOOTSTRAP_JS = `(() => {
 
 const EXPORT_README_TEXT = `STGY export archive
 
-This archive contains a copy of your exported STGY data and browser-readable HTML pages.
-Start with index.html to browse the profile and posts included in the archive.
+This directory contains your exported STGY data and browser-readable HTML pages.
+Start with index.html to browse the profile and posts included in the current export.
 
 The main contents are:
 
@@ -137,9 +150,21 @@ The main contents are:
   pub-config.json, relations.json, and avatar.webp
     Publication settings, social relations, and the avatar image.
 
+  export-manifest.json
+    Inventory and source fingerprints used for incremental exports.
+
 The JSON files are suitable for processing or migration. The HTML files provide a convenient
 way to read the exported contents as a static website. Keep the directory structure intact so
 that images, tracks, scripts, and stylesheets continue to resolve correctly.
+
+Incremental exports
+-------------------
+
+After extracting an export, keep export-manifest.json together with the exported directory.
+On a later export, select that manifest as the previous export manifest. The new ZIP will contain
+only changed/new post and resource files plus files that are regenerated every time. Its top-level
+directory has the same stable name, so extracting it over the previous export updates the backup
+by adding and overwriting files. Files deleted from STGY are not deleted from the local backup.
 
 Map viewing
 -----------
@@ -176,7 +201,7 @@ type ReplyDigest = {
   text: string;
 };
 
-type ExportPostDetail = PostDetail & {
+type ExportPostDetail = Omit<PostDetail, "olderPostId" | "newerPostId"> & {
   replyDigests: ReplyDigest[];
 };
 
@@ -533,11 +558,7 @@ async function fetchAllMyPosts(userId: string): Promise<Post[]> {
   });
 }
 
-async function fetchAllReplyDigests(
-  postId: string,
-  focusUserId: string,
-  postBaseSleepMs: number,
-): Promise<ReplyDigest[]> {
+async function fetchAllReplies(postId: string, focusUserId: string): Promise<Post[]> {
   const replies: Post[] = [];
   let after: string | undefined;
   for (;;) {
@@ -556,10 +577,20 @@ async function fetchAllReplyDigests(
   }
 
   const seen = new Set<string>();
+  return replies.filter((reply) => {
+    if (seen.has(reply.id)) return false;
+    seen.add(reply.id);
+    return true;
+  });
+}
+
+async function makeReplyDigests(
+  replies: Post[],
+  focusUserId: string,
+  postBaseSleepMs: number,
+): Promise<ReplyDigest[]> {
   const replyDigests: ReplyDigest[] = [];
   for (const reply of replies) {
-    if (seen.has(reply.id)) continue;
-    seen.add(reply.id);
     const detail = await withTooOftenRetry(() => getPost(reply.id, focusUserId));
     replyDigests.push({
       id: detail.id,
@@ -573,6 +604,13 @@ async function fetchAllReplyDigests(
     await sleep(postBaseSleepMs);
   }
   return replyDigests;
+}
+
+function withoutPostNavigation(detail: PostDetail, replyDigests: ReplyDigest[]): ExportPostDetail {
+  const { olderPostId, newerPostId, ...post } = detail;
+  void olderPostId;
+  void newerPostId;
+  return { ...post, replyDigests };
 }
 
 async function fetchAllMyImages(userId: string): Promise<MediaObject[]> {
@@ -621,6 +659,23 @@ async function fetchAllMyTracks(userId: string): Promise<TrackObject[]> {
 
 function isMasterKey(key: string, userId: string): boolean {
   return key.startsWith(`${userId}/masters/`) || key.startsWith(`${userId}/master/`);
+}
+
+function trackArchiveEntryFromManifest(entry: ExportManifestTrack): TrackArchiveEntry {
+  return {
+    track: {
+      bucket: "",
+      key: entry.key,
+      size: entry.size,
+      etag: entry.etag,
+      lastModified: entry.lastModified,
+      publicUrl: entry.publicUrl,
+      previewKey: entry.previewKey,
+      previewUrl: entry.previewUrl,
+    },
+    masterFilename: entry.masterPath.split("/").pop() || "",
+    previewFilename: entry.previewPath.split("/").pop() || "",
+  };
 }
 
 function imageFilenameFromKey(key: string, userId: string): string {
@@ -702,6 +757,8 @@ export default function PageBody() {
     afterBytes: number;
   } | null>(null);
   const [includeUnreferencedResources, setIncludeUnreferencedResources] = useState(false);
+  const [incrementalExport, setIncrementalExport] = useState(false);
+  const [previousManifestFile, setPreviousManifestFile] = useState<File | null>(null);
 
   useEffect(() => {
     let canceled = false;
@@ -729,12 +786,7 @@ export default function PageBody() {
     };
   }, []);
 
-  const exportFileName = useMemo(() => {
-    const ts = formatTimestampYYYYMMDDhhmmss(new Date());
-    return `stgy-export-${userId ?? "unknown"}-${ts}.zip`;
-  }, [userId]);
-
-  const exportRootDir = useMemo(() => exportFileName.replace(/\.zip$/i, ""), [exportFileName]);
+  const exportRootDir = `stgy-export-${userId ?? "unknown"}`;
 
   async function handleExport(e: FormEvent) {
     e.preventDefault();
@@ -746,8 +798,21 @@ export default function PageBody() {
     setDone(null);
 
     try {
-      let zipWriter: IZipWriter;
+      const now = new Date();
+      const exportFileName = `stgy-export-${userId}-${formatTimestampYYYYMMDDhhmmss(now)}.zip`;
+      let previousManifest: ExportManifest | null = null;
+      if (incrementalExport) {
+        if (!previousManifestFile) {
+          throw new Error("Select export-manifest.json for incremental export.");
+        }
+        previousManifest = parseExportManifest(
+          await previousManifestFile.text(),
+          userId,
+          exportRootDir,
+        );
+      }
 
+      let zipWriter: IZipWriter;
       if (window.showSaveFilePicker) {
         const handle = await window.showSaveFilePicker({
           suggestedName: exportFileName,
@@ -763,7 +828,6 @@ export default function PageBody() {
       setExportProgress(null);
 
       const enc = new TextEncoder();
-      const now = new Date();
       const base = `${exportRootDir}/`;
       const postBaseSleepMs = profile.isAdmin ? POST_BASE_SLEEP_MS_ADMIN : POST_BASE_SLEEP_MS;
       const imageBaseSleepMs = profile.isAdmin
@@ -789,91 +853,223 @@ export default function PageBody() {
         fetchAllLikedPosts(userId),
       ]);
 
+      type PreparedPost = {
+        post: Post;
+        sourceFingerprint: string;
+        detail: ExportPostDetail | null;
+        imageFilenames: string[];
+        trackKeys: string[];
+        errors: string[];
+      };
+
       const posts = await fetchAllMyPosts(userId);
-      const postDetails: ExportPostDetail[] = [];
+      const preparedPosts: PreparedPost[] = [];
       for (const post of posts) {
+        const replies = post.countReplies > 0 ? await fetchAllReplies(post.id, userId) : [];
+        const sourceFingerprint = await makePostSourceFingerprint(post, replies);
+        const previousPost = previousManifest?.posts[post.id];
+        const jsonPath = `posts/${post.id}.json`;
+        const htmlPath = `posts/${post.id}.html`;
+        const canReuse =
+          previousPost?.sourceFingerprint === sourceFingerprint &&
+          previousManifest?.files[jsonPath] != null &&
+          previousManifest.files[htmlPath] != null;
+
+        if (canReuse && previousPost) {
+          preparedPosts.push({
+            post,
+            sourceFingerprint,
+            detail: null,
+            imageFilenames: previousPost.imageFilenames,
+            trackKeys: previousPost.trackKeys,
+            errors: previousPost.errors,
+          });
+          continue;
+        }
+
         const detail = await withTooOftenRetry(() => getPost(post.id, userId));
         await sleep(postBaseSleepMs);
         const replyDigests =
-          detail.countReplies > 0
-            ? await fetchAllReplyDigests(detail.id, userId, postBaseSleepMs)
-            : [];
-        postDetails.push({ ...detail, replyDigests });
+          replies.length > 0 ? await makeReplyDigests(replies, userId, postBaseSleepMs) : [];
+        const exportDetail = withoutPostNavigation(detail, replyDigests);
+        const referenceTexts = [exportDetail.content, exportDetail.snippet];
+        preparedPosts.push({
+          post,
+          sourceFingerprint,
+          detail: exportDetail,
+          imageFilenames: Array.from(collectOwnedImageFilenames(referenceTexts, userId)).sort(),
+          trackKeys: Array.from(collectOwnedTrackKeys(referenceTexts, userId)).sort(),
+          errors: [],
+        });
       }
 
-      const referenceSources = [
-        { label: "Profile introduction", text: profile.introduction },
-        { label: "Profile snippet", text: profile.snippet },
-        ...postDetails.flatMap((post) => [
-          { label: `Post ${post.id} content`, text: post.content },
-          { label: `Post ${post.id} snippet`, text: post.snippet },
-        ]),
-      ];
-      const referenceTexts = referenceSources.map((source) => source.text);
-
       const tracks = await fetchAllMyTracks(userId);
-      const allTrackEntries = makeTrackArchiveEntries(tracks, userId);
-      const trackEntries = includeUnreferencedResources
-        ? allTrackEntries
-        : filterReferencedTrackArchiveEntries(referenceTexts, allTrackEntries);
-      const unexportedTrackReferences = collectUnexportedTrackReferences(
-        referenceSources,
-        trackEntries,
-        userId,
-      );
-      const trackExportErrors = unexportedTrackReferences.map(
-        ({ reference, sources, reason }) => {
-          const detail =
-            reason === "owned-by-another-user"
-              ? "the track belongs to another user"
-              : "the track is not in your track storage";
-          return `${sources.join(", ")}: Track was not exported because ${detail}: ${reference}`;
-        },
-      );
+      const currentTrackEntries = makeTrackArchiveEntries(tracks, userId);
+      const knownTrackEntriesByKey = new Map<string, TrackArchiveEntry>();
+      for (const entry of Object.values(previousManifest?.tracks ?? {})) {
+        const archiveEntry = trackArchiveEntryFromManifest(entry);
+        if (archiveEntry.masterFilename && archiveEntry.previewFilename) {
+          knownTrackEntriesByKey.set(entry.key, archiveEntry);
+        }
+      }
+      for (const entry of currentTrackEntries) knownTrackEntriesByKey.set(entry.track.key, entry);
+
+      const profileReferenceTexts = [profile.introduction, profile.snippet];
+      const referencedTrackKeys = collectOwnedTrackKeys(profileReferenceTexts, userId);
+      for (const prepared of preparedPosts) {
+        for (const key of prepared.trackKeys) referencedTrackKeys.add(key);
+      }
+      const currentTrackKeys = new Set(currentTrackEntries.map((entry) => entry.track.key));
+      const trackEntries = Array.from(knownTrackEntriesByKey.values()).filter((entry) => {
+        const referenced =
+          referencedTrackKeys.has(entry.track.key) || referencedTrackKeys.has(entry.track.previewKey);
+        return referenced || (includeUnreferencedResources && currentTrackKeys.has(entry.track.key));
+      });
+
       const exportProfile = rewriteProfileIntroductionAndSnippet(profile, userId, trackEntries);
 
       const images = await fetchAllMyImages(userId);
-      const referencedImageFilenames = includeUnreferencedResources
-        ? null
-        : collectOwnedImageFilenames(referenceTexts, userId);
-      const masterByFilename = new Map<string, MediaObject>();
-
+      const allMastersByFilename = new Map<string, MediaObject>();
       images
         .filter((it) => isMasterKey(it.key, userId))
         .forEach((it) => {
-          const fname = imageFilenameFromKey(it.key, userId);
-          if (referencedImageFilenames && !referencedImageFilenames.has(fname)) return;
-          if (!masterByFilename.has(fname)) masterByFilename.set(fname, it);
+          const filename = imageFilenameFromKey(it.key, userId);
+          if (!allMastersByFilename.has(filename)) allMastersByFilename.set(filename, it);
         });
 
-      const unexportedImageReferences = collectUnexportedImageReferences(
-        referenceSources,
-        new Set(masterByFilename.keys()),
+      const referencedImageFilenames = collectOwnedImageFilenames(profileReferenceTexts, userId);
+      for (const prepared of preparedPosts) {
+        for (const filename of prepared.imageFilenames) referencedImageFilenames.add(filename);
+      }
+
+      const masterByFilename = new Map<string, MediaObject>();
+      for (const [filename, item] of allMastersByFilename) {
+        if (!includeUnreferencedResources && !referencedImageFilenames.has(filename)) continue;
+        masterByFilename.set(filename, item);
+      }
+
+      const availableImageFilenames = new Set<string>(masterByFilename.keys());
+      for (const entry of Object.values(previousManifest?.images ?? {})) {
+        if (previousManifest?.files[entry.path]) {
+          const filename = entry.path.split("/").pop();
+          if (filename) availableImageFilenames.add(filename);
+        }
+      }
+
+      const profileSources = [
+        { label: "Profile introduction", text: profile.introduction },
+        { label: "Profile snippet", text: profile.snippet },
+      ];
+      const profileTrackErrors = collectUnexportedTrackReferences(
+        profileSources,
+        trackEntries,
         userId,
-      );
-      const imageExportErrors = unexportedImageReferences.map(
-        ({ reference, sources, reason }) => {
+      ).map(({ reference, sources, reason }) => {
+        const detail =
+          reason === "owned-by-another-user"
+            ? "the track belongs to another user"
+            : "the track is not in your track storage or previous export";
+        return `${sources.join(", ")}: Track was not exported because ${detail}: ${reference}`;
+      });
+      const profileImageErrors = collectUnexportedImageReferences(
+        profileSources,
+        availableImageFilenames,
+        userId,
+      ).map(({ reference, sources, reason }) => {
+        const detail =
+          reason === "owned-by-another-user"
+            ? "the image belongs to another user"
+            : "the image is not in your image storage or previous export";
+        return `${sources.join(", ")}: Image was not exported because ${detail}: ${reference}`;
+      });
+
+      for (const prepared of preparedPosts) {
+        if (!prepared.detail) continue;
+        const sources = [
+          { label: `Post ${prepared.post.id} content`, text: prepared.detail.content },
+          { label: `Post ${prepared.post.id} snippet`, text: prepared.detail.snippet },
+        ];
+        const trackErrors = collectUnexportedTrackReferences(sources, trackEntries, userId).map(
+          ({ reference, sources: labels, reason }) => {
+            const detail =
+              reason === "owned-by-another-user"
+                ? "the track belongs to another user"
+                : "the track is not in your track storage or previous export";
+            return `${labels.join(", ")}: Track was not exported because ${detail}: ${reference}`;
+          },
+        );
+        const imageErrors = collectUnexportedImageReferences(
+          sources,
+          availableImageFilenames,
+          userId,
+        ).map(({ reference, sources: labels, reason }) => {
           const detail =
             reason === "owned-by-another-user"
               ? "the image belongs to another user"
-              : "the image is not in your image storage";
-          return `${sources.join(", ")}: Image was not exported because ${detail}: ${reference}`;
-        },
+              : "the image is not in your image storage or previous export";
+          return `${labels.join(", ")}: Image was not exported because ${detail}: ${reference}`;
+        });
+        prepared.errors = [...trackErrors, ...imageErrors];
+      }
+
+      setExportErrors([
+        ...profileTrackErrors,
+        ...profileImageErrors,
+        ...preparedPosts.flatMap((prepared) => prepared.errors),
+      ]);
+
+      const nextFiles: Record<string, ExportManifestFile> = {
+        ...(previousManifest?.files ?? {}),
+      };
+      const nextPosts: Record<string, ExportManifestPost> = {};
+      const nextImages = { ...(previousManifest?.images ?? {}) };
+      const nextTracks = { ...(previousManifest?.tracks ?? {}) };
+
+      const dirtyPosts = preparedPosts.filter((prepared) => prepared.detail !== null);
+      const newImages = Array.from(masterByFilename.entries()).filter(([filename, item]) => {
+        if (!previousManifest) return true;
+        const path = `images/${filename}`;
+        return (
+          previousManifest.images[item.key]?.path !== path || previousManifest.files[path] == null
+        );
+      });
+      const currentTrackEntryByKey = new Map(
+        currentTrackEntries.map((entry) => [entry.track.key, entry] as const),
       );
-      setExportErrors([...trackExportErrors, ...imageExportErrors]);
+      const newTracks = trackEntries.filter((entry) => {
+        const current = currentTrackEntryByKey.get(entry.track.key);
+        if (!current) return false;
+        const masterPath = `tracks/masters/${entry.masterFilename}`;
+        const previewPath = `tracks/previews/${entry.previewFilename}`;
+        if (!previousManifest) return true;
+        const previous = previousManifest.tracks[entry.track.key];
+        return (
+          previous?.masterPath !== masterPath ||
+          previous?.previewPath !== previewPath ||
+          previousManifest.files[masterPath] == null ||
+          previousManifest.files[previewPath] == null
+        );
+      });
 
       const totalFiles =
-        9 +
+        10 +
         (pubCfg ? 1 : 0) +
         (avatarUrl ? 1 : 0) +
-        posts.length * 2 +
-        masterByFilename.size +
-        trackEntries.length * 2;
+        dirtyPosts.length * 2 +
+        newImages.length +
+        newTracks.length * 2;
       let completedFiles = 0;
       let beforeBytes = 0;
 
-      const addExportFile = async (name: string, data: Uint8Array) => {
-        await zipWriter.addFile(name, data, now);
+      const addExportFile = async (
+        relativePath: string,
+        data: Uint8Array,
+        recordInManifest = true,
+      ) => {
+        await zipWriter.addFile(`${base}${relativePath}`, data, now);
+        if (recordInManifest) {
+          nextFiles[relativePath] = await makeManifestFileEntry(data, now);
+        }
         beforeBytes += data.byteLength;
         completedFiles += 1;
         setExportProgress({ completed: completedFiles, total: totalFiles });
@@ -885,12 +1081,9 @@ export default function PageBody() {
       const articleContentCss = new TextDecoder().decode(
         await fetchBytes(ARTICLE_CONTENT_CSS_URL, "article stylesheet", 0, 0),
       );
+      await addExportFile("style.css", enc.encode(buildHtmlStylesCss(articleContentCss)));
       await addExportFile(
-        `${base}style.css`,
-        enc.encode(buildHtmlStylesCss(articleContentCss)),
-      );
-      await addExportFile(
-        `${base}assets/track-viewer.css`,
+        "assets/track-viewer.css",
         await fetchBytes(
           TRACK_VIEWER_CSS_URL,
           "track viewer stylesheet",
@@ -899,7 +1092,7 @@ export default function PageBody() {
         ),
       );
       await addExportFile(
-        `${base}assets/track-viewer.js`,
+        "assets/track-viewer.js",
         await fetchBytes(
           TRACK_VIEWER_JS_URL,
           "track viewer script",
@@ -907,60 +1100,78 @@ export default function PageBody() {
           perMbSleepMs,
         ),
       );
-      await addExportFile(
-        `${base}assets/track-export.js`,
-        enc.encode(TRACK_EXPORT_BOOTSTRAP_JS),
-      );
-      await addExportFile(`${base}README.txt`, enc.encode(EXPORT_README_TEXT));
-      await addExportFile(
-        `${base}profile.json`,
-        enc.encode(JSON.stringify(exportProfile, null, 2)),
-      );
-      await addExportFile(`${base}profile.html`, enc.encode(renderProfileHtml(exportProfile)));
+      await addExportFile("assets/track-export.js", enc.encode(TRACK_EXPORT_BOOTSTRAP_JS));
+      await addExportFile("README.txt", enc.encode(EXPORT_README_TEXT));
+      await addExportFile("profile.json", enc.encode(JSON.stringify(exportProfile, null, 2)));
+      await addExportFile("profile.html", enc.encode(renderProfileHtml(exportProfile)));
 
       if (pubCfg) {
-        await addExportFile(
-          `${base}pub-config.json`,
-          enc.encode(JSON.stringify(pubCfg, null, 2)),
-        );
+        await addExportFile("pub-config.json", enc.encode(JSON.stringify(pubCfg, null, 2)));
       }
 
       if (avatarUrl) {
         await addExportFile(
-          `${base}avatar.webp`,
+          "avatar.webp",
           await fetchBytes(avatarUrl, "avatar", imageBaseSleepMs, perMbSleepMs),
         );
       }
 
       await addExportFile(
-        `${base}relations.json`,
+        "relations.json",
         enc.encode(JSON.stringify({ followees, blockees, likes }, null, 2)),
       );
 
-      for (const detail of postDetails) {
-        const rewritten = rewritePostContentAndSnippet(detail, userId, trackEntries);
+      for (const prepared of preparedPosts) {
+        nextPosts[prepared.post.id] = {
+          sourceFingerprint: prepared.sourceFingerprint,
+          imageFilenames: [...prepared.imageFilenames].sort(),
+          trackKeys: [...prepared.trackKeys].sort(),
+          errors: prepared.errors,
+        };
 
+        if (!prepared.detail) continue;
+        const rewritten = rewritePostContentAndSnippet(prepared.detail, userId, trackEntries);
         const jsonBytes = enc.encode(JSON.stringify(rewritten, null, 2));
-        await addExportFile(`${base}posts/${detail.id}.json`, jsonBytes);
+        await addExportFile(`posts/${prepared.post.id}.json`, jsonBytes);
 
         const htmlBytes = enc.encode(renderPostHtml(rewritten));
-        await addExportFile(`${base}posts/${detail.id}.html`, htmlBytes);
-
+        await addExportFile(`posts/${prepared.post.id}.html`, htmlBytes);
         await sleepForTransferBytes(jsonBytes.length + htmlBytes.length, 0, perMbSleepMs);
       }
 
-      await addExportFile(`${base}index.html`, enc.encode(renderIndexHtml(posts, profile)));
+      await addExportFile("index.html", enc.encode(renderIndexHtml(posts, profile)));
 
-      for (const [filename, it] of masterByFilename.entries()) {
+      for (const [filename, item] of newImages) {
+        const path = `images/${filename}`;
         await addExportFile(
-          `${base}images/${filename}`,
-          await fetchBytes(it.publicUrl, filename, imageBaseSleepMs, perMbSleepMs),
+          path,
+          await fetchBytes(item.publicUrl, filename, imageBaseSleepMs, perMbSleepMs),
         );
+        nextImages[item.key] = {
+          key: item.key,
+          path,
+          size: item.size,
+          etag: item.etag,
+          lastModified: item.lastModified,
+        };
+      }
+      for (const [filename, item] of masterByFilename) {
+        const path = `images/${filename}`;
+        if (nextImages[item.key] || !nextFiles[path]) continue;
+        nextImages[item.key] = {
+          key: item.key,
+          path,
+          size: item.size,
+          etag: item.etag,
+          lastModified: item.lastModified,
+        };
       }
 
-      for (const entry of trackEntries) {
+      for (const entry of newTracks) {
+        const masterPath = `tracks/masters/${entry.masterFilename}`;
+        const previewPath = `tracks/previews/${entry.previewFilename}`;
         await addExportFile(
-          `${base}tracks/masters/${entry.masterFilename}`,
+          masterPath,
           await fetchBytes(
             entry.track.publicUrl,
             entry.masterFilename,
@@ -969,7 +1180,7 @@ export default function PageBody() {
           ),
         );
         await addExportFile(
-          `${base}tracks/previews/${entry.previewFilename}`,
+          previewPath,
           await fetchBytes(
             entry.track.previewUrl,
             entry.previewFilename,
@@ -977,7 +1188,54 @@ export default function PageBody() {
             perMbSleepMs,
           ),
         );
+        nextTracks[entry.track.key] = {
+          key: entry.track.key,
+          masterPath,
+          previewPath,
+          previewKey: entry.track.previewKey,
+          publicUrl: entry.track.publicUrl,
+          previewUrl: entry.track.previewUrl,
+          size: entry.track.size,
+          etag: entry.track.etag,
+          lastModified: entry.track.lastModified,
+        };
       }
+      for (const entry of trackEntries) {
+        const masterPath = `tracks/masters/${entry.masterFilename}`;
+        const previewPath = `tracks/previews/${entry.previewFilename}`;
+        if (nextTracks[entry.track.key] || !nextFiles[masterPath] || !nextFiles[previewPath]) {
+          continue;
+        }
+        nextTracks[entry.track.key] = {
+          key: entry.track.key,
+          masterPath,
+          previewPath,
+          previewKey: entry.track.previewKey,
+          publicUrl: entry.track.publicUrl,
+          previewUrl: entry.track.previewUrl,
+          size: entry.track.size,
+          etag: entry.track.etag,
+          lastModified: entry.track.lastModified,
+        };
+      }
+
+      const manifest: ExportManifest = {
+        format: EXPORT_MANIFEST_FORMAT,
+        version: EXPORT_MANIFEST_VERSION,
+        exporterVersion: EXPORTER_VERSION,
+        userId,
+        rootDir: exportRootDir,
+        exportedAt: now.toISOString(),
+        files: nextFiles,
+        posts: nextPosts,
+        images: nextImages,
+        tracks: nextTracks,
+      };
+      await addExportFile(
+        EXPORT_MANIFEST_FILENAME,
+        enc.encode(JSON.stringify(manifest, null, 2)),
+        false,
+      );
 
       setExportPhase("finalizing");
       await sleep(0);
@@ -994,7 +1252,9 @@ export default function PageBody() {
   }
 
   const exportButtonLabel = !exporting
-    ? "Export all data"
+    ? incrementalExport && previousManifestFile
+      ? "Export changes"
+      : "Export all data"
     : exportPhase === "preparing"
       ? "Preparing…"
       : exportProgress
@@ -1018,7 +1278,7 @@ export default function PageBody() {
 
   return (
     <main className="max-w-2xl mx-auto mt-12 p-4 bg-white shadow border rounded">
-      <h1 className="text-2xl font-bold mb-6">Exporting all data</h1>
+      <h1 className="text-2xl font-bold mb-6">Exporting data</h1>
       <form
         onSubmit={handleExport}
         className="flex flex-col gap-6"
@@ -1026,10 +1286,13 @@ export default function PageBody() {
       >
         <section className="text-sm text-gray-700 leading-relaxed">
           <p>
-            You can download your STGY data in one ZIP archive here. By default, images and tracks
-            are included only when referenced by the exported profile or posts. Select the option
-            beside the button to include resources that are not referenced. The archive includes the
-            following files:
+            You can download your STGY data as a ZIP archive here. To make an incremental export,
+            select the incremental export option and choose <code>export-manifest.json</code> from
+            your previous extracted export. Changed and new files will be included in the new ZIP;
+            files deleted from STGY are left untouched in the local backup. By default, images and
+            tracks are included only when referenced by the exported profile or posts. Select the
+            option beside the button to include resources that are not referenced. The archive
+            includes the following files:
           </p>
           <ul className="list-disc pl-6 mt-3 space-y-1 text-sm text-gray-700">
             <li>
@@ -1092,6 +1355,10 @@ export default function PageBody() {
               <code className="font-bold">./README.txt</code> : Archive overview and viewing
               instructions
             </li>
+            <li>
+              <code className="font-bold">./export-manifest.json</code> : File inventory and metadata
+              for incremental exports
+            </li>
           </ul>
           <p className="mt-3">
             The JSON and HTML versions of the profile/posts contain the same information. JSON is
@@ -1120,31 +1387,61 @@ export default function PageBody() {
           >
             <div className="font-bold">Download finished</div>
             <div className="mt-1 text-sm">
-              Source data size (before ZIP): {formatBytes(done.beforeBytes)}
+              Included data size (before ZIP): {formatBytes(done.beforeBytes)}
             </div>
             <div className="text-sm">ZIP archive size (after ZIP): {formatBytes(done.afterBytes)}</div>
             <div className="mt-1">{exportErrorIndicator}</div>
           </div>
         )}
         {!done && (
-          <div className="flex items-center gap-3 flex-wrap">
-            <button
-              type="submit"
-              className="bg-blue-600 text-white px-8 py-2 rounded disabled:opacity-60"
-              disabled={loading || exporting}
-            >
-              {exportButtonLabel}
-            </button>
-            {exportErrorIndicator}
-            <label className="flex items-center gap-2 text-sm text-gray-700">
-              <input
-                type="checkbox"
-                checked={includeUnreferencedResources}
-                onChange={(event) => setIncludeUnreferencedResources(event.target.checked)}
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
+              <button
+                type="submit"
+                className="bg-blue-600 text-white px-8 py-2 rounded disabled:opacity-60"
                 disabled={loading || exporting}
-              />
-              <span>include unreferenced resources</span>
-            </label>
+              >
+                {exportButtonLabel}
+              </button>
+              {exportErrorIndicator}
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={includeUnreferencedResources}
+                  onChange={(event) => setIncludeUnreferencedResources(event.target.checked)}
+                  disabled={loading || exporting}
+                />
+                <span>include unreferenced resources</span>
+              </label>
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={incrementalExport}
+                  onChange={(event) => {
+                    const checked = event.target.checked;
+                    setIncrementalExport(checked);
+                    if (!checked) setPreviousManifestFile(null);
+                  }}
+                  disabled={loading || exporting}
+                />
+                <span>incremental export</span>
+              </label>
+            </div>
+            {incrementalExport && (
+              <div className="rounded border border-gray-300 bg-gray-50 p-3 text-sm text-gray-700">
+                <p>
+                  Select <code>export-manifest.json</code> from the existing{" "}
+                  <code>{exportRootDir}</code> directory to export only changes.
+                </p>
+                <input
+                  type="file"
+                  accept="application/json,.json"
+                  onChange={(event) => setPreviousManifestFile(event.target.files?.[0] ?? null)}
+                  disabled={loading || exporting}
+                  className="mt-2 block w-full text-sm text-gray-700 file:mr-3 file:cursor-pointer file:rounded file:border file:border-gray-400 file:bg-white file:px-3 file:py-1.5 file:font-medium file:text-gray-700 hover:file:bg-gray-100 disabled:opacity-60"
+                />
+              </div>
+            )}
           </div>
         )}
       </form>

@@ -1716,13 +1716,13 @@ Search remains available while search indexes are being rebuilt. During rebuildi
 The frontend export feature allows data to be downloaded on a per-user basis. Importing it creates the corresponding user and uploads the profile, avatar image, posts, images, and tracks. User IDs and post IDs are preserved. Only images and tracks actually referenced from posts are re-uploaded, and their object IDs are reassigned. When an exported zip file is extracted and imported on the VPS, connect directly to the backend port exposed on the host loopback instead of using the public URL. This bypasses Caddy, so the import is not subject to Caddy's rate limit. Specify the backend directly with ``--backend-api-base`` as follows.
 
 ```:small
-./scripts/import-archive.py --backend-api-base http://127.0.0.1:3100 --data-dir stgy-export-0000000000020101-20260722140653 --admin-email admin@stgy.jp --admin-password stgystgy
+./scripts/import-archive.py --backend-api-base http://127.0.0.1:3100 --data-dir stgy-export-0000000000020101 --admin-email admin@stgy.jp --admin-password stgystgy
 ```
 
 To import post data and its associated images and tracks as resources owned by an existing user, use the --owner option.
 
 ```:small
-./scripts/import-archive.py --backend-api-base http://127.0.0.1:3100 --data-dir stgy-export-0000000000020101-20260722140653 --admin-email admin@stgy.jp --admin-password stgystgy --owner 1234567890ABCDEF
+./scripts/import-archive.py --backend-api-base http://127.0.0.1:3100 --data-dir stgy-export-0000000000020101 --admin-email admin@stgy.jp --admin-password stgystgy --owner 1234567890ABCDEF
 ```
 
 When running the importer from outside the VPS through the public URL, the existing ``--stgy-base https://stgy.jp/`` option can still be used; that path goes through Caddy. Add --no-reply to exclude reply posts. Add --publish to publish every imported post.

@@ -1716,13 +1716,13 @@ npm run reset-search-restore
 フロントエンドのエクスポート機能を使うと、個々のユーザの単位でデータをダウンロードできる。それをインポートすると、該当のユーザが作られ、プロファイルとアバター画像と記事と画像と経路が全てアップロードされる。ユーザIDや投稿IDも保たれる。画像や経路は、記事から参照されているもののみを再アップロードして、オブジェクトIDを振り直す。VPS上でエクスポートしたzipファイルを展開してインポートする場合は、公開URLではなくBackendがホストのloopbackに公開しているポートへ直接接続する。こうするとCaddyを経由しないため、インポート処理はCaddyのレートリミットの対象にならない。以下のように ``--backend-api-base`` を指定する。
 
 ```:small
-./scripts/import-archive.py --backend-api-base http://127.0.0.1:3100 --data-dir stgy-export-0000000000020101-20260722140653 --admin-email admin@stgy.jp --admin-password stgystgy
+./scripts/import-archive.py --backend-api-base http://127.0.0.1:3100 --data-dir stgy-export-0000000000020101 --admin-email admin@stgy.jp --admin-password stgystgy
 ```
 
 既存のユーザの所有リソースとして記事データとそれに付随する画像と経路をインポートしたい場合、--ownerオプションを使う。
 
 ```:small
-./scripts/import-archive.py --backend-api-base http://127.0.0.1:3100 --data-dir stgy-export-0000000000020101-20260722140653 --admin-email admin@stgy.jp --admin-password stgystgy --owner 1234567890ABCDEF
+./scripts/import-archive.py --backend-api-base http://127.0.0.1:3100 --data-dir stgy-export-0000000000020101 --admin-email admin@stgy.jp --admin-password stgystgy --owner 1234567890ABCDEF
 ```
 
 VPS外から公開URL経由で実行する場合は、従来どおり ``--stgy-base https://stgy.jp/`` を指定できる。この場合はCaddyを経由する。返信の記事を除外したい場合、--no-replyオプションをつける。インポートした記事を全て公開したい場合、--publishオプションをつける。

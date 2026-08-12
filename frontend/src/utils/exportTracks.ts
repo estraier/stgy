@@ -95,7 +95,28 @@ export function filterReferencedTrackArchiveEntries(
 }
 
 const STGY_TRACK_PATH_PATTERN =
-  /\/tracks\/([^/\s"'<>|)]+)\/(?:masters|previews)\/\d{6}\/[0-9a-f]{16}\.(?:fit|trjgz)/gi;
+  /\/tracks\/([^/\s"'<>|)]+)\/((?:masters|previews)\/\d{6}\/[0-9a-f]{16}\.(?:fit|trjgz))/gi;
+
+export function collectOwnedTrackKeys(texts: Iterable<string>, userId: string): Set<string> {
+  const keys = new Set<string>();
+  const normalizedUserId = userId.toLowerCase();
+
+  for (const text of texts) {
+    const pattern = new RegExp(STGY_TRACK_PATH_PATTERN.source, STGY_TRACK_PATH_PATTERN.flags);
+    for (const match of String(text || "").matchAll(pattern)) {
+      let ownerId: string;
+      try {
+        ownerId = decodeURIComponent(match[1]);
+      } catch {
+        ownerId = match[1];
+      }
+      if (ownerId.toLowerCase() !== normalizedUserId) continue;
+      keys.add(`${userId}/${match[2]}`);
+    }
+  }
+
+  return keys;
+}
 
 export function collectUnexportedTrackReferences(
   sources: Iterable<TrackReferenceSource>,
