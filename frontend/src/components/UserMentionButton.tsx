@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { GeoAddress, GeoPlace } from "@/api/geo";
-import { encodeGeo } from "@/api/geo";
+import { decodeGeo, encodeGeo } from "@/api/geo";
 import type { User } from "@/api/models";
 import { listFriendsByNicknamePrefix } from "@/api/users";
 import AvatarImg from "@/components/AvatarImg";
@@ -39,6 +39,7 @@ export default function UserMentionButton({
   const [position, setPosition] = useState({ top: 0, left: 0, width: 320 });
   const anchorRectRef = useRef<DOMRect | null>(null);
   const geoMode = query.startsWith("%");
+  const currentLocationMode = isCurrentLocationQuery(query);
 
   const doFetch = useCallback(async (q: string, requestId: number) => {
     setLoading(true);
@@ -85,6 +86,13 @@ export default function UserMentionButton({
   useEffect(() => {
     requestIdRef.current += 1;
     if (!open) return;
+    if (isCurrentLocationQuery(query)) {
+      setLoading(false);
+      setError(null);
+      setUsers([]);
+      setPlaces([]);
+      return;
+    }
     const requestId = requestIdRef.current;
     const timer = window.setTimeout(() => {
       void doFetch(query, requestId);
@@ -165,12 +173,69 @@ export default function UserMentionButton({
     [onInsert],
   );
 
+  const onPickCurrentLocation = useCallback(async () => {
+    const requestId = ++requestIdRef.current;
+    setLoading(true);
+    setError(null);
+
+    try {
+      const position = await getCurrentPosition();
+      if (requestId !== requestIdRef.current) return;
+
+      const longitude = position.coords.longitude;
+      const latitude = position.coords.latitude;
+      let label = "";
+
+      try {
+        const decoded = await decodeGeo(longitude, latitude, locale);
+        if (requestId !== requestIdRef.current) return;
+        const place = getMostSpecificPlace(decoded);
+        const address = place ? getPreferredAddress(place, locale) : undefined;
+        if (address) label = escapeLabelForMarkdown(address.label);
+      } catch {
+        // Reverse geocoding is optional. Insert the current-location map even if it fails.
+      }
+
+      if (requestId !== requestIdRef.current) return;
+      const coordinate = `${longitude.toFixed(5)},${latitude.toFixed(5)}`;
+      onInsert(`@[${label}](map://${coordinate},16|${coordinate})`);
+      setOpen(false);
+    } catch (e) {
+      if (requestId === requestIdRef.current) {
+        setError(getCurrentLocationErrorMessage(e));
+      }
+    } finally {
+      if (requestId === requestIdRef.current) {
+        setLoading(false);
+      }
+    }
+  }, [locale, onInsert]);
+
   const content = useMemo(() => {
     if (loading) {
       return <div className="py-4 text-center text-sm text-gray-500">Loading…</div>;
     }
     if (error) {
       return <div className="py-4 text-center text-sm text-red-600">{error}</div>;
+    }
+    if (currentLocationMode) {
+      return (
+        <ul className="divide-y">
+          <li>
+            <button
+              type="button"
+              className="w-full px-2 py-2 text-left hover:bg-gray-100 focus:bg-gray-100 focus:outline-none"
+              onClick={() => void onPickCurrentLocation()}
+              title="Insert map at current location"
+            >
+              <div className="text-sm text-gray-900">Current location</div>
+              <div className="text-[11px] text-gray-500">
+                Use your current location and insert a map with a pin
+              </div>
+            </button>
+          </li>
+        </ul>
+      );
     }
     if (geoMode) {
       if (!query.slice(1).trim() || !places.length) {
@@ -238,7 +303,19 @@ export default function UserMentionButton({
         })}
       </ul>
     );
-  }, [error, geoMode, loading, locale, onPickPlace, onPickUser, places, query, users]);
+  }, [
+    currentLocationMode,
+    error,
+    geoMode,
+    loading,
+    locale,
+    onPickCurrentLocation,
+    onPickPlace,
+    onPickUser,
+    places,
+    query,
+    users,
+  ]);
 
   return (
     <div ref={containerRef} className={"relative inline-block " + className}>
@@ -283,7 +360,7 @@ export default function UserMentionButton({
                 type="text"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search users or %place…"
+                placeholder="Search users, %place or %here…"
                 className="w-full px-2 py-1 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-blue-300"
               />
             </div>
@@ -309,4 +386,43 @@ function getPreferredAddress(place: GeoPlace, locale?: string): GeoAddress | und
 
 function escapeLabelForMarkdown(label: string): string {
   return label.replace(/([\[\]])/g, "_");
+}
+
+function isCurrentLocationQuery(query: string): boolean {
+  return query.trim().toLowerCase() === "%here";
+}
+
+function getMostSpecificPlace(places: readonly GeoPlace[]): GeoPlace | undefined {
+  let result: GeoPlace | undefined;
+  for (const place of places) {
+    if (!result || place.level > result.level) result = place;
+  }
+  return result;
+}
+
+function getCurrentPosition(): Promise<GeolocationPosition> {
+  return new Promise((resolve, reject) => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      reject(new Error("Current location is not available in this browser"));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(resolve, reject, {
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 0,
+    });
+  });
+}
+
+function getCurrentLocationErrorMessage(error: unknown): string {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof error.message === "string" &&
+    error.message
+  ) {
+    return error.message;
+  }
+  return "Failed to get current location";
 }

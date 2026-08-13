@@ -104,7 +104,7 @@ When the post form has focus, a post-editing menu bar appears. The left side con
 
 ![Basic editing menu](/data/help-edit-menu-basic.png){grid}
 
-On the right side of the menu bar is the user-mention button. User mentions provide a convenient way to create hyperlinks to specific user detail pages. Enter a user name in the search field to insert markup that mentions that user. If the mentioned user follows you when you publish the post, that user receives a notification. You can also prefix a query with "%", for example ``%Tokorozawa, Saitama``, to search place names by prefecture or municipality and insert markup that embeds a map of that place.
+On the right side of the menu bar is the user-mention button. User mentions provide a convenient way to create hyperlinks to specific user detail pages. Enter a user name in the search field to insert markup that mentions that user. If the mentioned user follows you when you publish the post, that user receives a notification. You can also prefix a query with "%", for example ``%Tokorozawa, Saitama``, to search place names by prefecture or municipality and insert markup that embeds a map of that place. "%here" indicates the current location.
 
 ![User list](/data/help-posts-mentions.png){grid}
 ![Place-name list](/data/help-posts-locations.png){grid}
