@@ -2330,6 +2330,14 @@ export function parseHtml(
   return postProcess(result, false);
 }
 
+const STRUCTURIZE_TITLE_SCAN_LIMIT = 5;
+const STRUCTURIZE_TITLE_CLASS_NAMES = new Set([
+  "entry-title", // Hatena, WordPress, Blogger
+  "post-title", // Blogger, Ghost
+  "wp-block-post-title", // WordPress block themes
+  "pw-post-title", // Medium
+]);
+
 export function structurizeHtml(
   html: string,
   opts?: { topMinFontSizePt?: number },
@@ -2619,13 +2627,32 @@ export function structurizeHtml(
     if (child.tagName.toLowerCase() !== "span") return null;
     return child as HTMLSpanElement;
   };
+  const hasKnownTitleClass = (el: Element): boolean =>
+    (el.getAttribute("class") || "")
+      .split(/\s+/)
+      .some((className) =>
+        STRUCTURIZE_TITLE_CLASS_NAMES.has(className.toLowerCase()),
+      );
+  const isHeading = (el: Element): boolean => /^h[1-6]$/i.test(el.tagName);
   const isWordTitleP = (el: Element): boolean => {
     if (el.tagName.toLowerCase() !== "p") return false;
     return (el.getAttribute("class") || "")
       .split(/\s+/)
       .some((className) => className.toLowerCase() === "msotitle");
   };
-  const pickTitleCandidateP = (
+  const pickClassTitleHeading = (bodyEl: Element): Element | null => {
+    let seen = 0;
+    const candidates = Array.from(
+      bodyEl.querySelectorAll("p,h1,h2,h3,h4,h5,h6"),
+    ) as Element[];
+    for (const el of candidates) {
+      if (seen >= STRUCTURIZE_TITLE_SCAN_LIMIT) break;
+      seen++;
+      if (isHeading(el) && hasKnownTitleClass(el)) return el;
+    }
+    return null;
+  };
+  const pickLegacyTitleCandidateP = (
     bodyEl: Element,
     minPtLocal: number,
     titleCandidates?: Set<Element>,
@@ -2634,7 +2661,10 @@ export function structurizeHtml(
     let seenTopLevelP = 0;
     for (
       let i = 0;
-      i < bodyEl.childNodes.length && (seenP < 5 || seenTopLevelP < 5);
+      i < bodyEl.childNodes.length && (
+        seenP < STRUCTURIZE_TITLE_SCAN_LIMIT ||
+        seenTopLevelP < STRUCTURIZE_TITLE_SCAN_LIMIT
+      );
       i++
     ) {
       const n = bodyEl.childNodes[i];
@@ -2642,8 +2672,12 @@ export function structurizeHtml(
       const el = n as Element;
       if (el.tagName.toLowerCase() !== "p") continue;
       seenTopLevelP++;
-      if (seenTopLevelP <= 5 && isWordTitleP(el)) return el;
-      if (seenP >= 5) continue;
+      if (
+        seenTopLevelP <= STRUCTURIZE_TITLE_SCAN_LIMIT &&
+        isWordTitleP(el)
+      )
+        return el;
+      if (seenP >= STRUCTURIZE_TITLE_SCAN_LIMIT) continue;
       if (titleCandidates && !titleCandidates.has(el)) continue;
       seenP++;
       const span = isSingleSpanP(el);
@@ -2665,23 +2699,47 @@ export function structurizeHtml(
     el.parentNode!.replaceChild(ne, el);
     return ne;
   };
+  const pickTitleCandidate = (
+    bodyEl: Element,
+    minPtLocal: number,
+    titleCandidates?: Set<Element>,
+  ): Element | null =>
+    pickClassTitleHeading(bodyEl) ||
+    pickLegacyTitleCandidateP(bodyEl, minPtLocal, titleCandidates);
   const stage3PromoteTitleAndDemoteHeadings = (
     bodyEl: Element,
     minPtLocal: number,
     titleCandidates?: Set<Element>,
   ) => {
-    const hasOriginalH1 = !!doc.querySelector("h1");
-    const titleP = pickTitleCandidateP(bodyEl, minPtLocal, titleCandidates);
-    if (!titleP) return;
-    if (hasOriginalH1) {
+    const title = pickTitleCandidate(bodyEl, minPtLocal, titleCandidates);
+    if (!title) return;
+    const hasOtherH1 = Array.from(bodyEl.querySelectorAll("h1")).some(
+      (h) => h !== title,
+    );
+    if (hasOtherH1) {
       const heads = bodyEl.querySelectorAll("h1,h2,h3,h4,h5");
       for (const h of Array.from(heads) as Element[]) {
+        if (h === title) continue;
         const level = parseInt(h.tagName.substring(1), 10);
         if (level >= 1 && level <= 5)
           replaceTagKeepAttrsAndChildren(h, "h" + (level + 1));
       }
     }
-    replaceTagKeepAttrsAndChildren(titleP, "h1");
+    const normalizedTitle =
+      title.tagName.toLowerCase() === "h1"
+        ? title
+        : replaceTagKeepAttrsAndChildren(title, "h1");
+    if (normalizedTitle.parentElement !== bodyEl) {
+      let topLevelAncestor = normalizedTitle.parentElement;
+      while (
+        topLevelAncestor?.parentElement &&
+        topLevelAncestor.parentElement !== bodyEl
+      ) {
+        topLevelAncestor = topLevelAncestor.parentElement;
+      }
+      if (topLevelAncestor?.parentElement === bodyEl)
+        bodyEl.insertBefore(normalizedTitle, topLevelAncestor);
+    }
   };
   const stage4FixOrphanSubLists = (rootEl: Element) => {
     const lists = Array.from(rootEl.querySelectorAll("ul,ol")) as Element[];

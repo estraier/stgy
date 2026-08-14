@@ -1538,6 +1538,67 @@ describe("structurizeHtml", () => {
       '<h1><span style="font-size:20pt">abc</span></h1><p><span>subtitle</span></p><h2>h2</h2><h5>h5</h5><h6>h6</h6>',
     );
   });
+
+  it("recognizes a known title class on an h1 and demotes body headings", () => {
+    const html =
+      '<header class="entry-header"><h1 class="entry-title"><a href="/entry/1">title</a></h1><span>meta</span></header><p>intro</p><h1>head1</h1><h2>head2</h2><h6>head6</h6>';
+    expect(structurizeHtml(html)).toBe(
+      '<h1 class="entry-title"><a href="/entry/1">title</a></h1><header class="entry-header"><span>meta</span></header><p>intro</p><h2>head1</h2><h3>head2</h3><h6>head6</h6>',
+    );
+  });
+
+  it("preserves a nested class title as a Markdown heading end-to-end", () => {
+    const html =
+      '<header><h1 class="entry-title">title</h1></header><p>intro</p><h1>section</h1>';
+    expect(makeMarkdownFromHtml(structurizeHtml(html))).toBe(`# title
+
+intro
+
+## section
+`);
+  });
+
+  it("normalizes a known title class on a non-h1 heading", () => {
+    const html =
+      '<h3 class="post-title entry-title"><a href="/post/1">title</a></h3><p>intro</p><h1>head1</h1><h2>head2</h2>';
+    expect(structurizeHtml(html)).toBe(
+      '<h1 class="post-title entry-title"><a href="/post/1">title</a></h1><p>intro</p><h2>head1</h2><h3>head2</h3>',
+    );
+  });
+
+  it("recognizes Ghost post title class", () => {
+    const html = '<h1 class="post-title">title</h1><h1>head1</h1>';
+    expect(structurizeHtml(html)).toBe(
+      '<h1 class="post-title">title</h1><h2>head1</h2>',
+    );
+  });
+
+  it("keeps body heading levels when a class title is the only h1", () => {
+    const html =
+      '<h1 class="wp-block-post-title">title</h1><p>intro</p><h2>head2</h2><h3>head3</h3>';
+    expect(structurizeHtml(html)).toBe(
+      '<h1 class="wp-block-post-title">title</h1><p>intro</p><h2>head2</h2><h3>head3</h3>',
+    );
+  });
+
+  it("recognizes Medium post title class", () => {
+    const html =
+      '<h2 class="pw-post-title">title</h2><p>intro</p><h2>head2</h2>';
+    expect(structurizeHtml(html)).toBe(
+      '<h1 class="pw-post-title">title</h1><p>intro</p><h2>head2</h2>',
+    );
+  });
+
+  it("does not recognize a known title class after the first five text blocks", () => {
+    const html =
+      '<p>one</p><p>two</p><p>three</p><p>four</p><p>five</p><h1 class="entry-title">title</h1><h1>head1</h1>';
+    expect(structurizeHtml(html)).toBe(html);
+  });
+
+  it("does not recognize a known title class on a non-heading element", () => {
+    const html = '<p class="entry-title">title</p><h1>head1</h1>';
+    expect(structurizeHtml(html)).toBe(html);
+  });
 });
 
 describe("countHtmlElements", () => {
