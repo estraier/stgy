@@ -27,12 +27,15 @@ export default function ArticleWithDecoration({
     const el = ref.current;
     if (!el) return;
     hydrateLinkSnippets(el);
+  });
+
+  React.useEffect(() => {
     ensureMathJaxReady().then(() => {
       const cur = ref.current;
       if (!cur) return;
       patchMathInlineInContainer(cur);
     });
-  }, [html, hydrateLinkSnippets]);
+  }, [html]);
 
   const prismDeps = React.useMemo(() => [html], [html]);
   const Element = as;

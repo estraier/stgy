@@ -163,7 +163,8 @@ export default async function PubSitePage({ params, searchParams }: Props) {
       if (design) qs.set("design", String(design));
       if (mode === "plain") qs.set("tab", "plain");
       const query = qs.toString();
-      return query ? `${siteRoot}?${query}` : siteRoot;
+      const href = query ? `${siteRoot}?${query}` : siteRoot;
+      return `${href}#pub-posts-controls`;
     };
 
     const snippetHref = buildTabHref("snippet");
