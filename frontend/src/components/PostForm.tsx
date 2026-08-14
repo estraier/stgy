@@ -171,11 +171,26 @@ function importedImageFilename(contentType: string): string {
   return `imported-image.${ext}`;
 }
 
+type TextareaScrollPosition = {
+  top: number;
+  left: number;
+};
+
+function captureTextareaScroll(ta: HTMLTextAreaElement): TextareaScrollPosition {
+  return { top: ta.scrollTop, left: ta.scrollLeft };
+}
+
+function restoreTextareaScroll(ta: HTMLTextAreaElement, scroll: TextareaScrollPosition) {
+  ta.scrollTop = scroll.top;
+  ta.scrollLeft = scroll.left;
+}
+
 function applyImageOptionFromTextarea(
   ta: HTMLTextAreaElement,
   setBody: (next: string) => void,
   updater: (tokens: ImageOptionToken[]) => ImageOptionToken[],
 ) {
+  const scroll = captureTextareaScroll(ta);
   const text = ta.value;
   const selStart = ta.selectionStart ?? 0;
   const selEnd = ta.selectionEnd ?? selStart;
@@ -196,6 +211,7 @@ function applyImageOptionFromTextarea(
   requestAnimationFrame(() => {
     const pos = clamp(newCaret, start, start + newLine.length);
     ta.setSelectionRange(pos, pos);
+    restoreTextareaScroll(ta, scroll);
   });
 }
 
@@ -204,6 +220,7 @@ function applyYouTubeOptionFromTextarea(
   setBody: (next: string) => void,
   updater: Parameters<typeof updateYouTubeMarkdownLine>[1],
 ) {
+  const scroll = captureTextareaScroll(ta);
   const text = ta.value;
   const selStart = ta.selectionStart ?? 0;
   const selEnd = ta.selectionEnd ?? selStart;
@@ -219,6 +236,7 @@ function applyYouTubeOptionFromTextarea(
   requestAnimationFrame(() => {
     const pos = clamp(newCaret, start, start + newLine.length);
     ta.setSelectionRange(pos, pos);
+    restoreTextareaScroll(ta, scroll);
   });
 }
 
@@ -227,6 +245,7 @@ function applyTrackOptionFromTextarea(
   setBody: (next: string) => void,
   updater: (tokens: MarkdownOptionToken[]) => MarkdownOptionToken[],
 ) {
+  const scroll = captureTextareaScroll(ta);
   const text = ta.value;
   const selStart = ta.selectionStart ?? 0;
   const selEnd = ta.selectionEnd ?? selStart;
@@ -242,6 +261,7 @@ function applyTrackOptionFromTextarea(
   requestAnimationFrame(() => {
     const pos = clamp(newCaret, start, start + newLine.length);
     ta.setSelectionRange(pos, pos);
+    restoreTextareaScroll(ta, scroll);
   });
 }
 
@@ -311,6 +331,7 @@ function applyPrefixToggleFromTextarea(
   setBody: (next: string) => void,
   prefix: string,
 ) {
+  const scroll = captureTextareaScroll(ta);
   const text = ta.value;
   const selStart = ta.selectionStart ?? 0;
   const selEnd = ta.selectionEnd ?? selStart;
@@ -335,12 +356,14 @@ function applyPrefixToggleFromTextarea(
   const selTo = head.length + replaced.length;
   requestAnimationFrame(() => {
     ta.setSelectionRange(selFrom, selTo);
+    restoreTextareaScroll(ta, scroll);
   });
 }
 function applyCodeFenceToggleFromTextarea(
   ta: HTMLTextAreaElement,
   setBody: (next: string) => void,
 ) {
+  const scroll = captureTextareaScroll(ta);
   const text = ta.value;
   const selStart = ta.selectionStart ?? 0;
   const selEnd = ta.selectionEnd ?? selStart;
@@ -365,6 +388,7 @@ function applyCodeFenceToggleFromTextarea(
     const selTo = head.length + replaced.length;
     requestAnimationFrame(() => {
       ta.setSelectionRange(selFrom, selTo);
+      restoreTextareaScroll(ta, scroll);
     });
     return;
   }
@@ -377,6 +401,7 @@ function applyCodeFenceToggleFromTextarea(
   const selTo = head.length + replaced.length;
   requestAnimationFrame(() => {
     ta.setSelectionRange(selFrom, selTo);
+    restoreTextareaScroll(ta, scroll);
   });
 }
 function applyInlineToggleFromTextarea(
@@ -385,6 +410,7 @@ function applyInlineToggleFromTextarea(
   open: string,
   close: string = open,
 ) {
+  const scroll = captureTextareaScroll(ta);
   const text = ta.value;
   const s0 = ta.selectionStart ?? 0;
   const e0 = ta.selectionEnd ?? s0;
@@ -397,6 +423,7 @@ function applyInlineToggleFromTextarea(
     const pos = before.length + open.length;
     requestAnimationFrame(() => {
       ta.setSelectionRange(pos, pos);
+      restoreTextareaScroll(ta, scroll);
     });
     return;
   }
@@ -418,9 +445,11 @@ function applyInlineToggleFromTextarea(
   const selTo = head.length + replacedBlock.length;
   requestAnimationFrame(() => {
     ta.setSelectionRange(selFrom, selTo);
+    restoreTextareaScroll(ta, scroll);
   });
 }
 function applyRubyToggleFromTextarea(ta: HTMLTextAreaElement, setBody: (next: string) => void) {
+  const scroll = captureTextareaScroll(ta);
   const text = ta.value;
   const s0 = ta.selectionStart ?? 0;
   const e0 = ta.selectionEnd ?? s0;
@@ -433,6 +462,7 @@ function applyRubyToggleFromTextarea(ta: HTMLTextAreaElement, setBody: (next: st
     const pos = before.length + 2;
     requestAnimationFrame(() => {
       ta.setSelectionRange(pos, pos);
+      restoreTextareaScroll(ta, scroll);
     });
     return;
   }
@@ -455,9 +485,11 @@ function applyRubyToggleFromTextarea(ta: HTMLTextAreaElement, setBody: (next: st
   const selTo = head.length + replacedBlock.length;
   requestAnimationFrame(() => {
     ta.setSelectionRange(selFrom, selTo);
+    restoreTextareaScroll(ta, scroll);
   });
 }
 function applyLinkToggleFromTextarea(ta: HTMLTextAreaElement, setBody: (next: string) => void) {
+  const scroll = captureTextareaScroll(ta);
   const text = ta.value;
   const s0 = ta.selectionStart ?? 0;
   const e0 = ta.selectionEnd ?? s0;
@@ -470,6 +502,7 @@ function applyLinkToggleFromTextarea(ta: HTMLTextAreaElement, setBody: (next: st
     const pos = before.length + 1;
     requestAnimationFrame(() => {
       ta.setSelectionRange(pos, pos);
+      restoreTextareaScroll(ta, scroll);
     });
     return;
   }
@@ -492,6 +525,7 @@ function applyLinkToggleFromTextarea(ta: HTMLTextAreaElement, setBody: (next: st
   const selTo = head.length + replacedBlock.length;
   requestAnimationFrame(() => {
     ta.setSelectionRange(selFrom, selTo);
+    restoreTextareaScroll(ta, scroll);
   });
 }
 function afterNextPaint(cb: () => void) {
@@ -656,7 +690,12 @@ export default function PostForm({
   const pasteNodesRef = useRef<MdNode[] | null>(null);
   const pasteImageNodesRef = useRef<MdElementNode[] | null>(null);
   const pasteHasBlockRef = useRef<boolean>(false);
-  const importTargetRef = useRef<{ start: number; end: number; originalLine: string } | null>(null);
+  const importTargetRef = useRef<{
+    start: number;
+    end: number;
+    originalLine: string;
+    scroll: TextareaScrollPosition;
+  } | null>(null);
   const hydrateTrackMaps = useTrackMapHydrator({
     lazy: true,
     redrawDelayMs: TRACK_MAP_REDRAW_DELAY_MS,
@@ -1070,6 +1109,7 @@ export default function PostForm({
       if (!parsed) return;
       const url = parsed.url.trim();
       if (!isAbsoluteHttpUrl(url)) return;
+      const scroll = captureTextareaScroll(ta);
 
       setImportBusy(true);
       setImportError(null);
@@ -1077,7 +1117,12 @@ export default function PostForm({
         const blob = await importRemoteImage(userId, url);
         const fileType = blob.type || "application/octet-stream";
         const file = new File([blob], importedImageFilename(fileType), { type: fileType });
-        importTargetRef.current = { start, end, originalLine: line };
+        importTargetRef.current = {
+          start,
+          end,
+          originalLine: line,
+          scroll,
+        };
         setImportDialogFiles([
           {
             id: cryptoRandomId(),
@@ -2007,7 +2052,7 @@ export default function PostForm({
   }
 
   const insertAtCursor = useCallback(
-    (snippet: string) => {
+    (snippet: string, preserveScroll = false) => {
       const ta = overlayActiveLiveRef.current ? overlayTextareaRef.current : textareaRef.current;
       if (!ta) {
         const base = bodyLiveRef.current ?? "";
@@ -2025,6 +2070,7 @@ export default function PostForm({
         updateMediaLineState();
         return;
       }
+      const scroll = preserveScroll ? captureTextareaScroll(ta) : null;
       const text = ta.value;
       const start = ta.selectionStart ?? text.length;
       const end = ta.selectionEnd ?? start;
@@ -2048,13 +2094,14 @@ export default function PostForm({
         }
         if (overlayActiveLiveRef.current) resizeOverlayTextareaRef.current();
         updateMediaLineState();
+        if (scroll) restoreTextareaScroll(ta, scroll);
       });
     },
     [setBody, updateMediaLineState],
   );
 
   const insertInlineAtCursor = useCallback(
-    (snippet: string) => {
+    (snippet: string, preserveScroll = false) => {
       const ta = overlayActiveLiveRef.current ? overlayTextareaRef.current : textareaRef.current;
       if (!ta) {
         const base = bodyLiveRef.current ?? "";
@@ -2071,6 +2118,7 @@ export default function PostForm({
         updateMediaLineState();
         return;
       }
+      const scroll = preserveScroll ? captureTextareaScroll(ta) : null;
       const text = ta.value;
       const start = ta.selectionStart ?? text.length;
       const end = ta.selectionEnd ?? start;
@@ -2092,9 +2140,20 @@ export default function PostForm({
         }
         if (overlayActiveLiveRef.current) resizeOverlayTextareaRef.current();
         updateMediaLineState();
+        if (scroll) restoreTextareaScroll(ta, scroll);
       });
     },
     [setBody, updateMediaLineState],
+  );
+
+  const insertAtCursorFromEditMenu = useCallback(
+    (snippet: string) => insertAtCursor(snippet, true),
+    [insertAtCursor],
+  );
+
+  const insertInlineAtCursorFromEditMenu = useCallback(
+    (snippet: string) => insertInlineAtCursor(snippet, true),
+    [insertInlineAtCursor],
   );
 
   const handlePasteUploadComplete = useCallback(
@@ -2182,6 +2241,7 @@ export default function PostForm({
         }
         if (overlayActive) resizeOverlayTextareaRef.current();
         updateMediaLineState();
+        restoreTextareaScroll(ta, target.scroll);
       });
     },
     [activeTextarea, overlayActive, setBody, updateMediaLineState],
@@ -2738,10 +2798,10 @@ export default function PostForm({
             <div className="flex items-center gap-1">
               <UserMentionButton
                 locale={userLocale}
-                onInsert={(md) => insertInlineAtCursor(md)}
+                onInsert={(md) => insertInlineAtCursorFromEditMenu(md)}
               />
-              <ExistingImageEmbedButton onInsert={(md) => insertAtCursor(md)} />
-              <UploadImageEmbedButton ref={uploadBtnRef} onInsert={(md) => insertAtCursor(md)} />
+              <ExistingImageEmbedButton onInsert={(md) => insertAtCursorFromEditMenu(md)} />
+              <UploadImageEmbedButton ref={uploadBtnRef} onInsert={(md) => insertAtCursorFromEditMenu(md)} />
             </div>
           </div>
         </div>
@@ -3221,12 +3281,12 @@ export default function PostForm({
                     <div className="flex items-center gap-1 -mb-0.5">
                       <UserMentionButton
                 locale={userLocale}
-                onInsert={(md) => insertInlineAtCursor(md)}
+                onInsert={(md) => insertInlineAtCursorFromEditMenu(md)}
               />
-                      <ExistingImageEmbedButton onInsert={(md) => insertAtCursor(md)} />
+                      <ExistingImageEmbedButton onInsert={(md) => insertAtCursorFromEditMenu(md)} />
                       <UploadImageEmbedButton
                         ref={uploadBtnRef}
-                        onInsert={(md) => insertAtCursor(md)}
+                        onInsert={(md) => insertAtCursorFromEditMenu(md)}
                       />
                     </div>
                   </div>
