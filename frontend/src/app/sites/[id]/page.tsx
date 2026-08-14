@@ -154,8 +154,8 @@ export default async function PubSitePage({ params, searchParams }: Props) {
       const query = qs.toString();
       return query ? `${siteRoot}?${query}` : siteRoot;
     };
-    const newerHref = buildPageHref(page - 1);
-    const olderHref = buildPageHref(page + 1);
+    const newerHref = `${buildPageHref(page - 1)}#pub-posts-controls`;
+    const olderHref = `${buildPageHref(page + 1)}#pub-posts-controls`;
 
     const buildTabHref = (mode: "snippet" | "plain") => {
       const qs = new URLSearchParams();
