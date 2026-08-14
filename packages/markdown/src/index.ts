@@ -750,6 +750,41 @@ function makeMdTrackMapElement(
   return makeElement("figure", children, attrs, line, char);
 }
 
+const MD_PRE_LINES_MIN = 1;
+const MD_PRE_LINES_MAX = 10000;
+
+function normalizeMdPreLines(
+  value: string | number | boolean | null | undefined,
+): number | undefined {
+  if (value === null || value === undefined || typeof value === "boolean")
+    return undefined;
+  const text = String(value).trim();
+  if (!/^-?\d+$/.test(text)) return undefined;
+  const n = Number(text);
+  if (Number.isNaN(n)) return undefined;
+  return Math.min(MD_PRE_LINES_MAX, Math.max(MD_PRE_LINES_MIN, Math.trunc(n)));
+}
+
+function splitMdPreStyle(rawStyle: string | undefined): {
+  style?: string;
+  lines?: number;
+} {
+  if (!rawStyle) return {};
+  const styles: string[] = [];
+  let lines: number | undefined;
+  for (const part of rawStyle.split(":")) {
+    if (part.startsWith("lines=")) {
+      const parsed = normalizeMdPreLines(part.slice("lines=".length));
+      if (parsed !== undefined) {
+        lines = parsed;
+        continue;
+      }
+    }
+    if (part) styles.push(part);
+  }
+  return { style: styles.length ? styles.join(":") : undefined, lines };
+}
+
 export function parseMarkdown(mdText: string): MdNode[] {
   let src = mdText.replace(/\r\n/g, "\n");
   const lines = src.split("\n");
@@ -766,7 +801,8 @@ export function parseMarkdown(mdText: string): MdNode[] {
   let inCode = false,
     codeLines: string[] = [],
     codeLang: string | undefined,
-    codeStyle: string | undefined;
+    codeStyle: string | undefined,
+    codeDisplayLines: number | undefined;
   let codeStartLine = -1,
     codeStartChar = -1,
     codeFenceLen = 0;
@@ -937,6 +973,8 @@ export function parseMarkdown(mdText: string): MdNode[] {
               const a: MdAttrs = {};
               if (codeLang) a["pre-mode"] = codeLang;
               if (codeStyle) a["pre-style"] = codeStyle;
+              if (codeDisplayLines !== undefined)
+                a["pre-lines"] = codeDisplayLines;
               return Object.keys(a).length ? a : undefined;
             })(),
             codeStartLine,
@@ -946,6 +984,7 @@ export function parseMarkdown(mdText: string): MdNode[] {
         inCode = false;
         codeLang = undefined;
         codeStyle = undefined;
+        codeDisplayLines = undefined;
         codeLines = [];
         codeFenceLen = 0;
         codeStartLine = -1;
@@ -966,15 +1005,20 @@ export function parseMarkdown(mdText: string): MdNode[] {
       const rawInfo = (codeOpen[2] || "").trim();
       codeLang = undefined;
       codeStyle = undefined;
+      codeDisplayLines = undefined;
       if (rawInfo) {
+        let rawStyle: string | undefined;
         if (rawInfo.startsWith(":")) {
-          codeStyle = rawInfo.slice(1) || undefined;
+          rawStyle = rawInfo.slice(1) || undefined;
         } else {
           const idx = rawInfo.indexOf(":");
           codeLang = idx === -1 ? rawInfo : rawInfo.slice(0, idx) || undefined;
-          codeStyle =
+          rawStyle =
             idx === -1 ? undefined : rawInfo.slice(idx + 1) || undefined;
         }
+        const parsedStyle = splitMdPreStyle(rawStyle);
+        codeStyle = parsedStyle.style;
+        codeDisplayLines = parsedStyle.lines;
       }
       codeFenceLen = codeOpen[1]!.length;
       codeStartLine = i;
@@ -1224,6 +1268,8 @@ export function parseMarkdown(mdText: string): MdNode[] {
           const a: MdAttrs = {};
           if (codeLang) a["pre-mode"] = codeLang;
           if (codeStyle) a["pre-style"] = codeStyle;
+          if (codeDisplayLines !== undefined)
+            a["pre-lines"] = codeDisplayLines;
           return Object.keys(a).length ? a : undefined;
         })(),
         codeStartLine >= 0 ? codeStartLine : undefined,
@@ -1784,8 +1830,10 @@ export function parseHtml(
         return pick(code) || (m1 ? m1[1]! : undefined);
       })();
     const style = preEl.getAttribute("data-pre-style");
+    const lines = normalizeMdPreLines(preEl.getAttribute("data-pre-lines"));
     if (mode) attrs["pre-mode"] = mode;
     if (style) attrs["pre-style"] = style;
+    if (lines !== undefined) attrs["pre-lines"] = lines;
     return Object.keys(attrs).length ? attrs : undefined;
   };
   const parseList = (listEl: Element): MdElementNode => {
@@ -3984,6 +4032,12 @@ export function mdRenderHtml(
         delete rec["pre-style"];
         rec["data-pre-style"] = vStyle;
       }
+      const vLines = normalizeMdPreLines(rec["pre-lines"]);
+      if (rec["pre-lines"] !== undefined) delete rec["pre-lines"];
+      if (vLines !== undefined) {
+        rec["data-pre-lines"] = vLines;
+        rec.style = `--pre-lines: ${vLines}`;
+      }
       attrs = withPos(attrs, n as MdElementNode);
       return `<pre${attrsToString(attrs)}>${serializeAll(n.children || [])}</pre>`;
     }
@@ -4509,14 +4563,20 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
         const fence = "`".repeat(Math.max(3, maxTicks + 1));
         const mode = getAttrStr(el.attrs, "pre-mode");
         const style = getAttrStr(el.attrs, "pre-style");
-        const info =
-          mode && style
-            ? `${mode}:${style}`
+        const lines = normalizeMdPreLines(el.attrs?.["pre-lines"]);
+        const modifiers = [
+          style || undefined,
+          lines !== undefined ? `lines=${lines}` : undefined,
+        ]
+          .filter((v): v is string => Boolean(v))
+          .join(":");
+        const info = mode
+          ? modifiers
+            ? `${mode}:${modifiers}`
             : mode
-              ? mode
-              : style
-                ? `:${style}`
-                : "";
+          : modifiers
+            ? `:${modifiers}`
+            : "";
         return info
           ? `${fence}${info}\n${code}\n${fence}`
           : `${fence}\n${code}\n${fence}`;
@@ -4935,6 +4995,7 @@ const ATTR_ENC: Record<string, string> = {
   "no-featured": "NF",
   "pre-mode": "PM",
   "pre-style": "PS",
+  "pre-lines": "PL",
   "hr-level": "HL",
 };
 

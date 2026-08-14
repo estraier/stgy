@@ -641,6 +641,7 @@ server.modules = (
   "mod_indexfile",
   "mod_access",
   "mod_accesslog",
+  "mod_setenv",
   "mod_cgi"
 )
 
@@ -653,6 +654,10 @@ index-file.names = (
 )
 
 include_shell "/usr/share/lighttpd/create-mime.conf.pl"
+
+setenv.add-environment = (
+  "PATH" => "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+)
 
 static-file.exclude-extensions = (
   ".cgi"

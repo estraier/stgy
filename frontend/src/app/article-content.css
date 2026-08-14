@@ -106,6 +106,7 @@
 }
 
 .markdown-body pre {
+  --pre-line-height: 1.4em;
   position: relative;
   margin: 0.55em 0.25em;
   padding: 0.1em 0.25em;
@@ -117,6 +118,10 @@
   font-family: "Inconsolata", "Source Code Pro", monospace;
   font-size: 95%;
   border: 1px solid #eee;
+}
+.markdown-body pre[data-pre-lines] {
+  max-height: calc(var(--pre-lines) * var(--pre-line-height));
+  overflow-y: auto;
 }
 .markdown-body pre[data-pre-mode]::before {
   position: absolute;
@@ -165,6 +170,7 @@
   font-style: italic;
 }
 .markdown-body pre[data-pre-mode="natural"] {
+  --pre-line-height: 1.5em;
   line-height: 1.5;
   background: none;
   font-family: "IBM Plex Sans JP", "Noto Sans JP", sans-serif;

@@ -2863,6 +2863,35 @@ describe("mdRenderHtml positions", () => {
 });
 
 describe("mdRenderHtml advanced", () => {
+  it("pre lines display limit", () => {
+    const mdText = `\`\`\`json:small:bold:lines=10
+one
+two
+\`\`\``;
+    expect(makeHtml(mdText)).toBe(
+      `<pre data-pre-lines="10" data-pre-mode="json" data-pre-style="small:bold" style="--pre-lines: 10">one\ntwo</pre>`,
+    );
+    expect(makeMarkdown(mdText)).toBe(
+      `\`\`\`json:small:bold:lines=10
+one
+two
+\`\`\`\n`,
+    );
+  });
+
+  it("clamps pre lines display limit", () => {
+    expect(makeHtml(`\`\`\`text:lines=0
+one
+\`\`\``)).toBe(
+      `<pre data-pre-lines="1" data-pre-mode="text" style="--pre-lines: 1">one</pre>`,
+    );
+    expect(makeHtml(`\`\`\`text:lines=10001
+one
+\`\`\``)).toBe(
+      `<pre data-pre-lines="10000" data-pre-mode="text" style="--pre-lines: 10000">one</pre>`,
+    );
+  });
+
   it("various formats", () => {
     const mdText = `# H1
 abc
@@ -3214,6 +3243,18 @@ describe("mdRenderMarkdown from HTML", () => {
     expect(makeMarkdownFromHtml(html)).toBe(`\`\`\`natural:small
   one two
   three four
+\`\`\`
+`);
+  });
+
+  it("pre lines display limit from HTML", () => {
+    const html = `<pre data-pre-mode="natural" data-pre-style="small" data-pre-lines="20000">
+one
+two
+</pre>`;
+    expect(makeMarkdownFromHtml(html)).toBe(`\`\`\`natural:small:lines=10000
+one
+two
 \`\`\`
 `);
   });

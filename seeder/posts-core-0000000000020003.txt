@@ -266,7 +266,7 @@ int main(int argc, char** argv) {
       "Let us both go to law: I will prosecute you."
 ```
 
-整形済みテキストの言語名の部分に「:xsmall」「:small」「:large」「:xlarge」「:bold」「:italic」の修飾子を書くことができます。「json:small」とか「natural:large:italic」のように言語名と組み合わせて使うこともできます。
+整形済みテキストの言語名の部分に「:xsmall」「:small」「:large」「:xlarge」「:bold」「:italic」の修飾子を書くことができます。「:lines=N」でNに表示行数を指定できます。「json:small」とか「natural:large:italic:lines=10」のように言語名と組み合わせて使うこともできます。
 
 ````
 ```:xsmall
@@ -287,6 +287,13 @@ o sweet spontaneous earth
 ```:italic
 o sweet spontaneous earth
 ```
+```:small:lines=3
+one
+two
+three
+four
+five
+```
 ````
 
 ```:xsmall
@@ -306,6 +313,13 @@ o sweet spontaneous earth
 ```
 ```:italic
 o sweet spontaneous earth
+```
+```:small:lines=3
+one
+two
+three
+four
+five
 ```
 
 ## 罫線

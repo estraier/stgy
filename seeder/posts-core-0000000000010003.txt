@@ -266,7 +266,7 @@ Normally, preformatted text is shown in a fixed-width font inside a frame. If yo
       "Let us both go to law: I will prosecute you."
 ```
 
-The language-name part of preformatted text can also contain the modifiers ``:xsmall``, ``:small``, ``:large``, ``:xlarge``, ``:bold``, and ``:italic``. They can be combined with a language name, as in ``json:small`` or ``natural:large:italic``.
+The language-name part of preformatted text can also contain the modifiers ``:xsmall``, ``:small``, ``:large``, ``:xlarge``, ``:bold``, and ``:italic``. ``lines=N`` specifies lines to be shown. They can be combined with a language name, as in ``json:small`` or ``natural:large:italic``.
 
 ````
 ```:xsmall
@@ -287,6 +287,13 @@ o sweet spontaneous earth
 ```:italic
 o sweet spontaneous earth
 ```
+```:small:lines=3
+one
+two
+three
+four
+five
+```
 ````
 
 ```:xsmall
@@ -306,6 +313,13 @@ o sweet spontaneous earth
 ```
 ```:italic
 o sweet spontaneous earth
+```
+```:small:lines=3
+one
+two
+three
+four
+five
 ```
 
 ## Horizontal rules
