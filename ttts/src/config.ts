@@ -26,8 +26,8 @@ export class Config {
       mmapSizes: [268435456, 268435456, 0],
       cacheSizes: [25165824, 25165824, 409600],
       automergeLevels: [8, 2],
-      maxDocumentTokenCount: 10000,
-      maxQueryTokenCount: 5,
+      maxDocumentTokenCount: 50000,
+      maxQueryTokenCount: 8,
     },
     {
       baseDir: COMMON_INDEX_DIR,
@@ -45,8 +45,8 @@ export class Config {
       mmapSizes: [268435456, 268435456, 0],
       cacheSizes: [25165824, 25165824, 409600],
       automergeLevels: [8, 2],
-      maxDocumentTokenCount: 10000,
-      maxQueryTokenCount: 5,
+      maxDocumentTokenCount: 50000,
+      maxQueryTokenCount: 8,
     },
   ];
 }

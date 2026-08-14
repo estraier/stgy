@@ -315,7 +315,7 @@ A document is tokenized as a whole using its specified effective locale. No per-
 
 This is not a sophisticated language identifier. The document language trusts the locale of the post or its owner, while the query side only corrects obvious Japanese, Chinese, or Korean scripts.
 
-A single document may register at most 10,000 tokens. A search query may use at most five tokens. These limits prevent huge bodies or extremely complex searches from consuming excessive memory or CPU.
+A single document may register at most 50,000 tokens. A search query may use at most eight tokens. These limits prevent huge bodies or extremely complex searches from consuming excessive memory or CPU.
 
 Tokenizer output can be inspected through the HTTP API.
 
