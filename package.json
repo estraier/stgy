@@ -101,6 +101,7 @@
     "vps:docker:start": "docker compose -f docker-compose.yml -f docker-compose.vps.yml start",
     "vps:docker:stop": "docker compose -f docker-compose.yml -f docker-compose.vps.yml stop",
     "vps:reset-data": "./scripts/reset-service-data.sh --core-only",
+    "vps:reset-data-test": "./scripts/reset-service-data.sh",
     "vps:native:reset-data": "./scripts/reset-service-data.sh --mode native --core-only",
     "vps:hybrid:reset-data": "./scripts/reset-service-data.sh --mode native --core-only"
   }

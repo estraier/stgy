@@ -27,9 +27,9 @@ If a reply intentionally has no stable ID and its ID is generated at import time
 ## User ranges
 
 - `...0001-0099`: administrators
-- `...0101-0499`: fixed users
+- `...0101-0499`: fixed users (including fixed core AI personas)
 - `...0501-0599`: ordinary test users
-- `...0601-0699`: AI users (core or test depending on the persona)
+- `...0601-0699`: AI test/persona users
 - `...0701-0799`: publication/demo users
 - `...0801-0899`: special-purpose tests
 
@@ -38,6 +38,7 @@ If a reply intentionally has no stable ID and its ID is generated at import time
 - `...0001-0003`: Welcome, Help, Markdown format
 - `...0101-0113`: technical documents
 - `...0201`: fixed support page
+- `...0301-0399`: fixed core AI/persona posts
 - `...0501-0599`: ordinary test posts
 - `...0601-0699`: AI test posts
 - `...0701-0799`: publication/demo posts and replies
