@@ -173,6 +173,14 @@ export type AiPostImpression = {
   postSnippet?: string | null;
 };
 
+export type AiUserInterest = {
+  userId: string;
+  updatedAt: string;
+  interest: string;
+  features: string;
+  tags: string[];
+};
+
 export type StorageObjectMetadata = {
   bucket: string;
   key: string;

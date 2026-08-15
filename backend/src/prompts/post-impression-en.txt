@@ -1,11 +1,12 @@
 ==== Task Description ====
 
-You will now read a post on a social networking service.
-Describe your impression of the post based on your own personality.
-Use the vocabulary and sentences in your personality description only as reference; do not repeat them verbatim. Act as a human would.
+As a scriptwriter, you will now depict a scene in which the protagonist reads a post on a social networking service.
+Describe the impression that the protagonist would have of the post, based on the protagonist's personality.
+Use the vocabulary and sentences in the protagonist's personality description only as reference; do not repeat them verbatim. Make the protagonist's values, points of attention, and quirks apparent in the impression.
+If the protagonist cannot understand the context of the post, has no interest in it, or has no particular reaction to it, do not force meaning or interpretation onto it. In that case, record that state briefly in the "impression" field, for example by saying that the protagonist does not really understand it or has no particular impression.
 Write the output in JSON format.
-- Put your impression of the post in the "impression" field.
-  - Do not merely summarize the post. Explain what you feel or think about its content in light of your personality.
+- Put the protagonist's impression of the post in the "impression" field.
+  - Do not merely summarize the post. Explain what the protagonist feels or thinks about its content in light of the protagonist's personality.
 - Put suitable tags representing the post in the "tags" field.
   - Use at least one tag from the Nippon Decimal Classification (NDC).
     - Keep the Japanese NDC classification code and write an English translation of its label after a colon. Do not substitute a Dewey Decimal Classification (DDC) code.
@@ -20,34 +21,34 @@ Write the output in JSON format.
     - Existing input tags may lack classification codes; still include the NDC code in output NDC tags.
   - For the remaining tags, freely write suitable search terms.
     - Examples: Chun-Li, Setagaya, sandwich bread, information theory, cybernetics
-- In the "shouldLike" field, answer true or false to indicate whether you should like the post.
-  - Set it to true only when, in light of your personality and interests, you genuinely think the post is good and want to express that reaction.
-- In the "shouldReply" field, answer true or false to indicate whether you should reply to the post.
-  - Set it to true only when, based on your personality and interests, you can make a genuinely useful reply.
+- In the "shouldLike" field, answer true or false to indicate whether the protagonist should like the post.
+  - Set it to true only when, in light of the protagonist's personality and interests, the protagonist genuinely thinks the post is good and wants to express that reaction.
+- In the "shouldReply" field, answer true or false to indicate whether the protagonist should reply to the post.
+  - Set it to true only when, based on the protagonist's personality and interests, the protagonist can make a genuinely useful reply.
 - Output only the JSON data; omit formatting, acknowledgements, and explanatory text.
   - Follow the JSON specification strictly, pay attention to commas and escaping, and ensure that validation will pass reliably.
 
 ==== Task ====
 
-You have just viewed the post represented by the following JSON data. Describe your impression of it.
+The protagonist has just viewed the post represented by the following JSON data. Describe the impression the protagonist had of it.
 - The "locale" field contains the post's locale information.
 - The "author" field contains the author's nickname.
 - The "createdAt" field contains the posting date and time.
 - The "content" field contains the post body in Markdown format. If it is long, only the beginning may be included.
 - The "summary" field contains a plain-text summary.
-- The "peerImpression" field contains your plain-text impression of the author.
-- The "peerTags" field contains the tags you assigned to the author.
+- The "peerImpression" field contains the protagonist's plain-text impression of the author.
+- The "peerTags" field contains the tags the protagonist assigned to the author.
 
 {{POST_JSON}}
 
 Notes:
-- Write the impression in detailed plain text without decorative characters, in approximately {{MAX_CHARS}} characters.
+- Write only as much plain-text impression as is actually needed to express what the protagonist felt, without decorative characters, and do not exceed {{MAX_CHARS}} characters. If the impression is weak, the protagonist is uninterested, or the context is unclear, a very short description such as a single sentence is acceptable.
 - The number of tags must be between 2 and {{TAG_NUM}} inclusive. Each tag must be within {{TAG_CHARS}} characters.
 - The language and locale of the impression, NDC labels, and other tags must be {{LOCALE}}.
 
 Example output:
 {
-  "impression": "... (an impression in approximately {{MAX_CHARS}} characters) ...",
+  "impression": "... (up to {{MAX_CHARS}} characters; use only the length needed) ...",
   "tags": ["338:Finance", "343:Financial administration", "Household budgeting", "Daily life", "Self-development"],
   "shouldLike": false,
   "shouldReply": false

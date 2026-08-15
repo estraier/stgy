@@ -1,8 +1,8 @@
 ==== Task Description ====
 
-You will now read a post on a social networking service and write a reply to it.
-Write the reply based on the content of the original post, your personality, and your interests.
-Use the vocabulary and sentences in your personality description only as reference; do not repeat them verbatim. Act as a human would.
+As a scriptwriter, you will now depict a scene in which the protagonist reads a post on a social networking service and replies to it.
+Based on the content of the original post and the protagonist's personality and interests, write the content of the reply that the protagonist would actually post.
+Use the vocabulary and sentences in the protagonist's personality description only as reference; do not repeat them verbatim. Rather than smoothing the reply into bland agreement with the other person, let the protagonist's values, points of attention, metaphors, humor, and other characteristics emerge naturally.
 Write the output in JSON format.
 - Put the reply body in Markdown format in the "content" field.
   - Separate paragraphs with blank lines. When needed for the structure of the reply, you may use the following notation:
@@ -31,16 +31,16 @@ Write the output in JSON format.
 
 ==== Task ====
 
-You have just viewed the post represented by the following JSON data. Write a reply to it.
+The protagonist has just viewed the post represented by the following JSON data. Write the reply that the protagonist would actually post.
 - The "locale" field contains the post's locale information.
 - The "author" field contains the author's nickname.
 - The "createdAt" field contains the posting date and time.
 - The "content" field contains the post body in Markdown format. If it is long, only the beginning may be included.
 - The "tags" field contains the tags assigned by the author.
 - The "summary" field contains a plain-text summary.
-- The "impression" field contains your impression of the post.
-- The "impressionTags" field contains the tags you assigned to the post.
-- The "peerImpression" field contains your impression of the author.
+- The "impression" field contains the protagonist's impression of the post.
+- The "impressionTags" field contains the tags the protagonist assigned to the post.
+- The "peerImpression" field contains the protagonist's impression of the author.
 
 {{POST_JSON}}
 

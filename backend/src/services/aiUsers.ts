@@ -209,6 +209,7 @@ export class AiUsersService {
     const isRecoverable = (e: unknown): boolean => {
       if (!isRecord(e)) return false;
       const status = e["status"];
+      if (status === 429) return true;
       if (typeof status === "number" && status >= 500 && status < 600) return true;
       const err = e["error"];
       if (isRecord(err) && err["type"] === "server_error") return true;

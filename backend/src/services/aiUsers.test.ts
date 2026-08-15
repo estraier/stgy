@@ -449,7 +449,20 @@ class MockPgPool {
   }
 }
 
-class MockRedis {}
+class MockRedis {
+  private values = new Map<string, string>();
+  setCalls: unknown[][] = [];
+
+  async get(key: string): Promise<string | null> {
+    return this.values.get(key) ?? null;
+  }
+
+  async set(key: string, value: string, ...args: unknown[]): Promise<"OK"> {
+    this.setCalls.push([key, value, ...args]);
+    this.values.set(key, value);
+    return "OK";
+  }
+}
 
 describe("AiUsersService", () => {
   let pgPool: MockPgPool;
@@ -610,6 +623,55 @@ describe("AiUsersService", () => {
       messages: [{ role: "user", content: "anything" }],
     });
     expect(res.message.content).toBe("");
+  });
+
+  test("chat: falls back on Flex 429 and disables Flex for subsequent calls", async () => {
+    const flexError = Object.assign(
+      new Error("Flex does not have sufficient resources available to fulfill your request"),
+      { status: 429 },
+    );
+    mockCreate
+      .mockRejectedValueOnce(flexError)
+      .mockResolvedValueOnce({ choices: [{ message: { content: "fallback" } }] })
+      .mockResolvedValueOnce({ choices: [{ message: { content: "cooldown" } }] });
+
+    const first = await service.chat({
+      model: "balanced",
+      messages: [{ role: "user", content: "first" }],
+    });
+    expect(first).toEqual({ message: { content: "fallback" } });
+    expect(mockCreate).toHaveBeenNthCalledWith(
+      1,
+      {
+        model: "gpt-5-mini",
+        service_tier: "flex",
+        messages: [{ role: "user", content: "first" }],
+      },
+      { timeout: 600000 },
+    );
+    expect(mockCreate).toHaveBeenNthCalledWith(
+      2,
+      { model: "gpt-5-mini", messages: [{ role: "user", content: "first" }] },
+      { timeout: 600000 },
+    );
+    expect(redis.setCalls[0]).toEqual([
+      "ai-users:disable-flex:chat:gpt-5-mini",
+      "1",
+      "EX",
+      30 * 60,
+    ]);
+
+    const second = await service.chat({
+      model: "balanced",
+      messages: [{ role: "user", content: "second" }],
+    });
+    expect(second).toEqual({ message: { content: "cooldown" } });
+    expect(mockCreate).toHaveBeenCalledTimes(3);
+    expect(mockCreate).toHaveBeenNthCalledWith(
+      3,
+      { model: "gpt-5-mini", messages: [{ role: "user", content: "second" }] },
+      { timeout: 600000 },
+    );
   });
 
   test("generateFeatures: returns encoded Int8Array", async () => {

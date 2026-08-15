@@ -4,8 +4,19 @@ import { Config } from "@/config";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { getUser, listFollowers, listFollowees } from "@/api/users";
 import { listPosts, addLike, removeLike, createPost } from "@/api/posts";
-import { listAiPeerImpressions, listAiPostImpressions } from "@/api/aiUser";
-import type { AiPeerImpression, AiPostImpression, User, UserDetail, Post } from "@/api/models";
+import {
+  getAiUserInterest,
+  listAiPeerImpressions,
+  listAiPostImpressions,
+} from "@/api/aiUser";
+import type {
+  AiPeerImpression,
+  AiPostImpression,
+  AiUserInterest,
+  User,
+  UserDetail,
+  Post,
+} from "@/api/models";
 import { notFound, useParams, useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import UserCard from "@/components/UserCard";
@@ -16,7 +27,7 @@ import { makePostIdFromDateString, parseBodyAndTags } from "@/utils/parse";
 import { formatDateTime } from "@/utils/format";
 
 const TAB_VALUES = ["posts", "replies", "followers", "followees"] as const;
-const AI_TAB_VALUES = ["posts", "users"] as const;
+const AI_TAB_VALUES = ["posts", "users", "interest"] as const;
 
 type ParsedImpressionPayload = {
   impression: string | null;
@@ -186,6 +197,7 @@ export default function PageBody() {
   const [followees, setFollowees] = useState<User[]>([]);
   const [aiPeerImpressions, setAiPeerImpressions] = useState<AiPeerImpression[]>([]);
   const [aiPostImpressions, setAiPostImpressions] = useState<AiPostImpression[]>([]);
+  const [aiInterest, setAiInterest] = useState<AiUserInterest | null>(null);
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [hasNext, setHasNext] = useState(false);
@@ -261,7 +273,7 @@ export default function PageBody() {
             else setListError(String(err) || "Failed to fetch post impressions.");
           })
           .finally(() => setListLoading(false));
-      } else {
+      } else if (aiTab === "users") {
         listAiPeerImpressions(user.id, {
           offset: (aiPage - 1) * Config.USERS_PAGE_SIZE,
           limit: Config.USERS_PAGE_SIZE + 1,
@@ -275,6 +287,15 @@ export default function PageBody() {
             if (err instanceof Error)
               setListError(err.message || "Failed to fetch user impressions.");
             else setListError(String(err) || "Failed to fetch user impressions.");
+          })
+          .finally(() => setListLoading(false));
+      } else {
+        setHasNext(false);
+        getAiUserInterest(user.id)
+          .then((data) => setAiInterest(data))
+          .catch((err: unknown) => {
+            if (err instanceof Error) setListError(err.message || "Failed to fetch interest.");
+            else setListError(String(err) || "Failed to fetch interest.");
           })
           .finally(() => setListLoading(false));
       }
@@ -669,21 +690,23 @@ export default function PageBody() {
                   ${aiTab === t ? "bg-blue-100 text-gray-800" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
                 onClick={() => handleAiTabChange(t)}
               >
-                {t === "posts" ? "Posts" : "Users"}
+                {t === "posts" ? "Posts" : t === "users" ? "Users" : "Interest"}
               </button>
             ))}
-            <label className="flex items-center gap-1 text-sm text-gray-700 cursor-pointer ml-4 max-md:ml-1">
-              <input
-                type="checkbox"
-                checked={aiOldestFirst}
-                onChange={(e) => handleAiOldestFirstToggle(e.target.checked)}
-                className="cursor-pointer"
-              />
-              <span className="hidden md:inline">Oldest first</span>
-              <span className="md:hidden scale-x-80 -ml-1" aria-hidden>
-                Oldest
-              </span>
-            </label>
+            {aiTab !== "interest" && (
+              <label className="flex items-center gap-1 text-sm text-gray-700 cursor-pointer ml-4 max-md:ml-1">
+                <input
+                  type="checkbox"
+                  checked={aiOldestFirst}
+                  onChange={(e) => handleAiOldestFirstToggle(e.target.checked)}
+                  className="cursor-pointer"
+                />
+                <span className="hidden md:inline">Oldest first</span>
+                <span className="md:hidden scale-x-80 -ml-1" aria-hidden>
+                  Oldest
+                </span>
+              </label>
+            )}
             <button
               type="button"
               className="ml-auto px-2 py-1 text-lg leading-none text-gray-500 hover:text-gray-800"
@@ -790,6 +813,34 @@ export default function PageBody() {
                   </li>
                 ))}
               </ul>
+            )}
+            {aiMode && aiTab === "interest" && (
+              <div>
+                {!aiInterest ? (
+                  <div className="text-gray-400 text-center">No interest found.</div>
+                ) : (
+                  <div className="rounded border bg-white p-3 shadow-sm">
+                    <div className="flex justify-end text-xs text-gray-400">
+                      {formatDateTime(new Date(aiInterest.updatedAt))}
+                    </div>
+                    <div className="mt-2 whitespace-pre-wrap text-sm text-gray-800">
+                      {aiInterest.interest}
+                    </div>
+                    {aiInterest.tags.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1.5 text-xs">
+                        {aiInterest.tags.map((tag) => (
+                          <span
+                            key={tag}
+                            className="rounded bg-gray-100 px-2 py-0.5 text-blue-700"
+                          >
+                            #{tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             )}
             {!aiMode && (tab === "posts" || tab === "replies") && (
               <ul className="space-y-4">
@@ -913,7 +964,7 @@ export default function PageBody() {
           </>
         )}
 
-        {!listLoading && !listError && (
+        {!listLoading && !listError && (!aiMode || aiTab !== "interest") && (
           <div className="mt-6 flex justify-center gap-4">
             <button
               className="px-3 py-1 rounded border text-gray-800 bg-blue-100 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"

@@ -225,7 +225,7 @@ export class Config {
   static readonly AI_SUMMARY_MODEL = envStr("STGY_AI_SUMMARY_MODEL", "basic");
   static readonly AI_SUMMARY_POST_LOOKBACK_MS = envNum(
     "STGY_AI_SUMMARY_POST_LOOKBACK_MS",
-    Date.now() - 1000,
+    0,
   );
   static readonly AI_SUMMARY_POST_SKIP_LATEST_MS = envNum(
     "STGY_AI_SUMMARY_POST_SKIP_LATEST_MS",

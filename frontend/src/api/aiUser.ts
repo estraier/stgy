@@ -1,4 +1,4 @@
-import type { AiPeerImpression, AiPostImpression } from "./models";
+import type { AiPeerImpression, AiPostImpression, AiUserInterest } from "./models";
 import { apiFetch, extractError } from "./client";
 
 function buildPageQuery(params: {
@@ -33,6 +33,13 @@ export async function listAiPostImpressions(
   const res = await apiFetch(`/ai-users/${userId}/post-impressions${q ? `?${q}` : ""}`, {
     method: "GET",
   });
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
+}
+
+export async function getAiUserInterest(userId: string): Promise<AiUserInterest | null> {
+  const res = await apiFetch(`/ai-users/${userId}/interests`, { method: "GET" });
+  if (res.status === 404) return null;
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();
 }

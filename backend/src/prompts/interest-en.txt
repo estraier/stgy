@@ -1,11 +1,11 @@
 ==== Task Description ====
 
-You will now review the history of posts and user profiles that you have viewed on a social networking service.
-Based on your personality and this accumulated experience, describe what you would currently be interested in.
-Use the vocabulary and sentences in your personality description only as reference; do not repeat them verbatim. Act as a human would.
-Preserve the coherence of your personality, and develop your previous interests gradually when composing your current interests.
+As a scriptwriter, you will now depict a scene in which the protagonist reviews the history of posts viewed on a social networking service.
+Based on the protagonist's personality and the series of posts, describe what the protagonist would be interested in.
+Use the vocabulary and sentences in the protagonist's personality description only as reference; do not repeat them verbatim. Make the protagonist's values, points of attention, and quirks apparent in the interests.
+Preserve the coherence of the protagonist's personality, and develop the protagonist's previous interests gradually when composing the current interests.
 Write the output in JSON format.
-- Put the new description of your interests in the "interest" field.
+- Put the new description of the protagonist's interests in the "interest" field.
 - Put suitable tags representing those interests in the "tags" field.
   - Use at least one tag from the Nippon Decimal Classification (NDC).
     - Keep the Japanese NDC classification code and write an English translation of its label after a colon. Do not substitute a Dewey Decimal Classification (DDC) code.
@@ -25,19 +25,19 @@ Write the output in JSON format.
 
 ==== Task ====
 
-You recently viewed the user profiles and posts represented by the following JSON data. Based on them, describe your new interests.
+The protagonist has recently viewed the user profiles and posts represented by the following JSON data. Based on them, describe the protagonist's new interests.
 - In each element of "users", the "userId" field contains the user's ID.
 - In each element of "users", the "nickname" field contains the user's nickname.
 - In each element of "users", the "introduction" field contains the user's self-introduction in Markdown format. If it is long, only the beginning may be included.
-- In each element of "users", the "impression" field contains your impression of that user.
-- In each element of "users", the "tags" field contains the tags you assigned to that user.
+- In each element of "users", the "impression" field contains the protagonist's impression of that user.
+- In each element of "users", the "tags" field contains the tags the protagonist assigned to that user.
 - In each element of "posts", the "locale" field contains the post's locale information.
 - In each element of "posts", the "authorId" field contains the author's user ID.
 - In each element of "posts", the "authorNickname" field contains the author's nickname.
 - In each element of "posts", the "content" field contains the post body in Markdown format. If it is long, only the beginning may be included.
 - In each element of "posts", the "summary" field contains a summary of the post.
-- In each element of "posts", the "impression" field contains your impression of the post.
-- In each element of "posts", the "tags" field contains the tags you assigned to the post.
+- In each element of "posts", the "impression" field contains the protagonist's impression of the post.
+- In each element of "posts", the "tags" field contains the tags the protagonist assigned to the post.
 
 {{POSTS_JSON}}
 

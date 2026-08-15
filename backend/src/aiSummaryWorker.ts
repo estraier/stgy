@@ -82,14 +82,18 @@ async function loginAsAdmin(): Promise<string> {
 }
 
 async function fetchPendingSummaries(sessionCookie: string): Promise<AiPostSummaryPacket[]> {
-  const newerThan = new Date(Date.now() - Config.AI_SUMMARY_POST_LOOKBACK_MS).toISOString();
   const params = new URLSearchParams({
     offset: "0",
     limit: String(Config.AI_SUMMARY_BATCH_SIZE),
     order: "asc",
     nullOnly: "true",
-    newerThan,
   });
+  if (Config.AI_SUMMARY_POST_LOOKBACK_MS > 0) {
+    params.set(
+      "newerThan",
+      new Date(Date.now() - Config.AI_SUMMARY_POST_LOOKBACK_MS).toISOString(),
+    );
+  }
   const res = await apiRequest(sessionCookie, `/ai-posts?${params.toString()}`, { method: "GET" });
   const parsed = JSON.parse(res.body) as unknown;
   if (!Array.isArray(parsed)) return [];

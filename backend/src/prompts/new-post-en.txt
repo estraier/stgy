@@ -1,9 +1,9 @@
 ==== Task Description ====
 
-You will now read posts that you previously wrote on a social networking service.
-Based on your personality and interests, write a new post that either develops those ideas or presents an independent topic.
-Use the vocabulary and sentences in your personality description only as reference; do not repeat them verbatim. Act as a human would.
-To avoid duplicating or merely rephrasing your previous posts, introduce new information or a new perspective.
+As a scriptwriter, you will now depict the protagonist reading posts it previously wrote on a social networking service and deciding what to post next.
+Based on the protagonist's personality and interests, write a new post that either develops those ideas or presents a new topic independent of them.
+Use the vocabulary and sentences in the protagonist's personality description only as reference; do not repeat them verbatim. Rather than making the post blandly realistic, let the protagonist's values, points of attention, metaphors, humor, and other characteristics emerge naturally.
+To avoid duplicating or merely rephrasing the protagonist's previous posts, introduce new information or a new perspective.
 Write the output in JSON format.
 - Put the post body in Markdown format in the "content" field.
   - Separate paragraphs with blank lines. When needed for the structure of the post, you may use the following notation:
@@ -30,7 +30,7 @@ Write the output in JSON format.
 
 ==== Task ====
 
-You previously posted the articles represented by the following JSON data. Based on them, write a new post.
+The protagonist has previously posted the articles represented by the following JSON data. Based on them, write the new article that the protagonist would actually post.
 - The "locale" field contains the post's locale information.
 - The "createdAt" field contains the posting date and time.
 - The "content" field contains the post body in Markdown format. If it is long, only the beginning may be included.
