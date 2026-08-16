@@ -14,6 +14,7 @@ import {
   getActivityMetadataSummaryLines,
   getActivityPowerCurvePoints,
   getAvailableScatterMetrics,
+  getHistogramBarScaleMaxPercentage,
   getHeartRateZoneDisplayRows,
   getPowerZoneDisplayRows,
   getScatterAxisRange,
@@ -942,6 +943,8 @@ function appendHistogramSection(
   title.textContent = titleText;
   section.appendChild(title);
 
+  const barScaleMaxPercentage = getHistogramBarScaleMaxPercentage(rows);
+
   rows.forEach((row) => {
     const item = document.createElement("div");
     item.className = "fit-demo-zone-row";
@@ -958,7 +961,9 @@ function appendHistogramSection(
 
     const bar = document.createElement("div");
     bar.className = "fit-demo-zone-bar";
-    bar.style.width = `${clampPercentage(row.percentage)}%`;
+    bar.style.width = `${clampPercentage(
+      (row.percentage / barScaleMaxPercentage) * 100
+    )}%`;
     bar.title = label.textContent || "";
 
     track.appendChild(bar);

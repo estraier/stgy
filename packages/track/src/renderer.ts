@@ -4,7 +4,10 @@ import { TrackLoader } from "./loader";
 import { getTrackJsonDisplayMetadataLines } from "./metadata";
 import { getFiniteNumberRange } from "./numeric";
 import { getTrackJsonTitle } from "./trackjson";
-import type { TrackPowerCurvePoint } from "./analysis";
+import {
+  getHistogramBarScaleMaxPercentage,
+  type TrackPowerCurvePoint,
+} from "./analysis";
 import {
   getTrackJsonAnalysis,
   type TrackJsonAnalysisDisplay,
@@ -1153,6 +1156,9 @@ export class StgyTrackRenderer {
         title.textContent = display.title;
         histogram.appendChild(title);
 
+        const barScaleMaxPercentage =
+          getHistogramBarScaleMaxPercentage(display.rows);
+
         display.rows.forEach((row) => {
           const item = document.createElement("div");
           item.className = "stgy-track-analysis-row";
@@ -1168,7 +1174,10 @@ export class StgyTrackRenderer {
 
           const bar = document.createElement("div");
           bar.className = "stgy-track-analysis-bar";
-          bar.style.width = `${Math.max(0, Math.min(100, row.percentage))}%`;
+          bar.style.width = `${Math.max(
+            0,
+            Math.min(100, (row.percentage / barScaleMaxPercentage) * 100),
+          )}%`;
           barTrack.appendChild(bar);
 
           const percentage = document.createElement("span");

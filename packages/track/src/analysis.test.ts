@@ -14,6 +14,7 @@ import {
   getActivityPowerCurvePoints,
   getDerivedHeartRateMetrics,
   getDerivedTrainingMetrics,
+  getHistogramBarScaleMaxPercentage,
   getHeartRateZoneDisplayRows,
   getPowerZoneDisplayRows,
   getAvailableScatterMetrics,
@@ -25,6 +26,26 @@ import {
   sampleEvenly,
 } from "./analysis";
 import type { TrackPoint } from "./activity";
+
+describe("getHistogramBarScaleMaxPercentage", () => {
+  test("weights the largest bracket twice against 100 percent", () => {
+    expect(
+      getHistogramBarScaleMaxPercentage([
+        { label: "A", seconds: 50, percentage: 50, color: "#000" },
+        { label: "B", seconds: 30, percentage: 30, color: "#000" },
+        { label: "C", seconds: 20, percentage: 20, color: "#000" },
+      ]),
+    ).toBeCloseTo(200 / 3);
+  });
+
+  test("keeps 100 percent as the scale maximum when one bracket is 100 percent", () => {
+    expect(
+      getHistogramBarScaleMaxPercentage([
+        { label: "A", seconds: 10, percentage: 100, color: "#000" },
+      ]),
+    ).toBe(100);
+  });
+});
 
 describe("buildPowerBracketHistogram", () => {
   test("uses lower-inclusive timed durations and 25 W thresholds", () => {

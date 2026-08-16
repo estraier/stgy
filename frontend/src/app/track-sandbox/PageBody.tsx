@@ -37,6 +37,7 @@ import {
   getActivityMetadataSummaryLines,
   getActivityPowerCurvePoints,
   getAvailableScatterMetrics,
+  getHistogramBarScaleMaxPercentage,
   getHeartRateZoneDisplayRows,
   getPowerZoneDisplayRows,
   getScatterAxisRange,
@@ -1115,6 +1116,8 @@ function PowerCurve({ points }: { points: PowerCurvePoint[] }) {
 }
 
 function ZoneBars({ title, rows }: { title: string; rows: ZoneRow[] }) {
+  const barScaleMaxPercentage = getHistogramBarScaleMaxPercentage(rows);
+
   return (
     <div>
       <div className="mb-2 text-xs font-semibold text-slate-600">{title}</div>
@@ -1131,7 +1134,12 @@ function ZoneBars({ title, rows }: { title: string; rows: ZoneRow[] }) {
                 <div
                   className="h-full rounded-full"
                   style={{
-                    width: row.percentage > 0 ? `${Math.max(2, row.percentage)}%` : "0%",
+                    width: row.percentage > 0
+                      ? `${Math.max(
+                        2,
+                        Math.min(100, (row.percentage / barScaleMaxPercentage) * 100),
+                      )}%`
+                      : "0%",
                     backgroundColor: ANALYSIS_BAR_FILL_COLOR,
                   }}
                 />

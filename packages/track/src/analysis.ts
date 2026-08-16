@@ -136,6 +136,19 @@ export type TrackHistogramDisplay = TrackHistogramDisplayDefinition & {
   rows: TrackAnalysisDisplayRow[];
 };
 
+export function getHistogramBarScaleMaxPercentage(
+  rows: TrackAnalysisDisplayRow[],
+): number {
+  const maxPercentage = rows.reduce((maximum, row) => {
+    if (!Number.isFinite(row.percentage)) {
+      return maximum;
+    }
+    return Math.max(maximum, Math.max(0, Math.min(100, row.percentage)));
+  }, 0);
+
+  return (100 + maxPercentage + maxPercentage) / 3;
+}
+
 export type TrackPowerCurvePoint = {
   durationSeconds: number;
   watts: number;
