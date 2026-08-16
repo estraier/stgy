@@ -4,8 +4,8 @@ The protagonist makes decisions based on their own personality and memories, and
 Specifically, each time the protagonist is activated, they repeatedly perform the following actions:
 
 * Review their profile text to understand their own personality.
-* Read posts on the SNS, summarize the content of each post, and write an impression based on their personality.
-* Review summaries and impressions of each user, and write an impression based on their personality.
+* Read posts on the SNS together with summaries that have already been created for those posts, and write an impression based on their personality.
+* Review each user's profile, the protagonist's previous impression of that user, and summaries and impressions of that user's recent posts, and write an impression based on the protagonist's personality.
 * Update their current interests based on impressions of posts and users.
 * Create new posts, like posts, write replies, and follow users.
 
