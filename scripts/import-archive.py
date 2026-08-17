@@ -483,6 +483,7 @@ def find_track_master(data_dir: Path, preview_path: Path) -> Path:
 def collect_media_references(
   data_dir: Path,
   posts: Iterable[ArchivePost],
+  extra_texts: Iterable[tuple[Path, str]] = (),
 ) -> tuple[tuple[Path, ...], tuple[Path, ...], dict[Path, Path]]:
   previews_dir = (data_dir / "tracks" / "previews").resolve()
   image_paths: set[Path] = set()
@@ -499,22 +500,22 @@ def collect_media_references(
       raise ValueError(f"referenced image type is unsupported: {candidate}")
     image_paths.add(candidate)
 
-  for post in posts:
-    for kind, url in iter_embed_urls(post.content):
+  def collect_from_text(source_file: Path, text: str) -> None:
+    for kind, url in iter_embed_urls(text):
       if kind == "!":
-        add_image_reference(post.path, url)
+        add_image_reference(source_file, url)
         continue
       if kind != "@":
         continue
       split = split_track_embed_with_pins(url)
       if split is not None:
         for image_url in iter_map_pin_image_urls(url):
-          add_image_reference(post.path, image_url)
+          add_image_reference(source_file, image_url)
         if url.startswith("map://"):
           continue
         url = split[0][0].strip()
 
-      candidate = resolve_archive_url(data_dir, post.path, url)
+      candidate = resolve_archive_url(data_dir, source_file, url)
       if candidate is None:
         continue
       try:
@@ -522,10 +523,15 @@ def collect_media_references(
       except ValueError:
         continue
       if not candidate.is_file():
-        raise ValueError(f"referenced track preview not found: {post.path}: {url}")
+        raise ValueError(f"referenced track preview not found: {source_file}: {url}")
       master = find_track_master(data_dir, candidate)
       preview_to_master[candidate] = master
       track_masters.add(master)
+
+  for post in posts:
+    collect_from_text(post.path, post.content)
+  for source_file, text in extra_texts:
+    collect_from_text(source_file, text)
 
   return (
     tuple(sorted(image_paths, key=str)),
@@ -561,7 +567,19 @@ def load_import_plan(data_dir: Path, no_reply: bool = False, publish: bool = Fal
       if not isinstance(created_at, str) or not created_at:
         raise ValueError(f"{post.path}: createdAt must be a non-empty string with --publish")
 
-  image_paths, track_master_paths, preview_to_master = collect_media_references(root, posts)
+  pub_path = root / "pub-config.json"
+  pub_config = load_json_object(pub_path) if pub_path.is_file() else None
+  extra_texts: list[tuple[Path, str]] = [
+    (profile_path, profile["introduction"]),
+  ]
+  if pub_config is not None and isinstance(pub_config.get("introduction"), str):
+    extra_texts.append((pub_path, pub_config["introduction"]))
+
+  image_paths, track_master_paths, preview_to_master = collect_media_references(
+    root,
+    posts,
+    extra_texts,
+  )
 
   avatar_path: Optional[Path] = None
   if profile.get("avatar"):
@@ -570,8 +588,6 @@ def load_import_plan(data_dir: Path, no_reply: bool = False, publish: bool = Fal
       raise ValueError(f"profile has an avatar but avatar.webp is missing: {candidate}")
     avatar_path = candidate.resolve()
 
-  pub_path = root / "pub-config.json"
-  pub_config = load_json_object(pub_path) if pub_path.is_file() else None
   return ImportPlan(
     data_dir=root,
     profile=profile,
@@ -894,6 +910,15 @@ def import_archive(
       client.update_user(owner_id, body)
     if plan.pub_config is not None:
       pub_config = validate_pub_config(plan.pub_config)
+      introduction = pub_config.get("introduction")
+      if isinstance(introduction, str):
+        pub_config["introduction"] = rewrite_embeds(
+          introduction,
+          plan.data_dir / "pub-config.json",
+          plan.data_dir,
+          image_urls,
+          track_urls_by_preview,
+        )
       if pub_config:
         client.update_pub_config(owner_id, pub_config)
         print("[PUB CONFIG] restored")

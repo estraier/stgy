@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import importlib.util
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -271,6 +272,139 @@ class ImportArchiveMapPinImageTest(unittest.TestCase):
 
       with self.assertRaisesRegex(ValueError, "referenced image not found"):
         MODULE.collect_media_references(data_dir, [post])
+
+
+class ImportArchiveProfileAndPubConfigMediaTest(unittest.TestCase):
+  def test_load_plan_collects_images_referenced_only_by_profile_and_pub_config(self) -> None:
+    with tempfile.TemporaryDirectory() as temporary_directory:
+      data_dir = Path(temporary_directory).resolve()
+      (data_dir / "posts").mkdir()
+      images_dir = data_dir / "images"
+      images_dir.mkdir()
+      profile_image = images_dir / "profile.jpg"
+      pub_image = images_dir / "publication.png"
+      profile_image.write_bytes(b"profile")
+      pub_image.write_bytes(b"publication")
+
+      (data_dir / "profile.json").write_text(
+        json.dumps(
+          {
+            "id": "0000000000000001",
+            "email": "import@example.com",
+            "nickname": "Imported",
+            "isAdmin": False,
+            "blockStrangers": False,
+            "locale": "ja-JP",
+            "timezone": "Asia/Tokyo",
+            "introduction": "![Profile](./images/profile.jpg)",
+            "avatar": None,
+            "aiModel": None,
+            "aiPersonality": None,
+          }
+        ),
+        encoding="utf-8",
+      )
+      (data_dir / "pub-config.json").write_text(
+        json.dumps(
+          {
+            "siteName": "Imported site",
+            "introduction": "![Publication](./images/publication.png)",
+          }
+        ),
+        encoding="utf-8",
+      )
+
+      plan = MODULE.load_import_plan(data_dir)
+
+      self.assertEqual(plan.image_paths, (profile_image, pub_image))
+
+  def test_import_rewrites_profile_and_pub_config_image_urls(self) -> None:
+    class FakeClient:
+      def __init__(self) -> None:
+        self.updated_users = []
+        self.updated_pub_configs = []
+
+      def login(self):
+        return {"userIsAdmin": True}
+
+      def get_user(self, _user_id):
+        return {"avatar": None}
+
+      def get_post(self, _post_id):
+        return None
+
+      def create_user(self, _body):
+        raise AssertionError("existing user must be updated")
+
+      def update_user(self, user_id, body):
+        self.updated_users.append((user_id, body))
+        return body
+
+      def create_post(self, _body):
+        raise AssertionError("no posts expected")
+
+      def update_post(self, _post_id, _body):
+        raise AssertionError("no posts expected")
+
+      def upload_image(self, _owner_id, path):
+        return f"/images/OWNER/masters/{path.name}"
+
+      def upload_track(self, _owner_id, _path):
+        raise AssertionError("no tracks expected")
+
+      def upload_avatar(self, _owner_id, _path):
+        raise AssertionError("no avatar expected")
+
+      def update_pub_config(self, user_id, body):
+        self.updated_pub_configs.append((user_id, body))
+
+    with tempfile.TemporaryDirectory() as temporary_directory:
+      data_dir = Path(temporary_directory).resolve()
+      images_dir = data_dir / "images"
+      images_dir.mkdir()
+      profile_image = images_dir / "profile.jpg"
+      pub_image = images_dir / "publication.png"
+      profile_image.write_bytes(b"profile")
+      pub_image.write_bytes(b"publication")
+
+      plan = MODULE.ImportPlan(
+        data_dir=data_dir,
+        profile={
+          "id": "0000000000000001",
+          "email": "import@example.com",
+          "nickname": "Imported",
+          "isAdmin": False,
+          "blockStrangers": False,
+          "locale": "ja-JP",
+          "timezone": "Asia/Tokyo",
+          "introduction": "![Profile](./images/profile.jpg)",
+          "aiModel": None,
+          "aiPersonality": None,
+        },
+        posts=(),
+        skipped_reply_count=0,
+        image_paths=(profile_image, pub_image),
+        track_master_paths=(),
+        track_preview_to_master={},
+        avatar_path=None,
+        pub_config={
+          "siteName": "Imported site",
+          "introduction": "![Publication](./images/publication.png)",
+        },
+      )
+      client = FakeClient()
+
+      MODULE.import_archive(plan, client, None)
+
+      self.assertEqual(
+        client.updated_users[-1][1]["introduction"],
+        "![Profile](/images/OWNER/masters/profile.jpg)",
+      )
+      self.assertEqual(
+        client.updated_pub_configs[-1][1]["introduction"],
+        "![Publication](/images/OWNER/masters/publication.png)",
+      )
+
 
 
 class ImportArchiveIdFromDateTest(unittest.TestCase):
