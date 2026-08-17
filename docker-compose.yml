@@ -153,7 +153,7 @@ services:
       STGY_SMTP_PORT: ${STGY_SMTP_PORT:-587}
       STGY_MAIL_SENDER_ADDRESS: ${STGY_MAIL_SENDER_ADDRESS:?}
       STGY_SEARCH_API_BASE_URL: ${STGY_SEARCH_API_BASE_URL:?}
-      STGY_BACKEND_API_BASE_URL: ${STGY_BACKEND_API_BASE_URL:?}
+      STGY_BACKEND_API_BASE_URL: "http://backend:${STGY_BACKEND_PORT:-3100}"
     command: ["node", "dist/oneWorker.js"]
     restart: unless-stopped
 

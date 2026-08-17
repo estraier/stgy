@@ -485,8 +485,8 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
     - STGY_SEARCH_API_BASE_URL=http://ttts:3200
 
 - AI要約ワーカ（Node.jsのCLI。実運用では統合ワーカ内で起動）
-  - バックエンドをhttps://stgy.jp/backendとして認識し、公開サブネットで通信。
-    - STGY_BACKEND_API_BASE_URL=https://stgy.jp/backend
+  - バックエンドをhttp://backend:3100として認識し、Dockerサブネットで通信。
+    - STGY_BACKEND_API_BASE_URL=http://backend:3100
   - キャッシュサーバをredis:6379として認識し、Dockerサブネットで通信。
     - STGY_REDIS_HOST=redis
     - STGY_REDIS_PORT=6379
@@ -495,8 +495,8 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
     - STGY_DATABASE_PORT=5432
 
 - AIユーザワーカ（Node.jsのCLI。実運用では統合ワーカ内で起動）
-  - バックエンドをhttps://stgy.jp/backendとして認識し、公開サブネットで通信。
-    - STGY_BACKEND_API_BASE_URL=https://stgy.jp/backend
+  - バックエンドをhttp://backend:3100として認識し、Dockerサブネットで通信。
+    - STGY_BACKEND_API_BASE_URL=http://backend:3100
   - キャッシュサーバをredis:6379として認識し、Dockerサブネットで通信。
     - STGY_REDIS_HOST=redis
     - STGY_REDIS_PORT=6379
@@ -819,7 +819,7 @@ sudo systemctl disable --now stgy-docker
 
 結局のところ、どのサービスをネイティブにして、どのサービスをコンテナ運用にするかは、運用の都合で決まるということになる。いずれにせよ、全てのサービスをネイティブで稼働させる方法をここで洗い出しておくことは有益だ。必要に応じて、以下の手順をなぞればよいだろう。
 
-全ネイティブ構成では、最初にenv.native.txtを.envとしてコピーする。以後、PostgreSQL、MinIO、Redisなどに設定するユーザ名やパスワードを変更した場合は、.envの対応する値も同じ値にする。.envはGitの管理対象外である。
+全ネイティブ構成では、最初にenv.native.txtを.envとしてコピーする。以後、PostgreSQL、MinIO、Redisなどに設定するユーザ名やパスワードを変更した場合は、.envの対応する値も同じ値にする。.envはGitの管理対象外である。統合ワーカからバックエンドへの内部API呼び出しはCaddyを経由させず、STGY_BACKEND_API_BASE_URL=http://127.0.0.1:3100として同一ホスト上のバックエンドへ直接接続する。
 
 ```:small
 cp env.native.txt .env

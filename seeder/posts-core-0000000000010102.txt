@@ -485,8 +485,8 @@ With an all-Docker configuration in mind, first organize the architecture and se
     - STGY_SEARCH_API_BASE_URL=http://ttts:3200
 
 - AI-summary worker (Node.js CLI; started inside the integrated worker in production)
-  - Recognizes the backend as https://stgy.jp/backend and communicates with it over the public subnet.
-    - STGY_BACKEND_API_BASE_URL=https://stgy.jp/backend
+  - Recognizes the backend as http://backend:3100 and communicates with it over the Docker subnet.
+    - STGY_BACKEND_API_BASE_URL=http://backend:3100
   - Recognizes the cache server as redis:6379 and communicates with it over the Docker subnet.
     - STGY_REDIS_HOST=redis
     - STGY_REDIS_PORT=6379
@@ -495,8 +495,8 @@ With an all-Docker configuration in mind, first organize the architecture and se
     - STGY_DATABASE_PORT=5432
 
 - AI-user worker (Node.js CLI; started inside the integrated worker in production)
-  - Recognizes the backend as https://stgy.jp/backend and communicates with it over the public subnet.
-    - STGY_BACKEND_API_BASE_URL=https://stgy.jp/backend
+  - Recognizes the backend as http://backend:3100 and communicates with it over the Docker subnet.
+    - STGY_BACKEND_API_BASE_URL=http://backend:3100
   - Recognizes the cache server as redis:6379 and communicates with it over the Docker subnet.
     - STGY_REDIS_HOST=redis
     - STGY_REDIS_PORT=6379
@@ -819,7 +819,7 @@ One might point out that containerized services can also be shared by multiple a
 
 Ultimately, which services should run natively and which should run in containers is determined by operational convenience. In any case, it is useful to document here how to run every service natively. Follow the procedures below as needed.
 
-For the all-native configuration, first copy env.native.txt to .env. Thereafter, whenever a username or password configured in PostgreSQL, MinIO, Redis, or another service is changed, set the corresponding value in .env to the same value. .env is excluded from Git tracking.
+For the all-native configuration, first copy env.native.txt to .env. Thereafter, whenever a username or password configured in PostgreSQL, MinIO, Redis, or another service is changed, set the corresponding value in .env to the same value. .env is excluded from Git tracking. Internal API calls from the integrated worker to the backend do not go through Caddy; STGY_BACKEND_API_BASE_URL=http://127.0.0.1:3100 connects directly to the backend on the same host.
 
 ```:small
 cp env.native.txt .env
