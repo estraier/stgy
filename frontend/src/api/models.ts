@@ -50,18 +50,19 @@ export type QueryStats = {
 
 export type ExplainPlan = string[];
 
+export type AIModelTier = "advanced" | "balanced" | "basic";
+
 export type AIModel = {
-  label: string;
+  label: AIModelTier;
   service: string;
   chatModel: string;
-  featureModel: string;
 };
 
 export type User = {
   id: string;
   nickname: string;
   avatar: string | null;
-  aiModel: string | null;
+  aiModel: AIModelTier | null;
   snippet: string;
   isAdmin: boolean;
   isFrozen: boolean;

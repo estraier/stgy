@@ -11,7 +11,7 @@ import { UsersService } from "../services/users";
 export default function createAIModelsRouter(pgPool: Pool, redis: Redis) {
   const router = Router();
 
-  const aiModelsService = new AIModelsService(pgPool);
+  const aiModelsService = new AIModelsService();
   const usersService = new UsersService(pgPool, redis);
   const authService = new AuthService(pgPool, redis);
   const authHelpers = new AuthHelpers(authService, usersService);

@@ -1,4 +1,4 @@
-import type { User, UserDetail, PubConfig, PubViewRankEntry, PubViewStats } from "./models";
+import type { AIModelTier, User, UserDetail, PubConfig, PubViewRankEntry, PubViewStats } from "./models";
 import { apiFetch, extractError } from "./client";
 
 export async function searchUsers(params: {
@@ -96,7 +96,7 @@ export async function createUser(user: {
   timezone: string;
   introduction: string;
   avatar: string | null;
-  aiModel: string | null;
+  aiModel: AIModelTier | null;
   aiPersonality: string | null;
 }): Promise<User> {
   const res = await apiFetch("/users", {

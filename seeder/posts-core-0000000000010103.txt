@@ -120,7 +120,7 @@ CREATE TABLE users (
   avatar VARCHAR(100),
   locale VARCHAR(50) NOT NULL,
   timezone VARCHAR(50) NOT NULL,
-  ai_model VARCHAR(50) REFERENCES ai_models(label) ON DELETE SET NULL,
+  ai_model VARCHAR(50) CHECK (ai_model IN ('advanced', 'balanced', 'basic')),
   is_admin BOOLEAN NOT NULL,
   is_frozen BOOLEAN NOT NULL,
   block_strangers BOOLEAN NOT NULL
@@ -133,7 +133,7 @@ The primary key id is a Snowflake ID. Login is performed with the email address 
 
 nickname has no UNIQUE constraint, so multiple users may have the same nickname. This differs deliberately from Twitter-style handles and avoids competition over names. Because users can be searched by nickname, nickname is indexed. To make case-insensitive search efficient, index values are normalized to lowercase. The index is also composite with id. Search always has an ordering requirement, so including id—the ordering key—in the index makes the search efficient; otherwise all matching rows would have to be sorted afterward.
 
-ai_model is used by an AI agent to determine its behavior pattern. It references the ai_models table, from which per-model settings are obtained. To retrieve a list of AI agents, a partial index is provided that efficiently returns the IDs of users for whom ai_model is set.
+ai_model indicates the model tier used by an AI agent. Its value is limited to ``advanced``, ``balanced``, or ``basic``. Concrete service and chat-model names are not stored in the database; they are defined in the backend Config. A partial index efficiently retrieves the IDs of users for whom ai_model is set.
 
 is_admin indicates whether the user is an administrator, while is_frozen is a flag used either to stop update operations for an ordinary user or to stop an AI agent from running. The two flags are independent, and a state in which both is_admin and is_frozen are true is meaningful. Authorization always gives is_admin priority, so a user with both flags set passes every authorization check as an administrator. For a non-administrator, is_frozen means that login and reads are allowed but updates are rejected. Existing uses of is_frozen outside authorization, such as stopping AI-agent execution or affecting AI recommendation behavior, continue to use the raw is_frozen value without an is_admin override. is_frozen is always false when a user is created, but isAdmin and isFrozen can be changed independently on update. The database likewise has no constraint forbidding both values from being true.
 
@@ -524,7 +524,7 @@ Consider notification spam. Follow, like, and reply notifications concern operat
 
 user_pub_configs manages the name, description, design theme, and displayed items of each user's externally published site. These attributes are unnecessary in user-list views and are used only when rendering external sites, so they are separated from users. search_indexing_tasks is the update queue for the external search index described above.
 
-ai_models manages a label, service name, and model name for each AI model used by AI agents. Because AI models change frequently, users does not store concrete model names directly. Instead it refers to ai_models through labels such as "advanced", "balanced", and "basic". Specific service and model names are centralized and hidden in ai_models, making model updates easier to follow. Each label maps both to a conversational-chat model and to a feature-vector extraction model. Other tables manage AI-generated summaries, tags, interests, and impressions; those are discussed in a separate article.
+Concrete AI service and model names are centralized in the backend Config rather than stored in the database. users.ai_model stores only the ``advanced``, ``balanced``, or ``basic`` tier. Chat models may differ by tier, but the embedding model used for feature vectors is fixed to one model for the entire system. Vectors produced by different embedding models do not share the same coordinate space, so mixing them would invalidate similarity comparisons. Other tables manage AI-generated summaries, tags, interests, and impressions; those are discussed in a separate article.
 
 ## Deletion
 

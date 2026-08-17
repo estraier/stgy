@@ -1,5 +1,6 @@
 import { AiUsersService } from "./aiUsers";
 import { encodeFeatures } from "../utils/vectorSpace";
+import { Config } from "../config";
 import type { Pool } from "pg";
 import type Redis from "ioredis";
 
@@ -41,8 +42,6 @@ class MockPgPool {
   }[] = [];
   user_secrets: { user_id: number; email: string }[] = [];
   user_details: { user_id: number; introduction: string; ai_personality: string | null }[] = [];
-  ai_models: { label: string; service: string; chat_model: string; feature_model: string }[] = [];
-
   ai_interests: { user_id: number; updated_at: Date; interest: string; features: Buffer }[] = [];
   ai_user_tags: { user_id: number; name: string }[] = [];
 
@@ -93,22 +92,6 @@ class MockPgPool {
 
     if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
       return { rows: [], rowCount: 0 };
-    }
-
-    if (sql.startsWith("SELECT label, service, chat_model FROM ai_models WHERE label = $1")) {
-      const label = params?.[0];
-      const rows = this.ai_models
-        .filter((m) => m.label === label)
-        .map((m) => ({ label: m.label, service: m.service, chat_model: m.chat_model }));
-      return { rows, rowCount: rows.length };
-    }
-
-    if (sql.startsWith("SELECT label, service, feature_model FROM ai_models WHERE label = $1")) {
-      const label = params?.[0];
-      const rows = this.ai_models
-        .filter((m) => m.label === label)
-        .map((m) => ({ label: m.label, service: m.service, feature_model: m.feature_model }));
-      return { rows, rowCount: rows.length };
     }
 
     if (
@@ -496,18 +479,6 @@ describe("AiUsersService", () => {
       { user_id: 1001, introduction: "Hello, I'm BotOne.", ai_personality: "Calm and logical." },
       { user_id: 1002, introduction: "Hi, I'm BotTwo.", ai_personality: "Cheerful and curious." },
     );
-    pgPool.ai_models.push({
-      label: "balanced",
-      service: "openai",
-      chat_model: "gpt-5-mini",
-      feature_model: "text-embedding-3-small",
-    });
-    pgPool.ai_models.push({
-      label: "advanced",
-      service: "openai",
-      chat_model: "gpt-5",
-      feature_model: "text-embedding-3-large",
-    });
   });
 
   test("listAiUsers: returns AI users only, default desc", async () => {
@@ -611,7 +582,7 @@ describe("AiUsersService", () => {
     expect(res).toEqual({ message: { content: "Hello from model!" } });
     expect(mockCreate).toHaveBeenCalledTimes(1);
     expect(mockCreate).toHaveBeenCalledWith(
-      { model: "gpt-5-mini", service_tier: "flex", messages: [{ role: "user", content: "hi" }] },
+      { model: Config.AI_MODELS.balanced.chatModel, service_tier: "flex", messages: [{ role: "user", content: "hi" }] },
       { timeout: 600000 },
     );
   });
@@ -643,7 +614,7 @@ describe("AiUsersService", () => {
     expect(mockCreate).toHaveBeenNthCalledWith(
       1,
       {
-        model: "gpt-5-mini",
+        model: Config.AI_MODELS.balanced.chatModel,
         service_tier: "flex",
         messages: [{ role: "user", content: "first" }],
       },
@@ -651,11 +622,11 @@ describe("AiUsersService", () => {
     );
     expect(mockCreate).toHaveBeenNthCalledWith(
       2,
-      { model: "gpt-5-mini", messages: [{ role: "user", content: "first" }] },
+      { model: Config.AI_MODELS.balanced.chatModel, messages: [{ role: "user", content: "first" }] },
       { timeout: 600000 },
     );
     expect(redis.setCalls[0]).toEqual([
-      "ai-users:disable-flex:chat:gpt-5-mini",
+      `ai-users:disable-flex:chat:${Config.AI_MODELS.balanced.chatModel}`,
       "1",
       "EX",
       30 * 60,
@@ -669,7 +640,7 @@ describe("AiUsersService", () => {
     expect(mockCreate).toHaveBeenCalledTimes(3);
     expect(mockCreate).toHaveBeenNthCalledWith(
       3,
-      { model: "gpt-5-mini", messages: [{ role: "user", content: "second" }] },
+      { model: Config.AI_MODELS.balanced.chatModel, messages: [{ role: "user", content: "second" }] },
       { timeout: 600000 },
     );
   });
@@ -680,10 +651,10 @@ describe("AiUsersService", () => {
       return i % 2 === 0 ? v : -v;
     });
     mockEmbeddingsCreate.mockResolvedValue({ data: [{ embedding: emb }] });
-    const out = await service.generateFeatures({ model: "balanced", input: "hello" });
+    const out = await service.generateFeatures({ input: "hello" });
     expect(mockEmbeddingsCreate).toHaveBeenCalledTimes(1);
     expect(mockEmbeddingsCreate).toHaveBeenCalledWith(
-      { model: "text-embedding-3-small", input: "hello" },
+      { model: Config.AI_FEATURE_MODEL, input: "hello" },
       { timeout: 600000 },
     );
     expect(out.features).toBeInstanceOf(Int8Array);
@@ -691,37 +662,31 @@ describe("AiUsersService", () => {
     expect(Array.from(out.features)).toEqual(Array.from(expected));
   });
 
-  test("generateFeatures: supports another model label", async () => {
+  test("generateFeatures: always uses the global feature model", async () => {
     const emb = Array.from({ length: 256 }, (_, i) => {
       const v = ((i % 89) + 1) / 2000;
       return i % 2 === 0 ? -v : v;
     });
     mockEmbeddingsCreate.mockResolvedValue({ data: [{ embedding: emb }] });
-    const out = await service.generateFeatures({ model: "advanced", input: "x" });
+    const out = await service.generateFeatures({ input: "x" });
     expect(mockEmbeddingsCreate).toHaveBeenCalledWith(
-      { model: "text-embedding-3-large", input: "x" },
+      { model: Config.AI_FEATURE_MODEL, input: "x" },
       { timeout: 600000 },
     );
     const expected = encodeFeatures(emb);
     expect(Array.from(out.features)).toEqual(Array.from(expected));
   });
 
-  test("generateFeatures: throws on unknown model label", async () => {
-    await expect(service.generateFeatures({ model: "nope", input: "x" })).rejects.toThrow(
-      "no such model",
-    );
-  });
-
-  test("generateFeatures: throws on unsupported service", async () => {
-    pgPool.ai_models.push({
-      label: "weird",
-      service: "other",
-      chat_model: "x",
-      feature_model: "y",
-    });
-    await expect(service.generateFeatures({ model: "weird", input: "x" })).rejects.toThrow(
-      "unsupported service",
-    );
+  test("generateFeatures: throws on unsupported feature service", async () => {
+    const original = Config.AI_FEATURE_SERVICE;
+    try {
+      (Config as unknown as { AI_FEATURE_SERVICE: string }).AI_FEATURE_SERVICE = "other";
+      await expect(service.generateFeatures({ input: "x" })).rejects.toThrow(
+        "unsupported service",
+      );
+    } finally {
+      (Config as unknown as { AI_FEATURE_SERVICE: string }).AI_FEATURE_SERVICE = original;
+    }
   });
 
   test("getAiUserInterest: returns null when not set", async () => {

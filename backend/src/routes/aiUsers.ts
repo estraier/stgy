@@ -9,6 +9,7 @@ import { DailyTimerThrottleService } from "../services/throttle";
 import { AuthHelpers } from "./authHelpers";
 import { int8ToBase64, base64ToInt8, maskEmailByHash } from "../utils/format";
 import type { ChatRequest } from "../models/aiUser";
+import { isAIModelTier, type AIModelTier } from "../models/aiModel";
 import { createLogger } from "../utils/logger";
 
 const logger = createLogger({ file: "aiUsers" });
@@ -58,7 +59,7 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
     Config.DAILY_DB_TIMER_LIMIT_MS,
   );
 
-  async function getLoginUserAiModel(userId: string): Promise<string | null> {
+  async function getLoginUserAiModel(userId: string): Promise<AIModelTier | null> {
     const user = await usersService.getUserLite(userId);
     return user?.aiModel ?? null;
   }
@@ -110,12 +111,15 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
     }
     const body = bodyRaw as Record<string, unknown>;
     const loginUserAiModel = await getLoginUserAiModel(loginUser.id);
-    let modelToUse: string;
+    let modelToUse: AIModelTier;
     if (loginUser.isAdmin) {
-      const modelRaw = typeof body["model"] === "string" ? body["model"] : "";
-      if (modelRaw && modelRaw.trim() !== "") {
+      const modelRaw = typeof body["model"] === "string" ? body["model"].trim() : "";
+      if (modelRaw) {
+        if (!isAIModelTier(modelRaw)) {
+          return res.status(400).json({ error: "no such model" });
+        }
         modelToUse = modelRaw;
-      } else if (loginUserAiModel && loginUserAiModel.trim() !== "") {
+      } else if (loginUserAiModel) {
         modelToUse = loginUserAiModel;
       } else {
         return res.status(400).json({ error: "model is required" });
@@ -125,7 +129,7 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
       if (modelRaw) {
         return res.status(403).json({ error: "model override not allowed" });
       }
-      if (!loginUserAiModel || loginUserAiModel.trim() === "") {
+      if (!loginUserAiModel) {
         return res.status(403).json({ error: "no model configured for this user" });
       }
       modelToUse = loginUserAiModel;
@@ -169,27 +173,14 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
       return res.status(400).json({ error: "invalid body" });
     }
     const body = bodyRaw as Record<string, unknown>;
-    const loginUserAiModel = await getLoginUserAiModel(loginUser.id);
-
-    let modelToUse: string;
-    if (loginUser.isAdmin) {
-      const modelRaw = typeof body["model"] === "string" ? body["model"] : "";
-      if (modelRaw && modelRaw.trim() !== "") {
-        modelToUse = modelRaw;
-      } else if (loginUserAiModel && loginUserAiModel.trim() !== "") {
-        modelToUse = loginUserAiModel;
-      } else {
-        return res.status(400).json({ error: "model is required" });
-      }
-    } else {
-      const modelRaw = typeof body["model"] === "string" ? body["model"] : "";
-      if (modelRaw) {
-        return res.status(403).json({ error: "model override not allowed" });
-      }
-      if (!loginUserAiModel || loginUserAiModel.trim() === "") {
+    if (body["model"] !== undefined) {
+      return res.status(400).json({ error: "model is not accepted for feature generation" });
+    }
+    if (!loginUser.isAdmin) {
+      const loginUserAiModel = await getLoginUserAiModel(loginUser.id);
+      if (!loginUserAiModel) {
         return res.status(403).json({ error: "no model configured for this user" });
       }
-      modelToUse = loginUserAiModel;
     }
 
     const input = typeof body["input"] === "string" ? body["input"] : "";
@@ -197,11 +188,11 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
       return res.status(400).json({ error: "input is required" });
     }
     try {
-      const out = await aiUsersService.generateFeatures({ model: modelToUse, input });
+      const out = await aiUsersService.generateFeatures({ input });
       res.json({ features: Buffer.from(out.features).toString("base64") });
     } catch (e) {
       const msg = (e as Error).message || "internal_error";
-      if (msg === "no such model" || msg === "unsupported service") {
+      if (msg === "unsupported service") {
         return res.status(400).json({ error: msg });
       }
       res.status(500).json({ error: "internal_error" });
@@ -283,34 +274,19 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
           watch.done();
           return res.status(400).json({ error: "features is required" });
         }
-        const loginUserAiModel = await getLoginUserAiModel(loginUser.id);
-        let modelToUse: string;
-        const modelOverride =
-          typeof body["model"] === "string" && body["model"].trim() !== ""
-            ? body["model"].trim()
-            : "";
-        if (loginUser.isAdmin) {
-          if (modelOverride) {
-            modelToUse = modelOverride;
-          } else if (loginUserAiModel && loginUserAiModel.trim() !== "") {
-            modelToUse = loginUserAiModel;
-          } else {
-            watch.done();
-            return res.status(400).json({ error: "model is required" });
-          }
-        } else {
-          if (modelOverride) {
-            watch.done();
-            return res.status(403).json({ error: "model override not allowed" });
-          }
-          if (!loginUserAiModel || loginUserAiModel.trim() === "") {
+        if (body["model"] !== undefined) {
+          watch.done();
+          return res.status(400).json({ error: "model is not accepted for feature generation" });
+        }
+        if (!loginUser.isAdmin) {
+          const loginUserAiModel = await getLoginUserAiModel(loginUser.id);
+          if (!loginUserAiModel) {
             watch.done();
             return res.status(403).json({ error: "no model configured for this user" });
           }
-          modelToUse = loginUserAiModel;
         }
         const input = buildInterestFeaturesInput(interestRaw, tags);
-        const out = await aiUsersService.generateFeatures({ model: modelToUse, input });
+        const out = await aiUsersService.generateFeatures({ input });
         features = out.features;
       }
       const saved = await aiUsersService.setAiUserInterest({
@@ -330,7 +306,7 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
     } catch (e) {
       watch.done();
       const msg = (e as Error).message || "internal_error";
-      if (msg === "no such model" || msg === "unsupported service") {
+      if (msg === "unsupported service") {
         return res.status(400).json({ error: msg });
       }
       res.status(500).json({ error: "internal_error" });

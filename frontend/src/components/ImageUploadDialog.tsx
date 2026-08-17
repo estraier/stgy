@@ -597,7 +597,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
           setItems((prev) =>
             prev.map((x) => {
               if (x.id !== f.id) return x;
-              const isHalfOrLess = out.blob.size * 2 <= f.size;
+              const isHalfOrLess = f.size >= 100 * 1024 && out.blob.size * 2 <= f.size;
               const auto = x.forceOptimize ? true : x.needsAutoOptimize || isHalfOrLess;
               return {
                 ...x,
@@ -826,6 +826,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
           <ul className={`grid ${gridClass} gap-3 justify-center`}>
             {items.map((it) => {
               const effSize = effectiveUploadSize(it);
+              const optimizedSize = it.optimized?.size ?? it.size;
               const isOver = SINGLE_LIMIT ? effSize > SINGLE_LIMIT : false;
               const showOver = isOver && allOptimizingDone;
               return (
@@ -928,7 +929,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
                         <span
                           className={`font-mono ${showOver ? "text-red-600 font-semibold" : ""}`}
                         >
-                          {formatBytes(effSize)}
+                          {formatBytes(optimizedSize)}
                         </span>
                         {" • "}
                         {it.optimized

@@ -1,4 +1,5 @@
 import { dirname, join } from "path";
+import { AI_MODEL_TIERS, type AIModelTier } from "./models/aiModel";
 
 export class Config {
   static readonly FRONTEND_ORIGIN = envStrCsv("STGY_FRONTEND_ORIGIN", ["http://localhost:3000"]);
@@ -200,6 +201,22 @@ export class Config {
   static readonly SEARCH_INDEX_TASK_SLEEP_MS = envNum("STGY_SEARCH_INDEX_TASK_SLEEP_MS", 500);
   static readonly SEARCH_INDEX_LOOP_SLEEP_MS = envNum("STGY_SEARCH_INDEX_LOOP_SLEEP_MS", 3 * 1000);
   static readonly AI_RPC_TIMEOUT_MS = envNum("STGY_AI_RPC_TIMEOUT_MS", 600 * 1000);
+  static readonly AI_MODELS: Readonly<Record<AIModelTier, { service: string; chatModel: string }>> = {
+    advanced: {
+      service: "openai",
+      chatModel: "gpt-5.6-sol",
+    },
+    balanced: {
+      service: "openai",
+      chatModel: "gpt-5.6-terra",
+    },
+    basic: {
+      service: "openai",
+      chatModel: "gpt-5.6-luna",
+    },
+  };
+  static readonly AI_FEATURE_SERVICE: string = "openai";
+  static readonly AI_FEATURE_MODEL: string = "text-embedding-3-small";
   static readonly AI_TAG_MAX_COUNT = envNum("STGY_AI_TAG_MAX_COUNT", 5);
   static readonly AI_TAG_MAX_LENGTH = envNum("STGY_AI_TAG_MAX_LENGTH", 40);
   static readonly AI_POST_SEED_NUM_CLUSTERS = envNum("STGY_AI_POST_SEED_NUM_CLUSTERS", 4);
@@ -222,7 +239,7 @@ export class Config {
     "STGY_AI_POST_RECOMMEND_VEC_CANDIDATES",
     200,
   );
-  static readonly AI_SUMMARY_MODEL = envStr("STGY_AI_SUMMARY_MODEL", "basic");
+  static readonly AI_SUMMARY_MODEL = envEnum("STGY_AI_SUMMARY_MODEL", AI_MODEL_TIERS, "basic");
   static readonly AI_SUMMARY_POST_LOOKBACK_MS = envNum(
     "STGY_AI_SUMMARY_POST_LOOKBACK_MS",
     0,
@@ -341,6 +358,17 @@ export function envBool(name: string, def?: boolean, treatEmptyAsUndefined = fal
   if (["0", "false", "no", "off"].includes(vv)) return false;
   if (def !== undefined) return def;
   throw new Error(`Env var ${name} is not a valid boolean: ${v}`);
+}
+
+export function envEnum<const T extends readonly string[]>(
+  name: string,
+  values: T,
+  def?: T[number],
+  treatEmptyAsUndefined = false,
+): T[number] {
+  const v = envStr(name, def, treatEmptyAsUndefined);
+  if ((values as readonly string[]).includes(v)) return v as T[number];
+  throw new Error(`Env var ${name} is not one of: ${values.join(", ")}`);
 }
 
 export function envStrCsv(name: string, def?: string[], treatEmptyAsUndefined = false): string[] {

@@ -1,4 +1,5 @@
 import { Config } from "../config";
+import { isAIModelTier, type AIModelTier } from "../models/aiModel";
 import { Pool } from "pg";
 import { pgQuery } from "../utils/servers";
 import { makePlainTextDigestFromJsonSnippet } from "../utils/snippet";
@@ -28,14 +29,14 @@ type RowList = {
   id: string;
   nickname: string;
   is_admin: boolean;
-  ai_model: string | null;
+  ai_model: AIModelTier | null;
 };
 
 type RowDetail = {
   id: string;
   nickname: string;
   is_admin: boolean;
-  ai_model: string | null;
+  ai_model: AIModelTier | null;
   created_at: Date;
   updated_at: Date | null;
   email: string;
@@ -193,14 +194,10 @@ export class AiUsersService {
   }
 
   async chat(req: ChatRequest): Promise<ChatResponse> {
-    const res = await pgQuery<{ label: string; service: string; chat_model: string }>(
-      this.pgPool,
-      `SELECT label, service, chat_model FROM ai_models WHERE label = $1`,
-      [req.model],
-    );
-    if (res.rowCount === 0) throw new Error("no such model");
-    const model_service = res.rows[0].service;
-    const model_name = res.rows[0].chat_model;
+    if (!req.model || !isAIModelTier(req.model)) throw new Error("no such model");
+    const modelConfig = Config.AI_MODELS[req.model];
+    const model_service = modelConfig.service;
+    const model_name = modelConfig.chatModel;
     if (model_service !== "openai") throw new Error("unsupported service");
     const cacheKey = `ai-users:disable-flex:chat:${model_name}`;
     const ttlSec = 30 * 60;
@@ -249,14 +246,8 @@ export class AiUsersService {
   }
 
   async generateFeatures(req: GenerateFeaturesRequest): Promise<GenerateFeaturesResponse> {
-    const res = await pgQuery<{ label: string; service: string; feature_model: string }>(
-      this.pgPool,
-      `SELECT label, service, feature_model FROM ai_models WHERE label = $1`,
-      [req.model],
-    );
-    if (res.rowCount === 0) throw new Error("no such model");
-    const model_service = res.rows[0].service;
-    const model_name = res.rows[0].feature_model;
+    const model_service = Config.AI_FEATURE_SERVICE;
+    const model_name = Config.AI_FEATURE_MODEL;
     if (model_service === "openai") {
       const r = await this.openai.embeddings.create(
         { model: model_name, input: req.input },

@@ -120,7 +120,7 @@ CREATE TABLE users (
   avatar VARCHAR(100),
   locale VARCHAR(50) NOT NULL,
   timezone VARCHAR(50) NOT NULL,
-  ai_model VARCHAR(50) REFERENCES ai_models(label) ON DELETE SET NULL,
+  ai_model VARCHAR(50) CHECK (ai_model IN ('advanced', 'balanced', 'basic')),
   is_admin BOOLEAN NOT NULL,
   is_frozen BOOLEAN NOT NULL,
   block_strangers BOOLEAN NOT NULL
@@ -133,7 +133,7 @@ CREATE INDEX idx_users_ai_id ON users (id) WHERE ai_model IS NOT NULL;
 
 nicknameにはUNIQUE制約がないので、同一のニックネームのユーザが複数いることが許される。この点はTwitterのハンドルネームとは明確に異なる。名前の取り合いを避けるためにそうした。ユーザをニックネームで検索する機能があるので、nicknameにはインデックスを貼っている。大文字小文字の違いを無視して検索を効率化したいので、インデックス内の値は小文字に正規化している。また、idとの複合インデックスになっている。検索には必ず順序指定が伴うので、その順序として使われるidとの複合インデックスにすることで検索が効率化する。そうでないと該当の全件をソートすることになってしまう。
 
-ai_modelは、AIエージェントが読んで自分の行動パターンを決めるのに用いる。ai_modelsテーブルを参照していて、モデル毎の設定はそこから取れるようになっている。AIエージェントの一覧を取得するために、ai_modelsが設定されているユーザIDのリストを取得するための部分インデックスが貼ってある。
+ai_modelはAIエージェントが使うモデルのtierを示す。値は ``advanced``、``balanced``、``basic`` の三つに制限し、具体的なサービス名やチャットモデル名はDBには持たずバックエンドのConfigで定義する。AIエージェントの一覧を取得するために、ai_modelが設定されているユーザIDのリストを効率的に取得する部分インデックスが貼ってある。
 
 is_adminは管理者かどうかのフラグで、is_frozenは通常ユーザの更新操作を停止したり、AIエージェントの稼働を止めたりするためのフラグである。両者は独立しており、is_adminとis_frozenが両方真になる状態にも意味がある。認可に関する判定では常にis_adminを優先するため、両方が真なら管理者として全ての認可を通過する。一方、非管理者でis_frozenが真ならログインと閲覧だけを許可し、更新操作を禁止する。AIエージェントの稼働停止やAI推薦での扱いなど、認可以外でis_frozenを参照する既存処理ではis_adminによる上書きを行わず、生のis_frozenをそのまま使う。ユーザ作成時にはis_frozenを必ず偽にするが、ユーザ更新ではisAdminとisFrozenを互いに独立して変更できる。DBレベルでも両方が真になることは禁止していない。
 
@@ -524,7 +524,7 @@ event_logsテーブルとnotificationsテーブルは急速に肥大化するの
 
 user_pub_configsテーブルは、各ユーザが外部公開するサイトの名前や説明やデザインテーマや表示項目を管理する。usersテーブルの一覧表示には不要で、外部公開サイトの描画時にだけ使う属性なので分離している。search_indexing_tasksテーブルは、前述した外部検索索引の更新キューである。
 
-ai_modelsテーブルは、AIエージェントを動かすAIモデル毎に、ラベルとサービス名とモデル名を管理するものだ。AIモデルは頻繁に更新されるため、usersテーブルに直接モデル名を持たせるのではなく、「advanced」「balanced」「basic」などのラベルを介してai_modelsテーブルを参照する。具体的なサービス名やモデル名はai_modelsテーブルに集中化され隠蔽されるので、モデルが更新された際に追従するのが楽になる。それぞれのラベルに対話チャット用のモデルと特徴量ベクトル抽出用のモデルが紐づけられている。それ以外にもAIによる要約やタグや関心や印象を管理するテーブルがあるが、詳細については別の記事に譲る。
+AIモデルの具体的なサービス名とモデル名はDBではなくバックエンドのConfigに集中して定義する。users.ai_modelには ``advanced``、``balanced``、``basic`` のtierだけを保存する。チャットモデルはtierごとに切り替えられるが、特徴量ベクトル用の埋め込みモデルはシステム全体で一種類に固定する。異なる埋め込みモデルが作るベクトルは同じ座標空間にないため、混在させると類似度比較が成立しないからだ。それ以外にもAIによる要約やタグや関心や印象を管理するテーブルがあるが、詳細については別の記事に譲る。
 
 ## 削除処理
 

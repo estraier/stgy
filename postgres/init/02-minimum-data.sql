@@ -1,10 +1,3 @@
-INSERT INTO ai_models
-(label, service, chat_model, feature_model)
-VALUES
-('advanced', 'openai', 'gpt-5.6-sol', 'text-embedding-3-small'),
-('balanced', 'openai', 'gpt-5.6-terra', 'text-embedding-3-small'),
-('basic', 'openai', 'gpt-5.6-luna', 'text-embedding-3-small');
-
 INSERT INTO users (
   id,
   updated_at,

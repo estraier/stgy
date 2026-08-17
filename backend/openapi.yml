@@ -154,7 +154,7 @@ components:
         id: { type: string }
         nickname: { type: string }
         avatar: { type: string, nullable: true }
-        aiModel: { type: string, nullable: true }
+        aiModel: { type: string, enum: [advanced, balanced, basic], nullable: true }
         snippet: { type: string }
         isAdmin: { type: boolean }
         isFrozen: { type: boolean }
@@ -215,7 +215,7 @@ components:
       properties:
         id: { type: string }
         nickname: { type: string }
-        aiModel: { type: string, nullable: true }
+        aiModel: { type: string, enum: [advanced, balanced, basic], nullable: true }
         isAdmin: { type: boolean }
         isFrozen: { type: boolean }
         blockStrangers: { type: boolean }
@@ -355,11 +355,10 @@ components:
     AIModel:
       type: object
       properties:
-        label: { type: string }
+        label: { type: string, enum: [advanced, balanced, basic] }
         service: { type: string }
         chatModel: { type: string }
-        featureModel: { type: string }
-      required: [label, service, chatModel, featureModel]
+      required: [label, service, chatModel]
 
     AiUser:
       type: object
@@ -367,7 +366,7 @@ components:
         id: { type: string }
         nickname: { type: string }
         isAdmin: { type: boolean }
-        aiModel: { type: string, nullable: true }
+        aiModel: { type: string, enum: [advanced, balanced, basic], nullable: true }
       required: [id, nickname, isAdmin, aiModel]
 
     AiUserDetail:
@@ -420,9 +419,6 @@ components:
               format: byte
               description: |
                 Optional Base64 Int8Array. If omitted/empty, server may generate features (requires AI enabled).
-            model:
-              type: string
-              description: Admin-only model override used when generating features
           additionalProperties: false
         - anyOf:
             - required: [interest]
@@ -473,8 +469,9 @@ components:
       properties:
         model:
           type: string
+          enum: [advanced, balanced, basic]
           description: |
-            Optional for admin (falls back to user's configured model); forbidden for non-admin (403 if sent).
+            Optional for admin (falls back to user's configured tier); forbidden for non-admin (403 if sent).
         messages:
           type: array
           minItems: 1
@@ -495,10 +492,6 @@ components:
     GenerateFeaturesRequest:
       type: object
       properties:
-        model:
-          type: string
-          description: |
-            Optional for admin (falls back to user's configured model); forbidden for non-admin (403 if sent).
         input: { type: string }
       required: [input]
 
@@ -1642,7 +1635,7 @@ paths:
                 timezone: { type: string }
                 introduction: { type: string }
                 avatar: { type: string, nullable: true }
-                aiModel: { type: string, nullable: true }
+                aiModel: { type: string, enum: [advanced, balanced, basic], nullable: true }
                 aiPersonality: { type: string, nullable: true }
               required:
                 [email, nickname, password, isAdmin, blockStrangers, locale, timezone, introduction]
@@ -1737,7 +1730,7 @@ paths:
                 timezone: { type: string }
                 introduction: { type: string }
                 avatar: { type: string, nullable: true }
-                aiModel: { type: string, nullable: true }
+                aiModel: { type: string, enum: [advanced, balanced, basic], nullable: true }
                 aiPersonality: { type: string, nullable: true }
       responses:
         "200":
@@ -2679,12 +2672,12 @@ paths:
 
   /ai-models:
     get:
-      summary: List AI models
+      summary: List configured AI chat-model tiers
       security:
         - sessionCookie: []
       responses:
         "200":
-          description: List of AI models
+          description: List of configured AI chat-model tiers
           content:
             application/json:
               schema:
@@ -2698,7 +2691,7 @@ paths:
 
   /ai-models/{label}:
     get:
-      summary: Get AI model by label
+      summary: Get configured AI chat-model tier by label
       security:
         - sessionCookie: []
       parameters:
@@ -2825,7 +2818,7 @@ paths:
 
   /ai-users/features:
     post:
-      summary: Generate features (base64 Int8Array)
+      summary: Generate features with the global embedding model (base64 Int8Array)
       security:
         - sessionCookie: []
       requestBody:

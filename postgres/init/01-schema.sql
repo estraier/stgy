@@ -8,13 +8,6 @@ ALTER SYSTEM SET pg_stat_statements.track_utility = off;
 ALTER SYSTEM SET pg_stat_statements.save = off;
 SELECT pg_reload_conf();
 
-CREATE TABLE ai_models (
-  label VARCHAR(50) PRIMARY KEY,
-  service VARCHAR(50) NOT NULL,
-  chat_model VARCHAR(50) NOT NULL,
-  feature_model VARCHAR(50) NOT NULL
-);
-
 CREATE TABLE user_agreement_terms (
   id BIGINT PRIMARY KEY,
   contents VARCHAR(262144) NOT NULL
@@ -28,7 +21,7 @@ CREATE TABLE users (
   avatar VARCHAR(100),
   locale VARCHAR(50) NOT NULL,
   timezone VARCHAR(50) NOT NULL,
-  ai_model VARCHAR(50) REFERENCES ai_models(label) ON DELETE SET NULL,
+  ai_model VARCHAR(50) CHECK (ai_model IN ('advanced', 'balanced', 'basic')),
   is_admin BOOLEAN NOT NULL,
   is_frozen BOOLEAN NOT NULL,
   block_strangers BOOLEAN NOT NULL

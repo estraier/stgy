@@ -204,7 +204,7 @@ async function generateFeatures(
 ): Promise<string> {
   const res = await apiRequest(sessionCookie, "/ai-users/features", {
     method: "POST",
-    body: { model: req.model, input: req.input },
+    body: { input: req.input },
   });
 
   const parsed = JSON.parse(res.body) as unknown;
@@ -362,7 +362,6 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
   const featuresInput = buildFeaturesInput(summary, keywords, postSnippet);
 
   const features = await generateFeatures(sessionCookie, {
-    model: Config.AI_SUMMARY_MODEL,
     input: featuresInput,
   });
   const pkt: UpdateAiPostSummaryPacket = { postId, summary, tags, keywords, features };

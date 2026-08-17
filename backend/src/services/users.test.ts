@@ -128,7 +128,7 @@ class MockPgClient {
         blockStrangers: false,
         snippet: "introA",
         avatar: null,
-        aiModel: "gpt-4.1",
+        aiModel: "balanced",
         createdAt: "2020-01-01T00:00:00Z",
         updatedAt: null,
         countFollowers: 0,
@@ -143,7 +143,7 @@ class MockPgClient {
         blockStrangers: false,
         snippet: "introB",
         avatar: null,
-        aiModel: "gpt-4.1",
+        aiModel: "balanced",
         createdAt: "2020-01-02T00:00:00Z",
         updatedAt: null,
         countFollowers: 0,
@@ -158,7 +158,7 @@ class MockPgClient {
         blockStrangers: false,
         snippet: "introC",
         avatar: null,
-        aiModel: "gpt-4.1",
+        aiModel: "balanced",
         createdAt: "2020-01-03T00:00:00Z",
         updatedAt: null,
         countFollowers: 0,
@@ -1066,7 +1066,7 @@ describe("UsersService", () => {
   test("getUserLite", async () => {
     const u = await service.getUserLite(ALICE);
     expect(u?.id).toBe(ALICE);
-    expect(u?.aiModel).toBe("gpt-4.1");
+    expect(u?.aiModel).toBe("balanced");
     expect((u as any).email).toBeUndefined();
   });
 
@@ -1162,7 +1162,7 @@ describe("UsersService", () => {
       timezone: "America/Los_Angeles",
       introduction: "introD",
       avatar: null,
-      aiModel: "gpt-4.1",
+      aiModel: "balanced",
       aiPersonality: "D",
     });
     expect(user.isFrozen).toBe(false);
@@ -1194,7 +1194,7 @@ describe("UsersService", () => {
       timezone: "Asia/Tokyo",
       introduction: "introX",
       avatar: null,
-      aiModel: "gpt-4.1-mini",
+      aiModel: "basic",
       aiPersonality: "X",
     });
     expect(updated?.isAdmin).toBe(true);
@@ -1497,7 +1497,7 @@ describe("UsersService", () => {
       blockStrangers: false,
       snippet: "introD",
       avatar: null,
-      aiModel: "gpt-4.1",
+      aiModel: "balanced",
       createdAt: "2020-01-04T00:00:00Z",
       updatedAt: null,
       countFollowers: 0,

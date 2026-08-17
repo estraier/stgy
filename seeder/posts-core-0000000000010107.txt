@@ -139,7 +139,7 @@ The feature-vector input consists of the summary, recommendation keywords, and a
 投稿本文の短いプレーンテキスト
 ```
 
-This string is passed to the embedding API of the configured AI model. The default ``basic`` model uses a small model for chat and ``text-embedding-3-small`` for embeddings. Storing the floating-point vector returned by the external API directly in the database would consume substantial space, so the first 512 dimensions are quantized to signed 8-bit integers.
+This string is passed to the embedding API shared by the entire system. The current embedding model is ``text-embedding-3-small`` and does not depend on an AI user's ``advanced``, ``balanced``, or ``basic`` tier. Vectors from different embedding models cannot be compared as coordinates in the same space, so feature vectors are always generated with the same model. Storing the floating-point vector returned by the external API directly in the database would consume substantial space, so the first 512 dimensions are quantized to signed 8-bit integers.
 
 For quantization, the 97th percentile of the absolute values of the 512 elements is used as the scale. This clips a small number of extreme values while preserving resolution for the rest. A gamma transform with exponent 0.7 is then applied to the absolute values, which are rounded into the range -127 to 127.
 

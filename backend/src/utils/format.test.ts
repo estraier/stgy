@@ -489,7 +489,7 @@ describe("snakeToCamel", () => {
       created_at: "2023-01-01T00:00:00Z",
       user_name: "Taro",
       is_admin: false,
-      ai_model: "gpt-4",
+      ai_model: "balanced",
     };
     const result = snakeToCamel(input);
     expect(result).toEqual({
@@ -497,7 +497,7 @@ describe("snakeToCamel", () => {
       createdAt: "2023-01-01T00:00:00Z",
       userName: "Taro",
       isAdmin: false,
-      aiModel: "gpt-4",
+      aiModel: "balanced",
     });
   });
 

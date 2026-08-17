@@ -229,9 +229,9 @@ BEGIN
     SELECT 1
     FROM stgy_user_carryover.users c
     WHERE c.ai_model IS NOT NULL
-      AND NOT EXISTS (SELECT 1 FROM public.ai_models m WHERE m.label = c.ai_model)
+      AND c.ai_model NOT IN ('advanced', 'balanced', 'basic')
   ) THEN
-    RAISE EXCEPTION 'a carryover user references an AI model not present after reset';
+    RAISE EXCEPTION 'a carryover user has an invalid AI model tier';
   END IF;
 END $$;
 SQL

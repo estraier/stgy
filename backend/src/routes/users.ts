@@ -18,6 +18,7 @@ import { SendMailService } from "../services/sendMail";
 import { PubViewsService } from "../services/pubViews";
 import { CreateUserInput, UpdateUserInput, UpdatePasswordInput, UserLite } from "../models/user";
 import { SearchCacheEntry } from "../models/search";
+import { isAIModelTier, type AIModelTier } from "../models/aiModel";
 import {
   validateEmail,
   normalizeEmail,
@@ -30,6 +31,17 @@ import {
   hexToDec,
   maskEmailByHash,
 } from "../utils/format";
+
+
+function normalizeAiModelTier(value: unknown): AIModelTier | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value !== "string") throw new Error("invalid aiModel");
+  const normalized = normalizeOneLiner(value);
+  if (normalized === undefined || normalized === null || normalized === "") return null;
+  if (!isAIModelTier(normalized)) throw new Error("invalid aiModel");
+  return normalized;
+}
 
 export default function createUsersRouter(
   pgPool: Pool,
@@ -321,7 +333,7 @@ export default function createUsersRouter(
         timezone: normalizeOneLiner(req.body.timezone) ?? "",
         introduction: normalizeMultiLines(req.body.introduction) ?? "",
         avatar: normalizeOneLiner(req.body.avatar) ?? null,
-        aiModel: normalizeOneLiner(req.body.aiModel) ?? null,
+        aiModel: normalizeAiModelTier(req.body.aiModel) ?? null,
         aiPersonality: normalizeMultiLines(req.body.aiPersonality) ?? null,
       };
       const watch = timerThrottleService.startWatch(loginUser);
@@ -414,7 +426,7 @@ export default function createUsersRouter(
         timezone: timezone,
         introduction: introduction,
         avatar: normalizeOneLiner(req.body.avatar),
-        aiModel: normalizeOneLiner(req.body.aiModel),
+        aiModel: normalizeAiModelTier(req.body.aiModel),
         aiPersonality: aiPersonality,
       };
       const watch = timerThrottleService.startWatch(loginUser);

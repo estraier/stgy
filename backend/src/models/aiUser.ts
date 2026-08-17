@@ -1,8 +1,10 @@
+import type { AIModelTier } from "./aiModel";
+
 export type AiUser = {
   id: string;
   nickname: string;
   isAdmin: boolean;
-  aiModel: string | null;
+  aiModel: AIModelTier | null;
 };
 
 export type AiUserDetail = AiUser & {
@@ -29,7 +31,7 @@ export type ChatMessage = {
 };
 
 export type ChatRequest = {
-  model?: string;
+  model?: AIModelTier;
   messages: ChatMessage[];
   responseFormat?: "text" | "json";
 };
@@ -41,7 +43,6 @@ export type ChatResponse = {
 };
 
 export type GenerateFeaturesRequest = {
-  model?: string;
   input: string;
 };
 

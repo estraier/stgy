@@ -292,7 +292,7 @@ async function generateFeatures(
 ): Promise<string> {
   const res = await apiRequest(sessionCookie, "/ai-users/features", {
     method: "POST",
-    body: { model: req.model, input: req.input },
+    body: { input: req.input },
   });
 
   const parsed = JSON.parse(res.body) as unknown;
@@ -1826,7 +1826,6 @@ async function createInterest(
   lines.push(introSnippet);
   const featuresInput = lines.join("\n");
   const generatedFeatures = await generateFeatures(adminSessionCookie, {
-    model: Config.AI_SUMMARY_MODEL,
     input: featuresInput,
   });
   const features = applyInterestHysteresis(

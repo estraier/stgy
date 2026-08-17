@@ -160,11 +160,6 @@ def build_sql() -> str:
       ) THEN
         RAISE EXCEPTION 'admin user secret is required before running make-volume-test.py';
       END IF;
-      IF NOT EXISTS (
-        SELECT 1 FROM ai_models WHERE label = 'basic'
-      ) THEN
-        RAISE EXCEPTION 'AI model basic is required before running make-volume-test.py';
-      END IF;
     END
     $$;
 

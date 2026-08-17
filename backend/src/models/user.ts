@@ -1,8 +1,10 @@
+import type { AIModelTier } from "./aiModel";
+
 export type User = {
   id: string;
   nickname: string;
   avatar: string | null;
-  aiModel: string | null;
+  aiModel: AIModelTier | null;
   snippet: string;
   isAdmin: boolean;
   isFrozen: boolean;
@@ -56,7 +58,7 @@ export type CreateUserInput = {
   nickname: string;
   password: string;
   avatar: string | null;
-  aiModel: string | null;
+  aiModel: AIModelTier | null;
   locale: string;
   timezone: string;
   isAdmin: boolean;
@@ -70,7 +72,7 @@ export type UpdateUserInput = {
   email?: string;
   nickname?: string;
   avatar?: string | null;
-  aiModel?: string | null;
+  aiModel?: AIModelTier | null;
   locale?: string;
   timezone?: string;
   isAdmin?: boolean;
