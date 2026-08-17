@@ -82,6 +82,11 @@ def test_tokenize():
   tokens = res.json()
   assert "hello" in tokens
 
+  text = "ポール・ド・ヴィヴィ"
+  res = requests.get(f"{base_url}/tokenize", params={"text": text, "locale": "ja"})
+  assert res.status_code == 200
+  assert res.json() == ["ポール", "ド", "ヴィヴィ"]
+
 def test_reservation():
   resource = "posts"
   base_url = f"{BASE_URL}/{resource}"

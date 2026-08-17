@@ -66,7 +66,10 @@ export class Tokenizer {
 
     let rawTokens: string[];
     if (locale.startsWith("ja") && this.kTokenizer) {
-      rawTokens = this.kTokenizer.tokenize(text).map((t) => t.surface_form);
+      // Kuromoji/IPADIC can group Japanese middle dots with surrounding katakana.
+      rawTokens = this.kTokenizer
+        .tokenize(text.replace(/・/g, " "))
+        .map((t) => t.surface_form);
     } else {
       let segmenter = this.segmenterCache.get(locale);
       if (!segmenter) {
@@ -82,7 +85,7 @@ export class Tokenizer {
     const tokens: string[] = [];
     for (const token of rawTokens) {
       const cleanToken = this.cleanToken(token);
-      if (!cleanToken || symbolOnlyRegex.test(cleanToken)) continue;
+      if (!cleanToken.trim() || symbolOnlyRegex.test(cleanToken)) continue;
       tokens.push(cleanToken);
     }
     return tokens;

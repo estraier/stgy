@@ -48,6 +48,24 @@ describe("makeFtsQuery", () => {
     expect(result.filteringPhrases).toEqual([]);
   });
 
+  test("tokenizes Japanese middle dots into separate query terms", async () => {
+    const result = await makeFtsQuery("ポール・ド・ヴィヴィ", "ja", 10, false);
+    expect(result.ftsQuery).toBe("ポール AND ド AND ヴィヴィ");
+    expect(result.filteringPhrases).toEqual([]);
+  });
+
+  test("preserves Japanese middle-dot names as filtered phrases without positions", async () => {
+    const result = await makeFtsQuery('"ポール・ド・ヴィヴィ"', "ja", 10, false);
+    expect(result.ftsQuery).toBe("ポール AND ド AND ヴィヴィ");
+    expect(result.filteringPhrases).toEqual(["ポール ド ヴィヴィ"]);
+  });
+
+  test("preserves Japanese middle-dot names as FTS phrases with positions", async () => {
+    const result = await makeFtsQuery('"ポール・ド・ヴィヴィ"', "ja", 10, true);
+    expect(result.ftsQuery).toBe('"ポール ド ヴィヴィ"');
+    expect(result.filteringPhrases).toEqual([]);
+  });
+
   test("respects maxTokens across mixed types", async () => {
     const result = await makeFtsQuery('one "two three four" five', "en", 3, false);
     expect(result.ftsQuery).toBe("one AND two AND three");

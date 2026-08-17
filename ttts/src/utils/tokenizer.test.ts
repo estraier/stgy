@@ -67,6 +67,11 @@ describe("Tokenizer", () => {
         const tokens = tokenizer.tokenize("私はC++言語が好きです", "ja");
         expect(tokens).toEqual(["私", "は", "c++", "言語", "が", "好き", "です"]);
       });
+
+      test("treats Japanese middle dots as word separators", () => {
+        const tokens = tokenizer.tokenize("ポール・ド・ヴィヴィ", "ja");
+        expect(tokens).toEqual(["ポール", "ド", "ヴィヴィ"]);
+      });
     });
 
     describe("Chinese (zh)", () => {
