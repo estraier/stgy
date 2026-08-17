@@ -521,11 +521,13 @@ export class PostsService {
     if (this.eventLogService) {
       if (input.replyTo) {
         try {
-          this.eventLogService.recordReply({
-            userId: input.ownedBy,
-            postId: id,
-            replyToPostId: input.replyTo,
-          });
+          void this.eventLogService
+            .recordReply({
+              userId: input.ownedBy,
+              postId: id,
+              replyToPostId: input.replyTo,
+            })
+            .catch(() => {});
         } catch {}
       }
       if (mentions.length > 0) {
@@ -545,11 +547,13 @@ export class PostsService {
             for (const mentionedUserId of uniqueSorted) {
               const decId = hexToDec(mentionedUserId);
               if (!allowedFollowerIds.has(String(decId))) continue;
-              this.eventLogService.recordMention({
-                userId: input.ownedBy,
-                postId: id,
-                mentionedUserId,
-              });
+              void this.eventLogService
+                .recordMention({
+                  userId: input.ownedBy,
+                  postId: id,
+                  mentionedUserId,
+                })
+                .catch(() => {});
             }
           }
         } catch {}
@@ -747,7 +751,9 @@ export class PostsService {
     if ((res.rowCount ?? 0) === 0) throw new Error("already liked");
     if (this.eventLogService) {
       try {
-        this.eventLogService.recordLike({ userId: userId, postId: postId });
+        void this.eventLogService
+          .recordLike({ userId: userId, postId: postId })
+          .catch(() => {});
       } catch {}
     }
   }

@@ -66,7 +66,7 @@ describe("mail worker queue handling", () => {
     expect(redis.multi).not.toHaveBeenCalled();
   });
 
-  test("returns a task to the queue when SMTP submission fails", async () => {
+  test("drops a task and continues when SMTP submission fails", async () => {
     const payload = JSON.stringify({
       type: "signup",
       email: "user@example.com",
@@ -74,6 +74,7 @@ describe("mail worker queue handling", () => {
     });
     const redis = makeRedisMock();
     redis.brpoplpush.mockResolvedValue(payload as never);
+    redis.lrem.mockResolvedValue(1 as never);
 
     const sendMailService = makeSendMailServiceMock();
     sendMailService.canSendMail.mockResolvedValue({ ok: true } as never);
@@ -87,11 +88,10 @@ describe("mail worker queue handling", () => {
         sendMailService as unknown as SendMailService,
         transporter,
       ),
-    ).rejects.toThrow("SMTP unavailable");
+    ).resolves.toBe(true);
 
-    expect(redis.transaction.lrem).toHaveBeenCalledWith(processingQueue, 1, payload);
-    expect(redis.transaction.lpush).toHaveBeenCalledWith(queue, payload);
-    expect(redis.transaction.exec).toHaveBeenCalledTimes(1);
+    expect(redis.lrem).toHaveBeenCalledWith(processingQueue, 1, payload);
+    expect(redis.multi).not.toHaveBeenCalled();
   });
 
   test("restores unfinished tasks when the worker starts", async () => {

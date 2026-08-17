@@ -422,6 +422,21 @@ async function queryAiUserIds(db: Pool, userIds: ReadonlySet<string>): Promise<S
   return new Set(res.rows.map((row: { id: string }) => decToHex(row.id)));
 }
 
+async function queryExistingUserIds(
+  db: Pool,
+  userIds: ReadonlySet<string>,
+): Promise<Set<string>> {
+  if (userIds.size === 0) return new Set();
+  const ids = Array.from(userIds, hexToDec);
+  const res = await db.query<{ id: string }>(
+    `SELECT id
+       FROM users
+      WHERE id = ANY($1::bigint[])`,
+    [ids],
+  );
+  return new Set(res.rows.map((row: { id: string }) => decToHex(row.id)));
+}
+
 async function queryPostOwners(db: Pool, postIds: ReadonlySet<string>): Promise<Map<string, string>> {
   if (postIds.size === 0) return new Map();
   const ids = Array.from(postIds, hexToDec);
@@ -458,14 +473,21 @@ async function prepareBatch(
     const actorUserId = eventActorUserId(row.payload);
     if (actorUserId) actorIds.add(actorUserId);
   }
-  const aiUserIds = await queryAiUserIds(db, actorIds);
+  const [existingActorIds, aiUserIds] = await Promise.all([
+    queryExistingUserIds(db, actorIds),
+    queryAiUserIds(db, actorIds),
+  ]);
 
   const postIds = new Set<string>();
   for (const row of rows) {
     const actorUserId = eventActorUserId(row.payload);
-    if (!actorUserId || aiUserIds.has(actorUserId)) continue;
+    if (!actorUserId || !existingActorIds.has(actorUserId) || aiUserIds.has(actorUserId)) continue;
     if (row.payload.type === "like") postIds.add(row.payload.postId);
-    if (row.payload.type === "reply") postIds.add(row.payload.replyToPostId);
+    if (row.payload.type === "reply") {
+      postIds.add(row.payload.postId);
+      postIds.add(row.payload.replyToPostId);
+    }
+    if (row.payload.type === "mention") postIds.add(row.payload.postId);
   }
   const postOwners = await queryPostOwners(db, postIds);
 
@@ -484,13 +506,19 @@ async function prepareBatch(
       );
       continue;
     }
-    if (aiUserIds.has(actorUserId)) continue;
+    if (!existingActorIds.has(actorUserId) || aiUserIds.has(actorUserId)) continue;
 
     let recipientUserId: string | undefined;
     if (payload.type === "follow") recipientUserId = payload.followeeId;
-    else if (payload.type === "mention") recipientUserId = payload.mentionedUserId;
-    else if (payload.type === "like") recipientUserId = postOwners.get(payload.postId);
-    else if (payload.type === "reply") recipientUserId = postOwners.get(payload.replyToPostId);
+    else if (payload.type === "mention") {
+      if (!postOwners.has(payload.postId)) continue;
+      recipientUserId = payload.mentionedUserId;
+    } else if (payload.type === "like") {
+      recipientUserId = postOwners.get(payload.postId);
+    } else if (payload.type === "reply") {
+      if (!postOwners.has(payload.postId)) continue;
+      recipientUserId = postOwners.get(payload.replyToPostId);
+    }
 
     if (!recipientUserId || isSelfInteraction(payload, recipientUserId)) continue;
     pending.push({ row, recipientUserId });
@@ -498,16 +526,19 @@ async function prepareBatch(
   }
 
   const timezones = await queryUserTimezones(db, recipientIds);
-  return pending.map(({ row, recipientUserId }) => {
+  const prepared: PreparedEvent[] = [];
+  for (const { row, recipientUserId } of pending) {
+    const timezone = timezones.get(recipientUserId);
+    if (!timezone) continue;
     const eventMs = eventMsFromId(row.event_id);
-    const timezone = timezones.get(recipientUserId) ?? Config.DEFAULT_TIMEZONE;
-    return {
+    prepared.push({
       payload: row.payload,
       recipientUserId,
       eventMs,
       term: formatDateInTz(eventMs, timezone),
-    };
-  });
+    });
+  }
+  return prepared;
 }
 
 async function bufferBatch(
@@ -516,7 +547,14 @@ async function bufferBatch(
   rows: Array<{ event_id: string; payload: AnyEventPayload }>,
 ): Promise<void> {
   if (rows.length === 0) return;
-  const prepared = await prepareBatch(db, rows);
+  let prepared: PreparedEvent[] = [];
+  try {
+    prepared = await prepareBatch(db, rows);
+  } catch (error) {
+    logger.error(
+      `[notificationworker] dropping notification batch during preparation (p=${state.partitionId}, count=${rows.length}): ${error}`,
+    );
+  }
   const lastEventId = BigInt(rows[rows.length - 1].event_id);
 
   if (state.firstBufferedAt === null) state.firstBufferedAt = Date.now();
@@ -852,43 +890,72 @@ async function flushPartition(context: WorkerContext, state: PartitionState): Pr
   let client: PoolClient | null = null;
   try {
     client = await context.pgPool.connect();
-    await client.query("BEGIN");
-    const nicknames = await loadNicknames(client, notifications);
-    const snippets = await loadPostSnippets(client, notifications);
-    const updatedAtISO = nextNotificationUpdatedAtISO();
+    try {
+      await client.query("BEGIN");
+      const nicknames = await loadNicknames(client, notifications);
+      const snippets = await loadPostSnippets(client, notifications);
+      const updatedAtISO = nextNotificationUpdatedAtISO();
 
-    for (const notification of notifications) {
-      if (notification.type === "follow") {
-        await upsertFollow(client, notification, nicknames, updatedAtISO);
-      } else if (notification.type === "like") {
-        await upsertLike(client, notification, nicknames, snippets, updatedAtISO);
-      } else if (notification.type === "reply") {
-        await upsertReply(client, notification, nicknames, snippets, updatedAtISO);
-      } else {
-        await upsertMention(client, notification, nicknames, snippets, updatedAtISO);
+      for (const notification of notifications) {
+        await client.query("SAVEPOINT notification_item");
+        try {
+          if (notification.type === "follow") {
+            await upsertFollow(client, notification, nicknames, updatedAtISO);
+          } else if (notification.type === "like") {
+            await upsertLike(client, notification, nicknames, snippets, updatedAtISO);
+          } else if (notification.type === "reply") {
+            await upsertReply(client, notification, nicknames, snippets, updatedAtISO);
+          } else {
+            await upsertMention(client, notification, nicknames, snippets, updatedAtISO);
+          }
+          await client.query("RELEASE SAVEPOINT notification_item");
+        } catch (error) {
+          try {
+            await client.query("ROLLBACK TO SAVEPOINT notification_item");
+            await client.query("RELEASE SAVEPOINT notification_item");
+          } catch {}
+          logger.error(
+            `[notificationworker] dropping notification after flush error (p=${state.partitionId}, user=${notification.recipientUserId}, slot=${notification.slot}): ${error}`,
+          );
+        }
       }
-    }
 
-    await context.eventLogService.saveCursor(
-      client,
-      CONSUMER,
-      state.partitionId,
-      lastEventId,
-    );
-    await client.query("COMMIT");
-  } catch (error) {
-    if (client) {
+      await context.eventLogService.saveCursor(
+        client,
+        CONSUMER,
+        state.partitionId,
+        lastEventId,
+      );
+      await client.query("COMMIT");
+    } catch (error) {
       try {
         await client.query("ROLLBACK");
       } catch {}
+
+      logger.error(
+        `[notificationworker] dropping buffered notifications after batch flush error (p=${state.partitionId}, count=${state.bufferedEventCount}): ${error}`,
+      );
+      try {
+        await client.query("BEGIN");
+        await context.eventLogService.saveCursor(
+          client,
+          CONSUMER,
+          state.partitionId,
+          lastEventId,
+        );
+        await client.query("COMMIT");
+      } catch (cursorError) {
+        try {
+          await client.query("ROLLBACK");
+        } catch {}
+        throw cursorError;
+      }
     }
-    throw error;
   } finally {
     client?.release();
     releaseRecipientLocks();
   }
 
-  // Clear only after both notification updates and the durable cursor have committed.
   const committed = state.bufferedEventCount;
   state.lastBufferedEventId = null;
   state.bufferedEventCount = 0;

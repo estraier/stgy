@@ -69,15 +69,6 @@ async function sendMailWithRecord(
   logger.info(`sent mail to ${address} [${subject}]`);
 }
 
-async function requeueMailTask(
-  queue: string,
-  processingQueue: string,
-  redis: Redis,
-  payload: string,
-): Promise<void> {
-  await redis.multi().lrem(processingQueue, 1, payload).lpush(queue, payload).exec();
-}
-
 export async function processNextMailTask(
   queue: string,
   processingQueue: string,
@@ -88,32 +79,27 @@ export async function processNextMailTask(
   const payload = await redis.brpoplpush(queue, processingQueue, 5);
   if (!payload) return false;
 
+  let msg: unknown;
   try {
-    let msg: unknown;
-    try {
-      msg = JSON.parse(payload);
-    } catch {
-      logger.error(`invalid payload in ${queue}: ${payload}`);
-      await redis.lrem(processingQueue, 1, payload);
-      return true;
-    }
-
-    if (typeof msg === "object" && msg !== null && "type" in msg) {
-      await handleMailTask(msg as MailTask, sendMailService, mailTransporter);
-    } else {
-      logger.error(`invalid task object in ${queue}: ${payload}`);
-    }
-
+    msg = JSON.parse(payload);
+  } catch {
+    logger.error(`invalid payload in ${queue}: ${payload}`);
     await redis.lrem(processingQueue, 1, payload);
     return true;
-  } catch (e) {
-    try {
-      await requeueMailTask(queue, processingQueue, redis, payload);
-    } catch (requeueError) {
-      logger.error(`failed to return mail task to ${queue}: ${requeueError}`);
-    }
-    throw e;
   }
+
+  if (typeof msg === "object" && msg !== null && "type" in msg) {
+    try {
+      await handleMailTask(msg as MailTask, sendMailService, mailTransporter);
+    } catch (e) {
+      logger.error(`failed to process mail task; dropping task: ${e}`);
+    }
+  } else {
+    logger.error(`invalid task object in ${queue}: ${payload}`);
+  }
+
+  await redis.lrem(processingQueue, 1, payload);
+  return true;
 }
 
 export async function recoverProcessingQueue(
@@ -146,7 +132,7 @@ async function processQueue(
       );
     } catch (e) {
       if (!lifecycle.isActive) break;
-      logger.error(`error processing ${queue}; task returned to queue: ${e}`);
+      logger.error(`error accessing ${queue}: ${e}`);
       await new Promise((resolve) => setTimeout(resolve, 3000));
     }
   }

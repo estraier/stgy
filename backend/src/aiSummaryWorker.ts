@@ -81,9 +81,12 @@ async function loginAsAdmin(): Promise<string> {
   return sessionCookie;
 }
 
-async function fetchPendingSummaries(sessionCookie: string): Promise<AiPostSummaryPacket[]> {
+async function fetchPendingSummaries(
+  sessionCookie: string,
+  offset: number,
+): Promise<AiPostSummaryPacket[]> {
   const params = new URLSearchParams({
-    offset: "0",
+    offset: String(offset),
     limit: String(Config.AI_SUMMARY_BATCH_SIZE),
     order: "asc",
     nullOnly: "true",
@@ -375,6 +378,7 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
 }
 
 async function processLoop(): Promise<void> {
+  let pendingOffset = 0;
   while (lifecycle.isActive) {
     let sessionCookie: string;
     try {
@@ -386,16 +390,21 @@ async function processLoop(): Promise<void> {
     }
     let summaries: AiPostSummaryPacket[] = [];
     try {
-      summaries = await fetchPendingSummaries(sessionCookie);
+      summaries = await fetchPendingSummaries(sessionCookie, pendingOffset);
     } catch (e) {
       logger.error(`fetchPendingSummaries error: ${e}`);
       await sleep(Config.AI_SUMMARY_IDLE_SLEEP_MS);
       continue;
     }
     if (summaries.length === 0) {
+      if (pendingOffset > 0) {
+        pendingOffset = 0;
+        continue;
+      }
       await sleep(Config.AI_SUMMARY_IDLE_SLEEP_MS);
       continue;
     }
+    let failedCount = 0;
     let index = 0;
     while (index < summaries.length && lifecycle.isActive) {
       if (inflight.size >= Config.AI_SUMMARY_CONCURRENCY) {
@@ -407,6 +416,7 @@ async function processLoop(): Promise<void> {
         try {
           await summarizePost(sessionCookie, postId);
         } catch (e) {
+          failedCount += 1;
           if (e instanceof UnauthorizedError) {
             logger.warn(`401 while summarizing postId=${postId}; will relogin`);
             return;
@@ -418,6 +428,10 @@ async function processLoop(): Promise<void> {
       p.finally(() => inflight.delete(p));
     }
     if (inflight.size > 0) await Promise.allSettled(Array.from(inflight));
+
+    // Successful rows disappear from the null-only query. Advance only by the
+    // failures that remain, so a poison post cannot pin the worker to offset 0.
+    pendingOffset += failedCount;
     await sleep(Config.AI_SUMMARY_LOOP_SLEEP_MS);
   }
 }

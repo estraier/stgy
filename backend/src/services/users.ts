@@ -1123,10 +1123,12 @@ export class UsersService {
 
     if (this.eventLogService) {
       try {
-        this.eventLogService.recordFollow({
-          followerId: input.followerId,
-          followeeId: input.followeeId,
-        });
+        void this.eventLogService
+          .recordFollow({
+            followerId: input.followerId,
+            followeeId: input.followeeId,
+          })
+          .catch(() => {});
       } catch {}
     }
   }

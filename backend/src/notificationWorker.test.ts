@@ -66,6 +66,15 @@ const dataPool = {
     if (/ai_model IS NOT NULL/i.test(sql)) {
       return { rows: [{ id: toDec(aiUserId) }] };
     }
+    if (/SELECT id\s+FROM users/i.test(sql)) {
+      return {
+        rows: [
+          { id: toDec(humanUserId) },
+          { id: toDec(aiUserId) },
+          { id: toDec(otherHumanUserId) },
+        ],
+      };
+    }
     if (/SELECT id, owned_by/i.test(sql)) {
       return { rows: [{ id: toDec(postId), owned_by: toDec(recipientUserId) }] };
     }

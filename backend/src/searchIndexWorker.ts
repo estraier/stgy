@@ -26,10 +26,11 @@ async function processSearchTasks(searchService: SearchService) {
         if (!lifecycle.isActive) break;
         try {
           await handleTask(searchService, task);
-          processedIds.push(task.id);
         } catch (e) {
-          logger.error(`Failed to process search task ${task.id}: ${e}`);
-          await sleep(Config.SEARCH_INDEX_LOOP_SLEEP_MS);
+          logger.error(`Failed to process search task ${task.id}; dropping task: ${e}`);
+        } finally {
+          // Search indexing is derived data. A poison task must not block newer tasks.
+          processedIds.push(task.id);
         }
         await sleep(Config.SEARCH_INDEX_TASK_SLEEP_MS);
       }
