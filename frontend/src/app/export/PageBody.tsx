@@ -125,12 +125,15 @@ const TRACK_EXPORT_BOOTSTRAP_JS = `(() => {
 const EXPORT_README_TEXT = `STGY export archive
 
 This directory contains your exported STGY data and browser-readable HTML pages.
-Start with index.html to browse the profile and posts included in the current export.
+Start with index.html to browse the profile, publication introduction, and posts included in the current export.
 
 The main contents are:
 
   profile.json and profile.html
     Your profile in machine-readable JSON and browser-readable HTML.
+
+  pub-config.json and pub-intro.html
+    Your publication settings and publication introduction.
 
   posts/
     Each post in JSON and HTML formats.
@@ -147,8 +150,8 @@ The main contents are:
   assets/ and style.css
     JavaScript and stylesheets used by the exported HTML.
 
-  pub-config.json, relations.json, and avatar.webp
-    Publication settings, social relations, and the avatar image.
+  relations.json and avatar.webp
+    Social relations and the avatar image.
 
   export-manifest.json
     Inventory and source fingerprints used for incremental exports.
@@ -293,6 +296,21 @@ function rewriteProfileIntroductionAndSnippet(
   return { ...profile, introduction: rewrittenIntro, snippet: rewrittenSnippet };
 }
 
+function rewritePubConfigIntroduction(
+  pubCfg: PubConfig,
+  userId: string,
+  trackEntries: TrackArchiveEntry[],
+): PubConfig {
+  return {
+    ...pubCfg,
+    introduction: rewriteTrackObjectUrlsToRelative(
+      rewriteOwnedImageObjectUrlsToRelative(pubCfg.introduction, userId, "./images"),
+      trackEntries,
+      "./tracks",
+    ),
+  };
+}
+
 function rewritePostContentAndSnippet<T extends Post | PostDetail>(
   post: T,
   userId: string,
@@ -346,13 +364,26 @@ function renderTrackAssetTags(baseDir: string): string {
   <script defer src="${baseDir}/track-export.js"></script>`;
 }
 
-function renderProfileHtml(profile: UserDetail): string {
+function rewriteExportedPostLinksInHtml(html: string, exportedPostIds: Set<string>): string {
+  return html.replace(/<a\b[^>]*>/gi, (tag) =>
+    tag.replace(/\bhref=(["'])([^"']*)\1/i, (match, quote: string, href: string) => {
+      const m = /^\/posts\/([^/?#]+)([?#].*)?$/.exec(href);
+      if (!m || !exportedPostIds.has(m[1])) return match;
+      return `href=${quote}./posts/${m[1]}.html${m[2] ?? ""}${quote}`;
+    }),
+  );
+}
+
+function renderProfileHtml(profile: UserDetail, exportedPostIds: Set<string>): string {
   const locale = String(profile.locale || "en");
   const nickname = profile.nickname || "User";
   const userId = profile.id;
-  const bodyHtml = profile.introduction
-    ? makeArticleHtmlFromMarkdown(profile.introduction, false, userId, false)
-    : "";
+  const bodyHtml = rewriteExportedPostLinksInHtml(
+    profile.introduction
+      ? makeArticleHtmlFromMarkdown(profile.introduction, false, userId, false)
+      : "",
+    exportedPostIds,
+  );
   const isAdmin = profile.isAdmin;
   const blockStrangers = profile.blockStrangers;
   const countsRowHtml = `<h2 class="page-label">Counts</h2>
@@ -404,6 +435,41 @@ function renderProfileHtml(profile: UserDetail): string {
         <tr><th>Created at</th><td>${escapeHtml(profile.createdAt)}</td></tr>
         ${profile.updatedAt ? `<tr><th>Updated at</th><td>${escapeHtml(profile.updatedAt)}</td></tr>` : ""}
       </table>
+    </div>
+  </main>
+</body>
+</html>
+`;
+}
+
+function renderPubIntroHtml(
+  pubCfg: PubConfig,
+  profile: UserDetail,
+  exportedPostIds: Set<string>,
+): string {
+  const locale = String(pubCfg.locale || profile.locale || "en");
+  const bodyHtml = rewriteExportedPostLinksInHtml(
+    pubCfg.introduction
+      ? makeArticleHtmlFromMarkdown(pubCfg.introduction, false, profile.id, false)
+      : "",
+    exportedPostIds,
+  );
+  return `<!doctype html>
+<html lang="${escapeHtml(locale)}">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Publication Introduction - STGY</title>
+  <link rel="stylesheet" href="./style.css" />
+  ${renderTrackAssetTags("./assets")}
+</head>
+<body class="stgy-export stgy-export-pub-intro">
+  <main>
+    <div class="card">
+      <h1>Publication Introduction</h1>
+      <div class="markdown-body publication-introduction">
+        ${bodyHtml}
+      </div>
     </div>
   </main>
 </body>
@@ -483,7 +549,7 @@ function renderPostHtml(post: ExportPostDetail): string {
 `;
 }
 
-function renderIndexHtml(posts: Post[], profile: UserDetail): string {
+function renderIndexHtml(posts: Post[], profile: UserDetail, hasPubConfig: boolean): string {
   const nickname = profile.nickname || "User";
   const sortedPosts = [...posts].sort((a, b) => a.id.localeCompare(b.id));
 
@@ -522,6 +588,7 @@ function renderIndexHtml(posts: Post[], profile: UserDetail): string {
       <h1>Data Index</h1>
       <ul class="list-meta">
         <li><a href="./profile.html">profile.html</a> <span class="muted">(${escapeHtml(profile.nickname)})</span></li>
+        ${hasPubConfig ? '<li><a href="./pub-intro.html">pub-intro.html</a></li>' : ""}
       </ul>
       <hr />
       <ul class="list-posts">
@@ -914,8 +981,12 @@ export default function PageBody() {
       }
       for (const entry of currentTrackEntries) knownTrackEntriesByKey.set(entry.track.key, entry);
 
-      const profileReferenceTexts = [profile.introduction, profile.snippet];
-      const referencedTrackKeys = collectOwnedTrackKeys(profileReferenceTexts, userId);
+      const rootReferenceTexts = [
+        profile.introduction,
+        profile.snippet,
+        pubCfg?.introduction ?? "",
+      ];
+      const referencedTrackKeys = collectOwnedTrackKeys(rootReferenceTexts, userId);
       for (const prepared of preparedPosts) {
         for (const key of prepared.trackKeys) referencedTrackKeys.add(key);
       }
@@ -927,6 +998,9 @@ export default function PageBody() {
       });
 
       const exportProfile = rewriteProfileIntroductionAndSnippet(profile, userId, trackEntries);
+      const exportPubCfg = pubCfg
+        ? rewritePubConfigIntroduction(pubCfg, userId, trackEntries)
+        : null;
 
       const images = await fetchAllMyImages(userId);
       const allMastersByFilename = new Map<string, MediaObject>();
@@ -937,7 +1011,7 @@ export default function PageBody() {
           if (!allMastersByFilename.has(filename)) allMastersByFilename.set(filename, it);
         });
 
-      const referencedImageFilenames = collectOwnedImageFilenames(profileReferenceTexts, userId);
+      const referencedImageFilenames = collectOwnedImageFilenames(rootReferenceTexts, userId);
       for (const prepared of preparedPosts) {
         for (const filename of prepared.imageFilenames) referencedImageFilenames.add(filename);
       }
@@ -959,6 +1033,9 @@ export default function PageBody() {
       const profileSources = [
         { label: "Profile introduction", text: profile.introduction },
         { label: "Profile snippet", text: profile.snippet },
+        ...(pubCfg
+          ? [{ label: "Publication introduction", text: pubCfg.introduction }]
+          : []),
       ];
       const profileTrackErrors = collectUnexportedTrackReferences(
         profileSources,
@@ -1053,7 +1130,7 @@ export default function PageBody() {
 
       const totalFiles =
         10 +
-        (pubCfg ? 1 : 0) +
+        (pubCfg ? 2 : 0) +
         (avatarUrl ? 1 : 0) +
         dirtyPosts.length * 2 +
         newImages.length +
@@ -1102,11 +1179,22 @@ export default function PageBody() {
       );
       await addExportFile("assets/track-export.js", enc.encode(TRACK_EXPORT_BOOTSTRAP_JS));
       await addExportFile("README.txt", enc.encode(EXPORT_README_TEXT));
+      const exportedPostIds = new Set(posts.map((post) => post.id));
       await addExportFile("profile.json", enc.encode(JSON.stringify(exportProfile, null, 2)));
-      await addExportFile("profile.html", enc.encode(renderProfileHtml(exportProfile)));
+      await addExportFile(
+        "profile.html",
+        enc.encode(renderProfileHtml(exportProfile, exportedPostIds)),
+      );
 
-      if (pubCfg) {
-        await addExportFile("pub-config.json", enc.encode(JSON.stringify(pubCfg, null, 2)));
+      if (exportPubCfg) {
+        await addExportFile(
+          "pub-config.json",
+          enc.encode(JSON.stringify(exportPubCfg, null, 2)),
+        );
+        await addExportFile(
+          "pub-intro.html",
+          enc.encode(renderPubIntroHtml(exportPubCfg, exportProfile, exportedPostIds)),
+        );
       }
 
       if (avatarUrl) {
@@ -1139,7 +1227,10 @@ export default function PageBody() {
         await sleepForTransferBytes(jsonBytes.length + htmlBytes.length, 0, perMbSleepMs);
       }
 
-      await addExportFile("index.html", enc.encode(renderIndexHtml(posts, profile)));
+      await addExportFile(
+        "index.html",
+        enc.encode(renderIndexHtml(posts, profile, exportPubCfg !== null)),
+      );
 
       for (const [filename, item] of newImages) {
         const path = `images/${filename}`;
@@ -1290,8 +1381,9 @@ export default function PageBody() {
             select the incremental export option and choose <code>export-manifest.json</code> from
             your previous extracted export. Changed and new files will be included in the new ZIP;
             files deleted from STGY are left untouched in the local backup. By default, images and
-            tracks are included only when referenced by the exported profile or posts. Select the
-            option beside the button to include resources that are not referenced. The archive
+            tracks are included only when referenced by the exported profile, publication
+            introduction, or posts. Select the option beside the button to include resources that
+            are not referenced. The archive
             includes the following files:
           </p>
           <ul className="list-disc pl-6 mt-3 space-y-1 text-sm text-gray-700">
@@ -1304,6 +1396,9 @@ export default function PageBody() {
             <li>
               <code className="font-bold">./pub-config.json</code> : Publication configuration in
               JSON
+            </li>
+            <li>
+              <code className="font-bold">./pub-intro.html</code> : Publication introduction in HTML
             </li>
             <li>
               <code className="font-bold">./avatar.webp</code> : Avatar image binary
