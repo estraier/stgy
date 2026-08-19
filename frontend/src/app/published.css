@@ -185,7 +185,12 @@ html:has(.site-container) {
 }
 .pub-theme-dir-norm .pub-side-search-button {
   flex: 0 0 auto;
-  padding: 0.2em 0.55em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.8em;
+  height: 1.8em;
+  padding: 0;
   border: 1px solid #aaa;
   border-radius: 0.25em;
   background: #eee;
@@ -195,6 +200,12 @@ html:has(.site-container) {
 .pub-theme-dir-norm .pub-side-search-button:hover {
   background: #def;
   border-color: #bdf;
+}
+.pub-side-search-button svg,
+.posts-search-button svg {
+  width: 1em;
+  height: 1em;
+  display: block;
 }
 
 .pub-theme-dir-norm .pub-side-profile article,
@@ -373,7 +384,12 @@ html:has(.site-container) {
   color: #222;
 }
 .pub-theme-dir-norm .site-container .posts-search-button {
-  padding: 0.2em 0.55em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.8em;
+  height: 1.8em;
+  padding: 0;
   border: 1px solid #aaa;
   border-radius: 0.25em;
   background: #eee;
@@ -1645,24 +1661,30 @@ html:has(.site-container) {
     gap: 0.3em;
     margin: 1em 0 0 1em;
     font-size: 85%;
-    writing-mode: horizontal-tb !important;
-    text-orientation: mixed !important;
-  }
-  .pub-theme-dir-vert .pub-side-search-form * {
-    writing-mode: horizontal-tb !important;
-    text-orientation: mixed !important;
   }
   .pub-theme-dir-vert .pub-side-search-input {
-    width: 10em;
-    min-width: 0;
-    padding: 0.2em 0.4em;
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    box-sizing: border-box;
+    width: 2em;
+    min-width: 2em;
+    max-width: 2em;
+    height: 10em;
+    min-height: 10em;
+    max-height: 10em;
+    padding: 0.4em 0.2em;
     border: 1px solid #aaa;
     border-radius: 0.25em;
     background: #fff;
     color: #222;
   }
   .pub-theme-dir-vert .pub-side-search-button {
-    padding: 0.2em 0.55em;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.8em;
+    height: 1.8em;
+    padding: 0;
     border: 1px solid #aaa;
     border-radius: 0.25em;
     background: #eee;
@@ -2214,24 +2236,29 @@ html:has(.site-container) {
     gap: 0.3em;
     margin-inline-start: auto;
     font-size: 85%;
-    writing-mode: horizontal-tb !important;
-    text-orientation: mixed !important;
-  }
-  .pub-theme-dir-vert .site-container .posts-search * {
-    writing-mode: horizontal-tb !important;
-    text-orientation: mixed !important;
   }
   .pub-theme-dir-vert .site-container .posts-search-input {
-    width: clamp(6em, 20vw, 12em);
-    min-width: 6em;
-    padding: 0.2em 0.4em;
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    box-sizing: border-box;
+    width: 2em;
+    min-width: 2em;
+    max-width: 2em;
+    height: clamp(6em, 20vh, 12em);
+    min-height: 6em;
+    padding: 0.4em 0.2em;
     border: 1px solid #aaa;
     border-radius: 0.25em;
     background: #fff;
     color: #222;
   }
   .pub-theme-dir-vert .site-container .posts-search-button {
-    padding: 0.2em 0.55em;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.8em;
+    height: 1.8em;
+    padding: 0;
     border: 1px solid #aaa;
     border-radius: 0.25em;
     background: #eee;
