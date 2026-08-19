@@ -34,12 +34,14 @@ export async function searchPosts(params: {
   offset?: number;
   limit?: number;
   locale?: string;
+  ownedBy?: string;
 }): Promise<Post[]> {
   const search = new URLSearchParams();
   search.append("query", params.query);
   if (params.offset !== undefined) search.append("offset", String(params.offset));
   if (params.limit !== undefined) search.append("limit", String(params.limit));
   if (params.locale) search.append("locale", params.locale);
+  if (params.ownedBy) search.append("ownedBy", params.ownedBy);
   const q = search.toString();
   const res = await apiFetch(`/posts/search?${q}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));

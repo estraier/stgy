@@ -1508,6 +1508,13 @@ paths:
           in: query
           required: true
           schema: { type: string }
+        - name: locale
+          in: query
+          schema: { type: string, default: en }
+        - name: ownedBy
+          in: query
+          description: Restrict full-text search to posts owned by this user ID.
+          schema: { type: string }
         - name: limit
           in: query
           schema: { type: integer, default: 21 }

@@ -227,7 +227,9 @@ SNSでは、新しい投稿ほど参照されやすく、検索結果でも新�
 ```sql:small
 CREATE TABLE id_tuples (
   internal_id INTEGER PRIMARY KEY,
-  external_id TEXT UNIQUE
+  external_id TEXT UNIQUE,
+  labels_json TEXT NOT NULL DEFAULT '[]',
+  numeric_value REAL
 );
 
 CREATE TABLE extra_attrs (
@@ -242,12 +244,13 @@ CREATE TABLE fts_meta (
 
 CREATE VIRTUAL TABLE docs USING fts5(
   tokens,
-  tokenize = "unicode61 categories 'L* N* Co M* P* S*' remove_diacritics 0",
-  detail = 'none'
+  labels,
+  tokenize = "unicode61 categories 'L* N* Co M* P* S*' remove_diacritics 0 tokenchars ' '",
+  detail = 'column'
 );
 ```
 
-実際の設定では ``recordContents`` がtrueなので、FTS5は正規化後のトークン列も保持する。``recordPositions`` はfalseなので、トークンの出現位置はFTS5に記録しない。位置情報を持たないことでインデックスを小さくする一方、後述するフレーズ検索では保持したトークン列を追加確認に使う。
+実際の設定では ``recordContents`` がtrueなので、FTS5は正規化後のトークン列も保持する。``recordPositions`` はfalseなので ``detail=column`` を使い、トークンの出現位置は記録せず、本文の ``tokens`` 列と探索空間を限定する ``labels`` 列の区別だけを保持する。後述するフレーズ検索では保持したトークン列を追加確認に使う。
 
 外部から見える投稿IDやユーザIDは文字列として ``external_id`` に格納し、FTS5のrowidには小さな整数の ``internal_id`` を使う。新しい文書を追加する際には、現在の最小internal_idから1を引いた値を割り当てる。
 
@@ -262,8 +265,9 @@ CREATE VIRTUAL TABLE docs USING fts5(
 ```sql:small
 SELECT t.external_id
 FROM docs
-JOIN id_tuples t ON docs.rowid = t.internal_id
+CROSS JOIN id_tuples t
 WHERE docs MATCH ?
+  AND t.internal_id = docs.rowid
 ORDER BY docs.rowid ASC
 LIMIT ?;
 ```
@@ -274,7 +278,7 @@ internal_idが小さいほど後から登録された文書なので、新しい
 
 ## トークナイズと正規化
 
-TTTSは文書をそのままFTS5へ渡さず、Node.js側でトークナイズしてから、トークンを空白区切りにして登録する。
+TTTSは文書をそのままFTS5へ渡さず、Node.js側でトークナイズしてから、各トークンをLF（改行）区切りにして登録する。原文の改行を保存するためではなく、TTTSが決めた一つのトークンをFTS5でも一つのtermとして扱わせるための内部表現である。
 
 最初に以下の正規化を行う。
 
@@ -303,7 +307,7 @@ check-out → check, out
 24/7      → 24, 7
 ```
 
-FTS5側のunicode61設定でも、句読点と記号をトークン文字として許可している。アプリ側で作った ``c++`` をFTS5が再び ``c`` に分割しないためである。FTS5の検索式において特別な意味を持つ記号を含むトークンは、検索式を作る際に引用符で囲む。
+FTS5側のunicode61設定では、句読点と記号に加えてU+0020 SPACEも ``tokenchars`` へ追加する。本文トークンとラベルに現れる印字文字とSPACEはterm内部に保持され、TTTSが内部表現として挿入したLFでtermが分かれる。これにより、アプリ側で作った ``c++`` やSPACEを含む一つの値をFTS5が再分割しない。FTS5の検索式において特別な意味を持つ文字を含むtermは、検索式を作る際に引用符で囲む。
 
 文書は、指定された実効ロケールで本文全体をトークナイズする。行ごとの言語判定は行わない。検索クエリでは、指定ロケールを優先候補として、文字種による簡単なロケール判定を行う。
 
@@ -349,15 +353,15 @@ Kuromojiが有効な環境では、概ね以下の結果になる。
 "東京 自転車"
 ```
 
-現在のシャードはFTS5の位置情報を記録しない ``detail=none`` である。そのため、複数トークンの引用部分は、最初に各トークンのAND検索で候補を絞り、保存してあるトークン列に同じ並びが含まれるかを ``LIKE`` で追加確認する。
+通常のシャードはFTS5の位置情報を記録しない ``detail=column`` である。そのため、複数トークンの引用部分は、最初に各トークンのAND検索で候補を絞り、保存してあるLF区切りのcanonical token列に同じ並びがあるかを追加確認する。
 
 ```text:small
 FTS5: 東京 AND 自転車
   ↓
-docs.tokens LIKE '%東京 自転車%'
+LF + docs.tokens + LF の中に LF + 東京 + LF + 自転車 + LF があるか確認
 ```
 
-単語の出現位置を持つインデックスより空間効率を優先し、フレーズ指定時だけ本文の正規化済みトークン列を確認する方式である。
+単語の出現位置を持つインデックスより空間効率を優先し、フレーズ指定時だけ本文のcanonical token列を確認する方式である。``recordPositions=true`` のシャードではFTS5のphrase演算子を使う。
 
 検索語が ``C++`` の場合は、FTS5の演算子として解釈されないように以下のような検索式になる。
 
@@ -366,6 +370,14 @@ docs.tokens LIKE '%東京 自転車%'
 ```
 
 これにより、``C++`` の文書を検索する際に ``C`` だけの文書へ一致することを避ける。
+
+### labelsとnumeric_valueによる探索空間の限定
+
+各文書には、0個以上のopaqueな ``labels`` と、nullableな汎用数値 ``numeric_value`` を持たせられる。TTTSはこれらの意味を解釈しない。labelは印字文字とU+0020 SPACEをそのまま保存し、複数labelはAND条件として使う。``labels`` はFTS5の独立した列なので、本文のtermとは混ざらない。
+
+``unicode61`` は大文字小文字をfoldするため、label条件はまずFTS5で候補を絞った後、``id_tuples.labels_json`` に保存したraw labelをcase-sensitiveな完全一致で確認する。数値条件は ``eq``、``gt``、``gte``、``lt``、``lte`` を使え、FTS候補ごとに ``id_tuples`` をINTEGER PRIMARY KEYで参照して逐次評価する。``numeric_value`` 自体には検索用B-tree indexを作らない。
+
+STGYの投稿では ``owner:<userId>`` をlabelとして登録し、``numericValue`` には外部公開日時のepoch millisecondを入れる。非公開ならNULL、予約公開なら未来日時になる。そのため、個別ユーザの記事検索はowner labelで限定でき、外部公開記事はさらに ``numeric_value <= now`` を加えるだけで、公開時刻到来時のインデックス更新を必要としない。
 
 ## 検索処理と結果の順序
 
@@ -462,9 +474,16 @@ curl -i -X PUT 'http://localhost:3200/posts/19F998DD11300000' \
   -d '{
     "text": "全文検索の対象となる本文",
     "timestamp": 1780000000,
-    "locale": "ja"
+    "locale": "ja",
+    "attrs": null,
+    "labels": ["owner:0000000000020101"],
+    "numericValue": 1780000000000
   }'
 ```
+
+PUTの ``attrs``、``labels``、``numericValue`` は完全snapshotを構成する必須フィールドである。PUTは部分更新ではなく、その文書の最新状態を表す完全snapshotとして扱う。TTTS内部のdocument queueにも同じ完全snapshotを保存し、SQLiteへ反映する直前にだけ現在値との差分を調べる。``recordContents=true`` ならcanonical token列が同一の本文はFTS5を書き換えず、``recordContents=false`` では本文を常に新旧不一致とみなしてFTS5を再反映する。``attrs=null``、``labels=[]``、``numericValue=null`` も明示的な現在状態である。
+
+検索APIでは、``label`` を複数回指定するとAND条件になり、``numericOp`` と ``numericValue`` を組にして数値filterを指定できる。例えば ``?label=owner%3A0000000000020101&numericOp=lte&numericValue=1780000000000`` のように使う。
 
 ``wait`` を指定しなければ、TTTSのキューへ登録した時点で ``202 Accepted`` を返す。
 

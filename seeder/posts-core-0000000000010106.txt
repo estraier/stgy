@@ -227,7 +227,9 @@ Each shard mainly contains the following tables.
 ```sql:small
 CREATE TABLE id_tuples (
   internal_id INTEGER PRIMARY KEY,
-  external_id TEXT UNIQUE
+  external_id TEXT UNIQUE,
+  labels_json TEXT NOT NULL DEFAULT '[]',
+  numeric_value REAL
 );
 
 CREATE TABLE extra_attrs (
@@ -242,12 +244,13 @@ CREATE TABLE fts_meta (
 
 CREATE VIRTUAL TABLE docs USING fts5(
   tokens,
-  tokenize = "unicode61 categories 'L* N* Co M* P* S*' remove_diacritics 0",
-  detail = 'none'
+  labels,
+  tokenize = "unicode61 categories 'L* N* Co M* P* S*' remove_diacritics 0 tokenchars ' '",
+  detail = 'column'
 );
 ```
 
-In the actual configuration, ``recordContents`` is true, so FTS5 also retains the normalized token sequence. ``recordPositions`` is false, so FTS5 does not store token positions. Omitting positions keeps the index smaller, while phrase search, described later, performs an additional check against the stored token sequence.
+In the actual configuration, ``recordContents`` is true, so FTS5 also retains the normalized token sequence. ``recordPositions`` is false, so TTTS uses ``detail=column``: token positions are not stored, but FTS5 still distinguishes the body ``tokens`` column from the search-space ``labels`` column. Phrase search, described later, performs an additional check against the stored token sequence.
 
 Externally visible post and user IDs are stored as strings in ``external_id``, while FTS5 rowid uses a small integer ``internal_id``. When a new document is added, it receives one less than the current minimum internal_id.
 
@@ -262,8 +265,9 @@ Search SQL retrieves rows with ``rowid ASC`` as follows.
 ```sql:small
 SELECT t.external_id
 FROM docs
-JOIN id_tuples t ON docs.rowid = t.internal_id
+CROSS JOIN id_tuples t
 WHERE docs MATCH ?
+  AND t.internal_id = docs.rowid
 ORDER BY docs.rowid ASC
 LIMIT ?;
 ```
@@ -274,7 +278,7 @@ This design does not calculate relevance scores such as BM25. Results are ordere
 
 ## Tokenization and Normalization
 
-TTTS does not pass documents directly to FTS5. Node.js tokenizes them first and stores the tokens joined by spaces.
+TTTS does not pass documents directly to FTS5. Node.js tokenizes them first and stores the tokens joined by LF characters. The LF characters do not preserve source line breaks; they are an internal separator that makes one TTTS token correspond to one FTS5 term.
 
 The following normalization is applied first.
 
@@ -303,7 +307,7 @@ check-out → check, out
 24/7      → 24, 7
 ```
 
-The FTS5 unicode61 configuration also permits punctuation and symbols as token characters. This prevents an application-produced token such as ``c++`` from being split again by FTS5 into ``c``. Tokens containing characters with special meaning in an FTS5 query expression are quoted when the expression is built.
+The FTS5 unicode61 configuration permits punctuation and symbols as token characters and additionally adds U+0020 SPACE through ``tokenchars``. Printable characters and SPACE inside body tokens or labels therefore remain inside one term, while the LF separators inserted by TTTS split terms. This prevents values such as ``c++`` or a single value containing SPACE from being split again by FTS5. Terms containing characters with special meaning in an FTS5 query expression are quoted when the expression is built.
 
 A document is tokenized as a whole using its specified effective locale. No per-line language detection is performed. For a search query, the specified locale is treated as the preferred candidate and a simple character-based locale detection is applied.
 
@@ -349,15 +353,15 @@ Text enclosed in double quotes is treated as a phrase.
 "東京 自転車"
 ```
 
-Current shards use ``detail=none`` and do not record token positions in FTS5. For a quoted segment containing multiple tokens, TTTS first narrows candidates using an AND search for the individual tokens, then uses ``LIKE`` against the stored token sequence to verify that the same sequence occurs.
+Normal shards use ``detail=column`` and do not record token positions in FTS5. For a quoted segment containing multiple tokens, TTTS first narrows candidates using an AND search for the individual tokens and then checks the stored LF-separated canonical token sequence for the same consecutive tokens.
 
 ```text:small
 FTS5: 東京 AND 自転車
   ↓
-docs.tokens LIKE '%東京 自転車%'
+check LF + docs.tokens + LF for LF + 東京 + LF + 自転車 + LF
 ```
 
-This favors space efficiency over an index that stores word positions and pays the extra normalized-token-sequence check only when a phrase is requested.
+This favors space efficiency over an index that stores word positions and pays the extra canonical-token-sequence check only when a phrase is requested. Shards with ``recordPositions=true`` use the FTS5 phrase operator.
 
 For a search term such as ``C++``, the generated query expression is quoted so that FTS5 does not interpret its characters as operators.
 
@@ -366,6 +370,14 @@ For a search term such as ``C++``, the generated query expression is quoted so t
 ```
 
 This prevents a search for ``C++`` documents from matching documents containing only ``C``.
+
+### Restricting the search space with labels and numeric_value
+
+Each document may carry zero or more opaque ``labels`` and one nullable generic ``numeric_value``. TTTS assigns no application-specific meaning to either. Labels preserve printable characters and U+0020 SPACE exactly, and multiple label filters use AND semantics. Because ``labels`` is a separate FTS5 column, label terms do not mix with body terms.
+
+``unicode61`` folds letter case, so a label condition first narrows candidates through FTS5 and then checks the raw label stored in ``id_tuples.labels_json`` with case-sensitive exact equality. Numeric filters support ``eq``, ``gt``, ``gte``, ``lt`` and ``lte``. For each FTS candidate, TTTS looks up ``id_tuples`` by its INTEGER PRIMARY KEY and applies the numeric comparison immediately. No separate B-tree index is created for ``numeric_value``.
+
+For STGY posts, the backend stores ``owner:<userId>`` as a label and the external publication time in epoch milliseconds as ``numericValue``. Unpublished posts use NULL and scheduled posts use their future timestamp. User-specific search can therefore add the owner label, while public search can additionally require ``numeric_value <= now`` without updating the index when the scheduled publication time arrives.
 
 ## Search Processing and Result Order
 
@@ -462,9 +474,16 @@ curl -i -X PUT 'http://localhost:3200/posts/19F998DD11300000' \
   -d '{
     "text": "全文検索の対象となる本文",
     "timestamp": 1780000000,
-    "locale": "ja"
+    "locale": "ja",
+    "attrs": null,
+    "labels": ["owner:0000000000020101"],
+    "numericValue": 1780000000000
   }'
 ```
+
+``attrs``, ``labels`` and ``numericValue`` are required fields of the PUT snapshot. PUT is a complete snapshot rather than a partial update. The TTTS document queue stores the same complete latest state, and differences from SQLite are evaluated only immediately before applying the task. With ``recordContents=true``, an unchanged canonical body token sequence avoids an FTS5 rewrite. With ``recordContents=false``, the body is always treated as changed and is re-applied to FTS5. ``attrs=null``, ``labels=[]`` and ``numericValue=null`` are explicit current states.
+
+On search endpoints, repeating ``label`` creates an AND condition, while ``numericOp`` and ``numericValue`` form a numeric filter. For example: ``?label=owner%3A0000000000020101&numericOp=lte&numericValue=1780000000000``.
 
 If ``wait`` is omitted, TTTS returns ``202 Accepted`` as soon as the request has been registered in its queue.
 

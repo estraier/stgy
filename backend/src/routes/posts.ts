@@ -83,13 +83,24 @@ export default function createPostsRouter(
     }
     const locale =
       typeof req.query.locale === "string" && req.query.locale ? req.query.locale : "en";
+    let ownedBy: string | undefined;
+    if (typeof req.query.ownedBy === "string" && req.query.ownedBy.trim() !== "") {
+      try {
+        ownedBy = decToHex(hexToDec(req.query.ownedBy.trim()));
+      } catch {
+        return res.status(400).json({ error: "invalid ownedBy" });
+      }
+    }
     const offset = Math.max(0, parseInt(req.query.offset as string) || 0);
     const reqLimit = Math.max(1, parseInt(req.query.limit as string) || 21);
     const neededLimit = offset + reqLimit;
     if (neededLimit > Config.SEARCH_LIMIT_MAX) {
       return res.status(400).json({ error: "Search limit exceeded" });
     }
-    const hash = crypto.createHash("md5").update(`${query}:${locale}`).digest("hex");
+    const hash = crypto
+      .createHash("md5")
+      .update(`${query}:${locale}:${ownedBy ?? ""}`)
+      .digest("hex");
     const cacheKey = `stgy:search:posts:${hash}`;
     let docIds: string[] = [];
     let isHit = false;
@@ -111,6 +122,7 @@ export default function createPostsRouter(
             offset: 0,
             limit: neededLimit,
             timeout: 3,
+            labels: ownedBy ? [`owner:${ownedBy}`] : undefined,
           });
         } finally {
           watch.done();

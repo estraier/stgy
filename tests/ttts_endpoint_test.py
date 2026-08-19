@@ -37,8 +37,17 @@ def test_posts():
     "timestamp": target_ts,
     "locale": "en",
     "attrs": attrs_data,
+    "labels": ["Owner:ABC", "project:foo bar"],
+    "numericValue": target_ts * 1000,
     "wait": 5
   }
+  incomplete_id = f"{doc_id}-incomplete"
+  res = requests.put(
+    f"{base_url}/{incomplete_id}",
+    json={"text": "incomplete snapshot", "timestamp": target_ts},
+  )
+  assert res.status_code == 400
+
   res = requests.put(f"{base_url}/{doc_id}", json=put_payload)
   assert res.status_code in (200, 408)
   res = requests.post(f"{base_url}/flush", json={"wait": 5})
@@ -49,13 +58,35 @@ def test_posts():
   res = requests.get(f"{base_url}/search", params={"query": doc_id, "locale": "en"})
   assert res.status_code == 200
   assert doc_id in res.json()
+  res = requests.get(
+    f"{base_url}/search",
+    params=[
+      ("query", doc_id),
+      ("locale", "en"),
+      ("label", "Owner:ABC"),
+      ("label", "project:foo bar"),
+      ("numericOp", "lte"),
+      ("numericValue", str(target_ts * 1000)),
+    ],
+  )
+  assert res.status_code == 200
+  assert doc_id in res.json()
+  res = requests.get(
+    f"{base_url}/search",
+    params={"query": doc_id, "locale": "en", "label": "Owner:abc"},
+  )
+  assert res.status_code == 200
+  assert doc_id not in res.json()
   res = requests.get(f"{base_url}/{doc_id}")
   assert res.status_code == 200
   doc = res.json()
   assert doc["id"] == doc_id
+  assert "\n" not in doc["bodyText"]
   actual_tokens = sorted(list(set(doc["bodyText"].split())))
   assert actual_tokens == expected_tokens
   assert doc["attrs"] == attrs_data
+  assert doc["labels"] == ["Owner:ABC", "project:foo bar"]
+  assert doc["numericValue"] == target_ts * 1000
   res = requests.get(f"{base_url}/search-fetch", params={"query": doc_id, "locale": "en"})
   assert len(res.json()) > 0
   assert res.json()[0]["id"] == doc_id
@@ -112,7 +143,7 @@ def test_reconstruction():
   resource = "posts"
   base_url = f"{BASE_URL}/{resource}"
   ts = int(time.time())
-  requests.put(f"{base_url}/rec-1", json={"text": "rebuild test", "timestamp": ts, "wait": 5})
+  requests.put(f"{base_url}/rec-1", json={"text": "rebuild test", "timestamp": ts, "attrs": None, "labels": [], "numericValue": None, "wait": 5})
   requests.post(f"{base_url}/flush", json={"wait": 5})
   rec_payload = {
     "timestamp": ts,
@@ -126,7 +157,7 @@ def test_shards():
   resource = "posts"
   base_url = f"{BASE_URL}/{resource}"
   past_ts = 1700000000
-  requests.put(f"{base_url}/shard-doc", json={"text": "shard test", "timestamp": past_ts, "wait": 5})
+  requests.put(f"{base_url}/shard-doc", json={"text": "shard test", "timestamp": past_ts, "attrs": None, "labels": [], "numericValue": None, "wait": 5})
   requests.post(f"{base_url}/flush", json={"wait": 5})
   res = requests.get(f"{base_url}/shards", params={"detailed": "true"})
   shards = res.json()
@@ -149,7 +180,7 @@ def test_queue_clear():
   base_url = f"{BASE_URL}/{resource}"
   requests.post(f"{base_url}/maintenance")
   ts = int(time.time())
-  requests.put(f"{base_url}/q-clear-1", json={"text": "queue clear test", "timestamp": ts})
+  requests.put(f"{base_url}/q-clear-1", json={"text": "queue clear test", "timestamp": ts, "attrs": None, "labels": [], "numericValue": None})
   res = requests.delete(f"{base_url}/queue")
   assert res.status_code == 200
   assert res.json()["result"] == "queue cleared"

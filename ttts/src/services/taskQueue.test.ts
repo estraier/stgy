@@ -59,7 +59,7 @@ describe("TaskQueue System", () => {
   test("DocumentTaskQueue: data task flow with string IDs", async () => {
     const task: TaskAdd = {
       type: "ADD",
-      payload: { docId: "doc1", timestamp: 100, bodyText: "test", locale: "en" },
+      payload: { docId: "doc1", timestamp: 100, bodyText: "test", locale: "en", attrs: null, labels: [], numericValue: null },
     };
     const id = await docQueue.enqueue(task);
 
@@ -85,7 +85,7 @@ describe("TaskQueue System", () => {
     const mgmtId = await mgmtQueue.enqueue({ type: "SYNC", payload: {} });
     const docId = await docQueue.enqueue({
       type: "ADD",
-      payload: { docId: "1", timestamp: 0, bodyText: "", locale: "" },
+      payload: { docId: "1", timestamp: 0, bodyText: "", locale: "", attrs: null, labels: [], numericValue: null },
     });
 
     expect(mgmtId).toBe("m-1");
@@ -111,11 +111,11 @@ describe("TaskQueue System", () => {
 
     const t1 = await docQueue.enqueue({
       type: "ADD",
-      payload: { docId: "1", timestamp: 0, bodyText: "", locale: "" },
+      payload: { docId: "1", timestamp: 0, bodyText: "", locale: "", attrs: null, labels: [], numericValue: null },
     });
     const t2 = await docQueue.enqueue({
       type: "ADD",
-      payload: { docId: "2", timestamp: 0, bodyText: "", locale: "" },
+      payload: { docId: "2", timestamp: 0, bodyText: "", locale: "", attrs: null, labels: [], numericValue: null },
     });
 
     const item = await docQueue.fetchFirst();

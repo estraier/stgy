@@ -46,6 +46,8 @@ describe("SearchService", () => {
         timestamp: 100,
         bodyText: "text",
         locale: "en",
+        labels: [],
+        numericValue: null,
       };
 
       await service.addDocument(doc);
@@ -59,6 +61,9 @@ describe("SearchService", () => {
         text: "text",
         timestamp: 100,
         locale: "en",
+        attrs: null,
+        labels: [],
+        numericValue: null,
       });
     });
 
@@ -76,7 +81,14 @@ describe("SearchService", () => {
 
     it("search should send GET request", async () => {
       mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ["d1"] });
-      const input: SearchInput = { query: "q", locale: "en", limit: 10 };
+      const input: SearchInput = {
+        query: "q",
+        locale: "en",
+        limit: 10,
+        labels: ["owner:0000000000000001", "foo bar"],
+        numericOp: "lte",
+        numericValue: 123,
+      };
       const res = await service.search(input);
 
       expect(res).toEqual(["d1"]);
@@ -84,6 +96,41 @@ describe("SearchService", () => {
       const url = new URL(urlStr as string);
       expect(url.searchParams.get("query")).toBe("q");
       expect(url.searchParams.get("limit")).toBe("10");
+      expect(url.searchParams.getAll("label")).toEqual([
+        "owner:0000000000000001",
+        "foo bar",
+      ]);
+      expect(url.searchParams.get("numericOp")).toBe("lte");
+      expect(url.searchParams.get("numericValue")).toBe("123");
+    });
+
+    it("addDocument should forward labels and numericValue", async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true, text: async () => "OK" });
+      await service.addDocument({
+        id: "d1",
+        timestamp: 100,
+        bodyText: "text",
+        locale: "en",
+        labels: ["Owner:ABC"],
+        numericValue: 456,
+      });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.labels).toEqual(["Owner:ABC"]);
+      expect(body.numericValue).toBe(456);
+    });
+
+    it("getIndexMetadata should map post owner and publication time", async () => {
+      (pgQuery as jest.Mock).mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{ owned_by: "1", published_at: "2026-08-18T00:00:00.000Z" }],
+      });
+
+      const metadata = await service.getIndexMetadata("0000000000000002");
+      expect(metadata).toEqual({
+        labels: ["owner:0000000000000001"],
+        numericValue: Date.parse("2026-08-18T00:00:00.000Z"),
+      });
     });
   });
 
@@ -93,7 +140,7 @@ describe("SearchService", () => {
     });
 
     it("enqueueAddDocument should insert task", async () => {
-      const doc: Document = {
+      const doc = {
         id: "d1",
         timestamp: 100,
         bodyText: "text",

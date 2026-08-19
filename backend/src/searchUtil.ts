@@ -103,6 +103,8 @@ interface UserRow {
 
 interface PostRow {
   id: string;
+  owned_by: string;
+  published_at: string | Date | null;
   locale: string | null;
   owner_locale: string | null;
   content: string | null;
@@ -232,6 +234,8 @@ async function runAddUsers(pgPool: Pool, startIdDec: string, endIdDec: string) {
           text: bodyText,
           timestamp,
           locale,
+          labels: [],
+          numericValue: null,
         });
       } catch (e) {
         if (!stopOnError) {
@@ -263,7 +267,7 @@ async function runAddPosts(pgPool: Pool, startIdDec: string, endIdDec: string) {
 
   while (true) {
     const sql = `
-      SELECT p.id, p.locale, u.locale AS owner_locale, pd.content
+      SELECT p.id, p.owned_by, p.published_at, p.locale, u.locale AS owner_locale, pd.content
       FROM posts p
       LEFT JOIN users u ON u.id = p.owned_by
       LEFT JOIN post_details pd ON p.id = pd.post_id
@@ -291,10 +295,15 @@ async function runAddPosts(pgPool: Pool, startIdDec: string, endIdDec: string) {
           Config.DEFAULT_LOCALE,
         );
 
+        const publishedAtMs =
+          row.published_at === null ? null : new Date(row.published_at).getTime();
         await fetchJson("posts", "PUT", `/${hexId}`, {
           text: bodyText,
           timestamp,
           locale,
+          labels: [`owner:${decToHex(row.owned_by)}`],
+          numericValue:
+            publishedAtMs !== null && Number.isFinite(publishedAtMs) ? publishedAtMs : null,
         });
       } catch (e) {
         if (!stopOnError) {

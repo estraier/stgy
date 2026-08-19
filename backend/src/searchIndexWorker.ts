@@ -56,11 +56,19 @@ async function handleTask(service: SearchService, task: SearchIndexTask) {
   if (task.bodyText === null) {
     await service.removeDocument(task.resourceId, seconds);
   } else {
+    const metadata = await service.getIndexMetadata(task.resourceId);
+    if (metadata === null) {
+      // The source document disappeared after this derived-data task was queued.
+      await service.removeDocument(task.resourceId, seconds);
+      return;
+    }
     await service.addDocument({
       id: task.resourceId,
       bodyText: task.bodyText,
       locale: task.locale || "en",
       timestamp: seconds,
+      labels: metadata.labels,
+      numericValue: metadata.numericValue,
     });
   }
 }

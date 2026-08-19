@@ -19,7 +19,7 @@ class VolumeTestSearchService extends SearchService {
     if (this.workerRunning) {
       throw new Error("Worker must be stopped to use direct access!");
     }
-    await this.addDocument(docId, timestamp, bodyText, locale, attrs);
+    await this.addDocument(docId, timestamp, bodyText, locale, attrs, [], null);
   }
 
   public async optimizeAll() {

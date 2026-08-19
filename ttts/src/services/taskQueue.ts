@@ -9,7 +9,9 @@ export type TaskAdd = {
     timestamp: number;
     bodyText: string;
     locale: string;
-    attrs?: string | null;
+    attrs: string | null;
+    labels: string[];
+    numericValue: number | null;
   };
 };
 export type TaskRemove = {

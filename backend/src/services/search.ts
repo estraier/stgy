@@ -3,6 +3,7 @@ import { Config } from "../config";
 import { Document, SearchInput } from "../models/search";
 import { IdIssueService } from "./idIssue";
 import { pgQuery } from "../utils/servers";
+import { decToHex, hexToDec } from "../utils/format";
 
 export type SearchIndexTask = {
   id: string;
@@ -32,6 +33,9 @@ export class SearchService {
       text: doc.bodyText,
       timestamp: doc.timestamp,
       locale: doc.locale,
+      attrs: null,
+      labels: doc.labels,
+      numericValue: doc.numericValue,
     };
     const res = await fetch(url, {
       method: "PUT",
@@ -68,6 +72,10 @@ export class SearchService {
     if (input.limit !== undefined) params.append("limit", input.limit.toString());
     if (input.offset !== undefined) params.append("offset", input.offset.toString());
     if (input.timeout !== undefined) params.append("timeout", input.timeout.toString());
+    for (const label of input.labels ?? []) params.append("label", label);
+    if (input.numericOp !== undefined) params.append("numericOp", input.numericOp);
+    if (input.numericValue !== undefined)
+      params.append("numericValue", input.numericValue.toString());
 
     const url = `${this.searchBaseUrl}/search?${params.toString()}`;
 
@@ -82,7 +90,29 @@ export class SearchService {
     return ids;
   }
 
-  async enqueueAddDocument(doc: Document, client?: PoolClient): Promise<void> {
+  async getIndexMetadata(
+    id: string,
+  ): Promise<{ labels: string[]; numericValue: number | null } | null> {
+    if (this.resourceName !== "posts") return { labels: [], numericValue: null };
+    const res = await pgQuery<{ owned_by: string; published_at: string | Date | null }>(
+      this.pgPool,
+      `SELECT owned_by, published_at FROM posts WHERE id = $1`,
+      [hexToDec(id)],
+    );
+    if (res.rows.length === 0) return null;
+    const row = res.rows[0];
+    const publishedAtMs = row.published_at === null ? null : new Date(row.published_at).getTime();
+    return {
+      labels: [`owner:${decToHex(row.owned_by)}`],
+      numericValue:
+        publishedAtMs !== null && Number.isFinite(publishedAtMs) ? publishedAtMs : null,
+    };
+  }
+
+  async enqueueAddDocument(
+    doc: Pick<Document, "id" | "timestamp" | "bodyText" | "locale">,
+    client?: PoolClient,
+  ): Promise<void> {
     const taskId = await this.idIssueService.issueBigint();
     const sql = `
       INSERT INTO search_indexing_tasks

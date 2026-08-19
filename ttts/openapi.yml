@@ -395,6 +395,26 @@ paths:
           schema:
             type: number
             default: 1
+        - name: label
+          in: query
+          description: Exact document label filter. Repeat to require multiple labels (AND).
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: true
+        - name: numericOp
+          in: query
+          description: Comparison operator for numericValue. Must be specified together with numericValue.
+          schema:
+            type: string
+            enum: [eq, gt, gte, lt, lte]
+        - name: numericValue
+          in: query
+          description: Numeric filter value. Must be specified together with numericOp.
+          schema:
+            type: number
       responses:
         "200":
           description: List of matching document IDs
@@ -438,6 +458,26 @@ paths:
           schema:
             type: number
             default: 1
+        - name: label
+          in: query
+          description: Exact document label filter. Repeat to require multiple labels (AND).
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: true
+        - name: numericOp
+          in: query
+          description: Comparison operator for numericValue. Must be specified together with numericValue.
+          schema:
+            type: string
+            enum: [eq, gt, gte, lt, lte]
+        - name: numericValue
+          in: query
+          description: Numeric filter value. Must be specified together with numericOp.
+          schema:
+            type: number
         - name: omitBodyText
           in: query
           schema:
@@ -500,6 +540,9 @@ paths:
               required:
                 - text
                 - timestamp
+                - attrs
+                - labels
+                - numericValue
               properties:
                 text:
                   type: string
@@ -510,7 +553,17 @@ paths:
                   default: en
                 attrs:
                   type: string
+                  nullable: true
                   description: JSON string of extra attributes
+                labels:
+                  type: array
+                  description: Opaque exact labels. Printable characters and U+0020 SPACE are allowed.
+                  items:
+                    type: string
+                numericValue:
+                  type: number
+                  nullable: true
+                  description: Generic nullable numeric value used by numeric search filters
                 wait:
                   type: number
       responses:
@@ -627,6 +680,13 @@ components:
           type: string
           nullable: true
           description: JSON string
+        labels:
+          type: array
+          items:
+            type: string
+        numericValue:
+          type: number
+          nullable: true
 
     IndexFileInfo:
       type: object

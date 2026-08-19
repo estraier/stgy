@@ -270,6 +270,7 @@ export default function PageBody() {
           offset: params.offset,
           limit: params.limit,
           locale: userLocale,
+          ownedBy: effectiveOwnedBy,
         });
       } else {
         if (searchQueryObj.tag) params.tag = searchQueryObj.tag;

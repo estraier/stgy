@@ -1,5 +1,10 @@
 import { Router, Request, Response } from "express";
-import { SearchService } from "../services/search";
+import {
+  normalizeLabels,
+  NumericOp,
+  SearchFilters,
+  SearchService,
+} from "../services/search";
 import { Tokenizer } from "../utils/tokenizer";
 import { parsePositiveSecondsOrDefault, waitForTaskOutcome } from "../utils/taskWait";
 
@@ -11,6 +16,36 @@ export default function createResourceRouter(instance: ResourceInstance) {
   const router = Router();
   const { searchService } = instance;
   const logger = searchService.getLogger();
+
+  const getSearchFilters = (req: Request): SearchFilters => {
+    const rawLabels = req.query.label;
+    const labels =
+      rawLabels === undefined
+        ? []
+        : Array.isArray(rawLabels)
+          ? rawLabels.map((v) => String(v))
+          : [String(rawLabels)];
+    const normalizedLabels = normalizeLabels(labels);
+
+    const rawNumericOp = req.query.numericOp;
+    const rawNumericValue = req.query.numericValue;
+    if (rawNumericOp === undefined && rawNumericValue === undefined) {
+      return { labels: normalizedLabels };
+    }
+    if (typeof rawNumericOp !== "string" || typeof rawNumericValue !== "string") {
+      throw new Error("numericOp and numericValue must be specified together");
+    }
+    if (!["eq", "gt", "gte", "lt", "lte"].includes(rawNumericOp)) {
+      throw new Error("invalid numericOp");
+    }
+    const numericValue = Number(rawNumericValue);
+    if (!Number.isFinite(numericValue)) throw new Error("numericValue must be a finite number");
+    return {
+      labels: normalizedLabels,
+      numericOp: rawNumericOp as NumericOp,
+      numericValue,
+    };
+  };
 
   const respondToTask = async (
     req: Request,
@@ -191,9 +226,13 @@ export default function createResourceRouter(instance: ResourceInstance) {
       const limit = parseInt(req.query.limit as string, 10) || 100;
       const offset = parseInt(req.query.offset as string, 10) || 0;
       const timeout = parsePositiveSecondsOrDefault(req.query.timeout, 1);
-      const results = await searchService.search(query, locale, limit, offset, timeout);
+      const filters = getSearchFilters(req);
+      const results = await searchService.search(query, locale, limit, offset, timeout, filters);
       res.json(results);
     } catch (e) {
+      if (e instanceof Error && /^(labels|numeric|invalid numericOp)/.test(e.message)) {
+        return res.status(400).json({ error: e.message });
+      }
       logger.error(e);
       res.status(500).json({ error: String(e) });
     }
@@ -209,13 +248,17 @@ export default function createResourceRouter(instance: ResourceInstance) {
       const timeout = parsePositiveSecondsOrDefault(req.query.timeout, 1);
       const omitBodyText = req.query.omitBodyText === "true";
       const omitAttrs = req.query.omitAttrs === "true";
-      const ids = await searchService.search(query, locale, limit, offset, timeout);
+      const filters = getSearchFilters(req);
+      const ids = await searchService.search(query, locale, limit, offset, timeout, filters);
       if (ids.length === 0) return res.json([]);
       const docs = await searchService.fetchDocuments(ids, omitBodyText, omitAttrs);
       const docMap = new Map(docs.map((d) => [d.id, d]));
       const orderedDocs = ids.map((id) => docMap.get(id)).filter((d) => d !== undefined);
       res.json(orderedDocs);
     } catch (e) {
+      if (e instanceof Error && /^(labels|numeric|invalid numericOp)/.test(e.message)) {
+        return res.status(400).json({ error: e.message });
+      }
       logger.error(e);
       res.status(500).json({ error: String(e) });
     }
@@ -238,12 +281,30 @@ export default function createResourceRouter(instance: ResourceInstance) {
   router.put("/:docId", async (req: Request, res: Response) => {
     try {
       const docId = req.params.docId;
-      const { text, timestamp, locale, attrs } = req.body || {};
+      const { text, timestamp, locale, attrs, labels, numericValue } = req.body || {};
       if (typeof text !== "string" || typeof timestamp !== "number")
         return res.status(400).json({ error: "text and timestamp are required" });
+      if (attrs !== null && typeof attrs !== "string")
+        return res.status(400).json({ error: "attrs must be a string or null" });
+      if (numericValue !== null && (typeof numericValue !== "number" || !Number.isFinite(numericValue)))
+        return res.status(400).json({ error: "numericValue must be a finite number or null" });
+      let normalizedLabels: string[];
+      try {
+        normalizedLabels = normalizeLabels(labels);
+      } catch (e) {
+        return res.status(400).json({ error: (e as Error).message });
+      }
       const taskId = await searchService.enqueueTask({
         type: "ADD",
-        payload: { docId, timestamp, bodyText: text, locale: locale || "en", attrs: attrs || null },
+        payload: {
+          docId,
+          timestamp,
+          bodyText: text,
+          locale: locale || "en",
+          attrs,
+          labels: normalizedLabels,
+          numericValue,
+        },
       });
       await respondToTask(req, res, taskId, "accepted");
     } catch (e) {

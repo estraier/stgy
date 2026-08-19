@@ -3,7 +3,11 @@ export type Document = {
   timestamp: number;
   bodyText: string;
   locale: string;
+  labels: string[];
+  numericValue: number | null;
 };
+
+export type SearchNumericOp = "eq" | "gt" | "gte" | "lt" | "lte";
 
 export type SearchInput = {
   query: string;
@@ -11,6 +15,9 @@ export type SearchInput = {
   offset?: number;
   limit?: number;
   timeout?: number;
+  labels?: string[];
+  numericOp?: SearchNumericOp;
+  numericValue?: number;
 };
 
 export type SearchCacheEntry = {

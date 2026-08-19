@@ -12,13 +12,83 @@ import {
   ManagementTask,
 } from "./taskQueue";
 import { IndexFileManager, IndexFileInfo } from "./indexFileManager";
-import { makeFtsQuery } from "../utils/query";
+import { makeFtsQuery, quoteFtsText } from "../utils/query";
 import { TaskWaitTimeoutError } from "../utils/taskWait";
 
 const DB_PAGE_SIZE_BYTES = 8192;
 const FTS_BLOCK_SIZE_BYTES = 8000;
 const WAL_MAX_SIZE_BYTES = 67108864;
 const BUSY_TIMEOUT_MS = 5000;
+export type NumericOp = "eq" | "gt" | "gte" | "lt" | "lte";
+
+export type SearchFilters = {
+  labels?: string[];
+  numericOp?: NumericOp;
+  numericValue?: number;
+};
+
+export function normalizeLabels(labels: unknown): string[] {
+  if (!Array.isArray(labels)) throw new Error("labels must be an array");
+  const unique = new Set<string>();
+  for (const label of labels) {
+    if (typeof label !== "string" || label.length === 0) {
+      throw new Error("labels must contain non-empty strings");
+    }
+    for (const ch of label) {
+      if (ch === " ") continue;
+      if (/^[\p{Cc}\p{Cf}\p{Cs}\p{Cn}\p{Z}]$/u.test(ch)) {
+        throw new Error("labels may contain only printable characters and U+0020 SPACE");
+      }
+    }
+    unique.add(label);
+  }
+  return Array.from(unique).sort();
+}
+
+function numericSqlOperator(op: NumericOp): string {
+  switch (op) {
+    case "eq":
+      return "=";
+    case "gt":
+      return ">";
+    case "gte":
+      return ">=";
+    case "lt":
+      return "<";
+    case "lte":
+      return "<=";
+  }
+  throw new Error(`invalid numericOp: ${op}`);
+}
+
+export function buildSearchSql(
+  filteringPhraseCount: number,
+  labelCount: number,
+  numericOp: NumericOp | undefined,
+  recordContents: boolean,
+): string {
+  let sql = `SELECT t.external_id
+               FROM docs
+               CROSS JOIN id_tuples t
+              WHERE docs MATCH ?
+                AND t.internal_id = docs.rowid`;
+  if (recordContents) {
+    for (let i = 0; i < filteringPhraseCount; i++) {
+      sql += ` AND instr(char(10) || docs.tokens || char(10), char(10) || ? || char(10)) > 0`;
+    }
+  }
+  for (let i = 0; i < labelCount; i++) {
+    sql += ` AND EXISTS (
+      SELECT 1 FROM json_each(t.labels_json) j
+       WHERE j.value = ? COLLATE BINARY
+    )`;
+  }
+  if (numericOp !== undefined) {
+    sql += ` AND t.numeric_value ${numericSqlOperator(numericOp)} ?`;
+  }
+  sql += ` ORDER BY docs.rowid ASC LIMIT ?`;
+  return sql;
+}
 
 class AsyncRWLock {
   private activeReaders = 0;
@@ -137,10 +207,17 @@ export class SearchService {
     await this.mgmtQueue.open();
     await this.docQueue.open();
 
-    const files = await this.fileManager.listIndexFiles();
+    const files = await this.fileManager.listIndexFiles(true);
     if (files.length > 0) this.latestShardTimestamp = files[0].startTimestamp;
     for (const file of files) {
       if (this.isClosing) break;
+      if (!file.isHealthy) {
+        this.logger.warn(
+          { shard: file.filename },
+          "Skipping unhealthy or incompatible search shard",
+        );
+        continue;
+      }
       await this.getShard(file.startTimestamp);
     }
 
@@ -221,9 +298,19 @@ export class SearchService {
   }
 
   async enqueueTask(task: SearchTask): Promise<string> {
-    return task.type === "ADD" || task.type === "REMOVE"
-      ? this.docQueue.enqueue(task)
-      : this.mgmtQueue.enqueue(task);
+    if (task.type === "ADD") {
+      if (task.payload.numericValue !== null && !Number.isFinite(task.payload.numericValue)) {
+        throw new Error("numericValue must be a finite number or null");
+      }
+      return this.docQueue.enqueue({
+        type: "ADD",
+        payload: {
+          ...task.payload,
+          labels: normalizeLabels(task.payload.labels),
+        },
+      });
+    }
+    return task.type === "REMOVE" ? this.docQueue.enqueue(task) : this.mgmtQueue.enqueue(task);
   }
 
   async waitTask(id: string, timeoutMs = 5000): Promise<void> {
@@ -248,8 +335,19 @@ export class SearchService {
     limit = 100,
     offset = 0,
     timeout = 1,
+    filters: SearchFilters = {},
   ): Promise<string[]> {
     if (!this.isOpen) throw new Error("Service not open");
+    const labels = normalizeLabels(filters.labels ?? []);
+    const hasNumericFilter = filters.numericOp !== undefined || filters.numericValue !== undefined;
+    if (hasNumericFilter) {
+      if (filters.numericOp === undefined || filters.numericValue === undefined) {
+        throw new Error("numericOp and numericValue must be specified together");
+      }
+      if (!Number.isFinite(filters.numericValue)) {
+        throw new Error("numericValue must be a finite number");
+      }
+    }
     const releaseRead = await this.serviceLock.acquireRead();
     try {
       const sortedTs = Array.from(this.shards.keys()).sort((a, b) => b - a);
@@ -275,16 +373,30 @@ export class SearchService {
         const { ftsQuery, filteringPhrases } = ftsQueryCache.get(shard.recordPositions)!;
         if (!ftsQuery) continue;
 
+        let combinedFtsQuery = `tokens : (${ftsQuery})`;
+        for (const label of labels) {
+          combinedFtsQuery += ` AND labels : ${quoteFtsText(label)}`;
+        }
+
         const db = this.selectReader(shard);
-        let sql = `SELECT t.external_id FROM docs JOIN id_tuples t ON docs.rowid = t.internal_id WHERE docs MATCH ?`;
-        const params: (string | number)[] = [ftsQuery];
+        const sql = buildSearchSql(
+          filteringPhrases.length,
+          labels.length,
+          hasNumericFilter ? filters.numericOp : undefined,
+          shard.recordContents,
+        );
+        const params: (string | number)[] = [combinedFtsQuery];
         if (shard.recordContents) {
           for (const phrase of filteringPhrases) {
-            sql += ` AND docs.tokens LIKE ?`;
-            params.push(`%${phrase}%`);
+            params.push(phrase);
           }
         }
-        sql += ` ORDER BY docs.rowid ASC LIMIT ?`;
+        for (const label of labels) {
+          params.push(label);
+        }
+        if (hasNumericFilter) {
+          params.push(filters.numericValue!);
+        }
         params.push(needed - results.length);
         const rows = await db.all<{ external_id: string }>(sql, params);
         rows.forEach((r) => results.push(r.external_id));
@@ -299,7 +411,13 @@ export class SearchService {
     if (!this.isOpen) throw new Error("Service not open");
     const releaseRead = await this.serviceLock.acquireRead();
     try {
-      const results: { id: string; bodyText: string | null; attrs: string | null }[] = [];
+      const results: {
+        id: string;
+        bodyText: string | null;
+        attrs: string | null;
+        labels: string[];
+        numericValue: number | null;
+      }[] = [];
       const needed = new Set(ids);
       const sortedTs = Array.from(this.shards.keys()).sort((a, b) => b - a);
       for (const ts of sortedTs) {
@@ -308,14 +426,30 @@ export class SearchService {
         const db = this.selectReader(shard);
         const batch = Array.from(needed);
         const placeholders = batch.map(() => "?").join(",");
-        const rows = await db.all<{ id: string; bodyText: string | null; attrs: string | null }>(
-          `SELECT t.external_id as id, ${omitBodyText ? "NULL" : "d.tokens"} as bodyText, ${omitAttrs ? "NULL" : "e.attrs"} as attrs
+        const rows = await db.all<{
+          id: string;
+          bodyText: string | null;
+          attrs: string | null;
+          labelsJson: string;
+          numericValue: number | null;
+        }>(
+          `SELECT t.external_id as id,
+                  ${omitBodyText ? "NULL" : "d.tokens"} as bodyText,
+                  ${omitAttrs ? "NULL" : "e.attrs"} as attrs,
+                  t.labels_json as labelsJson,
+                  t.numeric_value as numericValue
            FROM id_tuples t JOIN docs d ON t.internal_id = d.rowid LEFT JOIN extra_attrs e ON t.external_id = e.external_id
            WHERE t.external_id IN (${placeholders})`,
           batch,
         );
         rows.forEach((r) => {
-          results.push(r);
+          results.push({
+            id: r.id,
+            bodyText: r.bodyText === null ? null : r.bodyText.replace(/\n/g, " "),
+            attrs: r.attrs,
+            labels: JSON.parse(r.labelsJson) as string[],
+            numericValue: r.numericValue,
+          });
           needed.delete(r.id);
         });
       }
@@ -424,7 +558,9 @@ export class SearchService {
         task.payload.timestamp,
         task.payload.bodyText,
         task.payload.locale,
-        task.payload.attrs ?? null,
+        task.payload.attrs,
+        task.payload.labels,
+        task.payload.numericValue,
       );
     } else if (task.type === "REMOVE") {
       await this.removeDocument(task.payload.docId, task.payload.timestamp);
@@ -462,7 +598,12 @@ export class SearchService {
     bodyText: string,
     locale: string,
     attrs: string | null,
+    labelsInput: string[],
+    numericValue: number | null,
   ) {
+    if (numericValue !== null && !Number.isFinite(numericValue)) {
+      throw new Error("numericValue must be a finite number or null");
+    }
     const bucketTs = this.fileManager.getBucketTimestamp(timestamp);
     const shard = await this.getShard(bucketTs);
     if (shard.pendingTxCount === 0) {
@@ -470,8 +611,27 @@ export class SearchService {
       shard.lastTxStartTime = Date.now();
     }
     shard.pendingTxCount++;
-    const existing = await shard.writer.get<{ internal_id: number }>(
-      "SELECT internal_id FROM id_tuples WHERE external_id = ?",
+    const labels = normalizeLabels(labelsInput);
+    const labelsJson = JSON.stringify(labels);
+    const labelsText = labels.join("\n");
+    const existing = await shard.writer.get<{
+      internal_id: number;
+      labels_json: string;
+      numeric_value: number | null;
+      tokens: string | null;
+      labels: string | null;
+      attrs: string | null;
+    }>(
+      `SELECT t.internal_id,
+              t.labels_json,
+              t.numeric_value,
+              d.tokens,
+              d.labels,
+              e.attrs
+         FROM id_tuples t
+         JOIN docs d ON d.rowid = t.internal_id
+         LEFT JOIN extra_attrs e ON e.external_id = t.external_id
+        WHERE t.external_id = ?`,
       [docId],
     );
     const internalId = existing
@@ -483,21 +643,40 @@ export class SearchService {
         )?.min_id ?? this.config.initialDocumentId) - 1;
     const tokens = (
       await this.makeIndexableTokens(bodyText, locale, this.config.maxDocumentTokenCount)
-    ).join(" ");
-    await shard.writer.run("INSERT OR REPLACE INTO docs (rowid, tokens) VALUES (?, ?)", [
-      internalId,
-      tokens,
-    ]);
-    if (!existing)
-      await shard.writer.run("INSERT INTO id_tuples (internal_id, external_id) VALUES (?, ?)", [
-        internalId,
-        docId,
-      ]);
-    if (attrs)
+    ).join("\n");
+    const ftsChanged =
+      !existing ||
+      !shard.recordContents ||
+      existing.tokens !== tokens ||
+      existing.labels !== labelsText;
+    if (ftsChanged) {
+      await shard.writer.run(
+        "INSERT OR REPLACE INTO docs (rowid, tokens, labels) VALUES (?, ?, ?)",
+        [internalId, tokens, labelsText],
+      );
+    }
+    if (!existing) {
+      await shard.writer.run(
+        "INSERT INTO id_tuples (internal_id, external_id, labels_json, numeric_value) VALUES (?, ?, ?, ?)",
+        [internalId, docId, labelsJson, numericValue],
+      );
+    } else if (
+      existing.labels_json !== labelsJson ||
+      existing.numeric_value !== numericValue
+    ) {
+      await shard.writer.run(
+        "UPDATE id_tuples SET labels_json = ?, numeric_value = ? WHERE internal_id = ?",
+        [labelsJson, numericValue, internalId],
+      );
+    }
+    if (attrs !== null && existing?.attrs !== attrs) {
       await shard.writer.run(
         "INSERT OR REPLACE INTO extra_attrs (external_id, attrs) VALUES (?, ?)",
         [docId, attrs],
       );
+    } else if (attrs === null && existing?.attrs !== null && existing?.attrs !== undefined) {
+      await shard.writer.run("DELETE FROM extra_attrs WHERE external_id = ?", [docId]);
+    }
   }
 
   protected async removeDocument(docId: string, timestamp: number) {
@@ -608,17 +787,37 @@ export class SearchService {
     const tempDb = await Database.open(tempPath);
     await tempDb.exec(`PRAGMA page_size = ${DB_PAGE_SIZE_BYTES};`);
     await this.setupSchema(tempDb, shard.recordPositions, shard.recordContents);
-    const rows = await shard.writer.all<{ external_id: string; tokens: string; attrs: string }>(
-      `SELECT t.external_id, d.tokens, e.attrs FROM id_tuples t JOIN docs d ON t.internal_id = d.rowid LEFT JOIN extra_attrs e ON t.external_id = e.external_id ORDER BY ${useExternalId ? "t.external_id ASC" : "t.internal_id DESC"}`,
+    const rows = await shard.writer.all<{
+      external_id: string;
+      tokens: string;
+      labels: string;
+      labels_json: string;
+      numeric_value: number | null;
+      attrs: string | null;
+    }>(
+      `SELECT t.external_id,
+              d.tokens,
+              d.labels,
+              t.labels_json,
+              t.numeric_value,
+              e.attrs
+         FROM id_tuples t
+         JOIN docs d ON t.internal_id = d.rowid
+         LEFT JOIN extra_attrs e ON t.external_id = e.external_id
+        ORDER BY ${useExternalId ? "t.external_id ASC" : "t.internal_id DESC"}`,
     );
     await tempDb.exec("BEGIN");
     let currentId = newInitialId;
     for (const row of rows) {
-      await tempDb.run("INSERT INTO id_tuples (internal_id, external_id) VALUES (?, ?)", [
+      await tempDb.run(
+        "INSERT INTO id_tuples (internal_id, external_id, labels_json, numeric_value) VALUES (?, ?, ?, ?)",
+        [currentId, row.external_id, row.labels_json, row.numeric_value],
+      );
+      await tempDb.run("INSERT INTO docs (rowid, tokens, labels) VALUES (?, ?, ?)", [
         currentId,
-        row.external_id,
+        row.tokens,
+        row.labels,
       ]);
-      await tempDb.run("INSERT INTO docs (rowid, tokens) VALUES (?, ?)", [currentId, row.tokens]);
       if (row.attrs)
         await tempDb.run("INSERT INTO extra_attrs (external_id, attrs) VALUES (?, ?)", [
           row.external_id,
@@ -679,18 +878,17 @@ export class SearchService {
       await writer.exec(`PRAGMA page_size = ${DB_PAGE_SIZE_BYTES};`);
       await this.setupStaticPragmas(writer);
       const meta = await writer
-        .get<{
-          record_positions: number;
-          record_contents: number;
-        }>(
-          "SELECT (SELECT v FROM fts_meta WHERE k = 'record_positions') as record_positions, (SELECT v FROM fts_meta WHERE k = 'record_contents') as record_contents",
+        .get<{ record_positions: number; record_contents: number }>(
+          `SELECT
+             (SELECT v FROM fts_meta WHERE k = 'record_positions') as record_positions,
+             (SELECT v FROM fts_meta WHERE k = 'record_contents') as record_contents`,
         )
         .catch(() => null);
-      let rp =
+      const rp =
         meta?.record_positions !== undefined
           ? !!meta.record_positions
           : this.config.recordPositions;
-      let rc =
+      const rc =
         meta?.record_contents !== undefined ? !!meta.record_contents : this.config.recordContents;
       if (!meta) await this.setupSchema(writer, rp, rc);
       const shard: ShardConnection = {
@@ -733,8 +931,9 @@ export class SearchService {
   }
 
   private async updateShardConfigsInternal() {
-    const files = await this.fileManager.listIndexFiles();
+    const files = await this.fileManager.listIndexFiles(true);
     for (const f of files) {
+      if (!f.isHealthy) continue;
       if (!this.shards.has(f.startTimestamp)) {
         await this.getShard(f.startTimestamp);
       }
@@ -802,15 +1001,28 @@ export class SearchService {
   private async setupSchema(db: Database, rp: boolean, rc: boolean) {
     await db.exec("BEGIN");
     try {
-      await db.exec(`CREATE TABLE IF NOT EXISTS id_tuples (internal_id INTEGER PRIMARY KEY, external_id TEXT UNIQUE);
+      await db.exec(`CREATE TABLE IF NOT EXISTS id_tuples (
+                        internal_id INTEGER PRIMARY KEY,
+                        external_id TEXT UNIQUE,
+                        labels_json TEXT NOT NULL DEFAULT '[]',
+                        numeric_value REAL
+                      );
                       CREATE TABLE IF NOT EXISTS extra_attrs (external_id TEXT PRIMARY KEY, attrs TEXT);
                       CREATE TABLE IF NOT EXISTS fts_meta (k TEXT PRIMARY KEY, v INTEGER);`);
       await db.run(
-        `INSERT OR IGNORE INTO fts_meta (k, v) VALUES ('record_positions', ?), ('record_contents', ?);`,
+        `INSERT OR IGNORE INTO fts_meta (k, v) VALUES
+          ('record_positions', ?),
+          ('record_contents', ?);`,
         [rp ? 1 : 0, rc ? 1 : 0],
       );
       await db.exec(
-        `CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5(tokens, tokenize = "unicode61 categories 'L* N* Co M* P* S*' remove_diacritics 0", detail = '${rp ? "full" : "none"}', ${rc ? "" : "content='',"});`,
+        `CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5(
+          tokens,
+          labels,
+          tokenize = "unicode61 categories 'L* N* Co M* P* S*' remove_diacritics 0 tokenchars ' '",
+          detail = '${rp ? "full" : "column"}',
+          ${rc ? "" : "content='', contentless_delete=1,"}
+        );`,
       );
       await db.exec(`INSERT INTO docs(docs, rank) VALUES('pgsz', ${FTS_BLOCK_SIZE_BYTES});`);
       await db.exec("COMMIT");
