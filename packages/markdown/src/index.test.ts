@@ -23,6 +23,8 @@ import {
   deserializeMdNodes,
   countPseudoTokens,
   sliceByPseudoTokens,
+  makeKwicData,
+  mdMakeKwicData,
   MdNode,
 } from "./index";
 
@@ -3602,6 +3604,282 @@ describe("sliceByPseudoTokens", () => {
     expect(sliceByPseudoTokens(text, 0, 2)).toBe("A😊");
     expect(sliceByPseudoTokens(text, 1, 3)).toBe("😊");
     expect(sliceByPseudoTokens(text, 2, 4)).toBe("😊B");
+  });
+});
+
+describe("KWIC", () => {
+  const options = { maxSegments: 4, contextSize: 3 };
+
+  it("highlights the full title and extracts body context", () => {
+    expect(
+      makeKwicData(
+        "Bicycle and Train",
+        "Before bicycle after",
+        ["bicycle"],
+        options,
+      ),
+    ).toStrictEqual({
+      version: 1,
+      title: [
+        { type: "highlight", text: "Bicycle" },
+        { type: "text", text: " and Train" },
+      ],
+      segments: [
+        {
+          type: "segment",
+          startPosition: 4,
+          endPosition: 17,
+          isStart: false,
+          isEnd: false,
+          children: [
+            { type: "text", text: "re " },
+            { type: "highlight", text: "bicycle" },
+            { type: "text", text: " af" },
+          ],
+        },
+      ],
+    });
+  });
+
+  it("separates a Markdown title before rendering the body as plain text", () => {
+    const kwic = mdMakeKwicData(
+      "# Bicycle **Title**\n\nBefore **bicycle** after",
+      ["bicycle"],
+      options,
+    );
+    expect(kwic.title).toStrictEqual([
+      { type: "highlight", text: "Bicycle" },
+      { type: "text", text: " Title" },
+    ]);
+    expect(kwic.segments).toStrictEqual([
+      {
+        type: "segment",
+        startPosition: 4,
+        endPosition: 17,
+        isStart: false,
+        isEnd: false,
+        children: [
+          { type: "text", text: "re " },
+          { type: "highlight", text: "bicycle" },
+          { type: "text", text: " af" },
+        ],
+      },
+    ]);
+  });
+
+  it("uses the whole Markdown body when no H1 or H2 title exists", () => {
+    const kwic = mdMakeKwicData(
+      "### Minor heading\n\nBody keyword here",
+      ["keyword"],
+      { maxSegments: 1, contextSize: 2 },
+    );
+    expect(kwic.title).toBeNull();
+    expect(kwic.segments).toHaveLength(1);
+    expect(kwic.segments[0]!.children).toContainEqual({
+      type: "highlight",
+      text: "keyword",
+    });
+  });
+
+  it("measures context in pseudo tokens so CJK context uses fewer characters", () => {
+    const ascii = makeKwicData(null, "ABCDEKEYFGHIJ", ["KEY"], {
+      maxSegments: 1,
+      contextSize: 3,
+    });
+    expect(ascii.segments[0]!.children).toStrictEqual([
+      { type: "text", text: "CDE" },
+      { type: "highlight", text: "KEY" },
+      { type: "text", text: "FGH" },
+    ]);
+
+    const japanese = makeKwicData(null, "あいうKEYえおか", ["KEY"], {
+      maxSegments: 1,
+      contextSize: 3,
+    });
+    expect(japanese.segments[0]!.children).toStrictEqual([
+      { type: "text", text: "いう" },
+      { type: "highlight", text: "KEY" },
+      { type: "text", text: "えお" },
+    ]);
+  });
+
+  it("extends a segment boundary through a highlight that would be cut", () => {
+    const kwic = makeKwicData(null, "XabcLONGKEYdef", ["X", "LONGKEY"], {
+      maxSegments: 1,
+      contextSize: 4,
+    });
+    expect(kwic.segments).toStrictEqual([
+      {
+        type: "segment",
+        startPosition: 0,
+        endPosition: 11,
+        isStart: true,
+        isEnd: false,
+        children: [
+          { type: "highlight", text: "X" },
+          { type: "text", text: "abc" },
+          { type: "highlight", text: "LONGKEY" },
+        ],
+      },
+    ]);
+  });
+
+  it("merges overlapping body segments and highlights every keyword inside them", () => {
+    const kwic = makeKwicData(null, "aaaKEYbbbKEYccc", ["KEY"], {
+      maxSegments: 4,
+      contextSize: 3,
+    });
+    expect(kwic.segments).toStrictEqual([
+      {
+        type: "segment",
+        startPosition: 0,
+        endPosition: 15,
+        isStart: true,
+        isEnd: true,
+        children: [
+          { type: "text", text: "aaa" },
+          { type: "highlight", text: "KEY" },
+          { type: "text", text: "bbb" },
+          { type: "highlight", text: "KEY" },
+          { type: "text", text: "ccc" },
+        ],
+      },
+    ]);
+  });
+
+  it("limits anchor use per keyword and selects anchors round-robin", () => {
+    const kwic = makeKwicData(
+      null,
+      "alpha--alpha--alpha--beta--beta--beta",
+      ["alpha", "beta"],
+      { maxSegments: 4, contextSize: 0 },
+    );
+    expect(kwic.segments.map((segment) => segment.children)).toStrictEqual([
+      [{ type: "highlight", text: "alpha" }],
+      [{ type: "highlight", text: "alpha" }],
+      [{ type: "highlight", text: "beta" }],
+      [{ type: "highlight", text: "beta" }],
+    ]);
+  });
+
+  it("folds case, NFKC compatibility forms, and Latin diacritics for matching", () => {
+    const kwic = makeKwicData(
+      "Ｃrème brûlée",
+      "xx Ｃrème yy",
+      ["creme"],
+      { maxSegments: 1, contextSize: 3 },
+    );
+    expect(kwic.title).toStrictEqual([
+      { type: "highlight", text: "Ｃrème" },
+      { type: "text", text: " brûlée" },
+    ]);
+    expect(kwic.segments[0]!.children).toStrictEqual([
+      { type: "text", text: "xx " },
+      { type: "highlight", text: "Ｃrème" },
+      { type: "text", text: " yy" },
+    ]);
+  });
+
+  it("maps compatibility clusters back to the original highlight range", () => {
+    const kwic = makeKwicData("ｶﾞ", "", ["ガ"], {
+      maxSegments: 1,
+      contextSize: 0,
+    });
+    expect(kwic.title).toStrictEqual([
+      { type: "highlight", text: "ｶﾞ" },
+    ]);
+  });
+
+  it("merges overlapping keyword highlights instead of nesting them", () => {
+    const kwic = makeKwicData("foobar", "", ["foo", "foobar"], {
+      maxSegments: 1,
+      contextSize: 3,
+    });
+    expect(kwic.title).toStrictEqual([
+      { type: "highlight", text: "foobar" },
+    ]);
+    expect(kwic.segments).toStrictEqual([]);
+  });
+
+  it("uses Unicode code-point positions instead of UTF-16 code units", () => {
+    const kwic = makeKwicData(null, "A😊BKEYC", ["KEY"], {
+      maxSegments: 1,
+      contextSize: 3,
+    });
+    expect(kwic.segments[0]).toMatchObject({
+      startPosition: 1,
+      endPosition: 7,
+      isStart: false,
+      isEnd: true,
+    });
+    expect(kwic.segments[0]!.children).toStrictEqual([
+      { type: "text", text: "😊B" },
+      { type: "highlight", text: "KEY" },
+      { type: "text", text: "C" },
+    ]);
+  });
+
+  it("marks segments that touch the beginning and end of the body", () => {
+    const kwic = makeKwicData(null, "KEY", ["KEY"], {
+      maxSegments: 1,
+      contextSize: 30,
+    });
+    expect(kwic.segments[0]).toStrictEqual({
+      type: "segment",
+      startPosition: 0,
+      endPosition: 3,
+      isStart: true,
+      isEnd: true,
+      children: [{ type: "highlight", text: "KEY" }],
+    });
+  });
+
+  it("deduplicates equivalent keywords and ignores empty keywords", () => {
+    const kwic = makeKwicData(
+      null,
+      "KEY--key--ＫＥＹ",
+      ["KEY", "key", "ＫＥＹ", "", "   "],
+      { maxSegments: 4, contextSize: 0 },
+    );
+    expect(kwic.segments).toHaveLength(3);
+    expect(
+      kwic.segments.flatMap((segment) =>
+        segment.children.filter((child) => child.type === "highlight"),
+      ),
+    ).toStrictEqual([
+      { type: "highlight", text: "KEY" },
+      { type: "highlight", text: "key" },
+      { type: "highlight", text: "ＫＥＹ" },
+    ]);
+  });
+
+  it("allows zero segment/context limits without special AST values", () => {
+    expect(
+      makeKwicData("KEY", "KEY", ["KEY"], {
+        maxSegments: 0,
+        contextSize: 0,
+      }),
+    ).toStrictEqual({
+      version: 1,
+      title: [{ type: "highlight", text: "KEY" }],
+      segments: [],
+    });
+
+    const keywordOnly = makeKwicData(null, "xxKEYyy", ["KEY"], {
+      maxSegments: 1,
+      contextSize: 0,
+    });
+    expect(keywordOnly.segments[0]!.children).toStrictEqual([
+      { type: "highlight", text: "KEY" },
+    ]);
+  });
+
+  it("produces plain JSON data that round-trips through JSON serialization", () => {
+    const kwic = makeKwicData("KEY title", "before KEY after", ["KEY"], {
+      maxSegments: 1,
+      contextSize: 2,
+    });
+    expect(JSON.parse(JSON.stringify(kwic))).toStrictEqual(kwic);
   });
 });
 

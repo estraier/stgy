@@ -11,6 +11,34 @@ export type MdElementNode = {
 export type MdMediaElement = MdElementNode & { tag: "img" | "video" };
 export type MdNode = MdTextNode | MdElementNode;
 
+export type KwicInlineNode =
+  | { type: "text"; text: string }
+  | { type: "highlight"; text: string };
+
+export type KwicSegmentNode = {
+  type: "segment";
+  /** Unicode code-point offset in the plain-text body. */
+  startPosition: number;
+  /** Exclusive Unicode code-point offset in the plain-text body. */
+  endPosition: number;
+  isStart: boolean;
+  isEnd: boolean;
+  children: KwicInlineNode[];
+};
+
+export type KwicData = {
+  version: 1;
+  title: KwicInlineNode[] | null;
+  segments: KwicSegmentNode[];
+};
+
+export type KwicOptions = {
+  /** Maximum number of non-overlapping body segments. */
+  maxSegments: number;
+  /** Context on each side of an anchor match, measured in pseudo tokens. */
+  contextSize: number;
+};
+
 function isMediaElement(n: MdNode): n is MdMediaElement {
   return n.type === "element" && (n.tag === "img" || n.tag === "video");
 }
@@ -5141,4 +5169,388 @@ export function sliceByPseudoTokens(
   }
   if (!started) return "";
   return text.slice(startIdx, endIdx);
+}
+
+type KwicRange = { start: number; end: number };
+type KwicFoldMapEntry = { start: number; end: number };
+type KwicKeywordMatches = { matches: KwicRange[] };
+
+function kwicCodePointWeight(ch: string): number {
+  const cp = ch.codePointAt(0);
+  if (cp == null) return 0;
+  return cp < 0x2000 ? 1 : 2;
+}
+
+function kwicFoldFragment(text: string): string {
+  return text
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[\p{Cc}\p{Cf}]+/gu, " ")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .normalize("NFC");
+}
+
+function isKwicClusterContinuation(ch: string): boolean {
+  const cp = ch.codePointAt(0);
+  if (cp == null) return false;
+  return (
+    /\p{M}/u.test(ch) ||
+    cp === 0xfe0e ||
+    cp === 0xfe0f ||
+    (cp >= 0x1f3fb && cp <= 0x1f3ff) ||
+    cp === 0xff9e ||
+    cp === 0xff9f
+  );
+}
+
+/**
+ * Folds text similarly to the TTTS tokenizer while retaining a mapping back to
+ * Unicode code-point offsets in the original string.  Clustering combining
+ * marks before NFKC keeps common composed/compatibility forms highlightable as
+ * one original range.
+ */
+function kwicFoldTextWithMap(text: string): {
+  folded: string;
+  map: KwicFoldMapEntry[];
+} {
+  const chars = Array.from(text);
+  let folded = "";
+  const map: KwicFoldMapEntry[] = [];
+
+  for (let start = 0; start < chars.length; ) {
+    let end = start + 1;
+    while (end < chars.length && isKwicClusterContinuation(chars[end]!)) {
+      end += 1;
+    }
+    while (end + 1 < chars.length && chars[end] === "\u200d") {
+      end += 2;
+      while (end < chars.length && isKwicClusterContinuation(chars[end]!)) {
+        end += 1;
+      }
+    }
+
+    const fragment = kwicFoldFragment(chars.slice(start, end).join(""));
+    folded += fragment;
+    for (let i = 0; i < fragment.length; i += 1) {
+      map.push({ start, end });
+    }
+    start = end;
+  }
+
+  return { folded, map };
+}
+
+function kwicFoldKeyword(keyword: string): string {
+  return kwicFoldFragment(keyword).trim();
+}
+
+function dedupeKwicKeywords(keywords: readonly string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const keyword of keywords) {
+    const folded = kwicFoldKeyword(keyword);
+    if (!folded || seen.has(folded)) continue;
+    seen.add(folded);
+    out.push(folded);
+  }
+  return out;
+}
+
+function findKwicMatches(
+  text: string,
+  foldedKeywords: readonly string[],
+): KwicKeywordMatches[] {
+  if (foldedKeywords.length === 0) return [];
+  const { folded, map } = kwicFoldTextWithMap(text);
+  const out: KwicKeywordMatches[] = [];
+
+  for (const keyword of foldedKeywords) {
+    const matches: KwicRange[] = [];
+    const seen = new Set<string>();
+    let from = 0;
+    while (from <= folded.length - keyword.length) {
+      const index = folded.indexOf(keyword, from);
+      if (index < 0) break;
+      const first = map[index];
+      const last = map[index + keyword.length - 1];
+      if (first && last && first.start < last.end) {
+        const key = `${first.start}:${last.end}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          matches.push({ start: first.start, end: last.end });
+        }
+      }
+      from = index + 1;
+    }
+    out.push({ matches });
+  }
+  return out;
+}
+
+function mergeKwicHighlightRanges(ranges: readonly KwicRange[]): KwicRange[] {
+  if (ranges.length === 0) return [];
+  const sorted = [...ranges].sort((a, b) => a.start - b.start || a.end - b.end);
+  const out: KwicRange[] = [];
+  for (const range of sorted) {
+    const last = out[out.length - 1];
+    if (last && range.start < last.end) {
+      if (range.end > last.end) last.end = range.end;
+    } else {
+      out.push({ ...range });
+    }
+  }
+  return out;
+}
+
+function mergeKwicSegmentRanges(ranges: readonly KwicRange[]): KwicRange[] {
+  if (ranges.length === 0) return [];
+  const sorted = [...ranges].sort((a, b) => a.start - b.start || a.end - b.end);
+  const out: KwicRange[] = [];
+  for (const range of sorted) {
+    const last = out[out.length - 1];
+    if (last && range.start <= last.end) {
+      if (range.end > last.end) last.end = range.end;
+    } else {
+      out.push({ ...range });
+    }
+  }
+  return out;
+}
+
+function kwicCodePointOffsets(text: string): number[] {
+  const offsets = [0];
+  let offset = 0;
+  for (const ch of text) {
+    offset += ch.length;
+    offsets.push(offset);
+  }
+  return offsets;
+}
+
+function makeKwicInlineNodes(
+  text: string,
+  start: number,
+  end: number,
+  highlights: readonly KwicRange[],
+): KwicInlineNode[] {
+  const offsets = kwicCodePointOffsets(text);
+  const out: KwicInlineNode[] = [];
+  let cursor = start;
+
+  const push = (type: "text" | "highlight", from: number, to: number) => {
+    if (to <= from) return;
+    const value = text.slice(offsets[from]!, offsets[to]!);
+    if (!value) return;
+    const last = out[out.length - 1];
+    if (last && last.type === type) {
+      last.text += value;
+    } else {
+      out.push({ type, text: value });
+    }
+  };
+
+  for (const highlight of highlights) {
+    if (highlight.end <= start) continue;
+    if (highlight.start >= end) break;
+    const hs = Math.max(start, highlight.start);
+    const he = Math.min(end, highlight.end);
+    push("text", cursor, hs);
+    push("highlight", hs, he);
+    cursor = Math.max(cursor, he);
+  }
+  push("text", cursor, end);
+  return out;
+}
+
+function kwicContextStart(
+  chars: readonly string[],
+  position: number,
+  contextSize: number,
+): number {
+  let used = 0;
+  let pos = position;
+  while (pos > 0 && used < contextSize) {
+    pos -= 1;
+    used += kwicCodePointWeight(chars[pos]!);
+  }
+  return pos;
+}
+
+function kwicContextEnd(
+  chars: readonly string[],
+  position: number,
+  contextSize: number,
+): number {
+  let used = 0;
+  let pos = position;
+  while (pos < chars.length && used < contextSize) {
+    used += kwicCodePointWeight(chars[pos]!);
+    pos += 1;
+  }
+  return pos;
+}
+
+function extendKwicRangeToHighlightBoundaries(
+  range: KwicRange,
+  highlights: readonly KwicRange[],
+): KwicRange {
+  let start = range.start;
+  let end = range.end;
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const highlight of highlights) {
+      if (highlight.start < start && start < highlight.end) {
+        start = highlight.start;
+        changed = true;
+      }
+      if (highlight.start < end && end < highlight.end) {
+        end = highlight.end;
+        changed = true;
+      }
+    }
+  }
+  return { start, end };
+}
+
+function rangeContainsKwicMatch(range: KwicRange, match: KwicRange): boolean {
+  return range.start <= match.start && match.end <= range.end;
+}
+
+function normalizeKwicNonNegativeInteger(value: number): number {
+  return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+}
+
+function makeKwicSegmentRanges(
+  bodyText: string,
+  keywordMatches: readonly KwicKeywordMatches[],
+  highlights: readonly KwicRange[],
+  options: KwicOptions,
+): KwicRange[] {
+  const maxSegments = normalizeKwicNonNegativeInteger(options.maxSegments);
+  const contextSize = normalizeKwicNonNegativeInteger(options.contextSize);
+  if (maxSegments === 0 || keywordMatches.length === 0) return [];
+
+  // A keyword may anchor at most ceil(maxSegments / keywordCount) segments.
+  const quota = Math.ceil(maxSegments / keywordMatches.length);
+  const chars = Array.from(bodyText);
+  const nextIndexes = keywordMatches.map(() => 0);
+  const anchorCounts = keywordMatches.map(() => 0);
+  let segments: KwicRange[] = [];
+
+  let progressed = true;
+  while (segments.length < maxSegments && progressed) {
+    progressed = false;
+    for (
+      let keywordIndex = 0;
+      keywordIndex < keywordMatches.length;
+      keywordIndex += 1
+    ) {
+      if (segments.length >= maxSegments) break;
+      if (anchorCounts[keywordIndex]! >= quota) continue;
+
+      const matches = keywordMatches[keywordIndex]!.matches;
+      let match: KwicRange | undefined;
+      while (nextIndexes[keywordIndex]! < matches.length) {
+        const candidate = matches[nextIndexes[keywordIndex]!]!;
+        nextIndexes[keywordIndex] = nextIndexes[keywordIndex]! + 1;
+        if (
+          segments.some((segment) => rangeContainsKwicMatch(segment, candidate))
+        ) {
+          continue;
+        }
+        match = candidate;
+        break;
+      }
+      if (!match) continue;
+
+      progressed = true;
+      anchorCounts[keywordIndex] = anchorCounts[keywordIndex]! + 1;
+      let candidateRange: KwicRange = {
+        start: kwicContextStart(chars, match.start, contextSize),
+        end: kwicContextEnd(chars, match.end, contextSize),
+      };
+      candidateRange = extendKwicRangeToHighlightBoundaries(
+        candidateRange,
+        highlights,
+      );
+      segments = mergeKwicSegmentRanges([...segments, candidateRange]);
+    }
+  }
+
+  return segments.slice(0, maxSegments);
+}
+
+/**
+ * Builds JSON-serializable KWIC data from a title and a plain-text body.
+ * `contextSize` is measured in the same pseudo-token units used by
+ * `countPseudoTokens`/`sliceByPseudoTokens`, and applies independently to each
+ * side of the anchor keyword.  Segment positions are Unicode code-point
+ * offsets in `bodyText`, with `endPosition` exclusive.
+ */
+export function makeKwicData(
+  title: string | null,
+  bodyText: string,
+  keywords: readonly string[],
+  options: KwicOptions,
+): KwicData {
+  const foldedKeywords = dedupeKwicKeywords(keywords);
+  const titleMatches =
+    title == null ? [] : findKwicMatches(title, foldedKeywords);
+  const bodyMatches = findKwicMatches(bodyText, foldedKeywords);
+
+  const titleHighlights = mergeKwicHighlightRanges(
+    titleMatches.flatMap((entry) => entry.matches),
+  );
+  const bodyHighlights = mergeKwicHighlightRanges(
+    bodyMatches.flatMap((entry) => entry.matches),
+  );
+  const segmentRanges = makeKwicSegmentRanges(
+    bodyText,
+    bodyMatches,
+    bodyHighlights,
+    options,
+  );
+  const bodyLength = Array.from(bodyText).length;
+
+  return {
+    version: 1,
+    title:
+      title == null
+        ? null
+        : makeKwicInlineNodes(
+            title,
+            0,
+            Array.from(title).length,
+            titleHighlights,
+          ),
+    segments: segmentRanges.map((range) => ({
+      type: "segment" as const,
+      startPosition: range.start,
+      endPosition: range.end,
+      isStart: range.start === 0,
+      isEnd: range.end === bodyLength,
+      children: makeKwicInlineNodes(
+        bodyText,
+        range.start,
+        range.end,
+        bodyHighlights,
+      ),
+    })),
+  };
+}
+
+/**
+ * Parses Markdown, removes the first H1 (or first H2 when no H1 exists) as the
+ * title using `mdSeparateTitle`, renders the remaining Markdown as plain text,
+ * and builds KWIC data from the two parts.
+ */
+export function mdMakeKwicData(
+  markdown: string,
+  keywords: readonly string[],
+  options: KwicOptions,
+): KwicData {
+  const { title, otherNodes } = mdSeparateTitle(parseMarkdown(markdown));
+  return makeKwicData(title, mdRenderText(otherNodes), keywords, options);
 }
