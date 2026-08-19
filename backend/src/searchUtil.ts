@@ -234,6 +234,7 @@ async function runAddUsers(pgPool: Pool, startIdDec: string, endIdDec: string) {
           text: bodyText,
           timestamp,
           locale,
+          attrs: null,
           labels: [],
           numericValue: null,
         });
@@ -301,6 +302,7 @@ async function runAddPosts(pgPool: Pool, startIdDec: string, endIdDec: string) {
           text: bodyText,
           timestamp,
           locale,
+          attrs: null,
           labels: [`owner:${decToHex(row.owned_by)}`],
           numericValue:
             publishedAtMs !== null && Number.isFinite(publishedAtMs) ? publishedAtMs : null,
