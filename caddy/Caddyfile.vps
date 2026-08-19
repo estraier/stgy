@@ -25,6 +25,26 @@ https://stgy.jp {
   import cgi_rate_limit
 
   rate_limit {
+    zone geo_per_ip {
+      match {
+        path /backend/geo/encode /backend/geo/encode/ /backend/geo/decode /backend/geo/decode/
+      }
+      key {remote_host}
+      events 60
+      window 1h
+    }
+    zone search_per_ip {
+      match {
+        path /backend/posts/search /backend/posts/search/
+      }
+      key {remote_host}
+      events 60
+      window 1h
+    }
+    log_key
+  }
+
+  rate_limit {
     zone stgy_per_ip {
       match {
         not path /_next/static/*
