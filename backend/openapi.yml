@@ -1055,14 +1055,16 @@ paths:
           required: false
           description: Locale preference; exact locale, then base language, then the configured default are tried.
           schema: { type: string, default: en }
-        - in: query
-          name: queryhash
+        - in: header
+          name: X-STGY-QueryHash
           required: false
           description: >-
-            Required for anonymous access. Exclude queryhash, URL-decode every parameter,
-            encode each key and value with encodeURIComponent, sort the resulting key=value
-            elements lexicographically, join them with &, and use the lowercase hexadecimal
-            SHA-1 digest of that UTF-8 string.
+            Required for anonymous access. URL-decode every query parameter, encode each key
+            and value with encodeURIComponent, sort the resulting key=value elements
+            lexicographically, join them with &, and send the lowercase hexadecimal SHA-1
+            digest of that UTF-8 string in this header. Because this is a custom header,
+            cross-origin browser requests require CORS preflight; only the configured STGY
+            frontend origin is allowed by the backend CORS policy.
           schema: { type: string, pattern: '^[0-9a-f]{40}$' }
       responses:
         "200":
@@ -1095,14 +1097,16 @@ paths:
           required: false
           description: Locale preference; exact locale, then base language, then the configured default are tried.
           schema: { type: string, default: en }
-        - in: query
-          name: queryhash
+        - in: header
+          name: X-STGY-QueryHash
           required: false
           description: >-
-            Required for anonymous access. Exclude queryhash, URL-decode every parameter,
-            encode each key and value with encodeURIComponent, sort the resulting key=value
-            elements lexicographically, join them with &, and use the lowercase hexadecimal
-            SHA-1 digest of that UTF-8 string.
+            Required for anonymous access. URL-decode every query parameter, encode each key
+            and value with encodeURIComponent, sort the resulting key=value elements
+            lexicographically, join them with &, and send the lowercase hexadecimal SHA-1
+            digest of that UTF-8 string in this header. Because this is a custom header,
+            cross-origin browser requests require CORS preflight; only the configured STGY
+            frontend origin is allowed by the backend CORS policy.
           schema: { type: string, pattern: '^[0-9a-f]{40}$' }
       responses:
         "200":
@@ -2232,10 +2236,12 @@ paths:
       summary: Search posts (Full text search)
       description: |
         Logged-in callers retain the normal post-search behavior. Anonymous callers
-        are accepted only with a valid `queryhash` and an explicit `ownedBy`; the
-        backend then forces the search to that owner and to posts whose publication
-        time is not later than the current time. Anonymous searches use the shared
-        anonymous daily timer throttle.
+        are accepted only with a valid `X-STGY-QueryHash` header and an explicit
+        `ownedBy`; the backend then forces the search to that owner and to posts whose
+        publication time is not later than the current time. Anonymous searches use
+        the shared anonymous daily timer throttle. The custom header also makes a
+        cross-origin browser request non-simple, so it must pass the backend CORS
+        preflight policy before the actual search request can be sent.
       security:
         - sessionCookie: []
         - {}
@@ -2272,13 +2278,14 @@ paths:
           description: |
             Publication-time order for anonymous public searches. Authenticated
             searches retain the existing TTTS result order.
-        - name: queryhash
-          in: query
-          schema: { type: string }
+        - name: X-STGY-QueryHash
+          in: header
+          schema: { type: string, pattern: '^[0-9a-f]{40}$' }
           description: |
-            Required for anonymous requests. SHA-1 of the canonicalized query
-            parameters excluding `queryhash`, using the same queryhash rules as the
-            anonymous geo endpoints.
+            Required for anonymous requests. SHA-1 of all canonicalized query
+            parameters, using the same rules as the anonymous geo endpoints. This
+            custom header intentionally requires CORS preflight for cross-origin
+            browser requests.
       responses:
         "200":
           description: Search result

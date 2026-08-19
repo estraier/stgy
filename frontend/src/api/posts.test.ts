@@ -13,7 +13,7 @@ describe("public post search API", () => {
     jest.clearAllMocks();
   });
 
-  test("adds queryhash and forces an anonymous request", async () => {
+  test("adds X-STGY-QueryHash and forces an anonymous request", async () => {
     mockApiFetch.mockResolvedValue({
       ok: true,
       json: jest.fn().mockResolvedValue([]),
@@ -31,8 +31,14 @@ describe("public post search API", () => {
     ).resolves.toEqual([]);
 
     expect(mockApiFetch).toHaveBeenCalledWith(
-      "/posts/search?query=foo&ownedBy=0000000000000001&offset=0&limit=6&locale=ja&order=desc&queryhash=f47067dfef0a91ceac8188ed85e174c41a14e1d3",
-      { method: "GET", credentials: "omit" },
+      "/posts/search?query=foo&ownedBy=0000000000000001&offset=0&limit=6&locale=ja&order=desc",
+      {
+        method: "GET",
+        credentials: "omit",
+        headers: {
+          "X-STGY-QueryHash": "f47067dfef0a91ceac8188ed85e174c41a14e1d3",
+        },
+      },
     );
   });
 });

@@ -1,6 +1,6 @@
 import type { Post, PostDetail, User } from "./models";
 import { apiFetch, extractError } from "./client";
-import { appendQueryHash } from "@/utils/queryHash";
+import { makeQueryHashHeaders } from "@/utils/queryHash";
 
 function buildPostQuery(
   params: {
@@ -64,10 +64,11 @@ export async function searchPubPostsByUser(params: {
   if (params.limit !== undefined) search.append("limit", String(params.limit));
   if (params.locale) search.append("locale", params.locale);
   if (params.order) search.append("order", params.order);
-  await appendQueryHash(search);
+  const headers = await makeQueryHashHeaders(search);
   const res = await apiFetch(`/posts/search?${search.toString()}`, {
     method: "GET",
     credentials: "omit",
+    headers,
   });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();

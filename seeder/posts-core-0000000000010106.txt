@@ -387,19 +387,19 @@ Search on ``/sites/[id]`` does not call TTTS during SSR. When the URL has ``q``,
 
 Anonymous ``/posts/search`` requires ``ownedBy``. The backend itself adds the TTTS ``owner:<ownedBy>`` label plus ``numericOp=lte`` and ``numericValue=<current epoch ms>``. The browser therefore cannot remove the publication constraint. After TTTS returns candidate IDs, PostgreSQL checks ``owned_by = ownedBy`` and ``published_at <= now`` again. This second check prevents another user's post or an unpublished or scheduled post from leaking into external results even if the search index or an ID cache is temporarily stale.
 
-Anonymous search also requires ``queryhash`` as a lightweight filter that raises the cost for simple crawlers which discover an API URL and replay it mechanically. The frontend removes ``queryhash`` itself, URL-decodes all query parameters, re-encodes each key and value with the same rules as ``encodeURIComponent``, preserves duplicate keys, sorts the complete ``key=value`` elements lexicographically, and joins them with ``&``. ``queryhash`` is the lowercase hexadecimal SHA-1 of the UTF-8 bytes of that canonical string. The backend requires exactly one ``queryhash`` and continues anonymous search only when the same calculation matches.
+Anonymous search also requires the custom HTTP header ``X-STGY-QueryHash``. The frontend URL-decodes every query parameter, re-encodes each key and value with the same rules as ``encodeURIComponent``, preserves duplicate keys, sorts the complete ``key=value`` elements lexicographically, joins them with ``&``, and sends the lowercase hexadecimal SHA-1 of the UTF-8 bytes of that canonical string in the header. The URL itself contains no query-hash parameter. The backend performs the same calculation over all query parameters and continues anonymous search only when the header matches.
 
 ```text:small
 ?c=111&a=222&b=444&b=333
   ↓
 a=222&b=333&b=444&c=111
   ↓
-SHA-1 → queryhash=d5dd857313b1b13cdda08e5d9ed98fef264884d7
+X-STGY-QueryHash: d5dd857313b1b13cdda08e5d9ed98fef264884d7
 ```
 
-``queryhash`` has no secret and any client that implements the algorithm can reproduce it. It is therefore not an authentication mechanism, CSRF boundary, or DoS-security boundary. Its purpose is only to reject primitive crawlers that repeat discovered URLs without executing or reproducing the client logic. Anonymous Geo API calls use the same canonicalization rule.
+The hash has no secret and any direct client that implements the algorithm can reproduce it, so it is not authentication and does not stop an attacker that calls the API directly. The header nevertheless serves two useful low-cost purposes. First, a primitive crawler that merely replays a discovered URL does not carry the required header. Second, a browser script running on another origin cannot attach this custom header as a simple cross-origin request: it must first pass CORS preflight. STGY's backend CORS policy allows only the configured STGY frontend origin, so an unrelated site's JavaScript cannot directly send the anonymous search API request with this header. Anonymous Geo API calls use the same rule.
 
-Anonymous search falls back to a fixed dummy user and all anonymous callers share the existing ``DailyTimerThrottleService("db")`` daily processing-time budget. The default is 120 seconds per day; time spent in a TTTS search on a cache miss is charged to that shared budget. This is a separate layer from Caddy's per-IP request-rate limit.
+Anonymous search falls back to a fixed dummy user and all anonymous callers share the existing ``DailyTimerThrottleService("db")`` daily processing-time budget. The default is 120 seconds per day; time spent in a TTTS search on a cache miss is charged to that shared budget. Caddy adds independent IP-based limits in production: ``/backend/posts/search`` is limited to 60 requests per hour per source IP, while the ordinary STGY-wide limit remains 120 requests per 5 minutes per IP by default. These layers address different cases: the custom header/CORS boundary blocks cross-site browser abuse, Caddy limits direct request frequency, and the backend timer limits actual processing time.
 
 ## Search Processing and Result Order
 
@@ -666,7 +666,7 @@ Update requests pass through several persistent queues: PostgreSQL ``search_inde
 
 Tokenization performs NFKC normalization, lowercasing, and word segmentation using Kuromoji or Intl.Segmenter, while preserving technical terms containing symbols such as ``C++``, ``C#``, ``.NET``, and ``node.js``. Search terms are normally combined with AND, and quoted segments receive an additional phrase-order check.
 
-TTTS candidate results are ordered newest first by creation time, not by relevance. Ordinary logged-in search uses that order. Anonymous post search on external publication sites validates ``queryhash``, restricts candidates to one owner and ``published_at <= now``, then lets PostgreSQL recheck publication eligibility and order the bounded candidate set by publication time ascending or descending. Caching candidate-ID arrays in Redis keeps repeated search work bounded. Because the search index can always be rebuilt from PostgreSQL, operation relies on eventual consistency and recoverability rather than complex distributed transactions.
+TTTS candidate results are ordered newest first by creation time, not by relevance. Ordinary logged-in search uses that order. Anonymous post search on external publication sites validates ``X-STGY-QueryHash``, restricts candidates to one owner and ``published_at <= now``, then lets PostgreSQL recheck publication eligibility and order the bounded candidate set by publication time ascending or descending. Caching candidate-ID arrays in Redis keeps repeated search work bounded. Because the search index can always be rebuilt from PostgreSQL, operation relies on eventual consistency and recoverability rather than complex distributed transactions.
 
 Next: [STGY Recommendations](/posts/0000000000010107)
 ____EOF____

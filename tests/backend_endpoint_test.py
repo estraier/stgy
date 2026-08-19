@@ -27,17 +27,12 @@ def queryhash(params):
   canonical = "&".join(sorted(
     f"{quote(str(key), safe=encode_uri_component_safe)}={quote(str(value), safe=encode_uri_component_safe)}"
     for key, value in items
-    if key != "queryhash"
   ))
   return hashlib.sha1(canonical.encode("utf-8")).hexdigest()
 
-def queryhashed_params(params):
-  if isinstance(params, dict):
-    result = list(params.items())
-  else:
-    result = list(params)
-  result.append(("queryhash", queryhash(result)))
-  return result
+
+def queryhash_headers(params):
+  return {"X-STGY-QueryHash": queryhash(params)}
 
 def login():
   url = f"{BASE_URL}/auth"
@@ -327,25 +322,36 @@ def test_geo():
 
   encode_ja_params = {"query": "埼玉県所沢市", "locale": "ja-JP"}
 
-  print("[geo] anonymous request without queryhash -> 403")
+  print("[geo] anonymous request without X-STGY-QueryHash -> 403")
   res = requests.get(f"{BASE_URL}/geo/encode", params=encode_ja_params)
   assert res.status_code == 403, res.text
   assert res.json() == {"error": "invalid queryhash"}
-  print("[geo] anonymous request without queryhash -> 403 OK")
+  print("[geo] anonymous request without X-STGY-QueryHash -> 403 OK")
 
-  print("[geo] anonymous request with invalid queryhash -> 403")
+  print("[geo] anonymous request with invalid X-STGY-QueryHash -> 403")
   res = requests.get(
     f"{BASE_URL}/geo/encode",
-    params={**encode_ja_params, "queryhash": "invalid"},
+    params=encode_ja_params,
+    headers={"X-STGY-QueryHash": "invalid"},
   )
   assert res.status_code == 403, res.text
   assert res.json() == {"error": "invalid queryhash"}
-  print("[geo] anonymous request with invalid queryhash -> 403 OK")
+  print("[geo] anonymous request with invalid X-STGY-QueryHash -> 403 OK")
+
+  print("[geo] legacy queryhash query parameter is not accepted")
+  res = requests.get(
+    f"{BASE_URL}/geo/encode",
+    params={**encode_ja_params, "queryhash": queryhash(encode_ja_params)},
+  )
+  assert res.status_code == 403, res.text
+  assert res.json() == {"error": "invalid queryhash"}
+  print("[geo] legacy queryhash query parameter rejected OK")
 
   print("[geo] anonymous encode with regional Japanese locale")
   res = requests.get(
     f"{BASE_URL}/geo/encode",
-    params=queryhashed_params(encode_ja_params),
+    params=encode_ja_params,
+    headers=queryhash_headers(encode_ja_params),
   )
   assert res.status_code == 200, res.text
   encoded = res.json()
@@ -384,7 +390,8 @@ def test_geo():
   encode_en_params = {"query": "tOkOrOzAwA, sAiTaMa"}
   res = requests.get(
     f"{BASE_URL}/geo/encode",
-    params=queryhashed_params(encode_en_params),
+    params=encode_en_params,
+    headers=queryhash_headers(encode_en_params),
   )
   assert res.status_code == 200, res.text
   encoded_en = res.json()
@@ -408,24 +415,26 @@ def test_geo():
   }
   res = requests.get(
     f"{BASE_URL}/geo/decode",
-    params=queryhashed_params(decode_params),
+    params=decode_params,
+    headers=queryhash_headers(decode_params),
   )
   assert res.status_code == 200, res.text
   decoded = res.json()
   assert decoded == encoded, f"unexpected decode result: {decoded}"
   print("[geo] anonymous decode representative point OK")
 
-  print("[geo] invalid session falls back to anonymous with queryhash")
+  print("[geo] invalid session falls back to anonymous with X-STGY-QueryHash")
   res = requests.get(
     f"{BASE_URL}/geo/encode",
-    params=queryhashed_params(encode_ja_params),
+    params=encode_ja_params,
+    headers=queryhash_headers(encode_ja_params),
     cookies={"session_id": "invalid-session"},
   )
   assert res.status_code == 200, res.text
   assert res.json() == encoded
   print("[geo] invalid session fallback OK")
 
-  print("[geo] logged-in request does not require queryhash")
+  print("[geo] logged-in request does not require X-STGY-QueryHash")
   session_id = login()
   try:
     res = requests.get(
@@ -437,32 +446,36 @@ def test_geo():
     assert res.json() == encoded
   finally:
     logout(session_id)
-  print("[geo] logged-in request without queryhash OK")
+  print("[geo] logged-in request without X-STGY-QueryHash OK")
 
   res = requests.get(
     f"{BASE_URL}/geo/encode",
-    params=queryhashed_params({}),
+    params={},
+    headers=queryhash_headers({}),
   )
   assert res.status_code == 400, res.text
   assert res.json() == {"error": "query is required"}
 
   res = requests.get(
     f"{BASE_URL}/geo/encode",
-    params=queryhashed_params({"query": "埼玉県所沢市並木", "locale": "ja-JP"}),
+    params={"query": "埼玉県所沢市並木", "locale": "ja-JP"},
+    headers=queryhash_headers({"query": "埼玉県所沢市並木", "locale": "ja-JP"}),
   )
   assert res.status_code == 404, res.text
   assert res.json() == {"error": "not found"}
 
   res = requests.get(
     f"{BASE_URL}/geo/decode",
-    params=queryhashed_params({"longitude": "x", "latitude": 35.803146}),
+    params={"longitude": "x", "latitude": 35.803146},
+    headers=queryhash_headers({"longitude": "x", "latitude": 35.803146}),
   )
   assert res.status_code == 400, res.text
   assert res.json() == {"error": "longitude must be a number"}
 
   res = requests.get(
     f"{BASE_URL}/geo/decode",
-    params=queryhashed_params({"longitude": 0, "latitude": 0, "locale": "ja-JP"}),
+    params={"longitude": 0, "latitude": 0, "locale": "ja-JP"},
+    headers=queryhash_headers({"longitude": 0, "latitude": 0, "locale": "ja-JP"}),
   )
   assert res.status_code == 404, res.text
   assert res.json() == {"error": "not found"}
@@ -1557,15 +1570,35 @@ def test_posts():
   res = requests.get(f"{BASE_URL}/posts/search", params=anonymous_search_params)
   assert res.status_code == 403, res.text
   assert res.json() == {"error": "invalid queryhash"}
-  print("[posts] anonymous search without queryhash -> 403 OK")
+  print("[posts] anonymous search without X-STGY-QueryHash -> 403 OK")
 
   res = requests.get(
     f"{BASE_URL}/posts/search",
-    params={**anonymous_search_params, "queryhash": "invalid"},
+    params=anonymous_search_params,
+    headers={"X-STGY-QueryHash": "invalid"},
   )
   assert res.status_code == 403, res.text
   assert res.json() == {"error": "invalid queryhash"}
-  print("[posts] anonymous search with invalid queryhash -> 403 OK")
+  print("[posts] anonymous search with invalid X-STGY-QueryHash -> 403 OK")
+
+  res = requests.get(
+    f"{BASE_URL}/posts/search",
+    params={**anonymous_search_params, "queryhash": queryhash(anonymous_search_params)},
+  )
+  assert res.status_code == 403, res.text
+  assert res.json() == {"error": "invalid queryhash"}
+  print("[posts] legacy queryhash query parameter rejected OK")
+
+  preflight = requests.options(
+    f"{BASE_URL}/posts/search",
+    headers={
+      "Origin": "https://example.invalid",
+      "Access-Control-Request-Method": "GET",
+      "Access-Control-Request-Headers": "x-stgy-queryhash",
+    },
+  )
+  assert preflight.headers.get("Access-Control-Allow-Origin") is None, preflight.headers
+  print("[posts] cross-origin preflight is not authorized OK")
 
   anonymous_search_without_owner = {
     "query": "Welcome",
@@ -1575,7 +1608,8 @@ def test_posts():
   }
   res = requests.get(
     f"{BASE_URL}/posts/search",
-    params=queryhashed_params(anonymous_search_without_owner),
+    params=anonymous_search_without_owner,
+    headers=queryhash_headers(anonymous_search_without_owner),
   )
   assert res.status_code == 400, res.text
   assert res.json() == {"error": "ownedBy is required"}
@@ -1584,7 +1618,8 @@ def test_posts():
   search_started_at = time.time()
   res = requests.get(
     f"{BASE_URL}/posts/search",
-    params=queryhashed_params(anonymous_search_params),
+    params=anonymous_search_params,
+    headers=queryhash_headers(anonymous_search_params),
   )
   assert res.status_code == 200, res.text
   anonymous_searched = res.json()
@@ -1612,7 +1647,8 @@ def test_posts():
   }
   res = requests.get(
     f"{BASE_URL}/posts/search",
-    params=queryhashed_params(ordered_search_params),
+    params=ordered_search_params,
+    headers=queryhash_headers(ordered_search_params),
   )
   assert res.status_code == 200, res.text
   ordered_desc = res.json()
@@ -1625,7 +1661,8 @@ def test_posts():
   ordered_search_asc_params = {**ordered_search_params, "order": "asc"}
   res = requests.get(
     f"{BASE_URL}/posts/search",
-    params=queryhashed_params(ordered_search_asc_params),
+    params=ordered_search_asc_params,
+    headers=queryhash_headers(ordered_search_asc_params),
   )
   assert res.status_code == 200, res.text
   ordered_asc = res.json()

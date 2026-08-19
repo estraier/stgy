@@ -286,29 +286,32 @@ console.log(geoCoder.decode(139.46, 35.80, "ja-JP"));
 As a Web API, it exposes the following two operations.
 
 ```text:small
-GET /geo/encode?query=埼玉県所沢市&locale=ja-JP&queryhash=<sha1>
-GET /geo/decode?longitude=139.46&latitude=35.80&locale=ja-JP&queryhash=<sha1>
+GET /geo/encode?query=埼玉県所沢市&locale=ja-JP
+X-STGY-QueryHash: <sha1>
+
+GET /geo/decode?longitude=139.46&latitude=35.80&locale=ja-JP
+X-STGY-QueryHash: <sha1>
 ```
 
-``encode`` returns representative coordinates from a place name, while ``decode`` returns the nearest administrative area and its parent hierarchy for a coordinate. With a valid login session, the backend continues to process the request as that logged-in user and ``queryhash`` is not required. The frontend's common Geo client nevertheless adds ``queryhash`` regardless of login state, allowing the same call path to be used by both authenticated and anonymous screens.
+``encode`` returns representative coordinates from a place name, while ``decode`` returns the nearest administrative area and its parent hierarchy for a coordinate. With a valid login session, the backend continues to process the request as that logged-in user and the query-hash header is not required. The frontend's common Geo client nevertheless sends ``X-STGY-QueryHash`` regardless of login state, allowing the same call path to be used by both authenticated and anonymous screens.
 
-### Anonymous Access and queryhash
+### Anonymous Access and X-STGY-QueryHash
 
-If no logged-in user can be obtained, the request falls back to anonymous access. This includes both requests with no session cookie and requests whose stale or otherwise invalid cookie no longer resolves to a valid user. Anonymous access requires ``queryhash``; if it is missing or invalid, the backend returns ``403 invalid queryhash`` before invoking the GeoCoder.
+If no logged-in user can be obtained, the request falls back to anonymous access. This includes both requests with no session cookie and requests whose stale or otherwise invalid cookie no longer resolves to a valid user. Anonymous access requires ``X-STGY-QueryHash``; if it is missing or invalid, the backend returns ``403 invalid queryhash`` before invoking the GeoCoder.
 
-The canonicalization rule for ``queryhash`` is shared with external-publication post search. The client removes ``queryhash`` itself, URL-decodes all query parameters, re-encodes each key and value with the same rules as ``encodeURIComponent``, preserves duplicate keys, sorts the complete ``key=value`` elements lexicographically, and joins them with ``&``. ``queryhash`` is the lowercase hexadecimal SHA-1 of the UTF-8 bytes of that canonical string. The backend also requires exactly one ``queryhash`` parameter.
+The canonicalization rule is shared with external-publication post search. The client URL-decodes all query parameters, re-encodes each key and value with the same rules as ``encodeURIComponent``, preserves duplicate keys, sorts the complete ``key=value`` elements lexicographically, and joins them with ``&``. The lowercase hexadecimal SHA-1 of the UTF-8 bytes of that canonical string is sent as the ``X-STGY-QueryHash`` header. No hash is added to the URL, and the backend calculates the expected value from all query parameters.
 
 ```text:small
 ?c=111&a=222&b=444&b=333
   ↓
 a=222&b=333&b=444&c=111
   ↓
-SHA-1 → queryhash=d5dd857313b1b13cdda08e5d9ed98fef264884d7
+X-STGY-QueryHash: d5dd857313b1b13cdda08e5d9ed98fef264884d7
 ```
 
-Because this uses no secret, it is not authentication or a cryptographic security mechanism. A bot that understands the algorithm can generate the same value. Its purpose is to cheaply reject simple crawlers that replay discovered Geo API URLs without executing or reproducing the client logic.
+Because this uses no secret, a bot that understands the algorithm can generate the same header, so it is not authentication and does not replace rate limiting. The custom-header placement still matters for browsers: another origin cannot send it as a simple request and must pass CORS preflight first. STGY's backend CORS policy allows only the configured frontend origin, which prevents unrelated-site JavaScript from directly sending the Geo API request with this header. The header also cheaply rejects crawlers that merely replay discovered URLs.
 
-Geo API processing time is limited by the existing ``DailyTimerThrottleService("geo")``. Logged-in users use per-user budgets; anonymous requests fall back to a fixed dummy user, so all anonymous callers share one budget. ``STGY_DAILY_GEO_TIMER_LIMIT_MS`` defaults to 120 seconds per day. Administrators are exempt. ``queryhash`` is checked before this timer throttle, so a simple request with no valid hash does not consume GeoCoder processing-time budget. Caddy's per-IP request-rate limit remains a separate layer.
+Geo API processing time is limited by the existing ``DailyTimerThrottleService("geo")``. Logged-in users use per-user budgets; anonymous requests fall back to a fixed dummy user, so all anonymous callers share one budget. ``STGY_DAILY_GEO_TIMER_LIMIT_MS`` defaults to 120 seconds per day. Administrators are exempt. The query-hash header is checked before this timer throttle, so a simple request without a valid header does not consume GeoCoder processing-time budget. In production Caddy independently limits ``/backend/geo/encode`` and ``/backend/geo/decode`` together to 60 requests per hour per source IP, while the ordinary STGY-wide default limit of 120 requests per 5 minutes per IP remains in effect.
 
 ## Geographic Hierarchy and Multilingual Addresses
 
@@ -462,7 +465,7 @@ The backend's track-preview generation explicitly requests Japanese, so the stor
 ]
 ```
 
-``track-sandbox`` does not assume login and therefore uses the browser's ``navigator.languages`` or ``navigator.language``. In an English environment, labels look like ``Tomi, Nagano, Japan``. POI reverse geocoding goes through the frontend's common ``decodeGeo`` helper, which calculates ``queryhash`` from all query parameters before calling ``/geo/decode``. Anonymous ``track-sandbox`` therefore passes through the queryhash filter and the shared anonymous timer throttle described above.
+``track-sandbox`` does not assume login and therefore uses the browser's ``navigator.languages`` or ``navigator.language``. In an English environment, labels look like ``Tomi, Nagano, Japan``. POI reverse geocoding goes through the frontend's common ``decodeGeo`` helper, which calculates the hash from all query parameters and sends it in ``X-STGY-QueryHash`` before calling ``/geo/decode``. Anonymous ``track-sandbox`` therefore passes through the query-hash-header filter and the shared anonymous timer throttle described above.
 
 This behavior is not built directly into ``packages/track``. ``applyTrackJsonPoiLabels`` merely accepts coordinate-to-label mappings and assigns a label to a POI whose coordinates match. A standalone TrackJSON conversion tool without place-name data can therefore still use ``packages/track``.
 
@@ -474,7 +477,7 @@ In the search dialog opened by the “@” button in the post editor, an input b
 %埼玉県所沢市
 ```
 
-The frontend passes the logged-in user's locale to ``/geo/encode``. The common ``encodeGeo`` client adds ``queryhash`` here as well, although a valid login session means the backend does not use the hash as an authentication condition. The frontend obtains representative coordinates from a result and inserts ``map://`` notation like the following into the article body.
+The frontend passes the logged-in user's locale to ``/geo/encode``. The common ``encodeGeo`` client sends ``X-STGY-QueryHash`` here as well, although a valid login session means the backend does not require the header. The frontend obtains representative coordinates from a result and inserts ``map://`` notation like the following into the article body.
 
 ```text:small
 @[日本埼玉県所沢市](map://139.461129,35.803146)
@@ -539,7 +542,7 @@ In STGY's maps and tracks feature, ``packages/track`` handles input parsing, nor
 
 Display TrackJSON is based on GeoJSON and associates route coordinates with series such as time, distance, elevation, heart rate, cadence, power, and speed. It also preserves route-wide metadata and POIs for start, end, center, and furthest point. In the browser, Leaflet maps are linked with measurement graphs and can be embedded in articles through Markdown ``@[caption](URL)`` notation or ``map://``.
 
-``packages/geocoder`` loads static NDJSON generated from N03 and the Address Base Registry at startup and performs place-name search and reverse geocoding entirely in memory. It supports Japanese and English addresses, locale fallback, case-insensitive search, and hierarchical search with country names omitted. Reverse geocoding stores 2 km-grid auxiliary points in TypedArrays, narrows candidates by latitude with binary search, and finds the nearest point. The Web API keeps the ordinary authenticated path and per-user timer throttle for logged-in users, while anonymous access validates queryhash and falls back to the shared dummy-user timer throttle.
+``packages/geocoder`` loads static NDJSON generated from N03 and the Address Base Registry at startup and performs place-name search and reverse geocoding entirely in memory. It supports Japanese and English addresses, locale fallback, case-insensitive search, and hierarchical search with country names omitted. Reverse geocoding stores 2 km-grid auxiliary points in TypedArrays, narrows candidates by latitude with binary search, and finds the nearest point. The Web API keeps the ordinary authenticated path and per-user timer throttle for logged-in users, while anonymous access validates ``X-STGY-QueryHash`` and falls back to the shared dummy-user timer throttle.
 
 The two packages do not directly depend on each other; place names are attached to TrackJSON POI coordinates as postprocessing. This separation allows track conversion, map rendering, and place-name search to be used independently while integrating them on STGY for article input, track upload, list display, and place-labeled metadata.
 

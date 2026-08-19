@@ -17,7 +17,7 @@ import { SearchCacheEntry } from "../models/search";
 import { makePlainTextDigestFromJsonSnippet } from "../utils/snippet";
 import { createLogger } from "../utils/logger";
 import { parsePostSearchQuery } from "../utils/postSearchQuery";
-import { verifyQueryHash } from "../utils/queryHash";
+import { QUERY_HASH_HEADER, verifyQueryHash } from "../utils/queryHash";
 import {
   normalizeOneLiner,
   normalizeMultiLines,
@@ -76,7 +76,7 @@ export default function createPostsRouter(
   router.get("/search", async (req, res) => {
     const currentUser = await authHelpers.getCurrentUser(req);
     const isAnonymous = !currentUser;
-    if (isAnonymous && !verifyQueryHash(req.originalUrl)) {
+    if (isAnonymous && !verifyQueryHash(req.originalUrl, req.get(QUERY_HASH_HEADER))) {
       return res.status(403).json({ error: "invalid queryhash" });
     }
     const searchUser = currentUser ?? authHelpers.makeDummyUser();

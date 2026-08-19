@@ -11,7 +11,7 @@ import { DailyTimerThrottleService } from "../services/throttle";
 import { PostsService } from "../services/posts";
 import { SearchService } from "../services/search";
 import createPostsRouter from "./posts";
-import { makeQueryHash } from "../utils/queryHash";
+import { QUERY_HASH_HEADER, makeQueryHash } from "../utils/queryHash";
 import { Config } from "../config";
 
 const loginUser: AuthenticatedUser = {
@@ -60,10 +60,9 @@ describe("post full-text search filters", () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
-  function withQueryHash(path: string): string {
+  function queryHashHeaders(path: string): Record<string, string> {
     const url = new URL(path, baseUrl);
-    url.searchParams.append("queryhash", makeQueryHash(url.searchParams));
-    return url.toString();
+    return { [QUERY_HASH_HEADER]: makeQueryHash(url.searchParams) };
   }
 
   test("maps owner and published status tokens to generic TTTS filters", async () => {
@@ -131,7 +130,7 @@ describe("post full-text search filters", () => {
     expect(search).not.toHaveBeenCalled();
   });
 
-  test("anonymous search requires queryhash", async () => {
+  test("anonymous search requires the X-STGY-QueryHash header", async () => {
     jest.spyOn(AuthHelpers.prototype, "getCurrentUser").mockResolvedValue(null);
 
     const response = await fetch(
@@ -143,12 +142,36 @@ describe("post full-text search filters", () => {
     expect(search).not.toHaveBeenCalled();
   });
 
+  test("anonymous search rejects an invalid query-hash header", async () => {
+    jest.spyOn(AuthHelpers.prototype, "getCurrentUser").mockResolvedValue(null);
+
+    const response = await fetch(`${baseUrl}/posts/search?query=foo&ownedBy=12345`, {
+      headers: { [QUERY_HASH_HEADER]: "invalid" },
+    });
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "invalid queryhash" });
+    expect(search).not.toHaveBeenCalled();
+  });
+
+  test("anonymous search does not accept the legacy queryhash query parameter", async () => {
+    jest.spyOn(AuthHelpers.prototype, "getCurrentUser").mockResolvedValue(null);
+    const hash = makeQueryHash(new URLSearchParams("query=foo&ownedBy=12345"));
+
+    const response = await fetch(
+      `${baseUrl}/posts/search?query=foo&ownedBy=12345&queryhash=${hash}`,
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "invalid queryhash" });
+    expect(search).not.toHaveBeenCalled();
+  });
+
   test("anonymous search requires an explicit owner", async () => {
     jest.spyOn(AuthHelpers.prototype, "getCurrentUser").mockResolvedValue(null);
 
-    const response = await fetch(
-      withQueryHash("/posts/search?query=foo&locale=en"),
-    );
+    const path = "/posts/search?query=foo&locale=en";
+    const response = await fetch(`${baseUrl}${path}`, { headers: queryHashHeaders(path) });
 
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: "ownedBy is required" });
@@ -159,9 +182,8 @@ describe("post full-text search filters", () => {
     jest.spyOn(AuthHelpers.prototype, "getCurrentUser").mockResolvedValue(null);
     jest.spyOn(Date, "now").mockReturnValue(123456789);
 
-    const response = await fetch(
-      withQueryHash("/posts/search?query=foo&ownedBy=12345&locale=en"),
-    );
+    const path = "/posts/search?query=foo&ownedBy=12345&locale=en";
+    const response = await fetch(`${baseUrl}${path}`, { headers: queryHashHeaders(path) });
 
     expect(response.status).toBe(200);
     expect(DailyTimerThrottleService.prototype.canDo).toHaveBeenCalledWith(
@@ -188,9 +210,8 @@ describe("post full-text search filters", () => {
   test("anonymous owner:me is rejected", async () => {
     jest.spyOn(AuthHelpers.prototype, "getCurrentUser").mockResolvedValue(null);
 
-    const response = await fetch(
-      withQueryHash("/posts/search?query=owner%3Ame%20foo&ownedBy=12345"),
-    );
+    const path = "/posts/search?query=owner%3Ame%20foo&ownedBy=12345";
+    const response = await fetch(`${baseUrl}${path}`, { headers: queryHashHeaders(path) });
 
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: "owner:me requires login" });
