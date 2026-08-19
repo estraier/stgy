@@ -305,7 +305,7 @@ describe("SearchService (Actor Model)", () => {
     );
   });
 
-  test("Management: RESERVE", async () => {
+  test("Management: RESERVE then ADD indexes the reserved document", async () => {
     await runTask(
       {
         type: "RESERVE",
@@ -318,6 +318,21 @@ describe("SearchService (Actor Model)", () => {
       },
       false,
     );
+
+    await runTask({
+      type: "ADD",
+      payload: {
+        docId: "res_1",
+        timestamp: 1000,
+        bodyText: "reserved searchable",
+        locale: "en",
+        attrs: null,
+        labels: ["owner:reserved"],
+        numericValue: 123,
+      },
+    });
+
+    expect(await service.search("searchable")).toContain("res_1");
   });
 
   test("Maintenance Mode: pauses worker", async () => {

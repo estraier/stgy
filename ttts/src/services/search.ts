@@ -629,7 +629,7 @@ export class SearchService {
               d.labels,
               e.attrs
          FROM id_tuples t
-         JOIN docs d ON d.rowid = t.internal_id
+         LEFT JOIN docs d ON d.rowid = t.internal_id
          LEFT JOIN extra_attrs e ON e.external_id = t.external_id
         WHERE t.external_id = ?`,
       [docId],
