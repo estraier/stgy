@@ -38,6 +38,8 @@ Press the gear icon and try the navigation menu. "Profile" opens the detail page
 
 Enter a search term in the search form and press the magnifying-glass icon or Enter to run a search. When searching under the "Posts" main tab, STGY searches post bodies. If you prefix a term with ``#``, as in ``#abc``, results are restricted to posts with that tag. If you prefix a term with ``@``, as in ``@abc``, results are restricted to posts written by the user with that nickname.
 
+Post search also supports ``owner:<user ID>`` to restrict results to an exact owner by user ID, and ``status:published`` to restrict results to posts that are externally published at the current time. These are additional filters for a full-text search and must be combined with at least one ordinary search term. For example, ``owner:0000000000020101 bicycle`` searches that user's posts for ``bicycle``, ``status:published bicycle`` searches currently published posts for ``bicycle``, and ``owner:0000000000020101 status:published bicycle`` combines both filters. A scheduled post does not match ``status:published`` until its publication time arrives.
+
 When searching under the "Users" main tab, STGY searches user names and introductions. If you prefix a term with ``@``, as in ``@abc``, results are restricted to the user with that nickname.
 
 ## Post list

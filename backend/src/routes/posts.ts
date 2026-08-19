@@ -16,6 +16,7 @@ import { CreatePostInput, UpdatePostInput } from "../models/post";
 import { SearchCacheEntry } from "../models/search";
 import { makePlainTextDigestFromJsonSnippet } from "../utils/snippet";
 import { createLogger } from "../utils/logger";
+import { parsePostSearchQuery } from "../utils/postSearchQuery";
 import {
   normalizeOneLiner,
   normalizeMultiLines,
@@ -77,20 +78,47 @@ export default function createPostsRouter(
     if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }
-    const query = typeof req.query.query === "string" ? req.query.query.trim() : "";
-    if (!query) {
+    const rawQuery = typeof req.query.query === "string" ? req.query.query.trim() : "";
+    if (!rawQuery) {
       return res.status(400).json({ error: "query is required" });
+    }
+    let parsedQuery: ReturnType<typeof parsePostSearchQuery>;
+    try {
+      parsedQuery = parsePostSearchQuery(rawQuery);
+    } catch (e) {
+      return res.status(400).json({ error: (e as Error).message });
+    }
+    if (!parsedQuery.query) {
+      return res.status(400).json({ error: "search term is required" });
     }
     const locale =
       typeof req.query.locale === "string" && req.query.locale ? req.query.locale : "en";
-    let ownedBy: string | undefined;
+    let queryOwner: string | undefined;
+    if (parsedQuery.owners.length > 0) {
+      try {
+        const normalizedOwners = Array.from(
+          new Set(parsedQuery.owners.map((owner) => decToHex(hexToDec(owner)))),
+        );
+        if (normalizedOwners.length > 1) {
+          return res.status(400).json({ error: "conflicting owner filters" });
+        }
+        queryOwner = normalizedOwners[0];
+      } catch {
+        return res.status(400).json({ error: "invalid owner filter" });
+      }
+    }
+    let parameterOwner: string | undefined;
     if (typeof req.query.ownedBy === "string" && req.query.ownedBy.trim() !== "") {
       try {
-        ownedBy = decToHex(hexToDec(req.query.ownedBy.trim()));
+        parameterOwner = decToHex(hexToDec(req.query.ownedBy.trim()));
       } catch {
         return res.status(400).json({ error: "invalid ownedBy" });
       }
     }
+    if (queryOwner && parameterOwner && queryOwner !== parameterOwner) {
+      return res.status(400).json({ error: "conflicting owner filters" });
+    }
+    const ownedBy = queryOwner ?? parameterOwner;
     const offset = Math.max(0, parseInt(req.query.offset as string) || 0);
     const reqLimit = Math.max(1, parseInt(req.query.limit as string) || 21);
     const neededLimit = offset + reqLimit;
@@ -99,7 +127,7 @@ export default function createPostsRouter(
     }
     const hash = crypto
       .createHash("md5")
-      .update(`${query}:${locale}:${ownedBy ?? ""}`)
+      .update(`${rawQuery}:${locale}:${ownedBy ?? ""}`)
       .digest("hex");
     const cacheKey = `stgy:search:posts:${hash}`;
     let docIds: string[] = [];
@@ -117,18 +145,20 @@ export default function createPostsRouter(
         const watch = timerThrottleService.startWatch(loginUser);
         try {
           docIds = await searchService.search({
-            query,
+            query: parsedQuery.query,
             locale,
             offset: 0,
             limit: neededLimit,
             timeout: 3,
             labels: ownedBy ? [`owner:${ownedBy}`] : undefined,
+            numericOp: parsedQuery.publishedOnly ? "lte" : undefined,
+            numericValue: parsedQuery.publishedOnly ? Date.now() : undefined,
           });
         } finally {
           watch.done();
         }
         const newCache: SearchCacheEntry = {
-          query,
+          query: rawQuery,
           limit: neededLimit,
           result: docIds,
         };

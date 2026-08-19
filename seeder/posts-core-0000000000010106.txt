@@ -379,6 +379,8 @@ Each document may carry zero or more opaque ``labels`` and one nullable generic 
 
 For STGY posts, the backend stores ``owner:<userId>`` as a label and the external publication time in epoch milliseconds as ``numericValue``. Unpublished posts use NULL and scheduled posts use their future timestamp. User-specific search can therefore add the owner label, while public search can additionally require ``numeric_value <= now`` without updating the index when the scheduled publication time arrives.
 
+STGY's ``/posts/search`` endpoint interprets the query string received from the UI in the backend. A standalone unquoted ``owner:<userId>`` token becomes the TTTS ``owner:<userId>`` label filter, while ``status:published`` becomes ``numericOp=lte`` with ``numericValue=<current epoch ms>``. Only the remaining tokens are sent to TTTS as the body query, and at least one ordinary body-search term is required. For example, ``owner:0000000000020101 status:published bicycle`` searches for ``bicycle`` among posts by that user that are externally published at the current time. Quoted ``"owner:..."`` and ``"status:published"`` strings are not treated as special tokens and remain ordinary body-search terms. TTTS itself assigns no STGY-specific meaning to ``owner`` or ``published`` and processes only opaque labels and the generic numeric filter.
+
 ## Search Processing and Result Order
 
 The TTTS search API exposes the following paths for each resource.
@@ -483,7 +485,7 @@ curl -i -X PUT 'http://localhost:3200/posts/19F998DD11300000' \
 
 ``attrs``, ``labels`` and ``numericValue`` are required fields of the PUT snapshot. PUT is a complete snapshot rather than a partial update. The TTTS document queue stores the same complete latest state, and differences from SQLite are evaluated only immediately before applying the task. With ``recordContents=true``, an unchanged canonical body token sequence avoids an FTS5 rewrite. With ``recordContents=false``, the body is always treated as changed and is re-applied to FTS5. ``attrs=null``, ``labels=[]`` and ``numericValue=null`` are explicit current states.
 
-On search endpoints, repeating ``label`` creates an AND condition, while ``numericOp`` and ``numericValue`` form a numeric filter. For example: ``?label=owner%3A0000000000020101&numericOp=lte&numericValue=1780000000000``.
+On search endpoints, repeating ``label`` creates an AND condition, while ``numericOp`` and ``numericValue`` form a numeric filter. For example: ``?label=owner%3A0000000000020101&numericOp=lte&numericValue=1780000000000``. These filters narrow an ordinary full-text query; TTTS still requires a non-empty body query.
 
 If ``wait`` is omitted, TTTS returns ``202 Accepted`` as soon as the request has been registered in its queue.
 

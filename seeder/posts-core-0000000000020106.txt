@@ -379,6 +379,8 @@ LF + docs.tokens + LF の中に LF + 東京 + LF + 自転車 + LF があるか�
 
 STGYの投稿では ``owner:<userId>`` をlabelとして登録し、``numericValue`` には外部公開日時のepoch millisecondを入れる。非公開ならNULL、予約公開なら未来日時になる。そのため、個別ユーザの記事検索はowner labelで限定でき、外部公開記事はさらに ``numeric_value <= now`` を加えるだけで、公開時刻到来時のインデックス更新を必要としない。
 
+STGYの ``/posts/search`` は、UIから受け取ったquery文字列をバックエンドで解釈する。非引用の独立したtoken ``owner:<userId>`` はTTTSの ``owner:<userId>`` label条件へ、``status:published`` は現在時刻を使った ``numericOp=lte`` と ``numericValue=<current epoch ms>`` へ変換する。それらの特殊tokenを取り除いた残りだけを本文queryとしてTTTSへ送り、少なくとも1つの通常の本文検索語を必須とする。例えば ``owner:0000000000020101 status:published 自転車`` は、指定ユーザが現在外部公開している投稿の中から「``自転車``」を検索する。引用符で囲まれた ``"owner:..."`` や ``"status:published"`` は特殊tokenとして扱わず、通常の本文検索語として扱う。TTTS自身は ``owner`` や ``published`` というSTGY固有の意味を解釈せず、opaqueなlabelと汎用数値filterだけを処理する。
+
 ## 検索処理と結果の順序
 
 TTTSの検索APIは、リソースごとに以下のパスを持つ。
@@ -483,7 +485,7 @@ curl -i -X PUT 'http://localhost:3200/posts/19F998DD11300000' \
 
 PUTの ``attrs``、``labels``、``numericValue`` は完全snapshotを構成する必須フィールドである。PUTは部分更新ではなく、その文書の最新状態を表す完全snapshotとして扱う。TTTS内部のdocument queueにも同じ完全snapshotを保存し、SQLiteへ反映する直前にだけ現在値との差分を調べる。``recordContents=true`` ならcanonical token列が同一の本文はFTS5を書き換えず、``recordContents=false`` では本文を常に新旧不一致とみなしてFTS5を再反映する。``attrs=null``、``labels=[]``、``numericValue=null`` も明示的な現在状態である。
 
-検索APIでは、``label`` を複数回指定するとAND条件になり、``numericOp`` と ``numericValue`` を組にして数値filterを指定できる。例えば ``?label=owner%3A0000000000020101&numericOp=lte&numericValue=1780000000000`` のように使う。
+検索APIでは、``label`` を複数回指定するとAND条件になり、``numericOp`` と ``numericValue`` を組にして数値filterを指定できる。例えば ``?label=owner%3A0000000000020101&numericOp=lte&numericValue=1780000000000`` のように使う。これらのfilterは通常の全文検索queryを絞り込むためのものであり、TTTSでは引き続き空でない本文queryを必須とする。
 
 ``wait`` を指定しなければ、TTTSのキューへ登録した時点で ``202 Accepted`` を返す。
 

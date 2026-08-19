@@ -2223,6 +2223,11 @@ paths:
           in: query
           required: true
           schema: { type: string }
+          description: |
+            Full-text query. In post search, standalone unquoted tokens of the form
+            `owner:<user-id>` and `status:published` are interpreted by the STGY
+            backend as filters and removed from the text sent to TTTS. At least one
+            ordinary full-text search term must remain after removing these filters.
         - name: limit
           in: query
           schema: { type: integer, default: 21 }
