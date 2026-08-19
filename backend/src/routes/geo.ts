@@ -8,6 +8,7 @@ import { UsersService } from "../services/users";
 import { DailyTimerThrottleService } from "../services/throttle";
 import { AuthHelpers } from "./authHelpers";
 import type { AuthenticatedUser } from "../models/session";
+import { verifyQueryHash } from "../utils/queryHash";
 
 export default function createGeoRouter(pgPool: Pool, redis: Redis, geoCoder: GeoCoder) {
   const router = Router();
@@ -76,10 +77,13 @@ async function getGeoUser(
   res: Response,
   authHelpers: AuthHelpers,
 ): Promise<AuthenticatedUser | null> {
-  if (!authHelpers.getSessionId(req)) {
-    return authHelpers.makeDummyUser();
+  const loginUser = authHelpers.getSessionId(req) ? await authHelpers.getCurrentUser(req) : null;
+  if (loginUser) return loginUser;
+  if (!verifyQueryHash(req.originalUrl)) {
+    res.status(403).json({ error: "invalid queryhash" });
+    return null;
   }
-  return await authHelpers.requireLogin(req, res);
+  return authHelpers.makeDummyUser();
 }
 
 function parseCoordinate(

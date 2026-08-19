@@ -1,3 +1,4 @@
+import { appendQueryHash } from "@/utils/queryHash";
 import { apiFetch, extractError } from "./client";
 
 export type GeoAddress = {
@@ -26,6 +27,7 @@ export async function encodeGeo(query: string, locale?: string): Promise<GeoPlac
   const search = new URLSearchParams();
   search.append("query", query);
   if (locale) search.append("locale", locale);
+  await appendQueryHash(search);
 
   const res = await apiFetch(`/geo/encode?${search.toString()}`, { method: "GET" });
   if (res.status === 404) return [];
@@ -42,6 +44,7 @@ export async function decodeGeo(
   search.append("longitude", String(longitude));
   search.append("latitude", String(latitude));
   if (locale) search.append("locale", locale);
+  await appendQueryHash(search);
 
   const res = await apiFetch(`/geo/decode?${search.toString()}`, { method: "GET" });
   if (res.status === 404) return [];

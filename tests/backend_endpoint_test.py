@@ -7,6 +7,8 @@ import time
 import base64
 import gzip
 import json
+import hashlib
+from urllib.parse import quote
 
 
 ADMIN_EMAIL = os.environ.get("STGY_ADMIN_EMAIL", "admin@stgy.jp")
@@ -300,10 +302,48 @@ def test_geo():
         return address
     return None
 
+  def queryhash(params):
+    if isinstance(params, dict):
+      items = params.items()
+    else:
+      items = params
+    encode_uri_component_safe = "~()*!.'-_"
+    canonical = "&".join(sorted(
+      f"{quote(str(key), safe=encode_uri_component_safe)}={quote(str(value), safe=encode_uri_component_safe)}"
+      for key, value in items
+      if key != "queryhash"
+    ))
+    return hashlib.sha1(canonical.encode("utf-8")).hexdigest()
+
+  def anonymous_params(params):
+    if isinstance(params, dict):
+      result = list(params.items())
+    else:
+      result = list(params)
+    result.append(("queryhash", queryhash(result)))
+    return result
+
+  encode_ja_params = {"query": "埼玉県所沢市", "locale": "ja-JP"}
+
+  print("[geo] anonymous request without queryhash -> 403")
+  res = requests.get(f"{BASE_URL}/geo/encode", params=encode_ja_params)
+  assert res.status_code == 403, res.text
+  assert res.json() == {"error": "invalid queryhash"}
+  print("[geo] anonymous request without queryhash -> 403 OK")
+
+  print("[geo] anonymous request with invalid queryhash -> 403")
+  res = requests.get(
+    f"{BASE_URL}/geo/encode",
+    params={**encode_ja_params, "queryhash": "invalid"},
+  )
+  assert res.status_code == 403, res.text
+  assert res.json() == {"error": "invalid queryhash"}
+  print("[geo] anonymous request with invalid queryhash -> 403 OK")
+
   print("[geo] anonymous encode with regional Japanese locale")
   res = requests.get(
     f"{BASE_URL}/geo/encode",
-    params={"query": "埼玉県所沢市", "locale": "ja-JP"},
+    params=anonymous_params(encode_ja_params),
   )
   assert res.status_code == 200, res.text
   encoded = res.json()
@@ -339,9 +379,10 @@ def test_geo():
   print("[geo] anonymous encode with regional Japanese locale OK")
 
   print("[geo] anonymous encode with default English locale")
+  encode_en_params = {"query": "tOkOrOzAwA, sAiTaMa"}
   res = requests.get(
     f"{BASE_URL}/geo/encode",
-    params={"query": "tOkOrOzAwA, sAiTaMa"},
+    params=anonymous_params(encode_en_params),
   )
   assert res.status_code == 200, res.text
   encoded_en = res.json()
@@ -358,49 +399,68 @@ def test_geo():
   print("[geo] anonymous encode with default English locale OK")
 
   municipality = encoded[0]
+  decode_params = {
+    "longitude": municipality["longitude"],
+    "latitude": municipality["latitude"],
+    "locale": "ja-JP",
+  }
   res = requests.get(
     f"{BASE_URL}/geo/decode",
-    params={
-      "longitude": municipality["longitude"],
-      "latitude": municipality["latitude"],
-      "locale": "ja-JP",
-    },
+    params=anonymous_params(decode_params),
   )
   assert res.status_code == 200, res.text
   decoded = res.json()
   assert decoded == encoded, f"unexpected decode result: {decoded}"
   print("[geo] anonymous decode representative point OK")
 
+  print("[geo] invalid session falls back to anonymous with queryhash")
   res = requests.get(
     f"{BASE_URL}/geo/encode",
-    params={"query": "埼玉県所沢市", "locale": "ja-JP"},
+    params=anonymous_params(encode_ja_params),
     cookies={"session_id": "invalid-session"},
   )
-  assert res.status_code == 401, res.text
-  assert res.json() == {"error": "login required"}
-  print("[geo] invalid session -> 401 OK")
+  assert res.status_code == 200, res.text
+  assert res.json() == encoded
+  print("[geo] invalid session fallback OK")
 
-  res = requests.get(f"{BASE_URL}/geo/encode")
+  print("[geo] logged-in request does not require queryhash")
+  session_id = login()
+  try:
+    res = requests.get(
+      f"{BASE_URL}/geo/encode",
+      params=encode_ja_params,
+      cookies={"session_id": session_id},
+    )
+    assert res.status_code == 200, res.text
+    assert res.json() == encoded
+  finally:
+    logout(session_id)
+  print("[geo] logged-in request without queryhash OK")
+
+  res = requests.get(
+    f"{BASE_URL}/geo/encode",
+    params=anonymous_params({}),
+  )
   assert res.status_code == 400, res.text
   assert res.json() == {"error": "query is required"}
 
   res = requests.get(
     f"{BASE_URL}/geo/encode",
-    params={"query": "埼玉県所沢市並木", "locale": "ja-JP"},
+    params=anonymous_params({"query": "埼玉県所沢市並木", "locale": "ja-JP"}),
   )
   assert res.status_code == 404, res.text
   assert res.json() == {"error": "not found"}
 
   res = requests.get(
     f"{BASE_URL}/geo/decode",
-    params={"longitude": "x", "latitude": 35.803146},
+    params=anonymous_params({"longitude": "x", "latitude": 35.803146}),
   )
   assert res.status_code == 400, res.text
   assert res.json() == {"error": "longitude must be a number"}
 
   res = requests.get(
     f"{BASE_URL}/geo/decode",
-    params={"longitude": 0, "latitude": 0, "locale": "ja-JP"},
+    params=anonymous_params({"longitude": 0, "latitude": 0, "locale": "ja-JP"}),
   )
   assert res.status_code == 404, res.text
   assert res.json() == {"error": "not found"}

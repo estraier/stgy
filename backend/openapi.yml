@@ -1055,6 +1055,15 @@ paths:
           required: false
           description: Locale preference; exact locale, then base language, then the configured default are tried.
           schema: { type: string, default: en }
+        - in: query
+          name: queryhash
+          required: false
+          description: >-
+            Required for anonymous access. Exclude queryhash, URL-decode every parameter,
+            encode each key and value with encodeURIComponent, sort the resulting key=value
+            elements lexicographically, join them with &, and use the lowercase hexadecimal
+            SHA-1 digest of that UTF-8 string.
+          schema: { type: string, pattern: '^[0-9a-f]{40}$' }
       responses:
         "200":
           description: Matching place and its parent hierarchy, ordered by descending level
@@ -1064,8 +1073,6 @@ paths:
                 $ref: "#/components/schemas/GeoPlaces"
         "400":
           $ref: "#/components/responses/Error400"
-        "401":
-          $ref: "#/components/responses/Error401"
         "403":
           $ref: "#/components/responses/Error403"
         "404":
@@ -1088,6 +1095,15 @@ paths:
           required: false
           description: Locale preference; exact locale, then base language, then the configured default are tried.
           schema: { type: string, default: en }
+        - in: query
+          name: queryhash
+          required: false
+          description: >-
+            Required for anonymous access. Exclude queryhash, URL-decode every parameter,
+            encode each key and value with encodeURIComponent, sort the resulting key=value
+            elements lexicographically, join them with &, and use the lowercase hexadecimal
+            SHA-1 digest of that UTF-8 string.
+          schema: { type: string, pattern: '^[0-9a-f]{40}$' }
       responses:
         "200":
           description: Nearest highest-level place and its parent hierarchy, ordered by descending level
@@ -1097,8 +1113,6 @@ paths:
                 $ref: "#/components/schemas/GeoPlaces"
         "400":
           $ref: "#/components/responses/Error400"
-        "401":
-          $ref: "#/components/responses/Error401"
         "403":
           $ref: "#/components/responses/Error403"
         "404":

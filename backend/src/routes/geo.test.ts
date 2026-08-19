@@ -8,6 +8,7 @@ import createGeoRouter from "./geo";
 import { AuthHelpers } from "./authHelpers";
 import { DailyTimerThrottleService } from "../services/throttle";
 import type { AuthenticatedUser } from "../models/session";
+import { makeQueryHash } from "../utils/queryHash";
 
 const loginUser: AuthenticatedUser = {
   id: "user-1",
@@ -20,6 +21,12 @@ const dummyUser: AuthenticatedUser = {
   isAdmin: false,
   isFrozen: false,
 };
+
+function withQueryHash(path: string): string {
+  const url = new URL(path, "http://localhost");
+  url.searchParams.append("queryhash", makeQueryHash(url.searchParams));
+  return `${url.pathname}${url.search}`;
+}
 
 const place: GeoPlace = {
   level: 3,
@@ -79,11 +86,11 @@ describe("geo routes", () => {
     });
   });
 
-  test("uses a throttled dummy user without a session", async () => {
+  test("uses a queryhash-protected throttled dummy user without a session", async () => {
     getSessionId.mockReturnValue(null);
     encode.mockReturnValue([place]);
 
-    const response = await fetch(`${baseUrl}/geo/encode?query=x`);
+    const response = await fetch(`${baseUrl}${withQueryHash("/geo/encode?query=x")}`);
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual([place]);
@@ -92,15 +99,29 @@ describe("geo routes", () => {
     expect(startWatch).toHaveBeenCalledWith(dummyUser);
   });
 
-  test("rejects an invalid session", async () => {
-    getSessionId.mockReturnValue("invalid-session");
-    getCurrentUser.mockResolvedValue(null);
+  test("rejects an anonymous request without a valid queryhash", async () => {
+    getSessionId.mockReturnValue(null);
 
     const response = await fetch(`${baseUrl}/geo/encode?query=x`);
 
-    expect(response.status).toBe(401);
-    expect(await response.json()).toEqual({ error: "login required" });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "invalid queryhash" });
+    expect(canDo).not.toHaveBeenCalled();
     expect(encode).not.toHaveBeenCalled();
+  });
+
+  test("falls back from an invalid session to anonymous queryhash access", async () => {
+    getSessionId.mockReturnValue("invalid-session");
+    getCurrentUser.mockResolvedValue(null);
+    encode.mockReturnValue([place]);
+
+    const response = await fetch(`${baseUrl}${withQueryHash("/geo/encode?query=x")}`);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([place]);
+    expect(getCurrentUser).toHaveBeenCalled();
+    expect(canDo).toHaveBeenCalledWith("0000000000000000");
+    expect(startWatch).toHaveBeenCalledWith(dummyUser);
   });
 
   test("applies geo timer throttling", async () => {
@@ -155,6 +176,20 @@ describe("geo routes", () => {
     expect(await response.json()).toEqual([place]);
     expect(decode).toHaveBeenCalledWith(139.46, 35.8, "ja");
     expect(done).toHaveBeenCalledTimes(1);
+  });
+
+  test("allows anonymous decode with a valid queryhash", async () => {
+    getSessionId.mockReturnValue(null);
+    decode.mockReturnValue([place]);
+
+    const response = await fetch(
+      `${baseUrl}${withQueryHash("/geo/decode?longitude=139.46&latitude=35.80&locale=ja")}`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([place]);
+    expect(canDo).toHaveBeenCalledWith("0000000000000000");
+    expect(startWatch).toHaveBeenCalledWith(dummyUser);
   });
 
   test("leaves the default decode locale to GeoCoder", async () => {
