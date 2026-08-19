@@ -423,6 +423,73 @@ export class PostsService {
     return out;
   }
 
+  async listPubPostsByIds(
+    ids: string[],
+    userId: string,
+    publishedUntil: string,
+    options?: PostPagination,
+  ): Promise<Post[]> {
+    if (!Array.isArray(ids) || ids.length === 0) return [];
+    const validIds = ids.filter(
+      (v) => typeof v === "string" && /^[0-9a-fA-F]{16}$/.test(v),
+    );
+    if (validIds.length === 0) return [];
+    const offset = options?.offset ?? 0;
+    const limit = options?.limit ?? 100;
+    const orderDir = (options?.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
+    const sql = `
+      WITH req AS (
+        SELECT id
+        FROM unnest($1::bigint[]) AS t(id)
+      )
+      SELECT
+        p.id,
+        p.owned_by,
+        p.reply_to,
+        p.published_at,
+        p.updated_at,
+        p.snippet,
+        p.locale,
+        p.allow_likes,
+        p.allow_replies,
+        id_to_timestamp(p.id) AS created_at,
+        u.nickname AS owner_nickname,
+        u.locale AS owner_locale,
+        pp.owned_by AS reply_to_owner_id,
+        pu.nickname AS reply_to_owner_nickname,
+        COALESCE(pc.reply_count,0) AS count_replies,
+        COALESCE(pc.like_count,0) AS count_likes,
+        ARRAY(SELECT pt.name FROM post_tags pt WHERE pt.post_id = p.id ORDER BY pt.name) AS tags
+      FROM req r
+      JOIN posts p ON p.id = r.id
+      JOIN users u ON p.owned_by = u.id
+      LEFT JOIN posts pp ON p.reply_to = pp.id
+      LEFT JOIN users pu ON pp.owned_by = pu.id
+      LEFT JOIN post_counts pc ON pc.post_id = p.id
+      WHERE p.owned_by = $2
+        AND p.published_at <= $3
+      ORDER BY p.published_at ${orderDir}, p.id ${orderDir}
+      OFFSET $4
+      LIMIT $5
+    `;
+    const params: unknown[] = [
+      hexArrayToDec(validIds),
+      hexToDec(userId),
+      publishedUntil,
+      offset,
+      limit,
+    ];
+    const res = await pgQuery(this.pgPool, sql, params);
+    const rows = res.rows.map((r) => {
+      r.id = decToHex(r.id);
+      r.owned_by = decToHex(r.owned_by);
+      r.reply_to = r.reply_to == null ? null : decToHex(r.reply_to);
+      r.reply_to_owner_id = r.reply_to_owner_id == null ? null : decToHex(r.reply_to_owner_id);
+      return r;
+    });
+    return snakeToCamel<Post[]>(rows);
+  }
+
   async createPost(input: CreatePostInput): Promise<PostDetail> {
     if (typeof input.content !== "string" || input.content.trim() === "")
       throw new Error("content is required");

@@ -11,6 +11,8 @@ import { DailyTimerThrottleService } from "../services/throttle";
 import { PostsService } from "../services/posts";
 import { SearchService } from "../services/search";
 import createPostsRouter from "./posts";
+import { makeQueryHash } from "../utils/queryHash";
+import { Config } from "../config";
 
 const loginUser: AuthenticatedUser = {
   id: "0000000000000001",
@@ -31,6 +33,7 @@ describe("post full-text search filters", () => {
       .mockReturnValue({ done: jest.fn() });
     search = jest.spyOn(SearchService.prototype, "search").mockResolvedValue([]);
     jest.spyOn(PostsService.prototype, "listPostsByIds").mockResolvedValue([]);
+    jest.spyOn(PostsService.prototype, "listPubPostsByIds").mockResolvedValue([]);
 
     const redis = {
       get: jest.fn().mockResolvedValue(null),
@@ -56,6 +59,12 @@ describe("post full-text search filters", () => {
     jest.restoreAllMocks();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
+
+  function withQueryHash(path: string): string {
+    const url = new URL(path, baseUrl);
+    url.searchParams.append("queryhash", makeQueryHash(url.searchParams));
+    return url.toString();
+  }
 
   test("maps owner and published status tokens to generic TTTS filters", async () => {
     jest.spyOn(Date, "now").mockReturnValue(123456789);
@@ -119,6 +128,72 @@ describe("post full-text search filters", () => {
 
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error: "conflicting owner filters" });
+    expect(search).not.toHaveBeenCalled();
+  });
+
+  test("anonymous search requires queryhash", async () => {
+    jest.spyOn(AuthHelpers.prototype, "getCurrentUser").mockResolvedValue(null);
+
+    const response = await fetch(
+      `${baseUrl}/posts/search?query=foo&ownedBy=12345`,
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "invalid queryhash" });
+    expect(search).not.toHaveBeenCalled();
+  });
+
+  test("anonymous search requires an explicit owner", async () => {
+    jest.spyOn(AuthHelpers.prototype, "getCurrentUser").mockResolvedValue(null);
+
+    const response = await fetch(
+      withQueryHash("/posts/search?query=foo&locale=en"),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "ownedBy is required" });
+    expect(search).not.toHaveBeenCalled();
+  });
+
+  test("anonymous search forces owner and published filters", async () => {
+    jest.spyOn(AuthHelpers.prototype, "getCurrentUser").mockResolvedValue(null);
+    jest.spyOn(Date, "now").mockReturnValue(123456789);
+
+    const response = await fetch(
+      withQueryHash("/posts/search?query=foo&ownedBy=12345&locale=en"),
+    );
+
+    expect(response.status).toBe(200);
+    expect(DailyTimerThrottleService.prototype.canDo).toHaveBeenCalledWith(
+      "0000000000000000",
+    );
+    expect(search).toHaveBeenCalledWith({
+      query: "foo",
+      locale: "en",
+      offset: 0,
+      limit: Config.SEARCH_LIMIT_MAX,
+      timeout: 3,
+      labels: ["owner:0000000000012345"],
+      numericOp: "lte",
+      numericValue: 123456789,
+    });
+    expect(PostsService.prototype.listPubPostsByIds).toHaveBeenCalledWith(
+      [],
+      "0000000000012345",
+      new Date(123456789).toISOString(),
+      { offset: 0, limit: 21, order: "desc" },
+    );
+  });
+
+  test("anonymous owner:me is rejected", async () => {
+    jest.spyOn(AuthHelpers.prototype, "getCurrentUser").mockResolvedValue(null);
+
+    const response = await fetch(
+      withQueryHash("/posts/search?query=owner%3Ame%20foo&ownedBy=12345"),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "owner:me requires login" });
     expect(search).not.toHaveBeenCalled();
   });
 });

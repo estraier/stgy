@@ -9,12 +9,35 @@ import gzip
 import json
 import hashlib
 from urllib.parse import quote
+from datetime import datetime
 
 
 ADMIN_EMAIL = os.environ.get("STGY_ADMIN_EMAIL", "admin@stgy.jp")
 ADMIN_PASSWORD = os.environ.get("STGY_ADMIN_PASSWORD", "stgystgy")
 TEST_SIGNUP_CODE = os.environ.get("STGY_TEST_SIGNUP_CODE", "000000")
 BASE_URL = os.environ.get("STGY_BACKEND_API_BASE_URL", "http://localhost:3100");
+
+
+def queryhash(params):
+  if isinstance(params, dict):
+    items = params.items()
+  else:
+    items = params
+  encode_uri_component_safe = "~()*!.'-_"
+  canonical = "&".join(sorted(
+    f"{quote(str(key), safe=encode_uri_component_safe)}={quote(str(value), safe=encode_uri_component_safe)}"
+    for key, value in items
+    if key != "queryhash"
+  ))
+  return hashlib.sha1(canonical.encode("utf-8")).hexdigest()
+
+def queryhashed_params(params):
+  if isinstance(params, dict):
+    result = list(params.items())
+  else:
+    result = list(params)
+  result.append(("queryhash", queryhash(result)))
+  return result
 
 def login():
   url = f"{BASE_URL}/auth"
@@ -302,27 +325,6 @@ def test_geo():
         return address
     return None
 
-  def queryhash(params):
-    if isinstance(params, dict):
-      items = params.items()
-    else:
-      items = params
-    encode_uri_component_safe = "~()*!.'-_"
-    canonical = "&".join(sorted(
-      f"{quote(str(key), safe=encode_uri_component_safe)}={quote(str(value), safe=encode_uri_component_safe)}"
-      for key, value in items
-      if key != "queryhash"
-    ))
-    return hashlib.sha1(canonical.encode("utf-8")).hexdigest()
-
-  def anonymous_params(params):
-    if isinstance(params, dict):
-      result = list(params.items())
-    else:
-      result = list(params)
-    result.append(("queryhash", queryhash(result)))
-    return result
-
   encode_ja_params = {"query": "埼玉県所沢市", "locale": "ja-JP"}
 
   print("[geo] anonymous request without queryhash -> 403")
@@ -343,7 +345,7 @@ def test_geo():
   print("[geo] anonymous encode with regional Japanese locale")
   res = requests.get(
     f"{BASE_URL}/geo/encode",
-    params=anonymous_params(encode_ja_params),
+    params=queryhashed_params(encode_ja_params),
   )
   assert res.status_code == 200, res.text
   encoded = res.json()
@@ -382,7 +384,7 @@ def test_geo():
   encode_en_params = {"query": "tOkOrOzAwA, sAiTaMa"}
   res = requests.get(
     f"{BASE_URL}/geo/encode",
-    params=anonymous_params(encode_en_params),
+    params=queryhashed_params(encode_en_params),
   )
   assert res.status_code == 200, res.text
   encoded_en = res.json()
@@ -406,7 +408,7 @@ def test_geo():
   }
   res = requests.get(
     f"{BASE_URL}/geo/decode",
-    params=anonymous_params(decode_params),
+    params=queryhashed_params(decode_params),
   )
   assert res.status_code == 200, res.text
   decoded = res.json()
@@ -416,7 +418,7 @@ def test_geo():
   print("[geo] invalid session falls back to anonymous with queryhash")
   res = requests.get(
     f"{BASE_URL}/geo/encode",
-    params=anonymous_params(encode_ja_params),
+    params=queryhashed_params(encode_ja_params),
     cookies={"session_id": "invalid-session"},
   )
   assert res.status_code == 200, res.text
@@ -439,28 +441,28 @@ def test_geo():
 
   res = requests.get(
     f"{BASE_URL}/geo/encode",
-    params=anonymous_params({}),
+    params=queryhashed_params({}),
   )
   assert res.status_code == 400, res.text
   assert res.json() == {"error": "query is required"}
 
   res = requests.get(
     f"{BASE_URL}/geo/encode",
-    params=anonymous_params({"query": "埼玉県所沢市並木", "locale": "ja-JP"}),
+    params=queryhashed_params({"query": "埼玉県所沢市並木", "locale": "ja-JP"}),
   )
   assert res.status_code == 404, res.text
   assert res.json() == {"error": "not found"}
 
   res = requests.get(
     f"{BASE_URL}/geo/decode",
-    params=anonymous_params({"longitude": "x", "latitude": 35.803146}),
+    params=queryhashed_params({"longitude": "x", "latitude": 35.803146}),
   )
   assert res.status_code == 400, res.text
   assert res.json() == {"error": "longitude must be a number"}
 
   res = requests.get(
     f"{BASE_URL}/geo/decode",
-    params=anonymous_params({"longitude": 0, "latitude": 0, "locale": "ja-JP"}),
+    params=queryhashed_params({"longitude": 0, "latitude": 0, "locale": "ja-JP"}),
   )
   assert res.status_code == 404, res.text
   assert res.json() == {"error": "not found"}
@@ -1543,6 +1545,96 @@ def test_posts():
   assert res.status_code == 200, res.text
   pub_list = res.json()
   assert any(p.get("id") == post_id for p in pub_list)
+
+
+  anonymous_search_params = {
+    "query": "Welcome",
+    "ownedBy": user_id,
+    "locale": "en",
+    "limit": 21,
+    "order": "desc",
+  }
+  res = requests.get(f"{BASE_URL}/posts/search", params=anonymous_search_params)
+  assert res.status_code == 403, res.text
+  assert res.json() == {"error": "invalid queryhash"}
+  print("[posts] anonymous search without queryhash -> 403 OK")
+
+  res = requests.get(
+    f"{BASE_URL}/posts/search",
+    params={**anonymous_search_params, "queryhash": "invalid"},
+  )
+  assert res.status_code == 403, res.text
+  assert res.json() == {"error": "invalid queryhash"}
+  print("[posts] anonymous search with invalid queryhash -> 403 OK")
+
+  anonymous_search_without_owner = {
+    "query": "Welcome",
+    "locale": "en",
+    "limit": 21,
+    "order": "desc",
+  }
+  res = requests.get(
+    f"{BASE_URL}/posts/search",
+    params=queryhashed_params(anonymous_search_without_owner),
+  )
+  assert res.status_code == 400, res.text
+  assert res.json() == {"error": "ownedBy is required"}
+  print("[posts] anonymous search without owner -> 400 OK")
+
+  search_started_at = time.time()
+  res = requests.get(
+    f"{BASE_URL}/posts/search",
+    params=queryhashed_params(anonymous_search_params),
+  )
+  assert res.status_code == 200, res.text
+  anonymous_searched = res.json()
+  assert isinstance(anonymous_searched, list), res.text
+  assert any(p.get("id") == "0000000000010001" for p in anonymous_searched), anonymous_searched
+  published_timestamps = []
+  for p in anonymous_searched:
+    assert p.get("ownedBy") == user_id, p
+    published_at_value = p.get("publishedAt")
+    assert isinstance(published_at_value, str) and published_at_value, p
+    published_at_ts = datetime.fromisoformat(
+      published_at_value.replace("Z", "+00:00")
+    ).timestamp()
+    assert published_at_ts <= search_started_at, p
+    published_timestamps.append(published_at_ts)
+  assert published_timestamps == sorted(published_timestamps, reverse=True)
+  print("[posts] anonymous public search OK:", len(anonymous_searched))
+
+  ordered_search_params = {
+    "query": "STGY",
+    "ownedBy": user_id,
+    "locale": "en",
+    "limit": 21,
+    "order": "desc",
+  }
+  res = requests.get(
+    f"{BASE_URL}/posts/search",
+    params=queryhashed_params(ordered_search_params),
+  )
+  assert res.status_code == 200, res.text
+  ordered_desc = res.json()
+  desc_timestamps = [
+    datetime.fromisoformat(p["publishedAt"].replace("Z", "+00:00")).timestamp()
+    for p in ordered_desc
+  ]
+  assert desc_timestamps == sorted(desc_timestamps, reverse=True)
+
+  ordered_search_asc_params = {**ordered_search_params, "order": "asc"}
+  res = requests.get(
+    f"{BASE_URL}/posts/search",
+    params=queryhashed_params(ordered_search_asc_params),
+  )
+  assert res.status_code == 200, res.text
+  ordered_asc = res.json()
+  asc_timestamps = [
+    datetime.fromisoformat(p["publishedAt"].replace("Z", "+00:00")).timestamp()
+    for p in ordered_asc
+  ]
+  assert asc_timestamps == sorted(asc_timestamps)
+  print("[posts] anonymous public search order OK")
   res = requests.delete(f"{BASE_URL}/posts/{post_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   print("[posts] deleted")

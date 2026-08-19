@@ -17,6 +17,7 @@ import { SearchCacheEntry } from "../models/search";
 import { makePlainTextDigestFromJsonSnippet } from "../utils/snippet";
 import { createLogger } from "../utils/logger";
 import { parsePostSearchQuery } from "../utils/postSearchQuery";
+import { verifyQueryHash } from "../utils/queryHash";
 import {
   normalizeOneLiner,
   normalizeMultiLines,
@@ -73,9 +74,13 @@ export default function createPostsRouter(
   }
 
   router.get("/search", async (req, res) => {
-    const loginUser = await authHelpers.requireLogin(req, res);
-    if (!loginUser) return;
-    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+    const currentUser = await authHelpers.getCurrentUser(req);
+    const isAnonymous = !currentUser;
+    if (isAnonymous && !verifyQueryHash(req.originalUrl)) {
+      return res.status(403).json({ error: "invalid queryhash" });
+    }
+    const searchUser = currentUser ?? authHelpers.makeDummyUser();
+    if (!searchUser.isAdmin && !(await timerThrottleService.canDo(searchUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }
     const rawQuery = typeof req.query.query === "string" ? req.query.query.trim() : "";
@@ -98,16 +103,23 @@ export default function createPostsRouter(
       try {
         const normalizedOwners = Array.from(
           new Set(
-            parsedQuery.owners.map((owner) =>
-              owner === "me" ? loginUser.id : decToHex(hexToDec(owner)),
-            ),
+            parsedQuery.owners.map((owner) => {
+              if (owner === "me") {
+                if (isAnonymous) throw new Error("owner:me requires login");
+                return searchUser.id;
+              }
+              return decToHex(hexToDec(owner));
+            }),
           ),
         );
         if (normalizedOwners.length > 1) {
           return res.status(400).json({ error: "conflicting owner filters" });
         }
         queryOwner = normalizedOwners[0];
-      } catch {
+      } catch (e) {
+        if (e instanceof Error && e.message === "owner:me requires login") {
+          return res.status(400).json({ error: e.message });
+        }
         return res.status(400).json({ error: "invalid owner filter" });
       }
     }
@@ -119,19 +131,28 @@ export default function createPostsRouter(
         return res.status(400).json({ error: "invalid ownedBy" });
       }
     }
+    if (isAnonymous && !parameterOwner) {
+      return res.status(400).json({ error: "ownedBy is required" });
+    }
     if (queryOwner && parameterOwner && queryOwner !== parameterOwner) {
       return res.status(400).json({ error: "conflicting owner filters" });
     }
     const ownedBy = queryOwner ?? parameterOwner;
+    const publicOrder = req.query.order === "asc" ? "asc" : "desc";
     const offset = Math.max(0, parseInt(req.query.offset as string) || 0);
     const reqLimit = Math.max(1, parseInt(req.query.limit as string) || 21);
     const neededLimit = offset + reqLimit;
     if (neededLimit > Config.SEARCH_LIMIT_MAX) {
       return res.status(400).json({ error: "Search limit exceeded" });
     }
+    const publishedOnly = isAnonymous || parsedQuery.publishedOnly;
+    const publishedUntilMs = publishedOnly ? Date.now() : undefined;
     const hash = crypto
       .createHash("md5")
-      .update(`${rawQuery}:${locale}:${ownedBy ?? ""}`)
+      .update(
+        `${rawQuery}:${locale}:${ownedBy ?? ""}:${publishedOnly ? "published" : "all"}:` +
+          (isAnonymous ? "anonymous" : "authenticated"),
+      )
       .digest("hex");
     const cacheKey = `stgy:search:posts:${hash}`;
     let docIds: string[] = [];
@@ -146,30 +167,42 @@ export default function createPostsRouter(
         }
       }
       if (!isHit) {
-        const watch = timerThrottleService.startWatch(loginUser);
+        const watch = timerThrottleService.startWatch(searchUser);
         try {
           docIds = await searchService.search({
             query: parsedQuery.query,
             locale,
             offset: 0,
-            limit: neededLimit,
+            limit: isAnonymous ? Config.SEARCH_LIMIT_MAX : neededLimit,
             timeout: 3,
             labels: ownedBy ? [`owner:${ownedBy}`] : undefined,
-            numericOp: parsedQuery.publishedOnly ? "lte" : undefined,
-            numericValue: parsedQuery.publishedOnly ? Date.now() : undefined,
+            numericOp: publishedOnly ? "lte" : undefined,
+            numericValue: publishedUntilMs,
           });
         } finally {
           watch.done();
         }
         const newCache: SearchCacheEntry = {
           query: rawQuery,
-          limit: neededLimit,
+          limit: isAnonymous ? Config.SEARCH_LIMIT_MAX : neededLimit,
           result: docIds,
         };
         await redis.setex(cacheKey, Config.SEARCH_CACHE_TTL_SEC, JSON.stringify(newCache));
       }
+      if (isAnonymous) {
+        if (!ownedBy || publishedUntilMs === undefined) {
+          return res.status(400).json({ error: "invalid public search" });
+        }
+        const posts = await postsService.listPubPostsByIds(
+          docIds,
+          ownedBy,
+          new Date(publishedUntilMs).toISOString(),
+          { offset, limit: reqLimit, order: publicOrder },
+        );
+        return res.json(posts);
+      }
       const slicedIds = docIds.slice(offset, offset + reqLimit);
-      const posts = await postsService.listPostsByIds(slicedIds, loginUser.id);
+      const posts = await postsService.listPostsByIds(slicedIds, searchUser.id);
       res.json(posts);
     } catch (e: unknown) {
       console.error("Search error:", e);

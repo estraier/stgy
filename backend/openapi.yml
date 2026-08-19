@@ -2230,8 +2230,15 @@ paths:
   /posts/search:
     get:
       summary: Search posts (Full text search)
+      description: |
+        Logged-in callers retain the normal post-search behavior. Anonymous callers
+        are accepted only with a valid `queryhash` and an explicit `ownedBy`; the
+        backend then forces the search to that owner and to posts whose publication
+        time is not later than the current time. Anonymous searches use the shared
+        anonymous daily timer throttle.
       security:
         - sessionCookie: []
+        - {}
       parameters:
         - name: query
           in: query
@@ -2241,14 +2248,37 @@ paths:
             Full-text query. In post search, standalone unquoted tokens of the form
             `owner:<user-id>`, `owner:me`, and `status:published` are interpreted by
             the STGY backend as filters and removed from the text sent to TTTS.
-            `owner:me` means the currently logged-in user. At least one ordinary
-            full-text search term must remain after removing these filters.
+            `owner:me` means the currently logged-in user and is rejected for
+            anonymous requests. At least one ordinary full-text search term must
+            remain after removing these filters. Anonymous requests are always
+            restricted to published posts regardless of whether `status:published`
+            is present.
+        - name: ownedBy
+          in: query
+          schema: { type: string }
+          description: Required for anonymous requests; restricts results to this owner.
+        - name: locale
+          in: query
+          schema: { type: string, default: en }
         - name: limit
           in: query
           schema: { type: integer, default: 21 }
         - name: offset
           in: query
           schema: { type: integer, default: 0 }
+        - name: order
+          in: query
+          schema: { type: string, enum: [asc, desc], default: desc }
+          description: |
+            Publication-time order for anonymous public searches. Authenticated
+            searches retain the existing TTTS result order.
+        - name: queryhash
+          in: query
+          schema: { type: string }
+          description: |
+            Required for anonymous requests. SHA-1 of the canonicalized query
+            parameters excluding `queryhash`, using the same queryhash rules as the
+            anonymous geo endpoints.
       responses:
         "200":
           description: Search result
@@ -2257,11 +2287,9 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/PostLite"
+                  $ref: "#/components/schemas/Post"
         "400":
           $ref: "#/components/responses/Error400"
-        "401":
-          $ref: "#/components/responses/Error401"
         "403":
           $ref: "#/components/responses/Error403"
 
