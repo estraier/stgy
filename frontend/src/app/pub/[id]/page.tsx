@@ -366,6 +366,23 @@ export default async function PubPostPage({ params, searchParams }: Props) {
                     })}
                   </section>
                 )}
+                <section className="pub-side-search">
+                  <h2 className="side-header">
+                    {convertForDirection("Search posts", themeDir)}
+                  </h2>
+                  <form className="pub-side-search-form" action={siteHrefBase} method="get">
+                    {design && <input type="hidden" name="design" value={design} />}
+                    <input
+                      className="pub-side-search-input"
+                      type="search"
+                      name="q"
+                      aria-label="Search posts"
+                    />
+                    <button className="pub-side-search-button" type="submit">
+                      search
+                    </button>
+                  </form>
+                </section>
               </aside>
             )}
           </div>

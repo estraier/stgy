@@ -161,6 +161,42 @@ html:has(.site-container) {
   color: #777;
 }
 
+.pub-theme-dir-norm .pub-side-search {
+  margin-top: 0.5em;
+  padding: 0.5em 0;
+  border-top: 1px solid #888;
+}
+.pub-theme-dir-norm .pub-side-search-form {
+  display: flex;
+  align-items: center;
+  gap: 0.3em;
+  margin: 0.5em 0.15em;
+  font-size: 85%;
+}
+.pub-theme-dir-norm .pub-side-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  padding: 0.2em 0.4em;
+  border: 1px solid #aaa;
+  border-radius: 0.25em;
+  background: #fff;
+  color: #222;
+}
+.pub-theme-dir-norm .pub-side-search-button {
+  flex: 0 0 auto;
+  padding: 0.2em 0.55em;
+  border: 1px solid #aaa;
+  border-radius: 0.25em;
+  background: #eee;
+  color: #222;
+  cursor: pointer;
+}
+.pub-theme-dir-norm .pub-side-search-button:hover {
+  background: #def;
+  border-color: #bdf;
+}
+
 .pub-theme-dir-norm .pub-side-profile article,
 .pub-theme-dir-norm .pub-side-recent article {
   zoom: 85%;
@@ -246,7 +282,8 @@ html:has(.site-container) {
     margin-top: -1.5em;
   }
   .pub-theme-dir-norm .pub-container:has(.pub-sidebar) .pub-side-profile,
-  .pub-theme-dir-norm .pub-container:has(.pub-sidebar) .pub-side-recent {
+  .pub-theme-dir-norm .pub-container:has(.pub-sidebar) .pub-side-recent,
+  .pub-theme-dir-norm .pub-container:has(.pub-sidebar) .pub-side-search {
     padding: 0;
     border-top: none;
   }
@@ -317,8 +354,39 @@ html:has(.site-container) {
   border-color: #bdf;
 }
 .pub-theme-dir-norm .site-container .posts-order {
-  margin-left: auto;
   opacity: 0.9;
+}
+.pub-theme-dir-norm .site-container .posts-search {
+  display: flex;
+  align-items: center;
+  gap: 0.3em;
+  margin-left: auto;
+  font-size: 85%;
+}
+.pub-theme-dir-norm .site-container .posts-search-input {
+  width: clamp(6em, 20vw, 14em);
+  min-width: 6em;
+  padding: 0.2em 0.4em;
+  border: 1px solid #aaa;
+  border-radius: 0.25em;
+  background: #fff;
+  color: #222;
+}
+.pub-theme-dir-norm .site-container .posts-search-button {
+  padding: 0.2em 0.55em;
+  border: 1px solid #aaa;
+  border-radius: 0.25em;
+  background: #eee;
+  color: #222;
+  cursor: pointer;
+}
+.pub-theme-dir-norm .site-container .posts-search-button:hover {
+  background: #def;
+  border-color: #bdf;
+}
+.pub-theme-dir-norm .site-container .site-search-result-title,
+.pub-theme-dir-norm .site-container .pub-search-status {
+  margin: 1em 0.4em;
 }
 .pub-theme-dir-norm .site-container .oldest-first-label input[type="checkbox"] {
   margin: 0;
@@ -1571,6 +1639,40 @@ html:has(.site-container) {
       "vkrn" 1;
     color: #888;
   }
+  .pub-theme-dir-vert .pub-side-search-form {
+    display: flex;
+    align-items: center;
+    gap: 0.3em;
+    margin: 1em 0 0 1em;
+    font-size: 85%;
+    writing-mode: horizontal-tb !important;
+    text-orientation: mixed !important;
+  }
+  .pub-theme-dir-vert .pub-side-search-form * {
+    writing-mode: horizontal-tb !important;
+    text-orientation: mixed !important;
+  }
+  .pub-theme-dir-vert .pub-side-search-input {
+    width: 10em;
+    min-width: 0;
+    padding: 0.2em 0.4em;
+    border: 1px solid #aaa;
+    border-radius: 0.25em;
+    background: #fff;
+    color: #222;
+  }
+  .pub-theme-dir-vert .pub-side-search-button {
+    padding: 0.2em 0.55em;
+    border: 1px solid #aaa;
+    border-radius: 0.25em;
+    background: #eee;
+    color: #222;
+    cursor: pointer;
+  }
+  .pub-theme-dir-vert .pub-side-search-button:hover {
+    background: #def;
+    border-color: #bdf;
+  }
   .pub-theme-dir-vert .pub-main .markdown-body,
   .pub-theme-dir-vert .pub-sidebar .markdown-body,
   .pub-theme-dir-vert .site-main .markdown-body,
@@ -2103,10 +2205,46 @@ html:has(.site-container) {
     border-color: #bdf;
   }
   .pub-theme-dir-vert .site-container .posts-order {
-    margin-inline-start: auto;
-    margin-left: auto;
     padding: 0.15em 0.3em;
     opacity: 0.9;
+  }
+  .pub-theme-dir-vert .site-container .posts-search {
+    display: flex;
+    align-items: center;
+    gap: 0.3em;
+    margin-inline-start: auto;
+    font-size: 85%;
+    writing-mode: horizontal-tb !important;
+    text-orientation: mixed !important;
+  }
+  .pub-theme-dir-vert .site-container .posts-search * {
+    writing-mode: horizontal-tb !important;
+    text-orientation: mixed !important;
+  }
+  .pub-theme-dir-vert .site-container .posts-search-input {
+    width: clamp(6em, 20vw, 12em);
+    min-width: 6em;
+    padding: 0.2em 0.4em;
+    border: 1px solid #aaa;
+    border-radius: 0.25em;
+    background: #fff;
+    color: #222;
+  }
+  .pub-theme-dir-vert .site-container .posts-search-button {
+    padding: 0.2em 0.55em;
+    border: 1px solid #aaa;
+    border-radius: 0.25em;
+    background: #eee;
+    color: #222;
+    cursor: pointer;
+  }
+  .pub-theme-dir-vert .site-container .posts-search-button:hover {
+    background: #def;
+    border-color: #bdf;
+  }
+  .pub-theme-dir-vert .site-container .site-search-result-title,
+  .pub-theme-dir-vert .site-container .pub-search-status {
+    margin: 1em 0.4em;
   }
   .pub-theme-dir-vert .site-container .oldest-first-label input[type="checkbox"] {
     margin: 1em 0 0 0;

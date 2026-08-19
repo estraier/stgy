@@ -16,6 +16,7 @@ import { formatDateTime, makeAbsoluteUrl, convertForDirection } from "@/utils/fo
 import PubImageBlockBinder from "@/components/PubImageBlockBinder";
 import PubScrollAction from "@/components/PubScrollAction";
 import PubHorizontalScrollRestore from "./PubHorizontalScrollRestore";
+import PubSiteSearchResults from "./PubSiteSearchResults";
 import type { Metadata } from "next";
 
 type PageParams = { id: string };
@@ -96,7 +97,13 @@ export async function generateMetadata({
 
 type Props = {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ page?: string; design?: string; tab?: string; oldestFirst?: string }>;
+  searchParams: Promise<{
+    page?: string;
+    design?: string;
+    tab?: string;
+    oldestFirst?: string;
+    q?: string;
+  }>;
 };
 
 export default async function PubSitePage({ params, searchParams }: Props) {
@@ -106,10 +113,13 @@ export default async function PubSitePage({ params, searchParams }: Props) {
     design: designRaw,
     tab: tabRaw,
     oldestFirst: oldestFirstRaw,
+    q: qRaw,
   } = await searchParams;
   const page = Math.max(1, Number.parseInt(pageStr ?? "1", 10) || 1);
   const design = Array.isArray(designRaw) ? designRaw[0] : designRaw;
   const tab = Array.isArray(tabRaw) ? tabRaw[0] : tabRaw;
+  const q = (Array.isArray(qRaw) ? qRaw[0] : qRaw)?.trim() ?? "";
+  const isSearch = q.length > 0;
   const tabMode = tab === "plain" ? "plain" : "snippet";
   const oldestFirst = oldestFirstRaw === "1";
 
@@ -135,11 +145,13 @@ export default async function PubSitePage({ params, searchParams }: Props) {
     const page_size =
       tabMode === "plain" ? Config.PUB_POSTS_PLAIN_PAGE_SIZE : Config.PUB_POSTS_RICH_PAGE_SIZE;
     const offset = (page - 1) * page_size;
-    const posts = await listPubPostsByUser(id, {
-      offset,
-      limit: page_size + 1,
-      order,
-    });
+    const posts = isSearch
+      ? []
+      : await listPubPostsByUser(id, {
+          offset,
+          limit: page_size + 1,
+          order,
+        });
     const hasPrev = page > 1;
     const hasNext = posts.length > page_size;
     const items = posts.slice(0, page_size);
@@ -151,6 +163,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
       if (design) qs.set("design", String(design));
       if (tabMode === "plain") qs.set("tab", "plain");
       if (oldestFirst) qs.set("oldestFirst", "1");
+      if (isSearch) qs.set("q", q);
       const query = qs.toString();
       return query ? `${siteRoot}?${query}` : siteRoot;
     };
@@ -162,6 +175,8 @@ export default async function PubSitePage({ params, searchParams }: Props) {
       qs.set("page", "1");
       if (design) qs.set("design", String(design));
       if (mode === "plain") qs.set("tab", "plain");
+      if (isSearch && oldestFirst) qs.set("oldestFirst", "1");
+      if (isSearch) qs.set("q", q);
       const query = qs.toString();
       const href = query ? `${siteRoot}?${query}` : siteRoot;
       return `${href}#pub-posts-controls`;
@@ -176,6 +191,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
       if (design) qs.set("design", String(design));
       if (tabMode === "plain") qs.set("tab", "plain");
       if (on) qs.set("oldestFirst", "1");
+      if (isSearch) qs.set("q", q);
       const query = qs.toString();
       return query ? `${siteRoot}?${query}` : siteRoot;
     };
@@ -209,11 +225,15 @@ export default async function PubSitePage({ params, searchParams }: Props) {
                 )}
               </div>
               <section className="site-profile">
-                <ArticleWithDecoration
-                  lang={locale}
-                  className="markdown-body site-intro"
-                  html={siteIntroHtml}
-                />
+                {isSearch ? (
+                  <div className="site-search-result-title">Search result of &quot;{q}&quot;</div>
+                ) : (
+                  <ArticleWithDecoration
+                    lang={locale}
+                    className="markdown-body site-intro"
+                    html={siteIntroHtml}
+                  />
+                )}
               </section>
               <nav className="site-posts-controls" id="pub-posts-controls">
                 <div className="posts-controls-row">
@@ -238,95 +258,128 @@ export default async function PubSitePage({ params, searchParams }: Props) {
                       <span>{convertForDirection("Oldest", themeDir)}</span>
                     </Link>
                   </div>
+                  <form className="posts-search" action={siteRoot} method="get">
+                    {design && <input type="hidden" name="design" value={design} />}
+                    {tabMode === "plain" && <input type="hidden" name="tab" value="plain" />}
+                    {oldestFirst && <input type="hidden" name="oldestFirst" value="1" />}
+                    <input
+                      className="posts-search-input"
+                      type="search"
+                      name="q"
+                      defaultValue={q}
+                      aria-label="Search posts"
+                    />
+                    <button className="posts-search-button" type="submit">
+                      Search
+                    </button>
+                  </form>
                 </div>
               </nav>
-              <section className="site-recent" id="pub-post-list">
-                {tabMode === "plain" ? (
-                  <ul className="pub-post-list">
-                    {items.map((r) => {
-                      const postHref = `/pub/${r.id}${
-                        design ? `?design=${encodeURIComponent(design)}` : ""
-                      }`;
-                      const publishedAtDate = new Date(r.publishedAt ?? "");
-                      const attrs = makePubAttributesFromJsonSnippet(r.snippet, { writingMode });
-                      return (
-                        <li
-                          key={String(r.id)}
-                          className="post-div post-list-item"
-                          id={`pubpost-${r.id}`}
-                          data-restore-id={String(r.id)}
-                          data-restore-page={String(page)}
-                        >
-                          <span className="date">
-                            {convertForDirection(
-                              formatDateTime(publishedAtDate).replace(/\s.*$/, ""),
-                              themeDir,
-                            )}
-                          </span>{" "}
-                          <Link href={postHref}>
-                            {attrs.title && <strong className="title">{attrs.title}</strong>}
-                            {attrs.metadata.author && (
-                              <em className="author">{attrs.metadata.author}</em>
-                            )}
-                            {attrs.desc}
-                          </Link>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                ) : (
-                  items.map((r, idx) => {
-                    const postHref = `/pub/${r.id}${
-                      design ? `?design=${encodeURIComponent(design)}` : ""
-                    }`;
-                    const snippetHtml = makeHtmlFromJsonSnippet(r.snippet, `p${idx + 1}-h`, {
-                      writingMode,
-                    });
-                    const publishedAtDate = new Date(r.publishedAt ?? "");
-                    return (
-                      <LinkDiv
-                        key={String(r.id)}
-                        href={postHref}
-                        className="link-div post-div"
-                        id={`pubpost-${r.id}`}
-                        data-restore-id={String(r.id)}
-                        data-restore-page={String(page)}
-                      >
-                        <div className="date">
-                          {convertForDirection(formatDateTime(publishedAtDate), themeDir)}
-                        </div>
-                        <ArticleWithDecoration
-                          lang={r.locale || pubcfg.locale || locale}
-                          className="markdown-body post-content-excerpt"
-                          html={snippetHtml}
-                        />
-                      </LinkDiv>
-                    );
-                  })
-                )}
-              </section>
-              <nav className="pub-pager" aria-label="Pagination">
-                <div className="pager-row">
-                  {hasPrev ? (
-                    <Link className="pager-btn" href={newerHref}>
-                      {convertForDirection("← Newer", themeDir)}
-                    </Link>
-                  ) : (
-                    <span className="pager-btn disabled" aria-disabled="true">
-                      {convertForDirection("← Newer", themeDir)}
-                    </span>
-                  )}
-                  {hasNext ? (
-                    <Link className="pager-btn" href={olderHref}>
-                      {convertForDirection("Older →", themeDir)}
-                    </Link>
-                  ) : (
-                    <span className="pager-btn disabled" aria-disabled="true">
-                      {convertForDirection("Older →", themeDir)}
-                    </span>
-                  )}
-                </div>
-              </nav>
+              {isSearch ? (
+                <PubSiteSearchResults
+                  userId={id}
+                  query={q}
+                  page={page}
+                  pageSize={page_size}
+                  order={order}
+                  tabMode={tabMode}
+                  design={design}
+                  writingMode={writingMode}
+                  themeDir={themeDir}
+                  locale={locale}
+                  pubLocale={pubcfg.locale}
+                />
+              ) : (
+                <>
+                  <section className="site-recent" id="pub-post-list">
+                    {tabMode === "plain" ? (
+                      <ul className="pub-post-list">
+                        {items.map((r) => {
+                          const postHref = `/pub/${r.id}${
+                            design ? `?design=${encodeURIComponent(design)}` : ""
+                          }`;
+                          const publishedAtDate = new Date(r.publishedAt ?? "");
+                          const attrs = makePubAttributesFromJsonSnippet(r.snippet, { writingMode });
+                          return (
+                            <li
+                              key={String(r.id)}
+                              className="post-div post-list-item"
+                              id={`pubpost-${r.id}`}
+                              data-restore-id={String(r.id)}
+                              data-restore-page={String(page)}
+                            >
+                              <span className="date">
+                                {convertForDirection(
+                                  formatDateTime(publishedAtDate).replace(/\s.*$/, ""),
+                                  themeDir,
+                                )}
+                              </span>{" "}
+                              <Link href={postHref}>
+                                {attrs.title && <strong className="title">{attrs.title}</strong>}
+                                {attrs.metadata.author && (
+                                  <em className="author">{attrs.metadata.author}</em>
+                                )}
+                                {attrs.desc}
+                              </Link>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    ) : (
+                      items.map((r, idx) => {
+                        const postHref = `/pub/${r.id}${
+                          design ? `?design=${encodeURIComponent(design)}` : ""
+                        }`;
+                        const snippetHtml = makeHtmlFromJsonSnippet(r.snippet, `p${idx + 1}-h`, {
+                          writingMode,
+                        });
+                        const publishedAtDate = new Date(r.publishedAt ?? "");
+                        return (
+                          <LinkDiv
+                            key={String(r.id)}
+                            href={postHref}
+                            className="link-div post-div"
+                            id={`pubpost-${r.id}`}
+                            data-restore-id={String(r.id)}
+                            data-restore-page={String(page)}
+                          >
+                            <div className="date">
+                              {convertForDirection(formatDateTime(publishedAtDate), themeDir)}
+                            </div>
+                            <ArticleWithDecoration
+                              lang={r.locale || pubcfg.locale || locale}
+                              className="markdown-body post-content-excerpt"
+                              html={snippetHtml}
+                            />
+                          </LinkDiv>
+                        );
+                      })
+                    )}
+                  </section>
+                  <nav className="pub-pager" aria-label="Pagination">
+                    <div className="pager-row">
+                      {hasPrev ? (
+                        <Link className="pager-btn" href={newerHref}>
+                          {convertForDirection("← Newer", themeDir)}
+                        </Link>
+                      ) : (
+                        <span className="pager-btn disabled" aria-disabled="true">
+                          {convertForDirection("← Newer", themeDir)}
+                        </span>
+                      )}
+                      {hasNext ? (
+                        <Link className="pager-btn" href={olderHref}>
+                          {convertForDirection("Older →", themeDir)}
+                        </Link>
+                      ) : (
+                        <span className="pager-btn disabled" aria-disabled="true">
+                          {convertForDirection("Older →", themeDir)}
+                        </span>
+                      )}
+                    </div>
+                  </nav>
+                </>
+              )}
             </section>
           </div>
         </main>

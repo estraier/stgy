@@ -1,5 +1,6 @@
 import type { Post, PostDetail, User } from "./models";
 import { apiFetch, extractError } from "./client";
+import { appendQueryHash } from "@/utils/queryHash";
 
 function buildPostQuery(
   params: {
@@ -44,6 +45,30 @@ export async function searchPosts(params: {
   if (params.ownedBy) search.append("ownedBy", params.ownedBy);
   const q = search.toString();
   const res = await apiFetch(`/posts/search?${q}`, { method: "GET" });
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
+}
+
+export async function searchPubPostsByUser(params: {
+  query: string;
+  userId: string;
+  offset?: number;
+  limit?: number;
+  locale?: string;
+  order?: "asc" | "desc";
+}): Promise<Post[]> {
+  const search = new URLSearchParams();
+  search.append("query", params.query);
+  search.append("ownedBy", params.userId);
+  if (params.offset !== undefined) search.append("offset", String(params.offset));
+  if (params.limit !== undefined) search.append("limit", String(params.limit));
+  if (params.locale) search.append("locale", params.locale);
+  if (params.order) search.append("order", params.order);
+  await appendQueryHash(search);
+  const res = await apiFetch(`/posts/search?${search.toString()}`, {
+    method: "GET",
+    credentials: "omit",
+  });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();
 }
