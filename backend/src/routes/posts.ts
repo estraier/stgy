@@ -97,7 +97,11 @@ export default function createPostsRouter(
     if (parsedQuery.owners.length > 0) {
       try {
         const normalizedOwners = Array.from(
-          new Set(parsedQuery.owners.map((owner) => decToHex(hexToDec(owner)))),
+          new Set(
+            parsedQuery.owners.map((owner) =>
+              owner === "me" ? loginUser.id : decToHex(hexToDec(owner)),
+            ),
+          ),
         );
         if (normalizedOwners.length > 1) {
           return res.status(400).json({ error: "conflicting owner filters" });

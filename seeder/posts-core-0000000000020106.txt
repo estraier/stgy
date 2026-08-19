@@ -379,7 +379,7 @@ LF + docs.tokens + LF の中に LF + 東京 + LF + 自転車 + LF があるか�
 
 STGYの投稿では ``owner:<userId>`` をlabelとして登録し、``numericValue`` には外部公開日時のepoch millisecondを入れる。非公開ならNULL、予約公開なら未来日時になる。そのため、個別ユーザの記事検索はowner labelで限定でき、外部公開記事はさらに ``numeric_value <= now`` を加えるだけで、公開時刻到来時のインデックス更新を必要としない。
 
-STGYの ``/posts/search`` は、UIから受け取ったquery文字列をバックエンドで解釈する。非引用の独立したtoken ``owner:<userId>`` はTTTSの ``owner:<userId>`` label条件へ、``status:published`` は現在時刻を使った ``numericOp=lte`` と ``numericValue=<current epoch ms>`` へ変換する。それらの特殊tokenを取り除いた残りだけを本文queryとしてTTTSへ送り、少なくとも1つの通常の本文検索語を必須とする。例えば ``owner:0000000000020101 status:published 自転車`` は、指定ユーザが現在外部公開している投稿の中から「``自転車``」を検索する。引用符で囲まれた ``"owner:..."`` や ``"status:published"`` は特殊tokenとして扱わず、通常の本文検索語として扱う。TTTS自身は ``owner`` や ``published`` というSTGY固有の意味を解釈せず、opaqueなlabelと汎用数値filterだけを処理する。
+STGYの ``/posts/search`` は、UIから受け取ったquery文字列をバックエンドで解釈する。非引用の独立したtoken ``owner:<userId>`` はTTTSの ``owner:<userId>`` label条件へ変換し、``owner:me`` はまず現在ログインしているユーザのIDへ解決してから同じowner label条件へ変換する。``status:published`` は現在時刻を使った ``numericOp=lte`` と ``numericValue=<current epoch ms>`` へ変換する。それらの特殊tokenを取り除いた残りだけを本文queryとしてTTTSへ送り、少なくとも1つの通常の本文検索語を必須とする。例えば ``owner:me status:published 自転車`` は、ログインユーザが現在外部公開している投稿の中から「``自転車``」を検索する。引用符で囲まれた ``"owner:..."`` や ``"status:published"`` は特殊tokenとして扱わず、通常の本文検索語として扱う。TTTS自身は ``owner``、``me``、``published`` というSTGY固有の意味を解釈せず、opaqueなlabelと汎用数値filterだけを処理する。
 
 ## 検索処理と結果の順序
 

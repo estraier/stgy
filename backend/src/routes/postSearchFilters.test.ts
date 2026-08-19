@@ -79,8 +79,27 @@ describe("post full-text search filters", () => {
     });
   });
 
+  test("resolves owner:me to the logged-in user", async () => {
+    const response = await fetch(
+      `${baseUrl}/posts/search?query=${encodeURIComponent("owner:me foo")}&locale=en`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(search).toHaveBeenCalledWith({
+      query: "foo",
+      locale: "en",
+      offset: 0,
+      limit: 21,
+      timeout: 3,
+      labels: ["owner:0000000000000001"],
+      numericOp: undefined,
+      numericValue: undefined,
+    });
+  });
+
   test.each([
     "owner:12345",
+    "owner:me",
     "status:published",
     "owner:12345 status:published",
   ])("rejects filter-only post search: %s", async (query) => {
