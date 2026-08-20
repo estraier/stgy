@@ -3678,6 +3678,7 @@ describe("KWIC", () => {
     expect(kwic.segments[0]!.children).toContainEqual({
       type: "highlight",
       text: "keyword",
+      keywordIndex: 0,
     });
   });
 

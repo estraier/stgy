@@ -26,7 +26,7 @@ WHERE content ILIKE '%検索語%';
 
 This approach, however, requires reading a broad range of bodies that might match the query. Adding a full-text index can accelerate the search, but then a large index must be updated whenever a post or user changes. Queries for common terms ordered by recency can also have very large candidate sets. If a full-text index first enumerates candidates and another index then orders them by time, it becomes difficult to predict the work required as data volume grows.
 
-STGY does not need sophisticated relevance ranking like a general Web search engine. It is enough for the search boxes in post lists, user lists, and external publication sites to accept a string and retrieve a bounded set of matching documents. TTTS therefore encodes an order that favors newer candidates directly in the index's internal IDs and partitions searchable data into chronological ranges.
+STGY does not need sophisticated relevance ranking like a general Web search engine. It is enough for the search boxes in the post and user lists to accept a string and retrieve recent documents containing it in order. The result order is therefore encoded directly in the index's internal IDs, and searchable data is partitioned into chronological ranges.
 
 Making full-text search a separate service also has the following advantages.
 
@@ -112,7 +112,7 @@ For a user, the searchable text is the nickname followed by a newline and the pr
 
 A user document uses that user's locale. Because locale is a required user attribute, fallback is normally unnecessary.
 
-The document timestamp is the creation time, in seconds, extracted from the Snowflake ID of the post or user. It is not the post's publication time or update time. Editing a post therefore does not move it to another chronological shard, and its TTTS candidate order remains based on creation time.
+The document timestamp is the creation time, in seconds, extracted from the Snowflake ID of the post or user. It is not the post's publication time or update time. Editing a post therefore does not move it to another chronological shard, and its search order remains based on creation time.
 
 ## PostgreSQL-Side Update Queue
 
@@ -274,7 +274,7 @@ LIMIT ?;
 
 Because smaller internal_id values correspond to documents registered later, newer documents are returned first. Updating an existing document preserves its internal_id, so an edit alone does not move it to the front of search results.
 
-This design does not calculate relevance scores such as BM25. TTTS candidate results are ordered by creation time, newest first, rather than by relevance. STGY normally uses that order for logged-in search, while external-publication post search may reorder the bounded candidate set by publication time.
+This design does not calculate relevance scores such as BM25. Results are ordered by creation time, newest first, rather than by relevance. STGY's full-text search is designed to find recent posts or users matching the query text.
 
 ## Tokenization and Normalization
 
@@ -373,33 +373,13 @@ This prevents a search for ``C++`` documents from matching documents containing 
 
 ### Restricting the search space with labels and numeric_value
 
-Each document may carry zero or more opaque ``labels`` and one nullable generic ``numeric_value``. TTTS assigns no application-specific meaning to either. Labels preserve printable characters and U+0020 SPACE exactly, and multiple label filters use AND semantics. Because ``labels`` is a separate FTS5 column, label terms do not mix with body terms.
+Each document may carry zero or more opaque ``labels`` and one nullable generic ``numeric_value``. TTTS assigns no application-specific meaning to either. Labels preserve printable characters and U+0020 SPACE, are matched case-insensitively by FTS5, and multiple label filters use AND semantics. Because ``labels`` is a separate FTS5 column, label terms do not mix with body terms. Label conditions are placed before the body condition in the FTS5 expression so that label posting lists lead the body-side intersection.
 
-``unicode61`` folds letter case, so a label condition first narrows candidates through FTS5 and then checks the raw label stored in ``id_tuples.labels_json`` with case-sensitive exact equality. Numeric filters support ``eq``, ``gt``, ``gte``, ``lt`` and ``lte``. For each FTS candidate, TTTS looks up ``id_tuples`` by its INTEGER PRIMARY KEY and applies the numeric comparison immediately. No separate B-tree index is created for ``numeric_value``.
+Numeric filters support ``eq``, ``gt``, ``gte``, ``lt`` and ``lte``. For each FTS candidate, TTTS looks up ``id_tuples`` by its INTEGER PRIMARY KEY and applies the numeric comparison immediately. No raw-label recheck or separate B-tree index for ``numeric_value`` is used.
 
 For STGY posts, the backend stores ``owner:<userId>`` as a label and the external publication time in epoch milliseconds as ``numericValue``. Unpublished posts use NULL and scheduled posts use their future timestamp. User-specific search can therefore add the owner label, while public search can additionally require ``numeric_value <= now`` without updating the index when the scheduled publication time arrives.
 
-For ordinary searches by logged-in users, STGY's ``/posts/search`` endpoint interprets the query string received from the UI in the backend. A standalone unquoted ``owner:<userId>`` token becomes the TTTS ``owner:<userId>`` label filter, and ``owner:me`` is first resolved to the currently logged-in user's ID and then becomes the same owner-label filter. ``status:published`` becomes ``numericOp=lte`` with ``numericValue=<current epoch ms>``. Only the remaining tokens are sent to TTTS as the body query, and at least one ordinary body-search term is required. For example, ``owner:me status:published bicycle`` searches for ``bicycle`` among the logged-in user's posts that are externally published at the current time. Quoted ``"owner:..."`` and ``"status:published"`` strings are not treated as special tokens and remain ordinary body-search terms. TTTS itself assigns no STGY-specific meaning to ``owner``, ``me`` or ``published`` and processes only opaque labels and the generic numeric filter.
-
-### Anonymous Search from External Publication Sites
-
-Search on ``/sites/[id]`` does not call TTTS during SSR. When the URL has ``q``, SSR returns a search heading in place of the introduction plus a Client Component for the results. After hydration, the browser calls the STGY backend's ``/posts/search`` endpoint. External-publication search uses ``credentials: "omit"``, so this request is deliberately handled as anonymous even when the viewer is logged in to STGY. The search box in the ``/pub/[id]`` sidebar navigates to ``/sites/[ownerId]?q=...`` and uses the same path.
-
-Anonymous ``/posts/search`` requires ``ownedBy``. The backend itself adds the TTTS ``owner:<ownedBy>`` label plus ``numericOp=lte`` and ``numericValue=<current epoch ms>``. The browser therefore cannot remove the publication constraint. After TTTS returns candidate IDs, PostgreSQL checks ``owned_by = ownedBy`` and ``published_at <= now`` again. This second check prevents another user's post or an unpublished or scheduled post from leaking into external results even if the search index or an ID cache is temporarily stale.
-
-Anonymous search also requires the custom HTTP header ``X-STGY-QueryHash``. The frontend URL-decodes every query parameter, re-encodes each key and value with the same rules as ``encodeURIComponent``, preserves duplicate keys, sorts the complete ``key=value`` elements lexicographically, joins them with ``&``, and sends the lowercase hexadecimal SHA-1 of the UTF-8 bytes of that canonical string in the header. The URL itself contains no query-hash parameter. The backend performs the same calculation over all query parameters and continues anonymous search only when the header matches.
-
-```text:small
-?c=111&a=222&b=444&b=333
-  ↓
-a=222&b=333&b=444&c=111
-  ↓
-X-STGY-QueryHash: d5dd857313b1b13cdda08e5d9ed98fef264884d7
-```
-
-The hash has no secret and any direct client that implements the algorithm can reproduce it, so it is not authentication and does not stop an attacker that calls the API directly. The header nevertheless serves two useful low-cost purposes. First, a primitive crawler that merely replays a discovered URL does not carry the required header. Second, a browser script running on another origin cannot attach this custom header as a simple cross-origin request: it must first pass CORS preflight. STGY's backend CORS policy allows only the configured STGY frontend origin, so an unrelated site's JavaScript cannot directly send the anonymous search API request with this header. Anonymous Geo API calls use the same rule.
-
-Anonymous search falls back to a fixed dummy user and all anonymous callers share the existing ``DailyTimerThrottleService("db")`` daily processing-time budget. The default is 120 seconds per day; time spent in a TTTS search on a cache miss is charged to that shared budget. Caddy adds independent IP-based limits in production: ``/backend/posts/search`` is limited to 60 requests per hour per source IP, while the ordinary STGY-wide limit remains 120 requests per 5 minutes per IP by default. These layers address different cases: the custom header/CORS boundary blocks cross-site browser abuse, Caddy limits direct request frequency, and the backend timer limits actual processing time.
+STGY's ``/posts/search`` endpoint interprets the query string received from the UI in the backend. A standalone unquoted ``owner:<userId>`` token becomes the TTTS ``owner:<userId>`` label filter, and ``owner:me`` is first resolved to the currently logged-in user's ID and then becomes the same owner-label filter. ``status:published`` becomes ``numericOp=lte`` with ``numericValue=<current epoch ms>``. Only the remaining tokens are sent to TTTS as the body query, and at least one ordinary body-search term is required. For example, ``owner:me status:published bicycle`` searches for ``bicycle`` among the logged-in user's posts that are externally published at the current time. Quoted ``"owner:..."`` and ``"status:published"`` strings are not treated as special tokens and remain ordinary body-search terms. TTTS itself assigns no STGY-specific meaning to ``owner``, ``me`` or ``published`` and processes only opaque labels and the generic numeric filter.
 
 ## Search Processing and Result Order
 
@@ -420,30 +400,28 @@ The main parameters are as follows.
 
 ``timeout`` may be a fractional value such as ``0.1`` or ``0.25``. Before processing each shard, TTTS checks elapsed time since the search began. If the timeout has expired, it returns the results accumulated so far. It does not cancel an SQLite query already in progress, so timeout is not a strict upper bound on CPU execution time; it is a criterion for whether to proceed to the next shard.
 
-For ordinary logged-in search, the STGY backend calls TTTS with offset 0 and requests the screen's required ``offset + limit`` results. TTTS obtains document IDs in creation-time-newest-first order, and the backend slices out the requested page range.
+When the STGY backend calls TTTS, it sets offset to 0 and requests the screen's required ``offset + limit`` results. TTTS obtains document IDs newest first, and the backend slices out the requested page range.
 
-Anonymous external-publication post search works differently. It asks TTTS for candidate IDs up to ``SEARCH_LIMIT_MAX`` and passes them to PostgreSQL ``listPubPostsByIds``. PostgreSQL rechecks the owner and publication time, then orders by ``published_at`` newest first for ``order=desc`` or oldest first for ``order=asc``, and only then applies offset and limit. This makes the Oldest switch on ``/sites/[id]`` use publication time. The candidate set exposed by the search API itself remains bounded by ``SEARCH_LIMIT_MAX``.
+For post search, the resulting document IDs are passed to PostgreSQL ``listPostsByIds``. Post attributes required for display, owners, tags, like counts, reply counts, and so on are loaded from PostgreSQL. User search works the same way: TTTS returns only IDs, and display data for users comes from PostgreSQL.
 
-For ordinary post search, the resulting document IDs are passed to PostgreSQL ``listPostsByIds``. Post attributes required for display, owners, tags, like counts, reply counts, and so on are loaded from PostgreSQL. User search works the same way: TTTS returns only IDs, and display data for users comes from PostgreSQL.
-
-In other words, TTTS determines search candidates rather than returning canonical SNS data. Ordinary search also uses TTTS's creation-time order, while external-publication search uses TTTS only for candidates and lets PostgreSQL decide final publication eligibility and publication-time order. Even if an obsolete ID remains temporarily in the index, it disappears from the final result when the PostgreSQL conditions are not satisfied.
+In other words, TTTS is a service that determines search candidates and their order, not a service that returns the canonical SNS data. Even if an obsolete ID remains temporarily in the index, it disappears from the final result when the corresponding PostgreSQL document no longer exists.
 
 ## Search-Result Cache in Redis
 
-The STGY backend caches arrays of document IDs for post and user searches in Redis. User-search cache keys are built from the query string and locale. Post-search keys additionally include owner, published/all scope, and anonymous/authenticated mode so that searches with the same body query but different search spaces cannot share a candidate set.
+The STGY backend caches arrays of document IDs for post and user searches in Redis. The cache key is built from the resource name, query string, and locale.
 
 ```text:small
-stgy:search:posts:{hash of query, locale, owner, publication scope, auth mode}
-stgy:search:users:{hash of query and locale}
+stgy:search:posts:{queryとlocaleのハッシュ}
+stgy:search:users:{queryとlocaleのハッシュ}
 ```
 
-For ordinary search, the cache stores both the maximum count already fetched and the result-ID array. For example, if the first request fetches 21 results and the next page requires 42, a cache containing only 21 causes the backend to request 42 from TTTS again. If the returned result count is smaller than the requested maximum, the backend treats that as the end of the result set and reuses the same cache. For anonymous external-publication search, the backend fetches TTTS candidate IDs up to ``SEARCH_LIMIT_MAX`` from the beginning so that PostgreSQL can reuse the same candidate cache for either publication-time order. ``order`` is not part of this cache key because it does not change the candidate set.
+The cache stores both the maximum count already fetched and the result-ID array. For example, if the first request fetches 21 results and the next page requires 42, a cache containing only 21 causes the backend to request 42 from TTTS again. If the returned result count is smaller than the requested maximum, the backend treats that as the end of the result set and reuses the same cache.
 
 The default cache lifetime is 600 seconds. Existing search caches are not invalidated immediately when the search index changes. Therefore even after a new post, update, or deletion has been reflected in the index, the same query may continue using a stale ID array for up to about ten minutes.
 
 This design prioritizes reducing repeated-query load over strict real-time search. The final post or user contents are still fetched from PostgreSQL every time, so an obsolete ID in cache does not resurrect data that has already been deleted.
 
-The backend search API limits the default maximum value of ``offset + limit`` to 1001. Search operations by ordinary logged-in users are subject to their per-user daily database-processing-time budget, while anonymous external-publication searches share the dummy user's daily database-processing-time budget. The purpose is to prevent unlimited deep paging and repeated search abuse.
+The backend search API limits the default maximum value of ``offset + limit`` to 1001. Search operations by ordinary users are also subject to the daily database-processing-time budget. The purpose is to prevent unlimited deep paging and repeated search abuse.
 
 ## Transactions and COMMIT
 
@@ -640,7 +618,7 @@ The time complexity of this full-text search cannot be expressed by one simple f
 
 In the worst case, if the query matches every document and requests a deep offset, many shards must be searched. In ordinary use, however, enough results are collected from the newest shards and old files are never opened. The purpose of this architecture is to prevent the cost of searching recent documents from rising sharply as total data volume grows.
 
-The tradeoff is the absence of relevance ranking: an old article that is the most semantically relevant to the query cannot be promoted by relevance. TTTS candidates are newest first; external-publication post search can only reorder that bounded candidate set by publication time. This is not intended to replace an advanced Web search engine; it is a feature for filtering SNS documents by text.
+The tradeoff is the absence of relevance ranking: an old article that is the most semantically relevant to the query cannot be promoted to the top. Results are newest first. This is not intended to replace an advanced Web search engine; it is a feature for filtering recent SNS documents by text.
 
 ## Limitations
 
@@ -648,7 +626,7 @@ The current full-text search has the following limitations.
 
 - Post search indexes the entire body and does not assign different search weights to title, tags, owner, or other fields.
 - User search indexes nickname and profile text, not other attributes.
-- No relevance score is calculated. Ordinary search uses TTTS's creation-time-newest-first order; external-publication post search reorders only the bounded TTTS candidate set by publication time.
+- No relevance score is calculated; results are returned newest first by creation time.
 - Search terms are essentially AND conditions; the public query syntax does not provide OR, NOT, prefix, or fuzzy search.
 - No per-line language detection is performed; one locale is used for the entire document.
 - There is a delay before updates appear in search.
@@ -666,7 +644,7 @@ Update requests pass through several persistent queues: PostgreSQL ``search_inde
 
 Tokenization performs NFKC normalization, lowercasing, and word segmentation using Kuromoji or Intl.Segmenter, while preserving technical terms containing symbols such as ``C++``, ``C#``, ``.NET``, and ``node.js``. Search terms are normally combined with AND, and quoted segments receive an additional phrase-order check.
 
-TTTS candidate results are ordered newest first by creation time, not by relevance. Ordinary logged-in search uses that order. Anonymous post search on external publication sites validates ``X-STGY-QueryHash``, restricts candidates to one owner and ``published_at <= now``, then lets PostgreSQL recheck publication eligibility and order the bounded candidate set by publication time ascending or descending. Caching candidate-ID arrays in Redis keeps repeated search work bounded. Because the search index can always be rebuilt from PostgreSQL, operation relies on eventual consistency and recoverability rather than complex distributed transactions.
+Results are ordered newest first by creation time, not by relevance. By collecting only the required number from the newest shards and caching ID arrays in Redis, normal SNS searches keep their work bounded. Because the search index can always be rebuilt from PostgreSQL, operation relies on eventual consistency and recoverability rather than complex distributed transactions.
 
 Next: [STGY Recommendations](/posts/0000000000010107)
 ____EOF____

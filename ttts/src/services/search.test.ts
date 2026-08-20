@@ -403,7 +403,7 @@ describe("SearchService (Actor Model)", () => {
     expect(() => normalizeLabels(["line\nlabel"])).toThrow();
   });
 
-  test("Labels filter the FTS search space and are exact after unicode61 folding", async () => {
+  test("Labels filter the FTS search space case-insensitively", async () => {
     await runTask({
       type: "ADD",
       payload: {
@@ -431,15 +431,15 @@ describe("SearchService (Actor Model)", () => {
 
     expect(
       await service.search("bicycle", "en", 100, 0, 1, { labels: ["Owner:ABC"] }),
-    ).toEqual(["label_upper"]);
+    ).toEqual(["label_lower", "label_upper"]);
     expect(
       await service.search("bicycle", "en", 100, 0, 1, { labels: ["Owner:abc"] }),
-    ).toEqual(["label_lower"]);
+    ).toEqual(["label_lower", "label_upper"]);
     expect(
       await service.search("bicycle", "en", 100, 0, 1, {
         labels: ["project:foo bar", "Owner:ABC"],
       }),
-    ).toEqual(["label_upper"]);
+    ).toEqual(["label_lower", "label_upper"]);
   });
 
   test("Labels preserve U+0020 SPACE exactly and do not leak into body search", async () => {
@@ -572,10 +572,10 @@ describe("SearchService (Actor Model)", () => {
     });
     const db = await Database.open(service.getIndexFilePath(1000));
     try {
-      const sql = buildSearchSql(0, 1, "lte", true);
+      const sql = buildSearchSql(0, "lte", true);
+      expect(sql).not.toContain("json_each");
       const plan = await db.all<{ detail: string }>(`EXPLAIN QUERY PLAN ${sql}`, [
-        'tokens : (plan) AND labels : "Owner:ABC"',
-        "Owner:ABC",
+        'labels : "Owner:ABC" AND tokens : (plan)',
         10,
         10,
       ]);

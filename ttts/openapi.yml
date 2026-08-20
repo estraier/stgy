@@ -557,7 +557,7 @@ paths:
                   description: JSON string of extra attributes
                 labels:
                   type: array
-                  description: Opaque exact labels. Printable characters and U+0020 SPACE are allowed.
+                  description: Opaque case-insensitive labels. Printable characters and U+0020 SPACE are allowed.
                   items:
                     type: string
                 numericValue:

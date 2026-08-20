@@ -63,7 +63,6 @@ function numericSqlOperator(op: NumericOp): string {
 
 export function buildSearchSql(
   filteringPhraseCount: number,
-  labelCount: number,
   numericOp: NumericOp | undefined,
   recordContents: boolean,
 ): string {
@@ -76,12 +75,6 @@ export function buildSearchSql(
     for (let i = 0; i < filteringPhraseCount; i++) {
       sql += ` AND instr(char(10) || docs.tokens || char(10), char(10) || ? || char(10)) > 0`;
     }
-  }
-  for (let i = 0; i < labelCount; i++) {
-    sql += ` AND EXISTS (
-      SELECT 1 FROM json_each(t.labels_json) j
-       WHERE j.value = ? COLLATE BINARY
-    )`;
   }
   if (numericOp !== undefined) {
     sql += ` AND t.numeric_value ${numericSqlOperator(numericOp)} ?`;
@@ -373,15 +366,12 @@ export class SearchService {
         const { ftsQuery, filteringPhrases } = ftsQueryCache.get(shard.recordPositions)!;
         if (!ftsQuery) continue;
 
-        let combinedFtsQuery = `tokens : (${ftsQuery})`;
-        for (const label of labels) {
-          combinedFtsQuery += ` AND labels : ${quoteFtsText(label)}`;
-        }
+        const labelQueries = labels.map((label) => `labels : ${quoteFtsText(label)}`);
+        const combinedFtsQuery = [...labelQueries, `tokens : (${ftsQuery})`].join(" AND ");
 
         const db = this.selectReader(shard);
         const sql = buildSearchSql(
           filteringPhrases.length,
-          labels.length,
           hasNumericFilter ? filters.numericOp : undefined,
           shard.recordContents,
         );
@@ -390,9 +380,6 @@ export class SearchService {
           for (const phrase of filteringPhrases) {
             params.push(phrase);
           }
-        }
-        for (const label of labels) {
-          params.push(label);
         }
         if (hasNumericFilter) {
           params.push(filters.numericValue!);
