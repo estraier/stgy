@@ -120,8 +120,16 @@ export default async function PubSitePage({ params, searchParams }: Props) {
   const tab = Array.isArray(tabRaw) ? tabRaw[0] : tabRaw;
   const q = (Array.isArray(qRaw) ? qRaw[0] : qRaw)?.trim() ?? "";
   const isSearch = q.length > 0;
-  const tabMode = tab === "plain" ? "plain" : "snippet";
-  const oldestFirst = oldestFirstRaw === "1";
+  const tabMode: "kwic" | "rich" | "plain" = isSearch
+    ? tab === "rich"
+      ? "rich"
+      : tab === "plain"
+        ? "plain"
+        : "kwic"
+    : tab === "plain"
+      ? "plain"
+      : "rich";
+  const oldestFirst = !isSearch && oldestFirstRaw === "1";
 
   try {
     const { pubcfg, intro: horizontalIntro } = await getPubSiteData(id);
@@ -162,6 +170,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
       qs.set("page", String(p));
       if (design) qs.set("design", String(design));
       if (tabMode === "plain") qs.set("tab", "plain");
+      if (isSearch && tabMode === "rich") qs.set("tab", "rich");
       if (oldestFirst) qs.set("oldestFirst", "1");
       if (isSearch) qs.set("q", q);
       const query = qs.toString();
@@ -170,19 +179,20 @@ export default async function PubSitePage({ params, searchParams }: Props) {
     const newerHref = `${buildPageHref(page - 1)}#pub-posts-controls`;
     const olderHref = `${buildPageHref(page + 1)}#pub-posts-controls`;
 
-    const buildTabHref = (mode: "snippet" | "plain") => {
+    const buildTabHref = (mode: "kwic" | "rich" | "plain") => {
       const qs = new URLSearchParams();
       qs.set("page", "1");
       if (design) qs.set("design", String(design));
       if (mode === "plain") qs.set("tab", "plain");
-      if (isSearch && oldestFirst) qs.set("oldestFirst", "1");
+      if (isSearch && mode === "rich") qs.set("tab", "rich");
       if (isSearch) qs.set("q", q);
       const query = qs.toString();
       const href = query ? `${siteRoot}?${query}` : siteRoot;
       return `${href}#pub-posts-controls`;
     };
 
-    const snippetHref = buildTabHref("snippet");
+    const kwicHref = buildTabHref("kwic");
+    const richHref = buildTabHref("rich");
     const listHref = buildTabHref("plain");
 
     const buildOldestFirstHref = (on: boolean) => {
@@ -191,7 +201,6 @@ export default async function PubSitePage({ params, searchParams }: Props) {
       if (design) qs.set("design", String(design));
       if (tabMode === "plain") qs.set("tab", "plain");
       if (on) qs.set("oldestFirst", "1");
-      if (isSearch) qs.set("q", q);
       const query = qs.toString();
       return query ? `${siteRoot}?${query}` : siteRoot;
     };
@@ -239,9 +248,17 @@ export default async function PubSitePage({ params, searchParams }: Props) {
                 <div className="posts-controls-row">
                   <span className="posts-label">{convertForDirection("Posts:", themeDir)}</span>
                   <div className="posts-tabs">
+                    {isSearch && (
+                      <Link
+                        className={`posts-tab${tabMode === "kwic" ? " active" : ""}`}
+                        href={kwicHref}
+                      >
+                        {convertForDirection("KWIC", themeDir)}
+                      </Link>
+                    )}
                     <Link
-                      className={`posts-tab${tabMode === "snippet" ? " active" : ""}`}
-                      href={snippetHref}
+                      className={`posts-tab${tabMode === "rich" ? " active" : ""}`}
+                      href={richHref}
                     >
                       {convertForDirection("Rich", themeDir)}
                     </Link>
@@ -252,15 +269,20 @@ export default async function PubSitePage({ params, searchParams }: Props) {
                       {convertForDirection("Plain", themeDir)}
                     </Link>
                   </div>
-                  <div className="posts-order">
-                    <Link href={oldestFirstHref} className="oldest-first-label">
-                      <input type="checkbox" checked={oldestFirst} readOnly />
-                      <span>{convertForDirection("Oldest", themeDir)}</span>
-                    </Link>
-                  </div>
+                  {!isSearch && (
+                    <div className="posts-order">
+                      <Link href={oldestFirstHref} className="oldest-first-label">
+                        <input type="checkbox" checked={oldestFirst} readOnly />
+                        <span>{convertForDirection("Oldest", themeDir)}</span>
+                      </Link>
+                    </div>
+                  )}
                   <form className="posts-search" action={siteRoot} method="get">
                     {design && <input type="hidden" name="design" value={design} />}
                     {tabMode === "plain" && <input type="hidden" name="tab" value="plain" />}
+                    {isSearch && tabMode === "rich" && (
+                      <input type="hidden" name="tab" value="rich" />
+                    )}
                     {oldestFirst && <input type="hidden" name="oldestFirst" value="1" />}
                     <input
                       className="posts-search-input"
@@ -284,7 +306,6 @@ export default async function PubSitePage({ params, searchParams }: Props) {
                   query={q}
                   page={page}
                   pageSize={page_size}
-                  order={order}
                   tabMode={tabMode}
                   design={design}
                   writingMode={writingMode}

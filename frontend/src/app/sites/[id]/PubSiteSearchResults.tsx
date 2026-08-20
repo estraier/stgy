@@ -2,7 +2,7 @@
 
 import React from "react";
 import Link from "next/link";
-import { searchPubPostsByUser } from "@/api/posts";
+import { getPubPostsKwic, searchPubPostsByUser } from "@/api/posts";
 import type { Post } from "@/api/models";
 import {
   makeHtmlFromJsonSnippet,
@@ -11,14 +11,16 @@ import {
 import { convertForDirection, formatDateTime } from "@/utils/format";
 import ArticleWithDecoration from "@/components/ArticleWithDecoration";
 import LinkDiv from "@/components/LinkDiv";
+import KwicBody from "@/components/KwicBody";
+import { extractSearchKeywords } from "@/utils/parse";
+import type { KwicData } from "stgy-markdown";
 
 type Props = {
   userId: string;
   query: string;
   page: number;
   pageSize: number;
-  order: "asc" | "desc";
-  tabMode: "snippet" | "plain";
+  tabMode: "kwic" | "rich" | "plain";
   design?: string;
   writingMode: "horizontal" | "vertical";
   themeDir: "norm" | "vert";
@@ -31,7 +33,6 @@ export default function PubSiteSearchResults({
   query,
   page,
   pageSize,
-  order,
   tabMode,
   design,
   writingMode,
@@ -41,6 +42,10 @@ export default function PubSiteSearchResults({
 }: Props) {
   const [posts, setPosts] = React.useState<Post[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const [kwicByPostId, setKwicByPostId] = React.useState<Record<string, KwicData>>({});
+  const [kwicLoading, setKwicLoading] = React.useState(false);
+  const [kwicError, setKwicError] = React.useState<string | null>(null);
+  const kwicKeywords = React.useMemo(() => extractSearchKeywords(query), [query]);
 
   React.useEffect(() => {
     let active = true;
@@ -53,7 +58,7 @@ export default function PubSiteSearchResults({
       offset: (page - 1) * pageSize,
       limit: pageSize + 1,
       locale: pubLocale || locale,
-      order,
+      order: "desc",
     })
       .then((result) => {
         if (active) setPosts(result);
@@ -66,7 +71,47 @@ export default function PubSiteSearchResults({
     return () => {
       active = false;
     };
-  }, [locale, order, page, pageSize, pubLocale, query, userId]);
+  }, [locale, page, pageSize, pubLocale, query, userId]);
+
+  React.useEffect(() => {
+    let active = true;
+    setKwicByPostId({});
+    setKwicError(null);
+    setKwicLoading(false);
+
+    if (tabMode !== "kwic" || !posts || posts.length === 0 || kwicKeywords.length === 0) {
+      return () => {
+        active = false;
+      };
+    }
+
+    const ids = posts.slice(0, pageSize).map((post) => post.id);
+    if (ids.length === 0) {
+      return () => {
+        active = false;
+      };
+    }
+
+    setKwicLoading(true);
+    getPubPostsKwic(ids, kwicKeywords)
+      .then((items) => {
+        if (!active) return;
+        const next: Record<string, KwicData> = {};
+        for (const item of items) next[item.id] = item.kwic;
+        setKwicByPostId(next);
+      })
+      .catch((e: unknown) => {
+        if (!active) return;
+        setKwicError(e instanceof Error ? e.message : String(e ?? "Failed to load KWIC"));
+      })
+      .finally(() => {
+        if (active) setKwicLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [kwicKeywords, pageSize, posts, tabMode]);
 
   const buildPageHref = React.useCallback(
     (p: number) => {
@@ -74,11 +119,11 @@ export default function PubSiteSearchResults({
       qs.set("page", String(p));
       if (design) qs.set("design", design);
       if (tabMode === "plain") qs.set("tab", "plain");
-      if (order === "asc") qs.set("oldestFirst", "1");
+      if (tabMode === "rich") qs.set("tab", "rich");
       qs.set("q", query);
       return `/sites/${userId}?${qs.toString()}#pub-posts-controls`;
     },
-    [design, order, query, tabMode, userId],
+    [design, query, tabMode, userId],
   );
 
   if (error) {
@@ -124,6 +169,41 @@ export default function PubSiteSearchResults({
               );
             })}
           </ul>
+        ) : tabMode === "kwic" ? (
+          items.map((r) => {
+            const postHref = `/pub/${r.id}${design ? `?design=${encodeURIComponent(design)}` : ""}`;
+            const publishedAtDate = new Date(r.publishedAt ?? "");
+            return (
+              <LinkDiv
+                key={String(r.id)}
+                href={postHref}
+                className="link-div post-div"
+                id={`pubpost-${r.id}`}
+                data-restore-id={String(r.id)}
+                data-restore-page={String(page)}
+              >
+                <div className="date">
+                  {convertForDirection(formatDateTime(publishedAtDate), themeDir)}
+                </div>
+                <div className="markdown-body post-content-excerpt pub-kwic-body">
+                  {kwicByPostId[r.id] ? (
+                    <KwicBody
+                      kwic={kwicByPostId[r.id]}
+                      className="space-y-1 text-sm leading-relaxed"
+                      titleClassName="text-[1.2em] font-medium"
+                      emptyClassName="opacity-60"
+                    />
+                  ) : kwicLoading ? (
+                    <span className="pub-search-status">Loading...</span>
+                  ) : (
+                    <span className="pub-search-status">
+                      {kwicError ? "KWIC unavailable." : "No matching context."}
+                    </span>
+                  )}
+                </div>
+              </LinkDiv>
+            );
+          })
         ) : (
           items.map((r, idx) => {
             const postHref = `/pub/${r.id}${design ? `?design=${encodeURIComponent(design)}` : ""}`;

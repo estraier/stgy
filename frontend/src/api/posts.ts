@@ -67,6 +67,23 @@ export async function getPostsKwic(
   return res.json();
 }
 
+export async function getPubPostsKwic(
+  ids: readonly string[],
+  keywords: readonly string[],
+): Promise<PostKwicItem[]> {
+  const search = new URLSearchParams();
+  for (const id of ids) search.append("id", id);
+  for (const keyword of keywords) search.append("keyword", keyword);
+  const headers = await makeQueryHashHeaders(search);
+  const res = await apiFetch(`/posts/kwic-pub?${search.toString()}`, {
+    method: "GET",
+    credentials: "omit",
+    headers,
+  });
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
+}
+
 export async function searchPubPostsByUser(params: {
   query: string;
   userId: string;
