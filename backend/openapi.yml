@@ -352,6 +352,56 @@ components:
           tags,
         ]
 
+    KwicInlineNode:
+      type: object
+      properties:
+        type: { type: string, enum: [text, highlight] }
+        text: { type: string }
+      required: [type, text]
+
+    KwicSegmentNode:
+      type: object
+      properties:
+        type: { type: string, enum: [segment] }
+        startPosition:
+          type: integer
+          minimum: 0
+          description: Unicode code-point offset in the plain-text body.
+        endPosition:
+          type: integer
+          minimum: 0
+          description: Exclusive Unicode code-point offset in the plain-text body.
+        isStart: { type: boolean }
+        isEnd: { type: boolean }
+        children:
+          type: array
+          items:
+            $ref: "#/components/schemas/KwicInlineNode"
+      required: [type, startPosition, endPosition, isStart, isEnd, children]
+
+    KwicData:
+      type: object
+      properties:
+        version: { type: integer, enum: [1] }
+        title:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/KwicInlineNode"
+        segments:
+          type: array
+          items:
+            $ref: "#/components/schemas/KwicSegmentNode"
+      required: [version, title, segments]
+
+    KwicItem:
+      type: object
+      properties:
+        id: { type: string }
+        kwic:
+          $ref: "#/components/schemas/KwicData"
+      required: [id, kwic]
+
     AIModel:
       type: object
       properties:
@@ -1516,6 +1566,53 @@ paths:
         "409":
           $ref: "#/components/responses/Error409"
 
+  /users/kwic:
+    get:
+      summary: Build KWIC data for users
+      description: |
+        Authenticated post-processing endpoint for user search results. The nickname
+        is used as the KWIC title and the Markdown introduction is rendered to plain
+        text as the body. Missing user IDs are omitted. The backend currently uses
+        at most 4 body segments with 30 STGY pseudo tokens of context on each side.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: query
+          required: true
+          style: form
+          explode: true
+          schema:
+            type: array
+            minItems: 1
+            maxItems: 100
+            items: { type: string }
+        - name: keyword
+          in: query
+          required: true
+          style: form
+          explode: true
+          schema:
+            type: array
+            minItems: 1
+            maxItems: 32
+            items: { type: string }
+      responses:
+        "200":
+          description: KWIC data in requested ID order, with missing IDs omitted
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/KwicItem"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+
   /users/search:
     get:
       summary: Search users (Full text search)
@@ -2228,6 +2325,107 @@ paths:
           $ref: "#/components/responses/Error400"
         "401":
           $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+
+  /posts/kwic:
+    get:
+      summary: Build KWIC data for posts
+      description: |
+        Authenticated post-processing endpoint for internal post search results.
+        Markdown is split into its title and remaining plain-text body by
+        `stgy-markdown`; missing post IDs are omitted. This endpoint does not impose
+        the public publication-time restriction. The backend currently uses at most
+        4 body segments with 30 STGY pseudo tokens of context on each side.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: query
+          required: true
+          style: form
+          explode: true
+          schema:
+            type: array
+            minItems: 1
+            maxItems: 100
+            items: { type: string }
+        - name: keyword
+          in: query
+          required: true
+          style: form
+          explode: true
+          schema:
+            type: array
+            minItems: 1
+            maxItems: 32
+            items: { type: string }
+      responses:
+        "200":
+          description: KWIC data in requested ID order, with missing IDs omitted
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/KwicItem"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+
+  /posts/kwic-pub:
+    get:
+      summary: Build KWIC data for public posts
+      description: |
+        Anonymous post-processing endpoint for public search results. Only requested
+        posts with a non-null publication time not later than the current time are
+        returned; missing, unpublished, and future-published IDs are all omitted.
+        No owner parameter is used. A valid `X-STGY-QueryHash` is mandatory, and the
+        request uses the shared anonymous database timer throttle. In production this
+        endpoint shares the Search Caddy rate-limit zone (60 requests/hour/IP) with
+        `/posts/search`.
+      security:
+        - {}
+      parameters:
+        - name: id
+          in: query
+          required: true
+          style: form
+          explode: true
+          schema:
+            type: array
+            minItems: 1
+            maxItems: 100
+            items: { type: string }
+        - name: keyword
+          in: query
+          required: true
+          style: form
+          explode: true
+          schema:
+            type: array
+            minItems: 1
+            maxItems: 32
+            items: { type: string }
+        - name: X-STGY-QueryHash
+          in: header
+          required: true
+          schema: { type: string, pattern: '^[0-9a-f]{40}$' }
+          description: SHA-1 of all canonicalized query parameters.
+      responses:
+        "200":
+          description: Public KWIC data in requested ID order
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/KwicItem"
+        "400":
+          $ref: "#/components/responses/Error400"
         "403":
           $ref: "#/components/responses/Error403"
 

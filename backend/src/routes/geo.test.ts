@@ -123,18 +123,6 @@ describe("geo routes", () => {
     expect(encode).not.toHaveBeenCalled();
   });
 
-  test("does not accept the legacy queryhash query parameter", async () => {
-    getSessionId.mockReturnValue(null);
-    const hash = makeQueryHash(new URLSearchParams("query=x"));
-
-    const response = await fetch(`${baseUrl}/geo/encode?query=x&queryhash=${hash}`);
-
-    expect(response.status).toBe(403);
-    expect(await response.json()).toEqual({ error: "invalid queryhash" });
-    expect(canDo).not.toHaveBeenCalled();
-    expect(encode).not.toHaveBeenCalled();
-  });
-
   test("falls back from an invalid session to anonymous query-hash header access", async () => {
     getSessionId.mockReturnValue("invalid-session");
     getCurrentUser.mockResolvedValue(null);

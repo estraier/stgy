@@ -95,6 +95,39 @@ export class UsersService {
     return Number(res.rows[0].count);
   }
 
+  async listKwicSourcesByIds(
+    ids: string[],
+  ): Promise<Array<{ id: string; nickname: string; introduction: string }>> {
+    if (!Array.isArray(ids) || ids.length === 0) return [];
+    const validIds = ids.filter(
+      (v) => typeof v === "string" && /^[0-9a-fA-F]{16}$/.test(v),
+    );
+    if (validIds.length === 0) return [];
+    const res = await pgQuery(
+      this.pgPool,
+      `
+        WITH req AS (
+          SELECT id, ord
+          FROM unnest($1::bigint[]) WITH ORDINALITY AS t(id, ord)
+        )
+        SELECT
+          u.id,
+          u.nickname,
+          COALESCE(d.introduction, '') AS introduction
+        FROM req r
+        JOIN users u ON u.id = r.id
+        LEFT JOIN user_details d ON d.user_id = u.id
+        ORDER BY r.ord
+      `,
+      [hexArrayToDec(validIds)],
+    );
+    return res.rows.map((row) => ({
+      id: decToHex(row.id),
+      nickname: typeof row.nickname === "string" ? row.nickname : "",
+      introduction: typeof row.introduction === "string" ? row.introduction : "",
+    }));
+  }
+
   async getUserLite(id: string): Promise<UserLite | null> {
     const res = await pgQuery(
       this.pgPool,

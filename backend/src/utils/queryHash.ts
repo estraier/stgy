@@ -16,6 +16,5 @@ export function makeQueryHash(search: URLSearchParams): string {
 export function verifyQueryHash(url: string, headerValue: unknown): boolean {
   if (typeof headerValue !== "string") return false;
   const search = new URL(url, "http://localhost").searchParams;
-  if (search.has("queryhash")) return false;
   return headerValue === makeQueryHash(search);
 }

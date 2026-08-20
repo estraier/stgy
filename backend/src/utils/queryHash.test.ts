@@ -23,6 +23,5 @@ describe("queryHash", () => {
     expect(verifyQueryHash("/x?b=333&a=222", hash)).toBe(true);
     expect(verifyQueryHash("/x?b=333&a=222", undefined)).toBe(false);
     expect(verifyQueryHash("/x?b=333&a=222", "bad")).toBe(false);
-    expect(verifyQueryHash("/x?b=333&a=222&queryhash=legacy", hash)).toBe(false);
   });
 });

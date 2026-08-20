@@ -40,7 +40,7 @@ https://stgy.jp {
     }
     zone search_per_ip {
       match {
-        path /backend/posts/search /backend/posts/search/
+        path /backend/posts/search /backend/posts/search/ /backend/posts/kwic-pub /backend/posts/kwic-pub/
       }
       key {remote_host}
       events 60

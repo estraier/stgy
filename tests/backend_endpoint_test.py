@@ -338,15 +338,6 @@ def test_geo():
   assert res.json() == {"error": "invalid queryhash"}
   print("[geo] anonymous request with invalid X-STGY-QueryHash -> 403 OK")
 
-  print("[geo] legacy queryhash query parameter is not accepted")
-  res = requests.get(
-    f"{BASE_URL}/geo/encode",
-    params={**encode_ja_params, "queryhash": queryhash(encode_ja_params)},
-  )
-  assert res.status_code == 403, res.text
-  assert res.json() == {"error": "invalid queryhash"}
-  print("[geo] legacy queryhash query parameter rejected OK")
-
   print("[geo] anonymous encode with regional Japanese locale")
   res = requests.get(
     f"{BASE_URL}/geo/encode",
@@ -1581,14 +1572,6 @@ def test_posts():
   assert res.json() == {"error": "invalid queryhash"}
   print("[posts] anonymous search with invalid X-STGY-QueryHash -> 403 OK")
 
-  res = requests.get(
-    f"{BASE_URL}/posts/search",
-    params={**anonymous_search_params, "queryhash": queryhash(anonymous_search_params)},
-  )
-  assert res.status_code == 403, res.text
-  assert res.json() == {"error": "invalid queryhash"}
-  print("[posts] legacy queryhash query parameter rejected OK")
-
   preflight = requests.options(
     f"{BASE_URL}/posts/search",
     headers={
@@ -1685,6 +1668,132 @@ def test_posts():
   print("[posts] full text search OK:", len(searched))
   logout(session_id)
   print("[test_posts] OK")
+
+def test_kwic():
+  print("[kwic] admin login")
+  session_id = login()
+  headers = {"Content-Type": "application/json"}
+  cookies = {"session_id": session_id}
+
+  user_input = {
+    "email": f"kwic-{session_id[:8]}@stgy.com",
+    "nickname": "KWIC Cyclist",
+    "isAdmin": False,
+    "introduction": "I ride a **bicycle** every day. Railway trips with a bicycle are fun.",
+    "password": "password1",
+    "locale": "en-US",
+    "timezone": "Asia/Tokyo",
+  }
+  res = requests.post(f"{BASE_URL}/users", json=user_input, headers=headers, cookies=cookies)
+  assert res.status_code == 201, res.text
+  user_id = res.json()["id"]
+
+  user_kwic_params = [
+    ("id", user_id),
+    ("keyword", "Cyclist"),
+    ("keyword", "bicycle"),
+  ]
+  res = requests.get(f"{BASE_URL}/users/kwic", params=user_kwic_params)
+  assert res.status_code == 401, res.text
+  res = requests.get(f"{BASE_URL}/users/kwic", params=user_kwic_params, cookies=cookies)
+  assert res.status_code == 200, res.text
+  user_items = res.json()
+  assert [item["id"] for item in user_items] == [user_id], user_items
+  user_kwic = user_items[0]["kwic"]
+  assert user_kwic["version"] == 1
+  assert any(
+    node["type"] == "highlight" and node["text"] == "Cyclist"
+    for node in (user_kwic["title"] or [])
+  ), user_kwic
+  assert any(
+    node["type"] == "highlight" and "bicycle" in node["text"].lower()
+    for segment in user_kwic["segments"]
+    for node in segment["children"]
+  ), user_kwic
+  for segment in user_kwic["segments"]:
+    assert isinstance(segment["startPosition"], int)
+    assert isinstance(segment["endPosition"], int)
+    assert segment["startPosition"] <= segment["endPosition"]
+    assert isinstance(segment["isStart"], bool)
+    assert isinstance(segment["isEnd"], bool)
+  print("[kwic] users/kwic OK")
+
+  past_published_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 60))
+  future_published_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 3600))
+  past_post_input = {
+    "ownedBy": user_id,
+    "content": "# Bicycle diary\n\nToday I rode a bicycle around the lake. Later I carried the bicycle onto a train.",
+    "replyTo": None,
+    "tags": ["kwic"],
+    "publishedAt": past_published_at,
+  }
+  future_post_input = {
+    "ownedBy": user_id,
+    "content": "# Future bicycle\n\nThis bicycle post must not be returned by the public KWIC endpoint yet.",
+    "replyTo": None,
+    "tags": ["kwic"],
+    "publishedAt": future_published_at,
+  }
+  res = requests.post(f"{BASE_URL}/posts", json=past_post_input, headers=headers, cookies=cookies)
+  assert res.status_code == 201, res.text
+  past_post_id = res.json()["id"]
+  res = requests.post(f"{BASE_URL}/posts", json=future_post_input, headers=headers, cookies=cookies)
+  assert res.status_code == 201, res.text
+  future_post_id = res.json()["id"]
+
+  post_kwic_params = [
+    ("id", past_post_id),
+    ("id", future_post_id),
+    ("keyword", "bicycle"),
+    ("keyword", "train"),
+  ]
+  res = requests.get(f"{BASE_URL}/posts/kwic", params=post_kwic_params)
+  assert res.status_code == 401, res.text
+  res = requests.get(f"{BASE_URL}/posts/kwic", params=post_kwic_params, cookies=cookies)
+  assert res.status_code == 200, res.text
+  post_items = res.json()
+  assert [item["id"] for item in post_items] == [past_post_id, future_post_id], post_items
+  past_kwic = post_items[0]["kwic"]
+  assert past_kwic["version"] == 1
+  assert any(
+    node["type"] == "highlight" and node["text"].lower() == "bicycle"
+    for node in (past_kwic["title"] or [])
+  ), past_kwic
+  assert any(
+    node["type"] == "highlight" and node["text"].lower() == "train"
+    for segment in past_kwic["segments"]
+    for node in segment["children"]
+  ), past_kwic
+  print("[kwic] posts/kwic OK")
+
+  res = requests.get(f"{BASE_URL}/posts/kwic-pub", params=post_kwic_params)
+  assert res.status_code == 403, res.text
+  assert res.json() == {"error": "invalid queryhash"}
+  print("[kwic] posts/kwic-pub without X-STGY-QueryHash -> 403 OK")
+
+  res = requests.get(
+    f"{BASE_URL}/posts/kwic-pub",
+    params=post_kwic_params,
+    headers=queryhash_headers(post_kwic_params),
+  )
+  assert res.status_code == 200, res.text
+  public_items = res.json()
+  assert [item["id"] for item in public_items] == [past_post_id], public_items
+  assert public_items[0]["kwic"]["version"] == 1
+  assert any(
+    node["type"] == "highlight" and node["text"].lower() == "bicycle"
+    for node in (public_items[0]["kwic"]["title"] or [])
+  ), public_items
+  print("[kwic] posts/kwic-pub published-only OK")
+
+  res = requests.delete(f"{BASE_URL}/posts/{future_post_id}", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  res = requests.delete(f"{BASE_URL}/posts/{past_post_id}", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  res = requests.delete(f"{BASE_URL}/users/{user_id}", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  logout(session_id)
+  print("[test_kwic] OK")
 
 def test_media():
   print("[media] admin login")

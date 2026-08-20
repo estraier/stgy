@@ -154,19 +154,6 @@ describe("post full-text search filters", () => {
     expect(search).not.toHaveBeenCalled();
   });
 
-  test("anonymous search does not accept the legacy queryhash query parameter", async () => {
-    jest.spyOn(AuthHelpers.prototype, "getCurrentUser").mockResolvedValue(null);
-    const hash = makeQueryHash(new URLSearchParams("query=foo&ownedBy=12345"));
-
-    const response = await fetch(
-      `${baseUrl}/posts/search?query=foo&ownedBy=12345&queryhash=${hash}`,
-    );
-
-    expect(response.status).toBe(403);
-    expect(await response.json()).toEqual({ error: "invalid queryhash" });
-    expect(search).not.toHaveBeenCalled();
-  });
-
   test("anonymous search requires an explicit owner", async () => {
     jest.spyOn(AuthHelpers.prototype, "getCurrentUser").mockResolvedValue(null);
 

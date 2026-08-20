@@ -18,6 +18,9 @@ import { SendMailService } from "../services/sendMail";
 import { PubViewsService } from "../services/pubViews";
 import { CreateUserInput, UpdateUserInput, UpdatePasswordInput, UserLite } from "../models/user";
 import { SearchCacheEntry } from "../models/search";
+import { KWIC_OPTIONS, parseKwicQuery } from "../utils/kwic";
+import { makeTextFromMarkdown } from "../utils/snippet";
+import { makeKwicData } from "stgy-markdown";
 import { isAIModelTier, type AIModelTier } from "../models/aiModel";
 import {
   validateEmail,
@@ -146,6 +149,39 @@ export default function createUsersRouter(
     } catch (e: unknown) {
       console.error("Search error:", e);
       res.status(500).json({ error: (e as Error).message || "Internal server error" });
+    }
+  });
+
+  router.get("/kwic", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    let kwicQuery: ReturnType<typeof parseKwicQuery>;
+    try {
+      kwicQuery = parseKwicQuery(req.query);
+    } catch (e) {
+      return res.status(400).json({ error: (e as Error).message });
+    }
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
+    const watch = timerThrottleService.startWatch(loginUser);
+    try {
+      const sources = await usersService.listKwicSourcesByIds(kwicQuery.ids);
+      return res.json(
+        sources.map((source) => ({
+          id: source.id,
+          kwic: makeKwicData(
+            source.nickname,
+            makeTextFromMarkdown(source.introduction),
+            kwicQuery.keywords,
+            KWIC_OPTIONS,
+          ),
+        })),
+      );
+    } catch (e) {
+      return res.status(500).json({ error: (e as Error).message || "failed to make KWIC" });
+    } finally {
+      watch.done();
     }
   });
 

@@ -330,6 +330,49 @@ export class PostsService {
     return out;
   }
 
+  async listKwicSourcesByIds(
+    ids: string[],
+    publishedUntil?: string,
+  ): Promise<Array<{ id: string; content: string }>> {
+    if (!Array.isArray(ids) || ids.length === 0) return [];
+    const validIds = ids.filter(
+      (v) => typeof v === "string" && /^[0-9a-fA-F]{16}$/.test(v),
+    );
+    if (validIds.length === 0) return [];
+
+    const params: unknown[] = [hexArrayToDec(validIds)];
+    let publishedWhere = "";
+    if (publishedUntil !== undefined) {
+      params.push(publishedUntil);
+      publishedWhere = `
+        WHERE p.published_at IS NOT NULL
+          AND p.published_at <= $2
+      `;
+    }
+    const res = await pgQuery(
+      this.pgPool,
+      `
+        WITH req AS (
+          SELECT id, ord
+          FROM unnest($1::bigint[]) WITH ORDINALITY AS t(id, ord)
+        )
+        SELECT
+          p.id,
+          COALESCE(pd.content, '') AS content
+        FROM req r
+        JOIN posts p ON p.id = r.id
+        LEFT JOIN post_details pd ON pd.post_id = p.id
+        ${publishedWhere}
+        ORDER BY r.ord
+      `,
+      params,
+    );
+    return res.rows.map((row) => ({
+      id: decToHex(row.id),
+      content: typeof row.content === "string" ? row.content : "",
+    }));
+  }
+
   async listPostsByIds(ids: string[], focusUserId?: string): Promise<Post[]> {
     if (!Array.isArray(ids) || ids.length === 0) return [];
     const out: Post[] = [];
