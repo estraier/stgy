@@ -190,7 +190,7 @@ export default function PubSiteSearchResults({
                     <KwicBody
                       kwic={kwicByPostId[r.id]}
                       className="space-y-1 text-sm leading-relaxed"
-                      titleClassName="text-[1.2em] font-medium"
+                      titleClassName="text-[1.2em] font-bold"
                       emptyClassName="opacity-60"
                     />
                   ) : kwicLoading ? (
