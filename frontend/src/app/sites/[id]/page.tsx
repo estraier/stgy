@@ -188,7 +188,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
       if (isSearch) qs.set("q", q);
       const query = qs.toString();
       const href = query ? `${siteRoot}?${query}` : siteRoot;
-      return `${href}#pub-posts-controls`;
+      return isSearch ? href : `${href}#pub-posts-controls`;
     };
 
     const kwicHref = buildTabHref("kwic");
