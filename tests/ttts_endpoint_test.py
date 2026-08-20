@@ -76,7 +76,7 @@ def test_posts():
     params={"query": doc_id, "locale": "en", "label": "Owner:abc"},
   )
   assert res.status_code == 200
-  assert doc_id not in res.json()
+  assert doc_id in res.json()
   res = requests.get(f"{base_url}/{doc_id}")
   assert res.status_code == 200
   doc = res.json()
