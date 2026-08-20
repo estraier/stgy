@@ -20,6 +20,8 @@ type UserCardProps = {
   focusUserIsAdmin?: boolean;
   clickable?: boolean;
   idPrefix?: string;
+  titleOverride?: React.ReactNode;
+  bodyOverride?: React.ReactNode;
 };
 
 export default function UserCard({
@@ -32,6 +34,8 @@ export default function UserCard({
   focusUserIsAdmin = false,
   clickable = true,
   idPrefix,
+  titleOverride,
+  bodyOverride,
 }: UserCardProps) {
   const [hovering, setHovering] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -169,7 +173,7 @@ export default function UserCard({
   const hasIntro = "introduction" in user && typeof user.introduction === "string";
   const introHtml = hasIntro ? makeArticleHtmlFromMarkdown(user.introduction as string) : "";
   const snippetHtml = makeHtmlFromJsonSnippet(user.snippet || "[]", idPrefix);
-  const bodyHtml = truncated ? snippetHtml : introHtml || snippetHtml;
+  const bodyHtml = bodyOverride === undefined ? (truncated ? snippetHtml : introHtml || snippetHtml) : "";
 
   const masterSrc = (() => {
     if (!user.avatar) return "";
@@ -301,7 +305,7 @@ export default function UserCard({
           lang={userLang}
           className={`-mt-1 truncate max-w-[24ex] text-slate-900 ${truncated ? "text-base" : "text-xl px-2"}`}
         >
-          {user.nickname}
+          {titleOverride === undefined ? user.nickname : titleOverride}
         </span>
         {isAdmin && (
           <span className="-mt-1 ml-2 px-2 py-1 bg-gray-300 text-gray-800 rounded text-xs opacity-90 max-md:text-[9px] max-md:px-1">
@@ -387,11 +391,20 @@ export default function UserCard({
         </div>
       )}
 
-      <MarkdownHtmlBody
-        html={bodyHtml}
-        lang={userLang}
-        className={`markdown-body user-introduction${truncated ? " excerpt" : ""}`}
-      />
+      {bodyOverride === undefined ? (
+        <MarkdownHtmlBody
+          html={bodyHtml}
+          lang={userLang}
+          className={`markdown-body user-introduction${truncated ? " excerpt" : ""}`}
+        />
+      ) : (
+        <div
+          lang={userLang}
+          className={`markdown-body user-introduction${truncated ? " excerpt" : ""}`}
+        >
+          {bodyOverride}
+        </div>
+      )}
 
       {!truncated && user.aiModel && user.aiModel.trim() !== "" && (
         <div className="text-xs text-gray-600 mt-2">

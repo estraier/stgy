@@ -1,4 +1,5 @@
 import type { AIModelTier, User, UserDetail, PubConfig, PubViewRankEntry, PubViewStats } from "./models";
+import type { KwicData } from "stgy-markdown";
 import { apiFetch, extractError } from "./client";
 
 export async function searchUsers(params: {
@@ -14,6 +15,25 @@ export async function searchUsers(params: {
   if (params.locale) search.append("locale", params.locale);
   const q = search.toString();
   const res = await apiFetch(`/users/search?${q}`, { method: "GET" });
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
+}
+
+
+
+export type UserKwicItem = {
+  id: string;
+  kwic: KwicData;
+};
+
+export async function getUsersKwic(
+  ids: readonly string[],
+  keywords: readonly string[],
+): Promise<UserKwicItem[]> {
+  const search = new URLSearchParams();
+  for (const id of ids) search.append("id", id);
+  for (const keyword of keywords) search.append("keyword", keyword);
+  const res = await apiFetch(`/users/kwic?${search.toString()}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();
 }

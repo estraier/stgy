@@ -4,10 +4,16 @@ import { Config } from "@/config";
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
-import { listUsers, listFollowers, listFollowees, searchUsers } from "@/api/users";
+import { listUsers, listFollowers, listFollowees, searchUsers, getUsersKwic } from "@/api/users";
 import type { User } from "@/api/models";
-import { parseUserSearchQuery, serializeUserSearchQuery } from "@/utils/parse";
+import type { KwicData } from "stgy-markdown";
+import {
+  extractSearchKeywords,
+  parseUserSearchQuery,
+  serializeUserSearchQuery,
+} from "@/utils/parse";
 import UserCard from "@/components/UserCard";
+import KwicBody, { KwicInlineNodes } from "@/components/KwicBody";
 
 const TAB_VALUES = ["followees", "followers", "all"] as const;
 
@@ -33,9 +39,10 @@ export default function PageBody() {
       page: Math.max(Number(searchParams.get("page")) || 1, 1),
       qParam: searchParams.get("q") ?? "",
       oldestFirst: searchParams.get("oldestFirst") === "1",
+      searchView: searchParams.get("view") === "rich" ? "rich" : "kwic",
     };
   }
-  const { tab, page, qParam, oldestFirst } = getQuery();
+  const { tab, page, qParam, oldestFirst, searchView } = getQuery();
 
   const searchQueryObj: UserSearchQuery = useMemo(
     () => (qParam ? (parseUserSearchQuery(qParam) as UserSearchQuery) : {}),
@@ -55,6 +62,16 @@ export default function PageBody() {
   );
 
   const isFullTextSearch = isSearchMode && !!searchQueryObj.query;
+  const kwicKeywords = useMemo(() => {
+    const values = searchQueryObj.query
+      ? extractSearchKeywords(searchQueryObj.query)
+      : [];
+    if (searchQueryObj.nickname) values.push(searchQueryObj.nickname);
+    return values.filter((value, index) => values.indexOf(value) === index);
+  }, [searchQueryObj.query, searchQueryObj.nickname]);
+  const canShowKwic = isSearchMode && kwicKeywords.length > 0;
+  const effectiveSearchView: "kwic" | "rich" =
+    canShowKwic && searchView !== "rich" ? "kwic" : "rich";
 
   const effectiveTab = isSearchMode ? "all" : tab;
   const canUseListUsersAfter = effectiveTab === "all" && !isFullTextSearch;
@@ -75,17 +92,30 @@ export default function PageBody() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [hasNext, setHasNext] = useState(false);
+  const [kwicResult, setKwicResult] = useState<{
+    key: string;
+    byUserId: Record<string, KwicData>;
+  }>({ key: "", byUserId: {} });
+  const [kwicLoading, setKwicLoading] = useState(false);
+  const [kwicError, setKwicError] = useState<string | null>(null);
   const [pendingRestore, setPendingRestore] = useState<{ userId: string; page: number } | null>(
     null,
   );
 
   const setQuery = useCallback(
     (
-      updates: Partial<{ tab: string; page: number; q: string; oldestFirst: string | undefined }>,
+      updates: Partial<{
+        tab: string;
+        page: number;
+        q: string;
+        oldestFirst: string | undefined;
+        view: string | undefined;
+      }>,
     ) => {
       const sp = new URLSearchParams(searchParams);
-      for (const key of ["tab", "page", "q", "oldestFirst"]) {
-        const v = updates[key as keyof typeof updates];
+      for (const key of ["tab", "page", "q", "oldestFirst", "view"] as const) {
+        if (!Object.prototype.hasOwnProperty.call(updates, key)) continue;
+        const v = updates[key];
         if (v !== undefined && v !== null && v !== "") {
           sp.set(key, String(v));
         } else {
@@ -217,6 +247,51 @@ export default function PageBody() {
   ]);
 
   useEffect(() => {
+    if (loading || !canShowKwic || effectiveSearchView !== "kwic" || users.length === 0) {
+      setKwicLoading(false);
+      setKwicError(null);
+      return;
+    }
+
+    const ids = users.map((user) => user.id);
+    const key = JSON.stringify([ids, kwicKeywords]);
+    if (kwicResult.key === key) {
+      setKwicLoading(false);
+      setKwicError(null);
+      return;
+    }
+
+    let canceled = false;
+    setKwicLoading(true);
+    setKwicError(null);
+    getUsersKwic(ids, kwicKeywords)
+      .then((items) => {
+        if (canceled) return;
+        const byUserId: Record<string, KwicData> = {};
+        for (const item of items) byUserId[item.id] = item.kwic;
+        setKwicResult({ key, byUserId });
+      })
+      .catch((caught: unknown) => {
+        if (canceled) return;
+        setKwicError(caught instanceof Error ? caught.message : "Failed to fetch KWIC.");
+      })
+      .finally(() => {
+        if (!canceled) setKwicLoading(false);
+      });
+
+    return () => {
+      canceled = true;
+    };
+  }, [
+    loading,
+    canShowKwic,
+    effectiveSearchView,
+    users,
+    kwicKeywords,
+    kwicResult.key,
+  ]);
+
+  useEffect(() => {
     function handler(e: MouseEvent) {
       const target = e.target as HTMLElement;
       const block = target.closest(".image-block");
@@ -310,23 +385,30 @@ export default function PageBody() {
       page: 1,
       q: undefined,
       oldestFirst: undefined,
+      view: undefined,
     });
   }
 
+  const currentKwicKey = canShowKwic
+    ? JSON.stringify([users.map((user) => user.id), kwicKeywords])
+    : "";
+  const currentKwicByUserId =
+    kwicResult.key === currentKwicKey ? kwicResult.byUserId : {};
+
   return (
     <main className="max-w-3xl mx-auto mt-8 p-1 sm:p-4">
-      <div className="flex gap-1 mb-2">
-        {TAB_VALUES.map((t) => (
-          <button
-            key={t}
-            className={`px-3 max-md:px-2 py-1 rounded-t min-w-0 sm:min-w-[110px] text-sm font-normal cursor-pointer
-              ${tab === t && !isSearchMode ? "bg-blue-100 text-gray-800" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
-            onClick={() => handleTabChange(t)}
-          >
-            {t.charAt(0).toUpperCase() + t.slice(1)}
-          </button>
-        ))}
-        {!isFullTextSearch && (
+      {!isSearchMode ? (
+        <div className="flex gap-1 mb-2">
+          {TAB_VALUES.map((t) => (
+            <button
+              key={t}
+              className={`px-3 max-md:px-2 py-1 rounded-t min-w-0 sm:min-w-[110px] text-sm font-normal cursor-pointer
+                ${tab === t ? "bg-blue-100 text-gray-800" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
+              onClick={() => handleTabChange(t)}
+            >
+              {t.charAt(0).toUpperCase() + t.slice(1)}
+            </button>
+          ))}
           <label className="flex items-center gap-1 text-sm text-gray-700 cursor-pointer ml-4 max-md:ml-1">
             <input
               type="checkbox"
@@ -339,15 +421,61 @@ export default function PageBody() {
               Oldest
             </span>
           </label>
-        )}
-      </div>
-      {isSearchMode && (
-        <div className="mb-2 text-sm text-gray-500">
-          Users matching{" "}
-          <span className="bg-gray-200 rounded px-2 py-0.5 text-gray-700">
-            {serializeUserSearchQuery(searchQueryObj)}
-          </span>
         </div>
+      ) : (
+        <>
+          <div className="mb-2 flex items-end gap-2">
+            <div className="min-w-0 flex-1 text-sm text-gray-500">
+              Users matching{" "}
+              <span className="bg-gray-200 rounded px-2 py-0.5 text-gray-700">
+                {serializeUserSearchQuery(searchQueryObj)}
+              </span>
+            </div>
+            <div className="ml-auto flex shrink-0 gap-1">
+              {(["kwic", "rich"] as const).map((view) => {
+                const disabled = view === "kwic" && !canShowKwic;
+                const active = effectiveSearchView === view;
+                return (
+                  <button
+                    key={view}
+                    type="button"
+                    disabled={disabled}
+                    className={`px-3 max-md:px-2 py-1 min-w-0 sm:min-w-[110px] rounded-t text-sm font-normal
+                      ${
+                        disabled
+                          ? "bg-blue-50 text-gray-300 cursor-not-allowed"
+                          : active
+                            ? "bg-blue-100 text-gray-800 cursor-pointer"
+                            : "bg-blue-50 text-gray-400 hover:bg-blue-100 cursor-pointer"
+                      }`}
+                    onClick={() => {
+                      if (disabled) return;
+                      setQuery({ view: view === "rich" ? "rich" : undefined });
+                    }}
+                  >
+                    {view === "kwic" ? "KWIC" : "Rich"}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          {!isFullTextSearch && (
+            <div className="mb-2">
+              <label className="flex items-center gap-1 text-sm text-gray-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={oldestFirst}
+                  onChange={(e) => handleOldestFirstToggle(e.target.checked)}
+                  className="cursor-pointer"
+                />
+                <span className="hidden md:inline">Oldest first</span>
+                <span className="md:hidden" aria-hidden>
+                  Oldest
+                </span>
+              </label>
+            </div>
+          )}
+        </>
       )}
       <div>
         {loading && <div className="text-gray-500">Loading…</div>}
@@ -378,6 +506,26 @@ export default function PageBody() {
                 }
                 onClick={() => location.assign(`/users/${user.id}`)}
                 idPrefix={`u${idx + 1}-h`}
+                titleOverride={
+                  effectiveSearchView === "kwic" &&
+                  canShowKwic &&
+                  currentKwicByUserId[user.id]?.title ? (
+                    <KwicInlineNodes nodes={currentKwicByUserId[user.id].title!} />
+                  ) : undefined
+                }
+                bodyOverride={
+                  effectiveSearchView === "kwic" && canShowKwic ? (
+                    currentKwicByUserId[user.id] ? (
+                      <KwicBody kwic={currentKwicByUserId[user.id]} showTitle={false} />
+                    ) : kwicLoading ? (
+                      <div className="text-sm text-gray-400">Loading context…</div>
+                    ) : (
+                      <div className="text-sm text-gray-400">
+                        {kwicError ? "KWIC unavailable." : "No matching context."}
+                      </div>
+                    )
+                  ) : undefined
+                }
               />
             </li>
           ))}
