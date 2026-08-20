@@ -5247,6 +5247,53 @@ function kwicFoldKeyword(keyword: string): string {
   return kwicFoldFragment(keyword).trim();
 }
 
+function isKwicWordLikeCharacter(ch: string): boolean {
+  return /[\p{Script=Latin}\p{Script=Greek}\p{Script=Cyrillic}\p{N}\p{M}]/u.test(
+    ch,
+  );
+}
+
+function kwicCodePointBefore(text: string, index: number): string | null {
+  if (index <= 0) return null;
+  let start = index - 1;
+  const low = text.charCodeAt(start);
+  if (
+    0xdc00 <= low &&
+    low <= 0xdfff &&
+    start > 0 &&
+    0xd800 <= text.charCodeAt(start - 1) &&
+    text.charCodeAt(start - 1) <= 0xdbff
+  ) {
+    start -= 1;
+  }
+  return text.slice(start, index);
+}
+
+function kwicCodePointAt(text: string, index: number): string | null {
+  if (index < 0 || index >= text.length) return null;
+  const cp = text.codePointAt(index);
+  return cp == null ? null : String.fromCodePoint(cp);
+}
+
+function hasKwicWordBoundaries(
+  text: string,
+  start: number,
+  end: number,
+): boolean {
+  const first = kwicCodePointAt(text, start);
+  const last = kwicCodePointBefore(text, end);
+
+  if (first && isKwicWordLikeCharacter(first)) {
+    const previous = kwicCodePointBefore(text, start);
+    if (previous && isKwicWordLikeCharacter(previous)) return false;
+  }
+  if (last && isKwicWordLikeCharacter(last)) {
+    const next = kwicCodePointAt(text, end);
+    if (next && isKwicWordLikeCharacter(next)) return false;
+  }
+  return true;
+}
+
 function dedupeKwicKeywords(keywords: readonly string[]): KwicKeyword[] {
   const out: KwicKeyword[] = [];
   const seen = new Set<string>();
@@ -5274,6 +5321,11 @@ function findKwicMatches(
     while (from <= folded.length - keyword.folded.length) {
       const index = folded.indexOf(keyword.folded, from);
       if (index < 0) break;
+      const matchEnd = index + keyword.folded.length;
+      if (!hasKwicWordBoundaries(folded, index, matchEnd)) {
+        from = index + 1;
+        continue;
+      }
       const first = map[index];
       const last = map[index + keyword.folded.length - 1];
       if (first && last && first.start < last.end) {

@@ -26,7 +26,7 @@ WHERE content ILIKE '%検索語%';
 
 しかし、この方法では、検索語に一致する可能性のある本文を広範囲に読まなければならない。全文検索用のインデックスを追加すれば検索を高速化できるが、投稿やユーザの更新のたびに大きなインデックスを更新する必要がある。また、頻出語に一致する文書を新しい順で取得する処理では、検索結果の候補が大量になりやすい。全文検索用インデックスで候補を列挙してから、別のインデックスで新しい順にソートする構成では、データ量が増えた時に処理量を予測しにくい。
 
-STGYで必要なのは、一般的なWeb検索エンジンのような高度な関連度ランキングではない。投稿一覧やユーザ一覧の検索欄に文字列を入力し、それを含む新しい文書を順番に取得できればよい。そこで、検索結果の順序を最初からインデックスの内部IDに組み込み、検索対象を時系列の範囲ごとに分割することにした。
+STGYで必要なのは、一般的なWeb検索エンジンのような高度な関連度ランキングではない。投稿一覧、ユーザ一覧、外部公開サイトの検索欄に文字列を入力し、それを含む文書を一定件数取得できればよい。そこで、TTTSでは候補を新しい文書から取得できるように検索順序をインデックスの内部IDへ組み込み、検索対象を時系列の範囲ごとに分割することにした。
 
 全文検索を別サービスにすると、以下の利点もある。
 
@@ -72,6 +72,8 @@ TTTSの/posts/searchまたは/users/search
 文書IDの配列を返す
   ↓
 PostgreSQLから投稿またはユーザの表示用データを取得
+  ↓ 必要なら
+表示中IDだけKWIC ASTを生成
 ```
 
 TTTSは、投稿用の ``posts`` とユーザ用の ``users`` を別リソースとして起動する。同じHTTPサーバの中にあるが、インデックスファイル、タスクキュー、設定、検索処理は独立している。ファイル名にもリソース名が接頭する。
@@ -112,7 +114,7 @@ en
 
 ユーザ文書には、そのユーザのlocaleを使う。ユーザのlocaleは必須属性なので、通常はフォールバックを必要としない。
 
-文書のタイムスタンプには、投稿またはユーザのSnowflake IDから取り出した作成日時を秒単位で使う。投稿の公開日時や更新日時ではない。したがって、投稿を編集しても別の時系列シャードへ移動せず、検索結果の順序も作成時刻を基準としたままである。
+文書のタイムスタンプには、投稿またはユーザのSnowflake IDから取り出した作成日時を秒単位で使う。投稿の公開日時や更新日時ではない。したがって、投稿を編集しても別の時系列シャードへ移動せず、TTTSの候補順も作成時刻を基準としたままである。
 
 ## PostgreSQL側の更新キュー
 
@@ -250,31 +252,13 @@ CREATE VIRTUAL TABLE docs USING fts5(
 );
 ```
 
-実際の設定では ``recordContents`` がtrueなので、FTS5は正規化後のトークン列も保持する。``recordPositions`` はfalseなので ``detail=column`` を使い、トークンの出現位置は記録せず、本文の ``tokens`` 列と探索空間を限定する ``labels`` 列の区別だけを保持する。後述するフレーズ検索では保持したトークン列を追加確認に使う。
+``recordContents`` はtrue、``recordPositions`` はfalseであり、FTS5は正規化後の本文を保持するが単語位置は記録しない。本文の ``tokens`` と探索空間を限定する ``labels`` は別列である。
 
-外部から見える投稿IDやユーザIDは文字列として ``external_id`` に格納し、FTS5のrowidには小さな整数の ``internal_id`` を使う。新しい文書を追加する際には、現在の最小internal_idから1を引いた値を割り当てる。
+外部IDは ``external_id``、FTS5のrowidは小さな整数の ``internal_id`` とする。新しい文書ほど小さいinternal_idを割り当て、``ORDER BY docs.rowid ASC`` で新しい文書から取得する。
 
-```text:small
-古い文書  internal_id = 2097150
-次の文書  internal_id = 2097149
-新しい文書 internal_id = 2097148
-```
+検索では ``docs CROSS JOIN id_tuples`` としてFTS5を外側ループに固定し、候補ごとに ``id_tuples`` をINTEGER PRIMARY KEYで参照する。FTS5式ではlabel条件を本文条件より先に置き、labelと本文のposting listを交差させる。labelはFTS5のcase-insensitiveな一致をそのまま採用し、``labels_json`` による再確認は行わない。``numeric_value`` は同じ候補に対するpredicateとして評価し、検索用B-tree indexは作らない。
 
-検索SQLは以下のように ``rowid ASC`` で取得する。
-
-```sql:small
-SELECT t.external_id
-FROM docs
-CROSS JOIN id_tuples t
-WHERE docs MATCH ?
-  AND t.internal_id = docs.rowid
-ORDER BY docs.rowid ASC
-LIMIT ?;
-```
-
-internal_idが小さいほど後から登録された文書なので、新しい文書から先に返る。既存文書を更新する場合はinternal_idを維持するため、編集しただけで検索結果の先頭へ移動することはない。
-
-この構成ではBM25などの関連度スコアを計算しない。検索結果は、関連度順ではなく作成時刻の新しい順である。STGYの全文検索は、検索語に一致する最近の投稿やユーザを探す機能として設計されている。
+``EXPLAIN QUERY PLAN`` のテストで、FTS5走査→INTEGER PRIMARY KEY検索の順序と、``USE TEMP B-TREE`` が発生しないことを確認する。これにより、属性条件を追加しても新しい候補からLIMITまで走査して早期終了する構造を維持する。
 
 ## トークナイズと正規化
 
@@ -337,91 +321,61 @@ Kuromojiが有効な環境では、概ね以下の結果になる。
 
 ## 検索クエリの意味
 
-通常の空白区切りの検索語は、トークナイズした後にANDで結合する。
+通常の空白区切り検索語はトークナイズ後にANDで結合する。ダブルクォート内はフレーズとして扱う。``detail=column`` のシャードでは、複数トークンのフレーズはFTS5で候補を絞った後、保存済みcanonical token列で連続一致を確認する。
 
-```text:small
-東京 自転車
-  ↓
-東京 AND 自転車
-```
-
-したがって、全ての検索語を含む文書が対象になる。OR検索、NOT検索、ワイルドカード検索、曖昧検索、関連語展開などはUI上の検索構文として提供していない。
-
-ダブルクォートで囲んだ部分はフレーズとして扱う。
-
-```text:small
-"東京 自転車"
-```
-
-通常のシャードはFTS5の位置情報を記録しない ``detail=column`` である。そのため、複数トークンの引用部分は、最初に各トークンのAND検索で候補を絞り、保存してあるLF区切りのcanonical token列に同じ並びがあるかを追加確認する。
-
-```text:small
-FTS5: 東京 AND 自転車
-  ↓
-LF + docs.tokens + LF の中に LF + 東京 + LF + 自転車 + LF があるか確認
-```
-
-単語の出現位置を持つインデックスより空間効率を優先し、フレーズ指定時だけ本文のcanonical token列を確認する方式である。``recordPositions=true`` のシャードではFTS5のphrase演算子を使う。
-
-検索語が ``C++`` の場合は、FTS5の演算子として解釈されないように以下のような検索式になる。
-
-```text:small
-"c++"
-```
-
-これにより、``C++`` の文書を検索する際に ``C`` だけの文書へ一致することを避ける。
+OR、NOT、ワイルドカード、曖昧検索、関連語展開はUI上の検索構文として提供しない。検索クエリのトークン数は最大8個である。
 
 ### labelsとnumeric_valueによる探索空間の限定
 
-各文書には、0個以上のopaqueな ``labels`` と、nullableな汎用数値 ``numeric_value`` を持たせられる。TTTSはこれらの意味を解釈しない。labelは印字文字とU+0020 SPACEをそのまま保存し、FTS5ではcase-insensitiveに一致する。複数labelはAND条件として使い、``labels`` はFTS5の独立した列なので本文のtermとは混ざらない。FTS5式ではlabel条件を本文条件より先に置き、labelのposting listを本文側より先に交差判定する。
+各文書には、0個以上のopaqueな ``labels`` とnullableな汎用数値 ``numeric_value`` を持たせられる。labelは印字文字とU+0020 SPACEを含む任意文字列を一つのtermとして扱い、FTS5ではcase-insensitiveに一致する。複数labelはAND条件で、FTS5式ではlabel条件を本文条件より先に置く。数値条件は ``eq``、``gt``、``gte``、``lt``、``lte`` を使う。TTTSはそれらのアプリケーション上の意味を解釈しない。rawなlabelは ``labels_json`` に保持するが、検索時の再判定には使わない。
 
-数値条件は ``eq``、``gt``、``gte``、``lt``、``lte`` を使え、FTS候補ごとに ``id_tuples`` をINTEGER PRIMARY KEYで参照して逐次評価する。raw labelの再確認は行わず、``numeric_value`` 自体にも検索用B-tree indexを作らない。
+STGYの投稿では ``owner:<userId>`` をlabel、外部公開日時のepoch millisecondを ``numericValue`` とする。非公開はNULL、予約公開は未来日時である。ログイン検索では ``owner:<userId>`` / ``owner:me`` をlabel条件、``status:published`` を ``numeric_value <= now`` へ変換する。
 
-STGYの投稿では ``owner:<userId>`` をlabelとして登録し、``numericValue`` には外部公開日時のepoch millisecondを入れる。非公開ならNULL、予約公開なら未来日時になる。そのため、個別ユーザの記事検索はowner labelで限定でき、外部公開記事はさらに ``numeric_value <= now`` を加えるだけで、公開時刻到来時のインデックス更新を必要としない。
+labelはFTS5のposting-list intersectionへ直接入るため、例えば特定ユーザの投稿検索ではSNS全体の本文ヒットを後段でowner判定する必要がない。数値条件はFTS候補の後段で評価するため、K件を得るまでH件の候補を見る場合、属性確認の追加コストは概ね ``O(H log N)`` である。数値条件の通過率をpとすれば概ね ``H ≈ K/p``、最悪時は本文＋label条件に一致する候補M件まで見る。
 
-STGYの ``/posts/search`` は、UIから受け取ったquery文字列をバックエンドで解釈する。非引用の独立したtoken ``owner:<userId>`` はTTTSの ``owner:<userId>`` label条件へ変換し、``owner:me`` はまず現在ログインしているユーザのIDへ解決してから同じowner label条件へ変換する。``status:published`` は現在時刻を使った ``numericOp=lte`` と ``numericValue=<current epoch ms>`` へ変換する。それらの特殊tokenを取り除いた残りだけを本文queryとしてTTTSへ送り、少なくとも1つの通常の本文検索語を必須とする。例えば ``owner:me status:published 自転車`` は、ログインユーザが現在外部公開している投稿の中から「``自転車``」を検索する。引用符で囲まれた ``"owner:..."`` や ``"status:published"`` は特殊tokenとして扱わず、通常の本文検索語として扱う。TTTS自身は ``owner``、``me``、``published`` というSTGY固有の意味を解釈せず、opaqueなlabelと汎用数値filterだけを処理する。
+### 外部公開サイトからの匿名検索
+
+``/sites/[id]`` の検索はSSR中にTTTSを呼ばず、hydrate後のClient Componentが ``credentials: "omit"`` で ``/posts/search`` を呼ぶ。匿名検索では ``ownedBy`` を必須とし、バックエンドが ``owner:<ownedBy>`` と ``numeric_value <= now`` を強制する。TTTSの候補取得後もPostgreSQLで ``owned_by`` と ``published_at <= now`` を再確認する。
+
+匿名の検索系APIでは、全query parameterをcanonicalizeしたUTF-8文字列のSHA-1を ``X-STGY-QueryHash`` ヘッダで送る。これは秘密情報ではなく、URLをそのまま反復する単純なクローラを安価に落とすためのフィルタである。カスタムヘッダを使うため他originのJavaScriptからはCORS preflightが必要になり、許可originはSTGY frontendに限定される。
+
+本番Caddyでは ``/backend/posts/search`` と ``/backend/posts/kwic-pub`` が同じ検索系のIP単位制限（60回/1時間）を共有し、STGY全体にも一般レート制限がある。匿名検索は固定ダミーユーザの ``DailyTimerThrottleService("db")`` 日次処理時間枠も共有する。またSTGY全ページは ``frame-ancestors 'none'`` と ``X-Frame-Options: DENY`` でframe埋め込みを禁止する。
 
 ## 検索処理と結果の順序
 
-TTTSの検索APIは、リソースごとに以下のパスを持つ。
+TTTSの検索APIは ``/posts/search`` と ``/users/search`` を持ち、TTTS候補は作成時刻の新しい順である。通常のログイン検索では、バックエンドが画面で必要な ``offset + limit`` 件まで候補IDを取得してPostgreSQLから表示データを読む。
 
-```text:small
-GET /posts/search
-GET /users/search
-```
+外部公開投稿検索では、TTTSから上限付き候補集合を取得し、PostgreSQLでownerと公開時刻を再確認して公開日時の新しい順にページングする。現在の ``/sites/[id]`` 検索結果ではOldest切り替えを表示しない。
 
-主なパラメータは以下の通りである。
-
-- ``query`` : 検索文字列
-- ``locale`` : クエリの優先ロケール
-- ``offset`` : 読み飛ばす件数
-- ``limit`` : 返す最大件数
-- ``timeout`` : 検索を続ける最大秒数
-
-``timeout`` には ``0.1`` や ``0.25`` などの小数を指定できる。TTTSはシャードを一つ処理する前に、開始からの経過時間を確認する。時間切れになった場合は、そこまでに集まった結果を返す。実行中の一つのSQLiteクエリを途中でキャンセルする仕組みではないので、timeoutは厳密なCPU実行時間の上限ではなく、次のシャードへ進むかどうかの判断基準である。
-
-STGYバックエンドからTTTSを呼ぶ際には、offsetを0にして、画面で必要な ``offset + limit`` 件を要求する。TTTS側で新しい順の文書IDを取得し、バックエンド側で要求されたページ範囲を切り出す。
-
-投稿検索では、得られた文書IDをPostgreSQLの ``listPostsByIds`` に渡す。表示に必要な投稿属性、所有者、タグ、イイネ数、返信数などはPostgreSQLから取得する。ユーザ検索でも、TTTSはIDだけを返し、ユーザの表示用データはPostgreSQLから取得する。
-
-つまり、TTTSは検索候補と順序を決めるサービスであり、SNSの正本データを返すサービスではない。インデックスに古いIDが一時的に残っていても、PostgreSQLに文書がなければ最終結果から消える。
+TTTSは候補IDを返す副次インデックスであり、投稿・ユーザの表示内容と公開可否の正本はPostgreSQLである。
 
 ## Redisによる検索結果キャッシュ
 
-STGYバックエンドは、投稿検索とユーザ検索の文書ID配列をRedisへキャッシュする。キャッシュキーは、リソース名と検索文字列とロケールから作る。
+STGYバックエンドは投稿検索とユーザ検索の候補ID配列をRedisへキャッシュする。投稿検索のキーにはquery、locale、owner、公開条件、匿名/認証済みの区別を含める。
+
+通常検索では必要件数に応じて候補キャッシュを拡張する。外部公開検索では上限付き候補集合をキャッシュし、ページ移動やKWIC/Rich/Plain切り替えで同じTTTS検索を繰り返さない。デフォルトTTLは600秒である。
+
+検索APIでは ``offset + limit`` に上限を設け、ログイン検索はユーザ単位、匿名検索は共有ダミーユーザ単位のDB処理時間制限を適用する。
+
+## KWIC
+
+検索結果のKWIC（Keyword In Context）はTTTSでは生成しない。検索結果として実際に表示するIDだけをPostgreSQLから取得し、``packages/markdown`` が原文MarkdownからKWIC ASTを生成する。
+
+バックエンドには以下のエンドポイントがある。
 
 ```text:small
-stgy:search:posts:{queryとlocaleのハッシュ}
-stgy:search:users:{queryとlocaleのハッシュ}
+GET /posts/kwic      # ログイン必須
+GET /users/kwic      # ログイン必須
+GET /posts/kwic-pub  # 匿名可、公開済み投稿のみ
 ```
 
-キャッシュには、取得済みの上限件数と結果IDの配列を保存する。例えば最初に21件を取得し、次のページで42件が必要になった場合、キャッシュが21件までしか持っていなければ、TTTSへ42件を再要求する。検索結果が要求上限より少なければ、それ以上の結果がないとみなして同じキャッシュを再利用する。
+``/posts/kwic-pub`` は ``X-STGY-QueryHash`` と匿名スロットリングの対象で、``published_at <= now`` をPostgreSQLで確認する。
 
-デフォルトのキャッシュ有効期間は600秒である。検索インデックスが更新されても、既存の検索キャッシュは直ちに無効化しない。このため、新規投稿、更新、削除が検索結果へ反映された後でも、同じ検索語では最大10分程度、古いID配列が使われる可能性がある。
+投稿ではMarkdownのタイトルを全文表示し、本文は検索語の前後40 pseudo tokensを基本範囲として最大4セグメント抽出する。一つの検索語だけで全セグメントを占有しないよう、各検索語をanchorとして使える数を ``ceil(maxSegments / keywordCount)`` に制限し、重なるセグメントはmergeする。ASTは ``text`` / ``highlight``、本文上の ``startPosition`` / ``endPosition`` / ``isStart`` / ``isEnd``、ハイライト元の ``keywordIndex`` を持ち、省略記号や色はfrontendで決める。
 
-これは厳密なリアルタイム検索よりも、同じ検索語が繰り返された時の負荷削減を優先した設計である。最終的な投稿やユーザの内容は毎回PostgreSQLから取得するので、キャッシュに古いIDがあっても、削除済みのデータそのものを復活させるわけではない。
+KWICの文字列照合はNFKC・case・Latin diacriticの差を吸収する。Latin、Greek、Cyrillic、Number、Markの連続部分では単語途中の一致を除外するため、``pro`` は ``profile`` 内ではハイライトしない。CJKには形態素解析を追加せず、部分一致の偽陽性を許容する。
 
-バックエンドの検索APIでは、``offset + limit`` の最大値をデフォルトで1001件に制限している。また、一般ユーザの検索処理は日次のDB処理時間制限の対象になる。無制限の深いページングや検索の連打を許さないためである。
+内部の投稿・ユーザ検索はKWIC/Richを切り替えられ、外部公開投稿検索はKWIC/Rich/Plainを切り替えられる。デフォルトはKWICで、外部公開検索ではOldest切り替えを表示しない。
 
 ## トランザクションとCOMMIT
 
@@ -603,48 +557,28 @@ PostgreSQLが正本なので、該当シャードまたは全体を再構築す�
 
 ## 性能上の特徴
 
-この全文検索の時間計算量を単純な一式で表すことはできないが、通常の検索が全データ量に比例しないように複数の制限を設けている。
+TTTSは以下を重視する。
 
-- 文書を時系列シャードに分ける。
-- 新しいシャードから検索する。
-- ``offset + limit`` 件が集まった時点で終了する。
-- 一つのクエリのトークン数を5件に制限する。
-- バックエンドで取得可能な深さを1001件に制限する。
-- 検索処理にtimeoutを設定する。
-- 同じ検索語の結果IDをRedisへキャッシュする。
-- 古いシャードのreader接続数とメモリ使用量を減らす。
-- 更新を複数件まとめてCOMMITする。
-- ワーカーの送信レートを意図的に抑える。
+- 時系列シャードを新しい順に検索し、必要件数で早期終了する。
+- owner等のlabelをFTS5で本文条件と交差し、探索空間を先に狭める。
+- ``CROSS JOIN`` でFTS5を外側ループに固定し、属性確認は候補ごとの主キー検索にする。
+- 数値条件は選択性の低いB-tree探索の起点にせず、FTS候補へ逐次適用する。
+- Redisキャッシュと検索件数上限で繰り返し処理を抑える。
+- KWICは現在画面に表示する文書だけ後処理し、TTTSの検索計算量を増やさない。
 
-最悪の場合、検索語が全ての文書に一致し、深いoffsetを要求すると、多数のシャードを検索することになる。しかし、一般的な利用では最新シャードから必要数が集まり、古いファイルは開かれない。データ量が増えても最近の文書への検索コストが急激に増えないことが、この構成の狙いである。
-
-一方、関連度ランキングを行わないため、「検索語との関連性が最も高い古い記事」を上位に出すことはできない。検索結果は新しい順である。高度なWeb検索の代替ではなく、SNS内の最近の文書を文字列で絞り込むための機能である。
+関連度ランキングは行わず、通常のTTTS候補順は作成時刻の新しい順である。
 
 ## 制限事項
 
-現在の全文検索には以下の制限がある。
-
-- 投稿の検索対象は本文全体であり、タイトル、タグ、所有者などに検索重みを付けない。
-- ユーザの検索対象はニックネームと自己紹介であり、その他の属性は検索しない。
-- 関連度スコアを計算せず、作成時刻の新しい順で返す。
-- 検索語は基本的にAND条件であり、一般向けのOR、NOT、前方一致、曖昧検索構文を提供しない。
-- 行ごとの言語判定は行わず、文書全体に一つのロケールを使う。
-- 更新内容が検索へ反映されるまで遅延がある。
-- Redisキャッシュによって、同じクエリのID配列が最大600秒古い可能性がある。
-- timeoutはシャード間の打ち切り判断であり、実行中のSQLiteクエリを強制中断しない。
-- インデックスとPostgreSQLの内容が完全に一致するかを常時照合する仕組みはなく、必要に応じて再構築する。
-
-これらは、機能不足というよりも、予測可能な性能と単純な運用を優先した結果である。将来、関連度検索、意味検索、複雑な検索構文などが必要になれば、現在のTTTSと別の検索方式を併用することになるだろう。
+- 関連度スコア、OR/NOT、ワイルドカード、曖昧検索は提供しない。
+- フレーズ検索は ``recordPositions=false`` の場合、候補取得後にcanonical token列を確認する。
+- numeric filterの通過率が低い場合は、必要件数より多くのFTS候補を調べる。
+- 検索インデックスとRedisキャッシュは結果整合性であり、最新状態の最終確認はPostgreSQLで行う。
+- 匿名APIのquery hashは認証ではなく、直接HTTPを実装したbotはCaddyと処理時間制限で抑制する。
 
 ## まとめ
 
-STGYの全文検索では、PostgreSQLを正本とし、投稿とユーザの検索用文書を非同期にTTTSへ送る。TTTSはSQLite FTS5のインデックスを時系列シャードに分割し、新しいシャードから順に検索する。文書には作成順と逆向きにinternal_idを割り当て、``rowid ASC`` だけで新しい順の検索結果を得る。
+STGYの全文検索は、SQLite FTS5を時系列シャードへ分割するTTTSを副次インデックスとして使う。投稿には ``owner:<userId>`` labelと公開日時の ``numericValue`` を持たせ、FTS5→主キー属性確認の実行順を固定して、探索空間を限定しても早期終了性を維持する。
 
-更新要求は、PostgreSQLの ``search_indexing_tasks``、TTTSの ``document_tasks``、``batch_tasks`` という複数段階の永続キューを通る。FTS5のCOMMITが完了するまでbatchタスクを削除せず、障害時には再実行する。厳密な一度だけの実行ではなく、冪等な更新を重複実行してでも欠落を避ける構成である。
-
-トークナイズは、NFKC正規化、小文字化、KuromojiまたはIntl.Segmenterを用いた単語分割を行い、``C++``、``C#``、``.NET``、``node.js`` などの記号を含む技術用語も保持する。検索語は原則としてANDで結合し、引用部分はフレーズとして追加確認する。
-
-検索結果は関連度順ではなく、作成時刻の新しい順である。最新シャードから必要な件数だけ取得し、RedisへID配列をキャッシュすることで、SNSの通常利用で処理量を限定する。検索インデックスはいつでもPostgreSQLから再構築できるので、複雑な分散トランザクションを導入せず、結果整合性と復旧可能性によって運用する。
-
-Next: [STGYの推薦機能](/posts/0000000000020107)
+外部公開検索ではownerと ``published_at <= now`` をTTTSとPostgreSQLの両方で確認し、匿名APIには ``X-STGY-QueryHash``、CORS、CaddyのIPレート制限、共有処理時間制限を重ねる。KWICはTTTSから分離し、表示対象文書だけをMarkdown原文からASTへ変換する。検索インデックスはPostgreSQLから再構築可能な派生データとして運用する。
 ____EOF____

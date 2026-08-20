@@ -3683,14 +3683,14 @@ describe("KWIC", () => {
   });
 
   it("measures context in pseudo tokens so CJK context uses fewer characters", () => {
-    const ascii = makeKwicData(null, "ABCDEKEYFGHIJ", ["KEY"], {
+    const ascii = makeKwicData(null, "ABCDE-KEY-FGHIJ", ["KEY"], {
       maxSegments: 1,
       contextSize: 3,
     });
     expect(ascii.segments[0]!.children).toStrictEqual([
-      { type: "text", text: "CDE" },
+      { type: "text", text: "DE-" },
       { type: "highlight", text: "KEY", keywordIndex: 0 },
-      { type: "text", text: "FGH" },
+      { type: "text", text: "-FG" },
     ]);
 
     const japanese = makeKwicData(null, "あいうKEYえおか", ["KEY"], {
@@ -3705,7 +3705,7 @@ describe("KWIC", () => {
   });
 
   it("extends a segment boundary through a highlight that would be cut", () => {
-    const kwic = makeKwicData(null, "XabcLONGKEYdef", ["X", "LONGKEY"], {
+    const kwic = makeKwicData(null, "X--LONGKEY--def", ["X", "LONGKEY"], {
       maxSegments: 1,
       contextSize: 4,
     });
@@ -3713,12 +3713,12 @@ describe("KWIC", () => {
       {
         type: "segment",
         startPosition: 0,
-        endPosition: 11,
+        endPosition: 10,
         isStart: true,
         isEnd: false,
         children: [
           { type: "highlight", text: "X", keywordIndex: 0 },
-          { type: "text", text: "abc" },
+          { type: "text", text: "--" },
           { type: "highlight", text: "LONGKEY", keywordIndex: 1 },
         ],
       },
@@ -3726,23 +3726,23 @@ describe("KWIC", () => {
   });
 
   it("merges overlapping body segments and highlights every keyword inside them", () => {
-    const kwic = makeKwicData(null, "aaaKEYbbbKEYccc", ["KEY"], {
+    const kwic = makeKwicData(null, "aaa KEY bbb KEY ccc", ["KEY"], {
       maxSegments: 4,
       contextSize: 3,
     });
     expect(kwic.segments).toStrictEqual([
       {
         type: "segment",
-        startPosition: 0,
-        endPosition: 15,
-        isStart: true,
-        isEnd: true,
+        startPosition: 1,
+        endPosition: 18,
+        isStart: false,
+        isEnd: false,
         children: [
-          { type: "text", text: "aaa" },
+          { type: "text", text: "aa " },
           { type: "highlight", text: "KEY", keywordIndex: 0 },
-          { type: "text", text: "bbb" },
+          { type: "text", text: " bbb " },
           { type: "highlight", text: "KEY", keywordIndex: 0 },
-          { type: "text", text: "ccc" },
+          { type: "text", text: " cc" },
         ],
       },
     ]);
@@ -3791,14 +3791,44 @@ describe("KWIC", () => {
     ]);
   });
 
+  it("rejects word-like partial matches but permits CJK substring matches", () => {
+    expect(
+      makeKwicData("pro profile professional", "", ["pro"], options).title,
+    ).toStrictEqual([
+      { type: "highlight", text: "pro", keywordIndex: 0 },
+      { type: "text", text: " profile professional" },
+    ]);
+
+    expect(
+      makeKwicData(null, "profile pro professional", ["pro"], {
+        maxSegments: 4,
+        contextSize: 0,
+      }).segments.map((segment) => segment.children),
+    ).toStrictEqual([[{ type: "highlight", text: "pro", keywordIndex: 0 }]]);
+
+    expect(
+      makeKwicData("αAzieru Azieru ЖAzieru 1Azieru", "", ["Azieru"], options)
+        .title,
+    ).toStrictEqual([
+      { type: "text", text: "αAzieru " },
+      { type: "highlight", text: "Azieru", keywordIndex: 0 },
+      { type: "text", text: " ЖAzieru 1Azieru" },
+    ]);
+
+    expect(makeKwicData("東京都", "", ["京都"], options).title).toStrictEqual([
+      { type: "text", text: "東" },
+      { type: "highlight", text: "京都", keywordIndex: 0 },
+    ]);
+  });
+
   it("keeps overlapping keyword highlights flat and assigns overlap to the earlier keyword", () => {
-    const kwic = makeKwicData("foobar", "", ["foo", "foobar"], {
+    const kwic = makeKwicData("東京都", "", ["東京", "東京都"], {
       maxSegments: 1,
       contextSize: 3,
     });
     expect(kwic.title).toStrictEqual([
-      { type: "highlight", text: "foo", keywordIndex: 0 },
-      { type: "highlight", text: "bar", keywordIndex: 1 },
+      { type: "highlight", text: "東京", keywordIndex: 0 },
+      { type: "highlight", text: "都", keywordIndex: 1 },
     ]);
     expect(kwic.segments).toStrictEqual([]);
   });
@@ -3818,20 +3848,20 @@ describe("KWIC", () => {
   });
 
   it("uses Unicode code-point positions instead of UTF-16 code units", () => {
-    const kwic = makeKwicData(null, "A😊BKEYC", ["KEY"], {
+    const kwic = makeKwicData(null, "A😊 KEY C", ["KEY"], {
       maxSegments: 1,
-      contextSize: 3,
+      contextSize: 2,
     });
     expect(kwic.segments[0]).toMatchObject({
       startPosition: 1,
-      endPosition: 7,
+      endPosition: 8,
       isStart: false,
       isEnd: true,
     });
     expect(kwic.segments[0]!.children).toStrictEqual([
-      { type: "text", text: "😊B" },
+      { type: "text", text: "😊 " },
       { type: "highlight", text: "KEY", keywordIndex: 0 },
-      { type: "text", text: "C" },
+      { type: "text", text: " C" },
     ]);
   });
 
@@ -3881,7 +3911,7 @@ describe("KWIC", () => {
       segments: [],
     });
 
-    const keywordOnly = makeKwicData(null, "xxKEYyy", ["KEY"], {
+    const keywordOnly = makeKwicData(null, "xx-KEY-yy", ["KEY"], {
       maxSegments: 1,
       contextSize: 0,
     });
