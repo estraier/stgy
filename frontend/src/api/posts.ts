@@ -1,4 +1,5 @@
 import type { Post, PostDetail, User } from "./models";
+import type { KwicData } from "stgy-markdown";
 import { apiFetch, extractError } from "./client";
 import { makeQueryHashHeaders } from "@/utils/queryHash";
 
@@ -45,6 +46,23 @@ export async function searchPosts(params: {
   if (params.ownedBy) search.append("ownedBy", params.ownedBy);
   const q = search.toString();
   const res = await apiFetch(`/posts/search?${q}`, { method: "GET" });
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
+}
+
+export type PostKwicItem = {
+  id: string;
+  kwic: KwicData;
+};
+
+export async function getPostsKwic(
+  ids: readonly string[],
+  keywords: readonly string[],
+): Promise<PostKwicItem[]> {
+  const search = new URLSearchParams();
+  for (const id of ids) search.append("id", id);
+  for (const keyword of keywords) search.append("keyword", keyword);
+  const res = await apiFetch(`/posts/kwic?${search.toString()}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();
 }

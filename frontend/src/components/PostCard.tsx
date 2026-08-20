@@ -32,6 +32,7 @@ type PostCardProps = {
   focusUserId?: string;
   focusUserIsAdmin?: boolean;
   idPrefix?: string;
+  bodyOverride?: React.ReactNode;
 };
 
 export default function PostCard({
@@ -48,6 +49,7 @@ export default function PostCard({
   focusUserId,
   focusUserIsAdmin = false,
   idPrefix,
+  bodyOverride,
 }: PostCardProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -55,12 +57,14 @@ export default function PostCard({
   const hasContent =
     "content" in post && typeof post.content === "string" && post.content.length > 0;
 
-  const bodyHtml = convertHtmlMathInline(
-    !truncated && hasContent
-      ? makeArticleHtmlFromMarkdown((post as PostDetail).content)
-      : makeHtmlFromJsonSnippet(post.snippet, idPrefix),
-  );
-
+  const bodyHtml =
+    bodyOverride === undefined
+      ? convertHtmlMathInline(
+          !truncated && hasContent
+            ? makeArticleHtmlFromMarkdown((post as PostDetail).content)
+            : makeHtmlFromJsonSnippet(post.snippet, idPrefix),
+        )
+      : "";
 
   const isBlockedForFocusUser = Boolean(
     (post as { isBlockingFocusUser?: boolean }).isBlockingFocusUser,
@@ -623,13 +627,17 @@ export default function PostCard({
         </span>
       </div>
 
-      <MarkdownHtmlBody
-        html={bodyHtml}
-        lang={postLang}
-        className={`markdown-body post-content${truncated ? " excerpt" : ""}`}
-        minHeight={36}
-        userSelect="text"
-      />
+      {bodyOverride === undefined ? (
+        <MarkdownHtmlBody
+          html={bodyHtml}
+          lang={postLang}
+          className={`markdown-body post-content${truncated ? " excerpt" : ""}`}
+          minHeight={36}
+          userSelect="text"
+        />
+      ) : (
+        <div className="post-content min-h-[36px] select-text">{bodyOverride}</div>
+      )}
 
       <div className="mt-1 flex items-center gap-2 text-xs text-gray-600">
         {(showPublishedLabel || (post.tags && post.tags.length > 0)) && (

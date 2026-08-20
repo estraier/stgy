@@ -10,15 +10,22 @@ import {
   addLike,
   removeLike,
   searchPosts,
+  getPostsKwic,
 } from "@/api/posts";
 import { RecommendPostsForUser, RecommendPostsForPost } from "@/api/aiPost";
 import { listUsers } from "@/api/users";
 import type { Post } from "@/api/models";
+import type { KwicData } from "stgy-markdown";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import { makePostIdFromDateString, parseBodyAndTags } from "@/utils/parse";
-import { parsePostSearchQuery, serializePostSearchQuery } from "@/utils/parse";
+import {
+  extractSearchKeywords,
+  parsePostSearchQuery,
+  serializePostSearchQuery,
+} from "@/utils/parse";
 import PostCard from "@/components/PostCard";
+import KwicBody from "@/components/KwicBody";
 import PostForm from "@/components/PostForm";
 import { useEditingHistory } from "@/hooks/useEditingHistory";
 import {
@@ -60,6 +67,12 @@ export default function PageBody() {
   const [replyError, setReplyError] = useState<string | null>(null);
   const [replySubmitting, setReplySubmitting] = useState(false);
   const [resolvedOwnedBy, setResolvedOwnedBy] = useState<string | undefined>(undefined);
+  const [kwicResult, setKwicResult] = useState<{
+    key: string;
+    byPostId: Record<string, KwicData>;
+  }>({ key: "", byPostId: {} });
+  const [kwicLoading, setKwicLoading] = useState(false);
+  const [kwicError, setKwicError] = useState<string | null>(null);
   const [pendingRestore, setPendingRestore] = useState<{ postId: string; page: number } | null>(
     null,
   );
@@ -74,9 +87,11 @@ export default function PageBody() {
       everyPost: sp.get("everyPost") === "1",
       page: Math.max(Number(sp.get("page")) || 1, 1),
       qParam: sp.get("q") ?? "",
+      searchView: sp.get("view") === "rich" ? "rich" : "kwic",
     };
   }
-  const { tab, includingReplies, oldestFirst, everyPost, page, qParam } = getQueryParams();
+  const { tab, includingReplies, oldestFirst, everyPost, page, qParam, searchView } =
+    getQueryParams();
 
   const similarPostId = useMemo(() => {
     const m = qParam.match(/^~([0-9A-Z]{16})$/);
@@ -151,6 +166,13 @@ export default function PageBody() {
       );
 
   const isFullTextSearch = isSearchMode && !isSimilarMode && !!searchQueryObj.query;
+  const kwicKeywords = useMemo(
+    () => (isFullTextSearch ? extractSearchKeywords(searchQueryObj.query!) : []),
+    [isFullTextSearch, searchQueryObj.query],
+  );
+  const canShowKwic = isFullTextSearch && kwicKeywords.length > 0;
+  const effectiveSearchView: "kwic" | "rich" =
+    canShowKwic && searchView !== "rich" ? "kwic" : "rich";
 
   const effectiveTab = isSearchMode ? "all" : tab;
 
@@ -188,7 +210,15 @@ export default function PageBody() {
   const setQuery = useCallback(
     (updates: Record<string, string | number | undefined>) => {
       const sp = new URLSearchParams(searchParams);
-      for (const key of ["tab", "includingReplies", "oldestFirst", "everyPost", "page", "q"]) {
+      for (const key of [
+        "tab",
+        "includingReplies",
+        "oldestFirst",
+        "everyPost",
+        "page",
+        "q",
+        "view",
+      ]) {
         if (Object.prototype.hasOwnProperty.call(updates, key)) {
           if (updates[key] !== undefined && updates[key] !== null && updates[key] !== "") {
             sp.set(key, String(updates[key]));
@@ -372,6 +402,51 @@ export default function PageBody() {
   useEffect(() => {
     fetchPosts();
   }, [fetchPosts]);
+
+  useEffect(() => {
+    if (loading || !canShowKwic || effectiveSearchView !== "kwic" || posts.length === 0) {
+      setKwicLoading(false);
+      setKwicError(null);
+      return;
+    }
+
+    const ids = posts.map((post) => post.id);
+    const key = JSON.stringify([ids, kwicKeywords]);
+    if (kwicResult.key === key) {
+      setKwicLoading(false);
+      setKwicError(null);
+      return;
+    }
+
+    let canceled = false;
+    setKwicLoading(true);
+    setKwicError(null);
+    getPostsKwic(ids, kwicKeywords)
+      .then((items) => {
+        if (canceled) return;
+        const byPostId: Record<string, KwicData> = {};
+        for (const item of items) byPostId[item.id] = item.kwic;
+        setKwicResult({ key, byPostId });
+      })
+      .catch((caught: unknown) => {
+        if (canceled) return;
+        setKwicError(caught instanceof Error ? caught.message : "Failed to fetch KWIC.");
+      })
+      .finally(() => {
+        if (!canceled) setKwicLoading(false);
+      });
+
+    return () => {
+      canceled = true;
+    };
+  }, [
+    loading,
+    canShowKwic,
+    effectiveSearchView,
+    posts,
+    kwicKeywords,
+    kwicResult.key,
+  ]);
 
   useEffect(() => {
     function handler(e: MouseEvent) {
@@ -610,6 +685,14 @@ export default function PageBody() {
 
   const showEveryPost = !isSearchMode && effectiveTab === "all";
   const showLegacyOptions = (isSearchMode || effectiveTab !== "all") && !isFullTextSearch;
+  const currentKwicKey = canShowKwic
+    ? JSON.stringify([
+        posts.map((post) => post.id),
+        kwicKeywords,
+      ])
+    : "";
+  const currentKwicByPostId =
+    kwicResult.key === currentKwicKey ? kwicResult.byPostId : {};
 
   return (
     <main className="max-w-3xl mx-auto mt-4 p-1 sm:p-4" onClick={clearError}>
@@ -630,30 +713,31 @@ export default function PageBody() {
         </div>
       )}
       <div className="h-6" />
-      <div className="flex gap-1 mb-2">
-        {TAB_VALUES.map((t) => (
-          <button
-            key={t}
-            className={`px-3 max-md:px-2 py-1 min-w-0 sm:min-w-[110px] rounded-t text-sm font-normal cursor-pointer
-              ${tab === t && !isSearchMode ? "bg-blue-100 text-gray-800" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
-            onClick={() =>
-              setQuery({
-                tab: t,
-                page: 1,
-                q: undefined,
-                includingReplies: undefined,
-                oldestFirst: undefined,
-                everyPost: undefined,
-              })
-            }
-          >
-            {t.charAt(0).toUpperCase() + t.slice(1)}
-          </button>
-        ))}
+      {!isSearchMode ? (
+        <div className="flex gap-1 mb-2">
+          {TAB_VALUES.map((t) => (
+            <button
+              key={t}
+              className={`px-3 max-md:px-2 py-1 min-w-0 sm:min-w-[110px] rounded-t text-sm font-normal cursor-pointer
+                ${tab === t ? "bg-blue-100 text-gray-800" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
+              onClick={() =>
+                setQuery({
+                  tab: t,
+                  page: 1,
+                  q: undefined,
+                  includingReplies: undefined,
+                  oldestFirst: undefined,
+                  everyPost: undefined,
+                  view: undefined,
+                })
+              }
+            >
+              {t.charAt(0).toUpperCase() + t.slice(1)}
+            </button>
+          ))}
 
-        {showLegacyOptions && (
-          <>
-            {!isSimilarMode && (
+          {showLegacyOptions && (
+            <>
               <label className="flex pl-2 items-center gap-1 text-sm ml-4 text-gray-700 cursor-pointer max-md:pl-0">
                 <input
                   type="checkbox"
@@ -668,44 +752,110 @@ export default function PageBody() {
                   Replies
                 </span>
               </label>
-            )}
-            <label className="flex pl-2 items-center gap-1 text-sm text-gray-700 cursor-pointer max-md:pl-0">
+              <label className="flex pl-2 items-center gap-1 text-sm text-gray-700 cursor-pointer max-md:pl-0">
+                <input
+                  type="checkbox"
+                  checked={oldestFirst}
+                  onChange={(e) =>
+                    setQuery({ oldestFirst: e.target.checked ? "1" : undefined, page: 1 })
+                  }
+                  className="cursor-pointer"
+                />
+                <span className="hidden md:inline">Oldest first</span>
+                <span className="md:hidden scale-x-80 -ml-1" aria-hidden>
+                  Oldest
+                </span>
+              </label>
+            </>
+          )}
+
+          {showEveryPost && (
+            <label className="flex pl-2 items-center gap-1 text-sm ml-4 text-gray-700 cursor-pointer max-md:pl-0">
               <input
                 type="checkbox"
-                checked={oldestFirst}
+                checked={everyPost}
                 onChange={(e) =>
-                  setQuery({ oldestFirst: e.target.checked ? "1" : undefined, page: 1 })
+                  setQuery({ everyPost: e.target.checked ? "1" : undefined, page: 1 })
                 }
                 className="cursor-pointer"
               />
-              <span className="hidden md:inline">Oldest first</span>
-              <span className="md:hidden scale-x-80 -ml-1" aria-hidden>
-                Oldest
-              </span>
+              <span>Every post</span>
             </label>
-          </>
-        )}
-
-        {showEveryPost && (
-          <label className="flex pl-2 items-center gap-1 text-sm ml-4 text-gray-700 cursor-pointer max-md:pl-0">
-            <input
-              type="checkbox"
-              checked={everyPost}
-              onChange={(e) => setQuery({ everyPost: e.target.checked ? "1" : undefined, page: 1 })}
-              className="cursor-pointer"
-            />
-            <span>Every post</span>
-          </label>
-        )}
-      </div>
-
-      {isSearchMode && (
-        <div className="mb-2 text-sm text-gray-500">
-          Posts matching{" "}
-          <span className="bg-gray-200 rounded px-2 py-0.5 text-gray-700">
-            {isSimilarMode ? `~${similarPostId}` : serializePostSearchQuery(searchQueryObj)}
-          </span>
+          )}
         </div>
+      ) : (
+        <>
+          <div className="mb-2 flex items-end gap-2">
+            <div className="min-w-0 flex-1 text-sm text-gray-500">
+              Posts matching{" "}
+              <span className="bg-gray-200 rounded px-2 py-0.5 text-gray-700">
+                {isSimilarMode ? `~${similarPostId}` : serializePostSearchQuery(searchQueryObj)}
+              </span>
+            </div>
+            <div className="ml-auto flex shrink-0 gap-1">
+              {(["kwic", "rich"] as const).map((view) => {
+                const disabled = view === "kwic" && !canShowKwic;
+                const active = effectiveSearchView === view;
+                return (
+                  <button
+                    key={view}
+                    type="button"
+                    disabled={disabled}
+                    className={`px-3 max-md:px-2 py-1 min-w-0 sm:min-w-[110px] rounded-t text-sm font-normal
+                      ${
+                        disabled
+                          ? "bg-blue-50 text-gray-300 cursor-not-allowed"
+                          : active
+                            ? "bg-blue-100 text-gray-800 cursor-pointer"
+                            : "bg-blue-50 text-gray-400 hover:bg-blue-100 cursor-pointer"
+                      }`}
+                    onClick={() => {
+                      if (disabled) return;
+                      setQuery({ view: view === "rich" ? "rich" : undefined });
+                    }}
+                  >
+                    {view === "kwic" ? "KWIC" : "Rich"}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {showLegacyOptions && (
+            <div className="mb-2 flex items-center gap-2">
+              {!isSimilarMode && (
+                <label className="flex items-center gap-1 text-sm text-gray-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={includingReplies}
+                    onChange={(e) =>
+                      setQuery({ includingReplies: e.target.checked ? "1" : undefined, page: 1 })
+                    }
+                    className="cursor-pointer"
+                  />
+                  <span className="hidden md:inline">Including replies</span>
+                  <span className="md:hidden scale-x-80 -ml-1" aria-hidden>
+                    Replies
+                  </span>
+                </label>
+              )}
+              <label className="flex items-center gap-1 text-sm text-gray-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={oldestFirst}
+                  onChange={(e) =>
+                    setQuery({ oldestFirst: e.target.checked ? "1" : undefined, page: 1 })
+                  }
+                  className="cursor-pointer"
+                />
+                <span className="hidden md:inline">Oldest first</span>
+                <span className="md:hidden scale-x-80 -ml-1" aria-hidden>
+                  Oldest
+                </span>
+              </label>
+            </div>
+          )}
+        </>
       )}
 
       <div>
@@ -737,6 +887,19 @@ export default function PageBody() {
                 focusUserId={userId}
                 focusUserIsAdmin={!!isAdmin}
                 idPrefix={`p${idx + 1}-h`}
+                bodyOverride={
+                  effectiveSearchView === "kwic" && canShowKwic ? (
+                    currentKwicByPostId[post.id] ? (
+                      <KwicBody kwic={currentKwicByPostId[post.id]} />
+                    ) : kwicLoading ? (
+                      <div className="text-sm text-gray-400">Loading context…</div>
+                    ) : (
+                      <div className="text-sm text-gray-400">
+                        {kwicError ? "KWIC unavailable." : "No matching context."}
+                      </div>
+                    )
+                  ) : undefined
+                }
               />
               {replyTo === post.id && (
                 <PostForm

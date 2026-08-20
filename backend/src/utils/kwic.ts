@@ -3,7 +3,7 @@ import { decToHex, hexToDec } from "./format";
 
 export const KWIC_OPTIONS: KwicOptions = {
   maxSegments: 4,
-  contextSize: 30,
+  contextSize: 40,
 };
 
 export const KWIC_MAX_IDS = 100;

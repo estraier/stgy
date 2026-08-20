@@ -1702,11 +1702,15 @@ def test_kwic():
   user_kwic = user_items[0]["kwic"]
   assert user_kwic["version"] == 1
   assert any(
-    node["type"] == "highlight" and node["text"] == "Cyclist"
+    node["type"] == "highlight"
+    and node["text"] == "Cyclist"
+    and node["keywordIndex"] == 0
     for node in (user_kwic["title"] or [])
   ), user_kwic
   assert any(
-    node["type"] == "highlight" and "bicycle" in node["text"].lower()
+    node["type"] == "highlight"
+    and "bicycle" in node["text"].lower()
+    and node["keywordIndex"] == 1
     for segment in user_kwic["segments"]
     for node in segment["children"]
   ), user_kwic
@@ -1756,11 +1760,15 @@ def test_kwic():
   past_kwic = post_items[0]["kwic"]
   assert past_kwic["version"] == 1
   assert any(
-    node["type"] == "highlight" and node["text"].lower() == "bicycle"
+    node["type"] == "highlight"
+    and node["text"].lower() == "bicycle"
+    and node["keywordIndex"] == 0
     for node in (past_kwic["title"] or [])
   ), past_kwic
   assert any(
-    node["type"] == "highlight" and node["text"].lower() == "train"
+    node["type"] == "highlight"
+    and node["text"].lower() == "train"
+    and node["keywordIndex"] == 1
     for segment in past_kwic["segments"]
     for node in segment["children"]
   ), past_kwic
@@ -1781,7 +1789,9 @@ def test_kwic():
   assert [item["id"] for item in public_items] == [past_post_id], public_items
   assert public_items[0]["kwic"]["version"] == 1
   assert any(
-    node["type"] == "highlight" and node["text"].lower() == "bicycle"
+    node["type"] == "highlight"
+    and node["text"].lower() == "bicycle"
+    and node["keywordIndex"] == 0
     for node in (public_items[0]["kwic"]["title"] or [])
   ), public_items
   print("[kwic] posts/kwic-pub published-only OK")

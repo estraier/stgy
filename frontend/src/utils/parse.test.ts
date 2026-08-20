@@ -1,5 +1,6 @@
 import {
   parsePostSearchQuery,
+  extractSearchKeywords,
   serializePostSearchQuery,
   parseUserSearchQuery,
   serializeUserSearchQuery,
@@ -60,6 +61,21 @@ describe("parsePostSearchQuery", () => {
       tag: "t",
       ownedBy: "o",
     });
+  });
+});
+
+
+describe("extractSearchKeywords", () => {
+  test("splits ordinary terms and preserves quoted phrases", () => {
+    expect(extractSearchKeywords('alpha "hot dog" beta')).toEqual(["alpha", "hot dog", "beta"]);
+  });
+
+  test("removes duplicate terms without changing order", () => {
+    expect(extractSearchKeywords("alpha beta alpha")).toEqual(["alpha", "beta"]);
+  });
+
+  test("returns an empty list for whitespace", () => {
+    expect(extractSearchKeywords("   ")).toEqual([]);
   });
 });
 

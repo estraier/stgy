@@ -1,5 +1,5 @@
 import { apiFetch } from "./client";
-import { searchPubPostsByUser } from "./posts";
+import { getPostsKwic, searchPubPostsByUser } from "./posts";
 
 jest.mock("./client", () => ({
   apiFetch: jest.fn(),
@@ -39,6 +39,38 @@ describe("public post search API", () => {
           "X-STGY-QueryHash": "f47067dfef0a91ceac8188ed85e174c41a14e1d3",
         },
       },
+    );
+  });
+});
+
+
+describe("post KWIC API", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  test("sends repeated id and keyword query parameters", async () => {
+    const response = [
+      {
+        id: "0000000000000001",
+        kwic: { version: 1, title: null, segments: [] },
+      },
+    ];
+    mockApiFetch.mockResolvedValue({
+      ok: true,
+      json: jest.fn().mockResolvedValue(response),
+    } as unknown as Response);
+
+    await expect(
+      getPostsKwic(
+        ["0000000000000001", "0000000000000002"],
+        ["alpha", "hot dog"],
+      ),
+    ).resolves.toEqual(response);
+
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      "/posts/kwic?id=0000000000000001&id=0000000000000002&keyword=alpha&keyword=hot+dog",
+      { method: "GET" },
     );
   });
 });

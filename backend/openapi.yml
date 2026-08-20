@@ -357,6 +357,10 @@ components:
       properties:
         type: { type: string, enum: [text, highlight] }
         text: { type: string }
+        keywordIndex:
+          type: integer
+          minimum: 0
+          description: Zero-based deduplicated keyword index; present for highlight nodes.
       required: [type, text]
 
     KwicSegmentNode:

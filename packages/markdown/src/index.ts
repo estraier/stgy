@@ -13,7 +13,7 @@ export type MdNode = MdTextNode | MdElementNode;
 
 export type KwicInlineNode =
   | { type: "text"; text: string }
-  | { type: "highlight"; text: string };
+  | { type: "highlight"; text: string; keywordIndex: number };
 
 export type KwicSegmentNode = {
   type: "segment";
@@ -5172,8 +5172,10 @@ export function sliceByPseudoTokens(
 }
 
 type KwicRange = { start: number; end: number };
+type KwicHighlightRange = KwicRange & { keywordIndex: number };
 type KwicFoldMapEntry = { start: number; end: number };
-type KwicKeywordMatches = { matches: KwicRange[] };
+type KwicKeyword = { folded: string; keywordIndex: number };
+type KwicKeywordMatches = { keywordIndex: number; matches: KwicRange[] };
 
 function kwicCodePointWeight(ch: string): number {
   const cp = ch.codePointAt(0);
@@ -5245,35 +5247,35 @@ function kwicFoldKeyword(keyword: string): string {
   return kwicFoldFragment(keyword).trim();
 }
 
-function dedupeKwicKeywords(keywords: readonly string[]): string[] {
-  const out: string[] = [];
+function dedupeKwicKeywords(keywords: readonly string[]): KwicKeyword[] {
+  const out: KwicKeyword[] = [];
   const seen = new Set<string>();
   for (const keyword of keywords) {
     const folded = kwicFoldKeyword(keyword);
     if (!folded || seen.has(folded)) continue;
     seen.add(folded);
-    out.push(folded);
+    out.push({ folded, keywordIndex: out.length });
   }
   return out;
 }
 
 function findKwicMatches(
   text: string,
-  foldedKeywords: readonly string[],
+  keywords: readonly KwicKeyword[],
 ): KwicKeywordMatches[] {
-  if (foldedKeywords.length === 0) return [];
+  if (keywords.length === 0) return [];
   const { folded, map } = kwicFoldTextWithMap(text);
   const out: KwicKeywordMatches[] = [];
 
-  for (const keyword of foldedKeywords) {
+  for (const keyword of keywords) {
     const matches: KwicRange[] = [];
     const seen = new Set<string>();
     let from = 0;
-    while (from <= folded.length - keyword.length) {
-      const index = folded.indexOf(keyword, from);
+    while (from <= folded.length - keyword.folded.length) {
+      const index = folded.indexOf(keyword.folded, from);
       if (index < 0) break;
       const first = map[index];
-      const last = map[index + keyword.length - 1];
+      const last = map[index + keyword.folded.length - 1];
       if (first && last && first.start < last.end) {
         const key = `${first.start}:${last.end}`;
         if (!seen.has(key)) {
@@ -5283,7 +5285,7 @@ function findKwicMatches(
       }
       from = index + 1;
     }
-    out.push({ matches });
+    out.push({ keywordIndex: keyword.keywordIndex, matches });
   }
   return out;
 }
@@ -5298,6 +5300,38 @@ function mergeKwicHighlightRanges(ranges: readonly KwicRange[]): KwicRange[] {
       if (range.end > last.end) last.end = range.end;
     } else {
       out.push({ ...range });
+    }
+  }
+  return out;
+}
+
+function makeKwicHighlightRanges(
+  keywordMatches: readonly KwicKeywordMatches[],
+): KwicHighlightRange[] {
+  const matches = keywordMatches.flatMap((entry) =>
+    entry.matches.map((match) => ({ ...match, keywordIndex: entry.keywordIndex })),
+  );
+  if (matches.length === 0) return [];
+
+  const boundaries = Array.from(
+    new Set(matches.flatMap((match) => [match.start, match.end])),
+  ).sort((a, b) => a - b);
+  const out: KwicHighlightRange[] = [];
+
+  for (let i = 0; i + 1 < boundaries.length; i += 1) {
+    const start = boundaries[i]!;
+    const end = boundaries[i + 1]!;
+    if (end <= start) continue;
+    const active = matches.filter(
+      (match) => match.start < end && start < match.end,
+    );
+    if (active.length === 0) continue;
+    const keywordIndex = Math.min(...active.map((match) => match.keywordIndex));
+    const last = out[out.length - 1];
+    if (last && last.end === start && last.keywordIndex === keywordIndex) {
+      last.end = end;
+    } else {
+      out.push({ start, end, keywordIndex });
     }
   }
   return out;
@@ -5332,21 +5366,37 @@ function makeKwicInlineNodes(
   text: string,
   start: number,
   end: number,
-  highlights: readonly KwicRange[],
+  highlights: readonly KwicHighlightRange[],
 ): KwicInlineNode[] {
   const offsets = kwicCodePointOffsets(text);
   const out: KwicInlineNode[] = [];
   let cursor = start;
 
-  const push = (type: "text" | "highlight", from: number, to: number) => {
+  const pushText = (from: number, to: number) => {
     if (to <= from) return;
     const value = text.slice(offsets[from]!, offsets[to]!);
     if (!value) return;
     const last = out[out.length - 1];
-    if (last && last.type === type) {
+    if (last?.type === "text") {
       last.text += value;
     } else {
-      out.push({ type, text: value });
+      out.push({ type: "text", text: value });
+    }
+  };
+
+  const pushHighlight = (
+    from: number,
+    to: number,
+    keywordIndex: number,
+  ) => {
+    if (to <= from) return;
+    const value = text.slice(offsets[from]!, offsets[to]!);
+    if (!value) return;
+    const last = out[out.length - 1];
+    if (last?.type === "highlight" && last.keywordIndex === keywordIndex) {
+      last.text += value;
+    } else {
+      out.push({ type: "highlight", text: value, keywordIndex });
     }
   };
 
@@ -5355,11 +5405,11 @@ function makeKwicInlineNodes(
     if (highlight.start >= end) break;
     const hs = Math.max(start, highlight.start);
     const he = Math.min(end, highlight.end);
-    push("text", cursor, hs);
-    push("highlight", hs, he);
+    pushText(cursor, hs);
+    pushHighlight(hs, he, highlight.keywordIndex);
     cursor = Math.max(cursor, he);
   }
-  push("text", cursor, end);
+  pushText(cursor, end);
   return out;
 }
 
@@ -5500,16 +5550,15 @@ export function makeKwicData(
     title == null ? [] : findKwicMatches(title, foldedKeywords);
   const bodyMatches = findKwicMatches(bodyText, foldedKeywords);
 
-  const titleHighlights = mergeKwicHighlightRanges(
-    titleMatches.flatMap((entry) => entry.matches),
-  );
-  const bodyHighlights = mergeKwicHighlightRanges(
+  const titleHighlights = makeKwicHighlightRanges(titleMatches);
+  const bodyHighlights = makeKwicHighlightRanges(bodyMatches);
+  const bodyHighlightCoverage = mergeKwicHighlightRanges(
     bodyMatches.flatMap((entry) => entry.matches),
   );
   const segmentRanges = makeKwicSegmentRanges(
     bodyText,
     bodyMatches,
-    bodyHighlights,
+    bodyHighlightCoverage,
     options,
   );
   const bodyLength = Array.from(bodyText).length;

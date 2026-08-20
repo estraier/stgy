@@ -47,6 +47,20 @@ export function parsePostSearchQuery(q: string): {
   };
 }
 
+export function extractSearchKeywords(query: string): string[] {
+  const keywords: string[] = [];
+  const seen = new Set<string>();
+  const regex = /"([^"]+)"|(\S+)/g;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(query)) !== null) {
+    const keyword = (match[1] ?? match[2] ?? "").trim();
+    if (!keyword || seen.has(keyword)) continue;
+    seen.add(keyword);
+    keywords.push(keyword);
+  }
+  return keywords;
+}
+
 export function serializePostSearchQuery(params: {
   query?: string;
   tag?: string;

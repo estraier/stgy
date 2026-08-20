@@ -3621,7 +3621,7 @@ describe("KWIC", () => {
     ).toStrictEqual({
       version: 1,
       title: [
-        { type: "highlight", text: "Bicycle" },
+        { type: "highlight", text: "Bicycle", keywordIndex: 0 },
         { type: "text", text: " and Train" },
       ],
       segments: [
@@ -3633,7 +3633,7 @@ describe("KWIC", () => {
           isEnd: false,
           children: [
             { type: "text", text: "re " },
-            { type: "highlight", text: "bicycle" },
+            { type: "highlight", text: "bicycle", keywordIndex: 0 },
             { type: "text", text: " af" },
           ],
         },
@@ -3648,7 +3648,7 @@ describe("KWIC", () => {
       options,
     );
     expect(kwic.title).toStrictEqual([
-      { type: "highlight", text: "Bicycle" },
+      { type: "highlight", text: "Bicycle", keywordIndex: 0 },
       { type: "text", text: " Title" },
     ]);
     expect(kwic.segments).toStrictEqual([
@@ -3660,7 +3660,7 @@ describe("KWIC", () => {
         isEnd: false,
         children: [
           { type: "text", text: "re " },
-          { type: "highlight", text: "bicycle" },
+          { type: "highlight", text: "bicycle", keywordIndex: 0 },
           { type: "text", text: " af" },
         ],
       },
@@ -3688,7 +3688,7 @@ describe("KWIC", () => {
     });
     expect(ascii.segments[0]!.children).toStrictEqual([
       { type: "text", text: "CDE" },
-      { type: "highlight", text: "KEY" },
+      { type: "highlight", text: "KEY", keywordIndex: 0 },
       { type: "text", text: "FGH" },
     ]);
 
@@ -3698,7 +3698,7 @@ describe("KWIC", () => {
     });
     expect(japanese.segments[0]!.children).toStrictEqual([
       { type: "text", text: "いう" },
-      { type: "highlight", text: "KEY" },
+      { type: "highlight", text: "KEY", keywordIndex: 0 },
       { type: "text", text: "えお" },
     ]);
   });
@@ -3716,9 +3716,9 @@ describe("KWIC", () => {
         isStart: true,
         isEnd: false,
         children: [
-          { type: "highlight", text: "X" },
+          { type: "highlight", text: "X", keywordIndex: 0 },
           { type: "text", text: "abc" },
-          { type: "highlight", text: "LONGKEY" },
+          { type: "highlight", text: "LONGKEY", keywordIndex: 1 },
         ],
       },
     ]);
@@ -3738,9 +3738,9 @@ describe("KWIC", () => {
         isEnd: true,
         children: [
           { type: "text", text: "aaa" },
-          { type: "highlight", text: "KEY" },
+          { type: "highlight", text: "KEY", keywordIndex: 0 },
           { type: "text", text: "bbb" },
-          { type: "highlight", text: "KEY" },
+          { type: "highlight", text: "KEY", keywordIndex: 0 },
           { type: "text", text: "ccc" },
         ],
       },
@@ -3755,10 +3755,10 @@ describe("KWIC", () => {
       { maxSegments: 4, contextSize: 0 },
     );
     expect(kwic.segments.map((segment) => segment.children)).toStrictEqual([
-      [{ type: "highlight", text: "alpha" }],
-      [{ type: "highlight", text: "alpha" }],
-      [{ type: "highlight", text: "beta" }],
-      [{ type: "highlight", text: "beta" }],
+      [{ type: "highlight", text: "alpha", keywordIndex: 0 }],
+      [{ type: "highlight", text: "alpha", keywordIndex: 0 }],
+      [{ type: "highlight", text: "beta", keywordIndex: 1 }],
+      [{ type: "highlight", text: "beta", keywordIndex: 1 }],
     ]);
   });
 
@@ -3770,12 +3770,12 @@ describe("KWIC", () => {
       { maxSegments: 1, contextSize: 3 },
     );
     expect(kwic.title).toStrictEqual([
-      { type: "highlight", text: "Ｃrème" },
+      { type: "highlight", text: "Ｃrème", keywordIndex: 0 },
       { type: "text", text: " brûlée" },
     ]);
     expect(kwic.segments[0]!.children).toStrictEqual([
       { type: "text", text: "xx " },
-      { type: "highlight", text: "Ｃrème" },
+      { type: "highlight", text: "Ｃrème", keywordIndex: 0 },
       { type: "text", text: " yy" },
     ]);
   });
@@ -3786,19 +3786,34 @@ describe("KWIC", () => {
       contextSize: 0,
     });
     expect(kwic.title).toStrictEqual([
-      { type: "highlight", text: "ｶﾞ" },
+      { type: "highlight", text: "ｶﾞ", keywordIndex: 0 },
     ]);
   });
 
-  it("merges overlapping keyword highlights instead of nesting them", () => {
+  it("keeps overlapping keyword highlights flat and assigns overlap to the earlier keyword", () => {
     const kwic = makeKwicData("foobar", "", ["foo", "foobar"], {
       maxSegments: 1,
       contextSize: 3,
     });
     expect(kwic.title).toStrictEqual([
-      { type: "highlight", text: "foobar" },
+      { type: "highlight", text: "foo", keywordIndex: 0 },
+      { type: "highlight", text: "bar", keywordIndex: 1 },
     ]);
     expect(kwic.segments).toStrictEqual([]);
+  });
+
+  it("records deduplicated keyword order on highlight nodes", () => {
+    const kwic = makeKwicData(
+      "alpha beta gamma delta epsilon",
+      "",
+      ["alpha", "beta", "gamma", "delta", "epsilon"],
+      { maxSegments: 1, contextSize: 0 },
+    );
+    expect(
+      kwic.title
+        ?.filter((node) => node.type === "highlight")
+        .map((node) => node.keywordIndex),
+    ).toStrictEqual([0, 1, 2, 3, 4]);
   });
 
   it("uses Unicode code-point positions instead of UTF-16 code units", () => {
@@ -3814,7 +3829,7 @@ describe("KWIC", () => {
     });
     expect(kwic.segments[0]!.children).toStrictEqual([
       { type: "text", text: "😊B" },
-      { type: "highlight", text: "KEY" },
+      { type: "highlight", text: "KEY", keywordIndex: 0 },
       { type: "text", text: "C" },
     ]);
   });
@@ -3830,7 +3845,7 @@ describe("KWIC", () => {
       endPosition: 3,
       isStart: true,
       isEnd: true,
-      children: [{ type: "highlight", text: "KEY" }],
+      children: [{ type: "highlight", text: "KEY", keywordIndex: 0 }],
     });
   });
 
@@ -3847,9 +3862,9 @@ describe("KWIC", () => {
         segment.children.filter((child) => child.type === "highlight"),
       ),
     ).toStrictEqual([
-      { type: "highlight", text: "KEY" },
-      { type: "highlight", text: "key" },
-      { type: "highlight", text: "ＫＥＹ" },
+      { type: "highlight", text: "KEY", keywordIndex: 0 },
+      { type: "highlight", text: "key", keywordIndex: 0 },
+      { type: "highlight", text: "ＫＥＹ", keywordIndex: 0 },
     ]);
   });
 
@@ -3861,7 +3876,7 @@ describe("KWIC", () => {
       }),
     ).toStrictEqual({
       version: 1,
-      title: [{ type: "highlight", text: "KEY" }],
+      title: [{ type: "highlight", text: "KEY", keywordIndex: 0 }],
       segments: [],
     });
 
@@ -3870,7 +3885,7 @@ describe("KWIC", () => {
       contextSize: 0,
     });
     expect(keywordOnly.segments[0]!.children).toStrictEqual([
-      { type: "highlight", text: "KEY" },
+      { type: "highlight", text: "KEY", keywordIndex: 0 },
     ]);
   });
 
