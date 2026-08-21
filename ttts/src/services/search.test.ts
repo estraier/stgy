@@ -89,6 +89,36 @@ describe("SearchService (Actor Model)", () => {
     return taskId;
   };
 
+  const searchIds = async (...args: Parameters<TestSearchService["search"]>) =>
+    (await service.search(...args)).result;
+
+  test("search returns normalized tokens even when there are no matches", async () => {
+    await expect(service.search("NoHit", "en")).resolves.toEqual({
+      tokens: ["nohit"],
+      result: [],
+    });
+  });
+
+  test("search returns normalized tokens with the result IDs", async () => {
+    await runTask({
+      type: "ADD",
+      payload: {
+        docId: "token_result",
+        timestamp: 1000,
+        bodyText: "C++ hop step",
+        locale: "en",
+        attrs: null,
+        labels: [],
+        numericValue: null,
+      },
+    });
+
+    await expect(service.search("C++ HOP", "en")).resolves.toEqual({
+      tokens: ["c++", "hop"],
+      result: ["token_result"],
+    });
+  });
+
   test("Basic Flow: Add and Search", async () => {
     const taskId = await runTask({
       type: "ADD",
@@ -96,7 +126,7 @@ describe("SearchService (Actor Model)", () => {
     });
     expect(taskId).toMatch(/^d-/);
 
-    const results = await service.search("hello");
+    const results = await searchIds("hello");
     expect(results).toContain("doc_1");
   });
 
@@ -116,12 +146,12 @@ describe("SearchService (Actor Model)", () => {
 
     await waitUntil(async () => (await service.getPendingBatchTaskIds()).includes(taskId));
 
-    const immediateRes = await service.search("automatic");
+    const immediateRes = await searchIds("automatic");
     expect(immediateRes).not.toContain("auto_1");
 
     await service.waitTask(taskId);
 
-    const lateRes = await service.search("automatic");
+    const lateRes = await searchIds("automatic");
     expect(lateRes).toContain("auto_1");
   });
 
@@ -150,7 +180,7 @@ describe("SearchService (Actor Model)", () => {
     await service.waitTask(taskId);
 
     expect(await service.getPendingBatchTaskIds()).not.toContain(taskId);
-    expect(await service.search("batch")).toContain("batch_1");
+    expect(await searchIds("batch")).toContain("batch_1");
   });
 
   test("Search preserves programming-language symbols", async () => {
@@ -167,8 +197,8 @@ describe("SearchService (Actor Model)", () => {
       },
     });
 
-    expect(await service.search("C++", "ja")).toContain("cpp_doc");
-    expect(await service.search("C", "ja")).not.toContain("cpp_doc");
+    expect(await searchIds("C++", "ja")).toContain("cpp_doc");
+    expect(await searchIds("C", "ja")).not.toContain("cpp_doc");
   });
 
   test("Update: Overwrite existing document", async () => {
@@ -176,15 +206,15 @@ describe("SearchService (Actor Model)", () => {
       type: "ADD",
       payload: { docId: "doc_upd", timestamp: 1000, bodyText: "version one", locale: "en", attrs: null, labels: [], numericValue: null },
     });
-    expect(await service.search("version")).toContain("doc_upd");
+    expect(await searchIds("version")).toContain("doc_upd");
 
     await runTask({
       type: "ADD",
       payload: { docId: "doc_upd", timestamp: 1000, bodyText: "version two", locale: "en", attrs: null, labels: [], numericValue: null },
     });
 
-    const oldRes = await service.search("one");
-    const newRes = await service.search("two");
+    const oldRes = await searchIds("one");
+    const newRes = await searchIds("two");
 
     expect(oldRes).not.toContain("doc_upd");
     expect(newRes).toContain("doc_upd");
@@ -195,14 +225,14 @@ describe("SearchService (Actor Model)", () => {
       type: "ADD",
       payload: { docId: "doc_del", timestamp: 1000, bodyText: "delete me", locale: "en", attrs: null, labels: [], numericValue: null },
     });
-    expect(await service.search("delete")).toContain("doc_del");
+    expect(await searchIds("delete")).toContain("doc_del");
 
     await runTask({
       type: "REMOVE",
       payload: { docId: "doc_del", timestamp: 1000 },
     });
 
-    const results = await service.search("delete");
+    const results = await searchIds("delete");
     expect(results).not.toContain("doc_del");
   });
 
@@ -219,8 +249,8 @@ describe("SearchService (Actor Model)", () => {
     const files = await service.listIndexFiles();
     expect(files.length).toBe(2);
 
-    const resA = await service.search("apple");
-    const resB = await service.search("banana");
+    const resA = await searchIds("apple");
+    const resB = await searchIds("banana");
     expect(resA).toContain("shard_A");
     expect(resB).toContain("shard_B");
   });
@@ -244,7 +274,7 @@ describe("SearchService (Actor Model)", () => {
       false,
     );
 
-    expect(await service.search("optimize")).toContain("doc_opt");
+    expect(await searchIds("optimize")).toContain("doc_opt");
   });
 
   test("Management: RECONSTRUCT", async () => {
@@ -261,7 +291,7 @@ describe("SearchService (Actor Model)", () => {
       false,
     );
 
-    expect(await service.search("reconstruct")).toContain("doc_rec");
+    expect(await searchIds("reconstruct")).toContain("doc_rec");
   });
 
   test("Management: DROP_SHARD", async () => {
@@ -280,7 +310,7 @@ describe("SearchService (Actor Model)", () => {
     );
 
     expect((await service.listIndexFiles()).length).toBe(0);
-    expect(await service.search("drop")).toEqual([]);
+    expect(await searchIds("drop")).toEqual([]);
   });
 
   test("Management: DROP_SHARD uses the listed shard timestamp without rebucketing", async () => {
@@ -332,7 +362,7 @@ describe("SearchService (Actor Model)", () => {
       },
     });
 
-    expect(await service.search("searchable")).toContain("res_1");
+    expect(await searchIds("searchable")).toContain("res_1");
   });
 
   test("Maintenance Mode: pauses worker", async () => {
@@ -345,7 +375,7 @@ describe("SearchService (Actor Model)", () => {
 
     await new Promise((r) => setTimeout(r, 200));
 
-    expect(await service.search("waiting")).not.toContain("doc_maint");
+    expect(await searchIds("waiting")).not.toContain("doc_maint");
 
     await service.endMaintenanceMode();
 
@@ -353,7 +383,7 @@ describe("SearchService (Actor Model)", () => {
     const syncId = await service.enqueueTask({ type: "SYNC", payload: {} });
     await service.waitTask(syncId);
 
-    expect(await service.search("waiting")).toContain("doc_maint");
+    expect(await searchIds("waiting")).toContain("doc_maint");
   });
 
   test("Recovery: Data persists across restart", async () => {
@@ -367,7 +397,7 @@ describe("SearchService (Actor Model)", () => {
     service = new TestSearchService(CONFIG, mockLogger);
     await service.open();
 
-    expect(await service.search("survive")).toContain("doc_persist");
+    expect(await searchIds("survive")).toContain("doc_persist");
   });
 
   test("Fetch Documents", async () => {
@@ -430,13 +460,13 @@ describe("SearchService (Actor Model)", () => {
     });
 
     expect(
-      await service.search("bicycle", "en", 100, 0, 1, { labels: ["Owner:ABC"] }),
+      await searchIds("bicycle", "en", 100, 0, 1, { labels: ["Owner:ABC"] }),
     ).toEqual(["label_lower", "label_upper"]);
     expect(
-      await service.search("bicycle", "en", 100, 0, 1, { labels: ["Owner:abc"] }),
+      await searchIds("bicycle", "en", 100, 0, 1, { labels: ["Owner:abc"] }),
     ).toEqual(["label_lower", "label_upper"]);
     expect(
-      await service.search("bicycle", "en", 100, 0, 1, {
+      await searchIds("bicycle", "en", 100, 0, 1, {
         labels: ["project:foo bar", "Owner:ABC"],
       }),
     ).toEqual(["label_lower", "label_upper"]);
@@ -457,13 +487,13 @@ describe("SearchService (Actor Model)", () => {
     });
 
     expect(
-      await service.search("body-only-token", "en", 100, 0, 1, { labels: ["foo  bar"] }),
+      await searchIds("body-only-token", "en", 100, 0, 1, { labels: ["foo  bar"] }),
     ).toEqual(["spaces"]);
     expect(
-      await service.search("body-only-token", "en", 100, 0, 1, { labels: ["foo bar "] }),
+      await searchIds("body-only-token", "en", 100, 0, 1, { labels: ["foo bar "] }),
     ).toEqual([]);
     expect(
-      await service.search("owner:abc", "en", 100, 0, 1, { labels: ["owner:abc"] }),
+      await searchIds("owner:abc", "en", 100, 0, 1, { labels: ["owner:abc"] }),
     ).toEqual([]);
   });
 
@@ -502,7 +532,7 @@ describe("SearchService (Actor Model)", () => {
     });
 
     expect(
-      await service.search("numeric", "en", 100, 0, 1, { numericOp, numericValue }),
+      await searchIds("numeric", "en", 100, 0, 1, { numericOp, numericValue }),
     ).toEqual(expected);
   });
 
@@ -554,7 +584,7 @@ describe("SearchService (Actor Model)", () => {
       payload: { docId: "phrase_no", timestamp: 1000, bodyText: "hot red dog", locale: "en", attrs: null, labels: [], numericValue: null },
     });
 
-    expect(await service.search('"hot dog"')).toEqual(["phrase_yes"]);
+    expect(await searchIds('"hot dog"')).toEqual(["phrase_yes"]);
   });
 
   test("search plan keeps FTS as the outer loop and PK lookup as the inner loop", async () => {
@@ -618,8 +648,8 @@ describe("SearchService (Actor Model)", () => {
       },
     });
 
-    expect(await service.search("one")).toEqual([]);
-    expect(await service.search("two", "en", 100, 0, 1, { labels: ["owner:x"] })).toEqual([
+    expect(await searchIds("one")).toEqual([]);
+    expect(await searchIds("two", "en", 100, 0, 1, { labels: ["owner:x"] })).toEqual([
       "contentless",
     ]);
 
@@ -635,7 +665,7 @@ describe("SearchService (Actor Model)", () => {
     }
 
     await runTask({ type: "REMOVE", payload: { docId: "contentless", timestamp: 1000 } });
-    expect(await service.search("two")).toEqual([]);
+    expect(await searchIds("two")).toEqual([]);
   });
 
   test("clearTaskQueue: should clear pending tasks", async () => {
@@ -656,7 +686,7 @@ describe("SearchService (Actor Model)", () => {
 
     await new Promise((r) => setTimeout(r, 500));
 
-    expect(await service.search("queue test 1")).toEqual([]);
-    expect(await service.search("queue test 2")).toEqual([]);
+    expect(await searchIds("queue test 1")).toEqual([]);
+    expect(await searchIds("queue test 2")).toEqual([]);
   });
 });

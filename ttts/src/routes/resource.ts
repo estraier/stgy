@@ -227,8 +227,8 @@ export default function createResourceRouter(instance: ResourceInstance) {
       const offset = parseInt(req.query.offset as string, 10) || 0;
       const timeout = parsePositiveSecondsOrDefault(req.query.timeout, 1);
       const filters = getSearchFilters(req);
-      const results = await searchService.search(query, locale, limit, offset, timeout, filters);
-      res.json(results);
+      const result = await searchService.search(query, locale, limit, offset, timeout, filters);
+      res.json(result);
     } catch (e) {
       if (e instanceof Error && /^(labels|numeric|invalid numericOp)/.test(e.message)) {
         return res.status(400).json({ error: e.message });
@@ -249,12 +249,27 @@ export default function createResourceRouter(instance: ResourceInstance) {
       const omitBodyText = req.query.omitBodyText === "true";
       const omitAttrs = req.query.omitAttrs === "true";
       const filters = getSearchFilters(req);
-      const ids = await searchService.search(query, locale, limit, offset, timeout, filters);
-      if (ids.length === 0) return res.json([]);
-      const docs = await searchService.fetchDocuments(ids, omitBodyText, omitAttrs);
+      const searchResult = await searchService.search(
+        query,
+        locale,
+        limit,
+        offset,
+        timeout,
+        filters,
+      );
+      if (searchResult.result.length === 0) {
+        return res.json({ tokens: searchResult.tokens, result: [] });
+      }
+      const docs = await searchService.fetchDocuments(
+        searchResult.result,
+        omitBodyText,
+        omitAttrs,
+      );
       const docMap = new Map(docs.map((d) => [d.id, d]));
-      const orderedDocs = ids.map((id) => docMap.get(id)).filter((d) => d !== undefined);
-      res.json(orderedDocs);
+      const orderedDocs = searchResult.result
+        .map((id) => docMap.get(id))
+        .filter((d) => d !== undefined);
+      res.json({ tokens: searchResult.tokens, result: orderedDocs });
     } catch (e) {
       if (e instanceof Error && /^(labels|numeric|invalid numericOp)/.test(e.message)) {
         return res.status(400).json({ error: e.message });

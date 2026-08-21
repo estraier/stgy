@@ -1,3 +1,8 @@
+export type SearchResult<T> = {
+  tokens: string[];
+  result: T[];
+};
+
 export type SessionInfo = {
   userId: string;
   userEmail: string;

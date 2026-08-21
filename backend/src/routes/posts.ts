@@ -156,8 +156,9 @@ export default function createPostsRouter(
           (isAnonymous ? "anonymous" : "authenticated"),
       )
       .digest("hex");
-    const cacheKey = `stgy:search:posts:${hash}`;
+    const cacheKey = `stgy:search:posts:v2:${hash}`;
     let docIds: string[] = [];
+    let searchTokens: string[] = [];
     let isHit = false;
     try {
       const cachedJson = await redis.get(cacheKey);
@@ -165,13 +166,14 @@ export default function createPostsRouter(
         const cache: SearchCacheEntry = JSON.parse(cachedJson);
         if (cache.limit >= neededLimit || cache.result.length < cache.limit) {
           docIds = cache.result;
+          searchTokens = cache.tokens;
           isHit = true;
         }
       }
       if (!isHit) {
         const watch = timerThrottleService.startWatch(searchUser);
         try {
-          docIds = await searchService.search({
+          const searchResult = await searchService.search({
             query: parsedQuery.query,
             locale,
             offset: 0,
@@ -181,12 +183,15 @@ export default function createPostsRouter(
             numericOp: publishedOnly ? "lte" : undefined,
             numericValue: publishedUntilMs,
           });
+          docIds = searchResult.result;
+          searchTokens = searchResult.tokens;
         } finally {
           watch.done();
         }
         const newCache: SearchCacheEntry = {
           query: rawQuery,
           limit: isAnonymous ? Config.SEARCH_LIMIT_MAX : neededLimit,
+          tokens: searchTokens,
           result: docIds,
         };
         await redis.setex(cacheKey, Config.SEARCH_CACHE_TTL_SEC, JSON.stringify(newCache));
@@ -201,11 +206,11 @@ export default function createPostsRouter(
           new Date(publishedUntilMs).toISOString(),
           { offset, limit: reqLimit, order: publicOrder },
         );
-        return res.json(posts);
+        return res.json({ tokens: searchTokens, result: posts });
       }
       const slicedIds = docIds.slice(offset, offset + reqLimit);
       const posts = await postsService.listPostsByIds(slicedIds, searchUser.id);
-      res.json(posts);
+      res.json({ tokens: searchTokens, result: posts });
     } catch (e: unknown) {
       console.error("Search error:", e);
       res.status(500).json({ error: (e as Error).message || "Internal server error" });

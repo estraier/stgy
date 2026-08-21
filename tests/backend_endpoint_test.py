@@ -1370,7 +1370,10 @@ def test_users():
   print("[users] nickname search OK")
   res = requests.get(f"{BASE_URL}/users/search?query=admin&limit=3", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
-  searched = res.json()
+  search_response = res.json()
+  assert set(search_response.keys()) == {"tokens", "result"}, search_response
+  assert search_response["tokens"] == ["admin"], search_response
+  searched = search_response["result"]
   print("[users] full text search OK:", len(searched))
   logout(session_id)
   print("[test_users] OK")
@@ -1605,7 +1608,10 @@ def test_posts():
     headers=queryhash_headers(anonymous_search_params),
   )
   assert res.status_code == 200, res.text
-  anonymous_searched = res.json()
+  anonymous_search_response = res.json()
+  assert set(anonymous_search_response.keys()) == {"tokens", "result"}, anonymous_search_response
+  assert anonymous_search_response["tokens"] == ["welcome"], anonymous_search_response
+  anonymous_searched = anonymous_search_response["result"]
   assert isinstance(anonymous_searched, list), res.text
   assert any(p.get("id") == "0000000000010001" for p in anonymous_searched), anonymous_searched
   published_timestamps = []
@@ -1634,7 +1640,10 @@ def test_posts():
     headers=queryhash_headers(ordered_search_params),
   )
   assert res.status_code == 200, res.text
-  ordered_desc = res.json()
+  ordered_desc_response = res.json()
+  assert set(ordered_desc_response.keys()) == {"tokens", "result"}, ordered_desc_response
+  assert ordered_desc_response["tokens"] == ["stgy"], ordered_desc_response
+  ordered_desc = ordered_desc_response["result"]
   desc_timestamps = [
     datetime.fromisoformat(p["publishedAt"].replace("Z", "+00:00")).timestamp()
     for p in ordered_desc
@@ -1648,7 +1657,10 @@ def test_posts():
     headers=queryhash_headers(ordered_search_asc_params),
   )
   assert res.status_code == 200, res.text
-  ordered_asc = res.json()
+  ordered_asc_response = res.json()
+  assert set(ordered_asc_response.keys()) == {"tokens", "result"}, ordered_asc_response
+  assert ordered_asc_response["tokens"] == ["stgy"], ordered_asc_response
+  ordered_asc = ordered_asc_response["result"]
   asc_timestamps = [
     datetime.fromisoformat(p["publishedAt"].replace("Z", "+00:00")).timestamp()
     for p in ordered_asc
@@ -1663,7 +1675,10 @@ def test_posts():
   assert res.status_code == 404
   res = requests.get(f"{BASE_URL}/posts/search?query=admin&limit=3", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
-  searched = res.json()
+  search_response = res.json()
+  assert set(search_response.keys()) == {"tokens", "result"}, search_response
+  assert search_response["tokens"] == ["admin"], search_response
+  searched = search_response["result"]
   print(searched)
   print("[posts] full text search OK:", len(searched))
   logout(session_id)

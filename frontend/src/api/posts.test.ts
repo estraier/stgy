@@ -1,5 +1,5 @@
 import { apiFetch } from "./client";
-import { getPostsKwic, getPubPostsKwic, searchPubPostsByUser } from "./posts";
+import { getPostsKwic, getPubPostsKwic, searchPosts, searchPubPostsByUser } from "./posts";
 
 jest.mock("./client", () => ({
   apiFetch: jest.fn(),
@@ -7,6 +7,28 @@ jest.mock("./client", () => ({
 }));
 
 const mockApiFetch = apiFetch as jest.MockedFunction<typeof apiFetch>;
+
+describe("post search API", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  test("returns search tokens with posts", async () => {
+    const response = { tokens: ["install", "settings"], result: [] };
+    mockApiFetch.mockResolvedValue({
+      ok: true,
+      json: jest.fn().mockResolvedValue(response),
+    } as unknown as Response);
+
+    await expect(searchPosts({ query: "Install Settings", locale: "en" })).resolves.toEqual(
+      response,
+    );
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      "/posts/search?query=Install+Settings&locale=en",
+      { method: "GET" },
+    );
+  });
+});
 
 describe("public post search API", () => {
   beforeEach(() => {
@@ -16,7 +38,7 @@ describe("public post search API", () => {
   test("adds X-STGY-QueryHash and forces an anonymous request", async () => {
     mockApiFetch.mockResolvedValue({
       ok: true,
-      json: jest.fn().mockResolvedValue([]),
+      json: jest.fn().mockResolvedValue({ tokens: ["foo"], result: [] }),
     } as unknown as Response);
 
     await expect(
@@ -28,7 +50,7 @@ describe("public post search API", () => {
         locale: "ja",
         order: "desc",
       }),
-    ).resolves.toEqual([]);
+    ).resolves.toEqual({ tokens: ["foo"], result: [] });
 
     expect(mockApiFetch).toHaveBeenCalledWith(
       "/posts/search?query=foo&ownedBy=0000000000000001&offset=0&limit=6&locale=ja&order=desc",
@@ -42,7 +64,6 @@ describe("public post search API", () => {
     );
   });
 });
-
 
 describe("post KWIC API", () => {
   beforeEach(() => {
@@ -74,7 +95,6 @@ describe("post KWIC API", () => {
     );
   });
 });
-
 
 describe("public post KWIC API", () => {
   beforeEach(() => {

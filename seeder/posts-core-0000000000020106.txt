@@ -69,11 +69,11 @@ TTTSの/posts/searchまたは/users/search
   ↓
 新しいSQLiteシャードから順にFTS5検索
   ↓
-文書IDの配列を返す
+実検索トークン列と文書ID配列を返す
   ↓
 PostgreSQLから投稿またはユーザの表示用データを取得
   ↓ 必要なら
-表示中IDだけKWIC ASTを生成
+実検索トークン列を使い、表示中IDだけKWIC ASTを生成
 ```
 
 TTTSは、投稿用の ``posts`` とユーザ用の ``users`` を別リソースとして起動する。同じHTTPサーバの中にあるが、インデックスファイル、タスクキュー、設定、検索処理は独立している。ファイル名にもリソース名が接頭する。
@@ -325,6 +325,8 @@ Kuromojiが有効な環境では、概ね以下の結果になる。
 
 OR、NOT、ワイルドカード、曖昧検索、関連語展開はUI上の検索構文として提供しない。検索クエリのトークン数は最大8個である。
 
+``GET /{resource}/search`` と ``GET /{resource}/search-fetch`` は、どちらもトップレベルに ``tokens`` と ``result`` を持つオブジェクトを返す。``tokens`` は、TTTSが実際にFTS5検索式を組み立てるために使った正規化済み本文検索トークン列であり、検索トークン数上限を適用した後、FTS5用の引用符付加やAND/phrase構文へのserializationを行う前の値である。順序と重複はそのまま保持し、label条件と数値条件は含めない。``search`` の ``result`` は文書ID配列、``search-fetch`` の ``result`` はTTTS内の文書配列である。検索結果が0件でも ``tokens`` は返す。
+
 ### labelsとnumeric_valueによる探索空間の限定
 
 各文書には、0個以上のopaqueな ``labels`` とnullableな汎用数値 ``numeric_value`` を持たせられる。labelは印字文字とU+0020 SPACEを含む任意文字列を一つのtermとして扱い、FTS5ではcase-insensitiveに一致する。複数labelはAND条件で、FTS5式ではlabel条件を本文条件より先に置く。数値条件は ``eq``、``gt``、``gte``、``lt``、``lte`` を使う。TTTSはそれらのアプリケーション上の意味を解釈しない。rawなlabelは ``labels_json`` に保持するが、検索時の再判定には使わない。
@@ -343,7 +345,7 @@ labelはFTS5のposting-list intersectionへ直接入るため、例えば特定�
 
 ## 検索処理と結果の順序
 
-TTTSの検索APIは ``/posts/search`` と ``/users/search`` を持ち、TTTS候補は作成時刻の新しい順である。通常のログイン検索では、バックエンドが画面で必要な ``offset + limit`` 件まで候補IDを取得してPostgreSQLから表示データを読む。
+TTTSの検索APIは ``/posts/search`` と ``/users/search`` を持ち、``{tokens, result}`` を返す。``result`` のTTTS候補IDは作成時刻の新しい順である。STGYバックエンドはTTTSが返した ``tokens`` を保持し、PostgreSQLから投稿・ユーザの表示データを取得した後も ``{tokens, result}`` の形でfrontendへ返す。通常のログイン検索では、画面で必要な ``offset + limit`` 件まで候補IDを取得する。
 
 外部公開投稿検索では、TTTSから上限付き候補集合を取得し、PostgreSQLでownerと公開時刻を再確認して公開日時の新しい順にページングする。現在の ``/sites/[id]`` 検索結果ではOldest切り替えを表示しない。
 
@@ -351,7 +353,7 @@ TTTSは候補IDを返す副次インデックスであり、投稿・ユーザ�
 
 ## Redisによる検索結果キャッシュ
 
-STGYバックエンドは投稿検索とユーザ検索の候補ID配列をRedisへキャッシュする。投稿検索のキーにはquery、locale、owner、公開条件、匿名/認証済みの区別を含める。
+STGYバックエンドは投稿検索とユーザ検索について、TTTSが返した実検索トークン列と候補ID配列を一緒にRedisへキャッシュする。投稿検索のキーにはquery、locale、owner、公開条件、匿名/認証済みの区別を含める。
 
 通常検索では必要件数に応じて候補キャッシュを拡張する。外部公開検索では上限付き候補集合をキャッシュし、ページ移動やKWIC/Rich/Plain切り替えで同じTTTS検索を繰り返さない。デフォルトTTLは600秒である。
 
@@ -359,7 +361,7 @@ STGYバックエンドは投稿検索とユーザ検索の候補ID配列をRedis
 
 ## KWIC
 
-検索結果のKWIC（Keyword In Context）はTTTSでは生成しない。検索結果として実際に表示するIDだけをPostgreSQLから取得し、``packages/markdown`` が原文MarkdownからKWIC ASTを生成する。
+検索結果のKWIC（Keyword In Context）はTTTSでは生成しない。frontendはrawな検索文字列を再解釈せず、検索レスポンスの ``tokens`` をそのままKWICのkeywordとして使う。例えば「インストールや設定作業」がTTTSで「インストール」「や」「設定」「作業」のAND検索になった場合、原文に「インストールや設定作業」という連続文字列がなくても、それぞれの実検索トークンをanchorとしてKWICを生成できる。検索結果として実際に表示するIDだけをPostgreSQLから取得し、``packages/markdown`` が原文MarkdownからKWIC ASTを生成する。
 
 バックエンドには以下のエンドポイントがある。
 
@@ -484,8 +486,8 @@ PUTの ``attrs``、``labels``、``numericValue`` は完全snapshotを構成す�
 - ``DELETE /{resource}/shards/{timestamp}`` : シャード削除
 - ``DELETE /{resource}/queue`` : タスクキューの消去
 - ``GET /{resource}/tokenize`` : トークナイズ結果の確認
-- ``GET /{resource}/search`` : 文書IDの検索
-- ``GET /{resource}/search-fetch`` : 検索してTTTS内の文書を取得
+- ``GET /{resource}/search`` : ``{tokens, result}`` を返し、``result`` に文書ID配列を格納
+- ``GET /{resource}/search-fetch`` : ``{tokens, result}`` を返し、``result`` にTTTS内の文書配列を格納
 
 queueの消去とreserveはメンテナンスモードを必要とする。通常の文書追加・削除を停止して、管理操作と競合しない状態で実行するためである。
 
@@ -564,7 +566,7 @@ TTTSは以下を重視する。
 - ``CROSS JOIN`` でFTS5を外側ループに固定し、属性確認は候補ごとの主キー検索にする。
 - 数値条件は選択性の低いB-tree探索の起点にせず、FTS候補へ逐次適用する。
 - Redisキャッシュと検索件数上限で繰り返し処理を抑える。
-- KWICは現在画面に表示する文書だけ後処理し、TTTSの検索計算量を増やさない。
+- TTTS検索で実際に使った正規化済みトークン列を検索結果と一緒に返し、そのトークンを使って現在画面に表示する文書だけKWICを後処理し、TTTSの検索計算量を増やさない。
 
 関連度ランキングは行わず、通常のTTTS候補順は作成時刻の新しい順である。
 
@@ -580,5 +582,5 @@ TTTSは以下を重視する。
 
 STGYの全文検索は、SQLite FTS5を時系列シャードへ分割するTTTSを副次インデックスとして使う。投稿には ``owner:<userId>`` labelと公開日時の ``numericValue`` を持たせ、FTS5→主キー属性確認の実行順を固定して、探索空間を限定しても早期終了性を維持する。
 
-外部公開検索ではownerと ``published_at <= now`` をTTTSとPostgreSQLの両方で確認し、匿名APIには ``X-STGY-QueryHash``、CORS、CaddyのIPレート制限、共有処理時間制限を重ねる。KWICはTTTSから分離し、表示対象文書だけをMarkdown原文からASTへ変換する。検索インデックスはPostgreSQLから再構築可能な派生データとして運用する。
+外部公開検索ではownerと ``published_at <= now`` をTTTSとPostgreSQLの両方で確認し、匿名APIには ``X-STGY-QueryHash``、CORS、CaddyのIPレート制限、共有処理時間制限を重ねる。KWICはTTTSから分離し、TTTS検索レスポンスの実検索トークン列を使って、表示対象文書だけをMarkdown原文からASTへ変換する。検索インデックスはPostgreSQLから再構築可能な派生データとして運用する。
 ____EOF____

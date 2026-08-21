@@ -27,6 +27,11 @@ export type SearchFilters = {
   numericValue?: number;
 };
 
+export type SearchResult = {
+  tokens: string[];
+  result: string[];
+};
+
 export function normalizeLabels(labels: unknown): string[] {
   if (!Array.isArray(labels)) throw new Error("labels must be an array");
   const unique = new Set<string>();
@@ -329,7 +334,7 @@ export class SearchService {
     offset = 0,
     timeout = 1,
     filters: SearchFilters = {},
-  ): Promise<string[]> {
+  ): Promise<SearchResult> {
     if (!this.isOpen) throw new Error("Service not open");
     const labels = normalizeLabels(filters.labels ?? []);
     const hasNumericFilter = filters.numericOp !== undefined || filters.numericValue !== undefined;
@@ -347,7 +352,11 @@ export class SearchService {
       const results: string[] = [];
       const needed = limit + offset;
       const start = Date.now();
-      const ftsQueryCache = new Map<boolean, { ftsQuery: string; filteringPhrases: string[] }>();
+      const ftsQueryCache = new Map<
+        boolean,
+        { ftsQuery: string; filteringPhrases: string[]; tokens: string[] }
+      >();
+      let searchTokens: string[] | undefined;
 
       for (const ts of sortedTs) {
         if (Date.now() - start > timeout * 1000 || results.length >= needed) break;
@@ -363,7 +372,8 @@ export class SearchService {
             ),
           );
         }
-        const { ftsQuery, filteringPhrases } = ftsQueryCache.get(shard.recordPositions)!;
+        const { ftsQuery, filteringPhrases, tokens } = ftsQueryCache.get(shard.recordPositions)!;
+        if (searchTokens === undefined) searchTokens = tokens;
         if (!ftsQuery) continue;
 
         const labelQueries = labels.map((label) => `labels : ${quoteFtsText(label)}`);
@@ -388,7 +398,12 @@ export class SearchService {
         const rows = await db.all<{ external_id: string }>(sql, params);
         rows.forEach((r) => results.push(r.external_id));
       }
-      return results.slice(offset, needed);
+      if (searchTokens === undefined) {
+        searchTokens = (
+          await makeFtsQuery(query, locale, this.config.maxQueryTokenCount, false)
+        ).tokens;
+      }
+      return { tokens: searchTokens, result: results.slice(offset, needed) };
     } finally {
       releaseRead();
     }

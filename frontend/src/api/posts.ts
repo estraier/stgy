@@ -1,4 +1,4 @@
-import type { Post, PostDetail, User } from "./models";
+import type { Post, PostDetail, User, SearchResult } from "./models";
 import type { KwicData } from "stgy-markdown";
 import { apiFetch, extractError } from "./client";
 import { makeQueryHashHeaders } from "@/utils/queryHash";
@@ -37,7 +37,7 @@ export async function searchPosts(params: {
   limit?: number;
   locale?: string;
   ownedBy?: string;
-}): Promise<Post[]> {
+}): Promise<SearchResult<Post>> {
   const search = new URLSearchParams();
   search.append("query", params.query);
   if (params.offset !== undefined) search.append("offset", String(params.offset));
@@ -91,7 +91,7 @@ export async function searchPubPostsByUser(params: {
   limit?: number;
   locale?: string;
   order?: "asc" | "desc";
-}): Promise<Post[]> {
+}): Promise<SearchResult<Post>> {
   const search = new URLSearchParams();
   search.append("query", params.query);
   search.append("ownedBy", params.userId);

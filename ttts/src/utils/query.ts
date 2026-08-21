@@ -13,12 +13,13 @@ export async function makeFtsQuery(
   locale: string,
   maxTokens: number,
   supportPhrase: boolean = false,
-): Promise<{ ftsQuery: string; filteringPhrases: string[] }> {
+): Promise<{ ftsQuery: string; filteringPhrases: string[]; tokens: string[] }> {
   const tokenizer = await Tokenizer.getInstance();
   const effectiveLocale = tokenizer.guessLocale(query, locale);
 
   const parts: string[] = [];
   const filteringPhrases: string[] = [];
+  const searchTokens: string[] = [];
 
   const regex = /"([^"]+)"|(\S+)/g;
   let match;
@@ -34,6 +35,7 @@ export async function makeFtsQuery(
         .slice(0, maxTokens - totalTokens);
 
       totalTokens += tokens.length;
+      searchTokens.push(...tokens);
 
       if (tokens.length > 0) {
         if (supportPhrase) {
@@ -54,6 +56,7 @@ export async function makeFtsQuery(
         .slice(0, maxTokens - totalTokens);
 
       totalTokens += tokens.length;
+      searchTokens.push(...tokens);
 
       if (tokens.length > 0) {
         parts.push(tokens.map(formatFtsToken).join(" AND "));
@@ -64,5 +67,6 @@ export async function makeFtsQuery(
   return {
     ftsQuery: parts.join(" AND "),
     filteringPhrases,
+    tokens: searchTokens,
   };
 }

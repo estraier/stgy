@@ -1,5 +1,5 @@
 import { apiFetch } from "./client";
-import { getUsersKwic } from "./users";
+import { getUsersKwic, searchUsers } from "./users";
 
 jest.mock("./client", () => ({
   apiFetch: jest.fn(),
@@ -7,6 +7,28 @@ jest.mock("./client", () => ({
 }));
 
 const mockApiFetch = apiFetch as jest.MockedFunction<typeof apiFetch>;
+
+describe("user search API", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  test("returns search tokens with users", async () => {
+    const response = { tokens: ["install", "settings"], result: [] };
+    mockApiFetch.mockResolvedValue({
+      ok: true,
+      json: jest.fn().mockResolvedValue(response),
+    } as unknown as Response);
+
+    await expect(searchUsers({ query: "Install Settings", locale: "en" })).resolves.toEqual(
+      response,
+    );
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      "/users/search?query=Install+Settings&locale=en",
+      { method: "GET" },
+    );
+  });
+});
 
 describe("user KWIC API", () => {
   beforeEach(() => {

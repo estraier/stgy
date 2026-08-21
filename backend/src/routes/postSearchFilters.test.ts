@@ -31,7 +31,9 @@ describe("post full-text search filters", () => {
     jest
       .spyOn(DailyTimerThrottleService.prototype, "startWatch")
       .mockReturnValue({ done: jest.fn() });
-    search = jest.spyOn(SearchService.prototype, "search").mockResolvedValue([]);
+    search = jest
+      .spyOn(SearchService.prototype, "search")
+      .mockResolvedValue({ tokens: ["foo"], result: [] });
     jest.spyOn(PostsService.prototype, "listPostsByIds").mockResolvedValue([]);
     jest.spyOn(PostsService.prototype, "listPubPostsByIds").mockResolvedValue([]);
 
@@ -85,6 +87,7 @@ describe("post full-text search filters", () => {
       numericOp: "lte",
       numericValue: 123456789,
     });
+    expect(await response.json()).toEqual({ tokens: ["foo"], result: [] });
   });
 
   test("resolves owner:me to the logged-in user", async () => {
@@ -103,6 +106,7 @@ describe("post full-text search filters", () => {
       numericOp: undefined,
       numericValue: undefined,
     });
+    expect(await response.json()).toEqual({ tokens: ["foo"], result: [] });
   });
 
   test.each([
@@ -192,6 +196,7 @@ describe("post full-text search filters", () => {
       new Date(123456789).toISOString(),
       { offset: 0, limit: 21, order: "desc" },
     );
+    expect(await response.json()).toEqual({ tokens: ["foo"], result: [] });
   });
 
   test("anonymous owner:me is rejected", async () => {

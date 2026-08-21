@@ -417,13 +417,11 @@ paths:
             type: number
       responses:
         "200":
-          description: List of matching document IDs
+          description: Search tokens and matching document IDs
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  type: string
+                $ref: "#/components/schemas/SearchResponse"
 
   /{resource}/search-fetch:
     parameters:
@@ -488,13 +486,11 @@ paths:
             type: boolean
       responses:
         "200":
-          description: List of documents
+          description: Search tokens and fetched documents
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Document"
+                $ref: "#/components/schemas/SearchFetchResponse"
 
   /{resource}/{docId}:
     parameters:
@@ -687,6 +683,46 @@ components:
         numericValue:
           type: number
           nullable: true
+
+    SearchResponse:
+      type: object
+      required: [tokens, result]
+      properties:
+        tokens:
+          type: array
+          description: >
+            Normalized content tokens actually used to construct the full-text query,
+            in query order after maxQueryTokenCount has been applied. Tokens are
+            returned before FTS5 quoting or AND/phrase serialization. Duplicates are
+            preserved. Label and numeric filters are not included. This list is returned
+            even when result is empty and is not affected by result offset/limit.
+          items:
+            type: string
+        result:
+          type: array
+          description: Matching document IDs after applying offset and limit.
+          items:
+            type: string
+
+    SearchFetchResponse:
+      type: object
+      required: [tokens, result]
+      properties:
+        tokens:
+          type: array
+          description: >
+            Normalized content tokens actually used to construct the full-text query,
+            in query order after maxQueryTokenCount has been applied. Tokens are
+            returned before FTS5 quoting or AND/phrase serialization. Duplicates are
+            preserved. Label and numeric filters are not included. This list is returned
+            even when result is empty and is not affected by result offset/limit.
+          items:
+            type: string
+        result:
+          type: array
+          description: Fetched documents for matching IDs after applying offset and limit.
+          items:
+            $ref: "#/components/schemas/Document"
 
     IndexFileInfo:
       type: object

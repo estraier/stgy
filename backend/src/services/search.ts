@@ -1,6 +1,6 @@
 import { Pool, type PoolClient } from "pg";
 import { Config } from "../config";
-import { Document, SearchInput } from "../models/search";
+import { Document, SearchInput, SearchResult } from "../models/search";
 import { IdIssueService } from "./idIssue";
 import { pgQuery } from "../utils/servers";
 import { decToHex, hexToDec } from "../utils/format";
@@ -64,7 +64,7 @@ export class SearchService {
     }
   }
 
-  async search(input: SearchInput): Promise<string[]> {
+  async search(input: SearchInput): Promise<SearchResult<string>> {
     const params = new URLSearchParams();
     params.append("query", input.query);
     params.append("locale", input.locale);
@@ -86,8 +86,8 @@ export class SearchService {
       throw new Error(`Search request failed [${res.status}]: ${errorText}`);
     }
 
-    const ids: string[] = await res.json();
-    return ids;
+    const result: SearchResult<string> = await res.json();
+    return result;
   }
 
   async getIndexMetadata(

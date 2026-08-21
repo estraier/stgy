@@ -19,11 +19,7 @@ import type { KwicData } from "stgy-markdown";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import { makePostIdFromDateString, parseBodyAndTags } from "@/utils/parse";
-import {
-  extractSearchKeywords,
-  parsePostSearchQuery,
-  serializePostSearchQuery,
-} from "@/utils/parse";
+import { parsePostSearchQuery, serializePostSearchQuery } from "@/utils/parse";
 import PostCard from "@/components/PostCard";
 import KwicBody from "@/components/KwicBody";
 import PostForm from "@/components/PostForm";
@@ -71,6 +67,7 @@ export default function PageBody() {
     key: string;
     byPostId: Record<string, KwicData>;
   }>({ key: "", byPostId: {} });
+  const [searchTokens, setSearchTokens] = useState<string[]>([]);
   const [kwicLoading, setKwicLoading] = useState(false);
   const [kwicError, setKwicError] = useState<string | null>(null);
   const [pendingRestore, setPendingRestore] = useState<{ postId: string; page: number } | null>(
@@ -167,14 +164,19 @@ export default function PageBody() {
 
   const isFullTextSearch = isSearchMode && !isSimilarMode && !!searchQueryObj.query;
   const kwicKeywords = useMemo(
-    () => (isFullTextSearch ? extractSearchKeywords(searchQueryObj.query!) : []),
-    [isFullTextSearch, searchQueryObj.query],
+    () => (isFullTextSearch ? searchTokens : []),
+    [isFullTextSearch, searchTokens],
   );
-  const canShowKwic = isFullTextSearch && kwicKeywords.length > 0;
+  const canShowKwic = isFullTextSearch;
   const effectiveSearchView: "kwic" | "rich" =
     canShowKwic && searchView !== "rich" ? "kwic" : "rich";
 
   const effectiveTab = isSearchMode ? "all" : tab;
+
+  useEffect(() => {
+    setSearchTokens([]);
+  }, [searchQueryObj.query, userLocale]);
+
 
   useEffect(() => {
     let canceled = false;
@@ -301,6 +303,9 @@ export default function PageBody() {
           limit: params.limit,
           locale: userLocale,
           ownedBy: effectiveOwnedBy,
+        }).then((searchResult) => {
+          setSearchTokens(searchResult.tokens);
+          return searchResult.result;
         });
       } else {
         if (searchQueryObj.tag) params.tag = searchQueryObj.tag;
@@ -404,7 +409,13 @@ export default function PageBody() {
   }, [fetchPosts]);
 
   useEffect(() => {
-    if (loading || !canShowKwic || effectiveSearchView !== "kwic" || posts.length === 0) {
+    if (
+      loading ||
+      !canShowKwic ||
+      effectiveSearchView !== "kwic" ||
+      posts.length === 0 ||
+      kwicKeywords.length === 0
+    ) {
       setKwicLoading(false);
       setKwicError(null);
       return;

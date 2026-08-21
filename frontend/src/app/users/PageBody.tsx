@@ -7,11 +7,7 @@ import { useRequireLogin } from "@/hooks/useRequireLogin";
 import { listUsers, listFollowers, listFollowees, searchUsers, getUsersKwic } from "@/api/users";
 import type { User } from "@/api/models";
 import type { KwicData } from "stgy-markdown";
-import {
-  extractSearchKeywords,
-  parseUserSearchQuery,
-  serializeUserSearchQuery,
-} from "@/utils/parse";
+import { parseUserSearchQuery, serializeUserSearchQuery } from "@/utils/parse";
 import UserCard from "@/components/UserCard";
 import KwicBody, { KwicInlineNodes } from "@/components/KwicBody";
 
@@ -54,6 +50,8 @@ export default function PageBody() {
     status.state === "authenticated" && status.session.userIsAdmin;
   const userLocale = status.state === "authenticated" ? status.session.userLocale : "en";
 
+  const [searchTokens, setSearchTokens] = useState<string[]>([]);
+
   const isSearchMode = useMemo(
     () =>
       (searchQueryObj.query && searchQueryObj.query.length > 0) ||
@@ -63,17 +61,19 @@ export default function PageBody() {
 
   const isFullTextSearch = isSearchMode && !!searchQueryObj.query;
   const kwicKeywords = useMemo(() => {
-    const values = searchQueryObj.query
-      ? extractSearchKeywords(searchQueryObj.query)
-      : [];
-    if (searchQueryObj.nickname) values.push(searchQueryObj.nickname);
-    return values.filter((value, index) => values.indexOf(value) === index);
-  }, [searchQueryObj.query, searchQueryObj.nickname]);
-  const canShowKwic = isSearchMode && kwicKeywords.length > 0;
+    if (isFullTextSearch) return searchTokens;
+    return searchQueryObj.nickname ? [searchQueryObj.nickname] : [];
+  }, [isFullTextSearch, searchQueryObj.nickname, searchTokens]);
+  const canShowKwic =
+    isFullTextSearch || (isSearchMode && kwicKeywords.length > 0);
   const effectiveSearchView: "kwic" | "rich" =
     canShowKwic && searchView !== "rich" ? "kwic" : "rich";
 
   const effectiveTab = isSearchMode ? "all" : tab;
+
+  useEffect(() => {
+    setSearchTokens([]);
+  }, [searchQueryObj.query, userLocale]);
   const canUseListUsersAfter = effectiveTab === "all" && !isFullTextSearch;
   const listUsersAfterStorageBase = useMemo(
     () =>
@@ -177,6 +177,9 @@ export default function PageBody() {
           offset,
           limit: params.limit,
           locale: userLocale,
+        }).then((searchResult) => {
+          setSearchTokens(searchResult.tokens);
+          return searchResult.result;
         });
       } else {
         if (searchQueryObj.query) params.query = searchQueryObj.query;
@@ -247,7 +250,13 @@ export default function PageBody() {
   ]);
 
   useEffect(() => {
-    if (loading || !canShowKwic || effectiveSearchView !== "kwic" || users.length === 0) {
+    if (
+      loading ||
+      !canShowKwic ||
+      effectiveSearchView !== "kwic" ||
+      users.length === 0 ||
+      kwicKeywords.length === 0
+    ) {
       setKwicLoading(false);
       setKwicError(null);
       return;

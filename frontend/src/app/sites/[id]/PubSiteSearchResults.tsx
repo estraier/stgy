@@ -12,7 +12,6 @@ import { convertForDirection, formatDateTime } from "@/utils/format";
 import ArticleWithDecoration from "@/components/ArticleWithDecoration";
 import LinkDiv from "@/components/LinkDiv";
 import KwicBody from "@/components/KwicBody";
-import { extractSearchKeywords } from "@/utils/parse";
 import type { KwicData } from "stgy-markdown";
 
 type Props = {
@@ -45,11 +44,13 @@ export default function PubSiteSearchResults({
   const [kwicByPostId, setKwicByPostId] = React.useState<Record<string, KwicData>>({});
   const [kwicLoading, setKwicLoading] = React.useState(false);
   const [kwicError, setKwicError] = React.useState<string | null>(null);
-  const kwicKeywords = React.useMemo(() => extractSearchKeywords(query), [query]);
+  const [searchTokens, setSearchTokens] = React.useState<string[]>([]);
+  const kwicKeywords = searchTokens;
 
   React.useEffect(() => {
     let active = true;
     setPosts(null);
+    setSearchTokens([]);
     setError(null);
 
     searchPubPostsByUser({
@@ -60,8 +61,10 @@ export default function PubSiteSearchResults({
       locale: pubLocale || locale,
       order: "desc",
     })
-      .then((result) => {
-        if (active) setPosts(result);
+      .then((searchResult) => {
+        if (!active) return;
+        setSearchTokens(searchResult.tokens);
+        setPosts(searchResult.result);
       })
       .catch((e: unknown) => {
         if (!active) return;
@@ -140,7 +143,9 @@ export default function PubSiteSearchResults({
   return (
     <>
       <section className="site-recent" id="pub-post-list">
-        {tabMode === "plain" ? (
+        {items.length === 0 ? (
+          <p className="pub-search-status">No posts found.</p>
+        ) : tabMode === "plain" ? (
           <ul className="pub-post-list">
             {items.map((r) => {
               const postHref = `/pub/${r.id}${design ? `?design=${encodeURIComponent(design)}` : ""}`;

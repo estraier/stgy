@@ -406,6 +406,43 @@ components:
           $ref: "#/components/schemas/KwicData"
       required: [id, kwic]
 
+    UserSearchResponse:
+      type: object
+      required: [tokens, result]
+      properties:
+        tokens:
+          type: array
+          description: >
+            Normalized content tokens returned by TTTS and actually used for the
+            full-text query. They are in query order after TTTS token limits and
+            normalization, before FTS5 quoting or AND/phrase serialization. Duplicates
+            are preserved. The token list is returned even when result is empty.
+          items: { type: string }
+        result:
+          type: array
+          description: Matching users for the requested result page.
+          items:
+            $ref: "#/components/schemas/UserLite"
+
+    PostSearchResponse:
+      type: object
+      required: [tokens, result]
+      properties:
+        tokens:
+          type: array
+          description: >
+            Normalized content tokens returned by TTTS and actually used for the
+            full-text query. STGY owner/publication filters are not included. Tokens
+            are in query order after TTTS token limits and normalization, before FTS5
+            quoting or AND/phrase serialization. Duplicates are preserved. The token list
+            is returned even when result is empty.
+          items: { type: string }
+        result:
+          type: array
+          description: Matching posts for the requested result page.
+          items:
+            $ref: "#/components/schemas/Post"
+
     AIModel:
       type: object
       properties:
@@ -1577,7 +1614,7 @@ paths:
         Authenticated post-processing endpoint for user search results. The nickname
         is used as the KWIC title and the Markdown introduction is rendered to plain
         text as the body. Missing user IDs are omitted. The backend currently uses
-        at most 4 body segments with 30 STGY pseudo tokens of context on each side.
+        at most 4 body segments with 40 STGY pseudo tokens of context on each side.
       security:
         - sessionCookie: []
       parameters:
@@ -1594,6 +1631,7 @@ paths:
         - name: keyword
           in: query
           required: true
+          description: For full-text search KWIC, pass the tokens returned by /users/search.
           style: form
           explode: true
           schema:
@@ -1645,13 +1683,11 @@ paths:
           schema: { type: string, default: "en" }
       responses:
         "200":
-          description: Search result
+          description: Search tokens and matching users
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/UserLite"
+                $ref: "#/components/schemas/UserSearchResponse"
         "400":
           $ref: "#/components/responses/Error400"
         "401":
@@ -2340,7 +2376,7 @@ paths:
         Markdown is split into its title and remaining plain-text body by
         `stgy-markdown`; missing post IDs are omitted. This endpoint does not impose
         the public publication-time restriction. The backend currently uses at most
-        4 body segments with 30 STGY pseudo tokens of context on each side.
+        4 body segments with 40 STGY pseudo tokens of context on each side.
       security:
         - sessionCookie: []
       parameters:
@@ -2357,6 +2393,7 @@ paths:
         - name: keyword
           in: query
           required: true
+          description: For full-text search KWIC, pass the tokens returned by /posts/search.
           style: form
           explode: true
           schema:
@@ -2407,6 +2444,7 @@ paths:
         - name: keyword
           in: query
           required: true
+          description: For public-search KWIC, pass the tokens returned by /posts/search.
           style: form
           explode: true
           schema:
@@ -2490,13 +2528,11 @@ paths:
             browser requests.
       responses:
         "200":
-          description: Search result
+          description: Search tokens and matching posts
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Post"
+                $ref: "#/components/schemas/PostSearchResponse"
         "400":
           $ref: "#/components/responses/Error400"
         "403":

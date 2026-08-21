@@ -80,7 +80,10 @@ describe("SearchService", () => {
     });
 
     it("search should send GET request", async () => {
-      mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ["d1"] });
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ tokens: ["q"], result: ["d1"] }),
+      });
       const input: SearchInput = {
         query: "q",
         locale: "en",
@@ -91,7 +94,7 @@ describe("SearchService", () => {
       };
       const res = await service.search(input);
 
-      expect(res).toEqual(["d1"]);
+      expect(res).toEqual({ tokens: ["q"], result: ["d1"] });
       const [urlStr] = mockFetch.mock.calls[0];
       const url = new URL(urlStr as string);
       expect(url.searchParams.get("query")).toBe("q");

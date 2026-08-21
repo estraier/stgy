@@ -1,5 +1,10 @@
 import { Command } from "commander";
-import { SearchService, SearchConfig } from "./services/search";
+import {
+  NumericOp,
+  SearchConfig,
+  SearchFilters,
+  SearchService,
+} from "./services/search";
 import { Config } from "./config";
 import path from "path";
 import fs from "fs/promises";
@@ -15,11 +20,13 @@ class VolumeTestSearchService extends SearchService {
     bodyText: string,
     locale: string,
     attrs: string | null = null,
+    labels: string[] = [],
+    numericValue: number | null = null,
   ) {
     if (this.workerRunning) {
       throw new Error("Worker must be stopped to use direct access!");
     }
-    await this.addDocument(docId, timestamp, bodyText, locale, attrs, [], null);
+    await this.addDocument(docId, timestamp, bodyText, locale, attrs, labels, numericValue);
   }
 
   public async optimizeAll() {
@@ -45,16 +52,54 @@ interface PrepareOptions {
   gamma: string;
   iteration: string;
   autoCommit?: string;
-  baseDir?: string;
+  baseDir: string;
   recordPositions: string;
   recordContents: string;
+  labelCardinality: string;
+  numericValues?: boolean;
 }
 
 interface SearchOptions {
   query?: string;
   limit: string;
   times: string;
-  baseDir?: string;
+  baseDir: string;
+  label: string[];
+  numericOp?: string;
+  numericValue?: string;
+}
+
+function collectOption(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
+function parseNumericOp(value: string | undefined): NumericOp | undefined {
+  if (value === undefined) return undefined;
+  if (
+    value === "eq" ||
+    value === "gt" ||
+    value === "gte" ||
+    value === "lt" ||
+    value === "lte"
+  ) {
+    return value;
+  }
+  throw new Error("--numeric-op must be one of: eq, gt, gte, lt, lte");
+}
+
+function numericOpSymbol(op: NumericOp): string {
+  switch (op) {
+    case "eq":
+      return "=";
+    case "gt":
+      return ">";
+    case "gte":
+      return ">=";
+    case "lt":
+      return "<";
+    case "lte":
+      return "<=";
+  }
 }
 
 function generateDocument(wordCount: number, vocabSize: number, gamma: number): string {
@@ -75,6 +120,10 @@ function logMemoryUsage(label: string): void {
 
 async function runPrepare(opts: PrepareOptions): Promise<void> {
   const baseSearchConfig = Config.resources[0];
+  const labelCardinality = parseInt(opts.labelCardinality, 10);
+  if (!Number.isInteger(labelCardinality) || labelCardinality < 0) {
+    throw new Error("--label-cardinality must be a non-negative integer");
+  }
 
   const flushInterval = opts.autoCommit
     ? parseInt(opts.autoCommit, 10)
@@ -82,7 +131,7 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
 
   const config: SearchConfig = {
     ...baseSearchConfig,
-    baseDir: opts.baseDir ? path.resolve(opts.baseDir) : baseSearchConfig.baseDir,
+    baseDir: path.resolve(opts.baseDir),
     autoCommitUpdateCount: Number.MAX_SAFE_INTEGER,
     recordPositions: opts.recordPositions === "true",
     recordContents: opts.recordContents !== "false",
@@ -113,9 +162,15 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
   const gamma = parseFloat(opts.gamma);
 
   console.log("=== Volume Test Prepare Start ===");
-  console.log(`Base Directory: ${config.baseDir}`);
-  console.log(`Vocab Size    : ${vocabSize}, Gamma: ${gamma}, Flush Interval: ${flushInterval}`);
-  console.log(`Positions     : ${config.recordPositions}, Contents: ${config.recordContents}`);
+  console.log(`Base Directory    : ${config.baseDir}`);
+  console.log(
+    `Vocab Size        : ${vocabSize}, Gamma: ${gamma}, Flush Interval: ${flushInterval}`,
+  );
+  console.log(
+    `Positions         : ${config.recordPositions}, Contents: ${config.recordContents}`,
+  );
+  console.log(`Label Cardinality : ${labelCardinality}`);
+  console.log(`Numeric Values    : ${opts.numericValues ? "global document index" : "none"}`);
   logMemoryUsage("At Start");
 
   const startTimeAll = Date.now();
@@ -137,7 +192,20 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
 
       if (i === 0) console.log(`  Sample: ${body.substring(0, 100)}...`);
 
-      await service.addDocumentDirect(docId, currentSimulatedTime, body, "en");
+      const globalDocIndex = (iter - 1) * docCountPerIter + i;
+      const labels =
+        labelCardinality > 0 ? [`label:${globalDocIndex % labelCardinality}`] : [];
+      const numericValue = opts.numericValues ? globalDocIndex : null;
+
+      await service.addDocumentDirect(
+        docId,
+        currentSimulatedTime,
+        body,
+        "en",
+        null,
+        labels,
+        numericValue,
+      );
 
       if ((i + 1) % flushInterval === 0) {
         await service.synchronizeAll();
@@ -233,10 +301,29 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
 }
 
 async function runSearch(opts: SearchOptions): Promise<void> {
+  const labels = opts.label ?? [];
+  const numericOp = parseNumericOp(opts.numericOp);
+  const hasNumericOp = numericOp !== undefined;
+  const hasNumericValue = opts.numericValue !== undefined;
+  if (hasNumericOp !== hasNumericValue) {
+    throw new Error("--numeric-op and --numeric-value must be specified together");
+  }
+  const numericValue = hasNumericValue ? Number(opts.numericValue) : undefined;
+  if (numericValue !== undefined && !Number.isFinite(numericValue)) {
+    throw new Error("--numeric-value must be a finite number");
+  }
+
+  const filters: SearchFilters = {
+    labels,
+    ...(numericOp !== undefined && numericValue !== undefined
+      ? { numericOp, numericValue }
+      : {}),
+  };
+
   const baseSearchConfig = Config.resources[0];
   const config: SearchConfig = {
     ...baseSearchConfig,
-    baseDir: opts.baseDir ? path.resolve(opts.baseDir) : baseSearchConfig.baseDir,
+    baseDir: path.resolve(opts.baseDir),
   };
 
   const service = new SearchService(config, silentLogger);
@@ -247,8 +334,17 @@ async function runSearch(opts: SearchOptions): Promise<void> {
   const limit = parseInt(opts.limit, 10) === 0 ? 1000000 : parseInt(opts.limit, 10);
 
   console.log(`=== Search Benchmark: "${query}" ===`);
-  console.log(`Base Directory: ${config.baseDir}`);
-  console.log(`Limit: ${opts.limit === "0" ? "Unlimited (Count mode)" : limit}, Trials: ${times}`);
+  console.log(`Base Directory : ${config.baseDir}`);
+  console.log(`Labels         : ${labels.length > 0 ? labels.join(", ") : "none"}`);
+  console.log(
+    `Numeric Filter : ${
+      numericOp !== undefined && numericValue !== undefined
+        ? `${numericOpSymbol(numericOp)} ${numericValue}`
+        : "none"
+    }`,
+  );
+  console.log(`Limit          : ${opts.limit === "0" ? "Unlimited (Count mode)" : limit}`);
+  console.log(`Trials         : ${times}`);
 
   const files = await service.listIndexFiles(false);
   console.log(`Searching across ${files.length} shards...`);
@@ -258,12 +354,12 @@ async function runSearch(opts: SearchOptions): Promise<void> {
 
   for (let i = 0; i < times; i++) {
     const start = process.hrtime.bigint();
-    const hitIds = await service.search(query, "en", limit);
+    const searchResult = await service.search(query, "en", limit, 0, 1, filters);
     const end = process.hrtime.bigint();
 
     const elapsedMs = Number(end - start) / 1000000;
     results.push(elapsedMs);
-    lastHitCount = hitIds.length;
+    lastHitCount = searchResult.result.length;
 
     if (i === 0) {
       console.log(`First run (Cold): ${elapsedMs.toFixed(3)}ms (Hits: ${lastHitCount})`);
@@ -293,9 +389,11 @@ program
   .option("--gamma <number>", "Gamma", "0.3")
   .option("--iteration <number>", "Iterations", "2")
   .option("--auto-commit <number>", "Flush interval (docs)", "10000")
-  .option("--base-dir <path>", "Directory path")
+  .requiredOption("--base-dir <path>", "Directory path")
   .option("--record-positions <string>", "Record positions", "false")
   .option("--record-contents <string>", "Record contents", "true")
+  .option("--label-cardinality <number>", "Number of generated labels (0 for none)", "0")
+  .option("--numeric-values", "Set numericValue to the global document index")
   .action((opts: PrepareOptions) => runPrepare(opts));
 
 program
@@ -303,7 +401,10 @@ program
   .option("--query <string>", "Search query", "w0")
   .option("--limit <number>", "Limit per search (0 for unlimited)", "100")
   .option("--times <number>", "Number of trials", "100")
-  .option("--base-dir <path>", "Directory path")
+  .requiredOption("--base-dir <path>", "Directory path")
+  .option("--label <string>", "Label filter (repeatable)", collectOption, [])
+  .option("--numeric-op <eq|gt|gte|lt|lte>", "Numeric filter operator")
+  .option("--numeric-value <number>", "Numeric filter value")
   .action((opts: SearchOptions) => runSearch(opts));
 
 program.parse(process.argv);

@@ -9,6 +9,11 @@ export type Document = {
 
 export type SearchNumericOp = "eq" | "gt" | "gte" | "lt" | "lte";
 
+export type SearchResult<T> = {
+  tokens: string[];
+  result: T[];
+};
+
 export type SearchInput = {
   query: string;
   locale: string;
@@ -23,5 +28,6 @@ export type SearchInput = {
 export type SearchCacheEntry = {
   query: string;
   limit: number;
+  tokens: string[];
   result: string[];
 };

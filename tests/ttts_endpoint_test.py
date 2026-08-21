@@ -57,7 +57,12 @@ def test_posts():
   expected_tokens = sorted(list(set(t_res.json())))
   res = requests.get(f"{base_url}/search", params={"query": doc_id, "locale": "en"})
   assert res.status_code == 200
-  assert doc_id in res.json()
+  search_result = res.json()
+  assert set(search_result.keys()) == {"tokens", "result"}, search_result
+  assert search_result["tokens"] == requests.get(
+    f"{base_url}/tokenize", params={"text": doc_id, "locale": "en"}
+  ).json()
+  assert doc_id in search_result["result"]
   res = requests.get(
     f"{base_url}/search",
     params=[
@@ -70,13 +75,13 @@ def test_posts():
     ],
   )
   assert res.status_code == 200
-  assert doc_id in res.json()
+  assert doc_id in res.json()["result"]
   res = requests.get(
     f"{base_url}/search",
     params={"query": doc_id, "locale": "en", "label": "Owner:abc"},
   )
   assert res.status_code == 200
-  assert doc_id in res.json()
+  assert doc_id in res.json()["result"]
   res = requests.get(f"{base_url}/{doc_id}")
   assert res.status_code == 200
   doc = res.json()
@@ -88,8 +93,12 @@ def test_posts():
   assert doc["labels"] == ["Owner:ABC", "project:foo bar"]
   assert doc["numericValue"] == target_ts * 1000
   res = requests.get(f"{base_url}/search-fetch", params={"query": doc_id, "locale": "en"})
-  assert len(res.json()) > 0
-  assert res.json()[0]["id"] == doc_id
+  assert res.status_code == 200, res.text
+  search_fetch_result = res.json()
+  assert set(search_fetch_result.keys()) == {"tokens", "result"}, search_fetch_result
+  assert search_fetch_result["tokens"] == search_result["tokens"]
+  assert len(search_fetch_result["result"]) > 0
+  assert search_fetch_result["result"][0]["id"] == doc_id
   res = requests.get(f"{base_url}/{doc_id}", params={"omitBodyText": "true"})
   assert res.json()["bodyText"] is None
   res = requests.get(f"{base_url}/{doc_id}", params={"omitAttrs": "true"})
@@ -102,7 +111,13 @@ def test_posts():
   res = requests.post(f"{base_url}/flush", json={"wait": 5})
   assert res.status_code == 200
   res = requests.get(f"{base_url}/search", params={"query": doc_id, "locale": "en"})
-  assert doc_id not in res.json()
+  deleted_search_result = res.json()
+  assert deleted_search_result["tokens"] == search_result["tokens"]
+  assert doc_id not in deleted_search_result["result"]
+  res = requests.get(f"{base_url}/search-fetch", params={"query": doc_id, "locale": "en"})
+  assert res.status_code == 200, res.text
+  deleted_search_fetch_result = res.json()
+  assert deleted_search_fetch_result == {"tokens": search_result["tokens"], "result": []}
 
 def test_tokenize():
   resource = "posts"

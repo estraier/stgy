@@ -1,4 +1,12 @@
-import type { AIModelTier, User, UserDetail, PubConfig, PubViewRankEntry, PubViewStats } from "./models";
+import type {
+  AIModelTier,
+  User,
+  UserDetail,
+  PubConfig,
+  PubViewRankEntry,
+  PubViewStats,
+  SearchResult,
+} from "./models";
 import type { KwicData } from "stgy-markdown";
 import { apiFetch, extractError } from "./client";
 
@@ -7,7 +15,7 @@ export async function searchUsers(params: {
   offset?: number;
   limit?: number;
   locale?: string;
-}): Promise<User[]> {
+}): Promise<SearchResult<User>> {
   const search = new URLSearchParams();
   search.append("query", params.query);
   if (params.offset !== undefined) search.append("offset", String(params.offset));
@@ -18,8 +26,6 @@ export async function searchUsers(params: {
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();
 }
-
-
 
 export type UserKwicItem = {
   id: string;
