@@ -258,7 +258,11 @@ export default function createResourceRouter(instance: ResourceInstance) {
         filters,
       );
       if (searchResult.result.length === 0) {
-        return res.json({ tokens: searchResult.tokens, result: [] });
+        return res.json({
+          tokens: searchResult.tokens,
+          phrases: searchResult.phrases,
+          result: [],
+        });
       }
       const docs = await searchService.fetchDocuments(
         searchResult.result,
@@ -269,7 +273,11 @@ export default function createResourceRouter(instance: ResourceInstance) {
       const orderedDocs = searchResult.result
         .map((id) => docMap.get(id))
         .filter((d) => d !== undefined);
-      res.json({ tokens: searchResult.tokens, result: orderedDocs });
+      res.json({
+        tokens: searchResult.tokens,
+        phrases: searchResult.phrases,
+        result: orderedDocs,
+      });
     } catch (e) {
       if (e instanceof Error && /^(labels|numeric|invalid numericOp)/.test(e.message)) {
         return res.status(400).json({ error: e.message });

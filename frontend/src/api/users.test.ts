@@ -13,8 +13,8 @@ describe("user search API", () => {
     jest.clearAllMocks();
   });
 
-  test("returns search tokens with users", async () => {
-    const response = { tokens: ["install", "settings"], result: [] };
+  test("returns search tokens and phrases with users", async () => {
+    const response = { tokens: ["install", "settings"], phrases: ["install", "settings"], result: [] };
     mockApiFetch.mockResolvedValue({
       ok: true,
       json: jest.fn().mockResolvedValue(response),

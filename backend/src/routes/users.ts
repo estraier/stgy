@@ -110,9 +110,10 @@ export default function createUsersRouter(
       return res.status(400).json({ error: "Search limit exceeded" });
     }
     const hash = crypto.createHash("md5").update(`${query}:${locale}`).digest("hex");
-    const cacheKey = `stgy:search:users:v2:${hash}`;
+    const cacheKey = `stgy:search:users:v3:${hash}`;
     let docIds: string[] = [];
     let searchTokens: string[] = [];
+    let searchPhrases: string[] = [];
     let isHit = false;
     try {
       const cachedJson = await redis.get(cacheKey);
@@ -121,6 +122,7 @@ export default function createUsersRouter(
         if (cache.limit >= neededLimit || cache.result.length < cache.limit) {
           docIds = cache.result;
           searchTokens = cache.tokens;
+          searchPhrases = cache.phrases;
           isHit = true;
         }
       }
@@ -136,6 +138,7 @@ export default function createUsersRouter(
           });
           docIds = searchResult.result;
           searchTokens = searchResult.tokens;
+          searchPhrases = searchResult.phrases;
         } finally {
           watch.done();
         }
@@ -143,6 +146,7 @@ export default function createUsersRouter(
           query,
           limit: neededLimit,
           tokens: searchTokens,
+          phrases: searchPhrases,
           result: docIds,
         };
         await redis.setex(cacheKey, Config.SEARCH_CACHE_TTL_SEC, JSON.stringify(newCache));
@@ -150,7 +154,7 @@ export default function createUsersRouter(
       const slicedIds = docIds.slice(offset, offset + reqLimit);
       const userPromises = slicedIds.map((id) => usersService.getUserLite(id));
       const users = (await Promise.all(userPromises)).filter((u): u is UserLite => u !== null);
-      res.json({ tokens: searchTokens, result: users });
+      res.json({ tokens: searchTokens, phrases: searchPhrases, result: users });
     } catch (e: unknown) {
       console.error("Search error:", e);
       res.status(500).json({ error: (e as Error).message || "Internal server error" });

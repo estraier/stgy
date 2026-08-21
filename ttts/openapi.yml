@@ -372,6 +372,12 @@ paths:
         - name: query
           in: query
           required: true
+          description: >
+            Full-text query. Whitespace-delimited input units are tokenized independently.
+            On recordPositions=true shards, one input unit that yields multiple tokens is
+            searched as a positional phrase even without quotes. Double quotes explicitly
+            request phrase semantics; without positions, an exact quoted multi-token phrase
+            is enforced by the stored token sequence when recordContents=true.
           schema:
             type: string
         - name: locale
@@ -417,7 +423,7 @@ paths:
             type: number
       responses:
         "200":
-          description: Search tokens and matching document IDs
+          description: Search tokens, phrase units, and matching document IDs
           content:
             application/json:
               schema:
@@ -433,6 +439,12 @@ paths:
         - name: query
           in: query
           required: true
+          description: >
+            Full-text query. Whitespace-delimited input units are tokenized independently.
+            On recordPositions=true shards, one input unit that yields multiple tokens is
+            searched as a positional phrase even without quotes. Double quotes explicitly
+            request phrase semantics; without positions, an exact quoted multi-token phrase
+            is enforced by the stored token sequence when recordContents=true.
           schema:
             type: string
         - name: locale
@@ -486,7 +498,7 @@ paths:
             type: boolean
       responses:
         "200":
-          description: Search tokens and fetched documents
+          description: Search tokens, phrase units, and fetched documents
           content:
             application/json:
               schema:
@@ -686,7 +698,7 @@ components:
 
     SearchResponse:
       type: object
-      required: [tokens, result]
+      required: [tokens, phrases, result]
       properties:
         tokens:
           type: array
@@ -696,6 +708,20 @@ components:
             returned before FTS5 quoting or AND/phrase serialization. Duplicates are
             preserved. Label and numeric filters are not included. This list is returned
             even when result is empty and is not affected by result offset/limit.
+          items:
+            type: string
+        phrases:
+          type: array
+          description: >
+            Complete search units for downstream presentation such as KWIC, in query
+            order after maxQueryTokenCount has been applied. Every effective term is
+            represented: a one-token term appears as that token, while tokens that are
+            actually constrained as one phrase are represented by one phrase string.
+            This includes quoted multi-token phrases and, on recordPositions=true
+            shards, a whitespace-delimited input unit that tokenizes into multiple
+            consecutive tokens. Order and duplicates are preserved. Label and numeric
+            filters are not included. Consumers that need search display units may use
+            this list without reconstructing phrase boundaries from tokens.
           items:
             type: string
         result:
@@ -706,7 +732,7 @@ components:
 
     SearchFetchResponse:
       type: object
-      required: [tokens, result]
+      required: [tokens, phrases, result]
       properties:
         tokens:
           type: array
@@ -716,6 +742,16 @@ components:
             returned before FTS5 quoting or AND/phrase serialization. Duplicates are
             preserved. Label and numeric filters are not included. This list is returned
             even when result is empty and is not affected by result offset/limit.
+          items:
+            type: string
+        phrases:
+          type: array
+          description: >
+            Complete search units for downstream presentation such as KWIC, using the
+            same semantics as SearchResponse.phrases. Every effective search term is
+            present, including one-token phrases, and multi-token phrases remain one
+            string when the search constrains them to be consecutive. Order and
+            duplicates are preserved. Label and numeric filters are not included.
           items:
             type: string
         result:

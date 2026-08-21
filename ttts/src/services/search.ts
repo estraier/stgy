@@ -29,6 +29,7 @@ export type SearchFilters = {
 
 export type SearchResult = {
   tokens: string[];
+  phrases: string[];
   result: string[];
 };
 
@@ -353,27 +354,32 @@ export class SearchService {
       const needed = limit + offset;
       const start = Date.now();
       const ftsQueryCache = new Map<
-        boolean,
-        { ftsQuery: string; filteringPhrases: string[]; tokens: string[] }
+        string,
+        { ftsQuery: string; filteringPhrases: string[]; tokens: string[]; phrases: string[] }
       >();
       let searchTokens: string[] | undefined;
+      let searchPhrases: string[] | undefined;
 
       for (const ts of sortedTs) {
         if (Date.now() - start > timeout * 1000 || results.length >= needed) break;
         const shard = await this.getShard(ts);
-        if (!ftsQueryCache.has(shard.recordPositions)) {
+        const queryCacheKey = `${shard.recordPositions}:${shard.recordContents}`;
+        if (!ftsQueryCache.has(queryCacheKey)) {
           ftsQueryCache.set(
-            shard.recordPositions,
+            queryCacheKey,
             await makeFtsQuery(
               query,
               locale,
               this.config.maxQueryTokenCount,
               shard.recordPositions,
+              shard.recordContents,
             ),
           );
         }
-        const { ftsQuery, filteringPhrases, tokens } = ftsQueryCache.get(shard.recordPositions)!;
+        const { ftsQuery, filteringPhrases, tokens, phrases } =
+          ftsQueryCache.get(queryCacheKey)!;
         if (searchTokens === undefined) searchTokens = tokens;
+        if (searchPhrases === undefined) searchPhrases = phrases;
         if (!ftsQuery) continue;
 
         const labelQueries = labels.map((label) => `labels : ${quoteFtsText(label)}`);
@@ -398,12 +404,22 @@ export class SearchService {
         const rows = await db.all<{ external_id: string }>(sql, params);
         rows.forEach((r) => results.push(r.external_id));
       }
-      if (searchTokens === undefined) {
-        searchTokens = (
-          await makeFtsQuery(query, locale, this.config.maxQueryTokenCount, false)
-        ).tokens;
+      if (searchTokens === undefined || searchPhrases === undefined) {
+        const fallbackQuery = await makeFtsQuery(
+          query,
+          locale,
+          this.config.maxQueryTokenCount,
+          this.config.recordPositions,
+          this.config.recordContents,
+        );
+        searchTokens = fallbackQuery.tokens;
+        searchPhrases = fallbackQuery.phrases;
       }
-      return { tokens: searchTokens, result: results.slice(offset, needed) };
+      return {
+        tokens: searchTokens,
+        phrases: searchPhrases,
+        result: results.slice(offset, needed),
+      };
     } finally {
       releaseRead();
     }

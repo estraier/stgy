@@ -50,7 +50,7 @@ export default function PageBody() {
     status.state === "authenticated" && status.session.userIsAdmin;
   const userLocale = status.state === "authenticated" ? status.session.userLocale : "en";
 
-  const [searchTokens, setSearchTokens] = useState<string[]>([]);
+  const [searchPhrases, setSearchPhrases] = useState<string[]>([]);
 
   const isSearchMode = useMemo(
     () =>
@@ -61,9 +61,9 @@ export default function PageBody() {
 
   const isFullTextSearch = isSearchMode && !!searchQueryObj.query;
   const kwicKeywords = useMemo(() => {
-    if (isFullTextSearch) return searchTokens;
+    if (isFullTextSearch) return searchPhrases;
     return searchQueryObj.nickname ? [searchQueryObj.nickname] : [];
-  }, [isFullTextSearch, searchQueryObj.nickname, searchTokens]);
+  }, [isFullTextSearch, searchQueryObj.nickname, searchPhrases]);
   const canShowKwic =
     isFullTextSearch || (isSearchMode && kwicKeywords.length > 0);
   const effectiveSearchView: "kwic" | "rich" =
@@ -72,7 +72,7 @@ export default function PageBody() {
   const effectiveTab = isSearchMode ? "all" : tab;
 
   useEffect(() => {
-    setSearchTokens([]);
+    setSearchPhrases([]);
   }, [searchQueryObj.query, userLocale]);
   const canUseListUsersAfter = effectiveTab === "all" && !isFullTextSearch;
   const listUsersAfterStorageBase = useMemo(
@@ -178,7 +178,7 @@ export default function PageBody() {
           limit: params.limit,
           locale: userLocale,
         }).then((searchResult) => {
-          setSearchTokens(searchResult.tokens);
+          setSearchPhrases(searchResult.phrases);
           return searchResult.result;
         });
       } else {

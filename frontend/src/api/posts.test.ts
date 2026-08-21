@@ -13,8 +13,8 @@ describe("post search API", () => {
     jest.clearAllMocks();
   });
 
-  test("returns search tokens with posts", async () => {
-    const response = { tokens: ["install", "settings"], result: [] };
+  test("returns search tokens and phrases with posts", async () => {
+    const response = { tokens: ["install", "settings"], phrases: ["install", "settings"], result: [] };
     mockApiFetch.mockResolvedValue({
       ok: true,
       json: jest.fn().mockResolvedValue(response),
@@ -38,7 +38,7 @@ describe("public post search API", () => {
   test("adds X-STGY-QueryHash and forces an anonymous request", async () => {
     mockApiFetch.mockResolvedValue({
       ok: true,
-      json: jest.fn().mockResolvedValue({ tokens: ["foo"], result: [] }),
+      json: jest.fn().mockResolvedValue({ tokens: ["foo"], phrases: ["foo"], result: [] }),
     } as unknown as Response);
 
     await expect(
@@ -50,7 +50,7 @@ describe("public post search API", () => {
         locale: "ja",
         order: "desc",
       }),
-    ).resolves.toEqual({ tokens: ["foo"], result: [] });
+    ).resolves.toEqual({ tokens: ["foo"], phrases: ["foo"], result: [] });
 
     expect(mockApiFetch).toHaveBeenCalledWith(
       "/posts/search?query=foo&ownedBy=0000000000000001&offset=0&limit=6&locale=ja&order=desc",

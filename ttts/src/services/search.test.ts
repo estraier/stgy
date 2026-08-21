@@ -95,6 +95,7 @@ describe("SearchService (Actor Model)", () => {
   test("search returns normalized tokens even when there are no matches", async () => {
     await expect(service.search("NoHit", "en")).resolves.toEqual({
       tokens: ["nohit"],
+      phrases: ["nohit"],
       result: [],
     });
   });
@@ -115,7 +116,33 @@ describe("SearchService (Actor Model)", () => {
 
     await expect(service.search("C++ HOP", "en")).resolves.toEqual({
       tokens: ["c++", "hop"],
+      phrases: ["c++", "hop"],
       result: ["token_result"],
+    });
+  });
+
+  test("search returns positional phrase units for unspaced multi-token input", async () => {
+    await service.close();
+    service = new TestSearchService({ ...CONFIG, recordPositions: true }, mockLogger);
+    await service.open();
+
+    await runTask({
+      type: "ADD",
+      payload: {
+        docId: "unspaced_phrase",
+        timestamp: 1000,
+        bodyText: "インストールや設定作業です",
+        locale: "ja",
+        attrs: null,
+        labels: [],
+        numericValue: null,
+      },
+    });
+
+    await expect(service.search("インストールや設定作業", "ja")).resolves.toEqual({
+      tokens: ["インストール", "や", "設定", "作業"],
+      phrases: ["インストールや設定作業"],
+      result: ["unspaced_phrase"],
     });
   });
 

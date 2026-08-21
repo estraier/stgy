@@ -58,10 +58,11 @@ def test_posts():
   res = requests.get(f"{base_url}/search", params={"query": doc_id, "locale": "en"})
   assert res.status_code == 200
   search_result = res.json()
-  assert set(search_result.keys()) == {"tokens", "result"}, search_result
+  assert set(search_result.keys()) == {"tokens", "phrases", "result"}, search_result
   assert search_result["tokens"] == requests.get(
     f"{base_url}/tokenize", params={"text": doc_id, "locale": "en"}
   ).json()
+  assert search_result["phrases"] == search_result["tokens"]
   assert doc_id in search_result["result"]
   res = requests.get(
     f"{base_url}/search",
@@ -95,8 +96,9 @@ def test_posts():
   res = requests.get(f"{base_url}/search-fetch", params={"query": doc_id, "locale": "en"})
   assert res.status_code == 200, res.text
   search_fetch_result = res.json()
-  assert set(search_fetch_result.keys()) == {"tokens", "result"}, search_fetch_result
+  assert set(search_fetch_result.keys()) == {"tokens", "phrases", "result"}, search_fetch_result
   assert search_fetch_result["tokens"] == search_result["tokens"]
+  assert search_fetch_result["phrases"] == search_result["phrases"]
   assert len(search_fetch_result["result"]) > 0
   assert search_fetch_result["result"][0]["id"] == doc_id
   res = requests.get(f"{base_url}/{doc_id}", params={"omitBodyText": "true"})
@@ -113,11 +115,16 @@ def test_posts():
   res = requests.get(f"{base_url}/search", params={"query": doc_id, "locale": "en"})
   deleted_search_result = res.json()
   assert deleted_search_result["tokens"] == search_result["tokens"]
+  assert deleted_search_result["phrases"] == search_result["phrases"]
   assert doc_id not in deleted_search_result["result"]
   res = requests.get(f"{base_url}/search-fetch", params={"query": doc_id, "locale": "en"})
   assert res.status_code == 200, res.text
   deleted_search_fetch_result = res.json()
-  assert deleted_search_fetch_result == {"tokens": search_result["tokens"], "result": []}
+  assert deleted_search_fetch_result == {
+    "tokens": search_result["tokens"],
+    "phrases": search_result["phrases"],
+    "result": [],
+  }
 
 def test_tokenize():
   resource = "posts"

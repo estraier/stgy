@@ -408,7 +408,7 @@ components:
 
     UserSearchResponse:
       type: object
-      required: [tokens, result]
+      required: [tokens, phrases, result]
       properties:
         tokens:
           type: array
@@ -418,6 +418,13 @@ components:
             normalization, before FTS5 quoting or AND/phrase serialization. Duplicates
             are preserved. The token list is returned even when result is empty.
           items: { type: string }
+        phrases:
+          type: array
+          description: >
+            Complete search units returned by TTTS for downstream presentation such as
+            KWIC. One-token terms appear individually; tokens constrained as one phrase
+            are represented by one phrase string. Order and duplicates are preserved.
+          items: { type: string }
         result:
           type: array
           description: Matching users for the requested result page.
@@ -426,7 +433,7 @@ components:
 
     PostSearchResponse:
       type: object
-      required: [tokens, result]
+      required: [tokens, phrases, result]
       properties:
         tokens:
           type: array
@@ -436,6 +443,14 @@ components:
             are in query order after TTTS token limits and normalization, before FTS5
             quoting or AND/phrase serialization. Duplicates are preserved. The token list
             is returned even when result is empty.
+          items: { type: string }
+        phrases:
+          type: array
+          description: >
+            Complete search units returned by TTTS for downstream presentation such as
+            KWIC. One-token terms appear individually; tokens constrained as one phrase
+            are represented by one phrase string. STGY owner/publication filters are
+            not included. Order and duplicates are preserved.
           items: { type: string }
         result:
           type: array
@@ -1631,7 +1646,7 @@ paths:
         - name: keyword
           in: query
           required: true
-          description: For full-text search KWIC, pass the tokens returned by /users/search.
+          description: For full-text search KWIC, pass the phrases returned by /users/search.
           style: form
           explode: true
           schema:
@@ -1665,6 +1680,10 @@ paths:
           in: query
           required: true
           schema: { type: string }
+          description: >
+            Full-text query using TTTS tokenization and phrase semantics. On positional
+            indexes, a whitespace-delimited input unit that tokenizes into multiple
+            tokens is searched as one phrase even without double quotes.
         - name: locale
           in: query
           schema: { type: string, default: en }
@@ -1683,7 +1702,7 @@ paths:
           schema: { type: string, default: "en" }
       responses:
         "200":
-          description: Search tokens and matching users
+          description: Search tokens, phrase units, and matching users
           content:
             application/json:
               schema:
@@ -2393,7 +2412,7 @@ paths:
         - name: keyword
           in: query
           required: true
-          description: For full-text search KWIC, pass the tokens returned by /posts/search.
+          description: For full-text search KWIC, pass the phrases returned by /posts/search.
           style: form
           explode: true
           schema:
@@ -2444,7 +2463,7 @@ paths:
         - name: keyword
           in: query
           required: true
-          description: For public-search KWIC, pass the tokens returned by /posts/search.
+          description: For public-search KWIC, pass the phrases returned by /posts/search.
           style: form
           explode: true
           schema:
@@ -2498,7 +2517,9 @@ paths:
             anonymous requests. At least one ordinary full-text search term must
             remain after removing these filters. Anonymous requests are always
             restricted to published posts regardless of whether `status:published`
-            is present.
+            is present. The remaining text uses TTTS tokenization and phrase semantics;
+            on positional indexes, a whitespace-delimited input unit that tokenizes
+            into multiple tokens is searched as one phrase even without double quotes.
         - name: ownedBy
           in: query
           schema: { type: string }
@@ -2528,7 +2549,7 @@ paths:
             browser requests.
       responses:
         "200":
-          description: Search tokens and matching posts
+          description: Search tokens, phrase units, and matching posts
           content:
             application/json:
               schema:

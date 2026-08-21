@@ -3,6 +3,8 @@ import path from "path";
 
 const DEFAULT_INDEX_DIR = path.join(process.cwd(), "search-index");
 const COMMON_INDEX_DIR = envStr("STGY_SEARCH_INDEX_DIR", DEFAULT_INDEX_DIR);
+const RECORD_POSITIONS = envBool("STGY_SEARCH_RECORD_POSITIONS", false);
+const RECORD_CONTENTS = envBool("STGY_SEARCH_RECORD_CONTENTS", true);
 
 export class Config {
   static readonly SERVER_PORT = envNum("STGY_SEARCH_PORT", 3200);
@@ -20,8 +22,8 @@ export class Config {
       updateWorkerBusySleepSeconds: 0.05,
       updateWorkerIdleSleepSeconds: 2.0,
       initialDocumentId: 2097151,
-      recordPositions: false,
-      recordContents: true,
+      recordPositions: RECORD_POSITIONS,
+      recordContents: RECORD_CONTENTS,
       readConnectionCounts: [2, 2, 1, 1, 0],
       mmapSizes: [268435456, 268435456, 0],
       cacheSizes: [25165824, 25165824, 409600],
@@ -39,8 +41,8 @@ export class Config {
       updateWorkerBusySleepSeconds: 0.05,
       updateWorkerIdleSleepSeconds: 2.0,
       initialDocumentId: 2097151,
-      recordPositions: false,
-      recordContents: true,
+      recordPositions: RECORD_POSITIONS,
+      recordContents: RECORD_CONTENTS,
       readConnectionCounts: [2, 2, 1, 1, 0],
       mmapSizes: [268435456, 268435456, 0],
       cacheSizes: [25165824, 25165824, 409600],

@@ -1,5 +1,6 @@
 export type SearchResult<T> = {
   tokens: string[];
+  phrases: string[];
   result: T[];
 };
 

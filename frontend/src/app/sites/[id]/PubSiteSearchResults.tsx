@@ -44,13 +44,13 @@ export default function PubSiteSearchResults({
   const [kwicByPostId, setKwicByPostId] = React.useState<Record<string, KwicData>>({});
   const [kwicLoading, setKwicLoading] = React.useState(false);
   const [kwicError, setKwicError] = React.useState<string | null>(null);
-  const [searchTokens, setSearchTokens] = React.useState<string[]>([]);
-  const kwicKeywords = searchTokens;
+  const [searchPhrases, setSearchPhrases] = React.useState<string[]>([]);
+  const kwicKeywords = searchPhrases;
 
   React.useEffect(() => {
     let active = true;
     setPosts(null);
-    setSearchTokens([]);
+    setSearchPhrases([]);
     setError(null);
 
     searchPubPostsByUser({
@@ -63,7 +63,7 @@ export default function PubSiteSearchResults({
     })
       .then((searchResult) => {
         if (!active) return;
-        setSearchTokens(searchResult.tokens);
+        setSearchPhrases(searchResult.phrases);
         setPosts(searchResult.result);
       })
       .catch((e: unknown) => {

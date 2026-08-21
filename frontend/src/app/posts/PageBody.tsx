@@ -67,7 +67,7 @@ export default function PageBody() {
     key: string;
     byPostId: Record<string, KwicData>;
   }>({ key: "", byPostId: {} });
-  const [searchTokens, setSearchTokens] = useState<string[]>([]);
+  const [searchPhrases, setSearchPhrases] = useState<string[]>([]);
   const [kwicLoading, setKwicLoading] = useState(false);
   const [kwicError, setKwicError] = useState<string | null>(null);
   const [pendingRestore, setPendingRestore] = useState<{ postId: string; page: number } | null>(
@@ -164,8 +164,8 @@ export default function PageBody() {
 
   const isFullTextSearch = isSearchMode && !isSimilarMode && !!searchQueryObj.query;
   const kwicKeywords = useMemo(
-    () => (isFullTextSearch ? searchTokens : []),
-    [isFullTextSearch, searchTokens],
+    () => (isFullTextSearch ? searchPhrases : []),
+    [isFullTextSearch, searchPhrases],
   );
   const canShowKwic = isFullTextSearch;
   const effectiveSearchView: "kwic" | "rich" =
@@ -174,7 +174,7 @@ export default function PageBody() {
   const effectiveTab = isSearchMode ? "all" : tab;
 
   useEffect(() => {
-    setSearchTokens([]);
+    setSearchPhrases([]);
   }, [searchQueryObj.query, userLocale]);
 
 
@@ -304,7 +304,7 @@ export default function PageBody() {
           locale: userLocale,
           ownedBy: effectiveOwnedBy,
         }).then((searchResult) => {
-          setSearchTokens(searchResult.tokens);
+          setSearchPhrases(searchResult.phrases);
           return searchResult.result;
         });
       } else {

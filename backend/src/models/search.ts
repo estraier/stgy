@@ -11,6 +11,7 @@ export type SearchNumericOp = "eq" | "gt" | "gte" | "lt" | "lte";
 
 export type SearchResult<T> = {
   tokens: string[];
+  phrases: string[];
   result: T[];
 };
 
@@ -29,5 +30,6 @@ export type SearchCacheEntry = {
   query: string;
   limit: number;
   tokens: string[];
+  phrases: string[];
   result: string[];
 };
