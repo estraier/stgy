@@ -109,6 +109,10 @@ describe("Tokenizer", () => {
         const tokens = tokenizer.tokenize("C++ C# .NET node.js", "en");
         expect(tokens).toEqual(["c++", "c#", ".net", "node.js"]);
       });
+
+      test("treats U+E000 as whitespace", () => {
+        expect(tokenizer.tokenize("alpha\uE000beta", "en")).toEqual(["alpha", "beta"]);
+      });
     });
 
     describe("Edge Cases", () => {

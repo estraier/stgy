@@ -46,6 +46,15 @@ describe("makeFtsQuery", () => {
     expect(result.phrases).toEqual(["hop", "step", "hot dog"]);
   });
 
+
+  test("treats U+E000 as whitespace before parsing query units", async () => {
+    const result = await makeFtsQuery("alpha\uE000beta", "en", 10, true);
+    expect(result.ftsQuery).toBe("alpha AND beta");
+    expect(result.filteringPhrases).toEqual([]);
+    expect(result.tokens).toEqual(["alpha", "beta"]);
+    expect(result.phrases).toEqual(["alpha", "beta"]);
+  });
+
   test("normalizes symbols and letters", async () => {
     const result = await makeFtsQuery("a* AND (b% OR C's)", "en", 10, false);
     expect(result.ftsQuery).toBe("a AND and AND b AND or AND \"c's\"");

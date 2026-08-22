@@ -1,6 +1,7 @@
 import kuromoji from "kuromoji";
 import path from "path";
 import { Config } from "../config";
+import { replaceInternalReservedCharWithSpace } from "./internalTokens";
 
 const TECHNICAL_TERM_REGEX =
   /(?:\.[a-z0-9]+|[a-z0-9]+(?:\+\+|#)(?:[a-z0-9]+)?|[a-z0-9]+(?:[._][a-z0-9]+)+)/g;
@@ -47,7 +48,7 @@ export class Tokenizer {
   }
 
   private normalize(text: string): string {
-    return text
+    return replaceInternalReservedCharWithSpace(text)
       .normalize("NFKC")
       .toLowerCase()
       .replace(/[\p{Cc}\p{Cf}]+/gu, " ")

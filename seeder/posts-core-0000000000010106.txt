@@ -248,7 +248,7 @@ CREATE VIRTUAL TABLE docs USING fts5(
   tokens,
   labels,
   tokenize = "unicode61 categories 'L* N* Co M* P* S*' remove_diacritics 0 tokenchars ' '",
-  detail = 'column'
+  detail = 'none'
 );
 ```
 
@@ -260,13 +260,17 @@ STGY_SEARCH_RECORD_CONTENTS
 STGY_SEARCH_AUTO_PHRASE_CHECK
 ```
 
-The current env.dev.txt, env.vps.txt, env.native.txt, and env.hybrid.txt set ``recordPositions=false``, ``recordContents=true``, and ``autoPhraseCheck=false``. The schema example above therefore uses ``detail='column'``: FTS5 retains the canonical token sequence but does not record token positions. With ``recordPositions=true``, TTTS uses ``detail='full'`` and records token positions. With ``recordContents=false``, TTTS creates the FTS5 table as contentless (``content=''`` and ``contentless_delete=1``). Body ``tokens`` and search-space ``labels`` are separate columns.
+The current env.dev.txt, env.vps.txt, env.native.txt, and env.hybrid.txt set ``recordPositions=false``, ``recordContents=true``, and ``autoPhraseCheck=false``. The schema example above therefore uses ``detail='none'``: FTS5 posting lists retain document IDs but no column numbers or token positions. With ``recordPositions=true``, TTTS uses ``detail='full'`` and records token positions. With ``recordContents=false``, TTTS creates the FTS5 table as contentless (``content=''`` and ``contentless_delete=1``). Body ``tokens`` and search-space ``labels`` remain separate stored columns, but non-positional search does not use column filters.
+
+Before indexing a label, TTTS converts it to a synthetic token of the form ``U+E000 + "L" + label`` and stores it in the ``labels`` column. U+E000 is reserved for TTTS internal tokens. If external body text, a search query, or a label contains U+E000, TTTS replaces it with U+0020 SPACE before tokenization or label normalization. Body-derived terms therefore cannot collide with synthetic label terms. Search does not use ``tokens:`` or ``labels:`` column filters; instead, synthetic label conditions and body conditions are placed in one table-wide ``MATCH`` expression. FTS5 can intersect those posting lists inside the same table, so with ``recordPositions=false`` there is no need to retain column information and ``detail='none'`` is sufficient. At the same time, with ``recordContents=true`` the stored ``tokens`` and ``labels`` columns remain separate, so pseudo-phrase verification and fetched body text can use ``tokens`` directly.
+
+This synthetic-label representation is not backward-compatible with indexes that stored raw labels in the ``labels`` column. When upgrading TTTS to this format, reset the search indexes and rebuild them from PostgreSQL.
 
 ``recordPositions`` and ``recordContents`` are recorded in ``fts_meta`` when a shard is created. When an existing shard is opened, TTTS uses the values in ``fts_meta`` rather than the current environment, so changing the environment does not alter the structure or search semantics of existing shards. To apply either changed setting to existing data, reset the search index and regenerate it with the new settings. ``autoPhraseCheck``, by contrast, is a query-time option that does not change the index format and is not stored in ``fts_meta``. Restarting TTTS with a different value applies it to existing shards without rebuilding the index.
 
 External IDs are stored in ``external_id`` and FTS5 rowid uses a small integer ``internal_id``. Newer documents receive smaller internal IDs, so ``ORDER BY docs.rowid ASC`` yields newer documents first.
 
-Search uses ``docs CROSS JOIN id_tuples`` to keep FTS5 as the outer loop and looks up ``id_tuples`` by INTEGER PRIMARY KEY for each candidate. Label conditions are placed before the body condition in the FTS5 expression, so label and body posting lists are intersected with the labels leading. FTS5's case-insensitive label match is accepted directly; there is no raw ``labels_json`` recheck. ``numeric_value`` is evaluated as a predicate on the same candidate and has no separate search B-tree index.
+Search uses ``docs CROSS JOIN id_tuples`` to keep FTS5 as the outer loop and looks up ``id_tuples`` by INTEGER PRIMARY KEY for each candidate. Synthetic label conditions are placed before the body condition in a table-wide FTS5 MATCH expression without column filters, so label and body posting lists are intersected with the labels leading. FTS5's case-insensitive label match is accepted directly; there is no ``labels_json`` recheck. ``numeric_value`` is evaluated as a predicate on the same candidate and has no separate search B-tree index.
 
 Regression tests inspect ``EXPLAIN QUERY PLAN`` to require FTS5 scan → INTEGER PRIMARY KEY lookup and no ``USE TEMP B-TREE``. This preserves newest-first LIMIT early termination after adding attribute filters.
 
@@ -279,6 +283,7 @@ The following normalization is applied first.
 - Normalize Unicode with NFKC.
 - Convert letters to lowercase.
 - Replace control characters and invisible formatting characters with spaces.
+- Replace U+E000, reserved for TTTS internal tokens, with U+0020 SPACE.
 - Remove diacritical marks within tokens.
 
 For example, differences in case and full-width/half-width forms are absorbed, and ``Café`` is generally stored as ``cafe``.
@@ -301,7 +306,9 @@ check-out → check, out
 24/7      → 24, 7
 ```
 
-The FTS5 unicode61 configuration permits punctuation and symbols as token characters and additionally adds U+0020 SPACE through ``tokenchars``. Printable characters and SPACE inside body tokens or labels therefore remain inside one term, while the LF separators inserted by TTTS split terms. This prevents values such as ``c++`` or a single value containing SPACE from being split again by FTS5. Terms containing characters with special meaning in an FTS5 query expression are quoted when the expression is built.
+The FTS5 unicode61 configuration permits punctuation and symbols as token characters and additionally adds U+0020 SPACE through ``tokenchars``. Printable characters and SPACE inside body tokens or synthetic labels therefore remain inside one term, while the LF separators inserted by TTTS split terms. This prevents values such as ``c++`` or a label containing SPACE from being split again by FTS5. The U+E000 prefix of a synthetic label is a Private Use character (category Co), so the unicode61 configuration retains it inside the term. Terms containing characters with special meaning in an FTS5 query expression are quoted when the expression is built.
+
+A search query replaces U+E000 with SPACE before parsing whitespace-delimited input units. Thus ``foo<U+E000>bar`` is handled exactly like ``foo bar`` as two input units and, even when positions are recorded, cannot accidentally become one phrase merely because the reserved character appeared between the words.
 
 A document is tokenized as a whole using its specified effective locale. No per-line language detection is performed. For a search query, the specified locale is treated as the preferred candidate and a simple character-based locale detection is applied.
 
@@ -335,7 +342,7 @@ Each whitespace-delimited input unit is tokenized independently. On ``recordPosi
 
 When ``recordPositions=false``, ``recordContents=true``, and ``autoPhraseCheck=true``, an unquoted input unit containing Han, hiragana, katakana, or Hangul is also treated automatically as a phrase when it yields multiple tokens. For example, if ``脚本家`` becomes ``脚本`` and ``家``, FTS5 first narrows candidates with ``脚本 AND 家`` and TTTS then requires ``脚本\n家`` to occur consecutively in the stored canonical token sequence. The automatic check is not applied to input units containing only non-CJK scripts. With the default ``autoPhraseCheck=false``, the tokens retain ordinary AND semantics. If ``recordContents=false``, consecutive-token verification is impossible, so the query falls back to AND even when ``autoPhraseCheck=true``.
 
-Double quotes explicitly request a phrase. On ``detail=column`` shards with ``recordContents=true``, a quoted multi-token phrase first narrows candidates with FTS5 and then checks the stored canonical token sequence for consecutive tokens. Quoted phrases keep this behavior regardless of ``autoPhraseCheck``.
+Double quotes explicitly request a phrase. On ``recordPositions=false`` shards with ``recordContents=true``, a quoted multi-token phrase first narrows candidates with FTS5 AND terms and then checks the stored canonical token sequence in ``docs.tokens`` for consecutive tokens. Synthetic labels are stored in the separate ``labels`` column and therefore never enter pseudo-phrase verification. Quoted phrases keep this behavior regardless of ``autoPhraseCheck``.
 
 The UI does not provide OR, NOT, wildcard, fuzzy, or related-term expansion. A search query may contain at most eight tokens.
 
@@ -343,7 +350,7 @@ Both ``GET /{resource}/search`` and ``GET /{resource}/search-fetch`` return a to
 
 ### Restricting the Search Space with labels and numeric_value
 
-Each document may carry zero or more opaque ``labels`` and one nullable generic ``numeric_value``. A label may contain arbitrary printable characters and U+0020 SPACE as one term and is matched case-insensitively by FTS5. Multiple labels use AND semantics, and label conditions are placed before the body condition in the FTS5 expression. Numeric filters support ``eq``, ``gt``, ``gte``, ``lt`` and ``lte``. TTTS assigns no application-specific meaning to them. Raw labels remain in ``labels_json`` but are not rechecked during search.
+Each document may carry zero or more opaque ``labels`` and one nullable generic ``numeric_value``. A label may contain arbitrary printable characters and U+0020 SPACE as one term and is matched case-insensitively by FTS5. U+E000 in external input is reserved and normalized to U+0020 SPACE; the normalized label is stored in ``labels_json``. For the FTS5 ``labels`` column, TTTS additionally prefixes the label with ``U+E000 + "L"`` and stores the resulting synthetic label token. Search does not use a column filter; the synthetic label term is placed in the same table-wide MATCH expression as body terms. Multiple labels use AND semantics, and label conditions are placed before the body condition. Numeric filters support ``eq``, ``gt``, ``gte``, ``lt`` and ``lte``. TTTS assigns no application-specific meaning to them. ``labels_json`` is not rechecked during search.
 
 STGY posts use ``owner:<userId>`` as a label and the external publication time in epoch milliseconds as ``numericValue``. Unpublished posts use NULL and scheduled posts use a future timestamp. Logged-in search converts ``owner:<userId>`` / ``owner:me`` into a label filter and ``status:published`` into ``numeric_value <= now``.
 

@@ -1,4 +1,5 @@
 import { Tokenizer } from "./tokenizer";
+import { replaceInternalReservedCharWithSpace } from "./internalTokens";
 
 export function quoteFtsText(text: string): string {
   return `"${text.replace(/"/g, '""')}"`;
@@ -33,7 +34,8 @@ export async function makeFtsQuery(
   phrases: string[];
 }> {
   const tokenizer = await Tokenizer.getInstance();
-  const effectiveLocale = tokenizer.guessLocale(query, locale);
+  const sanitizedQuery = replaceInternalReservedCharWithSpace(query);
+  const effectiveLocale = tokenizer.guessLocale(sanitizedQuery, locale);
 
   const parts: string[] = [];
   const filteringPhrases: string[] = [];
@@ -44,7 +46,7 @@ export async function makeFtsQuery(
   let match;
   let totalTokens = 0;
 
-  while ((match = regex.exec(query)) !== null && totalTokens < maxTokens) {
+  while ((match = regex.exec(sanitizedQuery)) !== null && totalTokens < maxTokens) {
     const text = match[1] ?? match[2]!;
     const allTokens = tokenizer
       .tokenize(text, effectiveLocale)

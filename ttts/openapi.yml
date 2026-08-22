@@ -380,6 +380,8 @@ paths:
             CJK script that yields multiple tokens is also checked as an exact phrase against
             the stored token sequence. Double quotes explicitly request phrase semantics and
             use the same stored-token check when positions are unavailable but contents exist.
+            U+E000 is reserved internally by TTTS and is normalized to U+0020 SPACE before
+            query units are parsed.
           schema:
             type: string
         - name: locale
@@ -405,7 +407,7 @@ paths:
             default: 1
         - name: label
           in: query
-          description: Exact document label filter. Repeat to require multiple labels (AND).
+          description: Exact document label filter after U+E000 is normalized to U+0020 SPACE. Repeat to require multiple labels (AND).
           schema:
             type: array
             items:
@@ -449,6 +451,8 @@ paths:
             CJK script that yields multiple tokens is also checked as an exact phrase against
             the stored token sequence. Double quotes explicitly request phrase semantics and
             use the same stored-token check when positions are unavailable but contents exist.
+            U+E000 is reserved internally by TTTS and is normalized to U+0020 SPACE before
+            query units are parsed.
           schema:
             type: string
         - name: locale
@@ -474,7 +478,7 @@ paths:
             default: 1
         - name: label
           in: query
-          description: Exact document label filter. Repeat to require multiple labels (AND).
+          description: Exact document label filter after U+E000 is normalized to U+0020 SPACE. Repeat to require multiple labels (AND).
           schema:
             type: array
             items:
@@ -558,6 +562,7 @@ paths:
               properties:
                 text:
                   type: string
+                  description: Document body text. U+E000 is reserved internally by TTTS and is normalized to U+0020 SPACE before tokenization.
                 timestamp:
                   type: number
                 locale:
@@ -569,7 +574,7 @@ paths:
                   description: JSON string of extra attributes
                 labels:
                   type: array
-                  description: Opaque case-insensitive labels. Printable characters and U+0020 SPACE are allowed.
+                  description: Opaque case-insensitive labels. Printable characters and U+0020 SPACE are allowed. U+E000 is reserved internally by TTTS and is normalized to U+0020 SPACE in label input.
                   items:
                     type: string
                 numericValue:
@@ -694,6 +699,7 @@ components:
           description: JSON string
         labels:
           type: array
+          description: Normalized labels. U+E000 in input is represented as U+0020 SPACE.
           items:
             type: string
         numericValue:

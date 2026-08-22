@@ -14,6 +14,10 @@ import {
 import { IndexFileManager, IndexFileInfo } from "./indexFileManager";
 import { makeFtsQuery, quoteFtsText } from "../utils/query";
 import { TaskWaitTimeoutError } from "../utils/taskWait";
+import {
+  makeSyntheticLabelToken,
+  replaceInternalReservedCharWithSpace,
+} from "../utils/internalTokens";
 
 const DB_PAGE_SIZE_BYTES = 8192;
 const FTS_BLOCK_SIZE_BYTES = 8000;
@@ -40,13 +44,14 @@ export function normalizeLabels(labels: unknown): string[] {
     if (typeof label !== "string" || label.length === 0) {
       throw new Error("labels must contain non-empty strings");
     }
-    for (const ch of label) {
+    const normalizedLabel = replaceInternalReservedCharWithSpace(label);
+    for (const ch of normalizedLabel) {
       if (ch === " ") continue;
       if (/^[\p{Cc}\p{Cf}\p{Cs}\p{Cn}\p{Z}]$/u.test(ch)) {
         throw new Error("labels may contain only printable characters and U+0020 SPACE");
       }
     }
-    unique.add(label);
+    unique.add(normalizedLabel);
   }
   return Array.from(unique).sort();
 }
@@ -384,8 +389,10 @@ export class SearchService {
         if (searchPhrases === undefined) searchPhrases = phrases;
         if (!ftsQuery) continue;
 
-        const labelQueries = labels.map((label) => `labels : ${quoteFtsText(label)}`);
-        const combinedFtsQuery = [...labelQueries, `tokens : (${ftsQuery})`].join(" AND ");
+        const labelQueries = labels.map((label) =>
+          quoteFtsText(makeSyntheticLabelToken(label)),
+        );
+        const combinedFtsQuery = [...labelQueries, `(${ftsQuery})`].join(" AND ");
 
         const db = this.selectReader(shard);
         const sql = buildSearchSql(
@@ -634,7 +641,7 @@ export class SearchService {
     shard.pendingTxCount++;
     const labels = normalizeLabels(labelsInput);
     const labelsJson = JSON.stringify(labels);
-    const labelsText = labels.join("\n");
+    const labelsText = labels.map(makeSyntheticLabelToken).join("\n");
     const existing = await shard.writer.get<{
       internal_id: number;
       labels_json: string;
@@ -1041,7 +1048,7 @@ export class SearchService {
           tokens,
           labels,
           tokenize = "unicode61 categories 'L* N* Co M* P* S*' remove_diacritics 0 tokenchars ' '",
-          detail = '${rp ? "full" : "column"}',
+          detail = '${rp ? "full" : "none"}',
           ${rc ? "" : "content='', contentless_delete=1,"}
         );`,
       );

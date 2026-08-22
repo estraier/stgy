@@ -451,12 +451,10 @@ describe("SearchService (Actor Model)", () => {
     expect(docs[0].numericValue).toBeNull();
   });
 
-  test("Labels accept printable characters and U+0020 SPACE but reject controls", () => {
-    expect(normalizeLabels([" foo  bar ", "C++ / cycling", "日本語 🚲"])).toEqual([
-      " foo  bar ",
-      "C++ / cycling",
-      "日本語 🚲",
-    ]);
+  test("Labels accept printable characters, preserve U+0020 SPACE, and map U+E000 to SPACE", () => {
+    expect(
+      normalizeLabels([" foo  bar ", "C++ / cycling", "日本語 🚲", "private\uE000label"]),
+    ).toEqual([" foo  bar ", "C++ / cycling", "private label", "日本語 🚲"]);
     expect(() => normalizeLabels(["tab\tlabel"])).toThrow();
     expect(() => normalizeLabels(["line\nlabel"])).toThrow();
   });
@@ -525,6 +523,38 @@ describe("SearchService (Actor Model)", () => {
     ).toEqual([]);
   });
 
+  test("U+E000 is reserved for synthetic labels and is sanitized in body, query, and labels", async () => {
+    await runTask({
+      type: "ADD",
+      payload: {
+        docId: "reserved_char",
+        timestamp: 1000,
+        bodyText: "alpha\uE000beta",
+        locale: "en",
+        labels: ["Group\uE000One"],
+        attrs: null,
+        numericValue: null,
+      },
+    });
+
+    expect(await searchIds("alpha\uE000beta", "en")).toEqual(["reserved_char"]);
+    expect(
+      await searchIds("alpha beta", "en", 100, 0, 1, { labels: ["Group One"] }),
+    ).toEqual(["reserved_char"]);
+    expect(await searchIds("Group One", "en")).toEqual([]);
+
+    const docs = await service.fetchDocuments(["reserved_char"]);
+    expect(docs).toEqual([
+      {
+        id: "reserved_char",
+        bodyText: "alpha beta",
+        attrs: null,
+        labels: ["Group One"],
+        numericValue: null,
+      },
+    ]);
+  });
+
   test.each([
     ["eq", 20, ["n20"]],
     ["gt", 20, ["n30"]],
@@ -564,7 +594,7 @@ describe("SearchService (Actor Model)", () => {
     ).toEqual(expected);
   });
 
-  test("attrs=null removes existing attrs and labels/numericValue are returned raw", async () => {
+  test("attrs=null removes existing attrs and labels/numericValue are returned", async () => {
     await runTask({
       type: "ADD",
       payload: {
@@ -602,17 +632,19 @@ describe("SearchService (Actor Model)", () => {
     ]);
   });
 
-  test("quoted phrases still require consecutive canonical tokens", async () => {
+  test("quoted phrases still require consecutive canonical body tokens with synthetic labels present", async () => {
     await runTask({
       type: "ADD",
-      payload: { docId: "phrase_yes", timestamp: 1000, bodyText: "hot dog", locale: "en", attrs: null, labels: [], numericValue: null },
+      payload: { docId: "phrase_yes", timestamp: 1000, bodyText: "hot dog", locale: "en", attrs: null, labels: ["owner:x"], numericValue: null },
     });
     await runTask({
       type: "ADD",
-      payload: { docId: "phrase_no", timestamp: 1000, bodyText: "hot red dog", locale: "en", attrs: null, labels: [], numericValue: null },
+      payload: { docId: "phrase_no", timestamp: 1000, bodyText: "hot red dog", locale: "en", attrs: null, labels: ["owner:x"], numericValue: null },
     });
 
-    expect(await searchIds('"hot dog"')).toEqual(["phrase_yes"]);
+    expect(
+      await searchIds('"hot dog"', "en", 100, 0, 1, { labels: ["owner:x"] }),
+    ).toEqual(["phrase_yes"]);
   });
 
   test("autoPhraseCheck enforces consecutive CJK tokens without positions", async () => {
@@ -654,7 +686,7 @@ describe("SearchService (Actor Model)", () => {
       const sql = buildSearchSql(0, "lte", true);
       expect(sql).not.toContain("json_each");
       const plan = await db.all<{ detail: string }>(`EXPLAIN QUERY PLAN ${sql}`, [
-        'labels : "Owner:ABC" AND tokens : (plan)',
+        '"\uE000LOwner:ABC" AND (plan)',
         10,
         10,
       ]);
@@ -667,7 +699,38 @@ describe("SearchService (Actor Model)", () => {
     }
   });
 
-  test("recordContents=false uses detail=column and supports overwrite/delete", async () => {
+  test("recordPositions=false keeps tokens/labels columns with detail=none", async () => {
+    await runTask({
+      type: "ADD",
+      payload: {
+        docId: "schema",
+        timestamp: 1000,
+        bodyText: "schema body",
+        locale: "en",
+        labels: ["owner:x"],
+        attrs: null,
+        numericValue: null,
+      },
+    });
+    const db = await Database.open(service.getIndexFilePath(1000));
+    try {
+      const schema = await db.get<{ sql: string }>(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='docs'",
+      );
+      expect(schema?.sql).toContain("detail = 'none'");
+      expect(schema?.sql).toMatch(/\blabels\b/);
+      const stored = await db.get<{ tokens: string; labels: string }>(
+        "SELECT tokens, labels FROM docs WHERE rowid = (SELECT internal_id FROM id_tuples WHERE external_id = ?)",
+        ["schema"],
+      );
+      expect(stored?.tokens).toBe("schema\nbody");
+      expect(stored?.labels).toBe("\uE000Lowner:x");
+    } finally {
+      await db.close();
+    }
+  });
+
+  test("recordContents=false uses detail=none and supports overwrite/delete", async () => {
     await service.close();
     service = new TestSearchService({ ...CONFIG, recordContents: false }, mockLogger);
     await service.open();
@@ -707,7 +770,8 @@ describe("SearchService (Actor Model)", () => {
       const schema = await db.get<{ sql: string }>(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='docs'",
       );
-      expect(schema?.sql).toContain("detail = 'column'");
+      expect(schema?.sql).toContain("detail = 'none'");
+      expect(schema?.sql).toMatch(/\blabels\b/);
       expect(schema?.sql).toContain("contentless_delete=1");
     } finally {
       await db.close();

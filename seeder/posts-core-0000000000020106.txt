@@ -248,7 +248,7 @@ CREATE VIRTUAL TABLE docs USING fts5(
   tokens,
   labels,
   tokenize = "unicode61 categories 'L* N* Co M* P* S*' remove_diacritics 0 tokenchars ' '",
-  detail = 'column'
+  detail = 'none'
 );
 ```
 
@@ -260,13 +260,17 @@ STGY_SEARCH_RECORD_CONTENTS
 STGY_SEARCH_AUTO_PHRASE_CHECK
 ```
 
-現在のenv.dev.txt、env.vps.txt、env.native.txt、env.hybrid.txtでは、``recordPositions=false``、``recordContents=true``、``autoPhraseCheck=false`` に設定している。そのため上記のスキーマ例では ``detail='column'`` となり、FTS5はcanonical token列を保持するが単語位置は記録しない。``recordPositions=true`` では ``detail='full'`` となり単語位置を記録する。``recordContents=false`` ではFTS5をcontentless構成（``content=''``、``contentless_delete=1``）にする。本文の ``tokens`` と探索空間を限定する ``labels`` は別列である。
+現在のenv.dev.txt、env.vps.txt、env.native.txt、env.hybrid.txtでは、``recordPositions=false``、``recordContents=true``、``autoPhraseCheck=false`` に設定している。そのため上記のスキーマ例では ``detail='none'`` となり、FTS5のposting listには文書IDだけを保持して列番号や単語位置を記録しない。``recordPositions=true`` では ``detail='full'`` となり単語位置を記録する。``recordContents=false`` ではFTS5をcontentless構成（``content=''``、``contentless_delete=1``）にする。本文の ``tokens`` と探索空間を限定する ``labels`` は従来どおり別列に保持するが、``recordPositions=false`` の検索では列指定を使わない。
+
+labelはFTS5へ登録する際に ``U+E000 + "L" + label`` というsynthetic tokenへ変換して ``labels`` 列へ保存する。U+E000はTTTS内部専用の予約文字であり、外部から与えられる本文・検索query・labelにU+E000が含まれる場合は、いずれもtokenizeやlabel正規化より前にU+0020 SPACEへ置換する。このため本文由来termとsynthetic label termは衝突しない。検索時は ``tokens:`` や ``labels:`` のcolumn filterを使わず、synthetic label条件と本文条件をtable-wideな一つの ``MATCH`` 式へ入れる。FTS5は同じtable内のposting listをAND交差できるため、``recordPositions=false`` ではcolumn情報を保存する必要がなく ``detail='none'`` を使える。一方、``recordContents=true`` では保存内容の ``tokens`` / ``labels`` 列は分離されたままなので、疑似フレーズ確認や本文取得では ``tokens`` 列だけを直接扱える。
+
+このsynthetic label形式は従来のraw labelを ``labels`` 列へ保存する形式との後方互換性を持たない。TTTSをこの形式へ更新する際は、既存検索インデックスをリセットし、PostgreSQLから再構築する。
 
 ``recordPositions`` と ``recordContents`` はシャード作成時に ``fts_meta`` へ記録される。既存シャードを開く際はenvの現在値ではなく ``fts_meta`` の値を使うため、運用中にenvを変更しても既存シャードの構造や検索semanticsは変わらない。設定変更を既存データにも適用する場合は、検索インデックスをリセットして新しい設定で再生成する必要がある。一方、``autoPhraseCheck`` は検索時だけに使う設定であり、インデックス形式を変更しないため ``fts_meta`` には保存しない。TTTSを新しいenvで再起動すれば既存シャードにも適用され、インデックスの再生成は不要である。
 
 外部IDは ``external_id``、FTS5のrowidは小さな整数の ``internal_id`` とする。新しい文書ほど小さいinternal_idを割り当て、``ORDER BY docs.rowid ASC`` で新しい文書から取得する。
 
-検索では ``docs CROSS JOIN id_tuples`` としてFTS5を外側ループに固定し、候補ごとに ``id_tuples`` をINTEGER PRIMARY KEYで参照する。FTS5式ではlabel条件を本文条件より先に置き、labelと本文のposting listを交差させる。labelはFTS5のcase-insensitiveな一致をそのまま採用し、``labels_json`` による再確認は行わない。``numeric_value`` は同じ候補に対するpredicateとして評価し、検索用B-tree indexは作らない。
+検索では ``docs CROSS JOIN id_tuples`` としてFTS5を外側ループに固定し、候補ごとに ``id_tuples`` をINTEGER PRIMARY KEYで参照する。FTS5式ではsynthetic label条件を本文条件より先に置き、column filterを使わないtable-wide MATCHの中でlabelと本文のposting listを交差させる。labelはFTS5のcase-insensitiveな一致をそのまま採用し、``labels_json`` による再確認は行わない。``numeric_value`` は同じ候補に対するpredicateとして評価し、検索用B-tree indexは作らない。
 
 ``EXPLAIN QUERY PLAN`` のテストで、FTS5走査→INTEGER PRIMARY KEY検索の順序と、``USE TEMP B-TREE`` が発生しないことを確認する。これにより、属性条件を追加しても新しい候補からLIMITまで走査して早期終了する構造を維持する。
 
@@ -279,6 +283,7 @@ TTTSは文書をそのままFTS5へ渡さず、Node.js側でトークナイズ�
 - UnicodeをNFKCで正規化する。
 - 英字を小文字にする。
 - 制御文字と不可視の書式文字を空白に置換する。
+- TTTS内部予約文字のU+E000をU+0020 SPACEへ置換する。
 - トークン内のダイアクリティカルマークを除去する。
 
 例えば、大文字小文字や全角半角の違いを吸収し、``Café`` は概ね ``cafe`` として登録される。
@@ -301,7 +306,9 @@ check-out → check, out
 24/7      → 24, 7
 ```
 
-FTS5側のunicode61設定では、句読点と記号に加えてU+0020 SPACEも ``tokenchars`` へ追加する。本文トークンとラベルに現れる印字文字とSPACEはterm内部に保持され、TTTSが内部表現として挿入したLFでtermが分かれる。これにより、アプリ側で作った ``c++`` やSPACEを含む一つの値をFTS5が再分割しない。FTS5の検索式において特別な意味を持つ文字を含むtermは、検索式を作る際に引用符で囲む。
+FTS5側のunicode61設定では、句読点と記号に加えてU+0020 SPACEも ``tokenchars`` へ追加する。本文トークンとsynthetic labelに現れる印字文字とSPACEはterm内部に保持され、TTTSが内部表現として挿入したLFでtermが分かれる。これにより、アプリ側で作った ``c++`` やSPACEを含む一つのlabelをFTS5が再分割しない。synthetic labelの先頭U+E000はPrivate Use文字（Co）なので、このunicode61設定ではtermの一部として保持される。FTS5の検索式において特別な意味を持つ文字を含むtermは、検索式を作る際に引用符で囲む。
+
+検索queryは空白区切りの入力単位を解釈する前にU+E000をSPACEへ置換する。このため、例えば ``foo<U+E000>bar`` は ``foo bar`` と同じ二つの入力単位として扱われ、positionsありの場合にも誤って一つのphraseにはならない。
 
 文書は、指定された実効ロケールで本文全体をトークナイズする。行ごとの言語判定は行わない。検索クエリでは、指定ロケールを優先候補として、文字種による簡単なロケール判定を行う。
 
@@ -335,7 +342,7 @@ Kuromojiが有効な環境では、概ね以下の結果になる。
 
 ``recordPositions=false`` かつ ``recordContents=true`` で ``autoPhraseCheck=true`` の場合は、漢字・ひらがな・カタカナ・ハングルのいずれかを含む引用符なしの一入力単位が複数トークンへ分割されたときにも、自動的にフレーズとして扱う。例えば ``脚本家`` が ``脚本``、``家`` へ分割された場合、FTS5では ``脚本 AND 家`` で候補を絞り、その後、保存済みcanonical token列に ``脚本\n家`` が連続して現れることを確認する。CJK文字を含まない入力単位にはこの自動判定を適用しない。デフォルトの ``autoPhraseCheck=false`` では従来どおりAND条件のままである。``recordContents=false`` では連続性を確認できないため、``autoPhraseCheck=true`` でもAND条件へ退化する。
 
-ダブルクォートは明示的なフレーズ指定であり、``detail=column`` かつ ``recordContents=true`` のシャードでは、複数トークンの引用フレーズをFTS5で候補絞り込みした後、保存済みcanonical token列で連続一致を確認する。引用フレーズは ``autoPhraseCheck`` の値に関係なく従来どおり処理する。
+ダブルクォートは明示的なフレーズ指定であり、``recordPositions=false`` かつ ``recordContents=true`` のシャードでは、複数トークンの引用フレーズをFTS5のAND条件で候補絞り込みした後、保存済み ``docs.tokens`` のcanonical token列で連続一致を確認する。synthetic labelは別の ``labels`` 列に保存されるため、疑似フレーズ確認には一切混入しない。引用フレーズは ``autoPhraseCheck`` の値に関係なく従来どおり処理する。
 
 OR、NOT、ワイルドカード、曖昧検索、関連語展開はUI上の検索構文として提供しない。検索クエリのトークン数は最大8個である。
 
@@ -343,7 +350,7 @@ OR、NOT、ワイルドカード、曖昧検索、関連語展開はUI上の検�
 
 ### labelsとnumeric_valueによる探索空間の限定
 
-各文書には、0個以上のopaqueな ``labels`` とnullableな汎用数値 ``numeric_value`` を持たせられる。labelは印字文字とU+0020 SPACEを含む任意文字列を一つのtermとして扱い、FTS5ではcase-insensitiveに一致する。複数labelはAND条件で、FTS5式ではlabel条件を本文条件より先に置く。数値条件は ``eq``、``gt``、``gte``、``lt``、``lte`` を使う。TTTSはそれらのアプリケーション上の意味を解釈しない。rawなlabelは ``labels_json`` に保持するが、検索時の再判定には使わない。
+各文書には、0個以上のopaqueな ``labels`` とnullableな汎用数値 ``numeric_value`` を持たせられる。labelは印字文字とU+0020 SPACEを含む任意文字列を一つのtermとして扱い、FTS5ではcase-insensitiveに一致する。外部入力のU+E000は内部予約文字なのでU+0020 SPACEへ正規化し、その正規化後labelを ``labels_json`` に保持する。FTS5の ``labels`` 列へは、さらに ``U+E000 + "L"`` を先頭に付けたsynthetic label tokenとして保存する。検索ではcolumn filterを使わず、このsynthetic label termを本文termと同じtable-wide MATCHへ入れる。複数labelはAND条件で、FTS5式ではlabel条件を本文条件より先に置く。数値条件は ``eq``、``gt``、``gte``、``lt``、``lte`` を使う。TTTSはそれらのアプリケーション上の意味を解釈しない。``labels_json`` による検索時の再判定は行わない。
 
 STGYの投稿では ``owner:<userId>`` をlabel、外部公開日時のepoch millisecondを ``numericValue`` とする。非公開はNULL、予約公開は未来日時である。ログイン検索では ``owner:<userId>`` / ``owner:me`` をlabel条件、``status:published`` を ``numeric_value <= now`` へ変換する。
 
@@ -453,7 +460,7 @@ curl -i -X PUT 'http://localhost:3200/posts/19F998DD11300000' \
   }'
 ```
 
-PUTの ``attrs``、``labels``、``numericValue`` は完全snapshotを構成する必須フィールドである。PUTは部分更新ではなく、その文書の最新状態を表す完全snapshotとして扱う。TTTS内部のdocument queueにも同じ完全snapshotを保存し、SQLiteへ反映する直前にだけ現在値との差分を調べる。``recordContents=true`` ならcanonical token列が同一の本文はFTS5を書き換えず、``recordContents=false`` では本文を常に新旧不一致とみなしてFTS5を再反映する。``attrs=null``、``labels=[]``、``numericValue=null`` も明示的な現在状態である。
+PUTの ``attrs``、``labels``、``numericValue`` は完全snapshotを構成する必須フィールドである。PUTは部分更新ではなく、その文書の最新状態を表す完全snapshotとして扱う。TTTS内部のdocument queueにも同じ完全snapshotを保存し、SQLiteへ反映する直前にだけ現在値との差分を調べる。``recordContents=true`` なら本文のcanonical ``tokens`` 列とsynthetic化した ``labels`` 列がともに同一ならFTS5を書き換えず、``recordContents=false`` では本文を常に新旧不一致とみなしてFTS5を再反映する。``attrs=null``、``labels=[]``、``numericValue=null`` も明示的な現在状態である。
 
 検索APIでは、``label`` を複数回指定するとAND条件になり、``numericOp`` と ``numericValue`` を組にして数値filterを指定できる。例えば ``?label=owner%3A0000000000020101&numericOp=lte&numericValue=1780000000000`` のように使う。これらのfilterは通常の全文検索queryを絞り込むためのものであり、TTTSでは引き続き空でない本文queryを必須とする。
 
