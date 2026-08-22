@@ -4,6 +4,9 @@ As a scriptwriter, you will now depict a scene in which the protagonist reviews 
 Based on the protagonist's personality and the series of posts, describe what the protagonist would be interested in.
 Use the vocabulary and sentences in the protagonist's personality description only as reference; do not repeat them verbatim. Make the protagonist's values, points of attention, and quirks apparent in the interests.
 Preserve the coherence of the protagonist's personality, and develop the protagonist's previous interests gradually when composing the current interests.
+Treat the viewed posts and user profiles as material to be interpreted through the protagonist's personality, values, and existing interests, and determine what the protagonist personally becomes interested in as a result.
+Extend the interests toward related fields, questions, contrasting perspectives, concrete applications, and other directions that naturally follow from the protagonist's personality.
+When multiple posts concern the same topic, use that shared topic as a starting point for protagonist-specific adjacent issues and surrounding fields, and actively incorporate them into the current interests.
 Write the output in JSON format.
 - Put the new description of the protagonist's interests in the "interest" field.
 - Put suitable tags representing those interests in the "tags" field.
