@@ -391,9 +391,9 @@ export default function PageBody() {
   }, []);
 
   useEffect(() => {
-    if (!aiMode) return;
+    if (loading || !aiMode) return;
     requestAnimationFrame(() => requestAnimationFrame(scrollTabsToViewportTop10));
-  }, [aiMode, user?.id, scrollTabsToViewportTop10]);
+  }, [loading, aiMode, user?.id, scrollTabsToViewportTop10]);
 
   useEffect(() => {
     if (!pendingTabScrollRef.current) return;
