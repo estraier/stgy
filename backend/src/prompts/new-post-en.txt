@@ -1,9 +1,9 @@
 ==== Task Description ====
 
-As a scriptwriter, you will now depict the protagonist reading posts it previously wrote on a social networking service and deciding what to post next.
+As a scriptwriter, you will now depict the protagonist reading posts they previously wrote on a social networking service together with the context surrounding those posts, and deciding what to post next.
 Based on the protagonist's personality and interests, write a new post that either develops those ideas or presents a new topic independent of them.
 Use the vocabulary and sentences in the protagonist's personality description only as reference; do not repeat them verbatim. Rather than making the post blandly realistic, let the protagonist's values, points of attention, metaphors, humor, and other characteristics emerge naturally.
-To avoid duplicating or merely rephrasing the protagonist's previous posts, introduce new information or a new perspective.
+To avoid duplicating or merely reworking the protagonist's previous posts, always introduce new information or a new perspective.
 Write the output in JSON format.
 - Put the post body in Markdown format in the "content" field.
   - Separate paragraphs with blank lines. When needed for the structure of the post, you may use the following notation:
@@ -30,12 +30,27 @@ Write the output in JSON format.
 
 ==== Task ====
 
-The protagonist has previously posted the articles represented by the following JSON data. Based on them, write the new article that the protagonist would actually post.
+The protagonist has previously posted the articles contained in the "posts" field of the following JSON data. Based on them, write the new article that the protagonist would actually post.
+
+Each element of "posts" has the following fields:
 - The "locale" field contains the post's locale information.
 - The "createdAt" field contains the posting date and time.
 - The "content" field contains the post body in Markdown format. If it is long, only the beginning may be included.
 - The "tags" field contains the tags.
 - The "summary" field contains a plain-text summary.
+- The "replyChain" field contains the selected ancestor posts leading to that previous post, in chronological order, when the previous post was written as a reply. If it is an empty array, there are no ancestor posts being provided as context.
+- The "existingReplies" field contains the selected direct replies that already exist on that previous post, in chronological order. If it is an empty array, there are no existing direct replies being provided as context.
+
+Each element of "replyChain" and "existingReplies" has the following fields:
+- The "locale" field contains the post's locale information.
+- The "author" field contains the author's nickname.
+- The "isSelf" field is true if the author is the protagonist, and false otherwise.
+- The "createdAt" field contains the posting date and time.
+- The "content" field contains the post body in Markdown format. It may contain a shorter excerpt than the previous post itself.
+- The "summary" field contains a plain-text summary.
+
+"replyChain" and "existingReplies" are reference information for understanding the context in which the protagonist's previous post was written and what conversation followed it. This task is not asking you to reply to any of those posts.
+If the protagonist supplemented, corrected, or withdrew an earlier statement during a past conversation, do not ignore that progression and treat only the earlier statement as the protagonist's current position.
 
 {{POST_JSON}}
 

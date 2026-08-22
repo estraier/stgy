@@ -70,6 +70,18 @@ type PeerImpressionPayload = {
   tags: string[];
 };
 
+type ReplyContextPost = {
+  locale: string;
+  author: string;
+  isSelf: boolean;
+  createdAt: string;
+  content: string;
+  summary: string;
+};
+
+const NEW_POST_REPLY_CONTEXT_LIMIT = 2;
+const NEW_POST_REPLY_CONTEXT_TEXT_LIMIT = 1000;
+
 type PostImpressionDecision = {
   shouldLike: boolean;
   shouldReply: boolean;
@@ -818,6 +830,106 @@ async function fetchPostById(sessionCookie: string, postId: string): Promise<Pos
   return JSON.parse(res.body) as PostDetail;
 }
 
+async function fetchReplyChain(
+  sessionCookie: string,
+  selfUserId: string,
+  fallbackLocale: string,
+  post: PostDetail,
+  limit = Config.AI_USER_REPLY_CHAIN_LIMIT,
+  contentTextLimit = Config.AI_USER_REPLY_CHAIN_POST_TEXT_LIMIT,
+): Promise<ReplyContextPost[]> {
+  if (limit <= 0) return [];
+
+  const posts: PostDetail[] = [];
+  const seen = new Set<string>([post.id]);
+  let replyTo = post.replyTo;
+
+  while (replyTo && posts.length < limit) {
+    if (seen.has(replyTo)) {
+      logger.info(`Stop cyclic reply chain postId=${post.id} replyTo=${replyTo}`);
+      break;
+    }
+    seen.add(replyTo);
+    try {
+      const parent = await fetchPostById(sessionCookie, replyTo);
+      posts.push(parent);
+      replyTo = parent.replyTo;
+    } catch (e) {
+      logger.info(
+        `Stop reply chain fetch postId=${post.id} replyTo=${replyTo}: ${truncateForLog(e, 50)}`,
+      );
+      break;
+    }
+  }
+
+  posts.reverse();
+  const result: ReplyContextPost[] = [];
+  for (const item of posts) {
+    const postSummary = await fetchPostSummary(sessionCookie, item.id);
+    const rawSummary = postSummary.summary ?? "";
+    result.push({
+      locale: (item.locale || item.ownerLocale || fallbackLocale).replaceAll(/_/g, "-"),
+      author: item.ownerNickname,
+      isSelf: item.ownedBy === selfUserId,
+      createdAt: item.createdAt,
+      content: truncateText(item.content, contentTextLimit),
+      summary: rawSummary ? truncateText(rawSummary, Config.AI_USER_POST_TEXT_LIMIT) : "",
+    });
+  }
+  return result;
+}
+
+async function fetchExistingRepliesToPost(
+  sessionCookie: string,
+  selfUserId: string,
+  fallbackLocale: string,
+  postId: string,
+  limit = Config.AI_USER_EXISTING_REPLIES_TO_POST_LIMIT,
+  contentTextLimit = Config.AI_USER_EXISTING_REPLIES_TO_POST_TEXT_LIMIT,
+): Promise<ReplyContextPost[]> {
+  if (limit <= 0) return [];
+
+  const params = new URLSearchParams();
+  params.set("offset", "0");
+  params.set("limit", String(limit));
+  params.set("order", "desc");
+  params.set("replyTo", postId);
+  const res = await apiRequest(sessionCookie, `/posts?${params.toString()}`, { method: "GET" });
+  const parsed = JSON.parse(res.body) as unknown;
+  if (!Array.isArray(parsed)) return [];
+
+  const ids = (parsed as Post[])
+    .map((item) => item.id)
+    .filter((id): id is string => typeof id === "string" && id.trim() !== "");
+  const viewableIds = await filterAiViewablePostIds(selfUserId, ids);
+  const posts: PostDetail[] = [];
+  for (const id of viewableIds) {
+    try {
+      posts.push(await fetchPostById(sessionCookie, id));
+    } catch (e) {
+      logger.info(
+        `Skip existing reply fetch postId=${postId} replyId=${id}: ${truncateForLog(e, 50)}`,
+      );
+    }
+  }
+
+  posts.reverse();
+  const result: ReplyContextPost[] = [];
+  for (const item of posts) {
+    const postSummary = await fetchPostSummary(sessionCookie, item.id);
+    const rawSummary = postSummary.summary ?? "";
+    result.push({
+      locale: (item.locale || item.ownerLocale || fallbackLocale).replaceAll(/_/g, "-"),
+      author: item.ownerNickname,
+      isSelf: item.ownedBy === selfUserId,
+      createdAt: item.createdAt,
+      content: truncateText(item.content, contentTextLimit),
+      summary: rawSummary ? truncateText(rawSummary, Config.AI_USER_POST_TEXT_LIMIT) : "",
+    });
+  }
+  return result;
+}
+
 type AiViewablePostRow = { post_id: string };
 
 async function filterAiViewablePostIds(
@@ -1264,7 +1376,22 @@ async function replyToPost(
     impressionTags,
     peerImpression: peerImpressionText,
   };
-  const postJson = JSON.stringify(postExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
+  const postPromptInput = {
+    replyChain: await fetchReplyChain(
+      userSessionCookie,
+      profile.id,
+      profile.locale,
+      post,
+    ),
+    post: { ...postExcerpt, isSelf: post.ownedBy === profile.id },
+    existingReplies: await fetchExistingRepliesToPost(
+      userSessionCookie,
+      profile.id,
+      profile.locale,
+      post.id,
+    ),
+  };
+  const postJson = JSON.stringify(postPromptInput, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
   let maxChars = fluctuatePostLength(Config.AI_USER_REPLY_LENGTH);
   let tagChars = Config.AI_TAG_MAX_LENGTH;
   let tagNum = Math.max(2, Config.AI_USER_NEW_POST_TAGS);
@@ -1390,7 +1517,16 @@ async function createPostImpression(
     peerImpression: peerImpressionText,
     peerTags,
   };
-  const postJson = JSON.stringify(postExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
+  const postPromptInput = {
+    replyChain: await fetchReplyChain(
+      userSessionCookie,
+      profile.id,
+      profile.locale,
+      post,
+    ),
+    post: { ...postExcerpt, isSelf: post.ownedBy === profile.id },
+  };
+  const postJson = JSON.stringify(postPromptInput, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
   let maxChars = Config.AI_USER_IMPRESSION_LENGTH;
   let tagChars = Config.AI_TAG_MAX_LENGTH;
   if (
@@ -1882,6 +2018,8 @@ async function createNewPost(
     content: string;
     tags: string[];
     summary: string;
+    replyChain?: ReplyContextPost[];
+    existingReplies?: ReplyContextPost[];
   }[] = [];
   for (const p of seedPosts) {
     const postLocale = (p.locale || p.ownerLocale || profile.locale).replaceAll(/_/g, "-");
@@ -1892,12 +2030,31 @@ async function createNewPost(
         ? truncateText(postSummary.summary, Config.AI_USER_POST_TEXT_LIMIT)
         : "";
     const tags = parseTagsField(postSummary.tags, Config.AI_TAG_MAX_COUNT);
+    const postContext = {
+      replyChain: await fetchReplyChain(
+        userSessionCookie,
+        profile.id,
+        profile.locale,
+        p,
+        NEW_POST_REPLY_CONTEXT_LIMIT,
+        NEW_POST_REPLY_CONTEXT_TEXT_LIMIT,
+      ),
+      existingReplies: await fetchExistingRepliesToPost(
+        userSessionCookie,
+        profile.id,
+        profile.locale,
+        p.id,
+        NEW_POST_REPLY_CONTEXT_LIMIT,
+        NEW_POST_REPLY_CONTEXT_TEXT_LIMIT,
+      ),
+    };
     posts.push({
       locale: postLocale,
       createdAt: p.createdAt,
       content: contentText,
       tags,
       summary: summaryText,
+      ...postContext,
     });
   }
   const postExcerpt = { posts };

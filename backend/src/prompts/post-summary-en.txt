@@ -8,6 +8,7 @@ Output must be in JSON format.
 
 - Put the summary text in the "summary" field.
   - Do not add any preface or explanation such as "This post is…". Summarize the content directly.
+  - Compress the important information from the entire range provided as "content", and do not bias the summary toward only the topic at the beginning.
   - If only the beginning of the content is shown, you do not need to mention that it is an excerpt.
 - Put tags that represent the post in the "tags" field.
   - Use at least one tag from the Nippon Decimal Classification (NDC).
@@ -15,7 +16,7 @@ Output must be in JSON format.
       - Examples: 000:General Works, 100:Philosophy, 200:History, 300:Social Sciences, 400:Natural Sciences, 500:Technology, 500:Engineering, 600:Industry, 700:The Arts, 700:Fine Arts, 800:Language, 900:Literature
       - Some official labels are compound labels such as "Technology. Engineering" where terms are separated by a period. In that case, pick one of them.
         - Examples: 500:Engineering, 700:Fine Arts
-    - If more suitable narrower categories exist, use them; Avoid the top categories if possible.
+    - If more suitable narrower categories exist, use them; avoid the top categories if possible.
       - Examples: 140:Psychology, 007:Information Science, 240:History of Africa, 326:Criminal Law
       - The top-level NDC classes (000/100/200/300/400/500/600/700/900) should be used only when it is not possible to identify a more specific lower-level class.
     - If a more suitable decimal subdivision exists, use it and write only its final label after the colon.
@@ -30,22 +31,22 @@ Output must be in JSON format.
 ==== Task ====
 
 You have just viewed the post represented by the following JSON data.
-- The "locale" attribute contains the post’s locale information.
-- The "author" attribute contains the author’s nickname.
-- The "content" attribute contains the post body in Markdown format. If it is long, only the beginning may be included.
+- The "locale" attribute contains the post's locale information.
+- The "author" attribute contains the author's nickname.
+- The "content" attribute contains the post body in Markdown format. If the post is extremely long, a certain range from the beginning is included. Treat the entire provided range as the subject of the summary.
 
 {{POST_JSON}}
 
 Notes:
-- Write the summary in plain text (no decorative characters) in approximately {{MAX_CHARS}} characters.
-- The number of tags must be between 2 and {{TAG_NUM}} (inclusive). Each tag must be within {{TAG_CHARS}} characters.
-- The number of keywords must be 10 or less. If there's no proper keyword, set an empty array.
-- The language (locale) of the output summary, the NDC tags, and the other tags must be {{LOCALE}}.
+- Write the summary in plain text without decorative characters, in approximately {{MAX_CHARS}} characters.
+- The number of tags must be between 2 and {{TAG_NUM}} inclusive. Each tag must be within {{TAG_CHARS}} characters.
+- The number of keywords must be 10 or less. If there is no suitable keyword, use an empty array.
+- The language and locale of the output summary, NDC labels, other tags, and keywords must be {{LOCALE}}.
 
 Example output:
 {
   "summary": "... (summary sentences in approximately {{MAX_CHARS}} characters) ...",
-  "tags": ["440:Astronomy", "444:Sun", "Quasar", "Summer constellations", "Certification exam"],
+  "tags": ["440:Astronomy", "444:Solar physics", "Quasar", "Summer constellations", "Certification exam"],
   "keywords": ["planetarium", "sun", "solar flare", "sunspot", "prominence", "Summer Triangle", "redshift"]
 }
 

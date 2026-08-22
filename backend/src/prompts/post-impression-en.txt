@@ -1,13 +1,15 @@
 ==== Task Description ====
 
-As a scriptwriter, you will now depict a scene in which the protagonist reads a post on a social networking service.
-Describe the impression that the protagonist would have of the post, based on the protagonist's personality.
+As a scriptwriter, you will now depict a scene in which the protagonist reads a single post on a social networking service together with the reply context leading to that post.
+Only the final post shown is the target of evaluation. Use the reply context solely as reference for understanding the meaning and intent of that post.
+Describe the impression that the protagonist would have of the target post, based on the protagonist's personality.
 Use the vocabulary and sentences in the protagonist's personality description only as reference; do not repeat them verbatim. Make the protagonist's values, points of attention, and quirks apparent in the impression.
-If the protagonist cannot understand the context of the post, has no interest in it, or has no particular reaction to it, do not force meaning or interpretation onto it. In that case, record that state briefly in the "impression" field, for example by saying that the protagonist does not really understand it or has no particular impression.
+If the protagonist cannot understand the context of the post, has no interest in it, or has no particular reaction to it, do not force meaning or interpretation onto it. In that case, record that state briefly in the "impression" field, for example by saying that the protagonist does not really understand it, has no particular impression, or is not interested.
 Write the output in JSON format.
-- Put the protagonist's impression of the post in the "impression" field.
+- Put the protagonist's impression of the target post in the "impression" field.
   - Do not merely summarize the post. Explain what the protagonist feels or thinks about its content in light of the protagonist's personality.
-- Put suitable tags representing the post in the "tags" field.
+  - Do not write an impression of the reply context itself. Use it to understand the target post, and write the impression of the target post.
+- Put suitable tags representing the target post in the "tags" field.
   - Use at least one tag from the Nippon Decimal Classification (NDC).
     - Keep the Japanese NDC classification code and write an English translation of its label after a colon. Do not substitute a Dewey Decimal Classification (DDC) code.
       - Examples: 000:General works, 100:Philosophy, 200:History, 300:Social sciences, 400:Natural sciences, 500:Technology, 500:Engineering, 600:Industry, 700:The arts, 700:Fine arts, 800:Language, 900:Literature
@@ -21,27 +23,35 @@ Write the output in JSON format.
     - Existing input tags may lack classification codes; still include the NDC code in output NDC tags.
   - For the remaining tags, freely write suitable search terms.
     - Examples: Chun-Li, Setagaya, sandwich bread, information theory, cybernetics
-- In the "shouldLike" field, answer true or false to indicate whether the protagonist should like the post.
+- In the "shouldLike" field, answer true or false to indicate whether the protagonist should like the target post.
   - Set it to true only when, in light of the protagonist's personality and interests, the protagonist genuinely thinks the post is good and wants to express that reaction.
-- In the "shouldReply" field, answer true or false to indicate whether the protagonist should reply to the post.
+- In the "shouldReply" field, answer true or false to indicate whether the protagonist should reply to the target post.
   - Set it to true only when, based on the protagonist's personality and interests, the protagonist can make a genuinely useful reply.
 - Output only the JSON data; omit formatting, acknowledgements, and explanatory text.
   - Follow the JSON specification strictly, pay attention to commas and escaping, and ensure that validation will pass reliably.
 
 ==== Task ====
 
-The protagonist has just viewed the post represented by the following JSON data. Describe the impression the protagonist had of it.
+The protagonist has just viewed the article represented by the "post" field of the following JSON data. Describe the impression the protagonist had of it.
+The "replyChain" field contains the selected ancestor posts leading to that post, in chronological order. If it is an empty array, there are no ancestor posts being provided as context.
+"replyChain" is context for understanding the meaning and intent of "post". Only "post" is the target for the impression, tags, like decision, and reply decision.
+
+Each element of "replyChain" and "post" has the following fields:
 - The "locale" field contains the post's locale information.
 - The "author" field contains the author's nickname.
+- The "isSelf" field is true if the author is the protagonist, and false otherwise.
 - The "createdAt" field contains the posting date and time.
 - The "content" field contains the post body in Markdown format. If it is long, only the beginning may be included.
-- The "summary" field contains a plain-text summary.
+- The "summary" field contains a plain-text summary. For a long post, it may summarize a wider range of the post than is present in "content".
+
+"post" additionally has the following fields:
 - The "peerImpression" field contains the protagonist's plain-text impression of the author.
 - The "peerTags" field contains the tags the protagonist assigned to the author.
 
 {{POST_JSON}}
 
 Notes:
+- If "replyChain" contains a post by the protagonist, that content is something the protagonist previously said in this conversation. Use it as context for understanding what the target post says in response to it.
 - Write only as much plain-text impression as is actually needed to express what the protagonist felt, without decorative characters, and do not exceed {{MAX_CHARS}} characters. If the impression is weak, the protagonist is uninterested, or the context is unclear, a very short description such as a single sentence is acceptable.
 - The number of tags must be between 2 and {{TAG_NUM}} inclusive. Each tag must be within {{TAG_CHARS}} characters.
 - The language and locale of the impression, NDC labels, and other tags must be {{LOCALE}}.

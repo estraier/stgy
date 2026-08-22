@@ -1,14 +1,16 @@
 ==== Task Description ====
 
-As a scriptwriter, you will now depict a scene in which the protagonist reads a post on a social networking service and replies to it.
-Based on the content of the original post and the protagonist's personality and interests, write the content of the reply that the protagonist would actually post.
+As a scriptwriter, you will now depict a scene in which the protagonist reads an ongoing conversation on a social networking service and replies to one post in it.
+Based on the content of the target post, the reply context leading to it, the direct replies that already exist on it, and the protagonist's personality and interests, write the content of the reply that the protagonist would actually post.
 Use the vocabulary and sentences in the protagonist's personality description only as reference; do not repeat them verbatim. Rather than smoothing the reply into bland agreement with the other person, let the protagonist's values, points of attention, metaphors, humor, and other characteristics emerge naturally.
+If the reply context contains the protagonist's own previous posts, do not ignore them and reply as though the protagonist were encountering the topic for the first time. If the protagonist's view has changed or the protagonist is correcting an earlier statement, make that change natural in the flow of the conversation.
+It is acceptable to express the same opinion as an existing reply, but do not unnecessarily repeat the same point as though it were a new discovery while ignoring the replies that are already there.
 Write the output in JSON format.
 - Put the reply body in Markdown format in the "content" field.
   - Separate paragraphs with blank lines. When needed for the structure of the reply, you may use the following notation:
     - Start a line with "# " or "## " for a heading.
       - If the reply has a title, a level-1 heading is recommended. A short reply does not need a title.
-      - Because the topic is usually clear from the original post, most replies should not need a heading.
+      - Because the topic is usually clear in a reply post, most replies should not need a heading.
     - Start a line with "- " for a list item.
     - Surround a phrase with "**" for emphasis.
   - Use this notation only when needed. Do not add headings, lists, or emphasis unnaturally.
@@ -31,13 +33,21 @@ Write the output in JSON format.
 
 ==== Task ====
 
-The protagonist has just viewed the post represented by the following JSON data. Write the reply that the protagonist would actually post.
+The protagonist is now about to reply to the article represented by the "post" field of the following JSON data.
+The "replyChain" field contains the selected ancestor posts leading to "post", in chronological order. If it is an empty array, there are no ancestor posts being provided as context.
+The "existingReplies" field contains the selected direct replies that already exist on "post", in chronological order. If it is an empty array, there are no existing direct replies being provided as context.
+"replyChain" is context for understanding the conversational flow in which "post" was written. "existingReplies" is context for understanding what other participants or the protagonist have already said in response to "post". The only target of the new reply is "post".
+
+Each element of "replyChain", "post", and "existingReplies" has the following fields:
 - The "locale" field contains the post's locale information.
 - The "author" field contains the author's nickname.
+- The "isSelf" field is true if the author is the protagonist, and false otherwise.
 - The "createdAt" field contains the posting date and time.
 - The "content" field contains the post body in Markdown format. If it is long, only the beginning may be included.
-- The "tags" field contains the tags assigned by the author.
 - The "summary" field contains a plain-text summary.
+
+"post" additionally has the following fields:
+- The "tags" field contains the tags assigned by the author.
 - The "impression" field contains the protagonist's impression of the post.
 - The "impressionTags" field contains the tags the protagonist assigned to the post.
 - The "peerImpression" field contains the protagonist's impression of the author.
@@ -45,6 +55,9 @@ The protagonist has just viewed the post represented by the following JSON data.
 {{POST_JSON}}
 
 Notes:
+- If "replyChain" contains a post by the protagonist, that content is something the protagonist previously said in this conversation. Take that statement into account when composing the current reply.
+- If "existingReplies" contains a post by the protagonist, the protagonist has already replied to this post. Do not unknowingly repeat the same content; write the current reply in light of what the protagonist has already said.
+- You may agree with existing replies, develop points already raised, or disagree when appropriate. Do not make being different from existing replies an objective in itself.
 - Write the reply body in Markdown format in approximately {{MAX_CHARS}} characters.
 - The number of tags must be between 2 and {{TAG_NUM}} inclusive. Each tag must be within {{TAG_CHARS}} characters.
 - The language and locale of the reply body, NDC labels, and other tags must be {{LOCALE}}.
