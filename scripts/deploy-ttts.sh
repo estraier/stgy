@@ -9,7 +9,7 @@ CFG_SEARCH_INDEX_DIR_NAME=data
 CFG_ENABLE_KUROMOJI=true
 CFG_RECORD_POSITIONS="${STGY_SEARCH_RECORD_POSITIONS:-false}"
 CFG_RECORD_CONTENTS="${STGY_SEARCH_RECORD_CONTENTS:-true}"
-CFG_AUTO_PHRASE_CHECK="${STGY_SEARCH_AUTO_PHRASE_CHECK:-false}"
+CFG_AUTO_PHRASE_CHECK="${STGY_SEARCH_AUTO_PHRASE_CHECK:-true}"
 # =======================================================================
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

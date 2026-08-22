@@ -5,7 +5,7 @@ const DEFAULT_INDEX_DIR = path.join(process.cwd(), "search-index");
 const COMMON_INDEX_DIR = envStr("STGY_SEARCH_INDEX_DIR", DEFAULT_INDEX_DIR);
 const RECORD_POSITIONS = envBool("STGY_SEARCH_RECORD_POSITIONS", false);
 const RECORD_CONTENTS = envBool("STGY_SEARCH_RECORD_CONTENTS", true);
-const AUTO_PHRASE_CHECK = envBool("STGY_SEARCH_AUTO_PHRASE_CHECK", false);
+const AUTO_PHRASE_CHECK = envBool("STGY_SEARCH_AUTO_PHRASE_CHECK", true);
 
 export class Config {
   static readonly SERVER_PORT = envNum("STGY_SEARCH_PORT", 3200);

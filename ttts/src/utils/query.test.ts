@@ -71,7 +71,7 @@ describe("makeFtsQuery", () => {
     expect(result.phrases).toEqual(["c++"]);
   });
 
-  test("tokenizes Japanese compound words into AND query without positions", async () => {
+  test("does not auto-check Japanese compound words when autoPhraseCheck is omitted", async () => {
     const result = await makeFtsQuery("電子ピアノ", "ja", 10, false);
     expect(result.ftsQuery).toBe("電子 AND ピアノ");
     expect(result.filteringPhrases).toEqual([]);
@@ -127,12 +127,12 @@ describe("makeFtsQuery", () => {
     expect(result.phrases).toEqual(["インストール", "設定"]);
   });
 
-  test("returns the actual Japanese tokens and complete KWIC phrase units", async () => {
-    const result = await makeFtsQuery("インストールや設定作業", "ja", 10, false);
+  test("returns the actual Japanese tokens and the auto-checked KWIC phrase", async () => {
+    const result = await makeFtsQuery("インストールや設定作業", "ja", 10, false, true, true);
     expect(result.ftsQuery).toBe("インストール AND や AND 設定 AND 作業");
-    expect(result.filteringPhrases).toEqual([]);
+    expect(result.filteringPhrases).toEqual(["インストール\nや\n設定\n作業"]);
     expect(result.tokens).toEqual(["インストール", "や", "設定", "作業"]);
-    expect(result.phrases).toEqual(["インストール", "や", "設定", "作業"]);
+    expect(result.phrases).toEqual(["インストールや設定作業"]);
   });
 
   test("returns an unquoted Japanese compound as one phrase when positions are available", async () => {
