@@ -252,16 +252,17 @@ CREATE VIRTUAL TABLE docs USING fts5(
 );
 ```
 
-``recordPositions`` and ``recordContents`` are configurable through environment variables.
+``recordPositions``, ``recordContents``, and ``autoPhraseCheck`` are configurable through environment variables.
 
 ```text:small
 STGY_SEARCH_RECORD_POSITIONS
 STGY_SEARCH_RECORD_CONTENTS
+STGY_SEARCH_AUTO_PHRASE_CHECK
 ```
 
-The current env.dev.txt, env.vps.txt, env.native.txt, and env.hybrid.txt set ``recordPositions=false`` and ``recordContents=true``. The schema example above therefore uses ``detail='column'``: FTS5 retains the canonical token sequence but does not record token positions. With ``recordPositions=true``, TTTS uses ``detail='full'`` and records token positions. With ``recordContents=false``, TTTS creates the FTS5 table as contentless (``content=''`` and ``contentless_delete=1``). Body ``tokens`` and search-space ``labels`` are separate columns.
+The current env.dev.txt, env.vps.txt, env.native.txt, and env.hybrid.txt set ``recordPositions=false``, ``recordContents=true``, and ``autoPhraseCheck=false``. The schema example above therefore uses ``detail='column'``: FTS5 retains the canonical token sequence but does not record token positions. With ``recordPositions=true``, TTTS uses ``detail='full'`` and records token positions. With ``recordContents=false``, TTTS creates the FTS5 table as contentless (``content=''`` and ``contentless_delete=1``). Body ``tokens`` and search-space ``labels`` are separate columns.
 
-These two values are recorded in ``fts_meta`` when a shard is created. When an existing shard is opened, TTTS uses the values in ``fts_meta`` rather than the current environment, so changing the environment does not alter the structure or search semantics of existing shards. To apply a changed setting to existing data, reset the search index and regenerate it with the new settings.
+``recordPositions`` and ``recordContents`` are recorded in ``fts_meta`` when a shard is created. When an existing shard is opened, TTTS uses the values in ``fts_meta`` rather than the current environment, so changing the environment does not alter the structure or search semantics of existing shards. To apply either changed setting to existing data, reset the search index and regenerate it with the new settings. ``autoPhraseCheck``, by contrast, is a query-time option that does not change the index format and is not stored in ``fts_meta``. Restarting TTTS with a different value applies it to existing shards without rebuilding the index.
 
 External IDs are stored in ``external_id`` and FTS5 rowid uses a small integer ``internal_id``. Newer documents receive smaller internal IDs, so ``ORDER BY docs.rowid ASC`` yields newer documents first.
 
@@ -330,11 +331,15 @@ With Kuromoji enabled, the result is approximately as follows.
 
 ## Search Query Semantics
 
-Each whitespace-delimited input unit is tokenized independently. On ``recordPositions=true`` shards, if one such unit becomes multiple tokens, those tokens are searched as one positional phrase even without double quotes. Thus if ``インストールや設定作業`` becomes the internal tokens ``インストール``, ``や``, ``設定`` and ``作業``, the search still requires them to be consecutive. Separate whitespace-delimited units remain AND conditions. Double quotes explicitly request a phrase; on ``detail=column`` shards with ``recordContents=true``, a quoted multi-token phrase first narrows candidates with FTS5 and then checks the stored canonical token sequence for consecutive tokens.
+Each whitespace-delimited input unit is tokenized independently. On ``recordPositions=true`` shards, if one such unit becomes multiple tokens, those tokens are searched as one positional phrase even without double quotes. Thus if ``インストールや設定作業`` becomes the internal tokens ``インストール``, ``や``, ``設定`` and ``作業``, the search still requires them to be consecutive. Separate whitespace-delimited units remain AND conditions.
+
+When ``recordPositions=false``, ``recordContents=true``, and ``autoPhraseCheck=true``, an unquoted input unit containing Han, hiragana, katakana, or Hangul is also treated automatically as a phrase when it yields multiple tokens. For example, if ``脚本家`` becomes ``脚本`` and ``家``, FTS5 first narrows candidates with ``脚本 AND 家`` and TTTS then requires ``脚本\n家`` to occur consecutively in the stored canonical token sequence. The automatic check is not applied to input units containing only non-CJK scripts. With the default ``autoPhraseCheck=false``, the tokens retain ordinary AND semantics. If ``recordContents=false``, consecutive-token verification is impossible, so the query falls back to AND even when ``autoPhraseCheck=true``.
+
+Double quotes explicitly request a phrase. On ``detail=column`` shards with ``recordContents=true``, a quoted multi-token phrase first narrows candidates with FTS5 and then checks the stored canonical token sequence for consecutive tokens. Quoted phrases keep this behavior regardless of ``autoPhraseCheck``.
 
 The UI does not provide OR, NOT, wildcard, fuzzy, or related-term expansion. A search query may contain at most eight tokens.
 
-Both ``GET /{resource}/search`` and ``GET /{resource}/search-fetch`` return a top-level object with ``tokens``, ``phrases`` and ``result``. ``tokens`` is the normalized minimal content-token sequence that TTTS actually used to build the FTS5 query, after the query token limit has been applied and before FTS5 quoting or AND/phrase serialization. ``phrases`` is the complete sequence of search units for downstream presentation such as KWIC. Every effective term appears there: a one-token term is copied as one phrase, while multiple tokens that are actually constrained to be consecutive are represented by one phrase string. For example, a non-positional search for ``インストールや設定作業`` may return ``tokens = ["インストール", "や", "設定", "作業"]`` and the same four strings in ``phrases``; a positional search for the same input may return ``tokens = ["インストール", "や", "設定", "作業"]`` but ``phrases = ["インストールや設定作業"]``. Order and duplicates are preserved. Label and numeric filters are not included. ``result`` contains document IDs for ``search`` and fetched TTTS documents for ``search-fetch``. Empty search results still return both lists.
+Both ``GET /{resource}/search`` and ``GET /{resource}/search-fetch`` return a top-level object with ``tokens``, ``phrases`` and ``result``. ``tokens`` is the normalized minimal content-token sequence that TTTS actually used to build the FTS5 query, after the query token limit has been applied and before FTS5 quoting or AND/phrase serialization. ``phrases`` is the complete sequence of search units for downstream presentation such as KWIC. Every effective term appears there: a one-token term is copied as one phrase, while multiple tokens that are actually constrained to be consecutive are represented by one phrase string. For example, a non-positional search with ``autoPhraseCheck=false`` for ``インストールや設定作業`` may return ``tokens = ["インストール", "や", "設定", "作業"]`` and the same four strings in ``phrases``; a positional search for the same input may return ``tokens = ["インストール", "や", "設定", "作業"]`` but ``phrases = ["インストールや設定作業"]``. With no positions but ``autoPhraseCheck=true``, if ``脚本家`` is split into ``脚本`` and ``家`` and constrained by the canonical-token check, the response is ``tokens = ["脚本", "家"]`` and ``phrases = ["脚本家"]``. Order and duplicates are preserved. Label and numeric filters are not included. ``result`` contains document IDs for ``search`` and fetched TTTS documents for ``search-fetch``. Empty search results still return both lists.
 
 ### Restricting the Search Space with labels and numeric_value
 
@@ -582,7 +587,7 @@ No relevance score is calculated; ordinary TTTS candidate order is creation-time
 ## Limitations
 
 - No relevance score, OR/NOT, wildcard, or fuzzy search is provided.
-- With ``recordPositions=false`` and ``recordContents=true``, quoted phrase search verifies the canonical token sequence after candidate retrieval. If neither positions nor contents are available, a multi-token quoted input degrades to AND terms.
+- With ``recordPositions=false`` and ``recordContents=true``, quoted phrases and CJK input units selected by ``autoPhraseCheck=true`` verify the canonical token sequence after candidate retrieval. With ``recordContents=false``, consecutive-token verification is unavailable and these inputs degrade to AND terms.
 - A low numeric-filter pass rate can require examining substantially more FTS candidates than the requested result count.
 - Search indexes and Redis caches are eventually consistent; PostgreSQL performs final current-state checks.
 - The anonymous query hash is not authentication. Bots that implement direct HTTP are constrained by Caddy and processing-time throttles instead.

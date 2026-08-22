@@ -375,9 +375,11 @@ paths:
           description: >
             Full-text query. Whitespace-delimited input units are tokenized independently.
             On recordPositions=true shards, one input unit that yields multiple tokens is
-            searched as a positional phrase even without quotes. Double quotes explicitly
-            request phrase semantics; without positions, an exact quoted multi-token phrase
-            is enforced by the stored token sequence when recordContents=true.
+            searched as a positional phrase even without quotes. With recordPositions=false,
+            recordContents=true, and autoPhraseCheck=true, an unquoted input unit containing
+            CJK script that yields multiple tokens is also checked as an exact phrase against
+            the stored token sequence. Double quotes explicitly request phrase semantics and
+            use the same stored-token check when positions are unavailable but contents exist.
           schema:
             type: string
         - name: locale
@@ -442,9 +444,11 @@ paths:
           description: >
             Full-text query. Whitespace-delimited input units are tokenized independently.
             On recordPositions=true shards, one input unit that yields multiple tokens is
-            searched as a positional phrase even without quotes. Double quotes explicitly
-            request phrase semantics; without positions, an exact quoted multi-token phrase
-            is enforced by the stored token sequence when recordContents=true.
+            searched as a positional phrase even without quotes. With recordPositions=false,
+            recordContents=true, and autoPhraseCheck=true, an unquoted input unit containing
+            CJK script that yields multiple tokens is also checked as an exact phrase against
+            the stored token sequence. Double quotes explicitly request phrase semantics and
+            use the same stored-token check when positions are unavailable but contents exist.
           schema:
             type: string
         - name: locale
@@ -717,9 +721,10 @@ components:
             order after maxQueryTokenCount has been applied. Every effective term is
             represented: a one-token term appears as that token, while tokens that are
             actually constrained as one phrase are represented by one phrase string.
-            This includes quoted multi-token phrases and, on recordPositions=true
-            shards, a whitespace-delimited input unit that tokenizes into multiple
-            consecutive tokens. Order and duplicates are preserved. Label and numeric
+            This includes quoted multi-token phrases, a whitespace-delimited input
+            unit that tokenizes into multiple consecutive tokens on recordPositions=true
+            shards, and CJK input units enforced by autoPhraseCheck when positions are
+            unavailable but recordContents=true. Order and duplicates are preserved. Label and numeric
             filters are not included. Consumers that need search display units may use
             this list without reconstructing phrase boundaries from tokens.
           items:

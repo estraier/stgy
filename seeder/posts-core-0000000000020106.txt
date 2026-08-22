@@ -252,16 +252,17 @@ CREATE VIRTUAL TABLE docs USING fts5(
 );
 ```
 
-``recordPositions`` と ``recordContents`` は環境変数で設定できる。
+``recordPositions``、``recordContents``、``autoPhraseCheck`` は環境変数で設定できる。
 
 ```text:small
 STGY_SEARCH_RECORD_POSITIONS
 STGY_SEARCH_RECORD_CONTENTS
+STGY_SEARCH_AUTO_PHRASE_CHECK
 ```
 
-現在のenv.dev.txt、env.vps.txt、env.native.txt、env.hybrid.txtでは、``recordPositions=false``、``recordContents=true`` に設定している。そのため上記のスキーマ例では ``detail='column'`` となり、FTS5はcanonical token列を保持するが単語位置は記録しない。``recordPositions=true`` では ``detail='full'`` となり単語位置を記録する。``recordContents=false`` ではFTS5をcontentless構成（``content=''``、``contentless_delete=1``）にする。本文の ``tokens`` と探索空間を限定する ``labels`` は別列である。
+現在のenv.dev.txt、env.vps.txt、env.native.txt、env.hybrid.txtでは、``recordPositions=false``、``recordContents=true``、``autoPhraseCheck=false`` に設定している。そのため上記のスキーマ例では ``detail='column'`` となり、FTS5はcanonical token列を保持するが単語位置は記録しない。``recordPositions=true`` では ``detail='full'`` となり単語位置を記録する。``recordContents=false`` ではFTS5をcontentless構成（``content=''``、``contentless_delete=1``）にする。本文の ``tokens`` と探索空間を限定する ``labels`` は別列である。
 
-これら二つの値はシャード作成時に ``fts_meta`` へ記録される。既存シャードを開く際はenvの現在値ではなく ``fts_meta`` の値を使うため、運用中にenvを変更しても既存シャードの構造や検索semanticsは変わらない。設定変更を既存データにも適用する場合は、検索インデックスをリセットして新しい設定で再生成する必要がある。
+``recordPositions`` と ``recordContents`` はシャード作成時に ``fts_meta`` へ記録される。既存シャードを開く際はenvの現在値ではなく ``fts_meta`` の値を使うため、運用中にenvを変更しても既存シャードの構造や検索semanticsは変わらない。設定変更を既存データにも適用する場合は、検索インデックスをリセットして新しい設定で再生成する必要がある。一方、``autoPhraseCheck`` は検索時だけに使う設定であり、インデックス形式を変更しないため ``fts_meta`` には保存しない。TTTSを新しいenvで再起動すれば既存シャードにも適用され、インデックスの再生成は不要である。
 
 外部IDは ``external_id``、FTS5のrowidは小さな整数の ``internal_id`` とする。新しい文書ほど小さいinternal_idを割り当て、``ORDER BY docs.rowid ASC`` で新しい文書から取得する。
 
@@ -330,11 +331,15 @@ Kuromojiが有効な環境では、概ね以下の結果になる。
 
 ## 検索クエリの意味
 
-空白で区切られた各入力単位を個別にトークナイズする。``recordPositions=true`` のシャードでは、一つの入力単位が複数トークンへ分割された場合、ダブルクォートで囲まれていなくても、それらを一つの位置付きフレーズとして検索する。例えば ``インストールや設定作業`` が内部的に ``インストール``、``や``、``設定``、``作業`` へ分割された場合でも、それらの連続を要求する。一方、最初から空白で分けて入力した単位同士はAND条件のままである。ダブルクォートは明示的なフレーズ指定であり、``detail=column`` かつ ``recordContents=true`` のシャードでは、複数トークンの引用フレーズをFTS5で候補絞り込みした後、保存済みcanonical token列で連続一致を確認する。
+空白で区切られた各入力単位を個別にトークナイズする。``recordPositions=true`` のシャードでは、一つの入力単位が複数トークンへ分割された場合、ダブルクォートで囲まれていなくても、それらを一つの位置付きフレーズとして検索する。例えば ``インストールや設定作業`` が内部的に ``インストール``、``や``、``設定``、``作業`` へ分割された場合でも、それらの連続を要求する。一方、最初から空白で分けて入力した単位同士はAND条件のままである。
+
+``recordPositions=false`` かつ ``recordContents=true`` で ``autoPhraseCheck=true`` の場合は、漢字・ひらがな・カタカナ・ハングルのいずれかを含む引用符なしの一入力単位が複数トークンへ分割されたときにも、自動的にフレーズとして扱う。例えば ``脚本家`` が ``脚本``、``家`` へ分割された場合、FTS5では ``脚本 AND 家`` で候補を絞り、その後、保存済みcanonical token列に ``脚本\n家`` が連続して現れることを確認する。CJK文字を含まない入力単位にはこの自動判定を適用しない。デフォルトの ``autoPhraseCheck=false`` では従来どおりAND条件のままである。``recordContents=false`` では連続性を確認できないため、``autoPhraseCheck=true`` でもAND条件へ退化する。
+
+ダブルクォートは明示的なフレーズ指定であり、``detail=column`` かつ ``recordContents=true`` のシャードでは、複数トークンの引用フレーズをFTS5で候補絞り込みした後、保存済みcanonical token列で連続一致を確認する。引用フレーズは ``autoPhraseCheck`` の値に関係なく従来どおり処理する。
 
 OR、NOT、ワイルドカード、曖昧検索、関連語展開はUI上の検索構文として提供しない。検索クエリのトークン数は最大8個である。
 
-``GET /{resource}/search`` と ``GET /{resource}/search-fetch`` は、どちらもトップレベルに ``tokens``、``phrases``、``result`` を持つオブジェクトを返す。``tokens`` はTTTSが実際にFTS5検索式を組み立てるために使った正規化済みの最小本文検索トークン列であり、検索トークン数上限を適用した後、FTS5用の引用符付加やAND/phrase構文へのserializationを行う前の値である。``phrases`` はKWICなど後段表示処理がそのまま使える完全な検索単位列である。一トークンの検索語も一要素として必ず含み、複数トークンが実際に連続フレーズとして拘束される場合は、それらを一つの文字列として含む。例えばpositionsなしで ``インストールや設定作業`` がAND分解される場合は ``tokens = ["インストール", "や", "設定", "作業"]`` かつ ``phrases`` も同じ4要素になる。一方、positionsありでは同じ入力が連続フレーズとして検索され、``tokens = ["インストール", "や", "設定", "作業"]``、``phrases = ["インストールや設定作業"]`` となる。順序と重複は保持し、label条件と数値条件は含めない。``search`` の ``result`` は文書ID配列、``search-fetch`` の ``result`` はTTTS内の文書配列である。検索結果が0件でも ``tokens`` と ``phrases`` は返す。
+``GET /{resource}/search`` と ``GET /{resource}/search-fetch`` は、どちらもトップレベルに ``tokens``、``phrases``、``result`` を持つオブジェクトを返す。``tokens`` はTTTSが実際にFTS5検索式を組み立てるために使った正規化済みの最小本文検索トークン列であり、検索トークン数上限を適用した後、FTS5用の引用符付加やAND/phrase構文へのserializationを行う前の値である。``phrases`` はKWICなど後段表示処理がそのまま使える完全な検索単位列である。一トークンの検索語も一要素として必ず含み、複数トークンが実際に連続フレーズとして拘束される場合は、それらを一つの文字列として含む。例えばpositionsなし・``autoPhraseCheck=false`` で ``インストールや設定作業`` がAND分解される場合は ``tokens = ["インストール", "や", "設定", "作業"]`` かつ ``phrases`` も同じ4要素になる。一方、positionsありでは同じ入力が連続フレーズとして検索され、``tokens = ["インストール", "や", "設定", "作業"]``、``phrases = ["インストールや設定作業"]`` となる。また、positionsなしでも ``autoPhraseCheck=true`` で ``脚本家`` が ``脚本``、``家`` に分かれ、canonical token列による連続一致を要求する場合は、``tokens = ["脚本", "家"]``、``phrases = ["脚本家"]`` となる。順序と重複は保持し、label条件と数値条件は含めない。``search`` の ``result`` は文書ID配列、``search-fetch`` の ``result`` はTTTS内の文書配列である。検索結果が0件でも ``tokens`` と ``phrases`` は返す。
 
 ### labelsとnumeric_valueによる探索空間の限定
 
@@ -582,7 +587,7 @@ TTTSは以下を重視する。
 ## 制限事項
 
 - 関連度スコア、OR/NOT、ワイルドカード、曖昧検索は提供しない。
-- ``recordPositions=false`` かつ ``recordContents=true`` では、引用フレーズを候補取得後にcanonical token列で確認する。positionsもcontentsもない場合、複数トークンの引用入力はAND条件へ退化する。
+- ``recordPositions=false`` かつ ``recordContents=true`` では、引用フレーズに加え、``autoPhraseCheck=true`` のときに複数トークンへ分割されたCJK入力単位も候補取得後にcanonical token列で確認する。``recordContents=false`` では連続性を確認できないため、これらはAND条件へ退化する。
 - numeric filterの通過率が低い場合は、必要件数より多くのFTS候補を調べる。
 - 検索インデックスとRedisキャッシュは結果整合性であり、最新状態の最終確認はPostgreSQLで行う。
 - 匿名APIのquery hashは認証ではなく、直接HTTPを実装したbotはCaddyと処理時間制限で抑制する。

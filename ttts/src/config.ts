@@ -5,12 +5,14 @@ const DEFAULT_INDEX_DIR = path.join(process.cwd(), "search-index");
 const COMMON_INDEX_DIR = envStr("STGY_SEARCH_INDEX_DIR", DEFAULT_INDEX_DIR);
 const RECORD_POSITIONS = envBool("STGY_SEARCH_RECORD_POSITIONS", false);
 const RECORD_CONTENTS = envBool("STGY_SEARCH_RECORD_CONTENTS", true);
+const AUTO_PHRASE_CHECK = envBool("STGY_SEARCH_AUTO_PHRASE_CHECK", false);
 
 export class Config {
   static readonly SERVER_PORT = envNum("STGY_SEARCH_PORT", 3200);
   static readonly LOG_FORMAT = envStr("STGY_SEARCH_LOG_FORMAT", "");
   static readonly INPUT_BODY_LIMIT = envNum("STGY_SEARCH_INPUT_BODY_LIMIT", 2 * 1024 * 1024);
   static readonly ENABLE_KUROMOJI = envBool("STGY_SEARCH_ENABLE_KUROMOJI", false);
+  static readonly autoPhraseCheck = AUTO_PHRASE_CHECK;
   static readonly resources: SearchConfig[] = [
     {
       baseDir: COMMON_INDEX_DIR,
@@ -24,6 +26,7 @@ export class Config {
       initialDocumentId: 2097151,
       recordPositions: RECORD_POSITIONS,
       recordContents: RECORD_CONTENTS,
+      autoPhraseCheck: AUTO_PHRASE_CHECK,
       readConnectionCounts: [2, 2, 1, 1, 0],
       mmapSizes: [268435456, 268435456, 0],
       cacheSizes: [25165824, 25165824, 409600],
@@ -43,6 +46,7 @@ export class Config {
       initialDocumentId: 2097151,
       recordPositions: RECORD_POSITIONS,
       recordContents: RECORD_CONTENTS,
+      autoPhraseCheck: AUTO_PHRASE_CHECK,
       readConnectionCounts: [2, 2, 1, 1, 0],
       mmapSizes: [268435456, 268435456, 0],
       cacheSizes: [25165824, 25165824, 409600],

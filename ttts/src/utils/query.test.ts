@@ -70,6 +70,38 @@ describe("makeFtsQuery", () => {
     expect(result.phrases).toEqual(["電子", "ピアノ"]);
   });
 
+  test("auto-checks an unquoted multi-token CJK input as a phrase without positions", async () => {
+    const result = await makeFtsQuery("脚本家", "ja", 10, false, true, true);
+    expect(result.ftsQuery).toBe("脚本 AND 家");
+    expect(result.filteringPhrases).toEqual(["脚本\n家"]);
+    expect(result.tokens).toEqual(["脚本", "家"]);
+    expect(result.phrases).toEqual(["脚本家"]);
+  });
+
+  test("does not auto-check CJK phrases when autoPhraseCheck is false", async () => {
+    const result = await makeFtsQuery("脚本家", "ja", 10, false, true, false);
+    expect(result.ftsQuery).toBe("脚本 AND 家");
+    expect(result.filteringPhrases).toEqual([]);
+    expect(result.tokens).toEqual(["脚本", "家"]);
+    expect(result.phrases).toEqual(["脚本", "家"]);
+  });
+
+  test("does not auto-check CJK phrases when recordContents is false", async () => {
+    const result = await makeFtsQuery("脚本家", "ja", 10, false, false, true);
+    expect(result.ftsQuery).toBe("脚本 AND 家");
+    expect(result.filteringPhrases).toEqual([]);
+    expect(result.tokens).toEqual(["脚本", "家"]);
+    expect(result.phrases).toEqual(["脚本", "家"]);
+  });
+
+  test("does not auto-check non-CJK unquoted multi-token input", async () => {
+    const result = await makeFtsQuery("check-out", "en", 10, false, true, true);
+    expect(result.ftsQuery).toBe("check AND out");
+    expect(result.filteringPhrases).toEqual([]);
+    expect(result.tokens).toEqual(["check", "out"]);
+    expect(result.phrases).toEqual(["check", "out"]);
+  });
+
   test("keeps a Japanese input unit as one phrase when it tokenizes to one token", async () => {
     const result = await makeFtsQuery("管理者", "ja", 10, true);
     expect(result.ftsQuery).toBe("管理者");

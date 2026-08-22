@@ -7,6 +7,9 @@ CFG_SEARCH_PORT=3200
 # Data directory name relative to the installation directory
 CFG_SEARCH_INDEX_DIR_NAME=data
 CFG_ENABLE_KUROMOJI=true
+CFG_RECORD_POSITIONS="${STGY_SEARCH_RECORD_POSITIONS:-false}"
+CFG_RECORD_CONTENTS="${STGY_SEARCH_RECORD_CONTENTS:-true}"
+CFG_AUTO_PHRASE_CHECK="${STGY_SEARCH_AUTO_PHRASE_CHECK:-false}"
 # =======================================================================
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -55,6 +58,9 @@ export NODE_ENV='__CFG_NODE_ENV__'
 export STGY_SEARCH_PORT='__CFG_SEARCH_PORT__'
 export STGY_SEARCH_INDEX_DIR="$DATA_DIR"
 export STGY_SEARCH_ENABLE_KUROMOJI='__CFG_ENABLE_KUROMOJI__'
+export STGY_SEARCH_RECORD_POSITIONS='__CFG_RECORD_POSITIONS__'
+export STGY_SEARCH_RECORD_CONTENTS='__CFG_RECORD_CONTENTS__'
+export STGY_SEARCH_AUTO_PHRASE_CHECK='__CFG_AUTO_PHRASE_CHECK__'
 # ===========================================================
 
 NODE_BIN="$(command -v node || true)"
@@ -266,6 +272,9 @@ sed -i \
   -e "s#__CFG_SEARCH_PORT__#${CFG_SEARCH_PORT}#g" \
   -e "s#__CFG_SEARCH_INDEX_DIR_NAME__#${CFG_SEARCH_INDEX_DIR_NAME}#g" \
   -e "s#__CFG_ENABLE_KUROMOJI__#${CFG_ENABLE_KUROMOJI}#g" \
+  -e "s#__CFG_RECORD_POSITIONS__#${CFG_RECORD_POSITIONS}#g" \
+  -e "s#__CFG_RECORD_CONTENTS__#${CFG_RECORD_CONTENTS}#g" \
+  -e "s#__CFG_AUTO_PHRASE_CHECK__#${CFG_AUTO_PHRASE_CHECK}#g" \
   "$TARGET/start.sh"
 
 chmod +x "$TARGET/start.sh"

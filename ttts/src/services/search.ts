@@ -140,6 +140,7 @@ export type SearchConfig = {
   initialDocumentId: number;
   recordPositions: boolean;
   recordContents: boolean;
+  autoPhraseCheck: boolean;
   readConnectionCounts: number[];
   mmapSizes: number[];
   cacheSizes: number[];
@@ -373,6 +374,7 @@ export class SearchService {
               this.config.maxQueryTokenCount,
               shard.recordPositions,
               shard.recordContents,
+              this.config.autoPhraseCheck,
             ),
           );
         }
@@ -411,6 +413,7 @@ export class SearchService {
           this.config.maxQueryTokenCount,
           this.config.recordPositions,
           this.config.recordContents,
+          this.config.autoPhraseCheck,
         );
         searchTokens = fallbackQuery.tokens;
         searchPhrases = fallbackQuery.phrases;

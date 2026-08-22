@@ -45,6 +45,7 @@ const CONFIG: SearchConfig = {
   initialDocumentId: 1000,
   recordPositions: false,
   recordContents: true,
+  autoPhraseCheck: false,
   readConnectionCounts: [1, 1],
   mmapSizes: [0, 0],
   cacheSizes: [409600, 409600],
@@ -612,6 +613,27 @@ describe("SearchService (Actor Model)", () => {
     });
 
     expect(await searchIds('"hot dog"')).toEqual(["phrase_yes"]);
+  });
+
+  test("autoPhraseCheck enforces consecutive CJK tokens without positions", async () => {
+    await service.close();
+    service = new TestSearchService({ ...CONFIG, autoPhraseCheck: true }, mockLogger);
+    await service.open();
+
+    await runTask({
+      type: "ADD",
+      payload: { docId: "auto_phrase_yes", timestamp: 1000, bodyText: "脚本家", locale: "ja", attrs: null, labels: [], numericValue: null },
+    });
+    await runTask({
+      type: "ADD",
+      payload: { docId: "auto_phrase_no", timestamp: 1000, bodyText: "脚本 の 家", locale: "ja", attrs: null, labels: [], numericValue: null },
+    });
+
+    await expect(service.search("脚本家", "ja")).resolves.toEqual({
+      tokens: ["脚本", "家"],
+      phrases: ["脚本家"],
+      result: ["auto_phrase_yes"],
+    });
   });
 
   test("search plan keeps FTS as the outer loop and PK lookup as the inner loop", async () => {

@@ -13,12 +13,19 @@ function makePhraseText(text: string, tokens: string[], truncated: boolean): str
   return tokens.join(/\s/u.test(text) ? " " : "");
 }
 
+function containsCjkScript(text: string): boolean {
+  return /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(
+    text,
+  );
+}
+
 export async function makeFtsQuery(
   query: string,
   locale: string,
   maxTokens: number,
   recordPositions: boolean = false,
   recordContents: boolean = true,
+  autoPhraseCheck: boolean = false,
 ): Promise<{
   ftsQuery: string;
   filteringPhrases: string[];
@@ -52,8 +59,16 @@ export async function makeFtsQuery(
     if (tokens.length === 0) continue;
 
     const isQuoted = match[1] !== undefined;
+    const shouldAutoCheckPhrase =
+      !isQuoted &&
+      !recordPositions &&
+      recordContents &&
+      autoPhraseCheck &&
+      tokens.length > 1 &&
+      containsCjkScript(text);
     const isPhrase =
-      tokens.length > 1 && (recordPositions || (isQuoted && recordContents));
+      tokens.length > 1 &&
+      (recordPositions || (recordContents && (isQuoted || shouldAutoCheckPhrase)));
 
     if (isPhrase) {
       searchPhrases.push(makePhraseText(text, tokens, truncated));
@@ -74,6 +89,9 @@ export async function makeFtsQuery(
       parts.push(tokens.map(formatFtsToken).join(" + "));
     } else {
       parts.push(tokens.map(formatFtsToken).join(" AND "));
+      if (shouldAutoCheckPhrase) {
+        filteringPhrases.push(tokens.join("\n"));
+      }
     }
   }
 
