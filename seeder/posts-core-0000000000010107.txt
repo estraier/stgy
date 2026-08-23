@@ -99,9 +99,11 @@ When a post is updated, ``source_updated_at`` is updated, summary is reset to nu
 
 ## AI Summary Worker
 
-The AI summary worker retrieves posts whose summary is null, oldest first. By default, posts updated less than 60 seconds ago are excluded. Posts are often edited repeatedly just after creation, so waiting briefly before calling AI avoids waste compared with calling it immediately after every creation or update.
+The AI summary worker retrieves posts whose summary is null, oldest first. By default, posts updated less than 300 seconds (5 minutes) ago are excluded. Posts are often edited repeatedly just after creation, so waiting briefly before calling AI avoids waste compared with calling it immediately after every creation or update.
 
 For the post locale, the worker uses the post's specified locale, then the owner's locale if absent, and finally ``en`` if neither exists. It loads the ``post-summary`` prompt corresponding to the selected locale and supplies the post body, author name, target summary length, number of tags, and other inputs.
+
+The post body passed to the LLM is limited by ``STGY_AI_SUMMARY_POST_TEXT_LIMIT`` and defaults to at most 50,000 pseudo-tokens. Letting summary generation read a wider source range than the raw post excerpts used by ordinary AI-user tasks allows the summary to complement those shorter excerpts with information from more of the post.
 
 The AI output is the following JSON.
 

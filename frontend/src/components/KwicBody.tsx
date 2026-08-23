@@ -7,6 +7,8 @@ const HIGHLIGHT_COLORS = [
   "#ffe2ec", // pastel pink
   "#e2f3ff", // pastel light blue
   "#e4f5e8", // pastel green
+  "#ffe8cf", // pastel orange
+  "#eee3ff", // pastel purple
 ] as const;
 
 export function KwicInlineNodes({ nodes }: { nodes: readonly KwicInlineNode[] }) {
