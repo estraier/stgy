@@ -125,7 +125,9 @@ export default function PageBody() {
   const [editing, setEditing] = useState(false);
 
   const tabsRef = useRef<HTMLDivElement | null>(null);
+  const tabsPrecedingContentRef = useRef<HTMLDivElement | null>(null);
   const pendingTabScrollRef = useRef(false);
+  const initialAiTabScrollActiveRef = useRef(false);
 
   const scrollTabsToViewportTop10 = useCallback(() => {
     const el = tabsRef.current;
@@ -391,8 +393,76 @@ export default function PageBody() {
   }, []);
 
   useEffect(() => {
-    if (loading || !aiMode) return;
-    requestAnimationFrame(() => requestAnimationFrame(scrollTabsToViewportTop10));
+    initialAiTabScrollActiveRef.current = !!aiMode;
+    if (!aiMode) return;
+
+    const stopInitialAiTabScroll = () => {
+      initialAiTabScrollActiveRef.current = false;
+    };
+    window.addEventListener("wheel", stopInitialAiTabScroll, { passive: true });
+    window.addEventListener("touchstart", stopInitialAiTabScroll, { passive: true });
+    window.addEventListener("pointerdown", stopInitialAiTabScroll, { passive: true });
+    window.addEventListener("keydown", stopInitialAiTabScroll);
+    return () => {
+      window.removeEventListener("wheel", stopInitialAiTabScroll);
+      window.removeEventListener("touchstart", stopInitialAiTabScroll);
+      window.removeEventListener("pointerdown", stopInitialAiTabScroll);
+      window.removeEventListener("keydown", stopInitialAiTabScroll);
+      initialAiTabScrollActiveRef.current = false;
+    };
+  }, [aiMode, user?.id]);
+
+  useEffect(() => {
+    if (loading || !aiMode || !initialAiTabScrollActiveRef.current) return;
+    let frame2 = 0;
+    const frame1 = requestAnimationFrame(() => {
+      frame2 = requestAnimationFrame(() => {
+        if (initialAiTabScrollActiveRef.current) scrollTabsToViewportTop10();
+      });
+    });
+    return () => {
+      cancelAnimationFrame(frame1);
+      if (frame2) cancelAnimationFrame(frame2);
+    };
+  }, [loading, aiMode, user?.id, scrollTabsToViewportTop10]);
+
+  useEffect(() => {
+    if (loading || listLoading || !aiMode || !initialAiTabScrollActiveRef.current) return;
+    let frame2 = 0;
+    const frame1 = requestAnimationFrame(() => {
+      frame2 = requestAnimationFrame(() => {
+        if (initialAiTabScrollActiveRef.current) scrollTabsToViewportTop10();
+      });
+    });
+    return () => {
+      cancelAnimationFrame(frame1);
+      if (frame2) cancelAnimationFrame(frame2);
+    };
+  }, [loading, listLoading, aiMode, user?.id, scrollTabsToViewportTop10]);
+
+  useEffect(() => {
+    if (loading || !aiMode || typeof ResizeObserver === "undefined") return;
+    const element = tabsPrecedingContentRef.current;
+    if (!element) return;
+
+    let frame1 = 0;
+    let frame2 = 0;
+    const observer = new ResizeObserver(() => {
+      if (!initialAiTabScrollActiveRef.current) return;
+      if (frame1) cancelAnimationFrame(frame1);
+      if (frame2) cancelAnimationFrame(frame2);
+      frame1 = requestAnimationFrame(() => {
+        frame2 = requestAnimationFrame(() => {
+          if (initialAiTabScrollActiveRef.current) scrollTabsToViewportTop10();
+        });
+      });
+    });
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+      if (frame1) cancelAnimationFrame(frame1);
+      if (frame2) cancelAnimationFrame(frame2);
+    };
   }, [loading, aiMode, user?.id, scrollTabsToViewportTop10]);
 
   useEffect(() => {
@@ -646,39 +716,41 @@ export default function PageBody() {
 
   return (
     <main className="max-w-3xl mx-auto mt-8 p-1 sm:p-4">
-      <UserCard
-        user={user}
-        truncated={false}
-        focusUserId={userId}
-        focusUserIsAdmin={!!isAdmin}
-        onViewAiImpressions={handleViewAiImpressions}
-        clickable={false}
-      />
+      <div ref={tabsPrecedingContentRef}>
+        <UserCard
+          user={user}
+          truncated={false}
+          focusUserId={userId}
+          focusUserIsAdmin={!!isAdmin}
+          onViewAiImpressions={handleViewAiImpressions}
+          clickable={false}
+        />
 
-      {canEdit && !editing && (
-        <div className="mt-4 flex justify-end">
-          <button
-            className="px-4 py-1 rounded border bg-sky-100 text-gray-700 hover:bg-sky-200 transition"
-            onClick={() => setEditing(true)}
-          >
-            Edit
-          </button>
-        </div>
-      )}
-      {canEdit && editing && (
-        <div className="mt-4">
-          <UserForm
-            user={user}
-            isAdmin={isAdmin}
-            isSelf={isSelf}
-            onUpdated={(updatedUser) => {
-              setUser(updatedUser ?? null);
-              setEditing(false);
-            }}
-            onCancel={() => setEditing(false)}
-          />
-        </div>
-      )}
+        {canEdit && !editing && (
+          <div className="mt-4 flex justify-end">
+            <button
+              className="px-4 py-1 rounded border bg-sky-100 text-gray-700 hover:bg-sky-200 transition"
+              onClick={() => setEditing(true)}
+            >
+              Edit
+            </button>
+          </div>
+        )}
+        {canEdit && editing && (
+          <div className="mt-4">
+            <UserForm
+              user={user}
+              isAdmin={isAdmin}
+              isSelf={isSelf}
+              onUpdated={(updatedUser) => {
+                setUser(updatedUser ?? null);
+                setEditing(false);
+              }}
+              onCancel={() => setEditing(false)}
+            />
+          </div>
+        )}
+      </div>
 
       <div ref={tabsRef} className="flex gap-1 mt-6 mb-2 items-center">
         {aiMode ? (
