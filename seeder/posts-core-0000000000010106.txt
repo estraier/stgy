@@ -73,7 +73,9 @@ TTTSの/posts/searchまたは/users/search
   ↓
 PostgreSQLから投稿またはユーザの表示用データを取得
   ↓ 必要なら
-フレーズ単位列を使い、表示中IDだけKWIC ASTを生成
+フレーズ単位列ごとのRedis KWICキャッシュを確認
+  ↓ cache missした表示中IDだけ
+PostgreSQLから原文を取得してKWIC ASTを生成
 ```
 
 TTTS runs ``posts`` for post documents and ``users`` for user documents as separate resources. They share one HTTP server, but their index files, task queues, settings, and search processing are independent. Resource names also prefix the filenames.
@@ -260,7 +262,7 @@ STGY_SEARCH_RECORD_CONTENTS
 STGY_SEARCH_AUTO_PHRASE_CHECK
 ```
 
-The current env.dev.txt, env.vps.txt, env.native.txt, and env.hybrid.txt set ``recordPositions=false``, ``recordContents=true``, and ``autoPhraseCheck=true``. The schema example above therefore uses ``detail='none'``: FTS5 posting lists retain document IDs but no column numbers or token positions. With ``recordPositions=true``, TTTS uses ``detail='full'`` and records token positions. With ``recordContents=false``, TTTS creates the FTS5 table as contentless (``content=''`` and ``contentless_delete=1``). Body ``tokens`` and search-space ``labels`` remain separate stored columns, but non-positional search does not use column filters.
+The current env.dev.txt, env.vps.txt, env.native.txt, and env.hybrid.txt set ``recordPositions=false``, ``recordContents=true``, and ``autoPhraseCheck=false``. The schema example above therefore uses ``detail='none'``: FTS5 posting lists retain document IDs but no column numbers or token positions. With ``recordPositions=true``, TTTS uses ``detail='full'`` and records token positions. With ``recordContents=false``, TTTS creates the FTS5 table as contentless (``content=''`` and ``contentless_delete=1``). Body ``tokens`` and search-space ``labels`` remain separate stored columns, but non-positional search does not use column filters.
 
 Before indexing a label, TTTS converts it to a synthetic token of the form ``U+E000 + "L" + label`` and stores it in the ``labels`` column. U+E000 is reserved for TTTS internal tokens. If external body text, a search query, or a label contains U+E000, TTTS replaces it with U+0020 SPACE before tokenization or label normalization. Body-derived terms therefore cannot collide with synthetic label terms. Search does not use ``tokens:`` or ``labels:`` column filters; instead, synthetic label conditions and body conditions are placed in one table-wide ``MATCH`` expression. FTS5 can intersect those posting lists inside the same table, so with ``recordPositions=false`` there is no need to retain column information and ``detail='none'`` is sufficient. At the same time, with ``recordContents=true`` the stored ``tokens`` and ``labels`` columns remain separate, so pseudo-phrase verification and fetched body text can use ``tokens`` directly.
 
@@ -340,13 +342,13 @@ With Kuromoji enabled, the result is approximately as follows.
 
 Each whitespace-delimited input unit is tokenized independently. On ``recordPositions=true`` shards, if one such unit becomes multiple tokens, those tokens are searched as one positional phrase even without double quotes. Thus if ``インストールや設定作業`` becomes the internal tokens ``インストール``, ``や``, ``設定`` and ``作業``, the search still requires them to be consecutive. Separate whitespace-delimited units remain AND conditions.
 
-When ``recordPositions=false``, ``recordContents=true``, and ``autoPhraseCheck=true``, an unquoted input unit containing Han, hiragana, katakana, or Hangul is also treated automatically as a phrase when it yields multiple tokens. For example, if ``脚本家`` becomes ``脚本`` and ``家``, FTS5 first narrows candidates with ``脚本 AND 家`` and TTTS then requires ``脚本\n家`` to occur consecutively in the stored canonical token sequence. The automatic check is not applied to input units containing only non-CJK scripts. The default is ``autoPhraseCheck=true``; setting it explicitly to ``false`` disables this automatic check and restores ordinary AND semantics. If ``recordContents=false``, consecutive-token verification is impossible, so the query falls back to AND even when ``autoPhraseCheck=true``.
+When ``recordPositions=false``, ``recordContents=true``, and ``autoPhraseCheck=true``, an unquoted input unit containing Han, hiragana, katakana, or Hangul is also treated automatically as a phrase when it yields multiple tokens. For example, if ``脚本家`` becomes ``脚本`` and ``家``, FTS5 first narrows candidates with ``脚本 AND 家`` and TTTS then requires ``脚本\n家`` to occur consecutively in the stored canonical token sequence. The automatic check is not applied to input units containing only non-CJK scripts. With the default ``autoPhraseCheck=false``, the tokens retain ordinary AND semantics. If ``recordContents=false``, consecutive-token verification is impossible, so the query falls back to AND even when ``autoPhraseCheck=true``.
 
 Double quotes explicitly request a phrase. On ``recordPositions=false`` shards with ``recordContents=true``, a quoted multi-token phrase first narrows candidates with FTS5 AND terms and then checks the stored canonical token sequence in ``docs.tokens`` for consecutive tokens. Synthetic labels are stored in the separate ``labels`` column and therefore never enter pseudo-phrase verification. Quoted phrases keep this behavior regardless of ``autoPhraseCheck``.
 
 The UI does not provide OR, NOT, wildcard, fuzzy, or related-term expansion. A search query may contain at most eight tokens.
 
-Both ``GET /{resource}/search`` and ``GET /{resource}/search-fetch`` return a top-level object with ``tokens``, ``phrases`` and ``result``. ``tokens`` is the normalized minimal content-token sequence that TTTS actually used to build the FTS5 query, after the query token limit has been applied and before FTS5 quoting or AND/phrase serialization. ``phrases`` is the complete sequence of search units for downstream presentation such as KWIC. Every effective term appears there: a one-token term is copied as one phrase, while multiple tokens that are actually constrained to be consecutive are represented by one phrase string. For example, a non-positional search with ``autoPhraseCheck=false`` explicitly configured for ``インストールや設定作業`` may return ``tokens = ["インストール", "や", "設定", "作業"]`` and the same four strings in ``phrases``; a positional search for the same input may return ``tokens = ["インストール", "や", "設定", "作業"]`` but ``phrases = ["インストールや設定作業"]``. With no positions but ``autoPhraseCheck=true``, if ``脚本家`` is split into ``脚本`` and ``家`` and constrained by the canonical-token check, the response is ``tokens = ["脚本", "家"]`` and ``phrases = ["脚本家"]``. Order and duplicates are preserved. Label and numeric filters are not included. ``result`` contains document IDs for ``search`` and fetched TTTS documents for ``search-fetch``. Empty search results still return both lists.
+Both ``GET /{resource}/search`` and ``GET /{resource}/search-fetch`` return a top-level object with ``tokens``, ``phrases`` and ``result``. ``tokens`` is the normalized minimal content-token sequence that TTTS actually used to build the FTS5 query, after the query token limit has been applied and before FTS5 quoting or AND/phrase serialization. ``phrases`` is the complete sequence of search units for downstream presentation such as KWIC. Every effective term appears there: a one-token term is copied as one phrase, while multiple tokens that are actually constrained to be consecutive are represented by one phrase string. For example, a non-positional search with ``autoPhraseCheck=false`` for ``インストールや設定作業`` may return ``tokens = ["インストール", "や", "設定", "作業"]`` and the same four strings in ``phrases``; a positional search for the same input may return ``tokens = ["インストール", "や", "設定", "作業"]`` but ``phrases = ["インストールや設定作業"]``. With no positions but ``autoPhraseCheck=true``, if ``脚本家`` is split into ``脚本`` and ``家`` and constrained by the canonical-token check, the response is ``tokens = ["脚本", "家"]`` and ``phrases = ["脚本家"]``. Order and duplicates are preserved. Label and numeric filters are not included. ``result`` contains document IDs for ``search`` and fetched TTTS documents for ``search-fetch``. Empty search results still return both lists.
 
 ### Restricting the Search Space with labels and numeric_value
 
@@ -376,13 +378,17 @@ TTTS is a derived candidate index. PostgreSQL remains authoritative for post/use
 
 The STGY backend caches the TTTS ``tokens`` and ``phrases`` together with candidate-ID arrays for post and user searches in Redis. Post-search keys include query, locale, owner, publication scope, and anonymous/authenticated mode.
 
-Ordinary search expands the candidate cache as deeper pages are requested. External-publication search caches a bounded candidate set so page movement and KWIC/Rich/Plain switching do not repeat the same TTTS search. The default TTL is 600 seconds.
+Ordinary search expands the candidate cache as deeper result ranges are requested. When the candidate array is expanded, the backend preserves the key's remaining TTL instead of extending its expiration time from the original creation. External-publication search caches a bounded candidate set so result navigation and KWIC/Rich/Plain switching do not repeat the same TTTS search. The default TTL is 180 seconds.
 
 ``offset + limit`` is bounded. Logged-in search is subject to per-user DB processing-time limits, while anonymous search uses the shared dummy-user budget.
 
 ## KWIC
 
-KWIC (Keyword In Context) is not generated by TTTS. The frontend uses only the ``phrases`` returned by the search response as KWIC keywords and never reconstructs phrase boundaries from ``tokens`` or re-parses the raw query string. Because ``phrases`` is complete, ordinary one-token search terms are present there as well. A non-positional Japanese query such as ``インストールや設定作業`` may therefore produce four phrase units and anchor KWIC around each actual AND term, while the same positional query may produce the same four ``tokens`` but the single KWIC unit ``phrases = ["インストールや設定作業"]``. Only IDs actually displayed are read from PostgreSQL, and ``packages/markdown`` converts the source Markdown into a KWIC AST around those phrase units.
+KWIC (Keyword In Context) is not generated by TTTS. The frontend uses only the ``phrases`` returned by the search response as KWIC keywords and never reconstructs phrase boundaries from ``tokens`` or re-parses the raw query string. Because ``phrases`` is complete, ordinary one-token search terms are present there as well. A non-positional Japanese query such as ``インストールや設定作業`` may therefore produce four phrase units and anchor KWIC around each actual AND term, while the same positional query may produce the same four ``tokens`` but the single KWIC unit ``phrases = ["インストールや設定作業"]``.
+
+The STGY backend caches KWIC in a Redis HASH keyed by the resource type and a hash of the ordered ``phrases`` array. Document IDs are HASH fields. All requested IDs are read in one ``HMGET``; only cache misses are fetched from PostgreSQL and converted by ``packages/markdown`` into KWIC ASTs, then added with one ``HSET``. Labels, numeric filters, owner/publication constraints, offset, and limit do not change the KWIC for a given document and ordered phrase list, so they are deliberately excluded from the KWIC cache key. The same document KWIC can therefore be reused across different searches that produce the same ordered ``phrases``.
+
+The KWIC HASH uses the same default 180-second duration as the search cache, but its lifetime is independent. TTL is assigned only when that keyword HASH is first created; later ``HSET`` operations for additional documents do not extend it. Before ``/posts/kwic-pub`` returns cache hits, PostgreSQL rechecks those cached IDs for current publication eligibility; cache misses fetch source content with the same publication condition as before. The anonymous-publication boundary therefore cannot be bypassed by the KWIC cache.
 
 The backend provides:
 
@@ -587,7 +593,7 @@ TTTS prioritizes the following properties.
 - Keep FTS5 as the outer loop with ``CROSS JOIN`` and check metadata by primary-key lookup.
 - Treat the low-selectivity numeric condition as a predicate on FTS candidates rather than a B-tree search starting point.
 - Bound repeated work with Redis caching and search-result limits.
-- Return both the actual normalized TTTS search tokens and the complete phrase-unit list with search results, and use only the phrase units to generate KWIC for documents currently displayed, without changing TTTS search complexity.
+- Return both the actual normalized TTTS search tokens and the complete phrase-unit list with search results, consult the Redis HASH for that ordered phrase list first, and generate KWIC only for displayed cache misses without changing TTTS search complexity.
 
 No relevance score is calculated; ordinary TTTS candidate order is creation-time newest first.
 
@@ -603,5 +609,5 @@ No relevance score is calculated; ordinary TTTS candidate order is creation-time
 
 STGY uses TTTS, a chronologically sharded SQLite FTS5 service, as a derived full-text index. Posts carry an ``owner:<userId>`` label and publication-time ``numericValue``. The FTS5 → primary-key metadata-check execution order is fixed so search-space restrictions preserve newest-first early termination.
 
-External-publication search rechecks owner and ``published_at <= now`` in both TTTS filtering and PostgreSQL. Anonymous APIs layer ``X-STGY-QueryHash``, CORS, Caddy IP rate limits, and a shared processing-time budget. KWIC remains outside TTTS and is generated only for displayed documents from the source Markdown, using the complete ``phrases`` list returned by TTTS search. The search index remains rebuildable derived data rather than an authoritative store.
+External-publication search rechecks owner and ``published_at <= now`` in both TTTS filtering and PostgreSQL. Anonymous APIs layer ``X-STGY-QueryHash``, CORS, Caddy IP rate limits, and a shared processing-time budget. KWIC remains outside TTTS and uses the complete ``phrases`` list returned by TTTS search. A Redis HASH keyed by the ordered phrase list is reused first, and only displayed cache misses are generated from source Markdown. The search index remains rebuildable derived data rather than an authoritative store.
 ____EOF____

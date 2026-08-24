@@ -373,6 +373,31 @@ export class PostsService {
     }));
   }
 
+  async listPublishedPostIdsByIds(ids: string[], publishedUntil: string): Promise<string[]> {
+    if (!Array.isArray(ids) || ids.length === 0) return [];
+    const validIds = ids.filter(
+      (v) => typeof v === "string" && /^[0-9a-fA-F]{16}$/.test(v),
+    );
+    if (validIds.length === 0) return [];
+    const res = await pgQuery(
+      this.pgPool,
+      `
+        WITH req AS (
+          SELECT id, ord
+          FROM unnest($1::bigint[]) WITH ORDINALITY AS t(id, ord)
+        )
+        SELECT p.id
+        FROM req r
+        JOIN posts p ON p.id = r.id
+        WHERE p.published_at IS NOT NULL
+          AND p.published_at <= $2
+        ORDER BY r.ord
+      `,
+      [hexArrayToDec(validIds), publishedUntil],
+    );
+    return res.rows.map((row) => decToHex(row.id));
+  }
+
   async listPostsByIds(ids: string[], focusUserId?: string): Promise<Post[]> {
     if (!Array.isArray(ids) || ids.length === 0) return [];
     const out: Post[] = [];

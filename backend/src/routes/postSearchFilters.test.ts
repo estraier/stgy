@@ -39,7 +39,7 @@ describe("post full-text search filters", () => {
 
     const redis = {
       get: jest.fn().mockResolvedValue(null),
-      setex: jest.fn().mockResolvedValue("OK"),
+      eval: jest.fn().mockResolvedValue(1),
     } as unknown as Redis;
     const app = express();
     app.use(

@@ -19,6 +19,8 @@ import { PubViewsService } from "../services/pubViews";
 import { CreateUserInput, UpdateUserInput, UpdatePasswordInput, UserLite } from "../models/user";
 import { SearchCacheEntry } from "../models/search";
 import { KWIC_OPTIONS, parseKwicQuery } from "../utils/kwic";
+import { makeKwicCacheKey, readKwicCache, writeKwicCache } from "../utils/kwicCache";
+import { writeSearchCache } from "../utils/searchCache";
 import { makeTextFromMarkdown } from "../utils/snippet";
 import { makeKwicData } from "stgy-markdown";
 import { isAIModelTier, type AIModelTier } from "../models/aiModel";
@@ -149,7 +151,7 @@ export default function createUsersRouter(
           phrases: searchPhrases,
           result: docIds,
         };
-        await redis.setex(cacheKey, Config.SEARCH_CACHE_TTL_SEC, JSON.stringify(newCache));
+        await writeSearchCache(redis, cacheKey, newCache);
       }
       const slicedIds = docIds.slice(offset, offset + reqLimit);
       const userPromises = slicedIds.map((id) => usersService.getUserLite(id));
@@ -175,17 +177,26 @@ export default function createUsersRouter(
     }
     const watch = timerThrottleService.startWatch(loginUser);
     try {
-      const sources = await usersService.listKwicSourcesByIds(kwicQuery.ids);
+      const cacheKey = makeKwicCacheKey("users", kwicQuery.keywords);
+      const cached = await readKwicCache(redis, cacheKey, kwicQuery.ids);
+      const missingIds = kwicQuery.ids.filter((id) => !cached.has(id));
+      const sources = await usersService.listKwicSourcesByIds(missingIds);
+      const generated = sources.map((source) => ({
+        id: source.id,
+        kwic: makeKwicData(
+          source.nickname,
+          makeTextFromMarkdown(source.introduction),
+          kwicQuery.keywords,
+          KWIC_OPTIONS,
+        ),
+      }));
+      await writeKwicCache(redis, cacheKey, generated);
+      for (const item of generated) cached.set(item.id, item.kwic);
       return res.json(
-        sources.map((source) => ({
-          id: source.id,
-          kwic: makeKwicData(
-            source.nickname,
-            makeTextFromMarkdown(source.introduction),
-            kwicQuery.keywords,
-            KWIC_OPTIONS,
-          ),
-        })),
+        kwicQuery.ids.flatMap((id) => {
+          const kwic = cached.get(id);
+          return kwic ? [{ id, kwic }] : [];
+        }),
       );
     } catch (e) {
       return res.status(500).json({ error: (e as Error).message || "failed to make KWIC" });

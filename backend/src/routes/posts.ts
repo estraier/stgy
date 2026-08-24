@@ -19,6 +19,8 @@ import { createLogger } from "../utils/logger";
 import { parsePostSearchQuery } from "../utils/postSearchQuery";
 import { QUERY_HASH_HEADER, verifyQueryHash } from "../utils/queryHash";
 import { KWIC_OPTIONS, parseKwicQuery } from "../utils/kwic";
+import { makeKwicCacheKey, readKwicCache, writeKwicCache } from "../utils/kwicCache";
+import { writeSearchCache } from "../utils/searchCache";
 import { mdMakeKwicData } from "stgy-markdown";
 import {
   normalizeOneLiner,
@@ -198,7 +200,7 @@ export default function createPostsRouter(
           phrases: searchPhrases,
           result: docIds,
         };
-        await redis.setex(cacheKey, Config.SEARCH_CACHE_TTL_SEC, JSON.stringify(newCache));
+        await writeSearchCache(redis, cacheKey, newCache);
       }
       if (isAnonymous) {
         if (!ownedBy || publishedUntilMs === undefined) {
@@ -237,15 +239,31 @@ export default function createPostsRouter(
     }
     const watch = timerThrottleService.startWatch(anonymousUser);
     try {
-      const sources = await postsService.listKwicSourcesByIds(
-        kwicQuery.ids,
-        new Date().toISOString(),
+      const publishedUntil = new Date().toISOString();
+      const cacheKey = makeKwicCacheKey("posts", kwicQuery.keywords);
+      const cached = await readKwicCache(redis, cacheKey, kwicQuery.ids);
+      const cachedIds = kwicQuery.ids.filter((id) => cached.has(id));
+      const missingIds = kwicQuery.ids.filter((id) => !cached.has(id));
+      const publicCachedIds = await postsService.listPublishedPostIdsByIds(
+        cachedIds,
+        publishedUntil,
       );
+      const publicCachedIdSet = new Set(publicCachedIds);
+      for (const id of cachedIds) {
+        if (!publicCachedIdSet.has(id)) cached.delete(id);
+      }
+      const sources = await postsService.listKwicSourcesByIds(missingIds, publishedUntil);
+      const generated = sources.map((source) => ({
+        id: source.id,
+        kwic: mdMakeKwicData(source.content, kwicQuery.keywords, KWIC_OPTIONS),
+      }));
+      await writeKwicCache(redis, cacheKey, generated);
+      for (const item of generated) cached.set(item.id, item.kwic);
       return res.json(
-        sources.map((source) => ({
-          id: source.id,
-          kwic: mdMakeKwicData(source.content, kwicQuery.keywords, KWIC_OPTIONS),
-        })),
+        kwicQuery.ids.flatMap((id) => {
+          const kwic = cached.get(id);
+          return kwic ? [{ id, kwic }] : [];
+        }),
       );
     } catch (e) {
       return res.status(500).json({ error: (e as Error).message || "failed to make KWIC" });
@@ -268,12 +286,21 @@ export default function createPostsRouter(
     }
     const watch = timerThrottleService.startWatch(loginUser);
     try {
-      const sources = await postsService.listKwicSourcesByIds(kwicQuery.ids);
+      const cacheKey = makeKwicCacheKey("posts", kwicQuery.keywords);
+      const cached = await readKwicCache(redis, cacheKey, kwicQuery.ids);
+      const missingIds = kwicQuery.ids.filter((id) => !cached.has(id));
+      const sources = await postsService.listKwicSourcesByIds(missingIds);
+      const generated = sources.map((source) => ({
+        id: source.id,
+        kwic: mdMakeKwicData(source.content, kwicQuery.keywords, KWIC_OPTIONS),
+      }));
+      await writeKwicCache(redis, cacheKey, generated);
+      for (const item of generated) cached.set(item.id, item.kwic);
       return res.json(
-        sources.map((source) => ({
-          id: source.id,
-          kwic: mdMakeKwicData(source.content, kwicQuery.keywords, KWIC_OPTIONS),
-        })),
+        kwicQuery.ids.flatMap((id) => {
+          const kwic = cached.get(id);
+          return kwic ? [{ id, kwic }] : [];
+        }),
       );
     } catch (e) {
       return res.status(500).json({ error: (e as Error).message || "failed to make KWIC" });

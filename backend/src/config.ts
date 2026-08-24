@@ -151,7 +151,7 @@ export class Config {
   static readonly PUB_SIDE_POSTS_MAX = 20;
   static readonly PUB_VIEW_RETENTION_DAYS = envNum("STGY_PUB_VIEW_RETENTION_DAYS", 15);
   static readonly SEARCH_LIMIT_MAX = envNum("STGY_SEARCH_LIMIT_MAX", 1001);
-  static readonly SEARCH_CACHE_TTL_SEC = envNum("STGY_SEARCH_CACHE_TTL_SEC", 600);
+  static readonly SEARCH_CACHE_TTL_SEC = envNum("STGY_SEARCH_CACHE_TTL_SEC", 180);
   static readonly LINK_SNIPPET_TTL_SEC = envNum("STGY_LINK_SNIPPET_TTL_SEC", 24 * 3600);
   static readonly LINK_SNIPPET_STALE_TTL_SEC = envNum(
     "STGY_LINK_SNIPPET_STALE_TTL_SEC",
