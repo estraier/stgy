@@ -82,10 +82,10 @@ const SQL_UPSERT_DETAILS =
   "INSERT INTO user_details (user_id, introduction, ai_personality) VALUES ($1, $2, $3) ON CONFLICT (user_id) DO UPDATE SET introduction = COALESCE(EXCLUDED.introduction, user_details.introduction), ai_personality = COALESCE(EXCLUDED.ai_personality, user_details.ai_personality)";
 
 const SQL_UPSERT_PUBCONFIG =
-  "INSERT INTO user_pub_configs ( user_id, site_name, subtitle, author, introduction, design_theme, show_service_header, show_site_name, show_pagenation, show_side_profile, show_side_recent, show_side_popular ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) ON CONFLICT (user_id) DO UPDATE SET site_name = EXCLUDED.site_name, subtitle = EXCLUDED.subtitle, author = EXCLUDED.author, introduction = EXCLUDED.introduction, design_theme = EXCLUDED.design_theme, show_service_header = EXCLUDED.show_service_header, show_site_name = EXCLUDED.show_site_name, show_pagenation = EXCLUDED.show_pagenation, show_side_profile = EXCLUDED.show_side_profile, show_side_recent = EXCLUDED.show_side_recent, show_side_popular = EXCLUDED.show_side_popular RETURNING site_name, subtitle, author, introduction, design_theme, show_service_header, show_site_name, show_pagenation, show_side_profile, show_side_recent, show_side_popular";
+  "INSERT INTO user_pub_configs ( user_id, site_name, subtitle, author, introduction, design_theme, show_service_header, show_site_name, show_pagenation, show_side_profile, show_side_recent, show_side_popular, extensions ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) ON CONFLICT (user_id) DO UPDATE SET site_name = EXCLUDED.site_name, subtitle = EXCLUDED.subtitle, author = EXCLUDED.author, introduction = EXCLUDED.introduction, design_theme = EXCLUDED.design_theme, show_service_header = EXCLUDED.show_service_header, show_site_name = EXCLUDED.show_site_name, show_pagenation = EXCLUDED.show_pagenation, show_side_profile = EXCLUDED.show_side_profile, show_side_recent = EXCLUDED.show_side_recent, show_side_popular = EXCLUDED.show_side_popular, extensions = EXCLUDED.extensions RETURNING site_name, subtitle, author, introduction, design_theme, show_service_header, show_site_name, show_pagenation, show_side_profile, show_side_recent, show_side_popular, extensions";
 
 const SQL_SELECT_PUBCONFIG =
-  "SELECT upc.site_name, upc.subtitle, upc.author, upc.introduction, upc.design_theme, upc.show_service_header, upc.show_site_name, upc.show_pagenation, upc.show_side_profile, upc.show_side_recent, upc.show_side_popular, u.locale FROM user_pub_configs upc LEFT JOIN users u ON u.id = upc.user_id WHERE upc.user_id = $1 LIMIT 1";
+  "SELECT upc.site_name, upc.subtitle, upc.author, upc.introduction, upc.design_theme, upc.show_service_header, upc.show_site_name, upc.show_pagenation, upc.show_side_profile, upc.show_side_recent, upc.show_side_popular, upc.extensions, u.locale FROM user_pub_configs upc LEFT JOIN users u ON u.id = upc.user_id WHERE upc.user_id = $1 LIMIT 1";
 
 const SQL_LIST_BLOCKEES_DESC =
   "SELECT u.id, u.updated_at, u.snippet, u.nickname, u.avatar, u.ai_model, u.is_admin, u.is_frozen, u.block_strangers, id_to_timestamp(u.id) AS created_at, COALESCE(uc.follower_count, 0) AS count_followers, COALESCE(uc.followee_count, 0) AS count_followees, COALESCE(uc.post_count, 0) AS count_posts FROM user_blocks b JOIN users u ON b.blockee_id = u.id LEFT JOIN user_counts uc ON uc.user_id = u.id WHERE b.blocker_id = $1 ORDER BY b.created_at DESC, b.blockee_id DESC OFFSET $2 LIMIT $3";
@@ -115,6 +115,7 @@ class MockPgClient {
       show_side_profile: boolean;
       show_side_recent: number;
       show_side_popular: number;
+      extensions: string;
     }
   >;
 
@@ -926,6 +927,7 @@ class MockPgClient {
         showSideProfile,
         showSideRecent,
         showSidePopular,
+        extensions,
       ] = params;
       const userId = decToHex(userIdDec);
       const row = {
@@ -940,6 +942,7 @@ class MockPgClient {
         show_side_profile: !!showSideProfile,
         show_side_recent: Number(showSideRecent),
         show_side_popular: Number(showSidePopular),
+        extensions: String(extensions),
       };
       this.pubConfigs[userId] = row;
       return { rows: [row] };
@@ -1572,6 +1575,7 @@ describe("UsersService", () => {
       showSideProfile: true,
       showSideRecent: 5,
       showSidePopular: 5,
+      extensions: {},
       locale: "ja-JP",
     });
   });
@@ -1589,6 +1593,10 @@ describe("UsersService", () => {
       showSideProfile: true,
       showSideRecent: 0,
       showSidePopular: 7,
+      extensions: {
+        shareButtons: ["hatena", "x"],
+        analytics: { googleAnalytics: { measurementId: "G-TEST123" } },
+      },
     };
     const saved1 = await service.setPubConfig(ALICE, cfg1);
     expect(saved1).toEqual(cfg1);
@@ -1606,6 +1614,8 @@ describe("UsersService", () => {
       show_side_profile: true,
       show_side_recent: 0,
       show_side_popular: 7,
+      extensions:
+        '{"shareButtons":["hatena","x"],"analytics":{"googleAnalytics":{"measurementId":"G-TEST123"}}}',
     });
     const cfg2 = {
       siteName: "My Awesome Site",
@@ -1619,6 +1629,7 @@ describe("UsersService", () => {
       showSideProfile: false,
       showSideRecent: 3,
       showSidePopular: 0,
+      extensions: { shareButtons: ["facebook"] },
     };
     const saved2 = await service.setPubConfig(ALICE, cfg2);
     expect(saved2).toEqual(cfg2);
@@ -1636,6 +1647,7 @@ describe("UsersService", () => {
       show_side_profile: false,
       show_side_recent: 3,
       show_side_popular: 0,
+      extensions: '{"shareButtons":["facebook"]}',
     });
   });
 });

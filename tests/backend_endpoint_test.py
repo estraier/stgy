@@ -1217,6 +1217,7 @@ def test_users():
   assert cfg["showSideProfile"] is True
   assert cfg["showSideRecent"] == 5
   assert cfg["showSidePopular"] == 5
+  assert cfg["extensions"] == {}
   update1 = {
     "siteName": "site1",
     "subtitle": "subtitle1",
@@ -1229,6 +1230,10 @@ def test_users():
     "showSideProfile": False,
     "showSideRecent": 7,
     "showSidePopular": 3,
+    "extensions": {
+      "shareButtons": ["hatena", "x"],
+      "analytics": {"googleAnalytics": {"measurementId": "G-TEST123"}},
+    },
   }
   res = requests.put(f"{BASE_URL}/users/{user1_id}/pub-config", json=update1, headers=headers, cookies=user1_cookies)
   assert res.status_code == 200, res.text
@@ -1245,6 +1250,7 @@ def test_users():
   assert saved1["showSideProfile"] is False
   assert saved1["showSideRecent"] == 7
   assert saved1["showSidePopular"] == 3
+  assert saved1["extensions"] == update1["extensions"]
   res = requests.get(f"{BASE_URL}/users/{user1_id}/pub-config", headers=headers, cookies=user1_cookies)
   assert res.status_code == 200, res.text
   got1 = res.json()
@@ -1269,11 +1275,19 @@ def test_users():
   assert saved2["showSideProfile"] is False
   assert saved2["showSideRecent"] == 7
   assert saved2["showSidePopular"] == 3
+  assert saved2["extensions"] == update1["extensions"]
   res = requests.get(f"{BASE_URL}/users/{user1_id}/pub-config", headers=headers, cookies=user1_cookies)
   assert res.status_code == 200, res.text
   got2 = res.json()
   saved2["locale"] = got2["locale"]
   assert got2 == saved2
+  res = requests.put(
+    f"{BASE_URL}/users/{user1_id}/pub-config",
+    json={"extensions": {"shareButtons": "x"}},
+    headers=headers,
+    cookies=user1_cookies,
+  )
+  assert res.status_code == 400, res.text
   user1_track = upload_sample_track(user1_id, user1_cookies, "users")
   res = requests.get(user1_track["getUrl"], cookies=user1_cookies)
   assert res.status_code == 200, res.text

@@ -905,6 +905,28 @@ components:
       required:
         [url, status, title, description, siteName, imageUrl, fetchedAt, expiresAt, stale, refreshing]
 
+    UserPubConfigExtensions:
+      type: object
+      description: |
+        Extensible public-site settings stored as one compact JSON object. The current
+        management UI uses shareButtons and analytics.googleAnalytics; additional keys may
+        be introduced by future versions without a database schema change.
+      properties:
+        shareButtons:
+          type: array
+          items: { type: string }
+          description: Ordered share-service identifiers selected for the public site.
+        analytics:
+          type: object
+          properties:
+            googleAnalytics:
+              type: object
+              properties:
+                measurementId: { type: string, maxLength: 128 }
+              additionalProperties: true
+          additionalProperties: true
+      additionalProperties: true
+
     UserPubConfig:
       type: object
       properties:
@@ -919,6 +941,8 @@ components:
         showSideProfile: { type: boolean }
         showSideRecent: { type: integer, default: 5 }
         showSidePopular: { type: integer, default: 5 }
+        extensions:
+          $ref: "#/components/schemas/UserPubConfigExtensions"
         locale:
           type: string
           description: Optional locale hint for public site rendering.
@@ -935,6 +959,7 @@ components:
           showSideProfile,
           showSideRecent,
           showSidePopular,
+          extensions,
         ]
 
     PubViewStatEntry:
@@ -4568,6 +4593,8 @@ paths:
                 showSideProfile: { type: boolean }
                 showSideRecent: { type: integer }
                 showSidePopular: { type: integer }
+                extensions:
+                  $ref: "#/components/schemas/UserPubConfigExtensions"
               description: |
                 Note: current server implementation does NOT accept/handle "locale" in this request.
       responses:

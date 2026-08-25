@@ -110,6 +110,73 @@ html:has(.site-container) {
   border-color: #6af;
 }
 
+.pub-share-buttons {
+  display: flex;
+  align-items: center;
+  gap: 0.45em;
+  min-height: 20px;
+  writing-mode: horizontal-tb !important;
+  text-orientation: mixed !important;
+}
+.pub-share-widget {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-height: 20px;
+  writing-mode: horizontal-tb !important;
+  text-orientation: mixed !important;
+}
+.pub-share-facebook {
+  height: 20px;
+  overflow: visible;
+}
+.pub-share-facebook .fb-share-button {
+  display: block;
+  height: 20px;
+  line-height: 0;
+}
+.pub-share-facebook .fb_iframe_widget > span {
+  display: block !important;
+  height: 20px !important;
+  vertical-align: top !important;
+}
+.pub-share-facebook .fb_iframe_widget iframe {
+  display: block;
+}
+.pub-share-hatena {
+  gap: 0.25em;
+}
+.pub-share-hatena img {
+  display: block;
+}
+.pub-hatena-star-container {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-height: 20px;
+  line-height: 20px;
+  vertical-align: top;
+  writing-mode: horizontal-tb !important;
+  text-orientation: mixed !important;
+}
+.pub-hatena-star-container > [data-hatena-star] {
+  display: inline-block;
+}
+.pub-article-with-share {
+  position: relative;
+}
+.pub-theme-dir-norm .pub-container .pub-main .markdown-body.pub-post-content-with-share {
+  padding-bottom: 2.15em;
+}
+.pub-theme-dir-norm .pub-article-with-share > .pub-share-buttons {
+  position: absolute;
+  left: 0.5em;
+  bottom: 0.35em;
+  z-index: 2;
+  justify-content: flex-start;
+  margin: 0;
+}
+
 .pub-theme-dir-norm .pub-pager {
   margin-top: 1em;
 }
@@ -1638,6 +1705,17 @@ html:has(.site-container) {
     margin-top: 1.2em;
     font-size: 90%;
     color: #888;
+  }
+  .pub-theme-dir-vert .pub-container .pub-main .markdown-body.pub-post-content-with-share {
+    padding-bottom: 3em;
+  }
+  .pub-theme-dir-vert .pub-article-with-share > .pub-share-buttons {
+    position: absolute;
+    left: 1em;
+    bottom: 0.5em;
+    z-index: 2;
+    justify-content: flex-start;
+    margin: 0;
   }
   .pub-theme-dir-vert .pub-side-profile article,
   .pub-theme-dir-vert .pub-side-recent article {

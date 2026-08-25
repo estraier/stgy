@@ -20,6 +20,7 @@ import { parseDateString } from "@/utils/parse";
 import PubImageBlockBinder from "@/components/PubImageBlockBinder";
 import PubScrollAction from "@/components/PubScrollAction";
 import PubTrackMapHydrator from "@/components/PubTrackMapHydrator";
+import PubShareButtons from "@/components/PubShareButtons";
 import type { Post } from "@/api/models";
 import type { Metadata } from "next";
 
@@ -232,6 +233,19 @@ export default async function PubPostPage({ params, searchParams }: Props) {
       ? `/pub/${post.olderPostId}${design ? `?design=${encodeURIComponent(design)}` : ""}`
       : "";
     const hasTrackMap = article.html.includes("stgy-track-map");
+    const enabledShareButtons = pubcfg.extensions.shareButtons ?? [];
+    const hasShareButtons = ["x", "facebook", "hatena"].some((service) =>
+      enabledShareButtons.includes(service),
+    );
+    const shareUrl = makeAbsoluteUrl(`/pub/${post.id}`);
+    const shareTitle = article.title || pubcfg.siteName.trim() || "STGY Publications";
+    const articleNode = (
+      <ArticleWithDecoration
+        lang={locale}
+        className={`markdown-body post-content${hasShareButtons ? " pub-post-content-with-share" : ""}`}
+        html={article.html}
+      />
+    );
 
     return (
       <div
@@ -260,11 +274,19 @@ export default async function PubPostPage({ params, searchParams }: Props) {
               <div className="date">
                 {convertForDirection(formatDateTime(new Date(post.publishedAt ?? "")), themeDir)}
               </div>
-              <ArticleWithDecoration
-                lang={locale}
-                className="markdown-body post-content"
-                html={article.html}
-              />
+              {hasShareButtons ? (
+                <div className="pub-article-with-share">
+                  {articleNode}
+                  <PubShareButtons
+                    enabled={enabledShareButtons}
+                    url={shareUrl}
+                    title={shareTitle}
+                    locale={locale}
+                  />
+                </div>
+              ) : (
+                articleNode
+              )}
               {hasTrackMap && <PubTrackMapHydrator htmlKey={String(post.id)} />}
               {pubcfg.showPagenation && (
                 <nav className="pub-pager" aria-label="Pagination">

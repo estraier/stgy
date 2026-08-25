@@ -278,6 +278,18 @@ export type MarkAllNotificationsInput = {
   isRead: boolean;
 };
 
+export type PubConfigExtensions = {
+  shareButtons?: string[];
+  analytics?: {
+    googleAnalytics?: {
+      measurementId?: string;
+      [key: string]: unknown;
+    };
+    [provider: string]: unknown;
+  };
+  [key: string]: unknown;
+};
+
 export type PubConfig = {
   siteName: string;
   subtitle: string;
@@ -290,5 +302,6 @@ export type PubConfig = {
   showSideProfile: boolean;
   showSideRecent: number;
   showSidePopular: number;
+  extensions: PubConfigExtensions;
   locale?: string;
 };

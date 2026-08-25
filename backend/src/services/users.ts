@@ -36,6 +36,7 @@ import { Pool } from "pg";
 import Redis from "ioredis";
 import { v4 as uuidv4 } from "uuid";
 import { pgQuery } from "../utils/servers";
+import { parsePubConfigExtensions, serializePubConfigExtensions } from "../utils/pubConfigExtensions";
 
 type FocusRelFlagsRow = {
   is_followed_by_focus_user: boolean;
@@ -1491,6 +1492,7 @@ export class UsersService {
         upc.show_side_profile,
         upc.show_side_recent,
         upc.show_side_popular,
+        upc.extensions,
         u.locale
       FROM user_pub_configs upc
       LEFT JOIN users u ON u.id = upc.user_id
@@ -1523,10 +1525,12 @@ export class UsersService {
         showSideProfile: true,
         showSideRecent: 5,
         showSidePopular: 5,
+        extensions: {},
         locale,
       };
     }
     const row = res.rows[0] as Record<string, unknown>;
+    row.extensions = parsePubConfigExtensions(row.extensions);
     return snakeToCamel<PubConfig>(row);
   }
 
@@ -1546,9 +1550,10 @@ export class UsersService {
         show_pagenation,
         show_side_profile,
         show_side_recent,
-        show_side_popular
+        show_side_popular,
+        extensions
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       ON CONFLICT (user_id) DO UPDATE SET
         site_name           = EXCLUDED.site_name,
         subtitle            = EXCLUDED.subtitle,
@@ -1560,7 +1565,8 @@ export class UsersService {
         show_pagenation     = EXCLUDED.show_pagenation,
         show_side_profile   = EXCLUDED.show_side_profile,
         show_side_recent    = EXCLUDED.show_side_recent,
-        show_side_popular   = EXCLUDED.show_side_popular
+        show_side_popular   = EXCLUDED.show_side_popular,
+        extensions          = EXCLUDED.extensions
       RETURNING
         site_name,
         subtitle,
@@ -1572,7 +1578,8 @@ export class UsersService {
         show_pagenation,
         show_side_profile,
         show_side_recent,
-        show_side_popular
+        show_side_popular,
+        extensions
     `,
       [
         hexToDec(userId),
@@ -1587,10 +1594,12 @@ export class UsersService {
         cfg.showSideProfile,
         cfg.showSideRecent,
         cfg.showSidePopular,
+        serializePubConfigExtensions(cfg.extensions),
       ],
     );
 
     const row = res.rows[0] as Record<string, unknown>;
+    row.extensions = parsePubConfigExtensions(row.extensions);
     return snakeToCamel<PubConfig>(row);
   }
 }

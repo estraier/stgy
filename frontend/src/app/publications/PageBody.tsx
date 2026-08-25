@@ -25,10 +25,17 @@ const emptyCfg: PubConfig = {
   showSideProfile: true,
   showSideRecent: 5,
   showSidePopular: 5,
+  extensions: {},
 };
 
 const emptyStats: PubViewStats = { retentionDays: 0, totalPv: 0, dailyPv: [], entries: [] };
 const STATS_PAGE_SIZE = 50;
+const SHARE_BUTTON_OPTIONS = [
+  { id: "x", label: "X" },
+  { id: "facebook", label: "Facebook" },
+  { id: "hatena", label: "Hatena" },
+] as const;
+const SHARE_BUTTON_IDS = new Set<string>(SHARE_BUTTON_OPTIONS.map((option) => option.id));
 
 function formatChartDate(date: string): string {
   const parts = date.split("-");
@@ -320,6 +327,46 @@ export default function PageBody() {
 
   function setField<K extends keyof PubConfig>(key: K, value: PubConfig[K]) {
     setCfg((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function setShareButton(id: string, enabled: boolean) {
+    setCfg((prev) => {
+      const current = Array.isArray(prev.extensions.shareButtons)
+        ? prev.extensions.shareButtons
+        : [];
+      const selected = new Set(current);
+      if (enabled) selected.add(id);
+      else selected.delete(id);
+
+      const shareButtons = [
+        ...SHARE_BUTTON_OPTIONS.filter((option) => selected.has(option.id)).map(
+          (option) => option.id,
+        ),
+        ...current.filter((value) => !SHARE_BUTTON_IDS.has(value) && selected.has(value)),
+      ];
+      const extensions = { ...prev.extensions };
+      if (shareButtons.length > 0) extensions.shareButtons = shareButtons;
+      else delete extensions.shareButtons;
+      return { ...prev, extensions };
+    });
+  }
+
+  function setGoogleAnalyticsMeasurementId(measurementId: string) {
+    setCfg((prev) => {
+      const extensions = { ...prev.extensions };
+      const analytics = { ...(prev.extensions.analytics ?? {}) };
+      if (measurementId.length > 0) {
+        analytics.googleAnalytics = {
+          ...(analytics.googleAnalytics ?? {}),
+          measurementId,
+        };
+      } else {
+        delete analytics.googleAnalytics;
+      }
+      if (Object.keys(analytics).length > 0) extensions.analytics = analytics;
+      else delete extensions.analytics;
+      return { ...prev, extensions };
+    });
   }
 
   function toggleSort(nextKey: SortKey) {
@@ -669,6 +716,43 @@ export default function PageBody() {
                   Popular entries in the sidebar (maximum {Config.PUB_SIDE_POSTS_MAX}; 0 or
                   less to hide)
                 </span>
+              </label>
+            </div>
+          </section>
+
+          <section className="border-t pt-5">
+            <h2 className="text-lg font-semibold mb-3">Extensions</h2>
+            <div className="flex flex-col gap-4">
+              <div>
+                <div className="text-sm text-gray-700 mb-2">Share buttons</div>
+                <div className="flex flex-wrap gap-x-5 gap-y-2">
+                  {SHARE_BUTTON_OPTIONS.map((option) => (
+                    <label key={option.id} className="inline-flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={(cfg.extensions.shareButtons ?? []).includes(option.id)}
+                        onChange={(e) => setShareButton(option.id, e.target.checked)}
+                        disabled={saving}
+                      />
+                      <span>{option.label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <label className="block">
+                <span className="block text-sm text-gray-700 mb-1">
+                  Google Analytics Measurement ID
+                </span>
+                <input
+                  type="text"
+                  value={cfg.extensions.analytics?.googleAnalytics?.measurementId ?? ""}
+                  onChange={(e) => setGoogleAnalyticsMeasurementId(e.target.value)}
+                  maxLength={128}
+                  placeholder="G-XXXXXXXXXX"
+                  className="border px-2 py-1 rounded w-full"
+                  disabled={saving}
+                />
               </label>
             </div>
           </section>

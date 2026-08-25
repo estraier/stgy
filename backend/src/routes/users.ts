@@ -16,13 +16,20 @@ import { AuthHelpers } from "./authHelpers";
 import { EventLogService } from "../services/eventLog";
 import { SendMailService } from "../services/sendMail";
 import { PubViewsService } from "../services/pubViews";
-import { CreateUserInput, UpdateUserInput, UpdatePasswordInput, UserLite } from "../models/user";
+import {
+  CreateUserInput,
+  UpdateUserInput,
+  UpdatePasswordInput,
+  UserLite,
+  type PubConfigExtensions,
+} from "../models/user";
 import { SearchCacheEntry } from "../models/search";
 import { KWIC_OPTIONS, parseKwicQuery } from "../utils/kwic";
 import { makeKwicCacheKey, readKwicCache, writeKwicCache } from "../utils/kwicCache";
 import { writeSearchCache } from "../utils/searchCache";
 import { makeTextFromMarkdown } from "../utils/snippet";
 import { makeKwicData } from "stgy-markdown";
+import { serializePubConfigExtensions, validatePubConfigExtensions } from "../utils/pubConfigExtensions";
 import { isAIModelTier, type AIModelTier } from "../models/aiModel";
 import {
   validateEmail,
@@ -932,9 +939,14 @@ export default function createUsersRouter(
     }
     let showSideRecent: number | undefined;
     let showSidePopular: number | undefined;
+    let extensions: PubConfigExtensions | undefined;
     try {
       showSideRecent = parseSidebarCount(req.body.showSideRecent);
       showSidePopular = parseSidebarCount(req.body.showSidePopular);
+      if (req.body.extensions !== undefined) {
+        extensions = validatePubConfigExtensions(req.body.extensions);
+        dataSize += Array.from(serializePubConfigExtensions(extensions)).length;
+      }
     } catch (e: unknown) {
       return res.status(400).json({ error: (e as Error).message });
     }
@@ -955,6 +967,7 @@ export default function createUsersRouter(
         showSideProfile: showSideProfile ?? current.showSideProfile,
         showSideRecent: showSideRecent ?? current.showSideRecent,
         showSidePopular: showSidePopular ?? current.showSidePopular,
+        extensions: extensions ?? current.extensions,
       };
       const watch = timerThrottleService.startWatch(loginUser);
       const saved = await usersService.setPubConfig(req.params.id, next);

@@ -1,5 +1,5 @@
 import { apiFetch } from "./client";
-import { getUsersKwic, searchUsers } from "./users";
+import { getPubConfig, getUsersKwic, searchUsers, setPubConfig } from "./users";
 
 jest.mock("./client", () => ({
   apiFetch: jest.fn(),
@@ -58,5 +58,54 @@ describe("user KWIC API", () => {
       "/users/kwic?id=0000000000000001&id=0000000000000002&keyword=alpha&keyword=hot+dog",
       { method: "GET" },
     );
+  });
+});
+
+describe("user public config API", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  test("returns extensions from public config", async () => {
+    const response = {
+      siteName: "Site",
+      subtitle: "",
+      author: "",
+      introduction: "",
+      designTheme: "",
+      showServiceHeader: true,
+      showSiteName: true,
+      showPagenation: true,
+      showSideProfile: true,
+      showSideRecent: 5,
+      showSidePopular: 5,
+      extensions: { shareButtons: ["hatena", "x"] },
+    };
+    mockApiFetch.mockResolvedValue({
+      ok: true,
+      json: jest.fn().mockResolvedValue(response),
+    } as unknown as Response);
+
+    await expect(getPubConfig("0000000000000001")).resolves.toEqual(response);
+    expect(mockApiFetch).toHaveBeenCalledWith("/users/0000000000000001/pub-config", {
+      method: "GET",
+    });
+  });
+
+  test("sends extensions when public config is updated", async () => {
+    const extensions = {
+      shareButtons: ["facebook"],
+      analytics: { googleAnalytics: { measurementId: "G-TEST123" } },
+    };
+    mockApiFetch.mockResolvedValue({
+      ok: true,
+      json: jest.fn().mockResolvedValue({ extensions }),
+    } as unknown as Response);
+
+    await setPubConfig("0000000000000001", { extensions });
+    expect(mockApiFetch).toHaveBeenCalledWith("/users/0000000000000001/pub-config", {
+      method: "PUT",
+      body: JSON.stringify({ extensions }),
+    });
   });
 });
