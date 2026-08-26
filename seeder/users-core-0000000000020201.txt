@@ -59,3 +59,6 @@ pubConfigIntroduction:<<____EOF____
 自転車旅行、長距離走、変速機、身体の使い方。速さよりも、無理なく遠くへ行き、また帰ってこられるための技術と知恵を考えます。
 ____EOF____
 pubConfigDesignTheme: newspaper
+pubConfigExtensions:<<____EOF____
+{"shareButtons":["x","facebook","hatena"]}
+____EOF____

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import json
 import os
 import sys
 import secrets
@@ -39,6 +40,9 @@ PUBCONFIG_BOOL_KEYS = [
 PUBCONFIG_INT_KEYS = [
   "pubConfigShowSideRecent",
   "pubConfigShowSidePopular",
+]
+PUBCONFIG_JSON_KEYS = [
+  "pubConfigExtensions",
 ]
 
 
@@ -142,6 +146,12 @@ def normalize_payload(raw: dict) -> dict:
   for k in PUBCONFIG_INT_KEYS:
     if k in raw and str(raw[k]).strip() != "":
       out[k] = to_int(str(raw[k]).strip())
+  for k in PUBCONFIG_JSON_KEYS:
+    if k in raw and str(raw[k]).strip() != "":
+      try:
+        out[k] = json.loads(str(raw[k]))
+      except json.JSONDecodeError as e:
+        raise ValueError(f"{k} must be valid JSON: {e.msg}") from e
   return out
 
 
@@ -171,6 +181,9 @@ def has_pub_config(payload: dict) -> bool:
   for k in PUBCONFIG_INT_KEYS:
     if k in payload:
       return True
+  for k in PUBCONFIG_JSON_KEYS:
+    if k in payload:
+      return True
   return False
 
 
@@ -198,6 +211,8 @@ def build_pub_config_body(payload: dict) -> dict:
     body["showSideRecent"] = payload["pubConfigShowSideRecent"]
   if "pubConfigShowSidePopular" in payload:
     body["showSidePopular"] = payload["pubConfigShowSidePopular"]
+  if "pubConfigExtensions" in payload:
+    body["extensions"] = payload["pubConfigExtensions"]
   return body
 
 

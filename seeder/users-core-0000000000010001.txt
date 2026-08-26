@@ -20,3 +20,6 @@ I publish technical documentation about STGY.
 STGY aims to be a textbook-style implementation of an SNS and is published as open-source software. These articles discuss how to achieve a high standard of usability, accessibility, scalability, performance, and security. If you are interested, see the [codebase](https://github.com/estraier/stgy).
 ____EOF____
 pubConfigDesignTheme: default
+pubConfigExtensions:<<____EOF____
+{"shareButtons":["x","facebook","hatena"]}
+____EOF____

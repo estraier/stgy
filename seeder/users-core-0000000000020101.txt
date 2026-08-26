@@ -22,3 +22,6 @@ pubConfigIntroduction:<<____EOF____
 自転車は主にAnchor RE8とブロンプトンを使い、カメラは主にE-M5M3を使っています。
 ____EOF____
 pubConfigDesignTheme: default
+pubConfigExtensions:<<____EOF____
+{"shareButtons":["x","facebook","hatena"]}
+____EOF____
