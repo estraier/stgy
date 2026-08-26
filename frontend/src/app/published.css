@@ -146,12 +146,11 @@ html:has(.site-container) {
 .pub-share-hatena {
   gap: 0.25em;
 }
-.pub-share-hatena img {
+.pub-share-hatena > .hatena-bookmark-button > img {
   display: block;
 }
 .pub-hatena-star-container {
-  display: inline-flex;
-  align-items: center;
+  display: inline-block;
   flex: 0 0 auto;
   min-height: 20px;
   line-height: 20px;
@@ -159,9 +158,7 @@ html:has(.site-container) {
   writing-mode: horizontal-tb !important;
   text-orientation: mixed !important;
 }
-.pub-hatena-star-container > [data-hatena-star] {
-  display: inline-block;
-}
+
 .pub-article-with-share {
   position: relative;
 }

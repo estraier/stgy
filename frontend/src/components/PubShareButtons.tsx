@@ -213,10 +213,11 @@ export default function PubShareButtons({ enabled, url, title, locale }: Props) 
           </a>
           <span
             key={`hatena-star:${url}`}
-            className="pub-hatena-star-container"
+            className="hatena-star-container pub-hatena-star-container"
             data-hatena-star-container=""
             data-hatena-star-url={url}
             data-hatena-star-title={title}
+            data-hatena-star-variant="profile-icon"
             data-hatena-star-profile-url-template="https://blog.hatena.ne.jp/{username}/"
           />
         </div>
