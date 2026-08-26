@@ -268,7 +268,9 @@ export default async function PubPostPage({ params, searchParams }: Props) {
           showServiceHeader={pubcfg.showServiceHeader}
           redirectTo={`/posts/${post.id}`}
           viewAsHref={`/posts/${post.id}`}
-          post={post}
+          logoHref={`/posts/${post.id}`}
+          countLikes={post.countLikes}
+          countReplies={post.countReplies}
         />
         <main className="pub-container" lang={locale}>
           {pubcfg.showSiteName && (

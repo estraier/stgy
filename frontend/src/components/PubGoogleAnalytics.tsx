@@ -1,15 +1,4 @@
-"use client";
-
-import { useEffect, useRef } from "react";
-
-type Gtag = (...args: unknown[]) => void;
-
-declare global {
-  interface Window {
-    dataLayer?: unknown[];
-    gtag?: Gtag;
-  }
-}
+import PubGoogleAnalyticsPageView from "@/components/PubGoogleAnalyticsPageView";
 
 type Props = {
   measurementId: string;
@@ -18,26 +7,7 @@ type Props = {
   contentType: string;
 };
 
-function ensureGoogleTag(measurementId: string): Gtag {
-  window.dataLayer ??= [];
-  if (!window.gtag) {
-    window.gtag = function gtag(...args: unknown[]) {
-      window.dataLayer?.push(args);
-    };
-    window.gtag("js", new Date());
-  }
-
-  const scriptId = "stgy-google-analytics-gtag";
-  if (!document.getElementById(scriptId)) {
-    const script = document.createElement("script");
-    script.id = scriptId;
-    script.async = true;
-    script.src = `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(measurementId)}`;
-    document.head.appendChild(script);
-  }
-
-  return window.gtag;
-}
+const GOOGLE_TAG_INIT_SCRIPT = `window.dataLayer=window.dataLayer||[];window.gtag=window.gtag||function(){window.dataLayer.push(arguments);};window.gtag("js",new Date());`;
 
 export default function PubGoogleAnalytics({
   measurementId,
@@ -45,37 +15,22 @@ export default function PubGoogleAnalytics({
   contentId,
   contentType,
 }: Props) {
-  const lastSentPageViewKey = useRef<string | null>(null);
+  const tagId = measurementId.trim();
+  if (!tagId) return null;
 
-  useEffect(() => {
-    const tagId = measurementId.trim();
-    if (!tagId) return;
-
-    const gtag = ensureGoogleTag(tagId);
-    const pageLocation = window.location.href;
-    const pageViewKey = [tagId, pageLocation, contentGroup, contentId, contentType].join("\n");
-
-    // React Strict Mode may run effects twice in development. Suppress only an
-    // immediate duplicate of the same page view; navigation away and back has a
-    // different last key in between and is counted again.
-    if (lastSentPageViewKey.current === pageViewKey) return;
-    lastSentPageViewKey.current = pageViewKey;
-
-    // Disable the automatic page_view so the one below can carry STGY's
-    // content metadata without generating a duplicate page view.
-    gtag("config", tagId, {
-      send_page_view: false,
-      content_group: contentGroup,
-    });
-    gtag("event", "page_view", {
-      send_to: tagId,
-      page_title: document.title,
-      page_location: pageLocation,
-      content_group: contentGroup,
-      content_id: contentId,
-      content_type: contentType,
-    });
-  }, [measurementId, contentGroup, contentId, contentType]);
-
-  return null;
+  return (
+    <>
+      <script
+        async
+        src={`https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(tagId)}`}
+      />
+      <script dangerouslySetInnerHTML={{ __html: GOOGLE_TAG_INIT_SCRIPT }} />
+      <PubGoogleAnalyticsPageView
+        measurementId={tagId}
+        contentGroup={contentGroup}
+        contentId={contentId}
+        contentType={contentType}
+      />
+    </>
+  );
 }

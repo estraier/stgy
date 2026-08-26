@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import type { PostDetail, SessionInfo } from "@/api/models";
+import type { SessionInfo } from "@/api/models";
 import { getSessionInfo } from "@/api/auth";
 import { Heart, MessageCircle } from "lucide-react";
 
@@ -10,7 +10,9 @@ type Props = {
   showServiceHeader: boolean;
   redirectTo?: string;
   viewAsHref?: string;
-  post?: PostDetail;
+  logoHref?: string;
+  countLikes?: number;
+  countReplies?: number;
 };
 
 function isAllowedPath(p: string): boolean {
@@ -32,7 +34,9 @@ export default function PubServiceHeader({
   showServiceHeader,
   redirectTo,
   viewAsHref,
-  post,
+  logoHref = "/",
+  countLikes = 0,
+  countReplies = 0,
 }: Props) {
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -59,16 +63,9 @@ export default function PubServiceHeader({
   const loginHref = addNext("/login", next);
   const signupHref = addNext("/signup", next);
   const viewHref = viewAsHref ?? "/posts";
-  const logoHref = post ? viewHref : "/";
   const likedByHref = `${viewHref}#liked-by`;
   const repliesHref = `${viewHref}#replies`;
 
-  let countLikes = 0;
-  let countReplies = 0;
-  if (post) {
-    countLikes = post.countLikes;
-    countReplies = post.countReplies;
-  }
   return (
     <nav className="sh-nav w-full h-10 flex items-center px-3">
       <Link href={logoHref} className="sh-logo">
