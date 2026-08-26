@@ -212,7 +212,7 @@ export default async function PubPostPage({ params, searchParams }: Props) {
       recentCount > 0
         ? listPubPostsByUser(post.ownedBy, {
             offset: 0,
-            limit: recentCount + 1,
+            limit: recentCount,
             order: "desc",
           })
         : Promise.resolve([]),
@@ -220,9 +220,7 @@ export default async function PubPostPage({ params, searchParams }: Props) {
         ? listPopularPosts(post.ownedBy, popularCount).catch(() => [])
         : Promise.resolve([]),
     ]);
-    const recent = recentRaw
-      .filter((r) => String(r.id) !== String(post.id))
-      .slice(0, recentCount);
+    const recent = recentRaw;
     const siteHrefBase = `/sites/${post.ownedBy}`;
     const siteHref = design ? `${siteHrefBase}?design=${encodeURIComponent(design)}` : siteHrefBase;
     const siteHrefWithPostsControls = `${siteHref}#pub-posts-controls`;

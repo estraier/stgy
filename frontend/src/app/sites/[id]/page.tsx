@@ -202,7 +202,8 @@ export default async function PubSitePage({ params, searchParams }: Props) {
       if (tabMode === "plain") qs.set("tab", "plain");
       if (on) qs.set("oldestFirst", "1");
       const query = qs.toString();
-      return query ? `${siteRoot}?${query}` : siteRoot;
+      const href = query ? `${siteRoot}?${query}` : siteRoot;
+      return `${href}#pub-posts-controls`;
     };
 
     const oldestFirstHref = buildOldestFirstHref(!oldestFirst);
