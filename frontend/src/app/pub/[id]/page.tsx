@@ -21,6 +21,7 @@ import PubImageBlockBinder from "@/components/PubImageBlockBinder";
 import PubScrollAction from "@/components/PubScrollAction";
 import PubTrackMapHydrator from "@/components/PubTrackMapHydrator";
 import PubShareButtons from "@/components/PubShareButtons";
+import PubGoogleAnalytics from "@/components/PubGoogleAnalytics";
 import type { Post } from "@/api/models";
 import type { Metadata } from "next";
 
@@ -239,6 +240,9 @@ export default async function PubPostPage({ params, searchParams }: Props) {
     );
     const shareUrl = makeAbsoluteUrl(`/pub/${post.id}`);
     const shareTitle = article.title || pubcfg.siteName.trim() || "STGY Publications";
+    const googleAnalyticsMeasurementId =
+      pubcfg.extensions.analytics?.googleAnalytics?.measurementId?.trim() ?? "";
+    const googleAnalyticsContentGroup = `stgy-user-${post.ownedBy}`;
     const articleNode = (
       <ArticleWithDecoration
         lang={locale}
@@ -252,6 +256,14 @@ export default async function PubPostPage({ params, searchParams }: Props) {
         className={`pub-page pub-theme-${theme} pub-theme-dir-${themeDir} pub-theme-tone-${themeTone}`}
       >
         <HeadLangPatcher lang={locale} />
+        {googleAnalyticsMeasurementId && (
+          <PubGoogleAnalytics
+            measurementId={googleAnalyticsMeasurementId}
+            contentGroup={googleAnalyticsContentGroup}
+            contentId={String(post.id)}
+            contentType="post"
+          />
+        )}
         <PubServiceHeader
           showServiceHeader={pubcfg.showServiceHeader}
           redirectTo={`/posts/${post.id}`}

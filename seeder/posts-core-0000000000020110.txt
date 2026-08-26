@@ -106,7 +106,7 @@ CREATE TABLE user_pub_configs (
 }
 ```
 
-``shareButtons`` は外部公開記事に表示するシェアサービスの識別子配列で、現在の設定画面はX、Facebook、LINE、Hatenaを扱い、認識したサービスはこの順に表示する。``line`` は記事URLとタイトルをLINE Shareへ渡す。フロントエンドはLINE Social Pluginsのカスタム共有URL ``https://social-plugins.line.me/lineit/share`` に、URLエンコードした ``url`` と ``text`` パラメータを渡すため、LINE用の追加JavaScript SDKは不要である。``hatena`` を有効にすると、はてなブックマークとはてなスターを表示する。``analytics.googleAnalytics.measurementId`` はGoogle Analytics連携用のMeasurement IDを保持し、最大128文字である。現在のコードでは設定画面とAPIがこの値を保存・復元する。未知のトップレベルキーや分析プロバイダ用の追加キーも保持できるため、将来の拡張と前方互換性を確保できる。
+``shareButtons`` は外部公開記事に表示するシェアサービスの識別子配列で、現在の設定画面はX、Facebook、LINE、Hatenaを扱い、認識したサービスはこの順に表示する。``line`` は記事URLとタイトルをLINE Shareへ渡す。フロントエンドはLINE Social Pluginsのカスタム共有URL ``https://social-plugins.line.me/lineit/share`` に、URLエンコードした ``url`` と ``text`` パラメータを渡すため、LINE用の追加JavaScript SDKは不要である。``hatena`` を有効にすると、はてなブックマークとはてなスターを表示する。``analytics.googleAnalytics.measurementId`` はGoogle Analytics連携用のMeasurement IDを保持し、最大128文字である。この値が空でない場合、``/pub/<投稿ID>`` は ``gtag.js`` を読み込み、そのMeasurement IDへ手動の ``page_view`` を送信する。二重計測を避けるため、``config`` コマンドによる自動 ``page_view`` は無効にする。イベントには ``page_location`` と ``page_title`` に加えて、``content_group=stgy-user-<公開ユーザID>``、``content_id=<投稿ID>``、``content_type=post`` を含める。``content_group`` により ``/pub/<投稿ID>`` というURL構造に依存せず公開ユーザ単位で記事をまとめられ、``content_id`` には個別のSTGY投稿IDが残る。設定画面とAPIはMeasurement IDを保存・復元するが、Google Analyticsの計測データそのものをSTGYが保存することはない。未知のトップレベルキーや分析プロバイダ用の追加キーも保持できるため、将来の拡張と前方互換性を確保できる。
 
 バックエンドは ``extensions`` を保存前と読出し後の両方で検証する。全体のJSONは4096文字以内とし、``shareButtons`` の各識別子は1〜64文字の英数字・``_``・``-`` に限定して重複を許さない。``analytics`` のプロバイダ名も同じ文字種で1〜64文字に限定する。DBにはJSON文字列として保存するが、``GET /users/{id}/pub-config`` と更新APIの入出力では通常のJSONオブジェクトとして扱う。
 

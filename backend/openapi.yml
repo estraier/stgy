@@ -925,7 +925,13 @@ components:
             googleAnalytics:
               type: object
               properties:
-                measurementId: { type: string, maxLength: 128 }
+                measurementId:
+                  type: string
+                  maxLength: 128
+                  description: >-
+                    Google Analytics Measurement ID used on externally published article pages.
+                    When non-empty, /pub/{postId} sends a page_view with content_group set to
+                    stgy-user-{ownerId}, content_id set to the STGY post ID, and content_type=post.
               additionalProperties: true
           additionalProperties: true
       additionalProperties: true
