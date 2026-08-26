@@ -230,7 +230,7 @@ STGYはCMS（コンテンツ管理システム）ではなく、編集履歴管�
 
 外部公開された記事はブログエンジンで管理しているようなものです。「Settings」タブでは、そのブログのサイト名、副題、著者名、紹介文、デザインテーマを指定します。STGYのヘッダの表示の有無や、サイドバーの表示の有無なども変更できます。
 
-「Extensions」では、外部公開サイトに追加する機能を設定します。「Share buttons」ではX、Facebook、LINE、Hatenaを個別に有効化でき、有効にしたサービスのボタンがこの順で外部公開の記事ページに表示されます。LINEは記事タイトルとURLをLINE Shareへ渡します。Hatenaを有効にすると、はてなブックマークとはてなスターが表示されます。「Google Analytics Measurement ID」には、Google Analytics連携用のMeasurement ID（``G-XXXXXXXXXX``の形式）を設定できます。GA4でWebデータストリームを作成する際は、「ウェブサイトのURL」に ``https://stgy.jp`` を指定してください。個別の ``/pub/<投稿ID>`` や ``/sites/<ユーザID>`` のURLを指定する必要はありません。Measurement IDを設定した場合、外部公開の記事ページはそのGoogle Analyticsプロパティへ ``page_view`` を送信します。通常のページURLとタイトルに加えて、``content_group=stgy-user-<公開ユーザID>``、``content_id=<投稿ID>``、``content_type=post`` を送るため、記事URLがすべて ``/pub/<投稿ID>`` 配下でも、同じ公開ユーザの記事をまとめて分析できます。これらは通常のサイト名やデザインテーマとは別の拡張設定として管理されます。
+「Extensions」では、外部公開サイトに追加する機能を設定します。「Share buttons」ではX、Facebook、LINE、Hatenaを個別に有効化でき、有効にしたサービスのボタンがこの順で外部公開の記事ページに表示されます。LINEは記事タイトルとURLをLINE Shareへ渡します。Hatenaを有効にすると、はてなブックマークとはてなスターが表示されます。「Google Analytics Measurement ID」には、Google Analytics連携用のMeasurement ID（``G-XXXXXXXXXX``の形式）を設定できます。GA4でWebデータストリームを作成する際は、「ウェブサイトのURL」に自分の外部公開サイトのURL ``https://stgy.jp/sites/<ユーザID>`` を指定してください。個別の記事の ``/pub/<投稿ID>`` をストリームURLに指定する必要はありません。Measurement IDを設定した場合、外部公開サイトページと外部公開記事ページはそのGoogle Analyticsプロパティへ ``page_view`` を送信します。通常のページURLとタイトルに加えて、両方で ``content_group=stgy-user-<公開ユーザID>`` を送り、サイトページでは ``content_id=<公開ユーザID>``、``content_type=site``、記事ページでは ``content_id=<投稿ID>``、``content_type=post`` を送ります。これにより、記事URLが ``/pub/<投稿ID>`` 配下にあっても、同じ公開ユーザのサイトと記事をまとめて分析できます。これらは通常のサイト名やデザインテーマとは別の拡張設定として管理されます。
 
 ![外部公開設定](/data/help-pub-config.png){grid}
 
