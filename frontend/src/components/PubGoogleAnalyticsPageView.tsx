@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { useServerInsertedHTML } from "next/navigation";
 
 type Gtag = (...args: unknown[]) => void;
 
@@ -10,6 +11,8 @@ declare global {
     gtag?: Gtag;
   }
 }
+
+const GOOGLE_TAG_INIT_SCRIPT = `window.dataLayer=window.dataLayer||[];window.gtag=window.gtag||function(){window.dataLayer.push(arguments);};window.gtag("js",new Date());`;
 
 type Props = {
   measurementId: string;
@@ -36,6 +39,10 @@ export default function PubGoogleAnalyticsPageView({
   contentType,
 }: Props) {
   const lastSentPageViewKey = useRef<string | null>(null);
+
+  useServerInsertedHTML(() => (
+    <script dangerouslySetInnerHTML={{ __html: GOOGLE_TAG_INIT_SCRIPT }} />
+  ));
 
   useEffect(() => {
     const tagId = measurementId.trim();

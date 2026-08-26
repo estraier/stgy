@@ -7,8 +7,6 @@ type Props = {
   contentType: string;
 };
 
-const GOOGLE_TAG_INIT_SCRIPT = `window.dataLayer=window.dataLayer||[];window.gtag=window.gtag||function(){window.dataLayer.push(arguments);};window.gtag("js",new Date());`;
-
 export default function PubGoogleAnalytics({
   measurementId,
   contentGroup,
@@ -24,7 +22,6 @@ export default function PubGoogleAnalytics({
         async
         src={`https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(tagId)}`}
       />
-      <script dangerouslySetInnerHTML={{ __html: GOOGLE_TAG_INIT_SCRIPT }} />
       <PubGoogleAnalyticsPageView
         measurementId={tagId}
         contentGroup={contentGroup}
