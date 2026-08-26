@@ -203,6 +203,8 @@ export default function PubShareButtons({ enabled, url, title, locale }: Props) 
             data-hatena-bookmark-lang={widgetLang}
             title="このエントリーをはてなブックマークに追加"
           >
+            {/* Hatena Bookmark provides this button image as part of its official widget. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src="https://b.st-hatena.com/images/v4/public/entry-button/button-only@2x.png"
               alt="このエントリーをはてなブックマークに追加"

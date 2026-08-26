@@ -1599,7 +1599,9 @@ export class UsersService {
     );
 
     const row = res.rows[0] as Record<string, unknown>;
-    row.extensions = parsePubConfigExtensions(row.extensions);
-    return snakeToCamel<PubConfig>(row);
+    return snakeToCamel<PubConfig>({
+      ...row,
+      extensions: parsePubConfigExtensions(row.extensions),
+    });
   }
 }

@@ -152,7 +152,10 @@ html:has(.site-container) {
 .pub-hatena-star-container {
   display: inline-block;
   flex: 0 0 auto;
+  max-width: min(12em, 35vw);
   min-height: 20px;
+  overflow: hidden;
+  white-space: nowrap;
   line-height: 20px;
   vertical-align: top;
   writing-mode: horizontal-tb !important;
