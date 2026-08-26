@@ -21,8 +21,8 @@ type Props = {
 function ensureGoogleTag(measurementId: string): Gtag {
   window.dataLayer ??= [];
   if (!window.gtag) {
-    window.gtag = function gtag() {
-      window.dataLayer?.push(arguments);
+    window.gtag = function gtag(...args: unknown[]) {
+      window.dataLayer?.push(args);
     };
     window.gtag("js", new Date());
   }
