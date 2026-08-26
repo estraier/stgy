@@ -8,7 +8,7 @@ import {
 describe("pubConfigExtensions", () => {
   test("accepts current and unknown extension providers", () => {
     const extensions = {
-      shareButtons: ["hatena", "x", "future_service"],
+      shareButtons: ["x", "facebook", "line", "hatena", "future_service"],
       analytics: {
         googleAnalytics: { measurementId: "G-TEST123" },
         futureAnalytics: { siteId: "abc" },

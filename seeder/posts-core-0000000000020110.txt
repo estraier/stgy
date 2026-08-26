@@ -84,11 +84,31 @@ CREATE TABLE user_pub_configs (
   show_pagenation BOOLEAN NOT NULL DEFAULT TRUE,
   show_side_profile BOOLEAN NOT NULL DEFAULT TRUE,
   show_side_recent INTEGER NOT NULL DEFAULT 5,
-  show_side_popular INTEGER NOT NULL DEFAULT 5
+  show_side_popular INTEGER NOT NULL DEFAULT 5,
+  extensions VARCHAR(4096) NOT NULL DEFAULT '{}'
 );
 ```
 
 サイト名、サブタイトル、既定の著者名、紹介文、デザインテーマのほか、サービスヘッダ、サイト名、前後記事、プロフィールの表示を切り替えられる。最近の記事とPopular entriesはBooleanではなく件数で指定し、0以下なら非表示とする。
+
+``extensions`` は、外部サービス連携などの追加設定を格納する拡張領域である。基本的な公開設定は型を固定した個別カラムに置き、将来追加・変更されやすい設定だけを一つのコンパクトなJSON文字列として保存する。これにより、拡張機能を追加するたびに ``user_pub_configs`` のカラムを増やす必要がない。DB上では最大4096文字の ``VARCHAR`` だが、APIではJSONオブジェクトとして入出力する。設定行が存在しない場合を含め、拡張設定が無い状態は空オブジェクト ``{}`` で表す。
+
+現在の主な内容は次の通りである。
+
+```json:small
+{
+  "shareButtons": ["x", "facebook", "line", "hatena"],
+  "analytics": {
+    "googleAnalytics": {
+      "measurementId": "G-XXXXXXXXXX"
+    }
+  }
+}
+```
+
+``shareButtons`` は外部公開記事に表示するシェアサービスの識別子配列で、現在の設定画面はX、Facebook、LINE、Hatenaを扱い、認識したサービスはこの順に表示する。``line`` は記事URLとタイトルをLINE Shareへ渡す。フロントエンドはLINE Social Pluginsのカスタム共有URL ``https://social-plugins.line.me/lineit/share`` に、URLエンコードした ``url`` と ``text`` パラメータを渡すため、LINE用の追加JavaScript SDKは不要である。``hatena`` を有効にすると、はてなブックマークとはてなスターを表示する。``analytics.googleAnalytics.measurementId`` はGoogle Analytics連携用のMeasurement IDを保持し、最大128文字である。現在のコードでは設定画面とAPIがこの値を保存・復元する。未知のトップレベルキーや分析プロバイダ用の追加キーも保持できるため、将来の拡張と前方互換性を確保できる。
+
+バックエンドは ``extensions`` を保存前と読出し後の両方で検証する。全体のJSONは4096文字以内とし、``shareButtons`` の各識別子は1〜64文字の英数字・``_``・``-`` に限定して重複を許さない。``analytics`` のプロバイダ名も同じ文字種で1〜64文字に限定する。DBにはJSON文字列として保存するが、``GET /users/{id}/pub-config`` と更新APIの入出力では通常のJSONオブジェクトとして扱う。
 
 設定画面はPublicationsページのSettingsタブに置く。設定の読み出しは外部公開ページからも必要なので公開APIであるが、更新は本人または管理者だけに許可する。設定レコードがまだない場合は既定値を返すため、外部公開を始める前に設定行を明示的に作っておく必要はない。
 

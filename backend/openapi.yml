@@ -915,7 +915,10 @@ components:
         shareButtons:
           type: array
           items: { type: string }
-          description: Ordered share-service identifiers selected for the public site.
+          description: |
+            Ordered share-service identifiers selected for the public site. The current
+            management UI supports x, facebook, line, and hatena, rendered in that order.
+            Unknown identifiers may be retained for forward compatibility.
         analytics:
           type: object
           properties:

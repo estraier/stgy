@@ -48,8 +48,9 @@ export default function PubShareButtons({ enabled, url, title, locale }: Props) 
   const enabledSet = useMemo(() => new Set(enabled), [enabled]);
   const showX = enabledSet.has("x");
   const showFacebook = enabledSet.has("facebook");
+  const showLine = enabledSet.has("line");
   const showHatena = enabledSet.has("hatena");
-  const showAny = showX || showFacebook || showHatena;
+  const showAny = showX || showFacebook || showLine || showHatena;
   const widgetLang = locale?.toLowerCase().startsWith("ja") ? "ja" : "en";
 
   useEffect(() => {
@@ -193,6 +194,20 @@ export default function PubShareButtons({ enabled, url, title, locale }: Props) 
           </div>
         </span>
       )}
+      {showLine && (
+        <span className="pub-share-widget pub-share-line">
+          <a
+            href={`https://social-plugins.line.me/lineit/share?url=${encodeURIComponent(url)}&text=${encodeURIComponent(title)}`}
+            className="pub-line-share-button"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={widgetLang === "ja" ? "LINEで送る" : "Share on LINE"}
+            title={widgetLang === "ja" ? "LINEで送る" : "Share on LINE"}
+          >
+            LINE
+          </a>
+        </span>
+      )}
       {showHatena && (
         <div className="pub-share-widget pub-share-hatena">
           <a
@@ -203,7 +218,7 @@ export default function PubShareButtons({ enabled, url, title, locale }: Props) 
             data-hatena-bookmark-lang={widgetLang}
             title="このエントリーをはてなブックマークに追加"
           >
-            {/* Hatena Bookmark provides this button image as part of its official widget. */}
+            {/* Hatena Bookmark provides this image as part of its official widget. */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src="https://b.st-hatena.com/images/v4/public/entry-button/button-only@2x.png"

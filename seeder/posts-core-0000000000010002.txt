@@ -230,6 +230,8 @@ Select "Publications" from the navigation menu to open the statistics and settin
 
 Externally published posts are managed much like a blog. On the "Settings" tab, you can specify the site's name, subtitle, author name, introduction, and design theme. You can also control whether the STGY header and the sidebar are displayed.
 
+The "Extensions" section configures additional features for the public site. Under "Share buttons", X, Facebook, LINE, and Hatena can be enabled independently, and buttons for the enabled services are shown on externally published article pages in that order. LINE opens LINE Share with the article title and URL. Enabling Hatena displays both Hatena Bookmark and Hatena Star. "Google Analytics Measurement ID" stores a Measurement ID for Google Analytics integration, in the form ``G-XXXXXXXXXX``. These values are managed as extensible settings separately from the ordinary site name and design-theme settings.
+
 ![External-publication settings](/data/help-pub-config.png){grid}
 
 A user's internal introduction and the public site's introduction are separate. Likewise, the user's nickname and the public author name are separate. The site introduction uses the same Markdown format as post bodies, so it can contain lists and links and can embed images.

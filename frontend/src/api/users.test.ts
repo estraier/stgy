@@ -79,7 +79,7 @@ describe("user public config API", () => {
       showSideProfile: true,
       showSideRecent: 5,
       showSidePopular: 5,
-      extensions: { shareButtons: ["hatena", "x"] },
+      extensions: { shareButtons: ["x", "facebook", "line", "hatena"] },
     };
     mockApiFetch.mockResolvedValue({
       ok: true,
@@ -94,7 +94,7 @@ describe("user public config API", () => {
 
   test("sends extensions when public config is updated", async () => {
     const extensions = {
-      shareButtons: ["facebook"],
+      shareButtons: ["facebook", "line"],
       analytics: { googleAnalytics: { measurementId: "G-TEST123" } },
     };
     mockApiFetch.mockResolvedValue({

@@ -84,11 +84,31 @@ CREATE TABLE user_pub_configs (
   show_pagenation BOOLEAN NOT NULL DEFAULT TRUE,
   show_side_profile BOOLEAN NOT NULL DEFAULT TRUE,
   show_side_recent INTEGER NOT NULL DEFAULT 5,
-  show_side_popular INTEGER NOT NULL DEFAULT 5
+  show_side_popular INTEGER NOT NULL DEFAULT 5,
+  extensions VARCHAR(4096) NOT NULL DEFAULT '{}'
 );
 ```
 
 In addition to the site name, subtitle, default author name, introduction, and design theme, the user can toggle display of the service header, site name, previous/next articles, and profile. Recent posts and Popular entries are specified as counts rather than Booleans; a value of zero or less hides them.
+
+``extensions`` is an extension area for additional settings such as integrations with external services. Core publication settings remain in individually typed columns, while settings that are more likely to be added or changed are stored together as one compact JSON string. This avoids adding another ``user_pub_configs`` column for every new extension. The database representation is a ``VARCHAR`` of at most 4096 characters, while the API reads and writes it as a JSON object. An empty extension set, including the default when no settings row exists, is represented as ``{}``.
+
+The principal fields currently used are as follows.
+
+```json:small
+{
+  "shareButtons": ["x", "facebook", "line", "hatena"],
+  "analytics": {
+    "googleAnalytics": {
+      "measurementId": "G-XXXXXXXXXX"
+    }
+  }
+}
+```
+
+``shareButtons`` is an array of share-service identifiers to show on externally published articles; the current settings UI handles X, Facebook, LINE, and Hatena, and renders recognized services in that order. ``line`` opens LINE Share with the article URL and title. The frontend uses LINE Social Plugins' custom-share URL, ``https://social-plugins.line.me/lineit/share``, with URL-encoded ``url`` and ``text`` parameters, so no additional LINE JavaScript SDK is required. Enabling ``hatena`` displays both Hatena Bookmark and Hatena Star. ``analytics.googleAnalytics.measurementId`` stores the Google Analytics Measurement ID and is limited to 128 characters. The current code saves and restores this value through the settings UI and API. Unknown top-level keys and additional analytics-provider keys can also be retained, providing room for future extensions and forward compatibility.
+
+The backend validates ``extensions`` both before storage and after reading it back. The complete JSON representation is limited to 4096 characters. Each ``shareButtons`` identifier must be unique and contain 1 to 64 ASCII letters, digits, underscores, or hyphens; analytics provider names use the same character and length rule. The database stores a JSON string, but ``GET /users/{id}/pub-config`` and the update API expose an ordinary JSON object.
 
 The settings UI is the Settings tab of the Publications page. Reading these settings is also required by externally published pages, so the read API is public, but updates are permitted only to the user themself or an administrator. If no settings row exists yet, defaults are returned, so a row does not have to be created explicitly before external publication begins.
 

@@ -33,6 +33,7 @@ const STATS_PAGE_SIZE = 50;
 const SHARE_BUTTON_OPTIONS = [
   { id: "x", label: "X" },
   { id: "facebook", label: "Facebook" },
+  { id: "line", label: "LINE" },
   { id: "hatena", label: "Hatena" },
 ] as const;
 const SHARE_BUTTON_IDS = new Set<string>(SHARE_BUTTON_OPTIONS.map((option) => option.id));

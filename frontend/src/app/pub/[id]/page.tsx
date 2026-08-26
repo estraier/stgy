@@ -234,7 +234,7 @@ export default async function PubPostPage({ params, searchParams }: Props) {
       : "";
     const hasTrackMap = article.html.includes("stgy-track-map");
     const enabledShareButtons = pubcfg.extensions.shareButtons ?? [];
-    const hasShareButtons = ["x", "facebook", "hatena"].some((service) =>
+    const hasShareButtons = ["x", "facebook", "line", "hatena"].some((service) =>
       enabledShareButtons.includes(service),
     );
     const shareUrl = makeAbsoluteUrl(`/pub/${post.id}`);
