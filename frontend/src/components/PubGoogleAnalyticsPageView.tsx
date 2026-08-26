@@ -9,10 +9,9 @@ declare global {
   interface Window {
     dataLayer?: unknown[];
     gtag?: Gtag;
+    __stgyGaCfg?: Map<string, string>;
   }
 }
-
-const GOOGLE_TAG_INIT_SCRIPT = `window.dataLayer=window.dataLayer||[];window.gtag=window.gtag||function(){window.dataLayer.push(arguments);};window.gtag("js",new Date());`;
 
 type Props = {
   measurementId: string;
@@ -20,6 +19,16 @@ type Props = {
   contentId: string;
   contentType: string;
 };
+
+function inlineString(value: string): string {
+  return JSON.stringify(value).replace(/</g, "\\u003c");
+}
+
+function googleTagInitScript(measurementId: string, contentGroup: string): string {
+  const tagId = inlineString(measurementId);
+  const group = inlineString(contentGroup);
+  return `window.dataLayer=window.dataLayer||[];window.gtag=window.gtag||function(){window.dataLayer.push(arguments);};window.gtag("js",new Date());window.gtag("config",${tagId},{send_page_view:false,content_group:${group}});window.__stgyGaCfg=window.__stgyGaCfg||new Map;window.__stgyGaCfg.set(${tagId},${group});`;
+}
 
 function ensureGoogleTag(): Gtag {
   window.dataLayer ??= [];
@@ -32,25 +41,53 @@ function ensureGoogleTag(): Gtag {
   return window.gtag;
 }
 
+function ensureGoogleTagConfigured(
+  gtag: Gtag,
+  tagId: string,
+  contentGroup: string,
+): void {
+  const configuredGroups = (window.__stgyGaCfg ??= new Map<string, string>());
+  if (configuredGroups.get(tagId) === contentGroup) return;
+
+  gtag("config", tagId, {
+    send_page_view: false,
+    content_group: contentGroup,
+  });
+  configuredGroups.set(tagId, contentGroup);
+}
+
 export default function PubGoogleAnalyticsPageView({
   measurementId,
   contentGroup,
   contentId,
   contentType,
 }: Props) {
+  const serverInitInserted = useRef(false);
   const lastSentPageViewKey = useRef<string | null>(null);
 
-  useServerInsertedHTML(() => (
-    <script dangerouslySetInnerHTML={{ __html: GOOGLE_TAG_INIT_SCRIPT }} />
-  ));
+  useServerInsertedHTML(() => {
+    if (serverInitInserted.current) return null;
+    serverInitInserted.current = true;
+    return (
+      <script
+        dangerouslySetInnerHTML={{
+          __html: googleTagInitScript(measurementId, contentGroup),
+        }}
+      />
+    );
+  });
 
   useEffect(() => {
     const tagId = measurementId.trim();
     if (!tagId) return;
 
     const gtag = ensureGoogleTag();
+    ensureGoogleTagConfigured(gtag, tagId, contentGroup);
+
     const pageLocation = window.location.href;
-    const pageViewKey = [tagId, pageLocation, contentGroup, contentId, contentType].join("\n");
+    const pageViewKey = [tagId, pageLocation, contentGroup, contentId, contentType].join(
+      "\n",
+    );
 
     // React Strict Mode may run effects twice in development. Suppress only an
     // immediate duplicate of the same page view; navigation away and back has a
@@ -58,12 +95,6 @@ export default function PubGoogleAnalyticsPageView({
     if (lastSentPageViewKey.current === pageViewKey) return;
     lastSentPageViewKey.current = pageViewKey;
 
-    // Disable the automatic page_view so the one below can carry STGY's
-    // content metadata without generating a duplicate page view.
-    gtag("config", tagId, {
-      send_page_view: false,
-      content_group: contentGroup,
-    });
     gtag("event", "page_view", {
       send_to: tagId,
       page_title: document.title,
