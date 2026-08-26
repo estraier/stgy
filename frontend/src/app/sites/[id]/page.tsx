@@ -15,6 +15,7 @@ import ArticleWithDecoration from "@/components/ArticleWithDecoration";
 import { formatDateTime, makeAbsoluteUrl, convertForDirection } from "@/utils/format";
 import PubImageBlockBinder from "@/components/PubImageBlockBinder";
 import PubScrollAction from "@/components/PubScrollAction";
+import PubGoogleAnalytics from "@/components/PubGoogleAnalytics";
 import PubHorizontalScrollRestore from "./PubHorizontalScrollRestore";
 import PubSiteSearchResults from "./PubSiteSearchResults";
 import type { Metadata } from "next";
@@ -211,6 +212,16 @@ export default async function PubSitePage({ params, searchParams }: Props) {
     const locale = pubcfg.locale || "und";
     const siteIntroHtml = intro.html;
     const siteTitle = pubcfg.siteName || intro.title || "STGY Publications";
+    const googleAnalyticsMeasurementId =
+      pubcfg.extensions.analytics?.googleAnalytics?.measurementId?.trim() ?? "";
+    const googleAnalyticsContentGroup = `stgy-user-${id}`;
+    const googleAnalyticsPageViewKey = [
+      String(page),
+      design ?? "",
+      tabMode,
+      oldestFirst ? "oldest" : "newest",
+      q,
+    ].join("\n");
 
     return (
       <div
@@ -218,6 +229,15 @@ export default async function PubSitePage({ params, searchParams }: Props) {
         data-page={page}
       >
         <HeadLangPatcher lang={locale} />
+        {googleAnalyticsMeasurementId && (
+          <PubGoogleAnalytics
+            measurementId={googleAnalyticsMeasurementId}
+            contentGroup={googleAnalyticsContentGroup}
+            contentId={id}
+            contentType="site"
+            pageViewKey={googleAnalyticsPageViewKey}
+          />
+        )}
         <PubServiceHeader
           showServiceHeader={pubcfg.showServiceHeader}
           redirectTo={baseHref}

@@ -18,6 +18,7 @@ type Props = {
   contentGroup: string;
   contentId: string;
   contentType: string;
+  pageViewKey?: string;
 };
 
 function inlineString(value: string): string {
@@ -61,6 +62,7 @@ export default function PubGoogleAnalyticsPageView({
   contentGroup,
   contentId,
   contentType,
+  pageViewKey,
 }: Props) {
   const serverInitInserted = useRef(false);
   const lastSentPageViewKey = useRef<string | null>(null);
@@ -85,15 +87,20 @@ export default function PubGoogleAnalyticsPageView({
     ensureGoogleTagConfigured(gtag, tagId, contentGroup);
 
     const pageLocation = window.location.href;
-    const pageViewKey = [tagId, pageLocation, contentGroup, contentId, contentType].join(
-      "\n",
-    );
+    const dedupeKey = [
+      tagId,
+      pageLocation,
+      contentGroup,
+      contentId,
+      contentType,
+      pageViewKey ?? "",
+    ].join("\n");
 
     // React Strict Mode may run effects twice in development. Suppress only an
     // immediate duplicate of the same page view; navigation away and back has a
     // different last key in between and is counted again.
-    if (lastSentPageViewKey.current === pageViewKey) return;
-    lastSentPageViewKey.current = pageViewKey;
+    if (lastSentPageViewKey.current === dedupeKey) return;
+    lastSentPageViewKey.current = dedupeKey;
 
     gtag("event", "page_view", {
       send_to: tagId,
@@ -103,7 +110,7 @@ export default function PubGoogleAnalyticsPageView({
       content_id: contentId,
       content_type: contentType,
     });
-  }, [measurementId, contentGroup, contentId, contentType]);
+  }, [measurementId, contentGroup, contentId, contentType, pageViewKey]);
 
   return null;
 }

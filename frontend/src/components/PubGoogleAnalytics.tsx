@@ -5,6 +5,7 @@ type Props = {
   contentGroup: string;
   contentId: string;
   contentType: string;
+  pageViewKey?: string;
 };
 
 export default function PubGoogleAnalytics({
@@ -12,6 +13,7 @@ export default function PubGoogleAnalytics({
   contentGroup,
   contentId,
   contentType,
+  pageViewKey,
 }: Props) {
   const tagId = measurementId.trim();
   if (!tagId) return null;
@@ -27,6 +29,7 @@ export default function PubGoogleAnalytics({
         contentGroup={contentGroup}
         contentId={contentId}
         contentType={contentType}
+        pageViewKey={pageViewKey}
       />
     </>
   );
