@@ -1,12 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useRef } from "react";
+import { FaFacebookF, FaXTwitter } from "react-icons/fa6";
+import { SiLine } from "react-icons/si";
 
 type Props = {
   enabled: readonly string[];
   url: string;
   title: string;
   locale?: string;
+  vertical?: boolean;
 };
 
 type ShareWidgetWindow = Window & {
@@ -43,7 +46,7 @@ function makeHatenaEntryUrl(rawUrl: string): string {
   }
 }
 
-export default function PubShareButtons({ enabled, url, title, locale }: Props) {
+export default function PubShareButtons({ enabled, url, title, locale, vertical = false }: Props) {
   const rootRef = useRef<HTMLElement | null>(null);
   const enabledSet = useMemo(() => new Set(enabled), [enabled]);
   const showX = enabledSet.has("x");
@@ -81,7 +84,7 @@ export default function PubShareButtons({ enabled, url, title, locale }: Props) 
   }, [showHatena]);
 
   useEffect(() => {
-    if (!showX || !rootRef.current) return;
+    if (vertical || !showX || !rootRef.current) return;
 
     const render = () => {
       const twttr = (window as ShareWidgetWindow).twttr;
@@ -104,10 +107,10 @@ export default function PubShareButtons({ enabled, url, title, locale }: Props) 
     script.addEventListener("load", render, { once: true });
     document.head.appendChild(script);
     return () => script.removeEventListener("load", render);
-  }, [showX, url, title, widgetLang]);
+  }, [showX, url, title, widgetLang, vertical]);
 
   useEffect(() => {
-    if (!showFacebook || !rootRef.current) return;
+    if (vertical || !showFacebook || !rootRef.current) return;
 
     const render = () => {
       (window as ShareWidgetWindow).FB?.XFBML?.parse?.(
@@ -140,7 +143,7 @@ export default function PubShareButtons({ enabled, url, title, locale }: Props) 
     script.addEventListener("load", render, { once: true });
     document.head.appendChild(script);
     return () => script.removeEventListener("load", render);
-  }, [showFacebook, url, widgetLang]);
+  }, [showFacebook, url, widgetLang, vertical]);
 
   useEffect(() => {
     if (!showHatena || !rootRef.current) return;
@@ -158,8 +161,87 @@ export default function PubShareButtons({ enabled, url, title, locale }: Props) 
 
   if (!showAny) return null;
 
+  if (vertical) {
+    return (
+      <nav
+        ref={rootRef}
+        className="pub-share-buttons pub-share-buttons-vertical"
+        aria-label="Share"
+      >
+        {showX && (
+          <a
+            href={`https://x.com/intent/tweet?text=${encodeURIComponent(title)}&url=${encodeURIComponent(url)}`}
+            className="pub-share-compact-button pub-share-compact-x"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={widgetLang === "ja" ? "Xで共有" : "Share on X"}
+            title={widgetLang === "ja" ? "Xで共有" : "Share on X"}
+          >
+            <FaXTwitter aria-hidden="true" />
+          </a>
+        )}
+        {showFacebook && (
+          <a
+            href={`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(url)}`}
+            className="pub-share-compact-button pub-share-compact-facebook"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={widgetLang === "ja" ? "Facebookで共有" : "Share on Facebook"}
+            title={widgetLang === "ja" ? "Facebookで共有" : "Share on Facebook"}
+          >
+            <FaFacebookF aria-hidden="true" />
+          </a>
+        )}
+        {showLine && (
+          <a
+            href={`https://social-plugins.line.me/lineit/share?url=${encodeURIComponent(url)}&text=${encodeURIComponent(title)}`}
+            className="pub-share-compact-button pub-share-compact-line"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={widgetLang === "ja" ? "LINEで送る" : "Share on LINE"}
+            title={widgetLang === "ja" ? "LINEで送る" : "Share on LINE"}
+          >
+            <SiLine aria-hidden="true" />
+          </a>
+        )}
+        {showHatena && (
+          <>
+            <a
+              href={makeHatenaEntryUrl(url)}
+              className="hatena-bookmark-button pub-share-compact-button pub-share-compact-hatena"
+              data-hatena-bookmark-title={title}
+              data-hatena-bookmark-layout="simple"
+              data-hatena-bookmark-lang={widgetLang}
+              title="このエントリーをはてなブックマークに追加"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="https://b.st-hatena.com/images/v4/public/entry-button/button-only@2x.png"
+                alt="このエントリーをはてなブックマークに追加"
+                width="20"
+                height="20"
+                style={{ border: "none" }}
+              />
+            </a>
+            <span className="pub-share-compact-star" title="Hatena Star">
+              <span
+                key={`hatena-star:${url}`}
+                className="hatena-star-container pub-hatena-star-container"
+                data-hatena-star-container=""
+                data-hatena-star-url={url}
+                data-hatena-star-title={title}
+                data-hatena-star-variant="profile-icon"
+                data-hatena-star-profile-url-template="https://blog.hatena.ne.jp/{username}/"
+              />
+            </span>
+          </>
+        )}
+      </nav>
+    );
+  }
+
   return (
-    <nav ref={rootRef} className="pub-share-buttons" aria-label="Share">
+    <nav ref={rootRef} className="pub-share-buttons pub-share-buttons-horizontal" aria-label="Share">
       {showX && (
         <span className="pub-share-widget pub-share-x">
           <a

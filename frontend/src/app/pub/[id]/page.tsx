@@ -297,13 +297,20 @@ export default async function PubPostPage({ params, searchParams }: Props) {
                     url={shareUrl}
                     title={shareTitle}
                     locale={locale}
+                    vertical={themeDir === "vert"}
                   />
                 </div>
               ) : (
                 articleNode
               )}
               {hasTrackMap && <PubTrackMapHydrator htmlKey={String(post.id)} />}
-              {showComments && <PubComments postId={String(post.id)} ownerId={post.ownedBy} />}
+              {showComments && (
+                <PubComments
+                  postId={String(post.id)}
+                  ownerId={post.ownedBy}
+                  themeDir={themeDir}
+                />
+              )}
               {pubcfg.showPagenation && (
                 <nav className="pub-pager" aria-label="Pagination">
                   <div className="pager-row">

@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { getSessionInfo } from "@/api/auth";
 import {
   approvePubComment,
@@ -13,7 +13,7 @@ import {
 } from "@/api/pubComments";
 import { createCaptchaChallenge, type CaptchaChallenge } from "@/api/captcha";
 import type { PubComment } from "@/api/models";
-import { formatDateTime } from "@/utils/format";
+import { convertForDirection, formatDateTime } from "@/utils/format";
 
 const EMPTY_FORM_STATE: PubCommentFormState = {
   captchaRequired: true,
@@ -26,6 +26,7 @@ const EMPTY_FORM_STATE: PubCommentFormState = {
 type Props = {
   postId: string;
   ownerId: string;
+  themeDir: "norm" | "vert";
 };
 
 function PencilIcon() {
@@ -94,7 +95,10 @@ function TrashIcon() {
   );
 }
 
-export default function PubComments({ postId, ownerId }: Props) {
+export default function PubComments({ postId, ownerId, themeDir }: Props) {
+  const sectionRef = useRef<HTMLElement>(null);
+  const surfaceRef = useRef<HTMLDivElement>(null);
+  const ui = useCallback((text: string) => convertForDirection(text, themeDir), [themeDir]);
   const [comments, setComments] = useState<PubComment[]>([]);
   const [page, setPage] = useState(1);
   const [order, setOrder] = useState<"newest" | "oldest">("newest");
@@ -143,6 +147,87 @@ export default function PubComments({ postId, ownerId }: Props) {
   useEffect(() => {
     void loadComments(1, "newest");
   }, [postId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (themeDir !== "vert") return;
+
+    const section = sectionRef.current;
+    const surface = surfaceRef.current;
+    const main = section?.closest(".pub-main");
+    const article = main?.querySelector<HTMLElement>(
+      ".pub-article-with-share > .markdown-body, :scope > .markdown-body",
+    );
+    if (!section || !surface || !article) return;
+
+    let frame = 0;
+
+    const syncPanelGeometry = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        // Use the actual painted article frame as the vertical comment panel
+        // height. This keeps all vertical publication themes aligned even
+        // when borders, padding, fonts, or viewport limits differ.
+        const articleHeight = article.getBoundingClientRect().height;
+        if (articleHeight > 0) {
+          surface.style.height = `${articleHeight}px`;
+          surface.style.minHeight = `${articleHeight}px`;
+          surface.style.maxHeight = `${articleHeight}px`;
+
+          const style = getComputedStyle(surface);
+          const contentHeight = Math.max(
+            0,
+            articleHeight
+              - Number.parseFloat(style.paddingTop || "0")
+              - Number.parseFloat(style.paddingBottom || "0")
+              - Number.parseFloat(style.borderTopWidth || "0")
+              - Number.parseFloat(style.borderBottomWidth || "0"),
+          );
+          surface.style.setProperty("--pub-comments-column-height", `${contentHeight}px`);
+        }
+
+        // Reset the physical width before measuring overflow so repeated
+        // comment/form updates never accumulate stale extra width.
+        surface.style.width = "max-content";
+
+        frame = requestAnimationFrame(() => {
+          const surfaceRect = surface.getBoundingClientRect();
+          let minLeft = surfaceRect.left;
+          let maxRight = surfaceRect.right;
+
+          for (const element of surface.querySelectorAll<HTMLElement>("*")) {
+            const rect = element.getBoundingClientRect();
+            if (rect.width === 0 && rect.height === 0) continue;
+            minLeft = Math.min(minLeft, rect.left);
+            maxRight = Math.max(maxRight, rect.right);
+          }
+
+          const requiredWidth = Math.ceil(maxRight - minLeft);
+          if (requiredWidth > 0) surface.style.width = `${requiredWidth}px`;
+        });
+      });
+    };
+
+    syncPanelGeometry();
+
+    const articleObserver = new ResizeObserver(syncPanelGeometry);
+    articleObserver.observe(article);
+
+    const mutationObserver = new MutationObserver(syncPanelGeometry);
+    mutationObserver.observe(surface, { childList: true, subtree: true, characterData: true });
+
+    window.addEventListener("resize", syncPanelGeometry);
+    return () => {
+      cancelAnimationFrame(frame);
+      articleObserver.disconnect();
+      mutationObserver.disconnect();
+      window.removeEventListener("resize", syncPanelGeometry);
+      surface.style.removeProperty("height");
+      surface.style.removeProperty("min-height");
+      surface.style.removeProperty("max-height");
+      surface.style.removeProperty("width");
+      surface.style.removeProperty("--pub-comments-column-height");
+    };
+  }, [themeDir]);
 
   useEffect(() => {
     let cancelled = false;
@@ -243,7 +328,7 @@ export default function PubComments({ postId, ownerId }: Props) {
   };
 
   const remove = async (comment: PubComment) => {
-    if (!window.confirm("Delete this comment?")) return;
+    if (!window.confirm(ui("Delete this comment?"))) return;
     setError(null);
     try {
       await deletePubComment(comment.id);
@@ -283,9 +368,10 @@ export default function PubComments({ postId, ownerId }: Props) {
   };
 
   return (
-    <section className="pub-comments" id="comments" aria-label="Comments">
+    <section ref={sectionRef} className="pub-comments" id="comments" aria-label="Comments">
+      <div ref={surfaceRef} className="pub-comments-surface">
       <div className="pub-comments-toolbar">
-        <h2>Comments</h2>
+        <h2>{ui("Comments")}</h2>
         <div className="pub-comments-controls">
           <label className="pub-comments-order" aria-label="Comment order">
             <input
@@ -295,7 +381,7 @@ export default function PubComments({ postId, ownerId }: Props) {
                 void changeOrder(event.target.checked ? "oldest" : "newest")
               }
             />
-            <span>Oldest</span>
+            <span>{ui("Oldest")}</span>
           </label>
           <nav className="pub-comments-pager" aria-label="Comment pages">
             <button
@@ -303,17 +389,17 @@ export default function PubComments({ postId, ownerId }: Props) {
               disabled={!hasPrevious || loading}
               onClick={() => void loadComments(page - 1, order)}
               aria-label="Previous page"
-              title="Previous page"
+              title={ui("Previous page")}
             >
               ◁
             </button>
-            <span>{page}</span>
+            <span>{ui(String(page))}</span>
             <button
               type="button"
               disabled={!hasNext || loading}
               onClick={() => void loadComments(page + 1, order)}
               aria-label="Next page"
-              title="Next page"
+              title={ui("Next page")}
             >
               ▷
             </button>
@@ -322,9 +408,9 @@ export default function PubComments({ postId, ownerId }: Props) {
       </div>
 
       {loading && comments.length === 0 ? (
-        <div className="pub-comments-note">Loading…</div>
+        <div className="pub-comments-note">{ui("Loading…")}</div>
       ) : comments.length === 0 ? (
-        <div className="pub-comments-note">No comments yet.</div>
+        <div className="pub-comments-note">{ui("No comments yet.")}</div>
       ) : (
         <div className="pub-comment-list">
           {comments.map((comment) => (
@@ -355,14 +441,14 @@ export default function PubComments({ postId, ownerId }: Props) {
                       className="rounded border border-gray-400 bg-gray-100 px-2 py-1 hover:bg-gray-200"
                       onClick={() => void saveEdit(comment)}
                     >
-                      Save
+                      {ui("Save")}
                     </button>
                     <button
                       type="button"
                       className="rounded border border-gray-400 bg-gray-100 px-2 py-1 hover:bg-gray-200"
                       onClick={() => setEditingId(null)}
                     >
-                      Cancel
+                      {ui("Cancel")}
                     </button>
                   </div>
                 </div>
@@ -374,16 +460,16 @@ export default function PubComments({ postId, ownerId }: Props) {
                     </div>
                     <span className="pub-comment-author-slot">
                       {comment.isAuthor && (
-                        <span className="pub-comment-author" title="Author" aria-label="Author">
+                        <span className="pub-comment-author" title={ui("Author")} aria-label="Author">
                           <BadgeCheckIcon />
                         </span>
                       )}
                     </span>
                     <time dateTime={comment.createdAt}>
-                      {formatDateTime(new Date(comment.createdAt), undefined, true)}
+                      {ui(formatDateTime(new Date(comment.createdAt), undefined, true))}
                     </time>
                     {comment.status === "pending" && (
-                      <span className="pub-comment-pending-label">Pending</span>
+                      <span className="pub-comment-pending-label">{ui("Pending")}</span>
                     )}
                     {(ownerLoggedIn || adminLoggedIn) && (
                       <div className="pub-comment-actions">
@@ -393,7 +479,7 @@ export default function PubComments({ postId, ownerId }: Props) {
                             className="pub-comment-icon-button pub-comment-approve-button"
                             onClick={() => void approve(comment)}
                             aria-label="Approve comment"
-                            title="Approve"
+                            title={ui("Approve")}
                           >
                             <ApproveIcon />
                           </button>
@@ -404,7 +490,7 @@ export default function PubComments({ postId, ownerId }: Props) {
                             className="pub-comment-icon-button"
                             onClick={() => beginEdit(comment)}
                             aria-label="Edit comment"
-                            title="Edit"
+                            title={ui("Edit")}
                           >
                             <PencilIcon />
                           </button>
@@ -414,7 +500,7 @@ export default function PubComments({ postId, ownerId }: Props) {
                           className="pub-comment-icon-button"
                           onClick={() => void remove(comment)}
                           aria-label="Delete comment"
-                          title="Delete"
+                          title={ui("Delete")}
                         >
                           <TrashIcon />
                         </button>
@@ -429,7 +515,7 @@ export default function PubComments({ postId, ownerId }: Props) {
         </div>
       )}
 
-      {message && <div className="pub-comments-message">{message}</div>}
+      {message && <div className="pub-comments-message">{ui(message)}</div>}
       {error && <div className="pub-comments-error">{error}</div>}
 
       {!formOpen && !limitReached && (
@@ -438,10 +524,12 @@ export default function PubComments({ postId, ownerId }: Props) {
           className="pub-comment-write rounded border border-gray-400 bg-gray-100 px-3 py-1.5 hover:bg-gray-200"
           onClick={() => void openForm()}
         >
-          Write a comment
+          {ui("Write a comment")}
         </button>
       )}
-      {limitReached && <div className="pub-comments-note">No more comments can be added.</div>}
+      {limitReached && (
+        <div className="pub-comments-note">{ui("No more comments can be added.")}</div>
+      )}
 
       {formOpen && (
         <form
@@ -449,32 +537,37 @@ export default function PubComments({ postId, ownerId }: Props) {
           onSubmit={(event) => void submit(event)}
         >
           <div className="pub-comment-form-name-row">
-            <label>
-              <span>Name</span>
-              <input
-                type="text"
-                value={name}
-                maxLength={30}
-                required
-                onChange={(event) => setName(event.target.value)}
-                disabled={submitting}
-              />
-            </label>
-            {formState.canPostAsAuthor && (
-              <label className="pub-comment-as-author">
+            <div className="pub-comment-name-field">
+              <label className="pub-comment-form-name-label" htmlFor={`pub-comment-name-${postId}`}>
+                {ui("Name")}
+              </label>
+              <div className="pub-comment-name-input-row">
                 <input
-                  type="checkbox"
-                  checked={asAuthor}
-                  onChange={(event) => setAsAuthor(event.target.checked)}
+                  id={`pub-comment-name-${postId}`}
+                  type="text"
+                  value={name}
+                  maxLength={30}
+                  required
+                  onChange={(event) => setName(event.target.value)}
                   disabled={submitting}
                 />
-                <span>as author</span>
-              </label>
-            )}
+                {formState.canPostAsAuthor && (
+                  <label className="pub-comment-as-author">
+                    <input
+                      type="checkbox"
+                      checked={asAuthor}
+                      onChange={(event) => setAsAuthor(event.target.checked)}
+                      disabled={submitting}
+                    />
+                    <span>{ui("as author")}</span>
+                  </label>
+                )}
+              </div>
+            </div>
           </div>
 
-          <label>
-            <span>Comment</span>
+          <label className="pub-comment-body-field">
+            <span>{ui("Comment")}</span>
             <textarea
               value={body}
               maxLength={1000}
@@ -488,17 +581,19 @@ export default function PubComments({ postId, ownerId }: Props) {
 
           {formState.captchaRequired && challenge && (
             <div className="pub-comment-captcha">
-              <img src={challenge.image} width={200} height={48} alt="Six digit CAPTCHA" />
+              <span className="pub-comment-captcha-image">
+                <img src={challenge.image} width={200} height={48} alt="Six digit CAPTCHA" />
+              </span>
               <button
                 type="button"
                 className="rounded border border-gray-400 bg-gray-100 px-3 py-1 hover:bg-gray-200 disabled:opacity-50"
                 onClick={() => void loadChallenge()}
                 disabled={submitting}
               >
-                New image
+                {ui("New image")}
               </button>
               <label>
-                <span>Enter the six digits</span>
+                <span>{ui("Enter the six digits")}</span>
                 <input
                   type="text"
                   inputMode="numeric"
@@ -525,7 +620,7 @@ export default function PubComments({ postId, ownerId }: Props) {
                 (formState.captchaRequired && captchaAnswer.length !== 6)
               }
             >
-              Post comment
+              {ui("Post comment")}
             </button>
             <button
               type="button"
@@ -533,11 +628,12 @@ export default function PubComments({ postId, ownerId }: Props) {
               onClick={() => setFormOpen(false)}
               disabled={submitting}
             >
-              Cancel
+              {ui("Cancel")}
             </button>
           </div>
         </form>
       )}
+      </div>
     </section>
   );
 }

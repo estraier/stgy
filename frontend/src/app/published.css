@@ -118,6 +118,70 @@ html:has(.site-container) {
   writing-mode: horizontal-tb !important;
   text-orientation: mixed !important;
 }
+
+.pub-share-buttons-vertical {
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3em;
+  min-height: 0;
+}
+.pub-share-compact-button,
+.pub-share-compact-star {
+  display: inline-flex;
+  box-sizing: border-box;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 24px;
+  border: 1px solid rgba(0, 0, 0, 0.16);
+  border-radius: 4px;
+  overflow: hidden;
+  writing-mode: horizontal-tb !important;
+  text-orientation: mixed !important;
+  text-decoration: none !important;
+}
+.pub-share-compact-button > svg {
+  width: 15px;
+  height: 15px;
+}
+.pub-share-compact-button:hover,
+.pub-share-compact-button:focus-visible {
+  opacity: 0.8;
+}
+.pub-share-compact-x {
+  color: #fff !important;
+  background: #000;
+}
+.pub-share-compact-facebook {
+  color: #fff !important;
+  background: #1877f2;
+}
+.pub-share-compact-line {
+  color: #fff !important;
+  background: #06c755;
+}
+.pub-share-compact-hatena {
+  background: #fff;
+}
+.pub-share-compact-hatena > img {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+.pub-share-compact-star {
+  position: relative;
+  background: #fff;
+}
+.pub-share-compact-star .pub-hatena-star-container {
+  display: block;
+  width: 22px;
+  max-width: 22px;
+  height: 22px;
+  min-height: 22px;
+  line-height: 22px;
+  overflow: hidden;
+}
 .pub-share-widget {
   display: inline-flex;
   align-items: center;
@@ -1728,14 +1792,14 @@ html:has(.site-container) {
     color: #888;
   }
   .pub-theme-dir-vert .pub-container .pub-main .markdown-body.pub-post-content-with-share {
-    padding-bottom: 3em;
+    padding-left: 2.4em;
+    padding-bottom: 0.5em;
   }
-  .pub-theme-dir-vert .pub-article-with-share > .pub-share-buttons {
+  .pub-theme-dir-vert .pub-article-with-share > .pub-share-buttons-vertical {
     position: absolute;
-    left: 1em;
+    left: 0.45em;
     bottom: 0.5em;
     z-index: 2;
-    justify-content: flex-start;
     margin: 0;
   }
   .pub-theme-dir-vert .pub-side-profile article,
@@ -4602,6 +4666,9 @@ html:has(.site-container) {
 }
 
 /* External publication comments */
+.pub-comments-surface {
+  display: contents;
+}
 .pub-comments {
   margin-top: 2rem;
   padding-top: 1rem;
@@ -4812,8 +4879,25 @@ html:has(.site-container) {
   align-items: end;
   flex-wrap: wrap;
 }
-.pub-comment-form-name-row > label:first-child {
+.pub-comment-name-field {
+  display: flex;
   flex: 1 1 14rem;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+.pub-comment-form-name-label {
+  display: block;
+}
+.pub-comment-name-input-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+.pub-comment-name-input-row > input[type="text"] {
+  flex: 1 1 14rem;
+  min-width: 0;
 }
 .pub-comment-form .pub-comment-as-author {
   flex: none;
@@ -4849,6 +4933,10 @@ html:has(.site-container) {
   flex-wrap: wrap;
   gap: 0.6rem;
 }
+.pub-comment-captcha-image {
+  display: inline-flex;
+  flex: none;
+}
 .pub-comment-captcha img {
   width: 200px;
   height: 48px;
@@ -4869,5 +4957,413 @@ html:has(.site-container) {
   }
   .pub-comment-actions {
     margin-left: 0;
+  }
+}
+
+/* External publication comments: vertical writing */
+@media screen {
+  /*
+   * In vertical-rl the inline axis is physical top-to-bottom (height) and the
+   * block axis is physical right-to-left (width).  The comment UI therefore
+   * gets one shared physical height from the painted article frame, while
+   * widths are allowed to grow only as much as each vertical column needs.
+   */
+  .pub-theme-dir-vert .pub-comments {
+    box-sizing: border-box;
+    margin: 1em 0 0 1em;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #222;
+    writing-mode: vertical-rl !important;
+    text-orientation: mixed !important;
+    font-feature-settings:
+      "vpal" 1,
+      "vkrn" 1;
+  }
+
+  .pub-theme-dir-vert .pub-comments-surface {
+    box-sizing: border-box;
+    display: inline-block;
+    width: max-content;
+    min-width: 0;
+    max-width: none;
+    height: min(40em, calc(100dvh - 3em));
+    min-height: 0;
+    max-height: none;
+    padding: 1em 0.8em;
+    border: 1px solid #ddd;
+    border-radius: 0.4em;
+    background: #fff;
+    color: inherit;
+    writing-mode: vertical-rl !important;
+    text-orientation: mixed !important;
+  }
+
+  .pub-theme-dir-vert .pub-comments-toolbar,
+  .pub-theme-dir-vert .pub-comment-list,
+  .pub-theme-dir-vert .pub-comments-note,
+  .pub-theme-dir-vert .pub-comments-message,
+  .pub-theme-dir-vert .pub-comments-error,
+  .pub-theme-dir-vert .pub-comment-form,
+  .pub-theme-dir-vert .pub-comment-edit-form {
+    box-sizing: border-box;
+    height: var(--pub-comments-column-height, 100%);
+    min-height: var(--pub-comments-column-height, 100%);
+    max-height: var(--pub-comments-column-height, 100%);
+  }
+
+  .pub-theme-dir-vert .pub-comments-toolbar {
+    margin: 0 0 0 0.75rem;
+  }
+
+  .pub-theme-dir-vert .pub-comments-controls {
+    margin-left: 0;
+  }
+
+  .pub-theme-dir-vert .pub-comments-order input[type="checkbox"] {
+    margin: 0;
+  }
+
+  .pub-theme-dir-vert .pub-comment-list {
+    display: block;
+    width: max-content;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .pub-theme-dir-vert .pub-comment {
+    position: relative;
+    box-sizing: border-box;
+    height: var(--pub-comments-column-height, 100%);
+    min-height: var(--pub-comments-column-height, 100%);
+    max-height: var(--pub-comments-column-height, 100%);
+    width: max-content;
+    min-width: 0;
+    max-width: none;
+    margin: 0 0 0 0.9rem;
+    padding: 0 0.7rem;
+    border-bottom: 0;
+    border-left: 1px solid rgba(128, 128, 128, 0.35);
+    background: transparent;
+    overflow: visible;
+  }
+
+  .pub-theme-dir-vert .pub-comment-pending {
+    padding-right: 0.55rem;
+    padding-left: 0.7rem;
+    border-right: 2px solid rgba(180, 120, 0, 0.65);
+    border-left: 1px solid rgba(128, 128, 128, 0.35);
+  }
+
+  /* Header items run downward.  If they cannot fit in the available article
+   * height they wrap into another vertical column instead of being clipped. */
+  .pub-theme-dir-vert .pub-comment-header {
+    box-sizing: border-box;
+    height: var(--pub-comments-column-height, 100%);
+    min-height: var(--pub-comments-column-height, 100%);
+    max-height: var(--pub-comments-column-height, 100%);
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    margin: 0 0 0 0.35rem;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    overflow: visible;
+  }
+
+  .pub-theme-dir-vert .pub-comment-name {
+    flex: 0 1 auto;
+    width: auto;
+    max-width: none;
+    height: auto;
+    max-height: 30ex;
+  }
+
+  .pub-theme-dir-vert .pub-comment-author-slot {
+    width: auto;
+    height: 1.8rem;
+  }
+
+  .pub-theme-dir-vert .pub-comment-header .pub-comment-actions {
+    position: absolute;
+    right: 0.7rem;
+    bottom: 0.35rem;
+    margin: 0;
+  }
+
+  /* The body uses the full article height.  Long text flows into columns to
+   * the left; only the number of visible columns is limited, never its height. */
+  .pub-theme-dir-vert .pub-comment-body {
+    box-sizing: border-box;
+    height: var(--pub-comments-column-height, 100%);
+    min-height: var(--pub-comments-column-height, 100%);
+    max-height: var(--pub-comments-column-height, 100%);
+    width: auto;
+    min-width: 0;
+    max-width: 15em;
+    overflow-x: auto;
+    overflow-y: auto;
+  }
+
+  .pub-theme-dir-vert .pub-comments-note,
+  .pub-theme-dir-vert .pub-comments-message,
+  .pub-theme-dir-vert .pub-comments-error,
+  .pub-theme-dir-vert .pub-comment-form,
+  .pub-theme-dir-vert .pub-comment-edit-form {
+    margin-top: 0;
+    margin-left: 0.8rem;
+  }
+
+  .pub-theme-dir-vert .pub-comment-write {
+    box-sizing: border-box;
+    width: auto;
+    min-width: 0;
+    max-width: 2.2em;
+    height: auto;
+    min-height: 0;
+    max-height: none;
+    align-self: flex-start;
+    padding: 0.4675rem 0.17rem;
+  }
+
+  /* A vertical form is tall and narrow: the form itself uses the article
+   * height, while each field consumes only the horizontal width it needs. */
+  .pub-theme-dir-vert .pub-comment-form,
+  .pub-theme-dir-vert .pub-comment-edit-form {
+    --pub-comment-form-inner-height: calc(var(--pub-comments-column-height, 40em) - 1.6rem - 2px);
+    width: max-content;
+    min-width: 0;
+    max-width: none;
+    padding: 0.8rem;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    align-content: flex-start;
+    gap: 0.5rem;
+    background: transparent;
+    overflow: visible;
+  }
+
+  .pub-theme-dir-vert .pub-comment-form-name-row {
+    box-sizing: border-box;
+    height: auto;
+    min-height: 0;
+    max-height: var(--pub-comments-column-height, 100%);
+    width: max-content;
+    min-width: 0;
+    max-width: none;
+    flex-direction: row;
+    align-items: flex-start;
+    flex-wrap: nowrap;
+  }
+
+  .pub-theme-dir-vert .pub-comment-name-field {
+    flex: none;
+    width: max-content;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .pub-theme-dir-vert .pub-comment-form-name-label {
+    display: block;
+  }
+
+  /* Name input and "as author" share the same vertical line.  The Name label
+   * is the adjacent line to the right; the input row itself runs top-to-bottom. */
+  .pub-theme-dir-vert .pub-comment-name-input-row {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.5rem;
+    width: max-content;
+    min-width: 0;
+  }
+
+  .pub-theme-dir-vert .pub-comment-form .pub-comment-as-author {
+    flex: none;
+    padding-bottom: 0;
+    margin: 0;
+    align-self: auto;
+  }
+
+  .pub-theme-dir-vert .pub-comment-name-input-row > input[type="text"],
+  .pub-theme-dir-vert .pub-comment-edit-form > input {
+    box-sizing: border-box;
+    width: 2.2em;
+    min-width: 2.2em;
+    max-width: 2.2em;
+    height: min(10em, var(--pub-comments-column-height, 10em));
+    min-height: 8em;
+    max-height: var(--pub-comments-column-height, 10em);
+    padding: 0.4em 0.2em;
+  }
+
+  /* The body field uses the entire available vertical inline axis.  The
+   * label and textarea form adjacent vertical columns; only the physical
+   * width is kept narrow. */
+  .pub-theme-dir-vert .pub-comment-body-field {
+    box-sizing: border-box;
+    flex: 0 0 auto;
+    height: var(--pub-comment-form-inner-height);
+    min-height: var(--pub-comment-form-inner-height);
+    max-height: var(--pub-comment-form-inner-height);
+    width: max-content;
+    min-width: 0;
+    max-width: none;
+    align-self: stretch;
+  }
+
+  .pub-theme-dir-vert .pub-comment-form textarea,
+  .pub-theme-dir-vert .pub-comment-edit-form textarea {
+    box-sizing: border-box;
+    width: 4em;
+    min-width: 4em;
+    max-width: 6em;
+    height: var(--pub-comment-form-inner-height);
+    min-height: var(--pub-comment-form-inner-height);
+    max-height: var(--pub-comment-form-inner-height);
+    resize: horizontal;
+  }
+
+  /* CAPTCHA participates in the vertical layout too.  Its bitmap is rotated
+   * into a narrow vertical strip; labels, controls and the six-digit input
+   * retain the page's vertical writing mode. */
+  .pub-theme-dir-vert .pub-comment-captcha {
+    box-sizing: border-box;
+    height: auto;
+    min-height: 0;
+    max-height: var(--pub-comments-column-height, 100%);
+    width: max-content;
+    min-width: 0;
+    max-width: 3.5em;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: nowrap;
+    padding: 0.5rem;
+    overflow: visible;
+  }
+
+  .pub-theme-dir-vert .pub-comment-captcha-image {
+    position: relative;
+    display: inline-block;
+    flex: 0 0 auto;
+    width: 40px;
+    height: 160px;
+    overflow: hidden;
+  }
+
+  .pub-theme-dir-vert .pub-comment-captcha-image img {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 160px;
+    height: 38.4px;
+    max-width: none;
+    max-height: none;
+    transform: translate(-50%, -50%) rotate(90deg);
+    transform-origin: center;
+  }
+
+  .pub-theme-dir-vert .pub-comment-captcha label {
+    min-width: 0;
+  }
+
+  .pub-theme-dir-vert .pub-comment-captcha input {
+    width: 2.2em;
+    min-width: 2.2em;
+    max-width: 2.2em;
+    height: 7em;
+    min-height: 7em;
+    max-height: 7em;
+    letter-spacing: 0.2em;
+  }
+
+  .pub-theme-dir-vert .pub-comment-form input[type="text"],
+  .pub-theme-dir-vert .pub-comment-form textarea,
+  .pub-theme-dir-vert .pub-comment-edit-form input,
+  .pub-theme-dir-vert .pub-comment-edit-form textarea,
+  .pub-theme-dir-vert .pub-comment-captcha input {
+    background: #fff !important;
+    color: #111 !important;
+    caret-color: #111 !important;
+  }
+
+  .pub-theme-shimbun .pub-comments-surface {
+    background-color: #f8f6f4 !important;
+    background-image:
+      repeating-linear-gradient(15deg, #f4f4f2 0, #f4f4f2 1px, transparent 1px, transparent 3px),
+      repeating-linear-gradient(62deg, #fbfbf8 0, #fafaf8 1px, transparent 1px, transparent 3px),
+      repeating-linear-gradient(83deg, #ffe 0, #ffe 0.5px, transparent 0.5px, transparent 2px) !important;
+    background-size:
+      2.7px 2.7px,
+      3.5px 3.5px,
+      5.3px 5.3px !important;
+    border: 1px solid #aaa !important;
+    border-radius: 0.3ex !important;
+    color: #111 !important;
+    font-family: "BIZ UDMincho", serif !important;
+  }
+
+  .pub-theme-hakuban .pub-comments-surface {
+    background-color: #fff !important;
+    background-image:
+      repeating-linear-gradient(15deg, #fafafb 0, #fafafb 1px, transparent 1px, transparent 3px),
+      repeating-linear-gradient(62deg, #fbfbfc 0, #fbfbfc 1px, transparent 1px, transparent 3px),
+      repeating-linear-gradient(83deg, #fcfcff 0, #fcfcff 0.5px, transparent 0.5px, transparent 2px) !important;
+    background-size:
+      2.7px 2.7px,
+      3.5px 3.5px,
+      5.3px 5.3px !important;
+    border: 3px solid #aaa !important;
+    color: #111 !important;
+    font-family: "Klee One", serif !important;
+  }
+
+  .pub-theme-kokuban .pub-comments-surface {
+    background-color: #00221a !important;
+    background-image:
+      repeating-linear-gradient(15deg, #041f19 0, #041f19 1px, transparent 1px, transparent 3px),
+      repeating-linear-gradient(62deg, #081e18 0, #081e18 1px, transparent 1px, transparent 3px),
+      repeating-linear-gradient(83deg, #0a1d17 0, #0a1d17 0.5px, transparent 0.5px, transparent 2px) !important;
+    background-size:
+      2.7px 2.7px,
+      3.5px 3.5px,
+      5.3px 5.3px !important;
+    border: 3px solid #888 !important;
+    color: #f8f8ff !important;
+    font-family: "Klee One", serif !important;
+  }
+
+  .pub-theme-kokuban .pub-comment {
+    border-left-color: rgba(255, 255, 255, 0.24);
+  }
+
+  .pub-theme-kokuban .pub-comment-pending {
+    border-right-color: #d6a33a;
+    border-left-color: rgba(255, 255, 255, 0.24);
+  }
+
+  .pub-theme-kokuban .pub-comment-pending-label {
+    color: #ffd27a;
+  }
+
+  .pub-theme-kokuban .pub-comment-actions .pub-comment-approve-button {
+    color: #a8dba8;
+  }
+
+  .pub-theme-kokuban .pub-comments-error {
+    color: #ff9d9d;
+  }
+
+  .pub-theme-kokuban .pub-comments button {
+    background: #354 !important;
+    border-color: #687 !important;
+    color: #eee !important;
+  }
+
+  .pub-theme-kokuban .pub-comments button:hover:not(:disabled) {
+    background: #465 !important;
+    border-color: #798 !important;
+    color: #fff !important;
   }
 }
