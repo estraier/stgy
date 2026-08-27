@@ -255,7 +255,18 @@ export type NotificationPostRecord = {
   ts: number;
 };
 
-export type NotificationAnyRecord = NotificationUserRecord | NotificationPostRecord;
+export type NotificationPubCommentRecord = {
+  commentId: string;
+  commenterName: string;
+  postId: string;
+  postSnippet: string;
+  ts: number;
+};
+
+export type NotificationAnyRecord =
+  | NotificationUserRecord
+  | NotificationPostRecord
+  | NotificationPubCommentRecord;
 
 export type Notification = {
   slot: string;
@@ -265,6 +276,7 @@ export type Notification = {
   createdAt: string;
   countUsers?: number;
   countPosts?: number;
+  countComments?: number;
   records: NotificationAnyRecord[];
 };
 
@@ -278,8 +290,27 @@ export type MarkAllNotificationsInput = {
   isRead: boolean;
 };
 
+
+export type PubCommentStatus = "pending" | "published";
+
+export type PubComment = {
+  id: string;
+  postId: string;
+  name: string;
+  body: string;
+  status: PubCommentStatus;
+  isAuthor: boolean;
+  createdAt: string;
+};
+
+
+export type PubCommentsMode = "none" | "moderated" | "open";
+
 export type PubConfigExtensions = {
   shareButtons?: string[];
+  comments?: {
+    mode?: PubCommentsMode;
+  };
   analytics?: {
     googleAnalytics?: {
       measurementId?: string;

@@ -18,6 +18,14 @@ export type LikeEventPayload = {
   postId: string;
 };
 
+
+export type PubCommentEventPayload = {
+  type: "pub-comment";
+  postId: string;
+  commentId: string;
+  commenterName: string;
+};
+
 export type FollowEventPayload = {
   type: "follow";
   followerId: string;
@@ -28,4 +36,5 @@ export type AnyEventPayload =
   | ReplyEventPayload
   | MentionEventPayload
   | LikeEventPayload
-  | FollowEventPayload;
+  | FollowEventPayload
+  | PubCommentEventPayload;

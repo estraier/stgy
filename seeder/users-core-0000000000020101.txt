@@ -23,5 +23,5 @@ pubConfigIntroduction:<<____EOF____
 ____EOF____
 pubConfigDesignTheme: default
 pubConfigExtensions:<<____EOF____
-{"shareButtons":["x","facebook","hatena"]}
+{"shareButtons":["x","facebook","hatena"],"comments":{"mode":"open"}}
 ____EOF____

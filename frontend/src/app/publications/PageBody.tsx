@@ -3,7 +3,12 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import type { PubConfig, PubViewDailyStatEntry, PubViewStats } from "@/api/models";
+import type {
+  PubConfig,
+  PubCommentsMode,
+  PubViewDailyStatEntry,
+  PubViewStats,
+} from "@/api/models";
 import { getSessionInfo } from "@/api/auth";
 import { getPubConfig, getPubStats, setPubConfig } from "@/api/users";
 import { Config } from "@/config";
@@ -348,6 +353,18 @@ export default function PageBody() {
       const extensions = { ...prev.extensions };
       if (shareButtons.length > 0) extensions.shareButtons = shareButtons;
       else delete extensions.shareButtons;
+      return { ...prev, extensions };
+    });
+  }
+
+  function setCommentsMode(mode: PubCommentsMode) {
+    setCfg((prev) => {
+      const extensions = { ...prev.extensions };
+      if (mode === "none") {
+        delete extensions.comments;
+      } else {
+        extensions.comments = { mode };
+      }
       return { ...prev, extensions };
     });
   }
@@ -739,6 +756,22 @@ export default function PageBody() {
                     </label>
                   ))}
                 </div>
+              </div>
+
+              <div>
+                <label className="block">
+                  <span className="block text-sm text-gray-700 mb-1">Comments</span>
+                  <select
+                    value={cfg.extensions.comments?.mode ?? "none"}
+                    onChange={(e) => setCommentsMode(e.target.value as PubCommentsMode)}
+                    className="border px-2 py-1 rounded w-full max-w-xs"
+                    disabled={saving}
+                  >
+                    <option value="none">None</option>
+                    <option value="moderated">Moderated</option>
+                    <option value="open">Open</option>
+                  </select>
+                </label>
               </div>
 
               <label className="block">

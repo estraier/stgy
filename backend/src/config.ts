@@ -42,6 +42,9 @@ export class Config {
   static readonly MAIL_DOMAIN_LIMIT_PER_MIN = envNum("STGY_MAIL_DOMAIN_LIMIT_PER_MIN", 10);
   static readonly MAIL_GLOBAL_LIMIT_PER_MIN = envNum("STGY_MAIL_GLOBAL_LIMIT_PER_MIN", 100);
   static readonly SESSION_TTL = envNum("STGY_SESSION_TTL", 3600 * 24 * 7);
+  static readonly CAPTCHA_CHALLENGE_TTL_SEC = envNum("STGY_CAPTCHA_CHALLENGE_TTL_SEC", 10 * 60);
+  static readonly CAPTCHA_PASS_TTL_SEC = envNum("STGY_CAPTCHA_PASS_TTL_SEC", 365 * 24 * 60 * 60);
+  static readonly CAPTCHA_PASS_MAX_USES = envNum("STGY_CAPTCHA_PASS_MAX_USES", 100);
   static readonly TRUST_PROXY_HOPS = envNum("STGY_TRUST_PROXY_HOPS", 1);
   static readonly ID_ISSUE_WORKER_ID = envNum("STGY_ID_ISSUE_WORKER_ID", 0);
   static readonly OPENAI_API_KEY = envStr("STGY_OPENAI_API_KEY", "");
@@ -149,6 +152,7 @@ export class Config {
   static readonly DEFAULT_TIMEZONE = envStr("STGY_DEFAULT_TIMEZONE", "Asia/Tokyo");
   static readonly MAX_PAGE_LIMIT = envNum("STGY_MAX_PAGE_LIMIT", 100);
   static readonly PUB_SIDE_POSTS_MAX = 20;
+  static readonly PUB_COMMENT_MAX_COMMENTS = envNum("STGY_PUB_COMMENT_MAX_COMMENTS", 100);
   static readonly PUB_VIEW_RETENTION_DAYS = envNum("STGY_PUB_VIEW_RETENTION_DAYS", 15);
   static readonly SEARCH_LIMIT_MAX = envNum("STGY_SEARCH_LIMIT_MAX", 1001);
   static readonly SEARCH_CACHE_TTL_SEC = envNum("STGY_SEARCH_CACHE_TTL_SEC", 180);

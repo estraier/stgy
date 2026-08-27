@@ -108,6 +108,30 @@ describe("EventLogService (with Redis publish)", () => {
     expect(redis.publish).toHaveBeenCalledWith(`notifications:wake:${worker}`, String(part));
   });
 
+  test("recordPubComment inserts and publishes wake for the post partition", async () => {
+    const { svc, query, redis } = mkSvc();
+    const out = await svc.recordPubComment({
+      postId: "POST-COMMENT",
+      commentId: "COMMENT-1",
+      commenterName: "guest",
+    });
+    expect(out).toBe(idBig);
+
+    const [, params] = query.mock.calls[0] as [string, any[]];
+    const part = svc.partitionForId("POST-COMMENT");
+    expect(params[0]).toBe(part);
+    expect(params[1]).toBe(idBig.toString());
+    expect(JSON.parse(params[2])).toEqual({
+      type: "pub-comment",
+      postId: "POST-COMMENT",
+      commentId: "COMMENT-1",
+      commenterName: "guest",
+    });
+
+    const worker = ((part % 3) + 3) % 3;
+    expect(redis.publish).toHaveBeenCalledWith(`notifications:wake:${worker}`, String(part));
+  });
+
   test("recordFollow inserts and publishes wake", async () => {
     const { svc, query, redis } = mkSvc();
     const out = await svc.recordFollow({ followerId: "U-NEW", followeeId: "10" });

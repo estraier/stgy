@@ -1,5 +1,7 @@
+import type { PubConfigExtensions } from "../models/user";
 import {
   PUB_CONFIG_EXTENSIONS_MAX_LENGTH,
+  getPubCommentsMode,
   parsePubConfigExtensions,
   serializePubConfigExtensions,
   validatePubConfigExtensions,
@@ -7,12 +9,13 @@ import {
 
 describe("pubConfigExtensions", () => {
   test("accepts current and unknown extension providers", () => {
-    const extensions = {
+    const extensions: PubConfigExtensions = {
       shareButtons: ["x", "facebook", "line", "hatena", "future_service"],
       analytics: {
         googleAnalytics: { measurementId: "G-TEST123" },
         futureAnalytics: { siteId: "abc" },
       },
+      comments: { mode: "moderated" },
       futureFeature: { enabled: true },
     };
     expect(validatePubConfigExtensions(extensions)).toBe(extensions);
@@ -35,6 +38,19 @@ describe("pubConfigExtensions", () => {
     expect(() =>
       validatePubConfigExtensions({ analytics: { googleAnalytics: "G-TEST" } }),
     ).toThrow("invalid extensions.analytics");
+  });
+
+  test("validates comment modes and defaults comments to none", () => {
+    expect(getPubCommentsMode({})).toBe("none");
+    expect(getPubCommentsMode({ comments: { mode: "none" } })).toBe("none");
+    expect(getPubCommentsMode({ comments: { mode: "moderated" } })).toBe("moderated");
+    expect(getPubCommentsMode({ comments: { mode: "open" } })).toBe("open");
+    expect(() => validatePubConfigExtensions({ comments: [] })).toThrow(
+      "invalid extensions.comments",
+    );
+    expect(() => validatePubConfigExtensions({ comments: { mode: "invalid" } })).toThrow(
+      "invalid extensions.comments.mode",
+    );
   });
 
   test("enforces the 4096-character storage limit", () => {

@@ -22,6 +22,7 @@ import PubScrollAction from "@/components/PubScrollAction";
 import PubTrackMapHydrator from "@/components/PubTrackMapHydrator";
 import PubShareButtons from "@/components/PubShareButtons";
 import PubGoogleAnalytics from "@/components/PubGoogleAnalytics";
+import PubComments from "@/components/PubComments";
 import type { Post } from "@/api/models";
 import type { Metadata } from "next";
 
@@ -238,6 +239,8 @@ export default async function PubPostPage({ params, searchParams }: Props) {
     );
     const shareUrl = makeAbsoluteUrl(`/pub/${post.id}`);
     const shareTitle = article.title || pubcfg.siteName.trim() || "STGY Publications";
+    const commentsMode = pubcfg.extensions.comments?.mode ?? "none";
+    const showComments = post.allowReplies && commentsMode !== "none";
     const googleAnalyticsMeasurementId =
       pubcfg.extensions.analytics?.googleAnalytics?.measurementId?.trim() ?? "";
     const googleAnalyticsContentGroup = `stgy-user-${post.ownedBy}`;
@@ -300,6 +303,7 @@ export default async function PubPostPage({ params, searchParams }: Props) {
                 articleNode
               )}
               {hasTrackMap && <PubTrackMapHydrator htmlKey={String(post.id)} />}
+              {showComments && <PubComments postId={String(post.id)} ownerId={post.ownedBy} />}
               {pubcfg.showPagenation && (
                 <nav className="pub-pager" aria-label="Pagination">
                   <div className="pager-row">

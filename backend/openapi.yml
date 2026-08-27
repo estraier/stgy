@@ -869,6 +869,16 @@ components:
         ts: { type: number }
       required: [userId, userNickname, postId, postSnippet, ts]
 
+    NotificationRecordPubComment:
+      type: object
+      properties:
+        commentId: { type: string }
+        commenterName: { type: string }
+        postId: { type: string }
+        postSnippet: { type: string }
+        ts: { type: number }
+      required: [commentId, commenterName, postId, postSnippet, ts]
+
     Notification:
       type: object
       properties:
@@ -879,12 +889,14 @@ components:
         createdAt: { type: string, format: date-time }
         countUsers: { type: integer }
         countPosts: { type: integer }
+        countComments: { type: integer }
         records:
           type: array
           items:
             anyOf:
               - $ref: "#/components/schemas/NotificationRecordUser"
               - $ref: "#/components/schemas/NotificationRecordPost"
+              - $ref: "#/components/schemas/NotificationRecordPubComment"
       required: [slot, term, isRead, updatedAt, createdAt, records]
 
     LinkSnippet:
@@ -909,8 +921,8 @@ components:
       type: object
       description: |
         Extensible public-site settings stored as one compact JSON object. The current
-        management UI uses shareButtons and analytics.googleAnalytics; additional keys may
-        be introduced by future versions without a database schema change.
+        management UI uses shareButtons, analytics.googleAnalytics, and comments; additional
+        keys may be introduced by future versions without a database schema change.
       properties:
         shareButtons:
           type: array
@@ -929,10 +941,21 @@ components:
                   type: string
                   maxLength: 128
                   description: >-
-                    Google Analytics Measurement ID used on externally published article pages.
+                    Google Analytics Measurement ID used on externally published pages.
                     When non-empty, /pub/{postId} sends a page_view with content_group set to
-                    stgy-user-{ownerId}, content_id set to the STGY post ID, and content_type=post.
+                    stgy-user-{ownerId}, content_id set to the STGY post ID, and content_type=post;
+                    /sites/{userId} uses the same content_group with content_id set to the user ID
+                    and content_type=site.
               additionalProperties: true
+          additionalProperties: true
+        comments:
+          type: object
+          properties:
+            mode:
+              type: string
+              enum: [none, moderated, open]
+              default: none
+          description: External-publication comment mode. Omission is equivalent to none.
           additionalProperties: true
       additionalProperties: true
 
@@ -1026,6 +1049,116 @@ components:
             $ref: "#/components/schemas/PubViewStatEntry"
       required: [retentionDays, totalPv, dailyPv, entries]
 
+    CaptchaStatus:
+      type: object
+      properties:
+        valid: { type: boolean }
+        used: { type: integer, minimum: 0 }
+        remaining: { type: integer, minimum: 0 }
+      required: [valid, used, remaining]
+
+    CaptchaChallenge:
+      type: object
+      properties:
+        challengeId: { type: string }
+        image:
+          type: string
+          description: PNG image encoded as a data:image/png;base64 URL.
+      required: [challengeId, image]
+
+    CaptchaVerifyRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        challengeId: { type: string }
+        answer:
+          type: string
+          pattern: '^\d{6}$'
+      required: [challengeId, answer]
+
+    CaptchaVerifyResponse:
+      type: object
+      properties:
+        passed: { type: boolean }
+        remaining: { type: integer, minimum: 0 }
+      required: [passed, remaining]
+
+    PubComment:
+      type: object
+      properties:
+        id: { type: string, pattern: '^[0-9A-F]{16}$' }
+        postId: { type: string, pattern: '^[0-9A-F]{16}$' }
+        name: { type: string, maxLength: 30 }
+        body:
+          type: string
+          maxLength: 1001
+          description: Normalized plain text. Stored responses end with exactly one LF.
+        status: { type: string, enum: [pending, published] }
+        isAuthor: { type: boolean }
+        createdAt: { type: string, format: date-time }
+      required: [id, postId, name, body, status, isAuthor, createdAt]
+
+    PubCommentPublicList:
+      type: object
+      properties:
+        comments:
+          type: array
+          maxItems: 10
+          items:
+            $ref: "#/components/schemas/PubComment"
+        page: { type: integer, minimum: 1 }
+        hasPrevious: { type: boolean }
+        hasNext: { type: boolean }
+        limitReached: { type: boolean }
+      required: [comments, page, hasPrevious, hasNext, limitReached]
+
+    PubCommentFormState:
+      type: object
+      properties:
+        captchaRequired: { type: boolean }
+        name: { type: string, maxLength: 30 }
+        canPostAsAuthor: { type: boolean }
+        canPost: { type: boolean }
+        limitReached: { type: boolean }
+      required: [captchaRequired, name, canPostAsAuthor, canPost, limitReached]
+
+    PubCommentCreateRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        postId: { type: string, pattern: '^[0-9A-Fa-f]{16}$' }
+        name: { type: string, maxLength: 30 }
+        body:
+          type: string
+          maxLength: 1000
+          description: Plain text before server-side normalization.
+        asAuthor: { type: boolean, default: false }
+        captchaId: { type: string }
+        captchaAnswer: { type: string, pattern: '^\d{6}$' }
+      required: [postId, name, body]
+
+    PubCommentCreateResponse:
+      type: object
+      properties:
+        comment:
+          $ref: "#/components/schemas/PubComment"
+      required: [comment]
+
+    PubCommentApproveRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        status: { type: string, enum: [published] }
+      required: [status]
+
+    PubCommentEditRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string, maxLength: 30 }
+        body: { type: string, maxLength: 1000 }
+      required: [name, body]
+
   responses:
     Error400:
       description: Bad request
@@ -1071,6 +1204,206 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
 
 paths:
+  /pub-comments:
+    get:
+      summary: List comments visible on a public article
+      parameters:
+        - in: query
+          name: postId
+          required: true
+          schema: { type: string, pattern: '^[0-9A-Fa-f]{16}$' }
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1, default: 1 }
+        - in: query
+          name: order
+          schema: { type: string, enum: [newest, oldest], default: newest }
+      responses:
+        "200":
+          description: Published comments; the logged-in article owner also receives pending comments
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PubCommentPublicList"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+    post:
+      summary: Submit an external-publication comment
+      description: |
+        Anonymous by default. An article owner who is currently logged in is CAPTCHA-exempt.
+        For other callers, either a valid CAPTCHA pass cookie or a valid six-digit challenge
+        answer is required. A valid X-STGY-QueryHash header is mandatory. In moderated mode,
+        ordinary comments are stored as pending while verified author comments publish immediately.
+      parameters:
+        - in: header
+          name: X-STGY-QueryHash
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PubCommentCreateRequest"
+      responses:
+        "201":
+          description: Comment saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PubCommentCreateResponse"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+        "409":
+          $ref: "#/components/responses/Error409"
+        "429":
+          $ref: "#/components/responses/Error429"
+
+  /pub-comments/form-state:
+    get:
+      summary: Get external-comment form state
+      parameters:
+        - in: query
+          name: postId
+          required: true
+          schema: { type: string, pattern: '^[0-9A-Fa-f]{16}$' }
+      responses:
+        "200":
+          description: CAPTCHA, saved-name, author, and posting-limit state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PubCommentFormState"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+
+  /pub-comments/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, pattern: '^[0-9A-Fa-f]{16}$' }
+    patch:
+      summary: Approve a pending comment or edit a comment
+      description: Article owners may approve pending comments and edit their verified-author comments; administrators may approve or edit any comment.
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/PubCommentApproveRequest"
+                - $ref: "#/components/schemas/PubCommentEditRequest"
+      responses:
+        "200":
+          description: Updated comment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PubComment"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+    delete:
+      summary: Delete a comment as the article owner or an administrator
+      description: Article owners may delete comments on their own articles; administrators may delete any comment.
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Comment deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result: { type: string, enum: [ok] }
+                required: [result]
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+
+  /captcha/status:
+    get:
+      summary: Get CAPTCHA pass-token status
+      responses:
+        "200":
+          description: Current pass-token status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CaptchaStatus"
+
+  /captcha/challenge:
+    post:
+      summary: Create a six-digit CAPTCHA challenge
+      responses:
+        "200":
+          description: Newly generated CAPTCHA challenge reusable until it expires or is solved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CaptchaChallenge"
+        "429":
+          $ref: "#/components/responses/Error429"
+
+  /captcha/verify:
+    post:
+      summary: Verify a CAPTCHA challenge and issue a one-year pass token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CaptchaVerifyRequest"
+      responses:
+        "200":
+          description: CAPTCHA accepted and pass cookie issued
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+              description: HttpOnly stgy_pub_comment_pass cookie
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CaptchaVerifyResponse"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "429":
+          $ref: "#/components/responses/Error429"
+
+  /captcha/pass:
+    delete:
+      summary: Revoke the current CAPTCHA pass token
+      responses:
+        "200":
+          description: Pass token revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result: { type: string, enum: [ok] }
+                required: [result]
+
   /link-snippets/resolve:
     post:
       summary: Resolve a URL to a link snippet

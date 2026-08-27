@@ -33,6 +33,10 @@ mockFetchBatch.mockResolvedValueOnce([
     event_id: "1006",
     payload: { type: "mention", userId: humanUserId, postId, mentionedUserId: recipientUserId },
   },
+  {
+    event_id: "1007",
+    payload: { type: "pub-comment", postId, commentId: "0000000000000300", commenterName: "guest" },
+  },
 ]);
 mockFetchBatch.mockResolvedValueOnce([]);
 const mockPurgeEventLogs = jest.fn(async () => 0);
@@ -113,7 +117,7 @@ jest.mock("./config", () => ({
     NOTIFICATION_WORKERS: 1,
     NOTIFICATION_BATCH_SIZE: 100,
     NOTIFICATION_BUFFER_FLUSH_MS: 60_000,
-    NOTIFICATION_BUFFER_MAX_EVENTS: 7,
+    NOTIFICATION_BUFFER_MAX_EVENTS: 8,
     NOTIFICATION_PAYLOAD_RECORDS: 10,
   },
 }));
@@ -159,7 +163,7 @@ describe("notificationWorker buffering", () => {
     await startNotificationWorker();
 
     const inserts = transactionQueries.filter(([sql]) => /INSERT INTO notifications/i.test(sql));
-    expect(inserts).toHaveLength(2);
+    expect(inserts).toHaveLength(3);
 
     const likeInsert = inserts.find(([, params]) => params?.[1] === `like:${postId}`);
     expect(likeInsert).toBeDefined();
@@ -189,13 +193,29 @@ describe("notificationWorker buffering", () => {
     ]);
     expect(mentionPayload.records.some((record) => record.userId === aiUserId)).toBe(false);
 
+    const commentInsert = inserts.find(([, params]) => params?.[1] === `pub-comment:${postId}`);
+    expect(commentInsert).toBeDefined();
+    const commentParams = commentInsert![1] as unknown[];
+    const commentPayload = JSON.parse(String(commentParams[3])) as {
+      countComments: number;
+      records: Array<{ commentId: string; commenterName: string; postId: string }>;
+    };
+    expect(commentPayload.countComments).toBe(1);
+    expect(commentPayload.records).toEqual([
+      expect.objectContaining({
+        commentId: "0000000000000300",
+        commenterName: "guest",
+        postId,
+      }),
+    ]);
+
     const updatedAtValues = inserts.map(([, params]) => String(params?.[4]));
     expect(new Set(updatedAtValues).size).toBe(1);
     expect(Date.parse(updatedAtValues[0]!)).toBeGreaterThan(1_000_000_000_000);
 
     expect(mockSaveCursor).toHaveBeenCalledTimes(1);
     expect(mockSaveCursor.mock.calls[0][2]).toBe(0);
-    expect(mockSaveCursor.mock.calls[0][3]).toBe(1006n);
+    expect(mockSaveCursor.mock.calls[0][3]).toBe(1007n);
 
     await lifecycle.stop();
   });

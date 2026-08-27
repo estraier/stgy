@@ -23,6 +23,8 @@ import createNotificationsRouter from "./routes/notifications";
 import createGeoRouter from "./routes/geo";
 import createLinkSnippetsRouter from "./routes/linkSnippets";
 import createAgreementTermsRouter from "./routes/agreementTerms";
+import createCaptchaRouter from "./routes/captcha";
+import createPubCommentsRouter from "./routes/pubComments";
 import { getSampleAddr, connectPgWithRetry, connectRedisWithRetry } from "./utils/servers";
 import { redactConfigValue } from "./utils/configLog";
 
@@ -104,6 +106,8 @@ async function main() {
   app.use("/geo", createGeoRouter(pgPool, redis, geoCoder));
   app.use("/link-snippets", createLinkSnippetsRouter(pgPool, redis));
   app.use("/agreement-terms", createAgreementTermsRouter(pgPool, redis));
+  app.use("/captcha", createCaptchaRouter(redis));
+  app.use("/pub-comments", createPubCommentsRouter(pgPool, redis, eventLogService));
 
   const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
     logger.error(`[error] ${req.method} ${req.path}: ${err}`);

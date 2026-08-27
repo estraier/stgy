@@ -110,6 +110,43 @@ describe("NotificationsService", () => {
     expect(nicknames).toEqual(["User One", "User Two"]);
   });
 
+  test("listFeed: parses public-comment records and comment counts", async () => {
+    const row = {
+      slot: "pub-comment:0000000000000100",
+      term: "2026-08-27",
+      is_read: false,
+      payload: {
+        countComments: 2,
+        records: [
+          {
+            commentId: "0000000000000200",
+            commenterName: "太郎",
+            postId: "0000000000000100",
+            postSnippet: "hello",
+            ts: 2000,
+          },
+        ],
+      },
+      updated_at: "2026-08-27T10:00:00.000Z",
+      created_at: "2026-08-27T09:00:00.000Z",
+    };
+    const q = (jest.fn() as any)
+      .mockResolvedValueOnce({ rows: [row] })
+      .mockResolvedValueOnce({ rows: [] });
+    const { svc } = mkSvc(q);
+
+    const out = await svc.listFeed(UID_HEX);
+
+    expect(out?.[0]?.countComments).toBe(2);
+    expect(out?.[0]?.records).toEqual([
+      expect.objectContaining({
+        commentId: "0000000000000200",
+        commenterName: "太郎",
+        postId: "0000000000000100",
+      }),
+    ]);
+  });
+
   test("listFeed: newerThan specified and no newer rows -> returns null and only existence check runs", async () => {
     const existsNone = { rowCount: 0, rows: [] };
 

@@ -46,6 +46,23 @@ https://stgy.jp {
       events 60
       window 1h
     }
+    zone captcha_per_ip {
+      match {
+        path /backend/captcha/challenge /backend/captcha/challenge/ /backend/captcha/verify /backend/captcha/verify/
+      }
+      key {remote_host}
+      events 60
+      window 1h
+    }
+    zone pub_comment_post_per_ip {
+      match {
+        method POST
+        path /backend/pub-comments /backend/pub-comments/
+      }
+      key {remote_host}
+      events 20
+      window 1h
+    }
     log_key
   }
 

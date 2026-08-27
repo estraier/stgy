@@ -1,4 +1,4 @@
-import type { PubConfigExtensions } from "../models/user";
+import type { PubConfigExtensions, PubCommentsMode } from "../models/user";
 
 export const PUB_CONFIG_EXTENSIONS_MAX_LENGTH = 4096;
 
@@ -22,6 +22,15 @@ export function validatePubConfigExtensions(value: unknown): PubConfigExtensions
         throw new Error("invalid extensions.shareButtons");
       }
       seen.add(id);
+    }
+  }
+
+  const comments = value.comments;
+  if (comments !== undefined) {
+    if (!isPlainObject(comments)) throw new Error("invalid extensions.comments");
+    const mode = comments.mode;
+    if (mode !== undefined && mode !== "none" && mode !== "moderated" && mode !== "open") {
+      throw new Error("invalid extensions.comments.mode");
     }
   }
 
@@ -69,4 +78,9 @@ export function parsePubConfigExtensions(value: unknown): PubConfigExtensions {
     throw new Error("invalid stored extensions");
   }
   return validatePubConfigExtensions(parsed);
+}
+
+export function getPubCommentsMode(value: PubConfigExtensions): PubCommentsMode {
+  const mode = value.comments?.mode;
+  return mode === "moderated" || mode === "open" ? mode : "none";
 }

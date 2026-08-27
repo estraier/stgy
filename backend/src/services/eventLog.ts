@@ -6,6 +6,7 @@ import type {
   LikeEventPayload,
   FollowEventPayload,
   MentionEventPayload,
+  PubCommentEventPayload,
 } from "../models/eventLog";
 import { Pool, PoolClient } from "pg";
 import Redis from "ioredis";
@@ -72,6 +73,21 @@ export class EventLogService {
 
   async recordLike(input: { userId: string; postId: string }): Promise<bigint> {
     const payload: LikeEventPayload = { type: "like", userId: input.userId, postId: input.postId };
+    const partitionId = this.partitionForId(input.postId);
+    return this.insert(partitionId, payload);
+  }
+
+  async recordPubComment(input: {
+    postId: string;
+    commentId: string;
+    commenterName: string;
+  }): Promise<bigint> {
+    const payload: PubCommentEventPayload = {
+      type: "pub-comment",
+      postId: input.postId,
+      commentId: input.commentId,
+      commenterName: input.commenterName,
+    };
     const partitionId = this.partitionForId(input.postId);
     return this.insert(partitionId, payload);
   }

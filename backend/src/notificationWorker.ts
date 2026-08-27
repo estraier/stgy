@@ -4,7 +4,11 @@ import { Pool, PoolClient } from "pg";
 import { IdIssueService } from "./services/idIssue";
 import type { AnyEventPayload } from "./models/eventLog";
 import { connectPgWithRetry, connectRedisWithRetry } from "./utils/servers";
-import { NotificationPostRecord, NotificationUserRecord } from "./models/notification";
+import {
+  NotificationPostRecord,
+  NotificationPubCommentRecord,
+  NotificationUserRecord,
+} from "./models/notification";
 import { makeTextFromJsonSnippet } from "./utils/snippet";
 import { EventLogService } from "./services/eventLog";
 import { NotificationsService } from "./services/notifications";
@@ -92,10 +96,25 @@ function dedupePerPost(records: NotificationPostRecord[], cap: number): Notifica
   return arr;
 }
 
+function dedupePubComments(
+  records: NotificationPubCommentRecord[],
+  cap: number,
+): NotificationPubCommentRecord[] {
+  const byComment = new Map<string, NotificationPubCommentRecord>();
+  for (const r of records) {
+    const prev = byComment.get(r.commentId);
+    if (!prev || r.ts >= prev.ts) byComment.set(r.commentId, r);
+  }
+  let arr = Array.from(byComment.values()).sort((a, b) => b.ts - a.ts);
+  if (arr.length > cap) arr = arr.slice(0, cap);
+  return arr;
+}
+
 type FollowPayload = { countUsers: number; records: NotificationUserRecord[] };
 type LikePayload = { countUsers: number; records: NotificationPostRecord[] };
 type ReplyPayload = { countUsers: number; countPosts: number; records: NotificationPostRecord[] };
 type MentionPayload = { countUsers: number; countPosts: number; records: NotificationPostRecord[] };
+type PubCommentPayload = { countComments: number; records: NotificationPubCommentRecord[] };
 
 function parseFollowPayload(raw: unknown): FollowPayload {
   const obj = isObject(raw) ? raw : {};
@@ -181,8 +200,30 @@ function parseMentionPayload(raw: unknown): MentionPayload {
   return { countUsers, countPosts, records };
 }
 
+function parsePubCommentPayload(raw: unknown): PubCommentPayload {
+  const obj = isObject(raw) ? raw : {};
+  const countComments = typeof obj.countComments === "number" ? obj.countComments : 0;
+  const arr = Array.isArray((obj as { records?: unknown }).records)
+    ? ((obj as { records: unknown[] }).records as unknown[])
+    : [];
+  const records: NotificationPubCommentRecord[] = [];
+  for (const it of arr) {
+    if (!isObject(it)) continue;
+    const r = it as Record<string, unknown>;
+    const commentId = typeof r.commentId === "string" ? r.commentId : undefined;
+    const commenterName = typeof r.commenterName === "string" ? r.commenterName : "";
+    const postId = typeof r.postId === "string" ? r.postId : undefined;
+    const postSnippet = typeof r.postSnippet === "string" ? r.postSnippet : "";
+    const ts = typeof r.ts === "number" ? r.ts : undefined;
+    if (!commentId || !postId || ts === undefined) continue;
+    records.push({ commentId, commenterName, postId, postSnippet, ts });
+  }
+  return { countComments, records };
+}
+
 type FollowBufferEntry = { userId: string; ts: number };
 type PostBufferEntry = { userId: string; postId: string; ts: number };
+type PubCommentBufferEntry = { commentId: string; commenterName: string; ts: number };
 
 type BufferedFollow = {
   type: "follow";
@@ -219,7 +260,21 @@ type BufferedMention = {
   entries: Map<string, PostBufferEntry>;
 };
 
-type BufferedNotification = BufferedFollow | BufferedLike | BufferedReply | BufferedMention;
+type BufferedPubComment = {
+  type: "pub-comment";
+  recipientUserId: string;
+  slot: string;
+  term: string;
+  postId: string;
+  entries: Map<string, PubCommentBufferEntry>;
+};
+
+type BufferedNotification =
+  | BufferedFollow
+  | BufferedLike
+  | BufferedReply
+  | BufferedMention
+  | BufferedPubComment;
 
 type PreparedEvent = {
   payload: AnyEventPayload;
@@ -389,6 +444,29 @@ function addPreparedEvent(state: PartitionState, event: PreparedEvent): void {
     return;
   }
 
+  if (payload.type === "pub-comment") {
+    const slot = `pub-comment:${payload.postId}`;
+    const key = bufferKey(recipientUserId, slot, term);
+    let buffered = state.notifications.get(key) as BufferedPubComment | undefined;
+    if (!buffered) {
+      buffered = {
+        type: "pub-comment",
+        recipientUserId,
+        slot,
+        term,
+        postId: payload.postId,
+        entries: new Map(),
+      };
+      state.notifications.set(key, buffered);
+    }
+    replaceLatest(buffered.entries, payload.commentId, {
+      commentId: payload.commentId,
+      commenterName: payload.commenterName,
+      ts,
+    });
+    return;
+  }
+
   if (payload.type === "mention") {
     const slot = `mention:${payload.postId}`;
     const key = bufferKey(recipientUserId, slot, term);
@@ -480,6 +558,10 @@ async function prepareBatch(
 
   const postIds = new Set<string>();
   for (const row of rows) {
+    if (row.payload.type === "pub-comment") {
+      postIds.add(row.payload.postId);
+      continue;
+    }
     const actorUserId = eventActorUserId(row.payload);
     if (!actorUserId || !existingActorIds.has(actorUserId) || aiUserIds.has(actorUserId)) continue;
     if (row.payload.type === "like") postIds.add(row.payload.postId);
@@ -499,25 +581,30 @@ async function prepareBatch(
 
   for (const row of rows) {
     const payload = row.payload;
-    const actorUserId = eventActorUserId(payload);
-    if (!actorUserId) {
-      logger.warn(
-        `[notificationworker] unknown payload type: ${(payload as { type?: string }).type}`,
-      );
-      continue;
-    }
-    if (!existingActorIds.has(actorUserId) || aiUserIds.has(actorUserId)) continue;
-
     let recipientUserId: string | undefined;
-    if (payload.type === "follow") recipientUserId = payload.followeeId;
-    else if (payload.type === "mention") {
-      if (!postOwners.has(payload.postId)) continue;
-      recipientUserId = payload.mentionedUserId;
-    } else if (payload.type === "like") {
+
+    if (payload.type === "pub-comment") {
       recipientUserId = postOwners.get(payload.postId);
-    } else if (payload.type === "reply") {
-      if (!postOwners.has(payload.postId)) continue;
-      recipientUserId = postOwners.get(payload.replyToPostId);
+    } else {
+      const actorUserId = eventActorUserId(payload);
+      if (!actorUserId) {
+        logger.warn(
+          `[notificationworker] unknown payload type: ${(payload as { type?: string }).type}`,
+        );
+        continue;
+      }
+      if (!existingActorIds.has(actorUserId) || aiUserIds.has(actorUserId)) continue;
+
+      if (payload.type === "follow") recipientUserId = payload.followeeId;
+      else if (payload.type === "mention") {
+        if (!postOwners.has(payload.postId)) continue;
+        recipientUserId = payload.mentionedUserId;
+      } else if (payload.type === "like") {
+        recipientUserId = postOwners.get(payload.postId);
+      } else if (payload.type === "reply") {
+        if (!postOwners.has(payload.postId)) continue;
+        recipientUserId = postOwners.get(payload.replyToPostId);
+      }
     }
 
     if (!recipientUserId || isSelfInteraction(payload, recipientUserId)) continue;
@@ -570,7 +657,9 @@ async function loadNicknames(
 ): Promise<Map<string, string>> {
   const userIds = new Set<string>();
   for (const notification of notifications) {
-    for (const entry of notification.entries.values()) userIds.add(entry.userId);
+    for (const entry of notification.entries.values()) {
+      if ("userId" in entry) userIds.add(entry.userId);
+    }
   }
   if (userIds.size === 0) return new Map();
   const ids = Array.from(userIds, hexToDec);
@@ -591,7 +680,7 @@ async function loadPostSnippets(
   for (const notification of notifications) {
     if (notification.type === "like") postIds.add(notification.postId);
     else if (notification.type === "reply") postIds.add(notification.replyToPostId);
-    else if (notification.type === "mention") postIds.add(notification.postId);
+    else if (notification.type === "mention" || notification.type === "pub-comment") postIds.add(notification.postId);
   }
   if (postIds.size === 0) return new Map();
   const ids = Array.from(postIds, hexToDec);
@@ -879,6 +968,72 @@ async function upsertMention(
   );
 }
 
+async function upsertPubComment(
+  db: PoolClient,
+  notification: BufferedPubComment,
+  snippets: ReadonlyMap<string, string>,
+  updatedAtISO: string,
+): Promise<void> {
+  const sel = await db.query<{ payload: unknown }>(
+    `SELECT payload::json AS payload FROM notifications
+      WHERE user_id = $1 AND slot = $2 AND term = $3
+      FOR UPDATE`,
+    [hexToDec(notification.recipientUserId), notification.slot, notification.term],
+  );
+  const cap = Config.NOTIFICATION_PAYLOAD_RECORDS;
+  const current = sel.rows.length > 0 ? parsePubCommentPayload(sel.rows[0].payload) : null;
+  const postSnippet = current?.records[0]?.postSnippet ?? snippets.get(notification.postId) ?? "";
+  const incoming = Array.from(notification.entries.values()).map<NotificationPubCommentRecord>(
+    (entry) => ({
+      commentId: entry.commentId,
+      commenterName: entry.commenterName,
+      postId: notification.postId,
+      postSnippet,
+      ts: entry.ts,
+    }),
+  );
+
+  if (!current) {
+    const payload: PubCommentPayload = {
+      countComments: new Set(incoming.map((entry) => entry.commentId)).size,
+      records: dedupePubComments(incoming, cap),
+    };
+    await db.query(
+      `INSERT INTO notifications (user_id, slot, term, is_read, payload, updated_at)
+       VALUES ($1, $2, $3, FALSE, $4, $5)`,
+      [
+        hexToDec(notification.recipientUserId),
+        notification.slot,
+        notification.term,
+        JSON.stringify(payload),
+        updatedAtISO,
+      ],
+    );
+    return;
+  }
+
+  const existing = new Set(current.records.map((record) => record.commentId));
+  const added = new Set(
+    incoming.filter((record) => !existing.has(record.commentId)).map((record) => record.commentId),
+  );
+  const payload: PubCommentPayload = {
+    countComments: Math.max(current.countComments, existing.size) + added.size,
+    records: dedupePubComments([...current.records, ...incoming], cap),
+  };
+  await db.query(
+    `UPDATE notifications
+       SET is_read = FALSE, payload = $4, updated_at = $5
+     WHERE user_id = $1 AND slot = $2 AND term = $3`,
+    [
+      hexToDec(notification.recipientUserId),
+      notification.slot,
+      notification.term,
+      JSON.stringify(payload),
+      updatedAtISO,
+    ],
+  );
+}
+
 async function flushPartition(context: WorkerContext, state: PartitionState): Promise<number> {
   const lastEventId = state.lastBufferedEventId;
   if (lastEventId === null || state.bufferedEventCount === 0) return 0;
@@ -905,8 +1060,10 @@ async function flushPartition(context: WorkerContext, state: PartitionState): Pr
             await upsertLike(client, notification, nicknames, snippets, updatedAtISO);
           } else if (notification.type === "reply") {
             await upsertReply(client, notification, nicknames, snippets, updatedAtISO);
-          } else {
+          } else if (notification.type === "mention") {
             await upsertMention(client, notification, nicknames, snippets, updatedAtISO);
+          } else {
+            await upsertPubComment(client, notification, snippets, updatedAtISO);
           }
           await client.query("RELEASE SAVEPOINT notification_item");
         } catch (error) {

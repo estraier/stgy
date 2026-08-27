@@ -120,8 +120,13 @@ export type ListFriendsByNicknamePrefixInput = {
   omitOthers?: boolean;
 };
 
+export type PubCommentsMode = "none" | "moderated" | "open";
+
 export type PubConfigExtensions = {
   shareButtons?: string[];
+  comments?: {
+    mode?: PubCommentsMode;
+  };
   analytics?: {
     googleAnalytics?: {
       measurementId?: string;

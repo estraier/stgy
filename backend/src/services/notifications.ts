@@ -21,6 +21,7 @@ type Row = {
 type ParsedPayload = {
   countUsers?: number;
   countPosts?: number;
+  countComments?: number;
   records: NotificationAnyRecord[];
 };
 
@@ -28,6 +29,7 @@ function parsePayload(raw: unknown): ParsedPayload {
   const obj = (raw ?? {}) as Record<string, unknown>;
   const countUsers = typeof obj.countUsers === "number" ? obj.countUsers : undefined;
   const countPosts = typeof obj.countPosts === "number" ? obj.countPosts : undefined;
+  const countComments = typeof obj.countComments === "number" ? obj.countComments : undefined;
   const arr = Array.isArray((obj as { records?: unknown }).records)
     ? ((obj as { records: unknown[] }).records as unknown[])
     : [];
@@ -37,17 +39,21 @@ function parsePayload(raw: unknown): ParsedPayload {
     const rec = it as Record<string, unknown>;
     const userId = typeof rec.userId === "string" ? rec.userId : undefined;
     const userNickname = typeof rec.userNickname === "string" ? rec.userNickname : "";
+    const commenterName = typeof rec.commenterName === "string" ? rec.commenterName : undefined;
+    const commentId = typeof rec.commentId === "string" ? rec.commentId : undefined;
     const ts = typeof rec.ts === "number" ? rec.ts : undefined;
     const postId = typeof rec.postId === "string" ? rec.postId : undefined;
     const postSnippet = typeof rec.postSnippet === "string" ? rec.postSnippet : undefined;
-    if (!userId || ts === undefined) continue;
-    if (postId) {
+    if (ts === undefined) continue;
+    if (commentId && commenterName !== undefined && postId) {
+      records.push({ commentId, commenterName, postId, postSnippet: postSnippet ?? "", ts });
+    } else if (userId && postId) {
       records.push({ userId, userNickname, postId, postSnippet: postSnippet ?? "", ts });
-    } else {
+    } else if (userId) {
       records.push({ userId, userNickname, ts });
     }
   }
-  return { countUsers, countPosts, records };
+  return { countUsers, countPosts, countComments, records };
 }
 
 function toIso(input: unknown): string {
@@ -68,6 +74,7 @@ function rowToNotification(r: Row): Notification {
     createdAt: toIso(r.created_at),
     countUsers: p.countUsers,
     countPosts: p.countPosts,
+    countComments: p.countComments,
     records: p.records,
   };
 }

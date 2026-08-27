@@ -12,7 +12,18 @@ export type NotificationPostRecord = {
   ts: number;
 };
 
-export type NotificationAnyRecord = NotificationUserRecord | NotificationPostRecord;
+export type NotificationPubCommentRecord = {
+  commentId: string;
+  commenterName: string;
+  postId: string;
+  postSnippet: string;
+  ts: number;
+};
+
+export type NotificationAnyRecord =
+  | NotificationUserRecord
+  | NotificationPostRecord
+  | NotificationPubCommentRecord;
 
 export type Notification = {
   slot: string;
@@ -22,6 +33,7 @@ export type Notification = {
   createdAt: string;
   countUsers?: number;
   countPosts?: number;
+  countComments?: number;
   records: NotificationAnyRecord[];
 };
 

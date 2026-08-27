@@ -20,7 +20,8 @@ type SlotInfo =
   | { kind: "follow" }
   | { kind: "like"; postId: string }
   | { kind: "reply"; postId?: string }
-  | { kind: "mention"; postId?: string };
+  | { kind: "mention"; postId?: string }
+  | { kind: "pub-comment"; postId?: string };
 
 function parseSlot(slot: string): SlotInfo {
   if (slot === "follow") return { kind: "follow" };
@@ -28,6 +29,7 @@ function parseSlot(slot: string): SlotInfo {
   if (k === "like" && v) return { kind: "like", postId: v };
   if (k === "reply") return { kind: "reply", postId: v || undefined };
   if (k === "mention") return { kind: "mention", postId: v || undefined };
+  if (k === "pub-comment") return { kind: "pub-comment", postId: v || undefined };
   return { kind: "follow" };
 }
 
@@ -47,12 +49,13 @@ function uniqueTopNicknames(n: Notification, max: number): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const r of n.records) {
-    if (!seen.has(r.userId)) {
-      seen.add(r.userId);
-      const nick = (r as PossibleNick).userNickname ?? r.userId;
-      out.push(nick);
-      if (out.length >= max) break;
-    }
+    const key = "commentId" in r ? `commenter:${r.commenterName}` : `user:${r.userId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const nick =
+      "commentId" in r ? r.commenterName : ((r as PossibleNick).userNickname ?? r.userId);
+    out.push(nick);
+    if (out.length >= max) break;
   }
   return out;
 }
@@ -161,6 +164,9 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
       } else if (slotInfo.kind === "mention") {
         const postId = slotInfo.postId;
         if (postId) target = `/posts/${postId}`;
+      } else if (slotInfo.kind === "pub-comment") {
+        const postId = slotInfo.postId;
+        if (postId) target = `/pub/${encodeURIComponent(postId)}#comments`;
       }
 
       setFeed((prev) =>
@@ -289,6 +295,8 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
 
                 const countUsers = n.countUsers ?? n.records.filter((r) => "userId" in r).length;
                 const countPosts = n.countPosts ?? n.records.filter(hasPost).length;
+                const countComments =
+                  n.countComments ?? n.records.filter((r) => "commentId" in r).length;
 
                 let title = "";
                 if (slotInfo.kind === "follow") {
@@ -299,6 +307,8 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
                   title = `${countPosts} repl${countPosts === 1 ? "y" : "ies"} to`;
                 } else if (slotInfo.kind === "mention") {
                   title = "Mentioned in";
+                } else if (slotInfo.kind === "pub-comment") {
+                  title = `${countComments} comment${countComments === 1 ? "" : "s"} on`;
                 }
 
                 const fullTitle =
