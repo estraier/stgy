@@ -12,7 +12,7 @@ export type PubCommentListResponse = {
 
 export type PubCommentFormState = {
   captchaRequired: boolean;
-  name: string;
+  nickname: string;
   canPostAsAuthor: boolean;
   asAuthor: boolean;
   canPost: boolean;
@@ -42,7 +42,7 @@ export async function getPubCommentFormState(postId: string): Promise<PubComment
 
 export async function createPubComment(input: {
   postId: string;
-  name: string;
+  nickname: string;
   body: string;
   asAuthor: boolean;
   captchaId?: string;
@@ -70,7 +70,7 @@ export async function approvePubComment(id: string): Promise<PubComment> {
 
 export async function editAuthorPubComment(
   id: string,
-  input: { name: string; body: string },
+  input: { nickname: string; body: string },
 ): Promise<PubComment> {
   const res = await apiFetch(`/pub-comments/${id}`, {
     method: "PATCH",

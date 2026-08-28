@@ -211,19 +211,19 @@ function parsePubCommentPayload(raw: unknown): PubCommentPayload {
     if (!isObject(it)) continue;
     const r = it as Record<string, unknown>;
     const commentId = typeof r.commentId === "string" ? r.commentId : undefined;
-    const commenterName = typeof r.commenterName === "string" ? r.commenterName : "";
+    const commenterNickname = typeof r.commenterNickname === "string" ? r.commenterNickname : "";
     const postId = typeof r.postId === "string" ? r.postId : undefined;
     const postSnippet = typeof r.postSnippet === "string" ? r.postSnippet : "";
     const ts = typeof r.ts === "number" ? r.ts : undefined;
     if (!commentId || !postId || ts === undefined) continue;
-    records.push({ commentId, commenterName, postId, postSnippet, ts });
+    records.push({ commentId, commenterNickname, postId, postSnippet, ts });
   }
   return { countComments, records };
 }
 
 type FollowBufferEntry = { userId: string; ts: number };
 type PostBufferEntry = { userId: string; postId: string; ts: number };
-type PubCommentBufferEntry = { commentId: string; commenterName: string; ts: number };
+type PubCommentBufferEntry = { commentId: string; commenterNickname: string; ts: number };
 
 type BufferedFollow = {
   type: "follow";
@@ -461,7 +461,7 @@ function addPreparedEvent(state: PartitionState, event: PreparedEvent): void {
     }
     replaceLatest(buffered.entries, payload.commentId, {
       commentId: payload.commentId,
-      commenterName: payload.commenterName,
+      commenterNickname: payload.commenterNickname,
       ts,
     });
     return;
@@ -986,7 +986,7 @@ async function upsertPubComment(
   const incoming = Array.from(notification.entries.values()).map<NotificationPubCommentRecord>(
     (entry) => ({
       commentId: entry.commentId,
-      commenterName: entry.commenterName,
+      commenterNickname: entry.commenterNickname,
       postId: notification.postId,
       postSnippet,
       ts: entry.ts,

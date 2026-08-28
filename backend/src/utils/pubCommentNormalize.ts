@@ -1,4 +1,4 @@
-export const PUB_COMMENT_NAME_MAX_LENGTH = 30;
+export const PUB_COMMENT_NICKNAME_MAX_LENGTH = 30;
 export const PUB_COMMENT_BODY_MAX_LENGTH = 1000;
 
 function isNonCharacter(codePoint: number): boolean {
@@ -27,14 +27,14 @@ function countCharacters(input: string): number {
   return Array.from(input).length;
 }
 
-export function normalizePubCommentName(input: unknown): string {
-  if (typeof input !== "string") throw new Error("name is required");
+export function normalizePubCommentNickname(input: unknown): string {
+  if (typeof input !== "string") throw new Error("nickname is required");
   let value = input.replace(/\r\n?/g, "\n");
   value = sanitizeUnicode(value, false);
   value = value.replace(/\s+/gu, " ").trim();
-  if (value.length === 0) throw new Error("name is required");
-  if (countCharacters(value) > PUB_COMMENT_NAME_MAX_LENGTH) {
-    throw new Error(`name must be ${PUB_COMMENT_NAME_MAX_LENGTH} characters or less`);
+  if (value.length === 0) throw new Error("nickname is required");
+  if (countCharacters(value) > PUB_COMMENT_NICKNAME_MAX_LENGTH) {
+    throw new Error(`nickname must be ${PUB_COMMENT_NICKNAME_MAX_LENGTH} characters or less`);
   }
   return value;
 }

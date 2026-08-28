@@ -14,7 +14,7 @@ export type NotificationPostRecord = {
 
 export type NotificationPubCommentRecord = {
   commentId: string;
-  commenterName: string;
+  commenterNickname: string;
   postId: string;
   postSnippet: string;
   ts: number;

@@ -18,9 +18,9 @@ import {
 } from "./captcha";
 import { QUERY_HASH_HEADER, verifyQueryHash } from "../utils/queryHash";
 
-export const PUB_COMMENT_NAME_COOKIE = "stgy_pub_comment_name";
+export const PUB_COMMENT_NICKNAME_COOKIE = "stgy_pub_comment_nickname";
 export const PUB_COMMENT_AS_AUTHOR_COOKIE = "stgy_pub_comment_as_author";
-const PUB_COMMENT_NAME_COOKIE_MAX_AGE_MS = 365 * 24 * 60 * 60 * 1000;
+const PUB_COMMENT_PREFERENCE_COOKIE_MAX_AGE_MS = 365 * 24 * 60 * 60 * 1000;
 
 export default function createPubCommentsRouter(
   pgPool: Pool,
@@ -55,7 +55,7 @@ export default function createPubCommentsRouter(
           currentUser,
           passToken: readCaptchaPassToken(req),
           clientIp: readClientIp(req),
-          savedName: readNameCookie(req),
+          savedNickname: readNicknameCookie(req),
           savedAsAuthor: readAsAuthorCookie(req),
         }),
       );
@@ -72,7 +72,7 @@ export default function createPubCommentsRouter(
     try {
       const result = await service.create({
         postId: typeof req.body?.postId === "string" ? req.body.postId : "",
-        name: req.body?.name,
+        nickname: req.body?.nickname,
         body: req.body?.body,
         asAuthor: req.body?.asAuthor === true,
         challengeId: typeof req.body?.captchaId === "string" ? req.body.captchaId : undefined,
@@ -83,12 +83,16 @@ export default function createPubCommentsRouter(
         clientIp: readClientIp(req),
       });
 
-      res.cookie(PUB_COMMENT_NAME_COOKIE, result.comment.name, makeNameCookieOptions(req));
+      res.cookie(
+        PUB_COMMENT_NICKNAME_COOKIE,
+        result.comment.nickname,
+        makeCommentPreferenceCookieOptions(req),
+      );
       if (result.asAuthorPreference !== undefined) {
         res.cookie(
           PUB_COMMENT_AS_AUTHOR_COOKIE,
           result.asAuthorPreference ? "1" : "0",
-          makeNameCookieOptions(req),
+          makeCommentPreferenceCookieOptions(req),
         );
       }
       if (result.newPassToken) {
@@ -116,19 +120,19 @@ export default function createPubCommentsRouter(
       if (req.body?.status !== undefined) {
         if (
           req.body.status !== "published" ||
-          req.body.name !== undefined ||
+          req.body.nickname !== undefined ||
           req.body.body !== undefined
         ) {
           return res.status(400).json({ error: "invalid update" });
         }
         return res.json(await service.approve(req.params.id, currentUser));
       }
-      if (req.body?.name === undefined || req.body?.body === undefined) {
-        return res.status(400).json({ error: "name and body are required" });
+      if (req.body?.nickname === undefined || req.body?.body === undefined) {
+        return res.status(400).json({ error: "nickname and body are required" });
       }
       return res.json(
         await service.editAuthorComment(req.params.id, currentUser, {
-          name: req.body.name,
+          nickname: req.body.nickname,
           body: req.body.body,
         }),
       );
@@ -157,8 +161,8 @@ function parsePositiveInt(value: unknown, defaultValue: number): number {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : defaultValue;
 }
 
-function readNameCookie(req: Request): string | undefined {
-  const value = req.cookies?.[PUB_COMMENT_NAME_COOKIE];
+function readNicknameCookie(req: Request): string | undefined {
+  const value = req.cookies?.[PUB_COMMENT_NICKNAME_COOKIE];
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
@@ -169,13 +173,13 @@ function readAsAuthorCookie(req: Request): boolean | undefined {
   return undefined;
 }
 
-function makeNameCookieOptions(req: Request) {
+function makeCommentPreferenceCookieOptions(req: Request) {
   return {
     httpOnly: true,
     secure: req.secure || req.get("x-forwarded-proto") === "https",
     sameSite: "lax" as const,
     path: "/",
-    maxAge: PUB_COMMENT_NAME_COOKIE_MAX_AGE_MS,
+    maxAge: PUB_COMMENT_PREFERENCE_COOKIE_MAX_AGE_MS,
   };
 }
 

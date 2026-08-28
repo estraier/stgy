@@ -18,7 +18,7 @@ import { convertForDirection, formatDateTime } from "@/utils/format";
 
 const EMPTY_FORM_STATE: PubCommentFormState = {
   captchaRequired: true,
-  name: "",
+  nickname: "",
   canPostAsAuthor: false,
   asAuthor: false,
   canPost: true,
@@ -115,7 +115,7 @@ export default function PubComments({ postId, ownerId, themeDir }: Props) {
 
   const [formOpen, setFormOpen] = useState(false);
   const [formState, setFormState] = useState<PubCommentFormState>(EMPTY_FORM_STATE);
-  const [name, setName] = useState("");
+  const [nickname, setNickname] = useState("");
   const [body, setBody] = useState("");
   const [asAuthor, setAsAuthor] = useState(false);
   const [challenge, setChallenge] = useState<CaptchaChallenge | null>(null);
@@ -124,7 +124,7 @@ export default function PubComments({ postId, ownerId, themeDir }: Props) {
   const [message, setMessage] = useState<string | null>(null);
 
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editName, setEditName] = useState("");
+  const [editNickname, setEditNickname] = useState("");
   const [editBody, setEditBody] = useState("");
 
   const loadComments = useCallback(
@@ -264,7 +264,7 @@ export default function PubComments({ postId, ownerId, themeDir }: Props) {
     try {
       const state = await getPubCommentFormState(postId);
       setFormState(state);
-      setName(state.name);
+      setNickname(state.nickname);
       setAsAuthor(state.asAuthor);
       if (!state.canPost || state.limitReached) {
         setLimitReached(true);
@@ -288,7 +288,7 @@ export default function PubComments({ postId, ownerId, themeDir }: Props) {
     try {
       const result = await createPubComment({
         postId,
-        name,
+        nickname,
         body,
         asAuthor,
         captchaId: formState.captchaRequired ? challenge?.challengeId : undefined,
@@ -358,7 +358,7 @@ export default function PubComments({ postId, ownerId, themeDir }: Props) {
 
   const beginEdit = (comment: PubComment) => {
     setEditingId(comment.id);
-    setEditName(comment.name);
+    setEditNickname(comment.nickname);
     setEditBody(comment.body.replace(/\n$/, ""));
     setError(null);
   };
@@ -366,7 +366,10 @@ export default function PubComments({ postId, ownerId, themeDir }: Props) {
   const saveEdit = async (comment: PubComment) => {
     setError(null);
     try {
-      const updated = await editAuthorPubComment(comment.id, { name: editName, body: editBody });
+      const updated = await editAuthorPubComment(comment.id, {
+        nickname: editNickname,
+        body: editBody,
+      });
       setComments((current) => current.map((item) => (item.id === updated.id ? updated : item)));
       setEditingId(null);
     } catch (e) {
@@ -428,10 +431,10 @@ export default function PubComments({ postId, ownerId, themeDir }: Props) {
               {editingId === comment.id ? (
                 <div className="pub-comment-edit-form rounded border border-gray-300 p-3">
                   <input
-                    value={editName}
+                    value={editNickname}
                     maxLength={30}
-                    onChange={(event) => setEditName(event.target.value)}
-                    aria-label="Name"
+                    onChange={(event) => setEditNickname(event.target.value)}
+                    aria-label="Nickname"
                     
                   />
                   <textarea
@@ -462,8 +465,8 @@ export default function PubComments({ postId, ownerId, themeDir }: Props) {
               ) : (
                 <>
                   <header className="pub-comment-header">
-                    <div className="pub-comment-name" title={comment.name}>
-                      {ui(comment.name)}
+                    <div className="pub-comment-nickname" title={comment.nickname}>
+                      {ui(comment.nickname)}
                     </div>
                     <span className="pub-comment-author-slot">
                       {comment.isAuthor && (
@@ -543,19 +546,19 @@ export default function PubComments({ postId, ownerId, themeDir }: Props) {
           className="pub-comment-form rounded border border-gray-300 p-4"
           onSubmit={(event) => void submit(event)}
         >
-          <div className="pub-comment-form-name-row">
-            <div className="pub-comment-name-field">
-              <label className="pub-comment-form-name-label" htmlFor={`pub-comment-name-${postId}`}>
-                {ui("Name")}
+          <div className="pub-comment-form-nickname-row">
+            <div className="pub-comment-nickname-field">
+              <label className="pub-comment-form-nickname-label" htmlFor={`pub-comment-nickname-${postId}`}>
+                {ui("Nickname")}
               </label>
-              <div className="pub-comment-name-input-row">
+              <div className="pub-comment-nickname-input-row">
                 <input
-                  id={`pub-comment-name-${postId}`}
+                  id={`pub-comment-nickname-${postId}`}
                   type="text"
-                  value={name}
+                  value={nickname}
                   maxLength={30}
                   required
-                  onChange={(event) => setName(event.target.value)}
+                  onChange={(event) => setNickname(event.target.value)}
                   disabled={submitting}
                 />
                 {formState.canPostAsAuthor && (
@@ -628,7 +631,7 @@ export default function PubComments({ postId, ownerId, themeDir }: Props) {
               className="rounded border border-gray-400 bg-gray-100 px-3 py-1.5 hover:bg-gray-200 disabled:opacity-50"
               disabled={
                 submitting ||
-                name.trim().length === 0 ||
+                nickname.trim().length === 0 ||
                 body.trim().length === 0 ||
                 (formState.captchaRequired && captchaAnswer.length !== 6)
               }

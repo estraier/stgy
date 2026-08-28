@@ -257,7 +257,7 @@ export type NotificationPostRecord = {
 
 export type NotificationPubCommentRecord = {
   commentId: string;
-  commenterName: string;
+  commenterNickname: string;
   postId: string;
   postSnippet: string;
   ts: number;
@@ -296,7 +296,7 @@ export type PubCommentStatus = "pending" | "published";
 export type PubComment = {
   id: string;
   postId: string;
-  name: string;
+  nickname: string;
   body: string;
   status: PubCommentStatus;
   isAuthor: boolean;

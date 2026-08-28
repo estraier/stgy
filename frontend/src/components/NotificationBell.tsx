@@ -49,11 +49,11 @@ function uniqueTopNicknames(n: Notification, max: number): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const r of n.records) {
-    const key = "commentId" in r ? `commenter:${r.commenterName}` : `user:${r.userId}`;
+    const key = "commentId" in r ? `commenter:${r.commenterNickname}` : `user:${r.userId}`;
     if (seen.has(key)) continue;
     seen.add(key);
     const nick =
-      "commentId" in r ? r.commenterName : ((r as PossibleNick).userNickname ?? r.userId);
+      "commentId" in r ? r.commenterNickname : ((r as PossibleNick).userNickname ?? r.userId);
     out.push(nick);
     if (out.length >= max) break;
   }

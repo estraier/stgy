@@ -39,14 +39,14 @@ function parsePayload(raw: unknown): ParsedPayload {
     const rec = it as Record<string, unknown>;
     const userId = typeof rec.userId === "string" ? rec.userId : undefined;
     const userNickname = typeof rec.userNickname === "string" ? rec.userNickname : "";
-    const commenterName = typeof rec.commenterName === "string" ? rec.commenterName : undefined;
+    const commenterNickname = typeof rec.commenterNickname === "string" ? rec.commenterNickname : undefined;
     const commentId = typeof rec.commentId === "string" ? rec.commentId : undefined;
     const ts = typeof rec.ts === "number" ? rec.ts : undefined;
     const postId = typeof rec.postId === "string" ? rec.postId : undefined;
     const postSnippet = typeof rec.postSnippet === "string" ? rec.postSnippet : undefined;
     if (ts === undefined) continue;
-    if (commentId && commenterName !== undefined && postId) {
-      records.push({ commentId, commenterName, postId, postSnippet: postSnippet ?? "", ts });
+    if (commentId && commenterNickname !== undefined && postId) {
+      records.push({ commentId, commenterNickname, postId, postSnippet: postSnippet ?? "", ts });
     } else if (userId && postId) {
       records.push({ userId, userNickname, postId, postSnippet: postSnippet ?? "", ts });
     } else if (userId) {

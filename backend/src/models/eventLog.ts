@@ -23,7 +23,7 @@ export type PubCommentEventPayload = {
   type: "pub-comment";
   postId: string;
   commentId: string;
-  commenterName: string;
+  commenterNickname: string;
 };
 
 export type FollowEventPayload = {

@@ -80,13 +80,13 @@ export class EventLogService {
   async recordPubComment(input: {
     postId: string;
     commentId: string;
-    commenterName: string;
+    commenterNickname: string;
   }): Promise<bigint> {
     const payload: PubCommentEventPayload = {
       type: "pub-comment",
       postId: input.postId,
       commentId: input.commentId,
-      commenterName: input.commenterName,
+      commenterNickname: input.commenterNickname,
     };
     const partitionId = this.partitionForId(input.postId);
     return this.insert(partitionId, payload);

@@ -1,4 +1,5 @@
 import { apiFetch, extractError } from "./client";
+import { makeMinuteHashHeaders } from "@/utils/minuteHash";
 import {
   createCaptchaChallenge,
   getCaptchaStatus,
@@ -11,8 +12,15 @@ jest.mock("./client", () => ({
   extractError: jest.fn(),
 }));
 
+jest.mock("@/utils/minuteHash", () => ({
+  makeMinuteHashHeaders: jest.fn(),
+}));
+
 const mockApiFetch = apiFetch as jest.MockedFunction<typeof apiFetch>;
 const mockExtractError = extractError as jest.MockedFunction<typeof extractError>;
+const mockMakeMinuteHashHeaders = makeMinuteHashHeaders as jest.MockedFunction<
+  typeof makeMinuteHashHeaders
+>;
 
 function jsonResponse(value: unknown, ok = true): Response {
   return {
@@ -24,6 +32,9 @@ function jsonResponse(value: unknown, ok = true): Response {
 describe("captcha API", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockMakeMinuteHashHeaders.mockResolvedValue({
+      "X-STGY-MinuteHash": "minute-hash",
+    });
   });
 
   test("gets pass status", async () => {
@@ -36,7 +47,10 @@ describe("captcha API", () => {
     const payload = { challengeId: "abc", image: "data:image/png;base64,AA==" };
     mockApiFetch.mockResolvedValue(jsonResponse(payload));
     await expect(createCaptchaChallenge()).resolves.toEqual(payload);
-    expect(mockApiFetch).toHaveBeenCalledWith("/captcha/challenge", { method: "POST" });
+    expect(mockApiFetch).toHaveBeenCalledWith("/captcha/challenge", {
+      method: "POST",
+      headers: { "X-STGY-MinuteHash": "minute-hash" },
+    });
   });
 
   test("verifies a challenge", async () => {
@@ -47,6 +61,7 @@ describe("captcha API", () => {
     });
     expect(mockApiFetch).toHaveBeenCalledWith("/captcha/verify", {
       method: "POST",
+      headers: { "X-STGY-MinuteHash": "minute-hash" },
       body: JSON.stringify({ challengeId: "challenge", answer: "482731" }),
     });
   });

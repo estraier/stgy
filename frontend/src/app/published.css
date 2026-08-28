@@ -4685,7 +4685,7 @@ html:has(.site-container) {
 .pub-comments-controls,
 .pub-comments-order,
 .pub-comment-header,
-.pub-comment-form-name-row,
+.pub-comment-form-nickname-row,
 .pub-comment-form-buttons,
 .pub-comments-pager,
 .pub-comment-actions {
@@ -4775,7 +4775,7 @@ html:has(.site-container) {
   margin-bottom: 0.35rem;
   font-size: 0.86rem;
 }
-.pub-comment-name {
+.pub-comment-nickname {
   flex: 0 0 30ex;
   width: 30ex;
   max-width: 30ex;
@@ -4879,28 +4879,29 @@ html:has(.site-container) {
   flex-direction: column;
   gap: 0.25rem;
 }
-.pub-comment-form-name-row {
+.pub-comment-form-nickname-row {
   align-items: end;
   flex-wrap: wrap;
 }
-.pub-comment-name-field {
+.pub-comment-nickname-field {
   display: flex;
   flex: 1 1 14rem;
   flex-direction: column;
   gap: 0.25rem;
   min-width: 0;
 }
-.pub-comment-form-name-label {
+.pub-comment-form-nickname-label {
   display: block;
 }
-.pub-comment-name-input-row {
+.pub-comment-nickname-input-row {
   display: flex;
   align-items: center;
   gap: 0.6rem;
   min-width: 0;
 }
-.pub-comment-name-input-row > input[type="text"] {
-  flex: 1 1 14rem;
+.pub-comment-nickname-input-row > input[type="text"] {
+  flex: 0 1 60%;
+  width: 60%;
   min-width: 0;
 }
 .pub-comment-form .pub-comment-as-author {
@@ -5076,7 +5077,7 @@ html:has(.site-container) {
     overflow: visible;
   }
 
-  .pub-theme-dir-vert .pub-comment-name {
+  .pub-theme-dir-vert .pub-comment-nickname {
     flex: 0 1 auto;
     width: auto;
     max-width: none;
@@ -5149,7 +5150,7 @@ html:has(.site-container) {
     overflow: visible;
   }
 
-  .pub-theme-dir-vert .pub-comment-form-name-row {
+  .pub-theme-dir-vert .pub-comment-form-nickname-row {
     box-sizing: border-box;
     height: auto;
     min-height: 0;
@@ -5162,20 +5163,20 @@ html:has(.site-container) {
     flex-wrap: nowrap;
   }
 
-  .pub-theme-dir-vert .pub-comment-name-field {
+  .pub-theme-dir-vert .pub-comment-nickname-field {
     flex: none;
     width: max-content;
     min-width: 0;
     max-width: none;
   }
 
-  .pub-theme-dir-vert .pub-comment-form-name-label {
+  .pub-theme-dir-vert .pub-comment-form-nickname-label {
     display: block;
   }
 
-  /* Name input and "as author" share the same vertical line.  The Name label
+  /* Nickname input and "as author" share the same vertical line.  The Nickname label
    * is the adjacent line to the right; the input row itself runs top-to-bottom. */
-  .pub-theme-dir-vert .pub-comment-name-input-row {
+  .pub-theme-dir-vert .pub-comment-nickname-input-row {
     flex-direction: row;
     align-items: center;
     gap: 0.5rem;
@@ -5190,15 +5191,15 @@ html:has(.site-container) {
     align-self: auto;
   }
 
-  .pub-theme-dir-vert .pub-comment-name-input-row > input[type="text"],
+  .pub-theme-dir-vert .pub-comment-nickname-input-row > input[type="text"],
   .pub-theme-dir-vert .pub-comment-edit-form > input {
     box-sizing: border-box;
     width: 2.2em;
     min-width: 2.2em;
     max-width: 2.2em;
-    height: min(10em, var(--pub-comments-column-height, 10em));
+    height: min(15em, var(--pub-comments-column-height, 15em));
     min-height: 8em;
-    max-height: var(--pub-comments-column-height, 10em);
+    max-height: var(--pub-comments-column-height, 15em);
     padding: 0.4em 0.2em;
   }
 

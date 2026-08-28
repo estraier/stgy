@@ -45,6 +45,8 @@ type FocusRelFlagsRow = {
   is_blocking_focus_user: boolean;
 };
 
+const PUB_CONFIG_CACHE_TTL_SECONDS = 120;
+
 export class UsersService {
   private pgPool: Pool;
   private redis: Redis;
@@ -541,6 +543,7 @@ export class UsersService {
       );
 
       await pgQuery(client, "COMMIT");
+      await this.invalidatePubConfigCache(id);
 
       const row = res.rows[0] as Record<string, unknown>;
       row.id = decToHex(row.id as string);
@@ -720,6 +723,7 @@ export class UsersService {
       }
 
       await pgQuery(client, "COMMIT");
+      if (input.locale !== undefined) await this.invalidatePubConfigCache(input.id);
 
       const row = res.rows[0] as Record<string, unknown>;
       row.id = decToHex(row.id as string);
@@ -913,6 +917,7 @@ export class UsersService {
       await this.searchService.enqueueRemoveDocument(id, timestamp, client);
 
       await pgQuery(client, "COMMIT");
+      await this.invalidatePubConfigCache(id);
     } catch (e) {
       await pgQuery(client, "ROLLBACK");
       throw e;
@@ -1477,6 +1482,12 @@ export class UsersService {
 
   async getPubConfig(userId: string): Promise<PubConfig> {
     const decId = hexToDec(userId);
+    const cacheKey = pubConfigCacheKey(decToHex(decId));
+    try {
+      const cached = parseCachedPubConfig(await this.redis.get(cacheKey));
+      if (cached) return cached;
+    } catch {}
+
     const res = await pgQuery(
       this.pgPool,
       `
@@ -1501,6 +1512,8 @@ export class UsersService {
     `,
       [decId],
     );
+
+    let cfg: PubConfig;
     if (res.rows.length === 0) {
       const det = await pgQuery(
         this.pgPool,
@@ -1513,7 +1526,7 @@ export class UsersService {
         [decId],
       );
       const locale = det.rows[0]?.locale ?? undefined;
-      return {
+      cfg = {
         siteName: "",
         subtitle: "",
         author: "",
@@ -1528,10 +1541,16 @@ export class UsersService {
         extensions: {},
         locale,
       };
+    } else {
+      const row = res.rows[0] as Record<string, unknown>;
+      row.extensions = parsePubConfigExtensions(row.extensions);
+      cfg = snakeToCamel<PubConfig>(row);
     }
-    const row = res.rows[0] as Record<string, unknown>;
-    row.extensions = parsePubConfigExtensions(row.extensions);
-    return snakeToCamel<PubConfig>(row);
+
+    try {
+      await this.redis.setex(cacheKey, PUB_CONFIG_CACHE_TTL_SECONDS, JSON.stringify(cfg));
+    } catch {}
+    return cfg;
   }
 
   async setPubConfig(userId: string, cfg: PubConfig): Promise<PubConfig> {
@@ -1599,9 +1618,49 @@ export class UsersService {
     );
 
     const row = res.rows[0] as Record<string, unknown>;
-    return snakeToCamel<PubConfig>({
+    const saved = snakeToCamel<PubConfig>({
       ...row,
       extensions: parsePubConfigExtensions(row.extensions),
     });
+    await this.invalidatePubConfigCache(userId);
+    return saved;
+  }
+
+  private async invalidatePubConfigCache(userId: string): Promise<void> {
+    try {
+      await this.redis.del(pubConfigCacheKey(decToHex(hexToDec(userId))));
+    } catch {}
+  }
+}
+
+function pubConfigCacheKey(userId: string): string {
+  return `user-pub-config:public:${userId}`;
+}
+
+function parseCachedPubConfig(raw: string | null): PubConfig | null {
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw) as Partial<PubConfig>;
+    if (
+      typeof value.siteName !== "string" ||
+      typeof value.subtitle !== "string" ||
+      typeof value.author !== "string" ||
+      typeof value.introduction !== "string" ||
+      typeof value.designTheme !== "string" ||
+      typeof value.showServiceHeader !== "boolean" ||
+      typeof value.showSiteName !== "boolean" ||
+      typeof value.showPagenation !== "boolean" ||
+      typeof value.showSideProfile !== "boolean" ||
+      typeof value.showSideRecent !== "number" ||
+      typeof value.showSidePopular !== "number" ||
+      !value.extensions ||
+      typeof value.extensions !== "object" ||
+      (value.locale !== undefined && typeof value.locale !== "string")
+    ) {
+      return null;
+    }
+    return value as PubConfig;
+  } catch {
+    return null;
   }
 }

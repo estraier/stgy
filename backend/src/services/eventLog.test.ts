@@ -113,7 +113,7 @@ describe("EventLogService (with Redis publish)", () => {
     const out = await svc.recordPubComment({
       postId: "POST-COMMENT",
       commentId: "COMMENT-1",
-      commenterName: "guest",
+      commenterNickname: "guest",
     });
     expect(out).toBe(idBig);
 
@@ -125,7 +125,7 @@ describe("EventLogService (with Redis publish)", () => {
       type: "pub-comment",
       postId: "POST-COMMENT",
       commentId: "COMMENT-1",
-      commenterName: "guest",
+      commenterNickname: "guest",
     });
 
     const worker = ((part % 3) + 3) % 3;

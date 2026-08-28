@@ -1,4 +1,5 @@
 import { apiFetch, extractError } from "./client";
+import { makeMinuteHashHeaders } from "@/utils/minuteHash";
 
 export type CaptchaStatus = {
   valid: boolean;
@@ -18,7 +19,8 @@ export async function getCaptchaStatus(): Promise<CaptchaStatus> {
 }
 
 export async function createCaptchaChallenge(): Promise<CaptchaChallenge> {
-  const res = await apiFetch("/captcha/challenge", { method: "POST" });
+  const headers = await makeMinuteHashHeaders();
+  const res = await apiFetch("/captcha/challenge", { method: "POST", headers });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();
 }
@@ -27,8 +29,10 @@ export async function verifyCaptchaChallenge(
   challengeId: string,
   answer: string,
 ): Promise<{ passed: boolean; remaining: number }> {
+  const headers = await makeMinuteHashHeaders();
   const res = await apiFetch("/captcha/verify", {
     method: "POST",
+    headers,
     body: JSON.stringify({ challengeId, answer }),
   });
   if (!res.ok) throw new Error(await extractError(res));

@@ -120,7 +120,7 @@ describe("NotificationsService", () => {
         records: [
           {
             commentId: "0000000000000200",
-            commenterName: "太郎",
+            commenterNickname: "太郎",
             postId: "0000000000000100",
             postSnippet: "hello",
             ts: 2000,
@@ -141,7 +141,7 @@ describe("NotificationsService", () => {
     expect(out?.[0]?.records).toEqual([
       expect.objectContaining({
         commentId: "0000000000000200",
-        commenterName: "太郎",
+        commenterNickname: "太郎",
         postId: "0000000000000100",
       }),
     ]);

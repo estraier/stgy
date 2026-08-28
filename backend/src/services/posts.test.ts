@@ -777,7 +777,18 @@ class MockPgClientMain {
   }
 }
 
-class MockRedis {}
+class MockRedis {
+  store = new Map<string, string>();
+
+  get = jest.fn(async (key: string) => this.store.get(key) ?? null);
+
+  setex = jest.fn(async (key: string, _ttl: number, value: string) => {
+    this.store.set(key, value);
+    return "OK";
+  });
+
+  del = jest.fn(async (key: string) => (this.store.delete(key) ? 1 : 0));
+}
 
 describe("posts service", () => {
   let pgClient: MockPgClientMain;
@@ -1060,6 +1071,7 @@ describe("posts service", () => {
     expect(post).not.toBeNull();
     expect(post!.content).toBe("updated content");
     expect(post!.replyTo).toBe(postSample.id);
+    expect(redis.del).toHaveBeenCalledWith(`post-pub:public:${postSample.id}`);
     expect(post!.replyToOwnerId).toBe(user1Hex);
     expect(
       pgClient.tags.some((t) => t.postId === toDecStr(postSample.id) && t.name === "foo"),
@@ -1147,6 +1159,7 @@ describe("posts service", () => {
 
   test("deletePost", async () => {
     await postsService.deletePost(postSample.id);
+    expect(redis.del).toHaveBeenCalledWith(`post-pub:public:${postSample.id}`);
     expect(pgClient.data.length).toBe(0);
     expect(pgClient.tags.some((t) => t.postId === toDecStr(postSample.id))).toBe(false);
     await expect(postsService.deletePost(hex16())).rejects.toThrow(/post not found/i);
@@ -1875,6 +1888,98 @@ describe("public posts (getPubPost / listPubPostsByUser)", () => {
     expect(hitGt!.publishedAt).toBe("2024-01-10T00:00:00Z");
     expect(hitGt!.ownerLocale).toBe("ja-JP");
     expect(hitGt!.replyToOwnerId).toBeNull();
+  });
+
+  test("getPubPost caches articles up to one week old for 600 seconds", async () => {
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(Date.parse("2024-01-08T00:00:00Z"));
+    try {
+      const idHex = hex16();
+      const row: MockPostRow = {
+        id: toDecStr(idHex),
+        ownedBy: toDecStr(alice),
+        replyTo: null,
+        allowLikes: true,
+        allowReplies: true,
+        createdAt: "2024-01-01T00:00:00Z",
+        publishedAt: "2024-01-02T00:00:00Z",
+        updatedAt: null,
+        content: "cached markdown",
+        locale: "ja-JP",
+      };
+      pgClient.data.push(row);
+
+      const querySpy = jest.spyOn(pgClient, "query");
+      const first = await postsService.getPubPost(idHex, "2024-01-03T00:00:00Z");
+      const firstPubQueries = querySpy.mock.calls.filter((call) =>
+        normalizeSql(String(call[0])).includes("WITH cur AS ("),
+      ).length;
+      expect(first?.content).toBe("cached markdown");
+      expect(redis.setex).toHaveBeenCalledWith(
+        `post-pub:public:${idHex}`,
+        600,
+        expect.any(String),
+      );
+
+      row.content = "changed behind cache";
+      const second = await postsService.getPubPost(idHex, "2024-01-04T00:00:00Z");
+      const secondPubQueries = querySpy.mock.calls.filter((call) =>
+        normalizeSql(String(call[0])).includes("WITH cur AS ("),
+      ).length;
+      expect(second?.content).toBe("cached markdown");
+      expect(secondPubQueries).toBe(firstPubQueries);
+      querySpy.mockRestore();
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  test("getPubPost caches articles older than one week for 120 seconds", async () => {
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(Date.parse("2024-01-08T00:00:01Z"));
+    try {
+      const idHex = hex16();
+      pgClient.data.push({
+        id: toDecStr(idHex),
+        ownedBy: toDecStr(alice),
+        replyTo: null,
+        allowLikes: true,
+        allowReplies: true,
+        createdAt: "2024-01-01T00:00:00Z",
+        publishedAt: "2024-01-02T00:00:00Z",
+        updatedAt: null,
+        content: "old cached markdown",
+        locale: "ja-JP",
+      });
+
+      await postsService.getPubPost(idHex, "2024-01-03T00:00:00Z");
+
+      expect(redis.setex).toHaveBeenCalledWith(
+        `post-pub:public:${idHex}`,
+        120,
+        expect.any(String),
+      );
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  test("getPubPost does not cache not-found or not-yet-published posts", async () => {
+    const idHex = hex16();
+    pgClient.data.push({
+      id: toDecStr(idHex),
+      ownedBy: toDecStr(alice),
+      replyTo: null,
+      allowLikes: true,
+      allowReplies: true,
+      createdAt: "2024-01-01T00:00:00Z",
+      publishedAt: "2024-01-10T00:00:00Z",
+      updatedAt: null,
+      content: "future",
+      locale: "ja-JP",
+    });
+
+    expect(await postsService.getPubPost(idHex, "2024-01-09T00:00:00Z")).toBeNull();
+    expect(redis.setex).not.toHaveBeenCalled();
+    expect(redis.store.has(`post-pub:public:${idHex}`)).toBe(false);
   });
 
   test("getPubPost returns adjacent published posts only", async () => {

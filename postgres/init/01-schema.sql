@@ -94,15 +94,15 @@ CREATE INDEX idx_posts_root_id ON posts (id) WHERE reply_to IS NULL;
 CREATE INDEX idx_posts_root_owned_by_id ON posts (owned_by, id) WHERE reply_to IS NULL;
 CREATE INDEX idx_posts_public_owned_by_published_at ON posts (owned_by, published_at, id) WHERE published_at IS NOT NULL;
 
-CREATE TABLE pub_comments (
+CREATE TABLE post_pub_comments (
   id BIGINT PRIMARY KEY,
   post_id BIGINT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
-  name VARCHAR(30) NOT NULL,
-  body VARCHAR(1001) NOT NULL,
-  status VARCHAR(16) NOT NULL CHECK (status IN ('pending', 'published')),
+  nickname VARCHAR(50) NOT NULL,
+  body VARCHAR(65536) NOT NULL,
+  status VARCHAR(32) NOT NULL CHECK (status IN ('pending', 'published')),
   is_author BOOLEAN NOT NULL DEFAULT FALSE
 );
-CREATE INDEX idx_pub_comments_post_status_id ON pub_comments(post_id, status, id DESC);
+CREATE INDEX idx_post_pub_comments_post_id ON post_pub_comments(post_id, id DESC);
 
 CREATE TABLE post_pub_access_counts (
   post_id BIGINT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,

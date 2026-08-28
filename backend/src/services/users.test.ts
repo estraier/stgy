@@ -1030,6 +1030,8 @@ class MockPgClient {
 
 class MockRedis {
   store: Record<string, any> = {};
+  stringStore: Record<string, string> = {};
+  setexCalls: Array<{ key: string; ttl: number; value: string }> = [];
   queue: { queue: string; val: string }[] = [];
   async hmset(key: string, obj: any) {
     this.store[key] = { ...obj };
@@ -1037,12 +1039,20 @@ class MockRedis {
   async hgetall(key: string) {
     return this.store[key] ? { ...this.store[key] } : {};
   }
+  async get(key: string) {
+    return this.stringStore[key] ?? null;
+  }
+  async setex(key: string, ttl: number, value: string) {
+    this.stringStore[key] = value;
+    this.setexCalls.push({ key, ttl, value });
+  }
   async expire(_key: string, _ttl: number) {}
   async lpush(queue: string, val: string) {
     this.queue.push({ queue, val });
   }
   async del(key: string) {
     delete this.store[key];
+    delete this.stringStore[key];
   }
 }
 
@@ -1561,7 +1571,7 @@ describe("UsersService", () => {
     expect(await service.checkBlock({ blockerId: BOB, blockeeId: ALICE })).toBe(false);
   });
 
-  test("getPubConfig returns defaults when not set", async () => {
+  test("getPubConfig returns defaults and caches them for 120 seconds", async () => {
     const cfg = await service.getPubConfig(ALICE);
     expect(cfg).toEqual({
       siteName: "",
@@ -1578,6 +1588,13 @@ describe("UsersService", () => {
       extensions: {},
       locale: "ja-JP",
     });
+    expect(redis.setexCalls.at(-1)).toMatchObject({
+      key: `user-pub-config:public:${ALICE}`,
+      ttl: 120,
+    });
+
+    pg.details[ALICE].locale = "en-US";
+    expect(await service.getPubConfig(ALICE)).toEqual(cfg);
   });
 
   test("setPubConfig upserts and subsequent get returns saved values", async () => {
@@ -1649,5 +1666,32 @@ describe("UsersService", () => {
       show_side_popular: 0,
       extensions: '{"shareButtons":["facebook"]}',
     });
+  });
+
+  test("pub config cache is invalidated by config changes and locale changes", async () => {
+    await service.getPubConfig(ALICE);
+    const key = `user-pub-config:public:${ALICE}`;
+    expect(redis.stringStore[key]).toBeDefined();
+
+    await service.setPubConfig(ALICE, {
+      siteName: "Cached Site",
+      subtitle: "",
+      author: "",
+      introduction: "",
+      designTheme: "default",
+      showServiceHeader: true,
+      showSiteName: true,
+      showPagenation: true,
+      showSideProfile: true,
+      showSideRecent: 5,
+      showSidePopular: 5,
+      extensions: {},
+    });
+    expect(redis.stringStore[key]).toBeUndefined();
+
+    await service.getPubConfig(ALICE);
+    expect(redis.stringStore[key]).toBeDefined();
+    await service.updateUser({ id: ALICE, locale: "en-US" });
+    expect(redis.stringStore[key]).toBeUndefined();
   });
 });

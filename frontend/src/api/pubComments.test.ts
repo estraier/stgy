@@ -53,7 +53,7 @@ describe("pub comments API", () => {
   test("gets form state", async () => {
     const payload = {
       captchaRequired: false,
-      name: "太郎",
+      nickname: "太郎",
       canPostAsAuthor: true,
       asAuthor: false,
       canPost: true,
@@ -66,7 +66,7 @@ describe("pub comments API", () => {
   test("creates a comment with query-hash header", async () => {
     const input = {
       postId: "0000000000000001",
-      name: "太郎",
+      nickname: "太郎",
       body: "hello",
       asAuthor: false,
       captchaId: "challenge",
@@ -96,10 +96,10 @@ describe("pub comments API", () => {
       body: JSON.stringify({ status: "published" }),
     });
 
-    await editAuthorPubComment("C", { name: "new", body: "body" });
+    await editAuthorPubComment("C", { nickname: "new", body: "body" });
     expect(mockApiFetch).toHaveBeenNthCalledWith(2, "/pub-comments/C", {
       method: "PATCH",
-      body: JSON.stringify({ name: "new", body: "body" }),
+      body: JSON.stringify({ nickname: "new", body: "body" }),
     });
 
     await deletePubComment("C");
@@ -111,7 +111,7 @@ describe("pub comments API", () => {
     mockApiFetch.mockResolvedValue(response);
     mockExtractError.mockResolvedValue("captcha required");
     await expect(
-      createPubComment({ postId: "P", name: "n", body: "b", asAuthor: false }),
+      createPubComment({ postId: "P", nickname: "n", body: "b", asAuthor: false }),
     ).rejects.toThrow("captcha required");
     expect(mockExtractError).toHaveBeenCalledWith(response);
   });

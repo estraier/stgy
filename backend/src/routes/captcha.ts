@@ -3,6 +3,7 @@ import type Redis from "ioredis";
 import { Config } from "../config";
 import { CaptchaService } from "../services/captcha";
 import { PUB_COMMENT_CAPTCHA_PURPOSE } from "../services/pubComments";
+import { MINUTE_HASH_HEADER, verifyMinuteHash } from "../utils/minuteHash";
 
 export const PUB_COMMENT_CAPTCHA_PASS_COOKIE = "stgy_pub_comment_pass";
 
@@ -19,7 +20,10 @@ export default function createCaptchaRouter(redis: Redis) {
     return res.json(status);
   });
 
-  router.post("/challenge", async (_req: Request, res: Response) => {
+  router.post("/challenge", async (req: Request, res: Response) => {
+    if (!verifyMinuteHash(req.get(MINUTE_HASH_HEADER))) {
+      return res.status(403).json({ error: "invalid minute hash" });
+    }
     const challenge = await captchaService.createChallenge(PUB_COMMENT_CAPTCHA_PURPOSE);
     return res.json({
       challengeId: challenge.id,
@@ -28,6 +32,9 @@ export default function createCaptchaRouter(redis: Redis) {
   });
 
   router.post("/verify", async (req: Request, res: Response) => {
+    if (!verifyMinuteHash(req.get(MINUTE_HASH_HEADER))) {
+      return res.status(403).json({ error: "invalid minute hash" });
+    }
     const challengeId = typeof req.body?.challengeId === "string" ? req.body.challengeId.trim() : "";
     const answer = typeof req.body?.answer === "string" ? req.body.answer.trim() : "";
     if (!/^[A-Za-z0-9_-]{16,128}$/.test(challengeId)) {

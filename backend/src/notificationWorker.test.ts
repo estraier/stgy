@@ -35,7 +35,7 @@ mockFetchBatch.mockResolvedValueOnce([
   },
   {
     event_id: "1007",
-    payload: { type: "pub-comment", postId, commentId: "0000000000000300", commenterName: "guest" },
+    payload: { type: "pub-comment", postId, commentId: "0000000000000300", commenterNickname: "guest" },
   },
 ]);
 mockFetchBatch.mockResolvedValueOnce([]);
@@ -198,13 +198,13 @@ describe("notificationWorker buffering", () => {
     const commentParams = commentInsert![1] as unknown[];
     const commentPayload = JSON.parse(String(commentParams[3])) as {
       countComments: number;
-      records: Array<{ commentId: string; commenterName: string; postId: string }>;
+      records: Array<{ commentId: string; commenterNickname: string; postId: string }>;
     };
     expect(commentPayload.countComments).toBe(1);
     expect(commentPayload.records).toEqual([
       expect.objectContaining({
         commentId: "0000000000000300",
-        commenterName: "guest",
+        commenterNickname: "guest",
         postId,
       }),
     ]);

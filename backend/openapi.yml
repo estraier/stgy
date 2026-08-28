@@ -873,11 +873,11 @@ components:
       type: object
       properties:
         commentId: { type: string }
-        commenterName: { type: string }
+        commenterNickname: { type: string }
         postId: { type: string }
         postSnippet: { type: string }
         ts: { type: number }
-      required: [commentId, commenterName, postId, postSnippet, ts]
+      required: [commentId, commenterNickname, postId, postSnippet, ts]
 
     Notification:
       type: object
@@ -1088,7 +1088,7 @@ components:
       properties:
         id: { type: string, pattern: '^[0-9A-F]{16}$' }
         postId: { type: string, pattern: '^[0-9A-F]{16}$' }
-        name: { type: string, maxLength: 30 }
+        nickname: { type: string, maxLength: 30 }
         body:
           type: string
           maxLength: 1001
@@ -1096,7 +1096,7 @@ components:
         status: { type: string, enum: [pending, published] }
         isAuthor: { type: boolean }
         createdAt: { type: string, format: date-time }
-      required: [id, postId, name, body, status, isAuthor, createdAt]
+      required: [id, postId, nickname, body, status, isAuthor, createdAt]
 
     PubCommentPublicList:
       type: object
@@ -1116,18 +1116,19 @@ components:
       type: object
       properties:
         captchaRequired: { type: boolean }
-        name: { type: string, maxLength: 30 }
+        nickname: { type: string, maxLength: 30 }
         canPostAsAuthor: { type: boolean }
+        asAuthor: { type: boolean }
         canPost: { type: boolean }
         limitReached: { type: boolean }
-      required: [captchaRequired, name, canPostAsAuthor, canPost, limitReached]
+      required: [captchaRequired, nickname, canPostAsAuthor, asAuthor, canPost, limitReached]
 
     PubCommentCreateRequest:
       type: object
       additionalProperties: false
       properties:
         postId: { type: string, pattern: '^[0-9A-Fa-f]{16}$' }
-        name: { type: string, maxLength: 30 }
+        nickname: { type: string, maxLength: 30 }
         body:
           type: string
           maxLength: 1000
@@ -1135,7 +1136,7 @@ components:
         asAuthor: { type: boolean, default: false }
         captchaId: { type: string }
         captchaAnswer: { type: string, pattern: '^\d{6}$' }
-      required: [postId, name, body]
+      required: [postId, nickname, body]
 
     PubCommentCreateResponse:
       type: object
@@ -1155,9 +1156,9 @@ components:
       type: object
       additionalProperties: false
       properties:
-        name: { type: string, maxLength: 30 }
+        nickname: { type: string, maxLength: 30 }
         body: { type: string, maxLength: 1000 }
-      required: [name, body]
+      required: [nickname, body]
 
   responses:
     Error400:
@@ -1275,7 +1276,7 @@ paths:
           schema: { type: string, pattern: '^[0-9A-Fa-f]{16}$' }
       responses:
         "200":
-          description: CAPTCHA, saved-name, author, and posting-limit state
+          description: CAPTCHA, saved-nickname, author, and posting-limit state
           content:
             application/json:
               schema:

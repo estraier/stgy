@@ -1,12 +1,21 @@
 import {
   normalizePubCommentBody,
-  normalizePubCommentName,
+  normalizePubCommentNickname,
   PUB_COMMENT_BODY_MAX_LENGTH,
+  PUB_COMMENT_NICKNAME_MAX_LENGTH,
 } from "./pubCommentNormalize";
 
 describe("pub comment normalization", () => {
-  test("normalizes a name", () => {
-    expect(normalizePubCommentName("  太郎\n  山田\tさん  ")).toBe("太郎 山田さん");
+  test("normalizes a nickname", () => {
+    expect(normalizePubCommentNickname("  太郎\n  山田\tさん  ")).toBe("太郎 山田さん");
+  });
+
+  test("enforces the nickname length in application code", () => {
+    const nickname = "x".repeat(PUB_COMMENT_NICKNAME_MAX_LENGTH);
+    expect(normalizePubCommentNickname(nickname)).toBe(nickname);
+    expect(() =>
+      normalizePubCommentNickname("x".repeat(PUB_COMMENT_NICKNAME_MAX_LENGTH + 1)),
+    ).toThrow(/30/);
   });
 
   test("normalizes body line endings and blank lines", () => {

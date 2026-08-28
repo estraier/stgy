@@ -33,6 +33,10 @@ import { Pool } from "pg";
 import Redis from "ioredis";
 import { pgQuery } from "../utils/servers";
 
+const PUB_POST_CACHE_RECENT_TTL_SECONDS = 600;
+const PUB_POST_CACHE_OLD_TTL_SECONDS = 120;
+const PUB_POST_CACHE_RECENT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
 export class PostsService {
   private pgPool: Pool;
   private redis: Redis;
@@ -845,6 +849,7 @@ export class PostsService {
         );
       }
       await pgQuery(client, "COMMIT");
+      await this.invalidatePubPostCache(input.id);
       return this.getPost(input.id);
     } catch (e) {
       await pgQuery(client, "ROLLBACK");
@@ -864,12 +869,19 @@ export class PostsService {
       if ((res.rowCount ?? 0) === 0) throw new Error("Post not found");
       await this.searchService.enqueueRemoveDocument(id, timestamp, client);
       await pgQuery(client, "COMMIT");
+      await this.invalidatePubPostCache(id);
     } catch (e) {
       await pgQuery(client, "ROLLBACK");
       throw e;
     } finally {
       client.release();
     }
+  }
+
+  private async invalidatePubPostCache(postId: string): Promise<void> {
+    try {
+      await this.redis.del(pubPostCacheKey(postId));
+    } catch {}
   }
 
   async addLike(postId: string, userId: string): Promise<void> {
@@ -1171,6 +1183,12 @@ export class PostsService {
   }
 
   async getPubPost(id: string, publishedUntil: string): Promise<PostDetail | null> {
+    const cacheKey = pubPostCacheKey(id);
+    try {
+      const cached = parseCachedPubPost(await this.redis.get(cacheKey));
+      if (cached && cached.publishedAt !== null && cached.publishedAt <= publishedUntil) return cached;
+    } catch {}
+
     const sql = `
       WITH cur AS (
         SELECT
@@ -1234,7 +1252,11 @@ export class PostsService {
     row.reply_to_owner_id = row.reply_to_owner_id == null ? null : decToHex(row.reply_to_owner_id);
     row.older_post_id = row.older_post_id == null ? null : decToHex(row.older_post_id);
     row.newer_post_id = row.newer_post_id == null ? null : decToHex(row.newer_post_id);
-    return snakeToCamel<PostDetail>(row);
+    const post = snakeToCamel<PostDetail>(row);
+    try {
+      await this.redis.setex(cacheKey, pubPostCacheTtlSeconds(post.createdAt), JSON.stringify(post));
+    } catch {}
+    return post;
   }
 
   async listPubPostsByUser(
@@ -1285,5 +1307,36 @@ export class PostsService {
       return r;
     });
     return snakeToCamel<Post[]>(rows);
+  }
+}
+
+
+function pubPostCacheTtlSeconds(createdAt: string, nowMs = Date.now()): number {
+  const createdAtMs = Date.parse(createdAt);
+  if (!Number.isFinite(createdAtMs)) return PUB_POST_CACHE_OLD_TTL_SECONDS;
+  return nowMs - createdAtMs <= PUB_POST_CACHE_RECENT_AGE_MS
+    ? PUB_POST_CACHE_RECENT_TTL_SECONDS
+    : PUB_POST_CACHE_OLD_TTL_SECONDS;
+}
+
+function pubPostCacheKey(postId: string): string {
+  return `post-pub:public:${postId}`;
+}
+
+function parseCachedPubPost(raw: string | null): PostDetail | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return null;
+    const post = parsed as Partial<PostDetail>;
+    if (
+      typeof post.id !== "string" ||
+      typeof post.content !== "string" ||
+      typeof post.publishedAt !== "string"
+    )
+      return null;
+    return post as PostDetail;
+  } catch {
+    return null;
   }
 }

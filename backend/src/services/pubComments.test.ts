@@ -16,10 +16,11 @@ type FakeDbOptions = {
   allowReplies?: boolean;
   initialCount?: number;
   lockedCount?: number;
+  postCreatedAt?: string;
   listRows?: Array<{
     id: string;
     post_id: string;
-    name: string;
+    nickname: string;
     body: string;
     status: "pending" | "published";
     is_author: boolean;
@@ -27,7 +28,7 @@ type FakeDbOptions = {
   commentRow?: {
     id: string;
     post_id: string;
-    name: string;
+    nickname: string;
     body: string;
     status: "pending" | "published";
     is_author: boolean;
@@ -43,41 +44,46 @@ function makeDb(options: FakeDbOptions = {}) {
   const inserted: unknown[][] = [];
   const updated: unknown[][] = [];
   const listRows = options.listRows ?? [];
+  let listQueryCount = 0;
+  let countQueryCount = 0;
 
   const postRow = {
     id: hexToDec(POST_ID),
     owned_by: hexToDec(OWNER_ID),
     allow_replies: allowReplies,
     extensions: JSON.stringify(mode === "none" ? {} : { comments: { mode } }),
+    created_at: options.postCreatedAt ?? new Date().toISOString(),
   };
 
   const poolQuery = jest.fn(async (sql: string) => {
     if (/SELECT p\.id, p\.owned_by, p\.allow_replies, upc\.extensions/i.test(sql)) {
       return { rows: [postRow], rowCount: 1 };
     }
-    if (/SELECT id, post_id, name, body, status, is_author\s+FROM pub_comments/i.test(sql)) {
+    if (/SELECT id, post_id, nickname, body, status, is_author\s+FROM post_pub_comments/i.test(sql)) {
+      listQueryCount++;
       const rows = /status = 'published'/i.test(sql)
         ? listRows.filter((row) => row.status === "published")
         : listRows;
       return { rows, rowCount: rows.length };
     }
-    if (/SELECT c\.id, c\.post_id, c\.name, c\.body, c\.status, c\.is_author, p\.owned_by/i.test(sql)) {
+    if (/SELECT c\.id, c\.post_id, c\.nickname, c\.body, c\.status, c\.is_author, p\.owned_by/i.test(sql)) {
       const row = options.commentRow;
       return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
     }
-    if (/UPDATE pub_comments SET name = \$2, body = \$3 WHERE id = \$1/i.test(sql)) {
+    if (/UPDATE post_pub_comments SET nickname = \$2, body = \$3 WHERE id = \$1/i.test(sql)) {
       updated.push([]);
       return { rows: [], rowCount: 1 };
     }
-    if (/UPDATE pub_comments SET status = 'published' WHERE id = \$1/i.test(sql)) {
+    if (/UPDATE post_pub_comments SET status = 'published' WHERE id = \$1/i.test(sql)) {
       updated.push([]);
       return { rows: [], rowCount: 1 };
     }
-    if (/DELETE FROM pub_comments WHERE id = \$1/i.test(sql)) {
+    if (/DELETE FROM post_pub_comments WHERE id = \$1/i.test(sql)) {
       updated.push([]);
       return { rows: [], rowCount: 1 };
     }
-    if (/SELECT COUNT\(\*\)::text AS count FROM pub_comments/i.test(sql)) {
+    if (/SELECT COUNT\(\*\)::text AS count FROM post_pub_comments/i.test(sql)) {
+      countQueryCount++;
       return { rows: [{ count: String(initialCount) }], rowCount: 1 };
     }
     throw new Error(`unexpected pool query: ${sql}`);
@@ -88,10 +94,10 @@ function makeDb(options: FakeDbOptions = {}) {
     if (/SELECT p\.id, p\.owned_by, p\.allow_replies, upc\.extensions/i.test(sql)) {
       return { rows: [postRow], rowCount: 1 };
     }
-    if (/SELECT COUNT\(\*\)::text AS count FROM pub_comments/i.test(sql)) {
+    if (/SELECT COUNT\(\*\)::text AS count FROM post_pub_comments/i.test(sql)) {
       return { rows: [{ count: String(lockedCount) }], rowCount: 1 };
     }
-    if (/INSERT INTO pub_comments/i.test(sql)) {
+    if (/INSERT INTO post_pub_comments/i.test(sql)) {
       inserted.push(params ?? []);
       return { rows: [], rowCount: 1 };
     }
@@ -99,11 +105,24 @@ function makeDb(options: FakeDbOptions = {}) {
   });
   const client = { query: clientQuery, release: jest.fn() };
   const pool = { query: poolQuery, connect: jest.fn(async () => client) } as unknown as Pool;
-  return { pool, poolQuery, clientQuery, inserted, updated };
+  return {
+    pool,
+    poolQuery,
+    clientQuery,
+    inserted,
+    updated,
+    get listQueryCount() {
+      return listQueryCount;
+    },
+    get countQueryCount() {
+      return countQueryCount;
+    },
+  };
 }
 
 function makeRedis(options: { passValid?: boolean; reserveResult?: boolean } = {}) {
   let passState = options.passValid ? { used: 0, reserved: 0 } : null;
+  const hashes = new Map<string, Map<string, string>>();
   const evalFn = jest.fn(async (script: string) => {
     if (script.includes("return {1, used, reserved}")) {
       return passState ? [1, passState.used, passState.reserved] : [0, 0, 0];
@@ -131,12 +150,34 @@ function makeRedis(options: { passValid?: boolean; reserveResult?: boolean } = {
     }
     return 1;
   });
+  const hget = jest.fn(async (key: string, field: string) => hashes.get(key)?.get(field) ?? null);
+  const hset = jest.fn(async (key: string, field: string, value: string) => {
+    let hash = hashes.get(key);
+    if (!hash) {
+      hash = new Map<string, string>();
+      hashes.set(key, hash);
+    }
+    const isNew = !hash.has(field);
+    hash.set(field, value);
+    return isNew ? 1 : 0;
+  });
+  const expire = jest.fn(async () => 1);
+  const del = jest.fn(async (...keys: string[]) => {
+    let deleted = 0;
+    for (const key of keys) {
+      if (hashes.delete(key)) deleted++;
+    }
+    return deleted;
+  });
   const redis = {
     set: jest.fn(async () => "OK"),
     eval: evalFn,
-    del: jest.fn(async () => 1),
+    hget,
+    hset,
+    expire,
+    del,
   } as unknown as Redis;
-  return { redis, evalFn };
+  return { redis, evalFn, hget, hset, expire, del, hashes };
 }
 
 function user(id: string, extra: Partial<AuthenticatedUser> = {}): AuthenticatedUser {
@@ -195,7 +236,7 @@ describe("PubCommentsService", () => {
 
     const result = await service.create({
       postId: POST_ID,
-      name: "owner",
+      nickname: "owner",
       body: "hello",
       asAuthor: false,
       currentUser: user(OWNER_ID, { isFrozen: true }),
@@ -213,7 +254,7 @@ describe("PubCommentsService", () => {
 
     const result = await service.create({
       postId: POST_ID,
-      name: " Author ",
+      nickname: " Author ",
       body: "hello",
       asAuthor: true,
       currentUser: user(OWNER_ID),
@@ -223,7 +264,7 @@ describe("PubCommentsService", () => {
 
     expect(result.comment.status).toBe("published");
     expect(result.comment.isAuthor).toBe(true);
-    expect(result.comment.name).toBe("Author");
+    expect(result.comment.nickname).toBe("Author");
     expect(result.comment.body).toBe("hello\n");
     expect(result.asAuthorPreference).toBe(true);
     expect(rd.evalFn).not.toHaveBeenCalled();
@@ -240,7 +281,7 @@ describe("PubCommentsService", () => {
 
     const result = await service.create({
       postId: POST_ID,
-      name: "guest name",
+      nickname: "guest name",
       body: "hello",
       asAuthor: false,
       currentUser: user(OWNER_ID),
@@ -262,7 +303,7 @@ describe("PubCommentsService", () => {
 
     const result = await service.create({
       postId: POST_ID,
-      name: "guest",
+      nickname: "guest",
       body: "hello",
       asAuthor: false,
       currentUser: user(GUEST_ID),
@@ -275,7 +316,7 @@ describe("PubCommentsService", () => {
     expect(rd.evalFn).toHaveBeenCalledTimes(3);
     expect(db.inserted).toHaveLength(1);
     expect(eventLog.recordPubComment).toHaveBeenCalledWith(
-      expect.objectContaining({ postId: POST_ID, commenterName: "guest" }),
+      expect.objectContaining({ postId: POST_ID, commenterNickname: "guest" }),
     );
   });
 
@@ -285,7 +326,7 @@ describe("PubCommentsService", () => {
         {
           id: hexToDec("0000000000000200"),
           post_id: hexToDec(POST_ID),
-          name: "pending guest",
+          nickname: "pending guest",
           body: "pending\n",
           status: "pending",
           is_author: false,
@@ -293,7 +334,7 @@ describe("PubCommentsService", () => {
         {
           id: hexToDec("0000000000000201"),
           post_id: hexToDec(POST_ID),
-          name: "published guest",
+          nickname: "published guest",
           body: "published\n",
           status: "published",
           is_author: false,
@@ -315,7 +356,7 @@ describe("PubCommentsService", () => {
         {
           id: hexToDec("0000000000000200"),
           post_id: hexToDec(POST_ID),
-          name: "pending guest",
+          nickname: "pending guest",
           body: "pending\n",
           status: "pending",
           is_author: false,
@@ -323,7 +364,7 @@ describe("PubCommentsService", () => {
         {
           id: hexToDec("0000000000000201"),
           post_id: hexToDec(POST_ID),
-          name: "published guest",
+          nickname: "published guest",
           body: "published\n",
           status: "published",
           is_author: false,
@@ -350,7 +391,7 @@ describe("PubCommentsService", () => {
         {
           id: hexToDec("0000000000000200"),
           post_id: hexToDec(POST_ID),
-          name: "pending guest",
+          nickname: "pending guest",
           body: "pending\n",
           status: "pending",
           is_author: false,
@@ -358,7 +399,7 @@ describe("PubCommentsService", () => {
         {
           id: hexToDec("0000000000000201"),
           post_id: hexToDec(POST_ID),
-          name: "published guest",
+          nickname: "published guest",
           body: "published\n",
           status: "published",
           is_author: false,
@@ -375,13 +416,109 @@ describe("PubCommentsService", () => {
     expect(result.comments[0]?.status).toBe("published");
   });
 
+  test("non-manager public list caches only the requested page and reuses it", async () => {
+    const db = makeDb({
+      listRows: [
+        {
+          id: hexToDec("0000000000000201"),
+          post_id: hexToDec(POST_ID),
+          nickname: "published guest",
+          body: "published\n",
+          status: "published",
+          is_author: false,
+        },
+      ],
+      initialCount: 1,
+    });
+    const rd = makeRedis();
+    const service = new PubCommentsService(db.pool, rd.redis);
+
+    const first = await service.listPublic(POST_ID, 1, "newest", null);
+    const second = await service.listPublic(POST_ID, 1, "newest", null);
+
+    expect(second).toEqual(first);
+    expect(db.listQueryCount).toBe(1);
+    expect(db.countQueryCount).toBe(1);
+    expect(rd.hget).toHaveBeenCalledTimes(2);
+    expect(rd.hset).toHaveBeenCalledTimes(1);
+    expect(rd.hset).toHaveBeenCalledWith(
+      `post-pub-comments:public:${POST_ID}`,
+      "newest:1",
+      expect.any(String),
+    );
+    expect(rd.expire).toHaveBeenCalledWith(`post-pub-comments:public:${POST_ID}`, 180);
+  });
+
+  test("public list uses a 60 second cache TTL for articles older than one week", async () => {
+    const db = makeDb({ initialCount: 0, postCreatedAt: "2000-01-01T00:00:00.000Z" });
+    const rd = makeRedis();
+    const service = new PubCommentsService(db.pool, rd.redis);
+
+    await service.listPublic(POST_ID, 1, "newest", null);
+
+    expect(rd.expire).toHaveBeenCalledWith(`post-pub-comments:public:${POST_ID}`, 60);
+  });
+
+  test("public list caches different order and page combinations in separate hash fields", async () => {
+    const db = makeDb({ initialCount: 0 });
+    const rd = makeRedis();
+    const service = new PubCommentsService(db.pool, rd.redis);
+
+    await service.listPublic(POST_ID, 1, "newest", null);
+    await service.listPublic(POST_ID, 2, "newest", null);
+    await service.listPublic(POST_ID, 1, "oldest", null);
+
+    expect(rd.hset.mock.calls.map((call) => call[1])).toEqual([
+      "newest:1",
+      "newest:2",
+      "oldest:1",
+    ]);
+    expect(db.listQueryCount).toBe(3);
+  });
+
+  test("owner and administrator lists bypass the public comment cache", async () => {
+    const db = makeDb({ initialCount: 0 });
+    const rd = makeRedis();
+    const service = new PubCommentsService(db.pool, rd.redis);
+
+    await service.listPublic(POST_ID, 1, "newest", user(OWNER_ID));
+    await service.listPublic(POST_ID, 1, "newest", user(ADMIN_ID, { isAdmin: true }));
+
+    expect(rd.hget).not.toHaveBeenCalled();
+    expect(rd.hset).not.toHaveBeenCalled();
+    expect(db.listQueryCount).toBe(2);
+    expect(db.countQueryCount).toBe(2);
+  });
+
+  test("successful create invalidates every cached public page for the post", async () => {
+    const db = makeDb({ mode: "open" });
+    const rd = makeRedis();
+    const service = new PubCommentsService(db.pool, rd.redis);
+
+    await service.listPublic(POST_ID, 1, "newest", null);
+    await service.listPublic(POST_ID, 1, "oldest", null);
+    expect(rd.hashes.get(`post-pub-comments:public:${POST_ID}`)?.size).toBe(2);
+
+    await service.create({
+      postId: POST_ID,
+      nickname: "owner",
+      body: "hello",
+      asAuthor: false,
+      currentUser: user(OWNER_ID),
+      clientIp: CLIENT_IP,
+    });
+
+    expect(rd.del).toHaveBeenCalledWith(`post-pub-comments:public:${POST_ID}`);
+    expect(rd.hashes.has(`post-pub-comments:public:${POST_ID}`)).toBe(false);
+  });
+
   test("administrator may edit any comment on another user's article", async () => {
     const commentId = "0000000000000200";
     const db = makeDb({
       commentRow: {
         id: hexToDec(commentId),
         post_id: hexToDec(POST_ID),
-        name: "guest",
+        nickname: "guest",
         body: "before\n",
         status: "published",
         is_author: false,
@@ -394,12 +531,55 @@ describe("PubCommentsService", () => {
     const updated = await service.editAuthorComment(
       commentId,
       user(ADMIN_ID, { isAdmin: true }),
-      { name: "edited", body: "after" },
+      { nickname: "edited", body: "after" },
     );
 
-    expect(updated.name).toBe("edited");
+    expect(updated.nickname).toBe("edited");
     expect(updated.body).toBe("after\n");
     expect(db.updated).toHaveLength(1);
+    expect(rd.del).toHaveBeenCalledWith(`post-pub-comments:public:${POST_ID}`);
+  });
+
+  test("approving a comment invalidates every cached public page for the post", async () => {
+    const commentId = "0000000000000200";
+    const db = makeDb({
+      commentRow: {
+        id: hexToDec(commentId),
+        post_id: hexToDec(POST_ID),
+        nickname: "guest",
+        body: "pending\n",
+        status: "pending",
+        is_author: false,
+        owned_by: hexToDec(OWNER_ID),
+      },
+    });
+    const rd = makeRedis();
+    const service = new PubCommentsService(db.pool, rd.redis);
+
+    await service.approve(commentId, user(OWNER_ID));
+
+    expect(rd.del).toHaveBeenCalledWith(`post-pub-comments:public:${POST_ID}`);
+  });
+
+  test("deleting a comment invalidates every cached public page for the post", async () => {
+    const commentId = "0000000000000200";
+    const db = makeDb({
+      commentRow: {
+        id: hexToDec(commentId),
+        post_id: hexToDec(POST_ID),
+        nickname: "guest",
+        body: "published\n",
+        status: "published",
+        is_author: false,
+        owned_by: hexToDec(OWNER_ID),
+      },
+    });
+    const rd = makeRedis();
+    const service = new PubCommentsService(db.pool, rd.redis);
+
+    await service.delete(commentId, user(OWNER_ID));
+
+    expect(rd.del).toHaveBeenCalledWith(`post-pub-comments:public:${POST_ID}`);
   });
 
   test("normalization failures are exposed as invalid_input", async () => {
@@ -410,7 +590,7 @@ describe("PubCommentsService", () => {
     await expect(
       service.create({
         postId: POST_ID,
-        name: "   ",
+        nickname: "   ",
         body: "hello",
         asAuthor: false,
         currentUser: user(OWNER_ID),
@@ -437,7 +617,7 @@ describe("PubCommentsService", () => {
     await expect(
       service.create({
         postId: POST_ID,
-        name: "author",
+        nickname: "author",
         body: "hello",
         asAuthor: true,
         currentUser: user(OWNER_ID),

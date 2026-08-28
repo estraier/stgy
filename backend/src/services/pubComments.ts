@@ -8,12 +8,15 @@ import { IdIssueService } from "./idIssue";
 import { EventLogService } from "./eventLog";
 import { CaptchaService } from "./captcha";
 import { getPubCommentsMode, parsePubConfigExtensions } from "../utils/pubConfigExtensions";
-import { normalizePubCommentBody, normalizePubCommentName } from "../utils/pubCommentNormalize";
+import { normalizePubCommentBody, normalizePubCommentNickname } from "../utils/pubCommentNormalize";
 import { decToHex, hexToDec } from "../utils/format";
 import { pgQuery } from "../utils/servers";
 
 export const PUB_COMMENT_PAGE_SIZE = 10;
 export const PUB_COMMENT_CAPTCHA_PURPOSE = "pub-comment";
+const PUB_COMMENT_PUBLIC_CACHE_RECENT_TTL_SECONDS = 180;
+const PUB_COMMENT_PUBLIC_CACHE_OLD_TTL_SECONDS = 60;
+const PUB_COMMENT_PUBLIC_CACHE_RECENT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type PubCommentFailureCode =
   | "invalid_input"
@@ -38,6 +41,7 @@ type PostState = {
   ownerId: string;
   allowReplies: boolean;
   mode: PubCommentsMode;
+  createdAt: string;
 };
 
 type PublicListResult = {
@@ -50,7 +54,7 @@ type PublicListResult = {
 
 type FormState = {
   captchaRequired: boolean;
-  name: string;
+  nickname: string;
   canPostAsAuthor: boolean;
   asAuthor: boolean;
   canPost: boolean;
@@ -59,7 +63,7 @@ type FormState = {
 
 type CreateInput = {
   postId: string;
-  name: unknown;
+  nickname: unknown;
   body: unknown;
   asAuthor: boolean;
   challengeId?: string;
@@ -82,7 +86,7 @@ export class PubCommentsService {
 
   constructor(
     private readonly pgPool: Pool,
-    redis: Redis,
+    private readonly redis: Redis,
     private readonly eventLogService?: EventLogService,
   ) {
     this.captchaService = new CaptchaService(redis);
@@ -97,20 +101,25 @@ export class PubCommentsService {
     const state = await this.requirePublicCommentState(postId);
     const canManage = currentUser?.isAdmin === true || currentUser?.id === state.ownerId;
     const normalizedPage = normalizePage(page);
+    if (!canManage) {
+      const cached = await this.getCachedPublicList(state.postId, normalizedPage, order);
+      if (cached) return cached;
+    }
+
     const offset = (normalizedPage - 1) * PUB_COMMENT_PAGE_SIZE;
     const direction = order === "oldest" ? "ASC" : "DESC";
     const statusFilter = canManage ? "" : " AND status = 'published'";
     const res = await pgQuery<{
       id: string;
       post_id: string;
-      name: string;
+      nickname: string;
       body: string;
       status: PubCommentStatus;
       is_author: boolean;
     }>(
       this.pgPool,
-      `SELECT id, post_id, name, body, status, is_author
-         FROM pub_comments
+      `SELECT id, post_id, nickname, body, status, is_author
+         FROM post_pub_comments
         WHERE post_id = $1${statusFilter}
         ORDER BY id ${direction}
         OFFSET $2 LIMIT $3`,
@@ -119,13 +128,17 @@ export class PubCommentsService {
     const hasNext = res.rows.length > PUB_COMMENT_PAGE_SIZE;
     const rows = hasNext ? res.rows.slice(0, PUB_COMMENT_PAGE_SIZE) : res.rows;
     const totalCount = await this.countComments(state.postId);
-    return {
+    const result: PublicListResult = {
       comments: rows.map(rowToComment),
       page: normalizedPage,
       hasPrevious: normalizedPage > 1,
       hasNext,
       limitReached: totalCount >= Config.PUB_COMMENT_MAX_COMMENTS,
     };
+    if (!canManage) {
+      await this.cachePublicList(state.postId, normalizedPage, order, result, state.createdAt);
+    }
+    return result;
   }
 
   async getFormState(input: {
@@ -133,7 +146,7 @@ export class PubCommentsService {
     currentUser: AuthenticatedUser | null;
     passToken?: string;
     clientIp: string;
-    savedName?: string;
+    savedNickname?: string;
     savedAsAuthor?: boolean;
   }): Promise<FormState> {
     const state = await this.requirePublicCommentState(input.postId);
@@ -141,12 +154,12 @@ export class PubCommentsService {
     const canPostAsAuthor = ownerLoggedIn && input.currentUser?.isFrozen !== true;
     const count = await this.countComments(state.postId);
     const limitReached = count >= Config.PUB_COMMENT_MAX_COMMENTS;
-    let name = "";
-    if (input.savedName) {
+    let nickname = "";
+    if (input.savedNickname) {
       try {
-        name = normalizePubCommentName(input.savedName);
+        nickname = normalizePubCommentNickname(input.savedNickname);
       } catch {
-        name = "";
+        nickname = "";
       }
     }
     let captchaRequired = false;
@@ -160,7 +173,7 @@ export class PubCommentsService {
     }
     return {
       captchaRequired,
-      name,
+      nickname,
       canPostAsAuthor,
       asAuthor: canPostAsAuthor && (input.savedAsAuthor ?? true),
       canPost: !limitReached,
@@ -171,7 +184,7 @@ export class PubCommentsService {
   async create(input: CreateInput): Promise<CreateResult> {
     const postId = normalizeId(input.postId, "postId");
     const initialState = await this.requirePublicCommentState(postId);
-    const { name, body } = normalizeCreateInput(input.name, input.body);
+    const { nickname, body } = normalizeCreateInput(input.nickname, input.body);
     const ownerLoggedIn = input.currentUser?.id === initialState.ownerId;
     const canPostAsAuthor = ownerLoggedIn && input.currentUser?.isFrozen !== true;
     if (input.asAuthor && !canPostAsAuthor) {
@@ -230,7 +243,7 @@ export class PubCommentsService {
         throw new PubCommentError("forbidden", "as author is not allowed");
       }
       const countRes = await client.query<{ count: string }>(
-        `SELECT COUNT(*)::text AS count FROM pub_comments WHERE post_id = $1`,
+        `SELECT COUNT(*)::text AS count FROM post_pub_comments WHERE post_id = $1`,
         [hexToDec(postId)],
       );
       const count = Number(countRes.rows[0]?.count ?? "0");
@@ -249,9 +262,9 @@ export class PubCommentsService {
       }
       status = locked.mode === "open" || stillOwner ? "published" : "pending";
       await client.query(
-        `INSERT INTO pub_comments (id, post_id, name, body, status, is_author)
+        `INSERT INTO post_pub_comments (id, post_id, nickname, body, status, is_author)
          VALUES ($1, $2, $3, $4, $5, $6)`,
-        [hexToDec(id), hexToDec(postId), name, body, status, input.asAuthor],
+        [hexToDec(id), hexToDec(postId), nickname, body, status, input.asAuthor],
       );
       await client.query("COMMIT");
     } catch (error) {
@@ -270,6 +283,8 @@ export class PubCommentsService {
     } finally {
       client.release();
     }
+
+    await this.invalidatePublicListCache(postId);
 
     let newPassToken: string | undefined;
     let passTokenInvalidated = false;
@@ -310,7 +325,7 @@ export class PubCommentsService {
     const comment: PubComment = {
       id,
       postId,
-      name,
+      nickname,
       body,
       status: status!,
       isAuthor: input.asAuthor,
@@ -322,7 +337,7 @@ export class PubCommentsService {
         await this.eventLogService.recordPubComment({
           postId,
           commentId: id,
-          commenterName: name,
+          commenterNickname: nickname,
         });
       } catch {}
     }
@@ -345,16 +360,17 @@ export class PubCommentsService {
     if (info.comment.status !== "pending") {
       throw new PubCommentError("invalid_input", "comment is not pending");
     }
-    await pgQuery(this.pgPool, `UPDATE pub_comments SET status = 'published' WHERE id = $1`, [
+    await pgQuery(this.pgPool, `UPDATE post_pub_comments SET status = 'published' WHERE id = $1`, [
       hexToDec(id),
     ]);
+    await this.invalidatePublicListCache(info.comment.postId);
     return { ...info.comment, status: "published" };
   }
 
   async editAuthorComment(
     commentId: string,
     currentUser: AuthenticatedUser,
-    input: { name: unknown; body: unknown },
+    input: { nickname: unknown; body: unknown },
   ): Promise<PubComment> {
     const id = normalizeId(commentId, "commentId");
     const info = await this.getCommentWithOwner(id);
@@ -363,13 +379,14 @@ export class PubCommentsService {
     if (!currentUser.isAdmin && !ownerMayEdit) {
       throw new PubCommentError("forbidden", "forbidden");
     }
-    const { name, body } = normalizeCreateInput(input.name, input.body);
-    await pgQuery(this.pgPool, `UPDATE pub_comments SET name = $2, body = $3 WHERE id = $1`, [
+    const { nickname, body } = normalizeCreateInput(input.nickname, input.body);
+    await pgQuery(this.pgPool, `UPDATE post_pub_comments SET nickname = $2, body = $3 WHERE id = $1`, [
       hexToDec(id),
-      name,
+      nickname,
       body,
     ]);
-    return { ...info.comment, name, body };
+    await this.invalidatePublicListCache(info.comment.postId);
+    return { ...info.comment, nickname, body };
   }
 
   async delete(commentId: string, currentUser: AuthenticatedUser): Promise<void> {
@@ -379,13 +396,50 @@ export class PubCommentsService {
     if (!currentUser.isAdmin && currentUser.id !== info.ownerId) {
       throw new PubCommentError("forbidden", "forbidden");
     }
-    await pgQuery(this.pgPool, `DELETE FROM pub_comments WHERE id = $1`, [hexToDec(id)]);
+    await pgQuery(this.pgPool, `DELETE FROM post_pub_comments WHERE id = $1`, [hexToDec(id)]);
+    await this.invalidatePublicListCache(info.comment.postId);
+  }
+
+  private async getCachedPublicList(
+    postId: string,
+    page: number,
+    order: PubCommentOrder,
+  ): Promise<PublicListResult | null> {
+    try {
+      const raw = await this.redis.hget(
+        publicListCacheKey(postId),
+        publicListCacheField(page, order),
+      );
+      return parseCachedPublicList(raw);
+    } catch {
+      return null;
+    }
+  }
+
+  private async cachePublicList(
+    postId: string,
+    page: number,
+    order: PubCommentOrder,
+    result: PublicListResult,
+    postCreatedAt: string,
+  ): Promise<void> {
+    try {
+      const key = publicListCacheKey(postId);
+      await this.redis.hset(key, publicListCacheField(page, order), JSON.stringify(result));
+      await this.redis.expire(key, pubCommentPublicCacheTtlSeconds(postCreatedAt));
+    } catch {}
+  }
+
+  private async invalidatePublicListCache(postId: string): Promise<void> {
+    try {
+      await this.redis.del(publicListCacheKey(postId));
+    } catch {}
   }
 
   private async countComments(postId: string): Promise<number> {
     const res = await pgQuery<{ count: string }>(
       this.pgPool,
-      `SELECT COUNT(*)::text AS count FROM pub_comments WHERE post_id = $1`,
+      `SELECT COUNT(*)::text AS count FROM post_pub_comments WHERE post_id = $1`,
       [hexToDec(postId)],
     );
     return Number(res.rows[0]?.count ?? "0");
@@ -415,8 +469,9 @@ export class PubCommentsService {
       owned_by: string;
       allow_replies: boolean;
       extensions: string | null;
+      created_at: string;
     }>(
-      `SELECT p.id, p.owned_by, p.allow_replies, upc.extensions
+      `SELECT p.id, p.owned_by, p.allow_replies, upc.extensions, id_to_timestamp(p.id) AS created_at
          FROM posts p
          LEFT JOIN user_pub_configs upc ON upc.user_id = p.owned_by
         WHERE p.id = $1
@@ -436,6 +491,7 @@ export class PubCommentsService {
       ownerId: decToHex(row.owned_by),
       allowReplies: row.allow_replies,
       mode,
+      createdAt: row.created_at,
     };
   }
 
@@ -445,15 +501,15 @@ export class PubCommentsService {
     const res = await pgQuery<{
       id: string;
       post_id: string;
-      name: string;
+      nickname: string;
       body: string;
       status: PubCommentStatus;
       is_author: boolean;
       owned_by: string;
     }>(
       this.pgPool,
-      `SELECT c.id, c.post_id, c.name, c.body, c.status, c.is_author, p.owned_by
-         FROM pub_comments c
+      `SELECT c.id, c.post_id, c.nickname, c.body, c.status, c.is_author, p.owned_by
+         FROM post_pub_comments c
          JOIN posts p ON p.id = c.post_id
         WHERE c.id = $1`,
       [hexToDec(commentId)],
@@ -466,10 +522,46 @@ export class PubCommentsService {
   }
 }
 
-function normalizeCreateInput(name: unknown, body: unknown): { name: string; body: string } {
+
+function pubCommentPublicCacheTtlSeconds(createdAt: string, nowMs = Date.now()): number {
+  const createdAtMs = Date.parse(createdAt);
+  if (!Number.isFinite(createdAtMs)) return PUB_COMMENT_PUBLIC_CACHE_OLD_TTL_SECONDS;
+  return nowMs - createdAtMs <= PUB_COMMENT_PUBLIC_CACHE_RECENT_AGE_MS
+    ? PUB_COMMENT_PUBLIC_CACHE_RECENT_TTL_SECONDS
+    : PUB_COMMENT_PUBLIC_CACHE_OLD_TTL_SECONDS;
+}
+
+function publicListCacheKey(postId: string): string {
+  return `post-pub-comments:public:${postId}`;
+}
+
+function publicListCacheField(page: number, order: PubCommentOrder): string {
+  return `${order}:${page}`;
+}
+
+function parseCachedPublicList(raw: string | null): PublicListResult | null {
+  if (raw === null) return null;
+  try {
+    const value = JSON.parse(raw) as Partial<PublicListResult>;
+    if (
+      !Array.isArray(value.comments) ||
+      !Number.isInteger(value.page) ||
+      typeof value.hasPrevious !== "boolean" ||
+      typeof value.hasNext !== "boolean" ||
+      typeof value.limitReached !== "boolean"
+    ) {
+      return null;
+    }
+    return value as PublicListResult;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeCreateInput(nickname: unknown, body: unknown): { nickname: string; body: string } {
   try {
     return {
-      name: normalizePubCommentName(name),
+      nickname: normalizePubCommentNickname(nickname),
       body: normalizePubCommentBody(body),
     };
   } catch (error) {
@@ -493,7 +585,7 @@ function normalizeId(value: string, name: string): string {
 function rowToComment(row: {
   id: string;
   post_id: string;
-  name: string;
+  nickname: string;
   body: string;
   status: PubCommentStatus;
   is_author: boolean;
@@ -502,7 +594,7 @@ function rowToComment(row: {
   return {
     id,
     postId: decToHex(row.post_id),
-    name: row.name,
+    nickname: row.nickname,
     body: row.body,
     status: row.status,
     isAuthor: row.is_author,
