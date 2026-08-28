@@ -1928,6 +1928,12 @@ html:has(.site-container) {
     padding-top: 0.25em;
     padding-bottom: 0.25em;
   }
+  .pub-theme-dir-vert .markdown-body pre[data-pre-lines] {
+    max-width: calc(var(--pre-lines) * var(--pre-line-height));
+    max-height: none;
+    overflow-x: auto;
+    overflow-y: visible;
+  }
   .pub-theme-dir-vert .markdown-body .image-block figcaption {
     right: 0.25em;
     bottom: unset;
@@ -2134,7 +2140,7 @@ html:has(.site-container) {
     .markdown-body:not(.excerpt)
     .image-grid[data-cols="1"]:not(:has(figure.image-block.expanded)) {
     height: 48%;
-    max-width: calc(80svw - 1.6rem) !important;
+    max-width: min(36em, calc(80svw - 1.6rem)) !important;
     min-width: 0;
     grid-template-rows: minmax(0, 1fr);
   }
@@ -2202,7 +2208,7 @@ html:has(.site-container) {
       .pub-main
       .markdown-body:not(.excerpt)
       .image-grid[data-cols="1"]:not(:has(figure.image-block.expanded)) {
-      max-width: calc(80svw - 0.8rem) !important;
+      max-width: min(36em, calc(80svw - 0.8rem)) !important;
     }
   }
   .pub-theme-dir-vert .markdown-body .image-grid figure.image-block.expanded {
@@ -3416,14 +3422,18 @@ html:has(.site-container) {
   }
 }
 
-/* Vertical public themes: cap images by physical viewport width without forcing them wider.
-   Do not set width or inline-size here; natural image size and existing data-size rules
-   must keep working. */
-.pub-theme-dir-vert .markdown-body figure.image-block,
+/* Vertical public themes: cap image media by physical viewport width without forcing
+   it wider. Multi-item grids are kept more compact than single/non-grid images. */
+.pub-theme-dir-vert .markdown-body figure.image-block:not([data-grid]),
 .pub-theme-dir-vert .markdown-body figure.featured-block,
-.pub-theme-dir-vert .markdown-body .image-grid {
+.pub-theme-dir-vert .markdown-body .image-grid[data-cols="1"] {
   box-sizing: border-box;
-  max-width: calc(100svw - 2rem) !important;
+  max-width: min(36em, calc(80svw - 1.6rem)) !important;
+}
+
+.pub-theme-dir-vert .markdown-body .image-grid[data-cols]:not([data-cols="1"]) {
+  box-sizing: border-box;
+  max-width: min(30em, calc(70svw - 1.4rem)) !important;
 }
 
 .pub-theme-dir-vert .markdown-body figure.image-block img,
@@ -3435,10 +3445,14 @@ html:has(.site-container) {
 }
 
 @media (max-width: 480px) {
-  .pub-theme-dir-vert .markdown-body figure.image-block,
+  .pub-theme-dir-vert .markdown-body figure.image-block:not([data-grid]),
   .pub-theme-dir-vert .markdown-body figure.featured-block,
-  .pub-theme-dir-vert .markdown-body .image-grid {
-    max-width: calc(100svw - 1rem) !important;
+  .pub-theme-dir-vert .markdown-body .image-grid[data-cols="1"] {
+    max-width: min(36em, calc(80svw - 0.8rem)) !important;
+  }
+
+  .pub-theme-dir-vert .markdown-body .image-grid[data-cols]:not([data-cols="1"]) {
+    max-width: min(30em, calc(70svw - 0.7rem)) !important;
   }
 }
 
@@ -4550,42 +4564,42 @@ html:has(.site-container) {
 .pub-theme-dir-vert
   .markdown-body:not(.excerpt)
   figure.image-block:not(.expanded):not([data-grid]) {
-  max-width: min(20em, 100vw);
+  max-width: min(20em, calc(80svw - 1.6rem));
   max-height: min(20em, 100%, var(--stgy-article-viewport-max-height));
 }
 
 .pub-theme-dir-vert
   .markdown-body:not(.excerpt)
   figure.image-block:not(.expanded):not([data-grid])[data-size="xsmall"] {
-  max-width: min(13em, 100vw);
+  max-width: min(13em, calc(80svw - 1.6rem));
   max-height: min(13em, 32%, var(--stgy-article-viewport-max-height));
 }
 
 .pub-theme-dir-vert
   .markdown-body:not(.excerpt)
   figure.image-block:not(.expanded):not([data-grid])[data-size="small"] {
-  max-width: min(16em, 100vw);
+  max-width: min(16em, calc(80svw - 1.6rem));
   max-height: min(16em, 40%, var(--stgy-article-viewport-max-height));
 }
 
 .pub-theme-dir-vert
   .markdown-body:not(.excerpt)
   figure.image-block:not(.expanded):not([data-grid])[data-size="medium"] {
-  max-width: min(20em, 100vw);
+  max-width: min(20em, calc(80svw - 1.6rem));
   max-height: min(20em, 50%, var(--stgy-article-viewport-max-height));
 }
 
 .pub-theme-dir-vert
   .markdown-body:not(.excerpt)
   figure.image-block:not(.expanded):not([data-grid])[data-size="large"] {
-  max-width: min(27em, 100vw);
+  max-width: min(27em, calc(80svw - 1.6rem));
   max-height: min(27em, 60%, var(--stgy-article-viewport-max-height));
 }
 
 .pub-theme-dir-vert
   .markdown-body:not(.excerpt)
   figure.image-block:not(.expanded):not([data-grid])[data-size="xlarge"] {
-  max-width: min(35em, 100vw);
+  max-width: min(35em, calc(80svw - 1.6rem));
   max-height: min(35em, 70%, var(--stgy-article-viewport-max-height));
 }
 
@@ -4596,7 +4610,7 @@ html:has(.site-container) {
 .pub-theme-dir-vert .site-main .markdown-body .featured-block img,
 .pub-theme-dir-vert .site-main .markdown-body .featured-block video {
   max-inline-size: min(15em, var(--stgy-article-viewport-max-height)) !important;
-  max-block-size: min(15em, 100vw) !important;
+  max-block-size: min(15em, calc(80svw - 1.6rem)) !important;
 }
 
 .pub-theme-dir-vert .pub-sidebar .markdown-body .featured-block img,
