@@ -25,7 +25,8 @@ export type PubCommentFailureCode =
   | "comment_limit_reached"
   | "captcha_required"
   | "captcha_invalid"
-  | "forbidden";
+  | "forbidden"
+  | "conflict";
 
 export class PubCommentError extends Error {
   constructor(
@@ -79,6 +80,23 @@ type CreateResult = {
   passTokenInvalidated: boolean;
   asAuthorPreference?: boolean;
 };
+
+type ImportInput = {
+  id: string;
+  postId: string;
+  nickname: unknown;
+  body: unknown;
+  status: unknown;
+  isAuthor: unknown;
+};
+
+type ImportResult = {
+  comment: PubComment;
+  created: boolean;
+};
+
+const PUB_COMMENT_DB_NICKNAME_MAX_LENGTH = 50;
+const PUB_COMMENT_DB_BODY_MAX_LENGTH = 65536;
 
 export class PubCommentsService {
   private readonly idIssueService = new IdIssueService(Config.ID_ISSUE_WORKER_ID);
@@ -186,6 +204,74 @@ export class PubCommentsService {
         }),
       ];
     });
+  }
+
+  async importComment(input: ImportInput): Promise<ImportResult> {
+    const id = normalizeId(input.id, "id");
+    const postId = normalizeId(input.postId, "postId");
+    const nickname = validateImportString(
+      input.nickname,
+      "nickname",
+      PUB_COMMENT_DB_NICKNAME_MAX_LENGTH,
+    );
+    const body = validateImportString(input.body, "body", PUB_COMMENT_DB_BODY_MAX_LENGTH);
+    if (input.status !== "pending" && input.status !== "published") {
+      throw new PubCommentError("invalid_input", "invalid status");
+    }
+    if (typeof input.isAuthor !== "boolean") {
+      throw new PubCommentError("invalid_input", "isAuthor must be boolean");
+    }
+
+    const postRes = await pgQuery<{ id: string }>(
+      this.pgPool,
+      `SELECT id FROM posts WHERE id = $1`,
+      [hexToDec(postId)],
+    );
+    if (postRes.rows.length === 0) {
+      throw new PubCommentError("not_found", "post not found");
+    }
+
+    const existingRes = await pgQuery<{ id: string; post_id: string }>(
+      this.pgPool,
+      `SELECT id, post_id FROM post_pub_comments WHERE id = $1`,
+      [hexToDec(id)],
+    );
+    const existing = existingRes.rows[0];
+    let created = false;
+    if (existing) {
+      if (decToHex(existing.post_id) !== postId) {
+        throw new PubCommentError("conflict", "comment ID already belongs to another post");
+      }
+      await pgQuery(
+        this.pgPool,
+        `UPDATE post_pub_comments
+            SET nickname = $2, body = $3, status = $4, is_author = $5
+          WHERE id = $1`,
+        [hexToDec(id), nickname, body, input.status, input.isAuthor],
+      );
+    } else {
+      await pgQuery(
+        this.pgPool,
+        `INSERT INTO post_pub_comments (id, post_id, nickname, body, status, is_author)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [hexToDec(id), hexToDec(postId), nickname, body, input.status, input.isAuthor],
+      );
+      created = true;
+    }
+
+    await this.invalidatePublicListCache(postId);
+    return {
+      comment: {
+        id,
+        postId,
+        nickname,
+        body,
+        status: input.status,
+        isAuthor: input.isAuthor,
+        createdAt: IdIssueService.bigIntToDate(BigInt(hexToDec(id))).toISOString(),
+      },
+      created,
+    };
   }
 
   async getFormState(input: {
@@ -627,6 +713,19 @@ function normalizeId(value: string, name: string): string {
   } catch {
     throw new PubCommentError("invalid_input", `invalid ${name}`);
   }
+}
+
+function validateImportString(input: unknown, field: string, maxLength: number): string {
+  if (typeof input !== "string" || input.length === 0) {
+    throw new PubCommentError("invalid_input", `${field} is required`);
+  }
+  if (input.includes("\u0000")) {
+    throw new PubCommentError("invalid_input", `${field} contains an invalid character`);
+  }
+  if (Array.from(input).length > maxLength) {
+    throw new PubCommentError("invalid_input", `${field} must be ${maxLength} characters or less`);
+  }
+  return input;
 }
 
 function rowToComment(row: {

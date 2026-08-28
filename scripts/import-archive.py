@@ -146,6 +146,17 @@ class StgyClient:
       "updated post response",
     )
 
+  def import_pub_comment(self, body: dict[str, Any]) -> dict[str, Any]:
+    return require_dict(
+      self._request(
+        "POST",
+        "/pub-comments/import",
+        expected={200, 201},
+        json_body=body,
+      ),
+      "imported public comment response",
+    )
+
   def upload_image(self, owner_id: str, path: Path) -> str:
     content_type = IMAGE_CONTENT_TYPES.get(path.suffix.lower())
     if content_type is None:
@@ -375,6 +386,42 @@ def validate_profile(profile: dict[str, Any], path: Path) -> dict[str, Any]:
   return profile
 
 
+def validate_post_comments(value: Any, path: Path) -> list[dict[str, Any]]:
+  if value is None:
+    return []
+  if not isinstance(value, list):
+    raise ValueError(f"{path}: comments must be an array")
+  comments: list[dict[str, Any]] = []
+  seen_ids: set[str] = set()
+  for index, raw in enumerate(value):
+    label = f"{path}: comments[{index}]"
+    if not isinstance(raw, dict):
+      raise ValueError(f"{label} must be an object")
+    comment = dict(raw)
+    comment_id = normalize_id(comment.get("id"), f"{label}: id")
+    if comment_id in seen_ids:
+      raise ValueError(f"{path}: duplicate comment ID {comment_id}")
+    seen_ids.add(comment_id)
+    nickname = comment.get("nickname")
+    body = comment.get("body")
+    status = comment.get("status")
+    is_author = comment.get("isAuthor")
+    if not isinstance(nickname, str) or not nickname:
+      raise ValueError(f"{label}: nickname must be a non-empty string")
+    if not isinstance(body, str) or not body:
+      raise ValueError(f"{label}: body must be a non-empty string")
+    if status not in {"pending", "published"}:
+      raise ValueError(f"{label}: status must be pending or published")
+    if not isinstance(is_author, bool):
+      raise ValueError(f"{label}: isAuthor must be boolean")
+    created_at = comment.get("createdAt")
+    if created_at is not None and not isinstance(created_at, str):
+      raise ValueError(f"{label}: createdAt must be a string or null")
+    comment["id"] = comment_id
+    comments.append(comment)
+  return comments
+
+
 def validate_post(data: dict[str, Any], path: Path) -> ArchivePost:
   result = dict(data)
   result["id"] = normalize_id(result.get("id"), f"{path}: id")
@@ -393,6 +440,7 @@ def validate_post(data: dict[str, Any], path: Path) -> ArchivePost:
   tags = result.get("tags")
   if not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
     raise ValueError(f"{path}: tags must be a string array")
+  result["comments"] = validate_post_comments(result.get("comments"), path)
   return ArchivePost(path=path, data=result)
 
 
@@ -559,6 +607,13 @@ def load_import_plan(data_dir: Path, no_reply: bool = False, publish: bool = Fal
   ids = [post.id for post in all_posts]
   if len(ids) != len(set(ids)):
     raise ValueError("duplicate post IDs in archive")
+  comment_ids = [
+    str(comment["id"])
+    for post in all_posts
+    for comment in post.data.get("comments", [])
+  ]
+  if len(comment_ids) != len(set(comment_ids)):
+    raise ValueError("duplicate comment IDs in archive")
   posts = tuple(post for post in all_posts if not (no_reply and post.reply_to is not None))
   skipped_reply_count = len(all_posts) - len(posts)
   if publish:
@@ -788,6 +843,7 @@ def validate_pub_config(data: dict[str, Any]) -> dict[str, Any]:
     "showSideProfile",
     "showSideRecent",
     "showSidePopular",
+    "extensions",
   }
   return {key: value for key, value in data.items() if key in allowed}
 
@@ -925,6 +981,7 @@ def import_archive(
 
   created = 0
   updated = 0
+  comments_imported = 0
   for post in sort_posts_for_restore(plan.posts):
     post_id = post_ids[post.id]
     reply_to = post.reply_to
@@ -956,11 +1013,27 @@ def import_archive(
       updated += 1
       print(f"[POST UPDATED] {post_id}")
 
+    for comment in post.data.get("comments", []):
+      comment_id = normalize_id(comment.get("id"), f"{post.path}: comment id")
+      client.import_pub_comment(
+        {
+          "id": comment_id,
+          "postId": post_id,
+          "nickname": comment["nickname"],
+          "body": comment["body"],
+          "status": comment["status"],
+          "isAuthor": comment["isAuthor"],
+        }
+      )
+      comments_imported += 1
+      print(f"[COMMENT IMPORTED] {comment_id} post={post_id}")
+
   print(
     "[SUMMARY] "
     f"owner={owner_id} user={'created' if created_user else ('skipped' if owner_override else 'updated')} "
-    f"postsCreated={created} postsUpdated={updated} repliesSkipped={plan.skipped_reply_count} "
-    f"images={len(image_urls)} tracks={len(track_url_by_master)}"
+    f"postsCreated={created} postsUpdated={updated} commentsImported={comments_imported} "
+    f"repliesSkipped={plan.skipped_reply_count} images={len(image_urls)} "
+    f"tracks={len(track_url_by_master)}"
   )
 
 

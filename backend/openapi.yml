@@ -1088,11 +1088,11 @@ components:
       properties:
         id: { type: string, pattern: '^[0-9A-F]{16}$' }
         postId: { type: string, pattern: '^[0-9A-F]{16}$' }
-        nickname: { type: string, maxLength: 30 }
+        nickname: { type: string, maxLength: 50 }
         body:
           type: string
-          maxLength: 1001
-          description: Normalized plain text. Stored responses end with exactly one LF.
+          maxLength: 65536
+          description: Stored plain text. Normal public submissions are server-normalized; archive imports preserve the archived value.
         status: { type: string, enum: [pending, published] }
         isAuthor: { type: boolean }
         createdAt: { type: string, format: date-time }
@@ -1144,6 +1144,18 @@ components:
         comment:
           $ref: "#/components/schemas/PubComment"
       required: [comment]
+
+    PubCommentImportRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        id: { type: string, pattern: '^[0-9A-Fa-f]{16}$' }
+        postId: { type: string, pattern: '^[0-9A-Fa-f]{16}$' }
+        nickname: { type: string, minLength: 1, maxLength: 50 }
+        body: { type: string, minLength: 1, maxLength: 65536 }
+        status: { type: string, enum: [pending, published] }
+        isAuthor: { type: boolean }
+      required: [id, postId, nickname, body, status, isAuthor]
 
     PubCommentApproveRequest:
       type: object
@@ -1265,6 +1277,48 @@ paths:
           $ref: "#/components/responses/Error409"
         "429":
           $ref: "#/components/responses/Error429"
+
+  /pub-comments/import:
+    post:
+      summary: Restore one external-publication comment
+      description: |
+        Administrator-only archive-import endpoint. The supplied comment ID, nickname, body,
+        status, and isAuthor value are restored without the normal public-comment CAPTCHA,
+        comment-mode, allowReplies, notification, 100-comment limit, or application-level
+        nickname/body normalization. The database field limits still apply. Re-importing the same
+        ID for the same post updates the archived values; an ID already attached to another post
+        is rejected. The public comment cache for the target post is invalidated after success.
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PubCommentImportRequest"
+      responses:
+        "200":
+          description: Existing comment restored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PubCommentCreateResponse"
+        "201":
+          description: Comment restored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PubCommentCreateResponse"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+        "409":
+          $ref: "#/components/responses/Error409"
 
   /pub-comments/export/{postId}:
     get:

@@ -123,6 +123,25 @@ export default function createPubCommentsRouter(
     }
   });
 
+  router.post("/import", async (req: Request, res: Response) => {
+    const currentUser = await authHelpers.requireLogin(req, res);
+    if (!currentUser) return;
+    if (!currentUser.isAdmin) return res.status(403).json({ error: "admin only" });
+    try {
+      const result = await service.importComment({
+        id: typeof req.body?.id === "string" ? req.body.id : "",
+        postId: typeof req.body?.postId === "string" ? req.body.postId : "",
+        nickname: req.body?.nickname,
+        body: req.body?.body,
+        status: req.body?.status,
+        isAuthor: req.body?.isAuthor,
+      });
+      return res.status(result.created ? 201 : 200).json({ comment: result.comment });
+    } catch (error) {
+      return sendPubCommentError(res, error);
+    }
+  });
+
   router.patch("/:id", async (req: Request, res: Response) => {
     const currentUser = await authHelpers.requireWritableUser(req, res);
     if (!currentUser) return;
@@ -202,7 +221,7 @@ function sendPubCommentError(res: Response, error: unknown) {
       ? 404
       : error.code === "forbidden" || error.code === "comments_disabled"
         ? 403
-        : error.code === "comment_limit_reached"
+        : error.code === "comment_limit_reached" || error.code === "conflict"
           ? 409
           : 400;
   return res.status(status).json({ error: error.message, code: error.code });

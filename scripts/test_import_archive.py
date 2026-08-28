@@ -69,6 +69,42 @@ class ImportArchiveMapPinImageTest(unittest.TestCase):
     finally:
       client.close()
 
+  def test_validate_post_accepts_exported_comments_and_defaults_missing_comments_to_empty(self) -> None:
+    with tempfile.TemporaryDirectory() as temporary_directory:
+      path = Path(temporary_directory) / "post.json"
+      base = {
+        "id": "0000000000000010",
+        "ownedBy": "0000000000000001",
+        "replyTo": None,
+        "content": "post",
+        "publishedAt": None,
+        "locale": "ja-JP",
+        "allowLikes": True,
+        "allowReplies": True,
+        "tags": [],
+      }
+      without_comments = MODULE.validate_post(base, path)
+      self.assertEqual(without_comments.data["comments"], [])
+
+      with_comments = MODULE.validate_post(
+        {
+          **base,
+          "comments": [
+            {
+              "id": "0000000000000020",
+              "createdAt": "2026-08-28T12:00:00.000Z",
+              "nickname": "guest",
+              "body": "hello\n",
+              "status": "pending",
+              "isAuthor": False,
+            }
+          ],
+        },
+        path,
+      )
+      self.assertEqual(with_comments.data["comments"][0]["id"], "0000000000000020")
+      self.assertEqual(with_comments.data["comments"][0]["body"], "hello\n")
+
   def test_collects_and_rewrites_local_map_pin_images(self) -> None:
     with tempfile.TemporaryDirectory() as temporary_directory:
       data_dir = Path(temporary_directory).resolve()
@@ -390,6 +426,14 @@ class ImportArchiveProfileAndPubConfigMediaTest(unittest.TestCase):
         pub_config={
           "siteName": "Imported site",
           "introduction": "![Publication](./images/publication.png)",
+          "extensions": {
+            "shareButtons": {
+              "x": True,
+              "facebook": True,
+              "hatena": True,
+            },
+            "googleAnalytics": {"measurementId": "G-TEST123456"},
+          },
         },
       )
       client = FakeClient()
@@ -403,6 +447,17 @@ class ImportArchiveProfileAndPubConfigMediaTest(unittest.TestCase):
       self.assertEqual(
         client.updated_pub_configs[-1][1]["introduction"],
         "![Publication](/images/OWNER/masters/publication.png)",
+      )
+      self.assertEqual(
+        client.updated_pub_configs[-1][1]["extensions"],
+        {
+          "shareButtons": {
+            "x": True,
+            "facebook": True,
+            "hatena": True,
+          },
+          "googleAnalytics": {"measurementId": "G-TEST123456"},
+        },
       )
 
 
@@ -439,6 +494,7 @@ class ImportArchiveIdFromDateTest(unittest.TestCase):
         self.created_users = []
         self.updated_users = []
         self.created_posts = []
+        self.imported_comments = []
 
       def login(self):
         return {"userIsAdmin": True}
@@ -463,6 +519,10 @@ class ImportArchiveIdFromDateTest(unittest.TestCase):
 
       def update_post(self, _post_id, _body):
         raise AssertionError("generated posts must not be updated")
+
+      def import_pub_comment(self, body):
+        self.imported_comments.append(body)
+        return {"comment": body}
 
       def upload_image(self, _owner_id, _path):
         raise AssertionError("no images expected")
@@ -506,6 +566,16 @@ class ImportArchiveIdFromDateTest(unittest.TestCase):
           "allowLikes": True,
           "allowReplies": True,
           "tags": [],
+          "comments": [
+            {
+              "id": "0000000000000030",
+              "createdAt": "2026-02-16T12:00:00.002+09:00",
+              "nickname": "guest",
+              "body": "comment\n",
+              "status": "published",
+              "isAuthor": False,
+            }
+          ],
         },
       )
       plan = MODULE.ImportPlan(
@@ -554,6 +624,19 @@ class ImportArchiveIdFromDateTest(unittest.TestCase):
       )
       self.assertIsNone(client.created_posts[0]["replyTo"])
       self.assertEqual(client.created_posts[1]["replyTo"], expected_parent_id)
+      self.assertEqual(
+        client.imported_comments,
+        [
+          {
+            "id": "0000000000000030",
+            "postId": expected_child_id,
+            "nickname": "guest",
+            "body": "comment\n",
+            "status": "published",
+            "isAuthor": False,
+          }
+        ],
+      )
 
   def test_rejects_duplicate_post_ids_generated_from_created_at(self) -> None:
     class FakeClient:

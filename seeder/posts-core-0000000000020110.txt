@@ -8,7 +8,7 @@ locale: ja-JP
 content:<<____EOF____
 # STGYの記事外部公開機能
 
-本記事では、STGYの記事をログインしていない閲覧者へ外部公開する仕組みと、その公開記事のページビューを数えるアクセスカウンタについて説明する。外部公開ページは、SNS内部の投稿データを別のブログデータへ複製するのではなく、同じ投稿を公開日時で選別して、ブログ風のレイアウトで表示する。アクセスカウンタは、個々のアクセス履歴をPostgreSQLへ蓄積せず、Redis上の日次カウンタを主カウンタとして高速に更新し、疎なチェックポイントだけをPostgreSQLへ保存する。PublicationsのStatsでは両者を日付単位で突き合わせ、直近15日間を集計する。
+本記事では、STGYの記事をログインしていない閲覧者へ外部公開する仕組みと、公開記事のシェア、コメント、ページビューを数えるアクセスカウンタについて説明する。外部公開ページは、SNS内部の投稿データを別のブログデータへ複製するのではなく、同じ投稿を公開日時で選別して、ブログ風のレイアウトで表示する。シェアとコメントは公開サイト設定の拡張領域から有効化し、コメント本体は専用テーブルへ保存する。アクセスカウンタは、個々のアクセス履歴をPostgreSQLへ蓄積せず、Redis上の日次カウンタを主カウンタとして高速に更新し、疎なチェックポイントだけをPostgreSQLへ保存する。PublicationsのStatsでは両者を日付単位で突き合わせ、直近15日間を集計する。
 
 SNS内部の記事画面は、投稿者、イイネ、返信、タグ、編集操作などを中心に設計される。一方で外部公開ページには、サイト名、記事タイトル、公開日時、前後記事、プロフィール、最近の記事、人気記事、OGPメタデータなどが必要になる。STGYでは、投稿の正本とMarkdown変換処理を共用しながら、内部画面と外部画面の取得APIと表示コンポーネントを分離している。
 
@@ -55,7 +55,7 @@ published_at <= 現在時刻  → 公開中
 /pub/{postId}    一つの公開記事
 ```
 
-サイトページは、公開済み投稿を公開日時順で取得する。Rich表示では投稿のJSONスニペットを記事風に描画し、Plain表示では公開日、タイトル、著者、説明を簡潔な一覧にする。新しい順と古い順を切り替えられ、RichとPlainではそれぞれ別のページサイズを設定できる。
+サイトページは、公開済み投稿を公開日時順で取得する。Rich表示では投稿のJSONスニペットを記事風に描画し、Plain表示では公開日、タイトル、著者、説明を簡潔な一覧にする。検索時にはKWIC/Rich/Plainを切り替えられる。新しい順と古い順を切り替えられ、RichとPlainではそれぞれ別のページサイズを設定できる。シェアボタンが有効な場合は、通常一覧と検索結果のRichスニペットにも各記事の左下へシェアボタンを表示する。
 
 記事ページは、Markdown本文を外部公開用のHTMLへ変換し、公開日時、前後記事、サイドバーを付ける。サイドバーには、設定に応じて次の要素を表示する。
 
@@ -98,6 +98,9 @@ CREATE TABLE user_pub_configs (
 ```json:small
 {
   "shareButtons": ["x", "facebook", "line", "hatena"],
+  "comments": {
+    "mode": "moderated"
+  },
   "analytics": {
     "googleAnalytics": {
       "measurementId": "G-XXXXXXXXXX"
@@ -106,11 +109,99 @@ CREATE TABLE user_pub_configs (
 }
 ```
 
-``shareButtons`` は外部公開記事に表示するシェアサービスの識別子配列で、現在の設定画面はX、Facebook、LINE、Hatenaを扱い、認識したサービスはこの順に表示する。``line`` は記事URLとタイトルをLINE Shareへ渡す。フロントエンドはLINE Social Pluginsのカスタム共有URL ``https://social-plugins.line.me/lineit/share`` に、URLエンコードした ``url`` と ``text`` パラメータを渡すため、LINE用の追加JavaScript SDKは不要である。``hatena`` を有効にすると、はてなブックマークとはてなスターを表示する。``analytics.googleAnalytics.measurementId`` はGoogle Analytics連携用のMeasurement IDを保持し、最大128文字である。この値が空でない場合、``/sites/<ユーザID>`` と ``/pub/<投稿ID>`` は ``gtag.js`` を読み込み、そのMeasurement IDへ手動の ``page_view`` を送信する。二重計測を避けるため、``config`` コマンドによる自動 ``page_view`` は無効にする。イベントには ``page_location`` と ``page_title`` に加えて ``content_group=stgy-user-<公開ユーザID>`` を含め、サイトページでは ``content_id=<公開ユーザID>``、``content_type=site``、記事ページでは ``content_id=<投稿ID>``、``content_type=post`` を送る。``content_group`` により ``/sites/<ユーザID>`` と ``/pub/<投稿ID>`` というURL構造に依存せず公開ユーザ単位でサイトと記事をまとめられ、``content_id`` にはサイトまたは投稿の個別IDが残る。設定画面とAPIはMeasurement IDを保存・復元するが、Google Analyticsの計測データそのものをSTGYが保存することはない。未知のトップレベルキーや分析プロバイダ用の追加キーも保持できるため、将来の拡張と前方互換性を確保できる。
+``shareButtons`` は外部公開記事に表示するシェアサービスの識別子配列で、現在の設定画面はX、Facebook、LINE、Hatenaを扱う。``comments.mode`` は外部コメントを ``none``、``moderated``、``open`` のいずれかに設定する。未指定の場合は ``none`` として扱う。``analytics.googleAnalytics.measurementId`` はGoogle Analytics連携用のMeasurement IDを保持し、最大128文字である。この値が空でない場合、``/sites/<ユーザID>`` と ``/pub/<投稿ID>`` は ``gtag.js`` を読み込み、そのMeasurement IDへ手動の ``page_view`` を送信する。二重計測を避けるため、``config`` コマンドによる自動 ``page_view`` は無効にする。イベントには ``page_location`` と ``page_title`` に加えて ``content_group=stgy-user-<公開ユーザID>`` を含め、サイトページでは ``content_id=<公開ユーザID>``、``content_type=site``、記事ページでは ``content_id=<投稿ID>``、``content_type=post`` を送る。``content_group`` により ``/sites/<ユーザID>`` と ``/pub/<投稿ID>`` というURL構造に依存せず公開ユーザ単位でサイトと記事をまとめられ、``content_id`` にはサイトまたは投稿の個別IDが残る。設定画面とAPIはMeasurement IDを保存・復元するが、Google Analyticsの計測データそのものをSTGYが保存することはない。未知のトップレベルキーや分析プロバイダ用の追加キーも保持できるため、将来の拡張と前方互換性を確保できる。
 
-バックエンドは ``extensions`` を保存前と読出し後の両方で検証する。全体のJSONは4096文字以内とし、``shareButtons`` の各識別子は1〜64文字の英数字・``_``・``-`` に限定して重複を許さない。``analytics`` のプロバイダ名も同じ文字種で1〜64文字に限定する。DBにはJSON文字列として保存するが、``GET /users/{id}/pub-config`` と更新APIの入出力では通常のJSONオブジェクトとして扱う。
+バックエンドは ``extensions`` を保存前と読出し後の両方で検証する。全体のJSONは4096文字以内とし、``shareButtons`` の各識別子は1〜64文字の英数字・``_``・``-`` に限定して重複を許さない。``comments.mode`` は ``none``、``moderated``、``open`` のみを許可する。``analytics`` のプロバイダ名も同じ文字種で1〜64文字に限定する。DBにはJSON文字列として保存するが、``GET /users/{id}/pub-config`` と更新APIの入出力では通常のJSONオブジェクトとして扱う。データエクスポートではこの ``extensions`` も ``pub-config.json`` に含め、``scripts/import-archive.py`` はシェア、コメント、Google Analyticsを含む ``extensions`` をそのまま公開設定更新APIへ戻す。
 
 設定画面はPublicationsページのSettingsタブに置く。設定の読み出しは外部公開ページからも必要なので公開APIであるが、更新は本人または管理者だけに許可する。設定レコードがまだない場合は既定値を返すため、外部公開を始める前に設定行を明示的に作っておく必要はない。
+
+## 公開記事のシェア
+
+シェア表示は ``PubShareButtons`` に集約する。認識する識別子は ``x``、``facebook``、``line``、``hatena`` で、表示順もX、Facebook、LINE、Hatenaに固定する。設定配列にそれ以外の値が残っていても表示対象にはしない。全て無効ならシェア領域自体を描画しない。
+
+``/pub/{postId}`` では記事本文の左下にシェアボタンを置く。``/sites/{userId}`` では通常一覧のRichスニペットと、検索後にRichタブを選んだスニペットの左下にも同じボタンを置く。PlainとKWICには表示しない。一覧のスニペット全体は記事へのリンクになっているため、シェア領域のclickとkeydownはイベント伝播を止め、シェアボタンの操作が記事遷移へ化けないようにする。
+
+共有先へ渡すURLは、デザイン指定などのクエリ文字列を付けない正規の ``/pub/{postId}`` である。横書きでは、Xは ``platform.twitter.com/widgets.js`` の公式ボタン、FacebookはSDKの ``button_count``、LINEはSocial Pluginsのshare URL、HatenaはBookmark公式widgetとHatena Star v2を使う。LINEはURLと記事タイトルをURL encodeしてshare URLへ渡すだけなので、追加のLINE JavaScript SDKは読み込まない。縦書きでは外部widgetの横方向レイアウトを持ち込まず、X、Facebook、LINEを24pxのcompact linkとして表示し、Hatena BookmarkとStarも同じ縦列へ収める。Hatenaを有効にするとBookmarkとStarを一組として表示する。
+
+外部widget用scriptは必要な場合だけClient Componentのhydration後に読み込む。特にHatena StarはサーバHTMLをhydration前に書き換えないよう、クライアント側からv2 widgetを起動する。``/sites`` では複数記事のシェア領域が同時にmountされるため、Hatena Bookmarkの全document scanは同一mount群で一回へまとめ、記事数だけ同じscriptを走らせない。
+
+## 外部公開コメント
+
+外部コメントはSNS内部のreplyとは別データである。コメントは匿名でも投稿できるため、SNSユーザとの関係を必須にせず、次の専用テーブルへ保存する。
+
+```sql:small
+CREATE TABLE post_pub_comments (
+  id BIGINT PRIMARY KEY,
+  post_id BIGINT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  nickname VARCHAR(50) NOT NULL,
+  body VARCHAR(65536) NOT NULL,
+  status VARCHAR(32) NOT NULL CHECK (status IN ('pending', 'published')),
+  is_author BOOLEAN NOT NULL DEFAULT FALSE
+);
+CREATE INDEX idx_post_pub_comments_post_id ON post_pub_comments(post_id, id DESC);
+```
+
+コメント行には投稿者のSTGYユーザID、メールアドレス、生のIPアドレスを保存しない。``nickname`` は実名を意味しない表示名で、``is_author`` は記事所有者が ``as author`` を選んで投稿したことだけを表す。作成日時カラムも持たず、他のSnowflake系IDと同様にコメントIDから時刻を復元する。
+
+コメント欄を表示して新規投稿を受け付けるには、記事が現在外部公開中であることに加えて、投稿の ``allow_replies`` がtrueで、所有者の ``extensions.comments.mode`` が ``none`` 以外でなければならない。モードの意味は次の通りである。
+
+|*mode*|*新規コメント*|
+| ``none`` | コメント欄を表示せず新規投稿も受け付けない。既存行は削除しない |
+| ``moderated`` | 通常の閲覧者は ``pending``、ログイン中の記事所有者は ``published`` |
+| ``open`` | 新規コメントを ``published`` |
+
+モード変更では既存コメントのstatusを書き換えない。たとえば ``moderated`` から ``open`` へ変えても、既存の ``pending`` は自動公開しない。記事所有者がログインして投稿する場合は ``moderated`` でも即時公開されるが、``is_author`` がtrueになるのは ``as author`` を選んだ場合だけである。
+
+### コメントAPIと権限
+
+公開記事のコメントUIが使う主なAPIは次の通りである。
+
+|*API*|*用途*|
+| ``GET /pub-comments?postId=...&page=1&order=newest`` | コメント一覧 |
+| ``GET /pub-comments/form-state?postId=...`` | CAPTCHA要否、保存nickname、as-author状態、上限到達状態 |
+| ``POST /pub-comments`` | 通常のコメント投稿 |
+| ``PATCH /pub-comments/{id}`` | pending承認、または許可されたコメント編集 |
+| ``DELETE /pub-comments/{id}`` | コメント削除 |
+| ``GET /pub-comments/export/{postId}`` | 所有者本人のデータエクスポート用全件取得 |
+| ``POST /pub-comments/import`` | 管理者専用のアーカイブ復元 |
+
+通常一覧は1ページ10件固定で、``newest`` と ``oldest`` を切り替える。一般閲覧者には ``published`` だけを返すが、記事所有者と管理者には同じ公開ページ上で ``pending`` も返す。記事所有者は自分の記事の ``pending`` を承認でき、自分の記事のコメントを削除できる。編集は、所有者については ``is_author=true`` の自分の著者コメントだけを許可し、管理者は任意のコメントを編集・承認・削除できる。
+
+通常の入力制限はnickname 30文字、本文1000文字である。nicknameは制御文字を除去して空白を一つへまとめ、本文は改行をLFへ統一し、先頭の空行を除き、3個以上の連続LFを2個へ丸め、末尾を正確に1個のLFにする。DBの50文字/65536文字という余裕は、将来のアプリ側制限変更やアーカイブ復元のためであり、通常フォームの上限ではない。1記事あたりの保存コメント数は ``STGY_PUB_COMMENT_MAX_COMMENTS`` で制限し、デフォルトはpendingを含めて100件である。
+
+コメント一覧と入力フォームはClient Componentで動く。記事本文はSSRされるが、コメント内容はhydration後に ``GET /pub-comments`` で取得する。入力フォームは初期HTMLへ出さず、``Write a comment`` を押した後に ``form-state`` を取得して開く。投稿成功後はNewestの1ページ目へ戻し、Comments見出しへスクロールする。nicknameと記事所有者の ``as author`` 選択は、HttpOnly、SameSite=Laxの1年cookieへ保存して次回入力に再利用する。
+
+### CAPTCHAとpass token
+
+ログイン中の記事所有者以外がコメントする場合は、CAPTCHA passが有効でなければ6桁数字CAPTCHAを要求する。challenge画像は200×48pxのPNGで、コード内の5×7 bitmap数字を5倍へ拡大し、各桁を最大±10度回転、配置をX/Y各±1pxずらし、背景の約10%へ黒いditherを入れて生成する。challengeはRedisに保存し、デフォルトTTLは600秒で、一度正解すると削除する。
+
+CAPTCHAの汎用APIはコメントAPIとは分離している。
+
+|*API*|*用途*|
+| ``GET /captcha/status`` | 現在のpass状態 |
+| ``POST /captcha/challenge`` | challenge生成 |
+| ``POST /captcha/verify`` | challengeだけを事前検証してpass発行 |
+| ``DELETE /captcha/pass`` | pass破棄 |
+
+``POST /captcha/challenge`` と ``POST /captcha/verify`` には ``X-STGY-MinuteHash`` を要求する。ブラウザはUTC現在分の ``YYYYMMDDhhmm`` をSHA-1した40桁hexを送り、Backendは現在分と前後1分を受理する。これは秘密鍵による認証ではなく、汎用botにSTGY固有の手順を追加で実装させるための軽量なプロトコルである。通常の ``POST /pub-comments`` は別途 ``X-STGY-QueryHash`` を要求する。
+
+CAPTCHAを一度解くと、HttpOnly cookie ``stgy_pub_comment_pass`` に対応するpass tokenをRedisへ保存する。TTLのデフォルトは1年で、一つのpassは最大100回の成功コメントに使える。さらに同じpassで利用できる接続元IPは最大4種類で、IPそのものは保存せず、pass tokenを鍵とするHMAC-SHA256をRedis Hashのfield名へ使う。5種類目のIPから使おうとするとpass全体を失効させる。古い ``used,reserved`` String形式のpassは最初の利用時にHash形式へ移行する。
+
+既存passを使うコメント投稿では、DB transaction前後で利用回数をreserve/commitする。コメントINSERTがrollbackした場合はreservationもreleaseするため、失敗した投稿で100回の利用枠を消費しない。CAPTCHAをその場で解いてコメント投稿まで成功した場合は、そのコメントをpassの1回目として発行する。VPSのCaddyではchallengeとverifyを合わせて1 IPあたり60回/時、通常の ``POST /pub-comments`` を1 IPあたり20回/時に制限する。
+
+### コメントの公開キャッシュ
+
+一般閲覧者向けコメント一覧は、DBを正本としたpage単位のread-through cacheをRedisへ持つ。キーは ``post-pub-comments:public:{postId}`` という記事単位のHashで、fieldは ``newest:1``、``oldest:2`` のようにorderとpageを組み合わせる。したがって最大100件を毎回Redisから転送せず、表示する10件だけを取得できる。空ページもキャッシュする。
+
+TTLは投稿の公開日ではなく作成時刻で決める。作成から7日以内の記事は180秒、それより古い記事は60秒である。記事所有者と管理者はpendingを含む最新状態が必要なのでこの公開キャッシュを使わず、PostgreSQLを直接読む。コメントの作成、承認、編集、削除、管理者importが成功した場合は、その記事のHash全体を ``DEL`` してnewest/oldestの全pageをまとめて無効化する。Redis障害時はDBへfallbackし、コメント操作そのものはRedis障害で失敗させない。
+
+### 通知とアーカイブ
+
+外部閲覧者からコメントが成功すると、記事所有者向けの通知eventを生成する。記事所有者自身のコメントでは通知しない。コメントテーブルにSNSユーザIDを保存しないため、通知に記録する投稿者情報もnicknameを中心とする。
+
+データエクスポートでは各投稿ごとに ``GET /pub-comments/export/{postId}`` を使い、現在の公開状態やcomments mode、公開キャッシュに関係なく、その所有者の投稿に保存された ``pending`` と ``published`` をID昇順で全件取得する。投稿JSONには ``comments`` 配列として ``id``、``createdAt``、``nickname``、``body``、``status``、``isAuthor`` を埋め込み、HTMLにも全文を表示する。incremental exportのfingerprintにもコメント配列を含めるので、追加、削除、編集、承認のいずれでも該当投稿だけ再生成される。
+
+``scripts/import-archive.py`` は投稿を作成または更新した後、そのJSONに ``comments`` があれば管理者専用 ``POST /pub-comments/import`` へ順番に送る。import APIはID、status、isAuthorを指定して復元し、CAPTCHA、comments mode、``allow_replies``、100件上限、通知を通さない。同じコメントIDが同じ投稿に既にあれば内容を更新し、別投稿に同じIDがあれば409 conflictとする。import時だけはDB上限のnickname 50文字、本文65536文字まで受け付け、成功後は公開コメントキャッシュを無効化する。
 
 ## 公開記事を取得するAPI
 
@@ -562,11 +653,11 @@ PostgreSQLの ``post_pub_access_counts`` は、チェックポイントまたは
 - 転送元IPヘッダは、信頼するリバースプロキシが正しく設定する必要がある。
 - 高度なアクセス解析に必要な参照元、地域、端末、閲覧経路などは記録しない。
 
-これらは不具合ではなく、アクセス履歴を永続化せず、小さな負荷でPopular entriesと短期Statsを提供するための選択である。広告課金、厳密なユニークユーザ数、長期分析が必要な運用では、専用のアクセス解析基盤を別途導入すべきである。
+これらは不具合ではなく、アクセス履歴を永続化せず、小さな負荷でPopular entriesと短期Statsを提供するための選択である。外部コメントもSNSアカウントと匿名投稿を恒久的に結び付けず、CAPTCHA passは本人確認ではなく投稿負荷を下げるための利便機構として扱う。広告課金、厳密なユニークユーザ数、長期分析やコメント投稿者の本人性保証が必要な運用では、専用の基盤を別途導入すべきである。
 
 ## まとめ
 
-STGYの記事外部公開機能は、``posts.published_at`` を公開状態の正本とし、SNS内部の投稿を別データへ複製せずに、``/sites/{userId}`` と ``/pub/{postId}`` へブログ風に表示する。公開記事APIは現在時刻以前の投稿だけを返し、サイト一覧、記事詳細、前後記事、ID集合取得を用途ごとに分ける。Markdown本文とJSONスニペットは内部表示と共用し、外部ページ側ではサイト設定、デザインテーマ、OGP、ページネーション、プロフィール、Recent postsを組み合わせる。
+STGYの記事外部公開機能は、``posts.published_at`` を公開状態の正本とし、SNS内部の投稿を別データへ複製せずに、``/sites/{userId}`` と ``/pub/{postId}`` へブログ風に表示する。公開記事APIは現在時刻以前の投稿だけを返し、サイト一覧、記事詳細、前後記事、ID集合取得を用途ごとに分ける。Markdown本文とJSONスニペットは内部表示と共用し、外部ページ側ではサイト設定、デザインテーマ、OGP、ページネーション、プロフィール、Recent postsを組み合わせる。``extensions`` からX/Facebook/LINE/Hatenaのシェアとコメントmodeを設定でき、シェアは記事とRichスニペットへ、コメントは ``allow_replies`` とmodeが許す記事ページへ追加する。
 
 アクセスカウンタは、生のIPアドレスや個々のアクセス履歴を保存しない。Frontendで自己申告ボットを除外し、IPを鍵付きハッシュの32ビットフィンガープリントへ変換し、Backendで署名を検証する。Redis Luaが投稿別LRUの更新、重複判定、日次PV加算、TTL設定、Stats用メタデータ更新を一回で行い、増加後のカウンタ値をNode.jsへ返す。
 
@@ -574,7 +665,9 @@ STGYの記事外部公開機能は、``posts.published_at`` を公開状態の�
 
 PublicationsのStatsはRedisとPostgreSQLを投稿・日付単位で統合してから15日分を集計し、固定サイズ1000の最小ヒープで上位投稿を選ぶ。RedisにStats用メタデータがなければ、上位IDだけをPostgreSQLから補完する。一方、公開ページのPopular entriesは表示負荷を抑えるためRedisだけでランキングを作り、得られたIDを汎用の ``pub-by-ids`` へ渡して正規のPostデータを一括取得する。
 
-投稿本文と公開設定の正本はPostgreSQLに置き、高頻度の短期カウンタはRedisで処理し、復旧に必要な最小限の集約値だけをPostgreSQLへ疎に残す。アクセス履歴を大量に永続化せず、Redis消失時の影響も限定しながら、Popular entriesと直近15日Statsを提供する構成である。
+コメント本体もPostgreSQLの ``post_pub_comments`` を正本とし、一般閲覧者向けの10件pageだけをRedisへ短時間キャッシュする。匿名コメントにはSNSユーザIDや生IPを保存せず、6桁CAPTCHAと100回/4 IPまでのpass tokenで機械的な連続投稿のコストを上げる。export/importは公開表示用キャッシュと分離し、pendingを含む保存データをIDとstatusごと復元できる。
+
+投稿本文と公開設定の正本はPostgreSQLに置き、高頻度の短期カウンタと短時間の公開コメントcacheはRedisで処理し、復旧に必要な最小限のPV集約値だけをPostgreSQLへ疎に残す。アクセス履歴を大量に永続化せず、Redis消失時の影響も限定しながら、公開記事の共有、外部コメント、Popular entriesと直近15日Statsを提供する構成である。
 
 Next: [STGYの管理機能](/posts/0000000000020111)
 ____EOF____

@@ -34,6 +34,8 @@ type FakeDbOptions = {
     is_author: boolean;
     owned_by: string;
   };
+  postExists?: boolean;
+  importExisting?: { id: string; post_id: string };
 };
 
 function makeDb(options: FakeDbOptions = {}) {
@@ -43,6 +45,7 @@ function makeDb(options: FakeDbOptions = {}) {
   const lockedCount = options.lockedCount ?? initialCount;
   const inserted: unknown[][] = [];
   const updated: unknown[][] = [];
+  const imported: unknown[][] = [];
   const listRows = options.listRows ?? [];
   let listQueryCount = 0;
   let countQueryCount = 0;
@@ -56,6 +59,24 @@ function makeDb(options: FakeDbOptions = {}) {
   };
 
   const poolQuery = jest.fn(async (sql: string, params?: unknown[]) => {
+    if (/SELECT id FROM posts WHERE id = \$1/i.test(sql)) {
+      return options.postExists === false
+        ? { rows: [], rowCount: 0 }
+        : { rows: [{ id: hexToDec(POST_ID) }], rowCount: 1 };
+    }
+    if (/SELECT id, post_id FROM post_pub_comments WHERE id = \$1/i.test(sql)) {
+      return options.importExisting
+        ? { rows: [options.importExisting], rowCount: 1 }
+        : { rows: [], rowCount: 0 };
+    }
+    if (/INSERT INTO post_pub_comments \(id, post_id, nickname, body, status, is_author\)/i.test(sql)) {
+      imported.push(params ?? []);
+      return { rows: [], rowCount: 1 };
+    }
+    if (/UPDATE post_pub_comments\s+SET nickname = \$2, body = \$3, status = \$4, is_author = \$5/i.test(sql)) {
+      imported.push(params ?? []);
+      return { rows: [], rowCount: 1 };
+    }
     if (/SELECT p\.id, p\.owned_by, p\.allow_replies, upc\.extensions/i.test(sql)) {
       return { rows: [postRow], rowCount: 1 };
     }
@@ -133,6 +154,7 @@ function makeDb(options: FakeDbOptions = {}) {
     clientQuery,
     inserted,
     updated,
+    imported,
     get listQueryCount() {
       return listQueryCount;
     },
@@ -395,6 +417,95 @@ describe("PubCommentsService", () => {
     await expect(service.listForExport(POST_ID, GUEST_ID)).rejects.toMatchObject({
       code: "not_found",
     });
+  });
+
+  test("admin import creates a comment with the supplied ID and preserves archived text exactly", async () => {
+    const db = makeDb();
+    const rd = makeRedis();
+    const eventLog = { recordPubComment: jest.fn() };
+    const service = new PubCommentsService(db.pool, rd.redis, eventLog as any);
+    const commentId = "0000000000000200";
+    const nickname = `  ${"n".repeat(31)}  `;
+    const body = `${"b".repeat(1001)}\n`;
+
+    const result = await service.importComment({
+      id: commentId,
+      postId: POST_ID,
+      nickname,
+      body,
+      status: "pending",
+      isAuthor: true,
+    });
+
+    expect(result.created).toBe(true);
+    expect(result.comment).toMatchObject({
+      id: commentId,
+      postId: POST_ID,
+      nickname,
+      body,
+      status: "pending",
+      isAuthor: true,
+    });
+    expect(db.imported).toHaveLength(1);
+    expect(db.imported[0]).toEqual([
+      hexToDec(commentId),
+      hexToDec(POST_ID),
+      nickname,
+      body,
+      "pending",
+      true,
+    ]);
+    expect(rd.del).toHaveBeenCalledWith(`post-pub-comments:public:${POST_ID}`);
+    expect(eventLog.recordPubComment).not.toHaveBeenCalled();
+  });
+
+  test("admin import updates the same comment ID when it already belongs to the same post", async () => {
+    const commentId = "0000000000000200";
+    const db = makeDb({
+      importExisting: { id: hexToDec(commentId), post_id: hexToDec(POST_ID) },
+    });
+    const rd = makeRedis();
+    const service = new PubCommentsService(db.pool, rd.redis);
+
+    const result = await service.importComment({
+      id: commentId,
+      postId: POST_ID,
+      nickname: "restored",
+      body: "restored body\n",
+      status: "published",
+      isAuthor: false,
+    });
+
+    expect(result.created).toBe(false);
+    expect(db.imported).toHaveLength(1);
+    expect(db.imported[0]).toEqual([
+      hexToDec(commentId),
+      "restored",
+      "restored body\n",
+      "published",
+      false,
+    ]);
+  });
+
+  test("admin import rejects a comment ID already attached to another post", async () => {
+    const commentId = "0000000000000200";
+    const db = makeDb({
+      importExisting: { id: hexToDec(commentId), post_id: hexToDec("0000000000000999") },
+    });
+    const rd = makeRedis();
+    const service = new PubCommentsService(db.pool, rd.redis);
+
+    await expect(
+      service.importComment({
+        id: commentId,
+        postId: POST_ID,
+        nickname: "restored",
+        body: "restored body\n",
+        status: "published",
+        isAuthor: false,
+      }),
+    ).rejects.toMatchObject({ code: "conflict" });
+    expect(db.imported).toHaveLength(0);
   });
 
   test("article owner sees pending comments in the public-page list", async () => {

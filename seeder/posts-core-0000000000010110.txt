@@ -8,7 +8,7 @@ locale: en-US
 content:<<____EOF____
 # STGY External Publication
 
-This article explains how STGY publishes posts externally to viewers who are not logged in, and the access counter that counts page views for those published posts. Rather than copying SNS post data into separate blog data, external publication selects the same posts by publication date and displays them in a blog-like layout. The access counter does not accumulate individual access records in PostgreSQL; it rapidly updates daily counters in Redis as the primary counters and stores only sparse checkpoints in PostgreSQL. The Publications Stats view reconciles the two sources by date and aggregates the most recent 15 days.
+This article explains how STGY publishes posts externally to viewers who are not logged in, including sharing, external comments, and the access counter that counts page views for published posts. Rather than copying SNS post data into separate blog data, external publication selects the same posts by publication date and displays them in a blog-like layout. Sharing and comments are enabled through the public-site extension settings, while comment bodies are stored in a dedicated table. The access counter does not accumulate individual access records in PostgreSQL; it rapidly updates daily counters in Redis as the primary counters and stores only sparse checkpoints in PostgreSQL. The Publications Stats view reconciles the two sources by date and aggregates the most recent 15 days.
 
 The internal SNS post screen is designed around the author, likes, replies, tags, editing operations, and similar functions. An externally published page, on the other hand, needs a site name, article title, publication date, previous and next articles, profile, recent articles, popular articles, OGP metadata, and so on. STGY shares the canonical post data and Markdown conversion process between the two views, while separating the retrieval APIs and display components for internal and external pages.
 
@@ -55,7 +55,7 @@ External publication has a site page for each user and an article page for each 
 /pub/{postId}    一つの公開記事
 ```
 
-The site page retrieves published posts in publication-date order. Rich view renders each post's JSON snippet in an article-like form, while Plain view presents the publication date, title, author, and description in a compact list. The order can be switched between newest-first and oldest-first, and Rich and Plain views have separate page-size settings.
+The site page retrieves published posts in publication-date order. Rich view renders each post's JSON snippet in an article-like form, while Plain view presents the publication date, title, author, and description in a compact list. Search results can be switched among KWIC, Rich, and Plain. The order can be switched between newest-first and oldest-first, and Rich and Plain views have separate page-size settings. When share buttons are enabled, each Rich snippet in both the normal listing and search results also shows that article's share buttons at the lower-left corner.
 
 The article page converts the Markdown body to HTML for external publication and adds the publication date, previous/next articles, and a sidebar. Depending on the settings, the sidebar can display the following elements.
 
@@ -98,6 +98,9 @@ The principal fields currently used are as follows.
 ```json:small
 {
   "shareButtons": ["x", "facebook", "line", "hatena"],
+  "comments": {
+    "mode": "moderated"
+  },
   "analytics": {
     "googleAnalytics": {
       "measurementId": "G-XXXXXXXXXX"
@@ -106,11 +109,99 @@ The principal fields currently used are as follows.
 }
 ```
 
-``shareButtons`` is an array of share-service identifiers to show on externally published articles; the current settings UI handles X, Facebook, LINE, and Hatena, and renders recognized services in that order. ``line`` opens LINE Share with the article URL and title. The frontend uses LINE Social Plugins' custom-share URL, ``https://social-plugins.line.me/lineit/share``, with URL-encoded ``url`` and ``text`` parameters, so no additional LINE JavaScript SDK is required. Enabling ``hatena`` displays both Hatena Bookmark and Hatena Star. ``analytics.googleAnalytics.measurementId`` stores the Google Analytics Measurement ID and is limited to 128 characters. When this value is non-empty, both ``/sites/<user ID>`` and ``/pub/<post ID>`` load ``gtag.js`` and send a manual ``page_view`` to that Measurement ID. The automatic page view from the ``config`` command is disabled to avoid duplicate counting. The event includes ``content_group=stgy-user-<owner ID>`` in addition to ``page_location`` and ``page_title``; site pages send ``content_id=<owner ID>`` and ``content_type=site``, while article pages send ``content_id=<post ID>`` and ``content_type=post``. ``content_group`` provides owner-level grouping independent of the ``/sites/<user ID>`` and ``/pub/<post ID>`` URL layouts, while ``content_id`` retains the individual site or post identifier. The settings UI and API save and restore the Measurement ID; no Google Analytics data is stored by STGY itself. Unknown top-level keys and additional analytics-provider keys can also be retained, providing room for future extensions and forward compatibility.
+``shareButtons`` is an array of share-service identifiers; the current settings UI handles X, Facebook, LINE, and Hatena. ``comments.mode`` controls external comments and can be ``none``, ``moderated``, or ``open``. A missing mode is treated as ``none``. ``analytics.googleAnalytics.measurementId`` stores the Google Analytics Measurement ID and is limited to 128 characters. When this value is non-empty, both ``/sites/<user ID>`` and ``/pub/<post ID>`` load ``gtag.js`` and send a manual ``page_view`` to that Measurement ID. The automatic page view from the ``config`` command is disabled to avoid duplicate counting. The event includes ``content_group=stgy-user-<owner ID>`` in addition to ``page_location`` and ``page_title``; site pages send ``content_id=<owner ID>`` and ``content_type=site``, while article pages send ``content_id=<post ID>`` and ``content_type=post``. ``content_group`` provides owner-level grouping independent of the ``/sites/<user ID>`` and ``/pub/<post ID>`` URL layouts, while ``content_id`` retains the individual site or post identifier. The settings UI and API save and restore the Measurement ID; no Google Analytics data is stored by STGY itself. Unknown top-level keys and additional analytics-provider keys can also be retained, providing room for future extensions and forward compatibility.
 
-The backend validates ``extensions`` both before storage and after reading it back. The complete JSON representation is limited to 4096 characters. Each ``shareButtons`` identifier must be unique and contain 1 to 64 ASCII letters, digits, underscores, or hyphens; analytics provider names use the same character and length rule. The database stores a JSON string, but ``GET /users/{id}/pub-config`` and the update API expose an ordinary JSON object.
+The backend validates ``extensions`` both before storage and after reading it back. The complete JSON representation is limited to 4096 characters. Each ``shareButtons`` identifier must be unique and contain 1 to 64 ASCII letters, digits, underscores, or hyphens. ``comments.mode`` accepts only ``none``, ``moderated``, and ``open``. Analytics provider names use the same identifier rule. The database stores a JSON string, but ``GET /users/{id}/pub-config`` and the update API expose an ordinary JSON object. Data export includes the same ``extensions`` in ``pub-config.json``, and ``scripts/import-archive.py`` restores the object, including share, comment, and Google Analytics settings, through the publication-settings update API.
 
 The settings UI is the Settings tab of the Publications page. Reading these settings is also required by externally published pages, so the read API is public, but updates are permitted only to the user themself or an administrator. If no settings row exists yet, defaults are returned, so a row does not have to be created explicitly before external publication begins.
+
+## Sharing Published Articles
+
+Share rendering is centralized in ``PubShareButtons``. The recognized identifiers are ``x``, ``facebook``, ``line``, and ``hatena``, rendered in the fixed order X, Facebook, LINE, Hatena. Unknown identifiers can remain in the extension object but are not rendered. If no recognized service is enabled, no share region is rendered.
+
+On ``/pub/{postId}``, the buttons are placed at the lower-left corner of the article body. On ``/sites/{userId}``, the same buttons are also placed at the lower-left corner of each Rich snippet, both in the normal listing and when the Rich tab is selected for search results. Plain and KWIC views do not show them. Because an entire Rich snippet is itself a link to the article, the share region stops click and keydown propagation so that operating a share button does not accidentally navigate the snippet.
+
+The URL passed to sharing services is always the canonical ``/pub/{postId}`` URL without presentation query parameters such as ``design``. In horizontal writing, X uses its ``platform.twitter.com/widgets.js`` official button, Facebook uses the SDK ``button_count`` widget, LINE uses the Social Plugins share URL, and Hatena combines the official Bookmark widget with Hatena Star v2. LINE simply URL-encodes the article URL and title into that share URL, so no additional LINE JavaScript SDK is loaded. In vertical writing, external horizontal widgets are avoided: X, Facebook, and LINE use 24-pixel compact links, while Hatena Bookmark and Star are fitted into the same vertical column. Enabling ``hatena`` therefore enables Bookmark and Star together.
+
+External widget scripts are loaded only when needed and after the Client Component has hydrated. Hatena Star in particular is started as a v2 widget from the client so that it cannot mutate server-rendered HTML before React hydration. Multiple share rows can mount together on ``/sites``; Hatena Bookmark's whole-document scan is coalesced so that the same script is not executed once per article.
+
+## External Publication Comments
+
+External comments are separate from SNS replies. Because a comment can be posted anonymously, it does not require a persistent relationship to an STGY user and is stored in a dedicated table.
+
+```sql:small
+CREATE TABLE post_pub_comments (
+  id BIGINT PRIMARY KEY,
+  post_id BIGINT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  nickname VARCHAR(50) NOT NULL,
+  body VARCHAR(65536) NOT NULL,
+  status VARCHAR(32) NOT NULL CHECK (status IN ('pending', 'published')),
+  is_author BOOLEAN NOT NULL DEFAULT FALSE
+);
+CREATE INDEX idx_post_pub_comments_post_id ON post_pub_comments(post_id, id DESC);
+```
+
+The row stores no commenter STGY user ID, email address, or raw IP address. ``nickname`` is only a display name, not an assertion of a real-world name, and ``is_author`` records only whether the article owner selected ``as author``. There is no separate creation-time column; the timestamp is recovered from the Snowflake-style comment ID.
+
+A comment section is displayed and accepts new comments only while the post is currently externally published, ``allow_replies`` is true, and the owner's ``extensions.comments.mode`` is not ``none``. The modes are: 
+
+|*mode*|*new comments*|
+| ``none`` | Hide the comment section and reject new comments; existing rows remain stored |
+| ``moderated`` | Ordinary viewers create ``pending`` comments; the logged-in article owner creates ``published`` comments |
+| ``open`` | New comments are ``published`` |
+
+Changing the mode does not rewrite existing statuses. In particular, changing ``moderated`` to ``open`` does not auto-publish old ``pending`` rows. An owner comment is immediately published even in ``moderated`` mode, but ``is_author`` becomes true only when the owner actually selects ``as author``.
+
+### Comment APIs and permissions
+
+The main APIs used by the published-page comment UI are: 
+
+|*API*|*Purpose*|
+| ``GET /pub-comments?postId=...&page=1&order=newest`` | List comments |
+| ``GET /pub-comments/form-state?postId=...`` | CAPTCHA requirement, saved nickname, as-author state, and limit state |
+| ``POST /pub-comments`` | Ordinary comment submission |
+| ``PATCH /pub-comments/{id}`` | Approve pending or edit an allowed comment |
+| ``DELETE /pub-comments/{id}`` | Delete a comment |
+| ``GET /pub-comments/export/{postId}`` | Retrieve every stored comment for the post owner during export |
+| ``POST /pub-comments/import`` | Administrator-only archive restoration |
+
+The normal list uses a fixed page size of 10 and supports ``newest`` and ``oldest``. Anonymous and ordinary viewers receive only ``published`` comments; the article owner and administrators see ``pending`` comments on the same published page as well. The owner can approve pending comments and delete comments on their own article. For editing, the owner can edit only their own ``is_author=true`` author comments, while an administrator can edit, approve, or delete any comment.
+
+Ordinary input limits are 30 characters for nickname and 1000 for body. Nicknames have control characters removed and whitespace collapsed. Bodies normalize line endings to LF, remove leading blank lines, reduce runs of three or more LFs to two, and are stored with exactly one trailing LF. The wider database limits of 50 and 65536 characters are intentional headroom for future application limits and archive restoration; they are not the ordinary form limits. Total stored comments per post, including pending rows, are limited by ``STGY_PUB_COMMENT_MAX_COMMENTS`` and default to 100.
+
+The comment list and input form are implemented as a Client Component. The article body is server-rendered, but comment content is fetched with ``GET /pub-comments`` after hydration. The input form is also absent from the initial HTML and is rendered only after the user presses ``Write a comment`` and ``form-state`` has been read. After successful submission, the UI returns to page 1 in Newest order and scrolls to the Comments heading. The nickname and the article owner's ``as author`` choice are saved in one-year HttpOnly, SameSite=Lax preference cookies for reuse.
+
+### CAPTCHA and pass tokens
+
+A commenter other than the logged-in article owner must solve a six-digit numeric CAPTCHA unless a valid CAPTCHA pass exists. A challenge is a 200×48 PNG generated from a code-defined 5×7 digit bitmap scaled by five. Each digit is rotated by up to ±10 degrees and placed with ±1-pixel X/Y jitter, while roughly 10 percent of background pixels receive black dither. Challenges are stored in Redis with a default TTL of 600 seconds and are deleted after a successful answer.
+
+The generic CAPTCHA endpoints are separate from the comment endpoints.
+
+|*API*|*Purpose*|
+| ``GET /captcha/status`` | Read the current pass state |
+| ``POST /captcha/challenge`` | Create a challenge |
+| ``POST /captcha/verify`` | Verify a challenge separately and issue a pass |
+| ``DELETE /captcha/pass`` | Revoke the pass |
+
+``POST /captcha/challenge`` and ``POST /captcha/verify`` require ``X-STGY-MinuteHash``. The browser SHA-1 hashes the UTC current-minute string ``YYYYMMDDhhmm`` and sends the 40-character hexadecimal digest; the backend accepts the current minute and ±1 minute. This is not secret-key authentication. Its purpose is to require a generic bot to implement an STGY-specific protocol. Ordinary ``POST /pub-comments`` separately requires ``X-STGY-QueryHash``.
+
+After a CAPTCHA is solved, an HttpOnly cookie named ``stgy_pub_comment_pass`` refers to pass state in Redis. Its default TTL is one year, and one pass can be used for at most 100 successful comments. A pass can also be used from at most four distinct source IPs. Raw IP addresses are not stored; the Redis Hash field name is an HMAC-SHA256 of the normalized IP using the pass token as key. Use from a fifth IP invalidates the entire pass. Legacy ``used,reserved`` String state is lazily migrated to the Hash form on first use.
+
+When an existing pass is used for comment submission, its use is reserved around the PostgreSQL transaction and committed only after the insert commits. A rollback releases the reservation, so a failed database operation does not consume one of the 100 uses. If the challenge is solved inline during a successful comment submission, that comment is counted as the first use of the newly issued pass. On the VPS, Caddy limits challenge and verify together to 60 requests per hour per IP and ordinary ``POST /pub-comments`` to 20 requests per hour per IP.
+
+### Public comment cache
+
+Public comment lists use PostgreSQL as the source of truth and a page-granularity Redis read-through cache for ordinary viewers. One article uses the Hash key ``post-pub-comments:public:{postId}``; fields such as ``newest:1`` and ``oldest:2`` identify order and page. This transfers only the 10 displayed comments rather than all 100 possible rows. Empty pages are cached as well.
+
+TTL is based on post creation time, not publication time. Posts created within seven days use 180 seconds; older posts use 60 seconds. Owners and administrators bypass this public cache because their lists include pending rows and need current management state. Successful create, approve, edit, delete, and administrator import operations delete the entire article Hash, invalidating all Newest/Oldest pages at once. Redis failures fall back to PostgreSQL and do not make a comment mutation fail.
+
+### Notifications and archives
+
+A successful external comment from someone other than the article owner records a notification event for the owner. Owner comments do not notify the owner. Because the comment table does not persist an SNS user ID for an anonymous commenter, the event likewise identifies the commenter primarily by nickname.
+
+During data export, each post is followed by ``GET /pub-comments/export/{postId}``. This path ignores current publication state, comments mode, and the public cache and returns all stored ``pending`` and ``published`` comments on a post owned by the logged-in exporter, ordered by ID ascending. The post JSON embeds a ``comments`` array containing ``id``, ``createdAt``, ``nickname``, ``body``, ``status``, and ``isAuthor``; the HTML version shows the same full text. The incremental-export source fingerprint also includes the comment array, so add, delete, edit, or approval regenerates only the affected post.
+
+After ``scripts/import-archive.py`` creates or updates a post, it sends any embedded ``comments`` entries one by one to administrator-only ``POST /pub-comments/import``. The import path restores explicit IDs, status, and isAuthor without CAPTCHA, comments-mode checks, ``allow_replies``, the 100-comment limit, or notifications. An existing comment ID on the same post is updated; the same ID on a different post returns 409 conflict. Import alone accepts the database limits of 50 nickname characters and 65536 body characters, then invalidates the public comment cache.
 
 ## APIs for Retrieving Published Posts
 
@@ -562,11 +653,11 @@ The current external-publication and access-counter implementation has the follo
 - Forwarded client-IP headers must be set correctly by a trusted reverse proxy.
 - Referrers, geographic location, device information, navigation paths, and other data needed for advanced analytics are not recorded.
 
-These are deliberate tradeoffs rather than defects. They allow STGY to provide Popular entries and short-term Stats at low cost without permanently storing access history. Deployments that require advertising settlement, strict unique-user counts, or long-term analysis should use a dedicated analytics platform separately.
+These are deliberate tradeoffs rather than defects. They allow STGY to provide Popular entries and short-term Stats at low cost without permanently storing access history. External comments likewise do not permanently bind anonymous posts to SNS accounts, and a CAPTCHA pass is a convenience/anti-automation mechanism rather than identity proof. Deployments that require advertising settlement, strict unique-user counts, long-term analysis, or verified commenter identity should use a dedicated platform separately.
 
 ## Summary
 
-STGY's external-publication feature uses ``posts.published_at`` as the canonical publication state and displays internal SNS posts in blog-like form at ``/sites/{userId}`` and ``/pub/{postId}`` without copying them into separate data. Public-post APIs return only posts whose publication time has arrived, with separate paths for site listings, article details, previous/next articles, and retrieval by an ID set. Markdown bodies and JSON snippets are shared with internal display, while external pages combine site settings, design themes, OGP, pagination, profiles, and Recent posts.
+STGY's external-publication feature uses ``posts.published_at`` as the canonical publication state and displays internal SNS posts in blog-like form at ``/sites/{userId}`` and ``/pub/{postId}`` without copying them into separate data. Public-post APIs return only posts whose publication time has arrived, with separate paths for site listings, article details, previous/next articles, and retrieval by an ID set. Markdown bodies and JSON snippets are shared with internal display, while external pages combine site settings, design themes, OGP, pagination, profiles, and Recent posts. ``extensions`` configures X/Facebook/LINE/Hatena sharing and comment mode; sharing is added to article bodies and Rich snippets, while comments are added to article pages only when both ``allow_replies`` and the configured mode permit them.
 
 The access counter stores neither raw IP addresses nor individual access histories. The Frontend excludes self-declared bots, converts the IP into a 32-bit fingerprint using a keyed hash, and the Backend verifies its signature. A Redis Lua script updates the per-post LRU, performs deduplication, increments the daily PV, sets TTLs, and refreshes Stats metadata in one atomic operation, then returns the post-increment counter value to Node.js.
 
@@ -574,7 +665,9 @@ Ordinary PV updates complete entirely in Redis, synchronizing to PostgreSQL only
 
 Publications Stats merges Redis and PostgreSQL per post and date before aggregating 15 days, then selects the top posts with a fixed-size min-heap of 1000 entries. If Redis lacks Stats metadata, only the top IDs are supplemented from PostgreSQL. Published-page Popular entries, by contrast, rank from Redis alone to minimize rendering load, then pass the resulting IDs to the general-purpose ``pub-by-ids`` endpoint to retrieve canonical Post data in one batch.
 
-The canonical post bodies and publication settings reside in PostgreSQL; high-frequency short-term counters are processed in Redis; and only the minimal aggregate values needed for recovery are sparsely retained in PostgreSQL. This architecture provides Popular entries and 15-day Stats without permanently storing large access histories, while limiting the impact of Redis data loss.
+Comment bodies likewise use PostgreSQL ``post_pub_comments`` as their source of truth, with only each ordinary viewer's 10-row page cached briefly in Redis. Anonymous comments do not store an SNS user ID or raw IP; a six-digit CAPTCHA and a pass limited to 100 uses and four source IPs increase the cost of automated posting. Export and import bypass the public display cache so pending state, explicit IDs, and the stored text can be restored faithfully.
+
+The canonical post bodies and publication settings reside in PostgreSQL; high-frequency short-term counters and short-lived public comment pages are processed in Redis; and only the minimal PV aggregate values needed for recovery are sparsely retained in PostgreSQL. This architecture provides sharing, external comments, Popular entries, and 15-day Stats without permanently storing large access histories, while limiting the impact of Redis data loss.
 
 Next: [STGY Administration Features](/posts/0000000000010111)
 ____EOF____
