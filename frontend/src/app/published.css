@@ -3423,17 +3423,35 @@ html:has(.site-container) {
 }
 
 /* Vertical public themes: cap image media by physical viewport width without forcing
-   it wider. Multi-item grids are kept more compact than single/non-grid images. */
+   it wider. Multi-item grids are kept more compact than single/non-grid images.
+   For grids, keep the physical and logical block-axis limits identical: in vertical
+   writing mode both describe the horizontal dimension. */
 .pub-theme-dir-vert .markdown-body figure.image-block:not([data-grid]),
-.pub-theme-dir-vert .markdown-body figure.featured-block,
-.pub-theme-dir-vert .markdown-body .image-grid[data-cols="1"] {
+.pub-theme-dir-vert .markdown-body figure.featured-block {
   box-sizing: border-box;
   max-width: min(36em, calc(80svw - 1.6rem)) !important;
 }
 
-.pub-theme-dir-vert .markdown-body .image-grid[data-cols]:not([data-cols="1"]) {
+.pub-theme-dir-vert .markdown-body .image-grid[data-cols="1"] {
+  --stgy-image-grid-max-width: min(36em, calc(80svw - 1.6rem));
   box-sizing: border-box;
-  max-width: min(30em, calc(70svw - 1.4rem)) !important;
+  min-width: 0 !important;
+  min-block-size: 0 !important;
+  max-width: var(--stgy-image-grid-max-width) !important;
+  max-block-size: var(--stgy-image-grid-max-width) !important;
+}
+
+.pub-theme-dir-vert .markdown-body .image-grid[data-cols]:not([data-cols="1"]) {
+  --stgy-image-grid-max-width: min(30em, calc(70svw - 1.4rem));
+  box-sizing: border-box;
+  min-width: 0 !important;
+  min-block-size: 0 !important;
+  max-width: var(--stgy-image-grid-max-width) !important;
+  max-block-size: var(--stgy-image-grid-max-width) !important;
+}
+
+.pub-theme-dir-vert .markdown-body .image-grid[data-cols]:not([data-cols="1"]):not(:has(figure.image-block.expanded)) {
+  overflow: clip;
 }
 
 .pub-theme-dir-vert .markdown-body figure.image-block img,
@@ -3446,14 +3464,34 @@ html:has(.site-container) {
 
 @media (max-width: 480px) {
   .pub-theme-dir-vert .markdown-body figure.image-block:not([data-grid]),
-  .pub-theme-dir-vert .markdown-body figure.featured-block,
-  .pub-theme-dir-vert .markdown-body .image-grid[data-cols="1"] {
+  .pub-theme-dir-vert .markdown-body figure.featured-block {
     max-width: min(36em, calc(80svw - 0.8rem)) !important;
   }
 
-  .pub-theme-dir-vert .markdown-body .image-grid[data-cols]:not([data-cols="1"]) {
-    max-width: min(30em, calc(70svw - 0.7rem)) !important;
+  .pub-theme-dir-vert .markdown-body .image-grid[data-cols="1"] {
+    --stgy-image-grid-max-width: min(36em, calc(80svw - 0.8rem));
   }
+
+  .pub-theme-dir-vert .markdown-body .image-grid[data-cols]:not([data-cols="1"]) {
+    --stgy-image-grid-max-width: min(30em, calc(70svw - 0.7rem));
+  }
+}
+
+/* Vertical image grids: a grid cell must be a hard paint/layout boundary.
+   In vertical writing mode an intrinsically wide image can otherwise paint past
+   the grid's physical left edge and cover the following paragraph. */
+.pub-theme-dir-vert .markdown-body .image-grid figure.image-block:not(.expanded) {
+  box-sizing: border-box;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  overflow: hidden;
+}
+
+.pub-theme-dir-vert .markdown-body .image-grid figure.image-block:not(.expanded) > img,
+.pub-theme-dir-vert .markdown-body .image-grid figure.image-block:not(.expanded) > video {
+  box-sizing: border-box;
+  min-width: 0 !important;
+  max-width: 100% !important;
 }
 
 /* Vertical /sites rich snippets: keep featured media compact while preserving
@@ -4619,10 +4657,20 @@ html:has(.site-container) {
   max-height: min(7em, var(--stgy-article-viewport-max-height)) !important;
 }
 
-.pub-theme-dir-vert .markdown-body .image-grid figure.image-block,
-.pub-theme-dir-vert .markdown-body .image-grid figure.image-block[data-size],
-.pub-theme-dir-vert .markdown-body .image-grid figure.image-block img,
-.pub-theme-dir-vert .markdown-body .image-grid figure.image-block video {
+.pub-theme-dir-vert .markdown-body .image-grid figure.image-block:not(.expanded),
+.pub-theme-dir-vert .markdown-body .image-grid figure.image-block:not(.expanded)[data-size],
+.pub-theme-dir-vert .markdown-body .image-grid figure.image-block:not(.expanded) img,
+.pub-theme-dir-vert .markdown-body .image-grid figure.image-block:not(.expanded) video {
+  min-width: 0 !important;
+  min-block-size: 0 !important;
+  max-inline-size: min(100%, var(--stgy-article-viewport-max-height)) !important;
+  max-width: var(--stgy-image-grid-max-width, min(100%, 100vw)) !important;
+  max-block-size: var(--stgy-image-grid-max-width, min(100%, 100vw)) !important;
+}
+
+.pub-theme-dir-vert .markdown-body .image-grid figure.image-block.expanded,
+.pub-theme-dir-vert .markdown-body .image-grid figure.image-block.expanded img,
+.pub-theme-dir-vert .markdown-body .image-grid figure.image-block.expanded video {
   max-inline-size: min(100%, var(--stgy-article-viewport-max-height)) !important;
   max-block-size: min(100%, 100vw) !important;
 }
