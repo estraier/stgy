@@ -55,9 +55,31 @@ function makeDb(options: FakeDbOptions = {}) {
     created_at: options.postCreatedAt ?? new Date().toISOString(),
   };
 
-  const poolQuery = jest.fn(async (sql: string) => {
+  const poolQuery = jest.fn(async (sql: string, params?: unknown[]) => {
     if (/SELECT p\.id, p\.owned_by, p\.allow_replies, upc\.extensions/i.test(sql)) {
       return { rows: [postRow], rowCount: 1 };
+    }
+    if (/SELECT c\.id, c\.post_id, c\.nickname, c\.body, c\.status, c\.is_author\s+FROM posts p/i.test(sql)) {
+      if (params?.[1] !== hexToDec(OWNER_ID)) return { rows: [], rowCount: 0 };
+      if (listRows.length === 0) {
+        return {
+          rows: [
+            {
+              id: null,
+              post_id: null,
+              nickname: null,
+              body: null,
+              status: null,
+              is_author: null,
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      return {
+        rows: listRows,
+        rowCount: listRows.length,
+      };
     }
     if (/SELECT id, post_id, nickname, body, status, is_author\s+FROM post_pub_comments/i.test(sql)) {
       listQueryCount++;
@@ -318,6 +340,61 @@ describe("PubCommentsService", () => {
     expect(eventLog.recordPubComment).toHaveBeenCalledWith(
       expect.objectContaining({ postId: POST_ID, commenterNickname: "guest" }),
     );
+  });
+
+  test("export list returns all comments for the post owner without using the public cache", async () => {
+    const db = makeDb({
+      listRows: [
+        {
+          id: hexToDec("0000000000000200"),
+          post_id: hexToDec(POST_ID),
+          nickname: "pending guest",
+          body: "pending\n",
+          status: "pending",
+          is_author: false,
+        },
+        {
+          id: hexToDec("0000000000000201"),
+          post_id: hexToDec(POST_ID),
+          nickname: "author",
+          body: "published\n",
+          status: "published",
+          is_author: true,
+        },
+      ],
+    });
+    const rd = makeRedis();
+    const service = new PubCommentsService(db.pool, rd.redis);
+
+    const comments = await service.listForExport(POST_ID, OWNER_ID);
+
+    expect(comments.map((comment) => comment.status)).toEqual(["pending", "published"]);
+    expect(comments[0]).toMatchObject({
+      postId: POST_ID,
+      nickname: "pending guest",
+      body: "pending\n",
+      isAuthor: false,
+    });
+    expect(rd.hget).not.toHaveBeenCalled();
+    expect(rd.hset).not.toHaveBeenCalled();
+  });
+
+  test("export list returns an empty array when an owned post has no comments", async () => {
+    const db = makeDb({ listRows: [] });
+    const rd = makeRedis();
+    const service = new PubCommentsService(db.pool, rd.redis);
+
+    await expect(service.listForExport(POST_ID, OWNER_ID)).resolves.toEqual([]);
+  });
+
+  test("export list rejects a post not owned by the requesting user", async () => {
+    const db = makeDb();
+    const rd = makeRedis();
+    const service = new PubCommentsService(db.pool, rd.redis);
+
+    await expect(service.listForExport(POST_ID, GUEST_ID)).rejects.toMatchObject({
+      code: "not_found",
+    });
   });
 
   test("article owner sees pending comments in the public-page list", async () => {

@@ -33,6 +33,14 @@ export async function listPubComments(params: {
   return res.json();
 }
 
+export async function listPubCommentsForExport(postId: string): Promise<PubComment[]> {
+  const res = await apiFetch(`/pub-comments/export/${encodeURIComponent(postId)}`, {
+    method: "GET",
+  });
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
+}
+
 export async function getPubCommentFormState(postId: string): Promise<PubCommentFormState> {
   const search = new URLSearchParams({ postId });
   const res = await apiFetch(`/pub-comments/form-state?${search.toString()}`, { method: "GET" });

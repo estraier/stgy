@@ -141,6 +141,53 @@ export class PubCommentsService {
     return result;
   }
 
+  async listForExport(postId: string, ownerId: string): Promise<PubComment[]> {
+    const normalizedPostId = normalizeId(postId, "postId");
+    const normalizedOwnerId = normalizeId(ownerId, "ownerId");
+    const res = await pgQuery<{
+      id: string | null;
+      post_id: string | null;
+      nickname: string | null;
+      body: string | null;
+      status: PubCommentStatus | null;
+      is_author: boolean | null;
+    }>(
+      this.pgPool,
+      `SELECT c.id, c.post_id, c.nickname, c.body, c.status, c.is_author
+         FROM posts p
+         LEFT JOIN post_pub_comments c ON c.post_id = p.id
+        WHERE p.id = $1
+          AND p.owned_by = $2
+        ORDER BY c.id ASC`,
+      [hexToDec(normalizedPostId), hexToDec(normalizedOwnerId)],
+    );
+    if (res.rows.length === 0) {
+      throw new PubCommentError("not_found", "post not found");
+    }
+    return res.rows.flatMap((row) => {
+      if (
+        row.id === null ||
+        row.post_id === null ||
+        row.nickname === null ||
+        row.body === null ||
+        row.status === null ||
+        row.is_author === null
+      ) {
+        return [];
+      }
+      return [
+        rowToComment({
+          id: row.id,
+          post_id: row.post_id,
+          nickname: row.nickname,
+          body: row.body,
+          status: row.status,
+          is_author: row.is_author,
+        }),
+      ];
+    });
+  }
+
   async getFormState(input: {
     postId: string;
     currentUser: AuthenticatedUser | null;

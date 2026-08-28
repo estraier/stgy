@@ -45,6 +45,16 @@ export default function createPubCommentsRouter(
     }
   });
 
+  router.get("/export/:postId", async (req: Request, res: Response) => {
+    const currentUser = await authHelpers.requireLogin(req, res);
+    if (!currentUser) return;
+    try {
+      return res.json(await service.listForExport(req.params.postId, currentUser.id));
+    } catch (error) {
+      return sendPubCommentError(res, error);
+    }
+  });
+
   router.get("/form-state", async (req: Request, res: Response) => {
     const postId = typeof req.query.postId === "string" ? req.query.postId : "";
     const currentUser = await authHelpers.getCurrentUser(req);

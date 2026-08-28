@@ -1266,6 +1266,37 @@ paths:
         "429":
           $ref: "#/components/responses/Error429"
 
+  /pub-comments/export/{postId}:
+    get:
+      summary: Export all comments stored for one owned post
+      description: |
+        Authenticated export-only endpoint. Returns every stored comment for the requesting
+        user's own post, including pending comments, in ascending comment-ID order. Publication
+        state, comment mode, allowReplies, and the public comment Redis cache are intentionally
+        ignored.
+      security:
+        - sessionCookie: []
+      parameters:
+        - in: path
+          name: postId
+          required: true
+          schema: { type: string, pattern: '^[0-9A-Fa-f]{16}$' }
+      responses:
+        "200":
+          description: All stored comments for the owned post
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PubComment"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "404":
+          $ref: "#/components/responses/Error404"
+
   /pub-comments/form-state:
     get:
       summary: Get external-comment form state

@@ -4,12 +4,14 @@ import { useEffect, useState, type FormEvent } from "react";
 import { getSessionInfo } from "@/api/auth";
 import { getPubConfig, getUser, listBlockees, listFollowees } from "@/api/users";
 import { getPost, listPosts, listPostsLikedByUser } from "@/api/posts";
+import { listPubCommentsForExport } from "@/api/pubComments";
 import { listImages } from "@/api/media";
 import { listTracks } from "@/api/tracks";
 import type {
   MediaObject,
   Post,
   PostDetail,
+  PubComment,
   PubConfig,
   TrackObject,
   User,
@@ -136,7 +138,7 @@ The main contents are:
     Your publication settings and publication introduction.
 
   posts/
-    Each post in JSON and HTML formats.
+    Each post in JSON and HTML formats, including reply digests and stored external comments.
 
   images/
     The original image data included in this export. Exported HTML refers to these local files.
@@ -204,8 +206,11 @@ type ReplyDigest = {
   text: string;
 };
 
+type ExportPubComment = Omit<PubComment, "postId">;
+
 type ExportPostDetail = Omit<PostDetail, "olderPostId" | "newerPostId"> & {
   replyDigests: ReplyDigest[];
+  comments: ExportPubComment[];
 };
 
 function sleep(ms: number): Promise<void> {
@@ -495,6 +500,26 @@ function renderReplyDigests(post: ExportPostDetail): string {
   </div>`;
 }
 
+function renderComments(post: ExportPostDetail): string {
+  if (post.comments.length === 0) return "";
+
+  return `<div class="export-comments">
+    ${post.comments
+      .map(
+        (comment) => `<div class="export-comment">
+          <div class="export-comment-meta">
+            <span class="export-comment-nickname">${escapeHtml(comment.nickname)}</span>
+            ${comment.isAuthor ? '<span class="export-comment-author">author</span>' : ""}
+            <span class="export-comment-status">${escapeHtml(comment.status)}</span>
+            <time datetime="${escapeHtml(comment.createdAt)}">${escapeHtml(comment.createdAt)}</time>
+          </div>
+          <div class="export-comment-body">${escapeHtml(comment.body)}</div>
+        </div>`,
+      )
+      .join("")}
+  </div>`;
+}
+
 function renderPostHtml(post: ExportPostDetail): string {
   const postId = post.id;
   const postDate = post.createdAt;
@@ -539,6 +564,12 @@ function renderPostHtml(post: ExportPostDetail): string {
         ${
           post.replyDigests.length > 0
             ? `<tr><td class="reply-digests-cell" colspan="2">${renderReplyDigests(post)}</td></tr>`
+            : ""
+        }
+        <tr><th>Comments</th><td>${post.comments.length}</td></tr>
+        ${
+          post.comments.length > 0
+            ? `<tr><td class="export-comments-cell" colspan="2">${renderComments(post)}</td></tr>`
             : ""
         }
       </table>
@@ -673,11 +704,22 @@ async function makeReplyDigests(
   return replyDigests;
 }
 
-function withoutPostNavigation(detail: PostDetail, replyDigests: ReplyDigest[]): ExportPostDetail {
+function withoutPostNavigation(
+  detail: PostDetail,
+  replyDigests: ReplyDigest[],
+  comments: PubComment[],
+): ExportPostDetail {
   const { olderPostId, newerPostId, ...post } = detail;
   void olderPostId;
   void newerPostId;
-  return { ...post, replyDigests };
+  return {
+    ...post,
+    replyDigests,
+    comments: comments.map(({ postId, ...comment }) => {
+      void postId;
+      return comment;
+    }),
+  };
 }
 
 async function fetchAllMyImages(userId: string): Promise<MediaObject[]> {
@@ -933,7 +975,8 @@ export default function PageBody() {
       const preparedPosts: PreparedPost[] = [];
       for (const post of posts) {
         const replies = post.countReplies > 0 ? await fetchAllReplies(post.id, userId) : [];
-        const sourceFingerprint = await makePostSourceFingerprint(post, replies);
+        const comments = await withTooOftenRetry(() => listPubCommentsForExport(post.id));
+        const sourceFingerprint = await makePostSourceFingerprint(post, replies, comments);
         const previousPost = previousManifest?.posts[post.id];
         const jsonPath = `posts/${post.id}.json`;
         const htmlPath = `posts/${post.id}.html`;
@@ -958,7 +1001,7 @@ export default function PageBody() {
         await sleep(postBaseSleepMs);
         const replyDigests =
           replies.length > 0 ? await makeReplyDigests(replies, userId, postBaseSleepMs) : [];
-        const exportDetail = withoutPostNavigation(detail, replyDigests);
+        const exportDetail = withoutPostNavigation(detail, replyDigests, comments);
         const referenceTexts = [exportDetail.content, exportDetail.snippet];
         preparedPosts.push({
           post,

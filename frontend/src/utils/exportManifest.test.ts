@@ -107,14 +107,48 @@ describe("manifest hashes", () => {
       ownerNickname: "r2",
     });
 
-    const first = await makePostSourceFingerprint(post, [reply1, reply2]);
+    const first = await makePostSourceFingerprint(post, [reply1, reply2], []);
     const reordered = await makePostSourceFingerprint(
       { ...post, tags: ["a", "b"] },
       [reply2, reply1],
+      [],
     );
-    const changed = await makePostSourceFingerprint(post, [
-      reply1,
-      { ...reply2, updatedAt: "2026-08-12T01:00:00.000Z" },
+    const changed = await makePostSourceFingerprint(
+      post,
+      [reply1, { ...reply2, updatedAt: "2026-08-12T01:00:00.000Z" }],
+      [],
+    );
+
+    expect(reordered).toBe(first);
+    expect(changed).not.toBe(first);
+  });
+
+  test("post fingerprint is order-stable and changes when a comment changes", async () => {
+    const post = makePost();
+    const comment1 = {
+      id: "0000000000000030",
+      postId: post.id,
+      nickname: "guest1",
+      body: "one\n",
+      status: "pending" as const,
+      isAuthor: false,
+      createdAt: "2026-08-28T00:00:00.000Z",
+    };
+    const comment2 = {
+      id: "0000000000000040",
+      postId: post.id,
+      nickname: "guest2",
+      body: "two\n",
+      status: "published" as const,
+      isAuthor: false,
+      createdAt: "2026-08-28T00:01:00.000Z",
+    };
+
+    const first = await makePostSourceFingerprint(post, [], [comment1, comment2]);
+    const reordered = await makePostSourceFingerprint(post, [], [comment2, comment1]);
+    const changed = await makePostSourceFingerprint(post, [], [
+      comment1,
+      { ...comment2, body: "edited\n" },
     ]);
 
     expect(reordered).toBe(first);

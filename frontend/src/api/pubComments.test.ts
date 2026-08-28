@@ -7,6 +7,7 @@ import {
   editAuthorPubComment,
   getPubCommentFormState,
   listPubComments,
+  listPubCommentsForExport,
 } from "./pubComments";
 
 jest.mock("./client", () => ({
@@ -48,6 +49,26 @@ describe("pub comments API", () => {
       "/pub-comments?postId=0000000000000001&page=2&order=oldest",
       { method: "GET" },
     );
+  });
+
+  test("lists all comments for export through the dedicated endpoint", async () => {
+    const payload = [
+      {
+        id: "0000000000000002",
+        postId: "0000000000000001",
+        nickname: "guest",
+        body: "hello\n",
+        status: "pending",
+        isAuthor: false,
+        createdAt: "2026-08-28T00:00:00.000Z",
+      },
+    ];
+    mockApiFetch.mockResolvedValue(jsonResponse(payload));
+
+    await expect(listPubCommentsForExport("0000000000000001")).resolves.toEqual(payload);
+    expect(mockApiFetch).toHaveBeenCalledWith("/pub-comments/export/0000000000000001", {
+      method: "GET",
+    });
   });
 
   test("gets form state", async () => {

@@ -150,6 +150,37 @@ html {
   margin-top: 0.15em;
 }
 
+:where(body.stgy-export) .export-comments {
+  font-size: 85%;
+}
+
+:where(body.stgy-export) .export-comment + .export-comment {
+  margin-top: 1em;
+}
+
+:where(body.stgy-export) .export-comment-meta {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 1.2em;
+  color: #6b7280;
+}
+
+:where(body.stgy-export) .export-comment-nickname {
+  color: #111827;
+  font-weight: 600;
+}
+
+:where(body.stgy-export) .export-comment-author,
+:where(body.stgy-export) .export-comment-status {
+  font-size: 90%;
+}
+
+:where(body.stgy-export) .export-comment-body {
+  margin-top: 0.15em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 :where(body.stgy-export) code {
   font-family: "Inconsolata", "Source Code Pro", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 0.95em;

@@ -1,4 +1,4 @@
-import type { Post } from "@/api/models";
+import type { Post, PubComment } from "@/api/models";
 
 export const EXPORT_MANIFEST_FORMAT = "stgy-export-manifest";
 export const EXPORT_MANIFEST_VERSION = 1;
@@ -201,7 +201,11 @@ function postFingerprintRecord(post: Post) {
   };
 }
 
-export async function makePostSourceFingerprint(post: Post, replies: Post[]): Promise<string> {
+export async function makePostSourceFingerprint(
+  post: Post,
+  replies: Post[],
+  comments: PubComment[],
+): Promise<string> {
   const payload = {
     post: postFingerprintRecord(post),
     replies: [...replies]
@@ -214,6 +218,16 @@ export async function makePostSourceFingerprint(post: Post, replies: Post[]): Pr
         snippet: reply.snippet,
         ownerNickname: reply.ownerNickname,
         locale: reply.locale,
+      })),
+    comments: [...comments]
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((comment) => ({
+        id: comment.id,
+        createdAt: comment.createdAt,
+        nickname: comment.nickname,
+        body: comment.body,
+        status: comment.status,
+        isAuthor: comment.isAuthor,
       })),
   };
   return sha256Hex(JSON.stringify(payload));
