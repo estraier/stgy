@@ -22,6 +22,7 @@ import PubScrollAction from "@/components/PubScrollAction";
 import PubTrackMapHydrator from "@/components/PubTrackMapHydrator";
 import PubShareButtons from "@/components/PubShareButtons";
 import PubGoogleAnalytics from "@/components/PubGoogleAnalytics";
+import PubSearchForm from "@/components/PubSearchForm";
 import PubComments from "@/components/PubComments";
 import type { Post } from "@/api/models";
 import type { Metadata } from "next";
@@ -415,21 +416,13 @@ export default async function PubPostPage({ params, searchParams }: Props) {
                   <h2 className="side-header">
                     {convertForDirection("Search posts", themeDir)}
                   </h2>
-                  <form className="pub-side-search-form" action={siteHrefBase} method="get">
-                    {design && <input type="hidden" name="design" value={design} />}
-                    <input
-                      className="pub-side-search-input"
-                      type="search"
-                      name="q"
-                      aria-label="Search posts"
-                    />
-                    <button className="pub-side-search-button" type="submit" aria-label="Search posts">
-                      <svg aria-hidden="true" viewBox="0 0 24 24">
-                        <circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" strokeWidth="2" />
-                        <path d="M16 16l5 5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                      </svg>
-                    </button>
-                  </form>
+                  <PubSearchForm
+                    action={siteHrefBase}
+                    className="pub-side-search-form"
+                    inputClassName="pub-side-search-input"
+                    buttonClassName="pub-side-search-button"
+                    hiddenFields={design ? [{ name: "design", value: design }] : []}
+                  />
                 </section>
               </aside>
             )}

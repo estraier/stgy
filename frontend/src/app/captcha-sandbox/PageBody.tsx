@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import {
   createCaptchaChallenge,
@@ -134,12 +135,13 @@ export default function CaptchaSandbox() {
             <form onSubmit={(event) => void verify(event)}>
               <div className="mb-4 flex items-center gap-3">
                 {/* The backend returns a raster PNG, never the source glyph data. */}
-                <img
+                <Image
                   src={challenge.image}
                   width={200}
                   height={48}
                   alt="Six digit CAPTCHA"
                   className="border border-gray-400 bg-white"
+                  unoptimized
                 />
                 <button
                   type="button"

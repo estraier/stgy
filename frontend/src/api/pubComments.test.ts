@@ -55,6 +55,7 @@ describe("pub comments API", () => {
       captchaRequired: false,
       name: "太郎",
       canPostAsAuthor: true,
+      asAuthor: false,
       canPost: true,
       limitReached: false,
     };

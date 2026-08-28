@@ -13,11 +13,13 @@ import { AuthHelpers } from "./authHelpers";
 import {
   makeCaptchaPassCookieOptions,
   PUB_COMMENT_CAPTCHA_PASS_COOKIE,
+  readClientIp,
   readCaptchaPassToken,
 } from "./captcha";
 import { QUERY_HASH_HEADER, verifyQueryHash } from "../utils/queryHash";
 
 export const PUB_COMMENT_NAME_COOKIE = "stgy_pub_comment_name";
+export const PUB_COMMENT_AS_AUTHOR_COOKIE = "stgy_pub_comment_as_author";
 const PUB_COMMENT_NAME_COOKIE_MAX_AGE_MS = 365 * 24 * 60 * 60 * 1000;
 
 export default function createPubCommentsRouter(
@@ -52,7 +54,9 @@ export default function createPubCommentsRouter(
           postId,
           currentUser,
           passToken: readCaptchaPassToken(req),
+          clientIp: readClientIp(req),
           savedName: readNameCookie(req),
+          savedAsAuthor: readAsAuthorCookie(req),
         }),
       );
     } catch (error) {
@@ -76,9 +80,17 @@ export default function createPubCommentsRouter(
           typeof req.body?.captchaAnswer === "string" ? req.body.captchaAnswer : undefined,
         currentUser,
         passToken: readCaptchaPassToken(req),
+        clientIp: readClientIp(req),
       });
 
       res.cookie(PUB_COMMENT_NAME_COOKIE, result.comment.name, makeNameCookieOptions(req));
+      if (result.asAuthorPreference !== undefined) {
+        res.cookie(
+          PUB_COMMENT_AS_AUTHOR_COOKIE,
+          result.asAuthorPreference ? "1" : "0",
+          makeNameCookieOptions(req),
+        );
+      }
       if (result.newPassToken) {
         res.cookie(
           PUB_COMMENT_CAPTCHA_PASS_COOKIE,
@@ -148,6 +160,13 @@ function parsePositiveInt(value: unknown, defaultValue: number): number {
 function readNameCookie(req: Request): string | undefined {
   const value = req.cookies?.[PUB_COMMENT_NAME_COOKIE];
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function readAsAuthorCookie(req: Request): boolean | undefined {
+  const value = req.cookies?.[PUB_COMMENT_AS_AUTHOR_COOKIE];
+  if (value === "1") return true;
+  if (value === "0") return false;
+  return undefined;
 }
 
 function makeNameCookieOptions(req: Request) {

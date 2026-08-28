@@ -52,6 +52,7 @@ type FormState = {
   captchaRequired: boolean;
   name: string;
   canPostAsAuthor: boolean;
+  asAuthor: boolean;
   canPost: boolean;
   limitReached: boolean;
 };
@@ -65,12 +66,14 @@ type CreateInput = {
   captchaAnswer?: string;
   currentUser: AuthenticatedUser | null;
   passToken?: string;
+  clientIp: string;
 };
 
 type CreateResult = {
   comment: PubComment;
   newPassToken?: string;
   passTokenInvalidated: boolean;
+  asAuthorPreference?: boolean;
 };
 
 export class PubCommentsService {
@@ -129,7 +132,9 @@ export class PubCommentsService {
     postId: string;
     currentUser: AuthenticatedUser | null;
     passToken?: string;
+    clientIp: string;
     savedName?: string;
+    savedAsAuthor?: boolean;
   }): Promise<FormState> {
     const state = await this.requirePublicCommentState(input.postId);
     const ownerLoggedIn = input.currentUser?.id === state.ownerId;
@@ -149,6 +154,7 @@ export class PubCommentsService {
       const passStatus = await this.captchaService.getPassTokenStatus(
         PUB_COMMENT_CAPTCHA_PURPOSE,
         input.passToken,
+        input.clientIp,
       );
       captchaRequired = !passStatus.valid;
     }
@@ -156,6 +162,7 @@ export class PubCommentsService {
       captchaRequired,
       name,
       canPostAsAuthor,
+      asAuthor: canPostAsAuthor && (input.savedAsAuthor ?? true),
       canPost: !limitReached,
       limitReached,
     };
@@ -181,6 +188,7 @@ export class PubCommentsService {
       const passStatus = await this.captchaService.getPassTokenStatus(
         PUB_COMMENT_CAPTCHA_PURPOSE,
         input.passToken,
+        input.clientIp,
       );
       if (passStatus.valid) {
         usedExistingPass = true;
@@ -233,6 +241,7 @@ export class PubCommentsService {
         passUseReserved = await this.captchaService.reservePassTokenUse(
           PUB_COMMENT_CAPTCHA_PURPOSE,
           input.passToken,
+          input.clientIp,
         );
         if (!passUseReserved) {
           throw new PubCommentError("captcha_required", "captcha required");
@@ -286,7 +295,11 @@ export class PubCommentsService {
     if (!ownerLoggedIn && solvedChallenge) {
       try {
         // This comment itself is the first successful use of the newly issued pass.
-        newPassToken = await this.captchaService.issuePassToken(PUB_COMMENT_CAPTCHA_PURPOSE, 1);
+        newPassToken = await this.captchaService.issuePassToken(
+          PUB_COMMENT_CAPTCHA_PURPOSE,
+          input.clientIp,
+          1,
+        );
       } catch {
         // The comment is already committed. Failure to issue the convenience pass must not
         // turn a successful submission into an HTTP error.
@@ -314,7 +327,12 @@ export class PubCommentsService {
       } catch {}
     }
 
-    return { comment, newPassToken, passTokenInvalidated };
+    return {
+      comment,
+      newPassToken,
+      passTokenInvalidated,
+      asAuthorPreference: canPostAsAuthor ? input.asAuthor : undefined,
+    };
   }
 
   async approve(commentId: string, currentUser: AuthenticatedUser): Promise<PubComment> {

@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { getSessionInfo } from "@/api/auth";
 import {
@@ -19,6 +20,7 @@ const EMPTY_FORM_STATE: PubCommentFormState = {
   captchaRequired: true,
   name: "",
   canPostAsAuthor: false,
+  asAuthor: false,
   canPost: true,
   limitReached: false,
 };
@@ -97,6 +99,7 @@ function TrashIcon() {
 
 export default function PubComments({ postId, ownerId, themeDir }: Props) {
   const sectionRef = useRef<HTMLElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
   const ui = useCallback((text: string) => convertForDirection(text, themeDir), [themeDir]);
   const [comments, setComments] = useState<PubComment[]>([]);
@@ -262,7 +265,7 @@ export default function PubComments({ postId, ownerId, themeDir }: Props) {
       const state = await getPubCommentFormState(postId);
       setFormState(state);
       setName(state.name);
-      setAsAuthor(state.canPostAsAuthor);
+      setAsAuthor(state.asAuthor);
       if (!state.canPost || state.limitReached) {
         setLimitReached(true);
         setFormOpen(false);
@@ -300,7 +303,11 @@ export default function PubComments({ postId, ownerId, themeDir }: Props) {
           ? "Comment submitted for approval."
           : "Comment posted.",
       );
-      await loadComments(1, order);
+      setOrder("newest");
+      await loadComments(1, "newest");
+      requestAnimationFrame(() => {
+        headingRef.current?.scrollIntoView({ block: "start", inline: "nearest" });
+      });
     } catch (e) {
       const text = e instanceof Error ? e.message : String(e);
       setError(text);
@@ -371,7 +378,7 @@ export default function PubComments({ postId, ownerId, themeDir }: Props) {
     <section ref={sectionRef} className="pub-comments" id="comments" aria-label="Comments">
       <div ref={surfaceRef} className="pub-comments-surface">
       <div className="pub-comments-toolbar">
-        <h2>{ui("Comments")}</h2>
+        <h2 ref={headingRef}>{ui("Comments")}</h2>
         <div className="pub-comments-controls">
           <label className="pub-comments-order" aria-label="Comment order">
             <input
@@ -456,7 +463,7 @@ export default function PubComments({ postId, ownerId, themeDir }: Props) {
                 <>
                   <header className="pub-comment-header">
                     <div className="pub-comment-name" title={comment.name}>
-                      {comment.name}
+                      {ui(comment.name)}
                     </div>
                     <span className="pub-comment-author-slot">
                       {comment.isAuthor && (
@@ -582,7 +589,13 @@ export default function PubComments({ postId, ownerId, themeDir }: Props) {
           {formState.captchaRequired && challenge && (
             <div className="pub-comment-captcha">
               <span className="pub-comment-captcha-image">
-                <img src={challenge.image} width={200} height={48} alt="Six digit CAPTCHA" />
+                <Image
+                  src={challenge.image}
+                  width={200}
+                  height={48}
+                  alt="Six digit CAPTCHA"
+                  unoptimized
+                />
               </span>
               <button
                 type="button"

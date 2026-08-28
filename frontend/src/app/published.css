@@ -1886,6 +1886,10 @@ html:has(.site-container) {
   .pub-theme-dir-vert .markdown-body .image-block {
     padding-right: 0.5em;
   }
+  .pub-theme-dir-vert .markdown-body pre {
+    padding-top: 0.25em;
+    padding-bottom: 0.25em;
+  }
   .pub-theme-dir-vert .markdown-body .image-block figcaption {
     right: 0.25em;
     bottom: unset;

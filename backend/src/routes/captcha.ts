@@ -14,6 +14,7 @@ export default function createCaptchaRouter(redis: Redis) {
     const status = await captchaService.getPassTokenStatus(
       PUB_COMMENT_CAPTCHA_PURPOSE,
       readCaptchaPassToken(req),
+      readClientIp(req),
     );
     return res.json(status);
   });
@@ -46,7 +47,10 @@ export default function createCaptchaRouter(redis: Redis) {
     if (previousToken) {
       await captchaService.revokePassToken(PUB_COMMENT_CAPTCHA_PURPOSE, previousToken);
     }
-    const token = await captchaService.issuePassToken(PUB_COMMENT_CAPTCHA_PURPOSE);
+    const token = await captchaService.issuePassToken(
+      PUB_COMMENT_CAPTCHA_PURPOSE,
+      readClientIp(req),
+    );
     res.cookie(PUB_COMMENT_CAPTCHA_PASS_COOKIE, token, makeCaptchaPassCookieOptions(req));
     return res.json({
       passed: true,
@@ -66,6 +70,12 @@ export default function createCaptchaRouter(redis: Redis) {
 export function readCaptchaPassToken(req: Request): string | undefined {
   const value = req.cookies?.[PUB_COMMENT_CAPTCHA_PASS_COOKIE];
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+export function readClientIp(req: Request): string {
+  const value = req.ip || req.socket.remoteAddress;
+  if (!value) throw new Error("client IP is unavailable");
+  return value;
 }
 
 export function makeCaptchaPassCookieOptions(req: Request) {

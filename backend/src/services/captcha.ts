@@ -26,6 +26,7 @@ const DIGIT_START_Y = 6;
 const CAPTCHA_DIGITS = 6;
 const TOKEN_BYTES = 32;
 const CHALLENGE_ID_BYTES = 18;
+const PASS_MAX_IP_ADDRESSES = 4;
 const BACKGROUND_DITHER_PROBABILITY = 0.10;
 const DIGIT_ROTATION_MAX_DEGREES = 10;
 const DIGIT_MARGIN = 4;
@@ -81,67 +82,202 @@ return 1
     return Number(result) === 1;
   }
 
-  async issuePassToken(purpose: string, initialUsed = 0): Promise<string> {
+  async issuePassToken(purpose: string, clientIp: string, initialUsed = 0): Promise<string> {
     const normalizedPurpose = normalizePurpose(purpose);
-    if (!Number.isSafeInteger(initialUsed) || initialUsed < 0 || initialUsed >= Config.CAPTCHA_PASS_MAX_USES) {
+    if (
+      !Number.isSafeInteger(initialUsed) ||
+      initialUsed < 0 ||
+      initialUsed >= Config.CAPTCHA_PASS_MAX_USES
+    ) {
       throw new Error("invalid initial CAPTCHA pass use count");
     }
     const token = crypto.randomBytes(TOKEN_BYTES).toString("base64url");
-    await this.redis.set(
+    await this.redis.eval(
+      `
+redis.call("HSET", KEYS[1], "used", ARGV[1], "reserved", "0", ARGV[2], "1")
+redis.call("EXPIRE", KEYS[1], ARGV[3])
+return 1
+`,
+      1,
       passKey(normalizedPurpose, token),
-      `${initialUsed},0`,
-      "EX",
+      initialUsed,
+      passIpField(token, clientIp),
       Config.CAPTCHA_PASS_TTL_SEC,
     );
     return token;
   }
 
-  async getPassTokenStatus(purpose: string, token: string | undefined): Promise<CaptchaPassStatus> {
+  async getPassTokenStatus(
+    purpose: string,
+    token: string | undefined,
+    clientIp: string,
+  ): Promise<CaptchaPassStatus> {
     if (!token) return invalidPassStatus();
     const normalizedPurpose = normalizePurpose(purpose);
-    const raw = await this.redis.get(passKey(normalizedPurpose, token));
-    const state = raw === null ? null : parseStoredPassState(raw);
-    if (!state || state.used + state.reserved >= Config.CAPTCHA_PASS_MAX_USES) {
+    const result = await this.redis.eval(
+      `
+local keyType = redis.call("TYPE", KEYS[1])
+if type(keyType) == "table" then
+  keyType = keyType["ok"]
+end
+if keyType == "none" then
+  return {0, 0, 0}
+end
+local used
+local reserved
+local legacy = false
+local legacyTtl = -1
+if keyType == "string" then
+  local value = redis.call("GET", KEYS[1])
+  local comma = value and string.find(value, ",", 1, true)
+  if not comma then
+    redis.call("DEL", KEYS[1])
+    return {0, 0, 0}
+  end
+  used = tonumber(string.sub(value, 1, comma - 1))
+  reserved = tonumber(string.sub(value, comma + 1))
+  legacy = true
+  legacyTtl = redis.call("PTTL", KEYS[1])
+elseif keyType == "hash" then
+  used = tonumber(redis.call("HGET", KEYS[1], "used"))
+  reserved = tonumber(redis.call("HGET", KEYS[1], "reserved"))
+else
+  redis.call("DEL", KEYS[1])
+  return {0, 0, 0}
+end
+local maxUses = tonumber(ARGV[1])
+if not used or not reserved or used < 0 or reserved < 0 then
+  redis.call("DEL", KEYS[1])
+  return {0, 0, 0}
+end
+if used + reserved >= maxUses then
+  if used >= maxUses and reserved == 0 then
+    redis.call("DEL", KEYS[1])
+  end
+  return {0, 0, 0}
+end
+local ipField = ARGV[2]
+if legacy then
+  redis.call("DEL", KEYS[1])
+  redis.call("HSET", KEYS[1], "used", tostring(used), "reserved", tostring(reserved), ipField, "1")
+  if legacyTtl >= 0 then
+    redis.call("PEXPIRE", KEYS[1], math.max(1, legacyTtl))
+  end
+elseif redis.call("HEXISTS", KEYS[1], ipField) == 0 then
+  local ipCount = 0
+  local fields = redis.call("HKEYS", KEYS[1])
+  for _, field in ipairs(fields) do
+    if string.sub(field, 1, 3) == "ip:" then
+      ipCount = ipCount + 1
+    end
+  end
+  if ipCount >= tonumber(ARGV[3]) then
+    redis.call("DEL", KEYS[1])
+    return {0, 0, 0}
+  end
+  redis.call("HSET", KEYS[1], ipField, "1")
+end
+return {1, used, reserved}
+`,
+      1,
+      passKey(normalizedPurpose, token),
+      Config.CAPTCHA_PASS_MAX_USES,
+      passIpField(token, clientIp),
+      PASS_MAX_IP_ADDRESSES,
+    );
+    const values = Array.isArray(result) ? result.map(Number) : [];
+    if (values[0] !== 1 || !Number.isSafeInteger(values[1]) || !Number.isSafeInteger(values[2])) {
       return invalidPassStatus();
     }
+    const used = values[1];
+    const reserved = values[2];
     return {
       valid: true,
-      used: state.used,
-      remaining: Config.CAPTCHA_PASS_MAX_USES - state.used - state.reserved,
+      used,
+      remaining: Config.CAPTCHA_PASS_MAX_USES - used - reserved,
     };
   }
 
-  async reservePassTokenUse(purpose: string, token: string | undefined): Promise<boolean> {
+  async reservePassTokenUse(
+    purpose: string,
+    token: string | undefined,
+    clientIp: string,
+  ): Promise<boolean> {
     if (!token) return false;
     const normalizedPurpose = normalizePurpose(purpose);
     const key = passKey(normalizedPurpose, token);
     const result = await this.redis.eval(
       `
-local value = redis.call("GET", KEYS[1])
-if not value then
+local keyType = redis.call("TYPE", KEYS[1])
+if type(keyType) == "table" then
+  keyType = keyType["ok"]
+end
+if keyType == "none" then
   return 0
 end
-local comma = string.find(value, ",", 1, true)
-if not comma then
+local used
+local reserved
+local legacy = false
+local legacyTtl = -1
+if keyType == "string" then
+  local value = redis.call("GET", KEYS[1])
+  local comma = value and string.find(value, ",", 1, true)
+  if not comma then
+    redis.call("DEL", KEYS[1])
+    return 0
+  end
+  used = tonumber(string.sub(value, 1, comma - 1))
+  reserved = tonumber(string.sub(value, comma + 1))
+  legacy = true
+  legacyTtl = redis.call("PTTL", KEYS[1])
+elseif keyType == "hash" then
+  used = tonumber(redis.call("HGET", KEYS[1], "used"))
+  reserved = tonumber(redis.call("HGET", KEYS[1], "reserved"))
+else
   redis.call("DEL", KEYS[1])
   return 0
 end
-local used = tonumber(string.sub(value, 1, comma - 1))
-local reserved = tonumber(string.sub(value, comma + 1))
 local maxUses = tonumber(ARGV[1])
-if not used or not reserved or used < 0 or reserved < 0 or used + reserved >= maxUses then
-  if used and reserved and used >= maxUses and reserved == 0 then
+if not used or not reserved or used < 0 or reserved < 0 then
+  redis.call("DEL", KEYS[1])
+  return 0
+end
+if used + reserved >= maxUses then
+  if used >= maxUses and reserved == 0 then
     redis.call("DEL", KEYS[1])
   end
   return 0
 end
+local ipField = ARGV[2]
+if legacy then
+  redis.call("DEL", KEYS[1])
+  redis.call("HSET", KEYS[1], "used", tostring(used), "reserved", tostring(reserved), ipField, "1")
+  if legacyTtl >= 0 then
+    redis.call("PEXPIRE", KEYS[1], math.max(1, legacyTtl))
+  end
+elseif redis.call("HEXISTS", KEYS[1], ipField) == 0 then
+  local ipCount = 0
+  local fields = redis.call("HKEYS", KEYS[1])
+  for _, field in ipairs(fields) do
+    if string.sub(field, 1, 3) == "ip:" then
+      ipCount = ipCount + 1
+    end
+  end
+  if ipCount >= tonumber(ARGV[3]) then
+    redis.call("DEL", KEYS[1])
+    return 0
+  end
+  redis.call("HSET", KEYS[1], ipField, "1")
+end
 reserved = reserved + 1
-redis.call("SET", KEYS[1], tostring(used) .. "," .. tostring(reserved), "KEEPTTL")
+redis.call("HSET", KEYS[1], "reserved", tostring(reserved))
 return 1
 `,
       1,
       key,
       Config.CAPTCHA_PASS_MAX_USES,
+      passIpField(token, clientIp),
+      PASS_MAX_IP_ADDRESSES,
     );
     return Number(result) === 1;
   }
@@ -155,17 +291,33 @@ return 1
     const key = passKey(normalizedPurpose, token);
     const result = await this.redis.eval(
       `
-local value = redis.call("GET", KEYS[1])
-if not value then
+local keyType = redis.call("TYPE", KEYS[1])
+if type(keyType) == "table" then
+  keyType = keyType["ok"]
+end
+if keyType == "none" then
   return 0
 end
-local comma = string.find(value, ",", 1, true)
-if not comma then
+local used
+local reserved
+local legacy = false
+if keyType == "string" then
+  local value = redis.call("GET", KEYS[1])
+  local comma = value and string.find(value, ",", 1, true)
+  if not comma then
+    redis.call("DEL", KEYS[1])
+    return 0
+  end
+  used = tonumber(string.sub(value, 1, comma - 1))
+  reserved = tonumber(string.sub(value, comma + 1))
+  legacy = true
+elseif keyType == "hash" then
+  used = tonumber(redis.call("HGET", KEYS[1], "used"))
+  reserved = tonumber(redis.call("HGET", KEYS[1], "reserved"))
+else
   redis.call("DEL", KEYS[1])
   return 0
 end
-local used = tonumber(string.sub(value, 1, comma - 1))
-local reserved = tonumber(string.sub(value, comma + 1))
 local maxUses = tonumber(ARGV[1])
 if not used or not reserved or used < 0 or reserved <= 0 then
   redis.call("DEL", KEYS[1])
@@ -177,7 +329,11 @@ if used >= maxUses and reserved == 0 then
   redis.call("DEL", KEYS[1])
   return 2
 end
-redis.call("SET", KEYS[1], tostring(used) .. "," .. tostring(reserved), "KEEPTTL")
+if legacy then
+  redis.call("SET", KEYS[1], tostring(used) .. "," .. tostring(reserved), "KEEPTTL")
+else
+  redis.call("HSET", KEYS[1], "used", tostring(used), "reserved", tostring(reserved))
+end
 return 1
 `,
       1,
@@ -195,22 +351,42 @@ return 1
     const key = passKey(normalizedPurpose, token);
     await this.redis.eval(
       `
-local value = redis.call("GET", KEYS[1])
-if not value then
+local keyType = redis.call("TYPE", KEYS[1])
+if type(keyType) == "table" then
+  keyType = keyType["ok"]
+end
+if keyType == "none" then
   return 0
 end
-local comma = string.find(value, ",", 1, true)
-if not comma then
+local used
+local reserved
+local legacy = false
+if keyType == "string" then
+  local value = redis.call("GET", KEYS[1])
+  local comma = value and string.find(value, ",", 1, true)
+  if not comma then
+    redis.call("DEL", KEYS[1])
+    return 0
+  end
+  used = tonumber(string.sub(value, 1, comma - 1))
+  reserved = tonumber(string.sub(value, comma + 1))
+  legacy = true
+elseif keyType == "hash" then
+  used = tonumber(redis.call("HGET", KEYS[1], "used"))
+  reserved = tonumber(redis.call("HGET", KEYS[1], "reserved"))
+else
   redis.call("DEL", KEYS[1])
   return 0
 end
-local used = tonumber(string.sub(value, 1, comma - 1))
-local reserved = tonumber(string.sub(value, comma + 1))
 if not used or not reserved or used < 0 or reserved <= 0 then
   return 0
 end
 reserved = reserved - 1
-redis.call("SET", KEYS[1], tostring(used) .. "," .. tostring(reserved), "KEEPTTL")
+if legacy then
+  redis.call("SET", KEYS[1], tostring(used) .. "," .. tostring(reserved), "KEEPTTL")
+else
+  redis.call("HSET", KEYS[1], "reserved", tostring(reserved))
+end
 return 1
 `,
       1,
@@ -242,19 +418,16 @@ function passKey(purpose: string, token: string): string {
   return `captcha:pass:${purpose}:${digest}`;
 }
 
-function invalidPassStatus(): CaptchaPassStatus {
-  return { valid: false, used: 0, remaining: 0 };
+function passIpField(token: string, clientIp: string): string {
+  const normalizedIp = clientIp.trim().toLowerCase();
+  if (!normalizedIp) throw new Error("client IP is required for CAPTCHA pass");
+  // Do not keep an IP value that can be recovered by hashing the small IPv4 address space.
+  const digest = crypto.createHmac("sha256", token).update(normalizedIp, "utf8").digest("hex");
+  return `ip:${digest}`;
 }
 
-function parseStoredPassState(raw: string): { used: number; reserved: number } | null {
-  const match = /^(\d+),(\d+)$/.exec(raw);
-  if (!match) return null;
-  const used = Number(match[1]);
-  const reserved = Number(match[2]);
-  if (!Number.isSafeInteger(used) || !Number.isSafeInteger(reserved) || used < 0 || reserved < 0) {
-    return null;
-  }
-  return { used, reserved };
+function invalidPassStatus(): CaptchaPassStatus {
+  return { valid: false, used: 0, remaining: 0 };
 }
 
 async function renderCaptchaPng(answer: string): Promise<Buffer> {

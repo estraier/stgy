@@ -14,6 +14,7 @@ export type PubCommentFormState = {
   captchaRequired: boolean;
   name: string;
   canPostAsAuthor: boolean;
+  asAuthor: boolean;
   canPost: boolean;
   limitReached: boolean;
 };

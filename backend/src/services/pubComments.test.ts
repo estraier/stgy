@@ -9,6 +9,7 @@ const POST_ID = "0000000000000100";
 const OWNER_ID = "0000000000000020";
 const GUEST_ID = "0000000000000030";
 const ADMIN_ID = "0000000000000040";
+const CLIENT_IP = "203.0.113.10";
 
 type FakeDbOptions = {
   mode?: "none" | "moderated" | "open";
@@ -102,39 +103,40 @@ function makeDb(options: FakeDbOptions = {}) {
 }
 
 function makeRedis(options: { passValid?: boolean; reserveResult?: boolean } = {}) {
-  let passState = options.passValid ? "0,0" : null;
-  const get = jest.fn(async () => passState);
+  let passState = options.passValid ? { used: 0, reserved: 0 } : null;
   const evalFn = jest.fn(async (script: string) => {
+    if (script.includes("return {1, used, reserved}")) {
+      return passState ? [1, passState.used, passState.reserved] : [0, 0, 0];
+    }
     if (script.includes("reserved = reserved + 1")) {
       if (!passState || options.reserveResult === false) return 0;
-      const [used, reserved] = passState.split(",").map(Number);
-      passState = `${used},${reserved + 1}`;
+      passState.reserved += 1;
       return 1;
     }
     if (script.includes("used = used + 1")) {
       if (!passState) return 0;
-      let [used, reserved] = passState.split(",").map(Number);
-      if (reserved <= 0) return 0;
-      used += 1;
-      reserved -= 1;
-      passState = `${used},${reserved}`;
+      if (passState.reserved <= 0) return 0;
+      passState.used += 1;
+      passState.reserved -= 1;
       return 1;
     }
     if (script.includes("reserved = reserved - 1")) {
       if (!passState) return 0;
-      const [used, reserved] = passState.split(",").map(Number);
-      passState = `${used},${Math.max(0, reserved - 1)}`;
+      passState.reserved = Math.max(0, passState.reserved - 1);
+      return 1;
+    }
+    if (script.includes('redis.call("HSET", KEYS[1], "used", ARGV[1]')) {
+      passState = { used: 1, reserved: 0 };
       return 1;
     }
     return 1;
   });
   const redis = {
-    get,
     set: jest.fn(async () => "OK"),
     eval: evalFn,
     del: jest.fn(async () => 1),
   } as unknown as Redis;
-  return { redis, get, evalFn };
+  return { redis, evalFn };
 }
 
 function user(id: string, extra: Partial<AuthenticatedUser> = {}): AuthenticatedUser {
@@ -142,6 +144,67 @@ function user(id: string, extra: Partial<AuthenticatedUser> = {}): Authenticated
 }
 
 describe("PubCommentsService", () => {
+  test("article owner reuses the saved as-author preference", async () => {
+    const db = makeDb();
+    const rd = makeRedis();
+    const service = new PubCommentsService(db.pool, rd.redis);
+
+    const savedOff = await service.getFormState({
+      postId: POST_ID,
+      currentUser: user(OWNER_ID),
+      clientIp: CLIENT_IP,
+      savedAsAuthor: false,
+    });
+    const savedOn = await service.getFormState({
+      postId: POST_ID,
+      currentUser: user(OWNER_ID),
+      clientIp: CLIENT_IP,
+      savedAsAuthor: true,
+    });
+    const noSavedPreference = await service.getFormState({
+      postId: POST_ID,
+      currentUser: user(OWNER_ID),
+      clientIp: CLIENT_IP,
+    });
+
+    expect(savedOff.asAuthor).toBe(false);
+    expect(savedOn.asAuthor).toBe(true);
+    expect(noSavedPreference.asAuthor).toBe(true);
+  });
+
+  test("saved as-author preference is ignored when the current user is not the article owner", async () => {
+    const db = makeDb();
+    const rd = makeRedis();
+    const service = new PubCommentsService(db.pool, rd.redis);
+
+    const state = await service.getFormState({
+      postId: POST_ID,
+      currentUser: user(GUEST_ID),
+      clientIp: CLIENT_IP,
+      savedAsAuthor: true,
+    });
+
+    expect(state.canPostAsAuthor).toBe(false);
+    expect(state.asAuthor).toBe(false);
+  });
+
+  test("as-author preference is not overwritten when the checkbox is unavailable", async () => {
+    const db = makeDb({ mode: "moderated" });
+    const rd = makeRedis();
+    const service = new PubCommentsService(db.pool, rd.redis);
+
+    const result = await service.create({
+      postId: POST_ID,
+      name: "owner",
+      body: "hello",
+      asAuthor: false,
+      currentUser: user(OWNER_ID, { isFrozen: true }),
+      clientIp: CLIENT_IP,
+    });
+
+    expect(result.asAuthorPreference).toBeUndefined();
+  });
+
   test("logged-in article owner bypasses CAPTCHA and as-author publishes immediately", async () => {
     const db = makeDb({ mode: "moderated" });
     const rd = makeRedis();
@@ -155,13 +218,14 @@ describe("PubCommentsService", () => {
       asAuthor: true,
       currentUser: user(OWNER_ID),
       passToken: undefined,
+      clientIp: CLIENT_IP,
     });
 
     expect(result.comment.status).toBe("published");
     expect(result.comment.isAuthor).toBe(true);
     expect(result.comment.name).toBe("Author");
     expect(result.comment.body).toBe("hello\n");
-    expect(rd.get).not.toHaveBeenCalled();
+    expect(result.asAuthorPreference).toBe(true);
     expect(rd.evalFn).not.toHaveBeenCalled();
     expect(db.inserted).toHaveLength(1);
     expect(db.inserted[0]?.[5]).toBe(true);
@@ -180,11 +244,13 @@ describe("PubCommentsService", () => {
       body: "hello",
       asAuthor: false,
       currentUser: user(OWNER_ID),
+      clientIp: CLIENT_IP,
     });
 
     expect(result.comment.status).toBe("published");
     expect(result.comment.isAuthor).toBe(false);
-    expect(rd.get).not.toHaveBeenCalled();
+    expect(result.asAuthorPreference).toBe(false);
+    expect(rd.evalFn).not.toHaveBeenCalled();
     expect(eventLog.recordPubComment).not.toHaveBeenCalled();
   });
 
@@ -201,11 +267,12 @@ describe("PubCommentsService", () => {
       asAuthor: false,
       currentUser: user(GUEST_ID),
       passToken: "token",
+      clientIp: CLIENT_IP,
     });
 
     expect(result.comment.status).toBe("published");
-    expect(rd.get).toHaveBeenCalled();
-    expect(rd.evalFn).toHaveBeenCalledTimes(2);
+    expect(result.asAuthorPreference).toBeUndefined();
+    expect(rd.evalFn).toHaveBeenCalledTimes(3);
     expect(db.inserted).toHaveLength(1);
     expect(eventLog.recordPubComment).toHaveBeenCalledWith(
       expect.objectContaining({ postId: POST_ID, commenterName: "guest" }),
@@ -347,6 +414,7 @@ describe("PubCommentsService", () => {
         body: "hello",
         asAuthor: false,
         currentUser: user(OWNER_ID),
+        clientIp: CLIENT_IP,
       }),
     ).rejects.toMatchObject({ code: "invalid_input" });
   });
@@ -373,6 +441,7 @@ describe("PubCommentsService", () => {
         body: "hello",
         asAuthor: true,
         currentUser: user(OWNER_ID),
+        clientIp: CLIENT_IP,
       }),
     ).rejects.toMatchObject({ code: "comment_limit_reached" });
     expect(db.inserted).toHaveLength(0);

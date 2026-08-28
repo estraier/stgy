@@ -16,6 +16,7 @@ import { formatDateTime, makeAbsoluteUrl, convertForDirection } from "@/utils/fo
 import PubImageBlockBinder from "@/components/PubImageBlockBinder";
 import PubScrollAction from "@/components/PubScrollAction";
 import PubGoogleAnalytics from "@/components/PubGoogleAnalytics";
+import PubSearchForm from "@/components/PubSearchForm";
 import PubHorizontalScrollRestore from "./PubHorizontalScrollRestore";
 import PubSiteSearchResults from "./PubSiteSearchResults";
 import type { Metadata } from "next";
@@ -298,27 +299,19 @@ export default async function PubSitePage({ params, searchParams }: Props) {
                       </Link>
                     </div>
                   )}
-                  <form className="posts-search" action={siteRoot} method="get">
-                    {design && <input type="hidden" name="design" value={design} />}
-                    {tabMode === "plain" && <input type="hidden" name="tab" value="plain" />}
-                    {isSearch && tabMode === "rich" && (
-                      <input type="hidden" name="tab" value="rich" />
-                    )}
-                    {oldestFirst && <input type="hidden" name="oldestFirst" value="1" />}
-                    <input
-                      className="posts-search-input"
-                      type="search"
-                      name="q"
-                      defaultValue={q}
-                      aria-label="Search posts"
-                    />
-                    <button className="posts-search-button" type="submit" aria-label="Search posts">
-                      <svg aria-hidden="true" viewBox="0 0 24 24">
-                        <circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" strokeWidth="2" />
-                        <path d="M16 16l5 5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                      </svg>
-                    </button>
-                  </form>
+                  <PubSearchForm
+                    action={siteRoot}
+                    className="posts-search"
+                    inputClassName="posts-search-input"
+                    buttonClassName="posts-search-button"
+                    defaultValue={q}
+                    hiddenFields={[
+                      ...(design ? [{ name: "design", value: design }] : []),
+                      ...(tabMode === "plain" ? [{ name: "tab", value: "plain" }] : []),
+                      ...(isSearch && tabMode === "rich" ? [{ name: "tab", value: "rich" }] : []),
+                      ...(oldestFirst ? [{ name: "oldestFirst", value: "1" }] : []),
+                    ]}
+                  />
                 </div>
               </nav>
               {isSearch ? (
