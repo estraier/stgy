@@ -36,6 +36,27 @@ const HATENA_BOOKMARK_WIDGETS_SRC = "https://b.st-hatena.com/js/bookmark_button.
 const HATENA_STAR_WIDGET_SRC = "https://s.hatena.ne.jp/js/widget/star.js";
 const HATENA_STAR_WIDGET_MARKER = "stgy-hatena-star-widget";
 
+let hatenaBookmarkWidgetsLoading = false;
+
+function loadHatenaBookmarkWidgets(): void {
+  if (hatenaBookmarkWidgetsLoading) return;
+  hatenaBookmarkWidgetsLoading = true;
+
+  queueMicrotask(() => {
+    const script = document.createElement("script");
+    script.src = HATENA_BOOKMARK_WIDGETS_SRC;
+    script.async = true;
+    script.charset = "utf-8";
+    const done = () => {
+      hatenaBookmarkWidgetsLoading = false;
+      script.remove();
+    };
+    script.addEventListener("load", done, { once: true });
+    script.addEventListener("error", done, { once: true });
+    document.head.appendChild(script);
+  });
+}
+
 function makeHatenaEntryUrl(rawUrl: string): string {
   try {
     const url = new URL(rawUrl);
@@ -148,14 +169,10 @@ export default function PubShareButtons({ enabled, url, title, locale, vertical 
   useEffect(() => {
     if (!showHatena || !rootRef.current) return;
 
-    // Hatena Bookmark's official button script scans the document when it executes.
-    // Re-executing it here also covers Next.js client-side navigation.
-    const script = document.createElement("script");
-    script.src = HATENA_BOOKMARK_WIDGETS_SRC;
-    script.async = true;
-    script.charset = "utf-8";
-    rootRef.current.appendChild(script);
-    return () => script.remove();
+    // The official script scans the whole document. Multiple share-button rows can
+    // mount together on /sites/[id], so coalesce them into one scan. A later
+    // client-side navigation can still trigger another scan after this one ends.
+    loadHatenaBookmarkWidgets();
   }, [showHatena, url, title, widgetLang]);
 
 
@@ -167,6 +184,8 @@ export default function PubShareButtons({ enabled, url, title, locale, vertical 
         ref={rootRef}
         className="pub-share-buttons pub-share-buttons-vertical"
         aria-label="Share"
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={(event) => event.stopPropagation()}
       >
         {showX && (
           <a
@@ -241,7 +260,13 @@ export default function PubShareButtons({ enabled, url, title, locale, vertical 
   }
 
   return (
-    <nav ref={rootRef} className="pub-share-buttons pub-share-buttons-horizontal" aria-label="Share">
+    <nav
+      ref={rootRef}
+      className="pub-share-buttons pub-share-buttons-horizontal"
+      aria-label="Share"
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
       {showX && (
         <span className="pub-share-widget pub-share-x">
           <a

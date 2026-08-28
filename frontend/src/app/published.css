@@ -262,6 +262,26 @@ html:has(.site-container) {
   margin: 0;
 }
 
+.pub-theme-dir-norm .site-container .pub-site-rich-post-with-share {
+  position: relative;
+}
+.pub-theme-dir-norm
+  .site-container
+  .markdown-body.post-content-excerpt.pub-site-post-content-with-share {
+  padding-bottom: 2.15em;
+}
+.pub-theme-dir-norm
+  .site-container
+  .pub-site-rich-post-with-share
+  > .pub-share-buttons-horizontal {
+  position: absolute;
+  left: 0.75em;
+  bottom: 0.35em;
+  z-index: 2;
+  justify-content: flex-start;
+  margin: 0;
+}
+
 .pub-theme-dir-norm .pub-pager {
   margin-top: 1em;
 }
@@ -1796,6 +1816,24 @@ html:has(.site-container) {
     padding-bottom: 0.5em;
   }
   .pub-theme-dir-vert .pub-article-with-share > .pub-share-buttons-vertical {
+    position: absolute;
+    left: 0.45em;
+    bottom: 0.5em;
+    z-index: 2;
+    margin: 0;
+  }
+  .pub-theme-dir-vert .site-container .pub-site-rich-post-with-share {
+    position: relative;
+  }
+  .pub-theme-dir-vert
+    .site-container
+    .markdown-body.post-content-excerpt.pub-site-post-content-with-share {
+    padding-left: 2.4em;
+  }
+  .pub-theme-dir-vert
+    .site-container
+    .pub-site-rich-post-with-share
+    > .pub-share-buttons-vertical {
     position: absolute;
     left: 0.45em;
     bottom: 0.5em;
