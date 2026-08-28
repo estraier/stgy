@@ -170,17 +170,27 @@ html:has(.site-container) {
   height: 20px;
 }
 .pub-share-compact-star {
+  --pub-hatena-star-length: 24px;
   position: relative;
+  height: var(--pub-hatena-star-length);
+  min-height: 24px;
+  flex: 0 0 auto;
   background: #fff;
 }
 .pub-share-compact-star .pub-hatena-star-container {
+  position: absolute;
+  top: 1px;
+  left: 1px;
   display: block;
-  width: 22px;
-  max-width: 22px;
+  width: max-content;
+  max-width: none;
   height: 22px;
   min-height: 22px;
   line-height: 22px;
-  overflow: hidden;
+  overflow: visible;
+  white-space: nowrap;
+  transform: translateX(22px) rotate(90deg);
+  transform-origin: top left;
 }
 .pub-share-widget {
   display: inline-flex;

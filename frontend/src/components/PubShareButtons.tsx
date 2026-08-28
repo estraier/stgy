@@ -175,6 +175,48 @@ export default function PubShareButtons({ enabled, url, title, locale, vertical 
     loadHatenaBookmarkWidgets();
   }, [showHatena, url, title, widgetLang]);
 
+  useEffect(() => {
+    if (!vertical || !showHatena || !rootRef.current) return;
+
+    const wrapper = rootRef.current.querySelector<HTMLElement>(
+      ".pub-share-compact-star",
+    );
+    const starContainer = wrapper?.querySelector<HTMLElement>(
+      ".pub-hatena-star-container",
+    );
+    if (!wrapper || !starContainer) return;
+
+    let frame: number | null = null;
+    const updateSize = () => {
+      if (frame !== null) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        const contentWidth = Math.max(22, Math.ceil(starContainer.scrollWidth));
+        wrapper.style.setProperty(
+          "--pub-hatena-star-length",
+          `${contentWidth + 2}px`,
+        );
+      });
+    };
+
+    const mutationObserver = new MutationObserver(updateSize);
+    mutationObserver.observe(starContainer, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      characterData: true,
+    });
+
+    const resizeObserver = new ResizeObserver(updateSize);
+    resizeObserver.observe(starContainer);
+    updateSize();
+
+    return () => {
+      mutationObserver.disconnect();
+      resizeObserver.disconnect();
+      if (frame !== null) cancelAnimationFrame(frame);
+    };
+  }, [showHatena, url, vertical]);
 
   if (!showAny) return null;
 
