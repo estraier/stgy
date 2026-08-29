@@ -16,6 +16,8 @@ import { createCaptchaChallenge, type CaptchaChallenge } from "@/api/captcha";
 import type { PubComment } from "@/api/models";
 import { convertForDirection, formatDateTime } from "@/utils/format";
 
+const PUB_COMMENT_BODY_MAX_LENGTH = 1000;
+
 const EMPTY_FORM_STATE: PubCommentFormState = {
   captchaRequired: true,
   nickname: "",
@@ -126,6 +128,8 @@ export default function PubComments({ postId, ownerId, themeDir }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editNickname, setEditNickname] = useState("");
   const [editBody, setEditBody] = useState("");
+  const bodyCharacterCount = Array.from(body).length;
+  const bodyLimitExceeded = bodyCharacterCount > PUB_COMMENT_BODY_MAX_LENGTH;
 
   const loadComments = useCallback(
     async (nextPage = page, nextOrder = order) => {
@@ -580,7 +584,6 @@ export default function PubComments({ postId, ownerId, themeDir }: Props) {
             <span>{ui("Comment")}</span>
             <textarea
               value={body}
-              maxLength={1000}
               required
               rows={6}
               onChange={(event) => setBody(event.target.value)}
@@ -648,6 +651,7 @@ export default function PubComments({ postId, ownerId, themeDir }: Props) {
                 submitting ||
                 nickname.trim().length === 0 ||
                 body.trim().length === 0 ||
+                bodyLimitExceeded ||
                 (formState.captchaRequired && captchaAnswer.length !== 6)
               }
             >
@@ -661,6 +665,14 @@ export default function PubComments({ postId, ownerId, themeDir }: Props) {
             >
               {ui("Cancel")}
             </button>
+            <span
+              className={`pub-comment-length-indicator${
+                bodyLimitExceeded ? " pub-comment-length-indicator-over" : ""
+              }`}
+            >
+              <span>{ui(`${bodyCharacterCount} / ${PUB_COMMENT_BODY_MAX_LENGTH}`)}</span>
+              {bodyLimitExceeded && <span>{ui("Exceeding the limit")}</span>}
+            </span>
           </div>
         </form>
       )}

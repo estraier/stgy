@@ -4975,6 +4975,20 @@ html:has(.site-container) {
   padding: 0.17rem 0.4675rem;
   font-size: 85%;
 }
+.pub-comment-length-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  margin-inline-start: auto;
+  font-size: 85%;
+  opacity: 0.65;
+  white-space: nowrap;
+}
+.pub-comment-length-indicator-over {
+  color: #b91c1c;
+  font-weight: 600;
+  opacity: 1;
+}
 .pub-comment-form,
 .pub-comment-edit-form {
   display: flex;
