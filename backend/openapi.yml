@@ -1233,7 +1233,7 @@ paths:
           schema: { type: string, enum: [newest, oldest], default: newest }
       responses:
         "200":
-          description: Published comments; the logged-in article owner also receives pending comments
+          description: Published comments; the logged-in article owner or administrator also receives pending comments
           content:
             application/json:
               schema:
@@ -1245,10 +1245,11 @@ paths:
     post:
       summary: Submit an external-publication comment
       description: |
-        Anonymous by default. An article owner who is currently logged in is CAPTCHA-exempt.
+        Anonymous by default. A logged-in article owner or administrator is CAPTCHA-exempt.
         For other callers, either a valid CAPTCHA pass cookie or a valid six-digit challenge
         answer is required. A valid X-STGY-QueryHash header is mandatory. In moderated mode,
-        ordinary comments are stored as pending while verified author comments publish immediately.
+        comments from a logged-in article owner or administrator publish immediately; other
+        comments are stored as pending. Owners and administrators may choose to post as owner.
       parameters:
         - in: header
           name: X-STGY-QueryHash
@@ -1361,7 +1362,7 @@ paths:
           schema: { type: string, pattern: '^[0-9A-Fa-f]{16}$' }
       responses:
         "200":
-          description: CAPTCHA, saved-nickname, author, and posting-limit state
+          description: CAPTCHA, saved-nickname, owner-posting, and posting-limit state
           content:
             application/json:
               schema:

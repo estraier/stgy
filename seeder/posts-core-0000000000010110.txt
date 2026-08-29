@@ -121,9 +121,9 @@ Share rendering is centralized in ``PubShareButtons``. The recognized identifier
 
 On ``/pub/{postId}``, the buttons are placed at the lower-left corner of the article body. On ``/sites/{userId}``, the same buttons are also placed at the lower-left corner of each Rich snippet, both in the normal listing and when the Rich tab is selected for search results. Plain and KWIC views do not show them. Because an entire Rich snippet is itself a link to the article, the share region stops click and keydown propagation so that operating a share button does not accidentally navigate the snippet.
 
-The URL passed to sharing services is always the canonical ``/pub/{postId}`` URL without presentation query parameters such as ``design``. In horizontal writing, X uses its ``platform.twitter.com/widgets.js`` official button, Facebook uses the SDK ``button_count`` widget, LINE uses the Social Plugins share URL, and Hatena combines the official Bookmark widget with Hatena Star v2. LINE simply URL-encodes the article URL and title into that share URL, so no additional LINE JavaScript SDK is loaded. In vertical writing, external horizontal widgets are avoided: X, Facebook, and LINE use 24-pixel compact links, while Hatena Bookmark and Star are fitted into the same vertical column. Enabling ``hatena`` therefore enables Bookmark and Star together.
+The URL passed to sharing services is always the canonical ``/pub/{postId}`` URL without presentation query parameters such as ``design``. In horizontal writing, X uses its ``platform.twitter.com/widgets.js`` official button, Facebook directly embeds the ``facebook.com/plugins/share_button.php`` ``button_count`` iframe at a width of 102 pixels, LINE uses the Social Plugins share URL, and Hatena combines the official Bookmark widget with Hatena Star v2. Facebook does not use XFBML or the JavaScript SDK, and LINE simply URL-encodes the article URL and title into its share URL, so no additional LINE JavaScript SDK is loaded. In vertical writing, external horizontal widgets are avoided: X, Facebook, and LINE use 24-pixel compact links, while Hatena Bookmark and Star are fitted into the same vertical column. Enabling ``hatena`` therefore enables Bookmark and Star together.
 
-External widget scripts are loaded only when needed and after the Client Component has hydrated. Hatena Star in particular is started as a v2 widget from the client so that it cannot mutate server-rendered HTML before React hydration. Multiple share rows can mount together on ``/sites``; Hatena Bookmark's whole-document scan is coalesced so that the same script is not executed once per article.
+External widget scripts are loaded only when needed and after the Client Component has hydrated. Facebook's direct iframe and LINE's share URL require no additional script. Hatena Star in particular is started as a v2 widget from the client so that it cannot mutate server-rendered HTML before React hydration. Multiple share rows can mount together on ``/sites``; Hatena Bookmark's whole-document scan is coalesced so that the same script is not executed once per article.
 
 ## External Publication Comments
 
@@ -141,16 +141,16 @@ CREATE TABLE post_pub_comments (
 CREATE INDEX idx_post_pub_comments_post_id ON post_pub_comments(post_id, id DESC);
 ```
 
-The row stores no commenter STGY user ID, email address, or raw IP address. ``nickname`` is only a display name, not an assertion of a real-world name, and ``is_author`` records only whether the article owner selected ``as author``. There is no separate creation-time column; the timestamp is recovered from the Snowflake-style comment ID.
+The row stores no commenter STGY user ID, email address, or raw IP address. ``nickname`` is only a display name, not an assertion of a real-world name, and ``is_author`` records whether the logged-in article owner or an administrator selected the UI option ``as owner`` when posting. The API/DB field names remain ``asAuthor`` / ``is_author`` for compatibility. There is no separate creation-time column; the timestamp is recovered from the Snowflake-style comment ID.
 
 A comment section is displayed and accepts new comments only while the post is currently externally published, ``allow_replies`` is true, and the owner's ``extensions.comments.mode`` is not ``none``. The modes are: 
 
 |*mode*|*new comments*|
 | ``none`` | Hide the comment section and reject new comments; existing rows remain stored |
-| ``moderated`` | Ordinary viewers create ``pending`` comments; the logged-in article owner creates ``published`` comments |
+| ``moderated`` | Ordinary viewers create ``pending`` comments; a logged-in article owner or administrator creates ``published`` comments |
 | ``open`` | New comments are ``published`` |
 
-Changing the mode does not rewrite existing statuses. In particular, changing ``moderated`` to ``open`` does not auto-publish old ``pending`` rows. An owner comment is immediately published even in ``moderated`` mode, but ``is_author`` becomes true only when the owner actually selects ``as author``.
+Changing the mode does not rewrite existing statuses. In particular, changing ``moderated`` to ``open`` does not auto-publish old ``pending`` rows. A comment from a logged-in article owner or administrator is immediately published even in ``moderated`` mode. Both can select the UI option ``as owner``; its default is on for the article owner and off for an administrator who does not own the article, unless a saved preference is available. ``is_author`` becomes true only when ``as owner`` is selected.
 
 ### Comment APIs and permissions
 
@@ -158,22 +158,22 @@ The main APIs used by the published-page comment UI are:
 
 |*API*|*Purpose*|
 | ``GET /pub-comments?postId=...&page=1&order=newest`` | List comments |
-| ``GET /pub-comments/form-state?postId=...`` | CAPTCHA requirement, saved nickname, as-author state, and limit state |
+| ``GET /pub-comments/form-state?postId=...`` | CAPTCHA requirement, saved nickname, as-owner state, and limit state |
 | ``POST /pub-comments`` | Ordinary comment submission |
 | ``PATCH /pub-comments/{id}`` | Approve pending or edit an allowed comment |
 | ``DELETE /pub-comments/{id}`` | Delete a comment |
 | ``GET /pub-comments/export/{postId}`` | Retrieve every stored comment for the post owner during export |
 | ``POST /pub-comments/import`` | Administrator-only archive restoration |
 
-The normal list uses a fixed page size of 10 and supports ``newest`` and ``oldest``. Anonymous and ordinary viewers receive only ``published`` comments; the article owner and administrators see ``pending`` comments on the same published page as well. The owner can approve pending comments and delete comments on their own article. For editing, the owner can edit only their own ``is_author=true`` author comments, while an administrator can edit, approve, or delete any comment.
+The normal list uses a fixed page size of 10 and supports ``newest`` and ``oldest``. Anonymous and ordinary viewers receive only ``published`` comments; the article owner and administrators see ``pending`` comments on the same published page as well. The owner can approve pending comments and delete comments on their own article. For editing, the article owner may edit any ``is_author=true`` comment on that article, while an administrator can edit, approve, or delete any comment. Because comment rows do not store the posting user's ID, an ``is_author=true`` row does not distinguish a comment posted by the owner from one posted by an administrator using ``as owner``.
 
 Ordinary input limits are 30 characters for nickname and 1000 for body. Nicknames have control characters removed and whitespace collapsed. Bodies normalize line endings to LF, remove leading blank lines, reduce runs of three or more LFs to two, and are stored with exactly one trailing LF. The wider database limits of 50 and 65536 characters are intentional headroom for future application limits and archive restoration; they are not the ordinary form limits. Total stored comments per post, including pending rows, are limited by ``STGY_PUB_COMMENT_MAX_COMMENTS`` and default to 100.
 
-The comment list and input form are implemented as a Client Component. The article body is server-rendered, but comment content is fetched with ``GET /pub-comments`` after hydration. The input form is also absent from the initial HTML and is rendered only after the user presses ``Write a comment`` and ``form-state`` has been read. After successful submission, the UI returns to page 1 in Newest order and scrolls to the Comments heading. The nickname and the article owner's ``as author`` choice are saved in one-year HttpOnly, SameSite=Lax preference cookies for reuse.
+The comment list and input form are implemented as a Client Component. The article body is server-rendered, but comment content is fetched with ``GET /pub-comments`` after hydration. The input form is also absent from the initial HTML and is rendered only after the user presses ``Write a comment`` and ``form-state`` has been read. After successful submission, the UI returns to page 1 in Newest order and scrolls to the Comments heading. The nickname and the ``as owner`` choice available to an article owner or administrator are saved in one-year HttpOnly, SameSite=Lax preference cookies for reuse.
 
 ### CAPTCHA and pass tokens
 
-A commenter other than the logged-in article owner must solve a six-digit numeric CAPTCHA unless a valid CAPTCHA pass exists. A challenge is a 200×48 PNG generated from a code-defined 5×7 digit bitmap scaled by five. Each digit is rotated by up to ±10 degrees and placed with ±1-pixel X/Y jitter, while roughly 10 percent of background pixels receive black dither. Challenges are stored in Redis with a default TTL of 600 seconds and are deleted after a successful answer.
+A commenter other than a logged-in article owner or administrator must solve a six-digit numeric CAPTCHA unless a valid CAPTCHA pass exists. Article owners and administrators are CAPTCHA-exempt. A challenge is a 200×48 PNG generated from a code-defined 5×7 digit bitmap scaled by five. Each digit is rotated by up to ±10 degrees and placed with ±1-pixel X/Y jitter, while roughly 10 percent of background pixels receive black dither. Challenges are stored in Redis with a default TTL of 600 seconds and are deleted after a successful answer.
 
 The generic CAPTCHA endpoints are separate from the comment endpoints.
 

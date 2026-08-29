@@ -569,7 +569,7 @@ export default function PubComments({ postId, ownerId, themeDir }: Props) {
                       onChange={(event) => setAsAuthor(event.target.checked)}
                       disabled={submitting}
                     />
-                    <span>{ui("as author")}</span>
+                    <span>{ui("as owner")}</span>
                   </label>
                 )}
               </div>

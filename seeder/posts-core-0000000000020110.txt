@@ -121,9 +121,9 @@ CREATE TABLE user_pub_configs (
 
 ``/pub/{postId}`` では記事本文の左下にシェアボタンを置く。``/sites/{userId}`` では通常一覧のRichスニペットと、検索後にRichタブを選んだスニペットの左下にも同じボタンを置く。PlainとKWICには表示しない。一覧のスニペット全体は記事へのリンクになっているため、シェア領域のclickとkeydownはイベント伝播を止め、シェアボタンの操作が記事遷移へ化けないようにする。
 
-共有先へ渡すURLは、デザイン指定などのクエリ文字列を付けない正規の ``/pub/{postId}`` である。横書きでは、Xは ``platform.twitter.com/widgets.js`` の公式ボタン、FacebookはSDKの ``button_count``、LINEはSocial Pluginsのshare URL、HatenaはBookmark公式widgetとHatena Star v2を使う。LINEはURLと記事タイトルをURL encodeしてshare URLへ渡すだけなので、追加のLINE JavaScript SDKは読み込まない。縦書きでは外部widgetの横方向レイアウトを持ち込まず、X、Facebook、LINEを24pxのcompact linkとして表示し、Hatena BookmarkとStarも同じ縦列へ収める。Hatenaを有効にするとBookmarkとStarを一組として表示する。
+共有先へ渡すURLは、デザイン指定などのクエリ文字列を付けない正規の ``/pub/{postId}`` である。横書きでは、Xは ``platform.twitter.com/widgets.js`` の公式ボタン、Facebookは ``facebook.com/plugins/share_button.php`` の ``button_count`` iframeを102px幅で直接埋め込み、LINEはSocial Pluginsのshare URL、HatenaはBookmark公式widgetとHatena Star v2を使う。FacebookはXFBML/JavaScript SDKを使わず、LINEもURLと記事タイトルをURL encodeしてshare URLへ渡すだけなので追加のLINE JavaScript SDKは読み込まない。縦書きでは外部widgetの横方向レイアウトを持ち込まず、X、Facebook、LINEを24pxのcompact linkとして表示し、Hatena BookmarkとStarも同じ縦列へ収める。Hatenaを有効にするとBookmarkとStarを一組として表示する。
 
-外部widget用scriptは必要な場合だけClient Componentのhydration後に読み込む。特にHatena StarはサーバHTMLをhydration前に書き換えないよう、クライアント側からv2 widgetを起動する。``/sites`` では複数記事のシェア領域が同時にmountされるため、Hatena Bookmarkの全document scanは同一mount群で一回へまとめ、記事数だけ同じscriptを走らせない。
+外部widget用scriptは必要な場合だけClient Componentのhydration後に読み込む。Facebookの直接iframeとLINEのshare URLには追加scriptを使わない。特にHatena StarはサーバHTMLをhydration前に書き換えないよう、クライアント側からv2 widgetを起動する。``/sites`` では複数記事のシェア領域が同時にmountされるため、Hatena Bookmarkの全document scanは同一mount群で一回へまとめ、記事数だけ同じscriptを走らせない。
 
 ## 外部公開コメント
 
@@ -141,16 +141,16 @@ CREATE TABLE post_pub_comments (
 CREATE INDEX idx_post_pub_comments_post_id ON post_pub_comments(post_id, id DESC);
 ```
 
-コメント行には投稿者のSTGYユーザID、メールアドレス、生のIPアドレスを保存しない。``nickname`` は実名を意味しない表示名で、``is_author`` は記事所有者が ``as author`` を選んで投稿したことだけを表す。作成日時カラムも持たず、他のSnowflake系IDと同様にコメントIDから時刻を復元する。
+コメント行には投稿者のSTGYユーザID、メールアドレス、生のIPアドレスを保存しない。``nickname`` は実名を意味しない表示名で、``is_author`` はログイン中の記事所有者または管理者がUI上の ``as owner`` を選んで投稿したことを表す。既存API/DBとの互換性のためフィールド名は ``asAuthor`` / ``is_author`` のまま維持する。作成日時カラムも持たず、他のSnowflake系IDと同様にコメントIDから時刻を復元する。
 
 コメント欄を表示して新規投稿を受け付けるには、記事が現在外部公開中であることに加えて、投稿の ``allow_replies`` がtrueで、所有者の ``extensions.comments.mode`` が ``none`` 以外でなければならない。モードの意味は次の通りである。
 
 |*mode*|*新規コメント*|
 | ``none`` | コメント欄を表示せず新規投稿も受け付けない。既存行は削除しない |
-| ``moderated`` | 通常の閲覧者は ``pending``、ログイン中の記事所有者は ``published`` |
+| ``moderated`` | 通常の閲覧者は ``pending``、ログイン中の記事所有者または管理者は ``published`` |
 | ``open`` | 新規コメントを ``published`` |
 
-モード変更では既存コメントのstatusを書き換えない。たとえば ``moderated`` から ``open`` へ変えても、既存の ``pending`` は自動公開しない。記事所有者がログインして投稿する場合は ``moderated`` でも即時公開されるが、``is_author`` がtrueになるのは ``as author`` を選んだ場合だけである。
+モード変更では既存コメントのstatusを書き換えない。たとえば ``moderated`` から ``open`` へ変えても、既存の ``pending`` は自動公開しない。記事所有者または管理者がログインして投稿する場合は ``moderated`` でも即時公開される。両者ともUI上の ``as owner`` を選べるが、初期値は記事所有者ならON、記事所有者ではない管理者ならOFFとし、保存済みの選択があればそれを再利用する。``is_author`` がtrueになるのは ``as owner`` を選んだ場合だけである。
 
 ### コメントAPIと権限
 
@@ -158,22 +158,22 @@ CREATE INDEX idx_post_pub_comments_post_id ON post_pub_comments(post_id, id DESC
 
 |*API*|*用途*|
 | ``GET /pub-comments?postId=...&page=1&order=newest`` | コメント一覧 |
-| ``GET /pub-comments/form-state?postId=...`` | CAPTCHA要否、保存nickname、as-author状態、上限到達状態 |
+| ``GET /pub-comments/form-state?postId=...`` | CAPTCHA要否、保存nickname、as-owner状態、上限到達状態 |
 | ``POST /pub-comments`` | 通常のコメント投稿 |
 | ``PATCH /pub-comments/{id}`` | pending承認、または許可されたコメント編集 |
 | ``DELETE /pub-comments/{id}`` | コメント削除 |
 | ``GET /pub-comments/export/{postId}`` | 所有者本人のデータエクスポート用全件取得 |
 | ``POST /pub-comments/import`` | 管理者専用のアーカイブ復元 |
 
-通常一覧は1ページ10件固定で、``newest`` と ``oldest`` を切り替える。一般閲覧者には ``published`` だけを返すが、記事所有者と管理者には同じ公開ページ上で ``pending`` も返す。記事所有者は自分の記事の ``pending`` を承認でき、自分の記事のコメントを削除できる。編集は、所有者については ``is_author=true`` の自分の著者コメントだけを許可し、管理者は任意のコメントを編集・承認・削除できる。
+通常一覧は1ページ10件固定で、``newest`` と ``oldest`` を切り替える。一般閲覧者には ``published`` だけを返すが、記事所有者と管理者には同じ公開ページ上で ``pending`` も返す。記事所有者は自分の記事の ``pending`` を承認でき、自分の記事のコメントを削除できる。編集は、記事所有者についてはその記事の ``is_author=true`` のコメントを許可し、管理者は任意のコメントを編集・承認・削除できる。コメント行には投稿者のユーザIDを持たないため、``is_author=true`` なら記事所有者自身が投稿したものか、管理者が ``as owner`` で投稿したものかを区別しない。
 
 通常の入力制限はnickname 30文字、本文1000文字である。nicknameは制御文字を除去して空白を一つへまとめ、本文は改行をLFへ統一し、先頭の空行を除き、3個以上の連続LFを2個へ丸め、末尾を正確に1個のLFにする。DBの50文字/65536文字という余裕は、将来のアプリ側制限変更やアーカイブ復元のためであり、通常フォームの上限ではない。1記事あたりの保存コメント数は ``STGY_PUB_COMMENT_MAX_COMMENTS`` で制限し、デフォルトはpendingを含めて100件である。
 
-コメント一覧と入力フォームはClient Componentで動く。記事本文はSSRされるが、コメント内容はhydration後に ``GET /pub-comments`` で取得する。入力フォームは初期HTMLへ出さず、``Write a comment`` を押した後に ``form-state`` を取得して開く。投稿成功後はNewestの1ページ目へ戻し、Comments見出しへスクロールする。nicknameと記事所有者の ``as author`` 選択は、HttpOnly、SameSite=Laxの1年cookieへ保存して次回入力に再利用する。
+コメント一覧と入力フォームはClient Componentで動く。記事本文はSSRされるが、コメント内容はhydration後に ``GET /pub-comments`` で取得する。入力フォームは初期HTMLへ出さず、``Write a comment`` を押した後に ``form-state`` を取得して開く。投稿成功後はNewestの1ページ目へ戻し、Comments見出しへスクロールする。nicknameと、記事所有者または管理者が利用できる ``as owner`` の選択は、HttpOnly、SameSite=Laxの1年cookieへ保存して次回入力に再利用する。
 
 ### CAPTCHAとpass token
 
-ログイン中の記事所有者以外がコメントする場合は、CAPTCHA passが有効でなければ6桁数字CAPTCHAを要求する。challenge画像は200×48pxのPNGで、コード内の5×7 bitmap数字を5倍へ拡大し、各桁を最大±10度回転、配置をX/Y各±1pxずらし、背景の約10%へ黒いditherを入れて生成する。challengeはRedisに保存し、デフォルトTTLは600秒で、一度正解すると削除する。
+ログイン中の記事所有者または管理者以外がコメントする場合は、CAPTCHA passが有効でなければ6桁数字CAPTCHAを要求する。記事所有者と管理者はCAPTCHAを免除する。challenge画像は200×48pxのPNGで、コード内の5×7 bitmap数字を5倍へ拡大し、各桁を最大±10度回転、配置をX/Y各±1pxずらし、背景の約10%へ黒いditherを入れて生成する。challengeはRedisに保存し、デフォルトTTLは600秒で、一度正解すると削除する。
 
 CAPTCHAの汎用APIはコメントAPIとは分離している。
 

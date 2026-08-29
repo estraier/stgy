@@ -284,7 +284,9 @@ export class PubCommentsService {
   }): Promise<FormState> {
     const state = await this.requirePublicCommentState(input.postId);
     const ownerLoggedIn = input.currentUser?.id === state.ownerId;
-    const canPostAsAuthor = ownerLoggedIn && input.currentUser?.isFrozen !== true;
+    const adminLoggedIn = input.currentUser?.isAdmin === true;
+    const managerLoggedIn = ownerLoggedIn || adminLoggedIn;
+    const canPostAsAuthor = managerLoggedIn && input.currentUser?.isFrozen !== true;
     const count = await this.countComments(state.postId);
     const limitReached = count >= Config.PUB_COMMENT_MAX_COMMENTS;
     let nickname = "";
@@ -296,7 +298,7 @@ export class PubCommentsService {
       }
     }
     let captchaRequired = false;
-    if (!limitReached && !ownerLoggedIn) {
+    if (!limitReached && !managerLoggedIn) {
       const passStatus = await this.captchaService.getPassTokenStatus(
         PUB_COMMENT_CAPTCHA_PURPOSE,
         input.passToken,
@@ -308,7 +310,7 @@ export class PubCommentsService {
       captchaRequired,
       nickname,
       canPostAsAuthor,
-      asAuthor: canPostAsAuthor && (input.savedAsAuthor ?? true),
+      asAuthor: canPostAsAuthor && (input.savedAsAuthor ?? ownerLoggedIn),
       canPost: !limitReached,
       limitReached,
     };
@@ -319,7 +321,9 @@ export class PubCommentsService {
     const initialState = await this.requirePublicCommentState(postId);
     const { nickname, body } = normalizeCreateInput(input.nickname, input.body);
     const ownerLoggedIn = input.currentUser?.id === initialState.ownerId;
-    const canPostAsAuthor = ownerLoggedIn && input.currentUser?.isFrozen !== true;
+    const adminLoggedIn = input.currentUser?.isAdmin === true;
+    const managerLoggedIn = ownerLoggedIn || adminLoggedIn;
+    const canPostAsAuthor = managerLoggedIn && input.currentUser?.isFrozen !== true;
     if (input.asAuthor && !canPostAsAuthor) {
       throw new PubCommentError("forbidden", "as author is not allowed");
     }
@@ -330,7 +334,7 @@ export class PubCommentsService {
 
     let usedExistingPass = false;
     let solvedChallenge = false;
-    if (!ownerLoggedIn) {
+    if (!managerLoggedIn) {
       const passStatus = await this.captchaService.getPassTokenStatus(
         PUB_COMMENT_CAPTCHA_PURPOSE,
         input.passToken,
@@ -368,11 +372,12 @@ export class PubCommentsService {
       if (!locked) throw new PubCommentError("not_found", "publication not found");
       this.assertCommentsEnabled(locked);
       const stillOwner = input.currentUser?.id === locked.ownerId;
+      const stillManager = stillOwner || input.currentUser?.isAdmin === true;
       ownerVerified = stillOwner;
-      if (ownerLoggedIn && !stillOwner) {
+      if (managerLoggedIn && !stillManager) {
         throw new PubCommentError("captcha_required", "captcha required");
       }
-      if (input.asAuthor && (!stillOwner || input.currentUser?.isFrozen === true)) {
+      if (input.asAuthor && (!stillManager || input.currentUser?.isFrozen === true)) {
         throw new PubCommentError("forbidden", "as author is not allowed");
       }
       const countRes = await client.query<{ count: string }>(
@@ -393,7 +398,7 @@ export class PubCommentsService {
           throw new PubCommentError("captcha_required", "captcha required");
         }
       }
-      status = locked.mode === "open" || stillOwner ? "published" : "pending";
+      status = locked.mode === "open" || stillManager ? "published" : "pending";
       await client.query(
         `INSERT INTO post_pub_comments (id, post_id, nickname, body, status, is_author)
          VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -440,7 +445,7 @@ export class PubCommentsService {
         } catch {}
       }
     }
-    if (!ownerLoggedIn && solvedChallenge) {
+    if (!managerLoggedIn && solvedChallenge) {
       try {
         // This comment itself is the first successful use of the newly issued pass.
         newPassToken = await this.captchaService.issuePassToken(

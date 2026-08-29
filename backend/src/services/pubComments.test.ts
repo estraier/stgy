@@ -257,7 +257,7 @@ describe("PubCommentsService", () => {
     expect(noSavedPreference.asAuthor).toBe(true);
   });
 
-  test("saved as-author preference is ignored when the current user is not the article owner", async () => {
+  test("saved as-author preference is ignored for an ordinary non-owner", async () => {
     const db = makeDb();
     const rd = makeRedis();
     const service = new PubCommentsService(db.pool, rd.redis);
@@ -271,6 +271,29 @@ describe("PubCommentsService", () => {
 
     expect(state.canPostAsAuthor).toBe(false);
     expect(state.asAuthor).toBe(false);
+  });
+
+  test("administrator may post as owner but defaults off for another user's article", async () => {
+    const db = makeDb();
+    const rd = makeRedis();
+    const service = new PubCommentsService(db.pool, rd.redis);
+
+    const defaultState = await service.getFormState({
+      postId: POST_ID,
+      currentUser: user(ADMIN_ID, { isAdmin: true }),
+      clientIp: CLIENT_IP,
+    });
+    const savedOn = await service.getFormState({
+      postId: POST_ID,
+      currentUser: user(ADMIN_ID, { isAdmin: true }),
+      clientIp: CLIENT_IP,
+      savedAsAuthor: true,
+    });
+
+    expect(defaultState.captchaRequired).toBe(false);
+    expect(defaultState.canPostAsAuthor).toBe(true);
+    expect(defaultState.asAuthor).toBe(false);
+    expect(savedOn.asAuthor).toBe(true);
   });
 
   test("as-author preference is not overwritten when the checkbox is unavailable", async () => {
@@ -337,6 +360,29 @@ describe("PubCommentsService", () => {
     expect(result.asAuthorPreference).toBe(false);
     expect(rd.evalFn).not.toHaveBeenCalled();
     expect(eventLog.recordPubComment).not.toHaveBeenCalled();
+  });
+
+  test("administrator bypasses CAPTCHA, auto-publishes in moderated mode, and may post as owner", async () => {
+    const db = makeDb({ mode: "moderated" });
+    const rd = makeRedis();
+    const eventLog = { recordPubComment: jest.fn(async () => 1n) };
+    const service = new PubCommentsService(db.pool, rd.redis, eventLog as any);
+
+    const result = await service.create({
+      postId: POST_ID,
+      nickname: "administrator",
+      body: "hello",
+      asAuthor: true,
+      currentUser: user(ADMIN_ID, { isAdmin: true }),
+      clientIp: CLIENT_IP,
+    });
+
+    expect(result.comment.status).toBe("published");
+    expect(result.comment.isAuthor).toBe(true);
+    expect(result.asAuthorPreference).toBe(true);
+    expect(rd.evalFn).not.toHaveBeenCalled();
+    expect(db.inserted).toHaveLength(1);
+    expect(db.inserted[0]?.[5]).toBe(true);
   });
 
   test("guest with a valid pass token reserves and commits one use around saving and records notification event", async () => {
