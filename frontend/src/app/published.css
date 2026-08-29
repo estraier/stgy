@@ -119,6 +119,15 @@ html:has(.site-container) {
   text-orientation: mixed !important;
 }
 
+.site-container .pub-share-buttons,
+.pub-container .pub-share-buttons {
+  opacity: 0.75;
+}
+.site-container .pub-share-buttons:hover,
+.pub-container .pub-share-buttons:hover {
+  opacity: 0.9;
+}
+
 .pub-share-buttons-vertical {
   flex-direction: column;
   align-items: center;
