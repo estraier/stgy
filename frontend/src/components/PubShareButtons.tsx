@@ -18,11 +18,6 @@ type ShareWidgetWindow = Window & {
       load?: (element?: HTMLElement) => void;
     };
   };
-  FB?: {
-    XFBML?: {
-      parse?: (element?: HTMLElement) => void;
-    };
-  };
   Hatena?: {
     Star?: {
       VERSION?: number;
@@ -31,7 +26,6 @@ type ShareWidgetWindow = Window & {
 };
 
 const X_WIDGETS_SRC = "https://platform.twitter.com/widgets.js";
-const FACEBOOK_SDK_MARKER = "stgy-facebook-sdk";
 const HATENA_BOOKMARK_WIDGETS_SRC = "https://b.st-hatena.com/js/bookmark_button.js";
 const HATENA_STAR_WIDGET_SRC = "https://s.hatena.ne.jp/js/widget/star.js";
 const HATENA_STAR_WIDGET_MARKER = "stgy-hatena-star-widget";
@@ -76,6 +70,8 @@ export default function PubShareButtons({ enabled, url, title, locale, vertical 
   const showHatena = enabledSet.has("hatena");
   const showAny = showX || showFacebook || showLine || showHatena;
   const widgetLang = locale?.toLowerCase().startsWith("ja") ? "ja" : "en";
+  const facebookLocale = widgetLang === "ja" ? "ja_JP" : "en_US";
+  const facebookWidth = 102;
 
   useEffect(() => {
     if (!showHatena || !rootRef.current) return;
@@ -129,42 +125,6 @@ export default function PubShareButtons({ enabled, url, title, locale, vertical 
     document.head.appendChild(script);
     return () => script.removeEventListener("load", render);
   }, [showX, url, title, widgetLang, vertical]);
-
-  useEffect(() => {
-    if (vertical || !showFacebook || !rootRef.current) return;
-
-    const render = () => {
-      (window as ShareWidgetWindow).FB?.XFBML?.parse?.(
-        rootRef.current ?? undefined,
-      );
-    };
-
-    const existing = document.querySelector<HTMLScriptElement>(
-      `script[data-${FACEBOOK_SDK_MARKER}="true"]`,
-    );
-    if (existing) {
-      if ((window as ShareWidgetWindow).FB?.XFBML?.parse) render();
-      else existing.addEventListener("load", render, { once: true });
-      return () => existing.removeEventListener("load", render);
-    }
-
-    if (!document.getElementById("fb-root")) {
-      const fbRoot = document.createElement("div");
-      fbRoot.id = "fb-root";
-      document.body.prepend(fbRoot);
-    }
-
-    const facebookLocale = widgetLang === "ja" ? "ja_JP" : "en_US";
-    const script = document.createElement("script");
-    script.src = `https://connect.facebook.net/${facebookLocale}/sdk.js#xfbml=1&version=v26.0`;
-    script.async = true;
-    script.defer = true;
-    script.crossOrigin = "anonymous";
-    script.setAttribute(`data-${FACEBOOK_SDK_MARKER}`, "true");
-    script.addEventListener("load", render, { once: true });
-    document.head.appendChild(script);
-    return () => script.removeEventListener("load", render);
-  }, [showFacebook, url, widgetLang, vertical]);
 
   useEffect(() => {
     if (!showHatena || !rootRef.current) return;
@@ -325,22 +285,23 @@ export default function PubShareButtons({ enabled, url, title, locale, vertical 
       )}
       {showFacebook && (
         <span className="pub-share-widget pub-share-facebook">
-          <div
+          <iframe
             key={`facebook:${url}`}
-            className="fb-share-button"
-            data-href={url}
-            data-layout="button_count"
-            data-size="small"
-          >
-            <a
-              target="_blank"
-              rel="noopener noreferrer"
-              href={`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(url)}&src=sdkpreparse`}
-              className="fb-xfbml-parse-ignore"
-            >
-              Share
-            </a>
-          </div>
+            src={`https://www.facebook.com/plugins/share_button.php?href=${encodeURIComponent(url)}&layout=button_count&size=small&locale=${facebookLocale}&width=${facebookWidth}&height=20&appId=`}
+            width={facebookWidth}
+            height="20"
+            scrolling="no"
+            frameBorder="0"
+            allowFullScreen
+            allow="autoplay; clipboard-write; encrypted-media; picture-in-picture; web-share"
+            style={{
+              display: "block",
+              flex: `0 0 ${facebookWidth}px`,
+              border: 0,
+              overflow: "hidden",
+            }}
+            title={widgetLang === "ja" ? "Facebookで共有" : "Share on Facebook"}
+          />
         </span>
       )}
       {showLine && (
