@@ -129,7 +129,7 @@ export default function PageBody() {
   if (status.state !== "authenticated") return null;
 
   return (
-    <main className="max-w-3xl mx-auto mt-12 p-4 bg-white shadow border rounded">
+    <main className="max-w-3xl mx-auto mt-12 p-4 bg-white shadow border border-[#808080] rounded">
       <h1 className="text-2xl font-bold mb-6">Editing history</h1>
       <p className="mb-3 text-sm text-gray-600">
         Editing history is stored only in this browser. It is not synchronized with the server or

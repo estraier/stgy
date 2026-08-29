@@ -829,7 +829,7 @@ export default function PageBody() {
                 )}
                 {aiPostImpressions.map((item) => (
                   <li key={`${item.peerId}:${item.postId}`}>
-                    <div className="rounded border bg-white p-3 shadow-sm">
+                    <div className="rounded border border-[#808080] bg-white p-3 shadow-sm">
                       <div className="flex items-start gap-2 text-sm">
                         <div className="min-w-0 flex-1">
                           <a
@@ -868,7 +868,7 @@ export default function PageBody() {
                 )}
                 {aiPeerImpressions.map((item) => (
                   <li key={item.peerId}>
-                    <div className="rounded border bg-white p-3 shadow-sm">
+                    <div className="rounded border border-[#808080] bg-white p-3 shadow-sm">
                       <div className="flex items-start gap-2 text-sm">
                         <a
                           href={`/users/${item.peerId}`}
@@ -891,7 +891,7 @@ export default function PageBody() {
                 {!aiInterest ? (
                   <div className="text-gray-400 text-center">No interest found.</div>
                 ) : (
-                  <div className="rounded border bg-white p-3 shadow-sm">
+                  <div className="rounded border border-[#808080] bg-white p-3 shadow-sm">
                     <div className="flex justify-end text-xs text-gray-400">
                       {formatDateTime(new Date(aiInterest.updatedAt))}
                     </div>

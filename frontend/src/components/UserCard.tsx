@@ -256,7 +256,7 @@ export default function UserCard({
 
   return (
     <article
-      className={`relative p-2 pt-3 sm:p-4 sm:pt-4 border rounded shadow-sm bg-white ${clickable ? "cursor-pointer" : ""} ${className}`}
+      className={`relative p-2 pt-3 sm:p-4 sm:pt-4 border border-[#808080] rounded shadow-sm bg-white ${clickable ? "cursor-pointer" : ""} ${className}`}
       onClick={clickable ? handleCardClick : undefined}
       tabIndex={clickable ? 0 : -1}
       role={clickable ? "button" : undefined}

@@ -482,7 +482,7 @@ export default function PageBody() {
 
   return (
     <main className="max-w-6xl mx-auto mt-8 p-4">
-      <div className="bg-white border rounded shadow p-4">
+      <div className="bg-white border border-[#808080] rounded shadow p-4">
         <h1 className="text-2xl font-bold mb-4">Contents Dashboard</h1>
 
         <div className="flex border-b mb-4">

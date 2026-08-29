@@ -424,7 +424,7 @@ export default function PageBody() {
   const sortButton = "inline-flex items-center gap-1 font-medium whitespace-nowrap";
 
   return (
-    <main className="max-w-3xl mx-auto mt-12 p-4 bg-white shadow border rounded">
+    <main className="max-w-3xl mx-auto mt-12 p-4 bg-white shadow border border-[#808080] rounded">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <h1 className="text-2xl font-bold">Publications</h1>
         <div className="flex items-center gap-2" role="tablist" aria-label="Publication pages">

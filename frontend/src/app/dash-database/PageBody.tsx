@@ -231,7 +231,7 @@ export default function PageBody() {
   const btnDanger = "bg-white text-red-700 border-red-300 hover:bg-red-50";
 
   return (
-    <main className="max-w-6xl mx-auto mt-12 p-4 bg-white shadow border rounded">
+    <main className="max-w-6xl mx-auto mt-12 p-4 bg-white shadow border border-[#808080] rounded">
       <div className="flex items-center justify-between gap-3 mb-6">
         <div className="flex flex-col gap-1 min-w-0">
           <h1 className="text-2xl font-bold">Database Dashboard</h1>

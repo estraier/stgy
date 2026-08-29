@@ -557,7 +557,7 @@ export default function PageBody() {
   const epArrowSlot = "w-4 mr-2 shrink-0";
 
   return (
-    <main className="max-w-6xl mx-auto mt-12 p-4 bg-white shadow border rounded">
+    <main className="max-w-6xl mx-auto mt-12 p-4 bg-white shadow border border-[#808080] rounded">
       <div className="flex items-center justify-between gap-3 mb-6">
         <h1 className="text-2xl font-bold">Endpoints Dashboard</h1>
 

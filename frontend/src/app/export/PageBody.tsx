@@ -1411,7 +1411,7 @@ export default function PageBody() {
     ) : null;
 
   return (
-    <main className="max-w-2xl mx-auto mt-12 p-4 bg-white shadow border rounded">
+    <main className="max-w-2xl mx-auto mt-12 p-4 bg-white shadow border border-[#808080] rounded">
       <h1 className="text-2xl font-bold mb-6">Exporting data</h1>
       <form
         onSubmit={handleExport}

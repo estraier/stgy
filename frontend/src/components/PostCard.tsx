@@ -560,7 +560,7 @@ export default function PostCard({
 
   return (
     <article
-      className={`p-2 sm:pt-4 sm:pb-2 sm:pl-4 sm:pr-3 border rounded bg-white shadow-sm ${
+      className={`p-2 sm:pt-4 sm:pb-2 sm:pl-4 sm:pr-3 border border-[#808080] rounded bg-white shadow-sm ${
         clickable ? "cursor-pointer" : ""
       } ${className}`}
       onClick={clickable && !pubDialogOpen ? handleCardClick : undefined}
