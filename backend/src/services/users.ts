@@ -45,7 +45,7 @@ type FocusRelFlagsRow = {
   is_blocking_focus_user: boolean;
 };
 
-const PUB_CONFIG_CACHE_TTL_SECONDS = 120;
+const PUB_CONFIG_CACHE_TTL_SECONDS = 600;
 
 export class UsersService {
   private pgPool: Pool;

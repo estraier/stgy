@@ -1571,7 +1571,7 @@ describe("UsersService", () => {
     expect(await service.checkBlock({ blockerId: BOB, blockeeId: ALICE })).toBe(false);
   });
 
-  test("getPubConfig returns defaults and caches them for 120 seconds", async () => {
+  test("getPubConfig returns defaults and caches them for 600 seconds", async () => {
     const cfg = await service.getPubConfig(ALICE);
     expect(cfg).toEqual({
       siteName: "",
@@ -1590,7 +1590,7 @@ describe("UsersService", () => {
     });
     expect(redis.setexCalls.at(-1)).toMatchObject({
       key: `user-pub-config:public:${ALICE}`,
-      ttl: 120,
+      ttl: 600,
     });
 
     pg.details[ALICE].locale = "en-US";
