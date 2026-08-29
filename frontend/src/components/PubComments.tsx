@@ -517,7 +517,7 @@ export default function PubComments({ postId, ownerId, themeDir }: Props) {
                       </div>
                     )}
                   </header>
-                  <pre className="pub-comment-body">{comment.body}</pre>
+                  <pre className="pub-comment-body">{convertForDirection(comment.body, themeDir)}</pre>
                 </>
               )}
             </article>

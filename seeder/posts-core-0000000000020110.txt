@@ -169,7 +169,7 @@ CREATE INDEX idx_post_pub_comments_post_id ON post_pub_comments(post_id, id DESC
 
 通常の入力制限はnickname 30文字、本文1000文字である。nicknameは制御文字を除去して空白を一つへまとめ、本文は改行をLFへ統一し、先頭の空行を除き、3個以上の連続LFを2個へ丸め、末尾を正確に1個のLFにする。DBの50文字/65536文字という余裕は、将来のアプリ側制限変更やアーカイブ復元のためであり、通常フォームの上限ではない。1記事あたりの保存コメント数は ``STGY_PUB_COMMENT_MAX_COMMENTS`` で制限し、デフォルトはpendingを含めて100件である。
 
-コメント一覧と入力フォームはClient Componentで動く。記事本文はSSRされるが、コメント内容はhydration後に ``GET /pub-comments`` で取得する。入力フォームは初期HTMLへ出さず、``Write a comment`` を押した後に ``form-state`` を取得して開く。投稿成功後はNewestの1ページ目へ戻し、Comments見出しへスクロールする。nicknameと、記事所有者または管理者が利用できる ``as owner`` の選択は、HttpOnly、SameSite=Laxの1年cookieへ保存して次回入力に再利用する。
+コメント一覧と入力フォームはClient Componentで動く。記事本文はSSRされるが、コメント内容はhydration後に ``GET /pub-comments`` で取得する。入力フォームは初期HTMLへ出さず、``Write a comment`` を押した後に ``form-state`` を取得して開く。投稿成功後はNewestの1ページ目へ戻し、Comments見出しへスクロールする。nicknameと、記事所有者または管理者が利用できる ``as owner`` の選択は、HttpOnly、SameSite=Laxの1年cookieへ保存して次回入力に再利用する。縦書きテーマでは、コメント本文の表示にも他の縦書きテキストと同じ方向依存変換を適用し、ASCII空白と印字可能ASCII文字を全角化する。DBに保存する本文と編集フォームへ戻す文字列は変換せず、入力された内容をそのまま保持する。
 
 ### CAPTCHAとpass token
 
