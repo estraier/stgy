@@ -8,9 +8,8 @@ import {
   makeHtmlFromJsonSnippet,
   makePubAttributesFromJsonSnippet,
 } from "@/utils/article";
-import { convertForDirection, formatDateTime, makeAbsoluteUrl } from "@/utils/format";
+import { convertForDirection, formatDateTime } from "@/utils/format";
 import ArticleWithDecoration from "@/components/ArticleWithDecoration";
-import PubShareButtons from "@/components/PubShareButtons";
 import LinkDiv from "@/components/LinkDiv";
 import KwicBody from "@/components/KwicBody";
 import type { KwicData } from "stgy-markdown";
@@ -26,8 +25,6 @@ type Props = {
   themeDir: "norm" | "vert";
   locale: string;
   pubLocale?: string | null;
-  shareButtons: readonly string[];
-  siteTitle: string;
 };
 
 export default function PubSiteSearchResults({
@@ -41,8 +38,6 @@ export default function PubSiteSearchResults({
   themeDir,
   locale,
   pubLocale,
-  shareButtons,
-  siteTitle,
 }: Props) {
   const [posts, setPosts] = React.useState<Post[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -51,10 +46,6 @@ export default function PubSiteSearchResults({
   const [kwicError, setKwicError] = React.useState<string | null>(null);
   const [searchPhrases, setSearchPhrases] = React.useState<string[]>([]);
   const kwicKeywords = searchPhrases;
-  const hasShareButtons = ["x", "facebook", "line", "hatena"].some((service) =>
-    shareButtons.includes(service),
-  );
-
   React.useEffect(() => {
     let active = true;
     setPosts(null);
@@ -224,16 +215,11 @@ export default function PubSiteSearchResults({
               writingMode,
             });
             const publishedAtDate = new Date(r.publishedAt ?? "");
-            const shareTitle = hasShareButtons
-              ? makePubAttributesFromJsonSnippet(r.snippet).title || siteTitle
-              : siteTitle;
             return (
               <LinkDiv
                 key={String(r.id)}
                 href={postHref}
-                className={`link-div post-div${
-                  hasShareButtons ? " pub-site-rich-post-with-share" : ""
-                }`}
+                className="link-div post-div"
                 id={`pubpost-${r.id}`}
                 data-restore-id={String(r.id)}
                 data-restore-page={String(page)}
@@ -243,20 +229,9 @@ export default function PubSiteSearchResults({
                 </div>
                 <ArticleWithDecoration
                   lang={r.locale || pubLocale || locale}
-                  className={`markdown-body post-content-excerpt${
-                    hasShareButtons ? " pub-site-post-content-with-share" : ""
-                  }`}
+                  className="markdown-body post-content-excerpt"
                   html={snippetHtml}
                 />
-                {hasShareButtons && (
-                  <PubShareButtons
-                    enabled={shareButtons}
-                    url={makeAbsoluteUrl(`/pub/${r.id}`)}
-                    title={shareTitle}
-                    locale={r.locale || pubLocale || locale}
-                    vertical={themeDir === "vert"}
-                  />
-                )}
               </LinkDiv>
             );
           })

@@ -55,7 +55,7 @@ published_at <= 現在時刻  → 公開中
 /pub/{postId}    一つの公開記事
 ```
 
-サイトページは、公開済み投稿を公開日時順で取得する。Rich表示では投稿のJSONスニペットを記事風に描画し、Plain表示では公開日、タイトル、著者、説明を簡潔な一覧にする。検索時にはKWIC/Rich/Plainを切り替えられる。新しい順と古い順を切り替えられ、RichとPlainではそれぞれ別のページサイズを設定できる。シェアボタンが有効な場合は、通常一覧と検索結果のRichスニペットにも各記事の左下へシェアボタンを表示する。
+サイトページは、公開済み投稿を公開日時順で取得する。Rich表示では投稿のJSONスニペットを記事風に描画し、Plain表示では公開日、タイトル、著者、説明を簡潔な一覧にする。検索時にはKWIC/Rich/Plainを切り替えられる。新しい順と古い順を切り替えられ、RichとPlainではそれぞれ別のページサイズを設定できる。
 
 記事ページは、Markdown本文を外部公開用のHTMLへ変換し、公開日時、前後記事、サイドバーを付ける。サイドバーには、設定に応じて次の要素を表示する。
 
@@ -119,11 +119,11 @@ CREATE TABLE user_pub_configs (
 
 シェア表示は ``PubShareButtons`` に集約する。認識する識別子は ``x``、``facebook``、``line``、``hatena`` で、表示順もX、Facebook、LINE、Hatenaに固定する。設定配列にそれ以外の値が残っていても表示対象にはしない。全て無効ならシェア領域自体を描画しない。
 
-``/pub/{postId}`` では記事本文の左下にシェアボタンを置く。``/sites/{userId}`` では通常一覧のRichスニペットと、検索後にRichタブを選んだスニペットの左下にも同じボタンを置く。PlainとKWICには表示しない。一覧のスニペット全体は記事へのリンクになっているため、シェア領域のclickとkeydownはイベント伝播を止め、シェアボタンの操作が記事遷移へ化けないようにする。
+``/pub/{postId}`` では記事本文の左下にシェアボタンを置く。``/sites/{userId}`` のRich、Plain、KWICスニペットにはシェアボタンを表示せず、記事一覧は閲覧に専念させる。シェア操作は個別の記事ページから行う。
 
 共有先へ渡すURLは、デザイン指定などのクエリ文字列を付けない正規の ``/pub/{postId}`` である。横書きでは、Xは ``platform.twitter.com/widgets.js`` の公式ボタン、Facebookは ``facebook.com/plugins/share_button.php`` の ``button_count`` iframeを102px幅で直接埋め込み、LINEはSocial Pluginsのshare URL、HatenaはBookmark公式widgetとHatena Star v2を使う。FacebookはXFBML/JavaScript SDKを使わず、LINEもURLと記事タイトルをURL encodeしてshare URLへ渡すだけなので追加のLINE JavaScript SDKは読み込まない。縦書きでは外部widgetの横方向レイアウトを持ち込まず、X、Facebook、LINEを24pxのcompact linkとして表示し、Hatena BookmarkとStarも同じ縦列へ収める。Hatenaを有効にするとBookmarkとStarを一組として表示する。
 
-外部widget用scriptは必要な場合だけClient Componentのhydration後に読み込む。Facebookの直接iframeとLINEのshare URLには追加scriptを使わない。特にHatena StarはサーバHTMLをhydration前に書き換えないよう、クライアント側からv2 widgetを起動する。``/sites`` では複数記事のシェア領域が同時にmountされるため、Hatena Bookmarkの全document scanは同一mount群で一回へまとめ、記事数だけ同じscriptを走らせない。
+外部widget用scriptは必要な場合だけClient Componentのhydration後に読み込む。Facebookの直接iframeとLINEのshare URLには追加scriptを使わない。特にHatena StarはサーバHTMLをhydration前に書き換えないよう、クライアント側からv2 widgetを起動する。Hatena Bookmarkの全document scanはまとめて実行し、同じscriptを重複して走らせない。
 
 ## 外部公開コメント
 
@@ -657,7 +657,7 @@ PostgreSQLの ``post_pub_access_counts`` は、チェックポイントまたは
 
 ## まとめ
 
-STGYの記事外部公開機能は、``posts.published_at`` を公開状態の正本とし、SNS内部の投稿を別データへ複製せずに、``/sites/{userId}`` と ``/pub/{postId}`` へブログ風に表示する。公開記事APIは現在時刻以前の投稿だけを返し、サイト一覧、記事詳細、前後記事、ID集合取得を用途ごとに分ける。Markdown本文とJSONスニペットは内部表示と共用し、外部ページ側ではサイト設定、デザインテーマ、OGP、ページネーション、プロフィール、Recent postsを組み合わせる。``extensions`` からX/Facebook/LINE/Hatenaのシェアとコメントmodeを設定でき、シェアは記事とRichスニペットへ、コメントは ``allow_replies`` とmodeが許す記事ページへ追加する。
+STGYの記事外部公開機能は、``posts.published_at`` を公開状態の正本とし、SNS内部の投稿を別データへ複製せずに、``/sites/{userId}`` と ``/pub/{postId}`` へブログ風に表示する。公開記事APIは現在時刻以前の投稿だけを返し、サイト一覧、記事詳細、前後記事、ID集合取得を用途ごとに分ける。Markdown本文とJSONスニペットは内部表示と共用し、外部ページ側ではサイト設定、デザインテーマ、OGP、ページネーション、プロフィール、Recent postsを組み合わせる。``extensions`` からX/Facebook/LINE/Hatenaのシェアとコメントmodeを設定でき、シェアは個別の記事本文へ、コメントは ``allow_replies`` とmodeが許す記事ページへ追加する。
 
 アクセスカウンタは、生のIPアドレスや個々のアクセス履歴を保存しない。Frontendで自己申告ボットを除外し、IPを鍵付きハッシュの32ビットフィンガープリントへ変換し、Backendで署名を検証する。Redis Luaが投稿別LRUの更新、重複判定、日次PV加算、TTL設定、Stats用メタデータ更新を一回で行い、増加後のカウンタ値をNode.jsへ返す。
 

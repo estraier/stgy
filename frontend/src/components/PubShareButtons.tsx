@@ -129,9 +129,8 @@ export default function PubShareButtons({ enabled, url, title, locale, vertical 
   useEffect(() => {
     if (!showHatena || !rootRef.current) return;
 
-    // The official script scans the whole document. Multiple share-button rows can
-    // mount together on /sites/[id], so coalesce them into one scan. A later
-    // client-side navigation can still trigger another scan after this one ends.
+    // The official script scans the whole document. Coalesce repeated mounts into
+    // one scan; a later client-side navigation can still trigger another scan.
     loadHatenaBookmarkWidgets();
   }, [showHatena, url, title, widgetLang]);
 
@@ -186,8 +185,6 @@ export default function PubShareButtons({ enabled, url, title, locale, vertical 
         ref={rootRef}
         className="pub-share-buttons pub-share-buttons-vertical"
         aria-label="Share"
-        onClick={(event) => event.stopPropagation()}
-        onKeyDown={(event) => event.stopPropagation()}
       >
         {showX && (
           <a
@@ -266,8 +263,6 @@ export default function PubShareButtons({ enabled, url, title, locale, vertical 
       ref={rootRef}
       className="pub-share-buttons pub-share-buttons-horizontal"
       aria-label="Share"
-      onClick={(event) => event.stopPropagation()}
-      onKeyDown={(event) => event.stopPropagation()}
     >
       {showX && (
         <span className="pub-share-widget pub-share-x">

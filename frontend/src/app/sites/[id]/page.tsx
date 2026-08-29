@@ -16,7 +16,6 @@ import { formatDateTime, makeAbsoluteUrl, convertForDirection } from "@/utils/fo
 import PubImageBlockBinder from "@/components/PubImageBlockBinder";
 import PubScrollAction from "@/components/PubScrollAction";
 import PubGoogleAnalytics from "@/components/PubGoogleAnalytics";
-import PubShareButtons from "@/components/PubShareButtons";
 import PubSearchForm from "@/components/PubSearchForm";
 import PubHorizontalScrollRestore from "./PubHorizontalScrollRestore";
 import PubSiteSearchResults from "./PubSiteSearchResults";
@@ -214,10 +213,6 @@ export default async function PubSitePage({ params, searchParams }: Props) {
     const locale = pubcfg.locale || "und";
     const siteIntroHtml = intro.html;
     const siteTitle = pubcfg.siteName || intro.title || "STGY Publications";
-    const enabledShareButtons = pubcfg.extensions.shareButtons ?? [];
-    const hasShareButtons = ["x", "facebook", "line", "hatena"].some((service) =>
-      enabledShareButtons.includes(service),
-    );
     const googleAnalyticsMeasurementId =
       pubcfg.extensions.analytics?.googleAnalytics?.measurementId?.trim() ?? "";
     const googleAnalyticsContentGroup = `stgy-user-${id}`;
@@ -331,8 +326,6 @@ export default async function PubSitePage({ params, searchParams }: Props) {
                   themeDir={themeDir}
                   locale={locale}
                   pubLocale={pubcfg.locale}
-                  shareButtons={enabledShareButtons}
-                  siteTitle={siteTitle}
                 />
               ) : (
                 <>
@@ -379,16 +372,11 @@ export default async function PubSitePage({ params, searchParams }: Props) {
                           writingMode,
                         });
                         const publishedAtDate = new Date(r.publishedAt ?? "");
-                        const shareTitle = hasShareButtons
-                          ? makePubAttributesFromJsonSnippet(r.snippet).title || siteTitle
-                          : siteTitle;
                         return (
                           <LinkDiv
                             key={String(r.id)}
                             href={postHref}
-                            className={`link-div post-div${
-                              hasShareButtons ? " pub-site-rich-post-with-share" : ""
-                            }`}
+                            className="link-div post-div"
                             id={`pubpost-${r.id}`}
                             data-restore-id={String(r.id)}
                             data-restore-page={String(page)}
@@ -398,20 +386,9 @@ export default async function PubSitePage({ params, searchParams }: Props) {
                             </div>
                             <ArticleWithDecoration
                               lang={r.locale || pubcfg.locale || locale}
-                              className={`markdown-body post-content-excerpt${
-                                hasShareButtons ? " pub-site-post-content-with-share" : ""
-                              }`}
+                              className="markdown-body post-content-excerpt"
                               html={snippetHtml}
                             />
-                            {hasShareButtons && (
-                              <PubShareButtons
-                                enabled={enabledShareButtons}
-                                url={makeAbsoluteUrl(`/pub/${r.id}`)}
-                                title={shareTitle}
-                                locale={r.locale || pubcfg.locale || locale}
-                                vertical={themeDir === "vert"}
-                              />
-                            )}
                           </LinkDiv>
                         );
                       })
