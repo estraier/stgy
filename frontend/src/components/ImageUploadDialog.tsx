@@ -62,7 +62,7 @@ type ImageCropInsets = {
   right: number;
 };
 
-type ImageEditParams = {
+export type ImageEditParams = {
   crop: ImageCropInsets;
   temperature: number;
   tint: number;
@@ -71,6 +71,8 @@ type ImageEditParams = {
   sigmoid: number;
   resizePercent: number;
 };
+
+export type ImageEditOutputFormat = "image/webp" | "image/jpeg" | "image/png";
 
 type Props = {
   userId: string;
@@ -244,7 +246,7 @@ function normalizeCrop(crop?: Partial<ImageCropInsets>): ImageCropInsets {
   };
 }
 
-function buildDefaultEditParams(w?: number, h?: number): ImageEditParams {
+export function buildDefaultEditParams(w?: number, h?: number): ImageEditParams {
   return {
     crop: { top: 0, bottom: 0, left: 0, right: 0 },
     temperature: 0,
@@ -845,7 +847,7 @@ async function decodeEditableSource(
   }
 }
 
-async function buildOptimizedVariant(
+export async function buildOptimizedVariant(
   file: File,
   srcW: number,
   srcH: number,
@@ -853,6 +855,7 @@ async function buildOptimizedVariant(
   name?: string,
   type?: string,
   edit?: ImageEditParams,
+  outputFormat: ImageEditOutputFormat = "image/webp",
 ): Promise<{ blob: Blob; width: number; height: number }> {
   const params = normalizeEditParams(edit, srcW, srcH);
   const decoded = await decodeEditableSource(file, srcW, srcH, name, type);
@@ -898,7 +901,7 @@ async function buildOptimizedVariant(
         type EncodeOpts = { type?: string; quality?: number };
         const conv = (output as OffscreenCanvas & { convertToBlob(options?: EncodeOpts): Promise<Blob> })
           .convertToBlob;
-        blob = await conv.call(output, { type: "image/webp", quality });
+        blob = await conv.call(output, { type: outputFormat, quality });
       }
     }
     if (!blob) {
@@ -928,7 +931,7 @@ async function buildOptimizedVariant(
       blob = await new Promise<Blob>((resolve, reject) =>
         output.toBlob(
           (b) => (b ? resolve(b) : reject(new Error("toBlob returned null"))),
-          "image/webp",
+          outputFormat,
           quality,
         ),
       );
@@ -1028,7 +1031,7 @@ type EditPoint = { x: number; y: number };
 type EditCorner = "nw" | "ne" | "sw" | "se";
 const EDIT_PREVIEW_MARGIN_PX = 8;
 
-function ImageEditDialog({ file, initialParams, onCancel, onApply }: EditDialogProps) {
+export function ImageEditDialog({ file, initialParams, onCancel, onApply }: EditDialogProps) {
   const [mounted, setMounted] = useState(false);
   const [imgUrl, setImgUrl] = useState<string>("");
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
@@ -1113,10 +1116,10 @@ function ImageEditDialog({ file, initialParams, onCancel, onApply }: EditDialogP
     const d = fitImage(natural, containerSize.w, containerSize.h);
     setDisplayed(d);
     const crop = normalizeCrop(initialParams.crop);
-    const x = Math.round(d.x + d.w * crop.left);
-    const y = Math.round(d.y + d.h * crop.top);
-    const right = Math.round(d.x + d.w * (1 - crop.right));
-    const bottom = Math.round(d.y + d.h * (1 - crop.bottom));
+    const x = d.x + d.w * crop.left;
+    const y = d.y + d.h * crop.top;
+    const right = d.x + d.w * (1 - crop.right);
+    const bottom = d.y + d.h * (1 - crop.bottom);
     setCropRect({
       x,
       y,
