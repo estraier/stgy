@@ -531,6 +531,11 @@ function applyLinkToggleFromTextarea(ta: HTMLTextAreaElement, setBody: (next: st
 function afterNextPaint(cb: () => void) {
   requestAnimationFrame(() => requestAnimationFrame(cb));
 }
+function getInsertedLineEndOffset(inserted: string) {
+  let end = inserted.length;
+  while (end > 0 && (inserted[end - 1] === "\n" || inserted[end - 1] === "\r")) end -= 1;
+  return end;
+}
 function resolveLineHeight(ta: HTMLTextAreaElement) {
   const s = window.getComputedStyle(ta);
   const lh = s.lineHeight;
@@ -2057,11 +2062,13 @@ export default function PostForm({
       if (!ta) {
         const base = bodyLiveRef.current ?? "";
         const needsNL = base.length > 0 && !base.endsWith("\n");
-        const next = base + (needsNL ? "\n" : "") + snippet;
+        const insert = (needsNL ? "\n" : "") + snippet;
+        const next = base + insert;
+        const pos = base.length + getInsertedLineEndOffset(insert);
         setBody(next);
-        caretRef.current = next.length;
-        selStartRef.current = next.length;
-        selEndRef.current = next.length;
+        caretRef.current = pos;
+        selStartRef.current = pos;
+        selEndRef.current = pos;
         scheduleSyncRef.current();
         if (overlayActiveLiveRef.current) {
           scheduleEditorHighlightRef.current();
@@ -2081,9 +2088,10 @@ export default function PostForm({
       const next = before + insert + after;
       setBody(next);
       requestAnimationFrame(() => {
-        const pos = before.length + insert.length;
+        const pos = before.length + getInsertedLineEndOffset(insert);
         ta.setSelectionRange(pos, pos);
         centerTextareaCaret(ta);
+        ta.focus({ preventScroll: true });
         caretRef.current = pos;
         selStartRef.current = pos;
         selEndRef.current = pos;
@@ -2106,10 +2114,11 @@ export default function PostForm({
       if (!ta) {
         const base = bodyLiveRef.current ?? "";
         const next = base + snippet;
+        const pos = base.length + getInsertedLineEndOffset(snippet);
         setBody(next);
-        caretRef.current = next.length;
-        selStartRef.current = next.length;
-        selEndRef.current = next.length;
+        caretRef.current = pos;
+        selStartRef.current = pos;
+        selEndRef.current = pos;
         scheduleSyncRef.current();
         if (overlayActiveLiveRef.current) {
           scheduleEditorHighlightRef.current();
@@ -2127,9 +2136,10 @@ export default function PostForm({
       const next = before + snippet + after;
       setBody(next);
       requestAnimationFrame(() => {
-        const pos = before.length + snippet.length;
+        const pos = before.length + getInsertedLineEndOffset(snippet);
         ta.setSelectionRange(pos, pos);
         centerTextareaCaret(ta);
+        ta.focus({ preventScroll: true });
         caretRef.current = pos;
         selStartRef.current = pos;
         selEndRef.current = pos;
