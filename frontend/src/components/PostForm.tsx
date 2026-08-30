@@ -2311,6 +2311,7 @@ export default function PostForm({
                 const attrs: MdAttrs = { ...(n.attrs ?? {}), src: "/data/no-video.mp4" };
                 n.attrs = attrs;
               } else if (n.tag === "img") {
+                n.attrs = { ...(n.attrs ?? {}), grid: true };
                 const srcVal =
                   (getAttr(n, "src") as unknown) ??
                   (getAttr(n, "SR") as unknown) ??
@@ -2320,9 +2321,6 @@ export default function PostForm({
                   const f = dataUrlToFile(src, `pasted-image-${files.length + 1}`);
                   if (f) {
                     files.push(f);
-                    if (n.attrs !== undefined) {
-                      n.attrs["grid"] = true;
-                    }
                     imageNodes.push(n);
                   } else {
                     const attrs: MdAttrs = { ...(n.attrs ?? {}), src: "/data/no-image.svg" };
