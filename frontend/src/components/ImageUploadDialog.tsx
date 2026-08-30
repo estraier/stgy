@@ -32,6 +32,8 @@ type SelectedItem = {
   type: string;
   size: number;
   previewUrl?: string;
+  originalPreviewUrl?: string;
+  optimizedPreviewUrl?: string;
   decodable: boolean;
   width?: number;
   height?: number;
@@ -50,6 +52,24 @@ type SelectedItem = {
   reusableUserId?: string;
   reusableRestPath?: string;
   reuse?: boolean;
+  edit?: ImageEditParams;
+};
+
+type ImageCropInsets = {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+};
+
+type ImageEditParams = {
+  crop: ImageCropInsets;
+  temperature: number;
+  tint: number;
+  exposureEv: number;
+  scaledLog: number;
+  sigmoid: number;
+  resizePercent: number;
 };
 
 type Props = {
@@ -182,6 +202,361 @@ function computeScale(w: number, h: number): number {
   const s1 = Config.IMAGE_OPTIMIZE_TARGET_LONGSIDE / longSide;
   const s2 = Math.sqrt(Config.IMAGE_OPTIMIZE_TARGET_PIXELS / (w * h));
   return Math.min(1, s1, s2);
+}
+
+function clamp01(v: number): number {
+  return Math.min(1, Math.max(0, v));
+}
+
+function clampExposureEv(v: number): number {
+  return Math.min(5, Math.max(-5, Math.round(v * 10) / 10));
+}
+
+function clampWhiteBalanceValue(v: number): number {
+  return Math.min(100, Math.max(-100, Math.round(v)));
+}
+
+function clampScaledLog(v: number): number {
+  return Math.min(16, Math.max(-16, Math.round(v * 10) / 10));
+}
+
+function clampSigmoid(v: number): number {
+  return Math.min(10, Math.max(-10, Math.round(v * 10) / 10));
+}
+
+function defaultResizePercent(w?: number, h?: number): number {
+  if (!w || !h || w <= 0 || h <= 0) return 100;
+  return Math.min(100, Math.max(1, Math.round(computeScale(w, h) * 100)));
+}
+
+function normalizeCrop(crop?: Partial<ImageCropInsets>): ImageCropInsets {
+  const top = clamp01(crop?.top ?? 0);
+  const bottom = clamp01(crop?.bottom ?? 0);
+  const left = clamp01(crop?.left ?? 0);
+  const right = clamp01(crop?.right ?? 0);
+  const sumTB = top + bottom;
+  const sumLR = left + right;
+  return {
+    top: sumTB >= 0.99 ? top / sumTB * 0.99 : top,
+    bottom: sumTB >= 0.99 ? bottom / sumTB * 0.99 : bottom,
+    left: sumLR >= 0.99 ? left / sumLR * 0.99 : left,
+    right: sumLR >= 0.99 ? right / sumLR * 0.99 : right,
+  };
+}
+
+function buildDefaultEditParams(w?: number, h?: number): ImageEditParams {
+  return {
+    crop: { top: 0, bottom: 0, left: 0, right: 0 },
+    temperature: 0,
+    tint: 0,
+    exposureEv: 0,
+    scaledLog: 0,
+    sigmoid: 0,
+    resizePercent: defaultResizePercent(w, h),
+  };
+}
+
+function normalizeEditParams(params: ImageEditParams | undefined, w?: number, h?: number): ImageEditParams {
+  const defaults = buildDefaultEditParams(w, h);
+  return {
+    crop: normalizeCrop(params?.crop ?? defaults.crop),
+    temperature: clampWhiteBalanceValue(params?.temperature ?? defaults.temperature),
+    tint: clampWhiteBalanceValue(params?.tint ?? defaults.tint),
+    exposureEv: clampExposureEv(params?.exposureEv ?? defaults.exposureEv),
+    scaledLog: clampScaledLog(params?.scaledLog ?? defaults.scaledLog),
+    sigmoid: clampSigmoid(params?.sigmoid ?? defaults.sigmoid),
+    resizePercent: Math.min(100, Math.max(1, Math.round(params?.resizePercent ?? defaults.resizePercent))),
+  };
+}
+
+function isMeaningfullyEdited(params: ImageEditParams | undefined, w?: number, h?: number): boolean {
+  if (!params) return false;
+  const normalized = normalizeEditParams(params, w, h);
+  const defaults = buildDefaultEditParams(w, h);
+  return (
+    normalized.crop.top > 0 ||
+    normalized.crop.bottom > 0 ||
+    normalized.crop.left > 0 ||
+    normalized.crop.right > 0 ||
+    normalized.temperature !== 0 ||
+    normalized.tint !== 0 ||
+    Math.abs(normalized.exposureEv) > 0.0001 ||
+    Math.abs(normalized.scaledLog) > 0.0001 ||
+    Math.abs(normalized.sigmoid) > 0.0001 ||
+    normalized.resizePercent !== defaults.resizePercent
+  );
+}
+
+function formatSignedEv(v: number): string {
+  return `${v >= 0 ? "+" : ""}${v.toFixed(1)}EV`;
+}
+
+function srgbChannelToLinear(v: number): number {
+  const x = clamp01(v / 255);
+  if (x <= 0.04045) return x / 12.92;
+  return Math.pow((x + 0.055) / 1.055, 2.4);
+}
+
+function linearChannelToSrgb(linear: number): number {
+  const x = clamp01(linear);
+  const srgb = x <= 0.0031308 ? x * 12.92 : 1.055 * Math.pow(x, 1 / 2.4) - 0.055;
+  return Math.round(clamp01(srgb) * 255);
+}
+
+type WhiteBalanceGains = { r: number; g: number; b: number };
+
+function whiteBalanceGains(temperature: number, tint: number): WhiteBalanceGains {
+  const t = clampWhiteBalanceValue(temperature) / 100;
+  const m = clampWhiteBalanceValue(tint) / 100;
+
+  // Work in log2 gain space so the three gains have a geometric mean of 1.
+  // Positive temperature warms (R up, B down); positive tint moves toward magenta
+  // (R/B up, G down) without introducing a global exposure shift.
+  const temperatureStops = t * 1.5;
+  const tintStops = m * 0.75;
+  const rStops = temperatureStops + tintStops / 2;
+  const gStops = -tintStops;
+  const bStops = -temperatureStops + tintStops / 2;
+  return {
+    r: Math.pow(2, rStops),
+    g: Math.pow(2, gStops),
+    b: Math.pow(2, bStops),
+  };
+}
+
+function applyWhiteBalanceLinear(
+  r: number,
+  g: number,
+  b: number,
+  gains: WhiteBalanceGains,
+): [number, number, number] {
+  // Match the existing itb_stack white-balance behavior: progressively reduce
+  // correction toward white so neutral highlights stay neutral.
+  const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+  const whiteThreshold = 0.98;
+  const weight = 1 - clamp01((gray - (1 - whiteThreshold)) / whiteThreshold);
+  const wr = weight * gains.r + (1 - weight);
+  const wg = weight * gains.g + (1 - weight);
+  const wb = weight * gains.b + (1 - weight);
+  return [clamp01(r * wr), clamp01(g * wg), clamp01(b * wb)];
+}
+
+function exposedPercentileFromRgb8(
+  data: Uint8ClampedArray,
+  factor: number,
+  percentile = 99.8,
+): number {
+  const histogram = new Uint32Array(256);
+  let sampleCount = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    histogram[data[i]]++;
+    histogram[data[i + 1]]++;
+    histogram[data[i + 2]]++;
+    sampleCount += 3;
+  }
+  if (sampleCount <= 0) return 0;
+
+  // NumPy's default percentile uses linear interpolation at
+  // rank = (N - 1) * percentile / 100. Because ImageData channels are 8 bit,
+  // a 256-bin histogram reproduces that percentile without sorting all pixels.
+  const rank = (sampleCount - 1) * Math.min(100, Math.max(0, percentile)) / 100;
+  const lowerRank = Math.floor(rank);
+  const upperRank = Math.ceil(rank);
+  const fraction = rank - lowerRank;
+
+  let cumulative = 0;
+  let lowerLevel = 255;
+  let upperLevel = 255;
+  let lowerFound = false;
+  for (let level = 0; level < histogram.length; level++) {
+    cumulative += histogram[level];
+    if (!lowerFound && cumulative > lowerRank) {
+      lowerLevel = level;
+      lowerFound = true;
+    }
+    if (cumulative > upperRank) {
+      upperLevel = level;
+      break;
+    }
+  }
+
+  const lower = srgbChannelToLinear(lowerLevel) * factor;
+  const upper = srgbChannelToLinear(upperLevel) * factor;
+  return lower + (upper - lower) * fraction;
+}
+
+function whiteBalancedExposedPercentileFromRgb8(
+  data: Uint8ClampedArray,
+  gains: WhiteBalanceGains,
+  factor: number,
+  percentile = 99.8,
+): number {
+  const histogram = new Uint32Array(65536);
+  let sampleCount = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    const r = srgbChannelToLinear(data[i]);
+    const g = srgbChannelToLinear(data[i + 1]);
+    const b = srgbChannelToLinear(data[i + 2]);
+    const [wr, wg, wb] = applyWhiteBalanceLinear(r, g, b, gains);
+    histogram[Math.min(65535, Math.max(0, Math.round(wr * 65535)))]++;
+    histogram[Math.min(65535, Math.max(0, Math.round(wg * 65535)))]++;
+    histogram[Math.min(65535, Math.max(0, Math.round(wb * 65535)))]++;
+    sampleCount += 3;
+  }
+  if (sampleCount <= 0) return 0;
+
+  const rank = (sampleCount - 1) * Math.min(100, Math.max(0, percentile)) / 100;
+  const lowerRank = Math.floor(rank);
+  const upperRank = Math.ceil(rank);
+  const fraction = rank - lowerRank;
+  let cumulative = 0;
+  let lowerLevel = 65535;
+  let upperLevel = 65535;
+  let lowerFound = false;
+  for (let level = 0; level < histogram.length; level++) {
+    cumulative += histogram[level];
+    if (!lowerFound && cumulative > lowerRank) {
+      lowerLevel = level;
+      lowerFound = true;
+    }
+    if (cumulative > upperRank) {
+      upperLevel = level;
+      break;
+    }
+  }
+  const lower = lowerLevel / 65535 * factor;
+  const upper = upperLevel / 65535 * factor;
+  return lower + (upper - lower) * fraction;
+}
+
+function applyScaledLogLinear(value: number, factor: number): number {
+  const x = clamp01(value);
+  const f = clampScaledLog(factor);
+  if (f > 1e-6) {
+    return clamp01(Math.log1p(x * f) / Math.log1p(f));
+  }
+  if (f < -1e-6) {
+    const magnitude = -f;
+    return clamp01(Math.expm1(x * Math.log1p(magnitude)) / magnitude);
+  }
+  return x;
+}
+
+function naiveSigmoid(value: number, gain: number, mid: number): number {
+  return 1 / (1 + Math.exp((mid - value) * gain));
+}
+
+function naiveInverseSigmoid(value: number, gain: number, mid: number): number {
+  const minVal = naiveSigmoid(0, gain, mid);
+  const maxVal = naiveSigmoid(1, gain, mid);
+  const a = (maxVal - minVal) * value + minVal;
+  return -Math.log(1 / a - 1) / gain;
+}
+
+function applySigmoidLinear(value: number, gain: number): number {
+  const x = clamp01(value);
+  const g = clampSigmoid(gain);
+  const mid = 0.5;
+  if (g > 1e-6) {
+    const minVal = naiveSigmoid(0, g, mid);
+    const maxVal = naiveSigmoid(1, g, mid);
+    return clamp01((naiveSigmoid(x, g, mid) - minVal) / (maxVal - minVal));
+  }
+  if (g < -1e-6) {
+    const magnitude = -g;
+    const minVal = naiveInverseSigmoid(0, magnitude, mid);
+    const maxVal = naiveInverseSigmoid(1, magnitude, mid);
+    return clamp01(
+      (naiveInverseSigmoid(x, magnitude, mid) - minVal) / (maxVal - minVal),
+    );
+  }
+  return x;
+}
+
+function highlightRolloffParams(maxVal: number): { inflection: number; scale: number } | null {
+  if (maxVal <= 1) return null;
+  const savingLimit = 4;
+  let asymptotic = 0.5;
+  if (maxVal > savingLimit) {
+    asymptotic = Math.pow(asymptotic, savingLimit / maxVal);
+  }
+  const inflection = asymptotic + (1 - asymptotic) / maxVal;
+  const scale = (1 - inflection) / (maxVal - inflection + 1e-6);
+  return { inflection, scale };
+}
+
+function applyColorAdjustmentsToCanvas(
+  canvas: HTMLCanvasElement | OffscreenCanvas,
+  temperature: number,
+  tint: number,
+  exposureEv: number,
+  scaledLog: number,
+  sigmoid: number,
+) {
+  const normalizedTemperature = clampWhiteBalanceValue(temperature);
+  const normalizedTint = clampWhiteBalanceValue(tint);
+  const normalizedScaledLog = clampScaledLog(scaledLog);
+  const normalizedSigmoid = clampSigmoid(sigmoid);
+  if (
+    normalizedTemperature === 0 &&
+    normalizedTint === 0 &&
+    Math.abs(exposureEv) < 0.0001 &&
+    Math.abs(normalizedScaledLog) < 0.0001 &&
+    Math.abs(normalizedSigmoid) < 0.0001
+  ) {
+    return;
+  }
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const factor = Math.pow(2, exposureEv);
+  const width = "width" in canvas ? canvas.width : 0;
+  const height = "height" in canvas ? canvas.height : 0;
+  if (!width || !height) return;
+  const imageData = ctx.getImageData(0, 0, width, height);
+  const data = imageData.data;
+  const gains = whiteBalanceGains(normalizedTemperature, normalizedTint);
+  const hasWhiteBalance = normalizedTemperature !== 0 || normalizedTint !== 0;
+  const maxVal =
+    factor > 1
+      ? hasWhiteBalance
+        ? whiteBalancedExposedPercentileFromRgb8(data, gains, factor, 99.8)
+        : exposedPercentileFromRgb8(data, factor, 99.8)
+      : 0;
+  const rolloff = factor > 1 ? highlightRolloffParams(maxVal) : null;
+  for (let i = 0; i < data.length; i += 4) {
+    let r = srgbChannelToLinear(data[i]);
+    let g = srgbChannelToLinear(data[i + 1]);
+    let b = srgbChannelToLinear(data[i + 2]);
+    if (hasWhiteBalance) {
+      [r, g, b] = applyWhiteBalanceLinear(r, g, b, gains);
+    }
+    r *= factor;
+    g *= factor;
+    b *= factor;
+    if (rolloff) {
+      if (r > rolloff.inflection) {
+        r = rolloff.inflection + (r - rolloff.inflection) * rolloff.scale;
+      }
+      if (g > rolloff.inflection) {
+        g = rolloff.inflection + (g - rolloff.inflection) * rolloff.scale;
+      }
+      if (b > rolloff.inflection) {
+        b = rolloff.inflection + (b - rolloff.inflection) * rolloff.scale;
+      }
+    }
+    // Match the Python tone order: linear exposure (with clipping), then scaled log,
+    // then sigmoid. Keep all three operations in this linear-RGB pass.
+    r = applyScaledLogLinear(clamp01(r), normalizedScaledLog);
+    g = applyScaledLogLinear(clamp01(g), normalizedScaledLog);
+    b = applyScaledLogLinear(clamp01(b), normalizedScaledLog);
+    r = applySigmoidLinear(r, normalizedSigmoid);
+    g = applySigmoidLinear(g, normalizedSigmoid);
+    b = applySigmoidLinear(b, normalizedSigmoid);
+    data[i] = linearChannelToSrgb(r);
+    data[i + 1] = linearChannelToSrgb(g);
+    data[i + 2] = linearChannelToSrgb(b);
+  }
+  ctx.putImageData(imageData, 0, 0);
 }
 
 type OffscreenCanvasCtor = new (width: number, height: number) => OffscreenCanvas;
@@ -389,6 +764,184 @@ async function rasterToWebp(
   return { blob, width: dw, height: dh };
 }
 
+async function decodeEditableSource(
+  file: File,
+  srcW: number,
+  srcH: number,
+  name?: string,
+  type?: string,
+): Promise<{ source: CanvasImageSource; width: number; height: number; cleanup: () => void }> {
+  if (isTiff(name || "", type || "")) {
+    const UTIF: typeof import("utif") = await import("utif");
+    const buf = await file.arrayBuffer();
+    const ifds = UTIF.decode(buf);
+    if (!ifds || ifds.length === 0) throw new Error("TIFF decode failed: no IFD");
+    UTIF.decodeImage(buf, ifds[0]);
+    type TiffIFDSize = { width: number; height: number };
+    const { width, height } = ifds[0] as TiffIFDSize;
+    if (!width || !height) throw new Error("TIFF decode failed: invalid size");
+    const rgba = UTIF.toRGBA8(ifds[0]);
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("2D context unavailable");
+    ctx.putImageData(new ImageData(new Uint8ClampedArray(rgba), width, height), 0, 0);
+    return { source: canvas, width, height, cleanup: () => {} };
+  }
+
+  if (isSvg(name || "", type || "")) {
+    const svgText = await file.text();
+    let size = parseSvgSize(svgText);
+    if (!size) {
+      const fallback = Math.max(1, Number(Config.IMAGE_OPTIMIZE_TARGET_LONGSIDE) || 1200);
+      size = { w: fallback, h: fallback };
+    }
+    const normalizedSvg = normalizeSvg(svgText, size.w, size.h);
+    const svgBlob = new Blob([normalizedSvg], { type: "image/svg+xml" });
+    try {
+      const bmp = await createImageBitmap(svgBlob);
+      return {
+        source: bmp,
+        width: bmp.width || size.w,
+        height: bmp.height || size.h,
+        cleanup: () => bmp.close?.(),
+      };
+    } catch {
+      const url = URL.createObjectURL(svgBlob);
+      try {
+        const img = document.createElement("img");
+        img.decoding = "async";
+        const ok = await new Promise<boolean>((resolve) => {
+          img.onload = () => resolve(true);
+          img.onerror = () => resolve(false);
+          img.src = url;
+        });
+        if (!ok) throw new Error("svg decode via <img> failed");
+        return {
+          source: img,
+          width: img.naturalWidth || size.w,
+          height: img.naturalHeight || size.h,
+          cleanup: () => setTimeout(() => URL.revokeObjectURL(url), 0),
+        };
+      } catch (e) {
+        URL.revokeObjectURL(url);
+        throw e;
+      }
+    }
+  }
+
+  try {
+    const bmp = await createImageBitmap(file);
+    return { source: bmp, width: bmp.width || srcW, height: bmp.height || srcH, cleanup: () => bmp.close?.() };
+  } catch {
+    const img = await decodeViaImg(file);
+    return {
+      source: img,
+      width: img.naturalWidth || srcW,
+      height: img.naturalHeight || srcH,
+      cleanup: () => {},
+    };
+  }
+}
+
+async function buildOptimizedVariant(
+  file: File,
+  srcW: number,
+  srcH: number,
+  quality = 0.8,
+  name?: string,
+  type?: string,
+  edit?: ImageEditParams,
+): Promise<{ blob: Blob; width: number; height: number }> {
+  const params = normalizeEditParams(edit, srcW, srcH);
+  const decoded = await decodeEditableSource(file, srcW, srcH, name, type);
+  const { source, cleanup } = decoded;
+  const w = decoded.width;
+  const h = decoded.height;
+  try {
+    const crop = normalizeCrop(params.crop);
+    const sx = Math.max(0, Math.min(w - 1, Math.round(w * crop.left)));
+    const sy = Math.max(0, Math.min(h - 1, Math.round(h * crop.top)));
+    const ex = Math.max(sx + 1, Math.min(w, Math.round(w * (1 - crop.right))));
+    const ey = Math.max(sy + 1, Math.min(h, Math.round(h * (1 - crop.bottom))));
+    const sw = Math.max(1, ex - sx);
+    const sh = Math.max(1, ey - sy);
+    const dw = Math.max(1, Math.round(sw * params.resizePercent / 100));
+    const dh = Math.max(1, Math.round(sh * params.resizePercent / 100));
+    let blob: Blob | null = null;
+    const OSC = getOffscreenCanvasCtor();
+    if (OSC) {
+      // Keep the processing order explicit: crop -> white balance -> exposure/rolloff
+      // -> scaled log -> sigmoid -> resize -> encode. White balance and tone adjustments share
+      // one linear-RGB pass so there is no extra 8-bit round-trip between them.
+      const cropped = new OSC(sw, sh);
+      const croppedCtx = cropped.getContext("2d");
+      if (!croppedCtx) throw new Error("2D context unavailable");
+      croppedCtx.drawImage(source, sx, sy, sw, sh, 0, 0, sw, sh);
+      applyColorAdjustmentsToCanvas(
+        cropped,
+        params.temperature,
+        params.tint,
+        params.exposureEv,
+        params.scaledLog,
+        params.sigmoid,
+      );
+
+      const output = new OSC(dw, dh);
+      const outputCtx = output.getContext("2d");
+      if (!outputCtx) throw new Error("2D context unavailable");
+      outputCtx.imageSmoothingEnabled = true;
+      outputCtx.imageSmoothingQuality = "high";
+      outputCtx.drawImage(cropped, 0, 0, sw, sh, 0, 0, dw, dh);
+      if ("convertToBlob" in output) {
+        type EncodeOpts = { type?: string; quality?: number };
+        const conv = (output as OffscreenCanvas & { convertToBlob(options?: EncodeOpts): Promise<Blob> })
+          .convertToBlob;
+        blob = await conv.call(output, { type: "image/webp", quality });
+      }
+    }
+    if (!blob) {
+      const cropped = document.createElement("canvas");
+      cropped.width = sw;
+      cropped.height = sh;
+      const croppedCtx = cropped.getContext("2d");
+      if (!croppedCtx) throw new Error("2D context unavailable");
+      croppedCtx.drawImage(source, sx, sy, sw, sh, 0, 0, sw, sh);
+      applyColorAdjustmentsToCanvas(
+        cropped,
+        params.temperature,
+        params.tint,
+        params.exposureEv,
+        params.scaledLog,
+        params.sigmoid,
+      );
+
+      const output = document.createElement("canvas");
+      output.width = dw;
+      output.height = dh;
+      const outputCtx = output.getContext("2d");
+      if (!outputCtx) throw new Error("2D context unavailable");
+      outputCtx.imageSmoothingEnabled = true;
+      outputCtx.imageSmoothingQuality = "high";
+      outputCtx.drawImage(cropped, 0, 0, sw, sh, 0, 0, dw, dh);
+      blob = await new Promise<Blob>((resolve, reject) =>
+        output.toBlob(
+          (b) => (b ? resolve(b) : reject(new Error("toBlob returned null"))),
+          "image/webp",
+          quality,
+        ),
+      );
+    }
+    if (!blob || !blob.size || !dw || !dh) {
+      throw new Error("invalid optimized output");
+    }
+    return { blob, width: dw, height: dh };
+  } finally {
+    cleanup();
+  }
+}
+
 function shouldAutoOptimize(meta: Pick<SelectedItem, "width" | "height" | "size">): boolean {
   const { width, height, size } = meta;
   const pixelCount = (width ?? 0) * (height ?? 0);
@@ -463,6 +1016,458 @@ function splitObjectKey(objectKey: string): { userId: string; restPath: string }
   return { userId: objectKey.slice(0, p), restPath: objectKey.slice(p + 1) };
 }
 
+type EditDialogProps = {
+  file: File;
+  initialParams: ImageEditParams;
+  onCancel: () => void;
+  onApply: (params: ImageEditParams) => void;
+};
+
+type EditRect = { x: number; y: number; w: number; h: number };
+type EditPoint = { x: number; y: number };
+type EditCorner = "nw" | "ne" | "sw" | "se";
+const EDIT_PREVIEW_MARGIN_PX = 8;
+
+function ImageEditDialog({ file, initialParams, onCancel, onApply }: EditDialogProps) {
+  const [mounted, setMounted] = useState(false);
+  const [imgUrl, setImgUrl] = useState<string>("");
+  const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const previewCanvasRef = useRef<HTMLCanvasElement>(null);
+  const previewImageRef = useRef<HTMLImageElement | null>(null);
+  const [containerSize, setContainerSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  const [displayed, setDisplayed] = useState<EditRect>({ x: 0, y: 0, w: 0, h: 0 });
+  const [cropRect, setCropRect] = useState<EditRect>({ x: 0, y: 0, w: 0, h: 0 });
+  const [temperature, setTemperature] = useState<number>(
+    clampWhiteBalanceValue(initialParams.temperature),
+  );
+  const [tint, setTint] = useState<number>(clampWhiteBalanceValue(initialParams.tint));
+  const [exposureEv, setExposureEv] = useState<number>(clampExposureEv(initialParams.exposureEv));
+  const [scaledLog, setScaledLog] = useState<number>(clampScaledLog(initialParams.scaledLog));
+  const [sigmoid, setSigmoid] = useState<number>(clampSigmoid(initialParams.sigmoid));
+  const [resizePercent, setResizePercent] = useState<number>(
+    Math.min(100, Math.max(1, Math.round(initialParams.resizePercent))),
+  );
+  const dragState = useRef<
+    | null
+    | { mode: "move"; startP: EditPoint; startCrop: EditRect }
+    | { mode: "resize"; corner: EditCorner; startP: EditPoint; startCrop: EditRect }
+  >(null);
+
+  useEffect(() => setMounted(true), []);
+
+  useEffect(() => {
+    const url = URL.createObjectURL(file);
+    setImgUrl(url);
+    const img = new window.Image();
+    img.decoding = "async";
+    img.src = url;
+    const onLoad = () => {
+      previewImageRef.current = img;
+      setNatural({ w: img.naturalWidth, h: img.naturalHeight });
+    };
+    const onError = () => setNatural(null);
+    img.addEventListener("load", onLoad);
+    img.addEventListener("error", onError);
+    return () => {
+      img.removeEventListener("load", onLoad);
+      img.removeEventListener("error", onError);
+      previewImageRef.current = null;
+      URL.revokeObjectURL(url);
+    };
+  }, [file]);
+
+  useEffect(() => {
+    if (!mounted) return;
+    const container = containerRef.current;
+    if (!container) return;
+    const updateSize = () => {
+      // Measure the actual gray preview area after the portal has mounted. The image fit and
+      // centering must be derived from this box, not from a placeholder size.
+      setContainerSize({ w: container.clientWidth, h: container.clientHeight });
+    };
+    updateSize();
+    const ro = new ResizeObserver(updateSize);
+    ro.observe(container);
+    return () => ro.disconnect();
+  }, [mounted]);
+
+  const fitImage = useCallback((nat: { w: number; h: number }, cw: number, ch: number): EditRect => {
+    if (nat.w <= 0 || nat.h <= 0 || cw <= 0 || ch <= 0) return { x: 0, y: 0, w: 0, h: 0 };
+    const margin = EDIT_PREVIEW_MARGIN_PX;
+    const innerW = Math.max(1, cw - margin * 2);
+    const innerH = Math.max(1, ch - margin * 2);
+    const scale = Math.min(innerW / nat.w, innerH / nat.h);
+    const w = nat.w * scale;
+    const h = nat.h * scale;
+    return {
+      x: (cw - w) / 2,
+      y: (ch - h) / 2,
+      w,
+      h,
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!natural || containerSize.w <= 0 || containerSize.h <= 0) return;
+    const d = fitImage(natural, containerSize.w, containerSize.h);
+    setDisplayed(d);
+    const crop = normalizeCrop(initialParams.crop);
+    const x = Math.round(d.x + d.w * crop.left);
+    const y = Math.round(d.y + d.h * crop.top);
+    const right = Math.round(d.x + d.w * (1 - crop.right));
+    const bottom = Math.round(d.y + d.h * (1 - crop.bottom));
+    setCropRect({
+      x,
+      y,
+      w: Math.max(40, right - x),
+      h: Math.max(40, bottom - y),
+    });
+  }, [natural, containerSize.w, containerSize.h, fitImage, initialParams.crop]);
+
+  const clampCropRect = useCallback(
+    (candidate: EditRect): EditRect => {
+      const minW = Math.min(40, displayed.w || 40);
+      const minH = Math.min(40, displayed.h || 40);
+      let w = Math.max(minW, Math.min(candidate.w, displayed.w));
+      let h = Math.max(minH, Math.min(candidate.h, displayed.h));
+      let x = Math.max(displayed.x, Math.min(candidate.x, displayed.x + displayed.w - w));
+      let y = Math.max(displayed.y, Math.min(candidate.y, displayed.y + displayed.h - h));
+      if (x + w > displayed.x + displayed.w) x = displayed.x + displayed.w - w;
+      if (y + h > displayed.y + displayed.h) y = displayed.y + displayed.h - h;
+      return {
+        x: Math.round(x),
+        y: Math.round(y),
+        w: Math.round(w),
+        h: Math.round(h),
+      };
+    },
+    [displayed.x, displayed.y, displayed.w, displayed.h],
+  );
+
+  const toLocal = useCallback((e: React.PointerEvent): EditPoint => {
+    const rect = containerRef.current!.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  }, []);
+
+  const onCropPointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      (e.currentTarget as Element).setPointerCapture(e.pointerId);
+      dragState.current = { mode: "move", startP: toLocal(e), startCrop: cropRect };
+      e.preventDefault();
+    },
+    [cropRect, toLocal],
+  );
+
+  const onHandlePointerDown = useCallback(
+    (corner: EditCorner) => (e: React.PointerEvent) => {
+      (e.currentTarget as Element).setPointerCapture(e.pointerId);
+      dragState.current = { mode: "resize", corner, startP: toLocal(e), startCrop: cropRect };
+      e.preventDefault();
+      e.stopPropagation();
+    },
+    [cropRect, toLocal],
+  );
+
+  const onPointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      if (!dragState.current) return;
+      const p = toLocal(e);
+      const dx = p.x - dragState.current.startP.x;
+      const dy = p.y - dragState.current.startP.y;
+      if (dragState.current.mode === "move") {
+        setCropRect(
+          clampCropRect({
+            ...dragState.current.startCrop,
+            x: dragState.current.startCrop.x + dx,
+            y: dragState.current.startCrop.y + dy,
+          }),
+        );
+        return;
+      }
+      const start = dragState.current.startCrop;
+      let next = { ...start };
+      if (dragState.current.corner === "nw") {
+        next = { x: start.x + dx, y: start.y + dy, w: start.w - dx, h: start.h - dy };
+      } else if (dragState.current.corner === "ne") {
+        next = { x: start.x, y: start.y + dy, w: start.w + dx, h: start.h - dy };
+      } else if (dragState.current.corner === "sw") {
+        next = { x: start.x + dx, y: start.y, w: start.w - dx, h: start.h + dy };
+      } else {
+        next = { x: start.x, y: start.y, w: start.w + dx, h: start.h + dy };
+      }
+      setCropRect(clampCropRect(next));
+    },
+    [clampCropRect, toLocal],
+  );
+
+  const onPointerUp = useCallback((e: React.PointerEvent) => {
+    try {
+      (e.target as Element).releasePointerCapture?.(e.pointerId);
+    } catch {}
+    dragState.current = null;
+  }, []);
+
+  const overlayPath = useMemo(() => {
+    return {
+      outer: `M${displayed.x},${displayed.y} H${displayed.x + displayed.w} V${displayed.y + displayed.h} H${displayed.x} Z`,
+      inner: `M${cropRect.x},${cropRect.y} H${cropRect.x + cropRect.w} V${cropRect.y + cropRect.h} H${cropRect.x} Z`,
+    };
+  }, [cropRect, displayed.x, displayed.y, displayed.w, displayed.h]);
+
+  useEffect(() => {
+    const canvas = previewCanvasRef.current;
+    const img = previewImageRef.current;
+    if (!canvas || !img || !displayed.w || !displayed.h) return;
+    const width = Math.max(1, Math.round(displayed.w));
+    const height = Math.max(1, Math.round(displayed.h));
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, width, height);
+    ctx.drawImage(img, 0, 0, width, height);
+    applyColorAdjustmentsToCanvas(
+      canvas,
+      temperature,
+      tint,
+      exposureEv,
+      scaledLog,
+      sigmoid,
+    );
+  }, [displayed.w, displayed.h, temperature, tint, exposureEv, scaledLog, sigmoid, natural]);
+
+  const onSubmit = useCallback(() => {
+    if (!displayed.w || !displayed.h) return;
+    const left = (cropRect.x - displayed.x) / displayed.w;
+    const top = (cropRect.y - displayed.y) / displayed.h;
+    const right = 1 - (cropRect.x + cropRect.w - displayed.x) / displayed.w;
+    const bottom = 1 - (cropRect.y + cropRect.h - displayed.y) / displayed.h;
+    onApply({
+      crop: normalizeCrop({ left, top, right, bottom }),
+      temperature: clampWhiteBalanceValue(temperature),
+      tint: clampWhiteBalanceValue(tint),
+      exposureEv: clampExposureEv(exposureEv),
+      scaledLog: clampScaledLog(scaledLog),
+      sigmoid: clampSigmoid(sigmoid),
+      resizePercent: Math.min(100, Math.max(1, Math.round(resizePercent))),
+    });
+  }, [
+    displayed.w,
+    displayed.h,
+    displayed.x,
+    displayed.y,
+    cropRect,
+    temperature,
+    tint,
+    exposureEv,
+    scaledLog,
+    sigmoid,
+    resizePercent,
+    onApply,
+  ]);
+
+  if (!mounted) return null;
+
+  return createPortal(
+    <div className="fixed inset-0 z-[70] bg-black/70 flex items-center justify-center p-4" onClick={onCancel}>
+      <div className="bg-white rounded shadow max-w-[95vw] max-h-[95vh] w-[min(1100px,95vw)] p-4" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-base font-semibold break-all">Edit image</h2>
+          <button className="px-2 py-0.5 text-sm rounded border border-gray-300 hover:bg-gray-100" onClick={onCancel}>
+            Close
+          </button>
+        </div>
+
+        <div className="mt-3 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_208px] gap-4 lg:items-stretch">
+          <div
+            ref={containerRef}
+            className="relative w-full h-[56vh] min-h-[360px] lg:h-auto rounded border bg-gray-200 overflow-hidden touch-none"
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={onPointerUp}
+          >
+              {imgUrl && natural ? (
+                <>
+                  <canvas
+                    ref={previewCanvasRef}
+                    className="absolute select-none"
+                    style={{
+                      left: displayed.x,
+                      top: displayed.y,
+                      width: displayed.w,
+                      height: displayed.h,
+                    }}
+                  />
+                  <svg className="absolute inset-0 w-full h-full pointer-events-none" aria-hidden="true">
+                    <path d={`${overlayPath.outer} ${overlayPath.inner}`} fill="rgba(0,0,0,0.45)" fillRule="evenodd" />
+                  </svg>
+                  <div
+                    className="absolute border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.45)] bg-transparent cursor-move"
+                    style={{ left: cropRect.x, top: cropRect.y, width: cropRect.w, height: cropRect.h }}
+                    onPointerDown={onCropPointerDown}
+                  >
+                    {(["nw", "ne", "sw", "se"] as EditCorner[]).map((corner) => {
+                      const style =
+                        corner === "nw"
+                          ? { left: -6, top: -6 }
+                          : corner === "ne"
+                            ? { right: -6, top: -6 }
+                            : corner === "sw"
+                              ? { left: -6, bottom: -6 }
+                              : { right: -6, bottom: -6 };
+                      return (
+                        <div
+                          key={corner}
+                          className="absolute w-3 h-3 rounded-full bg-white border border-black cursor-pointer"
+                          style={style}
+                          onPointerDown={onHandlePointerDown(corner)}
+                        />
+                      );
+                    })}
+                  </div>
+                </>
+              ) : (
+                <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-500">Loading preview…</div>
+              )}
+          </div>
+
+          <div className="space-y-4 text-sm text-gray-800">
+            <div className="rounded border px-2 py-3 space-y-2">
+              <div className="font-medium">Crop</div>
+              <div className="flex items-center justify-between gap-1 text-[10px] text-gray-700 leading-5 font-mono whitespace-nowrap">
+                <span>T={(displayed.h ? ((cropRect.y - displayed.y) / displayed.h) * 100 : 0).toFixed(1)}%</span>
+                <span>B={(displayed.h ? (1 - (cropRect.y + cropRect.h - displayed.y) / displayed.h) * 100 : 0).toFixed(1)}%</span>
+                <span>L={(displayed.w ? ((cropRect.x - displayed.x) / displayed.w) * 100 : 0).toFixed(1)}%</span>
+                <span>R={(displayed.w ? (1 - (cropRect.x + cropRect.w - displayed.x) / displayed.w) * 100 : 0).toFixed(1)}%</span>
+              </div>
+            </div>
+
+            <div className="rounded border p-3 space-y-3">
+              <div className="font-medium">White balance</div>
+              <label className="block space-y-1">
+                <div className="flex items-center justify-between gap-3">
+                  <span>Temperature</span>
+                  <span className="font-mono text-[12px]">
+                    {temperature >= 0 ? "+" : ""}{temperature}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={-100}
+                  max={100}
+                  step={1}
+                  value={temperature}
+                  onChange={(e) => setTemperature(clampWhiteBalanceValue(Number(e.target.value)))}
+                  className="w-full"
+                />
+              </label>
+              <label className="block space-y-1">
+                <div className="flex items-center justify-between gap-3">
+                  <span>Tint</span>
+                  <span className="font-mono text-[12px]">
+                    {tint >= 0 ? "+" : ""}{tint}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={-100}
+                  max={100}
+                  step={1}
+                  value={tint}
+                  onChange={(e) => setTint(clampWhiteBalanceValue(Number(e.target.value)))}
+                  className="w-full"
+                />
+              </label>
+            </div>
+
+            <div className="rounded border p-3 space-y-3">
+              <div className="font-medium">Tone</div>
+              <label className="block space-y-1">
+                <div className="flex items-center justify-between gap-3">
+                  <span>Exposure</span>
+                  <span className="font-mono text-[12px]">{formatSignedEv(exposureEv)}</span>
+                </div>
+                <input
+                  type="range"
+                  min={-5}
+                  max={5}
+                  step={0.1}
+                  value={exposureEv}
+                  onChange={(e) => setExposureEv(clampExposureEv(Number(e.target.value)))}
+                  className="w-full"
+                />
+              </label>
+              <label className="block space-y-1">
+                <div className="flex items-center justify-between gap-3">
+                  <span>Scaled log</span>
+                  <span className="font-mono text-[12px]">
+                    {scaledLog >= 0 ? "+" : ""}{scaledLog.toFixed(1)}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={-16}
+                  max={16}
+                  step={0.1}
+                  value={scaledLog}
+                  onChange={(e) => setScaledLog(clampScaledLog(Number(e.target.value)))}
+                  className="w-full"
+                />
+              </label>
+              <label className="block space-y-1">
+                <div className="flex items-center justify-between gap-3">
+                  <span>Sigmoid</span>
+                  <span className="font-mono text-[12px]">
+                    {sigmoid >= 0 ? "+" : ""}{sigmoid.toFixed(1)}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={-10}
+                  max={10}
+                  step={0.1}
+                  value={sigmoid}
+                  onChange={(e) => setSigmoid(clampSigmoid(Number(e.target.value)))}
+                  className="w-full"
+                />
+              </label>
+            </div>
+
+            <div className="rounded border p-3 space-y-2">
+              <label className="block space-y-1">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-medium">Resize</span>
+                  <span className="font-mono text-[12px]">{resizePercent}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={1}
+                  max={100}
+                  step={1}
+                  value={resizePercent}
+                  onChange={(e) => setResizePercent(Math.min(100, Math.max(1, Number(e.target.value) || 100)))}
+                  className="w-full"
+                />
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-4 flex justify-end gap-2">
+          <button className="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-100" onClick={onCancel}>
+            Cancel
+          </button>
+          <button className="px-3 py-1 rounded border border-blue-700 bg-blue-600 text-white hover:bg-blue-700" onClick={onSubmit}>
+            Edit
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 export default function ImageUploadDialog({ userId, files, maxCount, onClose, onComplete }: Props) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
@@ -496,8 +1501,10 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
 
   const [bytesMonthlyUsed, setBytesMonthlyUsed] = useState<number | null>(null);
   const [bytesMonthlyLimit, setBytesMonthlyLimit] = useState<number | null>(null);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
 
   const revokeQueue = useRef<string[]>([]);
+  const optimizeJobs = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     let mountedFlag = true;
@@ -563,6 +1570,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
               ? {
                   ...x,
                   previewUrl: meta.previewUrl,
+                  originalPreviewUrl: meta.previewUrl,
                   decodable: meta.decodable,
                   width: meta.width,
                   height: meta.height,
@@ -580,13 +1588,14 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
         );
 
         try {
-          const out = await rasterToWebp(
+          const out = await buildOptimizedVariant(
             f.file,
             meta.width ?? 0,
             meta.height ?? 0,
             0.8,
             f.name,
             f.type,
+            undefined,
           );
 
           if (cancelled) return;
@@ -602,6 +1611,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
               return {
                 ...x,
                 previewUrl: x.previewUrl && x.decodable ? x.previewUrl : optimizedPreviewUrl,
+                optimizedPreviewUrl,
                 decodable: true,
                 optimized: {
                   blob: out.blob,
@@ -652,6 +1662,82 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
     };
   }, []);
 
+  const reprocessItem = useCallback(async (snapshot: SelectedItem, nextEdit: ImageEditParams) => {
+    if (!snapshot.width || !snapshot.height) return;
+    const token = (optimizeJobs.current.get(snapshot.id) || 0) + 1;
+    optimizeJobs.current.set(snapshot.id, token);
+    setItems((prev) =>
+      prev.map((x) =>
+        x.id === snapshot.id
+          ? {
+              ...x,
+              edit: nextEdit,
+              reuse: isMeaningfullyEdited(nextEdit, x.width, x.height) ? false : x.reuse,
+              status: "optimizing",
+              error: undefined,
+            }
+          : x,
+      ),
+    );
+    try {
+      const out = await buildOptimizedVariant(
+        snapshot.file,
+        snapshot.width,
+        snapshot.height,
+        0.8,
+        snapshot.name,
+        snapshot.type,
+        nextEdit,
+      );
+      if (optimizeJobs.current.get(snapshot.id) !== token) return;
+      const processedPreviewUrl = URL.createObjectURL(out.blob);
+      revokeQueue.current.push(processedPreviewUrl);
+      setItems((prev) =>
+        prev.map((x) => {
+          if (x.id !== snapshot.id) return x;
+          const isHalfOrLess = x.size >= 100 * 1024 && out.blob.size * 2 <= x.size;
+          const auto = x.forceOptimize ? true : x.needsAutoOptimize || isHalfOrLess;
+          return {
+            ...x,
+            edit: nextEdit,
+            previewUrl: processedPreviewUrl,
+            optimizedPreviewUrl: processedPreviewUrl,
+            decodable: true,
+            optimized: { blob: out.blob, size: out.blob.size, width: out.width, height: out.height },
+            needsAutoOptimize: auto,
+            optimize: x.forceOptimize ? true : x.optimize,
+            status: "ready",
+            error: undefined,
+          };
+        }),
+      );
+    } catch {
+      if (optimizeJobs.current.get(snapshot.id) !== token) return;
+      setItems((prev) =>
+        prev.map((x) =>
+          x.id === snapshot.id
+            ? x.forceOptimize
+              ? {
+                  ...x,
+                  edit: nextEdit,
+                  status: "error",
+                  optimized: undefined,
+                  error:
+                    "This format requires optimization, but a WebP could not be produced. Please convert to JPEG/PNG/WebP and try again.",
+                }
+              : {
+                  ...x,
+                  edit: nextEdit,
+                  status: "ready",
+                  optimized: undefined,
+                  optimize: false,
+                }
+            : x,
+        ),
+      );
+    }
+  }, []);
+
   const effectiveUploadSize = useCallback((it: SelectedItem) => {
     return it.optimize && it.optimized ? it.optimized.size : it.size;
   }, []);
@@ -693,6 +1779,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
 
     for (let idx = 0; idx < next.length; idx++) {
       const it = next[idx];
+      const hasMeaningfulEdit = isMeaningfullyEdited(it.edit, it.width, it.height);
 
       if (it.status === "error" || it.status === "optimizing") {
         results.push({ ok: false, error: it.error || "unavailable", name: it.name });
@@ -707,7 +1794,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
         continue;
       }
 
-      if (it.reusableUserId && it.reusableRestPath && it.reuse) {
+      if (!hasMeaningfulEdit && it.reusableUserId && it.reusableRestPath && it.reuse) {
         const objectKey = `${it.reusableUserId}/${it.reusableRestPath}`;
         next[idx] = { ...it, status: "done" };
         setItems([...next]);
@@ -745,9 +1832,11 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
         await uploadToPresigned(presigned, blob, name, type);
         const meta = await finalizeImage(userId, presigned.objectKey);
 
-        const { userId: savedUserId, restPath } = splitObjectKey(meta.key);
-        const h = it.hash || (await sha256Hex(it.file));
-        if (h && savedUserId && restPath) upsertLru(h, savedUserId, restPath);
+        if (!hasMeaningfulEdit) {
+          const { userId: savedUserId, restPath } = splitObjectKey(meta.key);
+          const h = it.hash || (await sha256Hex(it.file));
+          if (h && savedUserId && restPath) upsertLru(h, savedUserId, restPath);
+        }
 
         next[idx] = { ...next[idx], status: "done" };
         setItems([...next]);
@@ -774,17 +1863,36 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
     return "grid-cols-1 sm:grid-cols-2 md:grid-cols-3";
   }, [items.length]);
 
+  const editingItem = useMemo(
+    () => items.find((it) => it.id === editingItemId) ?? null,
+    [items, editingItemId],
+  );
+
   if (!mounted) return null;
 
-  return createPortal(
-    <div
-      className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4"
-      onClick={onClose}
-    >
-      <div
-        className="bg-white rounded shadow max-w-[90vw] max-h-[90vh] p-3 w-full sm:w-auto"
-        onClick={(e) => e.stopPropagation()}
-      >
+  return (
+    <>
+      {editingItem && (
+        <ImageEditDialog
+          file={editingItem.file}
+          initialParams={normalizeEditParams(editingItem.edit, editingItem.width, editingItem.height)}
+          onCancel={() => setEditingItemId(null)}
+          onApply={(params) => {
+            setEditingItemId(null);
+            void reprocessItem(editingItem, params);
+          }}
+        />
+      )}
+
+      {createPortal(
+        <div
+          className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4"
+          onClick={onClose}
+        >
+          <div
+            className="bg-white rounded shadow max-w-[90vw] max-h-[90vh] p-3 w-full sm:w-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
         <div className="flex justify-between items-start gap-3">
           <h2 className="text-base font-semibold break-all">Upload images</h2>
           <button
@@ -829,6 +1937,8 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
               const optimizedSize = it.optimized?.size ?? it.size;
               const isOver = SINGLE_LIMIT ? effSize > SINGLE_LIMIT : false;
               const showOver = isOver && allOptimizingDone;
+              const hasMeaningfulEdit = isMeaningfullyEdited(it.edit, it.width, it.height);
+              const isUsingExistingData = !!(it.reusableUserId && it.reusableRestPath && it.reuse);
               return (
                 <li key={it.id} className="rounded border bg-white overflow-hidden mx-auto">
                   <div className="relative w-[70vw] sm:w-[44vw] md:w-[28vw] lg:w-[24vw] xl:w-[22vw] aspect-video bg-gray-50">
@@ -872,7 +1982,8 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
                       )}
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-2 flex-wrap">
                       {!!(it.reusableUserId && it.reusableRestPath) && (
                         <label className="inline-flex items-center gap-2 cursor-pointer">
                           <input
@@ -881,12 +1992,29 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
                             checked={!!it.reuse}
                             onChange={() =>
                               setItems((prev) =>
-                                prev.map((x) => (x.id === it.id ? { ...x, reuse: !x.reuse } : x)),
+                                prev.map((x) => {
+                                  if (x.id !== it.id) return x;
+                                  const reuse = !x.reuse;
+                                  const previewUrl = reuse
+                                    ? x.originalPreviewUrl ?? x.previewUrl
+                                    : x.optimize
+                                      ? x.edit && x.optimizedPreviewUrl
+                                        ? x.optimizedPreviewUrl
+                                        : x.originalPreviewUrl ?? x.previewUrl
+                                      : x.originalPreviewUrl ?? x.previewUrl;
+                                  return { ...x, reuse, previewUrl };
+                                }),
                               )
                             }
-                            disabled={it.status === "optimizing" || it.status === "uploading"}
+                            disabled={
+                              hasMeaningfulEdit ||
+                              it.status === "optimizing" ||
+                              it.status === "uploading"
+                            }
                           />
-                          <span className="text-[13px]">Use existing data</span>
+                          <span className={`text-[13px] ${hasMeaningfulEdit ? "text-gray-400" : ""}`}>
+                            Use existing data
+                          </span>
                         </label>
                       )}
 
@@ -897,29 +2025,50 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
                           checked={it.optimize}
                           onChange={() =>
                             setItems((prev) =>
-                              prev.map((x) =>
-                                x.id === it.id
-                                  ? { ...x, optimize: x.forceOptimize ? true : !x.optimize }
-                                  : x,
-                              ),
+                              prev.map((x) => {
+                                if (x.id !== it.id) return x;
+                                const optimize = x.forceOptimize ? true : !x.optimize;
+                                const previewUrl = optimize
+                                  ? x.edit && x.optimizedPreviewUrl
+                                    ? x.optimizedPreviewUrl
+                                    : x.originalPreviewUrl ?? x.previewUrl
+                                  : x.originalPreviewUrl ?? x.previewUrl;
+                                return { ...x, optimize, previewUrl };
+                              }),
                             )
                           }
                           disabled={
+                            isUsingExistingData ||
                             it.forceOptimize ||
                             it.status === "optimizing" ||
                             it.status === "uploading"
                           }
                         />
-                        <span className="text-[13px]">
+                        <span className={`text-[13px] ${isUsingExistingData ? "text-gray-400" : ""}`}>
                           Optimize for Web{" "}
                           {it.forceOptimize && <span className="text-gray-500">(required)</span>}
                         </span>
                       </label>
+                      </div>
+
+                      <button
+                        type="button"
+                        className="px-2 py-0.5 text-[13px] rounded border border-gray-300 bg-white hover:bg-gray-100 disabled:text-gray-400 disabled:bg-gray-100"
+                        onClick={() => setEditingItemId(it.id)}
+                        disabled={
+                          isUsingExistingData ||
+                          !it.optimize ||
+                          it.status === "optimizing" ||
+                          it.status === "uploading" ||
+                          !it.width ||
+                          !it.height
+                        }
+                      >
+                        Edit
+                      </button>
                     </div>
 
-                    <div
-                      className={`text-[12px] ${it.optimize ? "text-gray-800" : "text-gray-400"}`}
-                    >
+                    <div className={`text-[12px] ${it.optimize && !isUsingExistingData ? "text-gray-800" : "text-gray-400"}`}>
                       <div>
                         <span className="text-gray-500">Optimized:</span>{" "}
                         <span className="font-mono">
@@ -979,5 +2128,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
       </div>
     </div>,
     document.body,
+      )}
+    </>
   );
 }
