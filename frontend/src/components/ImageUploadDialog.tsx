@@ -69,6 +69,8 @@ export type ImageEditParams = {
   exposureEv: number;
   scaledLog: number;
   sigmoid: number;
+  vibrance: number;
+  saturation: number;
   resizePercent: number;
 };
 
@@ -226,6 +228,10 @@ function clampSigmoid(v: number): number {
   return Math.min(10, Math.max(-10, Math.round(v * 10) / 10));
 }
 
+function clampColorAdjustment(v: number): number {
+  return Math.min(100, Math.max(-100, Math.round(v)));
+}
+
 function defaultResizePercent(w?: number, h?: number): number {
   if (!w || !h || w <= 0 || h <= 0) return 100;
   return Math.min(100, Math.max(1, Math.round(computeScale(w, h) * 100)));
@@ -254,6 +260,8 @@ export function buildDefaultEditParams(w?: number, h?: number): ImageEditParams 
     exposureEv: 0,
     scaledLog: 0,
     sigmoid: 0,
+    vibrance: 0,
+    saturation: 0,
     resizePercent: defaultResizePercent(w, h),
   };
 }
@@ -267,6 +275,8 @@ function normalizeEditParams(params: ImageEditParams | undefined, w?: number, h?
     exposureEv: clampExposureEv(params?.exposureEv ?? defaults.exposureEv),
     scaledLog: clampScaledLog(params?.scaledLog ?? defaults.scaledLog),
     sigmoid: clampSigmoid(params?.sigmoid ?? defaults.sigmoid),
+    vibrance: clampColorAdjustment(params?.vibrance ?? defaults.vibrance),
+    saturation: clampColorAdjustment(params?.saturation ?? defaults.saturation),
     resizePercent: Math.min(100, Math.max(1, Math.round(params?.resizePercent ?? defaults.resizePercent))),
   };
 }
@@ -285,8 +295,18 @@ function isMeaningfullyEdited(params: ImageEditParams | undefined, w?: number, h
     Math.abs(normalized.exposureEv) > 0.0001 ||
     Math.abs(normalized.scaledLog) > 0.0001 ||
     Math.abs(normalized.sigmoid) > 0.0001 ||
+    normalized.vibrance !== 0 ||
+    normalized.saturation !== 0 ||
     normalized.resizePercent !== defaults.resizePercent
   );
+}
+
+function colorSaturationFactor(saturation: number): number {
+  return Math.max(0, 1 + clampColorAdjustment(saturation) / 100);
+}
+
+function colorVibranceFactor(vibrance: number): number {
+  return clampColorAdjustment(vibrance) * 3 / 100;
 }
 
 function formatSignedEv(v: number): string {
@@ -475,16 +495,164 @@ function applySigmoidLinear(value: number, gain: number): number {
   return x;
 }
 
-function highlightRolloffParams(maxVal: number): { inflection: number; scale: number } | null {
+function rgbToHsv(r: number, g: number, b: number): [number, number, number] {
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const delta = max - min;
+  let h = 0;
+  if (delta > 1e-6) {
+    if (max === r) {
+      h = ((g - b) / delta) % 6;
+    } else if (max === g) {
+      h = (b - r) / delta + 2;
+    } else {
+      h = (r - g) / delta + 4;
+    }
+    h /= 6;
+    if (h < 0) h += 1;
+  }
+  const s = max <= 1e-6 ? 0 : delta / max;
+  const v = max;
+  return [h, clamp01(s), clamp01(v)];
+}
+
+function hsvToRgb(h: number, s: number, v: number): [number, number, number] {
+  const hh = ((h % 1) + 1) % 1 * 6;
+  const c = clamp01(v) * clamp01(s);
+  const x = c * (1 - Math.abs(hh % 2 - 1));
+  const m = clamp01(v) - c;
+  let rp = 0;
+  let gp = 0;
+  let bp = 0;
+  if (hh < 1) {
+    rp = c;
+    gp = x;
+  } else if (hh < 2) {
+    rp = x;
+    gp = c;
+  } else if (hh < 3) {
+    gp = c;
+    bp = x;
+  } else if (hh < 4) {
+    gp = x;
+    bp = c;
+  } else if (hh < 5) {
+    rp = x;
+    bp = c;
+  } else {
+    rp = c;
+    bp = x;
+  }
+  return [clamp01(rp + m), clamp01(gp + m), clamp01(bp + m)];
+}
+
+function rolloffParams(
+  maxVal: number,
+  asymptotic = 0.5,
+  savingLimit = 4,
+): { inflection: number; scale: number } | null {
   if (maxVal <= 1) return null;
-  const savingLimit = 4;
-  let asymptotic = 0.5;
   if (maxVal > savingLimit) {
     asymptotic = Math.pow(asymptotic, savingLimit / maxVal);
   }
   const inflection = asymptotic + (1 - asymptotic) / maxVal;
   const scale = (1 - inflection) / (maxVal - inflection + 1e-6);
   return { inflection, scale };
+}
+
+function applyRolloffScalar(value: number, rolloff: { inflection: number; scale: number } | null): number {
+  if (!rolloff || value <= rolloff.inflection) return value;
+  return rolloff.inflection + (value - rolloff.inflection) * rolloff.scale;
+}
+
+function applyToneLinearToRgb(
+  r: number,
+  g: number,
+  b: number,
+  gains: WhiteBalanceGains,
+  hasWhiteBalance: boolean,
+  factor: number,
+  rolloff: { inflection: number; scale: number } | null,
+  scaledLog: number,
+  sigmoid: number,
+): [number, number, number] {
+  if (hasWhiteBalance) {
+    [r, g, b] = applyWhiteBalanceLinear(r, g, b, gains);
+  }
+  r *= factor;
+  g *= factor;
+  b *= factor;
+  r = applyRolloffScalar(r, rolloff);
+  g = applyRolloffScalar(g, rolloff);
+  b = applyRolloffScalar(b, rolloff);
+  r = applyScaledLogLinear(clamp01(r), scaledLog);
+  g = applyScaledLogLinear(clamp01(g), scaledLog);
+  b = applyScaledLogLinear(clamp01(b), scaledLog);
+  r = applySigmoidLinear(r, sigmoid);
+  g = applySigmoidLinear(g, sigmoid);
+  b = applySigmoidLinear(b, sigmoid);
+  return [r, g, b];
+}
+
+function saturatedPercentileAfterToneFromRgb8(
+  data: Uint8ClampedArray,
+  gains: WhiteBalanceGains,
+  hasWhiteBalance: boolean,
+  factor: number,
+  rolloff: { inflection: number; scale: number } | null,
+  scaledLog: number,
+  sigmoid: number,
+  saturationFactor: number,
+  percentile = 99,
+): number {
+  if (saturationFactor <= 1) return 0;
+  const bins = 4096;
+  const maxValue = Math.max(1, saturationFactor);
+  const histogram = new Uint32Array(bins);
+  let sampleCount = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    let r = srgbChannelToLinear(data[i]);
+    let g = srgbChannelToLinear(data[i + 1]);
+    let b = srgbChannelToLinear(data[i + 2]);
+    [r, g, b] = applyToneLinearToRgb(
+      r,
+      g,
+      b,
+      gains,
+      hasWhiteBalance,
+      factor,
+      rolloff,
+      scaledLog,
+      sigmoid,
+    );
+    const [, s] = rgbToHsv(r, g, b);
+    const value = Math.min(maxValue, Math.max(0, s * saturationFactor));
+    const idx = Math.min(bins - 1, Math.max(0, Math.round(value / maxValue * (bins - 1))));
+    histogram[idx]++;
+    sampleCount += 1;
+  }
+  if (sampleCount <= 0) return 0;
+  const rank = (sampleCount - 1) * Math.min(100, Math.max(0, percentile)) / 100;
+  const lowerRank = Math.floor(rank);
+  const upperRank = Math.ceil(rank);
+  const fraction = rank - lowerRank;
+  let cumulative = 0;
+  let lowerLevel = bins - 1;
+  let upperLevel = bins - 1;
+  let lowerFound = false;
+  for (let level = 0; level < bins; level++) {
+    cumulative += histogram[level];
+    if (!lowerFound && cumulative > lowerRank) {
+      lowerLevel = level;
+      lowerFound = true;
+    }
+    if (cumulative > upperRank) {
+      upperLevel = level;
+      break;
+    }
+  }
+  const interpolated = lowerLevel + (upperLevel - lowerLevel) * fraction;
+  return maxValue * interpolated / (bins - 1);
 }
 
 function applyColorAdjustmentsToCanvas(
@@ -494,17 +662,23 @@ function applyColorAdjustmentsToCanvas(
   exposureEv: number,
   scaledLog: number,
   sigmoid: number,
+  vibrance: number,
+  saturation: number,
 ) {
   const normalizedTemperature = clampWhiteBalanceValue(temperature);
   const normalizedTint = clampWhiteBalanceValue(tint);
   const normalizedScaledLog = clampScaledLog(scaledLog);
   const normalizedSigmoid = clampSigmoid(sigmoid);
+  const normalizedVibrance = clampColorAdjustment(vibrance);
+  const normalizedSaturation = clampColorAdjustment(saturation);
   if (
     normalizedTemperature === 0 &&
     normalizedTint === 0 &&
     Math.abs(exposureEv) < 0.0001 &&
     Math.abs(normalizedScaledLog) < 0.0001 &&
-    Math.abs(normalizedSigmoid) < 0.0001
+    Math.abs(normalizedSigmoid) < 0.0001 &&
+    normalizedVibrance === 0 &&
+    normalizedSaturation === 0
   ) {
     return;
   }
@@ -524,36 +698,52 @@ function applyColorAdjustmentsToCanvas(
         ? whiteBalancedExposedPercentileFromRgb8(data, gains, factor, 99.8)
         : exposedPercentileFromRgb8(data, factor, 99.8)
       : 0;
-  const rolloff = factor > 1 ? highlightRolloffParams(maxVal) : null;
+  const rolloff = factor > 1 ? rolloffParams(maxVal, 0.5, 4) : null;
+  const saturationFactor = colorSaturationFactor(normalizedSaturation);
+  const vibranceFactor = colorVibranceFactor(normalizedVibrance);
+  const saturationRolloff = saturationFactor > 1
+    ? rolloffParams(
+        saturatedPercentileAfterToneFromRgb8(
+          data,
+          gains,
+          hasWhiteBalance,
+          factor,
+          rolloff,
+          normalizedScaledLog,
+          normalizedSigmoid,
+          saturationFactor,
+          99,
+        ),
+        0.7,
+        4,
+      )
+    : null;
   for (let i = 0; i < data.length; i += 4) {
     let r = srgbChannelToLinear(data[i]);
     let g = srgbChannelToLinear(data[i + 1]);
     let b = srgbChannelToLinear(data[i + 2]);
-    if (hasWhiteBalance) {
-      [r, g, b] = applyWhiteBalanceLinear(r, g, b, gains);
+    [r, g, b] = applyToneLinearToRgb(
+      r,
+      g,
+      b,
+      gains,
+      hasWhiteBalance,
+      factor,
+      rolloff,
+      normalizedScaledLog,
+      normalizedSigmoid,
+    );
+    if (normalizedSaturation !== 0 || normalizedVibrance !== 0) {
+      let [h, s, v] = rgbToHsv(r, g, b);
+      if (normalizedSaturation !== 0) {
+        s = applyRolloffScalar(s * saturationFactor, saturationRolloff);
+        s = clamp01(s);
+      }
+      if (normalizedVibrance !== 0) {
+        s = applyScaledLogLinear(s, vibranceFactor);
+      }
+      [r, g, b] = hsvToRgb(h, s, v);
     }
-    r *= factor;
-    g *= factor;
-    b *= factor;
-    if (rolloff) {
-      if (r > rolloff.inflection) {
-        r = rolloff.inflection + (r - rolloff.inflection) * rolloff.scale;
-      }
-      if (g > rolloff.inflection) {
-        g = rolloff.inflection + (g - rolloff.inflection) * rolloff.scale;
-      }
-      if (b > rolloff.inflection) {
-        b = rolloff.inflection + (b - rolloff.inflection) * rolloff.scale;
-      }
-    }
-    // Match the Python tone order: linear exposure (with clipping), then scaled log,
-    // then sigmoid. Keep all three operations in this linear-RGB pass.
-    r = applyScaledLogLinear(clamp01(r), normalizedScaledLog);
-    g = applyScaledLogLinear(clamp01(g), normalizedScaledLog);
-    b = applyScaledLogLinear(clamp01(b), normalizedScaledLog);
-    r = applySigmoidLinear(r, normalizedSigmoid);
-    g = applySigmoidLinear(g, normalizedSigmoid);
-    b = applySigmoidLinear(b, normalizedSigmoid);
     data[i] = linearChannelToSrgb(r);
     data[i + 1] = linearChannelToSrgb(g);
     data[i + 2] = linearChannelToSrgb(b);
@@ -697,8 +887,9 @@ export async function buildOptimizedVariant(
     const OSC = getOffscreenCanvasCtor();
     if (OSC) {
       // Keep the processing order explicit: crop -> white balance -> exposure/rolloff
-      // -> scaled log -> sigmoid -> resize -> encode. White balance and tone adjustments share
-      // one linear-RGB pass so there is no extra 8-bit round-trip between them.
+      // -> logarithm -> sigmoid -> vibrance/saturation -> resize -> encode.
+      // White balance, tone, and color adjustments share one linear-RGB pass so
+      // there is no extra 8-bit round-trip between them.
       const cropped = new OSC(sw, sh);
       const croppedCtx = cropped.getContext("2d");
       if (!croppedCtx) throw new Error("2D context unavailable");
@@ -710,6 +901,8 @@ export async function buildOptimizedVariant(
         params.exposureEv,
         params.scaledLog,
         params.sigmoid,
+        params.vibrance,
+        params.saturation,
       );
 
       const output = new OSC(dw, dh);
@@ -739,6 +932,8 @@ export async function buildOptimizedVariant(
         params.exposureEv,
         params.scaledLog,
         params.sigmoid,
+        params.vibrance,
+        params.saturation,
       );
 
       const output = document.createElement("canvas");
@@ -870,6 +1065,8 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
   const [exposureEv, setExposureEv] = useState<number>(clampExposureEv(initialParams.exposureEv));
   const [scaledLog, setScaledLog] = useState<number>(clampScaledLog(initialParams.scaledLog));
   const [sigmoid, setSigmoid] = useState<number>(clampSigmoid(initialParams.sigmoid));
+  const [vibrance, setVibrance] = useState<number>(clampColorAdjustment(initialParams.vibrance));
+  const [saturation, setSaturation] = useState<number>(clampColorAdjustment(initialParams.saturation));
   const [resizePercent, setResizePercent] = useState<number>(
     Math.min(100, Math.max(1, Math.round(initialParams.resizePercent))),
   );
@@ -1059,8 +1256,10 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
       exposureEv,
       scaledLog,
       sigmoid,
+      vibrance,
+      saturation,
     );
-  }, [displayed.w, displayed.h, temperature, tint, exposureEv, scaledLog, sigmoid, natural]);
+  }, [displayed.w, displayed.h, temperature, tint, exposureEv, scaledLog, sigmoid, vibrance, saturation, natural]);
 
   const onSubmit = useCallback(() => {
     if (!displayed.w || !displayed.h) return;
@@ -1075,6 +1274,8 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
       exposureEv: clampExposureEv(exposureEv),
       scaledLog: clampScaledLog(scaledLog),
       sigmoid: clampSigmoid(sigmoid),
+      vibrance: clampColorAdjustment(vibrance),
+      saturation: clampColorAdjustment(saturation),
       resizePercent: Math.min(100, Math.max(1, Math.round(resizePercent))),
     });
   }, [
@@ -1088,6 +1289,8 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     exposureEv,
     scaledLog,
     sigmoid,
+    vibrance,
+    saturation,
     resizePercent,
     onApply,
   ]);
@@ -1103,6 +1306,8 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     setExposureEv(params.exposureEv);
     setScaledLog(params.scaledLog);
     setSigmoid(params.sigmoid);
+    setVibrance(params.vibrance);
+    setSaturation(params.saturation);
     setResizePercent(params.resizePercent);
     if (displayed.w > 0 && displayed.h > 0) {
       const crop = normalizeCrop(params.crop);
@@ -1134,7 +1339,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
         <div className="mt-3 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_208px] gap-4 lg:items-stretch">
           <div
             ref={containerRef}
-            className="relative w-full h-[56vh] min-h-[360px] lg:h-auto rounded border bg-gray-200 overflow-hidden touch-none"
+            className="relative w-full h-[42vh] min-h-[270px] lg:h-auto rounded border bg-gray-200 overflow-hidden touch-none"
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
             onPointerCancel={onPointerUp}
@@ -1185,9 +1390,9 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
           </div>
 
           <div className="space-y-4 text-sm text-gray-800">
-            <div className="rounded border px-2 py-3 space-y-2">
-              <div className="font-medium">Crop</div>
-              <div className="flex items-center justify-between gap-1 text-[10px] text-gray-700 leading-5 font-mono whitespace-nowrap">
+            <div className="rounded border px-2 py-3 flex lg:block items-center gap-2 lg:space-y-2">
+              <div className="font-medium w-24 shrink-0 lg:w-auto">Crop</div>
+              <div className="flex flex-1 min-w-0 items-center justify-between gap-1 text-[10px] text-gray-700 leading-5 font-mono whitespace-nowrap">
                 <span>T={(displayed.h ? ((cropRect.y - displayed.y) / displayed.h) * 100 : 0).toFixed(1)}%</span>
                 <span>B={(displayed.h ? (1 - (cropRect.y + cropRect.h - displayed.y) / displayed.h) * 100 : 0).toFixed(1)}%</span>
                 <span>L={(displayed.w ? ((cropRect.x - displayed.x) / displayed.w) * 100 : 0).toFixed(1)}%</span>
@@ -1195,15 +1400,13 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
               </div>
             </div>
 
-            <div className="rounded border p-3 space-y-3">
-              <div className="font-medium">White balance</div>
-              <label className="block space-y-1">
-                <div className="flex items-center justify-between gap-3">
-                  <span>Temperature</span>
-                  <span className="font-mono text-[12px]">
-                    {temperature >= 0 ? "+" : ""}{temperature}
-                  </span>
-                </div>
+            <div className="rounded border p-3 space-y-2 lg:space-y-3">
+              <div className="hidden lg:block font-medium">White balance</div>
+              <label className="grid grid-cols-[96px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+                <span className="col-start-1 row-start-1">Temperature</span>
+                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">
+                  {temperature >= 0 ? "+" : ""}{temperature}
+                </span>
                 <input
                   type="range"
                   min={-100}
@@ -1211,16 +1414,12 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                   step={1}
                   value={temperature}
                   onChange={(e) => setTemperature(clampWhiteBalanceValue(Number(e.target.value)))}
-                  className="w-full"
+                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
               </label>
-              <label className="block space-y-1">
-                <div className="flex items-center justify-between gap-3">
-                  <span>Tint</span>
-                  <span className="font-mono text-[12px]">
-                    {tint >= 0 ? "+" : ""}{tint}
-                  </span>
-                </div>
+              <label className="grid grid-cols-[96px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+                <span className="col-start-1 row-start-1">Tint</span>
+                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{tint >= 0 ? "+" : ""}{tint}</span>
                 <input
                   type="range"
                   min={-100}
@@ -1228,18 +1427,16 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                   step={1}
                   value={tint}
                   onChange={(e) => setTint(clampWhiteBalanceValue(Number(e.target.value)))}
-                  className="w-full"
+                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
               </label>
             </div>
 
-            <div className="rounded border p-3 space-y-3">
-              <div className="font-medium">Tone</div>
-              <label className="block space-y-1">
-                <div className="flex items-center justify-between gap-3">
-                  <span>Exposure</span>
-                  <span className="font-mono text-[12px]">{formatSignedEv(exposureEv)}</span>
-                </div>
+            <div className="rounded border p-3 space-y-2 lg:space-y-3">
+              <div className="hidden lg:block font-medium">Tone</div>
+              <label className="grid grid-cols-[96px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+                <span className="col-start-1 row-start-1">Exposure</span>
+                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{formatSignedEv(exposureEv)}</span>
                 <input
                   type="range"
                   min={-5}
@@ -1247,16 +1444,12 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                   step={0.1}
                   value={exposureEv}
                   onChange={(e) => setExposureEv(clampExposureEv(Number(e.target.value)))}
-                  className="w-full"
+                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
               </label>
-              <label className="block space-y-1">
-                <div className="flex items-center justify-between gap-3">
-                  <span>Scaled log</span>
-                  <span className="font-mono text-[12px]">
-                    {scaledLog >= 0 ? "+" : ""}{scaledLog.toFixed(1)}
-                  </span>
-                </div>
+              <label className="grid grid-cols-[96px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+                <span className="col-start-1 row-start-1">Logarithm</span>
+                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{scaledLog >= 0 ? "+" : ""}{scaledLog.toFixed(1)}</span>
                 <input
                   type="range"
                   min={-16}
@@ -1264,16 +1457,12 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                   step={0.1}
                   value={scaledLog}
                   onChange={(e) => setScaledLog(clampScaledLog(Number(e.target.value)))}
-                  className="w-full"
+                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
               </label>
-              <label className="block space-y-1">
-                <div className="flex items-center justify-between gap-3">
-                  <span>Sigmoid</span>
-                  <span className="font-mono text-[12px]">
-                    {sigmoid >= 0 ? "+" : ""}{sigmoid.toFixed(1)}
-                  </span>
-                </div>
+              <label className="grid grid-cols-[96px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+                <span className="col-start-1 row-start-1">Sigmoid</span>
+                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{sigmoid >= 0 ? "+" : ""}{sigmoid.toFixed(1)}</span>
                 <input
                   type="range"
                   min={-10}
@@ -1281,17 +1470,45 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                   step={0.1}
                   value={sigmoid}
                   onChange={(e) => setSigmoid(clampSigmoid(Number(e.target.value)))}
-                  className="w-full"
+                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
+                />
+              </label>
+            </div>
+
+            <div className="rounded border p-3 space-y-2 lg:space-y-3">
+              <div className="hidden lg:block font-medium">Color</div>
+              <label className="grid grid-cols-[96px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+                <span className="col-start-1 row-start-1">Vibrance</span>
+                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{vibrance >= 0 ? "+" : ""}{vibrance}</span>
+                <input
+                  type="range"
+                  min={-100}
+                  max={100}
+                  step={1}
+                  value={vibrance}
+                  onChange={(e) => setVibrance(clampColorAdjustment(Number(e.target.value)))}
+                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
+                />
+              </label>
+              <label className="grid grid-cols-[96px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+                <span className="col-start-1 row-start-1">Saturation</span>
+                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{saturation >= 0 ? "+" : ""}{saturation}</span>
+                <input
+                  type="range"
+                  min={-100}
+                  max={100}
+                  step={1}
+                  value={saturation}
+                  onChange={(e) => setSaturation(clampColorAdjustment(Number(e.target.value)))}
+                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
               </label>
             </div>
 
             <div className="rounded border p-3 space-y-2">
-              <label className="block space-y-1">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="font-medium">Resize</span>
-                  <span className="font-mono text-[12px]">{resizePercent}%</span>
-                </div>
+              <label className="grid grid-cols-[96px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+                <span className="col-start-1 row-start-1 font-medium">Resize</span>
+                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{resizePercent}%</span>
                 <input
                   type="range"
                   min={1}
@@ -1299,7 +1516,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                   step={1}
                   value={resizePercent}
                   onChange={(e) => setResizePercent(Math.min(100, Math.max(1, Number(e.target.value) || 100)))}
-                  className="w-full"
+                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
               </label>
             </div>
