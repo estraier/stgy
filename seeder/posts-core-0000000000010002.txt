@@ -182,7 +182,7 @@ When you select a file for upload, optimized data for web viewing is generated a
 
 ![Image optimization](/data/help-image-optimize.png){grid}
 
-If you want to adjust the image optimized for web, click the "Edit" button.  It opens the image editor, by which you can specify adjustment settings such as cropping, white balance, and tone.  You can set the resizing ratio too.
+If you want to adjust the image optimized for web, click the "Edit" button.  It opens the image editor, by which you can specify adjustment settings such as cropping, white balance, tone, and mosaicing.  You can set the resizing ratio too.
 
 ![Image editor](/data/help-image-editor.png){grid}
 

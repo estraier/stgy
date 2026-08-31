@@ -62,6 +62,13 @@ type ImageCropInsets = {
   right: number;
 };
 
+export type ImageMosaicRegion = {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+};
+
 export type ImageEditParams = {
   crop: ImageCropInsets;
   temperature: number;
@@ -72,6 +79,7 @@ export type ImageEditParams = {
   vibrance: number;
   saturation: number;
   resizePercent: number;
+  mosaicRegions: ImageMosaicRegion[];
 };
 
 export type ImageEditOutputFormat = "image/webp" | "image/jpeg" | "image/png";
@@ -252,6 +260,22 @@ function normalizeCrop(crop?: Partial<ImageCropInsets>): ImageCropInsets {
   };
 }
 
+function normalizeMosaicRegion(region: Partial<ImageMosaicRegion>): ImageMosaicRegion | null {
+  const left = clamp01(Math.min(region.left ?? 0, region.right ?? 0));
+  const right = clamp01(Math.max(region.left ?? 0, region.right ?? 0));
+  const top = clamp01(Math.min(region.top ?? 0, region.bottom ?? 0));
+  const bottom = clamp01(Math.max(region.top ?? 0, region.bottom ?? 0));
+  if (right - left <= 0 || bottom - top <= 0) return null;
+  return { left, top, right, bottom };
+}
+
+function normalizeMosaicRegions(regions?: ImageMosaicRegion[]): ImageMosaicRegion[] {
+  if (!regions?.length) return [];
+  return regions
+    .map((region) => normalizeMosaicRegion(region))
+    .filter((region): region is ImageMosaicRegion => region !== null);
+}
+
 export function buildDefaultEditParams(w?: number, h?: number): ImageEditParams {
   return {
     crop: { top: 0, bottom: 0, left: 0, right: 0 },
@@ -263,6 +287,7 @@ export function buildDefaultEditParams(w?: number, h?: number): ImageEditParams 
     vibrance: 0,
     saturation: 0,
     resizePercent: defaultResizePercent(w, h),
+    mosaicRegions: [],
   };
 }
 
@@ -278,6 +303,7 @@ function normalizeEditParams(params: ImageEditParams | undefined, w?: number, h?
     vibrance: clampColorAdjustment(params?.vibrance ?? defaults.vibrance),
     saturation: clampColorAdjustment(params?.saturation ?? defaults.saturation),
     resizePercent: Math.min(100, Math.max(1, Math.round(params?.resizePercent ?? defaults.resizePercent))),
+    mosaicRegions: normalizeMosaicRegions(params?.mosaicRegions ?? defaults.mosaicRegions),
   };
 }
 
@@ -297,7 +323,8 @@ function isMeaningfullyEdited(params: ImageEditParams | undefined, w?: number, h
     Math.abs(normalized.sigmoid) > 0.0001 ||
     normalized.vibrance !== 0 ||
     normalized.saturation !== 0 ||
-    normalized.resizePercent !== defaults.resizePercent
+    normalized.resizePercent !== defaults.resizePercent ||
+    normalized.mosaicRegions.length > 0
   );
 }
 
@@ -752,6 +779,106 @@ function applyColorAdjustmentsToCanvas(
   ctx.putImageData(imageData, 0, 0);
 }
 
+type MosaicPixelRect = { x: number; y: number; w: number; h: number };
+
+function applyMosaicRectsToCanvas(
+  canvas: HTMLCanvasElement | OffscreenCanvas,
+  rects: MosaicPixelRect[],
+  divisions = 16,
+) {
+  if (!rects.length || divisions <= 0) return;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const width = canvas.width;
+  const height = canvas.height;
+  const grid = Math.max(1, Math.round(divisions));
+  for (const rect of rects) {
+    const x0 = Math.max(0, Math.min(width, Math.floor(rect.x)));
+    const y0 = Math.max(0, Math.min(height, Math.floor(rect.y)));
+    const x1 = Math.max(x0, Math.min(width, Math.ceil(rect.x + rect.w)));
+    const y1 = Math.max(y0, Math.min(height, Math.ceil(rect.y + rect.h)));
+    const rw = x1 - x0;
+    const rh = y1 - y0;
+    if (rw <= 0 || rh <= 0) continue;
+    const imageData = ctx.getImageData(x0, y0, rw, rh);
+    const data = imageData.data;
+    for (let gy = 0; gy < grid; gy++) {
+      const ty = Math.floor(gy * rh / grid);
+      const yEnd = Math.floor((gy + 1) * rh / grid);
+      const th = yEnd - ty;
+      if (th <= 0) continue;
+      for (let gx = 0; gx < grid; gx++) {
+        const tx = Math.floor(gx * rw / grid);
+        const xEnd = Math.floor((gx + 1) * rw / grid);
+        const tw = xEnd - tx;
+        if (tw <= 0) continue;
+        let sumR = 0;
+        let sumG = 0;
+        let sumB = 0;
+        let sumA = 0;
+        let count = 0;
+        for (let py = 0; py < th; py++) {
+          let offset = ((ty + py) * rw + tx) * 4;
+          for (let px = 0; px < tw; px++, offset += 4) {
+            sumR += data[offset];
+            sumG += data[offset + 1];
+            sumB += data[offset + 2];
+            sumA += data[offset + 3];
+            count++;
+          }
+        }
+        if (!count) continue;
+        const avgR = Math.round(sumR / count);
+        const avgG = Math.round(sumG / count);
+        const avgB = Math.round(sumB / count);
+        const avgA = Math.round(sumA / count);
+        for (let py = 0; py < th; py++) {
+          let offset = ((ty + py) * rw + tx) * 4;
+          for (let px = 0; px < tw; px++, offset += 4) {
+            data[offset] = avgR;
+            data[offset + 1] = avgG;
+            data[offset + 2] = avgB;
+            data[offset + 3] = avgA;
+          }
+        }
+      }
+    }
+    ctx.putImageData(imageData, x0, y0);
+  }
+}
+
+function mosaicRegionsToOutputRects(
+  regions: ImageMosaicRegion[],
+  sourceW: number,
+  sourceH: number,
+  cropX: number,
+  cropY: number,
+  cropW: number,
+  cropH: number,
+  outputW: number,
+  outputH: number,
+): MosaicPixelRect[] {
+  const scaleX = outputW / cropW;
+  const scaleY = outputH / cropH;
+  return regions.flatMap((region) => {
+    const left = region.left * sourceW;
+    const top = region.top * sourceH;
+    const right = region.right * sourceW;
+    const bottom = region.bottom * sourceH;
+    const ix0 = Math.max(cropX, left);
+    const iy0 = Math.max(cropY, top);
+    const ix1 = Math.min(cropX + cropW, right);
+    const iy1 = Math.min(cropY + cropH, bottom);
+    if (ix1 <= ix0 || iy1 <= iy0) return [];
+    return [{
+      x: (ix0 - cropX) * scaleX,
+      y: (iy0 - cropY) * scaleY,
+      w: (ix1 - ix0) * scaleX,
+      h: (iy1 - iy0) * scaleY,
+    }];
+  });
+}
+
 type OffscreenCanvasCtor = new (width: number, height: number) => OffscreenCanvas;
 function getOffscreenCanvasCtor(): OffscreenCanvasCtor | null {
   const g = globalThis as unknown as { OffscreenCanvas?: OffscreenCanvasCtor };
@@ -888,7 +1015,7 @@ export async function buildOptimizedVariant(
     const OSC = getOffscreenCanvasCtor();
     if (OSC) {
       // Keep the processing order explicit: crop -> white balance -> exposure/rolloff
-      // -> logarithm -> sigmoid -> vibrance/saturation -> resize -> encode.
+      // -> logarithm -> sigmoid -> vibrance/saturation -> resize -> mosaic -> encode.
       // White balance, tone, and color adjustments share one linear-RGB pass so
       // there is no extra 8-bit round-trip between them.
       const cropped = new OSC(sw, sh);
@@ -912,6 +1039,11 @@ export async function buildOptimizedVariant(
       outputCtx.imageSmoothingEnabled = true;
       outputCtx.imageSmoothingQuality = "high";
       outputCtx.drawImage(cropped, 0, 0, sw, sh, 0, 0, dw, dh);
+      applyMosaicRectsToCanvas(
+        output,
+        mosaicRegionsToOutputRects(params.mosaicRegions, w, h, sx, sy, sw, sh, dw, dh),
+        16,
+      );
       if ("convertToBlob" in output) {
         type EncodeOpts = { type?: string; quality?: number };
         const conv = (output as OffscreenCanvas & { convertToBlob(options?: EncodeOpts): Promise<Blob> })
@@ -945,6 +1077,11 @@ export async function buildOptimizedVariant(
       outputCtx.imageSmoothingEnabled = true;
       outputCtx.imageSmoothingQuality = "high";
       outputCtx.drawImage(cropped, 0, 0, sw, sh, 0, 0, dw, dh);
+      applyMosaicRectsToCanvas(
+        output,
+        mosaicRegionsToOutputRects(params.mosaicRegions, w, h, sx, sy, sw, sh, dw, dh),
+        16,
+      );
       blob = await new Promise<Blob>((resolve, reject) =>
         output.toBlob(
           (b) => (b ? resolve(b) : reject(new Error("toBlob returned null"))),
@@ -1130,6 +1267,12 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
   const [resizePercent, setResizePercent] = useState<number>(
     Math.min(100, Math.max(1, Math.round(initialParams.resizePercent))),
   );
+  const [mosaicMode, setMosaicMode] = useState(false);
+  const [mosaicRegions, setMosaicRegions] = useState<ImageMosaicRegion[]>(
+    normalizeMosaicRegions(initialParams.mosaicRegions),
+  );
+  const [mosaicDraft, setMosaicDraft] = useState<EditRect | null>(null);
+  const mosaicDragStart = useRef<EditPoint | null>(null);
   const [showHistogram, setShowHistogram] = useState(false);
   const [histogram, setHistogram] = useState<HistogramData | null>(null);
   const dragState = useRef<
@@ -1232,6 +1375,76 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
   const toLocal = useCallback((e: React.PointerEvent): EditPoint => {
     const rect = containerRef.current!.getBoundingClientRect();
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  }, []);
+
+  const clampPointToDisplayed = useCallback((point: EditPoint): EditPoint => ({
+    x: Math.max(displayed.x, Math.min(displayed.x + displayed.w, point.x)),
+    y: Math.max(displayed.y, Math.min(displayed.y + displayed.h, point.y)),
+  }), [displayed]);
+
+  const onMosaicPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!mosaicMode || displayed.w <= 0 || displayed.h <= 0) return;
+    const point = toLocal(e);
+    if (
+      point.x < displayed.x ||
+      point.x > displayed.x + displayed.w ||
+      point.y < displayed.y ||
+      point.y > displayed.y + displayed.h
+    ) {
+      return;
+    }
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const start = clampPointToDisplayed(point);
+    mosaicDragStart.current = start;
+    setMosaicDraft({ x: start.x, y: start.y, w: 0, h: 0 });
+    e.preventDefault();
+  }, [clampPointToDisplayed, displayed, mosaicMode, toLocal]);
+
+  const onMosaicPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const start = mosaicDragStart.current;
+    if (!start) return;
+    const point = clampPointToDisplayed(toLocal(e));
+    setMosaicDraft({
+      x: Math.min(start.x, point.x),
+      y: Math.min(start.y, point.y),
+      w: Math.abs(point.x - start.x),
+      h: Math.abs(point.y - start.y),
+    });
+  }, [clampPointToDisplayed, toLocal]);
+
+  const onMosaicPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const start = mosaicDragStart.current;
+    if (!start) return;
+    const point = clampPointToDisplayed(toLocal(e));
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {}
+    mosaicDragStart.current = null;
+    setMosaicDraft(null);
+    const x = Math.min(start.x, point.x);
+    const y = Math.min(start.y, point.y);
+    const w = Math.abs(point.x - start.x);
+    const h = Math.abs(point.y - start.y);
+    if (w < 2 || h < 2 || displayed.w <= 0 || displayed.h <= 0) return;
+    const region = normalizeMosaicRegion({
+      left: (x - displayed.x) / displayed.w,
+      top: (y - displayed.y) / displayed.h,
+      right: (x + w - displayed.x) / displayed.w,
+      bottom: (y + h - displayed.y) / displayed.h,
+    });
+    if (region) setMosaicRegions((current) => [...current, region]);
+  }, [clampPointToDisplayed, displayed, toLocal]);
+
+  const onMosaicPointerCancel = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {}
+    mosaicDragStart.current = null;
+    setMosaicDraft(null);
+  }, []);
+
+  const removeMosaicRegion = useCallback((index: number) => {
+    setMosaicRegions((current) => current.filter((_, i) => i !== index));
   }, []);
 
   const onCropPointerDown = useCallback(
@@ -1387,7 +1600,31 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
       vibrance,
       saturation,
     );
-  }, [displayed.w, displayed.h, temperature, tint, exposureEv, scaledLog, sigmoid, vibrance, saturation, natural]);
+    if (mosaicRegions.length && natural?.w) {
+      applyMosaicRectsToCanvas(
+        canvas,
+        mosaicRegions.map((region) => ({
+          x: region.left * canvas.width,
+          y: region.top * canvas.height,
+          w: (region.right - region.left) * canvas.width,
+          h: (region.bottom - region.top) * canvas.height,
+        })),
+        16,
+      );
+    }
+  }, [
+    displayed.w,
+    displayed.h,
+    temperature,
+    tint,
+    exposureEv,
+    scaledLog,
+    sigmoid,
+    vibrance,
+    saturation,
+    natural,
+    mosaicRegions,
+  ]);
 
   useEffect(() => {
     if (!showHistogram) {
@@ -1427,6 +1664,8 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     vibrance,
     saturation,
     natural,
+    mosaicRegions,
+    resizePercent,
   ]);
 
   const histogramPaths = useMemo(() => {
@@ -1459,6 +1698,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
       vibrance: clampColorAdjustment(vibrance),
       saturation: clampColorAdjustment(saturation),
       resizePercent: Math.min(100, Math.max(1, Math.round(resizePercent))),
+      mosaicRegions: normalizeMosaicRegions(mosaicRegions),
     });
   }, [
     displayed.w,
@@ -1474,6 +1714,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     vibrance,
     saturation,
     resizePercent,
+    mosaicRegions,
     onApply,
   ]);
 
@@ -1491,6 +1732,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     setVibrance(params.vibrance);
     setSaturation(params.saturation);
     setResizePercent(params.resizePercent);
+    setMosaicRegions(params.mosaicRegions);
     if (displayed.w > 0 && displayed.h > 0) {
       const crop = normalizeCrop(params.crop);
       const x = displayed.x + displayed.w * crop.left;
@@ -1517,6 +1759,18 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
             <label className="inline-flex items-center gap-2 text-sm text-gray-700 select-none">
               <input
                 type="checkbox"
+                checked={mosaicMode}
+                onChange={(e) => {
+                  setMosaicMode(e.target.checked);
+                  mosaicDragStart.current = null;
+                  setMosaicDraft(null);
+                }}
+              />
+              <span>Mosaic</span>
+            </label>
+            <label className="inline-flex items-center gap-2 text-sm text-gray-700 select-none">
+              <input
+                type="checkbox"
                 checked={showHistogram}
                 onChange={(e) => setShowHistogram(e.target.checked)}
               />
@@ -1531,10 +1785,11 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
         <div className="mt-3 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_208px] gap-4 lg:items-stretch">
           <div
             ref={containerRef}
-            className="relative w-full h-[42vh] min-h-[270px] lg:h-auto rounded border bg-gray-200 overflow-hidden touch-none"
-            onPointerMove={onPointerMove}
-            onPointerUp={onPointerUp}
-            onPointerCancel={onPointerUp}
+            className={`relative w-full h-[42vh] min-h-[270px] lg:h-auto rounded border bg-gray-200 overflow-hidden touch-none ${mosaicMode ? "cursor-crosshair" : ""}`}
+            onPointerDown={mosaicMode ? onMosaicPointerDown : undefined}
+            onPointerMove={mosaicMode ? onMosaicPointerMove : onPointerMove}
+            onPointerUp={mosaicMode ? onMosaicPointerUp : onPointerUp}
+            onPointerCancel={mosaicMode ? onMosaicPointerCancel : onPointerUp}
           >
               {imgUrl && natural ? (
                 <>
@@ -1554,9 +1809,11 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                       height: displayed.h,
                     }}
                   />
-                  <svg className="absolute inset-0 w-full h-full pointer-events-none" aria-hidden="true">
-                    <path d={`${overlayPath.outer} ${overlayPath.inner}`} fill="rgba(0,0,0,0.45)" fillRule="evenodd" />
-                  </svg>
+                  {!mosaicMode && (
+                    <svg className="absolute inset-0 w-full h-full pointer-events-none" aria-hidden="true">
+                      <path d={`${overlayPath.outer} ${overlayPath.inner}`} fill="rgba(0,0,0,0.45)" fillRule="evenodd" />
+                    </svg>
+                  )}
                   {showHistogram && histogramPaths && (
                     <div className="absolute left-2 bottom-2 w-[294px] h-[138px] rounded border border-white/40 bg-black/80 shadow-sm pointer-events-none">
                       <svg
@@ -1573,30 +1830,63 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                       </svg>
                     </div>
                   )}
-                  <div
-                    className="absolute border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.45)] bg-transparent cursor-move"
-                    style={{ left: cropRect.x, top: cropRect.y, width: cropRect.w, height: cropRect.h }}
-                    onPointerDown={onCropPointerDown}
-                  >
-                    {(["nw", "ne", "sw", "se"] as EditCorner[]).map((corner) => {
-                      const style =
-                        corner === "nw"
-                          ? { left: -6, top: -6 }
-                          : corner === "ne"
-                            ? { right: -6, top: -6 }
-                            : corner === "sw"
-                              ? { left: -6, bottom: -6 }
-                              : { right: -6, bottom: -6 };
-                      return (
-                        <div
-                          key={corner}
-                          className="absolute w-3 h-3 rounded-full bg-white border border-black cursor-pointer"
-                          style={style}
-                          onPointerDown={onHandlePointerDown(corner)}
-                        />
-                      );
-                    })}
-                  </div>
+                  {mosaicMode && mosaicRegions.map((region, index) => (
+                    <div
+                      key={index}
+                      className="absolute border-2 border-dashed border-white shadow-[0_0_0_1px_rgba(0,0,0,0.65)] pointer-events-none"
+                      style={{
+                        left: displayed.x + region.left * displayed.w,
+                        top: displayed.y + region.top * displayed.h,
+                        width: (region.right - region.left) * displayed.w,
+                        height: (region.bottom - region.top) * displayed.h,
+                      }}
+                    >
+                      <button
+                        type="button"
+                        className="absolute -right-2.5 -top-2.5 w-5 h-5 rounded-full border border-white bg-black/80 text-white text-[12px] leading-none flex items-center justify-center pointer-events-auto"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeMosaicRegion(index);
+                        }}
+                        aria-label="Remove mosaic region"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                  {mosaicMode && mosaicDraft && (
+                    <div
+                      className="absolute border-2 border-dashed border-white bg-black/10 shadow-[0_0_0_1px_rgba(0,0,0,0.65)] pointer-events-none"
+                      style={{ left: mosaicDraft.x, top: mosaicDraft.y, width: mosaicDraft.w, height: mosaicDraft.h }}
+                    />
+                  )}
+                  {!mosaicMode && (
+                    <div
+                      className="absolute border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.45)] bg-transparent cursor-move"
+                      style={{ left: cropRect.x, top: cropRect.y, width: cropRect.w, height: cropRect.h }}
+                      onPointerDown={onCropPointerDown}
+                    >
+                      {(["nw", "ne", "sw", "se"] as EditCorner[]).map((corner) => {
+                        const style =
+                          corner === "nw"
+                            ? { left: -6, top: -6 }
+                            : corner === "ne"
+                              ? { right: -6, top: -6 }
+                              : corner === "sw"
+                                ? { left: -6, bottom: -6 }
+                                : { right: -6, bottom: -6 };
+                        return (
+                          <div
+                            key={corner}
+                            className="absolute w-3 h-3 rounded-full bg-white border border-black cursor-pointer"
+                            style={style}
+                            onPointerDown={onHandlePointerDown(corner)}
+                          />
+                        );
+                      })}
+                    </div>
+                  )}
                 </>
               ) : (
                 <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-500">Loading preview…</div>
