@@ -109,7 +109,7 @@ export async function generateMetadata({
       article.title || "POST@" + new Date(post.publishedAt ?? "").toISOString().slice(0, 10);
     const artDesc = article.desc || artTitle;
     const siteName = pubcfg.siteName?.trim() || "";
-    const pageTitle = siteName ? `${siteName}: ${artTitle}` : artTitle;
+    const pageTitle = siteName ? `${artTitle} - ${siteName}` : artTitle;
     const author = (article.metadata.author || pubcfg.author || "").trim();
     const metaDate = parseDateString(article.metadata.date ?? "");
     const metaDateIso = metaDate ? metaDate.toISOString() : undefined;
