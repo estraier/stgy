@@ -734,7 +734,8 @@ function applyColorAdjustmentsToCanvas(
       normalizedSigmoid,
     );
     if (normalizedSaturation !== 0 || normalizedVibrance !== 0) {
-      let [h, s, v] = rgbToHsv(r, g, b);
+      const [h, initialS, v] = rgbToHsv(r, g, b);
+      let s = initialS;
       if (normalizedSaturation !== 0) {
         s = applyRolloffScalar(s * saturationFactor, saturationRolloff);
         s = clamp01(s);
@@ -1230,6 +1231,63 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     dragState.current = null;
   }, []);
 
+  const applyCropAspectRatio = useCallback(
+    (ratio: number) => {
+      if (ratio <= 0 || cropRect.w <= 0 || cropRect.h <= 0 || displayed.w <= 0 || displayed.h <= 0) {
+        return;
+      }
+
+      // Preserve the current crop center and area. If that rectangle would extend
+      // outside the image, shrink it uniformly to the largest rectangle of the
+      // requested aspect ratio that still fits around the same center.
+      const centerX = cropRect.x + cropRect.w / 2;
+      const centerY = cropRect.y + cropRect.h / 2;
+      const area = cropRect.w * cropRect.h;
+      let width = Math.sqrt(area * ratio);
+      let height = width / ratio;
+
+      const maxWidth = 2 * Math.max(
+        0,
+        Math.min(centerX - displayed.x, displayed.x + displayed.w - centerX),
+      );
+      const maxHeight = 2 * Math.max(
+        0,
+        Math.min(centerY - displayed.y, displayed.y + displayed.h - centerY),
+      );
+      const scale = Math.min(1, maxWidth / width, maxHeight / height);
+      width *= scale;
+      height *= scale;
+
+      setCropRect({
+        x: centerX - width / 2,
+        y: centerY - height / 2,
+        w: width,
+        h: height,
+      });
+    },
+    [cropRect, displayed],
+  );
+
+  const cropAspectButtons = (
+    <div className="flex items-center gap-1 shrink-0">
+      {[
+        ["1:1", 1],
+        ["4:3", 4 / 3],
+        ["3:2", 3 / 2],
+        ["16:9", 16 / 9],
+      ].map(([label, ratio]) => (
+        <button
+          key={label}
+          type="button"
+          className="px-1 py-0.5 rounded border border-gray-300 bg-white hover:bg-gray-100 text-[10px] leading-none whitespace-nowrap"
+          onClick={() => applyCropAspectRatio(ratio as number)}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+
   const overlayPath = useMemo(() => {
     return {
       outer: `M${displayed.x},${displayed.y} H${displayed.x + displayed.w} V${displayed.y + displayed.h} H${displayed.x} Z`,
@@ -1390,9 +1448,20 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
           </div>
 
           <div className="space-y-4 text-sm text-gray-800">
-            <div className="rounded border px-2 py-3 flex lg:block items-center gap-2 lg:space-y-2">
-              <div className="font-medium w-24 shrink-0 lg:w-auto">Crop</div>
-              <div className="flex flex-1 min-w-0 items-center justify-between gap-1 text-[10px] text-gray-700 leading-5 font-mono whitespace-nowrap">
+            <div className="rounded border px-2 py-3 lg:space-y-2">
+              <div className="grid grid-cols-[96px_minmax(0,1fr)] lg:flex lg:items-center gap-2">
+                <div className="font-medium">Crop</div>
+                <div className="flex min-w-0 items-center gap-2">
+                  {cropAspectButtons}
+                  <div className="flex lg:hidden flex-1 min-w-0 items-center justify-between gap-1 text-[10px] text-gray-700 leading-5 font-mono whitespace-nowrap">
+                    <span>T={(displayed.h ? ((cropRect.y - displayed.y) / displayed.h) * 100 : 0).toFixed(1)}%</span>
+                    <span>B={(displayed.h ? (1 - (cropRect.y + cropRect.h - displayed.y) / displayed.h) * 100 : 0).toFixed(1)}%</span>
+                    <span>L={(displayed.w ? ((cropRect.x - displayed.x) / displayed.w) * 100 : 0).toFixed(1)}%</span>
+                    <span>R={(displayed.w ? (1 - (cropRect.x + cropRect.w - displayed.x) / displayed.w) * 100 : 0).toFixed(1)}%</span>
+                  </div>
+                </div>
+              </div>
+              <div className="hidden lg:flex min-w-0 items-center justify-between gap-1 text-[10px] text-gray-700 leading-5 font-mono whitespace-nowrap">
                 <span>T={(displayed.h ? ((cropRect.y - displayed.y) / displayed.h) * 100 : 0).toFixed(1)}%</span>
                 <span>B={(displayed.h ? (1 - (cropRect.y + cropRect.h - displayed.y) / displayed.h) * 100 : 0).toFixed(1)}%</span>
                 <span>L={(displayed.w ? ((cropRect.x - displayed.x) / displayed.w) * 100 : 0).toFixed(1)}%</span>
