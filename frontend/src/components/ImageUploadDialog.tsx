@@ -1058,20 +1058,27 @@ const EDIT_PREVIEW_MARGIN_PX = 8;
 const HISTOGRAM_BINS = 256;
 const HISTOGRAM_SAMPLE_MAX = 256;
 
-function computeHistogramData(sourceCanvas: HTMLCanvasElement): HistogramData | null {
+function computeHistogramData(
+  sourceCanvas: HTMLCanvasElement,
+  sourceRect: { x: number; y: number; w: number; h: number },
+): HistogramData | null {
   const srcW = sourceCanvas.width;
   const srcH = sourceCanvas.height;
   if (srcW <= 0 || srcH <= 0) return null;
-  const scale = Math.min(1, HISTOGRAM_SAMPLE_MAX / Math.max(srcW, srcH));
-  const sampleW = Math.max(1, Math.round(srcW * scale));
-  const sampleH = Math.max(1, Math.round(srcH * scale));
+  const sx = Math.max(0, Math.min(srcW - 1, sourceRect.x));
+  const sy = Math.max(0, Math.min(srcH - 1, sourceRect.y));
+  const sw = Math.max(1, Math.min(srcW - sx, sourceRect.w));
+  const sh = Math.max(1, Math.min(srcH - sy, sourceRect.h));
+  const scale = Math.min(1, HISTOGRAM_SAMPLE_MAX / Math.max(sw, sh));
+  const sampleW = Math.max(1, Math.round(sw * scale));
+  const sampleH = Math.max(1, Math.round(sh * scale));
   const sampleCanvas = document.createElement("canvas");
   sampleCanvas.width = sampleW;
   sampleCanvas.height = sampleH;
   const sampleCtx = sampleCanvas.getContext("2d", { willReadFrequently: true });
   if (!sampleCtx) return null;
   sampleCtx.clearRect(0, 0, sampleW, sampleH);
-  sampleCtx.drawImage(sourceCanvas, 0, 0, sampleW, sampleH);
+  sampleCtx.drawImage(sourceCanvas, sx, sy, sw, sh, 0, 0, sampleW, sampleH);
   const imageData = sampleCtx.getImageData(0, 0, sampleW, sampleH).data;
   const r = new Array<number>(HISTOGRAM_BINS).fill(0);
   const g = new Array<number>(HISTOGRAM_BINS).fill(0);
@@ -1322,14 +1329,23 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     [cropRect, displayed],
   );
 
+  const usePortraitCropRatios = !!natural && natural.w / natural.h <= 0.95;
   const cropAspectButtons = (
     <div className="flex items-center gap-1 shrink-0">
-      {[
-        ["1:1", 1],
-        ["4:3", 4 / 3],
-        ["3:2", 3 / 2],
-        ["16:9", 16 / 9],
-      ].map(([label, ratio]) => (
+      {(usePortraitCropRatios
+        ? [
+            ["1:1", 1],
+            ["3:4", 3 / 4],
+            ["2:3", 2 / 3],
+            ["9:16", 9 / 16],
+          ]
+        : [
+            ["1:1", 1],
+            ["4:3", 4 / 3],
+            ["3:2", 3 / 2],
+            ["16:9", 16 / 9],
+          ]
+      ).map(([label, ratio]) => (
         <button
           key={label}
           type="button"
@@ -1371,16 +1387,47 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
       vibrance,
       saturation,
     );
-    if (showHistogram) {
-      setHistogram(computeHistogramData(canvas));
-    }
-  }, [displayed.w, displayed.h, temperature, tint, exposureEv, scaledLog, sigmoid, vibrance, saturation, natural, showHistogram]);
+  }, [displayed.w, displayed.h, temperature, tint, exposureEv, scaledLog, sigmoid, vibrance, saturation, natural]);
 
   useEffect(() => {
     if (!showHistogram) {
       setHistogram(null);
+      return;
     }
-  }, [showHistogram]);
+    const canvas = previewCanvasRef.current;
+    if (!canvas || !displayed.w || !displayed.h || !cropRect.w || !cropRect.h) {
+      setHistogram(null);
+      return;
+    }
+    const scaleX = canvas.width / displayed.w;
+    const scaleY = canvas.height / displayed.h;
+    setHistogram(
+      computeHistogramData(canvas, {
+        x: (cropRect.x - displayed.x) * scaleX,
+        y: (cropRect.y - displayed.y) * scaleY,
+        w: cropRect.w * scaleX,
+        h: cropRect.h * scaleY,
+      }),
+    );
+  }, [
+    showHistogram,
+    cropRect.x,
+    cropRect.y,
+    cropRect.w,
+    cropRect.h,
+    displayed.x,
+    displayed.y,
+    displayed.w,
+    displayed.h,
+    temperature,
+    tint,
+    exposureEv,
+    scaledLog,
+    sigmoid,
+    vibrance,
+    saturation,
+    natural,
+  ]);
 
   const histogramPaths = useMemo(() => {
     if (!histogram || histogram.maxCount <= 0) return null;
@@ -1463,7 +1510,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
 
   return createPortal(
     <div className="fixed inset-0 z-[70] bg-black/70 flex items-center justify-center p-4" onClick={onCancel}>
-      <div className="bg-white rounded shadow max-w-[95vw] max-h-[95vh] w-[min(1100px,95vw)] p-4" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-white rounded shadow max-w-[95vw] max-h-[95dvh] overflow-y-auto w-[min(1100px,95vw)] p-4" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-base font-semibold break-all">Edit image</h2>
           <div className="flex items-center gap-3">

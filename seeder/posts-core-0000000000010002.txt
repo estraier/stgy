@@ -182,6 +182,10 @@ When you select a file for upload, optimized data for web viewing is generated a
 
 ![Image optimization](/data/help-image-optimize.png){grid}
 
+If you want to adjust the image optimized for web, click the "Edit" button.  It opens the image editor, by which you can specify adjustment settings such as cropping, white balance, and tone.  You can set the resizing ratio too.
+
+![Image editor](/data/help-image-editor.png){grid}
+
 ## Track management
 
 Select "Tracks" from the navigation menu to open the track management page. It displays previews of tracks you have uploaded. Press "Update tracks" to upload track data from your local computer. Tracks may be in FIT, GPX, or TrackJSON format and may be up to 10 MB each. There is also a monthly quota of 100 MB.
