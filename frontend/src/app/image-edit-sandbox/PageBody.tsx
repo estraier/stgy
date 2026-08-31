@@ -145,6 +145,10 @@ export default function ImageEditSandbox() {
     }
   }, [generateResult, result, source]);
 
+  const sandboxDefaultEditParams = source
+    ? { ...buildDefaultEditParams(source.width, source.height), resizePercent: 100 }
+    : undefined;
+
   return (
     <main className="mx-auto max-w-5xl p-4 sm:p-6">
       <h1 className="text-xl font-semibold">Image Edit Sandbox</h1>
@@ -174,6 +178,17 @@ export default function ImageEditSandbox() {
             ))}
           </select>
         </label>
+
+        {result && source && (
+          <button
+            type="button"
+            className="ml-auto rounded border border-gray-400 bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-200 disabled:text-gray-400"
+            onClick={() => setEditing(true)}
+            disabled={processing}
+          >
+            Re-edit
+          </button>
+        )}
       </div>
 
       {processing && <div className="mt-4 text-sm text-gray-600">Processing…</div>}
@@ -204,6 +219,7 @@ export default function ImageEditSandbox() {
         <ImageEditDialog
           file={source.file}
           initialParams={source.edit}
+          defaultParams={sandboxDefaultEditParams}
           onCancel={() => setEditing(false)}
           onApply={(params) => void onApply(params)}
         />

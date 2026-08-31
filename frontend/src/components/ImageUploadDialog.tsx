@@ -843,6 +843,7 @@ function splitObjectKey(objectKey: string): { userId: string; restPath: string }
 type EditDialogProps = {
   file: File;
   initialParams: ImageEditParams;
+  defaultParams?: ImageEditParams;
   onCancel: () => void;
   onApply: (params: ImageEditParams) => void;
 };
@@ -852,7 +853,7 @@ type EditPoint = { x: number; y: number };
 type EditCorner = "nw" | "ne" | "sw" | "se";
 const EDIT_PREVIEW_MARGIN_PX = 8;
 
-export function ImageEditDialog({ file, initialParams, onCancel, onApply }: EditDialogProps) {
+export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, onApply }: EditDialogProps) {
   const [mounted, setMounted] = useState(false);
   const [imgUrl, setImgUrl] = useState<string>("");
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
@@ -1091,6 +1092,33 @@ export function ImageEditDialog({ file, initialParams, onCancel, onApply }: Edit
     onApply,
   ]);
 
+  const onReset = useCallback(() => {
+    const params = normalizeEditParams(
+      defaultParams ?? buildDefaultEditParams(natural?.w, natural?.h),
+      natural?.w,
+      natural?.h,
+    );
+    setTemperature(params.temperature);
+    setTint(params.tint);
+    setExposureEv(params.exposureEv);
+    setScaledLog(params.scaledLog);
+    setSigmoid(params.sigmoid);
+    setResizePercent(params.resizePercent);
+    if (displayed.w > 0 && displayed.h > 0) {
+      const crop = normalizeCrop(params.crop);
+      const x = displayed.x + displayed.w * crop.left;
+      const y = displayed.y + displayed.h * crop.top;
+      const right = displayed.x + displayed.w * (1 - crop.right);
+      const bottom = displayed.y + displayed.h * (1 - crop.bottom);
+      setCropRect({
+        x,
+        y,
+        w: Math.max(40, right - x),
+        h: Math.max(40, bottom - y),
+      });
+    }
+  }, [defaultParams, displayed, natural]);
+
   if (!mounted) return null;
 
   return createPortal(
@@ -1098,8 +1126,8 @@ export function ImageEditDialog({ file, initialParams, onCancel, onApply }: Edit
       <div className="bg-white rounded shadow max-w-[95vw] max-h-[95vh] w-[min(1100px,95vw)] p-4" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-base font-semibold break-all">Edit image</h2>
-          <button className="px-2 py-0.5 text-sm rounded border border-gray-300 hover:bg-gray-100" onClick={onCancel}>
-            Close
+          <button className="px-2 py-0.5 text-sm rounded border border-gray-300 hover:bg-gray-100" onClick={onReset}>
+            Reset
           </button>
         </div>
 
