@@ -1047,7 +1047,59 @@ type EditDialogProps = {
 type EditRect = { x: number; y: number; w: number; h: number };
 type EditPoint = { x: number; y: number };
 type EditCorner = "nw" | "ne" | "sw" | "se";
+type HistogramData = {
+  r: number[];
+  g: number[];
+  b: number[];
+  luma: number[];
+  maxCount: number;
+};
 const EDIT_PREVIEW_MARGIN_PX = 8;
+const HISTOGRAM_BINS = 256;
+const HISTOGRAM_SAMPLE_MAX = 256;
+
+function computeHistogramData(sourceCanvas: HTMLCanvasElement): HistogramData | null {
+  const srcW = sourceCanvas.width;
+  const srcH = sourceCanvas.height;
+  if (srcW <= 0 || srcH <= 0) return null;
+  const scale = Math.min(1, HISTOGRAM_SAMPLE_MAX / Math.max(srcW, srcH));
+  const sampleW = Math.max(1, Math.round(srcW * scale));
+  const sampleH = Math.max(1, Math.round(srcH * scale));
+  const sampleCanvas = document.createElement("canvas");
+  sampleCanvas.width = sampleW;
+  sampleCanvas.height = sampleH;
+  const sampleCtx = sampleCanvas.getContext("2d", { willReadFrequently: true });
+  if (!sampleCtx) return null;
+  sampleCtx.clearRect(0, 0, sampleW, sampleH);
+  sampleCtx.drawImage(sourceCanvas, 0, 0, sampleW, sampleH);
+  const imageData = sampleCtx.getImageData(0, 0, sampleW, sampleH).data;
+  const r = new Array<number>(HISTOGRAM_BINS).fill(0);
+  const g = new Array<number>(HISTOGRAM_BINS).fill(0);
+  const b = new Array<number>(HISTOGRAM_BINS).fill(0);
+  const luma = new Array<number>(HISTOGRAM_BINS).fill(0);
+  let maxCount = 0;
+  for (let i = 0; i < imageData.length; i += 4) {
+    const rr = imageData[i] ?? 0;
+    const gg = imageData[i + 1] ?? 0;
+    const bb = imageData[i + 2] ?? 0;
+    const yy = Math.min(255, Math.max(0, Math.round(rr * 0.2126 + gg * 0.7152 + bb * 0.0722)));
+    maxCount = Math.max(maxCount, ++r[rr], ++g[gg], ++b[bb], ++luma[yy]);
+  }
+  return { r, g, b, luma, maxCount };
+}
+
+function histogramPath(values: number[], maxCount: number, width: number, height: number): string {
+  if (!values.length || maxCount <= 0) {
+    return `M0,${height} L${width},${height}`;
+  }
+  return values
+    .map((value, index) => {
+      const x = (index / (values.length - 1)) * width;
+      const y = height - (value / maxCount) * height;
+      return `${index === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(" ");
+}
 
 export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, onApply }: EditDialogProps) {
   const [mounted, setMounted] = useState(false);
@@ -1071,6 +1123,8 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
   const [resizePercent, setResizePercent] = useState<number>(
     Math.min(100, Math.max(1, Math.round(initialParams.resizePercent))),
   );
+  const [showHistogram, setShowHistogram] = useState(false);
+  const [histogram, setHistogram] = useState<HistogramData | null>(null);
   const dragState = useRef<
     | null
     | { mode: "move"; startP: EditPoint; startCrop: EditRect }
@@ -1317,7 +1371,30 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
       vibrance,
       saturation,
     );
-  }, [displayed.w, displayed.h, temperature, tint, exposureEv, scaledLog, sigmoid, vibrance, saturation, natural]);
+    if (showHistogram) {
+      setHistogram(computeHistogramData(canvas));
+    }
+  }, [displayed.w, displayed.h, temperature, tint, exposureEv, scaledLog, sigmoid, vibrance, saturation, natural, showHistogram]);
+
+  useEffect(() => {
+    if (!showHistogram) {
+      setHistogram(null);
+    }
+  }, [showHistogram]);
+
+  const histogramPaths = useMemo(() => {
+    if (!histogram || histogram.maxCount <= 0) return null;
+    const width = 256;
+    const height = 80;
+    return {
+      width,
+      height,
+      luma: histogramPath(histogram.luma, histogram.maxCount, width, height),
+      r: histogramPath(histogram.r, histogram.maxCount, width, height),
+      g: histogramPath(histogram.g, histogram.maxCount, width, height),
+      b: histogramPath(histogram.b, histogram.maxCount, width, height),
+    };
+  }, [histogram]);
 
   const onSubmit = useCallback(() => {
     if (!displayed.w || !displayed.h) return;
@@ -1389,9 +1466,19 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
       <div className="bg-white rounded shadow max-w-[95vw] max-h-[95vh] w-[min(1100px,95vw)] p-4" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-base font-semibold break-all">Edit image</h2>
-          <button className="px-2 py-0.5 text-sm rounded border border-gray-300 hover:bg-gray-100" onClick={onReset}>
-            Reset
-          </button>
+          <div className="flex items-center gap-3">
+            <label className="inline-flex items-center gap-2 text-sm text-gray-700 select-none">
+              <input
+                type="checkbox"
+                checked={showHistogram}
+                onChange={(e) => setShowHistogram(e.target.checked)}
+              />
+              <span>Histogram</span>
+            </label>
+            <button className="px-2 py-0.5 text-sm rounded border border-gray-300 hover:bg-gray-100" onClick={onReset}>
+              Reset
+            </button>
+          </div>
         </div>
 
         <div className="mt-3 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_208px] gap-4 lg:items-stretch">
@@ -1404,6 +1491,12 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
           >
               {imgUrl && natural ? (
                 <>
+                  {showHistogram && histogramPaths && (
+                    <div
+                      className="absolute left-2 bottom-2 w-[294px] h-[138px] rounded bg-black pointer-events-none"
+                      aria-hidden="true"
+                    />
+                  )}
                   <canvas
                     ref={previewCanvasRef}
                     className="absolute select-none"
@@ -1417,6 +1510,22 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                   <svg className="absolute inset-0 w-full h-full pointer-events-none" aria-hidden="true">
                     <path d={`${overlayPath.outer} ${overlayPath.inner}`} fill="rgba(0,0,0,0.45)" fillRule="evenodd" />
                   </svg>
+                  {showHistogram && histogramPaths && (
+                    <div className="absolute left-2 bottom-2 w-[294px] h-[138px] rounded border border-white/40 bg-black/80 shadow-sm pointer-events-none">
+                      <svg
+                        className="absolute inset-[6px] w-[calc(100%-12px)] h-[calc(100%-12px)]"
+                        viewBox={`0 0 ${histogramPaths.width} ${histogramPaths.height}`}
+                        preserveAspectRatio="none"
+                        aria-hidden="true"
+                      >
+                        <path d={`M0,${histogramPaths.height} L${histogramPaths.width},${histogramPaths.height}`} stroke="rgba(255,255,255,0.2)" strokeWidth="1" fill="none" />
+                        <path d={histogramPaths.luma} stroke="rgba(255,255,255,0.85)" strokeWidth="1.5" fill="none" />
+                        <path d={histogramPaths.r} stroke="rgba(255,80,80,0.8)" strokeWidth="1" fill="none" />
+                        <path d={histogramPaths.g} stroke="rgba(80,255,120,0.8)" strokeWidth="1" fill="none" />
+                        <path d={histogramPaths.b} stroke="rgba(100,160,255,0.8)" strokeWidth="1" fill="none" />
+                      </svg>
+                    </div>
+                  )}
                   <div
                     className="absolute border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.45)] bg-transparent cursor-move"
                     style={{ left: cropRect.x, top: cropRect.y, width: cropRect.w, height: cropRect.h }}
