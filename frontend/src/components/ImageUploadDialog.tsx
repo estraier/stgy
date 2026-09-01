@@ -1542,6 +1542,25 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     [cropRect, displayed],
   );
 
+  const applyResizeTargetPixels = useCallback((targetPixels: number) => {
+    if (!natural || displayed.w <= 0 || displayed.h <= 0 || cropRect.w <= 0 || cropRect.h <= 0) {
+      return;
+    }
+    const crop = normalizeCrop({
+      left: (cropRect.x - displayed.x) / displayed.w,
+      top: (cropRect.y - displayed.y) / displayed.h,
+      right: 1 - (cropRect.x + cropRect.w - displayed.x) / displayed.w,
+      bottom: 1 - (cropRect.y + cropRect.h - displayed.y) / displayed.h,
+    });
+    const sx = Math.max(0, Math.min(natural.w - 1, Math.round(natural.w * crop.left)));
+    const sy = Math.max(0, Math.min(natural.h - 1, Math.round(natural.h * crop.top)));
+    const ex = Math.max(sx + 1, Math.min(natural.w, Math.round(natural.w * (1 - crop.right))));
+    const ey = Math.max(sy + 1, Math.min(natural.h, Math.round(natural.h * (1 - crop.bottom))));
+    const croppedPixels = Math.max(1, ex - sx) * Math.max(1, ey - sy);
+    const percent = Math.round(Math.sqrt(targetPixels / croppedPixels) * 100);
+    setResizePercent(Math.min(100, Math.max(1, percent)));
+  }, [natural, displayed, cropRect]);
+
   const usePortraitCropRatios = !!natural && natural.w / natural.h <= 0.95;
   const cropAspectButtons = (
     <div className="flex items-center gap-1 shrink-0">
@@ -2044,19 +2063,35 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
             </div>
 
             <div className="rounded border p-3 space-y-2">
-              <label className="grid grid-cols-[96px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+              <div className="grid grid-cols-[auto_minmax(0,1fr)_56px] items-center gap-x-2 gap-y-1">
                 <span className="col-start-1 row-start-1 font-medium">Resize</span>
-                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{resizePercent}%</span>
+                <div className="col-start-2 row-start-1 flex items-center gap-1 shrink-0">
+                  {([
+                    ["1MP", 1_000_000],
+                    ["4MP", 4_000_000],
+                  ] as const).map(([label, targetPixels]) => (
+                    <button
+                      key={label}
+                      type="button"
+                      className="px-1 py-0.5 rounded border border-gray-300 bg-white hover:bg-gray-100 text-[10px] leading-none whitespace-nowrap"
+                      onClick={() => applyResizeTargetPixels(targetPixels)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <span className="col-start-3 row-start-1 w-14 text-right justify-self-end font-mono text-[12px]">{resizePercent}%</span>
                 <input
                   type="range"
+                  aria-label="Resize"
                   min={1}
                   max={100}
                   step={1}
                   value={resizePercent}
                   onChange={(e) => setResizePercent(Math.min(100, Math.max(1, Number(e.target.value) || 100)))}
-                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
+                  className="col-span-3 col-start-1 row-start-2 w-full"
                 />
-              </label>
+              </div>
             </div>
           </div>
         </div>
