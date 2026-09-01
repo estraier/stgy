@@ -380,11 +380,11 @@ function applyWhiteBalanceLinear(
   b: number,
   gains: WhiteBalanceGains,
 ): [number, number, number] {
-  // Match the existing itb_stack white-balance behavior: progressively reduce
-  // correction toward white so neutral highlights stay neutral.
+  // Progressively reduce correction toward white while retaining more WB
+  // through the midtones by applying gamma 0.5 to the protection mask.
   const gray = 0.299 * r + 0.587 * g + 0.114 * b;
   const whiteThreshold = 0.98;
-  const weight = 1 - clamp01((gray - (1 - whiteThreshold)) / whiteThreshold);
+  const weight = Math.sqrt(1 - clamp01((gray - (1 - whiteThreshold)) / whiteThreshold));
   const wr = weight * gains.r + (1 - weight);
   const wg = weight * gains.g + (1 - weight);
   const wb = weight * gains.b + (1 - weight);
@@ -681,18 +681,22 @@ function applySigmoidLinear(value: number, gain: number): number {
   const x = clamp01(value);
   const g = clampSigmoid(gain);
   const mid = 0.5;
+  const gamma = HISTOGRAM_DISPLAY_GAMMA;
+  const encoded = Math.pow(x, 1 / gamma);
   if (g > 1e-6) {
     const minVal = naiveSigmoid(0, g, mid);
     const maxVal = naiveSigmoid(1, g, mid);
-    return clamp01((naiveSigmoid(x, g, mid) - minVal) / (maxVal - minVal));
+    const adjusted = clamp01((naiveSigmoid(encoded, g, mid) - minVal) / (maxVal - minVal));
+    return clamp01(Math.pow(adjusted, gamma));
   }
   if (g < -1e-6) {
     const magnitude = -g;
     const minVal = naiveInverseSigmoid(0, magnitude, mid);
     const maxVal = naiveInverseSigmoid(1, magnitude, mid);
-    return clamp01(
-      (naiveInverseSigmoid(x, magnitude, mid) - minVal) / (maxVal - minVal),
+    const adjusted = clamp01(
+      (naiveInverseSigmoid(encoded, magnitude, mid) - minVal) / (maxVal - minVal),
     );
+    return clamp01(Math.pow(adjusted, gamma));
   }
   return x;
 }
@@ -857,6 +861,112 @@ function saturatedPercentileAfterToneFromRgb8(
   return maxValue * interpolated / (bins - 1);
 }
 
+type ColorAdjustmentContext = {
+  gains: WhiteBalanceGains;
+  hasWhiteBalance: boolean;
+  factor: number;
+  rolloff: { inflection: number; scale: number } | null;
+  scaledLog: number;
+  sigmoid: number;
+  normalizedVibrance: number;
+  normalizedSaturation: number;
+  saturationFactor: number;
+  vibranceFactor: number;
+  saturationRolloff: { inflection: number; scale: number } | null;
+};
+
+function buildColorAdjustmentContextFromRgb8(
+  data: Uint8ClampedArray,
+  temperature: number,
+  tint: number,
+  exposureEv: number,
+  scaledLog: number,
+  sigmoid: number,
+  vibrance: number,
+  saturation: number,
+): ColorAdjustmentContext {
+  const normalizedTemperature = clampWhiteBalanceValue(temperature);
+  const normalizedTint = clampWhiteBalanceValue(tint);
+  const normalizedScaledLog = clampScaledLog(scaledLog);
+  const normalizedSigmoid = clampSigmoid(sigmoid);
+  const normalizedVibrance = clampColorAdjustment(vibrance);
+  const normalizedSaturation = clampColorAdjustment(saturation);
+  const factor = Math.pow(2, exposureEv);
+  const gains = whiteBalanceGains(normalizedTemperature, normalizedTint);
+  const hasWhiteBalance = normalizedTemperature !== 0 || normalizedTint !== 0;
+  const maxVal =
+    factor > 1
+      ? hasWhiteBalance
+        ? whiteBalancedExposedPercentileFromRgb8(data, gains, factor, 99.8)
+        : exposedPercentileFromRgb8(data, factor, 99.8)
+      : 0;
+  const rolloff = factor > 1 ? rolloffParams(maxVal, 0.5, 4) : null;
+  const saturationFactor = colorSaturationFactor(normalizedSaturation);
+  const vibranceFactor = colorVibranceFactor(normalizedVibrance);
+  const saturationRolloff = saturationFactor > 1
+    ? rolloffParams(
+        saturatedPercentileAfterToneFromRgb8(
+          data,
+          gains,
+          hasWhiteBalance,
+          factor,
+          rolloff,
+          normalizedScaledLog,
+          normalizedSigmoid,
+          saturationFactor,
+          99,
+        ),
+        0.7,
+        4,
+      )
+    : null;
+  return {
+    gains,
+    hasWhiteBalance,
+    factor,
+    rolloff,
+    scaledLog: normalizedScaledLog,
+    sigmoid: normalizedSigmoid,
+    normalizedVibrance,
+    normalizedSaturation,
+    saturationFactor,
+    vibranceFactor,
+    saturationRolloff,
+  };
+}
+
+function applyColorAdjustmentsLinearRgb(
+  r: number,
+  g: number,
+  b: number,
+  context: ColorAdjustmentContext,
+): [number, number, number] {
+  [r, g, b] = applyToneLinearToRgb(
+    r,
+    g,
+    b,
+    context.gains,
+    context.hasWhiteBalance,
+    context.factor,
+    context.rolloff,
+    context.scaledLog,
+    context.sigmoid,
+  );
+  if (context.normalizedSaturation !== 0 || context.normalizedVibrance !== 0) {
+    const [h, initialS, v] = rgbToHsv(r, g, b);
+    let s = initialS;
+    if (context.normalizedSaturation !== 0) {
+      s = applyRolloffScalar(s * context.saturationFactor, context.saturationRolloff);
+      s = clamp01(s);
+    }
+    if (context.normalizedVibrance !== 0) {
+      s = applyScaledLogLinear(s, context.vibranceFactor);
+    }
+    [r, g, b] = hsvToRgb(h, s, v);
+  }
+  return [r, g, b];
+}
+
 function applyColorAdjustmentsToCanvas(
   canvas: HTMLCanvasElement | OffscreenCanvas,
   temperature: number,
@@ -886,67 +996,26 @@ function applyColorAdjustmentsToCanvas(
   }
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
-  const factor = Math.pow(2, exposureEv);
   const width = "width" in canvas ? canvas.width : 0;
   const height = "height" in canvas ? canvas.height : 0;
   if (!width || !height) return;
   const imageData = ctx.getImageData(0, 0, width, height);
   const data = imageData.data;
-  const gains = whiteBalanceGains(normalizedTemperature, normalizedTint);
-  const hasWhiteBalance = normalizedTemperature !== 0 || normalizedTint !== 0;
-  const maxVal =
-    factor > 1
-      ? hasWhiteBalance
-        ? whiteBalancedExposedPercentileFromRgb8(data, gains, factor, 99.8)
-        : exposedPercentileFromRgb8(data, factor, 99.8)
-      : 0;
-  const rolloff = factor > 1 ? rolloffParams(maxVal, 0.5, 4) : null;
-  const saturationFactor = colorSaturationFactor(normalizedSaturation);
-  const vibranceFactor = colorVibranceFactor(normalizedVibrance);
-  const saturationRolloff = saturationFactor > 1
-    ? rolloffParams(
-        saturatedPercentileAfterToneFromRgb8(
-          data,
-          gains,
-          hasWhiteBalance,
-          factor,
-          rolloff,
-          normalizedScaledLog,
-          normalizedSigmoid,
-          saturationFactor,
-          99,
-        ),
-        0.7,
-        4,
-      )
-    : null;
+  const context = buildColorAdjustmentContextFromRgb8(
+    data,
+    normalizedTemperature,
+    normalizedTint,
+    exposureEv,
+    normalizedScaledLog,
+    normalizedSigmoid,
+    normalizedVibrance,
+    normalizedSaturation,
+  );
   for (let i = 0; i < data.length; i += 4) {
     let r = srgbChannelToLinear(data[i]);
     let g = srgbChannelToLinear(data[i + 1]);
     let b = srgbChannelToLinear(data[i + 2]);
-    [r, g, b] = applyToneLinearToRgb(
-      r,
-      g,
-      b,
-      gains,
-      hasWhiteBalance,
-      factor,
-      rolloff,
-      normalizedScaledLog,
-      normalizedSigmoid,
-    );
-    if (normalizedSaturation !== 0 || normalizedVibrance !== 0) {
-      const [h, initialS, v] = rgbToHsv(r, g, b);
-      let s = initialS;
-      if (normalizedSaturation !== 0) {
-        s = applyRolloffScalar(s * saturationFactor, saturationRolloff);
-        s = clamp01(s);
-      }
-      if (normalizedVibrance !== 0) {
-        s = applyScaledLogLinear(s, vibranceFactor);
-      }
-      [r, g, b] = hsvToRgb(h, s, v);
-    }
+    [r, g, b] = applyColorAdjustmentsLinearRgb(r, g, b, context);
     data[i] = linearChannelToSrgb(r);
     data[i + 1] = linearChannelToSrgb(g);
     data[i + 2] = linearChannelToSrgb(b);
@@ -1369,40 +1438,165 @@ type HistogramData = {
 const EDIT_PREVIEW_MARGIN_PX = 8;
 const HISTOGRAM_BINS = 256;
 const HISTOGRAM_SAMPLE_MAX = 256;
+const HISTOGRAM_DISPLAY_GAMMA = 2.4;
+
+function histogramDisplayValue(linear: number): number {
+  return Math.pow(clamp01(linear), 1 / HISTOGRAM_DISPLAY_GAMMA);
+}
+
+function addHistogramInterval(
+  output: number[],
+  lo: number,
+  hi: number,
+  weight: number,
+) {
+  if (weight <= 0) return;
+  const displayLo = clamp01(Math.min(lo, hi));
+  const displayHi = clamp01(Math.max(lo, hi));
+  const width = displayHi - displayLo;
+  if (width <= 1e-12) {
+    const bin = Math.min(
+      HISTOGRAM_BINS - 1,
+      Math.max(0, Math.floor(displayLo * HISTOGRAM_BINS)),
+    );
+    output[bin] += weight;
+    return;
+  }
+
+  const firstBin = Math.min(
+    HISTOGRAM_BINS - 1,
+    Math.max(0, Math.floor(displayLo * HISTOGRAM_BINS)),
+  );
+  const lastBin = Math.min(
+    HISTOGRAM_BINS - 1,
+    Math.max(0, Math.ceil(displayHi * HISTOGRAM_BINS) - 1),
+  );
+  for (let bin = firstBin; bin <= lastBin; bin++) {
+    const binLo = bin / HISTOGRAM_BINS;
+    const binHi = (bin + 1) / HISTOGRAM_BINS;
+    const overlap = Math.min(displayHi, binHi) - Math.max(displayLo, binLo);
+    if (overlap > 0) output[bin] += weight * overlap / width;
+  }
+}
 
 function computeHistogramData(
-  sourceCanvas: HTMLCanvasElement,
+  sourceImage: HTMLImageElement,
   sourceRect: { x: number; y: number; w: number; h: number },
+  temperature: number,
+  tint: number,
+  exposureEv: number,
+  scaledLog: number,
+  sigmoid: number,
+  vibrance: number,
+  saturation: number,
 ): HistogramData | null {
-  const srcW = sourceCanvas.width;
-  const srcH = sourceCanvas.height;
-  if (srcW <= 0 || srcH <= 0) return null;
-  const sx = Math.max(0, Math.min(srcW - 1, sourceRect.x));
-  const sy = Math.max(0, Math.min(srcH - 1, sourceRect.y));
-  const sw = Math.max(1, Math.min(srcW - sx, sourceRect.w));
-  const sh = Math.max(1, Math.min(srcH - sy, sourceRect.h));
+  const sourceW = sourceImage.naturalWidth;
+  const sourceH = sourceImage.naturalHeight;
+  if (sourceW <= 0 || sourceH <= 0) return null;
+
+  const sx = Math.max(0, Math.min(sourceW - 1, Math.floor(sourceRect.x)));
+  const sy = Math.max(0, Math.min(sourceH - 1, Math.floor(sourceRect.y)));
+  const ex = Math.max(sx + 1, Math.min(sourceW, Math.ceil(sourceRect.x + sourceRect.w)));
+  const ey = Math.max(sy + 1, Math.min(sourceH, Math.ceil(sourceRect.y + sourceRect.h)));
+  const sw = ex - sx;
+  const sh = ey - sy;
+  if (sw <= 0 || sh <= 0) return null;
+
+  // Histogram processing is deliberately independent from the displayed preview canvas.
+  // Take an evenly spaced nearest-neighbour sample of the original cropped image so no
+  // encoded-sRGB interpolation is introduced by the preview resize. Each sample represents
+  // the same area of the crop and therefore contributes cropArea / sampleCount pixels.
   const scale = Math.min(1, HISTOGRAM_SAMPLE_MAX / Math.max(sw, sh));
   const sampleW = Math.max(1, Math.round(sw * scale));
   const sampleH = Math.max(1, Math.round(sh * scale));
   const sampleCanvas = document.createElement("canvas");
   sampleCanvas.width = sampleW;
   sampleCanvas.height = sampleH;
-  const sampleCtx = sampleCanvas.getContext("2d", { willReadFrequently: true });
+  const sampleCtx = sampleCanvas.getContext("2d");
   if (!sampleCtx) return null;
+  sampleCtx.imageSmoothingEnabled = false;
   sampleCtx.clearRect(0, 0, sampleW, sampleH);
-  sampleCtx.drawImage(sourceCanvas, sx, sy, sw, sh, 0, 0, sampleW, sampleH);
-  const imageData = sampleCtx.getImageData(0, 0, sampleW, sampleH).data;
+  sampleCtx.drawImage(sourceImage, sx, sy, sw, sh, 0, 0, sampleW, sampleH);
+  const sampleData = sampleCtx.getImageData(0, 0, sampleW, sampleH).data;
+  if (!sampleData.length) return null;
+
+  const adjustment = buildColorAdjustmentContextFromRgb8(
+    sampleData,
+    temperature,
+    tint,
+    exposureEv,
+    scaledLog,
+    sigmoid,
+    vibrance,
+    saturation,
+  );
   const r = new Array<number>(HISTOGRAM_BINS).fill(0);
   const g = new Array<number>(HISTOGRAM_BINS).fill(0);
   const b = new Array<number>(HISTOGRAM_BINS).fill(0);
   const luma = new Array<number>(HISTOGRAM_BINS).fill(0);
+  const areaWeight = sw * sh / (sampleW * sampleH);
+
+  for (let i = 0; i < sampleData.length; i += 4) {
+    const rc = sampleData[i] ?? 0;
+    const gc = sampleData[i + 1] ?? 0;
+    const bc = sampleData[i + 2] ?? 0;
+
+    // The source is normally 8-bit sRGB, so each code represents a finite quantization
+    // cell rather than one exact linear-light value. Transform the eight corners of that
+    // RGB cell through the same linear-light edit pipeline as the image, then distribute
+    // the represented image area over the output histogram interval. This preserves area
+    // while avoiding comb-like gaps after changing from the sRGB transfer curve to the
+    // pure-gamma 2.4 display axis.
+    const rLinear = [
+      srgbChannelToLinear(Math.max(0, rc - 0.5)),
+      srgbChannelToLinear(Math.min(255, rc + 0.5)),
+    ];
+    const gLinear = [
+      srgbChannelToLinear(Math.max(0, gc - 0.5)),
+      srgbChannelToLinear(Math.min(255, gc + 0.5)),
+    ];
+    const bLinear = [
+      srgbChannelToLinear(Math.max(0, bc - 0.5)),
+      srgbChannelToLinear(Math.min(255, bc + 0.5)),
+    ];
+
+    let minR = 1;
+    let maxR = 0;
+    let minG = 1;
+    let maxG = 0;
+    let minB = 1;
+    let maxB = 0;
+    let minY = 1;
+    let maxY = 0;
+    for (let corner = 0; corner < 8; corner++) {
+      let rr = rLinear[corner & 1];
+      let gg = gLinear[(corner >> 1) & 1];
+      let bb = bLinear[(corner >> 2) & 1];
+      [rr, gg, bb] = applyColorAdjustmentsLinearRgb(rr, gg, bb, adjustment);
+      const yy = clamp01(0.2126 * rr + 0.7152 * gg + 0.0722 * bb);
+      const dr = histogramDisplayValue(rr);
+      const dg = histogramDisplayValue(gg);
+      const db = histogramDisplayValue(bb);
+      const dy = histogramDisplayValue(yy);
+      minR = Math.min(minR, dr);
+      maxR = Math.max(maxR, dr);
+      minG = Math.min(minG, dg);
+      maxG = Math.max(maxG, dg);
+      minB = Math.min(minB, db);
+      maxB = Math.max(maxB, db);
+      minY = Math.min(minY, dy);
+      maxY = Math.max(maxY, dy);
+    }
+
+    addHistogramInterval(r, minR, maxR, areaWeight);
+    addHistogramInterval(g, minG, maxG, areaWeight);
+    addHistogramInterval(b, minB, maxB, areaWeight);
+    addHistogramInterval(luma, minY, maxY, areaWeight);
+  }
+
   let maxCount = 0;
-  for (let i = 0; i < imageData.length; i += 4) {
-    const rr = imageData[i] ?? 0;
-    const gg = imageData[i + 1] ?? 0;
-    const bb = imageData[i + 2] ?? 0;
-    const yy = Math.min(255, Math.max(0, Math.round(rr * 0.2126 + gg * 0.7152 + bb * 0.0722)));
-    maxCount = Math.max(maxCount, ++r[rr], ++g[gg], ++b[bb], ++luma[yy]);
+  for (let i = 0; i < HISTOGRAM_BINS; i++) {
+    maxCount = Math.max(maxCount, r[i] ?? 0, g[i] ?? 0, b[i] ?? 0, luma[i] ?? 0);
   }
   return { r, g, b, luma, maxCount };
 }
@@ -1867,20 +2061,46 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
       setHistogram(null);
       return;
     }
-    const canvas = previewCanvasRef.current;
-    if (!canvas || !displayed.w || !displayed.h || !cropRect.w || !cropRect.h) {
+    const img = previewImageRef.current;
+    if (
+      !img ||
+      !natural ||
+      !displayed.w ||
+      !displayed.h ||
+      !cropRect.w ||
+      !cropRect.h
+    ) {
       setHistogram(null);
       return;
     }
-    const scaleX = canvas.width / displayed.w;
-    const scaleY = canvas.height / displayed.h;
+    const crop = normalizeCrop({
+      left: (cropRect.x - displayed.x) / displayed.w,
+      top: (cropRect.y - displayed.y) / displayed.h,
+      right: 1 - (cropRect.x + cropRect.w - displayed.x) / displayed.w,
+      bottom: 1 - (cropRect.y + cropRect.h - displayed.y) / displayed.h,
+    });
+    const sx = Math.max(0, Math.min(natural.w - 1, Math.round(natural.w * crop.left)));
+    const sy = Math.max(0, Math.min(natural.h - 1, Math.round(natural.h * crop.top)));
+    const ex = Math.max(
+      sx + 1,
+      Math.min(natural.w, Math.round(natural.w * (1 - crop.right))),
+    );
+    const ey = Math.max(
+      sy + 1,
+      Math.min(natural.h, Math.round(natural.h * (1 - crop.bottom))),
+    );
     setHistogram(
-      computeHistogramData(canvas, {
-        x: (cropRect.x - displayed.x) * scaleX,
-        y: (cropRect.y - displayed.y) * scaleY,
-        w: cropRect.w * scaleX,
-        h: cropRect.h * scaleY,
-      }),
+      computeHistogramData(
+        img,
+        { x: sx, y: sy, w: ex - sx, h: ey - sy },
+        temperature,
+        tint,
+        exposureEv,
+        scaledLog,
+        sigmoid,
+        vibrance,
+        saturation,
+      ),
     );
   }, [
     showHistogram,
@@ -1900,8 +2120,6 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     vibrance,
     saturation,
     natural,
-    mosaicRegions,
-    resizePercent,
     eyedropperMode,
   ]);
 
