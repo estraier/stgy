@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import NextImage from "next/image";
 import { createPortal } from "react-dom";
-import { Pipette } from "lucide-react";
+import { Pipette, RotateCw } from "lucide-react";
 import { formatBytes } from "@/utils/format";
 import { Config } from "@/config";
 import {
@@ -72,6 +72,7 @@ export type ImageMosaicRegion = {
 
 export type ImageEditParams = {
   crop: ImageCropInsets;
+  rotationDegrees: number;
   temperature: number;
   tint: number;
   exposureEv: number;
@@ -277,9 +278,16 @@ function normalizeMosaicRegions(regions?: ImageMosaicRegion[]): ImageMosaicRegio
     .filter((region): region is ImageMosaicRegion => region !== null);
 }
 
+function normalizeRotationDegrees(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  const normalized = ((value + 180) % 360 + 360) % 360 - 180;
+  return Math.abs(normalized) < 1e-9 ? 0 : normalized;
+}
+
 export function buildDefaultEditParams(w?: number, h?: number): ImageEditParams {
   return {
     crop: { top: 0, bottom: 0, left: 0, right: 0 },
+    rotationDegrees: 0,
     temperature: 0,
     tint: 0,
     exposureEv: 0,
@@ -296,6 +304,7 @@ function normalizeEditParams(params: ImageEditParams | undefined, w?: number, h?
   const defaults = buildDefaultEditParams(w, h);
   return {
     crop: normalizeCrop(params?.crop ?? defaults.crop),
+    rotationDegrees: normalizeRotationDegrees(params?.rotationDegrees ?? defaults.rotationDegrees),
     temperature: clampWhiteBalanceValue(params?.temperature ?? defaults.temperature),
     tint: clampWhiteBalanceValue(params?.tint ?? defaults.tint),
     exposureEv: clampExposureEv(params?.exposureEv ?? defaults.exposureEv),
@@ -317,6 +326,7 @@ function isMeaningfullyEdited(params: ImageEditParams | undefined, w?: number, h
     normalized.crop.bottom > 0 ||
     normalized.crop.left > 0 ||
     normalized.crop.right > 0 ||
+    Math.abs(normalized.rotationDegrees) > 0.0001 ||
     normalized.temperature !== 0 ||
     normalized.tint !== 0 ||
     Math.abs(normalized.exposureEv) > 0.0001 ||
@@ -569,10 +579,12 @@ function exposedPercentileFromRgb8(
   data: Uint8ClampedArray,
   factor: number,
   percentile = 99.8,
+  ignoreTransparent = false,
 ): number {
   const histogram = new Uint32Array(256);
   let sampleCount = 0;
   for (let i = 0; i < data.length; i += 4) {
+    if (ignoreTransparent && data[i + 3] === 0) continue;
     histogram[data[i]]++;
     histogram[data[i + 1]]++;
     histogram[data[i + 2]]++;
@@ -614,10 +626,12 @@ function whiteBalancedExposedPercentileFromRgb8(
   gains: WhiteBalanceGains,
   factor: number,
   percentile = 99.8,
+  ignoreTransparent = false,
 ): number {
   const histogram = new Uint32Array(65536);
   let sampleCount = 0;
   for (let i = 0; i < data.length; i += 4) {
+    if (ignoreTransparent && data[i + 3] === 0) continue;
     const r = srgbChannelToLinear(data[i]);
     const g = srgbChannelToLinear(data[i + 1]);
     const b = srgbChannelToLinear(data[i + 2]);
@@ -810,6 +824,7 @@ function saturatedPercentileAfterToneFromRgb8(
   sigmoid: number,
   saturationFactor: number,
   percentile = 99,
+  ignoreTransparent = false,
 ): number {
   if (saturationFactor <= 1) return 0;
   const bins = 4096;
@@ -817,6 +832,7 @@ function saturatedPercentileAfterToneFromRgb8(
   const histogram = new Uint32Array(bins);
   let sampleCount = 0;
   for (let i = 0; i < data.length; i += 4) {
+    if (ignoreTransparent && data[i + 3] === 0) continue;
     let r = srgbChannelToLinear(data[i]);
     let g = srgbChannelToLinear(data[i + 1]);
     let b = srgbChannelToLinear(data[i + 2]);
@@ -884,6 +900,7 @@ function buildColorAdjustmentContextFromRgb8(
   sigmoid: number,
   vibrance: number,
   saturation: number,
+  ignoreTransparent = false,
 ): ColorAdjustmentContext {
   const normalizedTemperature = clampWhiteBalanceValue(temperature);
   const normalizedTint = clampWhiteBalanceValue(tint);
@@ -897,8 +914,8 @@ function buildColorAdjustmentContextFromRgb8(
   const maxVal =
     factor > 1
       ? hasWhiteBalance
-        ? whiteBalancedExposedPercentileFromRgb8(data, gains, factor, 99.8)
-        : exposedPercentileFromRgb8(data, factor, 99.8)
+        ? whiteBalancedExposedPercentileFromRgb8(data, gains, factor, 99.8, ignoreTransparent)
+        : exposedPercentileFromRgb8(data, factor, 99.8, ignoreTransparent)
       : 0;
   const rolloff = factor > 1 ? rolloffParams(maxVal, 0.5, 4) : null;
   const saturationFactor = colorSaturationFactor(normalizedSaturation);
@@ -915,6 +932,7 @@ function buildColorAdjustmentContextFromRgb8(
           normalizedSigmoid,
           saturationFactor,
           99,
+          ignoreTransparent,
         ),
         0.7,
         4,
@@ -976,6 +994,7 @@ function applyColorAdjustmentsToCanvas(
   sigmoid: number,
   vibrance: number,
   saturation: number,
+  ignoreTransparent = false,
 ) {
   const normalizedTemperature = clampWhiteBalanceValue(temperature);
   const normalizedTint = clampWhiteBalanceValue(tint);
@@ -1010,8 +1029,10 @@ function applyColorAdjustmentsToCanvas(
     normalizedSigmoid,
     normalizedVibrance,
     normalizedSaturation,
+    ignoreTransparent,
   );
   for (let i = 0; i < data.length; i += 4) {
+    if (ignoreTransparent && data[i + 3] === 0) continue;
     let r = srgbChannelToLinear(data[i]);
     let g = srgbChannelToLinear(data[i + 1]);
     let b = srgbChannelToLinear(data[i + 2]);
@@ -1121,6 +1142,93 @@ function mosaicRegionsToOutputRects(
       h: (iy1 - iy0) * scaleY,
     }];
   });
+}
+
+type RotationCanvasContext = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+
+function rotatePoint(
+  x: number,
+  y: number,
+  centerX: number,
+  centerY: number,
+  degrees: number,
+): EditPoint {
+  const radians = normalizeRotationDegrees(degrees) * Math.PI / 180;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  const dx = x - centerX;
+  const dy = y - centerY;
+  return {
+    x: centerX + dx * cos - dy * sin,
+    y: centerY + dx * sin + dy * cos,
+  };
+}
+
+function inverseRotatePoint(
+  x: number,
+  y: number,
+  centerX: number,
+  centerY: number,
+  degrees: number,
+): EditPoint {
+  return rotatePoint(x, y, centerX, centerY, -degrees);
+}
+
+function drawRotatedSourceToContext(
+  ctx: RotationCanvasContext,
+  source: CanvasImageSource,
+  sourceW: number,
+  sourceH: number,
+  cropX: number,
+  cropY: number,
+  scaleX: number,
+  scaleY: number,
+  rotationDegrees: number,
+) {
+  ctx.save();
+  ctx.setTransform(scaleX, 0, 0, scaleY, -cropX * scaleX, -cropY * scaleY);
+  ctx.translate(sourceW / 2, sourceH / 2);
+  ctx.rotate(normalizeRotationDegrees(rotationDegrees) * Math.PI / 180);
+  ctx.translate(-sourceW / 2, -sourceH / 2);
+  ctx.drawImage(source, 0, 0, sourceW, sourceH);
+  ctx.restore();
+}
+
+function fillRotationPadding(
+  ctx: RotationCanvasContext,
+  canvasW: number,
+  canvasH: number,
+  sourceW: number,
+  sourceH: number,
+  cropX: number,
+  cropY: number,
+  scaleX: number,
+  scaleY: number,
+  rotationDegrees: number,
+) {
+  if (Math.abs(normalizeRotationDegrees(rotationDegrees)) < 1e-9) return;
+  const centerX = sourceW / 2;
+  const centerY = sourceH / 2;
+  const corners = [
+    rotatePoint(0, 0, centerX, centerY, rotationDegrees),
+    rotatePoint(sourceW, 0, centerX, centerY, rotationDegrees),
+    rotatePoint(sourceW, sourceH, centerX, centerY, rotationDegrees),
+    rotatePoint(0, sourceH, centerX, centerY, rotationDegrees),
+  ].map((point) => ({
+    x: (point.x - cropX) * scaleX,
+    y: (point.y - cropY) * scaleY,
+  }));
+
+  ctx.save();
+  ctx.globalCompositeOperation = "destination-over";
+  ctx.fillStyle = "rgb(128, 128, 128)";
+  ctx.beginPath();
+  ctx.rect(0, 0, canvasW, canvasH);
+  ctx.moveTo(corners[0].x, corners[0].y);
+  for (let i = 1; i < corners.length; i++) ctx.lineTo(corners[i].x, corners[i].y);
+  ctx.closePath();
+  ctx.fill("evenodd");
+  ctx.restore();
 }
 
 type OffscreenCanvasCtor = new (width: number, height: number) => OffscreenCanvas;
@@ -1253,19 +1361,37 @@ export async function buildOptimizedVariant(
     const ey = Math.max(sy + 1, Math.min(h, Math.round(h * (1 - crop.bottom))));
     const sw = Math.max(1, ex - sx);
     const sh = Math.max(1, ey - sy);
+    const hasRotation = Math.abs(params.rotationDegrees) > 1e-9;
     const dw = Math.max(1, Math.round(sw * params.resizePercent / 100));
     const dh = Math.max(1, Math.round(sh * params.resizePercent / 100));
     let blob: Blob | null = null;
     const OSC = getOffscreenCanvasCtor();
     if (OSC) {
-      // Keep the processing order explicit: crop -> white balance -> exposure/rolloff
-      // -> logarithm -> sigmoid -> vibrance/saturation -> resize -> mosaic -> encode.
+      // Keep the processing order explicit: rotate -> crop -> white balance -> exposure/rolloff
+      // -> logarithm -> sigmoid -> vibrance/saturation -> fill rotation padding -> resize
+      // -> mosaic -> encode.
       // White balance, tone, and color adjustments share one linear-RGB pass so
       // there is no extra 8-bit round-trip between them.
       const cropped = new OSC(sw, sh);
       const croppedCtx = cropped.getContext("2d");
       if (!croppedCtx) throw new Error("2D context unavailable");
-      croppedCtx.drawImage(source, sx, sy, sw, sh, 0, 0, sw, sh);
+      if (hasRotation) {
+        croppedCtx.imageSmoothingEnabled = true;
+        croppedCtx.imageSmoothingQuality = "high";
+        drawRotatedSourceToContext(
+          croppedCtx,
+          source,
+          w,
+          h,
+          sx,
+          sy,
+          1,
+          1,
+          params.rotationDegrees,
+        );
+      } else {
+        croppedCtx.drawImage(source, sx, sy, sw, sh, 0, 0, sw, sh);
+      }
       applyColorAdjustmentsToCanvas(
         cropped,
         params.temperature,
@@ -1275,7 +1401,11 @@ export async function buildOptimizedVariant(
         params.sigmoid,
         params.vibrance,
         params.saturation,
+        hasRotation,
       );
+      if (hasRotation) {
+        fillRotationPadding(croppedCtx, sw, sh, w, h, sx, sy, 1, 1, params.rotationDegrees);
+      }
 
       const output = new OSC(dw, dh);
       const outputCtx = output.getContext("2d");
@@ -1301,7 +1431,23 @@ export async function buildOptimizedVariant(
       cropped.height = sh;
       const croppedCtx = cropped.getContext("2d");
       if (!croppedCtx) throw new Error("2D context unavailable");
-      croppedCtx.drawImage(source, sx, sy, sw, sh, 0, 0, sw, sh);
+      if (hasRotation) {
+        croppedCtx.imageSmoothingEnabled = true;
+        croppedCtx.imageSmoothingQuality = "high";
+        drawRotatedSourceToContext(
+          croppedCtx,
+          source,
+          w,
+          h,
+          sx,
+          sy,
+          1,
+          1,
+          params.rotationDegrees,
+        );
+      } else {
+        croppedCtx.drawImage(source, sx, sy, sw, sh, 0, 0, sw, sh);
+      }
       applyColorAdjustmentsToCanvas(
         cropped,
         params.temperature,
@@ -1311,7 +1457,11 @@ export async function buildOptimizedVariant(
         params.sigmoid,
         params.vibrance,
         params.saturation,
+        hasRotation,
       );
+      if (hasRotation) {
+        fillRotationPadding(croppedCtx, sw, sh, w, h, sx, sy, 1, 1, params.rotationDegrees);
+      }
 
       const output = document.createElement("canvas");
       output.width = dw;
@@ -1482,6 +1632,7 @@ function addHistogramInterval(
 function computeHistogramData(
   sourceImage: HTMLImageElement,
   sourceRect: { x: number; y: number; w: number; h: number },
+  rotationDegrees: number,
   temperature: number,
   tint: number,
   exposureEv: number,
@@ -1503,9 +1654,10 @@ function computeHistogramData(
   if (sw <= 0 || sh <= 0) return null;
 
   // Histogram processing is deliberately independent from the displayed preview canvas.
-  // Take an evenly spaced nearest-neighbour sample of the original cropped image so no
-  // encoded-sRGB interpolation is introduced by the preview resize. Each sample represents
-  // the same area of the crop and therefore contributes cropArea / sampleCount pixels.
+  // Take an evenly spaced nearest-neighbour sample of the rotated crop. Each sample
+  // represents the same area of the crop and therefore contributes cropArea / sampleCount
+  // pixels. Rotation padding remains transparent while the edit context is computed so the
+  // fixed 50% gray padding cannot alter exposure or saturation rolloff statistics.
   const scale = Math.min(1, HISTOGRAM_SAMPLE_MAX / Math.max(sw, sh));
   const sampleW = Math.max(1, Math.round(sw * scale));
   const sampleH = Math.max(1, Math.round(sh * scale));
@@ -1516,10 +1668,25 @@ function computeHistogramData(
   if (!sampleCtx) return null;
   sampleCtx.imageSmoothingEnabled = false;
   sampleCtx.clearRect(0, 0, sampleW, sampleH);
-  sampleCtx.drawImage(sourceImage, sx, sy, sw, sh, 0, 0, sampleW, sampleH);
+  if (Math.abs(normalizeRotationDegrees(rotationDegrees)) > 1e-9) {
+    drawRotatedSourceToContext(
+      sampleCtx,
+      sourceImage,
+      sourceW,
+      sourceH,
+      sx,
+      sy,
+      sampleW / sw,
+      sampleH / sh,
+      rotationDegrees,
+    );
+  } else {
+    sampleCtx.drawImage(sourceImage, sx, sy, sw, sh, 0, 0, sampleW, sampleH);
+  }
   const sampleData = sampleCtx.getImageData(0, 0, sampleW, sampleH).data;
   if (!sampleData.length) return null;
 
+  const hasRotation = Math.abs(normalizeRotationDegrees(rotationDegrees)) > 1e-9;
   const adjustment = buildColorAdjustmentContextFromRgb8(
     sampleData,
     temperature,
@@ -1529,6 +1696,7 @@ function computeHistogramData(
     sigmoid,
     vibrance,
     saturation,
+    hasRotation,
   );
   const r = new Array<number>(HISTOGRAM_BINS).fill(0);
   const g = new Array<number>(HISTOGRAM_BINS).fill(0);
@@ -1540,6 +1708,29 @@ function computeHistogramData(
     const rc = sampleData[i] ?? 0;
     const gc = sampleData[i + 1] ?? 0;
     const bc = sampleData[i + 2] ?? 0;
+
+    if (hasRotation) {
+      const sampleIndex = i / 4;
+      const sampleX = sampleIndex % sampleW;
+      const sampleY = Math.floor(sampleIndex / sampleW);
+      const rotatedX = sx + (sampleX + 0.5) * sw / sampleW;
+      const rotatedY = sy + (sampleY + 0.5) * sh / sampleH;
+      const unrotated = inverseRotatePoint(
+        rotatedX,
+        rotatedY,
+        sourceW / 2,
+        sourceH / 2,
+        rotationDegrees,
+      );
+      if (unrotated.x < 0 || unrotated.x >= sourceW || unrotated.y < 0 || unrotated.y >= sourceH) {
+        const grayDisplay = histogramDisplayValue(srgbChannelToLinear(128));
+        addHistogramInterval(r, grayDisplay, grayDisplay, areaWeight);
+        addHistogramInterval(g, grayDisplay, grayDisplay, areaWeight);
+        addHistogramInterval(b, grayDisplay, grayDisplay, areaWeight);
+        addHistogramInterval(luma, grayDisplay, grayDisplay, areaWeight);
+        continue;
+      }
+    }
 
     // The source is normally 8-bit sRGB, so each code represents a finite quantization
     // cell rather than one exact linear-light value. Transform the eight corners of that
@@ -1624,6 +1815,14 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
   const [containerSize, setContainerSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
   const [displayed, setDisplayed] = useState<EditRect>({ x: 0, y: 0, w: 0, h: 0 });
   const [cropRect, setCropRect] = useState<EditRect>({ x: 0, y: 0, w: 0, h: 0 });
+  const [rotationDegrees, setRotationDegrees] = useState<number>(
+    normalizeRotationDegrees(initialParams.rotationDegrees ?? 0),
+  );
+  const [rotationMode, setRotationMode] = useState(false);
+  const rotationDragState = useRef<
+    | null
+    | { pointerId: number; startAngle: number; startRotation: number }
+  >(null);
   const [temperature, setTemperature] = useState<number>(
     clampWhiteBalanceValue(initialParams.temperature),
   );
@@ -1828,14 +2027,27 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     const y = e.clientY - rect.top;
     const resizedWidth = Math.max(1, Math.round(displayed.w));
     const resizedHeight = Math.max(1, Math.round(displayed.h));
-    const px = Math.min(
-      resizedWidth - 1,
-      Math.max(0, Math.floor((x - displayed.x) / displayed.w * resizedWidth)),
+    const rotatedX = (x - displayed.x) / displayed.w * resizedWidth;
+    const rotatedY = (y - displayed.y) / displayed.h * resizedHeight;
+    const unrotated = inverseRotatePoint(
+      rotatedX,
+      rotatedY,
+      resizedWidth / 2,
+      resizedHeight / 2,
+      rotationDegrees,
     );
-    const py = Math.min(
-      resizedHeight - 1,
-      Math.max(0, Math.floor((y - displayed.y) / displayed.h * resizedHeight)),
-    );
+    if (
+      unrotated.x < 0 ||
+      unrotated.x >= resizedWidth ||
+      unrotated.y < 0 ||
+      unrotated.y >= resizedHeight
+    ) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    const px = Math.min(resizedWidth - 1, Math.max(0, Math.floor(unrotated.x)));
+    const py = Math.min(resizedHeight - 1, Math.max(0, Math.floor(unrotated.y)));
 
     // Sample the bicubic-resized preview rather than one raw source pixel. The
     // clicked pixel has weight 1.0, orthogonal neighbors 0.8, and diagonals 0.5.
@@ -1855,7 +2067,44 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     }
     e.preventDefault();
     e.stopPropagation();
-  }, [displayed, eyedropperMode, natural]);
+  }, [displayed, eyedropperMode, natural, rotationDegrees]);
+
+  const onRotationHandlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!rotationMode || displayed.w <= 0 || displayed.h <= 0) return;
+    const point = toLocal(e);
+    const centerX = displayed.x + displayed.w / 2;
+    const centerY = displayed.y + displayed.h / 2;
+    const startAngle = Math.atan2(point.y - centerY, point.x - centerX) * 180 / Math.PI;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    rotationDragState.current = {
+      pointerId: e.pointerId,
+      startAngle,
+      startRotation: rotationDegrees,
+    };
+    e.preventDefault();
+    e.stopPropagation();
+  }, [displayed, rotationDegrees, rotationMode, toLocal]);
+
+  const onRotationPointerMove = useCallback((e: React.PointerEvent) => {
+    const drag = rotationDragState.current;
+    if (!drag || drag.pointerId !== e.pointerId || displayed.w <= 0 || displayed.h <= 0) return;
+    const point = toLocal(e);
+    const centerX = displayed.x + displayed.w / 2;
+    const centerY = displayed.y + displayed.h / 2;
+    const currentAngle = Math.atan2(point.y - centerY, point.x - centerX) * 180 / Math.PI;
+    const delta = normalizeRotationDegrees(currentAngle - drag.startAngle);
+    setRotationDegrees(normalizeRotationDegrees(drag.startRotation + delta));
+    e.preventDefault();
+  }, [displayed, toLocal]);
+
+  const onRotationPointerUp = useCallback((e: React.PointerEvent) => {
+    const drag = rotationDragState.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    try {
+      (e.target as Element).releasePointerCapture?.(e.pointerId);
+    } catch {}
+    rotationDragState.current = null;
+  }, []);
 
   const onCropPointerDown = useCallback(
     (e: React.PointerEvent) => {
@@ -2018,7 +2267,14 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.clearRect(0, 0, width, height);
-    ctx.drawImage(img, 0, 0, width, height);
+    const hasRotation = Math.abs(normalizeRotationDegrees(rotationDegrees)) > 1e-9;
+    if (hasRotation) {
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      drawRotatedSourceToContext(ctx, img, width, height, 0, 0, 1, 1, rotationDegrees);
+    } else {
+      ctx.drawImage(img, 0, 0, width, height);
+    }
     applyColorAdjustmentsToCanvas(
       canvas,
       temperature,
@@ -2028,8 +2284,12 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
       sigmoid,
       vibrance,
       saturation,
+      hasRotation,
     );
-    if (!eyedropperMode && mosaicRegions.length && natural?.w) {
+    if (hasRotation) {
+      fillRotationPadding(ctx, width, height, width, height, 0, 0, 1, 1, rotationDegrees);
+    }
+    if (!eyedropperMode && !rotationMode && mosaicRegions.length && natural?.w) {
       applyMosaicRectsToCanvas(
         canvas,
         mosaicRegions.map((region) => ({
@@ -2051,6 +2311,8 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     sigmoid,
     vibrance,
     saturation,
+    rotationDegrees,
+    rotationMode,
     natural,
     mosaicRegions,
     eyedropperMode,
@@ -2093,6 +2355,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
       computeHistogramData(
         img,
         { x: sx, y: sy, w: ex - sx, h: ey - sy },
+        rotationDegrees,
         temperature,
         tint,
         exposureEv,
@@ -2119,6 +2382,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     sigmoid,
     vibrance,
     saturation,
+    rotationDegrees,
     natural,
     eyedropperMode,
   ]);
@@ -2168,6 +2432,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     const bottom = 1 - (cropRect.y + cropRect.h - displayed.y) / displayed.h;
     onApply({
       crop: normalizeCrop({ left, top, right, bottom }),
+      rotationDegrees: normalizeRotationDegrees(rotationDegrees),
       temperature: clampWhiteBalanceValue(temperature),
       tint: clampWhiteBalanceValue(tint),
       exposureEv: clampExposureEv(exposureEv),
@@ -2184,6 +2449,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     displayed.x,
     displayed.y,
     cropRect,
+    rotationDegrees,
     temperature,
     tint,
     exposureEv,
@@ -2202,6 +2468,9 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
       natural?.w,
       natural?.h,
     );
+    setRotationDegrees(params.rotationDegrees);
+    setRotationMode(false);
+    rotationDragState.current = null;
     setTemperature(params.temperature);
     setTint(params.tint);
     setExposureEv(params.exposureEv);
@@ -2231,7 +2500,16 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
   return createPortal(
     <div
       className="fixed inset-0 z-[70] bg-black/70 flex items-center justify-center p-4"
-      onClick={eyedropperMode ? () => setEyedropperMode(false) : onCancel}
+      onClick={
+        eyedropperMode
+          ? () => setEyedropperMode(false)
+          : rotationMode
+            ? () => {
+                setRotationMode(false);
+                rotationDragState.current = null;
+              }
+            : onCancel
+      }
       onContextMenuCapture={() => {
         if (eyedropperMode) setEyedropperMode(false);
       }}
@@ -2241,6 +2519,10 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
         onClick={(e) => {
           e.stopPropagation();
           if (eyedropperMode) setEyedropperMode(false);
+          if (rotationMode) {
+            setRotationMode(false);
+            rotationDragState.current = null;
+          }
         }}
       >
         <div className="flex items-center justify-between gap-3">
@@ -2272,14 +2554,14 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
           </div>
         </div>
 
-        <div className="mt-3 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_208px] gap-4 lg:items-stretch">
+        <div className="mt-3 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_250px] gap-4 lg:items-stretch">
           <div
             ref={containerRef}
-            className={`relative w-full h-[42vh] min-h-[270px] lg:h-auto rounded border bg-gray-200 overflow-hidden touch-none ${!eyedropperMode && mosaicMode ? "cursor-crosshair" : ""}`}
-            onPointerDown={eyedropperMode ? undefined : mosaicMode ? onMosaicPointerDown : undefined}
-            onPointerMove={eyedropperMode ? undefined : mosaicMode ? onMosaicPointerMove : onPointerMove}
-            onPointerUp={eyedropperMode ? undefined : mosaicMode ? onMosaicPointerUp : onPointerUp}
-            onPointerCancel={eyedropperMode ? undefined : mosaicMode ? onMosaicPointerCancel : onPointerUp}
+            className={`relative w-full h-[42vh] min-h-[270px] lg:h-auto rounded border bg-gray-200 overflow-hidden touch-none ${!eyedropperMode && !rotationMode && mosaicMode ? "cursor-crosshair" : ""}`}
+            onPointerDown={eyedropperMode || rotationMode ? undefined : mosaicMode ? onMosaicPointerDown : undefined}
+            onPointerMove={eyedropperMode ? undefined : rotationMode ? onRotationPointerMove : mosaicMode ? onMosaicPointerMove : onPointerMove}
+            onPointerUp={eyedropperMode ? undefined : rotationMode ? onRotationPointerUp : mosaicMode ? onMosaicPointerUp : onPointerUp}
+            onPointerCancel={eyedropperMode ? undefined : rotationMode ? onRotationPointerUp : mosaicMode ? onMosaicPointerCancel : onPointerUp}
           >
               {imgUrl && natural ? (
                 <>
@@ -2313,7 +2595,42 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                       aria-label="Pick neutral white balance point"
                     />
                   )}
-                  {!eyedropperMode && !mosaicMode && (
+                  {!eyedropperMode && rotationMode && (
+                    <div
+                      className="absolute z-30"
+                      style={{
+                        left: displayed.x,
+                        top: displayed.y,
+                        width: displayed.w,
+                        height: displayed.h,
+                      }}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={(e) => e.stopPropagation()}
+                      aria-label="Rotate image"
+                    >
+                      {(["nw", "ne", "sw", "se"] as EditCorner[]).map((corner) => {
+                        const style =
+                          corner === "nw"
+                            ? { left: -7, top: -7 }
+                            : corner === "ne"
+                              ? { right: -7, top: -7 }
+                              : corner === "sw"
+                                ? { left: -7, bottom: -7 }
+                                : { right: -7, bottom: -7 };
+                        return (
+                          <div
+                            key={corner}
+                            className="absolute w-4 h-4 rounded-full bg-white border border-black shadow cursor-grab active:cursor-grabbing"
+                            style={style}
+                            onPointerDown={onRotationHandlePointerDown}
+                            aria-label="Rotation handle"
+                            title="Drag to rotate"
+                          />
+                        );
+                      })}
+                    </div>
+                  )}
+                  {!eyedropperMode && !rotationMode && !mosaicMode && (
                     <svg className="absolute inset-0 w-full h-full pointer-events-none" aria-hidden="true">
                       <path d={`${overlayPath.outer} ${overlayPath.inner}`} fill="rgba(0,0,0,0.45)" fillRule="evenodd" />
                     </svg>
@@ -2334,7 +2651,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                       </svg>
                     </div>
                   )}
-                  {!eyedropperMode && mosaicMode && mosaicRegions.map((region, index) => (
+                  {!eyedropperMode && !rotationMode && mosaicMode && mosaicRegions.map((region, index) => (
                     <div
                       key={index}
                       className="absolute border-2 border-dashed border-white shadow-[0_0_0_1px_rgba(0,0,0,0.65)] pointer-events-none"
@@ -2359,13 +2676,13 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                       </button>
                     </div>
                   ))}
-                  {!eyedropperMode && mosaicMode && mosaicDraft && (
+                  {!eyedropperMode && !rotationMode && mosaicMode && mosaicDraft && (
                     <div
                       className="absolute border-2 border-dashed border-white bg-black/10 shadow-[0_0_0_1px_rgba(0,0,0,0.65)] pointer-events-none"
                       style={{ left: mosaicDraft.x, top: mosaicDraft.y, width: mosaicDraft.w, height: mosaicDraft.h }}
                     />
                   )}
-                  {!eyedropperMode && !mosaicMode && (
+                  {!eyedropperMode && !rotationMode && !mosaicMode && (
                     <div
                       className="absolute border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.45)] bg-transparent cursor-move"
                       style={{ left: cropRect.x, top: cropRect.y, width: cropRect.w, height: cropRect.h }}
@@ -2403,6 +2720,28 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                 <div className="font-medium">Crop</div>
                 <div className="flex min-w-0 items-center gap-2">
                   {cropAspectButtons}
+                  <button
+                    type="button"
+                    className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border ${
+                      rotationMode
+                        ? "border-blue-500 bg-blue-50 text-blue-700"
+                        : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                    }`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setRotationMode((current) => !current);
+                      setEyedropperMode(false);
+                      rotationDragState.current = null;
+                      mosaicDragStart.current = null;
+                      setMosaicDraft(null);
+                      dragState.current = null;
+                    }}
+                    aria-label="Rotate image"
+                    aria-pressed={rotationMode}
+                    title="Rotate image"
+                  >
+                    <RotateCw size={13} strokeWidth={1.8} />
+                  </button>
                   <div className="flex lg:hidden flex-1 min-w-0 items-center justify-between gap-1 text-[10px] text-gray-700 leading-5 font-mono whitespace-nowrap">
                     <span>T={(displayed.h ? ((cropRect.y - displayed.y) / displayed.h) * 100 : 0).toFixed(1)}%</span>
                     <span>B={(displayed.h ? (1 - (cropRect.y + cropRect.h - displayed.y) / displayed.h) * 100 : 0).toFixed(1)}%</span>
@@ -2431,6 +2770,8 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                   }`}
                   onClick={() => {
                     setEyedropperMode((current) => !current);
+                    setRotationMode(false);
+                    rotationDragState.current = null;
                     mosaicDragStart.current = null;
                     setMosaicDraft(null);
                     dragState.current = null;
