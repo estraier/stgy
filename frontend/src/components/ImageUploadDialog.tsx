@@ -1629,6 +1629,385 @@ function addHistogramInterval(
   }
 }
 
+type ToneAutoSample = {
+  data: Uint8ClampedArray;
+};
+
+const TONE_AUTO_EXPOSURE_CLIP_PENALTY = 50;
+const TONE_AUTO_EXPOSURE_HIGHLIGHT_START = 0.95;
+const TONE_AUTO_EXPOSURE_HIGHLIGHT_PENALTY = 1;
+const TONE_AUTO_LOG_MIN = -3;
+const TONE_AUTO_LOG_MAX = 3;
+const TONE_AUTO_LOG_LOWER = 0.42;
+const TONE_AUTO_LOG_UPPER = 0.58;
+const TONE_AUTO_SIGMOID_MAX = 3;
+const TONE_AUTO_SIGMOID_BLACK_THRESHOLD = 0.05;
+const TONE_AUTO_SIGMOID_WHITE_THRESHOLD = 0.95;
+const TONE_AUTO_SIGMOID_BLACK_PENALTY = 2;
+const TONE_AUTO_SIGMOID_WHITE_PENALTY = 2;
+
+function createToneAutoSample(
+  sourceImage: HTMLImageElement,
+  sourceRect: { x: number; y: number; w: number; h: number },
+  rotationDegrees: number,
+): ToneAutoSample | null {
+  const sourceW = sourceImage.naturalWidth;
+  const sourceH = sourceImage.naturalHeight;
+  if (sourceW <= 0 || sourceH <= 0) return null;
+
+  const sx = Math.max(0, Math.min(sourceW - 1, Math.floor(sourceRect.x)));
+  const sy = Math.max(0, Math.min(sourceH - 1, Math.floor(sourceRect.y)));
+  const ex = Math.max(sx + 1, Math.min(sourceW, Math.ceil(sourceRect.x + sourceRect.w)));
+  const ey = Math.max(sy + 1, Math.min(sourceH, Math.ceil(sourceRect.y + sourceRect.h)));
+  const sw = ex - sx;
+  const sh = ey - sy;
+  if (sw <= 0 || sh <= 0) return null;
+
+  const scale = Math.min(1, HISTOGRAM_SAMPLE_MAX / Math.max(sw, sh));
+  const sampleW = Math.max(1, Math.round(sw * scale));
+  const sampleH = Math.max(1, Math.round(sh * scale));
+  const sampleCanvas = document.createElement("canvas");
+  sampleCanvas.width = sampleW;
+  sampleCanvas.height = sampleH;
+  const sampleCtx = sampleCanvas.getContext("2d");
+  if (!sampleCtx) return null;
+  sampleCtx.imageSmoothingEnabled = false;
+  sampleCtx.clearRect(0, 0, sampleW, sampleH);
+  if (Math.abs(normalizeRotationDegrees(rotationDegrees)) > 1e-9) {
+    drawRotatedSourceToContext(
+      sampleCtx,
+      sourceImage,
+      sourceW,
+      sourceH,
+      sx,
+      sy,
+      sampleW / sw,
+      sampleH / sh,
+      rotationDegrees,
+    );
+  } else {
+    sampleCtx.drawImage(sourceImage, sx, sy, sw, sh, 0, 0, sampleW, sampleH);
+  }
+  return { data: sampleCtx.getImageData(0, 0, sampleW, sampleH).data };
+}
+
+function toneHistogramPercentile(histogram: Float64Array, total: number, percentile: number): number {
+  if (total <= 0) return 0;
+  const target = clamp01(percentile) * total;
+  let cumulative = 0;
+  for (let bin = 0; bin < histogram.length; bin++) {
+    const count = histogram[bin];
+    const next = cumulative + count;
+    if (target <= next || bin === histogram.length - 1) {
+      const fraction = count > 0 ? clamp01((target - cumulative) / count) : 0.5;
+      return clamp01((bin + fraction) / histogram.length);
+    }
+    cumulative = next;
+  }
+  return 1;
+}
+
+function toneHistogramTrimmedMean(
+  histogram: Float64Array,
+  total: number,
+  lowerFraction = 0.25,
+  upperFraction = 0.75,
+): number {
+  if (total <= 0) return 0.5;
+  const lower = clamp01(lowerFraction) * total;
+  const upper = clamp01(upperFraction) * total;
+  if (upper <= lower) return 0.5;
+  let cumulative = 0;
+  let weightedSum = 0;
+  let included = 0;
+  for (let bin = 0; bin < histogram.length; bin++) {
+    const count = histogram[bin];
+    const next = cumulative + count;
+    const overlap = Math.max(0, Math.min(next, upper) - Math.max(cumulative, lower));
+    if (overlap > 0) {
+      weightedSum += overlap * ((bin + 0.5) / histogram.length);
+      included += overlap;
+    }
+    cumulative = next;
+    if (cumulative >= upper) break;
+  }
+  return included > 0 ? weightedSum / included : 0.5;
+}
+
+function toneHistogramTailFraction(
+  histogram: Float64Array,
+  total: number,
+  lowerExclusive: number,
+  upperInclusive: number,
+): number {
+  if (total <= 0) return 0;
+  let count = 0;
+  for (let bin = 0; bin < histogram.length; bin++) {
+    const center = (bin + 0.5) / histogram.length;
+    if (center < lowerExclusive || center > upperInclusive) {
+      count += histogram[bin];
+    }
+  }
+  return count / total;
+}
+
+function buildToneLumaHistogram(
+  sample: ToneAutoSample,
+  temperature: number,
+  tint: number,
+  exposureEv: number,
+  scaledLog: number,
+  sigmoid: number,
+): { histogram: Float64Array; total: number } {
+  const histogram = new Float64Array(HISTOGRAM_BINS);
+  const data = sample.data;
+  const context = buildColorAdjustmentContextFromRgb8(
+    data,
+    temperature,
+    tint,
+    exposureEv,
+    scaledLog,
+    sigmoid,
+    0,
+    0,
+    true,
+  );
+  let total = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] === 0) continue;
+    let r = srgbChannelToLinear(data[i]);
+    let g = srgbChannelToLinear(data[i + 1]);
+    let b = srgbChannelToLinear(data[i + 2]);
+    [r, g, b] = applyToneLinearToRgb(
+      r,
+      g,
+      b,
+      context.gains,
+      context.hasWhiteBalance,
+      context.factor,
+      context.rolloff,
+      context.scaledLog,
+      context.sigmoid,
+    );
+    const y = clamp01(0.2126 * r + 0.7152 * g + 0.0722 * b);
+    const display = histogramDisplayValue(y);
+    const bin = Math.min(HISTOGRAM_BINS - 1, Math.max(0, Math.floor(display * HISTOGRAM_BINS)));
+    histogram[bin] += 1;
+    total += 1;
+  }
+  return { histogram, total };
+}
+
+function evaluateAutoExposure(
+  sample: ToneAutoSample,
+  temperature: number,
+  tint: number,
+  exposureEv: number,
+): { richness: number; clipRate: number; highlightPressure: number } {
+  const data = sample.data;
+  const context = buildColorAdjustmentContextFromRgb8(
+    data,
+    temperature,
+    tint,
+    exposureEv,
+    0,
+    0,
+    0,
+    0,
+    true,
+  );
+  const histogram = new Float64Array(HISTOGRAM_BINS);
+  let total = 0;
+  let clipped = 0;
+  let highlightPressure = 0;
+
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] === 0) continue;
+    let r = srgbChannelToLinear(data[i]);
+    let g = srgbChannelToLinear(data[i + 1]);
+    let b = srgbChannelToLinear(data[i + 2]);
+    if (context.hasWhiteBalance) {
+      [r, g, b] = applyWhiteBalanceLinear(r, g, b, context.gains);
+    }
+    r = applyRolloffScalar(r * context.factor, context.rolloff);
+    g = applyRolloffScalar(g * context.factor, context.rolloff);
+    b = applyRolloffScalar(b * context.factor, context.rolloff);
+    const maxChannel = Math.max(r, g, b);
+    if (maxChannel >= 1) clipped += 1;
+    if (maxChannel > TONE_AUTO_EXPOSURE_HIGHLIGHT_START) {
+      const pressure = clamp01(
+        (Math.min(maxChannel, 1) - TONE_AUTO_EXPOSURE_HIGHLIGHT_START) /
+          (1 - TONE_AUTO_EXPOSURE_HIGHLIGHT_START),
+      );
+      highlightPressure += pressure * pressure;
+    }
+    const y = clamp01(0.2126 * clamp01(r) + 0.7152 * clamp01(g) + 0.0722 * clamp01(b));
+    const display = histogramDisplayValue(y);
+    const bin = Math.min(HISTOGRAM_BINS - 1, Math.max(0, Math.floor(display * HISTOGRAM_BINS)));
+    histogram[bin] += 1;
+    total += 1;
+  }
+  if (total <= 0) return { richness: 0, clipRate: 0, highlightPressure: 0 };
+
+  let entropy = 0;
+  for (let bin = 0; bin < histogram.length; bin++) {
+    const count = histogram[bin];
+    if (count <= 0) continue;
+    const p = count / total;
+    entropy -= p * Math.log(p);
+  }
+  const normalizedEntropy = entropy / Math.log(HISTOGRAM_BINS);
+  const p2 = toneHistogramPercentile(histogram, total, 0.02);
+  const p98 = toneHistogramPercentile(histogram, total, 0.98);
+  return {
+    richness: normalizedEntropy * Math.max(0, p98 - p2),
+    clipRate: clipped / total,
+    highlightPressure: highlightPressure / total,
+  };
+}
+
+function findAutoExposure(
+  sample: ToneAutoSample,
+  temperature: number,
+  tint: number,
+): number {
+  const baseline = evaluateAutoExposure(sample, temperature, tint, 0);
+  const baselineClip = baseline.clipRate;
+  const baselineHighlightPressure = baseline.highlightPressure;
+  let bestEv = 0;
+  let bestScore = -Infinity;
+  for (let step = -30; step <= 30; step++) {
+    const ev = step / 10;
+    const evaluation = evaluateAutoExposure(sample, temperature, tint, ev);
+    const newClip = Math.max(0, evaluation.clipRate - baselineClip);
+    const newHighlightPressure = Math.max(
+      0,
+      evaluation.highlightPressure - baselineHighlightPressure,
+    );
+    const score =
+      evaluation.richness -
+      TONE_AUTO_EXPOSURE_CLIP_PENALTY * newClip -
+      TONE_AUTO_EXPOSURE_HIGHLIGHT_PENALTY * newHighlightPressure;
+    if (
+      score > bestScore + 1e-12 ||
+      (Math.abs(score - bestScore) <= 1e-12 && Math.abs(ev) < Math.abs(bestEv))
+    ) {
+      bestScore = score;
+      bestEv = ev;
+    }
+  }
+  return clampExposureEv(bestEv);
+}
+
+function findAutoLogarithm(
+  sample: ToneAutoSample,
+  temperature: number,
+  tint: number,
+  exposureEv: number,
+): number {
+  const initial = buildToneLumaHistogram(sample, temperature, tint, exposureEv, 0, 0);
+  const initialMean = toneHistogramTrimmedMean(initial.histogram, initial.total);
+  if (initialMean >= TONE_AUTO_LOG_LOWER && initialMean <= TONE_AUTO_LOG_UPPER) return 0;
+
+  if (initialMean < TONE_AUTO_LOG_LOWER) {
+    for (let step = 1; step <= Math.round(TONE_AUTO_LOG_MAX * 10); step++) {
+      const value = step / 10;
+      const result = buildToneLumaHistogram(sample, temperature, tint, exposureEv, value, 0);
+      if (toneHistogramTrimmedMean(result.histogram, result.total) >= TONE_AUTO_LOG_LOWER) {
+        return clampScaledLog(value);
+      }
+    }
+    return clampScaledLog(TONE_AUTO_LOG_MAX);
+  }
+
+  for (let step = 1; step <= Math.round(Math.abs(TONE_AUTO_LOG_MIN) * 10); step++) {
+    const value = -step / 10;
+    const result = buildToneLumaHistogram(sample, temperature, tint, exposureEv, value, 0);
+    if (toneHistogramTrimmedMean(result.histogram, result.total) <= TONE_AUTO_LOG_UPPER) {
+      return clampScaledLog(value);
+    }
+  }
+  return clampScaledLog(TONE_AUTO_LOG_MIN);
+}
+
+function findAutoSigmoid(
+  sample: ToneAutoSample,
+  temperature: number,
+  tint: number,
+  exposureEv: number,
+  scaledLog: number,
+): number {
+  const baseline = buildToneLumaHistogram(sample, temperature, tint, exposureEv, scaledLog, 0);
+  const baselineBlack = toneHistogramTailFraction(
+    baseline.histogram,
+    baseline.total,
+    TONE_AUTO_SIGMOID_BLACK_THRESHOLD,
+    1,
+  );
+  const baselineWhite = toneHistogramTailFraction(
+    baseline.histogram,
+    baseline.total,
+    0,
+    TONE_AUTO_SIGMOID_WHITE_THRESHOLD,
+  );
+
+  let bestValue = 0;
+  let bestScore = -Infinity;
+
+  for (
+    let step = -Math.round(TONE_AUTO_SIGMOID_MAX * 10);
+    step <= Math.round(TONE_AUTO_SIGMOID_MAX * 10);
+    step++
+  ) {
+    const value = step / 10;
+    const result = buildToneLumaHistogram(
+      sample,
+      temperature,
+      tint,
+      exposureEv,
+      scaledLog,
+      value,
+    );
+    if (result.total <= 0) continue;
+
+    let entropy = 0;
+    for (let bin = 0; bin < result.histogram.length; bin++) {
+      const count = result.histogram[bin];
+      if (count <= 0) continue;
+      const p = count / result.total;
+      entropy -= p * Math.log(p);
+    }
+    const normalizedEntropy = entropy / Math.log(HISTOGRAM_BINS);
+    const blackFraction = toneHistogramTailFraction(
+      result.histogram,
+      result.total,
+      TONE_AUTO_SIGMOID_BLACK_THRESHOLD,
+      1,
+    );
+    const whiteFraction = toneHistogramTailFraction(
+      result.histogram,
+      result.total,
+      0,
+      TONE_AUTO_SIGMOID_WHITE_THRESHOLD,
+    );
+    const newBlack = Math.max(0, blackFraction - baselineBlack);
+    const newWhite = Math.max(0, whiteFraction - baselineWhite);
+    const score =
+      normalizedEntropy -
+      TONE_AUTO_SIGMOID_BLACK_PENALTY * newBlack -
+      TONE_AUTO_SIGMOID_WHITE_PENALTY * newWhite;
+
+    if (
+      score > bestScore + 1e-12 ||
+      (Math.abs(score - bestScore) <= 1e-12 && Math.abs(value) < Math.abs(bestValue))
+    ) {
+      bestScore = score;
+      bestValue = value;
+    }
+  }
+
+  return clampSigmoid(bestValue);
+}
 function computeHistogramData(
   sourceImage: HTMLImageElement,
   sourceRect: { x: number; y: number; w: number; h: number },
@@ -2387,6 +2766,87 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     eyedropperMode,
   ]);
 
+  const currentToneAutoSample = useCallback((): ToneAutoSample | null => {
+    const img = previewImageRef.current;
+    if (
+      !img ||
+      !natural ||
+      !displayed.w ||
+      !displayed.h ||
+      !cropRect.w ||
+      !cropRect.h
+    ) {
+      return null;
+    }
+    const crop = normalizeCrop({
+      left: (cropRect.x - displayed.x) / displayed.w,
+      top: (cropRect.y - displayed.y) / displayed.h,
+      right: 1 - (cropRect.x + cropRect.w - displayed.x) / displayed.w,
+      bottom: 1 - (cropRect.y + cropRect.h - displayed.y) / displayed.h,
+    });
+    const sx = Math.max(0, Math.min(natural.w - 1, Math.round(natural.w * crop.left)));
+    const sy = Math.max(0, Math.min(natural.h - 1, Math.round(natural.h * crop.top)));
+    const ex = Math.max(
+      sx + 1,
+      Math.min(natural.w, Math.round(natural.w * (1 - crop.right))),
+    );
+    const ey = Math.max(
+      sy + 1,
+      Math.min(natural.h, Math.round(natural.h * (1 - crop.bottom))),
+    );
+    return createToneAutoSample(
+      img,
+      { x: sx, y: sy, w: ex - sx, h: ey - sy },
+      rotationDegrees,
+    );
+  }, [
+    natural,
+    displayed.x,
+    displayed.y,
+    displayed.w,
+    displayed.h,
+    cropRect.x,
+    cropRect.y,
+    cropRect.w,
+    cropRect.h,
+    rotationDegrees,
+  ]);
+
+  const onAutoExposure = useCallback(() => {
+    const sample = currentToneAutoSample();
+    if (!sample) return;
+    setExposureEv(findAutoExposure(sample, temperature, tint));
+  }, [currentToneAutoSample, temperature, tint]);
+
+  const onAutoLogarithm = useCallback(() => {
+    const sample = currentToneAutoSample();
+    if (!sample) return;
+    setScaledLog(findAutoLogarithm(sample, temperature, tint, exposureEv));
+  }, [currentToneAutoSample, temperature, tint, exposureEv]);
+
+  const onAutoSigmoid = useCallback(() => {
+    const sample = currentToneAutoSample();
+    if (!sample) return;
+    setSigmoid(findAutoSigmoid(sample, temperature, tint, exposureEv, scaledLog));
+  }, [currentToneAutoSample, temperature, tint, exposureEv, scaledLog]);
+
+  const onAutoTone = useCallback(() => {
+    const sample = currentToneAutoSample();
+    if (!sample) return;
+    const autoExposure = findAutoExposure(sample, temperature, tint);
+    const autoLogarithm = findAutoLogarithm(sample, temperature, tint, autoExposure);
+    const autoSigmoid = findAutoSigmoid(
+      sample,
+      temperature,
+      tint,
+      autoExposure,
+      autoLogarithm,
+    );
+    setExposureEv(autoExposure);
+    setScaledLog(autoLogarithm);
+    setSigmoid(autoSigmoid);
+  }, [currentToneAutoSample, temperature, tint]);
+
   const histogramPaths = useMemo(() => {
     if (!histogram || histogram.maxCount <= 0) return null;
     const width = 256;
@@ -2814,11 +3274,32 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
             </div>
 
             <div className="rounded border p-3 space-y-2 lg:space-y-3">
-              <div className="hidden lg:block font-medium">Tone</div>
-              <label className="grid grid-cols-[96px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
-                <span className="col-start-1 row-start-1">Exposure</span>
+              <div className="flex items-center gap-2 font-medium">
+                <span>Tone</span>
+                <button
+                  type="button"
+                  className="h-5 rounded border border-gray-300 bg-white px-1.5 text-[10px] font-normal text-gray-700 hover:bg-gray-100"
+                  onClick={onAutoTone}
+                  title="Auto tone: Exposure, Logarithm, then Sigmoid"
+                >
+                  Auto
+                </button>
+              </div>
+              <div className="grid grid-cols-[112px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+                <div className="col-start-1 row-start-1 flex min-w-0 items-center gap-1">
+                  <span>Exposure</span>
+                  <button
+                    type="button"
+                    className="h-5 rounded border border-gray-300 bg-white px-1 text-[10px] text-gray-700 hover:bg-gray-100"
+                    onClick={onAutoExposure}
+                    title="Auto exposure"
+                  >
+                    Auto
+                  </button>
+                </div>
                 <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{formatSignedEv(exposureEv)}</span>
                 <input
+                  aria-label="Exposure"
                   type="range"
                   min={-5}
                   max={5}
@@ -2827,11 +3308,22 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                   onChange={(e) => setExposureEv(clampExposureEv(Number(e.target.value)))}
                   className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
-              </label>
-              <label className="grid grid-cols-[96px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
-                <span className="col-start-1 row-start-1">Logarithm</span>
+              </div>
+              <div className="grid grid-cols-[112px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+                <div className="col-start-1 row-start-1 flex min-w-0 items-center gap-1">
+                  <span>Logarithm</span>
+                  <button
+                    type="button"
+                    className="h-5 rounded border border-gray-300 bg-white px-1 text-[10px] text-gray-700 hover:bg-gray-100"
+                    onClick={onAutoLogarithm}
+                    title="Auto logarithm"
+                  >
+                    Auto
+                  </button>
+                </div>
                 <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{scaledLog >= 0 ? "+" : ""}{scaledLog.toFixed(1)}</span>
                 <input
+                  aria-label="Logarithm"
                   type="range"
                   min={-16}
                   max={16}
@@ -2840,11 +3332,22 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                   onChange={(e) => setScaledLog(clampScaledLog(Number(e.target.value)))}
                   className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
-              </label>
-              <label className="grid grid-cols-[96px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
-                <span className="col-start-1 row-start-1">Sigmoid</span>
+              </div>
+              <div className="grid grid-cols-[112px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+                <div className="col-start-1 row-start-1 flex min-w-0 items-center gap-1">
+                  <span>Sigmoid</span>
+                  <button
+                    type="button"
+                    className="h-5 rounded border border-gray-300 bg-white px-1 text-[10px] text-gray-700 hover:bg-gray-100"
+                    onClick={onAutoSigmoid}
+                    title="Auto sigmoid"
+                  >
+                    Auto
+                  </button>
+                </div>
                 <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{sigmoid >= 0 ? "+" : ""}{sigmoid.toFixed(1)}</span>
                 <input
+                  aria-label="Sigmoid"
                   type="range"
                   min={-10}
                   max={10}
@@ -2853,7 +3356,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                   onChange={(e) => setSigmoid(clampSigmoid(Number(e.target.value)))}
                   className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
-              </label>
+              </div>
             </div>
 
             <div className="rounded border p-3 space-y-2 lg:space-y-3">
