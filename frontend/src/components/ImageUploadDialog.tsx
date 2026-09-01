@@ -1682,6 +1682,29 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     };
   }, [histogram]);
 
+  const outputDimensions = useMemo(() => {
+    if (!natural || displayed.w <= 0 || displayed.h <= 0 || cropRect.w <= 0 || cropRect.h <= 0) {
+      return null;
+    }
+    const crop = normalizeCrop({
+      left: (cropRect.x - displayed.x) / displayed.w,
+      top: (cropRect.y - displayed.y) / displayed.h,
+      right: 1 - (cropRect.x + cropRect.w - displayed.x) / displayed.w,
+      bottom: 1 - (cropRect.y + cropRect.h - displayed.y) / displayed.h,
+    });
+    const sx = Math.max(0, Math.min(natural.w - 1, Math.round(natural.w * crop.left)));
+    const sy = Math.max(0, Math.min(natural.h - 1, Math.round(natural.h * crop.top)));
+    const ex = Math.max(sx + 1, Math.min(natural.w, Math.round(natural.w * (1 - crop.right))));
+    const ey = Math.max(sy + 1, Math.min(natural.h, Math.round(natural.h * (1 - crop.bottom))));
+    const sw = Math.max(1, ex - sx);
+    const sh = Math.max(1, ey - sy);
+    const percent = Math.min(100, Math.max(1, Math.round(resizePercent)));
+    return {
+      w: Math.max(1, Math.round(sw * percent / 100)),
+      h: Math.max(1, Math.round(sh * percent / 100)),
+    };
+  }, [natural, displayed, cropRect, resizePercent]);
+
   const onSubmit = useCallback(() => {
     if (!displayed.w || !displayed.h) return;
     const left = (cropRect.x - displayed.x) / displayed.w;
@@ -2038,7 +2061,15 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
           </div>
         </div>
 
-        <div className="mt-4 flex justify-end gap-2">
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <div className="mr-auto flex flex-wrap gap-x-6 gap-y-1 text-[12px] text-gray-600 font-mono">
+            <span>
+              Input ({natural ? `${natural.w}x${natural.h}, ${(natural.w * natural.h / 1_000_000).toFixed(1)}MP` : "—"})
+            </span>
+            <span>
+              Output ({outputDimensions ? `${outputDimensions.w}x${outputDimensions.h}, ${(outputDimensions.w * outputDimensions.h / 1_000_000).toFixed(1)}MP` : "—"})
+            </span>
+          </div>
           <button className="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-100" onClick={onCancel}>
             Cancel
           </button>
