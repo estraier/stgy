@@ -1659,7 +1659,6 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
       setTemperature(wb.temperature);
       setTint(wb.tint);
     }
-    setEyedropperMode(false);
     e.preventDefault();
     e.stopPropagation();
   }, [displayed, eyedropperMode, natural]);
@@ -2092,6 +2091,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                         height: displayed.h,
                       }}
                       onPointerDown={onEyedropperPointerDown}
+                      onClick={(e) => e.stopPropagation()}
                       aria-label="Pick neutral white balance point"
                     />
                   )}
