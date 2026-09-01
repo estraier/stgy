@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import NextImage from "next/image";
 import { createPortal } from "react-dom";
+import { Pipette } from "lucide-react";
 import { formatBytes } from "@/utils/format";
 import { Config } from "@/config";
 import {
@@ -388,6 +389,180 @@ function applyWhiteBalanceLinear(
   const wg = weight * gains.g + (1 - weight);
   const wb = weight * gains.b + (1 - weight);
   return [clamp01(r * wr), clamp01(g * wg), clamp01(b * wb)];
+}
+
+const EYEDROPPER_SAMPLE_WEIGHTS = [
+  [0.5, 0.8, 0.5],
+  [0.8, 1.0, 0.8],
+  [0.5, 0.8, 0.5],
+] as const;
+
+function catmullRomWeight(distance: number): number {
+  const x = Math.abs(distance);
+  if (x <= 1) return 1.5 * x * x * x - 2.5 * x * x + 1;
+  if (x < 2) return -0.5 * x * x * x + 2.5 * x * x - 4 * x + 2;
+  return 0;
+}
+
+function sampleEyedropperRgb8(
+  image: HTMLImageElement,
+  sourceWidth: number,
+  sourceHeight: number,
+  resizedWidth: number,
+  resizedHeight: number,
+  centerX: number,
+  centerY: number,
+): [number, number, number] | null {
+  if (
+    sourceWidth <= 0 ||
+    sourceHeight <= 0 ||
+    resizedWidth <= 0 ||
+    resizedHeight <= 0
+  ) {
+    return null;
+  }
+
+  const targetPoints: Array<{ x: number; y: number; weight: number }> = [];
+  let patchLeft = sourceWidth - 1;
+  let patchTop = sourceHeight - 1;
+  let patchRight = 0;
+  let patchBottom = 0;
+
+  for (let ky = -1; ky <= 1; ky++) {
+    for (let kx = -1; kx <= 1; kx++) {
+      const x = Math.min(resizedWidth - 1, Math.max(0, centerX + kx));
+      const y = Math.min(resizedHeight - 1, Math.max(0, centerY + ky));
+      const weight = EYEDROPPER_SAMPLE_WEIGHTS[ky + 1][kx + 1];
+      targetPoints.push({ x, y, weight });
+
+      // Match pixel-center mapping for a resized image. Each target pixel is then
+      // reconstructed explicitly with Catmull-Rom bicubic interpolation.
+      const sourceX = (x + 0.5) * sourceWidth / resizedWidth - 0.5;
+      const sourceY = (y + 0.5) * sourceHeight / resizedHeight - 0.5;
+      const baseX = Math.floor(sourceX);
+      const baseY = Math.floor(sourceY);
+      patchLeft = Math.min(patchLeft, Math.max(0, baseX - 1));
+      patchTop = Math.min(patchTop, Math.max(0, baseY - 1));
+      patchRight = Math.max(patchRight, Math.min(sourceWidth - 1, baseX + 2));
+      patchBottom = Math.max(patchBottom, Math.min(sourceHeight - 1, baseY + 2));
+    }
+  }
+
+  const patchWidth = Math.max(1, patchRight - patchLeft + 1);
+  const patchHeight = Math.max(1, patchBottom - patchTop + 1);
+  const patchCanvas = document.createElement("canvas");
+  patchCanvas.width = patchWidth;
+  patchCanvas.height = patchHeight;
+  const ctx = patchCanvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return null;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(
+    image,
+    patchLeft,
+    patchTop,
+    patchWidth,
+    patchHeight,
+    0,
+    0,
+    patchWidth,
+    patchHeight,
+  );
+  const pixels = ctx.getImageData(0, 0, patchWidth, patchHeight).data;
+
+  const sampleBicubic = (targetX: number, targetY: number): [number, number, number] => {
+    const sourceX = (targetX + 0.5) * sourceWidth / resizedWidth - 0.5;
+    const sourceY = (targetY + 0.5) * sourceHeight / resizedHeight - 0.5;
+    const baseX = Math.floor(sourceX);
+    const baseY = Math.floor(sourceY);
+    let red = 0;
+    let green = 0;
+    let blue = 0;
+    let totalWeight = 0;
+
+    for (let iy = baseY - 1; iy <= baseY + 2; iy++) {
+      const wy = catmullRomWeight(sourceY - iy);
+      const sy = Math.min(sourceHeight - 1, Math.max(0, iy));
+      for (let ix = baseX - 1; ix <= baseX + 2; ix++) {
+        const wx = catmullRomWeight(sourceX - ix);
+        const weight = wx * wy;
+        if (weight === 0) continue;
+        const sx = Math.min(sourceWidth - 1, Math.max(0, ix));
+        const offset = ((sy - patchTop) * patchWidth + (sx - patchLeft)) * 4;
+        red += pixels[offset] * weight;
+        green += pixels[offset + 1] * weight;
+        blue += pixels[offset + 2] * weight;
+        totalWeight += weight;
+      }
+    }
+
+    if (Math.abs(totalWeight) > 1e-12) {
+      red /= totalWeight;
+      green /= totalWeight;
+      blue /= totalWeight;
+    }
+    return [
+      Math.min(255, Math.max(0, red)),
+      Math.min(255, Math.max(0, green)),
+      Math.min(255, Math.max(0, blue)),
+    ];
+  };
+
+  let red = 0;
+  let green = 0;
+  let blue = 0;
+  let totalWeight = 0;
+  for (const point of targetPoints) {
+    const [r, g, b] = sampleBicubic(point.x, point.y);
+    red += r * point.weight;
+    green += g * point.weight;
+    blue += b * point.weight;
+    totalWeight += point.weight;
+  }
+  if (totalWeight <= 0) return null;
+  return [red / totalWeight, green / totalWeight, blue / totalWeight];
+}
+
+function neutralWhiteBalanceForRgb8(
+  red: number,
+  green: number,
+  blue: number,
+): { temperature: number; tint: number } {
+  const r = srgbChannelToLinear(red);
+  const g = srgbChannelToLinear(green);
+  const b = srgbChannelToLinear(blue);
+  if (Math.max(r, g, b) <= 1e-8) return { temperature: 0, tint: 0 };
+
+  let bestTemperature = 0;
+  let bestTint = 0;
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  // Temperature and tint are integer controls in [-100, 100]. Search that exact
+  // parameter space against the editor's own white-balance model so the eyedropper
+  // result matches the correction that will actually be rendered and encoded.
+  for (let candidateTemperature = -100; candidateTemperature <= 100; candidateTemperature++) {
+    for (let candidateTint = -100; candidateTint <= 100; candidateTint++) {
+      const [rr, gg, bb] = applyWhiteBalanceLinear(
+        r,
+        g,
+        b,
+        whiteBalanceGains(candidateTemperature, candidateTint),
+      );
+      const mean = (rr + gg + bb) / 3;
+      const scale = mean * mean + 1e-12;
+      const score = (
+        (rr - mean) * (rr - mean) +
+        (gg - mean) * (gg - mean) +
+        (bb - mean) * (bb - mean)
+      ) / scale;
+      if (score < bestScore) {
+        bestScore = score;
+        bestTemperature = candidateTemperature;
+        bestTint = candidateTint;
+      }
+    }
+  }
+
+  return { temperature: bestTemperature, tint: bestTint };
 }
 
 function exposedPercentileFromRgb8(
@@ -1275,6 +1450,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
   const mosaicDragStart = useRef<EditPoint | null>(null);
   const [showHistogram, setShowHistogram] = useState(false);
   const [histogram, setHistogram] = useState<HistogramData | null>(null);
+  const [eyedropperMode, setEyedropperMode] = useState(false);
   const dragState = useRef<
     | null
     | { mode: "move"; startP: EditPoint; startCrop: EditRect }
@@ -1446,6 +1622,47 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
   const removeMosaicRegion = useCallback((index: number) => {
     setMosaicRegions((current) => current.filter((_, i) => i !== index));
   }, []);
+
+  const onEyedropperPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!eyedropperMode || e.button !== 0 || e.ctrlKey || !natural || displayed.w <= 0 || displayed.h <= 0) return;
+    const img = previewImageRef.current;
+    const container = containerRef.current;
+    if (!img || !container) return;
+
+    const rect = container.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const resizedWidth = Math.max(1, Math.round(displayed.w));
+    const resizedHeight = Math.max(1, Math.round(displayed.h));
+    const px = Math.min(
+      resizedWidth - 1,
+      Math.max(0, Math.floor((x - displayed.x) / displayed.w * resizedWidth)),
+    );
+    const py = Math.min(
+      resizedHeight - 1,
+      Math.max(0, Math.floor((y - displayed.y) / displayed.h * resizedHeight)),
+    );
+
+    // Sample the bicubic-resized preview rather than one raw source pixel. The
+    // clicked pixel has weight 1.0, orthogonal neighbors 0.8, and diagonals 0.5.
+    const rgb = sampleEyedropperRgb8(
+      img,
+      natural.w,
+      natural.h,
+      resizedWidth,
+      resizedHeight,
+      px,
+      py,
+    );
+    if (rgb) {
+      const wb = neutralWhiteBalanceForRgb8(rgb[0], rgb[1], rgb[2]);
+      setTemperature(wb.temperature);
+      setTint(wb.tint);
+    }
+    setEyedropperMode(false);
+    e.preventDefault();
+    e.stopPropagation();
+  }, [displayed, eyedropperMode, natural]);
 
   const onCropPointerDown = useCallback(
     (e: React.PointerEvent) => {
@@ -1619,7 +1836,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
       vibrance,
       saturation,
     );
-    if (mosaicRegions.length && natural?.w) {
+    if (!eyedropperMode && mosaicRegions.length && natural?.w) {
       applyMosaicRectsToCanvas(
         canvas,
         mosaicRegions.map((region) => ({
@@ -1643,10 +1860,11 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     saturation,
     natural,
     mosaicRegions,
+    eyedropperMode,
   ]);
 
   useEffect(() => {
-    if (!showHistogram) {
+    if (!showHistogram || eyedropperMode) {
       setHistogram(null);
       return;
     }
@@ -1685,6 +1903,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     natural,
     mosaicRegions,
     resizePercent,
+    eyedropperMode,
   ]);
 
   const histogramPaths = useMemo(() => {
@@ -1793,8 +2012,20 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
   if (!mounted) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-[70] bg-black/70 flex items-center justify-center p-4" onClick={onCancel}>
-      <div className="bg-white rounded shadow max-w-[95vw] max-h-[95dvh] overflow-y-auto w-[min(1100px,95vw)] p-4" onClick={(e) => e.stopPropagation()}>
+    <div
+      className="fixed inset-0 z-[70] bg-black/70 flex items-center justify-center p-4"
+      onClick={eyedropperMode ? () => setEyedropperMode(false) : onCancel}
+      onContextMenuCapture={() => {
+        if (eyedropperMode) setEyedropperMode(false);
+      }}
+    >
+      <div
+        className="bg-white rounded shadow max-w-[95vw] max-h-[95dvh] overflow-y-auto w-[min(1100px,95vw)] p-4"
+        onClick={(e) => {
+          e.stopPropagation();
+          if (eyedropperMode) setEyedropperMode(false);
+        }}
+      >
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-base font-semibold break-all">Edit image</h2>
           <div className="flex items-center gap-3">
@@ -1827,15 +2058,15 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
         <div className="mt-3 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_208px] gap-4 lg:items-stretch">
           <div
             ref={containerRef}
-            className={`relative w-full h-[42vh] min-h-[270px] lg:h-auto rounded border bg-gray-200 overflow-hidden touch-none ${mosaicMode ? "cursor-crosshair" : ""}`}
-            onPointerDown={mosaicMode ? onMosaicPointerDown : undefined}
-            onPointerMove={mosaicMode ? onMosaicPointerMove : onPointerMove}
-            onPointerUp={mosaicMode ? onMosaicPointerUp : onPointerUp}
-            onPointerCancel={mosaicMode ? onMosaicPointerCancel : onPointerUp}
+            className={`relative w-full h-[42vh] min-h-[270px] lg:h-auto rounded border bg-gray-200 overflow-hidden touch-none ${!eyedropperMode && mosaicMode ? "cursor-crosshair" : ""}`}
+            onPointerDown={eyedropperMode ? undefined : mosaicMode ? onMosaicPointerDown : undefined}
+            onPointerMove={eyedropperMode ? undefined : mosaicMode ? onMosaicPointerMove : onPointerMove}
+            onPointerUp={eyedropperMode ? undefined : mosaicMode ? onMosaicPointerUp : onPointerUp}
+            onPointerCancel={eyedropperMode ? undefined : mosaicMode ? onMosaicPointerCancel : onPointerUp}
           >
               {imgUrl && natural ? (
                 <>
-                  {showHistogram && histogramPaths && (
+                  {!eyedropperMode && showHistogram && histogramPaths && (
                     <div
                       className="absolute left-2 bottom-2 w-[294px] h-[138px] rounded bg-black pointer-events-none"
                       aria-hidden="true"
@@ -1851,12 +2082,25 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                       height: displayed.h,
                     }}
                   />
-                  {!mosaicMode && (
+                  {eyedropperMode && (
+                    <div
+                      className="absolute z-30 cursor-crosshair"
+                      style={{
+                        left: displayed.x,
+                        top: displayed.y,
+                        width: displayed.w,
+                        height: displayed.h,
+                      }}
+                      onPointerDown={onEyedropperPointerDown}
+                      aria-label="Pick neutral white balance point"
+                    />
+                  )}
+                  {!eyedropperMode && !mosaicMode && (
                     <svg className="absolute inset-0 w-full h-full pointer-events-none" aria-hidden="true">
                       <path d={`${overlayPath.outer} ${overlayPath.inner}`} fill="rgba(0,0,0,0.45)" fillRule="evenodd" />
                     </svg>
                   )}
-                  {showHistogram && histogramPaths && (
+                  {!eyedropperMode && showHistogram && histogramPaths && (
                     <div className="absolute left-2 bottom-2 w-[294px] h-[138px] rounded border border-white/40 bg-black/80 shadow-sm pointer-events-none">
                       <svg
                         className="absolute inset-[6px] w-[calc(100%-12px)] h-[calc(100%-12px)]"
@@ -1872,7 +2116,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                       </svg>
                     </div>
                   )}
-                  {mosaicMode && mosaicRegions.map((region, index) => (
+                  {!eyedropperMode && mosaicMode && mosaicRegions.map((region, index) => (
                     <div
                       key={index}
                       className="absolute border-2 border-dashed border-white shadow-[0_0_0_1px_rgba(0,0,0,0.65)] pointer-events-none"
@@ -1897,13 +2141,13 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                       </button>
                     </div>
                   ))}
-                  {mosaicMode && mosaicDraft && (
+                  {!eyedropperMode && mosaicMode && mosaicDraft && (
                     <div
                       className="absolute border-2 border-dashed border-white bg-black/10 shadow-[0_0_0_1px_rgba(0,0,0,0.65)] pointer-events-none"
                       style={{ left: mosaicDraft.x, top: mosaicDraft.y, width: mosaicDraft.w, height: mosaicDraft.h }}
                     />
                   )}
-                  {!mosaicMode && (
+                  {!eyedropperMode && !mosaicMode && (
                     <div
                       className="absolute border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.45)] bg-transparent cursor-move"
                       style={{ left: cropRect.x, top: cropRect.y, width: cropRect.w, height: cropRect.h }}
@@ -1958,7 +2202,28 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
             </div>
 
             <div className="rounded border p-3 space-y-2 lg:space-y-3">
-              <div className="hidden lg:block font-medium">White balance</div>
+              <div className="flex items-center gap-1 font-medium">
+                <span>White balance</span>
+                <button
+                  type="button"
+                  className={`inline-flex h-5 w-5 items-center justify-center rounded border ${
+                    eyedropperMode
+                      ? "border-blue-500 bg-blue-50 text-blue-700"
+                      : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                  }`}
+                  onClick={() => {
+                    setEyedropperMode((current) => !current);
+                    mosaicDragStart.current = null;
+                    setMosaicDraft(null);
+                    dragState.current = null;
+                  }}
+                  aria-label="White balance eyedropper"
+                  aria-pressed={eyedropperMode}
+                  title="White balance eyedropper"
+                >
+                  <Pipette size={13} strokeWidth={1.8} />
+                </button>
+              </div>
               <label className="grid grid-cols-[96px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
                 <span className="col-start-1 row-start-1">Temperature</span>
                 <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">
