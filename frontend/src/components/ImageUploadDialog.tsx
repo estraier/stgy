@@ -1829,9 +1829,9 @@ function evaluateAutoExposure(
     if (context.hasWhiteBalance) {
       [r, g, b] = applyWhiteBalanceLinear(r, g, b, context.gains);
     }
-    r = applyRolloffScalar(r * context.factor, context.rolloff);
-    g = applyRolloffScalar(g * context.factor, context.rolloff);
-    b = applyRolloffScalar(b * context.factor, context.rolloff);
+    r *= context.factor;
+    g *= context.factor;
+    b *= context.factor;
     const maxChannel = Math.max(r, g, b);
     if (maxChannel >= 1) clipped += 1;
     if (maxChannel > TONE_AUTO_EXPOSURE_HIGHLIGHT_START) {
