@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import NextImage from "next/image";
 import { createPortal } from "react-dom";
-import { Pipette, RotateCw } from "lucide-react";
+import { Move, Palette, Pipette, RotateCw } from "lucide-react";
 import { formatBytes } from "@/utils/format";
 import { Config } from "@/config";
 import {
@@ -70,6 +70,15 @@ export type ImageMosaicRegion = {
   bottom: number;
 };
 
+export type ImageTextOverlay = {
+  id: string;
+  left: number;
+  top: number;
+  text: string;
+  fontSize: number;
+  colorIndex: number;
+};
+
 export type ImageEditParams = {
   crop: ImageCropInsets;
   rotationDegrees: number;
@@ -82,6 +91,7 @@ export type ImageEditParams = {
   saturation: number;
   resizePercent: number;
   mosaicRegions: ImageMosaicRegion[];
+  textOverlays: ImageTextOverlay[];
 };
 
 export type ImageEditOutputFormat = "image/webp" | "image/jpeg" | "image/png";
@@ -278,6 +288,36 @@ function normalizeMosaicRegions(regions?: ImageMosaicRegion[]): ImageMosaicRegio
     .filter((region): region is ImageMosaicRegion => region !== null);
 }
 
+function makeOverlayId(prefix: string): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `${prefix}-${crypto.randomUUID()}`;
+  }
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function normalizeTextColorIndex(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  const rounded = Math.round(value);
+  const mod = rounded % TEXT_OVERLAY_COLORS.length;
+  return mod >= 0 ? mod : mod + TEXT_OVERLAY_COLORS.length;
+}
+
+function normalizeTextOverlay(overlay: Partial<ImageTextOverlay>): ImageTextOverlay {
+  return {
+    id: typeof overlay.id === "string" && overlay.id ? overlay.id : makeOverlayId("text"),
+    left: clamp01(overlay.left ?? 0),
+    top: clamp01(overlay.top ?? 0),
+    text: typeof overlay.text === "string" ? overlay.text : "",
+    fontSize: Math.max(1, Math.round(Number.isFinite(overlay.fontSize) ? overlay.fontSize ?? 1 : 1)),
+    colorIndex: normalizeTextColorIndex(overlay.colorIndex ?? 0),
+  };
+}
+
+function normalizeTextOverlays(overlays?: ImageTextOverlay[]): ImageTextOverlay[] {
+  if (!overlays?.length) return [];
+  return overlays.map((overlay) => normalizeTextOverlay(overlay));
+}
+
 function normalizeRotationDegrees(value: number): number {
   if (!Number.isFinite(value)) return 0;
   const normalized = ((value + 180) % 360 + 360) % 360 - 180;
@@ -297,6 +337,7 @@ export function buildDefaultEditParams(w?: number, h?: number): ImageEditParams 
     saturation: 0,
     resizePercent: defaultResizePercent(w, h),
     mosaicRegions: [],
+    textOverlays: [],
   };
 }
 
@@ -314,6 +355,7 @@ function normalizeEditParams(params: ImageEditParams | undefined, w?: number, h?
     saturation: clampColorAdjustment(params?.saturation ?? defaults.saturation),
     resizePercent: Math.min(100, Math.max(1, Math.round(params?.resizePercent ?? defaults.resizePercent))),
     mosaicRegions: normalizeMosaicRegions(params?.mosaicRegions ?? defaults.mosaicRegions),
+    textOverlays: normalizeTextOverlays(params?.textOverlays ?? defaults.textOverlays),
   };
 }
 
@@ -335,7 +377,8 @@ function isMeaningfullyEdited(params: ImageEditParams | undefined, w?: number, h
     normalized.vibrance !== 0 ||
     normalized.saturation !== 0 ||
     normalized.resizePercent !== defaults.resizePercent ||
-    normalized.mosaicRegions.length > 0
+    normalized.mosaicRegions.length > 0 ||
+    normalized.textOverlays.length > 0
   );
 }
 
@@ -1144,6 +1187,97 @@ function mosaicRegionsToOutputRects(
   });
 }
 
+let textMeasureContext: CanvasRenderingContext2D | null = null;
+function getTextMeasureContext(): CanvasRenderingContext2D | null {
+  if (textMeasureContext) return textMeasureContext;
+  if (typeof document === "undefined") return null;
+  const canvas = document.createElement("canvas");
+  textMeasureContext = canvas.getContext("2d");
+  return textMeasureContext;
+}
+
+function measureTextOverlayLayout(text: string, fontSize: number): Pick<TextOverlayLayout, "width" | "height" | "lineHeight"> {
+  const size = Math.max(1, fontSize);
+  const lineHeight = Math.max(1, size * TEXT_OVERLAY_LINE_HEIGHT);
+  const lines = text.split("\n");
+  const ctx = getTextMeasureContext();
+  let maxWidth = size;
+  if (ctx) {
+    ctx.font = `${size}px ${TEXT_OVERLAY_FONT_FAMILY}`;
+    maxWidth = Math.max(
+      size,
+      ...lines.map((line) => ctx.measureText(line.length > 0 ? line : "　").width),
+    );
+  }
+  return {
+    width: Math.max(
+      size + TEXT_OVERLAY_BOX_PADDING_X * 2 + 2,
+      Math.ceil(maxWidth + TEXT_OVERLAY_BOX_PADDING_X * 2 + 2),
+    ),
+    height: Math.max(
+      lineHeight + TEXT_OVERLAY_BOX_PADDING_Y * 2,
+      Math.ceil(lines.length * lineHeight + TEXT_OVERLAY_BOX_PADDING_Y * 2),
+    ),
+    lineHeight,
+  };
+}
+
+async function ensureTextOverlayFontReady(): Promise<void> {
+  if (typeof document === "undefined") return;
+  const doc = document as Document & {
+    fonts?: {
+      load?: (font: string) => Promise<unknown>;
+      ready?: Promise<unknown>;
+    };
+  };
+  try {
+    await doc.fonts?.ready;
+    await doc.fonts?.load?.(`16px ${TEXT_OVERLAY_FONT_FAMILY}`);
+  } catch {}
+}
+
+function drawTextOverlaysToContext(
+  ctx: RotationCanvasContext,
+  overlays: ImageTextOverlay[],
+  sourceW: number,
+  sourceH: number,
+  cropX: number,
+  cropY: number,
+  cropW: number,
+  cropH: number,
+  outputW: number,
+  outputH: number,
+  rotationDegrees: number,
+) {
+  if (!overlays.length) return;
+  const scaleX = outputW / cropW;
+  const scaleY = outputH / cropH;
+  const centerX = sourceW / 2;
+  const centerY = sourceH / 2;
+  ctx.save();
+  ctx.textBaseline = "top";
+  for (const overlay of overlays) {
+    const point = rotatePoint(
+      overlay.left * sourceW,
+      overlay.top * sourceH,
+      centerX,
+      centerY,
+      rotationDegrees,
+    );
+    const fontSize = Math.max(1, overlay.fontSize * scaleX);
+    const lineHeight = Math.max(1, fontSize * TEXT_OVERLAY_LINE_HEIGHT);
+    const x = (point.x - cropX) * scaleX;
+    const y = (point.y - cropY) * scaleY;
+    ctx.font = `${fontSize}px ${TEXT_OVERLAY_FONT_FAMILY}`;
+    ctx.fillStyle = TEXT_OVERLAY_COLORS[normalizeTextColorIndex(overlay.colorIndex)];
+    const lines = overlay.text.split("\n");
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+      ctx.fillText(lines[lineIndex], x, y + lineIndex * lineHeight);
+    }
+  }
+  ctx.restore();
+}
+
 type RotationCanvasContext = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
 function rotatePoint(
@@ -1364,6 +1498,9 @@ export async function buildOptimizedVariant(
     const hasRotation = Math.abs(params.rotationDegrees) > 1e-9;
     const dw = Math.max(1, Math.round(sw * params.resizePercent / 100));
     const dh = Math.max(1, Math.round(sh * params.resizePercent / 100));
+    if (params.textOverlays.length > 0) {
+      await ensureTextOverlayFontReady();
+    }
     let blob: Blob | null = null;
     const OSC = getOffscreenCanvasCtor();
     if (OSC) {
@@ -1417,6 +1554,19 @@ export async function buildOptimizedVariant(
         output,
         mosaicRegionsToOutputRects(params.mosaicRegions, w, h, sx, sy, sw, sh, dw, dh),
         16,
+      );
+      drawTextOverlaysToContext(
+        outputCtx,
+        params.textOverlays,
+        w,
+        h,
+        sx,
+        sy,
+        sw,
+        sh,
+        dw,
+        dh,
+        params.rotationDegrees,
       );
       if ("convertToBlob" in output) {
         type EncodeOpts = { type?: string; quality?: number };
@@ -1475,6 +1625,19 @@ export async function buildOptimizedVariant(
         output,
         mosaicRegionsToOutputRects(params.mosaicRegions, w, h, sx, sy, sw, sh, dw, dh),
         16,
+      );
+      drawTextOverlaysToContext(
+        outputCtx,
+        params.textOverlays,
+        w,
+        h,
+        sx,
+        sy,
+        sw,
+        sh,
+        dw,
+        dh,
+        params.rotationDegrees,
       );
       blob = await new Promise<Blob>((resolve, reject) =>
         output.toBlob(
@@ -1578,6 +1741,17 @@ type EditDialogProps = {
 type EditRect = { x: number; y: number; w: number; h: number };
 type EditPoint = { x: number; y: number };
 type EditCorner = "nw" | "ne" | "sw" | "se";
+type TextOverlayLayout = {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  fontSize: number;
+  lineHeight: number;
+  text: string;
+  colorIndex: number;
+};
 type HistogramData = {
   r: number[];
   g: number[];
@@ -1586,6 +1760,22 @@ type HistogramData = {
   maxCount: number;
 };
 const EDIT_PREVIEW_MARGIN_PX = 8;
+const TEXT_OVERLAY_DEFAULT_FONT_SIZE_RATIO = 0.05;
+const TEXT_OVERLAY_FONT_STEP = Math.pow(2, 1 / 8);
+const TEXT_OVERLAY_FONT_FAMILY = '"Noto Sans JP", sans-serif';
+const TEXT_OVERLAY_LINE_HEIGHT = 1.2;
+const TEXT_OVERLAY_BOX_PADDING_X = 6;
+const TEXT_OVERLAY_BOX_PADDING_Y = 4;
+const TEXT_OVERLAY_COLORS = [
+  "#000000",
+  "#ffffff",
+  "#ff0000",
+  "#ff8c00",
+  "#ffd400",
+  "#00aa00",
+  "#0066ff",
+  "#8000ff",
+] as const;
 const HISTOGRAM_BINS = 256;
 const HISTOGRAM_SAMPLE_MAX = 256;
 const HISTOGRAM_DISPLAY_GAMMA = 2.4;
@@ -2214,26 +2404,44 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
   const [resizePercent, setResizePercent] = useState<number>(
     Math.min(100, Math.max(1, Math.round(initialParams.resizePercent))),
   );
+  const [textMode, setTextMode] = useState(false);
+  const [textOverlays, setTextOverlays] = useState<ImageTextOverlay[]>(
+    normalizeTextOverlays(initialParams.textOverlays),
+  );
+  const [activeTextId, setActiveTextId] = useState<string | null>(null);
   const [mosaicMode, setMosaicMode] = useState(false);
   const [mosaicRegions, setMosaicRegions] = useState<ImageMosaicRegion[]>(
     normalizeMosaicRegions(initialParams.mosaicRegions),
   );
   const [mosaicDraft, setMosaicDraft] = useState<EditRect | null>(null);
-  const [mosaicMoveDraft, setMosaicMoveDraft] = useState<{ index: number; region: ImageMosaicRegion } | null>(null);
   const mosaicDragStart = useRef<EditPoint | null>(null);
   const mosaicMoveState = useRef<
     | null
-    | { index: number; startPoint: EditPoint; startRegion: ImageMosaicRegion }
+    | { pointerId: number; index: number; startPoint: EditPoint; startRegion: ImageMosaicRegion }
   >(null);
   const [showHistogram, setShowHistogram] = useState(false);
   const [histogram, setHistogram] = useState<HistogramData | null>(null);
   const [eyedropperMode, setEyedropperMode] = useState(false);
-  const [toneAutoBusy, setToneAutoBusy] = useState(false);
+  const [autoToneBusy, setAutoToneBusy] = useState(false);
+  const activeTextBoxRef = useRef<HTMLDivElement | null>(null);
+  const textMoveState = useRef<
+    | null
+    | { pointerId: number; id: string; offsetX: number; offsetY: number }
+  >(null);
   const dragState = useRef<
     | null
     | { mode: "move"; startP: EditPoint; startCrop: EditRect }
     | { mode: "resize"; corner: EditCorner; startP: EditPoint; startCrop: EditRect }
   >(null);
+
+  const sliderDefaults = useMemo(
+    () => normalizeEditParams(
+      defaultParams ?? buildDefaultEditParams(natural?.w, natural?.h),
+      natural?.w,
+      natural?.h,
+    ),
+    [defaultParams, natural],
+  );
 
   useEffect(() => setMounted(true), []);
 
@@ -2336,6 +2544,155 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     y: Math.max(displayed.y, Math.min(displayed.y + displayed.h, point.y)),
   }), [displayed]);
 
+  const previewToSourceTextPoint = useCallback((point: EditPoint): { left: number; top: number } | null => {
+    if (displayed.w <= 0 || displayed.h <= 0) return null;
+    const local = {
+      x: point.x - displayed.x,
+      y: point.y - displayed.y,
+    };
+    const unrotated = inverseRotatePoint(
+      local.x,
+      local.y,
+      displayed.w / 2,
+      displayed.h / 2,
+      rotationDegrees,
+    );
+    return {
+      left: clamp01(unrotated.x / displayed.w),
+      top: clamp01(unrotated.y / displayed.h),
+    };
+  }, [displayed, rotationDegrees]);
+
+  const sourceToPreviewTextPoint = useCallback((overlay: ImageTextOverlay): EditPoint | null => {
+    if (!natural || displayed.w <= 0 || displayed.h <= 0) return null;
+    const local = rotatePoint(
+      overlay.left * displayed.w,
+      overlay.top * displayed.h,
+      displayed.w / 2,
+      displayed.h / 2,
+      rotationDegrees,
+    );
+    return {
+      x: displayed.x + local.x,
+      y: displayed.y + local.y,
+    };
+  }, [displayed, natural, rotationDegrees]);
+
+  const previewTextLayouts = useMemo<TextOverlayLayout[]>(() => {
+    if (!natural || displayed.w <= 0 || displayed.h <= 0) return [];
+    const previewScale = displayed.w / natural.w;
+    return textOverlays.map((overlay) => {
+      const point = sourceToPreviewTextPoint(overlay) ?? { x: displayed.x, y: displayed.y };
+      const fontSize = Math.max(1, overlay.fontSize * previewScale);
+      const { width, height, lineHeight } = measureTextOverlayLayout(overlay.text, fontSize);
+      return {
+        id: overlay.id,
+        x: point.x,
+        y: point.y,
+        width,
+        height,
+        fontSize,
+        lineHeight,
+        text: overlay.text,
+        colorIndex: overlay.colorIndex,
+      };
+    });
+  }, [natural, displayed, textOverlays, sourceToPreviewTextPoint]);
+
+  const updateTextOverlay = useCallback((id: string, updater: (overlay: ImageTextOverlay) => ImageTextOverlay) => {
+    setTextOverlays((current) => current.map((overlay) => (overlay.id === id ? normalizeTextOverlay(updater(overlay)) : overlay)));
+  }, []);
+
+  const removeTextOverlay = useCallback((id: string) => {
+    setTextOverlays((current) => current.filter((overlay) => overlay.id !== id));
+    setActiveTextId((current) => (current === id ? null : current));
+  }, []);
+
+  const finishTextOverlayEditing = useCallback((id: string) => {
+    setTextOverlays((current) => current.filter((overlay) => overlay.id !== id || overlay.text.length > 0));
+    setActiveTextId((current) => (current === id ? null : current));
+  }, []);
+
+  const onTextOverlayBlur = useCallback((id: string) => {
+    window.setTimeout(() => {
+      const root = activeTextBoxRef.current;
+      const focused = document.activeElement;
+      if (root && focused instanceof Node && root.contains(focused)) return;
+      finishTextOverlayEditing(id);
+    }, 0);
+  }, [finishTextOverlayEditing]);
+
+  const onTextMovePointerDown = useCallback((id: string, layout: TextOverlayLayout) =>
+    (e: React.PointerEvent<HTMLButtonElement>) => {
+      if (!textMode || e.button !== 0) return;
+      const point = toLocal(e);
+      textMoveState.current = {
+        pointerId: e.pointerId,
+        id,
+        offsetX: point.x - layout.x,
+        offsetY: point.y - layout.y,
+      };
+      e.currentTarget.setPointerCapture(e.pointerId);
+      e.preventDefault();
+      e.stopPropagation();
+    }, [textMode, toLocal]);
+
+  const onTextMovePointerMove = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
+    const state = textMoveState.current;
+    if (!state || state.pointerId !== e.pointerId) return;
+    const point = toLocal(e);
+    const sourcePoint = previewToSourceTextPoint({
+      x: point.x - state.offsetX,
+      y: point.y - state.offsetY,
+    });
+    if (!sourcePoint) return;
+    updateTextOverlay(state.id, (current) => ({
+      ...current,
+      left: sourcePoint.left,
+      top: sourcePoint.top,
+    }));
+    e.preventDefault();
+    e.stopPropagation();
+  }, [previewToSourceTextPoint, toLocal, updateTextOverlay]);
+
+  const onTextMovePointerUp = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
+    const state = textMoveState.current;
+    if (!state || state.pointerId !== e.pointerId) return;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {}
+    textMoveState.current = null;
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const onTextPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!textMode || e.button !== 0 || e.ctrlKey || displayed.w <= 0 || displayed.h <= 0) return;
+    const point = toLocal(e);
+    if (
+      point.x < displayed.x ||
+      point.x > displayed.x + displayed.w ||
+      point.y < displayed.y ||
+      point.y > displayed.y + displayed.h
+    ) {
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    const sourcePoint = previewToSourceTextPoint(point);
+    if (!sourcePoint || !natural) return;
+    const overlay = normalizeTextOverlay({
+      id: makeOverlayId("text"),
+      left: sourcePoint.left,
+      top: sourcePoint.top,
+      text: "",
+      fontSize: Math.round(Math.hypot(natural.w, natural.h) * TEXT_OVERLAY_DEFAULT_FONT_SIZE_RATIO),
+      colorIndex: 0,
+    });
+    setTextOverlays((current) => [...current, overlay]);
+    setActiveTextId(overlay.id);
+  }, [displayed, natural, previewToSourceTextPoint, textMode, toLocal]);
+
   const onMosaicPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (!mosaicMode || displayed.w <= 0 || displayed.h <= 0) return;
     const point = toLocal(e);
@@ -2348,53 +2705,48 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
       return;
     }
     e.currentTarget.setPointerCapture(e.pointerId);
+    for (let index = mosaicRegions.length - 1; index >= 0; index--) {
+      const region = mosaicRegions[index];
+      const left = displayed.x + region.left * displayed.w;
+      const top = displayed.y + region.top * displayed.h;
+      const width = (region.right - region.left) * displayed.w;
+      const height = (region.bottom - region.top) * displayed.h;
+      if (
+        point.x >= left &&
+        point.x <= left + width &&
+        point.y >= top &&
+        point.y <= top + height
+      ) {
+        mosaicMoveState.current = {
+          pointerId: e.pointerId,
+          index,
+          startPoint: point,
+          startRegion: region,
+        };
+        setMosaicDraft({ x: left, y: top, w: width, h: height });
+        e.preventDefault();
+        return;
+      }
+    }
     const start = clampPointToDisplayed(point);
     mosaicDragStart.current = start;
     setMosaicDraft({ x: start.x, y: start.y, w: 0, h: 0 });
     e.preventDefault();
-  }, [clampPointToDisplayed, displayed, mosaicMode, toLocal]);
-
-  const movedMosaicRegion = useCallback(
-    (
-      state: { startPoint: EditPoint; startRegion: ImageMosaicRegion },
-      point: EditPoint,
-    ): ImageMosaicRegion => {
-      const width = state.startRegion.right - state.startRegion.left;
-      const height = state.startRegion.bottom - state.startRegion.top;
-      const dx = displayed.w > 0 ? (point.x - state.startPoint.x) / displayed.w : 0;
-      const dy = displayed.h > 0 ? (point.y - state.startPoint.y) / displayed.h : 0;
-      const left = Math.max(0, Math.min(1 - width, state.startRegion.left + dx));
-      const top = Math.max(0, Math.min(1 - height, state.startRegion.top + dy));
-      return { left, top, right: left + width, bottom: top + height };
-    },
-    [displayed.h, displayed.w],
-  );
-
-  const onMosaicRegionPointerDown = useCallback(
-    (index: number, e: React.PointerEvent<HTMLDivElement>) => {
-      if (!mosaicMode || displayed.w <= 0 || displayed.h <= 0) return;
-      const region = mosaicRegions[index];
-      if (!region) return;
-      e.stopPropagation();
-      if (e.button !== 0) return;
-      const point = clampPointToDisplayed(toLocal(e));
-      try {
-        containerRef.current?.setPointerCapture(e.pointerId);
-      } catch {}
-      mosaicDragStart.current = null;
-      setMosaicDraft(null);
-      mosaicMoveState.current = { index, startPoint: point, startRegion: region };
-      setMosaicMoveDraft({ index, region });
-      e.preventDefault();
-    },
-    [clampPointToDisplayed, displayed.h, displayed.w, mosaicMode, mosaicRegions, toLocal],
-  );
+  }, [clampPointToDisplayed, displayed, mosaicMode, mosaicRegions, toLocal]);
 
   const onMosaicPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const moveState = mosaicMoveState.current;
     if (moveState) {
-      const point = clampPointToDisplayed(toLocal(e));
-      setMosaicMoveDraft({ index: moveState.index, region: movedMosaicRegion(moveState, point) });
+      const point = toLocal(e);
+      const dx = point.x - moveState.startPoint.x;
+      const dy = point.y - moveState.startPoint.y;
+      const regionWidth = (moveState.startRegion.right - moveState.startRegion.left) * displayed.w;
+      const regionHeight = (moveState.startRegion.bottom - moveState.startRegion.top) * displayed.h;
+      const startLeft = displayed.x + moveState.startRegion.left * displayed.w;
+      const startTop = displayed.y + moveState.startRegion.top * displayed.h;
+      const nextLeft = Math.max(displayed.x, Math.min(displayed.x + displayed.w - regionWidth, startLeft + dx));
+      const nextTop = Math.max(displayed.y, Math.min(displayed.y + displayed.h - regionHeight, startTop + dy));
+      setMosaicDraft({ x: nextLeft, y: nextTop, w: regionWidth, h: regionHeight });
       return;
     }
     const start = mosaicDragStart.current;
@@ -2406,19 +2758,41 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
       w: Math.abs(point.x - start.x),
       h: Math.abs(point.y - start.y),
     });
-  }, [clampPointToDisplayed, movedMosaicRegion, toLocal]);
+  }, [
+    clampPointToDisplayed,
+    displayed.h,
+    displayed.w,
+    displayed.x,
+    displayed.y,
+    toLocal,
+  ]);
 
   const onMosaicPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const moveState = mosaicMoveState.current;
-    if (moveState) {
-      const point = clampPointToDisplayed(toLocal(e));
-      const region = movedMosaicRegion(moveState, point);
+    if (moveState && displayed.w > 0 && displayed.h > 0) {
       try {
         e.currentTarget.releasePointerCapture(e.pointerId);
       } catch {}
+      const point = toLocal(e);
+      const dx = point.x - moveState.startPoint.x;
+      const dy = point.y - moveState.startPoint.y;
+      const regionWidth = (moveState.startRegion.right - moveState.startRegion.left) * displayed.w;
+      const regionHeight = (moveState.startRegion.bottom - moveState.startRegion.top) * displayed.h;
+      const startLeft = displayed.x + moveState.startRegion.left * displayed.w;
+      const startTop = displayed.y + moveState.startRegion.top * displayed.h;
+      const nextLeft = Math.max(displayed.x, Math.min(displayed.x + displayed.w - regionWidth, startLeft + dx));
+      const nextTop = Math.max(displayed.y, Math.min(displayed.y + displayed.h - regionHeight, startTop + dy));
+      const updated = normalizeMosaicRegion({
+        left: (nextLeft - displayed.x) / displayed.w,
+        top: (nextTop - displayed.y) / displayed.h,
+        right: (nextLeft + regionWidth - displayed.x) / displayed.w,
+        bottom: (nextTop + regionHeight - displayed.y) / displayed.h,
+      });
       mosaicMoveState.current = null;
-      setMosaicMoveDraft(null);
-      setMosaicRegions((current) => current.map((item, index) => index === moveState.index ? region : item));
+      setMosaicDraft(null);
+      if (updated) {
+        setMosaicRegions((current) => current.map((region, index) => (index === moveState.index ? updated : region)));
+      }
       return;
     }
     const start = mosaicDragStart.current;
@@ -2441,7 +2815,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
       bottom: (y + h - displayed.y) / displayed.h,
     });
     if (region) setMosaicRegions((current) => [...current, region]);
-  }, [clampPointToDisplayed, displayed, movedMosaicRegion, toLocal]);
+  }, [clampPointToDisplayed, displayed, toLocal]);
 
   const onMosaicPointerCancel = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     try {
@@ -2450,7 +2824,6 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     mosaicDragStart.current = null;
     mosaicMoveState.current = null;
     setMosaicDraft(null);
-    setMosaicMoveDraft(null);
   }, []);
 
   const removeMosaicRegion = useCallback((index: number) => {
@@ -2874,49 +3247,46 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     rotationDegrees,
   ]);
 
-  const runToneAuto = useCallback(
-    (work: () => void) => {
-      if (toneAutoBusy) return;
-      setToneAutoBusy(true);
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          try {
-            work();
-          } finally {
-            setToneAutoBusy(false);
-          }
-        });
-      });
-    },
-    [toneAutoBusy],
-  );
+  const runAutoToneTask = useCallback(async (task: () => void) => {
+    setAutoToneBusy(true);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    try {
+      task();
+    } finally {
+      setAutoToneBusy(false);
+    }
+  }, []);
 
   const onAutoExposure = useCallback(() => {
-    runToneAuto(() => {
+    if (autoToneBusy) return;
+    void runAutoToneTask(() => {
       const sample = currentToneAutoSample();
       if (!sample) return;
       setExposureEv(findAutoExposure(sample, temperature, tint));
     });
-  }, [currentToneAutoSample, runToneAuto, temperature, tint]);
+  }, [autoToneBusy, currentToneAutoSample, runAutoToneTask, temperature, tint]);
 
   const onAutoLogarithm = useCallback(() => {
-    runToneAuto(() => {
+    if (autoToneBusy) return;
+    void runAutoToneTask(() => {
       const sample = currentToneAutoSample();
       if (!sample) return;
       setScaledLog(findAutoLogarithm(sample, temperature, tint, exposureEv));
     });
-  }, [currentToneAutoSample, exposureEv, runToneAuto, temperature, tint]);
+  }, [autoToneBusy, currentToneAutoSample, exposureEv, runAutoToneTask, temperature, tint]);
 
   const onAutoSigmoid = useCallback(() => {
-    runToneAuto(() => {
+    if (autoToneBusy) return;
+    void runAutoToneTask(() => {
       const sample = currentToneAutoSample();
       if (!sample) return;
       setSigmoid(findAutoSigmoid(sample, temperature, tint, exposureEv, scaledLog));
     });
-  }, [currentToneAutoSample, exposureEv, runToneAuto, scaledLog, temperature, tint]);
+  }, [autoToneBusy, currentToneAutoSample, exposureEv, runAutoToneTask, scaledLog, temperature, tint]);
 
   const onAutoTone = useCallback(() => {
-    runToneAuto(() => {
+    if (autoToneBusy) return;
+    void runAutoToneTask(() => {
       const sample = currentToneAutoSample();
       if (!sample) return;
       const autoExposure = findAutoExposure(sample, temperature, tint);
@@ -2932,7 +3302,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
       setScaledLog(autoLogarithm);
       setSigmoid(autoSigmoid);
     });
-  }, [currentToneAutoSample, runToneAuto, temperature, tint]);
+  }, [autoToneBusy, currentToneAutoSample, runAutoToneTask, temperature, tint]);
 
   const histogramPaths = useMemo(() => {
     if (!histogram || histogram.maxCount <= 0) return null;
@@ -2989,6 +3359,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
       saturation: clampColorAdjustment(saturation),
       resizePercent: Math.min(100, Math.max(1, Math.round(resizePercent))),
       mosaicRegions: normalizeMosaicRegions(mosaicRegions),
+      textOverlays: normalizeTextOverlays(textOverlays),
     });
   }, [
     displayed.w,
@@ -3006,6 +3377,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     saturation,
     resizePercent,
     mosaicRegions,
+    textOverlays,
     onApply,
   ]);
 
@@ -3026,7 +3398,13 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     setVibrance(params.vibrance);
     setSaturation(params.saturation);
     setResizePercent(params.resizePercent);
+    setTextMode(false);
+    setActiveTextId(null);
+    textMoveState.current = null;
+    setTextOverlays(params.textOverlays);
     setMosaicRegions(params.mosaicRegions);
+    mosaicMoveState.current = null;
+    setMosaicDraft(null);
     if (displayed.w > 0 && displayed.h > 0) {
       const crop = normalizeCrop(params.crop);
       const x = displayed.x + displayed.w * crop.left;
@@ -3078,13 +3456,48 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
             <label className="inline-flex items-center gap-2 text-sm text-gray-700 select-none">
               <input
                 type="checkbox"
+                checked={textMode}
+                onChange={(e) => {
+                  const next = e.target.checked;
+                  if (next) {
+                    setTextMode(true);
+                    setActiveTextId(null);
+                    textMoveState.current = null;
+                    setEyedropperMode(false);
+                    setRotationMode(false);
+                    rotationDragState.current = null;
+                    setMosaicMode(false);
+                    mosaicDragStart.current = null;
+                    mosaicMoveState.current = null;
+                    setMosaicDraft(null);
+                    dragState.current = null;
+                  } else {
+                    setTextMode(false);
+                    setActiveTextId(null);
+                    textMoveState.current = null;
+                  }
+                }}
+              />
+              <span>Text</span>
+            </label>
+            <label className="inline-flex items-center gap-2 text-sm text-gray-700 select-none">
+              <input
+                type="checkbox"
                 checked={mosaicMode}
                 onChange={(e) => {
-                  setMosaicMode(e.target.checked);
+                  const next = e.target.checked;
+                  setMosaicMode(next);
+                  if (next) {
+                    setTextMode(false);
+                    setActiveTextId(null);
+                    textMoveState.current = null;
+                    setEyedropperMode(false);
+                    setRotationMode(false);
+                    rotationDragState.current = null;
+                  }
                   mosaicDragStart.current = null;
                   mosaicMoveState.current = null;
                   setMosaicDraft(null);
-                  setMosaicMoveDraft(null);
                 }}
               />
               <span>Mosaic</span>
@@ -3106,8 +3519,8 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
         <div className="mt-3 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_250px] gap-4 lg:items-stretch">
           <div
             ref={containerRef}
-            className={`relative w-full h-[42vh] min-h-[270px] lg:h-auto rounded border bg-gray-200 overflow-hidden touch-none ${!eyedropperMode && !rotationMode && mosaicMode ? "cursor-crosshair" : ""}`}
-            onPointerDown={eyedropperMode || rotationMode ? undefined : mosaicMode ? onMosaicPointerDown : undefined}
+            className={`relative w-full h-[42vh] min-h-[270px] lg:h-auto rounded border bg-gray-200 overflow-hidden touch-none ${textMode ? "cursor-text" : !eyedropperMode && !rotationMode && mosaicMode ? "cursor-crosshair" : ""}`}
+            onPointerDown={eyedropperMode || rotationMode ? undefined : textMode ? onTextPointerDown : mosaicMode ? onMosaicPointerDown : undefined}
             onPointerMove={eyedropperMode ? undefined : rotationMode ? onRotationPointerMove : mosaicMode ? onMosaicPointerMove : onPointerMove}
             onPointerUp={eyedropperMode ? undefined : rotationMode ? onRotationPointerUp : mosaicMode ? onMosaicPointerUp : onPointerUp}
             onPointerCancel={eyedropperMode ? undefined : rotationMode ? onRotationPointerUp : mosaicMode ? onMosaicPointerCancel : onPointerUp}
@@ -3130,6 +3543,11 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                       height: displayed.h,
                     }}
                   />
+                  {autoToneBusy && (
+                    <div className="absolute inset-0 z-40 flex items-center justify-center pointer-events-none">
+                      <div className="h-10 w-10 rounded-full border-4 border-white/40 border-t-white animate-spin shadow-[0_0_0_1px_rgba(0,0,0,0.25)]" />
+                    </div>
+                  )}
                   {eyedropperMode && (
                     <div
                       className="absolute z-30 cursor-crosshair"
@@ -3179,7 +3597,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                       })}
                     </div>
                   )}
-                  {!eyedropperMode && !rotationMode && !mosaicMode && (
+                  {!eyedropperMode && !rotationMode && !mosaicMode && !textMode && (
                     <svg className="absolute inset-0 w-full h-full pointer-events-none" aria-hidden="true">
                       <path d={`${overlayPath.outer} ${overlayPath.inner}`} fill="rgba(0,0,0,0.45)" fillRule="evenodd" />
                     </svg>
@@ -3200,44 +3618,174 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                       </svg>
                     </div>
                   )}
-                  {!eyedropperMode && !rotationMode && mosaicMode &&
-                    mosaicRegions.map((region, index) => {
-                      const displayedRegion =
-                        mosaicMoveDraft?.index === index ? mosaicMoveDraft.region : region;
-                      return (
-                        <div
-                          key={index}
-                          className="absolute border-2 border-dashed border-white shadow-[0_0_0_1px_rgba(0,0,0,0.65)] cursor-move"
-                          style={{
-                            left: displayed.x + displayedRegion.left * displayed.w,
-                            top: displayed.y + displayedRegion.top * displayed.h,
-                            width: (displayedRegion.right - displayedRegion.left) * displayed.w,
-                            height: (displayedRegion.bottom - displayedRegion.top) * displayed.h,
-                          }}
-                          onPointerDown={(e) => onMosaicRegionPointerDown(index, e)}
-                        >
-                          <button
-                            type="button"
-                            className="absolute -right-2.5 -top-2.5 w-5 h-5 rounded-full border border-white bg-black/80 text-white text-[12px] leading-none flex items-center justify-center pointer-events-auto"
-                            onPointerDown={(e) => e.stopPropagation()}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              removeMosaicRegion(index);
+                  {!eyedropperMode && !rotationMode && previewTextLayouts.map((layout) => {
+                    const overlay = textOverlays.find((item) => item.id === layout.id);
+                    if (!overlay) return null;
+                    const active = textMode && activeTextId === layout.id;
+                    return (
+                      <div
+                        key={layout.id}
+                        ref={active ? activeTextBoxRef : undefined}
+                        className={`absolute z-30 ${textMode ? "pointer-events-auto" : "pointer-events-none"}`}
+                        style={{
+                          left: layout.x,
+                          top: layout.y,
+                          minWidth: layout.width,
+                          minHeight: layout.height,
+                        }}
+                        onPointerDown={(e) => {
+                          if (!textMode) return;
+                          e.stopPropagation();
+                        }}
+                        onClick={(e) => {
+                          if (!textMode) return;
+                          e.stopPropagation();
+                          setActiveTextId(layout.id);
+                        }}
+                      >
+                        {active ? (
+                          <>
+                            <textarea
+                              value={overlay.text}
+                              autoFocus
+                              wrap="off"
+                              onChange={(e) => updateTextOverlay(layout.id, (current) => ({ ...current, text: e.target.value }))}
+                              onBlur={() => onTextOverlayBlur(layout.id)}
+                              className="block resize-none overflow-hidden rounded border border-black/40 bg-white/55 px-[6px] py-[4px] outline-none"
+                              style={{
+                                width: layout.width,
+                                height: layout.height,
+                                color: TEXT_OVERLAY_COLORS[layout.colorIndex],
+                                fontSize: layout.fontSize,
+                                lineHeight: `${TEXT_OVERLAY_LINE_HEIGHT}`,
+                                fontFamily: TEXT_OVERLAY_FONT_FAMILY,
+                                whiteSpace: "pre",
+                                overflowWrap: "normal",
+                                wordBreak: "normal",
+                              }}
+                            />
+                            <div className="absolute -left-2.5 -top-2.5 flex items-center gap-1">
+                              <button
+                                type="button"
+                                className="flex h-5 w-5 cursor-move items-center justify-center rounded-full border border-white bg-black/80 text-white"
+                                onPointerDown={onTextMovePointerDown(layout.id, layout)}
+                                onPointerMove={onTextMovePointerMove}
+                                onPointerUp={onTextMovePointerUp}
+                                onPointerCancel={onTextMovePointerUp}
+                                aria-label="Move text overlay"
+                                title="Drag to move text"
+                              >
+                                <Move size={12} strokeWidth={2} />
+                              </button>
+                              <button
+                                type="button"
+                                className="flex h-5 min-w-5 items-center justify-center rounded border border-white bg-black/80 px-1 text-[11px] leading-none text-white"
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  updateTextOverlay(layout.id, (current) => ({
+                                    ...current,
+                                    fontSize: Math.max(1, Math.round(current.fontSize / TEXT_OVERLAY_FONT_STEP)),
+                                  }));
+                                }}
+                                aria-label="Decrease font size"
+                              >
+                                −
+                              </button>
+                              <button
+                                type="button"
+                                className="flex h-5 min-w-5 items-center justify-center rounded border border-white bg-black/80 px-1 text-[11px] leading-none text-white"
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  updateTextOverlay(layout.id, (current) => ({
+                                    ...current,
+                                    fontSize: Math.max(1, Math.round(current.fontSize * TEXT_OVERLAY_FONT_STEP)),
+                                  }));
+                                }}
+                                aria-label="Increase font size"
+                              >
+                                ＋
+                              </button>
+                              <button
+                                type="button"
+                                className="flex h-5 min-w-5 items-center justify-center rounded border border-white bg-black/80 px-1 text-white"
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  updateTextOverlay(layout.id, (current) => ({
+                                    ...current,
+                                    colorIndex: (current.colorIndex + 1) % TEXT_OVERLAY_COLORS.length,
+                                  }));
+                                }}
+                                aria-label="Change text color"
+                                title="Change text color"
+                              >
+                                <Palette size={13} strokeWidth={1.8} />
+                              </button>
+                            </div>
+                            <button
+                              type="button"
+                              className="absolute -right-2.5 -top-2.5 flex h-5 w-5 items-center justify-center rounded-full border border-white bg-black/80 text-[12px] leading-none text-white"
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removeTextOverlay(layout.id);
+                              }}
+                              aria-label="Remove text overlay"
+                            >
+                              ✕
+                            </button>
+                          </>
+                        ) : (
+                          <div
+                            className={textMode ? "cursor-text" : ""}
+                            style={{
+                              color: TEXT_OVERLAY_COLORS[layout.colorIndex],
+                              fontSize: layout.fontSize,
+                              lineHeight: `${TEXT_OVERLAY_LINE_HEIGHT}`,
+                              fontFamily: TEXT_OVERLAY_FONT_FAMILY,
+                              whiteSpace: "pre",
                             }}
-                            aria-label="Remove mosaic region"
                           >
-                            ✕
-                          </button>
-                        </div>
-                      );
-                    })}
+                            {layout.text}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {!eyedropperMode && !rotationMode && mosaicMode && mosaicRegions.map((region, index) => (
+                    <div
+                      key={index}
+                      className="absolute border-2 border-dashed border-white shadow-[0_0_0_1px_rgba(0,0,0,0.65)]"
+                      style={{
+                        left: displayed.x + region.left * displayed.w,
+                        top: displayed.y + region.top * displayed.h,
+                        width: (region.right - region.left) * displayed.w,
+                        height: (region.bottom - region.top) * displayed.h,
+                      }}
+                    >
+                      <button
+                        type="button"
+                        className="absolute -right-2.5 -top-2.5 w-5 h-5 rounded-full border border-white bg-black/80 text-white text-[12px] leading-none flex items-center justify-center pointer-events-auto"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeMosaicRegion(index);
+                        }}
+                        aria-label="Remove mosaic region"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
                   {!eyedropperMode && !rotationMode && mosaicMode && mosaicDraft && (
                     <div
                       className="absolute border-2 border-dashed border-white bg-black/10 shadow-[0_0_0_1px_rgba(0,0,0,0.65)] pointer-events-none"
                       style={{ left: mosaicDraft.x, top: mosaicDraft.y, width: mosaicDraft.w, height: mosaicDraft.h }}
                     />
                   )}
-                  {!eyedropperMode && !rotationMode && !mosaicMode && (
+                  {!eyedropperMode && !rotationMode && !mosaicMode && !textMode && (
                     <div
                       className="absolute border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.45)] bg-transparent cursor-move"
                       style={{ left: cropRect.x, top: cropRect.y, width: cropRect.w, height: cropRect.h }}
@@ -3267,17 +3815,6 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
               ) : (
                 <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-500">Loading preview…</div>
               )}
-              {toneAutoBusy && (
-                <div
-                  className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none"
-                  role="status"
-                  aria-label="Applying automatic tone correction"
-                >
-                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-black/45 shadow">
-                    <div className="h-7 w-7 animate-spin rounded-full border-2 border-white/40 border-t-white" />
-                  </div>
-                </div>
-              )}
           </div>
 
           <div className="space-y-4 text-sm text-gray-800">
@@ -3295,13 +3832,15 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                     }`}
                     onClick={(e) => {
                       e.stopPropagation();
+                      setTextMode(false);
+                      setActiveTextId(null);
+                      textMoveState.current = null;
                       setRotationMode((current) => !current);
                       setEyedropperMode(false);
                       rotationDragState.current = null;
                       mosaicDragStart.current = null;
                       mosaicMoveState.current = null;
                       setMosaicDraft(null);
-                      setMosaicMoveDraft(null);
                       dragState.current = null;
                     }}
                     aria-label="Rotate image"
@@ -3337,13 +3876,15 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                       : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
                   }`}
                   onClick={() => {
+                    setTextMode(false);
+                    setActiveTextId(null);
+                    textMoveState.current = null;
                     setEyedropperMode((current) => !current);
                     setRotationMode(false);
                     rotationDragState.current = null;
                     mosaicDragStart.current = null;
                     mosaicMoveState.current = null;
                     setMosaicDraft(null);
-                    setMosaicMoveDraft(null);
                     dragState.current = null;
                   }}
                   aria-label="White balance eyedropper"
@@ -3365,6 +3906,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                   step={1}
                   value={temperature}
                   onChange={(e) => setTemperature(clampWhiteBalanceValue(Number(e.target.value)))}
+                  onDoubleClick={() => setTemperature(sliderDefaults.temperature)}
                   className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
               </label>
@@ -3378,6 +3920,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                   step={1}
                   value={tint}
                   onChange={(e) => setTint(clampWhiteBalanceValue(Number(e.target.value)))}
+                  onDoubleClick={() => setTint(sliderDefaults.tint)}
                   className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
               </label>
@@ -3388,9 +3931,9 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                 <span>Tone</span>
                 <button
                   type="button"
-                  className="h-5 rounded border border-gray-300 bg-white px-1.5 text-[10px] font-normal text-gray-700 hover:bg-gray-100"
+                  className="h-5 rounded border border-gray-300 bg-white px-1.5 text-[10px] font-normal text-gray-700 hover:bg-gray-100 disabled:cursor-default disabled:opacity-60"
                   onClick={onAutoTone}
-                  disabled={toneAutoBusy}
+                  disabled={autoToneBusy}
                   title="Auto tone: Exposure, Logarithm, then Sigmoid"
                 >
                   Auto
@@ -3401,9 +3944,9 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                   <span>Exposure</span>
                   <button
                     type="button"
-                    className="h-5 rounded border border-gray-300 bg-white px-1 text-[10px] text-gray-700 hover:bg-gray-100"
+                    className="h-5 rounded border border-gray-300 bg-white px-1 text-[10px] text-gray-700 hover:bg-gray-100 disabled:cursor-default disabled:opacity-60"
                     onClick={onAutoExposure}
-                    disabled={toneAutoBusy}
+                    disabled={autoToneBusy}
                     title="Auto exposure"
                   >
                     Auto
@@ -3418,6 +3961,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                   step={0.1}
                   value={exposureEv}
                   onChange={(e) => setExposureEv(clampExposureEv(Number(e.target.value)))}
+                  onDoubleClick={() => setExposureEv(sliderDefaults.exposureEv)}
                   className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
               </div>
@@ -3426,9 +3970,9 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                   <span>Logarithm</span>
                   <button
                     type="button"
-                    className="h-5 rounded border border-gray-300 bg-white px-1 text-[10px] text-gray-700 hover:bg-gray-100"
+                    className="h-5 rounded border border-gray-300 bg-white px-1 text-[10px] text-gray-700 hover:bg-gray-100 disabled:cursor-default disabled:opacity-60"
                     onClick={onAutoLogarithm}
-                    disabled={toneAutoBusy}
+                    disabled={autoToneBusy}
                     title="Auto logarithm"
                   >
                     Auto
@@ -3443,6 +3987,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                   step={0.1}
                   value={scaledLog}
                   onChange={(e) => setScaledLog(clampScaledLog(Number(e.target.value)))}
+                  onDoubleClick={() => setScaledLog(sliderDefaults.scaledLog)}
                   className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
               </div>
@@ -3451,9 +3996,9 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                   <span>Sigmoid</span>
                   <button
                     type="button"
-                    className="h-5 rounded border border-gray-300 bg-white px-1 text-[10px] text-gray-700 hover:bg-gray-100"
+                    className="h-5 rounded border border-gray-300 bg-white px-1 text-[10px] text-gray-700 hover:bg-gray-100 disabled:cursor-default disabled:opacity-60"
                     onClick={onAutoSigmoid}
-                    disabled={toneAutoBusy}
+                    disabled={autoToneBusy}
                     title="Auto sigmoid"
                   >
                     Auto
@@ -3468,6 +4013,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                   step={0.1}
                   value={sigmoid}
                   onChange={(e) => setSigmoid(clampSigmoid(Number(e.target.value)))}
+                  onDoubleClick={() => setSigmoid(sliderDefaults.sigmoid)}
                   className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
               </div>
@@ -3485,6 +4031,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                   step={1}
                   value={vibrance}
                   onChange={(e) => setVibrance(clampColorAdjustment(Number(e.target.value)))}
+                  onDoubleClick={() => setVibrance(sliderDefaults.vibrance)}
                   className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
               </label>
@@ -3498,6 +4045,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                   step={1}
                   value={saturation}
                   onChange={(e) => setSaturation(clampColorAdjustment(Number(e.target.value)))}
+                  onDoubleClick={() => setSaturation(sliderDefaults.saturation)}
                   className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
               </label>
@@ -3530,6 +4078,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                   step={1}
                   value={resizePercent}
                   onChange={(e) => setResizePercent(Math.min(100, Math.max(1, Number(e.target.value) || 100)))}
+                  onDoubleClick={() => setResizePercent(sliderDefaults.resizePercent)}
                   className="col-span-3 col-start-1 row-start-2 w-full"
                 />
               </div>
