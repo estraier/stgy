@@ -2219,7 +2219,12 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     normalizeMosaicRegions(initialParams.mosaicRegions),
   );
   const [mosaicDraft, setMosaicDraft] = useState<EditRect | null>(null);
+  const [mosaicMoveDraft, setMosaicMoveDraft] = useState<{ index: number; region: ImageMosaicRegion } | null>(null);
   const mosaicDragStart = useRef<EditPoint | null>(null);
+  const mosaicMoveState = useRef<
+    | null
+    | { index: number; startPoint: EditPoint; startRegion: ImageMosaicRegion }
+  >(null);
   const [showHistogram, setShowHistogram] = useState(false);
   const [histogram, setHistogram] = useState<HistogramData | null>(null);
   const [eyedropperMode, setEyedropperMode] = useState(false);
@@ -2349,7 +2354,49 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     e.preventDefault();
   }, [clampPointToDisplayed, displayed, mosaicMode, toLocal]);
 
+  const movedMosaicRegion = useCallback(
+    (
+      state: { startPoint: EditPoint; startRegion: ImageMosaicRegion },
+      point: EditPoint,
+    ): ImageMosaicRegion => {
+      const width = state.startRegion.right - state.startRegion.left;
+      const height = state.startRegion.bottom - state.startRegion.top;
+      const dx = displayed.w > 0 ? (point.x - state.startPoint.x) / displayed.w : 0;
+      const dy = displayed.h > 0 ? (point.y - state.startPoint.y) / displayed.h : 0;
+      const left = Math.max(0, Math.min(1 - width, state.startRegion.left + dx));
+      const top = Math.max(0, Math.min(1 - height, state.startRegion.top + dy));
+      return { left, top, right: left + width, bottom: top + height };
+    },
+    [displayed.h, displayed.w],
+  );
+
+  const onMosaicRegionPointerDown = useCallback(
+    (index: number, e: React.PointerEvent<HTMLDivElement>) => {
+      if (!mosaicMode || displayed.w <= 0 || displayed.h <= 0) return;
+      const region = mosaicRegions[index];
+      if (!region) return;
+      e.stopPropagation();
+      if (e.button !== 0) return;
+      const point = clampPointToDisplayed(toLocal(e));
+      try {
+        containerRef.current?.setPointerCapture(e.pointerId);
+      } catch {}
+      mosaicDragStart.current = null;
+      setMosaicDraft(null);
+      mosaicMoveState.current = { index, startPoint: point, startRegion: region };
+      setMosaicMoveDraft({ index, region });
+      e.preventDefault();
+    },
+    [clampPointToDisplayed, displayed.h, displayed.w, mosaicMode, mosaicRegions, toLocal],
+  );
+
   const onMosaicPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const moveState = mosaicMoveState.current;
+    if (moveState) {
+      const point = clampPointToDisplayed(toLocal(e));
+      setMosaicMoveDraft({ index: moveState.index, region: movedMosaicRegion(moveState, point) });
+      return;
+    }
     const start = mosaicDragStart.current;
     if (!start) return;
     const point = clampPointToDisplayed(toLocal(e));
@@ -2359,9 +2406,21 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
       w: Math.abs(point.x - start.x),
       h: Math.abs(point.y - start.y),
     });
-  }, [clampPointToDisplayed, toLocal]);
+  }, [clampPointToDisplayed, movedMosaicRegion, toLocal]);
 
   const onMosaicPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const moveState = mosaicMoveState.current;
+    if (moveState) {
+      const point = clampPointToDisplayed(toLocal(e));
+      const region = movedMosaicRegion(moveState, point);
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {}
+      mosaicMoveState.current = null;
+      setMosaicMoveDraft(null);
+      setMosaicRegions((current) => current.map((item, index) => index === moveState.index ? region : item));
+      return;
+    }
     const start = mosaicDragStart.current;
     if (!start) return;
     const point = clampPointToDisplayed(toLocal(e));
@@ -2382,14 +2441,16 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
       bottom: (y + h - displayed.y) / displayed.h,
     });
     if (region) setMosaicRegions((current) => [...current, region]);
-  }, [clampPointToDisplayed, displayed, toLocal]);
+  }, [clampPointToDisplayed, displayed, movedMosaicRegion, toLocal]);
 
   const onMosaicPointerCancel = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     try {
       e.currentTarget.releasePointerCapture(e.pointerId);
     } catch {}
     mosaicDragStart.current = null;
+    mosaicMoveState.current = null;
     setMosaicDraft(null);
+    setMosaicMoveDraft(null);
   }, []);
 
   const removeMosaicRegion = useCallback((index: number) => {
@@ -3021,7 +3082,9 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                 onChange={(e) => {
                   setMosaicMode(e.target.checked);
                   mosaicDragStart.current = null;
+                  mosaicMoveState.current = null;
                   setMosaicDraft(null);
+                  setMosaicMoveDraft(null);
                 }}
               />
               <span>Mosaic</span>
@@ -3137,31 +3200,37 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                       </svg>
                     </div>
                   )}
-                  {!eyedropperMode && !rotationMode && mosaicMode && mosaicRegions.map((region, index) => (
-                    <div
-                      key={index}
-                      className="absolute border-2 border-dashed border-white shadow-[0_0_0_1px_rgba(0,0,0,0.65)] pointer-events-none"
-                      style={{
-                        left: displayed.x + region.left * displayed.w,
-                        top: displayed.y + region.top * displayed.h,
-                        width: (region.right - region.left) * displayed.w,
-                        height: (region.bottom - region.top) * displayed.h,
-                      }}
-                    >
-                      <button
-                        type="button"
-                        className="absolute -right-2.5 -top-2.5 w-5 h-5 rounded-full border border-white bg-black/80 text-white text-[12px] leading-none flex items-center justify-center pointer-events-auto"
-                        onPointerDown={(e) => e.stopPropagation()}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          removeMosaicRegion(index);
-                        }}
-                        aria-label="Remove mosaic region"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  ))}
+                  {!eyedropperMode && !rotationMode && mosaicMode &&
+                    mosaicRegions.map((region, index) => {
+                      const displayedRegion =
+                        mosaicMoveDraft?.index === index ? mosaicMoveDraft.region : region;
+                      return (
+                        <div
+                          key={index}
+                          className="absolute border-2 border-dashed border-white shadow-[0_0_0_1px_rgba(0,0,0,0.65)] cursor-move"
+                          style={{
+                            left: displayed.x + displayedRegion.left * displayed.w,
+                            top: displayed.y + displayedRegion.top * displayed.h,
+                            width: (displayedRegion.right - displayedRegion.left) * displayed.w,
+                            height: (displayedRegion.bottom - displayedRegion.top) * displayed.h,
+                          }}
+                          onPointerDown={(e) => onMosaicRegionPointerDown(index, e)}
+                        >
+                          <button
+                            type="button"
+                            className="absolute -right-2.5 -top-2.5 w-5 h-5 rounded-full border border-white bg-black/80 text-white text-[12px] leading-none flex items-center justify-center pointer-events-auto"
+                            onPointerDown={(e) => e.stopPropagation()}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              removeMosaicRegion(index);
+                            }}
+                            aria-label="Remove mosaic region"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      );
+                    })}
                   {!eyedropperMode && !rotationMode && mosaicMode && mosaicDraft && (
                     <div
                       className="absolute border-2 border-dashed border-white bg-black/10 shadow-[0_0_0_1px_rgba(0,0,0,0.65)] pointer-events-none"
@@ -3230,7 +3299,9 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                       setEyedropperMode(false);
                       rotationDragState.current = null;
                       mosaicDragStart.current = null;
+                      mosaicMoveState.current = null;
                       setMosaicDraft(null);
+                      setMosaicMoveDraft(null);
                       dragState.current = null;
                     }}
                     aria-label="Rotate image"
@@ -3270,7 +3341,9 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                     setRotationMode(false);
                     rotationDragState.current = null;
                     mosaicDragStart.current = null;
+                    mosaicMoveState.current = null;
                     setMosaicDraft(null);
+                    setMosaicMoveDraft(null);
                     dragState.current = null;
                   }}
                   aria-label="White balance eyedropper"
