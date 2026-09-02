@@ -77,6 +77,7 @@ export type ImageTextOverlay = {
   text: string;
   fontSize: number;
   colorIndex: number;
+  outlineColorIndex: number | null;
 };
 
 export type ImageEditParams = {
@@ -302,6 +303,11 @@ function normalizeTextColorIndex(value: number): number {
   return mod >= 0 ? mod : mod + TEXT_OVERLAY_COLORS.length;
 }
 
+function normalizeOptionalTextColorIndex(value: number | null | undefined): number | null {
+  if (value == null) return null;
+  return normalizeTextColorIndex(value);
+}
+
 function normalizeTextOverlay(overlay: Partial<ImageTextOverlay>): ImageTextOverlay {
   return {
     id: typeof overlay.id === "string" && overlay.id ? overlay.id : makeOverlayId("text"),
@@ -310,6 +316,7 @@ function normalizeTextOverlay(overlay: Partial<ImageTextOverlay>): ImageTextOver
     text: typeof overlay.text === "string" ? overlay.text : "",
     fontSize: Math.max(1, Math.round(Number.isFinite(overlay.fontSize) ? overlay.fontSize ?? 1 : 1)),
     colorIndex: normalizeTextColorIndex(overlay.colorIndex ?? 0),
+    outlineColorIndex: normalizeOptionalTextColorIndex(overlay.outlineColorIndex),
   };
 }
 
@@ -1211,6 +1218,7 @@ function measureTextOverlayLayout(text: string, fontSize: number): Pick<TextOver
   }
   return {
     width: Math.max(
+      TEXT_OVERLAY_MIN_BOX_WIDTH,
       size + TEXT_OVERLAY_BOX_PADDING_X * 2 + 2,
       Math.ceil(maxWidth + TEXT_OVERLAY_BOX_PADDING_X * 2 + 2),
     ),
@@ -1220,6 +1228,53 @@ function measureTextOverlayLayout(text: string, fontSize: number): Pick<TextOver
     ),
     lineHeight,
   };
+}
+
+function textOverlayOutlineRadius(fontSize: number): number {
+  return Math.max(1.5, fontSize * 0.015);
+}
+
+const textOverlayOutlineOffsetsCache = new Map<number, Array<[number, number]>>();
+function textOverlayOutlineOffsets(fontSize: number): Array<[number, number]> {
+  const radius = textOverlayOutlineRadius(fontSize);
+  // Quantize only the cache key. The offsets themselves remain sub-pixel so the
+  // browser/canvas rasterizer can antialias the dilated edge instead of producing
+  // the stair-step boundary caused by integer-only copies.
+  const cacheKey = Math.max(4, Math.round(radius * 4));
+  const cached = textOverlayOutlineOffsetsCache.get(cacheKey);
+  if (cached) return cached;
+
+  const effectiveRadius = cacheKey / 4;
+  const radialStep = 0.5;
+  const arcStep = 0.75;
+  const rings = Math.max(1, Math.ceil(effectiveRadius / radialStep));
+  const offsets: Array<[number, number]> = [];
+  for (let ring = 1; ring <= rings; ring++) {
+    const r = effectiveRadius * ring / rings;
+    const samples = Math.max(12, Math.ceil(2 * Math.PI * r / arcStep));
+    for (let i = 0; i < samples; i++) {
+      const angle = 2 * Math.PI * i / samples;
+      offsets.push([Math.cos(angle) * r, Math.sin(angle) * r]);
+    }
+  }
+  textOverlayOutlineOffsetsCache.set(cacheKey, offsets);
+  return offsets;
+}
+
+function textOverlayOutlineStyle(fontSize: number, outlineColorIndex: number | null): React.CSSProperties {
+  if (outlineColorIndex == null) return {};
+  const color = TEXT_OVERLAY_COLORS[normalizeTextColorIndex(outlineColorIndex)];
+  const shadows = textOverlayOutlineOffsets(fontSize).map(
+    ([dx, dy]) => `${dx.toFixed(2)}px ${dy.toFixed(2)}px 0 ${color}`,
+  );
+  return {
+    textShadow: shadows.join(", "),
+  };
+}
+
+function nextOutlineColorIndex(value: number | null): number | null {
+  if (value == null) return 0;
+  return value + 1 >= TEXT_OVERLAY_COLORS.length ? null : value + 1;
 }
 
 async function ensureTextOverlayFontReady(): Promise<void> {
@@ -1270,8 +1325,18 @@ function drawTextOverlaysToContext(
     const y = (point.y - cropY) * scaleY;
     ctx.font = `${fontSize}px ${TEXT_OVERLAY_FONT_FAMILY}`;
     ctx.fillStyle = TEXT_OVERLAY_COLORS[normalizeTextColorIndex(overlay.colorIndex)];
+    const outlineColor = normalizeOptionalTextColorIndex(overlay.outlineColorIndex);
+    const outlineOffsets = outlineColor == null ? [] : textOverlayOutlineOffsets(fontSize);
     const lines = overlay.text.split("\n");
     for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+      if (outlineColor != null) {
+        const lineY = y + lineIndex * lineHeight;
+        ctx.fillStyle = TEXT_OVERLAY_COLORS[outlineColor];
+        for (const [dx, dy] of outlineOffsets) {
+          ctx.fillText(lines[lineIndex], x + dx, lineY + dy);
+        }
+        ctx.fillStyle = TEXT_OVERLAY_COLORS[normalizeTextColorIndex(overlay.colorIndex)];
+      }
       ctx.fillText(lines[lineIndex], x, y + lineIndex * lineHeight);
     }
   }
@@ -1751,6 +1816,7 @@ type TextOverlayLayout = {
   lineHeight: number;
   text: string;
   colorIndex: number;
+  outlineColorIndex: number | null;
 };
 type HistogramData = {
   r: number[];
@@ -1766,8 +1832,13 @@ const TEXT_OVERLAY_FONT_FAMILY = '"Noto Sans JP", sans-serif';
 const TEXT_OVERLAY_LINE_HEIGHT = 1.2;
 const TEXT_OVERLAY_BOX_PADDING_X = 6;
 const TEXT_OVERLAY_BOX_PADDING_Y = 4;
+const TEXT_OVERLAY_CONTROL_BUTTON_SIZE = 20;
+const TEXT_OVERLAY_CONTROL_GAP = 4;
+const TEXT_OVERLAY_DELETE_BUTTON_SIZE = 20;
+const TEXT_OVERLAY_CONTROL_SAFE_GAP = 8;
 const TEXT_OVERLAY_COLORS = [
   "#000000",
+  "#808080",
   "#ffffff",
   "#ff0000",
   "#ff8c00",
@@ -1776,6 +1847,11 @@ const TEXT_OVERLAY_COLORS = [
   "#0066ff",
   "#8000ff",
 ] as const;
+const TEXT_OVERLAY_MIN_BOX_WIDTH =
+  TEXT_OVERLAY_CONTROL_BUTTON_SIZE * 5 +
+  TEXT_OVERLAY_CONTROL_GAP * 4 +
+  TEXT_OVERLAY_DELETE_BUTTON_SIZE +
+  TEXT_OVERLAY_CONTROL_SAFE_GAP;
 const HISTOGRAM_BINS = 256;
 const HISTOGRAM_SAMPLE_MAX = 256;
 const HISTOGRAM_DISPLAY_GAMMA = 2.4;
@@ -2595,6 +2671,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
         lineHeight,
         text: overlay.text,
         colorIndex: overlay.colorIndex,
+        outlineColorIndex: overlay.outlineColorIndex,
       };
     });
   }, [natural, displayed, textOverlays, sourceToPreviewTextPoint]);
@@ -2688,6 +2765,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
       text: "",
       fontSize: Math.round(Math.hypot(natural.w, natural.h) * TEXT_OVERLAY_DEFAULT_FONT_SIZE_RATIO),
       colorIndex: 0,
+      outlineColorIndex: null,
     });
     setTextOverlays((current) => [...current, overlay]);
     setActiveTextId(overlay.id);
@@ -3656,12 +3734,14 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                                 width: layout.width,
                                 height: layout.height,
                                 color: TEXT_OVERLAY_COLORS[layout.colorIndex],
+                                WebkitTextFillColor: TEXT_OVERLAY_COLORS[layout.colorIndex],
                                 fontSize: layout.fontSize,
                                 lineHeight: `${TEXT_OVERLAY_LINE_HEIGHT}`,
                                 fontFamily: TEXT_OVERLAY_FONT_FAMILY,
                                 whiteSpace: "pre",
                                 overflowWrap: "normal",
                                 wordBreak: "normal",
+                                ...textOverlayOutlineStyle(layout.fontSize, layout.outlineColorIndex),
                               }}
                             />
                             <div className="absolute -left-2.5 -top-2.5 flex items-center gap-1">
@@ -3723,6 +3803,28 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                               >
                                 <Palette size={13} strokeWidth={1.8} />
                               </button>
+                              <button
+                                type="button"
+                                className="flex h-5 min-w-5 items-center justify-center rounded border border-white bg-black/80 px-1 text-white"
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  updateTextOverlay(layout.id, (current) => ({
+                                    ...current,
+                                    outlineColorIndex: nextOutlineColorIndex(current.outlineColorIndex),
+                                  }));
+                                }}
+                                aria-label="Change text outline color"
+                                title="Change text outline color"
+                              >
+                                <span
+                                  aria-hidden="true"
+                                  className="text-[11px] font-bold leading-none"
+                                  style={{ color: "transparent", WebkitTextStroke: "1px #ffffff" }}
+                                >
+                                  A
+                                </span>
+                              </button>
                             </div>
                             <button
                               type="button"
@@ -3742,10 +3844,12 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                             className={textMode ? "cursor-text" : ""}
                             style={{
                               color: TEXT_OVERLAY_COLORS[layout.colorIndex],
+                              WebkitTextFillColor: TEXT_OVERLAY_COLORS[layout.colorIndex],
                               fontSize: layout.fontSize,
                               lineHeight: `${TEXT_OVERLAY_LINE_HEIGHT}`,
                               fontFamily: TEXT_OVERLAY_FONT_FAMILY,
                               whiteSpace: "pre",
+                              ...textOverlayOutlineStyle(layout.fontSize, layout.outlineColorIndex),
                             }}
                           >
                             {layout.text}
