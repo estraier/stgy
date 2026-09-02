@@ -2223,6 +2223,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
   const [showHistogram, setShowHistogram] = useState(false);
   const [histogram, setHistogram] = useState<HistogramData | null>(null);
   const [eyedropperMode, setEyedropperMode] = useState(false);
+  const [toneAutoBusy, setToneAutoBusy] = useState(false);
   const dragState = useRef<
     | null
     | { mode: "move"; startP: EditPoint; startCrop: EditRect }
@@ -2812,40 +2813,65 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     rotationDegrees,
   ]);
 
+  const runToneAuto = useCallback(
+    (work: () => void) => {
+      if (toneAutoBusy) return;
+      setToneAutoBusy(true);
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          try {
+            work();
+          } finally {
+            setToneAutoBusy(false);
+          }
+        });
+      });
+    },
+    [toneAutoBusy],
+  );
+
   const onAutoExposure = useCallback(() => {
-    const sample = currentToneAutoSample();
-    if (!sample) return;
-    setExposureEv(findAutoExposure(sample, temperature, tint));
-  }, [currentToneAutoSample, temperature, tint]);
+    runToneAuto(() => {
+      const sample = currentToneAutoSample();
+      if (!sample) return;
+      setExposureEv(findAutoExposure(sample, temperature, tint));
+    });
+  }, [currentToneAutoSample, runToneAuto, temperature, tint]);
 
   const onAutoLogarithm = useCallback(() => {
-    const sample = currentToneAutoSample();
-    if (!sample) return;
-    setScaledLog(findAutoLogarithm(sample, temperature, tint, exposureEv));
-  }, [currentToneAutoSample, temperature, tint, exposureEv]);
+    runToneAuto(() => {
+      const sample = currentToneAutoSample();
+      if (!sample) return;
+      setScaledLog(findAutoLogarithm(sample, temperature, tint, exposureEv));
+    });
+  }, [currentToneAutoSample, exposureEv, runToneAuto, temperature, tint]);
 
   const onAutoSigmoid = useCallback(() => {
-    const sample = currentToneAutoSample();
-    if (!sample) return;
-    setSigmoid(findAutoSigmoid(sample, temperature, tint, exposureEv, scaledLog));
-  }, [currentToneAutoSample, temperature, tint, exposureEv, scaledLog]);
+    runToneAuto(() => {
+      const sample = currentToneAutoSample();
+      if (!sample) return;
+      setSigmoid(findAutoSigmoid(sample, temperature, tint, exposureEv, scaledLog));
+    });
+  }, [currentToneAutoSample, exposureEv, runToneAuto, scaledLog, temperature, tint]);
 
   const onAutoTone = useCallback(() => {
-    const sample = currentToneAutoSample();
-    if (!sample) return;
-    const autoExposure = findAutoExposure(sample, temperature, tint);
-    const autoLogarithm = findAutoLogarithm(sample, temperature, tint, autoExposure);
-    const autoSigmoid = findAutoSigmoid(
-      sample,
-      temperature,
-      tint,
-      autoExposure,
-      autoLogarithm,
-    );
-    setExposureEv(autoExposure);
-    setScaledLog(autoLogarithm);
-    setSigmoid(autoSigmoid);
-  }, [currentToneAutoSample, temperature, tint]);
+    runToneAuto(() => {
+      const sample = currentToneAutoSample();
+      if (!sample) return;
+      const autoExposure = findAutoExposure(sample, temperature, tint);
+      const autoLogarithm = findAutoLogarithm(sample, temperature, tint, autoExposure);
+      const autoSigmoid = findAutoSigmoid(
+        sample,
+        temperature,
+        tint,
+        autoExposure,
+        autoLogarithm,
+      );
+      setExposureEv(autoExposure);
+      setScaledLog(autoLogarithm);
+      setSigmoid(autoSigmoid);
+    });
+  }, [currentToneAutoSample, runToneAuto, temperature, tint]);
 
   const histogramPaths = useMemo(() => {
     if (!histogram || histogram.maxCount <= 0) return null;
@@ -3172,6 +3198,17 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
               ) : (
                 <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-500">Loading preview…</div>
               )}
+              {toneAutoBusy && (
+                <div
+                  className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none"
+                  role="status"
+                  aria-label="Applying automatic tone correction"
+                >
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-black/45 shadow">
+                    <div className="h-7 w-7 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                  </div>
+                </div>
+              )}
           </div>
 
           <div className="space-y-4 text-sm text-gray-800">
@@ -3280,6 +3317,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                   type="button"
                   className="h-5 rounded border border-gray-300 bg-white px-1.5 text-[10px] font-normal text-gray-700 hover:bg-gray-100"
                   onClick={onAutoTone}
+                  disabled={toneAutoBusy}
                   title="Auto tone: Exposure, Logarithm, then Sigmoid"
                 >
                   Auto
@@ -3292,6 +3330,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                     type="button"
                     className="h-5 rounded border border-gray-300 bg-white px-1 text-[10px] text-gray-700 hover:bg-gray-100"
                     onClick={onAutoExposure}
+                    disabled={toneAutoBusy}
                     title="Auto exposure"
                   >
                     Auto
@@ -3316,6 +3355,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                     type="button"
                     className="h-5 rounded border border-gray-300 bg-white px-1 text-[10px] text-gray-700 hover:bg-gray-100"
                     onClick={onAutoLogarithm}
+                    disabled={toneAutoBusy}
                     title="Auto logarithm"
                   >
                     Auto
@@ -3340,6 +3380,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                     type="button"
                     className="h-5 rounded border border-gray-300 bg-white px-1 text-[10px] text-gray-700 hover:bg-gray-100"
                     onClick={onAutoSigmoid}
+                    disabled={toneAutoBusy}
                     title="Auto sigmoid"
                   >
                     Auto
