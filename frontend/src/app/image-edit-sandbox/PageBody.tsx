@@ -5,9 +5,12 @@ import {
   ImageEditDialog,
   buildDefaultEditParams,
   buildOptimizedVariant,
+  probeEditableImage,
+  type DecodedImage,
   type ImageEditOutputFormat,
   type ImageEditParams,
 } from "@/components/ImageUploadDialog";
+import { Config } from "@/config";
 import { formatBytes } from "@/utils/format";
 
 type SourceImage = {
@@ -25,6 +28,45 @@ type EditResult = {
   format: ImageEditOutputFormat;
 };
 
+
+type ResultZoomFocus = {
+  x: number;
+  y: number;
+};
+
+type ResultZoomPan = {
+  x: number;
+  y: number;
+};
+
+type ResultZoomDrag = {
+  pointerId: number;
+  startClientX: number;
+  startClientY: number;
+  startPanX: number;
+  startPanY: number;
+  moved: boolean;
+};
+
+function clampResultZoomPan(
+  pan: ResultZoomPan,
+  viewportWidth: number,
+  viewportHeight: number,
+  imageWidth: number,
+  imageHeight: number,
+): ResultZoomPan {
+  const clampAxis = (value: number, viewportSize: number, imageSize: number) => {
+    if (imageSize <= viewportSize) return (viewportSize - imageSize) / 2;
+    const max = viewportSize / 2;
+    const min = viewportSize / 2 - imageSize;
+    return Math.min(max, Math.max(min, value));
+  };
+  return {
+    x: clampAxis(pan.x, viewportWidth, imageWidth),
+    y: clampAxis(pan.y, viewportHeight, imageHeight),
+  };
+}
+
 const OUTPUT_FORMAT_OPTIONS: { value: ImageEditOutputFormat; label: string }[] = [
   { value: "image/webp", label: "WebP" },
   { value: "image/jpeg", label: "JPEG" },
@@ -32,22 +74,11 @@ const OUTPUT_FORMAT_OPTIONS: { value: ImageEditOutputFormat; label: string }[] =
 ];
 
 async function readImageSize(file: File): Promise<{ width: number; height: number }> {
-  const url = URL.createObjectURL(file);
-  try {
-    const img = new window.Image();
-    img.decoding = "async";
-    await new Promise<void>((resolve, reject) => {
-      img.onload = () => resolve();
-      img.onerror = () => reject(new Error("Could not decode this image in the browser."));
-      img.src = url;
-    });
-    if (!img.naturalWidth || !img.naturalHeight) {
-      throw new Error("Could not determine the image dimensions.");
-    }
-    return { width: img.naturalWidth, height: img.naturalHeight };
-  } finally {
-    URL.revokeObjectURL(url);
+  const meta = await probeEditableImage(file);
+  if (!meta.width || !meta.height) {
+    throw new Error("Could not determine the image dimensions.");
   }
+  return { width: meta.width, height: meta.height };
 }
 
 export default function ImageEditSandbox() {
@@ -59,8 +90,15 @@ export default function ImageEditSandbox() {
   const [result, setResult] = useState<EditResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [outputFormat, setOutputFormat] = useState<ImageEditOutputFormat>("image/webp");
+  const resultZoomViewportRef = useRef<HTMLDivElement | null>(null);
+  const resultZoomDragRef = useRef<ResultZoomDrag | null>(null);
+  const resultZoomSuppressClickRef = useRef(false);
+  const [resultZoomFocus, setResultZoomFocus] = useState<ResultZoomFocus | null>(null);
+  const [resultZoomPan, setResultZoomPan] = useState<ResultZoomPan>({ x: 0, y: 0 });
 
   const clearResult = useCallback(() => {
+    resultZoomDragRef.current = null;
+    setResultZoomFocus(null);
     if (resultUrlRef.current) {
       URL.revokeObjectURL(resultUrlRef.current);
       resultUrlRef.current = null;
@@ -69,6 +107,121 @@ export default function ImageEditSandbox() {
   }, []);
 
   useEffect(() => clearResult, [clearResult]);
+
+  const closeResultZoom = useCallback(() => {
+    resultZoomDragRef.current = null;
+    resultZoomSuppressClickRef.current = false;
+    setResultZoomFocus(null);
+  }, []);
+
+  useEffect(() => {
+    if (!resultZoomFocus || !result) return;
+    const frame = requestAnimationFrame(() => {
+      const viewport = resultZoomViewportRef.current;
+      if (!viewport) return;
+      const rect = viewport.getBoundingClientRect();
+      setResultZoomPan(
+        clampResultZoomPan(
+          {
+            x: rect.width / 2 - resultZoomFocus.x * result.width,
+            y: rect.height / 2 - resultZoomFocus.y * result.height,
+          },
+          rect.width,
+          rect.height,
+          result.width,
+          result.height,
+        ),
+      );
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [result, resultZoomFocus]);
+
+  useEffect(() => {
+    if (!resultZoomFocus) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeResultZoom();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [closeResultZoom, resultZoomFocus]);
+
+  const openResultZoom = useCallback((event: React.MouseEvent<HTMLImageElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    setResultZoomPan({ x: 0, y: 0 });
+    setResultZoomFocus({
+      x: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)),
+      y: Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)),
+    });
+  }, []);
+
+  const onResultZoomPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!result) return;
+    event.preventDefault();
+    resultZoomSuppressClickRef.current = false;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    resultZoomDragRef.current = {
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startPanX: resultZoomPan.x,
+      startPanY: resultZoomPan.y,
+      moved: false,
+    };
+  }, [result, resultZoomPan]);
+
+  const onResultZoomPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = resultZoomDragRef.current;
+    const viewport = resultZoomViewportRef.current;
+    if (!drag || drag.pointerId !== event.pointerId || !viewport || !result) return;
+    const dx = event.clientX - drag.startClientX;
+    const dy = event.clientY - drag.startClientY;
+    if (!drag.moved && Math.hypot(dx, dy) >= 3) drag.moved = true;
+    const rect = viewport.getBoundingClientRect();
+    setResultZoomPan(
+      clampResultZoomPan(
+        { x: drag.startPanX + dx, y: drag.startPanY + dy },
+        rect.width,
+        rect.height,
+        result.width,
+        result.height,
+      ),
+    );
+  }, [result]);
+
+  const onResultZoomPointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = resultZoomDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    resultZoomDragRef.current = null;
+    resultZoomSuppressClickRef.current = drag.moved;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }, []);
+
+  const onResultZoomClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (resultZoomSuppressClickRef.current) {
+      resultZoomSuppressClickRef.current = false;
+      return;
+    }
+    closeResultZoom();
+  }, [closeResultZoom]);
+
+  const onResultZoomPointerCancel = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = resultZoomDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    resultZoomDragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }, []);
 
   const onChooseFile = useCallback(async (file: File | undefined) => {
     if (!file) return;
@@ -98,6 +251,7 @@ export default function ImageEditSandbox() {
     sourceImage: SourceImage,
     params: ImageEditParams,
     format: ImageEditOutputFormat,
+    decodedImage?: DecodedImage,
   ) => {
     setProcessing(true);
     setError(null);
@@ -111,6 +265,7 @@ export default function ImageEditSandbox() {
         sourceImage.file.type,
         params,
         format,
+        decodedImage,
       );
       const url = URL.createObjectURL(processed.blob);
       const previousUrl = resultUrlRef.current;
@@ -130,12 +285,19 @@ export default function ImageEditSandbox() {
     }
   }, []);
 
-  const onApply = useCallback(async (params: ImageEditParams) => {
-    if (!source) return;
+  const onApply = useCallback(async (params: ImageEditParams, decodedImage?: DecodedImage) => {
+    if (!source) {
+      decodedImage?.cleanup();
+      return;
+    }
     setEditing(false);
     const nextSource = { ...source, edit: params };
     setSource(nextSource);
-    await generateResult(nextSource, params, outputFormat);
+    try {
+      await generateResult(nextSource, params, outputFormat, decodedImage);
+    } finally {
+      decodedImage?.cleanup();
+    }
   }, [generateResult, outputFormat, source]);
 
   const onOutputFormatChange = useCallback((format: ImageEditOutputFormat) => {
@@ -157,14 +319,25 @@ export default function ImageEditSandbox() {
         <input
           ref={inputRef}
           type="file"
-          accept="image/*,.svg"
+          accept={Config.IMAGE_ALLOWED_TYPES}
           onChange={(e) => void onChooseFile(e.target.files?.[0])}
           disabled={processing}
-          className="block max-w-full text-sm file:mr-3 file:rounded file:border file:border-gray-400 file:bg-gray-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-gray-800 hover:file:bg-gray-200"
+          className="hidden"
         />
+        <div className="inline-flex items-center gap-2 text-sm text-gray-800">
+          <span className="font-medium">Input:</span>
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            disabled={processing}
+            className="rounded border border-gray-400 bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-200 disabled:opacity-50"
+          >
+            Choose file
+          </button>
+        </div>
 
         <label className="inline-flex items-center gap-2 text-sm text-gray-800">
-          <span className="font-medium">Format</span>
+          <span className="font-medium">Output:</span>
           <select
             value={outputFormat}
             onChange={(e) => onOutputFormatChange(e.target.value as ImageEditOutputFormat)}
@@ -202,7 +375,9 @@ export default function ImageEditSandbox() {
             <img
               src={result.url}
               alt="Edited result"
-              className="mx-auto block max-h-[70vh] max-w-full object-contain"
+              className="mx-auto block max-h-[70vh] max-w-full cursor-zoom-in object-contain"
+              onClick={openResultZoom}
+              draggable={false}
             />
           </div>
           <div className="mt-2 text-sm text-gray-700">
@@ -213,6 +388,40 @@ export default function ImageEditSandbox() {
             {result.width}×{result.height}
           </div>
         </section>
+      )}
+
+      {resultZoomFocus && result && (
+        <div
+          className="fixed inset-0 z-[90] flex items-center justify-center bg-black/75 p-1.5 sm:p-3"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (event.target === event.currentTarget) closeResultZoom();
+          }}
+        >
+          <div
+            ref={resultZoomViewportRef}
+            className="relative h-[95vh] w-[96vw] sm:h-[90vh] sm:w-[92vw] touch-none select-none overflow-hidden rounded border border-gray-500 bg-black cursor-grab active:cursor-grabbing"
+            onPointerDown={onResultZoomPointerDown}
+            onPointerMove={onResultZoomPointerMove}
+            onPointerUp={onResultZoomPointerUp}
+            onPointerCancel={onResultZoomPointerCancel}
+            onClick={onResultZoomClick}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={result.url}
+              alt="Edited result enlarged"
+              draggable={false}
+              className="pointer-events-none absolute left-0 top-0 max-h-none max-w-none select-none"
+              style={{
+                width: `${result.width}px`,
+                height: `${result.height}px`,
+                transform: `translate3d(${resultZoomPan.x}px, ${resultZoomPan.y}px, 0)`,
+              }}
+            />
+          </div>
+        </div>
       )}
 
       {editing && source && (

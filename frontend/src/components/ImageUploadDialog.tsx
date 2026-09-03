@@ -133,6 +133,75 @@ function isTiff(name: string, type: string) {
   return ext === "tif" || ext === "tiff";
 }
 
+const RAW_IMAGE_EXTS = new Set([
+  "3fr",
+  "ari",
+  "arw",
+  "bay",
+  "cap",
+  "cr2",
+  "cr3",
+  "crw",
+  "dcr",
+  "dcs",
+  "dng",
+  "drf",
+  "eip",
+  "erf",
+  "fff",
+  "gpr",
+  "iiq",
+  "k25",
+  "kdc",
+  "mdc",
+  "mef",
+  "mos",
+  "mrw",
+  "nef",
+  "nrw",
+  "obm",
+  "orf",
+  "pef",
+  "ptx",
+  "pxn",
+  "raf",
+  "raw",
+  "rwl",
+  "rw2",
+  "rwz",
+  "sr2",
+  "srf",
+  "srw",
+  "x3f",
+]);
+
+const RAW_IMAGE_MIMES = new Set([
+  "image/x-adobe-dng",
+  "image/x-canon-cr2",
+  "image/x-canon-cr3",
+  "image/x-epson-erf",
+  "image/x-fuji-raf",
+  "image/x-kodak-dcr",
+  "image/x-kodak-k25",
+  "image/x-minolta-mrw",
+  "image/x-nikon-nef",
+  "image/x-olympus-orf",
+  "image/x-panasonic-rw2",
+  "image/x-pentax-pef",
+  "image/x-sony-arw",
+  "image/x-sony-sr2",
+  "image/x-sony-srf",
+  "image/x-sigma-x3f",
+  "image/dng",
+]);
+
+function isRawImage(name: string, type: string) {
+  const t = (type || "").toLowerCase();
+  if (RAW_IMAGE_MIMES.has(t)) return true;
+  const ext = (name.split(".").pop() || "").toLowerCase();
+  return RAW_IMAGE_EXTS.has(ext);
+}
+
 function parseSvgSize(svg: string): { w: number; h: number } | null {
   try {
     const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
@@ -184,12 +253,87 @@ function normalizeSvg(svg: string, targetW: number, targetH: number): string {
   }
 }
 
-async function readMeta(file: File): Promise<{
+type EditableImageMeta = {
   decodable: boolean;
   width?: number;
   height?: number;
   previewUrl?: string;
-}> {
+};
+
+type LibRawSettingsLike = {
+  outputColor?: number;
+  outputBps?: 8 | 16;
+  useCameraWb?: boolean;
+  useCameraMatrix?: number;
+  noAutoBright?: boolean;
+  highlight?: number;
+  userFlip?: number;
+};
+
+type LibRawMetadataLike = {
+  width?: number;
+  height?: number;
+  [key: string]: unknown;
+};
+
+type LibRawImageDataLike = {
+  width: number;
+  height: number;
+  colors: number;
+  bits: number;
+  data: Uint8Array | Uint8ClampedArray | Uint16Array;
+};
+
+type LibRawInstanceLike = {
+  open(bytes: BufferSource, settings?: LibRawSettingsLike): Promise<void>;
+  metadata(fullOutput?: boolean): Promise<LibRawMetadataLike | undefined>;
+  imageData(): Promise<LibRawImageDataLike | undefined>;
+  dispose?: () => void;
+};
+
+const RAW_DECODE_SETTINGS: LibRawSettingsLike = {
+  outputColor: 1,
+  outputBps: 16,
+  useCameraWb: true,
+  useCameraMatrix: 1,
+};
+
+const LIBRAW_BROWSER_MODULE_URL = "/vendor/libraw-wasm/index.js";
+
+async function createLibRawInstance(): Promise<LibRawInstanceLike> {
+  // Keep LibRaw's worker/WASM files out of Next/Webpack's chunk graph. The
+  // package is copied verbatim to public/vendor/libraw-wasm by the frontend
+  // prebuild/predev step so its relative worker/WASM URLs remain intact.
+  const moduleUrl = LIBRAW_BROWSER_MODULE_URL;
+  const mod = (await import(/* webpackIgnore: true */ moduleUrl)) as {
+    default: new () => LibRawInstanceLike;
+  };
+  return new mod.default();
+}
+
+async function readRawMeta(file: File): Promise<EditableImageMeta> {
+  let raw: LibRawInstanceLike | null = null;
+  try {
+    raw = await createLibRawInstance();
+    await raw.open(new Uint8Array(await file.arrayBuffer()));
+    const meta = await raw.metadata(false);
+    const width = Number(meta?.width || 0);
+    const height = Number(meta?.height || 0);
+    if (width > 0 && height > 0) {
+      return { decodable: false, width, height };
+    }
+    return { decodable: false };
+  } catch {
+    return { decodable: false };
+  } finally {
+    raw?.dispose?.();
+  }
+}
+
+async function readMeta(file: File): Promise<EditableImageMeta> {
+  if (isRawImage(file.name || "", file.type || "")) {
+    return readRawMeta(file);
+  }
   let objectUrl: string | undefined;
   try {
     objectUrl = URL.createObjectURL(file);
@@ -221,6 +365,12 @@ async function readMeta(file: File): Promise<{
     if (objectUrl) URL.revokeObjectURL(objectUrl);
     return { decodable: false };
   }
+}
+
+export async function probeEditableImage(file: File): Promise<EditableImageMeta> {
+  const meta = await readMeta(file);
+  if (meta.previewUrl) URL.revokeObjectURL(meta.previewUrl);
+  return { decodable: meta.decodable, width: meta.width, height: meta.height };
 }
 
 function computeScale(w: number, h: number): number {
@@ -1700,7 +1850,7 @@ type DecodedRgbaImage16 = {
   cleanup: () => void;
 };
 
-type DecodedImage = DecodedCanvasSourceImage | DecodedRgbaImage8 | DecodedRgbaImage16;
+export type DecodedImage = DecodedCanvasSourceImage | DecodedRgbaImage8 | DecodedRgbaImage16;
 
 type DrawableDecodedImage = {
   source: CanvasImageSource;
@@ -1708,6 +1858,90 @@ type DrawableDecodedImage = {
   height: number;
   cleanup: () => void;
 };
+
+function scaleSampleTo16(v: number, bits: number): number {
+  const b = Math.max(1, Math.min(16, Math.round(bits || 16)));
+  if (b >= 16) return Math.max(0, Math.min(65535, Math.round(v)));
+  const max = (1 << b) - 1;
+  return max > 0 ? Math.round((Math.max(0, v) / max) * 65535) : 0;
+}
+
+function scaleSampleTo8(v: number, bits: number): number {
+  const b = Math.max(1, Math.min(16, Math.round(bits || 8)));
+  if (b <= 8) {
+    const max = (1 << b) - 1;
+    return max > 0 ? Math.round((Math.max(0, v) / max) * 255) : 0;
+  }
+  return Math.round(Math.max(0, Math.min(65535, v)) / 257);
+}
+
+function libRawImageDataToDecoded(image: LibRawImageDataLike): DecodedRgbaImage8 | DecodedRgbaImage16 {
+  const width = Math.max(1, Math.round(image.width || 0));
+  const height = Math.max(1, Math.round(image.height || 0));
+  const colors = Math.max(1, Math.round(image.colors || 3));
+  const bits = Math.max(1, Math.round(image.bits || 8));
+  const count = width * height;
+  const src = image.data;
+
+  if (bits > 8 || src instanceof Uint16Array) {
+    const rgba = new Uint16Array(count * 4);
+    for (let i = 0; i < count; i++) {
+      const si = i * colors;
+      const r = Number(src[si] ?? 0);
+      const g = Number(src[si + (colors >= 2 ? 1 : 0)] ?? r);
+      const b = Number(src[si + (colors >= 3 ? 2 : colors >= 2 ? 1 : 0)] ?? g);
+      const di = i * 4;
+      rgba[di] = scaleSampleTo16(r, bits);
+      rgba[di + 1] = scaleSampleTo16(g, bits);
+      rgba[di + 2] = scaleSampleTo16(b, bits);
+      rgba[di + 3] = 65535;
+    }
+    return {
+      storage: "rgba",
+      bitDepth: 16,
+      width,
+      height,
+      data: rgba,
+      cleanup: () => {},
+    };
+  }
+
+  const rgba = new Uint8ClampedArray(count * 4);
+  for (let i = 0; i < count; i++) {
+    const si = i * colors;
+    const r = Number(src[si] ?? 0);
+    const g = Number(src[si + (colors >= 2 ? 1 : 0)] ?? r);
+    const b = Number(src[si + (colors >= 3 ? 2 : colors >= 2 ? 1 : 0)] ?? g);
+    const di = i * 4;
+    rgba[di] = scaleSampleTo8(r, bits);
+    rgba[di + 1] = scaleSampleTo8(g, bits);
+    rgba[di + 2] = scaleSampleTo8(b, bits);
+    rgba[di + 3] = 255;
+  }
+  return {
+    storage: "rgba",
+    bitDepth: 8,
+    width,
+    height,
+    data: rgba,
+    cleanup: () => {},
+  };
+}
+
+async function decodeRawImage(file: File): Promise<DecodedRgbaImage8 | DecodedRgbaImage16> {
+  let raw: LibRawInstanceLike | null = null;
+  try {
+    raw = await createLibRawInstance();
+    await raw.open(new Uint8Array(await file.arrayBuffer()), RAW_DECODE_SETTINGS);
+    const image = await raw.imageData();
+    if (!image || !image.width || !image.height || !image.data) {
+      throw new Error("RAW decode failed");
+    }
+    return libRawImageDataToDecoded(image);
+  } finally {
+    raw?.dispose?.();
+  }
+}
 
 function decodedImageToCanvasSource(decoded: DecodedImage): DrawableDecodedImage {
   if (decoded.storage === "canvas-source") {
@@ -1740,7 +1974,9 @@ function decodedImageToCanvasSource(decoded: DecodedImage): DrawableDecodedImage
       rgba8[i] = Math.round(decoded.data[i] / 257);
     }
   }
-  ctx.putImageData(new ImageData(rgba8, decoded.width, decoded.height), 0, 0);
+  const imageData = ctx.createImageData(decoded.width, decoded.height);
+  imageData.data.set(rgba8);
+  ctx.putImageData(imageData, 0, 0);
   return {
     source: canvas,
     width: decoded.width,
@@ -1756,6 +1992,10 @@ async function decodeImage(
   name?: string,
   type?: string,
 ): Promise<DecodedImage> {
+  if (isRawImage(name || "", type || "")) {
+    return decodeRawImage(file);
+  }
+
   if (isTiff(name || "", type || "")) {
     const UTIF: typeof import("utif") = await import("utif");
     const buf = await file.arrayBuffer();
@@ -1853,9 +2093,11 @@ export async function buildOptimizedVariant(
   type?: string,
   edit?: ImageEditParams,
   outputFormat: ImageEditOutputFormat = "image/webp",
+  decodedImage?: DecodedImage,
 ): Promise<{ blob: Blob; width: number; height: number }> {
   const params = normalizeEditParams(edit, srcW, srcH);
-  const decoded = await decodeImage(file, srcW, srcH, name, type);
+  const ownsDecodedImage = !decodedImage;
+  const decoded = decodedImage ?? await decodeImage(file, srcW, srcH, name, type);
   const drawable = decodedImageToCanvasSource(decoded);
   const { source, cleanup } = drawable;
   const w = drawable.width;
@@ -2025,7 +2267,7 @@ export async function buildOptimizedVariant(
     }
     return { blob, width: dw, height: dh };
   } finally {
-    cleanup();
+    if (ownsDecodedImage) cleanup();
   }
 }
 
@@ -2108,7 +2350,7 @@ type EditDialogProps = {
   initialParams: ImageEditParams;
   defaultParams?: ImageEditParams;
   onCancel: () => void;
-  onApply: (params: ImageEditParams) => void;
+  onApply: (params: ImageEditParams, decodedImage?: DecodedImage) => void;
 };
 
 type EditRect = { x: number; y: number; w: number; h: number };
@@ -2772,6 +3014,8 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
   const containerRef = useRef<HTMLDivElement>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
   const previewImageRef = useRef<CanvasImageSource | null>(null);
+  const decodedImageRef = useRef<DecodedImage | null>(null);
+  const transferredDecodedImageRef = useRef<DecodedImage | null>(null);
   const [containerSize, setContainerSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
   const [displayed, setDisplayed] = useState<EditRect>({ x: 0, y: 0, w: 0, h: 0 });
   const [cropRect, setCropRect] = useState<EditRect>({ x: 0, y: 0, w: 0, h: 0 });
@@ -2841,25 +3085,31 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
 
   useEffect(() => {
     let cancelled = false;
+    let decodedForEffect: DecodedImage | null = null;
     let cleanup: (() => void) | null = null;
     setImageReady(false);
     setNatural(null);
     previewImageRef.current = null;
+    decodedImageRef.current = null;
+    transferredDecodedImageRef.current = null;
 
     void (async () => {
       try {
         const decoded = await decodeImage(file, 0, 0, file.name, file.type);
+        decodedForEffect = decoded;
         if (cancelled) {
           decoded.cleanup();
           return;
         }
         const drawable = decodedImageToCanvasSource(decoded);
         cleanup = drawable.cleanup;
+        if (isRawImage(file.name, file.type)) decodedImageRef.current = decoded;
         previewImageRef.current = drawable.source;
         setNatural({ w: drawable.width, h: drawable.height });
         setImageReady(true);
       } catch {
         if (!cancelled) {
+          decodedImageRef.current = null;
           previewImageRef.current = null;
           setNatural(null);
           setImageReady(false);
@@ -2870,7 +3120,11 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     return () => {
       cancelled = true;
       previewImageRef.current = null;
-      cleanup?.();
+      decodedImageRef.current = null;
+      if (!decodedForEffect || transferredDecodedImageRef.current !== decodedForEffect) {
+        cleanup?.();
+      }
+      transferredDecodedImageRef.current = null;
     };
   }, [file]);
 
@@ -3810,7 +4064,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     const top = (cropRect.y - displayed.y) / displayed.h;
     const right = 1 - (cropRect.x + cropRect.w - displayed.x) / displayed.w;
     const bottom = 1 - (cropRect.y + cropRect.h - displayed.y) / displayed.h;
-    onApply({
+    const params: ImageEditParams = {
       crop: normalizeCrop({ left, top, right, bottom }),
       rotationDegrees: normalizeRotationDegrees(rotationDegrees),
       temperature: clampWhiteBalanceValue(temperature),
@@ -3823,7 +4077,10 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
       resizePercent: Math.min(100, Math.max(1, Math.round(resizePercent))),
       mosaicRegions: normalizeMosaicRegions(mosaicRegions),
       textOverlays: normalizeTextOverlays(textOverlays),
-    });
+    };
+    const decodedImage = decodedImageRef.current;
+    if (decodedImage) transferredDecodedImageRef.current = decodedImage;
+    onApply(params, decodedImage ?? undefined);
   }, [
     displayed.w,
     displayed.h,
@@ -4886,8 +5143,15 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
     };
   }, []);
 
-  const reprocessItem = useCallback(async (snapshot: SelectedItem, nextEdit: ImageEditParams) => {
-    if (!snapshot.width || !snapshot.height) return;
+  const reprocessItem = useCallback(async (
+    snapshot: SelectedItem,
+    nextEdit: ImageEditParams,
+    decodedImage?: DecodedImage,
+  ) => {
+    if (!snapshot.width || !snapshot.height) {
+      decodedImage?.cleanup();
+      return;
+    }
     const token = (optimizeJobs.current.get(snapshot.id) || 0) + 1;
     optimizeJobs.current.set(snapshot.id, token);
     setItems((prev) =>
@@ -4912,6 +5176,8 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
         snapshot.name,
         snapshot.type,
         nextEdit,
+        "image/webp",
+        decodedImage,
       );
       if (optimizeJobs.current.get(snapshot.id) !== token) return;
       const processedPreviewUrl = URL.createObjectURL(out.blob);
@@ -4959,6 +5225,8 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
             : x,
         ),
       );
+    } finally {
+      decodedImage?.cleanup();
     }
   }, []);
 
@@ -5101,9 +5369,9 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
           file={editingItem.file}
           initialParams={normalizeEditParams(editingItem.edit, editingItem.width, editingItem.height)}
           onCancel={() => setEditingItemId(null)}
-          onApply={(params) => {
+          onApply={(params, decodedImage) => {
             setEditingItemId(null);
-            void reprocessItem(editingItem, params);
+            void reprocessItem(editingItem, params, decodedImage);
           }}
         />
       )}
