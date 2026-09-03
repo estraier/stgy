@@ -1216,18 +1216,28 @@ function textOverlayFontFamily(fontIndex: number): string {
   return TEXT_OVERLAY_FONTS[normalizeTextFontIndex(fontIndex)].family;
 }
 
+function textOverlayFontWeight(fontIndex: number): number {
+  return TEXT_OVERLAY_FONTS[normalizeTextFontIndex(fontIndex)].weight;
+}
+
+function textOverlayCanvasFont(fontIndex: number, fontSize: number): string {
+  return `${textOverlayFontWeight(fontIndex)} ${Math.max(1, fontSize)}px ${textOverlayFontFamily(fontIndex)}`;
+}
+
 function textOverlayFontLoadDescriptor(fontIndex: number, fontSize = 16): string {
-  return `${Math.max(1, fontSize)}px ${TEXT_OVERLAY_FONTS[normalizeTextFontIndex(fontIndex)].loadFamily}`;
+  return `${textOverlayFontWeight(fontIndex)} ${Math.max(1, fontSize)}px ${TEXT_OVERLAY_FONTS[normalizeTextFontIndex(fontIndex)].loadFamily}`;
 }
 
 function measureTextOverlayLayout(text: string, fontSize: number, fontIndex: number): Pick<TextOverlayLayout, "width" | "height" | "lineHeight"> {
   const size = Math.max(1, fontSize);
   const lineHeight = Math.max(1, size * TEXT_OVERLAY_LINE_HEIGHT);
+  const paddingX = size * TEXT_OVERLAY_TEXT_INSET_X_EM;
+  const paddingY = size * TEXT_OVERLAY_TEXT_INSET_Y_EM;
   const lines = text.split("\n");
   const ctx = getTextMeasureContext();
   let maxWidth = size;
   if (ctx) {
-    ctx.font = `${size}px ${textOverlayFontFamily(fontIndex)}`;
+    ctx.font = textOverlayCanvasFont(fontIndex, size);
     maxWidth = Math.max(
       size,
       ...lines.map((line) => ctx.measureText(line.length > 0 ? line : "　").width),
@@ -1236,14 +1246,23 @@ function measureTextOverlayLayout(text: string, fontSize: number, fontIndex: num
   return {
     width: Math.max(
       TEXT_OVERLAY_MIN_BOX_WIDTH,
-      size + TEXT_OVERLAY_BOX_PADDING_X * 2 + 2,
-      Math.ceil(maxWidth + TEXT_OVERLAY_BOX_PADDING_X * 2 + 2),
+      size + paddingX * 2,
+      Math.ceil(maxWidth + paddingX * 2),
     ),
     height: Math.max(
-      lineHeight + TEXT_OVERLAY_BOX_PADDING_Y * 2,
-      Math.ceil(lines.length * lineHeight + TEXT_OVERLAY_BOX_PADDING_Y * 2),
+      lineHeight + paddingY * 2,
+      Math.ceil(lines.length * lineHeight + paddingY * 2),
     ),
     lineHeight,
+  };
+}
+
+function textOverlayRenderOffset(fontSize: number): { x: number; y: number } {
+  // Editing, committed preview, and baked canvas all use the same font-relative text
+  // inset. Avoid fixed CSS-pixel padding here: it cannot stay aligned across font sizes.
+  return {
+    x: fontSize * TEXT_OVERLAY_TEXT_INSET_X_EM,
+    y: fontSize * TEXT_OVERLAY_TEXT_INSET_Y_EM,
   };
 }
 
@@ -1389,9 +1408,10 @@ function drawTextOverlaysToContext(
     );
     const fontSize = Math.max(1, overlay.fontSize * scaleX);
     const lineHeight = Math.max(1, fontSize * TEXT_OVERLAY_LINE_HEIGHT);
-    const x = (point.x - cropX) * scaleX;
-    const y = (point.y - cropY) * scaleY;
-    ctx.font = `${fontSize}px ${textOverlayFontFamily(overlay.fontIndex)}`;
+    const renderOffset = textOverlayRenderOffset(fontSize);
+    const x = (point.x - cropX) * scaleX + renderOffset.x;
+    const y = (point.y - cropY) * scaleY + renderOffset.y;
+    ctx.font = textOverlayCanvasFont(overlay.fontIndex, fontSize);
     const fillColor = TEXT_OVERLAY_COLORS[normalizeTextColorIndex(overlay.colorIndex)];
     ctx.fillStyle = fillColor;
     const outlineColor = normalizeOptionalTextColorIndex(overlay.outlineColorIndex);
@@ -1941,14 +1961,15 @@ const EDIT_PREVIEW_MARGIN_PX = 8;
 const TEXT_OVERLAY_DEFAULT_FONT_SIZE_RATIO = 0.05;
 const TEXT_OVERLAY_FONT_STEP = Math.pow(2, 1 / 8);
 const TEXT_OVERLAY_FONTS = [
-  { name: "Noto Sans JP", family: '"Noto Sans JP", sans-serif', loadFamily: '"Noto Sans JP"' },
-  { name: "Noto Serif JP", family: '"Noto Serif JP", serif', loadFamily: '"Noto Serif JP"' },
-  { name: "Klee One", family: '"Klee One", serif', loadFamily: '"Klee One"' },
-  { name: "Dela Gothic One", family: '"Dela Gothic One", sans-serif', loadFamily: '"Dela Gothic One"' },
+  { name: "Noto Sans JP", family: '"Noto Sans JP", sans-serif', loadFamily: '"Noto Sans JP"', weight: 400 },
+  { name: "Noto Serif JP", family: '"Noto Serif JP", serif', loadFamily: '"Noto Serif JP"', weight: 400 },
+  { name: "Klee One", family: '"Klee One", serif', loadFamily: '"Klee One"', weight: 400 },
+  { name: "Dela Gothic One", family: '"Dela Gothic One", sans-serif', loadFamily: '"Dela Gothic One"', weight: 400 },
+  { name: "Zen Old Mincho Black", family: '"Zen Old Mincho", serif', loadFamily: '"Zen Old Mincho"', weight: 900 },
 ] as const;
 const TEXT_OVERLAY_LINE_HEIGHT = 1.2;
-const TEXT_OVERLAY_BOX_PADDING_X = 6;
-const TEXT_OVERLAY_BOX_PADDING_Y = 4;
+const TEXT_OVERLAY_TEXT_INSET_X_EM = 0.09;
+const TEXT_OVERLAY_TEXT_INSET_Y_EM = 0.06;
 const TEXT_OVERLAY_CONTROL_BUTTON_SIZE = 20;
 const TEXT_OVERLAY_CONTROL_GAP = 4;
 const TEXT_OVERLAY_DELETE_BUTTON_SIZE = 20;
@@ -3865,15 +3886,19 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                               wrap="off"
                               onChange={(e) => updateTextOverlay(layout.id, (current) => ({ ...current, text: e.target.value }))}
                               onBlur={() => onTextOverlayBlur(layout.id)}
-                              className="block resize-none overflow-hidden rounded border border-black/40 bg-white/55 px-[6px] py-[4px] outline-none"
+                              className="block resize-none appearance-none overflow-hidden rounded border-0 bg-white/55 outline-none"
                               style={{
                                 width: layout.width,
                                 height: layout.height,
+                                boxSizing: "border-box",
+                                padding: `${TEXT_OVERLAY_TEXT_INSET_Y_EM}em ${TEXT_OVERLAY_TEXT_INSET_X_EM}em`,
+                                boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.4)",
                                 color: TEXT_OVERLAY_COLORS[layout.colorIndex],
                                 WebkitTextFillColor: TEXT_OVERLAY_COLORS[layout.colorIndex],
                                 fontSize: layout.fontSize,
                                 lineHeight: `${TEXT_OVERLAY_LINE_HEIGHT}`,
                                 fontFamily: textOverlayFontFamily(layout.fontIndex),
+                                fontWeight: textOverlayFontWeight(layout.fontIndex),
                                 whiteSpace: "pre",
                                 overflowWrap: "normal",
                                 wordBreak: "normal",
@@ -3982,7 +4007,10 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                                   <span
                                     aria-hidden="true"
                                     className="text-[11px] leading-none"
-                                    style={{ fontFamily: textOverlayFontFamily(layout.fontIndex) }}
+                                    style={{
+                                      fontFamily: textOverlayFontFamily(layout.fontIndex),
+                                      fontWeight: textOverlayFontWeight(layout.fontIndex),
+                                    }}
                                   >
                                     あ
                                   </span>
@@ -4006,11 +4034,16 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                           <div
                             className={textMode ? "cursor-text" : ""}
                             style={{
+                              width: layout.width,
+                              height: layout.height,
+                              boxSizing: "border-box",
+                              padding: `${TEXT_OVERLAY_TEXT_INSET_Y_EM}em ${TEXT_OVERLAY_TEXT_INSET_X_EM}em`,
                               color: TEXT_OVERLAY_COLORS[layout.colorIndex],
                               WebkitTextFillColor: TEXT_OVERLAY_COLORS[layout.colorIndex],
                               fontSize: layout.fontSize,
                               lineHeight: `${TEXT_OVERLAY_LINE_HEIGHT}`,
                               fontFamily: textOverlayFontFamily(layout.fontIndex),
+                              fontWeight: textOverlayFontWeight(layout.fontIndex),
                               whiteSpace: "pre",
                               ...textOverlayOutlineStyle(layout.fontSize, layout.outlineColorIndex),
                             }}
