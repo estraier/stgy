@@ -285,6 +285,11 @@ export default function ImageEditSandbox() {
     }
   }, []);
 
+  const onEditError = useCallback((message: string) => {
+    setEditing(false);
+    setError(message || "Failed to load image preview.");
+  }, []);
+
   const onApply = useCallback(async (params: ImageEditParams, decodedImage?: DecodedImage) => {
     if (!source) {
       decodedImage?.cleanup();
@@ -430,7 +435,8 @@ export default function ImageEditSandbox() {
           initialParams={source.edit}
           defaultParams={sandboxDefaultEditParams}
           onCancel={() => setEditing(false)}
-          onApply={(params) => void onApply(params)}
+          onError={onEditError}
+          onApply={(params, decodedImage) => void onApply(params, decodedImage)}
         />
       )}
     </main>

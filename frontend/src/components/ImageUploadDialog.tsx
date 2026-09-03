@@ -285,6 +285,7 @@ type LibRawImageDataLike = {
 };
 
 type LibRawInstanceLike = {
+  worker?: Worker;
   open(bytes: BufferSource, settings?: LibRawSettingsLike): Promise<void>;
   metadata(fullOutput?: boolean): Promise<LibRawMetadataLike | undefined>;
   imageData(): Promise<LibRawImageDataLike | undefined>;
@@ -296,14 +297,15 @@ const RAW_DECODE_SETTINGS: LibRawSettingsLike = {
   outputBps: 16,
   useCameraWb: true,
   useCameraMatrix: 1,
+  noAutoBright: true,
 };
 
 const LIBRAW_BROWSER_MODULE_URL = "/vendor/libraw-wasm/index.js";
 
 async function createLibRawInstance(): Promise<LibRawInstanceLike> {
-  // Keep LibRaw's worker/WASM files out of Next/Webpack's chunk graph. The
-  // package is copied verbatim to public/vendor/libraw-wasm by the frontend
-  // prebuild/predev step so its relative worker/WASM URLs remain intact.
+  // Keep LibRaw's worker/WASM files out of Next/Webpack's chunk graph. STGY
+  // builds the LibRaw-Wasm 1.6.0 runtime without pthread/OpenMP and publishes
+  // those files under public/vendor/libraw-wasm before dev/build starts.
   const moduleUrl = LIBRAW_BROWSER_MODULE_URL;
   const mod = (await import(/* webpackIgnore: true */ moduleUrl)) as {
     default: new () => LibRawInstanceLike;
@@ -1928,18 +1930,52 @@ function libRawImageDataToDecoded(image: LibRawImageDataLike): DecodedRgbaImage8
   };
 }
 
+function createLibRawWorkerFailure(raw: LibRawInstanceLike): {
+  promise: Promise<never>;
+  cleanup: () => void;
+} {
+  const worker = raw.worker;
+  if (!worker) {
+    return { promise: new Promise<never>(() => {}), cleanup: () => {} };
+  }
+
+  let onError: ((event: ErrorEvent) => void) | null = null;
+  let onMessageError: (() => void) | null = null;
+  const promise = new Promise<never>((_, reject) => {
+    onError = (event) => reject(new Error(event.message || "RAW decoder failed"));
+    onMessageError = () => reject(new Error("RAW decoder worker communication failed"));
+    worker.addEventListener("error", onError);
+    worker.addEventListener("messageerror", onMessageError);
+  });
+
+  return {
+    promise,
+    cleanup: () => {
+      if (onError) worker.removeEventListener("error", onError);
+      if (onMessageError) worker.removeEventListener("messageerror", onMessageError);
+    },
+  };
+}
+
 async function decodeRawImage(file: File): Promise<DecodedRgbaImage8 | DecodedRgbaImage16> {
   let raw: LibRawInstanceLike | null = null;
+  let workerFailure: ReturnType<typeof createLibRawWorkerFailure> | null = null;
   try {
     raw = await createLibRawInstance();
-    await raw.open(new Uint8Array(await file.arrayBuffer()), RAW_DECODE_SETTINGS);
-    const image = await raw.imageData();
+    workerFailure = createLibRawWorkerFailure(raw);
+    await Promise.race([
+      raw.open(new Uint8Array(await file.arrayBuffer()), RAW_DECODE_SETTINGS),
+      workerFailure.promise,
+    ]);
+    const image = await Promise.race([raw.imageData(), workerFailure.promise]);
     if (!image || !image.width || !image.height || !image.data) {
       throw new Error("RAW decode failed");
     }
     return libRawImageDataToDecoded(image);
   } finally {
-    raw?.dispose?.();
+    workerFailure?.cleanup();
+    if (raw?.dispose) raw.dispose();
+    else raw?.worker?.terminate();
   }
 }
 
@@ -2351,6 +2387,7 @@ type EditDialogProps = {
   defaultParams?: ImageEditParams;
   onCancel: () => void;
   onApply: (params: ImageEditParams, decodedImage?: DecodedImage) => void;
+  onError?: (message: string) => void;
 };
 
 type EditRect = { x: number; y: number; w: number; h: number };
@@ -3007,7 +3044,14 @@ function histogramPath(values: number[], maxCount: number, width: number, height
     .join(" ");
 }
 
-export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, onApply }: EditDialogProps) {
+export function ImageEditDialog({
+  file,
+  initialParams,
+  defaultParams,
+  onCancel,
+  onApply,
+  onError,
+}: EditDialogProps) {
   const [mounted, setMounted] = useState(false);
   const [imageReady, setImageReady] = useState(false);
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
@@ -3016,6 +3060,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
   const previewImageRef = useRef<CanvasImageSource | null>(null);
   const decodedImageRef = useRef<DecodedImage | null>(null);
   const transferredDecodedImageRef = useRef<DecodedImage | null>(null);
+  const onErrorRef = useRef(onError);
   const [containerSize, setContainerSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
   const [displayed, setDisplayed] = useState<EditRect>({ x: 0, y: 0, w: 0, h: 0 });
   const [cropRect, setCropRect] = useState<EditRect>({ x: 0, y: 0, w: 0, h: 0 });
@@ -3084,6 +3129,10 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
   useEffect(() => setMounted(true), []);
 
   useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
+
+  useEffect(() => {
     let cancelled = false;
     let decodedForEffect: DecodedImage | null = null;
     let cleanup: (() => void) | null = null;
@@ -3107,12 +3156,13 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
         previewImageRef.current = drawable.source;
         setNatural({ w: drawable.width, h: drawable.height });
         setImageReady(true);
-      } catch {
+      } catch (error) {
         if (!cancelled) {
           decodedImageRef.current = null;
           previewImageRef.current = null;
           setNatural(null);
           setImageReady(false);
+          onErrorRef.current?.(error instanceof Error ? error.message : String(error));
         }
       }
     })();
@@ -5369,6 +5419,14 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
           file={editingItem.file}
           initialParams={normalizeEditParams(editingItem.edit, editingItem.width, editingItem.height)}
           onCancel={() => setEditingItemId(null)}
+          onError={(message) => {
+            setEditingItemId(null);
+            setItems((prev) =>
+              prev.map((x) =>
+                x.id === editingItem.id ? { ...x, status: "error", error: message } : x,
+              ),
+            );
+          }}
           onApply={(params, decodedImage) => {
             setEditingItemId(null);
             void reprocessItem(editingItem, params, decodedImage);

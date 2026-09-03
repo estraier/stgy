@@ -42,3 +42,6 @@ next-env.d.ts
 
 # generated export viewer bundle
 /public/export-assets/
+
+# generated LibRaw-Wasm runtime
+/public/vendor/libraw-wasm/

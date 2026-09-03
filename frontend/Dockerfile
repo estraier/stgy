@@ -1,3 +1,13 @@
+FROM emscripten/emsdk:5.0.7 AS libraw-builder
+USER root
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends autoconf automake libtool pkg-config git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app/frontend
+COPY frontend/scripts/build-libraw-wasm.sh ./scripts/build-libraw-wasm.sh
+RUN chmod +x ./scripts/build-libraw-wasm.sh \
+    && ./scripts/build-libraw-wasm.sh /app/libraw-cache
+
 FROM node:24-alpine AS builder
 WORKDIR /app
 COPY package.json package-lock.json .npmrc ./
@@ -8,6 +18,7 @@ COPY packages/geocoder/package.json packages/geocoder/package.json
 RUN npm config set registry https://registry.npmjs.org/
 RUN npm ci --workspaces --include-workspace-root
 COPY frontend ./frontend
+COPY --from=libraw-builder /app/libraw-cache ./frontend/.cache/libraw-wasm-stgy-1.6.0
 COPY packages/markdown ./packages/markdown
 COPY packages/track ./packages/track
 COPY packages/geocoder ./packages/geocoder

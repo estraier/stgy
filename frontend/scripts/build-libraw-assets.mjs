@@ -1,23 +1,19 @@
-import { cp, mkdir, readFile, rm } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { cp, mkdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
-const LIBRAW_VERSION = "1.1.2";
-const require = createRequire(import.meta.url);
+const LIBRAW_WASM_VERSION = "1.6.0";
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const frontendDir = dirname(scriptDir);
-const entryPath = require.resolve("libraw-wasm");
-const packageJsonPath = require.resolve("libraw-wasm/package.json");
-const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8"));
-if (packageJson.version !== LIBRAW_VERSION) {
-  throw new Error(
-    `libraw-wasm ${LIBRAW_VERSION} is required, but ${packageJson.version || "unknown"} is installed.`,
-  );
-}
-
-const sourceDir = dirname(entryPath);
+const cacheDir = join(frontendDir, ".cache", `libraw-wasm-stgy-${LIBRAW_WASM_VERSION}`);
+const sourceDir = join(cacheDir, "dist");
 const destinationDir = join(frontendDir, "public", "vendor", "libraw-wasm");
+
+execFileSync(process.execPath, [join(scriptDir, "build-libraw-wasm.mjs")], {
+  cwd: frontendDir,
+  stdio: "inherit",
+});
 
 await rm(destinationDir, { recursive: true, force: true });
 await mkdir(dirname(destinationDir), { recursive: true });
