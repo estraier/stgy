@@ -263,9 +263,11 @@ type EditableImageMeta = {
 type LibRawSettingsLike = {
   outputColor?: number;
   outputBps?: 8 | 16;
+  gamm?: [number, number, number, number, number, number];
   useCameraWb?: boolean;
   useCameraMatrix?: number;
   noAutoBright?: boolean;
+  adjustMaximumThr?: number;
   highlight?: number;
   userFlip?: number;
 };
@@ -295,10 +297,17 @@ type LibRawInstanceLike = {
 const RAW_DECODE_SETTINGS: LibRawSettingsLike = {
   outputColor: 1,
   outputBps: 16,
+  gamm: [1, 1, 0, 0, 0, 0],
   useCameraWb: true,
   useCameraMatrix: 1,
   noAutoBright: true,
+  adjustMaximumThr: 0,
 };
+
+const RAW_BASELINE_PERCENTILE = 98;
+const RAW_BASELINE_TARGET = 0.9;
+const RAW_BASELINE_ROLLOFF_PERCENTILE = 99.8;
+const RAW_BASELINE_ROLLOFF_ASYMPTOTIC = 0.7;
 
 const LIBRAW_BROWSER_MODULE_URL = "/vendor/libraw-wasm/index.js";
 
@@ -1877,6 +1886,85 @@ function scaleSampleTo8(v: number, bits: number): number {
   return Math.round(Math.max(0, Math.min(65535, v)) / 257);
 }
 
+function histogramPercentile16(
+  histogram: Uint32Array,
+  sampleCount: number,
+  percentile: number,
+): number {
+  if (sampleCount <= 0) return 0;
+  const rank = (sampleCount - 1) * Math.min(100, Math.max(0, percentile)) / 100;
+  const lowerRank = Math.floor(rank);
+  const upperRank = Math.ceil(rank);
+  const fraction = rank - lowerRank;
+  let cumulative = 0;
+  let lowerLevel = histogram.length - 1;
+  let upperLevel = histogram.length - 1;
+  let lowerFound = false;
+  for (let level = 0; level < histogram.length; level++) {
+    cumulative += histogram[level];
+    if (!lowerFound && cumulative > lowerRank) {
+      lowerLevel = level;
+      lowerFound = true;
+    }
+    if (cumulative > upperRank) {
+      upperLevel = level;
+      break;
+    }
+  }
+  return lowerLevel + (upperLevel - lowerLevel) * fraction;
+}
+
+function applyRawBaselineExposure(decoded: DecodedRgbaImage16): void {
+  const data = decoded.data;
+  const rmsHistogram = new Uint32Array(65536);
+  const channelHistogram = new Uint32Array(65536);
+  const pixelCount = decoded.width * decoded.height;
+  if (pixelCount <= 0) return;
+
+  for (let i = 0; i < data.length; i += 4) {
+    const r16 = data[i];
+    const g16 = data[i + 1];
+    const b16 = data[i + 2];
+    const r = r16 / 65535;
+    const g = g16 / 65535;
+    const b = b16 / 65535;
+    const rms = Math.sqrt((r * r + g * g + b * b) / 3);
+    const rmsLevel = Math.min(65535, Math.max(0, Math.round(rms * 65535)));
+    rmsHistogram[rmsLevel]++;
+    channelHistogram[r16]++;
+    channelHistogram[g16]++;
+    channelHistogram[b16]++;
+  }
+
+  const p98 = histogramPercentile16(
+    rmsHistogram,
+    pixelCount,
+    RAW_BASELINE_PERCENTILE,
+  ) / 65535;
+  if (!(p98 > 0)) return;
+
+  const factor = RAW_BASELINE_TARGET / p98;
+  const channelMax = histogramPercentile16(
+    channelHistogram,
+    pixelCount * 3,
+    RAW_BASELINE_ROLLOFF_PERCENTILE,
+  ) / 65535 * factor;
+  const rolloff = rolloffParams(
+    channelMax,
+    RAW_BASELINE_ROLLOFF_ASYMPTOTIC,
+    4,
+  );
+
+  for (let i = 0; i < data.length; i += 4) {
+    const r = applyRolloffScalar(data[i] / 65535 * factor, rolloff);
+    const g = applyRolloffScalar(data[i + 1] / 65535 * factor, rolloff);
+    const b = applyRolloffScalar(data[i + 2] / 65535 * factor, rolloff);
+    data[i] = Math.round(clamp01(r) * 65535);
+    data[i + 1] = Math.round(clamp01(g) * 65535);
+    data[i + 2] = Math.round(clamp01(b) * 65535);
+  }
+}
+
 function libRawImageDataToDecoded(image: LibRawImageDataLike): DecodedRgbaImage8 | DecodedRgbaImage16 {
   const width = Math.max(1, Math.round(image.width || 0));
   const height = Math.max(1, Math.round(image.height || 0));
@@ -1971,7 +2059,11 @@ async function decodeRawImage(file: File): Promise<DecodedRgbaImage8 | DecodedRg
     if (!image || !image.width || !image.height || !image.data) {
       throw new Error("RAW decode failed");
     }
-    return libRawImageDataToDecoded(image);
+    const decoded = libRawImageDataToDecoded(image);
+    if (decoded.bitDepth === 16) {
+      applyRawBaselineExposure(decoded);
+    }
+    return decoded;
   } finally {
     workerFailure?.cleanup();
     if (raw?.dispose) raw.dispose();
@@ -3106,6 +3198,8 @@ export function ImageEditDialog({
   const [histogramGeometryDragging, setHistogramGeometryDragging] = useState(false);
   const [eyedropperMode, setEyedropperMode] = useState(false);
   const [autoToneBusy, setAutoToneBusy] = useState(false);
+  const [applyBusy, setApplyBusy] = useState(false);
+  const applyPendingRef = useRef(false);
   const activeTextBoxRef = useRef<HTMLDivElement | null>(null);
   const textMoveState = useRef<
     | null
@@ -4109,7 +4203,7 @@ export function ImageEditDialog({
   }, [natural, displayed, cropRect, resizePercent]);
 
   const onSubmit = useCallback(() => {
-    if (!displayed.w || !displayed.h) return;
+    if (!displayed.w || !displayed.h || applyPendingRef.current) return;
     const left = (cropRect.x - displayed.x) / displayed.w;
     const top = (cropRect.y - displayed.y) / displayed.h;
     const right = 1 - (cropRect.x + cropRect.w - displayed.x) / displayed.w;
@@ -4128,9 +4222,15 @@ export function ImageEditDialog({
       mosaicRegions: normalizeMosaicRegions(mosaicRegions),
       textOverlays: normalizeTextOverlays(textOverlays),
     };
-    const decodedImage = decodedImageRef.current;
-    if (decodedImage) transferredDecodedImageRef.current = decodedImage;
-    onApply(params, decodedImage ?? undefined);
+    applyPendingRef.current = true;
+    setApplyBusy(true);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const decodedImage = decodedImageRef.current;
+        if (decodedImage) transferredDecodedImageRef.current = decodedImage;
+        onApply(params, decodedImage ?? undefined);
+      });
+    });
   }, [
     displayed.w,
     displayed.h,
@@ -4321,7 +4421,7 @@ export function ImageEditDialog({
                       height: displayed.h,
                     }}
                   />
-                  {autoToneBusy && (
+                  {(autoToneBusy || applyBusy) && (
                     <div className="absolute inset-0 z-40 flex items-center justify-center pointer-events-none">
                       <div className="h-10 w-10 rounded-full border-4 border-white/40 border-t-white animate-spin shadow-[0_0_0_1px_rgba(0,0,0,0.25)]" />
                     </div>
@@ -4986,10 +5086,18 @@ export function ImageEditDialog({
               Output ({outputDimensions ? `${outputDimensions.w}x${outputDimensions.h}, ${(outputDimensions.w * outputDimensions.h / 1_000_000).toFixed(1)}MP` : "—"})
             </span>
           </div>
-          <button className="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-100" onClick={onCancel}>
+          <button
+            className="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-100 disabled:opacity-50"
+            onClick={onCancel}
+            disabled={applyBusy}
+          >
             Cancel
           </button>
-          <button className="px-3 py-1 rounded border border-blue-700 bg-blue-600 text-white hover:bg-blue-700" onClick={onSubmit}>
+          <button
+            className="px-3 py-1 rounded border border-blue-700 bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+            onClick={onSubmit}
+            disabled={applyBusy}
+          >
             Edit
           </button>
         </div>
