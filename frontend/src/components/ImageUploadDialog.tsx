@@ -76,6 +76,7 @@ export type ImageTextOverlay = {
   top: number;
   text: string;
   fontSize: number;
+  fontIndex: number;
   colorIndex: number;
   outlineColorIndex: number | null;
 };
@@ -308,6 +309,13 @@ function normalizeOptionalTextColorIndex(value: number | null | undefined): numb
   return normalizeTextColorIndex(value);
 }
 
+function normalizeTextFontIndex(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  const rounded = Math.round(value);
+  const mod = rounded % TEXT_OVERLAY_FONTS.length;
+  return mod >= 0 ? mod : mod + TEXT_OVERLAY_FONTS.length;
+}
+
 function normalizeTextOverlay(overlay: Partial<ImageTextOverlay>): ImageTextOverlay {
   return {
     id: typeof overlay.id === "string" && overlay.id ? overlay.id : makeOverlayId("text"),
@@ -315,6 +323,7 @@ function normalizeTextOverlay(overlay: Partial<ImageTextOverlay>): ImageTextOver
     top: clamp01(overlay.top ?? 0),
     text: typeof overlay.text === "string" ? overlay.text : "",
     fontSize: Math.max(1, Math.round(Number.isFinite(overlay.fontSize) ? overlay.fontSize ?? 1 : 1)),
+    fontIndex: normalizeTextFontIndex(overlay.fontIndex ?? 0),
     colorIndex: normalizeTextColorIndex(overlay.colorIndex ?? 0),
     outlineColorIndex: normalizeOptionalTextColorIndex(overlay.outlineColorIndex),
   };
@@ -1203,14 +1212,22 @@ function getTextMeasureContext(): CanvasRenderingContext2D | null {
   return textMeasureContext;
 }
 
-function measureTextOverlayLayout(text: string, fontSize: number): Pick<TextOverlayLayout, "width" | "height" | "lineHeight"> {
+function textOverlayFontFamily(fontIndex: number): string {
+  return TEXT_OVERLAY_FONTS[normalizeTextFontIndex(fontIndex)].family;
+}
+
+function textOverlayFontLoadDescriptor(fontIndex: number, fontSize = 16): string {
+  return `${Math.max(1, fontSize)}px ${TEXT_OVERLAY_FONTS[normalizeTextFontIndex(fontIndex)].loadFamily}`;
+}
+
+function measureTextOverlayLayout(text: string, fontSize: number, fontIndex: number): Pick<TextOverlayLayout, "width" | "height" | "lineHeight"> {
   const size = Math.max(1, fontSize);
   const lineHeight = Math.max(1, size * TEXT_OVERLAY_LINE_HEIGHT);
   const lines = text.split("\n");
   const ctx = getTextMeasureContext();
   let maxWidth = size;
   if (ctx) {
-    ctx.font = `${size}px ${TEXT_OVERLAY_FONT_FAMILY}`;
+    ctx.font = `${size}px ${textOverlayFontFamily(fontIndex)}`;
     maxWidth = Math.max(
       size,
       ...lines.map((line) => ctx.measureText(line.length > 0 ? line : "　").width),
@@ -1232,6 +1249,19 @@ function measureTextOverlayLayout(text: string, fontSize: number): Pick<TextOver
 
 function textOverlayOutlineRadius(fontSize: number): number {
   return Math.max(1.5, fontSize * 0.015);
+}
+
+const TEXT_OVERLAY_OUTLINE_OPACITY = 0.8;
+const TEXT_OVERLAY_PREVIEW_SHADOW_OPACITY = 0.28;
+
+function hexColorWithAlpha(color: string, alpha: number): string {
+  const match = /^#([0-9a-f]{6})$/i.exec(color);
+  if (!match) return color;
+  const value = Number.parseInt(match[1], 16);
+  const r = (value >> 16) & 0xff;
+  const g = (value >> 8) & 0xff;
+  const b = value & 0xff;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 const textOverlayOutlineOffsetsCache = new Map<number, Array<[number, number]>>();
@@ -1263,7 +1293,12 @@ function textOverlayOutlineOffsets(fontSize: number): Array<[number, number]> {
 
 function textOverlayOutlineStyle(fontSize: number, outlineColorIndex: number | null): React.CSSProperties {
   if (outlineColorIndex == null) return {};
-  const color = TEXT_OVERLAY_COLORS[normalizeTextColorIndex(outlineColorIndex)];
+  // text-shadow copies overlap, so each preview copy uses a lower alpha. The final
+  // image composites the already-unioned outline mask once at exactly 0.8 opacity.
+  const color = hexColorWithAlpha(
+    TEXT_OVERLAY_COLORS[normalizeTextColorIndex(outlineColorIndex)],
+    TEXT_OVERLAY_PREVIEW_SHADOW_OPACITY,
+  );
   const shadows = textOverlayOutlineOffsets(fontSize).map(
     ([dx, dy]) => `${dx.toFixed(2)}px ${dy.toFixed(2)}px 0 ${color}`,
   );
@@ -1277,18 +1312,51 @@ function nextOutlineColorIndex(value: number | null): number | null {
   return value + 1 >= TEXT_OVERLAY_COLORS.length ? null : value + 1;
 }
 
-async function ensureTextOverlayFontReady(): Promise<void> {
+async function ensureTextOverlayFontReady(fontIndex: number, text = "あ"): Promise<void> {
   if (typeof document === "undefined") return;
   const doc = document as Document & {
     fonts?: {
       load?: (font: string) => Promise<unknown>;
+      check?: (font: string, text?: string) => boolean;
       ready?: Promise<unknown>;
     };
   };
+  const descriptor = textOverlayFontLoadDescriptor(fontIndex);
+  const sample = text.length > 0 ? text : "あ";
   try {
     await doc.fonts?.ready;
-    await doc.fonts?.load?.(`16px ${TEXT_OVERLAY_FONT_FAMILY}`);
+    if (doc.fonts?.check?.(descriptor, sample)) return;
+    await doc.fonts?.load?.(descriptor, sample);
   } catch {}
+}
+
+function isTextOverlayFontReady(fontIndex: number, text = "あ"): boolean {
+  if (typeof document === "undefined") return true;
+  const fonts = (document as Document & {
+    fonts?: { check?: (font: string, text?: string) => boolean };
+  }).fonts;
+  if (!fonts?.check) return true;
+  try {
+    return fonts.check(
+      textOverlayFontLoadDescriptor(fontIndex),
+      text.length > 0 ? text : "あ",
+    );
+  } catch {
+    return true;
+  }
+}
+
+async function ensureTextOverlayFontsReady(overlays: ImageTextOverlay[]): Promise<void> {
+  const byFont = new Map<number, string[]>();
+  for (const overlay of overlays) {
+    const fontIndex = normalizeTextFontIndex(overlay.fontIndex);
+    const texts = byFont.get(fontIndex) ?? [];
+    texts.push(overlay.text);
+    byFont.set(fontIndex, texts);
+  }
+  await Promise.all(
+    Array.from(byFont, ([fontIndex, texts]) => ensureTextOverlayFontReady(fontIndex, texts.join("\n"))),
+  );
 }
 
 function drawTextOverlaysToContext(
@@ -1323,19 +1391,42 @@ function drawTextOverlaysToContext(
     const lineHeight = Math.max(1, fontSize * TEXT_OVERLAY_LINE_HEIGHT);
     const x = (point.x - cropX) * scaleX;
     const y = (point.y - cropY) * scaleY;
-    ctx.font = `${fontSize}px ${TEXT_OVERLAY_FONT_FAMILY}`;
-    ctx.fillStyle = TEXT_OVERLAY_COLORS[normalizeTextColorIndex(overlay.colorIndex)];
+    ctx.font = `${fontSize}px ${textOverlayFontFamily(overlay.fontIndex)}`;
+    const fillColor = TEXT_OVERLAY_COLORS[normalizeTextColorIndex(overlay.colorIndex)];
+    ctx.fillStyle = fillColor;
     const outlineColor = normalizeOptionalTextColorIndex(overlay.outlineColorIndex);
     const outlineOffsets = outlineColor == null ? [] : textOverlayOutlineOffsets(fontSize);
     const lines = overlay.text.split("\n");
     for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
       if (outlineColor != null) {
         const lineY = y + lineIndex * lineHeight;
-        ctx.fillStyle = TEXT_OVERLAY_COLORS[outlineColor];
-        for (const [dx, dy] of outlineOffsets) {
-          ctx.fillText(lines[lineIndex], x + dx, lineY + dy);
+        const padding = Math.ceil(textOverlayOutlineRadius(fontSize) + 2);
+        const measuredWidth = Math.max(1, ctx.measureText(lines[lineIndex]).width);
+        const surface = createTextOutlineSurface(
+          Math.ceil(measuredWidth + padding * 2),
+          Math.ceil(lineHeight + padding * 2),
+        );
+        if (surface) {
+          surface.ctx.font = ctx.font;
+          surface.ctx.textBaseline = "top";
+          surface.ctx.fillStyle = TEXT_OVERLAY_COLORS[outlineColor];
+          for (const [dx, dy] of outlineOffsets) {
+            surface.ctx.fillText(lines[lineIndex], padding + dx, padding + dy);
+          }
+          const previousAlpha = ctx.globalAlpha;
+          ctx.globalAlpha = previousAlpha * TEXT_OVERLAY_OUTLINE_OPACITY;
+          ctx.drawImage(surface.canvas, x - padding, lineY - padding);
+          ctx.globalAlpha = previousAlpha;
+        } else {
+          const previousAlpha = ctx.globalAlpha;
+          ctx.globalAlpha = previousAlpha * TEXT_OVERLAY_OUTLINE_OPACITY;
+          ctx.fillStyle = TEXT_OVERLAY_COLORS[outlineColor];
+          for (const [dx, dy] of outlineOffsets) {
+            ctx.fillText(lines[lineIndex], x + dx, lineY + dy);
+          }
+          ctx.globalAlpha = previousAlpha;
         }
-        ctx.fillStyle = TEXT_OVERLAY_COLORS[normalizeTextColorIndex(overlay.colorIndex)];
+        ctx.fillStyle = fillColor;
       }
       ctx.fillText(lines[lineIndex], x, y + lineIndex * lineHeight);
     }
@@ -1344,6 +1435,26 @@ function drawTextOverlaysToContext(
 }
 
 type RotationCanvasContext = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+
+function createTextOutlineSurface(
+  width: number,
+  height: number,
+): { canvas: HTMLCanvasElement | OffscreenCanvas; ctx: RotationCanvasContext } | null {
+  const w = Math.max(1, width);
+  const h = Math.max(1, height);
+  const OSC = getOffscreenCanvasCtor();
+  if (OSC) {
+    const canvas = new OSC(w, h);
+    const ctx = canvas.getContext("2d");
+    if (ctx) return { canvas, ctx };
+  }
+  if (typeof document === "undefined") return null;
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  return ctx ? { canvas, ctx } : null;
+}
 
 function rotatePoint(
   x: number,
@@ -1564,7 +1675,7 @@ export async function buildOptimizedVariant(
     const dw = Math.max(1, Math.round(sw * params.resizePercent / 100));
     const dh = Math.max(1, Math.round(sh * params.resizePercent / 100));
     if (params.textOverlays.length > 0) {
-      await ensureTextOverlayFontReady();
+      await ensureTextOverlayFontsReady(params.textOverlays);
     }
     let blob: Blob | null = null;
     const OSC = getOffscreenCanvasCtor();
@@ -1815,6 +1926,7 @@ type TextOverlayLayout = {
   fontSize: number;
   lineHeight: number;
   text: string;
+  fontIndex: number;
   colorIndex: number;
   outlineColorIndex: number | null;
 };
@@ -1828,7 +1940,12 @@ type HistogramData = {
 const EDIT_PREVIEW_MARGIN_PX = 8;
 const TEXT_OVERLAY_DEFAULT_FONT_SIZE_RATIO = 0.05;
 const TEXT_OVERLAY_FONT_STEP = Math.pow(2, 1 / 8);
-const TEXT_OVERLAY_FONT_FAMILY = '"Noto Sans JP", sans-serif';
+const TEXT_OVERLAY_FONTS = [
+  { name: "Noto Sans JP", family: '"Noto Sans JP", sans-serif', loadFamily: '"Noto Sans JP"' },
+  { name: "Noto Serif JP", family: '"Noto Serif JP", serif', loadFamily: '"Noto Serif JP"' },
+  { name: "Klee One", family: '"Klee One", serif', loadFamily: '"Klee One"' },
+  { name: "Dela Gothic One", family: '"Dela Gothic One", sans-serif', loadFamily: '"Dela Gothic One"' },
+] as const;
 const TEXT_OVERLAY_LINE_HEIGHT = 1.2;
 const TEXT_OVERLAY_BOX_PADDING_X = 6;
 const TEXT_OVERLAY_BOX_PADDING_Y = 4;
@@ -1848,8 +1965,8 @@ const TEXT_OVERLAY_COLORS = [
   "#8000ff",
 ] as const;
 const TEXT_OVERLAY_MIN_BOX_WIDTH =
-  TEXT_OVERLAY_CONTROL_BUTTON_SIZE * 5 +
-  TEXT_OVERLAY_CONTROL_GAP * 4 +
+  TEXT_OVERLAY_CONTROL_BUTTON_SIZE * 6 +
+  TEXT_OVERLAY_CONTROL_GAP * 5 +
   TEXT_OVERLAY_DELETE_BUTTON_SIZE +
   TEXT_OVERLAY_CONTROL_SAFE_GAP;
 const HISTOGRAM_BINS = 256;
@@ -2485,6 +2602,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     normalizeTextOverlays(initialParams.textOverlays),
   );
   const [activeTextId, setActiveTextId] = useState<string | null>(null);
+  const [fontLoadingTextId, setFontLoadingTextId] = useState<string | null>(null);
   const [mosaicMode, setMosaicMode] = useState(false);
   const [mosaicRegions, setMosaicRegions] = useState<ImageMosaicRegion[]>(
     normalizeMosaicRegions(initialParams.mosaicRegions),
@@ -2660,7 +2778,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     return textOverlays.map((overlay) => {
       const point = sourceToPreviewTextPoint(overlay) ?? { x: displayed.x, y: displayed.y };
       const fontSize = Math.max(1, overlay.fontSize * previewScale);
-      const { width, height, lineHeight } = measureTextOverlayLayout(overlay.text, fontSize);
+      const { width, height, lineHeight } = measureTextOverlayLayout(overlay.text, fontSize, overlay.fontIndex);
       return {
         id: overlay.id,
         x: point.x,
@@ -2670,6 +2788,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
         fontSize,
         lineHeight,
         text: overlay.text,
+        fontIndex: overlay.fontIndex,
         colorIndex: overlay.colorIndex,
         outlineColorIndex: overlay.outlineColorIndex,
       };
@@ -2679,6 +2798,22 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
   const updateTextOverlay = useCallback((id: string, updater: (overlay: ImageTextOverlay) => ImageTextOverlay) => {
     setTextOverlays((current) => current.map((overlay) => (overlay.id === id ? normalizeTextOverlay(updater(overlay)) : overlay)));
   }, []);
+
+  const switchTextOverlayFont = useCallback(async (id: string) => {
+    const overlay = textOverlays.find((item) => item.id === id);
+    if (!overlay) return;
+    const nextFontIndex = (normalizeTextFontIndex(overlay.fontIndex) + 1) % TEXT_OVERLAY_FONTS.length;
+    const needsLoad = !isTextOverlayFontReady(nextFontIndex, overlay.text);
+    if (needsLoad) setFontLoadingTextId(id);
+    try {
+      if (needsLoad) await ensureTextOverlayFontReady(nextFontIndex, overlay.text);
+      updateTextOverlay(id, (current) => ({ ...current, fontIndex: nextFontIndex }));
+    } finally {
+      if (needsLoad) {
+        setFontLoadingTextId((current) => (current === id ? null : current));
+      }
+    }
+  }, [textOverlays, updateTextOverlay]);
 
   const removeTextOverlay = useCallback((id: string) => {
     setTextOverlays((current) => current.filter((overlay) => overlay.id !== id));
@@ -2764,6 +2899,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
       top: sourcePoint.top,
       text: "",
       fontSize: Math.round(Math.hypot(natural.w, natural.h) * TEXT_OVERLAY_DEFAULT_FONT_SIZE_RATIO),
+      fontIndex: 0,
       colorIndex: 0,
       outlineColorIndex: null,
     });
@@ -3737,7 +3873,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                                 WebkitTextFillColor: TEXT_OVERLAY_COLORS[layout.colorIndex],
                                 fontSize: layout.fontSize,
                                 lineHeight: `${TEXT_OVERLAY_LINE_HEIGHT}`,
-                                fontFamily: TEXT_OVERLAY_FONT_FAMILY,
+                                fontFamily: textOverlayFontFamily(layout.fontIndex),
                                 whiteSpace: "pre",
                                 overflowWrap: "normal",
                                 wordBreak: "normal",
@@ -3825,6 +3961,33 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                                   A
                                 </span>
                               </button>
+                              <button
+                                type="button"
+                                className="flex h-5 min-w-5 items-center justify-center rounded border border-white bg-black/80 px-1 text-white disabled:cursor-wait"
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void switchTextOverlayFont(layout.id);
+                                }}
+                                disabled={fontLoadingTextId === layout.id}
+                                aria-label={`Change font from ${TEXT_OVERLAY_FONTS[normalizeTextFontIndex(layout.fontIndex)].name}`}
+                                title={`Font: ${TEXT_OVERLAY_FONTS[normalizeTextFontIndex(layout.fontIndex)].name}. Click to switch to ${TEXT_OVERLAY_FONTS[(normalizeTextFontIndex(layout.fontIndex) + 1) % TEXT_OVERLAY_FONTS.length].name}`}
+                              >
+                                {fontLoadingTextId === layout.id ? (
+                                  <span
+                                    aria-hidden="true"
+                                    className="h-3 w-3 animate-spin rounded-full border-2 border-white/40 border-t-white"
+                                  />
+                                ) : (
+                                  <span
+                                    aria-hidden="true"
+                                    className="text-[11px] leading-none"
+                                    style={{ fontFamily: textOverlayFontFamily(layout.fontIndex) }}
+                                  >
+                                    あ
+                                  </span>
+                                )}
+                              </button>
                             </div>
                             <button
                               type="button"
@@ -3847,7 +4010,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                               WebkitTextFillColor: TEXT_OVERLAY_COLORS[layout.colorIndex],
                               fontSize: layout.fontSize,
                               lineHeight: `${TEXT_OVERLAY_LINE_HEIGHT}`,
-                              fontFamily: TEXT_OVERLAY_FONT_FAMILY,
+                              fontFamily: textOverlayFontFamily(layout.fontIndex),
                               whiteSpace: "pre",
                               ...textOverlayOutlineStyle(layout.fontSize, layout.outlineColorIndex),
                             }}

@@ -20,13 +20,19 @@ export const viewport: Viewport = {
   themeColor: "#f8f8ff",
 };
 
+type GoogleFontFamilySpec = string | { name: string; weights?: number[] };
+
 function buildGoogleFontsHref(
-  families: string[],
+  families: GoogleFontFamilySpec[],
   weights: number[] = [400, 500, 600, 700, 800],
   display: "auto" | "block" | "swap" | "fallback" | "optional" = "swap",
 ) {
   const famParam = families
-    .map((f) => `family=${f.trim().replace(/\s+/g, "+")}:wght@${weights.join(";")}`)
+    .map((family) => {
+      const name = typeof family === "string" ? family : family.name;
+      const familyWeights = typeof family === "string" ? weights : (family.weights ?? weights);
+      return `family=${name.trim().replace(/\s+/g, "+")}:wght@${familyWeights.join(";")}`;
+    })
     .join("&");
   return `https://fonts.googleapis.com/css2?${famParam}&display=${display}`;
 }
@@ -38,6 +44,7 @@ const FONT_FAMILIES = [
   "BIZ UDGothic",
   "IBM Plex Sans JP",
   "Klee One",
+  { name: "Dela Gothic One", weights: [400] },
   "Zen Antique",
   "Inconsolata",
   "Source Code Pro",
