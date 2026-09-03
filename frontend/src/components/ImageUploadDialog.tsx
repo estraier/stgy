@@ -474,7 +474,7 @@ function catmullRomWeight(distance: number): number {
 }
 
 function sampleEyedropperRgb8(
-  image: HTMLImageElement,
+  image: CanvasImageSource,
   sourceWidth: number,
   sourceHeight: number,
   resizedWidth: number,
@@ -1266,6 +1266,74 @@ function textOverlayRenderOffset(fontSize: number): { x: number; y: number } {
   };
 }
 
+type TextOverlayFontMetrics = {
+  ascent: number;
+  descent: number;
+  baselineFromLineTop: number;
+};
+
+function textOverlayFontMetrics(
+  ctx: RotationCanvasContext,
+  fontSize: number,
+  lineHeight: number,
+): TextOverlayFontMetrics {
+  // CSS lays glyphs out on an alphabetic baseline inside the line box. Recreate
+  // that baseline from the font metrics instead of using canvas "top", whose
+  // meaning varies noticeably between Japanese font families.
+  const metrics = ctx.measureText("あAg");
+  const measuredAscent = metrics.fontBoundingBoxAscent;
+  const measuredDescent = metrics.fontBoundingBoxDescent;
+  const ascent = Number.isFinite(measuredAscent) && measuredAscent > 0
+    ? measuredAscent
+    : Number.isFinite(metrics.actualBoundingBoxAscent) && metrics.actualBoundingBoxAscent > 0
+      ? metrics.actualBoundingBoxAscent
+      : fontSize * 0.8;
+  const descent = Number.isFinite(measuredDescent) && measuredDescent >= 0
+    ? measuredDescent
+    : Number.isFinite(metrics.actualBoundingBoxDescent) && metrics.actualBoundingBoxDescent >= 0
+      ? metrics.actualBoundingBoxDescent
+      : fontSize * 0.2;
+  const leading = lineHeight - ascent - descent;
+  return {
+    ascent,
+    descent,
+    baselineFromLineTop: leading / 2 + ascent,
+  };
+}
+
+type TextOverlayInkBounds = {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+};
+
+function textOverlayInkBounds(
+  ctx: RotationCanvasContext,
+  text: string,
+  fallback: TextOverlayFontMetrics,
+): TextOverlayInkBounds {
+  const metrics = ctx.measureText(text);
+  const actualLeft = Number.isFinite(metrics.actualBoundingBoxLeft)
+    ? Math.max(0, metrics.actualBoundingBoxLeft)
+    : 0;
+  const actualRight = Number.isFinite(metrics.actualBoundingBoxRight)
+    ? Math.max(0, metrics.actualBoundingBoxRight)
+    : Math.max(0, metrics.width);
+  const actualAscent = Number.isFinite(metrics.actualBoundingBoxAscent)
+    ? Math.max(0, metrics.actualBoundingBoxAscent)
+    : fallback.ascent;
+  const actualDescent = Number.isFinite(metrics.actualBoundingBoxDescent)
+    ? Math.max(0, metrics.actualBoundingBoxDescent)
+    : fallback.descent;
+  return {
+    left: -actualLeft,
+    top: -actualAscent,
+    right: actualRight,
+    bottom: actualDescent,
+  };
+}
+
 function textOverlayOutlineRadius(fontSize: number): number {
   return Math.max(1.5, fontSize * 0.015);
 }
@@ -1403,7 +1471,7 @@ function drawTextOverlaysToContext(
   const centerX = sourceW / 2;
   const centerY = sourceH / 2;
   ctx.save();
-  ctx.textBaseline = "top";
+  ctx.textBaseline = "alphabetic";
   for (const overlay of overlays) {
     const point = rotatePoint(
       overlay.left * sourceW,
@@ -1418,43 +1486,55 @@ function drawTextOverlaysToContext(
     const x = (point.x - cropX) * scaleX + renderOffset.x;
     const y = (point.y - cropY) * scaleY + renderOffset.y;
     ctx.font = textOverlayCanvasFont(overlay.fontIndex, fontSize);
+    const fontMetrics = textOverlayFontMetrics(ctx, fontSize, lineHeight);
     const fillColor = TEXT_OVERLAY_COLORS[normalizeTextColorIndex(overlay.colorIndex)];
     ctx.fillStyle = fillColor;
     const outlineColor = normalizeOptionalTextColorIndex(overlay.outlineColorIndex);
     const outlineOffsets = outlineColor == null ? [] : textOverlayOutlineOffsets(fontSize);
     const lines = overlay.text.split("\n");
     for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+      const line = lines[lineIndex];
+      const lineTop = y + lineIndex * lineHeight;
+      const baselineY = lineTop + fontMetrics.baselineFromLineTop;
       if (outlineColor != null) {
-        const lineY = y + lineIndex * lineHeight;
-        const padding = Math.ceil(textOverlayOutlineRadius(fontSize) + 2);
-        const measuredWidth = Math.max(1, ctx.measureText(lines[lineIndex]).width);
-        const surface = createTextOutlineSurface(
-          Math.ceil(measuredWidth + padding * 2),
-          Math.ceil(lineHeight + padding * 2),
-        );
+        const margin = Math.ceil(textOverlayOutlineRadius(fontSize) + 2);
+        const ink = textOverlayInkBounds(ctx, line, fontMetrics);
+        // Use the actual glyph ink bounds, not the CSS line-height, so fonts with
+        // tall ascenders (notably Zen Old Mincho 900) cannot be clipped at the
+        // temporary outline surface edge. Floor/ceil also preserves sub-pixel AA.
+        const surfaceLeft = Math.floor(ink.left - margin);
+        const surfaceTop = Math.floor(ink.top - margin);
+        const surfaceRight = Math.ceil(ink.right + margin);
+        const surfaceBottom = Math.ceil(ink.bottom + margin);
+        const surface = line.length > 0 ? createTextOutlineSurface(
+          Math.max(1, surfaceRight - surfaceLeft),
+          Math.max(1, surfaceBottom - surfaceTop),
+        ) : null;
         if (surface) {
           surface.ctx.font = ctx.font;
-          surface.ctx.textBaseline = "top";
+          surface.ctx.textBaseline = "alphabetic";
           surface.ctx.fillStyle = TEXT_OVERLAY_COLORS[outlineColor];
+          const surfaceAnchorX = -surfaceLeft;
+          const surfaceBaselineY = -surfaceTop;
           for (const [dx, dy] of outlineOffsets) {
-            surface.ctx.fillText(lines[lineIndex], padding + dx, padding + dy);
+            surface.ctx.fillText(line, surfaceAnchorX + dx, surfaceBaselineY + dy);
           }
           const previousAlpha = ctx.globalAlpha;
           ctx.globalAlpha = previousAlpha * TEXT_OVERLAY_OUTLINE_OPACITY;
-          ctx.drawImage(surface.canvas, x - padding, lineY - padding);
+          ctx.drawImage(surface.canvas, x + surfaceLeft, baselineY + surfaceTop);
           ctx.globalAlpha = previousAlpha;
         } else {
           const previousAlpha = ctx.globalAlpha;
           ctx.globalAlpha = previousAlpha * TEXT_OVERLAY_OUTLINE_OPACITY;
           ctx.fillStyle = TEXT_OVERLAY_COLORS[outlineColor];
           for (const [dx, dy] of outlineOffsets) {
-            ctx.fillText(lines[lineIndex], x + dx, lineY + dy);
+            ctx.fillText(line, x + dx, baselineY + dy);
           }
           ctx.globalAlpha = previousAlpha;
         }
         ctx.fillStyle = fillColor;
       }
-      ctx.fillText(lines[lineIndex], x, y + lineIndex * lineHeight);
+      ctx.fillText(line, x, baselineY);
     }
   }
   ctx.restore();
@@ -1593,13 +1673,89 @@ async function decodeViaImg(file: File): Promise<HTMLImageElement> {
   }
 }
 
-async function decodeEditableSource(
+type DecodedCanvasSourceImage = {
+  storage: "canvas-source";
+  bitDepth: 8;
+  width: number;
+  height: number;
+  source: CanvasImageSource;
+  cleanup: () => void;
+};
+
+type DecodedRgbaImage8 = {
+  storage: "rgba";
+  bitDepth: 8;
+  width: number;
+  height: number;
+  data: Uint8ClampedArray;
+  cleanup: () => void;
+};
+
+type DecodedRgbaImage16 = {
+  storage: "rgba";
+  bitDepth: 16;
+  width: number;
+  height: number;
+  data: Uint16Array;
+  cleanup: () => void;
+};
+
+type DecodedImage = DecodedCanvasSourceImage | DecodedRgbaImage8 | DecodedRgbaImage16;
+
+type DrawableDecodedImage = {
+  source: CanvasImageSource;
+  width: number;
+  height: number;
+  cleanup: () => void;
+};
+
+function decodedImageToCanvasSource(decoded: DecodedImage): DrawableDecodedImage {
+  if (decoded.storage === "canvas-source") {
+    return {
+      source: decoded.source,
+      width: decoded.width,
+      height: decoded.height,
+      cleanup: decoded.cleanup,
+    };
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = decoded.width;
+  canvas.height = decoded.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    decoded.cleanup();
+    throw new Error("2D context unavailable");
+  }
+
+  let rgba8: Uint8ClampedArray;
+  if (decoded.bitDepth === 8) {
+    rgba8 = decoded.data;
+  } else {
+    // Compatibility boundary for the current 8-bit Canvas pipeline. A future
+    // 16-bit/float processing path can consume DecodedRgbaImage16 directly and
+    // bypass this conversion without changing the decoder API.
+    rgba8 = new Uint8ClampedArray(decoded.data.length);
+    for (let i = 0; i < decoded.data.length; i++) {
+      rgba8[i] = Math.round(decoded.data[i] / 257);
+    }
+  }
+  ctx.putImageData(new ImageData(rgba8, decoded.width, decoded.height), 0, 0);
+  return {
+    source: canvas,
+    width: decoded.width,
+    height: decoded.height,
+    cleanup: decoded.cleanup,
+  };
+}
+
+async function decodeImage(
   file: File,
-  srcW: number,
-  srcH: number,
+  srcW = 0,
+  srcH = 0,
   name?: string,
   type?: string,
-): Promise<{ source: CanvasImageSource; width: number; height: number; cleanup: () => void }> {
+): Promise<DecodedImage> {
   if (isTiff(name || "", type || "")) {
     const UTIF: typeof import("utif") = await import("utif");
     const buf = await file.arrayBuffer();
@@ -1610,13 +1766,14 @@ async function decodeEditableSource(
     const { width, height } = ifds[0] as TiffIFDSize;
     if (!width || !height) throw new Error("TIFF decode failed: invalid size");
     const rgba = UTIF.toRGBA8(ifds[0]);
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("2D context unavailable");
-    ctx.putImageData(new ImageData(new Uint8ClampedArray(rgba), width, height), 0, 0);
-    return { source: canvas, width, height, cleanup: () => {} };
+    return {
+      storage: "rgba",
+      bitDepth: 8,
+      width,
+      height,
+      data: new Uint8ClampedArray(rgba),
+      cleanup: () => {},
+    };
   }
 
   if (isSvg(name || "", type || "")) {
@@ -1631,6 +1788,8 @@ async function decodeEditableSource(
     try {
       const bmp = await createImageBitmap(svgBlob);
       return {
+        storage: "canvas-source",
+        bitDepth: 8,
         source: bmp,
         width: bmp.width || size.w,
         height: bmp.height || size.h,
@@ -1648,6 +1807,8 @@ async function decodeEditableSource(
         });
         if (!ok) throw new Error("svg decode via <img> failed");
         return {
+          storage: "canvas-source",
+          bitDepth: 8,
           source: img,
           width: img.naturalWidth || size.w,
           height: img.naturalHeight || size.h,
@@ -1662,10 +1823,19 @@ async function decodeEditableSource(
 
   try {
     const bmp = await createImageBitmap(file);
-    return { source: bmp, width: bmp.width || srcW, height: bmp.height || srcH, cleanup: () => bmp.close?.() };
+    return {
+      storage: "canvas-source",
+      bitDepth: 8,
+      source: bmp,
+      width: bmp.width || srcW,
+      height: bmp.height || srcH,
+      cleanup: () => bmp.close?.(),
+    };
   } catch {
     const img = await decodeViaImg(file);
     return {
+      storage: "canvas-source",
+      bitDepth: 8,
       source: img,
       width: img.naturalWidth || srcW,
       height: img.naturalHeight || srcH,
@@ -1685,10 +1855,11 @@ export async function buildOptimizedVariant(
   outputFormat: ImageEditOutputFormat = "image/webp",
 ): Promise<{ blob: Blob; width: number; height: number }> {
   const params = normalizeEditParams(edit, srcW, srcH);
-  const decoded = await decodeEditableSource(file, srcW, srcH, name, type);
-  const { source, cleanup } = decoded;
-  const w = decoded.width;
-  const h = decoded.height;
+  const decoded = await decodeImage(file, srcW, srcH, name, type);
+  const drawable = decodedImageToCanvasSource(decoded);
+  const { source, cleanup } = drawable;
+  const w = drawable.width;
+  const h = drawable.height;
   try {
     const crop = normalizeCrop(params.crop);
     const sx = Math.max(0, Math.min(w - 1, Math.round(w * crop.left)));
@@ -2057,12 +2228,12 @@ const TONE_AUTO_SIGMOID_BLACK_PENALTY = 2;
 const TONE_AUTO_SIGMOID_WHITE_PENALTY = 2;
 
 function createToneAutoSample(
-  sourceImage: HTMLImageElement,
+  sourceImage: CanvasImageSource,
+  sourceW: number,
+  sourceH: number,
   sourceRect: { x: number; y: number; w: number; h: number },
   rotationDegrees: number,
 ): ToneAutoSample | null {
-  const sourceW = sourceImage.naturalWidth;
-  const sourceH = sourceImage.naturalHeight;
   if (sourceW <= 0 || sourceH <= 0) return null;
 
   const sx = Math.max(0, Math.min(sourceW - 1, Math.floor(sourceRect.x)));
@@ -2419,7 +2590,9 @@ function findAutoSigmoid(
   return clampSigmoid(bestValue);
 }
 function computeHistogramData(
-  sourceImage: HTMLImageElement,
+  sourceImage: CanvasImageSource,
+  sourceW: number,
+  sourceH: number,
   sourceRect: { x: number; y: number; w: number; h: number },
   rotationDegrees: number,
   temperature: number,
@@ -2430,8 +2603,6 @@ function computeHistogramData(
   vibrance: number,
   saturation: number,
 ): HistogramData | null {
-  const sourceW = sourceImage.naturalWidth;
-  const sourceH = sourceImage.naturalHeight;
   if (sourceW <= 0 || sourceH <= 0) return null;
 
   const sx = Math.max(0, Math.min(sourceW - 1, Math.floor(sourceRect.x)));
@@ -2596,11 +2767,11 @@ function histogramPath(values: number[], maxCount: number, width: number, height
 
 export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, onApply }: EditDialogProps) {
   const [mounted, setMounted] = useState(false);
-  const [imgUrl, setImgUrl] = useState<string>("");
+  const [imageReady, setImageReady] = useState(false);
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
-  const previewImageRef = useRef<HTMLImageElement | null>(null);
+  const previewImageRef = useRef<CanvasImageSource | null>(null);
   const [containerSize, setContainerSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
   const [displayed, setDisplayed] = useState<EditRect>({ x: 0, y: 0, w: 0, h: 0 });
   const [cropRect, setCropRect] = useState<EditRect>({ x: 0, y: 0, w: 0, h: 0 });
@@ -2669,23 +2840,37 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
   useEffect(() => setMounted(true), []);
 
   useEffect(() => {
-    const url = URL.createObjectURL(file);
-    setImgUrl(url);
-    const img = new window.Image();
-    img.decoding = "async";
-    img.src = url;
-    const onLoad = () => {
-      previewImageRef.current = img;
-      setNatural({ w: img.naturalWidth, h: img.naturalHeight });
-    };
-    const onError = () => setNatural(null);
-    img.addEventListener("load", onLoad);
-    img.addEventListener("error", onError);
+    let cancelled = false;
+    let cleanup: (() => void) | null = null;
+    setImageReady(false);
+    setNatural(null);
+    previewImageRef.current = null;
+
+    void (async () => {
+      try {
+        const decoded = await decodeImage(file, 0, 0, file.name, file.type);
+        if (cancelled) {
+          decoded.cleanup();
+          return;
+        }
+        const drawable = decodedImageToCanvasSource(decoded);
+        cleanup = drawable.cleanup;
+        previewImageRef.current = drawable.source;
+        setNatural({ w: drawable.width, h: drawable.height });
+        setImageReady(true);
+      } catch {
+        if (!cancelled) {
+          previewImageRef.current = null;
+          setNatural(null);
+          setImageReady(false);
+        }
+      }
+    })();
+
     return () => {
-      img.removeEventListener("load", onLoad);
-      img.removeEventListener("error", onError);
+      cancelled = true;
       previewImageRef.current = null;
-      URL.revokeObjectURL(url);
+      cleanup?.();
     };
   }, [file]);
 
@@ -3417,6 +3602,8 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     setHistogram(
       computeHistogramData(
         img,
+        natural.w,
+        natural.h,
         { x: sx, y: sy, w: ex - sx, h: ey - sy },
         rotationDegrees,
         temperature,
@@ -3481,6 +3668,8 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     );
     return createToneAutoSample(
       img,
+      natural.w,
+      natural.h,
       { x: sx, y: sy, w: ex - sx, h: ey - sy },
       rotationDegrees,
     );
@@ -3807,7 +3996,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
             onPointerUp={eyedropperMode ? undefined : rotationMode ? onRotationPointerUp : mosaicMode ? onMosaicPointerUp : onPointerUp}
             onPointerCancel={eyedropperMode ? undefined : rotationMode ? onRotationPointerUp : mosaicMode ? onMosaicPointerCancel : onPointerUp}
           >
-              {imgUrl && natural ? (
+              {imageReady && natural ? (
                 <>
                   {!eyedropperMode && showHistogram && histogramPaths && (
                     <div
