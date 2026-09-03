@@ -316,11 +316,17 @@ const RAW_BASELINE_PERCENTILE = 98;
 const RAW_BASELINE_TARGET = 0.9;
 const RAW_BASELINE_ROLLOFF_PERCENTILE = 99.8;
 const RAW_BASELINE_ROLLOFF_ASYMPTOTIC = 0.5;
-const RAW_THUMBNAIL_MATCH_ITERATIONS = 10;
+const RAW_THUMBNAIL_MATCH_ITERATIONS = 20;
 const RAW_THUMBNAIL_MATCH_SEARCH_STEPS = 24;
 const RAW_THUMBNAIL_MATCH_GAIN_MAX = 1 << 16;
 const RAW_THUMBNAIL_MATCH_LOG_MIN = -16;
 const RAW_THUMBNAIL_MATCH_LOG_MAX = 16;
+const RAW_THUMBNAIL_MATCH_SIGMOID_MIN = -10;
+const RAW_THUMBNAIL_MATCH_SIGMOID_MAX = 10;
+const RAW_THUMBNAIL_MATCH_SIGMOID_STEP = 0.01;
+const RAW_THUMBNAIL_MATCH_EXPOSURE_RELAXATION = 0.5;
+const RAW_THUMBNAIL_MATCH_LOG_RELAXATION = 0.5;
+const RAW_THUMBNAIL_MATCH_SIGMOID_RELAXATION = 0.25;
 const DEBUG_PERCENTILES = [0, 1, 2, 5, 25, 50, 75, 95, 98, 99, 100] as const;
 const DEBUG_PERCENTILE_SAMPLE_MAX = 256;
 
@@ -1953,34 +1959,64 @@ function applyRawBaselineScaledLogLinear(value: number, factor: number): number 
   return x;
 }
 
+function applyRawBaselineSigmoidLinear(value: number, gain: number): number {
+  const x = clamp01(value);
+  const g = Math.min(
+    RAW_THUMBNAIL_MATCH_SIGMOID_MAX,
+    Math.max(RAW_THUMBNAIL_MATCH_SIGMOID_MIN, gain),
+  );
+  const mid = 0.5;
+  const gamma = HISTOGRAM_DISPLAY_GAMMA;
+  const encoded = Math.pow(x, 1 / gamma);
+  if (g > 1e-8) {
+    const minVal = naiveSigmoid(0, g, mid);
+    const maxVal = naiveSigmoid(1, g, mid);
+    const adjusted = clamp01((naiveSigmoid(encoded, g, mid) - minVal) / (maxVal - minVal));
+    return clamp01(Math.pow(adjusted, gamma));
+  }
+  if (g < -1e-8) {
+    const magnitude = -g;
+    const minVal = naiveInverseSigmoid(0, magnitude, mid);
+    const maxVal = naiveInverseSigmoid(1, magnitude, mid);
+    const adjusted = clamp01(
+      (naiveInverseSigmoid(encoded, magnitude, mid) - minVal) / (maxVal - minVal),
+    );
+    return clamp01(Math.pow(adjusted, gamma));
+  }
+  return x;
+}
+
 function transformedRawLumaValue(
   rawLuma: number,
   gain: number,
   scaledLog: number,
+  sigmoid: number,
 ): number {
-  return applyRawBaselineScaledLogLinear(rawLuma * gain, scaledLog);
+  const logarithmic = applyRawBaselineScaledLogLinear(rawLuma * gain, scaledLog);
+  return applyRawBaselineSigmoidLinear(logarithmic, sigmoid);
 }
 
 function solveRawThumbnailMatchGain(
   rawP98: number,
   scaledLog: number,
+  sigmoid: number,
   targetP98: number,
 ): number {
   const target = clamp01(targetP98);
   if (!(target > 0) || !(rawP98 > 0)) return 0;
 
   let upper = 1;
-  let upperValue = transformedRawLumaValue(rawP98, upper, scaledLog);
+  let upperValue = transformedRawLumaValue(rawP98, upper, scaledLog, sigmoid);
   while (upperValue < target && upper < RAW_THUMBNAIL_MATCH_GAIN_MAX) {
     upper = Math.min(RAW_THUMBNAIL_MATCH_GAIN_MAX, upper * 2);
-    upperValue = transformedRawLumaValue(rawP98, upper, scaledLog);
+    upperValue = transformedRawLumaValue(rawP98, upper, scaledLog, sigmoid);
   }
   if (upperValue < target) return upper;
 
   let lower = 0;
   for (let i = 0; i < RAW_THUMBNAIL_MATCH_SEARCH_STEPS; i++) {
     const mid = (lower + upper) / 2;
-    const value = transformedRawLumaValue(rawP98, mid, scaledLog);
+    const value = transformedRawLumaValue(rawP98, mid, scaledLog, sigmoid);
     if (value < target) lower = mid;
     else upper = mid;
   }
@@ -1990,35 +2026,78 @@ function solveRawThumbnailMatchGain(
 function solveRawThumbnailMatchLog(
   rawP50: number,
   gain: number,
+  sigmoid: number,
   targetP50: number,
 ): number {
   const target = clamp01(targetP50);
   let lower = RAW_THUMBNAIL_MATCH_LOG_MIN;
   let upper = RAW_THUMBNAIL_MATCH_LOG_MAX;
-  const lowerValue = transformedRawLumaValue(rawP50, gain, lower);
+  const lowerValue = transformedRawLumaValue(rawP50, gain, lower, sigmoid);
   if (target <= lowerValue) return lower;
-  const upperValue = transformedRawLumaValue(rawP50, gain, upper);
+  const upperValue = transformedRawLumaValue(rawP50, gain, upper, sigmoid);
   if (target >= upperValue) return upper;
 
   for (let i = 0; i < RAW_THUMBNAIL_MATCH_SEARCH_STEPS; i++) {
     const mid = (lower + upper) / 2;
-    const value = transformedRawLumaValue(rawP50, gain, mid);
+    const value = transformedRawLumaValue(rawP50, gain, mid, sigmoid);
     if (value < target) lower = mid;
     else upper = mid;
   }
   return (lower + upper) / 2;
 }
 
+function rawThumbnailContrast(p25: number, p75: number): number {
+  const gamma = HISTOGRAM_DISPLAY_GAMMA;
+  return Math.pow(clamp01(p75), 1 / gamma) - Math.pow(clamp01(p25), 1 / gamma);
+}
+
+function solveRawThumbnailMatchSigmoid(
+  rawP25: number,
+  rawP75: number,
+  gain: number,
+  scaledLog: number,
+  targetContrast: number,
+): number {
+  let bestSigmoid = 0;
+  let bestError = Number.POSITIVE_INFINITY;
+  for (
+    let sigmoid = RAW_THUMBNAIL_MATCH_SIGMOID_MIN;
+    sigmoid <= RAW_THUMBNAIL_MATCH_SIGMOID_MAX + RAW_THUMBNAIL_MATCH_SIGMOID_STEP / 2;
+    sigmoid += RAW_THUMBNAIL_MATCH_SIGMOID_STEP
+  ) {
+    const p25 = transformedRawLumaValue(rawP25, gain, scaledLog, sigmoid);
+    const p75 = transformedRawLumaValue(rawP75, gain, scaledLog, sigmoid);
+    const error = Math.abs(rawThumbnailContrast(p25, p75) - targetContrast);
+    if (
+      error < bestError - 1e-12 ||
+      (Math.abs(error - bestError) <= 1e-12 && Math.abs(sigmoid) < Math.abs(bestSigmoid))
+    ) {
+      bestError = error;
+      bestSigmoid = sigmoid;
+    }
+  }
+  return Math.min(
+    RAW_THUMBNAIL_MATCH_SIGMOID_MAX,
+    Math.max(RAW_THUMBNAIL_MATCH_SIGMOID_MIN, bestSigmoid),
+  );
+}
+
 function applyRawThumbnailMatchedBaseline(
   decoded: DecodedRgbaImage16,
   thumbnailPercentiles: DebugPercentileValues,
 ): boolean {
+  const p25Index = DEBUG_PERCENTILES.indexOf(25);
   const p50Index = DEBUG_PERCENTILES.indexOf(50);
+  const p75Index = DEBUG_PERCENTILES.indexOf(75);
   const p98Index = DEBUG_PERCENTILES.indexOf(98);
+  const targetP25 = thumbnailPercentiles[p25Index];
   const targetP50 = thumbnailPercentiles[p50Index];
+  const targetP75 = thumbnailPercentiles[p75Index];
   const targetP98 = thumbnailPercentiles[p98Index];
   if (
+    !Number.isFinite(targetP25) ||
     !Number.isFinite(targetP50) ||
+    !Number.isFinite(targetP75) ||
     !Number.isFinite(targetP98) ||
     !(targetP98 > 1e-6)
   ) {
@@ -2028,18 +2107,45 @@ function applyRawThumbnailMatchedBaseline(
   const sample = sampleLinearRgbFromRgba16(decoded);
   if (!sample.length) return false;
   const rawPercentiles = debugPercentilesFromLinearRgbSample(sample);
+  const rawP25 = rawPercentiles[p25Index];
   const rawP50 = rawPercentiles[p50Index];
+  const rawP75 = rawPercentiles[p75Index];
   const rawP98 = rawPercentiles[p98Index];
-  if (!(rawP50 >= 0) || !(rawP98 > 1e-6)) return false;
+  if (
+    !(rawP25 >= 0) ||
+    !(rawP50 >= 0) ||
+    !(rawP75 >= rawP25) ||
+    !(rawP98 > 1e-6)
+  ) {
+    return false;
+  }
 
-  // The RAW baseline tone transform is a monotonic function of linear luminance:
-  // Y' = logarithm(gain * Y). Therefore pixel luminance ordering never changes,
-  // so P50/P98 only need to be selected once. The iteration below is scalar-only.
+  const targetContrast = rawThumbnailContrast(targetP25, targetP75);
+
+  // All RAW baseline operations are monotonic functions of linear luminance and
+  // RGB is scaled only by Y'/Y. Pixel luminance ordering therefore never changes,
+  // so P25/P50/P75/P98 are selected once and the iterations are scalar-only.
+  // Under-relax each coupled update to suppress oscillation between the three targets.
+  let gain = 1;
   let scaledLog = 0;
-  let gain = solveRawThumbnailMatchGain(rawP98, scaledLog, targetP98);
+  let sigmoid = 0;
   for (let i = 0; i < RAW_THUMBNAIL_MATCH_ITERATIONS; i++) {
-    scaledLog = solveRawThumbnailMatchLog(rawP50, gain, targetP50);
-    gain = solveRawThumbnailMatchGain(rawP98, scaledLog, targetP98);
+    const targetGain = solveRawThumbnailMatchGain(rawP98, scaledLog, sigmoid, targetP98);
+    if (targetGain > 0 && gain > 0) {
+      gain *= Math.pow(targetGain / gain, RAW_THUMBNAIL_MATCH_EXPOSURE_RELAXATION);
+    }
+
+    const targetLog = solveRawThumbnailMatchLog(rawP50, gain, sigmoid, targetP50);
+    scaledLog += RAW_THUMBNAIL_MATCH_LOG_RELAXATION * (targetLog - scaledLog);
+
+    const targetSigmoid = solveRawThumbnailMatchSigmoid(
+      rawP25,
+      rawP75,
+      gain,
+      scaledLog,
+      targetContrast,
+    );
+    sigmoid += RAW_THUMBNAIL_MATCH_SIGMOID_RELAXATION * (targetSigmoid - sigmoid);
   }
 
   const data = decoded.data;
@@ -2054,7 +2160,7 @@ function applyRawThumbnailMatchedBaseline(
       data[i + 2] = 0;
       continue;
     }
-    const adjustedLuma = transformedRawLumaValue(luma, gain, scaledLog);
+    const adjustedLuma = transformedRawLumaValue(luma, gain, scaledLog, sigmoid);
     const scale = adjustedLuma / luma;
     data[i] = Math.round(clamp01(r * scale) * 65535);
     data[i + 1] = Math.round(clamp01(g * scale) * 65535);
