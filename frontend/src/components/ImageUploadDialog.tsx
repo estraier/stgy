@@ -1272,6 +1272,7 @@ function textOverlayOutlineRadius(fontSize: number): number {
 
 const TEXT_OVERLAY_OUTLINE_OPACITY = 0.8;
 const TEXT_OVERLAY_PREVIEW_SHADOW_OPACITY = 0.28;
+const EDIT_GRID_DIAGONAL_DIVISOR = 14;
 
 function hexColorWithAlpha(color: string, alpha: number): string {
   const match = /^#([0-9a-f]{6})$/i.exec(color);
@@ -1281,6 +1282,11 @@ function hexColorWithAlpha(color: string, alpha: number): string {
   const g = (value >> 8) & 0xff;
   const b = value & 0xff;
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function editGridCellSize(displayW: number, displayH: number): number {
+  const diagonal = Math.hypot(displayW, displayH);
+  return Math.max(8, Math.round(diagonal / EDIT_GRID_DIAGONAL_DIVISOR));
 }
 
 const textOverlayOutlineOffsetsCache = new Map<number, Array<[number, number]>>();
@@ -2635,7 +2641,9 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     | { pointerId: number; index: number; startPoint: EditPoint; startRegion: ImageMosaicRegion }
   >(null);
   const [showHistogram, setShowHistogram] = useState(false);
+  const [showGrid, setShowGrid] = useState(false);
   const [histogram, setHistogram] = useState<HistogramData | null>(null);
+  const [histogramGeometryDragging, setHistogramGeometryDragging] = useState(false);
   const [eyedropperMode, setEyedropperMode] = useState(false);
   const [autoToneBusy, setAutoToneBusy] = useState(false);
   const activeTextBoxRef = useRef<HTMLDivElement | null>(null);
@@ -3130,6 +3138,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
       startAngle,
       startRotation: rotationDegrees,
     };
+    setHistogramGeometryDragging(true);
     e.preventDefault();
     e.stopPropagation();
   }, [displayed, rotationDegrees, rotationMode, toLocal]);
@@ -3153,12 +3162,14 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
       (e.target as Element).releasePointerCapture?.(e.pointerId);
     } catch {}
     rotationDragState.current = null;
+    setHistogramGeometryDragging(false);
   }, []);
 
   const onCropPointerDown = useCallback(
     (e: React.PointerEvent) => {
       (e.currentTarget as Element).setPointerCapture(e.pointerId);
       dragState.current = { mode: "move", startP: toLocal(e), startCrop: cropRect };
+      setHistogramGeometryDragging(true);
       e.preventDefault();
     },
     [cropRect, toLocal],
@@ -3168,6 +3179,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     (corner: EditCorner) => (e: React.PointerEvent) => {
       (e.currentTarget as Element).setPointerCapture(e.pointerId);
       dragState.current = { mode: "resize", corner, startP: toLocal(e), startCrop: cropRect };
+      setHistogramGeometryDragging(true);
       e.preventDefault();
       e.stopPropagation();
     },
@@ -3211,6 +3223,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
       (e.target as Element).releasePointerCapture?.(e.pointerId);
     } catch {}
     dragState.current = null;
+    setHistogramGeometryDragging(false);
   }, []);
 
   const applyCropAspectRatio = useCallback(
@@ -3372,6 +3385,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
       setHistogram(null);
       return;
     }
+    if (histogramGeometryDragging) return;
     const img = previewImageRef.current;
     if (
       !img ||
@@ -3416,6 +3430,7 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
     );
   }, [
     showHistogram,
+    histogramGeometryDragging,
     cropRect.x,
     cropRect.y,
     cropRect.w,
@@ -3552,6 +3567,30 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
       b: histogramPath(histogram.b, histogram.maxCount, width, height),
     };
   }, [histogram]);
+
+  const gridPaths = useMemo(() => {
+    if (!showGrid || displayed.w <= 0 || displayed.h <= 0) return null;
+    const width = displayed.w;
+    const height = displayed.h;
+    const cell = editGridCellSize(width, height);
+    const vertical: string[] = [];
+    const horizontal: string[] = [];
+    for (let x = cell; x < width; x += cell) {
+      vertical.push(`M${x},0 V${height}`);
+    }
+    for (let y = cell; y < height; y += cell) {
+      horizontal.push(`M0,${y} H${width}`);
+    }
+    return {
+      width,
+      height,
+      cell,
+      vertical: vertical.join(" "),
+      horizontal: horizontal.join(" "),
+    };
+  }, [showGrid, displayed.w, displayed.h]);
+
+  const cropDragging = histogramGeometryDragging && dragState.current !== null;
 
   const outputDimensions = useMemo(() => {
     if (!natural || displayed.w <= 0 || displayed.h <= 0 || cropRect.w <= 0 || cropRect.h <= 0) {
@@ -3745,6 +3784,14 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
               />
               <span>Histogram</span>
             </label>
+            <label className="inline-flex items-center gap-2 text-sm text-gray-700 select-none">
+              <input
+                type="checkbox"
+                checked={showGrid}
+                onChange={(e) => setShowGrid(e.target.checked)}
+              />
+              <span>Grid</span>
+            </label>
             <button className="px-2 py-0.5 text-sm rounded border border-gray-300 hover:bg-gray-100" onClick={onReset}>
               Reset
             </button>
@@ -3832,10 +3879,35 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                       })}
                     </div>
                   )}
-                  {!eyedropperMode && !rotationMode && !mosaicMode && !textMode && (
+                  {!eyedropperMode && !rotationMode && (
                     <svg className="absolute inset-0 w-full h-full pointer-events-none" aria-hidden="true">
                       <path d={`${overlayPath.outer} ${overlayPath.inner}`} fill="rgba(0,0,0,0.45)" fillRule="evenodd" />
                     </svg>
+                  )}
+                  {!eyedropperMode && !cropDragging && gridPaths && (
+                    <div
+                      className="absolute pointer-events-none"
+                      style={{
+                        left: displayed.x,
+                        top: displayed.y,
+                        width: displayed.w,
+                        height: displayed.h,
+                      }}
+                      aria-hidden="true"
+                    >
+                      <svg
+                        className="absolute inset-0 w-full h-full"
+                        viewBox={`0 0 ${gridPaths.width} ${gridPaths.height}`}
+                        preserveAspectRatio="none"
+                      >
+                        {gridPaths.vertical ? (
+                          <path d={gridPaths.vertical} stroke="rgba(255,255,255,0.45)" strokeWidth="1" fill="none" />
+                        ) : null}
+                        {gridPaths.horizontal ? (
+                          <path d={gridPaths.horizontal} stroke="rgba(255,255,255,0.45)" strokeWidth="1" fill="none" />
+                        ) : null}
+                      </svg>
+                    </div>
                   )}
                   {!eyedropperMode && showHistogram && histogramPaths && (
                     <div className="absolute left-2 bottom-2 w-[294px] h-[138px] rounded border border-white/40 bg-black/80 shadow-sm pointer-events-none">
@@ -4085,30 +4157,53 @@ export function ImageEditDialog({ file, initialParams, defaultParams, onCancel, 
                       style={{ left: mosaicDraft.x, top: mosaicDraft.y, width: mosaicDraft.w, height: mosaicDraft.h }}
                     />
                   )}
-                  {!eyedropperMode && !rotationMode && !mosaicMode && !textMode && (
+                  {!eyedropperMode && !rotationMode && (
                     <div
-                      className="absolute border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.45)] bg-transparent cursor-move"
+                      className={`absolute border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.45)] bg-transparent ${mosaicMode || textMode ? "pointer-events-none" : "cursor-move"}`}
                       style={{ left: cropRect.x, top: cropRect.y, width: cropRect.w, height: cropRect.h }}
-                      onPointerDown={onCropPointerDown}
+                      onPointerDown={mosaicMode || textMode ? undefined : onCropPointerDown}
                     >
-                      {(["nw", "ne", "sw", "se"] as EditCorner[]).map((corner) => {
-                        const style =
-                          corner === "nw"
-                            ? { left: -6, top: -6 }
-                            : corner === "ne"
-                              ? { right: -6, top: -6 }
-                              : corner === "sw"
-                                ? { left: -6, bottom: -6 }
-                                : { right: -6, bottom: -6 };
-                        return (
-                          <div
-                            key={corner}
-                            className="absolute w-3 h-3 rounded-full bg-white border border-black cursor-pointer"
-                            style={style}
-                            onPointerDown={onHandlePointerDown(corner)}
+                      {cropDragging && (
+                        <svg
+                          className="absolute inset-0 h-full w-full pointer-events-none"
+                          viewBox="0 0 6 6"
+                          preserveAspectRatio="none"
+                          aria-hidden="true"
+                        >
+                          <path
+                            d="M3,0 V6 M0,3 H6"
+                            stroke="rgba(255,255,255,0.72)"
+                            strokeWidth="1"
+                            vectorEffect="non-scaling-stroke"
+                            fill="none"
                           />
-                        );
-                      })}
+                          <path
+                            d="M2,0 V6 M4,0 V6 M0,2 H6 M0,4 H6"
+                            stroke="rgba(255,255,255,0.52)"
+                            strokeWidth="1"
+                            vectorEffect="non-scaling-stroke"
+                            fill="none"
+                          />
+                        </svg>
+                      )}
+                      {!mosaicMode && !textMode && (["nw", "ne", "sw", "se"] as EditCorner[]).map((corner) => {
+                          const style =
+                            corner === "nw"
+                              ? { left: -6, top: -6 }
+                              : corner === "ne"
+                                ? { right: -6, top: -6 }
+                                : corner === "sw"
+                                  ? { left: -6, bottom: -6 }
+                                  : { right: -6, bottom: -6 };
+                          return (
+                            <div
+                              key={corner}
+                              className="absolute w-3 h-3 rounded-full bg-white border border-black cursor-pointer"
+                              style={style}
+                              onPointerDown={onHandlePointerDown(corner)}
+                            />
+                          );
+                        })}
                     </div>
                   )}
                 </>
