@@ -4,11 +4,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ImageEditDialog,
   buildDefaultEditParams,
-  buildOptimizedVariant,
+  buildEditedVariant,
+  detectEditableImageColorProfile,
+  encodeEditedVariant,
+  isRawImageFile,
   probeEditableImage,
   type DecodedImage,
+  type ImageEditOutputColorProfile,
   type ImageEditOutputFormat,
   type ImageEditParams,
+  type ImageEditPreparedVariant,
 } from "@/components/ImageUploadDialog";
 import { Config } from "@/config";
 import { formatBytes } from "@/utils/format";
@@ -18,6 +23,7 @@ type SourceImage = {
   width: number;
   height: number;
   edit: ImageEditParams;
+  inputColorProfile: ImageEditOutputColorProfile;
 };
 
 type EditResult = {
@@ -26,8 +32,10 @@ type EditResult = {
   width: number;
   height: number;
   format: ImageEditOutputFormat;
+  colorProfile: ImageEditOutputColorProfile;
 };
 
+type OutputColorProfileSelection = "best" | ImageEditOutputColorProfile;
 
 type ResultZoomFocus = {
   x: number;
@@ -71,7 +79,31 @@ const OUTPUT_FORMAT_OPTIONS: { value: ImageEditOutputFormat; label: string }[] =
   { value: "image/webp", label: "WebP" },
   { value: "image/jpeg", label: "JPEG" },
   { value: "image/png", label: "PNG" },
+  { value: "image/png16", label: "PNG16" },
 ];
+
+const OUTPUT_COLOR_PROFILE_OPTIONS: { value: OutputColorProfileSelection; label: string }[] = [
+  { value: "best", label: "best profile" },
+  { value: "srgb", label: "sRGB" },
+  { value: "display-p3", label: "Display P3" },
+];
+
+function resolveOutputColorProfile(
+  sourceImage: SourceImage | null,
+  selection: OutputColorProfileSelection,
+): ImageEditOutputColorProfile {
+  if (selection === "best") {
+    if (sourceImage && isRawImageFile(sourceImage.file.name || "", sourceImage.file.type || "")) return "display-p3";
+    return sourceImage?.inputColorProfile ?? "srgb";
+  }
+  return selection;
+}
+
+function releasePreparedVariant(prepared: ImageEditPreparedVariant | null): void {
+  if (!prepared) return;
+  prepared.canvas.width = 1;
+  prepared.canvas.height = 1;
+}
 
 async function readImageSize(file: File): Promise<{ width: number; height: number }> {
   const meta = await probeEditableImage(file);
@@ -84,17 +116,24 @@ async function readImageSize(file: File): Promise<{ width: number; height: numbe
 export default function ImageEditSandbox() {
   const inputRef = useRef<HTMLInputElement>(null);
   const resultUrlRef = useRef<string | null>(null);
+  const editedVariantRef = useRef<ImageEditPreparedVariant | null>(null);
   const [source, setSource] = useState<SourceImage | null>(null);
   const [editing, setEditing] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [result, setResult] = useState<EditResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [outputFormat, setOutputFormat] = useState<ImageEditOutputFormat>("image/webp");
+  const [outputColorProfileSelection, setOutputColorProfileSelection] = useState<OutputColorProfileSelection>("best");
   const resultZoomViewportRef = useRef<HTMLDivElement | null>(null);
   const resultZoomDragRef = useRef<ResultZoomDrag | null>(null);
   const resultZoomSuppressClickRef = useRef(false);
   const [resultZoomFocus, setResultZoomFocus] = useState<ResultZoomFocus | null>(null);
   const [resultZoomPan, setResultZoomPan] = useState<ResultZoomPan>({ x: 0, y: 0 });
+
+  const clearEditedVariant = useCallback(() => {
+    releasePreparedVariant(editedVariantRef.current);
+    editedVariantRef.current = null;
+  }, []);
 
   const clearResult = useCallback(() => {
     resultZoomDragRef.current = null;
@@ -107,6 +146,7 @@ export default function ImageEditSandbox() {
   }, []);
 
   useEffect(() => clearResult, [clearResult]);
+  useEffect(() => clearEditedVariant, [clearEditedVariant]);
 
   const closeResultZoom = useCallback(() => {
     resultZoomDragRef.current = null;
@@ -227,14 +267,20 @@ export default function ImageEditSandbox() {
     if (!file) return;
     setError(null);
     clearResult();
+    clearEditedVariant();
     try {
-      const { width, height } = await readImageSize(file);
+      const [size, inputColorProfile] = await Promise.all([
+        readImageSize(file),
+        detectEditableImageColorProfile(file),
+      ]);
+      const { width, height } = size;
       const edit = buildDefaultEditParams(width, height);
       const nextSource: SourceImage = {
         file,
         width,
         height,
         edit: { ...edit, resizePercent: 100 },
+        inputColorProfile,
       };
       setSource(nextSource);
       setEditing(true);
@@ -245,27 +291,43 @@ export default function ImageEditSandbox() {
     } finally {
       if (inputRef.current) inputRef.current.value = "";
     }
-  }, [clearResult]);
+  }, [clearEditedVariant, clearResult]);
 
   const generateResult = useCallback(async (
     sourceImage: SourceImage,
     params: ImageEditParams,
     format: ImageEditOutputFormat,
+    outputColorProfileSelectionValue: OutputColorProfileSelection,
     decodedImage?: DecodedImage,
+    rebuildEditedVariant = false,
   ) => {
     setProcessing(true);
     setError(null);
     try {
-      const processed = await buildOptimizedVariant(
-        sourceImage.file,
-        sourceImage.width,
-        sourceImage.height,
+      let prepared = editedVariantRef.current;
+      if (rebuildEditedVariant || !prepared) {
+        const cacheColorProfile = resolveOutputColorProfile(sourceImage, "best");
+        const nextPrepared = await buildEditedVariant(
+          sourceImage.file,
+          sourceImage.width,
+          sourceImage.height,
+          sourceImage.file.name,
+          sourceImage.file.type,
+          params,
+          decodedImage,
+          cacheColorProfile,
+        );
+        releasePreparedVariant(editedVariantRef.current);
+        editedVariantRef.current = nextPrepared;
+        prepared = nextPrepared;
+      }
+
+      const resolvedOutputColorProfile = resolveOutputColorProfile(sourceImage, outputColorProfileSelectionValue);
+      const processed = await encodeEditedVariant(
+        prepared,
         0.8,
-        sourceImage.file.name,
-        sourceImage.file.type,
-        params,
         format,
-        decodedImage,
+        resolvedOutputColorProfile,
       );
       const url = URL.createObjectURL(processed.blob);
       const previousUrl = resultUrlRef.current;
@@ -276,6 +338,7 @@ export default function ImageEditSandbox() {
         width: processed.width,
         height: processed.height,
         format,
+        colorProfile: resolvedOutputColorProfile,
       });
       if (previousUrl) URL.revokeObjectURL(previousUrl);
     } catch (e) {
@@ -299,18 +362,30 @@ export default function ImageEditSandbox() {
     const nextSource = { ...source, edit: params };
     setSource(nextSource);
     try {
-      await generateResult(nextSource, params, outputFormat, decodedImage);
+      await generateResult(nextSource, params, outputFormat, outputColorProfileSelection, decodedImage, true);
     } finally {
       decodedImage?.cleanup();
     }
-  }, [generateResult, outputFormat, source]);
+  }, [generateResult, outputColorProfileSelection, outputFormat, source]);
 
   const onOutputFormatChange = useCallback((format: ImageEditOutputFormat) => {
     setOutputFormat(format);
     if (source && result) {
-      void generateResult(source, source.edit, format);
+      void generateResult(source, source.edit, format, outputColorProfileSelection);
     }
-  }, [generateResult, result, source]);
+  }, [generateResult, outputColorProfileSelection, result, source]);
+
+  const onOutputColorProfileSelectionChange = useCallback((selection: OutputColorProfileSelection) => {
+    setOutputColorProfileSelection(selection);
+    if (source && result) {
+      void generateResult(source, source.edit, outputFormat, selection);
+    }
+  }, [generateResult, outputFormat, result, source]);
+
+  const onReEdit = useCallback(() => {
+    clearEditedVariant();
+    setEditing(true);
+  }, [clearEditedVariant]);
 
   const sandboxDefaultEditParams = source
     ? { ...buildDefaultEditParams(source.width, source.height), resizePercent: 100 }
@@ -341,13 +416,13 @@ export default function ImageEditSandbox() {
           </button>
         </div>
 
-        <label className="inline-flex items-center gap-2 text-sm text-gray-800">
-          <span className="font-medium">Output:</span>
+        <div className="inline-flex items-center text-sm text-gray-800">
+          <span className="mr-2 font-medium">Output:</span>
           <select
             value={outputFormat}
             onChange={(e) => onOutputFormatChange(e.target.value as ImageEditOutputFormat)}
             disabled={processing}
-            className="rounded border border-gray-400 bg-white px-3 py-1.5 text-sm"
+            className="rounded-l border border-gray-400 bg-white px-3 py-1.5 text-sm"
           >
             {OUTPUT_FORMAT_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
@@ -355,13 +430,25 @@ export default function ImageEditSandbox() {
               </option>
             ))}
           </select>
-        </label>
+          <select
+            value={outputColorProfileSelection}
+            onChange={(e) => onOutputColorProfileSelectionChange(e.target.value as OutputColorProfileSelection)}
+            disabled={processing}
+            className="-ml-px rounded-r border border-gray-400 bg-white px-3 py-1.5 text-sm"
+          >
+            {OUTPUT_COLOR_PROFILE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
 
         {result && source && (
           <button
             type="button"
             className="ml-auto rounded border border-gray-400 bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-200 disabled:text-gray-400"
-            onClick={() => setEditing(true)}
+            onClick={onReEdit}
             disabled={processing}
           >
             Re-edit
@@ -387,6 +474,8 @@ export default function ImageEditSandbox() {
           </div>
           <div className="mt-2 text-sm text-gray-700">
             {OUTPUT_FORMAT_OPTIONS.find((option) => option.value === result.format)?.label ?? result.format}
+            {" • "}
+            {result.colorProfile === "display-p3" ? "Display P3" : "sRGB"}
             {" • "}
             {formatBytes(result.size)}
             {" • "}

@@ -96,7 +96,8 @@ export type ImageEditParams = {
   textOverlays: ImageTextOverlay[];
 };
 
-export type ImageEditOutputFormat = "image/webp" | "image/jpeg" | "image/png";
+export type ImageEditOutputFormat = "image/webp" | "image/jpeg" | "image/png" | "image/png16";
+export type ImageEditOutputColorProfile = "srgb" | "display-p3";
 
 type Props = {
   userId: string;
@@ -131,6 +132,13 @@ function isTiff(name: string, type: string) {
   if (t === "image/tiff" || t === "image/tif") return true;
   const ext = (name.split(".").pop() || "").toLowerCase();
   return ext === "tif" || ext === "tiff";
+}
+
+function isHeif(name: string, type: string) {
+  const t = (type || "").toLowerCase();
+  if (t === "image/heic" || t === "image/heif") return true;
+  const ext = (name.split(".").pop() || "").toLowerCase();
+  return ext === "heic" || ext === "heif";
 }
 
 const RAW_IMAGE_EXTS = new Set([
@@ -195,7 +203,7 @@ const RAW_IMAGE_MIMES = new Set([
   "image/dng",
 ]);
 
-function isRawImage(name: string, type: string) {
+export function isRawImageFile(name: string, type: string) {
   const t = (type || "").toLowerCase();
   if (RAW_IMAGE_MIMES.has(t)) return true;
   const ext = (name.split(".").pop() || "").toLowerCase();
@@ -307,7 +315,7 @@ type LibRawInstanceLike = {
 };
 
 const RAW_DECODE_SETTINGS: LibRawSettingsLike = {
-  outputColor: 1,
+  outputColor: 4,
   outputBps: 16,
   gamm: [1, 1, 0, 0, 0, 0],
   useCameraWb: true,
@@ -320,7 +328,79 @@ const RAW_DECODE_SETTINGS: LibRawSettingsLike = {
 
 const RAW_BASELINE_PERCENTILE = 98;
 const RAW_BASELINE_TARGET = 0.9;
-const RAW_INTERNAL_STORAGE_GAMMA = 2.2;
+
+// RAW editing uses linear ProPhoto RGB (D50). Canvas/file output may be standard sRGB (D65)
+// or Display P3 (D65). These fixed transforms fold ProPhoto RGB -> XYZ(D50),
+// Bradford D50 -> D65, and then XYZ(D65) -> the target linear RGB space.
+const PROPHOTO_TO_SRGB_M00 = 2.03407582;
+const PROPHOTO_TO_SRGB_M01 = -0.72733415;
+const PROPHOTO_TO_SRGB_M02 = -0.30674161;
+const PROPHOTO_TO_SRGB_M10 = -0.22881318;
+const PROPHOTO_TO_SRGB_M11 = 1.23173011;
+const PROPHOTO_TO_SRGB_M12 = -0.00291696;
+const PROPHOTO_TO_SRGB_M20 = -0.00856980;
+const PROPHOTO_TO_SRGB_M21 = -0.15328665;
+const PROPHOTO_TO_SRGB_M22 = 1.16185645;
+const PROPHOTO_TO_DISPLAY_P3_M00 = 1.63250441;
+const PROPHOTO_TO_DISPLAY_P3_M01 = -0.37966939;
+const PROPHOTO_TO_DISPLAY_P3_M02 = -0.25283503;
+const PROPHOTO_TO_DISPLAY_P3_M10 = -0.15368049;
+const PROPHOTO_TO_DISPLAY_P3_M11 = 1.16669036;
+const PROPHOTO_TO_DISPLAY_P3_M12 = -0.01300987;
+const PROPHOTO_TO_DISPLAY_P3_M20 = 0.01039021;
+const PROPHOTO_TO_DISPLAY_P3_M21 = -0.06280507;
+const PROPHOTO_TO_DISPLAY_P3_M22 = 1.05241486;
+
+// Inverse transforms used to normalize tagged TIFF RGB into the same linear
+// ProPhoto RGB (D50) working space as RAW after its baseline processing.
+const SRGB_TO_PROPHOTO_M00 = 0.52934593;
+const SRGB_TO_PROPHOTO_M01 = 0.33007280;
+const SRGB_TO_PROPHOTO_M02 = 0.14058125;
+const SRGB_TO_PROPHOTO_M10 = 0.09837429;
+const SRGB_TO_PROPHOTO_M11 = 0.87346103;
+const SRGB_TO_PROPHOTO_M12 = 0.02816470;
+const SRGB_TO_PROPHOTO_M20 = 0.01688320;
+const SRGB_TO_PROPHOTO_M21 = 0.11767252;
+const SRGB_TO_PROPHOTO_M22 = 0.86544429;
+const DISPLAY_P3_TO_PROPHOTO_M00 = 0.63170772;
+const DISPLAY_P3_TO_PROPHOTO_M01 = 0.21388506;
+const DISPLAY_P3_TO_PROPHOTO_M02 = 0.15440722;
+const DISPLAY_P3_TO_PROPHOTO_M10 = 0.08319654;
+const DISPLAY_P3_TO_PROPHOTO_M11 = 0.88586510;
+const DISPLAY_P3_TO_PROPHOTO_M12 = 0.03093836;
+const DISPLAY_P3_TO_PROPHOTO_M20 = -0.00127175;
+const DISPLAY_P3_TO_PROPHOTO_M21 = 0.05075423;
+const DISPLAY_P3_TO_PROPHOTO_M22 = 0.95051752;
+// Adobe RGB (1998) uses D65 primaries and a pure 2.19921875 transfer.
+// This fixed transform folds Adobe RGB (1998) -> XYZ(D65), Bradford D65 -> D50,
+// and XYZ(D50) -> linear ProPhoto RGB.
+const ADOBE_RGB_TO_PROPHOTO_M00 = 0.74021392;
+const ADOBE_RGB_TO_PROPHOTO_M01 = 0.11316980;
+const ADOBE_RGB_TO_PROPHOTO_M02 = 0.14661626;
+const ADOBE_RGB_TO_PROPHOTO_M10 = 0.13756225;
+const ADOBE_RGB_TO_PROPHOTO_M11 = 0.83306398;
+const ADOBE_RGB_TO_PROPHOTO_M12 = 0.02937378;
+const ADOBE_RGB_TO_PROPHOTO_M20 = 0.02360872;
+const ADOBE_RGB_TO_PROPHOTO_M21 = 0.07379435;
+const ADOBE_RGB_TO_PROPHOTO_M22 = 0.90259694;
+// Rec.2020 uses D65 primaries. This fixed transform folds Rec.2020 -> XYZ(D65),
+// Bradford D65 -> D50, and XYZ(D50) -> linear ProPhoto RGB.
+const REC_2020_TO_PROPHOTO_M00 = 0.83516439;
+const REC_2020_TO_PROPHOTO_M01 = 0.04879000;
+const REC_2020_TO_PROPHOTO_M02 = 0.11598029;
+const REC_2020_TO_PROPHOTO_M10 = 0.05401942;
+const REC_2020_TO_PROPHOTO_M11 = 0.92894837;
+const REC_2020_TO_PROPHOTO_M12 = 0.01705522;
+const REC_2020_TO_PROPHOTO_M20 = -0.00233881;
+const REC_2020_TO_PROPHOTO_M21 = 0.03632883;
+const REC_2020_TO_PROPHOTO_M22 = 0.96607458;
+const REC_2020_TRANSFER_ALPHA = 1.09929682680944;
+const REC_2020_TRANSFER_BETA = 0.018053968510807;
+
+// Y row of the standard linear ProPhoto RGB -> XYZ(D50) matrix.
+const PROPHOTO_LUMA_R = 0.2880402;
+const PROPHOTO_LUMA_G = 0.7118741;
+const PROPHOTO_LUMA_B = 0.0000857;
 const RAW_MEDIAN_DENOISE_WEAK_ISO = 800;
 const RAW_MEDIAN_DENOISE_STRONG_ISO = 3200;
 const RAW_BASELINE_ROLLOFF_PERCENTILE = 99.8;
@@ -374,9 +454,28 @@ async function readRawMeta(file: File): Promise<EditableImageMeta> {
   }
 }
 
+async function readTiffMeta(file: File): Promise<EditableImageMeta> {
+  try {
+    const UTIF: typeof import("utif") = await import("utif");
+    const ifds = UTIF.decode(await file.arrayBuffer());
+    if (!ifds?.length) return { decodable: false };
+    const ifd = ifds[0] as unknown as TiffIfdLike;
+    const width = Number(ifd.t256?.[0] ?? ifd.width ?? 0);
+    const height = Number(ifd.t257?.[0] ?? ifd.height ?? 0);
+    return width > 0 && height > 0
+      ? { decodable: true, width, height }
+      : { decodable: false };
+  } catch {
+    return { decodable: false };
+  }
+}
+
 async function readMeta(file: File): Promise<EditableImageMeta> {
-  if (isRawImage(file.name || "", file.type || "")) {
+  if (isRawImageFile(file.name || "", file.type || "")) {
     return readRawMeta(file);
+  }
+  if (isTiff(file.name || "", file.type || "")) {
+    return readTiffMeta(file);
   }
   let objectUrl: string | undefined;
   try {
@@ -1248,6 +1347,7 @@ function applyColorAdjustmentsToCanvas(
   vibrance: number,
   saturation: number,
   ignoreTransparent = false,
+  canvasSpecOrOutputColorProfile: ImageEditCanvasSpec | ImageEditOutputColorProfile = "srgb",
 ) {
   const normalizedTemperature = clampWhiteBalanceValue(temperature);
   const normalizedTint = clampWhiteBalanceValue(tint);
@@ -1266,36 +1366,66 @@ function applyColorAdjustmentsToCanvas(
   ) {
     return;
   }
-  const ctx = canvas.getContext("2d");
+  const canvasSpec = resolveCanvasSpec(canvasSpecOrOutputColorProfile);
+  const ctx = getCanvas2dContext(canvas, canvasSpec.colorSpace, true, canvasSpec.colorType);
   if (!ctx) return;
   const width = "width" in canvas ? canvas.width : 0;
   const height = "height" in canvas ? canvas.height : 0;
   if (!width || !height) return;
-  const imageData = ctx.getImageData(0, 0, width, height);
+  const imageData = getCanvasImageData(ctx, 0, 0, width, height, canvasSpec.colorSpace, canvasSpec.pixelFormat);
   const data = imageData.data;
-  const context = buildColorAdjustmentContextFromRgb8(
-    data,
-    normalizedTemperature,
-    normalizedTint,
-    exposureEv,
-    normalizedScaledLog,
-    normalizedSigmoid,
-    normalizedVibrance,
-    normalizedSaturation,
-    ignoreTransparent,
-  );
-  for (let i = 0; i < data.length; i += 4) {
-    if (ignoreTransparent && data[i + 3] === 0) continue;
-    let r = srgbChannelToLinear(data[i]);
-    let g = srgbChannelToLinear(data[i + 1]);
-    let b = srgbChannelToLinear(data[i + 2]);
-    [r, g, b] = applyColorAdjustmentsLinearRgb(r, g, b, context);
-    data[i] = linearChannelToSrgb(r);
-    data[i + 1] = linearChannelToSrgb(g);
-    data[i + 2] = linearChannelToSrgb(b);
+  if (canvasSpec.linearLight && isFloat16ImageDataArray(data)) {
+    const linearData = data as unknown as { [index: number]: number; length: number };
+    const sampleData = new Float32Array(linearData.length);
+    for (let i = 0; i < linearData.length; i++) sampleData[i] = linearData[i] ?? 0;
+    const context = buildColorAdjustmentContextFromLinearRgbaSample(
+      { kind: "linear", data: sampleData, width, height },
+      normalizedTemperature,
+      normalizedTint,
+      exposureEv,
+      normalizedScaledLog,
+      normalizedSigmoid,
+      normalizedVibrance,
+      normalizedSaturation,
+      ignoreTransparent,
+    );
+    for (let i = 0; i < linearData.length; i += 4) {
+      if (ignoreTransparent && (linearData[i + 3] ?? 0) <= 0) continue;
+      let r = linearData[i] ?? 0;
+      let g = linearData[i + 1] ?? 0;
+      let b = linearData[i + 2] ?? 0;
+      [r, g, b] = applyColorAdjustmentsLinearRgb(r, g, b, context);
+      linearData[i] = r;
+      linearData[i + 1] = g;
+      linearData[i + 2] = b;
+    }
+  } else {
+    const rgb8 = data as Uint8ClampedArray;
+    const context = buildColorAdjustmentContextFromRgb8(
+      rgb8,
+      normalizedTemperature,
+      normalizedTint,
+      exposureEv,
+      normalizedScaledLog,
+      normalizedSigmoid,
+      normalizedVibrance,
+      normalizedSaturation,
+      ignoreTransparent,
+    );
+    for (let i = 0; i < rgb8.length; i += 4) {
+      if (ignoreTransparent && rgb8[i + 3] === 0) continue;
+      let r = srgbChannelToLinear(rgb8[i]);
+      let g = srgbChannelToLinear(rgb8[i + 1]);
+      let b = srgbChannelToLinear(rgb8[i + 2]);
+      [r, g, b] = applyColorAdjustmentsLinearRgb(r, g, b, context);
+      rgb8[i] = linearChannelToSrgb(r);
+      rgb8[i + 1] = linearChannelToSrgb(g);
+      rgb8[i + 2] = linearChannelToSrgb(b);
+    }
   }
   ctx.putImageData(imageData, 0, 0);
 }
+
 
 type MosaicPixelRect = { x: number; y: number; w: number; h: number };
 
@@ -1303,9 +1433,11 @@ function applyMosaicRectsToCanvas(
   canvas: HTMLCanvasElement | OffscreenCanvas,
   rects: MosaicPixelRect[],
   divisions = 16,
+  canvasSpecOrOutputColorProfile: ImageEditCanvasSpec | ImageEditOutputColorProfile = "srgb",
 ) {
   if (!rects.length || divisions <= 0) return;
-  const ctx = canvas.getContext("2d");
+  const canvasSpec = resolveCanvasSpec(canvasSpecOrOutputColorProfile);
+  const ctx = getCanvas2dContext(canvas, canvasSpec.colorSpace, true, canvasSpec.colorType);
   if (!ctx) return;
   const width = canvas.width;
   const height = canvas.height;
@@ -1318,45 +1450,91 @@ function applyMosaicRectsToCanvas(
     const rw = x1 - x0;
     const rh = y1 - y0;
     if (rw <= 0 || rh <= 0) continue;
-    const imageData = ctx.getImageData(x0, y0, rw, rh);
+    const imageData = getCanvasImageData(ctx, x0, y0, rw, rh, canvasSpec.colorSpace, canvasSpec.pixelFormat);
     const data = imageData.data;
-    for (let gy = 0; gy < grid; gy++) {
-      const ty = Math.floor(gy * rh / grid);
-      const yEnd = Math.floor((gy + 1) * rh / grid);
-      const th = yEnd - ty;
-      if (th <= 0) continue;
-      for (let gx = 0; gx < grid; gx++) {
-        const tx = Math.floor(gx * rw / grid);
-        const xEnd = Math.floor((gx + 1) * rw / grid);
-        const tw = xEnd - tx;
-        if (tw <= 0) continue;
-        let sumR = 0;
-        let sumG = 0;
-        let sumB = 0;
-        let sumA = 0;
-        let count = 0;
-        for (let py = 0; py < th; py++) {
-          let offset = ((ty + py) * rw + tx) * 4;
-          for (let px = 0; px < tw; px++, offset += 4) {
-            sumR += data[offset];
-            sumG += data[offset + 1];
-            sumB += data[offset + 2];
-            sumA += data[offset + 3];
-            count++;
+    if (canvasSpec.linearLight && isFloat16ImageDataArray(data)) {
+      const linearData = data as unknown as { [index: number]: number; length: number };
+      for (let gy = 0; gy < grid; gy++) {
+        const ty = Math.floor((gy * rh) / grid);
+        const yEnd = Math.floor(((gy + 1) * rh) / grid);
+        const th = yEnd - ty;
+        if (th <= 0) continue;
+        for (let gx = 0; gx < grid; gx++) {
+          const tx = Math.floor((gx * rw) / grid);
+          const xEnd = Math.floor(((gx + 1) * rw) / grid);
+          const tw = xEnd - tx;
+          if (tw <= 0) continue;
+          let sumR = 0;
+          let sumG = 0;
+          let sumB = 0;
+          let sumA = 0;
+          let count = 0;
+          for (let py = 0; py < th; py++) {
+            let offset = ((ty + py) * rw + tx) * 4;
+            for (let px = 0; px < tw; px++, offset += 4) {
+              sumR += linearData[offset] ?? 0;
+              sumG += linearData[offset + 1] ?? 0;
+              sumB += linearData[offset + 2] ?? 0;
+              sumA += linearData[offset + 3] ?? 0;
+              count++;
+            }
+          }
+          if (!count) continue;
+          const avgR = sumR / count;
+          const avgG = sumG / count;
+          const avgB = sumB / count;
+          const avgA = sumA / count;
+          for (let py = 0; py < th; py++) {
+            let offset = ((ty + py) * rw + tx) * 4;
+            for (let px = 0; px < tw; px++, offset += 4) {
+              linearData[offset] = avgR;
+              linearData[offset + 1] = avgG;
+              linearData[offset + 2] = avgB;
+              linearData[offset + 3] = avgA;
+            }
           }
         }
-        if (!count) continue;
-        const avgR = Math.round(sumR / count);
-        const avgG = Math.round(sumG / count);
-        const avgB = Math.round(sumB / count);
-        const avgA = Math.round(sumA / count);
-        for (let py = 0; py < th; py++) {
-          let offset = ((ty + py) * rw + tx) * 4;
-          for (let px = 0; px < tw; px++, offset += 4) {
-            data[offset] = avgR;
-            data[offset + 1] = avgG;
-            data[offset + 2] = avgB;
-            data[offset + 3] = avgA;
+      }
+    } else {
+      const rgba8 = data as Uint8ClampedArray;
+      for (let gy = 0; gy < grid; gy++) {
+        const ty = Math.floor((gy * rh) / grid);
+        const yEnd = Math.floor(((gy + 1) * rh) / grid);
+        const th = yEnd - ty;
+        if (th <= 0) continue;
+        for (let gx = 0; gx < grid; gx++) {
+          const tx = Math.floor((gx * rw) / grid);
+          const xEnd = Math.floor(((gx + 1) * rw) / grid);
+          const tw = xEnd - tx;
+          if (tw <= 0) continue;
+          let sumR = 0;
+          let sumG = 0;
+          let sumB = 0;
+          let sumA = 0;
+          let count = 0;
+          for (let py = 0; py < th; py++) {
+            let offset = ((ty + py) * rw + tx) * 4;
+            for (let px = 0; px < tw; px++, offset += 4) {
+              sumR += rgba8[offset];
+              sumG += rgba8[offset + 1];
+              sumB += rgba8[offset + 2];
+              sumA += rgba8[offset + 3];
+              count++;
+            }
+          }
+          if (!count) continue;
+          const avgR = Math.round(sumR / count);
+          const avgG = Math.round(sumG / count);
+          const avgB = Math.round(sumB / count);
+          const avgA = Math.round(sumA / count);
+          for (let py = 0; py < th; py++) {
+            let offset = ((ty + py) * rw + tx) * 4;
+            for (let px = 0; px < tw; px++, offset += 4) {
+              rgba8[offset] = avgR;
+              rgba8[offset + 1] = avgG;
+              rgba8[offset + 2] = avgB;
+              rgba8[offset + 3] = avgA;
+            }
           }
         }
       }
@@ -1364,6 +1542,7 @@ function applyMosaicRectsToCanvas(
     ctx.putImageData(imageData, x0, y0);
   }
 }
+
 
 function mosaicRegionsToOutputRects(
   regions: ImageMosaicRegion[],
@@ -1658,6 +1837,7 @@ function drawTextOverlaysToContext(
   outputW: number,
   outputH: number,
   rotationDegrees: number,
+  canvasSpecOrOutputColorProfile: ImageEditCanvasSpec | ImageEditOutputColorProfile = "srgb",
 ) {
   if (!overlays.length) return;
   const scaleX = outputW / cropW;
@@ -1703,6 +1883,7 @@ function drawTextOverlaysToContext(
         const surface = line.length > 0 ? createTextOutlineSurface(
           Math.max(1, surfaceRight - surfaceLeft),
           Math.max(1, surfaceBottom - surfaceTop),
+          canvasSpecOrOutputColorProfile,
         ) : null;
         if (surface) {
           surface.ctx.font = ctx.font;
@@ -1739,20 +1920,22 @@ type RotationCanvasContext = CanvasRenderingContext2D | OffscreenCanvasRendering
 function createTextOutlineSurface(
   width: number,
   height: number,
+  canvasSpecOrOutputColorProfile: ImageEditCanvasSpec | ImageEditOutputColorProfile = "srgb",
 ): { canvas: HTMLCanvasElement | OffscreenCanvas; ctx: RotationCanvasContext } | null {
   const w = Math.max(1, width);
   const h = Math.max(1, height);
+  const canvasSpec = resolveCanvasSpec(canvasSpecOrOutputColorProfile);
   const OSC = getOffscreenCanvasCtor();
   if (OSC) {
     const canvas = new OSC(w, h);
-    const ctx = canvas.getContext("2d");
+    const ctx = getCanvas2dContext(canvas, canvasSpec.colorSpace, false, canvasSpec.colorType);
     if (ctx) return { canvas, ctx };
   }
   if (typeof document === "undefined") return null;
   const canvas = document.createElement("canvas");
   canvas.width = w;
   canvas.height = h;
-  const ctx = canvas.getContext("2d");
+  const ctx = getCanvas2dContext(canvas, canvasSpec.colorSpace, false, canvasSpec.colorType);
   return ctx ? { canvas, ctx } : null;
 }
 
@@ -1888,7 +2071,8 @@ type DecodedRgbaImage8 = {
 type DecodedRgbaImage16 = {
   storage: "rgba";
   bitDepth: 16;
-  transfer: "linear" | "gamma22";
+  colorSpace: "prophoto";
+  transfer: "linear" | "gamma20";
   width: number;
   height: number;
   data: Uint16Array;
@@ -1904,6 +2088,505 @@ type DrawableDecodedImage = {
   cleanup: () => void;
 };
 
+type Canvas2dContextLike = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+const PROFILE_SNIFF_BYTES = 1024 * 1024;
+const DISPLAY_P3_PROFILE_LABEL_RE = /display[ _-]?p3/i;
+const PROPHOTO_PROFILE_LABEL_RE = /(?:prophoto|romm)[ _-]?rgb/i;
+const ADOBE_RGB_PROFILE_LABEL_RE = /adobe[ _-]?rgb(?:[ _-]?\(?1998\)?)?/i;
+const REC_2020_PROFILE_LABEL_RE = /(?:rec(?:\.|ommendation)?|bt)[\s._-]*2020/i;
+
+type TiffInputColorProfile = "srgb" | "display-p3" | "prophoto" | "adobe-rgb" | "rec2020";
+type ImageEditCanvasColorSpace = ImageEditOutputColorProfile | "srgb-linear" | "display-p3-linear";
+type ImageEditCanvasColorType = "unorm8" | "float16";
+type ImageEditCanvasPixelFormat = "rgba-unorm8" | "rgba-float16";
+type ImageEditCanvasSpec = {
+  colorProfile: ImageEditOutputColorProfile;
+  colorSpace: ImageEditCanvasColorSpace;
+  colorType: ImageEditCanvasColorType;
+  pixelFormat: ImageEditCanvasPixelFormat;
+  linearLight: boolean;
+};
+
+function inputColorProfileToBestOutputProfile(profile: TiffInputColorProfile): ImageEditOutputColorProfile {
+  return profile === "display-p3" || profile === "prophoto" || profile === "adobe-rgb" || profile === "rec2020"
+    ? "display-p3"
+    : "srgb";
+}
+const LINEAR_FLOAT16_CANVAS_SUPPORT = new Map<ImageEditOutputColorProfile, boolean>();
+
+type TiffIfdLike = {
+  width?: number;
+  height?: number;
+  data?: Uint8Array;
+  t256?: number[];
+  t257?: number[];
+  t258?: number[];
+  t262?: number[];
+  t277?: number[];
+  t284?: number[];
+  t338?: number[];
+  t339?: number[];
+  t34675?: unknown;
+};
+
+function getLinearCanvasColorSpace(profile: ImageEditOutputColorProfile): ImageEditCanvasColorSpace {
+  return profile === "display-p3" ? "display-p3-linear" : "srgb-linear";
+}
+
+function buildUnorm8CanvasSpec(colorProfile: ImageEditOutputColorProfile = "srgb"): ImageEditCanvasSpec {
+  return {
+    colorProfile,
+    colorSpace: colorProfile,
+    colorType: "unorm8",
+    pixelFormat: "rgba-unorm8",
+    linearLight: false,
+  };
+}
+
+function buildLinearFloat16CanvasSpec(colorProfile: ImageEditOutputColorProfile = "srgb"): ImageEditCanvasSpec {
+  return {
+    colorProfile,
+    colorSpace: getLinearCanvasColorSpace(colorProfile),
+    colorType: "float16",
+    pixelFormat: "rgba-float16",
+    linearLight: true,
+  };
+}
+
+function buildPng16EncodeCanvasSpec(colorProfile: ImageEditOutputColorProfile = "srgb"): ImageEditCanvasSpec {
+  return {
+    colorProfile,
+    colorSpace: colorProfile,
+    colorType: "float16",
+    pixelFormat: "rgba-float16",
+    linearLight: false,
+  };
+}
+
+function resolveCanvasSpec(specOrProfile?: ImageEditCanvasSpec | ImageEditOutputColorProfile): ImageEditCanvasSpec {
+  if (!specOrProfile) return buildUnorm8CanvasSpec("srgb");
+  return typeof specOrProfile === "string" ? buildUnorm8CanvasSpec(specOrProfile) : specOrProfile;
+}
+
+function hasFloat16ArraySupport(): boolean {
+  return typeof (globalThis as { Float16Array?: unknown }).Float16Array !== "undefined";
+}
+
+function isFloat16ImageDataArray(value: unknown): boolean {
+  return !!value && typeof value === "object" && (value as { constructor?: { name?: string } }).constructor?.name === "Float16Array";
+}
+
+function getCanvas2dContext(
+  canvas: HTMLCanvasElement | OffscreenCanvas,
+  colorSpace: ImageEditCanvasColorSpace = "srgb",
+  willReadFrequently = false,
+  colorType: ImageEditCanvasColorType = "unorm8",
+  allowFallback = true,
+): Canvas2dContextLike | null {
+  const options: {
+    colorSpace?: ImageEditCanvasColorSpace;
+    colorType?: ImageEditCanvasColorType;
+    willReadFrequently?: boolean;
+  } = {
+    colorSpace,
+    colorType,
+  };
+  if (willReadFrequently) options.willReadFrequently = true;
+  try {
+    const ctx = (canvas as HTMLCanvasElement).getContext("2d", options as unknown as CanvasRenderingContext2DSettings);
+    if (ctx) return ctx as Canvas2dContextLike;
+  } catch {}
+  if (!allowFallback) return null;
+  if (willReadFrequently) {
+    try {
+      const ctx = (canvas as HTMLCanvasElement).getContext(
+        "2d",
+        { willReadFrequently: true } as unknown as CanvasRenderingContext2DSettings,
+      );
+      if (ctx) return ctx as Canvas2dContextLike;
+    } catch {}
+  }
+  return (canvas as HTMLCanvasElement).getContext("2d") as Canvas2dContextLike | null;
+}
+
+function getCanvasImageData(
+  ctx: Canvas2dContextLike,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  colorSpace: ImageEditCanvasColorSpace = "srgb",
+  pixelFormat: ImageEditCanvasPixelFormat = "rgba-unorm8",
+): ImageData {
+  try {
+    return (ctx as CanvasRenderingContext2D & {
+      getImageData(
+        sx: number,
+        sy: number,
+        sw: number,
+        sh: number,
+        settings?: { colorSpace?: ImageEditCanvasColorSpace; pixelFormat?: ImageEditCanvasPixelFormat },
+      ): ImageData;
+    }).getImageData(x, y, width, height, { colorSpace, pixelFormat });
+  } catch {
+    return ctx.getImageData(x, y, width, height);
+  }
+}
+
+function createCanvasImageData(
+  ctx: Canvas2dContextLike,
+  width: number,
+  height: number,
+  colorSpace: ImageEditCanvasColorSpace = "srgb",
+  pixelFormat: ImageEditCanvasPixelFormat = "rgba-unorm8",
+): ImageData {
+  try {
+    return (ctx as CanvasRenderingContext2D & {
+      createImageData(
+        sw: number,
+        sh: number,
+        settings?: { colorSpace?: ImageEditCanvasColorSpace; pixelFormat?: ImageEditCanvasPixelFormat },
+      ): ImageData;
+    }).createImageData(width, height, { colorSpace, pixelFormat });
+  } catch {}
+  if (pixelFormat === "rgba-float16" && hasFloat16ArraySupport()) {
+    try {
+      const Float16Ctor = (globalThis as {
+        Float16Array?: new (length: number) => ArrayBufferView;
+      }).Float16Array;
+      if (Float16Ctor) {
+        return new ImageData(
+          new Float16Ctor(width * height * 4) as unknown as Uint8ClampedArray,
+          width,
+          height,
+          { colorSpace, pixelFormat } as unknown as ImageDataSettings,
+        );
+      }
+    } catch {}
+  }
+  try {
+    return new ImageData(
+      new Uint8ClampedArray(width * height * 4),
+      width,
+      height,
+      { colorSpace } as unknown as ImageDataSettings,
+    );
+  } catch {
+    return ctx.createImageData(width, height);
+  }
+}
+
+function canUseLinearFloat16Canvas(colorProfile: ImageEditOutputColorProfile): boolean {
+  const cached = LINEAR_FLOAT16_CANVAS_SUPPORT.get(colorProfile);
+  if (cached != null) return cached;
+  if (!hasFloat16ArraySupport()) {
+    LINEAR_FLOAT16_CANVAS_SUPPORT.set(colorProfile, false);
+    return false;
+  }
+  const OSC = getOffscreenCanvasCtor();
+  const probeCanvas = OSC ? new OSC(1, 1) : typeof document !== "undefined" ? document.createElement("canvas") : null;
+  if (!probeCanvas) {
+    LINEAR_FLOAT16_CANVAS_SUPPORT.set(colorProfile, false);
+    return false;
+  }
+  probeCanvas.width = 1;
+  probeCanvas.height = 1;
+  const colorSpace = getLinearCanvasColorSpace(colorProfile);
+  const ctx = getCanvas2dContext(probeCanvas, colorSpace, false, "float16", false);
+  if (!ctx) {
+    LINEAR_FLOAT16_CANVAS_SUPPORT.set(colorProfile, false);
+    return false;
+  }
+  try {
+    const attrs = (ctx as CanvasRenderingContext2D & { getContextAttributes?: () => { colorSpace?: string; colorType?: string } }).getContextAttributes?.();
+    if (attrs?.colorSpace && attrs.colorSpace !== colorSpace) {
+      LINEAR_FLOAT16_CANVAS_SUPPORT.set(colorProfile, false);
+      return false;
+    }
+    if (attrs?.colorType && attrs.colorType !== "float16") {
+      LINEAR_FLOAT16_CANVAS_SUPPORT.set(colorProfile, false);
+      return false;
+    }
+    const imageData = createCanvasImageData(ctx, 1, 1, colorSpace, "rgba-float16");
+    if (!isFloat16ImageDataArray(imageData.data)) {
+      LINEAR_FLOAT16_CANVAS_SUPPORT.set(colorProfile, false);
+      return false;
+    }
+    ctx.putImageData(imageData, 0, 0);
+    const readback = getCanvasImageData(ctx, 0, 0, 1, 1, colorSpace, "rgba-float16");
+    const ok = isFloat16ImageDataArray(readback.data);
+    LINEAR_FLOAT16_CANVAS_SUPPORT.set(colorProfile, ok);
+    return ok;
+  } catch {
+    LINEAR_FLOAT16_CANVAS_SUPPORT.set(colorProfile, false);
+    return false;
+  }
+}
+
+function buildPreferredEditCanvasSpec(colorProfile: ImageEditOutputColorProfile): ImageEditCanvasSpec {
+  return canUseLinearFloat16Canvas(colorProfile)
+    ? buildLinearFloat16CanvasSpec(colorProfile)
+    : buildUnorm8CanvasSpec(colorProfile);
+}
+
+function buildEncodeCanvasSpec(
+  colorProfile: ImageEditOutputColorProfile,
+  outputFormat: ImageEditOutputFormat,
+): ImageEditCanvasSpec {
+  if (outputFormat === "image/png16") {
+    if (!canUseLinearFloat16Canvas(colorProfile)) {
+      throw new Error("PNG16 output requires browser support for linear float16 canvas.");
+    }
+    return buildPng16EncodeCanvasSpec(colorProfile);
+  }
+  return buildUnorm8CanvasSpec(colorProfile);
+}
+function profileLabelText(bytes: Uint8Array): string {
+  // ICC v4 descriptions are often UTF-16BE. Removing NUL bytes lets the same
+  // conservative label matcher handle both ASCII and the common BMP-string form.
+  return new TextDecoder("latin1").decode(bytes).replace(/\0/g, "");
+}
+
+function sniffTiffInputColorProfile(bytes: Uint8Array): TiffInputColorProfile {
+  const text = profileLabelText(bytes);
+  if (DISPLAY_P3_PROFILE_LABEL_RE.test(text)) return "display-p3";
+  if (PROPHOTO_PROFILE_LABEL_RE.test(text)) return "prophoto";
+  if (ADOBE_RGB_PROFILE_LABEL_RE.test(text)) return "adobe-rgb";
+  if (REC_2020_PROFILE_LABEL_RE.test(text)) return "rec2020";
+  return "srgb";
+}
+
+function bytesFromTiffTag(value: unknown): Uint8Array | null {
+  if (value instanceof Uint8Array) return value;
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (ArrayBuffer.isView(value)) {
+    const view = value as ArrayBufferView;
+    return new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+  }
+  if (Array.isArray(value)) {
+    const numeric = value.filter((item): item is number => typeof item === "number");
+    if (numeric.length === value.length) return Uint8Array.from(numeric, (item) => item & 0xff);
+  }
+  return null;
+}
+
+function tiffInputColorProfile(ifd: TiffIfdLike): TiffInputColorProfile {
+  const icc = bytesFromTiffTag(ifd.t34675);
+  return icc?.length ? sniffTiffInputColorProfile(icc) : "srgb";
+}
+
+type HeifNclxColorInfo = {
+  colourPrimaries: number;
+  transferCharacteristics: number;
+  matrixCoefficients: number;
+  fullRangeFlag: boolean;
+};
+
+type HeifColorInfo =
+  | { kind: "nclx"; nclx: HeifNclxColorInfo }
+  | { kind: "icc"; icc: Uint8Array };
+
+type IsoBox = {
+  type: string;
+  start: number;
+  size: number;
+  headerSize: number;
+  contentStart: number;
+  end: number;
+};
+
+function readIsoBoxSize(view: DataView, offset: number): number {
+  const size32 = view.getUint32(offset, false);
+  if (size32 !== 1) return size32;
+  const hi = view.getUint32(offset + 8, false);
+  const lo = view.getUint32(offset + 12, false);
+  return hi * 0x100000000 + lo;
+}
+
+function readIsoBoxes(view: DataView, start: number, end: number): IsoBox[] {
+  const boxes: IsoBox[] = [];
+  let offset = start;
+  while (offset + 8 <= end) {
+    const size32 = view.getUint32(offset, false);
+    const type = String.fromCharCode(
+      view.getUint8(offset + 4),
+      view.getUint8(offset + 5),
+      view.getUint8(offset + 6),
+      view.getUint8(offset + 7),
+    );
+    const headerSize = size32 === 1 ? 16 : 8;
+    if (offset + headerSize > end) break;
+    const size = size32 === 0 ? end - offset : readIsoBoxSize(view, offset);
+    if (!Number.isFinite(size) || size < headerSize || offset + size > end) break;
+    boxes.push({
+      type,
+      start: offset,
+      size,
+      headerSize,
+      contentStart: offset + headerSize,
+      end: offset + size,
+    });
+    offset += size;
+  }
+  return boxes;
+}
+
+function parseHeifColrBox(bytes: Uint8Array, box: IsoBox): HeifColorInfo | null {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (box.contentStart + 4 > box.end) return null;
+  const colourType = String.fromCharCode(
+    view.getUint8(box.contentStart),
+    view.getUint8(box.contentStart + 1),
+    view.getUint8(box.contentStart + 2),
+    view.getUint8(box.contentStart + 3),
+  );
+  if (colourType === "nclx") {
+    if (box.contentStart + 11 > box.end) return null;
+    const flags = view.getUint8(box.contentStart + 10);
+    return {
+      kind: "nclx",
+      nclx: {
+        colourPrimaries: view.getUint16(box.contentStart + 4, false),
+        transferCharacteristics: view.getUint16(box.contentStart + 6, false),
+        matrixCoefficients: view.getUint16(box.contentStart + 8, false),
+        fullRangeFlag: (flags & 0x80) !== 0,
+      },
+    };
+  }
+  if (colourType === "prof" || colourType === "rICC") {
+    return {
+      kind: "icc",
+      icc: bytes.slice(box.contentStart + 4, box.end),
+    };
+  }
+  return null;
+}
+
+function parsePrimaryHeifColorInfo(bytes: Uint8Array): HeifColorInfo | null {
+  try {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const topLevelBoxes = readIsoBoxes(view, 0, bytes.byteLength);
+    const metaBox = topLevelBoxes.find((box) => box.type === "meta");
+    if (!metaBox || metaBox.contentStart + 4 > metaBox.end) return null;
+    const metaChildren = readIsoBoxes(view, metaBox.contentStart + 4, metaBox.end);
+    const pitmBox = metaChildren.find((box) => box.type === "pitm");
+    const iprpBox = metaChildren.find((box) => box.type === "iprp");
+    if (!pitmBox || !iprpBox || pitmBox.contentStart + 6 > pitmBox.end) return null;
+
+    const pitmVersion = view.getUint8(pitmBox.contentStart);
+    const primaryItemId = pitmVersion >= 1
+      ? view.getUint32(pitmBox.contentStart + 4, false)
+      : view.getUint16(pitmBox.contentStart + 4, false);
+
+    const iprpChildren = readIsoBoxes(view, iprpBox.contentStart, iprpBox.end);
+    const ipcoBox = iprpChildren.find((box) => box.type === "ipco");
+    const ipmaBoxes = iprpChildren.filter((box) => box.type === "ipma");
+    if (!ipcoBox || !ipmaBoxes.length) return null;
+
+    const propertyBoxes = readIsoBoxes(view, ipcoBox.contentStart, ipcoBox.end);
+    let colorPropertyIndices: number[] | null = null;
+
+    for (const ipmaBox of ipmaBoxes) {
+      if (ipmaBox.contentStart + 8 > ipmaBox.end) continue;
+      const version = view.getUint8(ipmaBox.contentStart);
+      const flags =
+        (view.getUint8(ipmaBox.contentStart + 1) << 16)
+        | (view.getUint8(ipmaBox.contentStart + 2) << 8)
+        | view.getUint8(ipmaBox.contentStart + 3);
+      const largePropertyIndex = (flags & 1) !== 0;
+      let offset = ipmaBox.contentStart + 4;
+      if (offset + 4 > ipmaBox.end) continue;
+      const entryCount = view.getUint32(offset, false);
+      offset += 4;
+      for (let entry = 0; entry < entryCount && offset < ipmaBox.end; entry++) {
+        if (version >= 1) {
+          if (offset + 4 > ipmaBox.end) break;
+        } else if (offset + 2 > ipmaBox.end) break;
+        const itemId = version >= 1 ? view.getUint32(offset, false) : view.getUint16(offset, false);
+        offset += version >= 1 ? 4 : 2;
+        if (offset + 1 > ipmaBox.end) break;
+        const associationCount = view.getUint8(offset);
+        offset += 1;
+        const propertyIndices: number[] = [];
+        for (let i = 0; i < associationCount && offset < ipmaBox.end; i++) {
+          if (largePropertyIndex) {
+            if (offset + 2 > ipmaBox.end) break;
+            const value = view.getUint16(offset, false);
+            offset += 2;
+            propertyIndices.push(value & 0x7fff);
+          } else {
+            const value = view.getUint8(offset);
+            offset += 1;
+            propertyIndices.push(value & 0x7f);
+          }
+        }
+        if (itemId === primaryItemId) {
+          colorPropertyIndices = propertyIndices;
+          break;
+        }
+      }
+      if (colorPropertyIndices) break;
+    }
+
+    if (!colorPropertyIndices?.length) return null;
+    for (const propertyIndex of colorPropertyIndices) {
+      const propertyBox = propertyBoxes[propertyIndex - 1];
+      if (!propertyBox || propertyBox.type !== "colr") continue;
+      const parsed = parseHeifColrBox(bytes, propertyBox);
+      if (parsed) return parsed;
+    }
+  } catch {}
+  return null;
+}
+
+function heifColorInfoToInputColorProfile(colorInfo: HeifColorInfo): TiffInputColorProfile {
+  if (colorInfo.kind === "icc") return sniffTiffInputColorProfile(colorInfo.icc);
+  switch (colorInfo.nclx.colourPrimaries) {
+    case 12:
+      return "display-p3";
+    case 9:
+      return "rec2020";
+    default:
+      return "srgb";
+  }
+}
+
+async function detectHeifOutputColorProfile(file: File): Promise<ImageEditOutputColorProfile> {
+  try {
+    const bytes = new Uint8Array(await file.slice(0, PROFILE_SNIFF_BYTES).arrayBuffer());
+    const colorInfo = parsePrimaryHeifColorInfo(bytes);
+    if (colorInfo) {
+      const profile = heifColorInfoToInputColorProfile(colorInfo);
+      return inputColorProfileToBestOutputProfile(profile);
+    }
+    return inputColorProfileToBestOutputProfile(sniffTiffInputColorProfile(bytes));
+  } catch {}
+  return "srgb";
+}
+
+async function detectTiffOutputColorProfile(file: File): Promise<ImageEditOutputColorProfile> {
+  try {
+    const UTIF: typeof import("utif") = await import("utif");
+    const ifds = UTIF.decode(await file.arrayBuffer());
+    if (ifds?.length) {
+      const profile = tiffInputColorProfile(ifds[0] as unknown as TiffIfdLike);
+      return inputColorProfileToBestOutputProfile(profile);
+    }
+  } catch {}
+  return "srgb";
+}
+
+export async function detectEditableImageColorProfile(file: File): Promise<ImageEditOutputColorProfile> {
+  if (isRawImageFile(file.name || "", file.type || "")) return "srgb";
+  if (isTiff(file.name || "", file.type || "")) return detectTiffOutputColorProfile(file);
+  if (isHeif(file.name || "", file.type || "")) return detectHeifOutputColorProfile(file);
+  try {
+    const bytes = new Uint8Array(await file.slice(0, PROFILE_SNIFF_BYTES).arrayBuffer());
+    return sniffTiffInputColorProfile(bytes) === "display-p3" ? "display-p3" : "srgb";
+  } catch {
+    return "srgb";
+  }
+}
 
 type LinearRgbaSample = {
   data: Float32Array;
@@ -1934,7 +2617,7 @@ function decodeStoredRgba16Channel(
   transfer: DecodedRgbaImage16["transfer"],
 ): number {
   const encoded = clamp01(sample / 65535);
-  if (transfer === "gamma22") return Math.pow(encoded, RAW_INTERNAL_STORAGE_GAMMA);
+  if (transfer === "gamma20") return encoded * encoded;
   return encoded;
 }
 
@@ -1943,10 +2626,185 @@ function encodeStoredRgba16Channel(
   transfer: DecodedRgbaImage16["transfer"],
 ): number {
   const clamped = clamp01(linear);
-  const encoded = transfer === "gamma22"
-    ? Math.pow(clamped, 1 / RAW_INTERNAL_STORAGE_GAMMA)
-    : clamped;
+  const encoded = transfer === "gamma20" ? Math.sqrt(clamped) : clamped;
   return Math.round(encoded * 65535);
+}
+
+function prophotoEncodedToLinear(encoded: number): number {
+  const x = clamp01(encoded);
+  return x <= 16 / 512 ? x / 16 : Math.pow(x, 1.8);
+}
+
+function adobeRgbEncodedToLinear(encoded: number): number {
+  return Math.pow(clamp01(encoded), 2.19921875);
+}
+
+function rec2020EncodedToLinear(encoded: number): number {
+  const x = clamp01(encoded);
+  const threshold = 4.5 * REC_2020_TRANSFER_BETA;
+  if (x < threshold) return x / 4.5;
+  return Math.pow(
+    (x + (REC_2020_TRANSFER_ALPHA - 1)) / REC_2020_TRANSFER_ALPHA,
+    1 / 0.45,
+  );
+}
+
+function tiffEncodedRgbToLinearProphoto(
+  r: number,
+  g: number,
+  b: number,
+  profile: TiffInputColorProfile,
+): [number, number, number] {
+  if (profile === "prophoto") {
+    return [
+      prophotoEncodedToLinear(r),
+      prophotoEncodedToLinear(g),
+      prophotoEncodedToLinear(b),
+    ];
+  }
+  if (profile === "adobe-rgb") {
+    const lr = adobeRgbEncodedToLinear(r);
+    const lg = adobeRgbEncodedToLinear(g);
+    const lb = adobeRgbEncodedToLinear(b);
+    return [
+      ADOBE_RGB_TO_PROPHOTO_M00 * lr + ADOBE_RGB_TO_PROPHOTO_M01 * lg + ADOBE_RGB_TO_PROPHOTO_M02 * lb,
+      ADOBE_RGB_TO_PROPHOTO_M10 * lr + ADOBE_RGB_TO_PROPHOTO_M11 * lg + ADOBE_RGB_TO_PROPHOTO_M12 * lb,
+      ADOBE_RGB_TO_PROPHOTO_M20 * lr + ADOBE_RGB_TO_PROPHOTO_M21 * lg + ADOBE_RGB_TO_PROPHOTO_M22 * lb,
+    ];
+  }
+  if (profile === "rec2020") {
+    const lr = rec2020EncodedToLinear(r);
+    const lg = rec2020EncodedToLinear(g);
+    const lb = rec2020EncodedToLinear(b);
+    return [
+      REC_2020_TO_PROPHOTO_M00 * lr + REC_2020_TO_PROPHOTO_M01 * lg + REC_2020_TO_PROPHOTO_M02 * lb,
+      REC_2020_TO_PROPHOTO_M10 * lr + REC_2020_TO_PROPHOTO_M11 * lg + REC_2020_TO_PROPHOTO_M12 * lb,
+      REC_2020_TO_PROPHOTO_M20 * lr + REC_2020_TO_PROPHOTO_M21 * lg + REC_2020_TO_PROPHOTO_M22 * lb,
+    ];
+  }
+
+  const lr = srgbChannelToLinear(clamp01(r) * 255);
+  const lg = srgbChannelToLinear(clamp01(g) * 255);
+  const lb = srgbChannelToLinear(clamp01(b) * 255);
+  if (profile === "display-p3") {
+    return [
+      DISPLAY_P3_TO_PROPHOTO_M00 * lr + DISPLAY_P3_TO_PROPHOTO_M01 * lg + DISPLAY_P3_TO_PROPHOTO_M02 * lb,
+      DISPLAY_P3_TO_PROPHOTO_M10 * lr + DISPLAY_P3_TO_PROPHOTO_M11 * lg + DISPLAY_P3_TO_PROPHOTO_M12 * lb,
+      DISPLAY_P3_TO_PROPHOTO_M20 * lr + DISPLAY_P3_TO_PROPHOTO_M21 * lg + DISPLAY_P3_TO_PROPHOTO_M22 * lb,
+    ];
+  }
+  return [
+    SRGB_TO_PROPHOTO_M00 * lr + SRGB_TO_PROPHOTO_M01 * lg + SRGB_TO_PROPHOTO_M02 * lb,
+    SRGB_TO_PROPHOTO_M10 * lr + SRGB_TO_PROPHOTO_M11 * lg + SRGB_TO_PROPHOTO_M12 * lb,
+    SRGB_TO_PROPHOTO_M20 * lr + SRGB_TO_PROPHOTO_M21 * lg + SRGB_TO_PROPHOTO_M22 * lb,
+  ];
+}
+
+function rgba8TiffToDecodedRgba16(
+  rgba8: Uint8Array,
+  width: number,
+  height: number,
+  profile: TiffInputColorProfile,
+): DecodedRgbaImage16 {
+  const count = width * height;
+  const rgba16 = new Uint16Array(count * 4);
+  for (let i = 0; i < count; i++) {
+    const si = i * 4;
+    const [r, g, b] = tiffEncodedRgbToLinearProphoto(
+      (rgba8[si] ?? 0) / 255,
+      (rgba8[si + 1] ?? 0) / 255,
+      (rgba8[si + 2] ?? 0) / 255,
+      profile,
+    );
+    rgba16[si] = encodeStoredRgba16Channel(r, "gamma20");
+    rgba16[si + 1] = encodeStoredRgba16Channel(g, "gamma20");
+    rgba16[si + 2] = encodeStoredRgba16Channel(b, "gamma20");
+    rgba16[si + 3] = Math.round(((rgba8[si + 3] ?? 255) / 255) * 65535);
+  }
+  return {
+    storage: "rgba",
+    bitDepth: 16,
+    colorSpace: "prophoto",
+    transfer: "gamma20",
+    width,
+    height,
+    data: rgba16,
+    cleanup: () => {},
+  };
+}
+
+function nativeRgbTiffToDecodedRgba16(
+  ifd: TiffIfdLike,
+  profile: TiffInputColorProfile,
+): DecodedRgbaImage16 | null {
+  const width = Math.max(0, Math.round(Number(ifd.width ?? ifd.t256?.[0] ?? 0)));
+  const height = Math.max(0, Math.round(Number(ifd.height ?? ifd.t257?.[0] ?? 0)));
+  const data = ifd.data;
+  const photometric = Number(ifd.t262?.[0] ?? 2);
+  const samplesPerPixel = Math.max(1, Math.round(Number(ifd.t277?.[0] ?? 3)));
+  const planarConfiguration = Math.round(Number(ifd.t284?.[0] ?? 1));
+  const bitsTag = ifd.t258?.length ? ifd.t258 : [8];
+  const sampleFormatTag = ifd.t339?.length ? ifd.t339 : [1];
+  if (!width || !height || !data || photometric !== 2 || samplesPerPixel < 3) return null;
+  if (planarConfiguration !== 1 && !(planarConfiguration === 2 && samplesPerPixel === 3)) return null;
+
+  const bits = Array.from({ length: samplesPerPixel }, (_, i) => Number(bitsTag[Math.min(i, bitsTag.length - 1)] ?? bitsTag[0]));
+  const formats = Array.from({ length: samplesPerPixel }, (_, i) => Number(sampleFormatTag[Math.min(i, sampleFormatTag.length - 1)] ?? 1));
+  const bitDepth = bits[0];
+  if ((bitDepth !== 8 && bitDepth !== 16) || bits.some((value) => value !== bitDepth)) return null;
+  if (formats.some((value) => value !== 1)) return null;
+  // UTIF's planar-2 interleave path is byte-oriented, so preserve native 16-bit
+  // precision only for chunky TIFFs. Other layouts use the compatibility fallback.
+  if (bitDepth === 16 && planarConfiguration !== 1) return null;
+
+  const bytesPerSample = bitDepth / 8;
+  const requiredBytes = width * height * samplesPerPixel * bytesPerSample;
+  if (data.byteLength < requiredBytes) return null;
+
+  const rgba16 = new Uint16Array(width * height * 4);
+  const alphaKind = Number(ifd.t338?.[0] ?? 0); // 1=associated, 2=unassociated
+  const hasAlpha = samplesPerPixel >= 4 && (alphaKind === 1 || alphaKind === 2);
+  const readSample = bitDepth === 8
+    ? (sampleIndex: number) => (data[sampleIndex] ?? 0) / 255
+    : (sampleIndex: number) => {
+        const byteIndex = sampleIndex * 2;
+        return (((data[byteIndex] ?? 0) | ((data[byteIndex + 1] ?? 0) << 8)) >>> 0) / 65535;
+      };
+
+  const count = width * height;
+  for (let i = 0; i < count; i++) {
+    const base = i * samplesPerPixel;
+    let r = readSample(base);
+    let g = readSample(base + 1);
+    let b = readSample(base + 2);
+    const alpha = hasAlpha ? clamp01(readSample(base + 3)) : 1;
+    if (hasAlpha && alphaKind === 1) {
+      if (alpha > 0) {
+        r = clamp01(r / alpha);
+        g = clamp01(g / alpha);
+        b = clamp01(b / alpha);
+      } else {
+        r = g = b = 0;
+      }
+    }
+    const [pr, pg, pb] = tiffEncodedRgbToLinearProphoto(r, g, b, profile);
+    const di = i * 4;
+    rgba16[di] = encodeStoredRgba16Channel(pr, "gamma20");
+    rgba16[di + 1] = encodeStoredRgba16Channel(pg, "gamma20");
+    rgba16[di + 2] = encodeStoredRgba16Channel(pb, "gamma20");
+    rgba16[di + 3] = Math.round(alpha * 65535);
+  }
+
+  return {
+    storage: "rgba",
+    bitDepth: 16,
+    colorSpace: "prophoto",
+    transfer: "gamma20",
+    width,
+    height,
+    data: rgba16,
+    cleanup: () => {},
+  };
 }
 
 function convertDecodedRgba16Transfer(
@@ -1968,7 +2826,6 @@ function convertDecodedRgba16Transfer(
       decodeStoredRgba16Channel(data[i + 2] ?? 0, decoded.transfer),
       transfer,
     );
-    data[i + 3] = 65535;
   }
   decoded.transfer = transfer;
 }
@@ -2161,7 +3018,7 @@ function applyRawThumbnailMatchedBaseline(
 
   const sample = sampleLinearRgbFromRgba16(decoded);
   if (!sample.length) return false;
-  const rawPercentiles = debugPercentilesFromLinearRgbSample(sample);
+  const rawPercentiles = debugPercentilesFromLinearRgbSample(sample, "prophoto");
   const rawP25 = rawPercentiles[p25Index];
   const rawP50 = rawPercentiles[p50Index];
   const rawP75 = rawPercentiles[p75Index];
@@ -2214,7 +3071,7 @@ function applyRawThumbnailMatchedBaseline(
     const r = decodeStoredRgba16Channel(data[i] ?? 0, decoded.transfer);
     const g = decodeStoredRgba16Channel(data[i + 1] ?? 0, decoded.transfer);
     const b = decodeStoredRgba16Channel(data[i + 2] ?? 0, decoded.transfer);
-    const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    const luma = PROPHOTO_LUMA_R * r + PROPHOTO_LUMA_G * g + PROPHOTO_LUMA_B * b;
     if (!(luma > 1e-12)) {
       data[i] = 0;
       data[i + 1] = 0;
@@ -2290,16 +3147,22 @@ function applyRawBaselineExposure(decoded: DecodedRgbaImage16): void {
   }
 }
 
-function debugPercentilesFromLinearRgbSample(sample: Float32Array): DebugPercentileValues {
+function debugPercentilesFromLinearRgbSample(
+  sample: Float32Array,
+  colorSpace: "srgb" | "prophoto" = "srgb",
+): DebugPercentileValues {
   const count = Math.floor(sample.length / 3);
   if (count <= 0) return DEBUG_PERCENTILES.map(() => 0);
+  const lumaR = colorSpace === "prophoto" ? PROPHOTO_LUMA_R : 0.2126;
+  const lumaG = colorSpace === "prophoto" ? PROPHOTO_LUMA_G : 0.7152;
+  const lumaB = colorSpace === "prophoto" ? PROPHOTO_LUMA_B : 0.0722;
   const luma = new Array<number>(count);
   for (let i = 0; i < count; i++) {
     const si = i * 3;
     const r = sample[si] ?? 0;
     const g = sample[si + 1] ?? 0;
     const b = sample[si + 2] ?? 0;
-    luma[i] = clamp01(0.2126 * r + 0.7152 * g + 0.0722 * b);
+    luma[i] = clamp01(lumaR * r + lumaG * g + lumaB * b);
   }
   luma.sort((a, b) => a - b);
   return DEBUG_PERCENTILES.map((percentile) => {
@@ -2375,6 +3238,36 @@ function sampleLinearRgb16Bilinear(
   ];
 }
 
+function sampleAlpha16Bilinear(
+  decoded: DecodedRgbaImage16,
+  x: number,
+  y: number,
+): number {
+  const clampedX = Math.max(0, Math.min(decoded.width - 1, x));
+  const clampedY = Math.max(0, Math.min(decoded.height - 1, y));
+  const x0 = Math.floor(clampedX);
+  const y0 = Math.floor(clampedY);
+  const x1 = Math.min(decoded.width - 1, x0 + 1);
+  const y1 = Math.min(decoded.height - 1, y0 + 1);
+  const tx = clampedX - x0;
+  const ty = clampedY - y0;
+  const data = decoded.data;
+  const idx00 = (y0 * decoded.width + x0) * 4 + 3;
+  const idx10 = (y0 * decoded.width + x1) * 4 + 3;
+  const idx01 = (y1 * decoded.width + x0) * 4 + 3;
+  const idx11 = (y1 * decoded.width + x1) * 4 + 3;
+  const w00 = (1 - tx) * (1 - ty);
+  const w10 = tx * (1 - ty);
+  const w01 = (1 - tx) * ty;
+  const w11 = tx * ty;
+  return clamp01(
+    ((data[idx00] ?? 65535) / 65535) * w00 +
+    ((data[idx10] ?? 65535) / 65535) * w10 +
+    ((data[idx01] ?? 65535) / 65535) * w01 +
+    ((data[idx11] ?? 65535) / 65535) * w11,
+  );
+}
+
 function renderedPixelToSourcePoint(
   x: number,
   y: number,
@@ -2435,7 +3328,7 @@ function sampleLinearRgbaFromRgba16Region(
       data[di] = r;
       data[di + 1] = g;
       data[di + 2] = b;
-      data[di + 3] = 1;
+      data[di + 3] = sampleAlpha16Bilinear(decoded, sourcePoint.x, sourcePoint.y);
     }
   }
   return { data, width: sampleW, height: sampleH };
@@ -2596,6 +3489,7 @@ function adjustedDebugPercentilesFromLinearRgbSample(
   sigmoid: number,
   vibrance: number,
   saturation: number,
+  colorSpace: "srgb" | "prophoto" = "srgb",
 ): DebugPercentileValues {
   const context = colorAdjustmentContextFromLinearRgbSample(
     sample,
@@ -2619,7 +3513,7 @@ function adjustedDebugPercentilesFromLinearRgbSample(
     adjusted[i + 1] = g;
     adjusted[i + 2] = b;
   }
-  return debugPercentilesFromLinearRgbSample(adjusted);
+  return debugPercentilesFromLinearRgbSample(adjusted, colorSpace);
 }
 
 function debugPercentilesFromSrgbRgba8(data: Uint8ClampedArray): DebugPercentileValues {
@@ -2720,6 +3614,7 @@ function libRawImageDataToDecoded(image: LibRawImageDataLike): DecodedRgbaImage8
     return {
       storage: "rgba",
       bitDepth: 16,
+      colorSpace: "prophoto",
       transfer: "linear",
       width,
       height,
@@ -2854,7 +3749,7 @@ async function decodeRawImage(file: File): Promise<DecodedRgbaImage8 | DecodedRg
         ? applyRawThumbnailMatchedBaseline(decoded, thumbnailPercentiles)
         : false;
       if (!matchedThumbnail) applyRawBaselineExposure(decoded);
-      convertDecodedRgba16Transfer(decoded, "gamma22");
+      convertDecodedRgba16Transfer(decoded, "gamma20");
     }
     return decoded;
   } finally {
@@ -2890,16 +3785,16 @@ function decodedImageToCanvasSource(decoded: DecodedImage): DrawableDecodedImage
     // Compatibility boundary for the current 8-bit Canvas pipeline.
     rgba8 = new Uint8ClampedArray(decoded.data.length);
     for (let i = 0; i < decoded.data.length; i += 4) {
-      rgba8[i] = linearChannelToSrgb(
-        decodeStoredRgba16Channel(decoded.data[i] ?? 0, decoded.transfer),
-      );
-      rgba8[i + 1] = linearChannelToSrgb(
-        decodeStoredRgba16Channel(decoded.data[i + 1] ?? 0, decoded.transfer),
-      );
-      rgba8[i + 2] = linearChannelToSrgb(
-        decodeStoredRgba16Channel(decoded.data[i + 2] ?? 0, decoded.transfer),
-      );
-      rgba8[i + 3] = 255;
+      const pr = decodeStoredRgba16Channel(decoded.data[i] ?? 0, decoded.transfer);
+      const pg = decodeStoredRgba16Channel(decoded.data[i + 1] ?? 0, decoded.transfer);
+      const pb = decodeStoredRgba16Channel(decoded.data[i + 2] ?? 0, decoded.transfer);
+      const sr = PROPHOTO_TO_SRGB_M00 * pr + PROPHOTO_TO_SRGB_M01 * pg + PROPHOTO_TO_SRGB_M02 * pb;
+      const sg = PROPHOTO_TO_SRGB_M10 * pr + PROPHOTO_TO_SRGB_M11 * pg + PROPHOTO_TO_SRGB_M12 * pb;
+      const sb = PROPHOTO_TO_SRGB_M20 * pr + PROPHOTO_TO_SRGB_M21 * pg + PROPHOTO_TO_SRGB_M22 * pb;
+      rgba8[i] = linearChannelToSrgb(sr);
+      rgba8[i + 1] = linearChannelToSrgb(sg);
+      rgba8[i + 2] = linearChannelToSrgb(sb);
+      rgba8[i + 3] = Math.round(((decoded.data[i + 3] ?? 65535) / 65535) * 255);
     }
   }
   const imageData = ctx.createImageData(decoded.width, decoded.height);
@@ -2913,6 +3808,28 @@ function decodedImageToCanvasSource(decoded: DecodedImage): DrawableDecodedImage
   };
 }
 
+async function decodeTiffImage(file: File): Promise<DecodedRgbaImage16> {
+  const UTIF: typeof import("utif") = await import("utif");
+  const buf = await file.arrayBuffer();
+  const ifds = UTIF.decode(buf);
+  if (!ifds || ifds.length === 0) throw new Error("TIFF decode failed: no IFD");
+  const originalIfd = ifds[0];
+  UTIF.decodeImage(buf, originalIfd);
+  const ifd = originalIfd as unknown as TiffIfdLike;
+  const width = Math.max(0, Math.round(Number(ifd.width ?? ifd.t256?.[0] ?? 0)));
+  const height = Math.max(0, Math.round(Number(ifd.height ?? ifd.t257?.[0] ?? 0)));
+  if (!width || !height) throw new Error("TIFF decode failed: invalid size");
+  const profile = tiffInputColorProfile(ifd);
+  const native = nativeRgbTiffToDecodedRgba16(ifd, profile);
+  if (native) return native;
+
+  // Preserve support for non-RGB / unusual TIFF layouts through UTIF's existing
+  // universal RGBA8 converter, but immediately normalize that result into the
+  // common 16-bit ProPhoto/gamma20 editing container.
+  const rgba = UTIF.toRGBA8(originalIfd);
+  return rgba8TiffToDecodedRgba16(rgba, width, height, profile);
+}
+
 async function decodeImage(
   file: File,
   srcW = 0,
@@ -2920,28 +3837,12 @@ async function decodeImage(
   name?: string,
   type?: string,
 ): Promise<DecodedImage> {
-  if (isRawImage(name || "", type || "")) {
+  if (isRawImageFile(name || "", type || "")) {
     return decodeRawImage(file);
   }
 
   if (isTiff(name || "", type || "")) {
-    const UTIF: typeof import("utif") = await import("utif");
-    const buf = await file.arrayBuffer();
-    const ifds = UTIF.decode(buf);
-    if (!ifds || ifds.length === 0) throw new Error("TIFF decode failed: no IFD");
-    UTIF.decodeImage(buf, ifds[0]);
-    type TiffIFDSize = { width: number; height: number };
-    const { width, height } = ifds[0] as TiffIFDSize;
-    if (!width || !height) throw new Error("TIFF decode failed: invalid size");
-    const rgba = UTIF.toRGBA8(ifds[0]);
-    return {
-      storage: "rgba",
-      bitDepth: 8,
-      width,
-      height,
-      data: new Uint8ClampedArray(rgba),
-      cleanup: () => {},
-    };
+    return decodeTiffImage(file);
   }
 
   if (isSvg(name || "", type || "")) {
@@ -3012,6 +3913,28 @@ async function decodeImage(
   }
 }
 
+function convertLinearProPhotoToOutputRgb(
+  r: number,
+  g: number,
+  b: number,
+  outputColorProfile: ImageEditOutputColorProfile,
+): [number, number, number] {
+  const m00 = outputColorProfile === "display-p3" ? PROPHOTO_TO_DISPLAY_P3_M00 : PROPHOTO_TO_SRGB_M00;
+  const m01 = outputColorProfile === "display-p3" ? PROPHOTO_TO_DISPLAY_P3_M01 : PROPHOTO_TO_SRGB_M01;
+  const m02 = outputColorProfile === "display-p3" ? PROPHOTO_TO_DISPLAY_P3_M02 : PROPHOTO_TO_SRGB_M02;
+  const m10 = outputColorProfile === "display-p3" ? PROPHOTO_TO_DISPLAY_P3_M10 : PROPHOTO_TO_SRGB_M10;
+  const m11 = outputColorProfile === "display-p3" ? PROPHOTO_TO_DISPLAY_P3_M11 : PROPHOTO_TO_SRGB_M11;
+  const m12 = outputColorProfile === "display-p3" ? PROPHOTO_TO_DISPLAY_P3_M12 : PROPHOTO_TO_SRGB_M12;
+  const m20 = outputColorProfile === "display-p3" ? PROPHOTO_TO_DISPLAY_P3_M20 : PROPHOTO_TO_SRGB_M20;
+  const m21 = outputColorProfile === "display-p3" ? PROPHOTO_TO_DISPLAY_P3_M21 : PROPHOTO_TO_SRGB_M21;
+  const m22 = outputColorProfile === "display-p3" ? PROPHOTO_TO_DISPLAY_P3_M22 : PROPHOTO_TO_SRGB_M22;
+  return [
+    m00 * r + m01 * g + m02 * b,
+    m10 * r + m11 * g + m12 * b,
+    m20 * r + m21 * g + m22 * b,
+  ];
+}
+
 function renderAdjustedRgba16ToCanvas(
   canvas: HTMLCanvasElement | OffscreenCanvas,
   decoded: DecodedRgbaImage16,
@@ -3024,13 +3947,16 @@ function renderAdjustedRgba16ToCanvas(
   sigmoid: number,
   vibrance: number,
   saturation: number,
+  canvasSpecOrOutputColorProfile: ImageEditCanvasSpec | ImageEditOutputColorProfile = "srgb",
 ) {
-  const ctx = canvas.getContext("2d");
+  const canvasSpec = resolveCanvasSpec(canvasSpecOrOutputColorProfile);
+  const ctx = getCanvas2dContext(canvas, canvasSpec.colorSpace, false, canvasSpec.colorType);
   if (!ctx) throw new Error("2D context unavailable");
   const width = Math.max(1, canvas.width);
   const height = Math.max(1, canvas.height);
-  const imageData = ctx.createImageData(width, height);
+  const imageData = createCanvasImageData(ctx, width, height, canvasSpec.colorSpace, canvasSpec.pixelFormat);
   const output = imageData.data;
+  const outputFloat16 = canvasSpec.linearLight && isFloat16ImageDataArray(output);
   const contextSample = sampleLinearRgbaFromRgba16Region(
     decoded,
     sourceRect,
@@ -3046,42 +3972,86 @@ function renderAdjustedRgba16ToCanvas(
     sigmoid,
     vibrance,
     saturation,
-    Math.abs(normalizeRotationDegrees(rotationDegrees)) > 1e-9,
+    true,
   );
   const scaleX = width / Math.max(1, sourceRect.w);
   const scaleY = height / Math.max(1, sourceRect.h);
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const di = (y * width + x) * 4;
-      const sourcePoint = renderedPixelToSourcePoint(
-        x,
-        y,
-        decoded.width,
-        decoded.height,
-        sourceRect.x,
-        sourceRect.y,
-        scaleX,
-        scaleY,
-        rotationDegrees,
-      );
-      if (
-        sourcePoint.x < 0 ||
-        sourcePoint.x >= decoded.width ||
-        sourcePoint.y < 0 ||
-        sourcePoint.y >= decoded.height
-      ) {
-        output[di] = 128;
-        output[di + 1] = 128;
-        output[di + 2] = 128;
-        output[di + 3] = 255;
-        continue;
+  const paddingLinear = srgbChannelToLinear(128);
+  if (outputFloat16) {
+    const data = output as unknown as { [index: number]: number };
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const di = (y * width + x) * 4;
+        const sourcePoint = renderedPixelToSourcePoint(
+          x,
+          y,
+          decoded.width,
+          decoded.height,
+          sourceRect.x,
+          sourceRect.y,
+          scaleX,
+          scaleY,
+          rotationDegrees,
+        );
+        if (
+          sourcePoint.x < 0 ||
+          sourcePoint.x >= decoded.width ||
+          sourcePoint.y < 0 ||
+          sourcePoint.y >= decoded.height
+        ) {
+          data[di] = paddingLinear;
+          data[di + 1] = paddingLinear;
+          data[di + 2] = paddingLinear;
+          data[di + 3] = 1;
+          continue;
+        }
+        let [r, g, b] = sampleLinearRgb16Bilinear(decoded, sourcePoint.x, sourcePoint.y);
+        const alpha = sampleAlpha16Bilinear(decoded, sourcePoint.x, sourcePoint.y);
+        [r, g, b] = applyColorAdjustmentsLinearRgb(r, g, b, context);
+        [r, g, b] = convertLinearProPhotoToOutputRgb(r, g, b, canvasSpec.colorProfile);
+        data[di] = clamp01(r);
+        data[di + 1] = clamp01(g);
+        data[di + 2] = clamp01(b);
+        data[di + 3] = clamp01(alpha);
       }
-      let [r, g, b] = sampleLinearRgb16Bilinear(decoded, sourcePoint.x, sourcePoint.y);
-      [r, g, b] = applyColorAdjustmentsLinearRgb(r, g, b, context);
-      output[di] = linearChannelToSrgb(r);
-      output[di + 1] = linearChannelToSrgb(g);
-      output[di + 2] = linearChannelToSrgb(b);
-      output[di + 3] = 255;
+    }
+  } else {
+    const data = output as Uint8ClampedArray;
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const di = (y * width + x) * 4;
+        const sourcePoint = renderedPixelToSourcePoint(
+          x,
+          y,
+          decoded.width,
+          decoded.height,
+          sourceRect.x,
+          sourceRect.y,
+          scaleX,
+          scaleY,
+          rotationDegrees,
+        );
+        if (
+          sourcePoint.x < 0 ||
+          sourcePoint.x >= decoded.width ||
+          sourcePoint.y < 0 ||
+          sourcePoint.y >= decoded.height
+        ) {
+          data[di] = 128;
+          data[di + 1] = 128;
+          data[di + 2] = 128;
+          data[di + 3] = 255;
+          continue;
+        }
+        let [r, g, b] = sampleLinearRgb16Bilinear(decoded, sourcePoint.x, sourcePoint.y);
+        const alpha = sampleAlpha16Bilinear(decoded, sourcePoint.x, sourcePoint.y);
+        [r, g, b] = applyColorAdjustmentsLinearRgb(r, g, b, context);
+        [r, g, b] = convertLinearProPhotoToOutputRgb(r, g, b, canvasSpec.colorProfile);
+        data[di] = linearChannelToSrgb(r);
+        data[di + 1] = linearChannelToSrgb(g);
+        data[di + 2] = linearChannelToSrgb(b);
+        data[di + 3] = Math.round(alpha * 255);
+      }
     }
   }
   ctx.putImageData(imageData, 0, 0);
@@ -3102,7 +4072,6 @@ function computeHistogramDataFromRgba16(
   if (decoded.width <= 0 || decoded.height <= 0) return null;
   const sample = sampleLinearRgbaFromRgba16Region(decoded, sourceRect, rotationDegrees, HISTOGRAM_SAMPLE_MAX);
   if (!sample.data.length) return null;
-  const hasRotation = Math.abs(normalizeRotationDegrees(rotationDegrees)) > 1e-9;
   const adjustment = buildColorAdjustmentContextFromLinearRgbaSample(
     sample,
     temperature,
@@ -3112,7 +4081,7 @@ function computeHistogramDataFromRgba16(
     sigmoid,
     vibrance,
     saturation,
-    hasRotation,
+    true,
   );
   const r = new Array<number>(HISTOGRAM_BINS).fill(0);
   const g = new Array<number>(HISTOGRAM_BINS).fill(0);
@@ -3132,10 +4101,13 @@ function computeHistogramDataFromRgba16(
     let gg = sample.data[i + 1] ?? 0;
     let bb = sample.data[i + 2] ?? 0;
     [rr, gg, bb] = applyColorAdjustmentsLinearRgb(rr, gg, bb, adjustment);
-    const yy = clamp01(0.2126 * rr + 0.7152 * gg + 0.0722 * bb);
-    const dr = histogramDisplayValue(rr);
-    const dg = histogramDisplayValue(gg);
-    const db = histogramDisplayValue(bb);
+    const sr = clamp01(PROPHOTO_TO_SRGB_M00 * rr + PROPHOTO_TO_SRGB_M01 * gg + PROPHOTO_TO_SRGB_M02 * bb);
+    const sg = clamp01(PROPHOTO_TO_SRGB_M10 * rr + PROPHOTO_TO_SRGB_M11 * gg + PROPHOTO_TO_SRGB_M12 * bb);
+    const sb = clamp01(PROPHOTO_TO_SRGB_M20 * rr + PROPHOTO_TO_SRGB_M21 * gg + PROPHOTO_TO_SRGB_M22 * bb);
+    const yy = clamp01(0.2126 * sr + 0.7152 * sg + 0.0722 * sb);
+    const dr = histogramDisplayValue(sr);
+    const dg = histogramDisplayValue(sg);
+    const db = histogramDisplayValue(sb);
     const dy = histogramDisplayValue(yy);
     addHistogramInterval(r, dr, dr, areaWeight);
     addHistogramInterval(g, dg, dg, areaWeight);
@@ -3158,12 +4130,28 @@ function createToneAutoSampleFromRgba16(
   return sample.data.length ? { kind: "linear", data: sample.data, width: sample.width, height: sample.height } : null;
 }
 
-async function buildOptimizedVariantFromRgba16(
+export type ImageEditPreparedVariant = {
+  canvas: HTMLCanvasElement | OffscreenCanvas;
+  width: number;
+  height: number;
+  colorProfile: ImageEditOutputColorProfile;
+  canvasSpec: ImageEditCanvasSpec;
+};
+
+function createImageEditCanvas(width: number, height: number): HTMLCanvasElement | OffscreenCanvas {
+  const OSC = getOffscreenCanvasCtor();
+  if (OSC) return new OSC(width, height);
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  return canvas;
+}
+
+async function buildEditedVariantFromRgba16(
   decoded: DecodedRgbaImage16,
   params: ImageEditParams,
-  quality: number,
-  outputFormat: ImageEditOutputFormat,
-): Promise<{ blob: Blob; width: number; height: number }> {
+  outputColorProfile: ImageEditOutputColorProfile,
+): Promise<ImageEditPreparedVariant> {
   const w = decoded.width;
   const h = decoded.height;
   const crop = normalizeCrop(params.crop);
@@ -3178,17 +4166,9 @@ async function buildOptimizedVariantFromRgba16(
   if (params.textOverlays.length > 0) {
     await ensureTextOverlayFontsReady(params.textOverlays);
   }
-  const OSC = getOffscreenCanvasCtor();
-  let blob: Blob | null = null;
-  const createCanvas = (width: number, height: number) => {
-    if (OSC) return new OSC(width, height);
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    return canvas;
-  };
 
-  const cropped = createCanvas(sw, sh);
+  const canvasSpec = buildPreferredEditCanvasSpec(outputColorProfile);
+  const cropped = createImageEditCanvas(sw, sh);
   renderAdjustedRgba16ToCanvas(
     cropped,
     decoded,
@@ -3201,10 +4181,11 @@ async function buildOptimizedVariantFromRgba16(
     params.sigmoid,
     params.vibrance,
     params.saturation,
+    canvasSpec,
   );
 
-  const output = createCanvas(dw, dh);
-  const outputCtx = output.getContext("2d");
+  const output = createImageEditCanvas(dw, dh);
+  const outputCtx = getCanvas2dContext(output, canvasSpec.colorSpace, false, canvasSpec.colorType);
   if (!outputCtx) throw new Error("2D context unavailable");
   outputCtx.imageSmoothingEnabled = true;
   outputCtx.imageSmoothingQuality = "high";
@@ -3213,6 +4194,7 @@ async function buildOptimizedVariantFromRgba16(
     output,
     mosaicRegionsToOutputRects(params.mosaicRegions, w, h, sx, sy, sw, sh, dw, dh),
     16,
+    canvasSpec,
   );
   drawTextOverlaysToContext(
     outputCtx,
@@ -3226,26 +4208,170 @@ async function buildOptimizedVariantFromRgba16(
     dw,
     dh,
     params.rotationDegrees,
+    canvasSpec,
   );
+  return { canvas: output, width: dw, height: dh, colorProfile: outputColorProfile, canvasSpec };
+}
 
-  if ("convertToBlob" in output) {
-    type EncodeOpts = { type?: string; quality?: number };
-    const conv = (output as OffscreenCanvas & { convertToBlob(options?: EncodeOpts): Promise<Blob> }).convertToBlob;
-    blob = await conv.call(output, { type: outputFormat, quality });
+async function buildEditedVariantFromDecoded(
+  decoded: Exclude<DecodedImage, DecodedRgbaImage16>,
+  params: ImageEditParams,
+  outputColorProfile: ImageEditOutputColorProfile,
+): Promise<ImageEditPreparedVariant> {
+  const drawable = decodedImageToCanvasSource(decoded);
+  const { source } = drawable;
+  const w = drawable.width;
+  const h = drawable.height;
+  const crop = normalizeCrop(params.crop);
+  const sx = Math.max(0, Math.min(w - 1, Math.round(w * crop.left)));
+  const sy = Math.max(0, Math.min(h - 1, Math.round(h * crop.top)));
+  const ex = Math.max(sx + 1, Math.min(w, Math.round(w * (1 - crop.right))));
+  const ey = Math.max(sy + 1, Math.min(h, Math.round(h * (1 - crop.bottom))));
+  const sw = Math.max(1, ex - sx);
+  const sh = Math.max(1, ey - sy);
+  const hasRotation = Math.abs(params.rotationDegrees) > 1e-9;
+  const dw = Math.max(1, Math.round(sw * params.resizePercent / 100));
+  const dh = Math.max(1, Math.round(sh * params.resizePercent / 100));
+  if (params.textOverlays.length > 0) {
+    await ensureTextOverlayFontsReady(params.textOverlays);
   }
-  if (!blob) {
-    blob = await new Promise<Blob>((resolve, reject) =>
-      (output as HTMLCanvasElement).toBlob(
-        (b) => (b ? resolve(b) : reject(new Error("toBlob returned null"))),
-        outputFormat,
-        quality,
-      ),
+
+  const canvasSpec = buildPreferredEditCanvasSpec(outputColorProfile);
+  const cropped = createImageEditCanvas(sw, sh);
+  const croppedCtx = getCanvas2dContext(cropped, canvasSpec.colorSpace, false, canvasSpec.colorType);
+  if (!croppedCtx) throw new Error("2D context unavailable");
+  if (hasRotation) {
+    croppedCtx.imageSmoothingEnabled = true;
+    croppedCtx.imageSmoothingQuality = "high";
+    drawRotatedSourceToContext(
+      croppedCtx,
+      source,
+      w,
+      h,
+      sx,
+      sy,
+      1,
+      1,
+      params.rotationDegrees,
     );
+  } else {
+    croppedCtx.drawImage(source, sx, sy, sw, sh, 0, 0, sw, sh);
   }
-  if (!blob || !blob.size || !dw || !dh) {
-    throw new Error("invalid optimized output");
+  applyColorAdjustmentsToCanvas(
+    cropped,
+    params.temperature,
+    params.tint,
+    params.exposureEv,
+    params.scaledLog,
+    params.sigmoid,
+    params.vibrance,
+    params.saturation,
+    hasRotation,
+    canvasSpec,
+  );
+  if (hasRotation) {
+    fillRotationPadding(croppedCtx, sw, sh, w, h, sx, sy, 1, 1, params.rotationDegrees);
   }
-  return { blob, width: dw, height: dh };
+
+  const output = createImageEditCanvas(dw, dh);
+  const outputCtx = getCanvas2dContext(output, canvasSpec.colorSpace, false, canvasSpec.colorType);
+  if (!outputCtx) throw new Error("2D context unavailable");
+  outputCtx.imageSmoothingEnabled = true;
+  outputCtx.imageSmoothingQuality = "high";
+  outputCtx.drawImage(cropped, 0, 0, sw, sh, 0, 0, dw, dh);
+  applyMosaicRectsToCanvas(
+    output,
+    mosaicRegionsToOutputRects(params.mosaicRegions, w, h, sx, sy, sw, sh, dw, dh),
+    16,
+    canvasSpec,
+  );
+  drawTextOverlaysToContext(
+    outputCtx,
+    params.textOverlays,
+    w,
+    h,
+    sx,
+    sy,
+    sw,
+    sh,
+    dw,
+    dh,
+    params.rotationDegrees,
+    canvasSpec,
+  );
+  return { canvas: output, width: dw, height: dh, colorProfile: outputColorProfile, canvasSpec };
+}
+
+export async function buildEditedVariant(
+  file: File,
+  srcW: number,
+  srcH: number,
+  name?: string,
+  type?: string,
+  edit?: ImageEditParams,
+  decodedImage?: DecodedImage,
+  outputColorProfile: ImageEditOutputColorProfile = "srgb",
+): Promise<ImageEditPreparedVariant> {
+  const params = normalizeEditParams(edit, srcW, srcH);
+  const ownsDecodedImage = !decodedImage;
+  const decoded = decodedImage ?? await decodeImage(file, srcW, srcH, name, type);
+  try {
+    if (decoded.storage === "rgba" && decoded.bitDepth === 16) {
+      return await buildEditedVariantFromRgba16(decoded, params, outputColorProfile);
+    }
+    return await buildEditedVariantFromDecoded(decoded, params, outputColorProfile);
+  } finally {
+    if (ownsDecodedImage) decoded.cleanup();
+  }
+}
+
+async function encodeImageEditCanvas(
+  canvas: HTMLCanvasElement | OffscreenCanvas,
+  outputFormat: ImageEditOutputFormat,
+  quality: number,
+): Promise<Blob> {
+  const mimeType = outputFormat === "image/png16" ? "image/png" : outputFormat;
+  if ("convertToBlob" in canvas) {
+    type EncodeOpts = { type?: string; quality?: number };
+    const conv = (canvas as OffscreenCanvas & { convertToBlob(options?: EncodeOpts): Promise<Blob> }).convertToBlob;
+    return conv.call(canvas, { type: mimeType, quality });
+  }
+  return new Promise<Blob>((resolve, reject) =>
+    (canvas as HTMLCanvasElement).toBlob(
+      (blob) => (blob ? resolve(blob) : reject(new Error("toBlob returned null"))),
+      mimeType,
+      quality,
+    ),
+  );
+}
+
+export async function encodeEditedVariant(
+  prepared: ImageEditPreparedVariant,
+  quality = 0.8,
+  outputFormat: ImageEditOutputFormat = "image/webp",
+  outputColorProfile: ImageEditOutputColorProfile = prepared.colorProfile,
+): Promise<{ blob: Blob; width: number; height: number }> {
+  const targetCanvasSpec = buildEncodeCanvasSpec(outputColorProfile, outputFormat);
+  let canvas = prepared.canvas;
+  if (
+    prepared.canvasSpec.colorSpace !== targetCanvasSpec.colorSpace ||
+    prepared.canvasSpec.colorType !== targetCanvasSpec.colorType ||
+    prepared.canvasSpec.linearLight !== targetCanvasSpec.linearLight
+  ) {
+    const converted = createImageEditCanvas(prepared.width, prepared.height);
+    const ctx = getCanvas2dContext(
+      converted,
+      targetCanvasSpec.colorSpace,
+      false,
+      targetCanvasSpec.colorType,
+    );
+    if (!ctx) throw new Error("2D context unavailable");
+    ctx.drawImage(prepared.canvas, 0, 0, prepared.width, prepared.height);
+    canvas = converted;
+  }
+  const blob = await encodeImageEditCanvas(canvas, outputFormat, quality);
+  if (canvas !== prepared.canvas) releaseCanvasIfNeeded(canvas);
+  return { blob, width: prepared.width, height: prepared.height };
 }
 
 export async function buildOptimizedVariant(
@@ -3258,188 +4384,19 @@ export async function buildOptimizedVariant(
   edit?: ImageEditParams,
   outputFormat: ImageEditOutputFormat = "image/webp",
   decodedImage?: DecodedImage,
+  outputColorProfile: ImageEditOutputColorProfile = "srgb",
 ): Promise<{ blob: Blob; width: number; height: number }> {
-  const params = normalizeEditParams(edit, srcW, srcH);
-  const ownsDecodedImage = !decodedImage;
-  const decoded = decodedImage ?? await decodeImage(file, srcW, srcH, name, type);
-  if (decoded.storage === "rgba" && decoded.bitDepth === 16) {
-    try {
-      return await buildOptimizedVariantFromRgba16(decoded, params, quality, outputFormat);
-    } finally {
-      if (ownsDecodedImage) decoded.cleanup();
-    }
-  }
-  const drawable = decodedImageToCanvasSource(decoded);
-  const { source, cleanup } = drawable;
-  const w = drawable.width;
-  const h = drawable.height;
-  try {
-    const crop = normalizeCrop(params.crop);
-    const sx = Math.max(0, Math.min(w - 1, Math.round(w * crop.left)));
-    const sy = Math.max(0, Math.min(h - 1, Math.round(h * crop.top)));
-    const ex = Math.max(sx + 1, Math.min(w, Math.round(w * (1 - crop.right))));
-    const ey = Math.max(sy + 1, Math.min(h, Math.round(h * (1 - crop.bottom))));
-    const sw = Math.max(1, ex - sx);
-    const sh = Math.max(1, ey - sy);
-    const hasRotation = Math.abs(params.rotationDegrees) > 1e-9;
-    const dw = Math.max(1, Math.round(sw * params.resizePercent / 100));
-    const dh = Math.max(1, Math.round(sh * params.resizePercent / 100));
-    if (params.textOverlays.length > 0) {
-      await ensureTextOverlayFontsReady(params.textOverlays);
-    }
-    let blob: Blob | null = null;
-    const OSC = getOffscreenCanvasCtor();
-    if (OSC) {
-      // Keep the processing order explicit: rotate -> crop -> white balance -> exposure/rolloff
-      // -> logarithm -> sigmoid -> vibrance/saturation -> fill rotation padding -> resize
-      // -> mosaic -> encode.
-      // White balance, tone, and color adjustments share one linear-RGB pass so
-      // there is no extra 8-bit round-trip between them.
-      const cropped = new OSC(sw, sh);
-      const croppedCtx = cropped.getContext("2d");
-      if (!croppedCtx) throw new Error("2D context unavailable");
-      if (hasRotation) {
-        croppedCtx.imageSmoothingEnabled = true;
-        croppedCtx.imageSmoothingQuality = "high";
-        drawRotatedSourceToContext(
-          croppedCtx,
-          source,
-          w,
-          h,
-          sx,
-          sy,
-          1,
-          1,
-          params.rotationDegrees,
-        );
-      } else {
-        croppedCtx.drawImage(source, sx, sy, sw, sh, 0, 0, sw, sh);
-      }
-      applyColorAdjustmentsToCanvas(
-        cropped,
-        params.temperature,
-        params.tint,
-        params.exposureEv,
-        params.scaledLog,
-        params.sigmoid,
-        params.vibrance,
-        params.saturation,
-        hasRotation,
-      );
-      if (hasRotation) {
-        fillRotationPadding(croppedCtx, sw, sh, w, h, sx, sy, 1, 1, params.rotationDegrees);
-      }
-
-      const output = new OSC(dw, dh);
-      const outputCtx = output.getContext("2d");
-      if (!outputCtx) throw new Error("2D context unavailable");
-      outputCtx.imageSmoothingEnabled = true;
-      outputCtx.imageSmoothingQuality = "high";
-      outputCtx.drawImage(cropped, 0, 0, sw, sh, 0, 0, dw, dh);
-      applyMosaicRectsToCanvas(
-        output,
-        mosaicRegionsToOutputRects(params.mosaicRegions, w, h, sx, sy, sw, sh, dw, dh),
-        16,
-      );
-      drawTextOverlaysToContext(
-        outputCtx,
-        params.textOverlays,
-        w,
-        h,
-        sx,
-        sy,
-        sw,
-        sh,
-        dw,
-        dh,
-        params.rotationDegrees,
-      );
-      if ("convertToBlob" in output) {
-        type EncodeOpts = { type?: string; quality?: number };
-        const conv = (output as OffscreenCanvas & { convertToBlob(options?: EncodeOpts): Promise<Blob> })
-          .convertToBlob;
-        blob = await conv.call(output, { type: outputFormat, quality });
-      }
-    }
-    if (!blob) {
-      const cropped = document.createElement("canvas");
-      cropped.width = sw;
-      cropped.height = sh;
-      const croppedCtx = cropped.getContext("2d");
-      if (!croppedCtx) throw new Error("2D context unavailable");
-      if (hasRotation) {
-        croppedCtx.imageSmoothingEnabled = true;
-        croppedCtx.imageSmoothingQuality = "high";
-        drawRotatedSourceToContext(
-          croppedCtx,
-          source,
-          w,
-          h,
-          sx,
-          sy,
-          1,
-          1,
-          params.rotationDegrees,
-        );
-      } else {
-        croppedCtx.drawImage(source, sx, sy, sw, sh, 0, 0, sw, sh);
-      }
-      applyColorAdjustmentsToCanvas(
-        cropped,
-        params.temperature,
-        params.tint,
-        params.exposureEv,
-        params.scaledLog,
-        params.sigmoid,
-        params.vibrance,
-        params.saturation,
-        hasRotation,
-      );
-      if (hasRotation) {
-        fillRotationPadding(croppedCtx, sw, sh, w, h, sx, sy, 1, 1, params.rotationDegrees);
-      }
-
-      const output = document.createElement("canvas");
-      output.width = dw;
-      output.height = dh;
-      const outputCtx = output.getContext("2d");
-      if (!outputCtx) throw new Error("2D context unavailable");
-      outputCtx.imageSmoothingEnabled = true;
-      outputCtx.imageSmoothingQuality = "high";
-      outputCtx.drawImage(cropped, 0, 0, sw, sh, 0, 0, dw, dh);
-      applyMosaicRectsToCanvas(
-        output,
-        mosaicRegionsToOutputRects(params.mosaicRegions, w, h, sx, sy, sw, sh, dw, dh),
-        16,
-      );
-      drawTextOverlaysToContext(
-        outputCtx,
-        params.textOverlays,
-        w,
-        h,
-        sx,
-        sy,
-        sw,
-        sh,
-        dw,
-        dh,
-        params.rotationDegrees,
-      );
-      blob = await new Promise<Blob>((resolve, reject) =>
-        output.toBlob(
-          (b) => (b ? resolve(b) : reject(new Error("toBlob returned null"))),
-          outputFormat,
-          quality,
-        ),
-      );
-    }
-    if (!blob || !blob.size || !dw || !dh) {
-      throw new Error("invalid optimized output");
-    }
-    return { blob, width: dw, height: dh };
-  } finally {
-    if (ownsDecodedImage) cleanup();
-  }
+  const prepared = await buildEditedVariant(
+    file,
+    srcW,
+    srcH,
+    name,
+    type,
+    edit,
+    decodedImage,
+    outputColorProfile,
+  );
+  return encodeEditedVariant(prepared, quality, outputFormat, outputColorProfile);
 }
 
 function shouldAutoOptimize(meta: Pick<SelectedItem, "width" | "height" | "size">): boolean {
@@ -3790,7 +4747,7 @@ function buildToneLumaHistogram(
         context.scaledLog,
         context.sigmoid,
       );
-      const y = clamp01(0.2126 * r + 0.7152 * g + 0.0722 * b);
+      const y = clamp01(PROPHOTO_LUMA_R * r + PROPHOTO_LUMA_G * g + PROPHOTO_LUMA_B * b);
       const display = histogramDisplayValue(y);
       const bin = Math.min(HISTOGRAM_BINS - 1, Math.max(0, Math.floor(display * HISTOGRAM_BINS)));
       histogram[bin] += 1;
@@ -3880,7 +4837,7 @@ function evaluateAutoExposure(
         );
         highlightPressure += pressure * pressure;
       }
-      const y = clamp01(0.2126 * clamp01(r) + 0.7152 * clamp01(g) + 0.0722 * clamp01(b));
+      const y = clamp01(PROPHOTO_LUMA_R * clamp01(r) + PROPHOTO_LUMA_G * clamp01(g) + PROPHOTO_LUMA_B * clamp01(b));
       const display = histogramDisplayValue(y);
       const bin = Math.min(HISTOGRAM_BINS - 1, Math.max(0, Math.floor(display * HISTOGRAM_BINS)));
       histogram[bin] += 1;
@@ -4399,7 +5356,7 @@ export function ImageEditDialog({
         } else {
           const drawable = decodedImageToCanvasSource(decoded);
           cleanup = drawable.cleanup;
-          if (isRawImage(file.name, file.type)) decodedImageRef.current = decoded;
+          if (isRawImageFile(file.name, file.type)) decodedImageRef.current = decoded;
           previewImageRef.current = drawable.source;
           setNatural({ w: drawable.width, h: drawable.height });
           setImageReady(true);
@@ -5066,7 +6023,8 @@ export function ImageEditDialog({
     const height = Math.max(1, Math.round(displayed.h));
     canvas.width = width;
     canvas.height = height;
-    const ctx = canvas.getContext("2d");
+    const previewCanvasSpec = buildPreferredEditCanvasSpec("srgb");
+    const ctx = getCanvas2dContext(canvas, previewCanvasSpec.colorSpace, false, previewCanvasSpec.colorType);
     if (!ctx) return;
     ctx.clearRect(0, 0, width, height);
     const hasRotation = Math.abs(normalizeRotationDegrees(rotationDegrees)) > 1e-9;
@@ -5083,6 +6041,7 @@ export function ImageEditDialog({
         sigmoid,
         vibrance,
         saturation,
+        previewCanvasSpec,
       );
     } else if (img) {
       if (hasRotation) {
@@ -5102,6 +6061,7 @@ export function ImageEditDialog({
         vibrance,
         saturation,
         hasRotation,
+        previewCanvasSpec,
       );
       if (hasRotation) {
         fillRotationPadding(ctx, width, height, width, height, 0, 0, 1, 1, rotationDegrees);
@@ -5117,6 +6077,7 @@ export function ImageEditDialog({
           h: (region.bottom - region.top) * canvas.height,
         })),
         16,
+        previewCanvasSpec,
       );
     }
   }, [
@@ -5186,7 +6147,7 @@ export function ImageEditDialog({
             saturation,
           )
         : computeHistogramData(
-            img,
+            img!,
             natural.w,
             natural.h,
             { x: sx, y: sy, w: ex - sx, h: ey - sy },
@@ -5228,7 +6189,7 @@ export function ImageEditDialog({
     if (
       !showHistogram ||
       !showPercentileDebug ||
-      !isRawImage(file.name, file.type) ||
+      !isRawImageFile(file.name, file.type) ||
       rawThumbnailDebugPercentiles
     ) {
       return () => {
@@ -5267,8 +6228,11 @@ export function ImageEditDialog({
       return;
     }
 
+    const percentileColorSpace = decoded?.storage === "rgba" && decoded.bitDepth === 16
+      ? "prophoto"
+      : "srgb";
     setPercentileDebug({
-      input: debugPercentilesFromLinearRgbSample(sample),
+      input: debugPercentilesFromLinearRgbSample(sample, percentileColorSpace),
       thumbnail: rawThumbnailDebugPercentiles,
       output: adjustedDebugPercentilesFromLinearRgbSample(
         sample,
@@ -5279,6 +6243,7 @@ export function ImageEditDialog({
         sigmoid,
         vibrance,
         saturation,
+        percentileColorSpace,
       ),
     });
   }, [
