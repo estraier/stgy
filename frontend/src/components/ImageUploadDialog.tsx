@@ -268,6 +268,9 @@ type LibRawSettingsLike = {
   useCameraMatrix?: number;
   noAutoBright?: boolean;
   adjustMaximumThr?: number;
+  threshold?: number;
+  medPasses?: number;
+  fbddNoiserd?: number;
   highlight?: number;
   userFlip?: number;
 };
@@ -275,6 +278,7 @@ type LibRawSettingsLike = {
 type LibRawMetadataLike = {
   width?: number;
   height?: number;
+  iso_speed?: number;
   [key: string]: unknown;
 };
 
@@ -310,11 +314,15 @@ const RAW_DECODE_SETTINGS: LibRawSettingsLike = {
   useCameraMatrix: 1,
   noAutoBright: true,
   adjustMaximumThr: 0,
+  threshold: 0,
+  fbddNoiserd: 0,
 };
 
 const RAW_BASELINE_PERCENTILE = 98;
 const RAW_BASELINE_TARGET = 0.9;
 const RAW_INTERNAL_STORAGE_GAMMA = 2.2;
+const RAW_MEDIAN_DENOISE_WEAK_ISO = 800;
+const RAW_MEDIAN_DENOISE_STRONG_ISO = 3200;
 const RAW_BASELINE_ROLLOFF_PERCENTILE = 99.8;
 const RAW_BASELINE_ROLLOFF_ASYMPTOTIC = 0.5;
 const RAW_THUMBNAIL_MATCH_ITERATIONS = 20;
@@ -328,6 +336,7 @@ const RAW_THUMBNAIL_MATCH_SIGMOID_STEP = 0.01;
 const RAW_THUMBNAIL_MATCH_EXPOSURE_RELAXATION = 0.7;
 const RAW_THUMBNAIL_MATCH_LOG_RELAXATION = 0.4;
 const RAW_THUMBNAIL_MATCH_SIGMOID_RELAXATION = 0.2;
+const RAW_THUMBNAIL_MATCH_RELAXATION_FINAL_SCALE = 0.5;
 const DEBUG_PERCENTILES = [0, 1, 2, 5, 25, 50, 75, 95, 98, 99, 100] as const;
 const DEBUG_PERCENTILE_SAMPLE_MAX = 256;
 
@@ -2176,13 +2185,19 @@ function applyRawThumbnailMatchedBaseline(
   let scaledLog = 0;
   let sigmoid = 0;
   for (let i = 0; i < RAW_THUMBNAIL_MATCH_ITERATIONS; i++) {
+    const progress = i / Math.max(1, RAW_THUMBNAIL_MATCH_ITERATIONS - 1);
+    const relaxationScale = Math.pow(RAW_THUMBNAIL_MATCH_RELAXATION_FINAL_SCALE, progress);
+
     const targetGain = solveRawThumbnailMatchGain(rawP98, scaledLog, sigmoid, targetP98);
     if (targetGain > 0 && gain > 0) {
-      gain *= Math.pow(targetGain / gain, RAW_THUMBNAIL_MATCH_EXPOSURE_RELAXATION);
+      gain *= Math.pow(
+        targetGain / gain,
+        RAW_THUMBNAIL_MATCH_EXPOSURE_RELAXATION * relaxationScale,
+      );
     }
 
     const targetLog = solveRawThumbnailMatchLog(rawP50, gain, sigmoid, targetP50);
-    scaledLog += RAW_THUMBNAIL_MATCH_LOG_RELAXATION * (targetLog - scaledLog);
+    scaledLog += RAW_THUMBNAIL_MATCH_LOG_RELAXATION * relaxationScale * (targetLog - scaledLog);
 
     const targetSigmoid = solveRawThumbnailMatchSigmoid(
       rawP25,
@@ -2191,7 +2206,7 @@ function applyRawThumbnailMatchedBaseline(
       scaledLog,
       targetContrast,
     );
-    sigmoid += RAW_THUMBNAIL_MATCH_SIGMOID_RELAXATION * (targetSigmoid - sigmoid);
+    sigmoid += RAW_THUMBNAIL_MATCH_SIGMOID_RELAXATION * relaxationScale * (targetSigmoid - sigmoid);
   }
 
   const data = decoded.data;
@@ -2762,6 +2777,13 @@ function createLibRawWorkerFailure(raw: LibRawInstanceLike): {
   };
 }
 
+function rawMedianDenoisePassesForIso(iso: number): number {
+  if (!Number.isFinite(iso) || iso <= 0) return 0;
+  if (iso > RAW_MEDIAN_DENOISE_STRONG_ISO) return 2;
+  if (iso > RAW_MEDIAN_DENOISE_WEAK_ISO) return 1;
+  return 0;
+}
+
 async function readRawThumbnailDebugPercentiles(
   file: File,
 ): Promise<DebugPercentileValues | undefined> {
@@ -2792,14 +2814,14 @@ async function decodeRawImage(file: File): Promise<DecodedRgbaImage8 | DecodedRg
   try {
     raw = await createLibRawInstance();
     workerFailure = createLibRawWorkerFailure(raw);
+    const rawBytes = new Uint8Array(await file.arrayBuffer());
     await Promise.race([
-      raw.open(new Uint8Array(await file.arrayBuffer()), RAW_DECODE_SETTINGS),
+      raw.open(rawBytes, RAW_DECODE_SETTINGS),
       workerFailure.promise,
     ]);
-    const image = await Promise.race([raw.imageData(), workerFailure.promise]);
-    if (!image || !image.width || !image.height || !image.data) {
-      throw new Error("RAW decode failed");
-    }
+
+    const metadata = await Promise.race([raw.metadata(false), workerFailure.promise]);
+    const medPasses = rawMedianDenoisePassesForIso(Number(metadata?.iso_speed));
 
     let thumbnailPercentiles: DebugPercentileValues | undefined;
     if (raw.thumbnailData) {
@@ -2809,6 +2831,21 @@ async function decodeRawImage(file: File): Promise<DecodedRgbaImage8 | DecodedRg
       } catch {
         thumbnailPercentiles = undefined;
       }
+    }
+
+    // medPasses is a LibRaw processing setting. Opening the same buffer again is
+    // cheap compared with unpack/demosaic, and lets us choose chroma-oriented
+    // median cleanup from the ISO metadata without changing the WASM wrapper.
+    if (medPasses > 0) {
+      await Promise.race([
+        raw.open(rawBytes, { ...RAW_DECODE_SETTINGS, medPasses }),
+        workerFailure.promise,
+      ]);
+    }
+
+    const image = await Promise.race([raw.imageData(), workerFailure.promise]);
+    if (!image || !image.width || !image.height || !image.data) {
+      throw new Error("RAW decode failed");
     }
 
     const decoded = libRawImageDataToDecoded(image);
