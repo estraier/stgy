@@ -92,6 +92,7 @@ export type ImageEditParams = {
   vibrance: number;
   saturation: number;
   resizePercent: number;
+  sharpen: number;
   mosaicRegions: ImageMosaicRegion[];
   textOverlays: ImageTextOverlay[];
 };
@@ -417,10 +418,21 @@ const RAW_THUMBNAIL_MATCH_EXPOSURE_RELAXATION = 0.7;
 const RAW_THUMBNAIL_MATCH_LOG_RELAXATION = 0.4;
 const RAW_THUMBNAIL_MATCH_SIGMOID_RELAXATION = 0.2;
 const RAW_THUMBNAIL_MATCH_RELAXATION_FINAL_SCALE = 0.5;
+const RAW_THUMBNAIL_MATCH_COLOR_ITERATIONS = 20;
+const RAW_THUMBNAIL_MATCH_SATURATION_RELAXATION = 0.7;
+const RAW_THUMBNAIL_MATCH_VIBRANCE_RELAXATION = 0.5;
+const RAW_THUMBNAIL_MATCH_COLOR_SEARCH_STEPS = 24;
+const RAW_THUMBNAIL_MATCH_SATURATION_PERCENTILE = 95;
+const RAW_THUMBNAIL_MATCH_VIBRANCE_PERCENTILE = 50;
 const DEBUG_PERCENTILES = [0, 1, 2, 5, 25, 50, 75, 95, 98, 99, 100] as const;
 const DEBUG_PERCENTILE_SAMPLE_MAX = 256;
 
 type DebugPercentileValues = number[];
+
+type RawThumbnailMatchReference = {
+  lumaPercentiles: DebugPercentileValues;
+  linearSrgbSample: Float32Array;
+};
 
 const LIBRAW_BROWSER_MODULE_URL = "/vendor/libraw-wasm/index.js";
 
@@ -547,6 +559,10 @@ function clampColorAdjustment(v: number): number {
   return Math.min(100, Math.max(-100, Math.round(v)));
 }
 
+function clampSharpen(v: number): number {
+  return Math.min(3, Math.max(0, Math.round(Number.isFinite(v) ? v : 0)));
+}
+
 function defaultResizePercent(w?: number, h?: number): number {
   if (!w || !h || w <= 0 || h <= 0) return 100;
   return Math.min(100, Math.max(1, Math.round(computeScale(w, h) * 100)));
@@ -645,6 +661,7 @@ export function buildDefaultEditParams(w?: number, h?: number): ImageEditParams 
     vibrance: 0,
     saturation: 0,
     resizePercent: defaultResizePercent(w, h),
+    sharpen: 0,
     mosaicRegions: [],
     textOverlays: [],
   };
@@ -663,6 +680,7 @@ function normalizeEditParams(params: ImageEditParams | undefined, w?: number, h?
     vibrance: clampColorAdjustment(params?.vibrance ?? defaults.vibrance),
     saturation: clampColorAdjustment(params?.saturation ?? defaults.saturation),
     resizePercent: Math.min(100, Math.max(1, Math.round(params?.resizePercent ?? defaults.resizePercent))),
+    sharpen: clampSharpen(params?.sharpen ?? defaults.sharpen),
     mosaicRegions: normalizeMosaicRegions(params?.mosaicRegions ?? defaults.mosaicRegions),
     textOverlays: normalizeTextOverlays(params?.textOverlays ?? defaults.textOverlays),
   };
@@ -686,6 +704,7 @@ function isMeaningfullyEdited(params: ImageEditParams | undefined, w?: number, h
     normalized.vibrance !== 0 ||
     normalized.saturation !== 0 ||
     normalized.resizePercent !== defaults.resizePercent ||
+    normalized.sharpen !== defaults.sharpen ||
     normalized.mosaicRegions.length > 0 ||
     normalized.textOverlays.length > 0
   );
@@ -1379,7 +1398,7 @@ function applyColorAdjustmentsToCanvas(
     const sampleData = new Float32Array(linearData.length);
     for (let i = 0; i < linearData.length; i++) sampleData[i] = linearData[i] ?? 0;
     const context = buildColorAdjustmentContextFromLinearRgbaSample(
-      { kind: "linear", data: sampleData, width, height },
+      { data: sampleData, width, height },
       normalizedTemperature,
       normalizedTint,
       exposureEv,
@@ -1426,6 +1445,139 @@ function applyColorAdjustmentsToCanvas(
   ctx.putImageData(imageData, 0, 0);
 }
 
+
+type SharpenPreset = {
+  radius: number;
+  sigma: number;
+  amount: number;
+  threshold: number;
+};
+
+const SHARPEN_GAMMA = 1.4;
+const SHARPEN_PRESETS: Record<1 | 2 | 3, SharpenPreset> = {
+  1: { radius: 1, sigma: 0.8, amount: 1.5, threshold: 0.01 },
+  2: { radius: 2, sigma: 1.0, amount: 1.2, threshold: 0.03 },
+  3: { radius: 3, sigma: 1.5, amount: 1.5, threshold: 0.03 },
+};
+
+function sharpenReflect101Index(index: number, length: number): number {
+  if (length <= 1) return 0;
+  let i = index;
+  while (i < 0 || i >= length) {
+    if (i < 0) i = -i;
+    if (i >= length) i = 2 * length - i - 2;
+  }
+  return i;
+}
+
+function buildSharpenGaussianKernel(radius: number, sigma: number): Float32Array {
+  const ksize = Math.ceil(2 * radius) + 1;
+  const half = Math.floor(ksize / 2);
+  const kernel = new Float32Array(ksize);
+  const sigma2 = 2 * sigma * sigma;
+  let sum = 0;
+  for (let i = -half; i <= half; i++) {
+    const weight = Math.exp(-(i * i) / sigma2);
+    kernel[i + half] = weight;
+    sum += weight;
+  }
+  if (sum > 0) {
+    for (let i = 0; i < kernel.length; i++) kernel[i] /= sum;
+  }
+  return kernel;
+}
+
+function applySharpenToCanvas(
+  canvas: HTMLCanvasElement | OffscreenCanvas,
+  level: number,
+  canvasSpecOrOutputColorProfile: ImageEditCanvasSpec | ImageEditOutputColorProfile = "srgb",
+) {
+  const sharpen = clampSharpen(level);
+  if (sharpen === 0) return;
+  const preset = SHARPEN_PRESETS[sharpen as 1 | 2 | 3];
+  const canvasSpec = resolveCanvasSpec(canvasSpecOrOutputColorProfile);
+  const ctx = getCanvas2dContext(canvas, canvasSpec.colorSpace, true, canvasSpec.colorType);
+  if (!ctx) return;
+  const width = canvas.width;
+  const height = canvas.height;
+  if (!width || !height) return;
+  const imageData = getCanvasImageData(
+    ctx,
+    0,
+    0,
+    width,
+    height,
+    canvasSpec.colorSpace,
+    canvasSpec.pixelFormat,
+  );
+  const data = imageData.data;
+  const float16 = canvasSpec.linearLight && isFloat16ImageDataArray(data);
+  const values = data as unknown as { [index: number]: number; length: number };
+  const pixelCount = width * height;
+  const scratch = new Float32Array(pixelCount);
+  const kernel = buildSharpenGaussianKernel(preset.radius, preset.sigma);
+  const half = Math.floor(kernel.length / 2);
+  const inverseGamma = 1 / SHARPEN_GAMMA;
+
+  const readLinear = (index: number): number => {
+    const value = values[index] ?? 0;
+    return float16 ? clamp01(value) : srgbChannelToLinear(value);
+  };
+  const readGamma = (index: number): number => {
+    const value = values[index] ?? 0;
+    return float16 ? clamp01(value) : clamp01(value / 255);
+  };
+  const writeGamma = (index: number, value: number) => {
+    const v = clamp01(value);
+    values[index] = float16 ? v : Math.round(v * 255);
+  };
+  const writeLinear = (index: number, value: number) => {
+    const v = clamp01(value);
+    values[index] = float16 ? v : linearChannelToSrgb(v);
+  };
+
+  for (let channel = 0; channel < 3; channel++) {
+    // The reference implementation sharpens in a gamma=1.4 working space.
+    // Temporarily store that channel in the ImageData itself so the only large
+    // scratch allocation is the single horizontal-blur plane below.
+    for (let pixel = 0; pixel < pixelCount; pixel++) {
+      const index = pixel * 4 + channel;
+      writeGamma(index, Math.pow(readLinear(index), inverseGamma));
+    }
+
+    for (let y = 0; y < height; y++) {
+      const row = y * width;
+      for (let x = 0; x < width; x++) {
+        let sum = 0;
+        for (let k = -half; k <= half; k++) {
+          const sx = sharpenReflect101Index(x + k, width);
+          sum += readGamma((row + sx) * 4 + channel) * kernel[k + half];
+        }
+        scratch[row + x] = sum;
+      }
+    }
+
+    for (let y = 0; y < height; y++) {
+      const row = y * width;
+      for (let x = 0; x < width; x++) {
+        let blurred = 0;
+        for (let k = -half; k <= half; k++) {
+          const sy = sharpenReflect101Index(y + k, height);
+          blurred += scratch[sy * width + x] * kernel[k + half];
+        }
+        const index = (row + x) * 4 + channel;
+        const originalGamma = readGamma(index);
+        const diff = originalGamma - blurred;
+        const sharpenedGamma = Math.abs(diff) > preset.threshold
+          ? originalGamma + preset.amount * diff
+          : originalGamma;
+        writeLinear(index, Math.pow(clamp01(sharpenedGamma), SHARPEN_GAMMA));
+      }
+    }
+  }
+
+  ctx.putImageData(imageData, 0, 0);
+}
 
 type MosaicPixelRect = { x: number; y: number; w: number; h: number };
 
@@ -2081,6 +2233,12 @@ type DecodedRgbaImage16 = {
 
 export type DecodedImage = DecodedCanvasSourceImage | DecodedRgbaImage8 | DecodedRgbaImage16;
 
+type RawDevelopmentCacheEntry = {
+  itemId: string;
+  file: File;
+  decoded: DecodedRgbaImage16;
+};
+
 type DrawableDecodedImage = {
   source: CanvasImageSource;
   width: number;
@@ -2255,11 +2413,22 @@ function createCanvasImageData(
         Float16Array?: new (length: number) => ArrayBufferView;
       }).Float16Array;
       if (Float16Ctor) {
-        return new ImageData(
-          new Float16Ctor(width * height * 4) as unknown as Uint8ClampedArray,
+        const Float16ImageData = ImageData as unknown as {
+          new (
+            data: ArrayBufferView,
+            sw: number,
+            sh: number,
+            settings?: {
+              colorSpace?: ImageEditCanvasColorSpace;
+              pixelFormat?: ImageEditCanvasPixelFormat;
+            },
+          ): ImageData;
+        };
+        return new Float16ImageData(
+          new Float16Ctor(width * height * 4),
           width,
           height,
-          { colorSpace, pixelFormat } as unknown as ImageDataSettings,
+          { colorSpace, pixelFormat },
         );
       }
     } catch {}
@@ -2298,7 +2467,9 @@ function canUseLinearFloat16Canvas(colorProfile: ImageEditOutputColorProfile): b
     return false;
   }
   try {
-    const attrs = (ctx as CanvasRenderingContext2D & { getContextAttributes?: () => { colorSpace?: string; colorType?: string } }).getContextAttributes?.();
+    const attrs = (ctx as unknown as {
+      getContextAttributes?: () => { colorSpace?: string; colorType?: string };
+    }).getContextAttributes?.();
     if (attrs?.colorSpace && attrs.colorSpace !== colorSpace) {
       LINEAR_FLOAT16_CANVAS_SUPPORT.set(colorProfile, false);
       return false;
@@ -2588,11 +2759,34 @@ export async function detectEditableImageColorProfile(file: File): Promise<Image
   }
 }
 
+export async function detectBestEditableImageOutputColorProfile(
+  file: File,
+): Promise<ImageEditOutputColorProfile> {
+  if (isRawImageFile(file.name || "", file.type || "")) return "display-p3";
+  return detectEditableImageColorProfile(file);
+}
+
 type LinearRgbaSample = {
   data: Float32Array;
   width: number;
   height: number;
 };
+
+type Rgba16EditPreviewCacheEntry = {
+  width: number;
+  height: number;
+  sample: LinearRgbaSample;
+};
+
+// Preview generation is an ImageEditDialog implementation detail. Keep one base preview
+// per decoded 16-bit input here so it survives Apply -> Re-Edit without exposing preview
+// state through the upload dialog's props. WeakMap lets the entry disappear with the
+// decoded input when that input is released.
+const RGBA16_EDIT_PREVIEW_CACHE = new WeakMap<DecodedRgbaImage16, Rgba16EditPreviewCacheEntry>();
+const RGBA16_EDIT_PREVIEW_CONTEXT_CACHE = new WeakMap<
+  DecodedRgbaImage16,
+  { rotationDegrees: number; sample: LinearRgbaSample }
+>();
 
 const COLOR_ADJUSTMENT_CONTEXT_SAMPLE_MAX = 256;
 
@@ -3087,6 +3281,216 @@ function applyRawThumbnailMatchedBaseline(
   return true;
 }
 
+function hsvSaturationPercentileFromLinearSrgbSample(
+  sample: Float32Array,
+  percentile: number,
+): number {
+  const count = Math.floor(sample.length / 3);
+  if (count <= 0) return 0;
+  const bins = 4096;
+  const histogram = new Uint32Array(bins);
+  for (let i = 0; i < count; i++) {
+    const si = i * 3;
+    const [, saturation] = rgbToHsv(
+      clamp01(sample[si] ?? 0),
+      clamp01(sample[si + 1] ?? 0),
+      clamp01(sample[si + 2] ?? 0),
+    );
+    histogram[Math.min(bins - 1, Math.max(0, Math.round(saturation * (bins - 1))))]++;
+  }
+  return histogramPercentile16(histogram, count, percentile) / (bins - 1);
+}
+
+type RawAutoColorSample = {
+  hue: Float32Array;
+  saturation: Float32Array;
+  value: Float32Array;
+  saturationP99: number;
+};
+
+function buildRawAutoColorSample(sample: Float32Array): RawAutoColorSample {
+  const count = Math.floor(sample.length / 3);
+  const hue = new Float32Array(count);
+  const saturation = new Float32Array(count);
+  const value = new Float32Array(count);
+  const saturationValues = new Array<number>(count);
+  for (let i = 0; i < count; i++) {
+    const si = i * 3;
+    const [h, s, v] = rgbToHsv(
+      sample[si] ?? 0,
+      sample[si + 1] ?? 0,
+      sample[si + 2] ?? 0,
+    );
+    hue[i] = h;
+    saturation[i] = s;
+    value[i] = v;
+    saturationValues[i] = s;
+  }
+  return {
+    hue,
+    saturation,
+    value,
+    saturationP99: percentileFromSortedValues(saturationValues, 99),
+  };
+}
+
+function rawAutoColorSaturationPercentile(
+  sample: RawAutoColorSample,
+  saturation: number,
+  vibrance: number,
+  percentile: number,
+): number {
+  const normalizedSaturation = clampColorAdjustment(saturation);
+  const normalizedVibrance = clampColorAdjustment(vibrance);
+  const saturationFactor = colorSaturationFactor(normalizedSaturation);
+  const vibranceFactor = colorVibranceFactor(normalizedVibrance);
+  // Match the manual Saturation path exactly: its rolloff is determined from
+  // the P99 saturation after the linear multiplier, before Vibrance.
+  const saturationRolloff = saturationFactor > 1
+    ? rolloffParams(sample.saturationP99 * saturationFactor, 0.7, 4)
+    : null;
+  const bins = 4096;
+  const histogram = new Uint32Array(bins);
+  for (let i = 0; i < sample.saturation.length; i++) {
+    let s = sample.saturation[i] ?? 0;
+    if (normalizedSaturation !== 0) {
+      s = applyRolloffScalar(s * saturationFactor, saturationRolloff);
+      s = clamp01(s);
+    }
+    if (normalizedVibrance !== 0) {
+      s = applyScaledLogLinear(s, vibranceFactor);
+    }
+    const [pr, pg, pb] = hsvToRgb(
+      sample.hue[i] ?? 0,
+      s,
+      sample.value[i] ?? 0,
+    );
+    const [sr, sg, sb] = convertLinearProPhotoToOutputRgb(pr, pg, pb, "srgb");
+    const [, outputSaturation] = rgbToHsv(
+      clamp01(sr),
+      clamp01(sg),
+      clamp01(sb),
+    );
+    histogram[Math.min(bins - 1, Math.max(0, Math.round(outputSaturation * (bins - 1))))]++;
+  }
+  return histogramPercentile16(histogram, sample.saturation.length, percentile) / (bins - 1);
+}
+
+function solveRawThumbnailMatchColorParameter(
+  sample: RawAutoColorSample,
+  target: number,
+  percentile: number,
+  fixedSaturation: number,
+  parameter: "saturation" | "vibrance",
+): number {
+  const evaluate = (value: number) => rawAutoColorSaturationPercentile(
+    sample,
+    parameter === "saturation" ? value : fixedSaturation,
+    parameter === "vibrance" ? value : 0,
+    percentile,
+  );
+  let lower = -100;
+  let upper = 100;
+  let lowerValue = evaluate(lower);
+  let upperValue = evaluate(upper);
+  const clampedTarget = clamp01(target);
+
+  // The manual HSV adjustment is normally monotonic in this statistic. If a
+  // gamut-clipping edge case reverses the endpoints, keep the search ordered.
+  if (lowerValue > upperValue) {
+    [lower, upper] = [upper, lower];
+    [lowerValue, upperValue] = [upperValue, lowerValue];
+  }
+  if (clampedTarget <= lowerValue) return lower;
+  if (clampedTarget >= upperValue) return upper;
+
+  for (let i = 0; i < RAW_THUMBNAIL_MATCH_COLOR_SEARCH_STEPS; i++) {
+    const mid = (lower + upper) / 2;
+    const value = evaluate(mid);
+    if (value < clampedTarget) {
+      lower = mid;
+      lowerValue = value;
+    } else {
+      upper = mid;
+      upperValue = value;
+    }
+  }
+  return Math.abs(lowerValue - clampedTarget) <= Math.abs(upperValue - clampedTarget)
+    ? lower
+    : upper;
+}
+
+function applyRawThumbnailMatchedColor(
+  decoded: DecodedRgbaImage16,
+  thumbnailLinearSrgbSample: Float32Array,
+): boolean {
+  if (!thumbnailLinearSrgbSample.length) return false;
+  const rawLinearProPhotoSample = sampleLinearRgbFromRgba16(decoded);
+  if (!rawLinearProPhotoSample.length) return false;
+
+  const targetP95 = hsvSaturationPercentileFromLinearSrgbSample(
+    thumbnailLinearSrgbSample,
+    RAW_THUMBNAIL_MATCH_SATURATION_PERCENTILE,
+  );
+  const targetP50 = hsvSaturationPercentileFromLinearSrgbSample(
+    thumbnailLinearSrgbSample,
+    RAW_THUMBNAIL_MATCH_VIBRANCE_PERCENTILE,
+  );
+  if (!Number.isFinite(targetP95) || !Number.isFinite(targetP50)) return false;
+
+  const sample = buildRawAutoColorSample(rawLinearProPhotoSample);
+  const targetSaturation = solveRawThumbnailMatchColorParameter(
+    sample,
+    targetP95,
+    RAW_THUMBNAIL_MATCH_SATURATION_PERCENTILE,
+    0,
+    "saturation",
+  );
+  let saturation = 0;
+  for (let i = 0; i < RAW_THUMBNAIL_MATCH_COLOR_ITERATIONS; i++) {
+    saturation += RAW_THUMBNAIL_MATCH_SATURATION_RELAXATION * (targetSaturation - saturation);
+  }
+  saturation = clampColorAdjustment(saturation);
+
+  const targetVibrance = solveRawThumbnailMatchColorParameter(
+    sample,
+    targetP50,
+    RAW_THUMBNAIL_MATCH_VIBRANCE_PERCENTILE,
+    saturation,
+    "vibrance",
+  );
+  let vibrance = 0;
+  for (let i = 0; i < RAW_THUMBNAIL_MATCH_COLOR_ITERATIONS; i++) {
+    vibrance += RAW_THUMBNAIL_MATCH_VIBRANCE_RELAXATION * (targetVibrance - vibrance);
+  }
+  vibrance = clampColorAdjustment(vibrance);
+
+  if (Math.abs(saturation) < 1e-6 && Math.abs(vibrance) < 1e-6) return true;
+  const context = colorAdjustmentContextFromLinearRgbSample(
+    rawLinearProPhotoSample,
+    0,
+    0,
+    0,
+    0,
+    0,
+    vibrance,
+    saturation,
+  );
+  const data = decoded.data;
+  for (let i = 0; i < data.length; i += 4) {
+    const [r, g, b] = applyColorAdjustmentsLinearRgb(
+      decodeStoredRgba16Channel(data[i] ?? 0, decoded.transfer),
+      decodeStoredRgba16Channel(data[i + 1] ?? 0, decoded.transfer),
+      decodeStoredRgba16Channel(data[i + 2] ?? 0, decoded.transfer),
+      context,
+    );
+    data[i] = encodeStoredRgba16Channel(r, decoded.transfer);
+    data[i + 1] = encodeStoredRgba16Channel(g, decoded.transfer);
+    data[i + 2] = encodeStoredRgba16Channel(b, decoded.transfer);
+  }
+  return true;
+}
+
 function applyRawBaselineExposure(decoded: DecodedRgbaImage16): void {
   const data = decoded.data;
   const rmsHistogram = new Uint32Array(65536);
@@ -3268,6 +3672,86 @@ function sampleAlpha16Bilinear(
   );
 }
 
+function buildRgba16EditPreviewBase(
+  decoded: DecodedRgbaImage16,
+  width: number,
+  height: number,
+): LinearRgbaSample {
+  const data = new Float32Array(width * height * 4);
+  const scaleX = width / Math.max(1, decoded.width);
+  const scaleY = height / Math.max(1, decoded.height);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const sourcePoint = renderedPixelToSourcePoint(
+        x,
+        y,
+        decoded.width,
+        decoded.height,
+        0,
+        0,
+        scaleX,
+        scaleY,
+        0,
+      );
+      const di = (y * width + x) * 4;
+      const [r, g, b] = sampleLinearRgb16Bilinear(decoded, sourcePoint.x, sourcePoint.y);
+      data[di] = r;
+      data[di + 1] = g;
+      data[di + 2] = b;
+      data[di + 3] = sampleAlpha16Bilinear(decoded, sourcePoint.x, sourcePoint.y);
+    }
+  }
+  return { data, width, height };
+}
+
+function getRgba16EditPreviewBase(
+  decoded: DecodedRgbaImage16,
+  width: number,
+  height: number,
+): LinearRgbaSample {
+  const cached = RGBA16_EDIT_PREVIEW_CACHE.get(decoded);
+  if (cached && cached.width >= width && cached.height >= height) {
+    return cached.sample;
+  }
+  const sample = buildRgba16EditPreviewBase(decoded, width, height);
+  RGBA16_EDIT_PREVIEW_CACHE.set(decoded, { width, height, sample });
+  return sample;
+}
+
+function sampleLinearRgbaSampleBilinear(
+  sample: LinearRgbaSample,
+  x: number,
+  y: number,
+): [number, number, number, number] {
+  const clampedX = Math.max(0, Math.min(sample.width - 1, x));
+  const clampedY = Math.max(0, Math.min(sample.height - 1, y));
+  const x0 = Math.floor(clampedX);
+  const y0 = Math.floor(clampedY);
+  const x1 = Math.min(sample.width - 1, x0 + 1);
+  const y1 = Math.min(sample.height - 1, y0 + 1);
+  const tx = clampedX - x0;
+  const ty = clampedY - y0;
+  const w00 = (1 - tx) * (1 - ty);
+  const w10 = tx * (1 - ty);
+  const w01 = (1 - tx) * ty;
+  const w11 = tx * ty;
+  const data = sample.data;
+  const idx00 = (y0 * sample.width + x0) * 4;
+  const idx10 = (y0 * sample.width + x1) * 4;
+  const idx01 = (y1 * sample.width + x0) * 4;
+  const idx11 = (y1 * sample.width + x1) * 4;
+  return [
+    (data[idx00] ?? 0) * w00 + (data[idx10] ?? 0) * w10 +
+      (data[idx01] ?? 0) * w01 + (data[idx11] ?? 0) * w11,
+    (data[idx00 + 1] ?? 0) * w00 + (data[idx10 + 1] ?? 0) * w10 +
+      (data[idx01 + 1] ?? 0) * w01 + (data[idx11 + 1] ?? 0) * w11,
+    (data[idx00 + 2] ?? 0) * w00 + (data[idx10 + 2] ?? 0) * w10 +
+      (data[idx01 + 2] ?? 0) * w01 + (data[idx11 + 2] ?? 0) * w11,
+    (data[idx00 + 3] ?? 0) * w00 + (data[idx10 + 3] ?? 0) * w10 +
+      (data[idx01 + 3] ?? 0) * w01 + (data[idx11 + 3] ?? 0) * w11,
+  ];
+}
+
 function renderedPixelToSourcePoint(
   x: number,
   y: number,
@@ -3332,6 +3816,28 @@ function sampleLinearRgbaFromRgba16Region(
     }
   }
   return { data, width: sampleW, height: sampleH };
+}
+
+function getRgba16EditPreviewContextSample(
+  decoded: DecodedRgbaImage16,
+  rotationDegrees: number,
+): LinearRgbaSample {
+  const normalizedRotation = normalizeRotationDegrees(rotationDegrees);
+  const cached = RGBA16_EDIT_PREVIEW_CONTEXT_CACHE.get(decoded);
+  if (cached && Math.abs(cached.rotationDegrees - normalizedRotation) < 1e-9) {
+    return cached.sample;
+  }
+  const sample = sampleLinearRgbaFromRgba16Region(
+    decoded,
+    { x: 0, y: 0, w: decoded.width, h: decoded.height },
+    normalizedRotation,
+    COLOR_ADJUSTMENT_CONTEXT_SAMPLE_MAX,
+  );
+  RGBA16_EDIT_PREVIEW_CONTEXT_CACHE.set(decoded, {
+    rotationDegrees: normalizedRotation,
+    sample,
+  });
+  return sample;
 }
 
 function percentileFromSortedValues(values: number[], percentile: number): number {
@@ -3516,21 +4022,12 @@ function adjustedDebugPercentilesFromLinearRgbSample(
   return debugPercentilesFromLinearRgbSample(adjusted, colorSpace);
 }
 
-function debugPercentilesFromSrgbRgba8(data: Uint8ClampedArray): DebugPercentileValues {
-  const sample = new Float32Array(Math.floor(data.length / 4) * 3);
-  for (let i = 0, oi = 0; i < data.length; i += 4, oi += 3) {
-    sample[oi] = srgbChannelToLinear(data[i] ?? 0);
-    sample[oi + 1] = srgbChannelToLinear(data[i + 1] ?? 0);
-    sample[oi + 2] = srgbChannelToLinear(data[i + 2] ?? 0);
-  }
-  return debugPercentilesFromLinearRgbSample(sample);
-}
-
-async function debugPercentilesFromRawThumbnail(
+async function rawThumbnailMatchReferenceFromThumbnail(
   thumbnail: LibRawThumbnailDataLike | undefined,
-): Promise<DebugPercentileValues | undefined> {
+): Promise<RawThumbnailMatchReference | undefined> {
   if (!thumbnail?.data?.length || thumbnail.width <= 0 || thumbnail.height <= 0) return undefined;
 
+  let sample: Float32Array | null = null;
   if (thumbnail.format === "bitmap") {
     const pixelCount = thumbnail.width * thumbnail.height;
     const channels = thumbnail.data.length >= pixelCount * 4 ? 4 : 3;
@@ -3541,7 +4038,9 @@ async function debugPercentilesFromRawThumbnail(
     );
     const sampleW = Math.max(1, Math.round(thumbnail.width * scale));
     const sampleH = Math.max(1, Math.round(thumbnail.height * scale));
-    const sample = new Float32Array(sampleW * sampleH * 3);
+    sample = new Float32Array(sampleW * sampleH * 3);
+    // LibRaw bitmap thumbnails do not carry an ICC payload here. Preserve the
+    // existing sRGB assumption, while JPEG thumbnails below are color-managed.
     for (let y = 0; y < sampleH; y++) {
       const sy = Math.min(thumbnail.height - 1, Math.floor((y + 0.5) * thumbnail.height / sampleH));
       for (let x = 0; x < sampleW; x++) {
@@ -3553,41 +4052,60 @@ async function debugPercentilesFromRawThumbnail(
         sample[targetIndex + 2] = srgbChannelToLinear(thumbnail.data[sourceIndex + 2] ?? 0);
       }
     }
-    return debugPercentilesFromLinearRgbSample(sample);
+  } else if (thumbnail.format === "jpeg") {
+    const jpegBytes = new Uint8Array(thumbnail.data.byteLength);
+    jpegBytes.set(thumbnail.data);
+    const blob = new Blob([jpegBytes.buffer], { type: "image/jpeg" });
+    let source: CanvasImageSource | null = null;
+    let cleanup = () => {};
+    try {
+      try {
+        // The default conversion honors the JPEG's embedded ICC profile. Drawing
+        // into an explicit sRGB canvas then normalizes all tagged thumbnails to
+        // the same comparison primaries before HSV statistics are computed.
+        const bitmap = await createImageBitmap(blob, { colorSpaceConversion: "default" });
+        source = bitmap;
+        cleanup = () => bitmap.close?.();
+      } catch {
+        const file = new File([blob], "raw-thumbnail.jpg", { type: "image/jpeg" });
+        source = await decodeViaImg(file);
+      }
+      const width = Number((source as ImageBitmap).width || (source as HTMLImageElement).naturalWidth || thumbnail.width);
+      const height = Number((source as ImageBitmap).height || (source as HTMLImageElement).naturalHeight || thumbnail.height);
+      const scale = Math.min(1, DEBUG_PERCENTILE_SAMPLE_MAX / Math.max(width, height));
+      const sampleW = Math.max(1, Math.round(width * scale));
+      const sampleH = Math.max(1, Math.round(height * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = sampleW;
+      canvas.height = sampleH;
+      const ctx = getCanvas2dContext(canvas, "srgb", true, "unorm8");
+      if (!ctx) return undefined;
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(source, 0, 0, width, height, 0, 0, sampleW, sampleH);
+      const rgba = ctx.getImageData(0, 0, sampleW, sampleH).data;
+      sample = new Float32Array(sampleW * sampleH * 3);
+      for (let i = 0, oi = 0; i < rgba.length; i += 4, oi += 3) {
+        sample[oi] = srgbChannelToLinear(rgba[i] ?? 0);
+        sample[oi + 1] = srgbChannelToLinear(rgba[i + 1] ?? 0);
+        sample[oi + 2] = srgbChannelToLinear(rgba[i + 2] ?? 0);
+      }
+    } finally {
+      cleanup();
+    }
   }
 
-  if (thumbnail.format !== "jpeg") return undefined;
-  const jpegBytes = new Uint8Array(thumbnail.data.byteLength);
-  jpegBytes.set(thumbnail.data);
-  const blob = new Blob([jpegBytes.buffer], { type: "image/jpeg" });
-  let source: CanvasImageSource | null = null;
-  let cleanup = () => {};
-  try {
-    try {
-      const bitmap = await createImageBitmap(blob);
-      source = bitmap;
-      cleanup = () => bitmap.close?.();
-    } catch {
-      const file = new File([blob], "raw-thumbnail.jpg", { type: "image/jpeg" });
-      source = await decodeViaImg(file);
-    }
-    const width = Number((source as ImageBitmap).width || (source as HTMLImageElement).naturalWidth || thumbnail.width);
-    const height = Number((source as ImageBitmap).height || (source as HTMLImageElement).naturalHeight || thumbnail.height);
-    const scale = Math.min(1, DEBUG_PERCENTILE_SAMPLE_MAX / Math.max(width, height));
-    const sampleW = Math.max(1, Math.round(width * scale));
-    const sampleH = Math.max(1, Math.round(height * scale));
-    const canvas = document.createElement("canvas");
-    canvas.width = sampleW;
-    canvas.height = sampleH;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return undefined;
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = "high";
-    ctx.drawImage(source, 0, 0, width, height, 0, 0, sampleW, sampleH);
-    return debugPercentilesFromSrgbRgba8(ctx.getImageData(0, 0, sampleW, sampleH).data);
-  } finally {
-    cleanup();
-  }
+  if (!sample?.length) return undefined;
+  return {
+    lumaPercentiles: debugPercentilesFromLinearRgbSample(sample),
+    linearSrgbSample: sample,
+  };
+}
+
+async function debugPercentilesFromRawThumbnail(
+  thumbnail: LibRawThumbnailDataLike | undefined,
+): Promise<DebugPercentileValues | undefined> {
+  return (await rawThumbnailMatchReferenceFromThumbnail(thumbnail))?.lumaPercentiles;
 }
 
 function libRawImageDataToDecoded(image: LibRawImageDataLike): DecodedRgbaImage8 | DecodedRgbaImage16 {
@@ -3674,8 +4192,8 @@ function createLibRawWorkerFailure(raw: LibRawInstanceLike): {
 
 function rawMedianDenoisePassesForIso(iso: number): number {
   if (!Number.isFinite(iso) || iso <= 0) return 0;
-  if (iso > RAW_MEDIAN_DENOISE_STRONG_ISO) return 2;
-  if (iso > RAW_MEDIAN_DENOISE_WEAK_ISO) return 1;
+  if (iso >= RAW_MEDIAN_DENOISE_STRONG_ISO) return 2;
+  if (iso >= RAW_MEDIAN_DENOISE_WEAK_ISO) return 1;
   return 0;
 }
 
@@ -3718,13 +4236,13 @@ async function decodeRawImage(file: File): Promise<DecodedRgbaImage8 | DecodedRg
     const metadata = await Promise.race([raw.metadata(false), workerFailure.promise]);
     const medPasses = rawMedianDenoisePassesForIso(Number(metadata?.iso_speed));
 
-    let thumbnailPercentiles: DebugPercentileValues | undefined;
+    let thumbnailReference: RawThumbnailMatchReference | undefined;
     if (raw.thumbnailData) {
       try {
         const thumbnail = await Promise.race([raw.thumbnailData(), workerFailure.promise]);
-        thumbnailPercentiles = await debugPercentilesFromRawThumbnail(thumbnail);
+        thumbnailReference = await rawThumbnailMatchReferenceFromThumbnail(thumbnail);
       } catch {
-        thumbnailPercentiles = undefined;
+        thumbnailReference = undefined;
       }
     }
 
@@ -3745,10 +4263,21 @@ async function decodeRawImage(file: File): Promise<DecodedRgbaImage8 | DecodedRg
 
     const decoded = libRawImageDataToDecoded(image);
     if (decoded.bitDepth === 16) {
-      const matchedThumbnail = thumbnailPercentiles
-        ? applyRawThumbnailMatchedBaseline(decoded, thumbnailPercentiles)
-        : false;
-      if (!matchedThumbnail) applyRawBaselineExposure(decoded);
+      if (thumbnailReference) {
+        const matchedThumbnail = applyRawThumbnailMatchedBaseline(
+          decoded,
+          thumbnailReference.lumaPercentiles,
+        );
+        if (matchedThumbnail) {
+          // Match color only after the thumbnail-driven tone baseline is fixed.
+          // Saturation follows HSV P95 first, then Vibrance follows HSV P50.
+          applyRawThumbnailMatchedColor(decoded, thumbnailReference.linearSrgbSample);
+        } else {
+          applyRawBaselineExposure(decoded);
+        }
+      } else {
+        applyRawBaselineExposure(decoded);
+      }
       convertDecodedRgba16Transfer(decoded, "gamma20");
     }
     return decoded;
@@ -3948,6 +4477,7 @@ function renderAdjustedRgba16ToCanvas(
   vibrance: number,
   saturation: number,
   canvasSpecOrOutputColorProfile: ImageEditCanvasSpec | ImageEditOutputColorProfile = "srgb",
+  previewBase?: LinearRgbaSample,
 ) {
   const canvasSpec = resolveCanvasSpec(canvasSpecOrOutputColorProfile);
   const ctx = getCanvas2dContext(canvas, canvasSpec.colorSpace, false, canvasSpec.colorType);
@@ -3957,12 +4487,20 @@ function renderAdjustedRgba16ToCanvas(
   const imageData = createCanvasImageData(ctx, width, height, canvasSpec.colorSpace, canvasSpec.pixelFormat);
   const output = imageData.data;
   const outputFloat16 = canvasSpec.linearLight && isFloat16ImageDataArray(output);
-  const contextSample = sampleLinearRgbaFromRgba16Region(
-    decoded,
-    sourceRect,
-    rotationDegrees,
-    COLOR_ADJUSTMENT_CONTEXT_SAMPLE_MAX,
-  );
+  const isFullImagePreview =
+    !!previewBase &&
+    sourceRect.x === 0 &&
+    sourceRect.y === 0 &&
+    sourceRect.w === decoded.width &&
+    sourceRect.h === decoded.height;
+  const contextSample = isFullImagePreview
+    ? getRgba16EditPreviewContextSample(decoded, rotationDegrees)
+    : sampleLinearRgbaFromRgba16Region(
+        decoded,
+        sourceRect,
+        rotationDegrees,
+        COLOR_ADJUSTMENT_CONTEXT_SAMPLE_MAX,
+      );
   const context = buildColorAdjustmentContextFromLinearRgbaSample(
     contextSample,
     temperature,
@@ -3977,36 +4515,82 @@ function renderAdjustedRgba16ToCanvas(
   const scaleX = width / Math.max(1, sourceRect.w);
   const scaleY = height / Math.max(1, sourceRect.h);
   const paddingLinear = srgbChannelToLinear(128);
+  const usePreviewBase = isFullImagePreview && !!previewBase;
+  const sampleRenderedPixel = (x: number, y: number): [number, number, number, number] | null => {
+    if (usePreviewBase && previewBase) {
+      const normalizedRotation = normalizeRotationDegrees(rotationDegrees);
+      if (
+        Math.abs(normalizedRotation) < 1e-9 &&
+        previewBase.width === width &&
+        previewBase.height === height
+      ) {
+        const i = (y * width + x) * 4;
+        return [
+          previewBase.data[i] ?? 0,
+          previewBase.data[i + 1] ?? 0,
+          previewBase.data[i + 2] ?? 0,
+          previewBase.data[i + 3] ?? 0,
+        ];
+      }
+      const point = renderedPixelToSourcePoint(
+        x,
+        y,
+        previewBase.width,
+        previewBase.height,
+        0,
+        0,
+        width / Math.max(1, previewBase.width),
+        height / Math.max(1, previewBase.height),
+        normalizedRotation,
+      );
+      if (
+        point.x < 0 ||
+        point.x >= previewBase.width ||
+        point.y < 0 ||
+        point.y >= previewBase.height
+      ) {
+        return null;
+      }
+      return sampleLinearRgbaSampleBilinear(previewBase, point.x, point.y);
+    }
+
+    const sourcePoint = renderedPixelToSourcePoint(
+      x,
+      y,
+      decoded.width,
+      decoded.height,
+      sourceRect.x,
+      sourceRect.y,
+      scaleX,
+      scaleY,
+      rotationDegrees,
+    );
+    if (
+      sourcePoint.x < 0 ||
+      sourcePoint.x >= decoded.width ||
+      sourcePoint.y < 0 ||
+      sourcePoint.y >= decoded.height
+    ) {
+      return null;
+    }
+    const [r, g, b] = sampleLinearRgb16Bilinear(decoded, sourcePoint.x, sourcePoint.y);
+    return [r, g, b, sampleAlpha16Bilinear(decoded, sourcePoint.x, sourcePoint.y)];
+  };
   if (outputFloat16) {
     const data = output as unknown as { [index: number]: number };
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const di = (y * width + x) * 4;
-        const sourcePoint = renderedPixelToSourcePoint(
-          x,
-          y,
-          decoded.width,
-          decoded.height,
-          sourceRect.x,
-          sourceRect.y,
-          scaleX,
-          scaleY,
-          rotationDegrees,
-        );
-        if (
-          sourcePoint.x < 0 ||
-          sourcePoint.x >= decoded.width ||
-          sourcePoint.y < 0 ||
-          sourcePoint.y >= decoded.height
-        ) {
+        const sample = sampleRenderedPixel(x, y);
+        if (!sample) {
           data[di] = paddingLinear;
           data[di + 1] = paddingLinear;
           data[di + 2] = paddingLinear;
           data[di + 3] = 1;
           continue;
         }
-        let [r, g, b] = sampleLinearRgb16Bilinear(decoded, sourcePoint.x, sourcePoint.y);
-        const alpha = sampleAlpha16Bilinear(decoded, sourcePoint.x, sourcePoint.y);
+        let [r, g, b] = sample;
+        const alpha = sample[3];
         [r, g, b] = applyColorAdjustmentsLinearRgb(r, g, b, context);
         [r, g, b] = convertLinearProPhotoToOutputRgb(r, g, b, canvasSpec.colorProfile);
         data[di] = clamp01(r);
@@ -4020,31 +4604,16 @@ function renderAdjustedRgba16ToCanvas(
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const di = (y * width + x) * 4;
-        const sourcePoint = renderedPixelToSourcePoint(
-          x,
-          y,
-          decoded.width,
-          decoded.height,
-          sourceRect.x,
-          sourceRect.y,
-          scaleX,
-          scaleY,
-          rotationDegrees,
-        );
-        if (
-          sourcePoint.x < 0 ||
-          sourcePoint.x >= decoded.width ||
-          sourcePoint.y < 0 ||
-          sourcePoint.y >= decoded.height
-        ) {
+        const sample = sampleRenderedPixel(x, y);
+        if (!sample) {
           data[di] = 128;
           data[di + 1] = 128;
           data[di + 2] = 128;
           data[di + 3] = 255;
           continue;
         }
-        let [r, g, b] = sampleLinearRgb16Bilinear(decoded, sourcePoint.x, sourcePoint.y);
-        const alpha = sampleAlpha16Bilinear(decoded, sourcePoint.x, sourcePoint.y);
+        let [r, g, b] = sample;
+        const alpha = sample[3];
         [r, g, b] = applyColorAdjustmentsLinearRgb(r, g, b, context);
         [r, g, b] = convertLinearProPhotoToOutputRgb(r, g, b, canvasSpec.colorProfile);
         data[di] = linearChannelToSrgb(r);
@@ -4147,6 +4716,11 @@ function createImageEditCanvas(width: number, height: number): HTMLCanvasElement
   return canvas;
 }
 
+function releaseCanvasIfNeeded(canvas: HTMLCanvasElement | OffscreenCanvas): void {
+  canvas.width = 0;
+  canvas.height = 0;
+}
+
 async function buildEditedVariantFromRgba16(
   decoded: DecodedRgbaImage16,
   params: ImageEditParams,
@@ -4190,6 +4764,7 @@ async function buildEditedVariantFromRgba16(
   outputCtx.imageSmoothingEnabled = true;
   outputCtx.imageSmoothingQuality = "high";
   outputCtx.drawImage(cropped, 0, 0, sw, sh, 0, 0, dw, dh);
+  applySharpenToCanvas(output, params.sharpen, canvasSpec);
   applyMosaicRectsToCanvas(
     output,
     mosaicRegionsToOutputRects(params.mosaicRegions, w, h, sx, sy, sw, sh, dw, dh),
@@ -4279,6 +4854,7 @@ async function buildEditedVariantFromDecoded(
   outputCtx.imageSmoothingEnabled = true;
   outputCtx.imageSmoothingQuality = "high";
   outputCtx.drawImage(cropped, 0, 0, sw, sh, 0, 0, dw, dh);
+  applySharpenToCanvas(output, params.sharpen, canvasSpec);
   applyMosaicRectsToCanvas(
     output,
     mosaicRegionsToOutputRects(params.mosaicRegions, w, h, sx, sy, sw, sh, dw, dh),
@@ -4384,8 +4960,10 @@ export async function buildOptimizedVariant(
   edit?: ImageEditParams,
   outputFormat: ImageEditOutputFormat = "image/webp",
   decodedImage?: DecodedImage,
-  outputColorProfile: ImageEditOutputColorProfile = "srgb",
+  outputColorProfile?: ImageEditOutputColorProfile,
 ): Promise<{ blob: Blob; width: number; height: number }> {
+  const resolvedOutputColorProfile =
+    outputColorProfile ?? (await detectBestEditableImageOutputColorProfile(file));
   const prepared = await buildEditedVariant(
     file,
     srcW,
@@ -4394,9 +4972,9 @@ export async function buildOptimizedVariant(
     type,
     edit,
     decodedImage,
-    outputColorProfile,
+    resolvedOutputColorProfile,
   );
-  return encodeEditedVariant(prepared, quality, outputFormat, outputColorProfile);
+  return encodeEditedVariant(prepared, quality, outputFormat, resolvedOutputColorProfile);
 }
 
 function shouldAutoOptimize(meta: Pick<SelectedItem, "width" | "height" | "size">): boolean {
@@ -4477,6 +5055,7 @@ type EditDialogProps = {
   file: File;
   initialParams: ImageEditParams;
   defaultParams?: ImageEditParams;
+  initialDecodedImage?: DecodedImage;
   onCancel: () => void;
   onApply: (params: ImageEditParams, decodedImage?: DecodedImage) => void;
   onError?: (message: string) => void;
@@ -5224,6 +5803,7 @@ export function ImageEditDialog({
   file,
   initialParams,
   defaultParams,
+  initialDecodedImage,
   onCancel,
   onApply,
   onError,
@@ -5260,6 +5840,7 @@ export function ImageEditDialog({
   const [resizePercent, setResizePercent] = useState<number>(
     Math.min(100, Math.max(1, Math.round(initialParams.resizePercent))),
   );
+  const [sharpen, setSharpen] = useState<number>(clampSharpen(initialParams.sharpen ?? 0));
   const [textMode, setTextMode] = useState(false);
   const [textOverlays, setTextOverlays] = useState<ImageTextOverlay[]>(
     normalizeTextOverlays(initialParams.textOverlays),
@@ -5330,6 +5911,7 @@ export function ImageEditDialog({
     let cancelled = false;
     let decodedForEffect: DecodedImage | null = null;
     let cleanup: (() => void) | null = null;
+    const ownsDecodedImage = !initialDecodedImage;
     setImageReady(false);
     setNatural(null);
     setShowPercentileDebug(false);
@@ -5341,10 +5923,11 @@ export function ImageEditDialog({
 
     void (async () => {
       try {
-        const decoded = await decodeImage(file, 0, 0, file.name, file.type);
+        const decoded =
+          initialDecodedImage ?? await decodeImage(file, 0, 0, file.name, file.type);
         decodedForEffect = decoded;
         if (cancelled) {
-          decoded.cleanup();
+          if (ownsDecodedImage) decoded.cleanup();
           return;
         }
         if (decoded.storage === "rgba" && decoded.bitDepth === 16) {
@@ -5376,12 +5959,15 @@ export function ImageEditDialog({
       cancelled = true;
       previewImageRef.current = null;
       decodedImageRef.current = null;
-      if (!decodedForEffect || transferredDecodedImageRef.current !== decodedForEffect) {
+      if (
+        ownsDecodedImage &&
+        (!decodedForEffect || transferredDecodedImageRef.current !== decodedForEffect)
+      ) {
         cleanup?.();
       }
       transferredDecodedImageRef.current = null;
     };
-  }, [file]);
+  }, [file, initialDecodedImage]);
 
   useEffect(() => {
     if (!mounted) return;
@@ -5979,6 +6565,7 @@ export function ImageEditDialog({
   }, [natural, displayed, cropRect]);
 
   const usePortraitCropRatios = !!natural && natural.w / natural.h <= 0.95;
+  const cropMarginsText = `T=${(displayed.h ? ((cropRect.y - displayed.y) / displayed.h) * 100 : 0).toFixed(1)}% B=${(displayed.h ? (1 - (cropRect.y + cropRect.h - displayed.y) / displayed.h) * 100 : 0).toFixed(1)}% L=${(displayed.w ? ((cropRect.x - displayed.x) / displayed.w) * 100 : 0).toFixed(1)}% R=${(displayed.w ? (1 - (cropRect.x + cropRect.w - displayed.x) / displayed.w) * 100 : 0).toFixed(1)}%`;
   const cropAspectButtons = (
     <div className="flex items-center gap-1 shrink-0">
       {(usePortraitCropRatios
@@ -6029,6 +6616,7 @@ export function ImageEditDialog({
     ctx.clearRect(0, 0, width, height);
     const hasRotation = Math.abs(normalizeRotationDegrees(rotationDegrees)) > 1e-9;
     if (rawDecoded?.storage === "rgba" && rawDecoded.bitDepth === 16) {
+      const previewBase = getRgba16EditPreviewBase(rawDecoded, width, height);
       renderAdjustedRgba16ToCanvas(
         canvas,
         rawDecoded,
@@ -6042,6 +6630,7 @@ export function ImageEditDialog({
         vibrance,
         saturation,
         previewCanvasSpec,
+        previewBase,
       );
     } else if (img) {
       if (hasRotation) {
@@ -6067,6 +6656,7 @@ export function ImageEditDialog({
         fillRotationPadding(ctx, width, height, width, height, 0, 0, 1, 1, rotationDegrees);
       }
     }
+    applySharpenToCanvas(canvas, sharpen, previewCanvasSpec);
     if (!eyedropperMode && !rotationMode && mosaicRegions.length && natural?.w) {
       applyMosaicRectsToCanvas(
         canvas,
@@ -6090,6 +6680,7 @@ export function ImageEditDialog({
     sigmoid,
     vibrance,
     saturation,
+    sharpen,
     rotationDegrees,
     rotationMode,
     natural,
@@ -6452,6 +7043,7 @@ export function ImageEditDialog({
       vibrance: clampColorAdjustment(vibrance),
       saturation: clampColorAdjustment(saturation),
       resizePercent: Math.min(100, Math.max(1, Math.round(resizePercent))),
+      sharpen: clampSharpen(sharpen),
       mosaicRegions: normalizeMosaicRegions(mosaicRegions),
       textOverlays: normalizeTextOverlays(textOverlays),
     };
@@ -6479,6 +7071,7 @@ export function ImageEditDialog({
     vibrance,
     saturation,
     resizePercent,
+    sharpen,
     mosaicRegions,
     textOverlays,
     onApply,
@@ -6501,6 +7094,7 @@ export function ImageEditDialog({
     setVibrance(params.vibrance);
     setSaturation(params.saturation);
     setResizePercent(params.resizePercent);
+    setSharpen(params.sharpen);
     setTextMode(false);
     setActiveTextId(null);
     textMoveState.current = null;
@@ -7106,49 +7700,41 @@ export function ImageEditDialog({
 
           <div className="space-y-4 text-sm text-gray-800">
             <div className="rounded border px-2 py-3 lg:space-y-2">
-              <div className="grid grid-cols-[96px_minmax(0,1fr)] lg:flex lg:items-center gap-2">
-                <div className="font-medium">Crop</div>
-                <div className="flex min-w-0 items-center gap-2">
-                  {cropAspectButtons}
-                  <button
-                    type="button"
-                    className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border ${
-                      rotationMode
-                        ? "border-blue-500 bg-blue-50 text-blue-700"
-                        : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
-                    }`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setTextMode(false);
-                      setActiveTextId(null);
-                      textMoveState.current = null;
-                      setRotationMode((current) => !current);
-                      setEyedropperMode(false);
-                      rotationDragState.current = null;
-                      mosaicDragStart.current = null;
-                      mosaicMoveState.current = null;
-                      setMosaicDraft(null);
-                      dragState.current = null;
-                    }}
-                    aria-label="Rotate image"
-                    aria-pressed={rotationMode}
-                    title="Rotate image"
-                  >
-                    <RotateCw size={13} strokeWidth={1.8} />
-                  </button>
-                  <div className="flex lg:hidden flex-1 min-w-0 items-center justify-between gap-1 text-[10px] text-gray-700 leading-5 font-mono whitespace-nowrap">
-                    <span>T={(displayed.h ? ((cropRect.y - displayed.y) / displayed.h) * 100 : 0).toFixed(1)}%</span>
-                    <span>B={(displayed.h ? (1 - (cropRect.y + cropRect.h - displayed.y) / displayed.h) * 100 : 0).toFixed(1)}%</span>
-                    <span>L={(displayed.w ? ((cropRect.x - displayed.x) / displayed.w) * 100 : 0).toFixed(1)}%</span>
-                    <span>R={(displayed.w ? (1 - (cropRect.x + cropRect.w - displayed.x) / displayed.w) * 100 : 0).toFixed(1)}%</span>
-                  </div>
+              <div className="flex flex-wrap items-center gap-x-1 gap-y-2 lg:gap-x-2">
+                <div className="shrink-0 font-medium">Crop</div>
+                {cropAspectButtons}
+                <button
+                  type="button"
+                  className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border ${
+                    rotationMode
+                      ? "border-blue-500 bg-blue-50 text-blue-700"
+                      : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                  }`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setTextMode(false);
+                    setActiveTextId(null);
+                    textMoveState.current = null;
+                    setRotationMode((current) => !current);
+                    setEyedropperMode(false);
+                    rotationDragState.current = null;
+                    mosaicDragStart.current = null;
+                    mosaicMoveState.current = null;
+                    setMosaicDraft(null);
+                    dragState.current = null;
+                  }}
+                  aria-label="Rotate image"
+                  aria-pressed={rotationMode}
+                  title="Rotate image"
+                >
+                  <RotateCw size={13} strokeWidth={1.8} />
+                </button>
+                <div className="lg:hidden min-w-0 text-[10px] text-gray-700 leading-5 font-mono whitespace-nowrap">
+                  {cropMarginsText}
                 </div>
               </div>
-              <div className="hidden lg:flex min-w-0 items-center justify-between gap-1 text-[10px] text-gray-700 leading-5 font-mono whitespace-nowrap">
-                <span>T={(displayed.h ? ((cropRect.y - displayed.y) / displayed.h) * 100 : 0).toFixed(1)}%</span>
-                <span>B={(displayed.h ? (1 - (cropRect.y + cropRect.h - displayed.y) / displayed.h) * 100 : 0).toFixed(1)}%</span>
-                <span>L={(displayed.w ? ((cropRect.x - displayed.x) / displayed.w) * 100 : 0).toFixed(1)}%</span>
-                <span>R={(displayed.w ? (1 - (cropRect.x + cropRect.w - displayed.x) / displayed.w) * 100 : 0).toFixed(1)}%</span>
+              <div className="hidden lg:block min-w-0 text-[10px] text-gray-700 leading-5 font-mono whitespace-nowrap">
+                {cropMarginsText}
               </div>
             </div>
 
@@ -7338,10 +7924,11 @@ export function ImageEditDialog({
               </label>
             </div>
 
-            <div className="rounded border p-3 space-y-2">
-              <div className="grid grid-cols-[auto_minmax(0,1fr)_56px] items-center gap-x-2 gap-y-1">
-                <span className="col-start-1 row-start-1 font-medium">Resize</span>
-                <div className="col-start-2 row-start-1 flex items-center gap-1 shrink-0">
+            <div className="rounded border p-3 space-y-2 lg:space-y-3">
+              <div className="font-medium">Finishing</div>
+              <div className="grid grid-cols-[112px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+                <div className="col-start-1 row-start-1 flex min-w-0 items-center gap-1">
+                  <span>Resize</span>
                   {([
                     ["1MP", 1_000_000],
                     ["4MP", 4_000_000],
@@ -7349,14 +7936,14 @@ export function ImageEditDialog({
                     <button
                       key={label}
                       type="button"
-                      className="px-1 py-0.5 rounded border border-gray-300 bg-white hover:bg-gray-100 text-[10px] leading-none whitespace-nowrap"
+                      className="h-5 rounded border border-gray-300 bg-white px-1 text-[10px] text-gray-700 hover:bg-gray-100"
                       onClick={() => applyResizeTargetPixels(targetPixels)}
                     >
                       {label}
                     </button>
                   ))}
                 </div>
-                <span className="col-start-3 row-start-1 w-14 text-right justify-self-end font-mono text-[12px]">{resizePercent}%</span>
+                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{resizePercent}%</span>
                 <input
                   type="range"
                   aria-label="Resize"
@@ -7366,15 +7953,30 @@ export function ImageEditDialog({
                   value={resizePercent}
                   onChange={(e) => setResizePercent(Math.min(100, Math.max(1, Number(e.target.value) || 100)))}
                   onDoubleClick={() => setResizePercent(sliderDefaults.resizePercent)}
-                  className="col-span-3 col-start-1 row-start-2 w-full"
+                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
               </div>
+              <label className="grid grid-cols-[112px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+                <span className="col-start-1 row-start-1">Sharpen</span>
+                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{sharpen}</span>
+                <input
+                  type="range"
+                  aria-label="Sharpen"
+                  min={0}
+                  max={3}
+                  step={1}
+                  value={sharpen}
+                  onChange={(e) => setSharpen(clampSharpen(Number(e.target.value)))}
+                  onDoubleClick={() => setSharpen(sliderDefaults.sharpen)}
+                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
+                />
+              </label>
             </div>
           </div>
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          <div className="mr-auto flex flex-wrap gap-x-6 gap-y-1 text-[12px] text-gray-600 font-mono">
+        <div className="mt-4 flex flex-col gap-2 lg:flex-row lg:items-center">
+          <div className="flex flex-nowrap gap-x-6 text-[12px] text-gray-600 font-mono whitespace-nowrap lg:mr-auto">
             <span>
               Input ({natural ? `${natural.w}x${natural.h}, ${(natural.w * natural.h / 1_000_000).toFixed(1)}MP` : "—"})
             </span>
@@ -7382,20 +7984,22 @@ export function ImageEditDialog({
               Output ({outputDimensions ? `${outputDimensions.w}x${outputDimensions.h}, ${(outputDimensions.w * outputDimensions.h / 1_000_000).toFixed(1)}MP` : "—"})
             </span>
           </div>
-          <button
-            className="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-100 disabled:opacity-50"
-            onClick={onCancel}
-            disabled={applyBusy}
-          >
-            Cancel
-          </button>
-          <button
-            className="px-3 py-1 rounded border border-blue-700 bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
-            onClick={onSubmit}
-            disabled={applyBusy}
-          >
-            Edit
-          </button>
+          <div className="flex justify-end gap-2">
+            <button
+              className="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-100 disabled:opacity-50"
+              onClick={onCancel}
+              disabled={applyBusy}
+            >
+              Cancel
+            </button>
+            <button
+              className="px-3 py-1 rounded border border-blue-700 bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+              onClick={onSubmit}
+              disabled={applyBusy}
+            >
+              Edit
+            </button>
+          </div>
         </div>
       </div>
     </div>,
@@ -7440,6 +8044,19 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
 
   const revokeQueue = useRef<string[]>([]);
   const optimizeJobs = useRef<Map<string, number>>(new Map());
+  const rawDevelopmentCacheRef = useRef<RawDevelopmentCacheEntry | null>(null);
+
+  useEffect(() => {
+    const cached = rawDevelopmentCacheRef.current;
+    if (!cached) return;
+    const stillSelected = files
+      .slice(0, maxCount)
+      .some((item) => item.id === cached.itemId && item.file === cached.file);
+    if (!stillSelected) {
+      cached.decoded.cleanup();
+      rawDevelopmentCacheRef.current = null;
+    }
+  }, [files, maxCount]);
 
   useEffect(() => {
     let mountedFlag = true;
@@ -7594,6 +8211,8 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
     return () => {
       for (const url of revokeQueue.current) URL.revokeObjectURL(url);
       revokeQueue.current = [];
+      rawDevelopmentCacheRef.current?.decoded.cleanup();
+      rawDevelopmentCacheRef.current = null;
     };
   }, []);
 
@@ -7602,8 +8221,33 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
     nextEdit: ImageEditParams,
     decodedImage?: DecodedImage,
   ) => {
+    let processingDecoded = decodedImage;
+    let cleanupProcessingDecoded = !!decodedImage;
+
+    if (
+      isRawImageFile(snapshot.name, snapshot.type) &&
+      decodedImage?.storage === "rgba" &&
+      decodedImage.bitDepth === 16
+    ) {
+      const cached = rawDevelopmentCacheRef.current;
+      if (cached?.decoded !== decodedImage) cached?.decoded.cleanup();
+      rawDevelopmentCacheRef.current = {
+        itemId: snapshot.id,
+        file: snapshot.file,
+        decoded: decodedImage,
+      };
+      processingDecoded = decodedImage;
+      cleanupProcessingDecoded = false;
+    } else if (isRawImageFile(snapshot.name, snapshot.type) && !decodedImage) {
+      const cached = rawDevelopmentCacheRef.current;
+      if (cached?.itemId === snapshot.id && cached.file === snapshot.file) {
+        processingDecoded = cached.decoded;
+        cleanupProcessingDecoded = false;
+      }
+    }
+
     if (!snapshot.width || !snapshot.height) {
-      decodedImage?.cleanup();
+      if (cleanupProcessingDecoded) processingDecoded?.cleanup();
       return;
     }
     const token = (optimizeJobs.current.get(snapshot.id) || 0) + 1;
@@ -7631,7 +8275,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
         snapshot.type,
         nextEdit,
         "image/webp",
-        decodedImage,
+        processingDecoded,
       );
       if (optimizeJobs.current.get(snapshot.id) !== token) return;
       const processedPreviewUrl = URL.createObjectURL(out.blob);
@@ -7680,7 +8324,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
         ),
       );
     } finally {
-      decodedImage?.cleanup();
+      if (cleanupProcessingDecoded) processingDecoded?.cleanup();
     }
   }, []);
 
@@ -7822,6 +8466,12 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
         <ImageEditDialog
           file={editingItem.file}
           initialParams={normalizeEditParams(editingItem.edit, editingItem.width, editingItem.height)}
+          initialDecodedImage={
+            rawDevelopmentCacheRef.current?.itemId === editingItem.id &&
+            rawDevelopmentCacheRef.current.file === editingItem.file
+              ? rawDevelopmentCacheRef.current.decoded
+              : undefined
+          }
           onCancel={() => setEditingItemId(null)}
           onError={(message) => {
             setEditingItemId(null);

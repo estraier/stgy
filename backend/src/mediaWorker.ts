@@ -83,6 +83,7 @@ async function generateKind(
 
   const outBuf = await base
     .resize({ width: tw, height: th, fit: "inside", withoutEnlargement: true })
+    .toColourspace("srgb")
     .webp({ quality: 82 })
     .toBuffer();
 

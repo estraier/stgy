@@ -5,9 +5,8 @@ import {
   ImageEditDialog,
   buildDefaultEditParams,
   buildEditedVariant,
-  detectEditableImageColorProfile,
+  detectBestEditableImageOutputColorProfile,
   encodeEditedVariant,
-  isRawImageFile,
   probeEditableImage,
   type DecodedImage,
   type ImageEditOutputColorProfile,
@@ -23,7 +22,7 @@ type SourceImage = {
   width: number;
   height: number;
   edit: ImageEditParams;
-  inputColorProfile: ImageEditOutputColorProfile;
+  bestOutputColorProfile: ImageEditOutputColorProfile;
 };
 
 type EditResult = {
@@ -93,8 +92,7 @@ function resolveOutputColorProfile(
   selection: OutputColorProfileSelection,
 ): ImageEditOutputColorProfile {
   if (selection === "best") {
-    if (sourceImage && isRawImageFile(sourceImage.file.name || "", sourceImage.file.type || "")) return "display-p3";
-    return sourceImage?.inputColorProfile ?? "srgb";
+    return sourceImage?.bestOutputColorProfile ?? "srgb";
   }
   return selection;
 }
@@ -269,9 +267,9 @@ export default function ImageEditSandbox() {
     clearResult();
     clearEditedVariant();
     try {
-      const [size, inputColorProfile] = await Promise.all([
+      const [size, bestOutputColorProfile] = await Promise.all([
         readImageSize(file),
-        detectEditableImageColorProfile(file),
+        detectBestEditableImageOutputColorProfile(file),
       ]);
       const { width, height } = size;
       const edit = buildDefaultEditParams(width, height);
@@ -280,7 +278,7 @@ export default function ImageEditSandbox() {
         width,
         height,
         edit: { ...edit, resizePercent: 100 },
-        inputColorProfile,
+        bestOutputColorProfile,
       };
       setSource(nextSource);
       setEditing(true);
