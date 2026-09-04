@@ -2772,17 +2772,21 @@ type LinearRgbaSample = {
   height: number;
 };
 
-type Rgba16EditPreviewCacheEntry = {
+type Rgba16RenderedPreviewCacheEntry = {
   width: number;
   height: number;
-  sample: LinearRgbaSample;
+  key: string;
+  canvas: HTMLCanvasElement | OffscreenCanvas;
 };
 
-// Preview generation is an ImageEditDialog implementation detail. Keep one base preview
-// per decoded 16-bit input here so it survives Apply -> Re-Edit without exposing preview
-// state through the upload dialog's props. WeakMap lets the entry disappear with the
-// decoded input when that input is released.
-const RGBA16_EDIT_PREVIEW_CACHE = new WeakMap<DecodedRgbaImage16, Rgba16EditPreviewCacheEntry>();
+// Preview generation is an ImageEditDialog implementation detail. Cache only the
+// completed preview Canvas for a decoded 16-bit input; do not expose preview state or
+// cache intermediate downsampled buffers through the upload dialog. WeakMap lets the
+// entry disappear together with the decoded input.
+const RGBA16_EDIT_RENDERED_PREVIEW_CACHE = new WeakMap<
+  DecodedRgbaImage16,
+  Rgba16RenderedPreviewCacheEntry
+>();
 const RGBA16_EDIT_PREVIEW_CONTEXT_CACHE = new WeakMap<
   DecodedRgbaImage16,
   { rotationDegrees: number; sample: LinearRgbaSample }
@@ -3672,86 +3676,6 @@ function sampleAlpha16Bilinear(
   );
 }
 
-function buildRgba16EditPreviewBase(
-  decoded: DecodedRgbaImage16,
-  width: number,
-  height: number,
-): LinearRgbaSample {
-  const data = new Float32Array(width * height * 4);
-  const scaleX = width / Math.max(1, decoded.width);
-  const scaleY = height / Math.max(1, decoded.height);
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const sourcePoint = renderedPixelToSourcePoint(
-        x,
-        y,
-        decoded.width,
-        decoded.height,
-        0,
-        0,
-        scaleX,
-        scaleY,
-        0,
-      );
-      const di = (y * width + x) * 4;
-      const [r, g, b] = sampleLinearRgb16Bilinear(decoded, sourcePoint.x, sourcePoint.y);
-      data[di] = r;
-      data[di + 1] = g;
-      data[di + 2] = b;
-      data[di + 3] = sampleAlpha16Bilinear(decoded, sourcePoint.x, sourcePoint.y);
-    }
-  }
-  return { data, width, height };
-}
-
-function getRgba16EditPreviewBase(
-  decoded: DecodedRgbaImage16,
-  width: number,
-  height: number,
-): LinearRgbaSample {
-  const cached = RGBA16_EDIT_PREVIEW_CACHE.get(decoded);
-  if (cached && cached.width >= width && cached.height >= height) {
-    return cached.sample;
-  }
-  const sample = buildRgba16EditPreviewBase(decoded, width, height);
-  RGBA16_EDIT_PREVIEW_CACHE.set(decoded, { width, height, sample });
-  return sample;
-}
-
-function sampleLinearRgbaSampleBilinear(
-  sample: LinearRgbaSample,
-  x: number,
-  y: number,
-): [number, number, number, number] {
-  const clampedX = Math.max(0, Math.min(sample.width - 1, x));
-  const clampedY = Math.max(0, Math.min(sample.height - 1, y));
-  const x0 = Math.floor(clampedX);
-  const y0 = Math.floor(clampedY);
-  const x1 = Math.min(sample.width - 1, x0 + 1);
-  const y1 = Math.min(sample.height - 1, y0 + 1);
-  const tx = clampedX - x0;
-  const ty = clampedY - y0;
-  const w00 = (1 - tx) * (1 - ty);
-  const w10 = tx * (1 - ty);
-  const w01 = (1 - tx) * ty;
-  const w11 = tx * ty;
-  const data = sample.data;
-  const idx00 = (y0 * sample.width + x0) * 4;
-  const idx10 = (y0 * sample.width + x1) * 4;
-  const idx01 = (y1 * sample.width + x0) * 4;
-  const idx11 = (y1 * sample.width + x1) * 4;
-  return [
-    (data[idx00] ?? 0) * w00 + (data[idx10] ?? 0) * w10 +
-      (data[idx01] ?? 0) * w01 + (data[idx11] ?? 0) * w11,
-    (data[idx00 + 1] ?? 0) * w00 + (data[idx10 + 1] ?? 0) * w10 +
-      (data[idx01 + 1] ?? 0) * w01 + (data[idx11 + 1] ?? 0) * w11,
-    (data[idx00 + 2] ?? 0) * w00 + (data[idx10 + 2] ?? 0) * w10 +
-      (data[idx01 + 2] ?? 0) * w01 + (data[idx11 + 2] ?? 0) * w11,
-    (data[idx00 + 3] ?? 0) * w00 + (data[idx10 + 3] ?? 0) * w10 +
-      (data[idx01 + 3] ?? 0) * w01 + (data[idx11 + 3] ?? 0) * w11,
-  ];
-}
-
 function renderedPixelToSourcePoint(
   x: number,
   y: number,
@@ -4477,7 +4401,6 @@ function renderAdjustedRgba16ToCanvas(
   vibrance: number,
   saturation: number,
   canvasSpecOrOutputColorProfile: ImageEditCanvasSpec | ImageEditOutputColorProfile = "srgb",
-  previewBase?: LinearRgbaSample,
 ) {
   const canvasSpec = resolveCanvasSpec(canvasSpecOrOutputColorProfile);
   const ctx = getCanvas2dContext(canvas, canvasSpec.colorSpace, false, canvasSpec.colorType);
@@ -4488,7 +4411,6 @@ function renderAdjustedRgba16ToCanvas(
   const output = imageData.data;
   const outputFloat16 = canvasSpec.linearLight && isFloat16ImageDataArray(output);
   const isFullImagePreview =
-    !!previewBase &&
     sourceRect.x === 0 &&
     sourceRect.y === 0 &&
     sourceRect.w === decoded.width &&
@@ -4515,45 +4437,7 @@ function renderAdjustedRgba16ToCanvas(
   const scaleX = width / Math.max(1, sourceRect.w);
   const scaleY = height / Math.max(1, sourceRect.h);
   const paddingLinear = srgbChannelToLinear(128);
-  const usePreviewBase = isFullImagePreview && !!previewBase;
   const sampleRenderedPixel = (x: number, y: number): [number, number, number, number] | null => {
-    if (usePreviewBase && previewBase) {
-      const normalizedRotation = normalizeRotationDegrees(rotationDegrees);
-      if (
-        Math.abs(normalizedRotation) < 1e-9 &&
-        previewBase.width === width &&
-        previewBase.height === height
-      ) {
-        const i = (y * width + x) * 4;
-        return [
-          previewBase.data[i] ?? 0,
-          previewBase.data[i + 1] ?? 0,
-          previewBase.data[i + 2] ?? 0,
-          previewBase.data[i + 3] ?? 0,
-        ];
-      }
-      const point = renderedPixelToSourcePoint(
-        x,
-        y,
-        previewBase.width,
-        previewBase.height,
-        0,
-        0,
-        width / Math.max(1, previewBase.width),
-        height / Math.max(1, previewBase.height),
-        normalizedRotation,
-      );
-      if (
-        point.x < 0 ||
-        point.x >= previewBase.width ||
-        point.y < 0 ||
-        point.y >= previewBase.height
-      ) {
-        return null;
-      }
-      return sampleLinearRgbaSampleBilinear(previewBase, point.x, point.y);
-    }
-
     const sourcePoint = renderedPixelToSourcePoint(
       x,
       y,
@@ -4719,6 +4603,22 @@ function createImageEditCanvas(width: number, height: number): HTMLCanvasElement
 function releaseCanvasIfNeeded(canvas: HTMLCanvasElement | OffscreenCanvas): void {
   canvas.width = 0;
   canvas.height = 0;
+}
+
+function cloneImageEditCanvas(
+  source: HTMLCanvasElement | OffscreenCanvas,
+  canvasSpec: ImageEditCanvasSpec,
+): HTMLCanvasElement | OffscreenCanvas {
+  const clone = createImageEditCanvas(source.width, source.height);
+  const ctx = getCanvas2dContext(
+    clone,
+    canvasSpec.colorSpace,
+    false,
+    canvasSpec.colorType,
+  );
+  if (!ctx) throw new Error("2D context unavailable");
+  ctx.drawImage(source, 0, 0);
+  return clone;
 }
 
 async function buildEditedVariantFromRgba16(
@@ -6615,8 +6515,41 @@ export function ImageEditDialog({
     if (!ctx) return;
     ctx.clearRect(0, 0, width, height);
     const hasRotation = Math.abs(normalizeRotationDegrees(rotationDegrees)) > 1e-9;
+    const canUseRenderedPreviewCache =
+      rawDecoded?.storage === "rgba" &&
+      rawDecoded.bitDepth === 16 &&
+      !rotationMode &&
+      !eyedropperMode;
+    const renderedPreviewCacheKey = canUseRenderedPreviewCache
+      ? JSON.stringify([
+          width,
+          height,
+          previewCanvasSpec.colorSpace,
+          previewCanvasSpec.colorType,
+          rotationDegrees,
+          temperature,
+          tint,
+          exposureEv,
+          scaledLog,
+          sigmoid,
+          vibrance,
+          saturation,
+          sharpen,
+          mosaicRegions,
+          natural?.w ?? 0,
+        ])
+      : null;
     if (rawDecoded?.storage === "rgba" && rawDecoded.bitDepth === 16) {
-      const previewBase = getRgba16EditPreviewBase(rawDecoded, width, height);
+      const cached = RGBA16_EDIT_RENDERED_PREVIEW_CACHE.get(rawDecoded);
+      if (
+        renderedPreviewCacheKey &&
+        cached?.key === renderedPreviewCacheKey &&
+        cached.width === width &&
+        cached.height === height
+      ) {
+        ctx.drawImage(cached.canvas, 0, 0);
+        return;
+      }
       renderAdjustedRgba16ToCanvas(
         canvas,
         rawDecoded,
@@ -6630,7 +6563,6 @@ export function ImageEditDialog({
         vibrance,
         saturation,
         previewCanvasSpec,
-        previewBase,
       );
     } else if (img) {
       if (hasRotation) {
@@ -6669,6 +6601,21 @@ export function ImageEditDialog({
         16,
         previewCanvasSpec,
       );
+    }
+    if (
+      rawDecoded?.storage === "rgba" &&
+      rawDecoded.bitDepth === 16 &&
+      renderedPreviewCacheKey
+    ) {
+      const previous = RGBA16_EDIT_RENDERED_PREVIEW_CACHE.get(rawDecoded);
+      const snapshot = cloneImageEditCanvas(canvas, previewCanvasSpec);
+      RGBA16_EDIT_RENDERED_PREVIEW_CACHE.set(rawDecoded, {
+        width,
+        height,
+        key: renderedPreviewCacheKey,
+        canvas: snapshot,
+      });
+      if (previous && previous.canvas !== snapshot) releaseCanvasIfNeeded(previous.canvas);
     }
   }, [
     displayed.w,
