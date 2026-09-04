@@ -314,6 +314,7 @@ const RAW_DECODE_SETTINGS: LibRawSettingsLike = {
 
 const RAW_BASELINE_PERCENTILE = 98;
 const RAW_BASELINE_TARGET = 0.9;
+const RAW_INTERNAL_STORAGE_GAMMA = 2.2;
 const RAW_BASELINE_ROLLOFF_PERCENTILE = 99.8;
 const RAW_BASELINE_ROLLOFF_ASYMPTOTIC = 0.5;
 const RAW_THUMBNAIL_MATCH_ITERATIONS = 20;
@@ -324,9 +325,9 @@ const RAW_THUMBNAIL_MATCH_LOG_MAX = 16;
 const RAW_THUMBNAIL_MATCH_SIGMOID_MIN = -10;
 const RAW_THUMBNAIL_MATCH_SIGMOID_MAX = 10;
 const RAW_THUMBNAIL_MATCH_SIGMOID_STEP = 0.01;
-const RAW_THUMBNAIL_MATCH_EXPOSURE_RELAXATION = 0.5;
-const RAW_THUMBNAIL_MATCH_LOG_RELAXATION = 0.5;
-const RAW_THUMBNAIL_MATCH_SIGMOID_RELAXATION = 0.25;
+const RAW_THUMBNAIL_MATCH_EXPOSURE_RELAXATION = 0.7;
+const RAW_THUMBNAIL_MATCH_LOG_RELAXATION = 0.4;
+const RAW_THUMBNAIL_MATCH_SIGMOID_RELAXATION = 0.2;
 const DEBUG_PERCENTILES = [0, 1, 2, 5, 25, 50, 75, 95, 98, 99, 100] as const;
 const DEBUG_PERCENTILE_SAMPLE_MAX = 256;
 
@@ -1878,6 +1879,7 @@ type DecodedRgbaImage8 = {
 type DecodedRgbaImage16 = {
   storage: "rgba";
   bitDepth: 16;
+  transfer: "linear" | "gamma22";
   width: number;
   height: number;
   data: Uint16Array;
@@ -1916,6 +1918,50 @@ function scaleSampleTo8(v: number, bits: number): number {
     return max > 0 ? Math.round((Math.max(0, v) / max) * 255) : 0;
   }
   return Math.round(Math.max(0, Math.min(65535, v)) / 257);
+}
+
+function decodeStoredRgba16Channel(
+  sample: number,
+  transfer: DecodedRgbaImage16["transfer"],
+): number {
+  const encoded = clamp01(sample / 65535);
+  if (transfer === "gamma22") return Math.pow(encoded, RAW_INTERNAL_STORAGE_GAMMA);
+  return encoded;
+}
+
+function encodeStoredRgba16Channel(
+  linear: number,
+  transfer: DecodedRgbaImage16["transfer"],
+): number {
+  const clamped = clamp01(linear);
+  const encoded = transfer === "gamma22"
+    ? Math.pow(clamped, 1 / RAW_INTERNAL_STORAGE_GAMMA)
+    : clamped;
+  return Math.round(encoded * 65535);
+}
+
+function convertDecodedRgba16Transfer(
+  decoded: DecodedRgbaImage16,
+  transfer: DecodedRgbaImage16["transfer"],
+): void {
+  if (decoded.transfer === transfer) return;
+  const data = decoded.data;
+  for (let i = 0; i < data.length; i += 4) {
+    data[i] = encodeStoredRgba16Channel(
+      decodeStoredRgba16Channel(data[i] ?? 0, decoded.transfer),
+      transfer,
+    );
+    data[i + 1] = encodeStoredRgba16Channel(
+      decodeStoredRgba16Channel(data[i + 1] ?? 0, decoded.transfer),
+      transfer,
+    );
+    data[i + 2] = encodeStoredRgba16Channel(
+      decodeStoredRgba16Channel(data[i + 2] ?? 0, decoded.transfer),
+      transfer,
+    );
+    data[i + 3] = 65535;
+  }
+  decoded.transfer = transfer;
 }
 
 function histogramPercentile16(
@@ -2150,9 +2196,9 @@ function applyRawThumbnailMatchedBaseline(
 
   const data = decoded.data;
   for (let i = 0; i < data.length; i += 4) {
-    const r = data[i] / 65535;
-    const g = data[i + 1] / 65535;
-    const b = data[i + 2] / 65535;
+    const r = decodeStoredRgba16Channel(data[i] ?? 0, decoded.transfer);
+    const g = decodeStoredRgba16Channel(data[i + 1] ?? 0, decoded.transfer);
+    const b = decodeStoredRgba16Channel(data[i + 2] ?? 0, decoded.transfer);
     const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
     if (!(luma > 1e-12)) {
       data[i] = 0;
@@ -2162,9 +2208,9 @@ function applyRawThumbnailMatchedBaseline(
     }
     const adjustedLuma = transformedRawLumaValue(luma, gain, scaledLog, sigmoid);
     const scale = adjustedLuma / luma;
-    data[i] = Math.round(clamp01(r * scale) * 65535);
-    data[i + 1] = Math.round(clamp01(g * scale) * 65535);
-    data[i + 2] = Math.round(clamp01(b * scale) * 65535);
+    data[i] = encodeStoredRgba16Channel(r * scale, decoded.transfer);
+    data[i + 1] = encodeStoredRgba16Channel(g * scale, decoded.transfer);
+    data[i + 2] = encodeStoredRgba16Channel(b * scale, decoded.transfer);
   }
   return true;
 }
@@ -2177,18 +2223,18 @@ function applyRawBaselineExposure(decoded: DecodedRgbaImage16): void {
   if (pixelCount <= 0) return;
 
   for (let i = 0; i < data.length; i += 4) {
-    const r16 = data[i];
-    const g16 = data[i + 1];
-    const b16 = data[i + 2];
-    const r = r16 / 65535;
-    const g = g16 / 65535;
-    const b = b16 / 65535;
+    const r16 = data[i] ?? 0;
+    const g16 = data[i + 1] ?? 0;
+    const b16 = data[i + 2] ?? 0;
+    const r = decodeStoredRgba16Channel(r16, decoded.transfer);
+    const g = decodeStoredRgba16Channel(g16, decoded.transfer);
+    const b = decodeStoredRgba16Channel(b16, decoded.transfer);
     const rms = Math.sqrt((r * r + g * g + b * b) / 3);
     const rmsLevel = Math.min(65535, Math.max(0, Math.round(rms * 65535)));
     rmsHistogram[rmsLevel]++;
-    channelHistogram[r16]++;
-    channelHistogram[g16]++;
-    channelHistogram[b16]++;
+    channelHistogram[Math.min(65535, Math.max(0, Math.round(r * 65535)))]++;
+    channelHistogram[Math.min(65535, Math.max(0, Math.round(g * 65535)))]++;
+    channelHistogram[Math.min(65535, Math.max(0, Math.round(b * 65535)))]++;
   }
 
   const p98 = histogramPercentile16(
@@ -2211,12 +2257,21 @@ function applyRawBaselineExposure(decoded: DecodedRgbaImage16): void {
   );
 
   for (let i = 0; i < data.length; i += 4) {
-    const r = applyRolloffScalar(data[i] / 65535 * factor, rolloff);
-    const g = applyRolloffScalar(data[i + 1] / 65535 * factor, rolloff);
-    const b = applyRolloffScalar(data[i + 2] / 65535 * factor, rolloff);
-    data[i] = Math.round(clamp01(r) * 65535);
-    data[i + 1] = Math.round(clamp01(g) * 65535);
-    data[i + 2] = Math.round(clamp01(b) * 65535);
+    const r = applyRolloffScalar(
+      decodeStoredRgba16Channel(data[i] ?? 0, decoded.transfer) * factor,
+      rolloff,
+    );
+    const g = applyRolloffScalar(
+      decodeStoredRgba16Channel(data[i + 1] ?? 0, decoded.transfer) * factor,
+      rolloff,
+    );
+    const b = applyRolloffScalar(
+      decodeStoredRgba16Channel(data[i + 2] ?? 0, decoded.transfer) * factor,
+      rolloff,
+    );
+    data[i] = encodeStoredRgba16Channel(r, decoded.transfer);
+    data[i + 1] = encodeStoredRgba16Channel(g, decoded.transfer);
+    data[i + 2] = encodeStoredRgba16Channel(b, decoded.transfer);
   }
 }
 
@@ -2257,9 +2312,9 @@ function sampleLinearRgbFromRgba16(decoded: DecodedRgbaImage16): Float32Array {
       const sx = Math.min(decoded.width - 1, Math.floor((x + 0.5) * decoded.width / sampleW));
       const sourceIndex = (sy * decoded.width + sx) * 4;
       const targetIndex = (y * sampleW + x) * 3;
-      output[targetIndex] = (decoded.data[sourceIndex] ?? 0) / 65535;
-      output[targetIndex + 1] = (decoded.data[sourceIndex + 1] ?? 0) / 65535;
-      output[targetIndex + 2] = (decoded.data[sourceIndex + 2] ?? 0) / 65535;
+      output[targetIndex] = decodeStoredRgba16Channel(decoded.data[sourceIndex] ?? 0, decoded.transfer);
+      output[targetIndex + 1] = decodeStoredRgba16Channel(decoded.data[sourceIndex + 1] ?? 0, decoded.transfer);
+      output[targetIndex + 2] = decodeStoredRgba16Channel(decoded.data[sourceIndex + 2] ?? 0, decoded.transfer);
     }
   }
   return output;
@@ -2288,11 +2343,20 @@ function sampleLinearRgb16Bilinear(
   const w10 = tx * (1 - ty);
   const w01 = (1 - tx) * ty;
   const w11 = tx * ty;
-  const scale = 1 / 65535;
+  const transfer = decoded.transfer;
   return [
-    ((data[idx00] ?? 0) * w00 + (data[idx10] ?? 0) * w10 + (data[idx01] ?? 0) * w01 + (data[idx11] ?? 0) * w11) * scale,
-    ((data[idx00 + 1] ?? 0) * w00 + (data[idx10 + 1] ?? 0) * w10 + (data[idx01 + 1] ?? 0) * w01 + (data[idx11 + 1] ?? 0) * w11) * scale,
-    ((data[idx00 + 2] ?? 0) * w00 + (data[idx10 + 2] ?? 0) * w10 + (data[idx01 + 2] ?? 0) * w01 + (data[idx11 + 2] ?? 0) * w11) * scale,
+    decodeStoredRgba16Channel(data[idx00] ?? 0, transfer) * w00 +
+      decodeStoredRgba16Channel(data[idx10] ?? 0, transfer) * w10 +
+      decodeStoredRgba16Channel(data[idx01] ?? 0, transfer) * w01 +
+      decodeStoredRgba16Channel(data[idx11] ?? 0, transfer) * w11,
+    decodeStoredRgba16Channel(data[idx00 + 1] ?? 0, transfer) * w00 +
+      decodeStoredRgba16Channel(data[idx10 + 1] ?? 0, transfer) * w10 +
+      decodeStoredRgba16Channel(data[idx01 + 1] ?? 0, transfer) * w01 +
+      decodeStoredRgba16Channel(data[idx11 + 1] ?? 0, transfer) * w11,
+    decodeStoredRgba16Channel(data[idx00 + 2] ?? 0, transfer) * w00 +
+      decodeStoredRgba16Channel(data[idx10 + 2] ?? 0, transfer) * w10 +
+      decodeStoredRgba16Channel(data[idx01 + 2] ?? 0, transfer) * w01 +
+      decodeStoredRgba16Channel(data[idx11 + 2] ?? 0, transfer) * w11,
   ];
 }
 
@@ -2641,6 +2705,7 @@ function libRawImageDataToDecoded(image: LibRawImageDataLike): DecodedRgbaImage8
     return {
       storage: "rgba",
       bitDepth: 16,
+      transfer: "linear",
       width,
       height,
       data: rgba,
@@ -2752,6 +2817,7 @@ async function decodeRawImage(file: File): Promise<DecodedRgbaImage8 | DecodedRg
         ? applyRawThumbnailMatchedBaseline(decoded, thumbnailPercentiles)
         : false;
       if (!matchedThumbnail) applyRawBaselineExposure(decoded);
+      convertDecodedRgba16Transfer(decoded, "gamma22");
     }
     return decoded;
   } finally {
@@ -2784,12 +2850,19 @@ function decodedImageToCanvasSource(decoded: DecodedImage): DrawableDecodedImage
   if (decoded.bitDepth === 8) {
     rgba8 = decoded.data;
   } else {
-    // Compatibility boundary for the current 8-bit Canvas pipeline. A future
-    // 16-bit/float processing path can consume DecodedRgbaImage16 directly and
-    // bypass this conversion without changing the decoder API.
+    // Compatibility boundary for the current 8-bit Canvas pipeline.
     rgba8 = new Uint8ClampedArray(decoded.data.length);
-    for (let i = 0; i < decoded.data.length; i++) {
-      rgba8[i] = Math.round(decoded.data[i] / 257);
+    for (let i = 0; i < decoded.data.length; i += 4) {
+      rgba8[i] = linearChannelToSrgb(
+        decodeStoredRgba16Channel(decoded.data[i] ?? 0, decoded.transfer),
+      );
+      rgba8[i + 1] = linearChannelToSrgb(
+        decodeStoredRgba16Channel(decoded.data[i + 1] ?? 0, decoded.transfer),
+      );
+      rgba8[i + 2] = linearChannelToSrgb(
+        decodeStoredRgba16Channel(decoded.data[i + 2] ?? 0, decoded.transfer),
+      );
+      rgba8[i + 3] = 255;
     }
   }
   const imageData = ctx.createImageData(decoded.width, decoded.height);
