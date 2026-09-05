@@ -6480,9 +6480,9 @@ export function ImageEditDialog({
           }
         }}
       >
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between lg:gap-3">
           <h2 className="text-base font-semibold break-all">Edit image</h2>
-          <div className="flex items-center gap-3">
+          <div className="grid grid-cols-2 items-center gap-x-3 gap-y-2 lg:flex lg:gap-3">
             <label className="inline-flex items-center gap-2 text-sm text-gray-700 select-none">
               <input
                 type="checkbox"
@@ -6548,7 +6548,10 @@ export function ImageEditDialog({
               />
               <span>Grid</span>
             </label>
-            <button className="px-2 py-0.5 text-sm rounded border border-gray-300 hover:bg-gray-100" onClick={onReset}>
+            <button
+              className="col-span-2 justify-self-start px-2 py-0.5 text-sm rounded border border-gray-300 hover:bg-gray-100 lg:col-auto lg:justify-self-auto"
+              onClick={onReset}
+            >
               Reset
             </button>
           </div>
@@ -7372,7 +7375,7 @@ export function ImageEditDialog({
         </div>
 
         <div className="mt-4 flex flex-col gap-2 lg:flex-row lg:items-center">
-          <div className="flex flex-nowrap gap-x-6 text-[12px] text-gray-600 font-mono whitespace-nowrap lg:mr-auto">
+          <div className="flex flex-col gap-y-0.5 text-[12px] text-gray-600 font-mono whitespace-nowrap lg:mr-auto lg:flex-row lg:flex-nowrap lg:gap-x-6 lg:gap-y-0">
             <span>
               Input ({natural ? `${natural.w}x${natural.h}, ${(natural.w * natural.h / 1_000_000).toFixed(1)}MP` : "—"})
             </span>
