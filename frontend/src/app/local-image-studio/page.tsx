@@ -4,8 +4,7 @@ import { Config } from "@/config";
 import PageBody from "./PageBody";
 
 const title = "Local Image Studio | STGY";
-const description =
-  "Lightweight, client-side RAW development and image editing. Process photos locally in your browser without uploading them to a server.";
+const description = "Edit images and develop RAW photos in your browser.";
 const canonicalUrl = new URL("/local-image-studio", Config.FRONTEND_CANONICAL_URL).toString();
 const imageUrl = new URL(
   "/data/local-image-studio-ogp.png",

@@ -86,6 +86,15 @@ const OUTPUT_COLOR_PROFILE_OPTIONS: { value: OutputColorProfileSelection; label:
   { value: "display-p3", label: "Display P3" },
 ];
 
+function outputFilename(fileName: string | undefined, format: ImageEditOutputFormat): string {
+  const extension = format === "image/jpeg" ? "jpg" : format === "image/png" ? "png" : "webp";
+  const trimmedName = fileName?.trim() ?? "";
+  const baseName = trimmedName
+    ? trimmedName.replace(/\.[^./\\]+$/, "") || "image"
+    : "image";
+  return `${baseName}-edited.${extension}`;
+}
+
 function resolveOutputColorProfile(
   sourceImage: SourceImage | null,
   selection: OutputColorProfileSelection,
@@ -399,98 +408,134 @@ export default function LocalImageStudio() {
     : undefined;
 
   return (
-    <main className="mx-auto max-w-5xl p-4 sm:p-6">
-      <h1 className="text-xl font-semibold">Local Image Studio</h1>
-
-      <div className="mt-4 flex flex-wrap items-center gap-3">
-        <input
-          ref={inputRef}
-          type="file"
-          accept={Config.IMAGE_ALLOWED_TYPES}
-          onChange={(e) => void onChooseFile(e.target.files?.[0])}
-          disabled={processing}
-          className="hidden"
-        />
-        <div className="inline-flex items-center gap-2 text-sm text-gray-800">
-          <span className="font-medium">Input:</span>
-          <button
-            type="button"
-            onClick={() => inputRef.current?.click()}
-            disabled={processing}
-            className="rounded border border-gray-400 bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-200 disabled:opacity-50"
-          >
-            Choose file
-          </button>
+    <main className="mx-auto max-w-5xl p-4 sm:p-6 lg:py-8">
+      <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+        <div className="border-b border-gray-200 bg-gradient-to-br from-white via-gray-50 to-gray-100 px-5 py-6 sm:px-7 sm:py-8">
+          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">
+            Local Image Studio
+          </div>
+          <h1 className="mt-2 max-w-3xl text-2xl font-semibold tracking-tight text-gray-950 sm:text-3xl">
+            Edit images and develop RAW photos in your browser.
+          </h1>
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-gray-600 sm:text-base">
+            Crop, rotate, tune tone and color, add text or mosaic, and process RAW files locally. Your image stays in the browser while you edit.
+          </p>
         </div>
 
-        <div className="inline-flex items-center text-sm text-gray-800">
-          <span className="mr-2 font-medium">Output:</span>
-          <select
-            value={outputFormat}
-            onChange={(e) => onOutputFormatChange(e.target.value as ImageEditOutputFormat)}
+        <div className="p-4 sm:p-6">
+          <input
+            ref={inputRef}
+            type="file"
+            accept={Config.IMAGE_ALLOWED_TYPES}
+            onChange={(e) => void onChooseFile(e.target.files?.[0])}
             disabled={processing}
-            className="rounded-l border border-gray-400 bg-white px-3 py-1.5 text-sm"
-          >
-            {OUTPUT_FORMAT_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-          <select
-            value={outputColorProfileSelection}
-            onChange={(e) => onOutputColorProfileSelectionChange(e.target.value as OutputColorProfileSelection)}
-            disabled={processing}
-            className="-ml-px rounded-r border border-gray-400 bg-white px-3 py-1.5 text-sm"
-          >
-            {OUTPUT_COLOR_PROFILE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+            className="hidden"
+          />
+
+          <div className="flex flex-col gap-4 rounded-xl border border-gray-200 bg-gray-50 p-4 sm:flex-row sm:flex-wrap sm:items-end">
+            <div>
+              <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-500">Input</div>
+              <button
+                type="button"
+                onClick={() => inputRef.current?.click()}
+                disabled={processing}
+                className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 shadow-sm hover:bg-gray-100 disabled:opacity-50"
+              >
+                Choose file
+              </button>
+            </div>
+
+            <div>
+              <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-500">Output</div>
+              <div className="inline-flex items-center">
+                <select
+                  value={outputFormat}
+                  onChange={(e) => onOutputFormatChange(e.target.value as ImageEditOutputFormat)}
+                  disabled={processing}
+                  className="rounded-l-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"
+                >
+                  {OUTPUT_FORMAT_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={outputColorProfileSelection}
+                  onChange={(e) => onOutputColorProfileSelectionChange(e.target.value as OutputColorProfileSelection)}
+                  disabled={processing}
+                  className="-ml-px rounded-r-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"
+                >
+                  {OUTPUT_COLOR_PROFILE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {result && source && (
+              <button
+                type="button"
+                className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 shadow-sm hover:bg-gray-100 disabled:text-gray-400 sm:ml-auto"
+                onClick={onReEdit}
+                disabled={processing}
+              >
+                Re-edit
+              </button>
+            )}
+          </div>
+
+          {!source && !processing && (
+            <div className="mt-5 rounded-xl border border-dashed border-gray-300 bg-white px-4 py-4 sm:px-5">
+              <div className="text-sm font-semibold text-gray-900">Usage</div>
+              <ol className="mt-2 grid gap-2 text-sm leading-5 text-gray-600 sm:grid-cols-3 sm:gap-4">
+                <li><span className="font-medium text-gray-900">1.</span> Choose an image.</li>
+                <li><span className="font-medium text-gray-900">2.</span> Adjust the image, then click Edit.</li>
+                <li><span className="font-medium text-gray-900">3.</span> Choose the output format and profile.</li>
+              </ol>
+            </div>
+          )}
+
+          {processing && <div className="mt-4 text-sm text-gray-600">Processing…</div>}
+          {error && <div className="mt-4 text-sm text-red-600">{error}</div>}
+
+          {result && (
+            <section className="mt-6">
+              <div className="rounded-xl border border-gray-200 bg-gray-100 p-3 shadow-inner">
+                {/* The studio displays the generated blob directly; Next/Image is unnecessary here. */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={result.url}
+                  alt="Edited result"
+                  className="mx-auto block max-h-[70vh] max-w-full cursor-zoom-in object-contain"
+                  onClick={openResultZoom}
+                  draggable={false}
+                />
+              </div>
+              <div className="mt-2 flex items-center gap-3 text-sm text-gray-700">
+                <div className="min-w-0">
+                  {OUTPUT_FORMAT_OPTIONS.find((option) => option.value === result.format)?.label ?? result.format}
+                  {" • "}
+                  {result.colorProfile === "display-p3" ? "Display P3" : "sRGB"}
+                  {" • "}
+                  {formatBytes(result.size)}
+                  {" • "}
+                  {result.width}×{result.height}
+                </div>
+                <a
+                  href={result.url}
+                  download={outputFilename(source?.file.name, result.format)}
+                  className="ml-auto shrink-0 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-900 shadow-sm hover:bg-gray-100"
+                >
+                  Download
+                </a>
+              </div>
+            </section>
+          )}
         </div>
-
-        {result && source && (
-          <button
-            type="button"
-            className="ml-auto rounded border border-gray-400 bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-200 disabled:text-gray-400"
-            onClick={onReEdit}
-            disabled={processing}
-          >
-            Re-edit
-          </button>
-        )}
-      </div>
-
-      {processing && <div className="mt-4 text-sm text-gray-600">Processing…</div>}
-      {error && <div className="mt-4 text-sm text-red-600">{error}</div>}
-
-      {result && (
-        <section className="mt-6">
-          <div className="rounded border border-gray-300 bg-gray-100 p-3">
-            {/* The sandbox displays the generated blob directly; Next/Image is unnecessary here. */}
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={result.url}
-              alt="Edited result"
-              className="mx-auto block max-h-[70vh] max-w-full cursor-zoom-in object-contain"
-              onClick={openResultZoom}
-              draggable={false}
-            />
-          </div>
-          <div className="mt-2 text-sm text-gray-700">
-            {OUTPUT_FORMAT_OPTIONS.find((option) => option.value === result.format)?.label ?? result.format}
-            {" • "}
-            {result.colorProfile === "display-p3" ? "Display P3" : "sRGB"}
-            {" • "}
-            {formatBytes(result.size)}
-            {" • "}
-            {result.width}×{result.height}
-          </div>
-        </section>
-      )}
-
+      </section>
       {resultZoomFocus && result && (
         <div
           className="fixed inset-0 z-[90] flex items-center justify-center bg-black/75 p-1.5 sm:p-3"
