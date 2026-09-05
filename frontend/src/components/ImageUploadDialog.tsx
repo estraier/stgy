@@ -8010,8 +8010,11 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
               );
               const isUsingExistingData = !!(it.reusableUserId && it.reusableRestPath && it.reuse);
               return (
-                <li key={it.id} className="rounded border bg-white overflow-hidden mx-auto">
-                  <div className="relative w-[70vw] sm:w-[44vw] md:w-[28vw] lg:w-[24vw] xl:w-[22vw] aspect-video bg-gray-50">
+                <li
+                  key={it.id}
+                  className="w-[70vw] sm:w-[44vw] md:w-[28vw] lg:w-[24vw] xl:w-[22vw] rounded border bg-white overflow-hidden mx-auto"
+                >
+                  <div className="relative w-full aspect-video bg-gray-50">
                     {it.previewUrl && it.decodable ? (
                       <NextImage
                         src={it.previewUrl}
@@ -8033,7 +8036,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
                     )}
                   </div>
 
-                  <div className="p-3 text-sm text-gray-800 space-y-2 min-w-[260px]">
+                  <div className="p-3 text-sm text-gray-800 space-y-2 min-w-0 sm:min-w-[260px]">
                     <div className="font-medium truncate max-w-60" title={it.name}>
                       {it.name}
                     </div>
