@@ -429,8 +429,14 @@ const DEBUG_PERCENTILE_SAMPLE_MAX = 256;
 
 type DebugPercentileValues = number[];
 
+type DebugPercentileStatistics = {
+  luminance: DebugPercentileValues;
+  saturation: DebugPercentileValues;
+};
+
 type RawThumbnailMatchReference = {
   lumaPercentiles: DebugPercentileValues;
+  saturationPercentiles: DebugPercentileValues;
   linearSrgbSample: Float32Array;
 };
 
@@ -2220,6 +2226,32 @@ type DecodedRgbaImage8 = {
   cleanup: () => void;
 };
 
+type RawDevelopmentLuminanceSettings = {
+  exposureEv: number;
+  logarithm: number;
+  sigmoid: number;
+};
+
+type RawDevelopmentSaturationSettings = {
+  saturation: number;
+  vibrance: number;
+};
+
+type RawDevelopmentSettings = {
+  mode: "thumbnail-match" | "fallback";
+  iso: number | null;
+  medPasses: number;
+  luminance: RawDevelopmentLuminanceSettings | null;
+  saturation: RawDevelopmentSaturationSettings;
+  elapsedSeconds: number;
+};
+
+type RawDevelopmentMemoryUsage = {
+  bufferBytes: number;
+  heapBytes?: number;
+  totalBytes?: number;
+};
+
 type DecodedRgbaImage16 = {
   storage: "rgba";
   bitDepth: 16;
@@ -2228,6 +2260,7 @@ type DecodedRgbaImage16 = {
   width: number;
   height: number;
   data: Uint16Array;
+  rawDevelopment?: RawDevelopmentSettings;
   cleanup: () => void;
 };
 
@@ -2791,6 +2824,16 @@ const RGBA16_EDIT_PREVIEW_CONTEXT_CACHE = new WeakMap<
   DecodedRgbaImage16,
   { rotationDegrees: number; sample: LinearRgbaSample }
 >();
+type Rgba16PercentileDebugCacheEntry = {
+  sample: Float32Array;
+  input: DebugPercentileStatistics;
+  outputKey?: string;
+  output?: DebugPercentileStatistics;
+};
+const RGBA16_EDIT_PERCENTILE_DEBUG_CACHE = new WeakMap<
+  DecodedRgbaImage16,
+  Rgba16PercentileDebugCacheEntry
+>();
 
 const COLOR_ADJUSTMENT_CONTEXT_SAMPLE_MAX = 256;
 
@@ -3195,7 +3238,7 @@ function solveRawThumbnailMatchSigmoid(
 function applyRawThumbnailMatchedBaseline(
   decoded: DecodedRgbaImage16,
   thumbnailPercentiles: DebugPercentileValues,
-): boolean {
+): RawDevelopmentLuminanceSettings | null {
   const p25Index = DEBUG_PERCENTILES.indexOf(25);
   const p50Index = DEBUG_PERCENTILES.indexOf(50);
   const p75Index = DEBUG_PERCENTILES.indexOf(75);
@@ -3211,11 +3254,11 @@ function applyRawThumbnailMatchedBaseline(
     !Number.isFinite(targetP98) ||
     !(targetP98 > 1e-6)
   ) {
-    return false;
+    return null;
   }
 
   const sample = sampleLinearRgbFromRgba16(decoded);
-  if (!sample.length) return false;
+  if (!sample.length) return null;
   const rawPercentiles = debugPercentilesFromLinearRgbSample(sample, "prophoto");
   const rawP25 = rawPercentiles[p25Index];
   const rawP50 = rawPercentiles[p50Index];
@@ -3227,7 +3270,7 @@ function applyRawThumbnailMatchedBaseline(
     !(rawP75 >= rawP25) ||
     !(rawP98 > 1e-6)
   ) {
-    return false;
+    return null;
   }
 
   const targetContrast = rawThumbnailContrast(targetP25, targetP75);
@@ -3282,7 +3325,11 @@ function applyRawThumbnailMatchedBaseline(
     data[i + 1] = encodeStoredRgba16Channel(g * scale, decoded.transfer);
     data[i + 2] = encodeStoredRgba16Channel(b * scale, decoded.transfer);
   }
-  return true;
+  return {
+    exposureEv: Math.log2(Math.max(gain, Number.MIN_VALUE)),
+    logarithm: scaledLog,
+    sigmoid,
+  };
 }
 
 function hsvSaturationPercentileFromLinearSrgbSample(
@@ -3427,10 +3474,10 @@ function solveRawThumbnailMatchColorParameter(
 function applyRawThumbnailMatchedColor(
   decoded: DecodedRgbaImage16,
   thumbnailLinearSrgbSample: Float32Array,
-): boolean {
-  if (!thumbnailLinearSrgbSample.length) return false;
+): RawDevelopmentSaturationSettings | null {
+  if (!thumbnailLinearSrgbSample.length) return null;
   const rawLinearProPhotoSample = sampleLinearRgbFromRgba16(decoded);
-  if (!rawLinearProPhotoSample.length) return false;
+  if (!rawLinearProPhotoSample.length) return null;
 
   const targetP95 = hsvSaturationPercentileFromLinearSrgbSample(
     thumbnailLinearSrgbSample,
@@ -3440,7 +3487,7 @@ function applyRawThumbnailMatchedColor(
     thumbnailLinearSrgbSample,
     RAW_THUMBNAIL_MATCH_VIBRANCE_PERCENTILE,
   );
-  if (!Number.isFinite(targetP95) || !Number.isFinite(targetP50)) return false;
+  if (!Number.isFinite(targetP95) || !Number.isFinite(targetP50)) return null;
 
   const sample = buildRawAutoColorSample(rawLinearProPhotoSample);
   const targetSaturation = solveRawThumbnailMatchColorParameter(
@@ -3469,7 +3516,9 @@ function applyRawThumbnailMatchedColor(
   }
   vibrance = clampColorAdjustment(vibrance);
 
-  if (Math.abs(saturation) < 1e-6 && Math.abs(vibrance) < 1e-6) return true;
+  if (Math.abs(saturation) < 1e-6 && Math.abs(vibrance) < 1e-6) {
+    return { saturation, vibrance };
+  }
   const context = colorAdjustmentContextFromLinearRgbSample(
     rawLinearProPhotoSample,
     0,
@@ -3492,15 +3541,17 @@ function applyRawThumbnailMatchedColor(
     data[i + 1] = encodeStoredRgba16Channel(g, decoded.transfer);
     data[i + 2] = encodeStoredRgba16Channel(b, decoded.transfer);
   }
-  return true;
+  return { saturation, vibrance };
 }
 
-function applyRawBaselineExposure(decoded: DecodedRgbaImage16): void {
+function applyRawBaselineExposure(
+  decoded: DecodedRgbaImage16,
+): RawDevelopmentLuminanceSettings | null {
   const data = decoded.data;
   const rmsHistogram = new Uint32Array(65536);
   const channelHistogram = new Uint32Array(65536);
   const pixelCount = decoded.width * decoded.height;
-  if (pixelCount <= 0) return;
+  if (pixelCount <= 0) return null;
 
   for (let i = 0; i < data.length; i += 4) {
     const r16 = data[i] ?? 0;
@@ -3522,7 +3573,7 @@ function applyRawBaselineExposure(decoded: DecodedRgbaImage16): void {
     pixelCount,
     RAW_BASELINE_PERCENTILE,
   ) / 65535;
-  if (!(p98 > 0)) return;
+  if (!(p98 > 0)) return null;
 
   const factor = RAW_BASELINE_TARGET / p98;
   const channelMax = histogramPercentile16(
@@ -3553,6 +3604,11 @@ function applyRawBaselineExposure(decoded: DecodedRgbaImage16): void {
     data[i + 1] = encodeStoredRgba16Channel(g, decoded.transfer);
     data[i + 2] = encodeStoredRgba16Channel(b, decoded.transfer);
   }
+  return {
+    exposureEv: Math.log2(Math.max(factor, Number.MIN_VALUE)),
+    logarithm: 0,
+    sigmoid: 0,
+  };
 }
 
 function debugPercentilesFromLinearRgbSample(
@@ -3582,6 +3638,46 @@ function debugPercentilesFromLinearRgbSample(
     const hi = luma[upper] ?? lo;
     return lo + (hi - lo) * fraction;
   });
+}
+
+function debugSaturationPercentilesFromLinearRgbSample(
+  sample: Float32Array,
+  colorSpace: "srgb" | "prophoto" = "srgb",
+): DebugPercentileValues {
+  const count = Math.floor(sample.length / 3);
+  if (count <= 0) return DEBUG_PERCENTILES.map(() => 0);
+  const values = new Array<number>(count);
+  for (let i = 0; i < count; i++) {
+    const si = i * 3;
+    let r = sample[si] ?? 0;
+    let g = sample[si + 1] ?? 0;
+    let b = sample[si + 2] ?? 0;
+    if (colorSpace === "prophoto") {
+      [r, g, b] = convertLinearProPhotoToOutputRgb(r, g, b, "srgb");
+    }
+    const [, saturation] = rgbToHsv(clamp01(r), clamp01(g), clamp01(b));
+    values[i] = saturation;
+  }
+  values.sort((a, b) => a - b);
+  return DEBUG_PERCENTILES.map((percentile) => {
+    const rank = (values.length - 1) * percentile / 100;
+    const lower = Math.floor(rank);
+    const upper = Math.ceil(rank);
+    const fraction = rank - lower;
+    const lo = values[lower] ?? 0;
+    const hi = values[upper] ?? lo;
+    return lo + (hi - lo) * fraction;
+  });
+}
+
+function debugStatisticsFromLinearRgbSample(
+  sample: Float32Array,
+  colorSpace: "srgb" | "prophoto" = "srgb",
+): DebugPercentileStatistics {
+  return {
+    luminance: debugPercentilesFromLinearRgbSample(sample, colorSpace),
+    saturation: debugSaturationPercentilesFromLinearRgbSample(sample, colorSpace),
+  };
 }
 
 function sampleLinearRgbFromRgba16(decoded: DecodedRgbaImage16): Float32Array {
@@ -3910,7 +4006,7 @@ function colorAdjustmentContextFromLinearRgbSample(
   );
 }
 
-function adjustedDebugPercentilesFromLinearRgbSample(
+function adjustedDebugStatisticsFromLinearRgbSample(
   sample: Float32Array,
   temperature: number,
   tint: number,
@@ -3920,7 +4016,7 @@ function adjustedDebugPercentilesFromLinearRgbSample(
   vibrance: number,
   saturation: number,
   colorSpace: "srgb" | "prophoto" = "srgb",
-): DebugPercentileValues {
+): DebugPercentileStatistics {
   const context = colorAdjustmentContextFromLinearRgbSample(
     sample,
     temperature,
@@ -3943,7 +4039,7 @@ function adjustedDebugPercentilesFromLinearRgbSample(
     adjusted[i + 1] = g;
     adjusted[i + 2] = b;
   }
-  return debugPercentilesFromLinearRgbSample(adjusted, colorSpace);
+  return debugStatisticsFromLinearRgbSample(adjusted, colorSpace);
 }
 
 async function rawThumbnailMatchReferenceFromThumbnail(
@@ -4022,14 +4118,20 @@ async function rawThumbnailMatchReferenceFromThumbnail(
   if (!sample?.length) return undefined;
   return {
     lumaPercentiles: debugPercentilesFromLinearRgbSample(sample),
+    saturationPercentiles: debugSaturationPercentilesFromLinearRgbSample(sample),
     linearSrgbSample: sample,
   };
 }
 
-async function debugPercentilesFromRawThumbnail(
+async function debugStatisticsFromRawThumbnail(
   thumbnail: LibRawThumbnailDataLike | undefined,
-): Promise<DebugPercentileValues | undefined> {
-  return (await rawThumbnailMatchReferenceFromThumbnail(thumbnail))?.lumaPercentiles;
+): Promise<DebugPercentileStatistics | undefined> {
+  const reference = await rawThumbnailMatchReferenceFromThumbnail(thumbnail);
+  if (!reference) return undefined;
+  return {
+    luminance: reference.lumaPercentiles,
+    saturation: reference.saturationPercentiles,
+  };
 }
 
 function libRawImageDataToDecoded(image: LibRawImageDataLike): DecodedRgbaImage8 | DecodedRgbaImage16 {
@@ -4121,9 +4223,24 @@ function rawMedianDenoisePassesForIso(iso: number): number {
   return 0;
 }
 
-async function readRawThumbnailDebugPercentiles(
+function formatRawDevelopmentSetting(value: number): string {
+  if (!Number.isFinite(value)) return "n/a";
+  const normalized = Math.abs(value) < 0.0005 ? 0 : value;
+  return normalized.toFixed(2).replace(/\.?0+$/, "");
+}
+
+function formatMemoryMiB(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MiB`;
+}
+
+const RAW_THUMBNAIL_DEBUG_STATISTICS_CACHE = new WeakMap<
+  File,
+  Promise<DebugPercentileStatistics | undefined>
+>();
+
+async function readRawThumbnailDebugStatisticsUncached(
   file: File,
-): Promise<DebugPercentileValues | undefined> {
+): Promise<DebugPercentileStatistics | undefined> {
   let raw: LibRawInstanceLike | null = null;
   let workerFailure: ReturnType<typeof createLibRawWorkerFailure> | null = null;
   try {
@@ -4135,7 +4252,7 @@ async function readRawThumbnailDebugPercentiles(
     ]);
     if (!raw.thumbnailData) return undefined;
     const thumbnail = await Promise.race([raw.thumbnailData(), workerFailure.promise]);
-    return await debugPercentilesFromRawThumbnail(thumbnail);
+    return await debugStatisticsFromRawThumbnail(thumbnail);
   } catch {
     return undefined;
   } finally {
@@ -4145,7 +4262,18 @@ async function readRawThumbnailDebugPercentiles(
   }
 }
 
+function readRawThumbnailDebugStatistics(
+  file: File,
+): Promise<DebugPercentileStatistics | undefined> {
+  const cached = RAW_THUMBNAIL_DEBUG_STATISTICS_CACHE.get(file);
+  if (cached) return cached;
+  const pending = readRawThumbnailDebugStatisticsUncached(file);
+  RAW_THUMBNAIL_DEBUG_STATISTICS_CACHE.set(file, pending);
+  return pending;
+}
+
 async function decodeRawImage(file: File): Promise<DecodedRgbaImage8 | DecodedRgbaImage16> {
+  const rawDevelopmentStartedAt = performance.now();
   let raw: LibRawInstanceLike | null = null;
   let workerFailure: ReturnType<typeof createLibRawWorkerFailure> | null = null;
   try {
@@ -4158,7 +4286,8 @@ async function decodeRawImage(file: File): Promise<DecodedRgbaImage8 | DecodedRg
     ]);
 
     const metadata = await Promise.race([raw.metadata(false), workerFailure.promise]);
-    const medPasses = rawMedianDenoisePassesForIso(Number(metadata?.iso_speed));
+    const isoValue = Number(metadata?.iso_speed);
+    const medPasses = rawMedianDenoisePassesForIso(isoValue);
 
     let thumbnailReference: RawThumbnailMatchReference | undefined;
     if (raw.thumbnailData) {
@@ -4187,22 +4316,41 @@ async function decodeRawImage(file: File): Promise<DecodedRgbaImage8 | DecodedRg
 
     const decoded = libRawImageDataToDecoded(image);
     if (decoded.bitDepth === 16) {
+      let mode: RawDevelopmentSettings["mode"] = "fallback";
+      let luminanceSettings: RawDevelopmentLuminanceSettings | null = null;
+      let saturationSettings: RawDevelopmentSaturationSettings = {
+        saturation: 0,
+        vibrance: 0,
+      };
       if (thumbnailReference) {
-        const matchedThumbnail = applyRawThumbnailMatchedBaseline(
+        const matchedLuminance = applyRawThumbnailMatchedBaseline(
           decoded,
           thumbnailReference.lumaPercentiles,
         );
-        if (matchedThumbnail) {
+        if (matchedLuminance) {
+          mode = "thumbnail-match";
+          luminanceSettings = matchedLuminance;
           // Match color only after the thumbnail-driven tone baseline is fixed.
           // Saturation follows HSV P95 first, then Vibrance follows HSV P50.
-          applyRawThumbnailMatchedColor(decoded, thumbnailReference.linearSrgbSample);
+          saturationSettings = applyRawThumbnailMatchedColor(
+            decoded,
+            thumbnailReference.linearSrgbSample,
+          ) ?? saturationSettings;
         } else {
-          applyRawBaselineExposure(decoded);
+          luminanceSettings = applyRawBaselineExposure(decoded);
         }
       } else {
-        applyRawBaselineExposure(decoded);
+        luminanceSettings = applyRawBaselineExposure(decoded);
       }
       convertDecodedRgba16Transfer(decoded, "gamma20");
+      decoded.rawDevelopment = {
+        mode,
+        iso: Number.isFinite(isoValue) && isoValue > 0 ? isoValue : null,
+        medPasses,
+        luminance: luminanceSettings,
+        saturation: saturationSettings,
+        elapsedSeconds: (performance.now() - rawDevelopmentStartedAt) / 1000,
+      };
     }
     return decoded;
   } finally {
@@ -4210,6 +4358,28 @@ async function decodeRawImage(file: File): Promise<DecodedRgbaImage8 | DecodedRg
     if (raw?.dispose) raw.dispose();
     else raw?.worker?.terminate();
   }
+}
+
+// RAW development is expensive and React Strict Mode may start the same editor effect
+// twice in development. Share only the in-flight Promise; the durable decoded result is
+// owned by ImageUploadDialog's one-entry RAW development cache.
+const RAW_DEVELOPMENT_IN_FLIGHT = new WeakMap<
+  File,
+  Promise<DecodedRgbaImage8 | DecodedRgbaImage16>
+>();
+
+function decodeRawImageShared(file: File): Promise<DecodedRgbaImage8 | DecodedRgbaImage16> {
+  const existing = RAW_DEVELOPMENT_IN_FLIGHT.get(file);
+  if (existing) return existing;
+
+  const promise = decodeRawImage(file)
+    .finally(() => {
+      if (RAW_DEVELOPMENT_IN_FLIGHT.get(file) === promise) {
+        RAW_DEVELOPMENT_IN_FLIGHT.delete(file);
+      }
+    });
+  RAW_DEVELOPMENT_IN_FLIGHT.set(file, promise);
+  return promise;
 }
 
 function decodedImageToCanvasSource(decoded: DecodedImage): DrawableDecodedImage {
@@ -4291,7 +4461,7 @@ async function decodeImage(
   type?: string,
 ): Promise<DecodedImage> {
   if (isRawImageFile(name || "", type || "")) {
-    return decodeRawImage(file);
+    return decodeRawImageShared(file);
   }
 
   if (isTiff(name || "", type || "")) {
@@ -4956,6 +5126,7 @@ type EditDialogProps = {
   initialParams: ImageEditParams;
   defaultParams?: ImageEditParams;
   initialDecodedImage?: DecodedImage;
+  onRawDevelopmentReady?: (decodedImage: DecodedRgbaImage16) => void;
   onCancel: () => void;
   onApply: (params: ImageEditParams, decodedImage?: DecodedImage) => void;
   onError?: (message: string) => void;
@@ -4986,9 +5157,9 @@ type HistogramData = {
 };
 
 type PercentileDebugData = {
-  input: DebugPercentileValues;
-  thumbnail?: DebugPercentileValues;
-  output: DebugPercentileValues;
+  input: DebugPercentileStatistics;
+  thumbnail?: DebugPercentileStatistics;
+  output: DebugPercentileStatistics;
 };
 const EDIT_PREVIEW_MARGIN_PX = 8;
 const TEXT_OVERLAY_DEFAULT_FONT_SIZE_RATIO = 0.05;
@@ -5704,6 +5875,7 @@ export function ImageEditDialog({
   initialParams,
   defaultParams,
   initialDecodedImage,
+  onRawDevelopmentReady,
   onCancel,
   onApply,
   onError,
@@ -5717,6 +5889,7 @@ export function ImageEditDialog({
   const decodedImageRef = useRef<DecodedImage | null>(null);
   const transferredDecodedImageRef = useRef<DecodedImage | null>(null);
   const onErrorRef = useRef(onError);
+  const onRawDevelopmentReadyRef = useRef(onRawDevelopmentReady);
   const [containerSize, setContainerSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
   const [displayed, setDisplayed] = useState<EditRect>({ x: 0, y: 0, w: 0, h: 0 });
   const [cropRect, setCropRect] = useState<EditRect>({ x: 0, y: 0, w: 0, h: 0 });
@@ -5760,7 +5933,8 @@ export function ImageEditDialog({
   const [showHistogram, setShowHistogram] = useState(false);
   const [showPercentileDebug, setShowPercentileDebug] = useState(false);
   const [percentileDebug, setPercentileDebug] = useState<PercentileDebugData | null>(null);
-  const [rawThumbnailDebugPercentiles, setRawThumbnailDebugPercentiles] = useState<DebugPercentileValues | undefined>(undefined);
+  const [rawThumbnailDebugStatistics, setRawThumbnailDebugStatistics] = useState<DebugPercentileStatistics | undefined>(undefined);
+  const [rawDevelopmentMemoryUsage, setRawDevelopmentMemoryUsage] = useState<RawDevelopmentMemoryUsage | undefined>(undefined);
   const [showGrid, setShowGrid] = useState(false);
   const [histogram, setHistogram] = useState<HistogramData | null>(null);
   const [histogramGeometryDragging, setHistogramGeometryDragging] = useState(false);
@@ -5796,6 +5970,10 @@ export function ImageEditDialog({
   }, [onError]);
 
   useEffect(() => {
+    onRawDevelopmentReadyRef.current = onRawDevelopmentReady;
+  }, [onRawDevelopmentReady]);
+
+  useEffect(() => {
     if (!showPercentileDebug) return;
     const onDocumentClick = (event: MouseEvent) => {
       const panel = percentilePanelRef.current;
@@ -5816,18 +5994,35 @@ export function ImageEditDialog({
     setNatural(null);
     setShowPercentileDebug(false);
     setPercentileDebug(null);
-    setRawThumbnailDebugPercentiles(undefined);
+    setRawThumbnailDebugStatistics(undefined);
+    setRawDevelopmentMemoryUsage(undefined);
     previewImageRef.current = null;
     decodedImageRef.current = null;
     transferredDecodedImageRef.current = null;
 
     void (async () => {
       try {
-        const decoded =
-          initialDecodedImage ?? await decodeImage(file, 0, 0, file.name, file.type);
+        const decoded = initialDecodedImage ?? await decodeImage(file, 0, 0, file.name, file.type);
         decodedForEffect = decoded;
+        if (
+          isRawImageFile(file.name, file.type) &&
+          decoded.storage === "rgba" &&
+          decoded.bitDepth === 16
+        ) {
+          onRawDevelopmentReadyRef.current?.(decoded);
+        }
         if (cancelled) {
-          if (ownsDecodedImage) decoded.cleanup();
+          if (
+            ownsDecodedImage &&
+            !(
+              isRawImageFile(file.name, file.type) &&
+              decoded.storage === "rgba" &&
+              decoded.bitDepth === 16 &&
+              onRawDevelopmentReadyRef.current
+            )
+          ) {
+            decoded.cleanup();
+          }
           return;
         }
         if (decoded.storage === "rgba" && decoded.bitDepth === 16) {
@@ -5861,6 +6056,13 @@ export function ImageEditDialog({
       decodedImageRef.current = null;
       if (
         ownsDecodedImage &&
+        !(
+          decodedForEffect &&
+          isRawImageFile(file.name, file.type) &&
+          decodedForEffect.storage === "rgba" &&
+          decodedForEffect.bitDepth === 16 &&
+          onRawDevelopmentReadyRef.current
+        ) &&
         (!decodedForEffect || transferredDecodedImageRef.current !== decodedForEffect)
       ) {
         cleanup?.();
@@ -6728,19 +6930,75 @@ export function ImageEditDialog({
       !showHistogram ||
       !showPercentileDebug ||
       !isRawImageFile(file.name, file.type) ||
-      rawThumbnailDebugPercentiles
+      rawThumbnailDebugStatistics
     ) {
       return () => {
         cancelled = true;
       };
     }
-    void readRawThumbnailDebugPercentiles(file).then((thumbnail) => {
-      if (!cancelled) setRawThumbnailDebugPercentiles(thumbnail);
+    void readRawThumbnailDebugStatistics(file).then((thumbnail) => {
+      if (!cancelled) setRawThumbnailDebugStatistics(thumbnail);
     });
     return () => {
       cancelled = true;
     };
-  }, [showHistogram, showPercentileDebug, file, rawThumbnailDebugPercentiles]);
+  }, [showHistogram, showPercentileDebug, file, rawThumbnailDebugStatistics]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (
+      !showHistogram ||
+      !showPercentileDebug ||
+      !imageReady ||
+      !isRawImageFile(file.name, file.type)
+    ) {
+      setRawDevelopmentMemoryUsage(undefined);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const decoded = decodedImageRef.current;
+    if (!(decoded?.storage === "rgba" && decoded.bitDepth === 16)) {
+      setRawDevelopmentMemoryUsage(undefined);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    type PerformanceWithMemory = Performance & {
+      memory?: { usedJSHeapSize?: number };
+      measureUserAgentSpecificMemory?: () => Promise<{ bytes?: number }>;
+    };
+    const perf = performance as PerformanceWithMemory;
+    const heapBytes = perf.memory?.usedJSHeapSize;
+    const initialUsage: RawDevelopmentMemoryUsage = {
+      bufferBytes: decoded.data.byteLength,
+      ...(typeof heapBytes === "number" && Number.isFinite(heapBytes)
+        ? { heapBytes }
+        : {}),
+    };
+    setRawDevelopmentMemoryUsage(initialUsage);
+
+    const measureTotal = perf.measureUserAgentSpecificMemory;
+    if (typeof measureTotal === "function") {
+      void measureTotal.call(perf).then(
+        (measurement) => {
+          const totalBytes = measurement?.bytes;
+          if (!cancelled && typeof totalBytes === "number" && Number.isFinite(totalBytes)) {
+            setRawDevelopmentMemoryUsage({ ...initialUsage, totalBytes });
+          }
+        },
+        () => {
+          // total is optional; keep buffer/heap when the browser cannot measure it.
+        },
+      );
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [showHistogram, showPercentileDebug, imageReady, file]);
 
   useEffect(() => {
     if (!showHistogram) {
@@ -6755,8 +7013,20 @@ export function ImageEditDialog({
 
     const decoded = decodedImageRef.current;
     let sample: Float32Array | null = null;
+    let inputStatistics: DebugPercentileStatistics | null = null;
+    let cachedRgba16: Rgba16PercentileDebugCacheEntry | undefined;
     if (decoded?.storage === "rgba" && decoded.bitDepth === 16) {
-      sample = sampleLinearRgbFromRgba16(decoded);
+      cachedRgba16 = RGBA16_EDIT_PERCENTILE_DEBUG_CACHE.get(decoded);
+      if (!cachedRgba16) {
+        const rawSample = sampleLinearRgbFromRgba16(decoded);
+        cachedRgba16 = {
+          sample: rawSample,
+          input: debugStatisticsFromLinearRgbSample(rawSample, "prophoto"),
+        };
+        RGBA16_EDIT_PERCENTILE_DEBUG_CACHE.set(decoded, cachedRgba16);
+      }
+      sample = cachedRgba16.sample;
+      inputStatistics = cachedRgba16.input;
     } else {
       const source = previewImageRef.current;
       if (source) sample = sampleLinearRgbFromCanvasSource(source, natural.w, natural.h);
@@ -6769,10 +7039,23 @@ export function ImageEditDialog({
     const percentileColorSpace = decoded?.storage === "rgba" && decoded.bitDepth === 16
       ? "prophoto"
       : "srgb";
-    setPercentileDebug({
-      input: debugPercentilesFromLinearRgbSample(sample, percentileColorSpace),
-      thumbnail: rawThumbnailDebugPercentiles,
-      output: adjustedDebugPercentilesFromLinearRgbSample(
+    if (!inputStatistics) {
+      inputStatistics = debugStatisticsFromLinearRgbSample(sample, percentileColorSpace);
+    }
+    const outputKey = [
+      temperature,
+      tint,
+      exposureEv,
+      scaledLog,
+      sigmoid,
+      vibrance,
+      saturation,
+    ].join("|");
+    let outputStatistics = cachedRgba16?.outputKey === outputKey
+      ? cachedRgba16.output
+      : undefined;
+    if (!outputStatistics) {
+      outputStatistics = adjustedDebugStatisticsFromLinearRgbSample(
         sample,
         temperature,
         tint,
@@ -6782,14 +7065,23 @@ export function ImageEditDialog({
         vibrance,
         saturation,
         percentileColorSpace,
-      ),
+      );
+      if (cachedRgba16) {
+        cachedRgba16.outputKey = outputKey;
+        cachedRgba16.output = outputStatistics;
+      }
+    }
+    setPercentileDebug({
+      input: inputStatistics,
+      thumbnail: rawThumbnailDebugStatistics,
+      output: outputStatistics,
     });
   }, [
     showHistogram,
     showPercentileDebug,
     imageReady,
     natural,
-    rawThumbnailDebugPercentiles,
+    rawThumbnailDebugStatistics,
     temperature,
     tint,
     exposureEv,
@@ -7064,6 +7356,14 @@ export function ImageEditDialog({
     }
   }, [defaultParams, displayed, natural]);
 
+  const rawDevelopmentSettings = (() => {
+    if (!isRawImageFile(file.name, file.type)) return undefined;
+    const decoded = decodedImageRef.current;
+    return decoded?.storage === "rgba" && decoded.bitDepth === 16
+      ? decoded.rawDevelopment
+      : undefined;
+  })();
+
   if (!mounted) return null;
 
   return createPortal(
@@ -7304,8 +7604,8 @@ export function ImageEditDialog({
                         e.stopPropagation();
                         setShowPercentileDebug(true);
                       }}
-                      aria-label="Show luminance percentiles"
-                      title="Luminance percentiles"
+                      aria-label="Show percentile statistics"
+                      title="Percentile statistics"
                     >
                       P
                     </button>
@@ -7325,36 +7625,78 @@ export function ImageEditDialog({
                         onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => e.stopPropagation()}
                       >
-                        <table className="border-collapse tabular-nums">
-                          <thead>
-                            <tr>
-                              <th className="px-1 py-0.5 text-left font-normal" />
-                              <th className="px-1 py-0.5 text-right font-normal">input</th>
-                              {percentileDebug?.thumbnail && (
-                                <th className="px-1 py-0.5 text-right font-normal">thumbnail</th>
+                        <div className="flex items-start gap-3">
+                          {([
+                            ["luminance", "luminance"],
+                            ["saturation", "saturation"],
+                          ] as const).map(([label, key]) => (
+                            <div key={key}>
+                              <div className="px-1 pb-1 font-medium">{label}</div>
+                              <table className="border-collapse tabular-nums">
+                                <thead>
+                                  <tr>
+                                    <th className="border border-gray-600 px-1 py-0.5 text-left font-normal" />
+                                    <th className="border border-gray-600 px-1 py-0.5 text-right font-normal">input</th>
+                                    {percentileDebug?.thumbnail && (
+                                      <th className="border border-gray-600 px-1 py-0.5 text-right font-normal">thumbnail</th>
+                                    )}
+                                    <th className="border border-gray-600 px-1 py-0.5 text-right font-normal">output</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {DEBUG_PERCENTILES.map((percentile, index) => (
+                                    <tr key={percentile}>
+                                      <th className="border border-gray-600 px-1 py-0.5 text-left font-normal">P{percentile}</th>
+                                      <td className="border border-gray-600 px-1 py-0.5 text-right">
+                                        {percentileDebug ? percentileDebug.input[key][index].toFixed(3) : "..."}
+                                      </td>
+                                      {percentileDebug?.thumbnail && (
+                                        <td className="border border-gray-600 px-1 py-0.5 text-right">
+                                          {percentileDebug.thumbnail[key][index].toFixed(3)}
+                                        </td>
+                                      )}
+                                      <td className="border border-gray-600 px-1 py-0.5 text-right">
+                                        {percentileDebug ? percentileDebug.output[key][index].toFixed(3) : "..."}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          ))}
+                        </div>
+                        {rawDevelopmentSettings && (
+                          <div className="mt-2 border-t border-gray-600 pt-2">
+                            <div className="font-medium">RAW development settings</div>
+                            <div className="mt-1 space-y-0.5 font-mono tabular-nums">
+                              <div>
+                                luminance: {rawDevelopmentSettings.luminance
+                                  ? `exposure=${formatRawDevelopmentSetting(rawDevelopmentSettings.luminance.exposureEv)}, logarithm=${formatRawDevelopmentSetting(rawDevelopmentSettings.luminance.logarithm)}, sigmoid=${formatRawDevelopmentSetting(rawDevelopmentSettings.luminance.sigmoid)}`
+                                  : "n/a"}
+                              </div>
+                              <div>
+                                saturation: saturation={formatRawDevelopmentSetting(rawDevelopmentSettings.saturation.saturation)}, vibrance={formatRawDevelopmentSetting(rawDevelopmentSettings.saturation.vibrance)}
+                              </div>
+                              <div>
+                                source: ISO={rawDevelopmentSettings.iso === null ? "n/a" : formatRawDevelopmentSetting(rawDevelopmentSettings.iso)}, medPasses={rawDevelopmentSettings.medPasses}, mode={rawDevelopmentSettings.mode === "thumbnail-match" ? "thumbnail match" : "fallback"}
+                              </div>
+                              <div>elapsed time: {formatRawDevelopmentSetting(rawDevelopmentSettings.elapsedSeconds)} s</div>
+                              {rawDevelopmentMemoryUsage && (
+                                <div>
+                                  memory usage: {[
+                                    `buffer=${formatMemoryMiB(rawDevelopmentMemoryUsage.bufferBytes)}`,
+                                    ...(rawDevelopmentMemoryUsage.heapBytes === undefined
+                                      ? []
+                                      : [`heap=${formatMemoryMiB(rawDevelopmentMemoryUsage.heapBytes)}`]),
+                                    ...(rawDevelopmentMemoryUsage.totalBytes === undefined
+                                      ? []
+                                      : [`total=${formatMemoryMiB(rawDevelopmentMemoryUsage.totalBytes)}`]),
+                                  ].join(", ")}
+                                </div>
                               )}
-                              <th className="px-1 py-0.5 text-right font-normal">output</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {DEBUG_PERCENTILES.map((percentile, index) => (
-                              <tr key={percentile}>
-                                <th className="px-1 py-0.5 text-left font-normal">P{percentile}</th>
-                                <td className="px-1 py-0.5 text-right">
-                                  {percentileDebug ? percentileDebug.input[index].toFixed(3) : "..."}
-                                </td>
-                                {percentileDebug?.thumbnail && (
-                                  <td className="px-1 py-0.5 text-right">
-                                    {percentileDebug.thumbnail[index].toFixed(3)}
-                                  </td>
-                                )}
-                                <td className="px-1 py-0.5 text-right">
-                                  {percentileDebug ? percentileDebug.output[index].toFixed(3) : "..."}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -7993,6 +8335,19 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
   const optimizeJobs = useRef<Map<string, number>>(new Map());
   const rawDevelopmentCacheRef = useRef<RawDevelopmentCacheEntry | null>(null);
 
+  const storeRawDevelopmentCache = useCallback((
+    itemId: string,
+    file: File,
+    decoded: DecodedRgbaImage16,
+  ) => {
+    const cached = rawDevelopmentCacheRef.current;
+    if (cached?.itemId === itemId && cached.file === file && cached.decoded === decoded) {
+      return;
+    }
+    if (cached?.decoded !== decoded) cached?.decoded.cleanup();
+    rawDevelopmentCacheRef.current = { itemId, file, decoded };
+  }, []);
+
   useEffect(() => {
     const cached = rawDevelopmentCacheRef.current;
     if (!cached) return;
@@ -8087,6 +8442,26 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
         );
 
         try {
+          let decodedForOptimize: DecodedImage | undefined;
+          if (isRawImageFile(f.name, f.type)) {
+            const cached = rawDevelopmentCacheRef.current;
+            if (cached?.itemId === f.id && cached.file === f.file) {
+              decodedForOptimize = cached.decoded;
+            } else {
+              decodedForOptimize = await decodeImage(
+                f.file,
+                meta.width ?? 0,
+                meta.height ?? 0,
+                f.name,
+                f.type,
+              );
+              if (cancelled) return;
+              if (decodedForOptimize.storage === "rgba" && decodedForOptimize.bitDepth === 16) {
+                storeRawDevelopmentCache(f.id, f.file, decodedForOptimize);
+              }
+            }
+          }
+
           const out = await buildOptimizedVariant(
             f.file,
             meta.width ?? 0,
@@ -8095,6 +8470,8 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
             f.name,
             f.type,
             undefined,
+            "image/webp",
+            decodedForOptimize,
           );
 
           if (cancelled) return;
@@ -8152,7 +8529,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
     return () => {
       cancelled = true;
     };
-  }, [files, maxCount, SINGLE_LIMIT]);
+  }, [files, maxCount, SINGLE_LIMIT, storeRawDevelopmentCache]);
 
   useEffect(() => {
     return () => {
@@ -8176,13 +8553,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
       decodedImage?.storage === "rgba" &&
       decodedImage.bitDepth === 16
     ) {
-      const cached = rawDevelopmentCacheRef.current;
-      if (cached?.decoded !== decodedImage) cached?.decoded.cleanup();
-      rawDevelopmentCacheRef.current = {
-        itemId: snapshot.id,
-        file: snapshot.file,
-        decoded: decodedImage,
-      };
+      storeRawDevelopmentCache(snapshot.id, snapshot.file, decodedImage);
       processingDecoded = decodedImage;
       cleanupProcessingDecoded = false;
     } else if (isRawImageFile(snapshot.name, snapshot.type) && !decodedImage) {
@@ -8273,7 +8644,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
     } finally {
       if (cleanupProcessingDecoded) processingDecoded?.cleanup();
     }
-  }, []);
+  }, [storeRawDevelopmentCache]);
 
   const effectiveUploadSize = useCallback((it: SelectedItem) => {
     return it.optimize && it.optimized ? it.optimized.size : it.size;
@@ -8419,6 +8790,9 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
               ? rawDevelopmentCacheRef.current.decoded
               : undefined
           }
+          onRawDevelopmentReady={(decodedImage) => {
+            storeRawDevelopmentCache(editingItem.id, editingItem.file, decodedImage);
+          }}
           onCancel={() => setEditingItemId(null)}
           onError={(message) => {
             setEditingItemId(null);

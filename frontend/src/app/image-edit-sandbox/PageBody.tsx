@@ -115,6 +115,7 @@ export default function ImageEditSandbox() {
   const inputRef = useRef<HTMLInputElement>(null);
   const resultUrlRef = useRef<string | null>(null);
   const editedVariantRef = useRef<ImageEditPreparedVariant | null>(null);
+  const rawDevelopmentRef = useRef<DecodedImage | null>(null);
   const [source, setSource] = useState<SourceImage | null>(null);
   const [editing, setEditing] = useState(false);
   const [processing, setProcessing] = useState(false);
@@ -133,6 +134,13 @@ export default function ImageEditSandbox() {
     editedVariantRef.current = null;
   }, []);
 
+  const clearRawDevelopment = useCallback(() => {
+    if (rawDevelopmentRef.current) {
+      rawDevelopmentRef.current.cleanup();
+      rawDevelopmentRef.current = null;
+    }
+  }, []);
+
   const clearResult = useCallback(() => {
     resultZoomDragRef.current = null;
     setResultZoomFocus(null);
@@ -145,6 +153,7 @@ export default function ImageEditSandbox() {
 
   useEffect(() => clearResult, [clearResult]);
   useEffect(() => clearEditedVariant, [clearEditedVariant]);
+  useEffect(() => clearRawDevelopment, [clearRawDevelopment]);
 
   const closeResultZoom = useCallback(() => {
     resultZoomDragRef.current = null;
@@ -266,6 +275,7 @@ export default function ImageEditSandbox() {
     setError(null);
     clearResult();
     clearEditedVariant();
+    clearRawDevelopment();
     try {
       const [size, bestOutputColorProfile] = await Promise.all([
         readImageSize(file),
@@ -289,7 +299,7 @@ export default function ImageEditSandbox() {
     } finally {
       if (inputRef.current) inputRef.current.value = "";
     }
-  }, [clearEditedVariant, clearResult]);
+  }, [clearEditedVariant, clearRawDevelopment, clearResult]);
 
   const generateResult = useCallback(async (
     sourceImage: SourceImage,
@@ -353,7 +363,7 @@ export default function ImageEditSandbox() {
 
   const onApply = useCallback(async (params: ImageEditParams, decodedImage?: DecodedImage) => {
     if (!source) {
-      decodedImage?.cleanup();
+      if (decodedImage && rawDevelopmentRef.current !== decodedImage) decodedImage.cleanup();
       return;
     }
     setEditing(false);
@@ -362,7 +372,7 @@ export default function ImageEditSandbox() {
     try {
       await generateResult(nextSource, params, outputFormat, outputColorProfileSelection, decodedImage, true);
     } finally {
-      decodedImage?.cleanup();
+      if (decodedImage && rawDevelopmentRef.current !== decodedImage) decodedImage.cleanup();
     }
   }, [generateResult, outputColorProfileSelection, outputFormat, source]);
 
@@ -521,6 +531,12 @@ export default function ImageEditSandbox() {
           file={source.file}
           initialParams={source.edit}
           defaultParams={sandboxDefaultEditParams}
+          initialDecodedImage={rawDevelopmentRef.current ?? undefined}
+          onRawDevelopmentReady={(decodedImage) => {
+            const previous = rawDevelopmentRef.current;
+            if (previous && previous !== decodedImage) previous.cleanup();
+            rawDevelopmentRef.current = decodedImage;
+          }}
           onCancel={() => setEditing(false)}
           onError={onEditError}
           onApply={(params, decodedImage) => void onApply(params, decodedImage)}
