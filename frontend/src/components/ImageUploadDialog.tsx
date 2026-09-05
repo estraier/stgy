@@ -3873,12 +3873,14 @@ async function decodeRawImage(file: File): Promise<DecodedRgbImage16> {
       }
     }
 
-    // medPasses is a LibRaw processing setting. Opening the same buffer again is
-    // cheap compared with unpack/demosaic, and lets us choose chroma-oriented
-    // median cleanup from the ISO metadata without changing the WASM wrapper.
+    // LibRaw-Wasm transfers the Uint8Array's backing ArrayBuffer to its Worker
+    // on open(), which detaches rawBytes in this thread. If ISO metadata enables
+    // medPasses, obtain a fresh buffer for the second open instead of reusing the
+    // detached one.
     if (medPasses > 0) {
+      const denoiseRawBytes = new Uint8Array(await file.arrayBuffer());
       await Promise.race([
-        raw.open(rawBytes, { ...RAW_DECODE_SETTINGS, medPasses }),
+        raw.open(denoiseRawBytes, { ...RAW_DECODE_SETTINGS, medPasses }),
         workerFailure.promise,
       ]);
     }
