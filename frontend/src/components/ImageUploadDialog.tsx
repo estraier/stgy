@@ -971,98 +971,6 @@ function neutralWhiteBalanceForRgb8(
   return { temperature: bestTemperature, tint: bestTint };
 }
 
-function exposedPercentileFromRgb8(
-  data: Uint8ClampedArray,
-  factor: number,
-  percentile = 99.8,
-  ignoreTransparent = false,
-): number {
-  const histogram = new Uint32Array(256);
-  let sampleCount = 0;
-  for (let i = 0; i < data.length; i += 4) {
-    if (ignoreTransparent && data[i + 3] === 0) continue;
-    histogram[data[i]]++;
-    histogram[data[i + 1]]++;
-    histogram[data[i + 2]]++;
-    sampleCount += 3;
-  }
-  if (sampleCount <= 0) return 0;
-
-  // NumPy's default percentile uses linear interpolation at
-  // rank = (N - 1) * percentile / 100. Because ImageData channels are 8 bit,
-  // a 256-bin histogram reproduces that percentile without sorting all pixels.
-  const rank = (sampleCount - 1) * Math.min(100, Math.max(0, percentile)) / 100;
-  const lowerRank = Math.floor(rank);
-  const upperRank = Math.ceil(rank);
-  const fraction = rank - lowerRank;
-
-  let cumulative = 0;
-  let lowerLevel = 255;
-  let upperLevel = 255;
-  let lowerFound = false;
-  for (let level = 0; level < histogram.length; level++) {
-    cumulative += histogram[level];
-    if (!lowerFound && cumulative > lowerRank) {
-      lowerLevel = level;
-      lowerFound = true;
-    }
-    if (cumulative > upperRank) {
-      upperLevel = level;
-      break;
-    }
-  }
-
-  const lower = srgbChannelToLinear(lowerLevel) * factor;
-  const upper = srgbChannelToLinear(upperLevel) * factor;
-  return lower + (upper - lower) * fraction;
-}
-
-function whiteBalancedExposedPercentileFromRgb8(
-  data: Uint8ClampedArray,
-  gains: WhiteBalanceGains,
-  factor: number,
-  percentile = 99.8,
-  ignoreTransparent = false,
-): number {
-  const histogram = new Uint32Array(65536);
-  let sampleCount = 0;
-  for (let i = 0; i < data.length; i += 4) {
-    if (ignoreTransparent && data[i + 3] === 0) continue;
-    const r = srgbChannelToLinear(data[i]);
-    const g = srgbChannelToLinear(data[i + 1]);
-    const b = srgbChannelToLinear(data[i + 2]);
-    const [wr, wg, wb] = applyWhiteBalanceLinear(r, g, b, gains);
-    histogram[Math.min(65535, Math.max(0, Math.round(wr * 65535)))]++;
-    histogram[Math.min(65535, Math.max(0, Math.round(wg * 65535)))]++;
-    histogram[Math.min(65535, Math.max(0, Math.round(wb * 65535)))]++;
-    sampleCount += 3;
-  }
-  if (sampleCount <= 0) return 0;
-
-  const rank = (sampleCount - 1) * Math.min(100, Math.max(0, percentile)) / 100;
-  const lowerRank = Math.floor(rank);
-  const upperRank = Math.ceil(rank);
-  const fraction = rank - lowerRank;
-  let cumulative = 0;
-  let lowerLevel = 65535;
-  let upperLevel = 65535;
-  let lowerFound = false;
-  for (let level = 0; level < histogram.length; level++) {
-    cumulative += histogram[level];
-    if (!lowerFound && cumulative > lowerRank) {
-      lowerLevel = level;
-      lowerFound = true;
-    }
-    if (cumulative > upperRank) {
-      upperLevel = level;
-      break;
-    }
-  }
-  const lower = lowerLevel / 65535 * factor;
-  const upper = upperLevel / 65535 * factor;
-  return lower + (upper - lower) * fraction;
-}
-
 function applyScaledLogLinear(value: number, factor: number): number {
   const x = clamp01(value);
   const f = clampScaledLog(factor);
@@ -1210,69 +1118,6 @@ function applyToneLinearToRgb(
   return [r, g, b];
 }
 
-function saturatedPercentileAfterToneFromRgb8(
-  data: Uint8ClampedArray,
-  gains: WhiteBalanceGains,
-  hasWhiteBalance: boolean,
-  factor: number,
-  rolloff: { inflection: number; scale: number } | null,
-  scaledLog: number,
-  sigmoid: number,
-  saturationFactor: number,
-  percentile = 99,
-  ignoreTransparent = false,
-): number {
-  if (saturationFactor <= 1) return 0;
-  const bins = 4096;
-  const maxValue = Math.max(1, saturationFactor);
-  const histogram = new Uint32Array(bins);
-  let sampleCount = 0;
-  for (let i = 0; i < data.length; i += 4) {
-    if (ignoreTransparent && data[i + 3] === 0) continue;
-    let r = srgbChannelToLinear(data[i]);
-    let g = srgbChannelToLinear(data[i + 1]);
-    let b = srgbChannelToLinear(data[i + 2]);
-    [r, g, b] = applyToneLinearToRgb(
-      r,
-      g,
-      b,
-      gains,
-      hasWhiteBalance,
-      factor,
-      rolloff,
-      scaledLog,
-      sigmoid,
-    );
-    const [, s] = rgbToHsv(r, g, b);
-    const value = Math.min(maxValue, Math.max(0, s * saturationFactor));
-    const idx = Math.min(bins - 1, Math.max(0, Math.round(value / maxValue * (bins - 1))));
-    histogram[idx]++;
-    sampleCount += 1;
-  }
-  if (sampleCount <= 0) return 0;
-  const rank = (sampleCount - 1) * Math.min(100, Math.max(0, percentile)) / 100;
-  const lowerRank = Math.floor(rank);
-  const upperRank = Math.ceil(rank);
-  const fraction = rank - lowerRank;
-  let cumulative = 0;
-  let lowerLevel = bins - 1;
-  let upperLevel = bins - 1;
-  let lowerFound = false;
-  for (let level = 0; level < bins; level++) {
-    cumulative += histogram[level];
-    if (!lowerFound && cumulative > lowerRank) {
-      lowerLevel = level;
-      lowerFound = true;
-    }
-    if (cumulative > upperRank) {
-      upperLevel = level;
-      break;
-    }
-  }
-  const interpolated = lowerLevel + (upperLevel - lowerLevel) * fraction;
-  return maxValue * interpolated / (bins - 1);
-}
-
 type ColorAdjustmentContext = {
   gains: WhiteBalanceGains;
   hasWhiteBalance: boolean;
@@ -1286,68 +1131,6 @@ type ColorAdjustmentContext = {
   vibranceFactor: number;
   saturationRolloff: { inflection: number; scale: number } | null;
 };
-
-function buildColorAdjustmentContextFromRgb8(
-  data: Uint8ClampedArray,
-  temperature: number,
-  tint: number,
-  exposureEv: number,
-  scaledLog: number,
-  sigmoid: number,
-  vibrance: number,
-  saturation: number,
-  ignoreTransparent = false,
-): ColorAdjustmentContext {
-  const normalizedTemperature = clampWhiteBalanceValue(temperature);
-  const normalizedTint = clampWhiteBalanceValue(tint);
-  const normalizedScaledLog = clampScaledLog(scaledLog);
-  const normalizedSigmoid = clampSigmoid(sigmoid);
-  const normalizedVibrance = clampColorAdjustment(vibrance);
-  const normalizedSaturation = clampColorAdjustment(saturation);
-  const factor = Math.pow(2, exposureEv);
-  const gains = whiteBalanceGains(normalizedTemperature, normalizedTint);
-  const hasWhiteBalance = normalizedTemperature !== 0 || normalizedTint !== 0;
-  const maxVal =
-    factor > 1
-      ? hasWhiteBalance
-        ? whiteBalancedExposedPercentileFromRgb8(data, gains, factor, 99.8, ignoreTransparent)
-        : exposedPercentileFromRgb8(data, factor, 99.8, ignoreTransparent)
-      : 0;
-  const rolloff = factor > 1 ? rolloffParams(maxVal, 0.5, 4) : null;
-  const saturationFactor = colorSaturationFactor(normalizedSaturation);
-  const vibranceFactor = colorVibranceFactor(normalizedVibrance);
-  const saturationRolloff = saturationFactor > 1
-    ? rolloffParams(
-        saturatedPercentileAfterToneFromRgb8(
-          data,
-          gains,
-          hasWhiteBalance,
-          factor,
-          rolloff,
-          normalizedScaledLog,
-          normalizedSigmoid,
-          saturationFactor,
-          99,
-          ignoreTransparent,
-        ),
-        0.7,
-        4,
-      )
-    : null;
-  return {
-    gains,
-    hasWhiteBalance,
-    factor,
-    rolloff,
-    scaledLog: normalizedScaledLog,
-    sigmoid: normalizedSigmoid,
-    normalizedVibrance,
-    normalizedSaturation,
-    saturationFactor,
-    vibranceFactor,
-    saturationRolloff,
-  };
-}
 
 function applyColorAdjustmentsLinearRgb(
   r: number,
@@ -1379,66 +1162,6 @@ function applyColorAdjustmentsLinearRgb(
     [r, g, b] = hsvToRgb(h, s, v);
   }
   return [r, g, b];
-}
-
-function applyColorAdjustmentsToCanvas(
-  canvas: HTMLCanvasElement | OffscreenCanvas,
-  temperature: number,
-  tint: number,
-  exposureEv: number,
-  scaledLog: number,
-  sigmoid: number,
-  vibrance: number,
-  saturation: number,
-  ignoreTransparent = false,
-  outputColorProfile: ImageEditOutputColorProfile = "srgb",
-) {
-  const normalizedTemperature = clampWhiteBalanceValue(temperature);
-  const normalizedTint = clampWhiteBalanceValue(tint);
-  const normalizedScaledLog = clampScaledLog(scaledLog);
-  const normalizedSigmoid = clampSigmoid(sigmoid);
-  const normalizedVibrance = clampColorAdjustment(vibrance);
-  const normalizedSaturation = clampColorAdjustment(saturation);
-  if (
-    normalizedTemperature === 0 &&
-    normalizedTint === 0 &&
-    Math.abs(exposureEv) < 0.0001 &&
-    Math.abs(normalizedScaledLog) < 0.0001 &&
-    Math.abs(normalizedSigmoid) < 0.0001 &&
-    normalizedVibrance === 0 &&
-    normalizedSaturation === 0
-  ) {
-    return;
-  }
-  const ctx = getCanvas2dContext(canvas, outputColorProfile, true);
-  if (!ctx) return;
-  const width = "width" in canvas ? canvas.width : 0;
-  const height = "height" in canvas ? canvas.height : 0;
-  if (!width || !height) return;
-  const imageData = getCanvasImageData(ctx, 0, 0, width, height, outputColorProfile);
-  const rgb8 = imageData.data;
-  const context = buildColorAdjustmentContextFromRgb8(
-    rgb8,
-    normalizedTemperature,
-    normalizedTint,
-    exposureEv,
-    normalizedScaledLog,
-    normalizedSigmoid,
-    normalizedVibrance,
-    normalizedSaturation,
-    ignoreTransparent,
-  );
-  for (let i = 0; i < rgb8.length; i += 4) {
-    if (ignoreTransparent && rgb8[i + 3] === 0) continue;
-    let r = srgbChannelToLinear(rgb8[i]);
-    let g = srgbChannelToLinear(rgb8[i + 1]);
-    let b = srgbChannelToLinear(rgb8[i + 2]);
-    [r, g, b] = applyColorAdjustmentsLinearRgb(r, g, b, context);
-    rgb8[i] = linearChannelToSrgb(r);
-    rgb8[i + 1] = linearChannelToSrgb(g);
-    rgb8[i + 2] = linearChannelToSrgb(b);
-  }
-  ctx.putImageData(imageData, 0, 0);
 }
 
 type SharpenPreset = {
@@ -2048,63 +1771,6 @@ function inverseRotatePoint(
   return rotatePoint(x, y, centerX, centerY, -degrees);
 }
 
-function drawRotatedSourceToContext(
-  ctx: RotationCanvasContext,
-  source: CanvasImageSource,
-  sourceW: number,
-  sourceH: number,
-  cropX: number,
-  cropY: number,
-  scaleX: number,
-  scaleY: number,
-  rotationDegrees: number,
-) {
-  ctx.save();
-  ctx.setTransform(scaleX, 0, 0, scaleY, -cropX * scaleX, -cropY * scaleY);
-  ctx.translate(sourceW / 2, sourceH / 2);
-  ctx.rotate(normalizeRotationDegrees(rotationDegrees) * Math.PI / 180);
-  ctx.translate(-sourceW / 2, -sourceH / 2);
-  ctx.drawImage(source, 0, 0, sourceW, sourceH);
-  ctx.restore();
-}
-
-function fillRotationPadding(
-  ctx: RotationCanvasContext,
-  canvasW: number,
-  canvasH: number,
-  sourceW: number,
-  sourceH: number,
-  cropX: number,
-  cropY: number,
-  scaleX: number,
-  scaleY: number,
-  rotationDegrees: number,
-) {
-  if (Math.abs(normalizeRotationDegrees(rotationDegrees)) < 1e-9) return;
-  const centerX = sourceW / 2;
-  const centerY = sourceH / 2;
-  const corners = [
-    rotatePoint(0, 0, centerX, centerY, rotationDegrees),
-    rotatePoint(sourceW, 0, centerX, centerY, rotationDegrees),
-    rotatePoint(sourceW, sourceH, centerX, centerY, rotationDegrees),
-    rotatePoint(0, sourceH, centerX, centerY, rotationDegrees),
-  ].map((point) => ({
-    x: (point.x - cropX) * scaleX,
-    y: (point.y - cropY) * scaleY,
-  }));
-
-  ctx.save();
-  ctx.globalCompositeOperation = "destination-over";
-  ctx.fillStyle = "rgb(128, 128, 128)";
-  ctx.beginPath();
-  ctx.rect(0, 0, canvasW, canvasH);
-  ctx.moveTo(corners[0].x, corners[0].y);
-  for (let i = 1; i < corners.length; i++) ctx.lineTo(corners[i].x, corners[i].y);
-  ctx.closePath();
-  ctx.fill("evenodd");
-  ctx.restore();
-}
-
 type OffscreenCanvasCtor = new (width: number, height: number) => OffscreenCanvas;
 function getOffscreenCanvasCtor(): OffscreenCanvasCtor | null {
   const g = globalThis as unknown as { OffscreenCanvas?: OffscreenCanvasCtor };
@@ -2130,24 +1796,6 @@ async function decodeViaImg(file: File): Promise<HTMLImageElement> {
     setTimeout(() => URL.revokeObjectURL(url), 0);
   }
 }
-
-type DecodedCanvasSourceImage = {
-  storage: "canvas-source";
-  bitDepth: 8;
-  width: number;
-  height: number;
-  source: CanvasImageSource;
-  cleanup: () => void;
-};
-
-type DecodedRgbaImage8 = {
-  storage: "rgba";
-  bitDepth: 8;
-  width: number;
-  height: number;
-  data: Uint8ClampedArray;
-  cleanup: () => void;
-};
 
 type RawDevelopmentLuminanceSettings = {
   exposureEv: number;
@@ -2175,9 +1823,7 @@ type RawDevelopmentMemoryUsage = {
   totalBytes?: number;
 };
 
-type DecodedRgbaImage16 = {
-  storage: "rgba";
-  bitDepth: 16;
+type DecodedRgbImage16 = {
   colorSpace: "prophoto";
   transfer: "linear" | "gamma20";
   width: number;
@@ -2187,19 +1833,12 @@ type DecodedRgbaImage16 = {
   cleanup: () => void;
 };
 
-export type DecodedImage = DecodedCanvasSourceImage | DecodedRgbaImage8 | DecodedRgbaImage16;
+export type DecodedImage = DecodedRgbImage16;
 
 type RawDevelopmentCacheEntry = {
   itemId: string;
   file: File;
-  decoded: DecodedRgbaImage16;
-};
-
-type DrawableDecodedImage = {
-  source: CanvasImageSource;
-  width: number;
-  height: number;
-  cleanup: () => void;
+  decoded: DecodedRgbImage16;
 };
 
 type Canvas2dContextLike = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
@@ -2209,10 +1848,10 @@ const PROPHOTO_PROFILE_LABEL_RE = /(?:prophoto|romm)[ _-]?rgb/i;
 const ADOBE_RGB_PROFILE_LABEL_RE = /adobe[ _-]?rgb(?:[ _-]?\(?1998\)?)?/i;
 const REC_2020_PROFILE_LABEL_RE = /(?:rec(?:\.|ommendation)?|bt)[\s._-]*2020/i;
 
-type TiffInputColorProfile = "srgb" | "display-p3" | "prophoto" | "adobe-rgb" | "rec2020";
+type ImageInputColorProfile = "srgb" | "display-p3" | "prophoto" | "adobe-rgb" | "rec2020";
 type ImageEditCanvasColorSpace = ImageEditOutputColorProfile;
 
-function inputColorProfileToBestOutputProfile(profile: TiffInputColorProfile): ImageEditOutputColorProfile {
+function inputColorProfileToBestOutputProfile(profile: ImageInputColorProfile): ImageEditOutputColorProfile {
   return profile === "display-p3" || profile === "prophoto" || profile === "adobe-rgb" || profile === "rec2020"
     ? "display-p3"
     : "srgb";
@@ -2309,7 +1948,7 @@ function profileLabelText(bytes: Uint8Array): string {
   return new TextDecoder("latin1").decode(bytes).replace(/\0/g, "");
 }
 
-function sniffTiffInputColorProfile(bytes: Uint8Array): TiffInputColorProfile {
+function sniffImageInputColorProfile(bytes: Uint8Array): ImageInputColorProfile {
   const text = profileLabelText(bytes);
   if (DISPLAY_P3_PROFILE_LABEL_RE.test(text)) return "display-p3";
   if (PROPHOTO_PROFILE_LABEL_RE.test(text)) return "prophoto";
@@ -2332,9 +1971,9 @@ function bytesFromTiffTag(value: unknown): Uint8Array | null {
   return null;
 }
 
-function tiffInputColorProfile(ifd: TiffIfdLike): TiffInputColorProfile {
+function tiffInputColorProfile(ifd: TiffIfdLike): ImageInputColorProfile {
   const icc = bytesFromTiffTag(ifd.t34675);
-  return icc?.length ? sniffTiffInputColorProfile(icc) : "srgb";
+  return icc?.length ? sniffImageInputColorProfile(icc) : "srgb";
 }
 
 type HeifNclxColorInfo = {
@@ -2501,8 +2140,8 @@ function parsePrimaryHeifColorInfo(bytes: Uint8Array): HeifColorInfo | null {
   return null;
 }
 
-function heifColorInfoToInputColorProfile(colorInfo: HeifColorInfo): TiffInputColorProfile {
-  if (colorInfo.kind === "icc") return sniffTiffInputColorProfile(colorInfo.icc);
+function heifColorInfoToInputColorProfile(colorInfo: HeifColorInfo): ImageInputColorProfile {
+  if (colorInfo.kind === "icc") return sniffImageInputColorProfile(colorInfo.icc);
   switch (colorInfo.nclx.colourPrimaries) {
     case 12:
       return "display-p3";
@@ -2521,7 +2160,7 @@ async function detectHeifOutputColorProfile(file: File): Promise<ImageEditOutput
       const profile = heifColorInfoToInputColorProfile(colorInfo);
       return inputColorProfileToBestOutputProfile(profile);
     }
-    return inputColorProfileToBestOutputProfile(sniffTiffInputColorProfile(bytes));
+    return inputColorProfileToBestOutputProfile(sniffImageInputColorProfile(bytes));
   } catch {}
   return "srgb";
 }
@@ -2544,7 +2183,7 @@ export async function detectEditableImageColorProfile(file: File): Promise<Image
   if (isHeif(file.name || "", file.type || "")) return detectHeifOutputColorProfile(file);
   try {
     const bytes = new Uint8Array(await file.slice(0, PROFILE_SNIFF_BYTES).arrayBuffer());
-    return sniffTiffInputColorProfile(bytes) === "display-p3" ? "display-p3" : "srgb";
+    return inputColorProfileToBestOutputProfile(sniffImageInputColorProfile(bytes));
   } catch {
     return "srgb";
   }
@@ -2557,13 +2196,14 @@ export async function detectBestEditableImageOutputColorProfile(
   return detectEditableImageColorProfile(file);
 }
 
-type LinearRgbaSample = {
+type LinearRgbSample = {
   data: Float32Array;
   width: number;
   height: number;
+  valid?: Uint8Array;
 };
 
-type Rgba16RenderedPreviewCacheEntry = {
+type Rgb16RenderedPreviewCacheEntry = {
   width: number;
   height: number;
   key: string;
@@ -2574,23 +2214,23 @@ type Rgba16RenderedPreviewCacheEntry = {
 // completed preview Canvas for a decoded 16-bit input; do not expose preview state or
 // cache intermediate downsampled buffers through the upload dialog. WeakMap lets the
 // entry disappear together with the decoded input.
-const RGBA16_EDIT_RENDERED_PREVIEW_CACHE = new WeakMap<
-  DecodedRgbaImage16,
-  Rgba16RenderedPreviewCacheEntry
+const RGB16_EDIT_RENDERED_PREVIEW_CACHE = new WeakMap<
+  DecodedRgbImage16,
+  Rgb16RenderedPreviewCacheEntry
 >();
-const RGBA16_EDIT_PREVIEW_CONTEXT_CACHE = new WeakMap<
-  DecodedRgbaImage16,
-  { rotationDegrees: number; sample: LinearRgbaSample }
+const RGB16_EDIT_PREVIEW_CONTEXT_CACHE = new WeakMap<
+  DecodedRgbImage16,
+  { rotationDegrees: number; sample: LinearRgbSample }
 >();
-type Rgba16PercentileDebugCacheEntry = {
+type Rgb16PercentileDebugCacheEntry = {
   sample: Float32Array;
   input: DebugPercentileStatistics;
   outputKey?: string;
   output?: DebugPercentileStatistics;
 };
-const RGBA16_EDIT_PERCENTILE_DEBUG_CACHE = new WeakMap<
-  DecodedRgbaImage16,
-  Rgba16PercentileDebugCacheEntry
+const RGB16_EDIT_PERCENTILE_DEBUG_CACHE = new WeakMap<
+  DecodedRgbImage16,
+  Rgb16PercentileDebugCacheEntry
 >();
 
 const COLOR_ADJUSTMENT_CONTEXT_SAMPLE_MAX = 256;
@@ -2602,27 +2242,18 @@ function scaleSampleTo16(v: number, bits: number): number {
   return max > 0 ? Math.round((Math.max(0, v) / max) * 65535) : 0;
 }
 
-function scaleSampleTo8(v: number, bits: number): number {
-  const b = Math.max(1, Math.min(16, Math.round(bits || 8)));
-  if (b <= 8) {
-    const max = (1 << b) - 1;
-    return max > 0 ? Math.round((Math.max(0, v) / max) * 255) : 0;
-  }
-  return Math.round(Math.max(0, Math.min(65535, v)) / 257);
-}
-
-function decodeStoredRgba16Channel(
+function decodeStoredRgb16Channel(
   sample: number,
-  transfer: DecodedRgbaImage16["transfer"],
+  transfer: DecodedRgbImage16["transfer"],
 ): number {
   const encoded = clamp01(sample / 65535);
   if (transfer === "gamma20") return encoded * encoded;
   return encoded;
 }
 
-function encodeStoredRgba16Channel(
+function encodeStoredRgb16Channel(
   linear: number,
-  transfer: DecodedRgbaImage16["transfer"],
+  transfer: DecodedRgbImage16["transfer"],
 ): number {
   const clamped = clamp01(linear);
   const encoded = transfer === "gamma20" ? Math.sqrt(clamped) : clamped;
@@ -2648,11 +2279,11 @@ function rec2020EncodedToLinear(encoded: number): number {
   );
 }
 
-function tiffEncodedRgbToLinearProphoto(
+function encodedRgbToLinearProphoto(
   r: number,
   g: number,
   b: number,
-  profile: TiffInputColorProfile,
+  profile: ImageInputColorProfile,
 ): [number, number, number] {
   if (profile === "prophoto") {
     return [
@@ -2699,43 +2330,50 @@ function tiffEncodedRgbToLinearProphoto(
   ];
 }
 
-function rgba8TiffToDecodedRgba16(
-  rgba8: Uint8Array,
-  width: number,
-  height: number,
-  profile: TiffInputColorProfile,
-): DecodedRgbaImage16 {
-  const count = width * height;
-  const rgba16 = new Uint16Array(count * 4);
+function writeRgba8ToDecodedRgb16(
+  rgba8: Uint8Array | Uint8ClampedArray,
+  rgb16: Uint16Array,
+  destinationPixelOffset: number,
+  profile: ImageInputColorProfile,
+): void {
+  const count = Math.floor(rgba8.length / 4);
   for (let i = 0; i < count; i++) {
     const si = i * 4;
-    const [r, g, b] = tiffEncodedRgbToLinearProphoto(
+    const di = (destinationPixelOffset + i) * 3;
+    const [r, g, b] = encodedRgbToLinearProphoto(
       (rgba8[si] ?? 0) / 255,
       (rgba8[si + 1] ?? 0) / 255,
       (rgba8[si + 2] ?? 0) / 255,
       profile,
     );
-    rgba16[si] = encodeStoredRgba16Channel(r, "gamma20");
-    rgba16[si + 1] = encodeStoredRgba16Channel(g, "gamma20");
-    rgba16[si + 2] = encodeStoredRgba16Channel(b, "gamma20");
-    rgba16[si + 3] = Math.round(((rgba8[si + 3] ?? 255) / 255) * 65535);
+    rgb16[di] = encodeStoredRgb16Channel(r, "gamma20");
+    rgb16[di + 1] = encodeStoredRgb16Channel(g, "gamma20");
+    rgb16[di + 2] = encodeStoredRgb16Channel(b, "gamma20");
   }
+}
+
+function rgba8ToDecodedRgb16(
+  rgba8: Uint8Array | Uint8ClampedArray,
+  width: number,
+  height: number,
+  profile: ImageInputColorProfile,
+): DecodedRgbImage16 {
+  const rgb16 = new Uint16Array(width * height * 3);
+  writeRgba8ToDecodedRgb16(rgba8, rgb16, 0, profile);
   return {
-    storage: "rgba",
-    bitDepth: 16,
     colorSpace: "prophoto",
     transfer: "gamma20",
     width,
     height,
-    data: rgba16,
+    data: rgb16,
     cleanup: () => {},
   };
 }
 
-function nativeRgbTiffToDecodedRgba16(
+function nativeRgbTiffToDecodedRgb16(
   ifd: TiffIfdLike,
-  profile: TiffInputColorProfile,
-): DecodedRgbaImage16 | null {
+  profile: ImageInputColorProfile,
+): DecodedRgbImage16 | null {
   const width = Math.max(0, Math.round(Number(ifd.width ?? ifd.t256?.[0] ?? 0)));
   const height = Math.max(0, Math.round(Number(ifd.height ?? ifd.t257?.[0] ?? 0)));
   const data = ifd.data;
@@ -2760,7 +2398,7 @@ function nativeRgbTiffToDecodedRgba16(
   const requiredBytes = width * height * samplesPerPixel * bytesPerSample;
   if (data.byteLength < requiredBytes) return null;
 
-  const rgba16 = new Uint16Array(width * height * 4);
+  const rgb16 = new Uint16Array(width * height * 3);
   const alphaKind = Number(ifd.t338?.[0] ?? 0); // 1=associated, 2=unassociated
   const hasAlpha = samplesPerPixel >= 4 && (alphaKind === 1 || alphaKind === 2);
   const readSample = bitDepth === 8
@@ -2776,8 +2414,8 @@ function nativeRgbTiffToDecodedRgba16(
     let r = readSample(base);
     let g = readSample(base + 1);
     let b = readSample(base + 2);
-    const alpha = hasAlpha ? clamp01(readSample(base + 3)) : 1;
     if (hasAlpha && alphaKind === 1) {
+      const alpha = clamp01(readSample(base + 3));
       if (alpha > 0) {
         r = clamp01(r / alpha);
         g = clamp01(g / alpha);
@@ -2786,43 +2424,40 @@ function nativeRgbTiffToDecodedRgba16(
         r = g = b = 0;
       }
     }
-    const [pr, pg, pb] = tiffEncodedRgbToLinearProphoto(r, g, b, profile);
-    const di = i * 4;
-    rgba16[di] = encodeStoredRgba16Channel(pr, "gamma20");
-    rgba16[di + 1] = encodeStoredRgba16Channel(pg, "gamma20");
-    rgba16[di + 2] = encodeStoredRgba16Channel(pb, "gamma20");
-    rgba16[di + 3] = Math.round(alpha * 65535);
+    const [pr, pg, pb] = encodedRgbToLinearProphoto(r, g, b, profile);
+    const di = i * 3;
+    rgb16[di] = encodeStoredRgb16Channel(pr, "gamma20");
+    rgb16[di + 1] = encodeStoredRgb16Channel(pg, "gamma20");
+    rgb16[di + 2] = encodeStoredRgb16Channel(pb, "gamma20");
   }
 
   return {
-    storage: "rgba",
-    bitDepth: 16,
     colorSpace: "prophoto",
     transfer: "gamma20",
     width,
     height,
-    data: rgba16,
+    data: rgb16,
     cleanup: () => {},
   };
 }
 
-function convertDecodedRgba16Transfer(
-  decoded: DecodedRgbaImage16,
-  transfer: DecodedRgbaImage16["transfer"],
+function convertDecodedRgb16Transfer(
+  decoded: DecodedRgbImage16,
+  transfer: DecodedRgbImage16["transfer"],
 ): void {
   if (decoded.transfer === transfer) return;
   const data = decoded.data;
-  for (let i = 0; i < data.length; i += 4) {
-    data[i] = encodeStoredRgba16Channel(
-      decodeStoredRgba16Channel(data[i] ?? 0, decoded.transfer),
+  for (let i = 0; i < data.length; i += 3) {
+    data[i] = encodeStoredRgb16Channel(
+      decodeStoredRgb16Channel(data[i] ?? 0, decoded.transfer),
       transfer,
     );
-    data[i + 1] = encodeStoredRgba16Channel(
-      decodeStoredRgba16Channel(data[i + 1] ?? 0, decoded.transfer),
+    data[i + 1] = encodeStoredRgb16Channel(
+      decodeStoredRgb16Channel(data[i + 1] ?? 0, decoded.transfer),
       transfer,
     );
-    data[i + 2] = encodeStoredRgba16Channel(
-      decodeStoredRgba16Channel(data[i + 2] ?? 0, decoded.transfer),
+    data[i + 2] = encodeStoredRgb16Channel(
+      decodeStoredRgb16Channel(data[i + 2] ?? 0, decoded.transfer),
       transfer,
     );
   }
@@ -2994,7 +2629,7 @@ function solveRawThumbnailMatchSigmoid(
 }
 
 function applyRawThumbnailMatchedBaseline(
-  decoded: DecodedRgbaImage16,
+  decoded: DecodedRgbImage16,
   thumbnailPercentiles: DebugPercentileValues,
 ): RawDevelopmentLuminanceSettings | null {
   const p25Index = DEBUG_PERCENTILES.indexOf(25);
@@ -3015,7 +2650,7 @@ function applyRawThumbnailMatchedBaseline(
     return null;
   }
 
-  const sample = sampleLinearRgbFromRgba16(decoded);
+  const sample = sampleLinearRgbFromRgb16(decoded);
   if (!sample.length) return null;
   const rawPercentiles = debugPercentilesFromLinearRgbSample(sample, "prophoto");
   const rawP25 = rawPercentiles[p25Index];
@@ -3066,10 +2701,10 @@ function applyRawThumbnailMatchedBaseline(
   }
 
   const data = decoded.data;
-  for (let i = 0; i < data.length; i += 4) {
-    const r = decodeStoredRgba16Channel(data[i] ?? 0, decoded.transfer);
-    const g = decodeStoredRgba16Channel(data[i + 1] ?? 0, decoded.transfer);
-    const b = decodeStoredRgba16Channel(data[i + 2] ?? 0, decoded.transfer);
+  for (let i = 0; i < data.length; i += 3) {
+    const r = decodeStoredRgb16Channel(data[i] ?? 0, decoded.transfer);
+    const g = decodeStoredRgb16Channel(data[i + 1] ?? 0, decoded.transfer);
+    const b = decodeStoredRgb16Channel(data[i + 2] ?? 0, decoded.transfer);
     const luma = PROPHOTO_LUMA_R * r + PROPHOTO_LUMA_G * g + PROPHOTO_LUMA_B * b;
     if (!(luma > 1e-12)) {
       data[i] = 0;
@@ -3079,9 +2714,9 @@ function applyRawThumbnailMatchedBaseline(
     }
     const adjustedLuma = transformedRawLumaValue(luma, gain, scaledLog, sigmoid);
     const scale = adjustedLuma / luma;
-    data[i] = encodeStoredRgba16Channel(r * scale, decoded.transfer);
-    data[i + 1] = encodeStoredRgba16Channel(g * scale, decoded.transfer);
-    data[i + 2] = encodeStoredRgba16Channel(b * scale, decoded.transfer);
+    data[i] = encodeStoredRgb16Channel(r * scale, decoded.transfer);
+    data[i + 1] = encodeStoredRgb16Channel(g * scale, decoded.transfer);
+    data[i + 2] = encodeStoredRgb16Channel(b * scale, decoded.transfer);
   }
   return {
     exposureEv: Math.log2(Math.max(gain, Number.MIN_VALUE)),
@@ -3283,11 +2918,11 @@ function solveRawThumbnailMatchColorParameter(
 }
 
 function applyRawThumbnailMatchedColor(
-  decoded: DecodedRgbaImage16,
+  decoded: DecodedRgbImage16,
   thumbnailLinearSrgbSample: Float32Array,
 ): RawDevelopmentSaturationSettings | null {
   if (!thumbnailLinearSrgbSample.length) return null;
-  const rawLinearProPhotoSample = sampleLinearRgbFromRgba16(decoded);
+  const rawLinearProPhotoSample = sampleLinearRgbFromRgb16(decoded);
   if (!rawLinearProPhotoSample.length) return null;
 
   const targetP95 = hsvSaturationPercentileFromLinearSrgbSample(
@@ -3341,22 +2976,22 @@ function applyRawThumbnailMatchedColor(
     saturation,
   );
   const data = decoded.data;
-  for (let i = 0; i < data.length; i += 4) {
+  for (let i = 0; i < data.length; i += 3) {
     const [r, g, b] = applyColorAdjustmentsLinearRgb(
-      decodeStoredRgba16Channel(data[i] ?? 0, decoded.transfer),
-      decodeStoredRgba16Channel(data[i + 1] ?? 0, decoded.transfer),
-      decodeStoredRgba16Channel(data[i + 2] ?? 0, decoded.transfer),
+      decodeStoredRgb16Channel(data[i] ?? 0, decoded.transfer),
+      decodeStoredRgb16Channel(data[i + 1] ?? 0, decoded.transfer),
+      decodeStoredRgb16Channel(data[i + 2] ?? 0, decoded.transfer),
       context,
     );
-    data[i] = encodeStoredRgba16Channel(r, decoded.transfer);
-    data[i + 1] = encodeStoredRgba16Channel(g, decoded.transfer);
-    data[i + 2] = encodeStoredRgba16Channel(b, decoded.transfer);
+    data[i] = encodeStoredRgb16Channel(r, decoded.transfer);
+    data[i + 1] = encodeStoredRgb16Channel(g, decoded.transfer);
+    data[i + 2] = encodeStoredRgb16Channel(b, decoded.transfer);
   }
   return { saturation, vibrance };
 }
 
 function applyRawBaselineExposure(
-  decoded: DecodedRgbaImage16,
+  decoded: DecodedRgbImage16,
 ): RawDevelopmentLuminanceSettings | null {
   const data = decoded.data;
   const rmsHistogram = new Uint32Array(65536);
@@ -3364,13 +2999,13 @@ function applyRawBaselineExposure(
   const pixelCount = decoded.width * decoded.height;
   if (pixelCount <= 0) return null;
 
-  for (let i = 0; i < data.length; i += 4) {
+  for (let i = 0; i < data.length; i += 3) {
     const r16 = data[i] ?? 0;
     const g16 = data[i + 1] ?? 0;
     const b16 = data[i + 2] ?? 0;
-    const r = decodeStoredRgba16Channel(r16, decoded.transfer);
-    const g = decodeStoredRgba16Channel(g16, decoded.transfer);
-    const b = decodeStoredRgba16Channel(b16, decoded.transfer);
+    const r = decodeStoredRgb16Channel(r16, decoded.transfer);
+    const g = decodeStoredRgb16Channel(g16, decoded.transfer);
+    const b = decodeStoredRgb16Channel(b16, decoded.transfer);
     const rms = Math.sqrt((r * r + g * g + b * b) / 3);
     const rmsLevel = Math.min(65535, Math.max(0, Math.round(rms * 65535)));
     rmsHistogram[rmsLevel]++;
@@ -3398,22 +3033,22 @@ function applyRawBaselineExposure(
     4,
   );
 
-  for (let i = 0; i < data.length; i += 4) {
+  for (let i = 0; i < data.length; i += 3) {
     const r = applyRolloffScalar(
-      decodeStoredRgba16Channel(data[i] ?? 0, decoded.transfer) * factor,
+      decodeStoredRgb16Channel(data[i] ?? 0, decoded.transfer) * factor,
       rolloff,
     );
     const g = applyRolloffScalar(
-      decodeStoredRgba16Channel(data[i + 1] ?? 0, decoded.transfer) * factor,
+      decodeStoredRgb16Channel(data[i + 1] ?? 0, decoded.transfer) * factor,
       rolloff,
     );
     const b = applyRolloffScalar(
-      decodeStoredRgba16Channel(data[i + 2] ?? 0, decoded.transfer) * factor,
+      decodeStoredRgb16Channel(data[i + 2] ?? 0, decoded.transfer) * factor,
       rolloff,
     );
-    data[i] = encodeStoredRgba16Channel(r, decoded.transfer);
-    data[i + 1] = encodeStoredRgba16Channel(g, decoded.transfer);
-    data[i + 2] = encodeStoredRgba16Channel(b, decoded.transfer);
+    data[i] = encodeStoredRgb16Channel(r, decoded.transfer);
+    data[i + 1] = encodeStoredRgb16Channel(g, decoded.transfer);
+    data[i + 2] = encodeStoredRgb16Channel(b, decoded.transfer);
   }
   return {
     exposureEv: Math.log2(Math.max(factor, Number.MIN_VALUE)),
@@ -3491,7 +3126,7 @@ function debugStatisticsFromLinearRgbSample(
   };
 }
 
-function sampleLinearRgbFromRgba16(decoded: DecodedRgbaImage16): Float32Array {
+function sampleLinearRgbFromRgb16(decoded: DecodedRgbImage16): Float32Array {
   const scale = Math.min(
     1,
     DEBUG_PERCENTILE_SAMPLE_MAX / Math.max(decoded.width, decoded.height),
@@ -3503,11 +3138,11 @@ function sampleLinearRgbFromRgba16(decoded: DecodedRgbaImage16): Float32Array {
     const sy = Math.min(decoded.height - 1, Math.floor((y + 0.5) * decoded.height / sampleH));
     for (let x = 0; x < sampleW; x++) {
       const sx = Math.min(decoded.width - 1, Math.floor((x + 0.5) * decoded.width / sampleW));
-      const sourceIndex = (sy * decoded.width + sx) * 4;
+      const sourceIndex = (sy * decoded.width + sx) * 3;
       const targetIndex = (y * sampleW + x) * 3;
-      output[targetIndex] = decodeStoredRgba16Channel(decoded.data[sourceIndex] ?? 0, decoded.transfer);
-      output[targetIndex + 1] = decodeStoredRgba16Channel(decoded.data[sourceIndex + 1] ?? 0, decoded.transfer);
-      output[targetIndex + 2] = decodeStoredRgba16Channel(decoded.data[sourceIndex + 2] ?? 0, decoded.transfer);
+      output[targetIndex] = decodeStoredRgb16Channel(decoded.data[sourceIndex] ?? 0, decoded.transfer);
+      output[targetIndex + 1] = decodeStoredRgb16Channel(decoded.data[sourceIndex + 1] ?? 0, decoded.transfer);
+      output[targetIndex + 2] = decodeStoredRgb16Channel(decoded.data[sourceIndex + 2] ?? 0, decoded.transfer);
     }
   }
   return output;
@@ -3515,7 +3150,7 @@ function sampleLinearRgbFromRgba16(decoded: DecodedRgbaImage16): Float32Array {
 
 
 function sampleLinearRgb16Bilinear(
-  decoded: DecodedRgbaImage16,
+  decoded: DecodedRgbImage16,
   x: number,
   y: number,
 ): [number, number, number] {
@@ -3528,60 +3163,31 @@ function sampleLinearRgb16Bilinear(
   const tx = clampedX - x0;
   const ty = clampedY - y0;
   const data = decoded.data;
-  const idx00 = (y0 * decoded.width + x0) * 4;
-  const idx10 = (y0 * decoded.width + x1) * 4;
-  const idx01 = (y1 * decoded.width + x0) * 4;
-  const idx11 = (y1 * decoded.width + x1) * 4;
+  const idx00 = (y0 * decoded.width + x0) * 3;
+  const idx10 = (y0 * decoded.width + x1) * 3;
+  const idx01 = (y1 * decoded.width + x0) * 3;
+  const idx11 = (y1 * decoded.width + x1) * 3;
   const w00 = (1 - tx) * (1 - ty);
   const w10 = tx * (1 - ty);
   const w01 = (1 - tx) * ty;
   const w11 = tx * ty;
   const transfer = decoded.transfer;
   return [
-    decodeStoredRgba16Channel(data[idx00] ?? 0, transfer) * w00 +
-      decodeStoredRgba16Channel(data[idx10] ?? 0, transfer) * w10 +
-      decodeStoredRgba16Channel(data[idx01] ?? 0, transfer) * w01 +
-      decodeStoredRgba16Channel(data[idx11] ?? 0, transfer) * w11,
-    decodeStoredRgba16Channel(data[idx00 + 1] ?? 0, transfer) * w00 +
-      decodeStoredRgba16Channel(data[idx10 + 1] ?? 0, transfer) * w10 +
-      decodeStoredRgba16Channel(data[idx01 + 1] ?? 0, transfer) * w01 +
-      decodeStoredRgba16Channel(data[idx11 + 1] ?? 0, transfer) * w11,
-    decodeStoredRgba16Channel(data[idx00 + 2] ?? 0, transfer) * w00 +
-      decodeStoredRgba16Channel(data[idx10 + 2] ?? 0, transfer) * w10 +
-      decodeStoredRgba16Channel(data[idx01 + 2] ?? 0, transfer) * w01 +
-      decodeStoredRgba16Channel(data[idx11 + 2] ?? 0, transfer) * w11,
+    decodeStoredRgb16Channel(data[idx00] ?? 0, transfer) * w00 +
+      decodeStoredRgb16Channel(data[idx10] ?? 0, transfer) * w10 +
+      decodeStoredRgb16Channel(data[idx01] ?? 0, transfer) * w01 +
+      decodeStoredRgb16Channel(data[idx11] ?? 0, transfer) * w11,
+    decodeStoredRgb16Channel(data[idx00 + 1] ?? 0, transfer) * w00 +
+      decodeStoredRgb16Channel(data[idx10 + 1] ?? 0, transfer) * w10 +
+      decodeStoredRgb16Channel(data[idx01 + 1] ?? 0, transfer) * w01 +
+      decodeStoredRgb16Channel(data[idx11 + 1] ?? 0, transfer) * w11,
+    decodeStoredRgb16Channel(data[idx00 + 2] ?? 0, transfer) * w00 +
+      decodeStoredRgb16Channel(data[idx10 + 2] ?? 0, transfer) * w10 +
+      decodeStoredRgb16Channel(data[idx01 + 2] ?? 0, transfer) * w01 +
+      decodeStoredRgb16Channel(data[idx11 + 2] ?? 0, transfer) * w11,
   ];
 }
 
-function sampleAlpha16Bilinear(
-  decoded: DecodedRgbaImage16,
-  x: number,
-  y: number,
-): number {
-  const clampedX = Math.max(0, Math.min(decoded.width - 1, x));
-  const clampedY = Math.max(0, Math.min(decoded.height - 1, y));
-  const x0 = Math.floor(clampedX);
-  const y0 = Math.floor(clampedY);
-  const x1 = Math.min(decoded.width - 1, x0 + 1);
-  const y1 = Math.min(decoded.height - 1, y0 + 1);
-  const tx = clampedX - x0;
-  const ty = clampedY - y0;
-  const data = decoded.data;
-  const idx00 = (y0 * decoded.width + x0) * 4 + 3;
-  const idx10 = (y0 * decoded.width + x1) * 4 + 3;
-  const idx01 = (y1 * decoded.width + x0) * 4 + 3;
-  const idx11 = (y1 * decoded.width + x1) * 4 + 3;
-  const w00 = (1 - tx) * (1 - ty);
-  const w10 = tx * (1 - ty);
-  const w01 = (1 - tx) * ty;
-  const w11 = tx * ty;
-  return clamp01(
-    ((data[idx00] ?? 65535) / 65535) * w00 +
-    ((data[idx10] ?? 65535) / 65535) * w10 +
-    ((data[idx01] ?? 65535) / 65535) * w01 +
-    ((data[idx11] ?? 65535) / 65535) * w11,
-  );
-}
 
 function renderedPixelToSourcePoint(
   x: number,
@@ -3602,18 +3208,19 @@ function renderedPixelToSourcePoint(
   return inverseRotatePoint(point.x, point.y, sourceW / 2, sourceH / 2, rotationDegrees);
 }
 
-function sampleLinearRgbaFromRgba16Region(
-  decoded: DecodedRgbaImage16,
+function sampleLinearRgbFromRgb16Region(
+  decoded: DecodedRgbImage16,
   sourceRect: { x: number; y: number; w: number; h: number },
   rotationDegrees: number,
   maxSide = COLOR_ADJUSTMENT_CONTEXT_SAMPLE_MAX,
-): LinearRgbaSample {
+): LinearRgbSample {
   const sw = Math.max(1, sourceRect.w);
   const sh = Math.max(1, sourceRect.h);
   const scale = Math.min(1, maxSide / Math.max(sw, sh));
   const sampleW = Math.max(1, Math.round(sw * scale));
   const sampleH = Math.max(1, Math.round(sh * scale));
-  const data = new Float32Array(sampleW * sampleH * 4);
+  const data = new Float32Array(sampleW * sampleH * 3);
+  const valid = new Uint8Array(sampleW * sampleH);
   const scaleX = sampleW / sw;
   const scaleY = sampleH / sh;
   for (let y = 0; y < sampleH; y++) {
@@ -3629,42 +3236,42 @@ function sampleLinearRgbaFromRgba16Region(
         scaleY,
         rotationDegrees,
       );
-      const di = (y * sampleW + x) * 4;
       if (
         sourcePoint.x < 0 ||
         sourcePoint.x >= decoded.width ||
         sourcePoint.y < 0 ||
         sourcePoint.y >= decoded.height
       ) {
-        data[di + 3] = 0;
         continue;
       }
+      const di = (y * sampleW + x) * 3;
+      const vi = y * sampleW + x;
       const [r, g, b] = sampleLinearRgb16Bilinear(decoded, sourcePoint.x, sourcePoint.y);
       data[di] = r;
       data[di + 1] = g;
       data[di + 2] = b;
-      data[di + 3] = sampleAlpha16Bilinear(decoded, sourcePoint.x, sourcePoint.y);
+      valid[vi] = 1;
     }
   }
-  return { data, width: sampleW, height: sampleH };
+  return { data, width: sampleW, height: sampleH, valid };
 }
 
-function getRgba16EditPreviewContextSample(
-  decoded: DecodedRgbaImage16,
+function getRgb16EditPreviewContextSample(
+  decoded: DecodedRgbImage16,
   rotationDegrees: number,
-): LinearRgbaSample {
+): LinearRgbSample {
   const normalizedRotation = normalizeRotationDegrees(rotationDegrees);
-  const cached = RGBA16_EDIT_PREVIEW_CONTEXT_CACHE.get(decoded);
+  const cached = RGB16_EDIT_PREVIEW_CONTEXT_CACHE.get(decoded);
   if (cached && Math.abs(cached.rotationDegrees - normalizedRotation) < 1e-9) {
     return cached.sample;
   }
-  const sample = sampleLinearRgbaFromRgba16Region(
+  const sample = sampleLinearRgbFromRgb16Region(
     decoded,
     { x: 0, y: 0, w: decoded.width, h: decoded.height },
     normalizedRotation,
     COLOR_ADJUSTMENT_CONTEXT_SAMPLE_MAX,
   );
-  RGBA16_EDIT_PREVIEW_CONTEXT_CACHE.set(decoded, {
+  RGB16_EDIT_PREVIEW_CONTEXT_CACHE.set(decoded, {
     rotationDegrees: normalizedRotation,
     sample,
   });
@@ -3683,8 +3290,8 @@ function percentileFromSortedValues(values: number[], percentile: number): numbe
   return lo + (hi - lo) * fraction;
 }
 
-function buildColorAdjustmentContextFromLinearRgbaSample(
-  sample: LinearRgbaSample,
+function buildColorAdjustmentContextFromLinearRgbSample(
+  sample: LinearRgbSample,
   temperature: number,
   tint: number,
   exposureEv: number,
@@ -3692,7 +3299,7 @@ function buildColorAdjustmentContextFromLinearRgbaSample(
   sigmoid: number,
   vibrance: number,
   saturation: number,
-  ignoreTransparent = false,
+  ignoreInvalid = false,
 ): ColorAdjustmentContext {
   const normalizedTemperature = clampWhiteBalanceValue(temperature);
   const normalizedTint = clampWhiteBalanceValue(tint);
@@ -3706,8 +3313,11 @@ function buildColorAdjustmentContextFromLinearRgbaSample(
 
   const exposedValues: number[] = [];
   const data = sample.data;
-  for (let i = 0; i < data.length; i += 4) {
-    if (ignoreTransparent && (data[i + 3] ?? 0) <= 0) continue;
+  const valid = sample.valid;
+  const count = Math.floor(data.length / 3);
+  for (let pixel = 0; pixel < count; pixel++) {
+    if (ignoreInvalid && valid && !valid[pixel]) continue;
+    const i = pixel * 3;
     let r = data[i] ?? 0;
     let g = data[i + 1] ?? 0;
     let b = data[i + 2] ?? 0;
@@ -3722,8 +3332,9 @@ function buildColorAdjustmentContextFromLinearRgbaSample(
   const vibranceFactor = colorVibranceFactor(normalizedVibrance);
   const saturationValues: number[] = [];
   if (saturationFactor > 1) {
-    for (let i = 0; i < data.length; i += 4) {
-      if (ignoreTransparent && (data[i + 3] ?? 0) <= 0) continue;
+    for (let pixel = 0; pixel < count; pixel++) {
+      if (ignoreInvalid && valid && !valid[pixel]) continue;
+      const i = pixel * 3;
       const [r, g, b] = applyToneLinearToRgb(
         data[i] ?? 0,
         data[i + 1] ?? 0,
@@ -3758,33 +3369,6 @@ function buildColorAdjustmentContextFromLinearRgbaSample(
   };
 }
 
-function sampleLinearRgbFromCanvasSource(
-  source: CanvasImageSource,
-  width: number,
-  height: number,
-): Float32Array | null {
-  if (width <= 0 || height <= 0) return null;
-  const scale = Math.min(1, DEBUG_PERCENTILE_SAMPLE_MAX / Math.max(width, height));
-  const sampleW = Math.max(1, Math.round(width * scale));
-  const sampleH = Math.max(1, Math.round(height * scale));
-  const canvas = document.createElement("canvas");
-  canvas.width = sampleW;
-  canvas.height = sampleH;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return null;
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(source, 0, 0, width, height, 0, 0, sampleW, sampleH);
-  const data = ctx.getImageData(0, 0, sampleW, sampleH).data;
-  const output = new Float32Array(sampleW * sampleH * 3);
-  for (let i = 0, oi = 0; i < data.length; i += 4, oi += 3) {
-    output[oi] = srgbChannelToLinear(data[i] ?? 0);
-    output[oi + 1] = srgbChannelToLinear(data[i + 1] ?? 0);
-    output[oi + 2] = srgbChannelToLinear(data[i + 2] ?? 0);
-  }
-  return output;
-}
-
 function colorAdjustmentContextFromLinearRgbSample(
   sample: Float32Array,
   temperature: number,
@@ -3795,18 +3379,8 @@ function colorAdjustmentContextFromLinearRgbSample(
   vibrance: number,
   saturation: number,
 ): ColorAdjustmentContext {
-  const count = Math.floor(sample.length / 3);
-  const rgba = new Float32Array(count * 4);
-  for (let i = 0; i < count; i++) {
-    const si = i * 3;
-    const di = i * 4;
-    rgba[di] = sample[si] ?? 0;
-    rgba[di + 1] = sample[si + 1] ?? 0;
-    rgba[di + 2] = sample[si + 2] ?? 0;
-    rgba[di + 3] = 1;
-  }
-  return buildColorAdjustmentContextFromLinearRgbaSample(
-    { data: rgba, width: count, height: 1 },
+  return buildColorAdjustmentContextFromLinearRgbSample(
+    { data: sample, width: Math.floor(sample.length / 3), height: 1 },
     temperature,
     tint,
     exposureEv,
@@ -3945,57 +3519,32 @@ async function debugStatisticsFromRawThumbnail(
   };
 }
 
-function libRawImageDataToDecoded(image: LibRawImageDataLike): DecodedRgbaImage8 | DecodedRgbaImage16 {
+function libRawImageDataToDecoded(image: LibRawImageDataLike): DecodedRgbImage16 {
   const width = Math.max(1, Math.round(image.width || 0));
   const height = Math.max(1, Math.round(image.height || 0));
   const colors = Math.max(1, Math.round(image.colors || 3));
   const bits = Math.max(1, Math.round(image.bits || 8));
   const count = width * height;
   const src = image.data;
+  const rgb = new Uint16Array(count * 3);
 
-  if (bits > 8 || src instanceof Uint16Array) {
-    const rgba = new Uint16Array(count * 4);
-    for (let i = 0; i < count; i++) {
-      const si = i * colors;
-      const r = Number(src[si] ?? 0);
-      const g = Number(src[si + (colors >= 2 ? 1 : 0)] ?? r);
-      const b = Number(src[si + (colors >= 3 ? 2 : colors >= 2 ? 1 : 0)] ?? g);
-      const di = i * 4;
-      rgba[di] = scaleSampleTo16(r, bits);
-      rgba[di + 1] = scaleSampleTo16(g, bits);
-      rgba[di + 2] = scaleSampleTo16(b, bits);
-      rgba[di + 3] = 65535;
-    }
-    return {
-      storage: "rgba",
-      bitDepth: 16,
-      colorSpace: "prophoto",
-      transfer: "linear",
-      width,
-      height,
-      data: rgba,
-      cleanup: () => {},
-    };
-  }
-
-  const rgba = new Uint8ClampedArray(count * 4);
   for (let i = 0; i < count; i++) {
     const si = i * colors;
     const r = Number(src[si] ?? 0);
     const g = Number(src[si + (colors >= 2 ? 1 : 0)] ?? r);
     const b = Number(src[si + (colors >= 3 ? 2 : colors >= 2 ? 1 : 0)] ?? g);
-    const di = i * 4;
-    rgba[di] = scaleSampleTo8(r, bits);
-    rgba[di + 1] = scaleSampleTo8(g, bits);
-    rgba[di + 2] = scaleSampleTo8(b, bits);
-    rgba[di + 3] = 255;
+    const di = i * 3;
+    rgb[di] = scaleSampleTo16(r, bits);
+    rgb[di + 1] = scaleSampleTo16(g, bits);
+    rgb[di + 2] = scaleSampleTo16(b, bits);
   }
+
   return {
-    storage: "rgba",
-    bitDepth: 8,
+    colorSpace: "prophoto",
+    transfer: "linear",
     width,
     height,
-    data: rgba,
+    data: rgb,
     cleanup: () => {},
   };
 }
@@ -4083,7 +3632,7 @@ function readRawThumbnailDebugStatistics(
   return pending;
 }
 
-async function decodeRawImage(file: File): Promise<DecodedRgbaImage8 | DecodedRgbaImage16> {
+async function decodeRawImage(file: File): Promise<DecodedRgbImage16> {
   const rawDevelopmentStartedAt = performance.now();
   let raw: LibRawInstanceLike | null = null;
   let workerFailure: ReturnType<typeof createLibRawWorkerFailure> | null = null;
@@ -4126,43 +3675,41 @@ async function decodeRawImage(file: File): Promise<DecodedRgbaImage8 | DecodedRg
     }
 
     const decoded = libRawImageDataToDecoded(image);
-    if (decoded.bitDepth === 16) {
-      let mode: RawDevelopmentSettings["mode"] = "fallback";
-      let luminanceSettings: RawDevelopmentLuminanceSettings | null = null;
-      let saturationSettings: RawDevelopmentSaturationSettings = {
-        saturation: 0,
-        vibrance: 0,
-      };
-      if (thumbnailReference) {
-        const matchedLuminance = applyRawThumbnailMatchedBaseline(
+    let mode: RawDevelopmentSettings["mode"] = "fallback";
+    let luminanceSettings: RawDevelopmentLuminanceSettings | null = null;
+    let saturationSettings: RawDevelopmentSaturationSettings = {
+      saturation: 0,
+      vibrance: 0,
+    };
+    if (thumbnailReference) {
+      const matchedLuminance = applyRawThumbnailMatchedBaseline(
+        decoded,
+        thumbnailReference.lumaPercentiles,
+      );
+      if (matchedLuminance) {
+        mode = "thumbnail-match";
+        luminanceSettings = matchedLuminance;
+        // Match color only after the thumbnail-driven tone baseline is fixed.
+        // Saturation follows HSV P95 first, then Vibrance follows HSV P50.
+        saturationSettings = applyRawThumbnailMatchedColor(
           decoded,
-          thumbnailReference.lumaPercentiles,
-        );
-        if (matchedLuminance) {
-          mode = "thumbnail-match";
-          luminanceSettings = matchedLuminance;
-          // Match color only after the thumbnail-driven tone baseline is fixed.
-          // Saturation follows HSV P95 first, then Vibrance follows HSV P50.
-          saturationSettings = applyRawThumbnailMatchedColor(
-            decoded,
-            thumbnailReference.linearSrgbSample,
-          ) ?? saturationSettings;
-        } else {
-          luminanceSettings = applyRawBaselineExposure(decoded);
-        }
+          thumbnailReference.linearSrgbSample,
+        ) ?? saturationSettings;
       } else {
         luminanceSettings = applyRawBaselineExposure(decoded);
       }
-      convertDecodedRgba16Transfer(decoded, "gamma20");
-      decoded.rawDevelopment = {
-        mode,
-        iso: Number.isFinite(isoValue) && isoValue > 0 ? isoValue : null,
-        medPasses,
-        luminance: luminanceSettings,
-        saturation: saturationSettings,
-        elapsedSeconds: (performance.now() - rawDevelopmentStartedAt) / 1000,
-      };
+    } else {
+      luminanceSettings = applyRawBaselineExposure(decoded);
     }
+    convertDecodedRgb16Transfer(decoded, "gamma20");
+    decoded.rawDevelopment = {
+      mode,
+      iso: Number.isFinite(isoValue) && isoValue > 0 ? isoValue : null,
+      medPasses,
+      luminance: luminanceSettings,
+      saturation: saturationSettings,
+      elapsedSeconds: (performance.now() - rawDevelopmentStartedAt) / 1000,
+    };
     return decoded;
   } finally {
     workerFailure?.cleanup();
@@ -4176,10 +3723,10 @@ async function decodeRawImage(file: File): Promise<DecodedRgbaImage8 | DecodedRg
 // owned by ImageUploadDialog's one-entry RAW development cache.
 const RAW_DEVELOPMENT_IN_FLIGHT = new WeakMap<
   File,
-  Promise<DecodedRgbaImage8 | DecodedRgbaImage16>
+  Promise<DecodedRgbImage16>
 >();
 
-function decodeRawImageShared(file: File): Promise<DecodedRgbaImage8 | DecodedRgbaImage16> {
+function decodeRawImageShared(file: File): Promise<DecodedRgbImage16> {
   const existing = RAW_DEVELOPMENT_IN_FLIGHT.get(file);
   if (existing) return existing;
 
@@ -4193,56 +3740,53 @@ function decodeRawImageShared(file: File): Promise<DecodedRgbaImage8 | DecodedRg
   return promise;
 }
 
-function decodedImageToCanvasSource(decoded: DecodedImage): DrawableDecodedImage {
-  if (decoded.storage === "canvas-source") {
-    return {
-      source: decoded.source,
-      width: decoded.width,
-      height: decoded.height,
-      cleanup: decoded.cleanup,
-    };
-  }
+function canvasSourceToDecodedRgb16(
+  source: CanvasImageSource,
+  width: number,
+  height: number,
+  sourceColorProfile: ImageEditOutputColorProfile,
+): DecodedRgbImage16 {
+  const canvas = createImageEditCanvas(width, height);
+  try {
+    const ctx = getCanvas2dContext(canvas, sourceColorProfile, true);
+    if (!ctx) throw new Error("2D context unavailable");
+    ctx.drawImage(source, 0, 0, width, height);
 
-  const canvas = document.createElement("canvas");
-  canvas.width = decoded.width;
-  canvas.height = decoded.height;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) {
-    decoded.cleanup();
-    throw new Error("2D context unavailable");
-  }
-
-  let rgba8: Uint8ClampedArray;
-  if (decoded.bitDepth === 8) {
-    rgba8 = decoded.data;
-  } else {
-    // Compatibility boundary for the current 8-bit Canvas pipeline.
-    rgba8 = new Uint8ClampedArray(decoded.data.length);
-    for (let i = 0; i < decoded.data.length; i += 4) {
-      const pr = decodeStoredRgba16Channel(decoded.data[i] ?? 0, decoded.transfer);
-      const pg = decodeStoredRgba16Channel(decoded.data[i + 1] ?? 0, decoded.transfer);
-      const pb = decodeStoredRgba16Channel(decoded.data[i + 2] ?? 0, decoded.transfer);
-      const sr = PROPHOTO_TO_SRGB_M00 * pr + PROPHOTO_TO_SRGB_M01 * pg + PROPHOTO_TO_SRGB_M02 * pb;
-      const sg = PROPHOTO_TO_SRGB_M10 * pr + PROPHOTO_TO_SRGB_M11 * pg + PROPHOTO_TO_SRGB_M12 * pb;
-      const sb = PROPHOTO_TO_SRGB_M20 * pr + PROPHOTO_TO_SRGB_M21 * pg + PROPHOTO_TO_SRGB_M22 * pb;
-      rgba8[i] = linearChannelToSrgb(sr);
-      rgba8[i + 1] = linearChannelToSrgb(sg);
-      rgba8[i + 2] = linearChannelToSrgb(sb);
-      rgba8[i + 3] = Math.round(((decoded.data[i + 3] ?? 65535) / 65535) * 255);
+    const rgb16 = new Uint16Array(width * height * 3);
+    const targetChunkBytes = 4 * 1024 * 1024;
+    const rowsPerChunk = Math.max(1, Math.floor(targetChunkBytes / Math.max(4, width * 4)));
+    for (let y = 0; y < height; y += rowsPerChunk) {
+      const chunkHeight = Math.min(rowsPerChunk, height - y);
+      const rgba8 = getCanvasImageData(
+        ctx,
+        0,
+        y,
+        width,
+        chunkHeight,
+        sourceColorProfile,
+      ).data;
+      writeRgba8ToDecodedRgb16(
+        rgba8,
+        rgb16,
+        y * width,
+        sourceColorProfile,
+      );
     }
+    return {
+      colorSpace: "prophoto",
+      transfer: "gamma20",
+      width,
+      height,
+      data: rgb16,
+      cleanup: () => {},
+    };
+  } finally {
+    releaseCanvasIfNeeded(canvas);
   }
-  const imageData = ctx.createImageData(decoded.width, decoded.height);
-  imageData.data.set(rgba8);
-  ctx.putImageData(imageData, 0, 0);
-  return {
-    source: canvas,
-    width: decoded.width,
-    height: decoded.height,
-    cleanup: decoded.cleanup,
-  };
 }
 
-async function decodeTiffImage(file: File): Promise<DecodedRgbaImage16> {
+
+async function decodeTiffImage(file: File): Promise<DecodedRgbImage16> {
   const UTIF: typeof import("utif") = await import("utif");
   const buf = await file.arrayBuffer();
   const ifds = UTIF.decode(buf);
@@ -4254,14 +3798,14 @@ async function decodeTiffImage(file: File): Promise<DecodedRgbaImage16> {
   const height = Math.max(0, Math.round(Number(ifd.height ?? ifd.t257?.[0] ?? 0)));
   if (!width || !height) throw new Error("TIFF decode failed: invalid size");
   const profile = tiffInputColorProfile(ifd);
-  const native = nativeRgbTiffToDecodedRgba16(ifd, profile);
+  const native = nativeRgbTiffToDecodedRgb16(ifd, profile);
   if (native) return native;
 
   // Preserve support for non-RGB / unusual TIFF layouts through UTIF's existing
   // universal RGBA8 converter, but immediately normalize that result into the
-  // common 16-bit ProPhoto/gamma20 editing container.
+  // common 16-bit ProPhoto/gamma20 RGB editing container.
   const rgba = UTIF.toRGBA8(originalIfd);
-  return rgba8TiffToDecodedRgba16(rgba, width, height, profile);
+  return rgba8ToDecodedRgb16(rgba, width, height, profile);
 }
 
 async function decodeImage(
@@ -4289,15 +3833,17 @@ async function decodeImage(
     const normalizedSvg = normalizeSvg(svgText, size.w, size.h);
     const svgBlob = new Blob([normalizedSvg], { type: "image/svg+xml" });
     try {
-      const bmp = await createImageBitmap(svgBlob);
-      return {
-        storage: "canvas-source",
-        bitDepth: 8,
-        source: bmp,
-        width: bmp.width || size.w,
-        height: bmp.height || size.h,
-        cleanup: () => bmp.close?.(),
-      };
+      const bmp = await createImageBitmap(svgBlob, { colorSpaceConversion: "default" });
+      try {
+        return canvasSourceToDecodedRgb16(
+          bmp,
+          bmp.width || size.w,
+          bmp.height || size.h,
+          "srgb",
+        );
+      } finally {
+        bmp.close?.();
+      }
     } catch {
       const url = URL.createObjectURL(svgBlob);
       try {
@@ -4309,41 +3855,44 @@ async function decodeImage(
           img.src = url;
         });
         if (!ok) throw new Error("svg decode via <img> failed");
-        return {
-          storage: "canvas-source",
-          bitDepth: 8,
-          source: img,
-          width: img.naturalWidth || size.w,
-          height: img.naturalHeight || size.h,
-          cleanup: () => setTimeout(() => URL.revokeObjectURL(url), 0),
-        };
-      } catch (e) {
+        return canvasSourceToDecodedRgb16(
+          img,
+          img.naturalWidth || size.w,
+          img.naturalHeight || size.h,
+          "srgb",
+        );
+      } finally {
         URL.revokeObjectURL(url);
-        throw e;
       }
     }
   }
 
+  // Browser decoders handle JPEG/WebP/PNG/HEIF and embedded ICC/nclx metadata.
+  // Rasterize once into an explicit sRGB or Display-P3 8-bit Canvas, then
+  // immediately normalize into the common ProPhoto/gamma2.0 Uint16 container.
+  // 8-bit inputs do not gain source precision, but all subsequent editor math
+  // shares the same 16-bit source representation as RAW/TIFF.
+  const decodeColorProfile = await detectEditableImageColorProfile(file);
   try {
-    const bmp = await createImageBitmap(file);
-    return {
-      storage: "canvas-source",
-      bitDepth: 8,
-      source: bmp,
-      width: bmp.width || srcW,
-      height: bmp.height || srcH,
-      cleanup: () => bmp.close?.(),
-    };
+    const bmp = await createImageBitmap(file, { colorSpaceConversion: "default" });
+    try {
+      return canvasSourceToDecodedRgb16(
+        bmp,
+        bmp.width || srcW,
+        bmp.height || srcH,
+        decodeColorProfile,
+      );
+    } finally {
+      bmp.close?.();
+    }
   } catch {
     const img = await decodeViaImg(file);
-    return {
-      storage: "canvas-source",
-      bitDepth: 8,
-      source: img,
-      width: img.naturalWidth || srcW,
-      height: img.naturalHeight || srcH,
-      cleanup: () => {},
-    };
+    return canvasSourceToDecodedRgb16(
+      img,
+      img.naturalWidth || srcW,
+      img.naturalHeight || srcH,
+      decodeColorProfile,
+    );
   }
 }
 
@@ -4369,9 +3918,9 @@ function convertLinearProPhotoToOutputRgb(
   ];
 }
 
-function renderAdjustedRgba16ToCanvas(
+function renderAdjustedRgb16ToCanvas(
   canvas: HTMLCanvasElement | OffscreenCanvas,
-  decoded: DecodedRgbaImage16,
+  decoded: DecodedRgbImage16,
   sourceRect: { x: number; y: number; w: number; h: number },
   rotationDegrees: number,
   temperature: number,
@@ -4395,14 +3944,14 @@ function renderAdjustedRgba16ToCanvas(
     sourceRect.w === decoded.width &&
     sourceRect.h === decoded.height;
   const contextSample = isFullImagePreview
-    ? getRgba16EditPreviewContextSample(decoded, rotationDegrees)
-    : sampleLinearRgbaFromRgba16Region(
+    ? getRgb16EditPreviewContextSample(decoded, rotationDegrees)
+    : sampleLinearRgbFromRgb16Region(
         decoded,
         sourceRect,
         rotationDegrees,
         COLOR_ADJUSTMENT_CONTEXT_SAMPLE_MAX,
       );
-  const context = buildColorAdjustmentContextFromLinearRgbaSample(
+  const context = buildColorAdjustmentContextFromLinearRgbSample(
     contextSample,
     temperature,
     tint,
@@ -4415,7 +3964,7 @@ function renderAdjustedRgba16ToCanvas(
   );
   const scaleX = width / Math.max(1, sourceRect.w);
   const scaleY = height / Math.max(1, sourceRect.h);
-  const sampleRenderedPixel = (x: number, y: number): [number, number, number, number] | null => {
+  const sampleRenderedPixel = (x: number, y: number): [number, number, number] | null => {
     const sourcePoint = renderedPixelToSourcePoint(
       x,
       y,
@@ -4435,8 +3984,7 @@ function renderAdjustedRgba16ToCanvas(
     ) {
       return null;
     }
-    const [r, g, b] = sampleLinearRgb16Bilinear(decoded, sourcePoint.x, sourcePoint.y);
-    return [r, g, b, sampleAlpha16Bilinear(decoded, sourcePoint.x, sourcePoint.y)];
+    return sampleLinearRgb16Bilinear(decoded, sourcePoint.x, sourcePoint.y);
   };
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
@@ -4450,21 +3998,20 @@ function renderAdjustedRgba16ToCanvas(
         continue;
       }
       let [r, g, b] = sample;
-      const alpha = sample[3];
       [r, g, b] = applyColorAdjustmentsLinearRgb(r, g, b, context);
       [r, g, b] = convertLinearProPhotoToOutputRgb(r, g, b, outputColorProfile);
       output[di] = linearChannelToSrgb(r);
       output[di + 1] = linearChannelToSrgb(g);
       output[di + 2] = linearChannelToSrgb(b);
-      output[di + 3] = Math.round(alpha * 255);
+      output[di + 3] = 255;
     }
   }
   ctx.putImageData(imageData, 0, 0);
 }
 
 
-function computeHistogramDataFromRgba16(
-  decoded: DecodedRgbaImage16,
+function computeHistogramDataFromRgb16(
+  decoded: DecodedRgbImage16,
   sourceRect: { x: number; y: number; w: number; h: number },
   rotationDegrees: number,
   temperature: number,
@@ -4476,9 +4023,9 @@ function computeHistogramDataFromRgba16(
   saturation: number,
 ): HistogramData | null {
   if (decoded.width <= 0 || decoded.height <= 0) return null;
-  const sample = sampleLinearRgbaFromRgba16Region(decoded, sourceRect, rotationDegrees, HISTOGRAM_SAMPLE_MAX);
+  const sample = sampleLinearRgbFromRgb16Region(decoded, sourceRect, rotationDegrees, HISTOGRAM_SAMPLE_MAX);
   if (!sample.data.length) return null;
-  const adjustment = buildColorAdjustmentContextFromLinearRgbaSample(
+  const adjustment = buildColorAdjustmentContextFromLinearRgbSample(
     sample,
     temperature,
     tint,
@@ -4494,8 +4041,10 @@ function computeHistogramDataFromRgba16(
   const b = new Array<number>(HISTOGRAM_BINS).fill(0);
   const luma = new Array<number>(HISTOGRAM_BINS).fill(0);
   const areaWeight = sourceRect.w * sourceRect.h / Math.max(1, sample.width * sample.height);
-  for (let i = 0; i < sample.data.length; i += 4) {
-    if ((sample.data[i + 3] ?? 0) <= 0) {
+  const pixelCount = Math.floor(sample.data.length / 3);
+  for (let pixel = 0; pixel < pixelCount; pixel++) {
+    const i = pixel * 3;
+    if (sample.valid && !sample.valid[pixel]) {
       const grayDisplay = histogramDisplayValue(srgbChannelToLinear(128));
       addHistogramInterval(r, grayDisplay, grayDisplay, areaWeight);
       addHistogramInterval(g, grayDisplay, grayDisplay, areaWeight);
@@ -4527,13 +4076,15 @@ function computeHistogramDataFromRgba16(
   return { r, g, b, luma, maxCount };
 }
 
-function createToneAutoSampleFromRgba16(
-  decoded: DecodedRgbaImage16,
+function createToneAutoSampleFromRgb16(
+  decoded: DecodedRgbImage16,
   sourceRect: { x: number; y: number; w: number; h: number },
   rotationDegrees: number,
 ): ToneAutoSample | null {
-  const sample = sampleLinearRgbaFromRgba16Region(decoded, sourceRect, rotationDegrees, HISTOGRAM_SAMPLE_MAX);
-  return sample.data.length ? { kind: "linear", data: sample.data, width: sample.width, height: sample.height } : null;
+  const sample = sampleLinearRgbFromRgb16Region(decoded, sourceRect, rotationDegrees, HISTOGRAM_SAMPLE_MAX);
+  return sample.data.length
+    ? { data: sample.data, width: sample.width, height: sample.height, valid: sample.valid }
+    : null;
 }
 
 export type ImageEditPreparedVariant = {
@@ -4568,8 +4119,8 @@ function cloneImageEditCanvas(
   return clone;
 }
 
-async function buildEditedVariantFromRgba16(
-  decoded: DecodedRgbaImage16,
+async function buildEditedVariantFromDecoded(
+  decoded: DecodedRgbImage16,
   params: ImageEditParams,
   outputColorProfile: ImageEditOutputColorProfile,
 ): Promise<ImageEditPreparedVariant> {
@@ -4588,11 +4139,11 @@ async function buildEditedVariantFromRgba16(
     await ensureTextOverlayFontsReady(params.textOverlays);
   }
 
-  // Keep RAW/TIFF in the 16-bit gamma2.0 source representation through crop/rotation
+  // Keep the common ProPhoto/gamma2.0 Uint16 RGB source representation through crop/rotation
   // sampling, all tone/color math, and output-primary conversion. Quantize only when
   // the result must cross the browser's 8-bit Canvas ImageData boundary.
   const cropped = createImageEditCanvas(sw, sh);
-  renderAdjustedRgba16ToCanvas(
+  renderAdjustedRgb16ToCanvas(
     cropped,
     decoded,
     { x: sx, y: sy, w: sw, h: sh },
@@ -4638,97 +4189,6 @@ async function buildEditedVariantFromRgba16(
   return { canvas: output, width: dw, height: dh, colorProfile: outputColorProfile };
 }
 
-async function buildEditedVariantFromDecoded(
-  decoded: Exclude<DecodedImage, DecodedRgbaImage16>,
-  params: ImageEditParams,
-  outputColorProfile: ImageEditOutputColorProfile,
-): Promise<ImageEditPreparedVariant> {
-  const drawable = decodedImageToCanvasSource(decoded);
-  const { source } = drawable;
-  const w = drawable.width;
-  const h = drawable.height;
-  const crop = normalizeCrop(params.crop);
-  const sx = Math.max(0, Math.min(w - 1, Math.round(w * crop.left)));
-  const sy = Math.max(0, Math.min(h - 1, Math.round(h * crop.top)));
-  const ex = Math.max(sx + 1, Math.min(w, Math.round(w * (1 - crop.right))));
-  const ey = Math.max(sy + 1, Math.min(h, Math.round(h * (1 - crop.bottom))));
-  const sw = Math.max(1, ex - sx);
-  const sh = Math.max(1, ey - sy);
-  const hasRotation = Math.abs(params.rotationDegrees) > 1e-9;
-  const dw = Math.max(1, Math.round(sw * params.resizePercent / 100));
-  const dh = Math.max(1, Math.round(sh * params.resizePercent / 100));
-  if (params.textOverlays.length > 0) {
-    await ensureTextOverlayFontsReady(params.textOverlays);
-  }
-
-  const cropped = createImageEditCanvas(sw, sh);
-  const croppedCtx = getCanvas2dContext(cropped, outputColorProfile);
-  if (!croppedCtx) throw new Error("2D context unavailable");
-  if (hasRotation) {
-    croppedCtx.imageSmoothingEnabled = true;
-    croppedCtx.imageSmoothingQuality = "high";
-    drawRotatedSourceToContext(
-      croppedCtx,
-      source,
-      w,
-      h,
-      sx,
-      sy,
-      1,
-      1,
-      params.rotationDegrees,
-    );
-  } else {
-    croppedCtx.drawImage(source, sx, sy, sw, sh, 0, 0, sw, sh);
-  }
-  applyColorAdjustmentsToCanvas(
-    cropped,
-    params.temperature,
-    params.tint,
-    params.exposureEv,
-    params.scaledLog,
-    params.sigmoid,
-    params.vibrance,
-    params.saturation,
-    hasRotation,
-    outputColorProfile,
-  );
-  if (hasRotation) {
-    fillRotationPadding(croppedCtx, sw, sh, w, h, sx, sy, 1, 1, params.rotationDegrees);
-  }
-
-  const output = createImageEditCanvas(dw, dh);
-  const outputCtx = getCanvas2dContext(output, outputColorProfile);
-  if (!outputCtx) throw new Error("2D context unavailable");
-  outputCtx.imageSmoothingEnabled = true;
-  outputCtx.imageSmoothingQuality = "high";
-  outputCtx.drawImage(cropped, 0, 0, sw, sh, 0, 0, dw, dh);
-  applySharpenToCanvas(output, params.sharpen, outputColorProfile);
-  applyMosaicRectsToCanvas(
-    output,
-    mosaicRegionsToOutputRects(params.mosaicRegions, w, h, sx, sy, sw, sh, dw, dh),
-    16,
-    outputColorProfile,
-  );
-  drawTextOverlaysToContext(
-    outputCtx,
-    params.textOverlays,
-    w,
-    h,
-    sx,
-    sy,
-    sw,
-    sh,
-    dw,
-    dh,
-    params.rotationDegrees,
-    outputColorProfile,
-  );
-  releaseCanvasIfNeeded(cropped);
-  return { canvas: output, width: dw, height: dh, colorProfile: outputColorProfile };
-}
-
-
 export async function buildEditedVariant(
   file: File,
   srcW: number,
@@ -4743,9 +4203,6 @@ export async function buildEditedVariant(
   const ownsDecodedImage = !decodedImage;
   const decoded = decodedImage ?? await decodeImage(file, srcW, srcH, name, type);
   try {
-    if (decoded.storage === "rgba" && decoded.bitDepth === 16) {
-      return await buildEditedVariantFromRgba16(decoded, params, outputColorProfile);
-    }
     return await buildEditedVariantFromDecoded(decoded, params, outputColorProfile);
   } finally {
     if (ownsDecodedImage) decoded.cleanup();
@@ -4897,7 +4354,7 @@ type EditDialogProps = {
   initialParams: ImageEditParams;
   defaultParams?: ImageEditParams;
   initialDecodedImage?: DecodedImage;
-  onRawDevelopmentReady?: (decodedImage: DecodedRgbaImage16) => void;
+  onRawDevelopmentReady?: (decodedImage: DecodedRgbImage16) => void;
   onCancel: () => void;
   onApply: (params: ImageEditParams, decodedImage?: DecodedImage) => void;
   onError?: (message: string) => void;
@@ -5008,9 +4465,12 @@ function addHistogramInterval(
   }
 }
 
-type ToneAutoSample =
-  | { kind: "rgb8"; data: Uint8ClampedArray }
-  | { kind: "linear"; data: Float32Array; width: number; height: number };
+type ToneAutoSample = {
+  data: Float32Array;
+  width: number;
+  height: number;
+  valid?: Uint8Array;
+};
 
 const TONE_AUTO_EXPOSURE_CLIP_PENALTY = 50;
 const TONE_AUTO_EXPOSURE_HIGHLIGHT_START = 0.95;
@@ -5025,50 +4485,6 @@ const TONE_AUTO_SIGMOID_WHITE_THRESHOLD = 0.95;
 const TONE_AUTO_SIGMOID_BLACK_PENALTY = 2;
 const TONE_AUTO_SIGMOID_WHITE_PENALTY = 2;
 
-function createToneAutoSample(
-  sourceImage: CanvasImageSource,
-  sourceW: number,
-  sourceH: number,
-  sourceRect: { x: number; y: number; w: number; h: number },
-  rotationDegrees: number,
-): ToneAutoSample | null {
-  if (sourceW <= 0 || sourceH <= 0) return null;
-
-  const sx = Math.max(0, Math.min(sourceW - 1, Math.floor(sourceRect.x)));
-  const sy = Math.max(0, Math.min(sourceH - 1, Math.floor(sourceRect.y)));
-  const ex = Math.max(sx + 1, Math.min(sourceW, Math.ceil(sourceRect.x + sourceRect.w)));
-  const ey = Math.max(sy + 1, Math.min(sourceH, Math.ceil(sourceRect.y + sourceRect.h)));
-  const sw = ex - sx;
-  const sh = ey - sy;
-  if (sw <= 0 || sh <= 0) return null;
-
-  const scale = Math.min(1, HISTOGRAM_SAMPLE_MAX / Math.max(sw, sh));
-  const sampleW = Math.max(1, Math.round(sw * scale));
-  const sampleH = Math.max(1, Math.round(sh * scale));
-  const sampleCanvas = document.createElement("canvas");
-  sampleCanvas.width = sampleW;
-  sampleCanvas.height = sampleH;
-  const sampleCtx = sampleCanvas.getContext("2d");
-  if (!sampleCtx) return null;
-  sampleCtx.imageSmoothingEnabled = false;
-  sampleCtx.clearRect(0, 0, sampleW, sampleH);
-  if (Math.abs(normalizeRotationDegrees(rotationDegrees)) > 1e-9) {
-    drawRotatedSourceToContext(
-      sampleCtx,
-      sourceImage,
-      sourceW,
-      sourceH,
-      sx,
-      sy,
-      sampleW / sw,
-      sampleH / sh,
-      rotationDegrees,
-    );
-  } else {
-    sampleCtx.drawImage(sourceImage, sx, sy, sw, sh, 0, 0, sampleW, sampleH);
-  }
-  return { kind: "rgb8", data: sampleCtx.getImageData(0, 0, sampleW, sampleH).data };
-}
 
 function toneHistogramPercentile(histogram: Float64Array, total: number, percentile: number): number {
   if (total <= 0) return 0;
@@ -5139,47 +4555,8 @@ function buildToneLumaHistogram(
   sigmoid: number,
 ): { histogram: Float64Array; total: number } {
   const histogram = new Float64Array(HISTOGRAM_BINS);
-  if (sample.kind === "linear") {
-    const context = buildColorAdjustmentContextFromLinearRgbaSample(
-      { data: sample.data, width: sample.width, height: sample.height },
-      temperature,
-      tint,
-      exposureEv,
-      scaledLog,
-      sigmoid,
-      0,
-      0,
-      true,
-    );
-    let total = 0;
-    for (let i = 0; i < sample.data.length; i += 4) {
-      if ((sample.data[i + 3] ?? 0) <= 0) continue;
-      let r = sample.data[i] ?? 0;
-      let g = sample.data[i + 1] ?? 0;
-      let b = sample.data[i + 2] ?? 0;
-      [r, g, b] = applyToneLinearToRgb(
-        r,
-        g,
-        b,
-        context.gains,
-        context.hasWhiteBalance,
-        context.factor,
-        context.rolloff,
-        context.scaledLog,
-        context.sigmoid,
-      );
-      const y = clamp01(PROPHOTO_LUMA_R * r + PROPHOTO_LUMA_G * g + PROPHOTO_LUMA_B * b);
-      const display = histogramDisplayValue(y);
-      const bin = Math.min(HISTOGRAM_BINS - 1, Math.max(0, Math.floor(display * HISTOGRAM_BINS)));
-      histogram[bin] += 1;
-      total += 1;
-    }
-    return { histogram, total };
-  }
-
-  const data = sample.data;
-  const context = buildColorAdjustmentContextFromRgb8(
-    data,
+  const context = buildColorAdjustmentContextFromLinearRgbSample(
+    { data: sample.data, width: sample.width, height: sample.height, valid: sample.valid },
     temperature,
     tint,
     exposureEv,
@@ -5190,11 +4567,13 @@ function buildToneLumaHistogram(
     true,
   );
   let total = 0;
-  for (let i = 0; i < data.length; i += 4) {
-    if (data[i + 3] === 0) continue;
-    let r = srgbChannelToLinear(data[i]);
-    let g = srgbChannelToLinear(data[i + 1]);
-    let b = srgbChannelToLinear(data[i + 2]);
+  const pixelCount = Math.floor(sample.data.length / 3);
+  for (let pixel = 0; pixel < pixelCount; pixel++) {
+    if (sample.valid && !sample.valid[pixel]) continue;
+    const i = pixel * 3;
+    let r = sample.data[i] ?? 0;
+    let g = sample.data[i + 1] ?? 0;
+    let b = sample.data[i + 2] ?? 0;
     [r, g, b] = applyToneLinearToRgb(
       r,
       g,
@@ -5206,7 +4585,7 @@ function buildToneLumaHistogram(
       context.scaledLog,
       context.sigmoid,
     );
-    const y = clamp01(0.2126 * r + 0.7152 * g + 0.0722 * b);
+    const y = clamp01(PROPHOTO_LUMA_R * r + PROPHOTO_LUMA_G * g + PROPHOTO_LUMA_B * b);
     const display = histogramDisplayValue(y);
     const bin = Math.min(HISTOGRAM_BINS - 1, Math.max(0, Math.floor(display * HISTOGRAM_BINS)));
     histogram[bin] += 1;
@@ -5225,84 +4604,48 @@ function evaluateAutoExposure(
   let total = 0;
   let clipped = 0;
   let highlightPressure = 0;
-
-  if (sample.kind === "linear") {
-    const context = buildColorAdjustmentContextFromLinearRgbaSample(
-      { data: sample.data, width: sample.width, height: sample.height },
-      temperature,
-      tint,
-      exposureEv,
-      0,
-      0,
-      0,
-      0,
-      true,
-    );
-    for (let i = 0; i < sample.data.length; i += 4) {
-      if ((sample.data[i + 3] ?? 0) <= 0) continue;
-      let r = sample.data[i] ?? 0;
-      let g = sample.data[i + 1] ?? 0;
-      let b = sample.data[i + 2] ?? 0;
-      if (context.hasWhiteBalance) {
-        [r, g, b] = applyWhiteBalanceLinear(r, g, b, context.gains);
-      }
-      r *= context.factor;
-      g *= context.factor;
-      b *= context.factor;
-      const maxChannel = Math.max(r, g, b);
-      if (maxChannel >= 1) clipped += 1;
-      if (maxChannel > TONE_AUTO_EXPOSURE_HIGHLIGHT_START) {
-        const pressure = clamp01(
-          (Math.min(maxChannel, 1) - TONE_AUTO_EXPOSURE_HIGHLIGHT_START) /
-            (1 - TONE_AUTO_EXPOSURE_HIGHLIGHT_START),
-        );
-        highlightPressure += pressure * pressure;
-      }
-      const y = clamp01(PROPHOTO_LUMA_R * clamp01(r) + PROPHOTO_LUMA_G * clamp01(g) + PROPHOTO_LUMA_B * clamp01(b));
-      const display = histogramDisplayValue(y);
-      const bin = Math.min(HISTOGRAM_BINS - 1, Math.max(0, Math.floor(display * HISTOGRAM_BINS)));
-      histogram[bin] += 1;
-      total += 1;
+  const context = buildColorAdjustmentContextFromLinearRgbSample(
+    { data: sample.data, width: sample.width, height: sample.height, valid: sample.valid },
+    temperature,
+    tint,
+    exposureEv,
+    0,
+    0,
+    0,
+    0,
+    true,
+  );
+  const pixelCount = Math.floor(sample.data.length / 3);
+  for (let pixel = 0; pixel < pixelCount; pixel++) {
+    if (sample.valid && !sample.valid[pixel]) continue;
+    const i = pixel * 3;
+    let r = sample.data[i] ?? 0;
+    let g = sample.data[i + 1] ?? 0;
+    let b = sample.data[i + 2] ?? 0;
+    if (context.hasWhiteBalance) {
+      [r, g, b] = applyWhiteBalanceLinear(r, g, b, context.gains);
     }
-  } else {
-    const data = sample.data;
-    const context = buildColorAdjustmentContextFromRgb8(
-      data,
-      temperature,
-      tint,
-      exposureEv,
-      0,
-      0,
-      0,
-      0,
-      true,
-    );
-    for (let i = 0; i < data.length; i += 4) {
-      if (data[i + 3] === 0) continue;
-      let r = srgbChannelToLinear(data[i]);
-      let g = srgbChannelToLinear(data[i + 1]);
-      let b = srgbChannelToLinear(data[i + 2]);
-      if (context.hasWhiteBalance) {
-        [r, g, b] = applyWhiteBalanceLinear(r, g, b, context.gains);
-      }
-      r *= context.factor;
-      g *= context.factor;
-      b *= context.factor;
-      const maxChannel = Math.max(r, g, b);
-      if (maxChannel >= 1) clipped += 1;
-      if (maxChannel > TONE_AUTO_EXPOSURE_HIGHLIGHT_START) {
-        const pressure = clamp01(
-          (Math.min(maxChannel, 1) - TONE_AUTO_EXPOSURE_HIGHLIGHT_START) /
-            (1 - TONE_AUTO_EXPOSURE_HIGHLIGHT_START),
-        );
-        highlightPressure += pressure * pressure;
-      }
-      const y = clamp01(0.2126 * clamp01(r) + 0.7152 * clamp01(g) + 0.0722 * clamp01(b));
-      const display = histogramDisplayValue(y);
-      const bin = Math.min(HISTOGRAM_BINS - 1, Math.max(0, Math.floor(display * HISTOGRAM_BINS)));
-      histogram[bin] += 1;
-      total += 1;
+    r *= context.factor;
+    g *= context.factor;
+    b *= context.factor;
+    const maxChannel = Math.max(r, g, b);
+    if (maxChannel >= 1) clipped += 1;
+    if (maxChannel > TONE_AUTO_EXPOSURE_HIGHLIGHT_START) {
+      const pressure = clamp01(
+        (Math.min(maxChannel, 1) - TONE_AUTO_EXPOSURE_HIGHLIGHT_START) /
+          (1 - TONE_AUTO_EXPOSURE_HIGHLIGHT_START),
+      );
+      highlightPressure += pressure * pressure;
     }
+    const y = clamp01(
+      PROPHOTO_LUMA_R * clamp01(r) +
+      PROPHOTO_LUMA_G * clamp01(g) +
+      PROPHOTO_LUMA_B * clamp01(b),
+    );
+    const display = histogramDisplayValue(y);
+    const bin = Math.min(HISTOGRAM_BINS - 1, Math.max(0, Math.floor(display * HISTOGRAM_BINS)));
+    histogram[bin] += 1;
+    total += 1;
   }
   if (total <= 0) return { richness: 0, clipRate: 0, highlightPressure: 0 };
 
@@ -5465,168 +4808,6 @@ function findAutoSigmoid(
 
   return clampSigmoid(bestValue);
 }
-function computeHistogramData(
-  sourceImage: CanvasImageSource,
-  sourceW: number,
-  sourceH: number,
-  sourceRect: { x: number; y: number; w: number; h: number },
-  rotationDegrees: number,
-  temperature: number,
-  tint: number,
-  exposureEv: number,
-  scaledLog: number,
-  sigmoid: number,
-  vibrance: number,
-  saturation: number,
-): HistogramData | null {
-  if (sourceW <= 0 || sourceH <= 0) return null;
-
-  const sx = Math.max(0, Math.min(sourceW - 1, Math.floor(sourceRect.x)));
-  const sy = Math.max(0, Math.min(sourceH - 1, Math.floor(sourceRect.y)));
-  const ex = Math.max(sx + 1, Math.min(sourceW, Math.ceil(sourceRect.x + sourceRect.w)));
-  const ey = Math.max(sy + 1, Math.min(sourceH, Math.ceil(sourceRect.y + sourceRect.h)));
-  const sw = ex - sx;
-  const sh = ey - sy;
-  if (sw <= 0 || sh <= 0) return null;
-
-  // Histogram processing is deliberately independent from the displayed preview canvas.
-  // Take an evenly spaced nearest-neighbour sample of the rotated crop. Each sample
-  // represents the same area of the crop and therefore contributes cropArea / sampleCount
-  // pixels. Rotation padding remains transparent while the edit context is computed so the
-  // fixed 50% gray padding cannot alter exposure or saturation rolloff statistics.
-  const scale = Math.min(1, HISTOGRAM_SAMPLE_MAX / Math.max(sw, sh));
-  const sampleW = Math.max(1, Math.round(sw * scale));
-  const sampleH = Math.max(1, Math.round(sh * scale));
-  const sampleCanvas = document.createElement("canvas");
-  sampleCanvas.width = sampleW;
-  sampleCanvas.height = sampleH;
-  const sampleCtx = sampleCanvas.getContext("2d");
-  if (!sampleCtx) return null;
-  sampleCtx.imageSmoothingEnabled = false;
-  sampleCtx.clearRect(0, 0, sampleW, sampleH);
-  if (Math.abs(normalizeRotationDegrees(rotationDegrees)) > 1e-9) {
-    drawRotatedSourceToContext(
-      sampleCtx,
-      sourceImage,
-      sourceW,
-      sourceH,
-      sx,
-      sy,
-      sampleW / sw,
-      sampleH / sh,
-      rotationDegrees,
-    );
-  } else {
-    sampleCtx.drawImage(sourceImage, sx, sy, sw, sh, 0, 0, sampleW, sampleH);
-  }
-  const sampleData = sampleCtx.getImageData(0, 0, sampleW, sampleH).data;
-  if (!sampleData.length) return null;
-
-  const hasRotation = Math.abs(normalizeRotationDegrees(rotationDegrees)) > 1e-9;
-  const adjustment = buildColorAdjustmentContextFromRgb8(
-    sampleData,
-    temperature,
-    tint,
-    exposureEv,
-    scaledLog,
-    sigmoid,
-    vibrance,
-    saturation,
-    hasRotation,
-  );
-  const r = new Array<number>(HISTOGRAM_BINS).fill(0);
-  const g = new Array<number>(HISTOGRAM_BINS).fill(0);
-  const b = new Array<number>(HISTOGRAM_BINS).fill(0);
-  const luma = new Array<number>(HISTOGRAM_BINS).fill(0);
-  const areaWeight = sw * sh / (sampleW * sampleH);
-
-  for (let i = 0; i < sampleData.length; i += 4) {
-    const rc = sampleData[i] ?? 0;
-    const gc = sampleData[i + 1] ?? 0;
-    const bc = sampleData[i + 2] ?? 0;
-
-    if (hasRotation) {
-      const sampleIndex = i / 4;
-      const sampleX = sampleIndex % sampleW;
-      const sampleY = Math.floor(sampleIndex / sampleW);
-      const rotatedX = sx + (sampleX + 0.5) * sw / sampleW;
-      const rotatedY = sy + (sampleY + 0.5) * sh / sampleH;
-      const unrotated = inverseRotatePoint(
-        rotatedX,
-        rotatedY,
-        sourceW / 2,
-        sourceH / 2,
-        rotationDegrees,
-      );
-      if (unrotated.x < 0 || unrotated.x >= sourceW || unrotated.y < 0 || unrotated.y >= sourceH) {
-        const grayDisplay = histogramDisplayValue(srgbChannelToLinear(128));
-        addHistogramInterval(r, grayDisplay, grayDisplay, areaWeight);
-        addHistogramInterval(g, grayDisplay, grayDisplay, areaWeight);
-        addHistogramInterval(b, grayDisplay, grayDisplay, areaWeight);
-        addHistogramInterval(luma, grayDisplay, grayDisplay, areaWeight);
-        continue;
-      }
-    }
-
-    // The source is normally 8-bit sRGB, so each code represents a finite quantization
-    // cell rather than one exact linear-light value. Transform the eight corners of that
-    // RGB cell through the same linear-light edit pipeline as the image, then distribute
-    // the represented image area over the output histogram interval. This preserves area
-    // while avoiding comb-like gaps after changing from the sRGB transfer curve to the
-    // pure-gamma 2.4 display axis.
-    const rLinear = [
-      srgbChannelToLinear(Math.max(0, rc - 0.5)),
-      srgbChannelToLinear(Math.min(255, rc + 0.5)),
-    ];
-    const gLinear = [
-      srgbChannelToLinear(Math.max(0, gc - 0.5)),
-      srgbChannelToLinear(Math.min(255, gc + 0.5)),
-    ];
-    const bLinear = [
-      srgbChannelToLinear(Math.max(0, bc - 0.5)),
-      srgbChannelToLinear(Math.min(255, bc + 0.5)),
-    ];
-
-    let minR = 1;
-    let maxR = 0;
-    let minG = 1;
-    let maxG = 0;
-    let minB = 1;
-    let maxB = 0;
-    let minY = 1;
-    let maxY = 0;
-    for (let corner = 0; corner < 8; corner++) {
-      let rr = rLinear[corner & 1];
-      let gg = gLinear[(corner >> 1) & 1];
-      let bb = bLinear[(corner >> 2) & 1];
-      [rr, gg, bb] = applyColorAdjustmentsLinearRgb(rr, gg, bb, adjustment);
-      const yy = clamp01(0.2126 * rr + 0.7152 * gg + 0.0722 * bb);
-      const dr = histogramDisplayValue(rr);
-      const dg = histogramDisplayValue(gg);
-      const db = histogramDisplayValue(bb);
-      const dy = histogramDisplayValue(yy);
-      minR = Math.min(minR, dr);
-      maxR = Math.max(maxR, dr);
-      minG = Math.min(minG, dg);
-      maxG = Math.max(maxG, dg);
-      minB = Math.min(minB, db);
-      maxB = Math.max(maxB, db);
-      minY = Math.min(minY, dy);
-      maxY = Math.max(maxY, dy);
-    }
-
-    addHistogramInterval(r, minR, maxR, areaWeight);
-    addHistogramInterval(g, minG, maxG, areaWeight);
-    addHistogramInterval(b, minB, maxB, areaWeight);
-    addHistogramInterval(luma, minY, maxY, areaWeight);
-  }
-
-  let maxCount = 0;
-  for (let i = 0; i < HISTOGRAM_BINS; i++) {
-    maxCount = Math.max(maxCount, r[i] ?? 0, g[i] ?? 0, b[i] ?? 0, luma[i] ?? 0);
-  }
-  return { r, g, b, luma, maxCount };
-}
 
 function histogramPath(values: number[], maxCount: number, width: number, height: number): string {
   if (!values.length || maxCount <= 0) {
@@ -5656,7 +4837,6 @@ export function ImageEditDialog({
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
-  const previewImageRef = useRef<CanvasImageSource | null>(null);
   const decodedImageRef = useRef<DecodedImage | null>(null);
   const transferredDecodedImageRef = useRef<DecodedImage | null>(null);
   const onErrorRef = useRef(onError);
@@ -5767,7 +4947,6 @@ export function ImageEditDialog({
     setPercentileDebug(null);
     setRawThumbnailDebugStatistics(undefined);
     setRawDevelopmentMemoryUsage(undefined);
-    previewImageRef.current = null;
     decodedImageRef.current = null;
     transferredDecodedImageRef.current = null;
 
@@ -5775,45 +4954,25 @@ export function ImageEditDialog({
       try {
         const decoded = initialDecodedImage ?? await decodeImage(file, 0, 0, file.name, file.type);
         decodedForEffect = decoded;
-        if (
-          isRawImageFile(file.name, file.type) &&
-          decoded.storage === "rgba" &&
-          decoded.bitDepth === 16
-        ) {
+        if (isRawImageFile(file.name, file.type)) {
           onRawDevelopmentReadyRef.current?.(decoded);
         }
         if (cancelled) {
           if (
             ownsDecodedImage &&
-            !(
-              isRawImageFile(file.name, file.type) &&
-              decoded.storage === "rgba" &&
-              decoded.bitDepth === 16 &&
-              onRawDevelopmentReadyRef.current
-            )
+            !(isRawImageFile(file.name, file.type) && onRawDevelopmentReadyRef.current)
           ) {
             decoded.cleanup();
           }
           return;
         }
-        if (decoded.storage === "rgba" && decoded.bitDepth === 16) {
-          cleanup = decoded.cleanup;
-          decodedImageRef.current = decoded;
-          previewImageRef.current = null;
-          setNatural({ w: decoded.width, h: decoded.height });
-          setImageReady(true);
-        } else {
-          const drawable = decodedImageToCanvasSource(decoded);
-          cleanup = drawable.cleanup;
-          if (isRawImageFile(file.name, file.type)) decodedImageRef.current = decoded;
-          previewImageRef.current = drawable.source;
-          setNatural({ w: drawable.width, h: drawable.height });
-          setImageReady(true);
-        }
+        cleanup = decoded.cleanup;
+        decodedImageRef.current = decoded;
+        setNatural({ w: decoded.width, h: decoded.height });
+        setImageReady(true);
       } catch (error) {
         if (!cancelled) {
           decodedImageRef.current = null;
-          previewImageRef.current = null;
           setNatural(null);
           setImageReady(false);
           onErrorRef.current?.(error instanceof Error ? error.message : String(error));
@@ -5823,15 +4982,12 @@ export function ImageEditDialog({
 
     return () => {
       cancelled = true;
-      previewImageRef.current = null;
       decodedImageRef.current = null;
       if (
         ownsDecodedImage &&
         !(
           decodedForEffect &&
           isRawImageFile(file.name, file.type) &&
-          decodedForEffect.storage === "rgba" &&
-          decodedForEffect.bitDepth === 16 &&
           onRawDevelopmentReadyRef.current
         ) &&
         (!decodedForEffect || transferredDecodedImageRef.current !== decodedForEffect)
@@ -6228,7 +5384,7 @@ export function ImageEditDialog({
 
   const onEyedropperPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (!eyedropperMode || e.button !== 0 || e.ctrlKey || !natural || displayed.w <= 0 || displayed.h <= 0) return;
-    const img = previewImageRef.current ?? previewCanvasRef.current;
+    const img = previewCanvasRef.current;
     const container = containerRef.current;
     if (!img || !container) return;
 
@@ -6261,8 +5417,8 @@ export function ImageEditDialog({
 
     // Sample the bicubic-resized preview rather than one raw source pixel. The
     // clicked pixel has weight 1.0, orthogonal neighbors 0.8, and diagonals 0.5.
-    const sampleSourceWidth = img === previewCanvasRef.current ? resizedWidth : natural.w;
-    const sampleSourceHeight = img === previewCanvasRef.current ? resizedHeight : natural.h;
+    const sampleSourceWidth = resizedWidth;
+    const sampleSourceHeight = resizedHeight;
     const rgb = sampleEyedropperRgb8(
       img,
       sampleSourceWidth,
@@ -6476,9 +5632,8 @@ export function ImageEditDialog({
 
   useEffect(() => {
     const canvas = previewCanvasRef.current;
-    const rawDecoded = decodedImageRef.current;
-    const img = previewImageRef.current;
-    if (!canvas || (!rawDecoded && !img) || !displayed.w || !displayed.h) return;
+    const decoded = decodedImageRef.current;
+    if (!canvas || !decoded || !displayed.w || !displayed.h) return;
     const width = Math.max(1, Math.round(displayed.w));
     const height = Math.max(1, Math.round(displayed.h));
     canvas.width = width;
@@ -6487,12 +5642,8 @@ export function ImageEditDialog({
     const ctx = getCanvas2dContext(canvas, previewColorProfile);
     if (!ctx) return;
     ctx.clearRect(0, 0, width, height);
-    const hasRotation = Math.abs(normalizeRotationDegrees(rotationDegrees)) > 1e-9;
-    const canUseRenderedPreviewCache =
-      rawDecoded?.storage === "rgba" &&
-      rawDecoded.bitDepth === 16 &&
-      !rotationMode &&
-      !eyedropperMode;
+
+    const canUseRenderedPreviewCache = !rotationMode && !eyedropperMode;
     const renderedPreviewCacheKey = canUseRenderedPreviewCache
       ? JSON.stringify([
           width,
@@ -6511,55 +5662,32 @@ export function ImageEditDialog({
           natural?.w ?? 0,
         ])
       : null;
-    if (rawDecoded?.storage === "rgba" && rawDecoded.bitDepth === 16) {
-      const cached = RGBA16_EDIT_RENDERED_PREVIEW_CACHE.get(rawDecoded);
-      if (
-        renderedPreviewCacheKey &&
-        cached?.key === renderedPreviewCacheKey &&
-        cached.width === width &&
-        cached.height === height
-      ) {
-        ctx.drawImage(cached.canvas, 0, 0);
-        return;
-      }
-      renderAdjustedRgba16ToCanvas(
-        canvas,
-        rawDecoded,
-        { x: 0, y: 0, w: rawDecoded.width, h: rawDecoded.height },
-        rotationDegrees,
-        temperature,
-        tint,
-        exposureEv,
-        scaledLog,
-        sigmoid,
-        vibrance,
-        saturation,
-        previewColorProfile,
-      );
-    } else if (img) {
-      if (hasRotation) {
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = "high";
-        drawRotatedSourceToContext(ctx, img, width, height, 0, 0, 1, 1, rotationDegrees);
-      } else {
-        ctx.drawImage(img, 0, 0, width, height);
-      }
-      applyColorAdjustmentsToCanvas(
-        canvas,
-        temperature,
-        tint,
-        exposureEv,
-        scaledLog,
-        sigmoid,
-        vibrance,
-        saturation,
-        hasRotation,
-        previewColorProfile,
-      );
-      if (hasRotation) {
-        fillRotationPadding(ctx, width, height, width, height, 0, 0, 1, 1, rotationDegrees);
-      }
+
+    const cached = RGB16_EDIT_RENDERED_PREVIEW_CACHE.get(decoded);
+    if (
+      renderedPreviewCacheKey &&
+      cached?.key === renderedPreviewCacheKey &&
+      cached.width === width &&
+      cached.height === height
+    ) {
+      ctx.drawImage(cached.canvas, 0, 0);
+      return;
     }
+
+    renderAdjustedRgb16ToCanvas(
+      canvas,
+      decoded,
+      { x: 0, y: 0, w: decoded.width, h: decoded.height },
+      rotationDegrees,
+      temperature,
+      tint,
+      exposureEv,
+      scaledLog,
+      sigmoid,
+      vibrance,
+      saturation,
+      previewColorProfile,
+    );
     applySharpenToCanvas(canvas, sharpen, previewColorProfile);
     if (!eyedropperMode && !rotationMode && mosaicRegions.length && natural?.w) {
       applyMosaicRectsToCanvas(
@@ -6574,14 +5702,11 @@ export function ImageEditDialog({
         previewColorProfile,
       );
     }
-    if (
-      rawDecoded?.storage === "rgba" &&
-      rawDecoded.bitDepth === 16 &&
-      renderedPreviewCacheKey
-    ) {
-      const previous = RGBA16_EDIT_RENDERED_PREVIEW_CACHE.get(rawDecoded);
+
+    if (renderedPreviewCacheKey) {
+      const previous = RGB16_EDIT_RENDERED_PREVIEW_CACHE.get(decoded);
       const snapshot = cloneImageEditCanvas(canvas, previewColorProfile);
-      RGBA16_EDIT_RENDERED_PREVIEW_CACHE.set(rawDecoded, {
+      RGB16_EDIT_RENDERED_PREVIEW_CACHE.set(decoded, {
         width,
         height,
         key: renderedPreviewCacheKey,
@@ -6613,15 +5738,14 @@ export function ImageEditDialog({
       return;
     }
     if (histogramGeometryDragging) return;
-    const img = previewImageRef.current;
-    const rawDecoded = decodedImageRef.current;
+    const decoded = decodedImageRef.current;
     if (
+      !decoded ||
       !natural ||
       !displayed.w ||
       !displayed.h ||
       !cropRect.w ||
-      !cropRect.h ||
-      (!img && !(rawDecoded?.storage === "rgba" && rawDecoded.bitDepth === 16))
+      !cropRect.h
     ) {
       setHistogram(null);
       return;
@@ -6643,33 +5767,18 @@ export function ImageEditDialog({
       Math.min(natural.h, Math.round(natural.h * (1 - crop.bottom))),
     );
     setHistogram(
-      rawDecoded?.storage === "rgba" && rawDecoded.bitDepth === 16
-        ? computeHistogramDataFromRgba16(
-            rawDecoded,
-            { x: sx, y: sy, w: ex - sx, h: ey - sy },
-            rotationDegrees,
-            temperature,
-            tint,
-            exposureEv,
-            scaledLog,
-            sigmoid,
-            vibrance,
-            saturation,
-          )
-        : computeHistogramData(
-            img!,
-            natural.w,
-            natural.h,
-            { x: sx, y: sy, w: ex - sx, h: ey - sy },
-            rotationDegrees,
-            temperature,
-            tint,
-            exposureEv,
-            scaledLog,
-            sigmoid,
-            vibrance,
-            saturation,
-          ),
+      computeHistogramDataFromRgb16(
+        decoded,
+        { x: sx, y: sy, w: ex - sx, h: ey - sy },
+        rotationDegrees,
+        temperature,
+        tint,
+        exposureEv,
+        scaledLog,
+        sigmoid,
+        vibrance,
+        saturation,
+      ),
     );
   }, [
     showHistogram,
@@ -6729,7 +5838,7 @@ export function ImageEditDialog({
     }
 
     const decoded = decodedImageRef.current;
-    if (!(decoded?.storage === "rgba" && decoded.bitDepth === 16)) {
+    if (!decoded) {
       setRawDevelopmentMemoryUsage(undefined);
       return () => {
         cancelled = true;
@@ -6782,36 +5891,25 @@ export function ImageEditDialog({
     }
 
     const decoded = decodedImageRef.current;
-    let sample: Float32Array | null = null;
-    let inputStatistics: DebugPercentileStatistics | null = null;
-    let cachedRgba16: Rgba16PercentileDebugCacheEntry | undefined;
-    if (decoded?.storage === "rgba" && decoded.bitDepth === 16) {
-      cachedRgba16 = RGBA16_EDIT_PERCENTILE_DEBUG_CACHE.get(decoded);
-      if (!cachedRgba16) {
-        const rawSample = sampleLinearRgbFromRgba16(decoded);
-        cachedRgba16 = {
-          sample: rawSample,
-          input: debugStatisticsFromLinearRgbSample(rawSample, "prophoto"),
-        };
-        RGBA16_EDIT_PERCENTILE_DEBUG_CACHE.set(decoded, cachedRgba16);
-      }
-      sample = cachedRgba16.sample;
-      inputStatistics = cachedRgba16.input;
-    } else {
-      const source = previewImageRef.current;
-      if (source) sample = sampleLinearRgbFromCanvasSource(source, natural.w, natural.h);
-    }
-    if (!sample?.length) {
+    if (!decoded) {
       setPercentileDebug(null);
       return;
     }
 
-    const percentileColorSpace = decoded?.storage === "rgba" && decoded.bitDepth === 16
-      ? "prophoto"
-      : "srgb";
-    if (!inputStatistics) {
-      inputStatistics = debugStatisticsFromLinearRgbSample(sample, percentileColorSpace);
+    let cached = RGB16_EDIT_PERCENTILE_DEBUG_CACHE.get(decoded);
+    if (!cached) {
+      const sample = sampleLinearRgbFromRgb16(decoded);
+      cached = {
+        sample,
+        input: debugStatisticsFromLinearRgbSample(sample, "prophoto"),
+      };
+      RGB16_EDIT_PERCENTILE_DEBUG_CACHE.set(decoded, cached);
     }
+    if (!cached.sample.length) {
+      setPercentileDebug(null);
+      return;
+    }
+
     const outputKey = [
       temperature,
       tint,
@@ -6821,12 +5919,12 @@ export function ImageEditDialog({
       vibrance,
       saturation,
     ].join("|");
-    let outputStatistics = cachedRgba16?.outputKey === outputKey
-      ? cachedRgba16.output
+    let outputStatistics = cached.outputKey === outputKey
+      ? cached.output
       : undefined;
     if (!outputStatistics) {
       outputStatistics = adjustedDebugStatisticsFromLinearRgbSample(
-        sample,
+        cached.sample,
         temperature,
         tint,
         exposureEv,
@@ -6834,15 +5932,13 @@ export function ImageEditDialog({
         sigmoid,
         vibrance,
         saturation,
-        percentileColorSpace,
+        "prophoto",
       );
-      if (cachedRgba16) {
-        cachedRgba16.outputKey = outputKey;
-        cachedRgba16.output = outputStatistics;
-      }
+      cached.outputKey = outputKey;
+      cached.output = outputStatistics;
     }
     setPercentileDebug({
-      input: inputStatistics,
+      input: cached.input,
       thumbnail: rawThumbnailDebugStatistics,
       output: outputStatistics,
     });
@@ -6862,15 +5958,14 @@ export function ImageEditDialog({
   ]);
 
   const currentToneAutoSample = useCallback((): ToneAutoSample | null => {
-    const img = previewImageRef.current;
-    const rawDecoded = decodedImageRef.current;
+    const decoded = decodedImageRef.current;
     if (
+      !decoded ||
       !natural ||
       !displayed.w ||
       !displayed.h ||
       !cropRect.w ||
-      !cropRect.h ||
-      (!img && !(rawDecoded?.storage === "rgba" && rawDecoded.bitDepth === 16))
+      !cropRect.h
     ) {
       return null;
     }
@@ -6890,17 +5985,8 @@ export function ImageEditDialog({
       sy + 1,
       Math.min(natural.h, Math.round(natural.h * (1 - crop.bottom))),
     );
-    if (rawDecoded?.storage === "rgba" && rawDecoded.bitDepth === 16) {
-      return createToneAutoSampleFromRgba16(
-        rawDecoded,
-        { x: sx, y: sy, w: ex - sx, h: ey - sy },
-        rotationDegrees,
-      );
-    }
-    return createToneAutoSample(
-      img!,
-      natural.w,
-      natural.h,
+    return createToneAutoSampleFromRgb16(
+      decoded,
       { x: sx, y: sy, w: ex - sx, h: ey - sy },
       rotationDegrees,
     );
@@ -7129,9 +6215,7 @@ export function ImageEditDialog({
   const rawDevelopmentSettings = (() => {
     if (!isRawImageFile(file.name, file.type)) return undefined;
     const decoded = decodedImageRef.current;
-    return decoded?.storage === "rgba" && decoded.bitDepth === 16
-      ? decoded.rawDevelopment
-      : undefined;
+    return decoded?.rawDevelopment;
   })();
 
   if (!mounted) return null;
@@ -8108,7 +7192,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
   const storeRawDevelopmentCache = useCallback((
     itemId: string,
     file: File,
-    decoded: DecodedRgbaImage16,
+    decoded: DecodedRgbImage16,
   ) => {
     const cached = rawDevelopmentCacheRef.current;
     if (cached?.itemId === itemId && cached.file === file && cached.decoded === decoded) {
@@ -8226,9 +7310,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
                 f.type,
               );
               if (cancelled) return;
-              if (decodedForOptimize.storage === "rgba" && decodedForOptimize.bitDepth === 16) {
-                storeRawDevelopmentCache(f.id, f.file, decodedForOptimize);
-              }
+              storeRawDevelopmentCache(f.id, f.file, decodedForOptimize);
             }
           }
 
@@ -8325,8 +7407,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
 
     if (
       isRawImageFile(snapshot.name, snapshot.type) &&
-      decodedImage?.storage === "rgba" &&
-      decodedImage.bitDepth === 16
+      decodedImage
     ) {
       storeRawDevelopmentCache(snapshot.id, snapshot.file, decodedImage);
       processingDecoded = decodedImage;
