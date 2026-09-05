@@ -89,6 +89,19 @@ export type ImageTextOverlay = {
   outlineColorIndex: number | null;
 };
 
+export type ImageDrawTool = "line" | "rect" | "ellipse";
+
+export type ImageDrawOverlay = {
+  id: string;
+  type: ImageDrawTool;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  strokeWidth: number;
+  colorIndex: number;
+};
+
 export type ImageEditParams = {
   crop: ImageCropInsets;
   rotationDegrees: number;
@@ -103,6 +116,7 @@ export type ImageEditParams = {
   sharpen: number;
   mosaicRegions: ImageMosaicRegion[];
   textOverlays: ImageTextOverlay[];
+  drawOverlays: ImageDrawOverlay[];
 };
 
 export type ImageEditOutputFormat = "image/webp" | "image/jpeg" | "image/png";
@@ -680,6 +694,46 @@ function normalizeTextOverlays(overlays?: ImageTextOverlay[]): ImageTextOverlay[
   return overlays.map((overlay) => normalizeTextOverlay(overlay));
 }
 
+function normalizeDrawTool(value: unknown): ImageDrawTool {
+  return value === "rect" || value === "ellipse" ? value : "line";
+}
+
+function normalizeDrawOverlay(overlay: Partial<ImageDrawOverlay>): ImageDrawOverlay | null {
+  const type = normalizeDrawTool(overlay.type);
+  let x1 = clamp01(Number.isFinite(overlay.x1) ? overlay.x1 ?? 0 : 0);
+  let y1 = clamp01(Number.isFinite(overlay.y1) ? overlay.y1 ?? 0 : 0);
+  let x2 = clamp01(Number.isFinite(overlay.x2) ? overlay.x2 ?? 0 : 0);
+  let y2 = clamp01(Number.isFinite(overlay.y2) ? overlay.y2 ?? 0 : 0);
+  if (type !== "line") {
+    [x1, x2] = [Math.min(x1, x2), Math.max(x1, x2)];
+    [y1, y2] = [Math.min(y1, y2), Math.max(y1, y2)];
+  }
+  const width = Math.max(1, Number.isFinite(overlay.strokeWidth) ? overlay.strokeWidth ?? 1 : 1);
+  const colorIndex = normalizeTextColorIndex(overlay.colorIndex ?? 0);
+  if (type === "line") {
+    if (Math.hypot(x2 - x1, y2 - y1) <= 1e-6) return null;
+  } else if (x2 - x1 <= 1e-6 || y2 - y1 <= 1e-6) {
+    return null;
+  }
+  return {
+    id: typeof overlay.id === "string" && overlay.id ? overlay.id : makeOverlayId("draw"),
+    type,
+    x1,
+    y1,
+    x2,
+    y2,
+    strokeWidth: width,
+    colorIndex,
+  };
+}
+
+function normalizeDrawOverlays(overlays?: ImageDrawOverlay[]): ImageDrawOverlay[] {
+  if (!overlays?.length) return [];
+  return overlays
+    .map((overlay) => normalizeDrawOverlay(overlay))
+    .filter((overlay): overlay is ImageDrawOverlay => overlay !== null);
+}
+
 function normalizeRotationDegrees(value: number): number {
   if (!Number.isFinite(value)) return 0;
   const normalized = ((value + 180) % 360 + 360) % 360 - 180;
@@ -701,6 +755,7 @@ export function buildDefaultEditParams(w?: number, h?: number): ImageEditParams 
     sharpen: 0,
     mosaicRegions: [],
     textOverlays: [],
+    drawOverlays: [],
   };
 }
 
@@ -733,6 +788,7 @@ function normalizeEditParams(params: ImageEditParams | undefined, w?: number, h?
     sharpen: clampSharpen(params?.sharpen ?? defaults.sharpen),
     mosaicRegions: normalizeMosaicRegions(params?.mosaicRegions ?? defaults.mosaicRegions),
     textOverlays: normalizeTextOverlays(params?.textOverlays ?? defaults.textOverlays),
+    drawOverlays: normalizeDrawOverlays(params?.drawOverlays ?? defaults.drawOverlays),
   };
 }
 
@@ -761,7 +817,8 @@ function isMeaningfullyEdited(
     normalized.resizePercent !== defaults.resizePercent ||
     normalized.sharpen !== defaults.sharpen ||
     normalized.mosaicRegions.length > 0 ||
-    normalized.textOverlays.length > 0
+    normalized.textOverlays.length > 0 ||
+    normalized.drawOverlays.length > 0
   );
 }
 
@@ -1659,40 +1716,71 @@ async function ensureTextOverlayFontsReady(overlays: ImageTextOverlay[]): Promis
   );
 }
 
+function drawOverlaysToContext(
+  ctx: RotationCanvasContext,
+  overlays: ImageDrawOverlay[],
+  sourceW: number,
+  sourceH: number,
+  cropW: number,
+  cropH: number,
+  outputW: number,
+  outputH: number,
+) {
+  if (!overlays.length) return;
+  const resizeScaleX = outputW / cropW;
+  const resizeScaleY = outputH / cropH;
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  for (const overlay of overlays) {
+    const x1 = overlay.x1 * sourceW * resizeScaleX;
+    const y1 = overlay.y1 * sourceH * resizeScaleY;
+    const x2 = overlay.x2 * sourceW * resizeScaleX;
+    const y2 = overlay.y2 * sourceH * resizeScaleY;
+    ctx.strokeStyle = TEXT_OVERLAY_COLORS[normalizeTextColorIndex(overlay.colorIndex)];
+    ctx.lineWidth = Math.max(1, overlay.strokeWidth * Math.min(resizeScaleX, resizeScaleY));
+    ctx.beginPath();
+    if (overlay.type === "line") {
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+    } else if (overlay.type === "rect") {
+      ctx.rect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
+    } else {
+      const left = Math.min(x1, x2);
+      const top = Math.min(y1, y2);
+      const width = Math.abs(x2 - x1);
+      const height = Math.abs(y2 - y1);
+      ctx.ellipse(left + width / 2, top + height / 2, width / 2, height / 2, 0, 0, Math.PI * 2);
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawTextOverlaysToContext(
   ctx: RotationCanvasContext,
   overlays: ImageTextOverlay[],
   sourceW: number,
   sourceH: number,
-  cropX: number,
-  cropY: number,
   cropW: number,
   cropH: number,
   outputW: number,
   outputH: number,
-  rotationDegrees: number,
   outputColorProfile: ImageEditOutputColorProfile = "srgb",
 ) {
   if (!overlays.length) return;
-  const scaleX = outputW / cropW;
-  const scaleY = outputH / cropH;
-  const centerX = sourceW / 2;
-  const centerY = sourceH / 2;
+  const resizeScaleX = outputW / cropW;
+  const resizeScaleY = outputH / cropH;
   ctx.save();
   ctx.textBaseline = "alphabetic";
   for (const overlay of overlays) {
-    const point = rotatePoint(
-      overlay.left * sourceW,
-      overlay.top * sourceH,
-      centerX,
-      centerY,
-      rotationDegrees,
-    );
-    const fontSize = Math.max(1, overlay.fontSize * scaleX);
+    const fontSize = Math.max(1, overlay.fontSize * Math.min(resizeScaleX, resizeScaleY));
     const lineHeight = Math.max(1, fontSize * TEXT_OVERLAY_LINE_HEIGHT);
     const renderOffset = textOverlayRenderOffset(fontSize);
-    const x = (point.x - cropX) * scaleX + renderOffset.x;
-    const y = (point.y - cropY) * scaleY + renderOffset.y;
+    // Text overlays live in the post-crop/post-rotation output frame. Crop and
+    // rotation change the image underneath, but never transform the overlay.
+    const x = overlay.left * sourceW * resizeScaleX + renderOffset.x;
+    const y = overlay.top * sourceH * resizeScaleY + renderOffset.y;
     ctx.font = textOverlayCanvasFont(overlay.fontIndex, fontSize);
     const fontMetrics = textOverlayFontMetrics(ctx, fontSize, lineHeight);
     const fillColor = TEXT_OVERLAY_COLORS[normalizeTextColorIndex(overlay.colorIndex)];
@@ -4403,18 +4491,25 @@ async function buildEditedVariantFromDecoded(
     16,
     outputColorProfile,
   );
+  drawOverlaysToContext(
+    outputCtx,
+    params.drawOverlays,
+    w,
+    h,
+    sw,
+    sh,
+    dw,
+    dh,
+  );
   drawTextOverlaysToContext(
     outputCtx,
     params.textOverlays,
     w,
     h,
-    sx,
-    sy,
     sw,
     sh,
     dw,
     dh,
-    params.rotationDegrees,
     outputColorProfile,
   );
   releaseCanvasIfNeeded(cropped);
@@ -4595,6 +4690,29 @@ type EditDialogProps = {
 type EditRect = { x: number; y: number; w: number; h: number };
 type EditPoint = { x: number; y: number };
 type EditCorner = "nw" | "ne" | "sw" | "se";
+type DrawHandle = EditCorner | "start" | "end";
+type DrawCreateState = {
+  pointerId: number;
+  startPoint: EditPoint;
+  type: ImageDrawTool;
+  strokeWidth: number;
+  colorIndex: number;
+};
+type DrawEditState =
+  | {
+      mode: "move";
+      pointerId: number;
+      id: string;
+      startPoint: EditPoint;
+      startOverlay: ImageDrawOverlay;
+    }
+  | {
+      mode: "handle";
+      pointerId: number;
+      id: string;
+      handle: DrawHandle;
+      startOverlay: ImageDrawOverlay;
+    };
 type TextOverlayLayout = {
   id: string;
   x: number;
@@ -4649,6 +4767,8 @@ const TEXT_OVERLAY_COLORS = [
   "#0066ff",
   "#8000ff",
 ] as const;
+const DRAW_STROKE_WIDTH_RATIOS = [0.001, 0.002, 0.004, 0.008] as const;
+const DRAW_STROKE_WIDTH_LABELS = ["Thin", "Medium", "Thick", "Extra thick"] as const;
 const TEXT_OVERLAY_MIN_BOX_WIDTH =
   TEXT_OVERLAY_CONTROL_BUTTON_SIZE * 6 +
   TEXT_OVERLAY_CONTROL_GAP * 5 +
@@ -5103,6 +5223,14 @@ export function ImageEditDialog({
   );
   const [activeTextId, setActiveTextId] = useState<string | null>(null);
   const [fontLoadingTextId, setFontLoadingTextId] = useState<string | null>(null);
+  const [drawMode, setDrawMode] = useState(false);
+  const [drawTool, setDrawTool] = useState<ImageDrawTool>("line");
+  const [drawStrokeWidthIndex, setDrawStrokeWidthIndex] = useState(1);
+  const [drawColorIndex, setDrawColorIndex] = useState(0);
+  const [drawOverlays, setDrawOverlays] = useState<ImageDrawOverlay[]>(
+    normalizeDrawOverlays(initialParams.drawOverlays),
+  );
+  const [drawDraft, setDrawDraft] = useState<ImageDrawOverlay | null>(null);
   const [mosaicMode, setMosaicMode] = useState(false);
   const [mosaicRegions, setMosaicRegions] = useState<ImageMosaicRegion[]>(
     normalizeMosaicRegions(initialParams.mosaicRegions),
@@ -5131,6 +5259,8 @@ export function ImageEditDialog({
     | null
     | { pointerId: number; id: string; offsetX: number; offsetY: number }
   >(null);
+  const drawCreateState = useRef<DrawCreateState | null>(null);
+  const drawEditState = useRef<DrawEditState | null>(null);
   const dragState = useRef<
     | null
     | { mode: "move"; startP: EditPoint; startCrop: EditRect }
@@ -5308,45 +5438,82 @@ export function ImageEditDialog({
     y: Math.max(displayed.y, Math.min(displayed.y + displayed.h, point.y)),
   }), [displayed]);
 
-  const previewToSourceTextPoint = useCallback((point: EditPoint): { left: number; top: number } | null => {
-    if (displayed.w <= 0 || displayed.h <= 0) return null;
-    const local = {
-      x: point.x - displayed.x,
-      y: point.y - displayed.y,
-    };
-    const unrotated = inverseRotatePoint(
-      local.x,
-      local.y,
-      displayed.w / 2,
-      displayed.h / 2,
-      rotationDegrees,
-    );
-    return {
-      left: clamp01(unrotated.x / displayed.w),
-      top: clamp01(unrotated.y / displayed.h),
-    };
-  }, [displayed, rotationDegrees]);
+  const clampPointToCropRect = useCallback((point: EditPoint): EditPoint => ({
+    x: Math.max(cropRect.x, Math.min(cropRect.x + cropRect.w, point.x)),
+    y: Math.max(cropRect.y, Math.min(cropRect.y + cropRect.h, point.y)),
+  }), [cropRect]);
 
-  const sourceToPreviewTextPoint = useCallback((overlay: ImageTextOverlay): EditPoint | null => {
-    if (!natural || displayed.w <= 0 || displayed.h <= 0) return null;
-    const local = rotatePoint(
-      overlay.left * displayed.w,
-      overlay.top * displayed.h,
-      displayed.w / 2,
-      displayed.h / 2,
-      rotationDegrees,
-    );
+  const cropPointToNormalized = useCallback((point: EditPoint): EditPoint | null => {
+    if (displayed.w <= 0 || displayed.h <= 0) return null;
     return {
-      x: displayed.x + local.x,
-      y: displayed.y + local.y,
+      x: clamp01((point.x - cropRect.x) / displayed.w),
+      y: clamp01((point.y - cropRect.y) / displayed.h),
     };
-  }, [displayed, natural, rotationDegrees]);
+  }, [cropRect.x, cropRect.y, displayed.h, displayed.w]);
+
+  const normalizedToCropPoint = useCallback((x: number, y: number): EditPoint => ({
+    x: cropRect.x + x * displayed.w,
+    y: cropRect.y + y * displayed.h,
+  }), [cropRect.x, cropRect.y, displayed.h, displayed.w]);
+
+  const constrainDrawEndPoint = useCallback((
+    type: ImageDrawTool,
+    start: EditPoint,
+    rawEnd: EditPoint,
+    constrain: boolean,
+  ): EditPoint => {
+    const end = clampPointToCropRect(rawEnd);
+    if (!constrain) return end;
+
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    if (type === "line") {
+      const length = Math.hypot(dx, dy);
+      if (length <= 0) return end;
+      const step = Math.PI / 4;
+      const angle = Math.round(Math.atan2(dy, dx) / step) * step;
+      const ux = Math.cos(angle);
+      const uy = Math.sin(angle);
+      let maxLength = Number.POSITIVE_INFINITY;
+      if (ux > 1e-9) maxLength = Math.min(maxLength, (cropRect.x + cropRect.w - start.x) / ux);
+      else if (ux < -1e-9) maxLength = Math.min(maxLength, (cropRect.x - start.x) / ux);
+      if (uy > 1e-9) maxLength = Math.min(maxLength, (cropRect.y + cropRect.h - start.y) / uy);
+      else if (uy < -1e-9) maxLength = Math.min(maxLength, (cropRect.y - start.y) / uy);
+      const snappedLength = Math.max(0, Math.min(length, maxLength));
+      return { x: start.x + ux * snappedLength, y: start.y + uy * snappedLength };
+    }
+
+    const signX = dx < 0 ? -1 : 1;
+    const signY = dy < 0 ? -1 : 1;
+    const wantedSize = Math.max(Math.abs(dx), Math.abs(dy));
+    const availableX = signX > 0 ? cropRect.x + cropRect.w - start.x : start.x - cropRect.x;
+    const availableY = signY > 0 ? cropRect.y + cropRect.h - start.y : start.y - cropRect.y;
+    const size = Math.max(0, Math.min(wantedSize, availableX, availableY));
+    return { x: start.x + signX * size, y: start.y + signY * size };
+  }, [clampPointToCropRect, cropRect]);
+
+  const previewToOverlayPoint = useCallback((point: EditPoint): { left: number; top: number } | null => {
+    if (displayed.w <= 0 || displayed.h <= 0) return null;
+    const clamped = clampPointToCropRect(point);
+    return {
+      left: clamp01((clamped.x - cropRect.x) / displayed.w),
+      top: clamp01((clamped.y - cropRect.y) / displayed.h),
+    };
+  }, [clampPointToCropRect, cropRect.x, cropRect.y, displayed.h, displayed.w]);
+
+  const overlayToPreviewTextPoint = useCallback((overlay: ImageTextOverlay): EditPoint | null => {
+    if (!natural || displayed.w <= 0 || displayed.h <= 0) return null;
+    return {
+      x: cropRect.x + overlay.left * displayed.w,
+      y: cropRect.y + overlay.top * displayed.h,
+    };
+  }, [cropRect.x, cropRect.y, displayed.h, displayed.w, natural]);
 
   const previewTextLayouts = useMemo<TextOverlayLayout[]>(() => {
     if (!natural || displayed.w <= 0 || displayed.h <= 0) return [];
     const previewScale = displayed.w / natural.w;
     return textOverlays.map((overlay) => {
-      const point = sourceToPreviewTextPoint(overlay) ?? { x: displayed.x, y: displayed.y };
+      const point = overlayToPreviewTextPoint(overlay) ?? { x: displayed.x, y: displayed.y };
       const fontSize = Math.max(1, overlay.fontSize * previewScale);
       const { width, height, lineHeight } = measureTextOverlayLayout(overlay.text, fontSize, overlay.fontIndex);
       return {
@@ -5363,7 +5530,7 @@ export function ImageEditDialog({
         outlineColorIndex: overlay.outlineColorIndex,
       };
     });
-  }, [natural, displayed, textOverlays, sourceToPreviewTextPoint]);
+  }, [natural, displayed, textOverlays, overlayToPreviewTextPoint]);
 
   const updateTextOverlay = useCallback((id: string, updater: (overlay: ImageTextOverlay) => ImageTextOverlay) => {
     setTextOverlays((current) => current.map((overlay) => (overlay.id === id ? normalizeTextOverlay(updater(overlay)) : overlay)));
@@ -5423,7 +5590,7 @@ export function ImageEditDialog({
     const state = textMoveState.current;
     if (!state || state.pointerId !== e.pointerId) return;
     const point = toLocal(e);
-    const sourcePoint = previewToSourceTextPoint({
+    const sourcePoint = previewToOverlayPoint({
       x: point.x - state.offsetX,
       y: point.y - state.offsetY,
     });
@@ -5435,7 +5602,7 @@ export function ImageEditDialog({
     }));
     e.preventDefault();
     e.stopPropagation();
-  }, [previewToSourceTextPoint, toLocal, updateTextOverlay]);
+  }, [previewToOverlayPoint, toLocal, updateTextOverlay]);
 
   const onTextMovePointerUp = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
     const state = textMoveState.current;
@@ -5452,16 +5619,16 @@ export function ImageEditDialog({
     if (!textMode || e.button !== 0 || e.ctrlKey || displayed.w <= 0 || displayed.h <= 0) return;
     const point = toLocal(e);
     if (
-      point.x < displayed.x ||
-      point.x > displayed.x + displayed.w ||
-      point.y < displayed.y ||
-      point.y > displayed.y + displayed.h
+      point.x < cropRect.x ||
+      point.x > cropRect.x + cropRect.w ||
+      point.y < cropRect.y ||
+      point.y > cropRect.y + cropRect.h
     ) {
       return;
     }
     e.preventDefault();
     e.stopPropagation();
-    const sourcePoint = previewToSourceTextPoint(point);
+    const sourcePoint = previewToOverlayPoint(point);
     if (!sourcePoint || !natural) return;
     const overlay = normalizeTextOverlay({
       id: makeOverlayId("text"),
@@ -5475,7 +5642,268 @@ export function ImageEditDialog({
     });
     setTextOverlays((current) => [...current, overlay]);
     setActiveTextId(overlay.id);
-  }, [displayed, natural, previewToSourceTextPoint, textMode, toLocal]);
+  }, [cropRect, natural, previewToOverlayPoint, textMode, toLocal]);
+
+  const updateDrawOverlay = useCallback((id: string, updater: (overlay: ImageDrawOverlay) => ImageDrawOverlay) => {
+    setDrawOverlays((current) => current.map((overlay) => (overlay.id === id ? updater(overlay) : overlay)));
+  }, []);
+
+  const removeDrawOverlay = useCallback((id: string) => {
+    setDrawOverlays((current) => current.filter((overlay) => overlay.id !== id));
+    drawEditState.current = null;
+  }, []);
+
+  const drawOverlayFromPreviewPoints = useCallback((
+    id: string,
+    type: ImageDrawTool,
+    start: EditPoint,
+    end: EditPoint,
+    strokeWidth: number,
+    colorIndex: number,
+  ): ImageDrawOverlay | null => {
+    const a = cropPointToNormalized(start);
+    const b = cropPointToNormalized(end);
+    if (!a || !b) return null;
+    if (type === "line") {
+      return {
+        id,
+        type,
+        x1: a.x,
+        y1: a.y,
+        x2: b.x,
+        y2: b.y,
+        strokeWidth,
+        colorIndex: normalizeTextColorIndex(colorIndex),
+      };
+    }
+    return {
+      id,
+      type,
+      x1: Math.min(a.x, b.x),
+      y1: Math.min(a.y, b.y),
+      x2: Math.max(a.x, b.x),
+      y2: Math.max(a.y, b.y),
+      strokeWidth,
+      colorIndex: normalizeTextColorIndex(colorIndex),
+    };
+  }, [cropPointToNormalized]);
+
+  const onDrawPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!drawMode || e.button !== 0 || !natural || cropRect.w <= 0 || cropRect.h <= 0) return;
+    const point = toLocal(e);
+    if (
+      point.x < cropRect.x ||
+      point.x > cropRect.x + cropRect.w ||
+      point.y < cropRect.y ||
+      point.y > cropRect.y + cropRect.h
+    ) {
+      return;
+    }
+    const startPoint = clampPointToCropRect(point);
+    const strokeWidth = Math.max(
+      1,
+      Math.hypot(natural.w, natural.h) * DRAW_STROKE_WIDTH_RATIOS[drawStrokeWidthIndex],
+    );
+    drawCreateState.current = {
+      pointerId: e.pointerId,
+      startPoint,
+      type: drawTool,
+      strokeWidth,
+      colorIndex: drawColorIndex,
+    };
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setDrawDraft(drawOverlayFromPreviewPoints(
+      "draw-draft",
+      drawTool,
+      startPoint,
+      startPoint,
+      strokeWidth,
+      drawColorIndex,
+    ) ?? {
+      id: "draw-draft",
+      type: drawTool,
+      x1: 0,
+      y1: 0,
+      x2: 0,
+      y2: 0,
+      strokeWidth,
+      colorIndex: drawColorIndex,
+    });
+    e.preventDefault();
+    e.stopPropagation();
+  }, [
+    clampPointToCropRect,
+    cropRect,
+    drawColorIndex,
+    drawMode,
+    drawOverlayFromPreviewPoints,
+    drawStrokeWidthIndex,
+    drawTool,
+    natural,
+    toLocal,
+  ]);
+
+  const onDrawPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const state = drawCreateState.current;
+    if (!state || state.pointerId !== e.pointerId) return;
+    const endPoint = constrainDrawEndPoint(state.type, state.startPoint, toLocal(e), e.shiftKey);
+    const draft = drawOverlayFromPreviewPoints(
+      "draw-draft",
+      state.type,
+      state.startPoint,
+      endPoint,
+      state.strokeWidth,
+      state.colorIndex,
+    );
+    if (draft) setDrawDraft(draft);
+    e.preventDefault();
+    e.stopPropagation();
+  }, [constrainDrawEndPoint, drawOverlayFromPreviewPoints, toLocal]);
+
+  const finishDrawCreation = useCallback((e: React.PointerEvent<HTMLDivElement>, cancelled = false) => {
+    const state = drawCreateState.current;
+    if (!state || state.pointerId !== e.pointerId) return;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {}
+    if (!cancelled) {
+      const endPoint = constrainDrawEndPoint(state.type, state.startPoint, toLocal(e), e.shiftKey);
+      const distance = state.type === "line"
+        ? Math.hypot(endPoint.x - state.startPoint.x, endPoint.y - state.startPoint.y)
+        : Math.max(Math.abs(endPoint.x - state.startPoint.x), Math.abs(endPoint.y - state.startPoint.y));
+      if (distance >= 3) {
+        const overlay = drawOverlayFromPreviewPoints(
+          makeOverlayId("draw"),
+          state.type,
+          state.startPoint,
+          endPoint,
+          state.strokeWidth,
+          state.colorIndex,
+        );
+        if (overlay) setDrawOverlays((current) => [...current, overlay]);
+      }
+    }
+    drawCreateState.current = null;
+    setDrawDraft(null);
+    e.preventDefault();
+    e.stopPropagation();
+  }, [constrainDrawEndPoint, drawOverlayFromPreviewPoints, toLocal]);
+
+  const onDrawMovePointerDown = useCallback((overlay: ImageDrawOverlay) =>
+    (e: React.PointerEvent<SVGElement>) => {
+      if (!drawMode || e.button !== 0) return;
+      drawEditState.current = {
+        mode: "move",
+        pointerId: e.pointerId,
+        id: overlay.id,
+        startPoint: toLocal(e),
+        startOverlay: { ...overlay },
+      };
+      e.currentTarget.setPointerCapture(e.pointerId);
+      e.preventDefault();
+      e.stopPropagation();
+    }, [drawMode, toLocal]);
+
+  const onDrawHandlePointerDown = useCallback((overlay: ImageDrawOverlay, handle: DrawHandle) =>
+    (e: React.PointerEvent<HTMLButtonElement>) => {
+      if (!drawMode || e.button !== 0) return;
+      drawEditState.current = {
+        mode: "handle",
+        pointerId: e.pointerId,
+        id: overlay.id,
+        handle,
+        startOverlay: { ...overlay },
+      };
+      e.currentTarget.setPointerCapture(e.pointerId);
+      e.preventDefault();
+      e.stopPropagation();
+    }, [drawMode]);
+
+  const onDrawEditPointerMove = useCallback((e: React.PointerEvent<Element>) => {
+    const state = drawEditState.current;
+    if (!state || state.pointerId !== e.pointerId || cropRect.w <= 0 || cropRect.h <= 0) return;
+    const point = clampPointToCropRect(toLocal(e));
+    if (state.mode === "move") {
+      const dx = (point.x - state.startPoint.x) / displayed.w;
+      const dy = (point.y - state.startPoint.y) / displayed.h;
+      const start = state.startOverlay;
+      const minX = Math.min(start.x1, start.x2);
+      const maxX = Math.max(start.x1, start.x2);
+      const minY = Math.min(start.y1, start.y2);
+      const maxY = Math.max(start.y1, start.y2);
+      const frameMaxX = cropRect.w / displayed.w;
+      const frameMaxY = cropRect.h / displayed.h;
+      const clampedDx = maxX - minX <= frameMaxX
+        ? Math.max(-minX, Math.min(frameMaxX - maxX, dx))
+        : dx;
+      const clampedDy = maxY - minY <= frameMaxY
+        ? Math.max(-minY, Math.min(frameMaxY - maxY, dy))
+        : dy;
+      updateDrawOverlay(state.id, () => ({
+        ...start,
+        x1: start.x1 + clampedDx,
+        y1: start.y1 + clampedDy,
+        x2: start.x2 + clampedDx,
+        y2: start.y2 + clampedDy,
+      }));
+    } else {
+      const start = state.startOverlay;
+      if (start.type === "line") {
+        const fixed = state.handle === "start"
+          ? normalizedToCropPoint(start.x2, start.y2)
+          : normalizedToCropPoint(start.x1, start.y1);
+        const moving = constrainDrawEndPoint("line", fixed, point, e.shiftKey);
+        const normalized = cropPointToNormalized(moving);
+        if (!normalized) return;
+        updateDrawOverlay(state.id, () => state.handle === "start"
+          ? { ...start, x1: normalized.x, y1: normalized.y }
+          : { ...start, x2: normalized.x, y2: normalized.y });
+      } else {
+        const fixedNormalized = state.handle === "nw"
+          ? { x: start.x2, y: start.y2 }
+          : state.handle === "ne"
+            ? { x: start.x1, y: start.y2 }
+            : state.handle === "sw"
+              ? { x: start.x2, y: start.y1 }
+              : { x: start.x1, y: start.y1 };
+        const fixed = normalizedToCropPoint(fixedNormalized.x, fixedNormalized.y);
+        const moving = constrainDrawEndPoint(start.type, fixed, point, e.shiftKey);
+        const normalized = cropPointToNormalized(moving);
+        if (!normalized) return;
+        updateDrawOverlay(state.id, () => ({
+          ...start,
+          x1: Math.min(fixedNormalized.x, normalized.x),
+          y1: Math.min(fixedNormalized.y, normalized.y),
+          x2: Math.max(fixedNormalized.x, normalized.x),
+          y2: Math.max(fixedNormalized.y, normalized.y),
+        }));
+      }
+    }
+    e.preventDefault();
+    e.stopPropagation();
+  }, [
+    clampPointToCropRect,
+    constrainDrawEndPoint,
+    cropPointToNormalized,
+    cropRect.h,
+    cropRect.w,
+    displayed.h,
+    displayed.w,
+    normalizedToCropPoint,
+    toLocal,
+    updateDrawOverlay,
+  ]);
+
+  const onDrawEditPointerUp = useCallback((e: React.PointerEvent<Element>) => {
+    const state = drawEditState.current;
+    if (!state || state.pointerId !== e.pointerId) return;
+    try {
+      (e.currentTarget as Element).releasePointerCapture(e.pointerId);
+    } catch {}
+    drawEditState.current = null;
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
 
   const onMosaicPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (!mosaicMode || displayed.w <= 0 || displayed.h <= 0) return;
@@ -6373,6 +6801,7 @@ export function ImageEditDialog({
       sharpen: clampSharpen(sharpen),
       mosaicRegions: normalizeMosaicRegions(mosaicRegions),
       textOverlays: normalizeTextOverlays(textOverlays),
+      drawOverlays: normalizeDrawOverlays(drawOverlays),
     };
     applyPendingRef.current = true;
     setApplyBusy(true);
@@ -6401,6 +6830,7 @@ export function ImageEditDialog({
     sharpen,
     mosaicRegions,
     textOverlays,
+    drawOverlays,
     onApply,
   ]);
 
@@ -6426,6 +6856,14 @@ export function ImageEditDialog({
     setActiveTextId(null);
     textMoveState.current = null;
     setTextOverlays(params.textOverlays);
+    setDrawMode(false);
+    setDrawTool("line");
+    setDrawStrokeWidthIndex(1);
+    setDrawColorIndex(0);
+    setDrawOverlays(params.drawOverlays);
+    setDrawDraft(null);
+    drawCreateState.current = null;
+    drawEditState.current = null;
     setMosaicRegions(params.mosaicRegions);
     mosaicMoveState.current = null;
     setMosaicDraft(null);
@@ -6482,7 +6920,7 @@ export function ImageEditDialog({
       >
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between lg:gap-3">
           <h2 className="text-base font-semibold break-all">Edit image</h2>
-          <div className="grid grid-cols-2 items-center gap-x-3 gap-y-2 lg:flex lg:gap-3">
+          <div className="grid grid-cols-3 items-center gap-x-3 gap-y-2 lg:flex lg:gap-3">
             <label className="inline-flex items-center gap-2 text-sm text-gray-700 select-none">
               <input
                 type="checkbox"
@@ -6493,6 +6931,10 @@ export function ImageEditDialog({
                     setTextMode(true);
                     setActiveTextId(null);
                     textMoveState.current = null;
+                    setDrawMode(false);
+                    setDrawDraft(null);
+                    drawCreateState.current = null;
+                    drawEditState.current = null;
                     setEyedropperMode(false);
                     setRotationMode(false);
                     rotationDragState.current = null;
@@ -6513,6 +6955,33 @@ export function ImageEditDialog({
             <label className="inline-flex items-center gap-2 text-sm text-gray-700 select-none">
               <input
                 type="checkbox"
+                checked={drawMode}
+                onChange={(e) => {
+                  const next = e.target.checked;
+                  setDrawMode(next);
+                  drawCreateState.current = null;
+                  drawEditState.current = null;
+                  setDrawDraft(null);
+                  if (next) {
+                    setTextMode(false);
+                    setActiveTextId(null);
+                    textMoveState.current = null;
+                    setMosaicMode(false);
+                    mosaicDragStart.current = null;
+                    mosaicMoveState.current = null;
+                    setMosaicDraft(null);
+                    setEyedropperMode(false);
+                    setRotationMode(false);
+                    rotationDragState.current = null;
+                    dragState.current = null;
+                  }
+                }}
+              />
+              <span>Draw</span>
+            </label>
+            <label className="inline-flex items-center gap-2 text-sm text-gray-700 select-none">
+              <input
+                type="checkbox"
                 checked={mosaicMode}
                 onChange={(e) => {
                   const next = e.target.checked;
@@ -6521,6 +6990,10 @@ export function ImageEditDialog({
                     setTextMode(false);
                     setActiveTextId(null);
                     textMoveState.current = null;
+                    setDrawMode(false);
+                    setDrawDraft(null);
+                    drawCreateState.current = null;
+                    drawEditState.current = null;
                     setEyedropperMode(false);
                     setRotationMode(false);
                     rotationDragState.current = null;
@@ -6549,7 +7022,7 @@ export function ImageEditDialog({
               <span>Grid</span>
             </label>
             <button
-              className="col-span-2 justify-self-start px-2 py-0.5 text-sm rounded border border-gray-300 hover:bg-gray-100 lg:col-auto lg:justify-self-auto"
+              className="col-span-3 justify-self-start px-2 py-0.5 text-sm rounded border border-gray-300 hover:bg-gray-100 lg:col-auto lg:justify-self-auto"
               onClick={onReset}
             >
               Reset
@@ -6560,11 +7033,11 @@ export function ImageEditDialog({
         <div className="mt-3 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_250px] gap-4 lg:items-stretch">
           <div
             ref={containerRef}
-            className={`relative w-full h-[42vh] min-h-[270px] lg:h-auto rounded border bg-gray-200 overflow-hidden touch-none ${textMode ? "cursor-text" : !eyedropperMode && !rotationMode && mosaicMode ? "cursor-crosshair" : ""}`}
-            onPointerDown={eyedropperMode || rotationMode ? undefined : textMode ? onTextPointerDown : mosaicMode ? onMosaicPointerDown : undefined}
-            onPointerMove={eyedropperMode ? undefined : rotationMode ? onRotationPointerMove : mosaicMode ? onMosaicPointerMove : onPointerMove}
-            onPointerUp={eyedropperMode ? undefined : rotationMode ? onRotationPointerUp : mosaicMode ? onMosaicPointerUp : onPointerUp}
-            onPointerCancel={eyedropperMode ? undefined : rotationMode ? onRotationPointerUp : mosaicMode ? onMosaicPointerCancel : onPointerUp}
+            className={`relative w-full h-[42vh] min-h-[270px] lg:h-auto rounded border bg-gray-200 overflow-hidden touch-none ${textMode ? "cursor-text" : !eyedropperMode && !rotationMode && (drawMode || mosaicMode) ? "cursor-crosshair" : ""}`}
+            onPointerDown={eyedropperMode || rotationMode ? undefined : textMode ? onTextPointerDown : drawMode ? onDrawPointerDown : mosaicMode ? onMosaicPointerDown : undefined}
+            onPointerMove={eyedropperMode ? undefined : rotationMode ? onRotationPointerMove : drawMode ? onDrawPointerMove : mosaicMode ? onMosaicPointerMove : onPointerMove}
+            onPointerUp={eyedropperMode ? undefined : rotationMode ? onRotationPointerUp : drawMode ? (e) => finishDrawCreation(e) : mosaicMode ? onMosaicPointerUp : onPointerUp}
+            onPointerCancel={eyedropperMode ? undefined : rotationMode ? onRotationPointerUp : drawMode ? (e) => finishDrawCreation(e, true) : mosaicMode ? onMosaicPointerCancel : onPointerUp}
           >
               {imageReady && natural ? (
                 <>
@@ -6668,6 +7141,220 @@ export function ImageEditDialog({
                       </svg>
                     </div>
                   )}
+                  {!eyedropperMode && drawMode && (
+                    <div
+                      className="absolute right-2 top-2 z-[35] flex items-center gap-1 rounded border border-black/30 bg-white/90 p-1 shadow"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {([
+                        ["line", "Line"],
+                        ["rect", "Rectangle"],
+                        ["ellipse", "Ellipse"],
+                      ] as const).map(([tool, label]) => (
+                        <button
+                          key={tool}
+                          type="button"
+                          className={`flex h-7 w-8 items-center justify-center rounded border ${
+                            drawTool === tool
+                              ? "border-blue-500 bg-blue-50 text-blue-700"
+                              : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                          }`}
+                          onClick={() => setDrawTool(tool)}
+                          aria-label={label}
+                          title={label}
+                        >
+                          <svg width="20" height="16" viewBox="0 0 20 16" aria-hidden="true">
+                            {tool === "line" ? (
+                              <line x1="3" y1="13" x2="17" y2="3" stroke="currentColor" strokeWidth="1.8" />
+                            ) : tool === "rect" ? (
+                              <rect x="3" y="3" width="14" height="10" fill="none" stroke="currentColor" strokeWidth="1.6" />
+                            ) : (
+                              <ellipse cx="10" cy="8" rx="7" ry="5" fill="none" stroke="currentColor" strokeWidth="1.6" />
+                            )}
+                          </svg>
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        className="flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-white hover:bg-gray-100"
+                        onClick={() => setDrawStrokeWidthIndex((current) => (current + 1) % DRAW_STROKE_WIDTH_RATIOS.length)}
+                        aria-label={`Stroke width: ${DRAW_STROKE_WIDTH_LABELS[drawStrokeWidthIndex]}`}
+                        title={`Stroke width: ${DRAW_STROKE_WIDTH_LABELS[drawStrokeWidthIndex]}`}
+                      >
+                        <span
+                          className="block w-5 border-t border-current"
+                          style={{ borderTopWidth: 1 + drawStrokeWidthIndex * 1.5 }}
+                        />
+                      </button>
+                      <button
+                        type="button"
+                        className="flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-white hover:bg-gray-100"
+                        onClick={() => setDrawColorIndex((current) => (current + 1) % TEXT_OVERLAY_COLORS.length)}
+                        aria-label="Change drawing color"
+                        title="Drawing color"
+                      >
+                        <span
+                          className="h-4 w-4 rounded-full border border-black/40"
+                          style={{ backgroundColor: TEXT_OVERLAY_COLORS[drawColorIndex] }}
+                        />
+                      </button>
+                    </div>
+                  )}
+                  {!eyedropperMode && cropRect.w > 0 && cropRect.h > 0 && (drawOverlays.length > 0 || drawDraft) && (
+                    <svg
+                      className="absolute z-20 overflow-visible"
+                      style={{
+                        left: cropRect.x,
+                        top: cropRect.y,
+                        width: cropRect.w,
+                        height: cropRect.h,
+                        pointerEvents: "none",
+                      }}
+                      viewBox={`0 0 ${cropRect.w} ${cropRect.h}`}
+                      preserveAspectRatio="none"
+                      aria-hidden="true"
+                    >
+                      {drawOverlays.map((overlay) => {
+                        const x1 = overlay.x1 * displayed.w;
+                        const y1 = overlay.y1 * displayed.h;
+                        const x2 = overlay.x2 * displayed.w;
+                        const y2 = overlay.y2 * displayed.h;
+                        const strokeWidth = Math.max(1, overlay.strokeWidth * displayed.w / natural.w);
+                        const stroke = TEXT_OVERLAY_COLORS[normalizeTextColorIndex(overlay.colorIndex)];
+                        const commonHitProps = {
+                          onPointerDown: onDrawMovePointerDown(overlay),
+                          onPointerMove: onDrawEditPointerMove,
+                          onPointerUp: onDrawEditPointerUp,
+                          onPointerCancel: onDrawEditPointerUp,
+                        };
+                        if (overlay.type === "line") {
+                          return (
+                            <g key={overlay.id}>
+                              <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={stroke} strokeWidth={strokeWidth} strokeLinecap="round" />
+                              {drawMode && (
+                                <line
+                                  x1={x1}
+                                  y1={y1}
+                                  x2={x2}
+                                  y2={y2}
+                                  stroke="rgba(0,0,0,0.001)"
+                                  strokeWidth={Math.max(12, strokeWidth + 10)}
+                                  strokeLinecap="round"
+                                  style={{ pointerEvents: "stroke", cursor: "move" }}
+                                  {...commonHitProps}
+                                />
+                              )}
+                            </g>
+                          );
+                        }
+                        const left = Math.min(x1, x2);
+                        const top = Math.min(y1, y2);
+                        const width = Math.abs(x2 - x1);
+                        const height = Math.abs(y2 - y1);
+                        return (
+                          <g key={overlay.id}>
+                            {overlay.type === "rect" ? (
+                              <rect x={left} y={top} width={width} height={height} fill="none" stroke={stroke} strokeWidth={strokeWidth} />
+                            ) : (
+                              <ellipse cx={left + width / 2} cy={top + height / 2} rx={width / 2} ry={height / 2} fill="none" stroke={stroke} strokeWidth={strokeWidth} />
+                            )}
+                            {drawMode && (overlay.type === "rect" ? (
+                              <rect
+                                x={left}
+                                y={top}
+                                width={width}
+                                height={height}
+                                fill="rgba(0,0,0,0.001)"
+                                stroke="rgba(0,0,0,0.001)"
+                                strokeWidth={Math.max(12, strokeWidth + 10)}
+                                style={{ pointerEvents: "all", cursor: "move" }}
+                                {...commonHitProps}
+                              />
+                            ) : (
+                              <ellipse
+                                cx={left + width / 2}
+                                cy={top + height / 2}
+                                rx={width / 2}
+                                ry={height / 2}
+                                fill="rgba(0,0,0,0.001)"
+                                stroke="rgba(0,0,0,0.001)"
+                                strokeWidth={Math.max(12, strokeWidth + 10)}
+                                style={{ pointerEvents: "all", cursor: "move" }}
+                                {...commonHitProps}
+                              />
+                            ))}
+                          </g>
+                        );
+                      })}
+                      {drawDraft && (() => {
+                        const x1 = drawDraft.x1 * displayed.w;
+                        const y1 = drawDraft.y1 * displayed.h;
+                        const x2 = drawDraft.x2 * displayed.w;
+                        const y2 = drawDraft.y2 * displayed.h;
+                        const strokeWidth = Math.max(1, drawDraft.strokeWidth * displayed.w / natural.w);
+                        const stroke = TEXT_OVERLAY_COLORS[normalizeTextColorIndex(drawDraft.colorIndex)];
+                        if (drawDraft.type === "line") {
+                          return <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={stroke} strokeWidth={strokeWidth} strokeLinecap="round" />;
+                        }
+                        const left = Math.min(x1, x2);
+                        const top = Math.min(y1, y2);
+                        const width = Math.abs(x2 - x1);
+                        const height = Math.abs(y2 - y1);
+                        return drawDraft.type === "rect" ? (
+                          <rect x={left} y={top} width={width} height={height} fill="none" stroke={stroke} strokeWidth={strokeWidth} />
+                        ) : (
+                          <ellipse cx={left + width / 2} cy={top + height / 2} rx={width / 2} ry={height / 2} fill="none" stroke={stroke} strokeWidth={strokeWidth} />
+                        );
+                      })()}
+                    </svg>
+                  )}
+                  {!eyedropperMode && drawMode && cropRect.w > 0 && cropRect.h > 0 && drawOverlays.map((overlay) => {
+                    const x1 = cropRect.x + overlay.x1 * displayed.w;
+                    const y1 = cropRect.y + overlay.y1 * displayed.h;
+                    const x2 = cropRect.x + overlay.x2 * displayed.w;
+                    const y2 = cropRect.y + overlay.y2 * displayed.h;
+                    const handles: Array<[DrawHandle, number, number]> = overlay.type === "line"
+                      ? [["start", x1, y1], ["end", x2, y2]]
+                      : [
+                          ["nw", Math.min(x1, x2), Math.min(y1, y2)],
+                          ["ne", Math.max(x1, x2), Math.min(y1, y2)],
+                          ["sw", Math.min(x1, x2), Math.max(y1, y2)],
+                          ["se", Math.max(x1, x2), Math.max(y1, y2)],
+                        ];
+                    const deleteX = Math.max(x1, x2) + 5;
+                    const deleteY = Math.min(y1, y2) - 10;
+                    return (
+                      <div key={`${overlay.id}-controls`} className="contents">
+                        {handles.map(([handle, x, y]) => (
+                          <button
+                            key={handle}
+                            type="button"
+                            className="absolute z-[31] h-3 w-3 rounded-full border border-black bg-white shadow"
+                            style={{ left: x - 6, top: y - 6 }}
+                            onPointerDown={onDrawHandlePointerDown(overlay, handle)}
+                            onPointerMove={onDrawEditPointerMove}
+                            onPointerUp={onDrawEditPointerUp}
+                            onPointerCancel={onDrawEditPointerUp}
+                            aria-label="Resize drawing"
+                          />
+                        ))}
+                        <button
+                          type="button"
+                          className="absolute z-[32] flex h-5 w-5 items-center justify-center rounded-full border border-white bg-black/80 text-[12px] leading-none text-white"
+                          style={{ left: deleteX, top: deleteY }}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeDrawOverlay(overlay.id);
+                          }}
+                          aria-label="Remove drawing"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    );
+                  })}
                   {!eyedropperMode && showHistogram && histogramPaths && (
                     <div className="absolute left-2 bottom-2 w-[294px] h-[138px] rounded border border-white/40 bg-black/80 shadow-sm pointer-events-none">
                       <svg
@@ -6810,7 +7497,7 @@ export function ImageEditDialog({
                       </div>
                     </div>
                   )}
-                  {!eyedropperMode && !rotationMode && previewTextLayouts.map((layout) => {
+                  {!eyedropperMode && previewTextLayouts.map((layout) => {
                     const overlay = textOverlays.find((item) => item.id === layout.id);
                     if (!overlay) return null;
                     const active = textMode && activeTextId === layout.id;
@@ -7044,9 +7731,9 @@ export function ImageEditDialog({
                   )}
                   {!eyedropperMode && !rotationMode && (
                     <div
-                      className={`absolute border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.45)] bg-transparent ${mosaicMode || textMode ? "pointer-events-none" : "cursor-move"}`}
+                      className={`absolute border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.45)] bg-transparent ${mosaicMode || textMode || drawMode ? "pointer-events-none" : "cursor-move"}`}
                       style={{ left: cropRect.x, top: cropRect.y, width: cropRect.w, height: cropRect.h }}
-                      onPointerDown={mosaicMode || textMode ? undefined : onCropPointerDown}
+                      onPointerDown={mosaicMode || textMode || drawMode ? undefined : onCropPointerDown}
                     >
                       {cropDragging && (
                         <svg
@@ -7071,7 +7758,7 @@ export function ImageEditDialog({
                           />
                         </svg>
                       )}
-                      {!mosaicMode && !textMode && (["nw", "ne", "sw", "se"] as EditCorner[]).map((corner) => {
+                      {!mosaicMode && !textMode && !drawMode && (["nw", "ne", "sw", "se"] as EditCorner[]).map((corner) => {
                           const style =
                             corner === "nw"
                               ? { left: -6, top: -6 }
@@ -7114,6 +7801,10 @@ export function ImageEditDialog({
                     setTextMode(false);
                     setActiveTextId(null);
                     textMoveState.current = null;
+                    setDrawMode(false);
+                    setDrawDraft(null);
+                    drawCreateState.current = null;
+                    drawEditState.current = null;
                     setRotationMode((current) => !current);
                     setEyedropperMode(false);
                     rotationDragState.current = null;
@@ -7151,6 +7842,10 @@ export function ImageEditDialog({
                     setTextMode(false);
                     setActiveTextId(null);
                     textMoveState.current = null;
+                    setDrawMode(false);
+                    setDrawDraft(null);
+                    drawCreateState.current = null;
+                    drawEditState.current = null;
                     setEyedropperMode((current) => !current);
                     setRotationMode(false);
                     rotationDragState.current = null;
