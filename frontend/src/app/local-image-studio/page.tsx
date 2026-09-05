@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import PageBody from "./PageBody";
 
-export default function ImageEditSandboxPage() {
+export default function LocalImageStudioPage() {
   return (
     <Suspense>
       <PageBody />

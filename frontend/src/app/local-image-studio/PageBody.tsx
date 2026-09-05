@@ -110,7 +110,7 @@ async function readImageSize(file: File): Promise<{ width: number; height: numbe
   return { width: meta.width, height: meta.height };
 }
 
-export default function ImageEditSandbox() {
+export default function LocalImageStudio() {
   const inputRef = useRef<HTMLInputElement>(null);
   const resultUrlRef = useRef<string | null>(null);
   const editedVariantRef = useRef<ImageEditPreparedVariant | null>(null);
@@ -394,13 +394,13 @@ export default function ImageEditSandbox() {
     setEditing(true);
   }, [clearEditedVariant]);
 
-  const sandboxDefaultEditParams = source
+  const studioDefaultEditParams = source
     ? { ...buildDefaultEditParams(source.width, source.height), resizePercent: 100 }
     : undefined;
 
   return (
     <main className="mx-auto max-w-5xl p-4 sm:p-6">
-      <h1 className="text-xl font-semibold">Image Edit Sandbox</h1>
+      <h1 className="text-xl font-semibold">Local Image Studio</h1>
 
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <input
@@ -529,7 +529,7 @@ export default function ImageEditSandbox() {
         <ImageEditDialog
           file={source.file}
           initialParams={source.edit}
-          defaultParams={sandboxDefaultEditParams}
+          defaultParams={studioDefaultEditParams}
           initialDecodedImage={rawDevelopmentRef.current ?? undefined}
           onRawDevelopmentReady={(decodedImage) => {
             const previous = rawDevelopmentRef.current;
