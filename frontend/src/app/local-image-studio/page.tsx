@@ -7,7 +7,7 @@ const title = "Local Image Studio | STGY";
 const description = "Edit images and develop RAW photos in your browser.";
 const canonicalUrl = new URL("/local-image-studio", Config.FRONTEND_CANONICAL_URL).toString();
 const imageUrl = new URL(
-  "/data/local-image-studio-ogp.png",
+  "/data/local-image-studio-ogp.jpg",
   Config.FRONTEND_CANONICAL_URL,
 ).toString();
 
