@@ -78,7 +78,6 @@ const OUTPUT_FORMAT_OPTIONS: { value: ImageEditOutputFormat; label: string }[] =
   { value: "image/webp", label: "WebP" },
   { value: "image/jpeg", label: "JPEG" },
   { value: "image/png", label: "PNG" },
-  { value: "image/png16", label: "PNG16" },
 ];
 
 const OUTPUT_COLOR_PROFILE_OPTIONS: { value: OutputColorProfileSelection; label: string }[] = [
