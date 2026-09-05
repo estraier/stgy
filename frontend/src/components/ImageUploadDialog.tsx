@@ -5,6 +5,14 @@ import NextImage from "next/image";
 import { createPortal } from "react-dom";
 import { Move, Palette, Pipette, RotateCw } from "lucide-react";
 import { formatBytes } from "@/utils/format";
+import {
+  buildRawLensfunCorrection,
+  lensfunSourceCoordinates,
+  lensfunVignettingGain,
+  summarizeLensfunCorrection,
+  type LensfunCorrection,
+  type RawLensMetadata,
+} from "@/utils/lensfunCorrection";
 import { Config } from "@/config";
 import {
   presignImageUpload,
@@ -284,10 +292,32 @@ type LibRawSettingsLike = {
   userFlip?: number;
 };
 
+type LibRawLensMakerNotesLike = {
+  Lens?: string;
+  CurFocal?: number;
+  CurAp?: number;
+  FocalLengthIn35mmFormat?: number;
+  [key: string]: unknown;
+};
+
+type LibRawLensInfoLike = {
+  Lens?: string;
+  LensMake?: string;
+  makernotes?: LibRawLensMakerNotesLike;
+  [key: string]: unknown;
+};
+
 type LibRawMetadataLike = {
   width?: number;
   height?: number;
   iso_speed?: number;
+  aperture?: number;
+  focal_len?: number;
+  camera_make?: string;
+  camera_model?: string;
+  normalized_make?: string;
+  normalized_model?: string;
+  lens?: LibRawLensInfoLike;
   [key: string]: unknown;
 };
 
@@ -1808,12 +1838,25 @@ type RawDevelopmentSaturationSettings = {
   vibrance: number;
 };
 
+type RawDevelopmentLensfunSettings = {
+  name: string;
+  focal: number | null;
+  aperture: number | null;
+  cropFactor: number | null;
+  distortionPercent: number | null;
+  tcaRedPercent: number | null;
+  tcaBluePercent: number | null;
+  vignettingPercent: number | null;
+  vignettingEv: number | null;
+};
+
 type RawDevelopmentSettings = {
   mode: "thumbnail-match" | "fallback";
   iso: number | null;
   medPasses: number;
   luminance: RawDevelopmentLuminanceSettings | null;
   saturation: RawDevelopmentSaturationSettings;
+  lensfun?: RawDevelopmentLensfunSettings;
   elapsedSeconds: number;
 };
 
@@ -1829,6 +1872,7 @@ type DecodedRgbImage16 = {
   width: number;
   height: number;
   data: Uint16Array;
+  lensCorrection?: LensfunCorrection;
   rawDevelopment?: RawDevelopmentSettings;
   cleanup: () => void;
 };
@@ -2701,10 +2745,15 @@ function applyRawThumbnailMatchedBaseline(
   }
 
   const data = decoded.data;
-  for (let i = 0; i < data.length; i += 3) {
-    const r = decodeStoredRgb16Channel(data[i] ?? 0, decoded.transfer);
-    const g = decodeStoredRgb16Channel(data[i + 1] ?? 0, decoded.transfer);
-    const b = decodeStoredRgb16Channel(data[i + 2] ?? 0, decoded.transfer);
+  const pixelCount = decoded.width * decoded.height;
+  for (let pixel = 0; pixel < pixelCount; pixel++) {
+    const i = pixel * 3;
+    const x = pixel % decoded.width;
+    const y = Math.floor(pixel / decoded.width);
+    const [rGain, gGain, bGain] = pendingLensfunVignettingGain(decoded, x, y);
+    const r = decodeStoredRgb16Channel(data[i] ?? 0, decoded.transfer) * rGain;
+    const g = decodeStoredRgb16Channel(data[i + 1] ?? 0, decoded.transfer) * gGain;
+    const b = decodeStoredRgb16Channel(data[i + 2] ?? 0, decoded.transfer) * bGain;
     const luma = PROPHOTO_LUMA_R * r + PROPHOTO_LUMA_G * g + PROPHOTO_LUMA_B * b;
     if (!(luma > 1e-12)) {
       data[i] = 0;
@@ -2718,6 +2767,7 @@ function applyRawThumbnailMatchedBaseline(
     data[i + 1] = encodeStoredRgb16Channel(g * scale, decoded.transfer);
     data[i + 2] = encodeStoredRgb16Channel(b * scale, decoded.transfer);
   }
+  finishLensfunVignettingBake(decoded);
   return {
     exposureEv: Math.log2(Math.max(gain, Number.MIN_VALUE)),
     logarithm: scaledLog,
@@ -2999,13 +3049,14 @@ function applyRawBaselineExposure(
   const pixelCount = decoded.width * decoded.height;
   if (pixelCount <= 0) return null;
 
-  for (let i = 0; i < data.length; i += 3) {
-    const r16 = data[i] ?? 0;
-    const g16 = data[i + 1] ?? 0;
-    const b16 = data[i + 2] ?? 0;
-    const r = decodeStoredRgb16Channel(r16, decoded.transfer);
-    const g = decodeStoredRgb16Channel(g16, decoded.transfer);
-    const b = decodeStoredRgb16Channel(b16, decoded.transfer);
+  for (let pixel = 0; pixel < pixelCount; pixel++) {
+    const i = pixel * 3;
+    const x = pixel % decoded.width;
+    const y = Math.floor(pixel / decoded.width);
+    const [rGain, gGain, bGain] = pendingLensfunVignettingGain(decoded, x, y);
+    const r = decodeStoredRgb16Channel(data[i] ?? 0, decoded.transfer) * rGain;
+    const g = decodeStoredRgb16Channel(data[i + 1] ?? 0, decoded.transfer) * gGain;
+    const b = decodeStoredRgb16Channel(data[i + 2] ?? 0, decoded.transfer) * bGain;
     const rms = Math.sqrt((r * r + g * g + b * b) / 3);
     const rmsLevel = Math.min(65535, Math.max(0, Math.round(rms * 65535)));
     rmsHistogram[rmsLevel]++;
@@ -3033,23 +3084,28 @@ function applyRawBaselineExposure(
     4,
   );
 
-  for (let i = 0; i < data.length; i += 3) {
+  for (let pixel = 0; pixel < pixelCount; pixel++) {
+    const i = pixel * 3;
+    const x = pixel % decoded.width;
+    const y = Math.floor(pixel / decoded.width);
+    const [rGain, gGain, bGain] = pendingLensfunVignettingGain(decoded, x, y);
     const r = applyRolloffScalar(
-      decodeStoredRgb16Channel(data[i] ?? 0, decoded.transfer) * factor,
+      decodeStoredRgb16Channel(data[i] ?? 0, decoded.transfer) * rGain * factor,
       rolloff,
     );
     const g = applyRolloffScalar(
-      decodeStoredRgb16Channel(data[i + 1] ?? 0, decoded.transfer) * factor,
+      decodeStoredRgb16Channel(data[i + 1] ?? 0, decoded.transfer) * gGain * factor,
       rolloff,
     );
     const b = applyRolloffScalar(
-      decodeStoredRgb16Channel(data[i + 2] ?? 0, decoded.transfer) * factor,
+      decodeStoredRgb16Channel(data[i + 2] ?? 0, decoded.transfer) * bGain * factor,
       rolloff,
     );
     data[i] = encodeStoredRgb16Channel(r, decoded.transfer);
     data[i + 1] = encodeStoredRgb16Channel(g, decoded.transfer);
     data[i + 2] = encodeStoredRgb16Channel(b, decoded.transfer);
   }
+  finishLensfunVignettingBake(decoded);
   return {
     exposureEv: Math.log2(Math.max(factor, Number.MIN_VALUE)),
     logarithm: 0,
@@ -3140,52 +3196,93 @@ function sampleLinearRgbFromRgb16(decoded: DecodedRgbImage16): Float32Array {
       const sx = Math.min(decoded.width - 1, Math.floor((x + 0.5) * decoded.width / sampleW));
       const sourceIndex = (sy * decoded.width + sx) * 3;
       const targetIndex = (y * sampleW + x) * 3;
-      output[targetIndex] = decodeStoredRgb16Channel(decoded.data[sourceIndex] ?? 0, decoded.transfer);
-      output[targetIndex + 1] = decodeStoredRgb16Channel(decoded.data[sourceIndex + 1] ?? 0, decoded.transfer);
-      output[targetIndex + 2] = decodeStoredRgb16Channel(decoded.data[sourceIndex + 2] ?? 0, decoded.transfer);
+      const [rGain, gGain, bGain] = pendingLensfunVignettingGain(decoded, sx, sy);
+      output[targetIndex] =
+        decodeStoredRgb16Channel(decoded.data[sourceIndex] ?? 0, decoded.transfer) * rGain;
+      output[targetIndex + 1] =
+        decodeStoredRgb16Channel(decoded.data[sourceIndex + 1] ?? 0, decoded.transfer) * gGain;
+      output[targetIndex + 2] =
+        decodeStoredRgb16Channel(decoded.data[sourceIndex + 2] ?? 0, decoded.transfer) * bGain;
     }
   }
   return output;
 }
 
 
-function sampleLinearRgb16Bilinear(
+function sampleLinearRgb16ChannelBilinearAtSource(
   decoded: DecodedRgbImage16,
   x: number,
   y: number,
-): [number, number, number] {
-  const clampedX = Math.max(0, Math.min(decoded.width - 1, x));
-  const clampedY = Math.max(0, Math.min(decoded.height - 1, y));
-  const x0 = Math.floor(clampedX);
-  const y0 = Math.floor(clampedY);
+  channel: 0 | 1 | 2,
+): number | null {
+  if (x < 0 || x > decoded.width - 1 || y < 0 || y > decoded.height - 1) return null;
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
   const x1 = Math.min(decoded.width - 1, x0 + 1);
   const y1 = Math.min(decoded.height - 1, y0 + 1);
-  const tx = clampedX - x0;
-  const ty = clampedY - y0;
+  const tx = x - x0;
+  const ty = y - y0;
   const data = decoded.data;
-  const idx00 = (y0 * decoded.width + x0) * 3;
-  const idx10 = (y0 * decoded.width + x1) * 3;
-  const idx01 = (y1 * decoded.width + x0) * 3;
-  const idx11 = (y1 * decoded.width + x1) * 3;
+  const idx00 = (y0 * decoded.width + x0) * 3 + channel;
+  const idx10 = (y0 * decoded.width + x1) * 3 + channel;
+  const idx01 = (y1 * decoded.width + x0) * 3 + channel;
+  const idx11 = (y1 * decoded.width + x1) * 3 + channel;
   const w00 = (1 - tx) * (1 - ty);
   const w10 = tx * (1 - ty);
   const w01 = (1 - tx) * ty;
   const w11 = tx * ty;
   const transfer = decoded.transfer;
-  return [
+  return (
     decodeStoredRgb16Channel(data[idx00] ?? 0, transfer) * w00 +
-      decodeStoredRgb16Channel(data[idx10] ?? 0, transfer) * w10 +
-      decodeStoredRgb16Channel(data[idx01] ?? 0, transfer) * w01 +
-      decodeStoredRgb16Channel(data[idx11] ?? 0, transfer) * w11,
-    decodeStoredRgb16Channel(data[idx00 + 1] ?? 0, transfer) * w00 +
-      decodeStoredRgb16Channel(data[idx10 + 1] ?? 0, transfer) * w10 +
-      decodeStoredRgb16Channel(data[idx01 + 1] ?? 0, transfer) * w01 +
-      decodeStoredRgb16Channel(data[idx11 + 1] ?? 0, transfer) * w11,
-    decodeStoredRgb16Channel(data[idx00 + 2] ?? 0, transfer) * w00 +
-      decodeStoredRgb16Channel(data[idx10 + 2] ?? 0, transfer) * w10 +
-      decodeStoredRgb16Channel(data[idx01 + 2] ?? 0, transfer) * w01 +
-      decodeStoredRgb16Channel(data[idx11 + 2] ?? 0, transfer) * w11,
-  ];
+    decodeStoredRgb16Channel(data[idx10] ?? 0, transfer) * w10 +
+    decodeStoredRgb16Channel(data[idx01] ?? 0, transfer) * w01 +
+    decodeStoredRgb16Channel(data[idx11] ?? 0, transfer) * w11
+  );
+}
+
+function sampleLinearRgb16BilinearAtSource(
+  decoded: DecodedRgbImage16,
+  x: number,
+  y: number,
+): [number, number, number] | null {
+  const r = sampleLinearRgb16ChannelBilinearAtSource(decoded, x, y, 0);
+  const g = sampleLinearRgb16ChannelBilinearAtSource(decoded, x, y, 1);
+  const b = sampleLinearRgb16ChannelBilinearAtSource(decoded, x, y, 2);
+  return r === null || g === null || b === null ? null : [r, g, b];
+}
+
+function sampleLinearRgb16Bilinear(
+  decoded: DecodedRgbImage16,
+  x: number,
+  y: number,
+): [number, number, number] | null {
+  const correction = decoded.lensCorrection;
+  if (!correction) return sampleLinearRgb16BilinearAtSource(decoded, x, y);
+
+  const coordinates = lensfunSourceCoordinates(correction, x, y);
+  if (correction.tca) {
+    let r = sampleLinearRgb16ChannelBilinearAtSource(decoded, coordinates.r[0], coordinates.r[1], 0);
+    let g = sampleLinearRgb16ChannelBilinearAtSource(decoded, coordinates.g[0], coordinates.g[1], 1);
+    let b = sampleLinearRgb16ChannelBilinearAtSource(decoded, coordinates.b[0], coordinates.b[1], 2);
+    if (r === null || g === null || b === null) return null;
+    if (correction.vignetting && !correction.vignettingBaked) {
+      r *= lensfunVignettingGain(correction, coordinates.r[0], coordinates.r[1])[0];
+      g *= lensfunVignettingGain(correction, coordinates.g[0], coordinates.g[1])[1];
+      b *= lensfunVignettingGain(correction, coordinates.b[0], coordinates.b[1])[2];
+    }
+    return [r, g, b];
+  }
+  const sample = sampleLinearRgb16BilinearAtSource(decoded, coordinates.g[0], coordinates.g[1]);
+  if (!sample) return null;
+  if (correction.vignetting && !correction.vignettingBaked) {
+    const [rGain, gGain, bGain] = lensfunVignettingGain(
+      correction,
+      coordinates.g[0],
+      coordinates.g[1],
+    );
+    return [sample[0] * rGain, sample[1] * gGain, sample[2] * bGain];
+  }
+  return sample;
 }
 
 
@@ -3246,7 +3343,9 @@ function sampleLinearRgbFromRgb16Region(
       }
       const di = (y * sampleW + x) * 3;
       const vi = y * sampleW + x;
-      const [r, g, b] = sampleLinearRgb16Bilinear(decoded, sourcePoint.x, sourcePoint.y);
+      const sample = sampleLinearRgb16Bilinear(decoded, sourcePoint.x, sourcePoint.y);
+      if (!sample) continue;
+      const [r, g, b] = sample;
       data[di] = r;
       data[di + 1] = g;
       data[di + 2] = b;
@@ -3519,6 +3618,93 @@ async function debugStatisticsFromRawThumbnail(
   };
 }
 
+function rawMetadataString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function rawMetadataPositiveNumber(value: unknown): number | undefined {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : undefined;
+}
+
+function rawLensMetadata(metadata: LibRawMetadataLike | undefined): RawLensMetadata | null {
+  if (!metadata) return null;
+  const cameraMaker = rawMetadataString(metadata.normalized_make) || rawMetadataString(metadata.camera_make);
+  const cameraModel = rawMetadataString(metadata.normalized_model) || rawMetadataString(metadata.camera_model);
+  const lensInfo = metadata.lens;
+  const makerNotes = lensInfo?.makernotes;
+  const lensModel = rawMetadataString(lensInfo?.Lens) || rawMetadataString(makerNotes?.Lens);
+  const lensMaker = rawMetadataString(lensInfo?.LensMake);
+  const focal = rawMetadataPositiveNumber(metadata.focal_len) ?? rawMetadataPositiveNumber(makerNotes?.CurFocal);
+  if (!cameraMaker || !cameraModel || !lensModel || !focal) return null;
+  const aperture = rawMetadataPositiveNumber(metadata.aperture) ?? rawMetadataPositiveNumber(makerNotes?.CurAp);
+  const equivalent35mm = rawMetadataPositiveNumber(makerNotes?.FocalLengthIn35mmFormat);
+  const cropFactor = equivalent35mm && focal > 0 ? equivalent35mm / focal : undefined;
+  return {
+    cameraMaker,
+    cameraModel,
+    ...(lensMaker ? { lensMaker } : {}),
+    lensModel,
+    focal,
+    ...(aperture ? { aperture } : {}),
+    ...(cropFactor && Number.isFinite(cropFactor) && cropFactor > 0 ? { cropFactor } : {}),
+  };
+}
+
+function rawLensLabelFromMetadata(metadata: RawLensMetadata): string {
+  const lensMaker = typeof metadata.lensMaker === "string" ? metadata.lensMaker.trim() : "";
+  const lensModel = typeof metadata.lensModel === "string" ? metadata.lensModel.trim() : "";
+  if (!lensMaker) return lensModel;
+  if (!lensModel) return lensMaker;
+  return lensModel.toLowerCase().startsWith(lensMaker.toLowerCase())
+    ? lensModel
+    : `${lensMaker} ${lensModel}`;
+}
+
+function buildRawDevelopmentLensfunSettings(
+  metadata: RawLensMetadata | null,
+  correction: LensfunCorrection | undefined,
+  width: number,
+  height: number,
+): RawDevelopmentLensfunSettings | undefined {
+  if (!metadata && !correction) return undefined;
+
+  const summary = correction ? summarizeLensfunCorrection(correction, width, height) : undefined;
+  const name = summary?.lensLabel || (metadata ? rawLensLabelFromMetadata(metadata) : "");
+  return {
+    name,
+    focal: summary?.focal ?? metadata?.focal ?? null,
+    aperture: summary?.aperture ?? metadata?.aperture ?? null,
+    cropFactor: summary?.cropFactor ?? metadata?.cropFactor ?? null,
+    distortionPercent: summary?.distortionPercent ?? null,
+    tcaRedPercent: summary?.tcaRedPercent ?? null,
+    tcaBluePercent: summary?.tcaBluePercent ?? null,
+    vignettingPercent: summary?.vignettingPercent ?? null,
+    vignettingEv: summary?.vignettingEv ?? null,
+  };
+}
+
+function pendingLensfunVignettingGain(
+  decoded: DecodedRgbImage16,
+  x: number,
+  y: number,
+): [number, number, number] {
+  const correction = decoded.lensCorrection;
+  if (!correction?.vignetting || correction.vignettingBaked) return [1, 1, 1];
+  return lensfunVignettingGain(correction, x, y);
+}
+
+function finishLensfunVignettingBake(decoded: DecodedRgbImage16): void {
+  const correction = decoded.lensCorrection;
+  if (!correction?.vignetting) return;
+
+  correction.vignettingBaked = true;
+  delete correction.vignetting;
+  if (!correction.distortion && !correction.tca) {
+    decoded.lensCorrection = undefined;
+  }
+}
+
 function libRawImageDataToDecoded(image: LibRawImageDataLike): DecodedRgbImage16 {
   const width = Math.max(1, Math.round(image.width || 0));
   const height = Math.max(1, Math.round(image.height || 0));
@@ -3589,6 +3775,34 @@ function formatRawDevelopmentSetting(value: number): string {
   return normalized.toFixed(2).replace(/\.?0+$/, "");
 }
 
+function formatSignedLensfunValue(value: number, digits: number, suffix = ""): string {
+  if (!Number.isFinite(value)) return "n/a";
+  const threshold = 0.5 * 10 ** (-digits);
+  const normalized = Math.abs(value) < threshold ? 0 : value;
+  const sign = normalized > 0 ? "+" : normalized < 0 ? "-" : "";
+  return `${sign}${Math.abs(normalized).toFixed(digits).replace(/\.?0+$/, "")}${suffix}`;
+}
+
+function formatRawDevelopmentLensfunCorrection(settings: RawDevelopmentLensfunSettings): string {
+  const parts: string[] = [];
+  if (settings.distortionPercent !== null) {
+    parts.push(`distortion=${formatSignedLensfunValue(settings.distortionPercent, 1, "%")}`);
+  }
+  if (settings.tcaRedPercent !== null || settings.tcaBluePercent !== null) {
+    parts.push(
+      `TCA R=${settings.tcaRedPercent === null ? "n/a" : formatSignedLensfunValue(settings.tcaRedPercent, 3, "%")} B=${settings.tcaBluePercent === null ? "n/a" : formatSignedLensfunValue(settings.tcaBluePercent, 3, "%")}`,
+    );
+  }
+  if (settings.vignettingPercent !== null || settings.vignettingEv !== null) {
+    const gain = settings.vignettingPercent === null
+      ? "n/a"
+      : `${(1 + settings.vignettingPercent / 100).toFixed(3)}x`;
+    const ev = settings.vignettingEv === null ? "n/a" : formatSignedLensfunValue(settings.vignettingEv, 2, "EV");
+    parts.push(`vignetting=${gain} (${ev})`);
+  }
+  return parts.length ? parts.join(", ") : "unavailable";
+}
+
 function formatMemoryMiB(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)}MiB`;
 }
@@ -3645,7 +3859,7 @@ async function decodeRawImage(file: File): Promise<DecodedRgbImage16> {
       workerFailure.promise,
     ]);
 
-    const metadata = await Promise.race([raw.metadata(false), workerFailure.promise]);
+    const metadata = await Promise.race([raw.metadata(true), workerFailure.promise]);
     const isoValue = Number(metadata?.iso_speed);
     const medPasses = rawMedianDenoisePassesForIso(isoValue);
 
@@ -3675,6 +3889,21 @@ async function decodeRawImage(file: File): Promise<DecodedRgbImage16> {
     }
 
     const decoded = libRawImageDataToDecoded(image);
+    const lensMetadata = rawLensMetadata(metadata);
+    decoded.lensCorrection = await buildRawLensfunCorrection(
+      lensMetadata,
+      decoded.width,
+      decoded.height,
+    );
+    // Capture the effective Lensfun values while every generated map is still
+    // present. Vignetting is baked into the RAW pixels during baseline tone
+    // processing and its map is then discarded to release memory.
+    const lensfunSettings = buildRawDevelopmentLensfunSettings(
+      lensMetadata,
+      decoded.lensCorrection,
+      decoded.width,
+      decoded.height,
+    );
     let mode: RawDevelopmentSettings["mode"] = "fallback";
     let luminanceSettings: RawDevelopmentLuminanceSettings | null = null;
     let saturationSettings: RawDevelopmentSaturationSettings = {
@@ -3708,6 +3937,7 @@ async function decodeRawImage(file: File): Promise<DecodedRgbImage16> {
       medPasses,
       luminance: luminanceSettings,
       saturation: saturationSettings,
+      lensfun: lensfunSettings,
       elapsedSeconds: (performance.now() - rawDevelopmentStartedAt) / 1000,
     };
     return decoded;
@@ -6475,7 +6705,7 @@ export function ImageEditDialog({
                     >
                       <div
                         ref={percentilePanelRef}
-                        className="absolute left-2 top-2 rounded border border-white/40 bg-black/85 p-2 text-[11px] leading-tight text-white shadow-lg"
+                        className="absolute left-2 top-2 max-w-[480px] overflow-x-auto rounded border border-white/40 bg-black/85 p-2 text-[11px] leading-tight text-white shadow-lg"
                         onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => e.stopPropagation()}
                       >
@@ -6534,6 +6764,27 @@ export function ImageEditDialog({
                               <div>
                                 source: ISO={rawDevelopmentSettings.iso === null ? "n/a" : formatRawDevelopmentSetting(rawDevelopmentSettings.iso)}, medPasses={rawDevelopmentSettings.medPasses}, mode={rawDevelopmentSettings.mode === "thumbnail-match" ? "thumbnail match" : "fallback"}
                               </div>
+                              {rawDevelopmentSettings.lensfun && (
+                                <>
+                                  <div>
+                                    lens: {[
+                                      rawDevelopmentSettings.lensfun.name || "n/a",
+                                      rawDevelopmentSettings.lensfun.focal === null
+                                        ? null
+                                        : `${formatRawDevelopmentSetting(rawDevelopmentSettings.lensfun.focal)}mm`,
+                                      rawDevelopmentSettings.lensfun.aperture === null
+                                        ? null
+                                        : `f/${formatRawDevelopmentSetting(rawDevelopmentSettings.lensfun.aperture)}`,
+                                      rawDevelopmentSettings.lensfun.cropFactor === null
+                                        ? null
+                                        : `crop=${formatRawDevelopmentSetting(rawDevelopmentSettings.lensfun.cropFactor)}`,
+                                    ].filter(Boolean).join(", ")}
+                                  </div>
+                                  <div>
+                                    lens correction: {formatRawDevelopmentLensfunCorrection(rawDevelopmentSettings.lensfun)}
+                                  </div>
+                                </>
+                              )}
                               {rawDevelopmentMemoryUsage && (
                                 <div>
                                   memory usage: {[

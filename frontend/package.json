@@ -11,14 +11,16 @@
     "test": "jest",
     "fmt": "prettier --write .",
     "lint": "eslint src --ext .js,.jsx,.ts,.tsx",
-    "clean": "rm -rf node_modules dist out .next .turbo public/export-assets public/vendor/libraw-wasm",
+    "clean": "rm -rf node_modules dist out .next .turbo public/export-assets public/vendor/libraw-wasm public/vendor/lensfun-wasm",
     "build:export-track-assets": "node scripts/build-export-track-assets.mjs",
     "build:libraw-assets": "node scripts/build-libraw-assets.mjs",
-    "prebuild": "npm run build:export-track-assets && npm run build:libraw-assets",
-    "predev": "npm run build:export-track-assets && npm run build:libraw-assets",
-    "build:libraw-wasm": "node scripts/build-libraw-wasm.mjs"
+    "prebuild": "npm run build:export-track-assets && npm run build:libraw-assets && npm run build:lensfun-assets",
+    "predev": "npm run build:export-track-assets && npm run build:libraw-assets && npm run build:lensfun-assets",
+    "build:libraw-wasm": "node scripts/build-libraw-wasm.mjs",
+    "build:lensfun-assets": "node scripts/build-lensfun-assets.mjs"
   },
   "dependencies": {
+    "@neoanaloglabkk/lensfun-wasm": "0.1.3",
     "@vvo/tzdb": "^6.187.0",
     "iso-639-1": "^3.1.5",
     "jdenticon": "^3.3.0",
