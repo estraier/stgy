@@ -108,6 +108,8 @@ export type ImageEditParams = {
   temperature: number;
   tint: number;
   exposureEv: number;
+  shadow: number;
+  highlight: number;
   scaledLog: number;
   sigmoid: number;
   vibrance: number;
@@ -615,6 +617,10 @@ function clampSigmoid(v: number): number {
   return Math.min(10, Math.max(-10, Math.round(v * 10) / 10));
 }
 
+function clampToneRangeAdjustment(v: number): number {
+  return Math.min(100, Math.max(-100, Math.round(v)));
+}
+
 function clampColorAdjustment(v: number): number {
   return Math.min(100, Math.max(-100, Math.round(v)));
 }
@@ -756,6 +762,8 @@ export function buildDefaultEditParams(w?: number, h?: number): ImageEditParams 
     temperature: 0,
     tint: 0,
     exposureEv: 0,
+    shadow: 0,
+    highlight: 0,
     scaledLog: 0,
     sigmoid: 0,
     vibrance: 0,
@@ -789,6 +797,8 @@ function normalizeEditParams(params: ImageEditParams | undefined, w?: number, h?
     temperature: clampWhiteBalanceValue(params?.temperature ?? defaults.temperature),
     tint: clampWhiteBalanceValue(params?.tint ?? defaults.tint),
     exposureEv: clampExposureEv(params?.exposureEv ?? defaults.exposureEv),
+    shadow: clampToneRangeAdjustment(params?.shadow ?? defaults.shadow),
+    highlight: clampToneRangeAdjustment(params?.highlight ?? defaults.highlight),
     scaledLog: clampScaledLog(params?.scaledLog ?? defaults.scaledLog),
     sigmoid: clampSigmoid(params?.sigmoid ?? defaults.sigmoid),
     vibrance: clampColorAdjustment(params?.vibrance ?? defaults.vibrance),
@@ -819,6 +829,8 @@ function isMeaningfullyEdited(
     normalized.temperature !== 0 ||
     normalized.tint !== 0 ||
     Math.abs(normalized.exposureEv) > 0.0001 ||
+    normalized.shadow !== 0 ||
+    normalized.highlight !== 0 ||
     Math.abs(normalized.scaledLog) > 0.0001 ||
     Math.abs(normalized.sigmoid) > 0.0001 ||
     normalized.vibrance !== 0 ||
@@ -1194,6 +1206,161 @@ function applyExposureLinearToRgb(
   return [r * factor, g * factor, b * factor];
 }
 
+const SHADOW_ADJUSTMENT_END = 0.4;
+const SHADOW_MAX_POINT_X = 0.15;
+const SHADOW_MAX_POINT_Y = 0.05;
+const SHADOW_SOFT_POINT_CURVE_X =
+  SHADOW_MAX_POINT_X / (1 - Math.sqrt(SHADOW_MAX_POINT_Y / SHADOW_MAX_POINT_X));
+// With mid fixed at 1, the slider raises sigmoid gain up to 4.
+const HIGHLIGHT_MAX_SIGMOID_GAIN = 4;
+// Use a direct power exponent (not conventional display-gamma encoding):
+// z = u^2.4, then return with u = z^(1/2.4).
+const HIGHLIGHT_WORKING_EXPONENT = 2.4;
+
+type HighlightRange = {
+  p0: number;
+  p100: number;
+};
+
+function cubicHermiteScalar(
+  value: number,
+  x0: number,
+  y0: number,
+  slope0: number,
+  x1: number,
+  y1: number,
+  slope1: number,
+): number {
+  const span = x1 - x0;
+  if (span <= 0) return y1;
+  const t = Math.min(1, Math.max(0, (value - x0) / span));
+  const t2 = t * t;
+  const t3 = t2 * t;
+  const h00 = 2 * t3 - 3 * t2 + 1;
+  const h10 = t3 - 2 * t2 + t;
+  const h01 = -2 * t3 + 3 * t2;
+  const h11 = t3 - t2;
+  return h00 * y0 + h10 * span * slope0 + h01 * y1 + h11 * span * slope1;
+}
+
+function monotoneInteriorSlope(
+  leftWidth: number,
+  rightWidth: number,
+  leftSlope: number,
+  rightSlope: number,
+): number {
+  if (leftSlope <= 0 || rightSlope <= 0) return 0;
+  const w1 = 2 * rightWidth + leftWidth;
+  const w2 = rightWidth + 2 * leftWidth;
+  return (w1 + w2) / (w1 / leftSlope + w2 / rightSlope);
+}
+
+function applyShadowLinear(value: number, shadow: number): number {
+  const normalized = clampToneRangeAdjustment(shadow);
+  if (normalized === 0 || value >= SHADOW_ADJUSTMENT_END) return value;
+
+  const p = -(SHADOW_MAX_POINT_X / 100) * normalized;
+  if (normalized < 0) {
+    if (value <= 0) return 0;
+    const shadowPointY = p * Math.pow(1 - p / SHADOW_SOFT_POINT_CURVE_X, 2);
+    const leftSlope = shadowPointY / p;
+    const rightSlope = (SHADOW_ADJUSTMENT_END - shadowPointY) / (SHADOW_ADJUSTMENT_END - p);
+    const middleSlope = monotoneInteriorSlope(
+      p,
+      SHADOW_ADJUSTMENT_END - p,
+      leftSlope,
+      rightSlope,
+    );
+    if (value <= p) {
+      return cubicHermiteScalar(value, 0, 0, leftSlope, p, shadowPointY, middleSlope);
+    }
+    return cubicHermiteScalar(
+      value,
+      p,
+      shadowPointY,
+      middleSlope,
+      SHADOW_ADJUSTMENT_END,
+      SHADOW_ADJUSTMENT_END,
+      1,
+    );
+  }
+
+  if (value <= p) return 0;
+  const secantSlope = SHADOW_ADJUSTMENT_END / (SHADOW_ADJUSTMENT_END - p);
+  return cubicHermiteScalar(
+    value,
+    p,
+    0,
+    secantSlope,
+    SHADOW_ADJUSTMENT_END,
+    SHADOW_ADJUSTMENT_END,
+    1,
+  );
+}
+
+function applyHighlightLinear(
+  value: number,
+  highlight: number,
+  range: HighlightRange | null,
+): number {
+  const normalized = clampToneRangeAdjustment(highlight);
+  if (normalized === 0 || !range) return value;
+
+  const { p0, p100 } = range;
+  const span = p100 - p0;
+  if (!(span > 1e-12) || value <= p0 || value >= p100) return value;
+
+  const x = Math.min(1, Math.max(0, (value - p0) / span));
+  const workingX = Math.pow(x, HIGHLIGHT_WORKING_EXPONENT);
+  const gain = HIGHLIGHT_MAX_SIGMOID_GAIN * Math.abs(normalized) / 100;
+  if (!(gain > 1e-12)) return value;
+
+  // The Highlight knee is fixed at the top of the normalized working domain.
+  // Slider magnitude changes sigmoid gain itself rather than blending a fixed
+  // maximum-strength curve with identity.
+  const workingMid = 1;
+  const minVal = naiveSigmoid(0, gain, workingMid);
+  const maxVal = naiveSigmoid(1, gain, workingMid);
+  const sigmoidSpan = maxVal - minVal;
+  if (!(sigmoidSpan > 1e-12)) return value;
+
+  const workingSigmoid = Math.min(
+    1,
+    Math.max(
+      0,
+      (naiveSigmoid(workingX, gain, workingMid) - minVal) / sigmoidSpan,
+    ),
+  );
+  // Negative Highlight uses the endpoint-normalized sigmoid. Positive Highlight
+  // mirrors the same displacement around identity, keeping both directions tied
+  // to the same fixed knee at 1.
+  const adjustedWorking = normalized < 0
+    ? workingSigmoid
+    : 2 * workingX - workingSigmoid;
+  const adjusted = Math.pow(clamp01(adjustedWorking), 1 / HIGHLIGHT_WORKING_EXPONENT);
+
+  return p0 + span * adjusted;
+}
+
+function applyShadowHighlightLinearToRgb(
+  r: number,
+  g: number,
+  b: number,
+  shadow: number,
+  highlight: number,
+  highlightRange: HighlightRange | null,
+): [number, number, number] {
+  r = applyShadowLinear(r, shadow);
+  g = applyShadowLinear(g, shadow);
+  b = applyShadowLinear(b, shadow);
+
+  const maxChannel = Math.max(r, g, b);
+  if (maxChannel <= 0) return [r, g, b];
+  const adjustedMax = applyHighlightLinear(maxChannel, highlight, highlightRange);
+  const scale = adjustedMax / maxChannel;
+  return [r * scale, g * scale, b * scale];
+}
+
 function applyDisplayRolloffAndClipLinearToRgb(
   r: number,
   g: number,
@@ -1214,6 +1381,9 @@ function applyToneLinearToRgb(
   gains: WhiteBalanceGains,
   hasWhiteBalance: boolean,
   factor: number,
+  shadow: number,
+  highlight: number,
+  highlightRange: HighlightRange | null,
   rolloff: { inflection: number; scale: number } | null,
   scaledLog: number,
   sigmoid: number,
@@ -1222,8 +1392,14 @@ function applyToneLinearToRgb(
     [r, g, b] = applyWhiteBalanceLinear(r, g, b, gains);
   }
   [r, g, b] = applyExposureLinearToRgb(r, g, b, factor);
-
-  // Shadow / Highlight operate here on the unclipped extended-range linear data.
+  [r, g, b] = applyShadowHighlightLinearToRgb(
+    r,
+    g,
+    b,
+    shadow,
+    highlight,
+    highlightRange,
+  );
 
   // Rolloff and clipping together form the boundary from extended-range linear
   // editing into the bounded [0,1] tone domain used by Logarithm and Sigmoid.
@@ -1241,6 +1417,9 @@ type ColorAdjustmentContext = {
   gains: WhiteBalanceGains;
   hasWhiteBalance: boolean;
   factor: number;
+  shadow: number;
+  highlight: number;
+  highlightRange: HighlightRange | null;
   rolloff: { inflection: number; scale: number } | null;
   scaledLog: number;
   sigmoid: number;
@@ -1264,6 +1443,9 @@ function applyColorAdjustmentsLinearRgb(
     context.gains,
     context.hasWhiteBalance,
     context.factor,
+    context.shadow,
+    context.highlight,
+    context.highlightRange,
     context.rolloff,
     context.scaledLog,
     context.sigmoid,
@@ -3293,6 +3475,8 @@ function applyRawThumbnailMatchedColor(
     0,
     0,
     0,
+    0,
+    0,
     vibrance,
     saturation,
   );
@@ -3675,6 +3859,8 @@ function buildColorAdjustmentContextFromLinearRgbSample(
   temperature: number,
   tint: number,
   exposureEv: number,
+  shadow: number,
+  highlight: number,
   scaledLog: number,
   sigmoid: number,
   vibrance: number,
@@ -3683,6 +3869,8 @@ function buildColorAdjustmentContextFromLinearRgbSample(
 ): ColorAdjustmentContext {
   const normalizedTemperature = clampWhiteBalanceValue(temperature);
   const normalizedTint = clampWhiteBalanceValue(tint);
+  const normalizedShadow = clampToneRangeAdjustment(shadow);
+  const normalizedHighlight = clampToneRangeAdjustment(highlight);
   const normalizedScaledLog = clampScaledLog(scaledLog);
   const normalizedSigmoid = clampSigmoid(sigmoid);
   const normalizedVibrance = clampColorAdjustment(vibrance);
@@ -3692,6 +3880,7 @@ function buildColorAdjustmentContextFromLinearRgbSample(
   const hasWhiteBalance = normalizedTemperature !== 0 || normalizedTint !== 0;
 
   const exposedValues: number[] = [];
+  const highlightMaxValues: number[] = [];
   const data = sample.data;
   const valid = sample.valid;
   const count = Math.floor(data.length / 3);
@@ -3704,12 +3893,28 @@ function buildColorAdjustmentContextFromLinearRgbSample(
     if (hasWhiteBalance) {
       [r, g, b] = applyWhiteBalanceLinear(r, g, b, gains);
     }
-    exposedValues.push(r * factor, g * factor, b * factor);
+    const exposedR = r * factor;
+    const exposedG = g * factor;
+    const exposedB = b * factor;
+    exposedValues.push(exposedR, exposedG, exposedB);
+    if (normalizedHighlight !== 0) {
+      highlightMaxValues.push(Math.max(
+        applyShadowLinear(exposedR, normalizedShadow),
+        applyShadowLinear(exposedG, normalizedShadow),
+        applyShadowLinear(exposedB, normalizedShadow),
+      ));
+    }
   }
   // Rolloff depends on the post-exposure signal range, not on the sign of the
   // Exposure control. RAW buffers may already contain values above 1 at 0 EV.
   const maxVal = percentileFromSortedValues(exposedValues, 99.8);
   const rolloff = rolloffParams(maxVal, 0.5, 4);
+  const highlightRange: HighlightRange | null = normalizedHighlight !== 0 && highlightMaxValues.length > 0
+    ? {
+        p0: percentileFromSortedValues(highlightMaxValues, 0),
+        p100: percentileFromSortedValues(highlightMaxValues, 100),
+      }
+    : null;
   const saturationFactor = colorSaturationFactor(normalizedSaturation);
   const vibranceFactor = colorVibranceFactor(normalizedVibrance);
   const saturationValues: number[] = [];
@@ -3724,6 +3929,9 @@ function buildColorAdjustmentContextFromLinearRgbSample(
         gains,
         hasWhiteBalance,
         factor,
+        normalizedShadow,
+        normalizedHighlight,
+        highlightRange,
         rolloff,
         normalizedScaledLog,
         normalizedSigmoid,
@@ -3740,6 +3948,9 @@ function buildColorAdjustmentContextFromLinearRgbSample(
     gains,
     hasWhiteBalance,
     factor,
+    shadow: normalizedShadow,
+    highlight: normalizedHighlight,
+    highlightRange,
     rolloff,
     scaledLog: normalizedScaledLog,
     sigmoid: normalizedSigmoid,
@@ -3756,6 +3967,8 @@ function colorAdjustmentContextFromLinearRgbSample(
   temperature: number,
   tint: number,
   exposureEv: number,
+  shadow: number,
+  highlight: number,
   scaledLog: number,
   sigmoid: number,
   vibrance: number,
@@ -3766,6 +3979,8 @@ function colorAdjustmentContextFromLinearRgbSample(
     temperature,
     tint,
     exposureEv,
+    shadow,
+    highlight,
     scaledLog,
     sigmoid,
     vibrance,
@@ -3778,6 +3993,8 @@ function adjustedDebugStatisticsFromLinearRgbSample(
   temperature: number,
   tint: number,
   exposureEv: number,
+  shadow: number,
+  highlight: number,
   scaledLog: number,
   sigmoid: number,
   vibrance: number,
@@ -3789,6 +4006,8 @@ function adjustedDebugStatisticsFromLinearRgbSample(
     temperature,
     tint,
     exposureEv,
+    shadow,
+    highlight,
     scaledLog,
     sigmoid,
     vibrance,
@@ -4473,6 +4692,8 @@ function renderAdjustedRgb16ToCanvas(
   temperature: number,
   tint: number,
   exposureEv: number,
+  shadow: number,
+  highlight: number,
   scaledLog: number,
   sigmoid: number,
   vibrance: number,
@@ -4503,6 +4724,8 @@ function renderAdjustedRgb16ToCanvas(
     temperature,
     tint,
     exposureEv,
+    shadow,
+    highlight,
     scaledLog,
     sigmoid,
     vibrance,
@@ -4564,6 +4787,8 @@ function computeHistogramDataFromRgb16(
   temperature: number,
   tint: number,
   exposureEv: number,
+  shadow: number,
+  highlight: number,
   scaledLog: number,
   sigmoid: number,
   vibrance: number,
@@ -4577,6 +4802,8 @@ function computeHistogramDataFromRgb16(
     temperature,
     tint,
     exposureEv,
+    shadow,
+    highlight,
     scaledLog,
     sigmoid,
     vibrance,
@@ -4698,6 +4925,8 @@ async function buildEditedVariantFromDecoded(
     params.temperature,
     params.tint,
     params.exposureEv,
+    params.shadow,
+    params.highlight,
     params.scaledLog,
     params.sigmoid,
     params.vibrance,
@@ -5064,6 +5293,7 @@ type ToneAutoSample = {
 const TONE_AUTO_EXPOSURE_CLIP_PENALTY = 50;
 const TONE_AUTO_EXPOSURE_HIGHLIGHT_START = 0.95;
 const TONE_AUTO_EXPOSURE_HIGHLIGHT_PENALTY = 1;
+const TONE_AUTO_SHADOW_PERCENTILE = 2;
 const TONE_AUTO_LOG_MIN = -3;
 const TONE_AUTO_LOG_MAX = 3;
 const TONE_AUTO_LOG_LOWER = 0.42;
@@ -5140,6 +5370,7 @@ function buildToneLumaHistogram(
   temperature: number,
   tint: number,
   exposureEv: number,
+  shadow: number,
   scaledLog: number,
   sigmoid: number,
 ): { histogram: Float64Array; total: number } {
@@ -5149,6 +5380,8 @@ function buildToneLumaHistogram(
     temperature,
     tint,
     exposureEv,
+    shadow,
+    0,
     scaledLog,
     sigmoid,
     0,
@@ -5170,6 +5403,9 @@ function buildToneLumaHistogram(
       context.gains,
       context.hasWhiteBalance,
       context.factor,
+      context.shadow,
+      context.highlight,
+      context.highlightRange,
       context.rolloff,
       context.scaledLog,
       context.sigmoid,
@@ -5198,6 +5434,8 @@ function evaluateAutoExposure(
     temperature,
     tint,
     exposureEv,
+    0,
+    0,
     0,
     0,
     0,
@@ -5288,20 +5526,57 @@ function findAutoExposure(
   return clampExposureEv(bestEv);
 }
 
-function findAutoLogarithm(
+function findAutoShadow(
   sample: ToneAutoSample,
   temperature: number,
   tint: number,
   exposureEv: number,
 ): number {
-  const initial = buildToneLumaHistogram(sample, temperature, tint, exposureEv, 0, 0);
+  const normalizedTemperature = clampWhiteBalanceValue(temperature);
+  const normalizedTint = clampWhiteBalanceValue(tint);
+  const gains = whiteBalanceGains(normalizedTemperature, normalizedTint);
+  const hasWhiteBalance = normalizedTemperature !== 0 || normalizedTint !== 0;
+  const factor = Math.pow(2, exposureEv);
+  const lumaValues: number[] = [];
+  const pixelCount = Math.floor(sample.data.length / 3);
+  for (let pixel = 0; pixel < pixelCount; pixel++) {
+    if (sample.valid && !sample.valid[pixel]) continue;
+    const i = pixel * 3;
+    let r = sample.data[i] ?? 0;
+    let g = sample.data[i + 1] ?? 0;
+    let b = sample.data[i + 2] ?? 0;
+    if (hasWhiteBalance) {
+      [r, g, b] = applyWhiteBalanceLinear(r, g, b, gains);
+    }
+    r *= factor;
+    g *= factor;
+    b *= factor;
+    lumaValues.push(Math.max(0, PROPHOTO_LUMA_R * r + PROPHOTO_LUMA_G * g + PROPHOTO_LUMA_B * b));
+  }
+  if (lumaValues.length === 0) return 0;
+
+  const p2 = percentileFromSortedValues(lumaValues, TONE_AUTO_SHADOW_PERCENTILE);
+  // Negative Shadow places its soft shadow point at
+  // p = -(SHADOW_MAX_POINT_X / 100) * shadow. Choose the slider value so
+  // that this point lands on the post-exposure P2 luminance.
+  return clampToneRangeAdjustment(-100 * p2 / SHADOW_MAX_POINT_X);
+}
+
+function findAutoLogarithm(
+  sample: ToneAutoSample,
+  temperature: number,
+  tint: number,
+  exposureEv: number,
+  shadow: number,
+): number {
+  const initial = buildToneLumaHistogram(sample, temperature, tint, exposureEv, shadow, 0, 0);
   const initialMean = toneHistogramTrimmedMean(initial.histogram, initial.total);
   if (initialMean >= TONE_AUTO_LOG_LOWER && initialMean <= TONE_AUTO_LOG_UPPER) return 0;
 
   if (initialMean < TONE_AUTO_LOG_LOWER) {
     for (let step = 1; step <= Math.round(TONE_AUTO_LOG_MAX * 10); step++) {
       const value = step / 10;
-      const result = buildToneLumaHistogram(sample, temperature, tint, exposureEv, value, 0);
+      const result = buildToneLumaHistogram(sample, temperature, tint, exposureEv, shadow, value, 0);
       if (toneHistogramTrimmedMean(result.histogram, result.total) >= TONE_AUTO_LOG_LOWER) {
         return clampScaledLog(value);
       }
@@ -5311,7 +5586,7 @@ function findAutoLogarithm(
 
   for (let step = 1; step <= Math.round(Math.abs(TONE_AUTO_LOG_MIN) * 10); step++) {
     const value = -step / 10;
-    const result = buildToneLumaHistogram(sample, temperature, tint, exposureEv, value, 0);
+    const result = buildToneLumaHistogram(sample, temperature, tint, exposureEv, shadow, value, 0);
     if (toneHistogramTrimmedMean(result.histogram, result.total) <= TONE_AUTO_LOG_UPPER) {
       return clampScaledLog(value);
     }
@@ -5324,9 +5599,18 @@ function findAutoSigmoid(
   temperature: number,
   tint: number,
   exposureEv: number,
+  shadow: number,
   scaledLog: number,
 ): number {
-  const baseline = buildToneLumaHistogram(sample, temperature, tint, exposureEv, scaledLog, 0);
+  const baseline = buildToneLumaHistogram(
+    sample,
+    temperature,
+    tint,
+    exposureEv,
+    shadow,
+    scaledLog,
+    0,
+  );
   const baselineBlack = toneHistogramTailFraction(
     baseline.histogram,
     baseline.total,
@@ -5354,6 +5638,7 @@ function findAutoSigmoid(
       temperature,
       tint,
       exposureEv,
+      shadow,
       scaledLog,
       value,
     );
@@ -5448,6 +5733,8 @@ export function ImageEditDialog({
   );
   const [tint, setTint] = useState<number>(clampWhiteBalanceValue(initialParams.tint));
   const [exposureEv, setExposureEv] = useState<number>(clampExposureEv(initialParams.exposureEv));
+  const [shadow, setShadow] = useState<number>(clampToneRangeAdjustment(initialParams.shadow ?? 0));
+  const [highlight, setHighlight] = useState<number>(clampToneRangeAdjustment(initialParams.highlight ?? 0));
   const [scaledLog, setScaledLog] = useState<number>(clampScaledLog(initialParams.scaledLog));
   const [sigmoid, setSigmoid] = useState<number>(clampSigmoid(initialParams.sigmoid));
   const [vibrance, setVibrance] = useState<number>(clampColorAdjustment(initialParams.vibrance));
@@ -6560,6 +6847,8 @@ export function ImageEditDialog({
           temperature,
           tint,
           exposureEv,
+          shadow,
+          highlight,
           scaledLog,
           sigmoid,
           vibrance,
@@ -6589,6 +6878,8 @@ export function ImageEditDialog({
       temperature,
       tint,
       exposureEv,
+      shadow,
+      highlight,
       scaledLog,
       sigmoid,
       vibrance,
@@ -6627,6 +6918,8 @@ export function ImageEditDialog({
     temperature,
     tint,
     exposureEv,
+    shadow,
+    highlight,
     scaledLog,
     sigmoid,
     vibrance,
@@ -6681,6 +6974,8 @@ export function ImageEditDialog({
         temperature,
         tint,
         exposureEv,
+        shadow,
+        highlight,
         scaledLog,
         sigmoid,
         vibrance,
@@ -6701,6 +6996,8 @@ export function ImageEditDialog({
     temperature,
     tint,
     exposureEv,
+    shadow,
+    highlight,
     scaledLog,
     sigmoid,
     vibrance,
@@ -6821,6 +7118,8 @@ export function ImageEditDialog({
       temperature,
       tint,
       exposureEv,
+      shadow,
+      highlight,
       scaledLog,
       sigmoid,
       vibrance,
@@ -6835,6 +7134,8 @@ export function ImageEditDialog({
         temperature,
         tint,
         exposureEv,
+        shadow,
+        highlight,
         scaledLog,
         sigmoid,
         vibrance,
@@ -6858,6 +7159,8 @@ export function ImageEditDialog({
     temperature,
     tint,
     exposureEv,
+    shadow,
+    highlight,
     scaledLog,
     sigmoid,
     vibrance,
@@ -6929,23 +7232,32 @@ export function ImageEditDialog({
     });
   }, [autoToneBusy, currentToneAutoSample, runAutoToneTask, temperature, tint]);
 
+  const onAutoShadow = useCallback(() => {
+    if (autoToneBusy) return;
+    void runAutoToneTask(() => {
+      const sample = currentToneAutoSample();
+      if (!sample) return;
+      setShadow(findAutoShadow(sample, temperature, tint, exposureEv));
+    });
+  }, [autoToneBusy, currentToneAutoSample, exposureEv, runAutoToneTask, temperature, tint]);
+
   const onAutoLogarithm = useCallback(() => {
     if (autoToneBusy) return;
     void runAutoToneTask(() => {
       const sample = currentToneAutoSample();
       if (!sample) return;
-      setScaledLog(findAutoLogarithm(sample, temperature, tint, exposureEv));
+      setScaledLog(findAutoLogarithm(sample, temperature, tint, exposureEv, shadow));
     });
-  }, [autoToneBusy, currentToneAutoSample, exposureEv, runAutoToneTask, temperature, tint]);
+  }, [autoToneBusy, currentToneAutoSample, exposureEv, runAutoToneTask, shadow, temperature, tint]);
 
   const onAutoSigmoid = useCallback(() => {
     if (autoToneBusy) return;
     void runAutoToneTask(() => {
       const sample = currentToneAutoSample();
       if (!sample) return;
-      setSigmoid(findAutoSigmoid(sample, temperature, tint, exposureEv, scaledLog));
+      setSigmoid(findAutoSigmoid(sample, temperature, tint, exposureEv, shadow, scaledLog));
     });
-  }, [autoToneBusy, currentToneAutoSample, exposureEv, runAutoToneTask, scaledLog, temperature, tint]);
+  }, [autoToneBusy, currentToneAutoSample, exposureEv, runAutoToneTask, scaledLog, shadow, temperature, tint]);
 
   const onAutoTone = useCallback(() => {
     if (autoToneBusy) return;
@@ -6953,15 +7265,25 @@ export function ImageEditDialog({
       const sample = currentToneAutoSample();
       if (!sample) return;
       const autoExposure = findAutoExposure(sample, temperature, tint);
-      const autoLogarithm = findAutoLogarithm(sample, temperature, tint, autoExposure);
+      const autoShadow = findAutoShadow(sample, temperature, tint, autoExposure);
+      const autoLogarithm = findAutoLogarithm(
+        sample,
+        temperature,
+        tint,
+        autoExposure,
+        autoShadow,
+      );
       const autoSigmoid = findAutoSigmoid(
         sample,
         temperature,
         tint,
         autoExposure,
+        autoShadow,
         autoLogarithm,
       );
       setExposureEv(autoExposure);
+      setShadow(autoShadow);
+      setHighlight(0);
       setScaledLog(autoLogarithm);
       setSigmoid(autoSigmoid);
     });
@@ -7040,6 +7362,8 @@ export function ImageEditDialog({
       temperature: clampWhiteBalanceValue(temperature),
       tint: clampWhiteBalanceValue(tint),
       exposureEv: clampExposureEv(exposureEv),
+      shadow: clampToneRangeAdjustment(shadow),
+      highlight: clampToneRangeAdjustment(highlight),
       scaledLog: clampScaledLog(scaledLog),
       sigmoid: clampSigmoid(sigmoid),
       vibrance: clampColorAdjustment(vibrance),
@@ -7069,6 +7393,8 @@ export function ImageEditDialog({
     temperature,
     tint,
     exposureEv,
+    shadow,
+    highlight,
     scaledLog,
     sigmoid,
     vibrance,
@@ -7093,6 +7419,8 @@ export function ImageEditDialog({
     setTemperature(params.temperature);
     setTint(params.tint);
     setExposureEv(params.exposureEv);
+    setShadow(params.shadow);
+    setHighlight(params.highlight);
     setScaledLog(params.scaledLog);
     setSigmoid(params.sigmoid);
     setVibrance(params.vibrance);
@@ -8174,7 +8502,7 @@ export function ImageEditDialog({
                   className="h-5 rounded border border-gray-300 bg-white px-1.5 text-[10px] font-normal text-gray-700 hover:bg-gray-100 disabled:cursor-default disabled:opacity-60"
                   onClick={onAutoTone}
                   disabled={autoToneBusy}
-                  title="Auto tone: Exposure, Logarithm, then Sigmoid"
+                  title="Auto tone: Exposure, Shadow, Logarithm, then Sigmoid; reset Highlight"
                 >
                   Auto
                 </button>
@@ -8257,6 +8585,47 @@ export function ImageEditDialog({
                   className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
               </div>
+              <div className="grid grid-cols-[112px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+                <div className="col-start-1 row-start-1 flex min-w-0 items-center gap-1">
+                  <span>Shadow</span>
+                  <button
+                    type="button"
+                    className="h-5 rounded border border-gray-300 bg-white px-1 text-[10px] text-gray-700 hover:bg-gray-100 disabled:cursor-default disabled:opacity-60"
+                    onClick={onAutoShadow}
+                    disabled={autoToneBusy}
+                    title="Auto shadow: place the shadow point at post-exposure P2"
+                  >
+                    Auto
+                  </button>
+                </div>
+                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{shadow >= 0 ? "+" : ""}{shadow}</span>
+                <input
+                  aria-label="Shadow"
+                  type="range"
+                  min={-100}
+                  max={100}
+                  step={1}
+                  value={shadow}
+                  onChange={(e) => setShadow(clampToneRangeAdjustment(Number(e.target.value)))}
+                  onDoubleClick={() => setShadow(sliderDefaults.shadow)}
+                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
+                />
+              </div>
+              <label className="grid grid-cols-[112px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+                <span className="col-start-1 row-start-1">Highlight</span>
+                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{highlight >= 0 ? "+" : ""}{highlight}</span>
+                <input
+                  aria-label="Highlight"
+                  type="range"
+                  min={-100}
+                  max={100}
+                  step={1}
+                  value={highlight}
+                  onChange={(e) => setHighlight(clampToneRangeAdjustment(Number(e.target.value)))}
+                  onDoubleClick={() => setHighlight(sliderDefaults.highlight)}
+                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
+                />
+              </label>
             </div>
 
             <div className="rounded border p-3 space-y-2 lg:space-y-3">
