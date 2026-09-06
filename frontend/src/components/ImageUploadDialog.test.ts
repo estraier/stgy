@@ -1,36 +1,9 @@
-jest.mock("next/image", () => ({
-  __esModule: true,
-  default: () => null,
-}));
+// Characterization tests import the extracted processing core directly so they do not
+// depend on React/Next.js or on the ImageUploadDialog component module.
 
-jest.mock("react-dom", () => ({
-  createPortal: (node: unknown) => node,
-}));
-
-jest.mock("lucide-react", () => ({
-  Move: () => null,
-  Palette: () => null,
-  Pipette: () => null,
-  RotateCw: () => null,
-}));
-
-jest.mock("@/utils/format", () => ({
-  formatBytes: (value: number) => String(value),
-}));
-
-jest.mock("@/config", () => ({ Config: {} }));
-
-jest.mock("@/api/media", () => ({
-  presignImageUpload: jest.fn(),
-  uploadToPresigned: jest.fn(),
-  finalizeImage: jest.fn(),
-  getImagesMonthlyQuota: jest.fn(),
-  checkImageExistenceDirectly: jest.fn(),
-}));
-
-// The component's sampling integration is characterized with deterministic
-// Lensfun coordinates here. lensfunCorrection.ts itself remains responsible for
-// calculating the real distortion/TCA/vignetting maps.
+// Sampling integration is characterized with deterministic Lensfun coordinates here.
+// lensfunCorrection.ts itself remains responsible for calculating the real
+// distortion/TCA/vignetting maps.
 jest.mock("@/utils/lensfunCorrection", () => ({
   buildRawLensfunCorrection: jest.fn(),
   summarizeLensfunCorrection: jest.fn(() => ""),
@@ -46,7 +19,7 @@ jest.mock("@/utils/lensfunCorrection", () => ({
   ],
 }));
 
-import { __imageEditorCharacterization as imageEditor } from "./ImageUploadDialog";
+import { __imageEditorCharacterization as imageEditor } from "./image-editor/characterization";
 
 function rounded(values: number[]): number[] {
   return values.map((value) => Number(value.toFixed(12)));
@@ -239,6 +212,38 @@ describe("image editor tone characterization", () => {
 });
 
 describe("image editor RGB16 characterization", () => {
+  test("uses a fixed-area analysis sample and reuses identical geometry", () => {
+    expect(imageEditor.analysisSampleDimensions(4000, 4000)).toEqual({ width: 256, height: 256 });
+    expect(imageEditor.analysisSampleDimensions(6000, 4000)).toEqual({ width: 314, height: 209 });
+    expect(imageEditor.analysisSampleDimensions(16000, 9000)).toEqual({ width: 341, height: 192 });
+    expect(imageEditor.analysisSampleDimensions(4000, 1000)).toEqual({ width: 512, height: 128 });
+    expect(imageEditor.analysisSampleDimensions(64, 32)).toEqual({ width: 64, height: 32 });
+
+    const decoded = makeSyntheticDecodedRgb16();
+    const sourceRect = { x: 0, y: 0, w: 4, h: 3 };
+    const first = imageEditor.getAnalysisLinearRgbSample(decoded, sourceRect, 17);
+    const second = imageEditor.getAnalysisLinearRgbSample(decoded, sourceRect, 17);
+    const differentRotation = imageEditor.getAnalysisLinearRgbSample(decoded, sourceRect, 18);
+    expect(second).toBe(first);
+    expect(differentRotation).not.toBe(first);
+  });
+
+  test("avoids sorting endpoint-only percentiles and sorts once for percentile sets", () => {
+    const endpointValues = [3, 1, 2];
+    expect(imageEditor.percentilesFromValues(endpointValues, [0, 100])).toEqual([1, 3]);
+    expect(endpointValues).toEqual([3, 1, 2]);
+
+    const percentileValues = [4, 1, 3, 2];
+    expect(imageEditor.percentilesFromValues(percentileValues, [0, 25, 50, 75, 100])).toEqual([
+      1,
+      1.75,
+      2.5,
+      3.25,
+      4,
+    ]);
+    expect(percentileValues).toEqual([1, 2, 3, 4]);
+  });
+
   test("freezes gamma2 storage with and without RAW 1EV headroom", () => {
     expect(imageEditor.encodeStoredRgb16Channel(1, "gamma20", 1)).toBe(65535);
     expect(imageEditor.encodeStoredRgb16Channel(1, "gamma20", 2)).toBe(46340);

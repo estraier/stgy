@@ -7,7 +7,6 @@ import { Move, Palette, Pipette, RotateCw } from "lucide-react";
 import { formatBytes } from "@/utils/format";
 import {
   buildRawLensfunCorrection,
-  lensfunSourceCoordinates,
   lensfunVignettingGain,
   summarizeLensfunCorrection,
   type LensfunCorrection,
@@ -21,6 +20,78 @@ import {
   getImagesMonthlyQuota,
   checkImageExistenceDirectly,
 } from "@/api/media";
+import type {
+  DecodedImage,
+  DecodedRgbImage16,
+  EditPoint,
+  HistogramData,
+  ImageEditOutputColorProfile,
+  ImageInputColorProfile,
+  LinearRgbSample,
+  RawDevelopmentHeadroomStatistics,
+  RawDevelopmentLensfunSettings,
+  RawDevelopmentLuminanceSettings,
+  RawDevelopmentSaturationSettings,
+  RawDevelopmentSettings,
+  ToneAutoSample,
+} from "./image-editor/types";
+export type { DecodedImage, ImageEditOutputColorProfile } from "./image-editor/types";
+import {
+  HISTOGRAM_DISPLAY_GAMMA,
+  applyColorAdjustmentsLinearRgb,
+  applyRolloffScalar,
+  applyScaledLogLinear,
+  applyWhiteBalanceLinear,
+  clamp01,
+  clampColorAdjustment,
+  clampExposureEv,
+  clampSharpen,
+  clampSigmoid,
+  clampScaledLog,
+  clampToneRangeAdjustment,
+  clampWhiteBalanceValue,
+  colorSaturationFactor,
+  colorVibranceFactor,
+  hsvToRgb,
+  linearChannelToSrgb,
+  naiveInverseSigmoid,
+  naiveSigmoid,
+  rgbToHsv,
+  rolloffParams,
+  srgbChannelToLinear,
+  whiteBalanceGains,
+  type ColorAdjustmentContext,
+} from "./image-editor/tone";
+import {
+  PROPHOTO_LUMA_B,
+  PROPHOTO_LUMA_G,
+  PROPHOTO_LUMA_R,
+  convertLinearProPhotoToOutputRgb,
+  encodedRgbToLinearProphoto,
+} from "./image-editor/color";
+import { getCanvas2dContext, getCanvasImageData } from "./image-editor/canvas";
+import {
+  decodeStoredRgb16Channel,
+  encodeStoredRgb16Channel,
+  getAnalysisLinearRgbSample,
+  inverseRotatePoint,
+  normalizeRotationDegrees,
+} from "./image-editor/sampling";
+import {
+  buildColorAdjustmentContextFromLinearRgbSample,
+  colorAdjustmentContextFromLinearRgbSample,
+  computeHistogramDataFromRgb16,
+  createToneAutoSampleFromRgb16,
+  findAutoExposure,
+  findAutoLogarithm,
+  findAutoShadow,
+  findAutoSigmoid,
+  percentileFromValues,
+  percentilesFromValues,
+} from "./image-editor/analysis";
+import { renderAdjustedRgb16ToCanvas } from "./image-editor/render";
+export { __imageEditorCharacterization } from "./image-editor/characterization";
+
 
 export type DialogFileItem = {
   id: string;
@@ -122,7 +193,6 @@ export type ImageEditParams = {
 };
 
 export type ImageEditOutputFormat = "image/webp" | "image/jpeg" | "image/png";
-export type ImageEditOutputColorProfile = "srgb" | "display-p3";
 export type RawDemosaicQuality = 0 | 1 | 2 | 3 | 4 | 11 | 12;
 export type RawHighlightMode = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 
@@ -384,79 +454,6 @@ const RAW_DEVELOPED_LINEAR_RANGE_MAX = 2;
 const RAW_HEADROOM_HISTOGRAM_STEP = 0.1;
 const RAW_HEADROOM_HISTOGRAM_MAX = 2;
 const RAW_TONE_SLOPE_EPSILON = 1e-5;
-
-// RAW editing uses linear ProPhoto RGB (D50). Canvas/file output may be standard sRGB (D65)
-// or Display P3 (D65). These fixed transforms fold ProPhoto RGB -> XYZ(D50),
-// Bradford D50 -> D65, and then XYZ(D65) -> the target linear RGB space.
-const PROPHOTO_TO_SRGB_M00 = 2.03407582;
-const PROPHOTO_TO_SRGB_M01 = -0.72733415;
-const PROPHOTO_TO_SRGB_M02 = -0.30674161;
-const PROPHOTO_TO_SRGB_M10 = -0.22881318;
-const PROPHOTO_TO_SRGB_M11 = 1.23173011;
-const PROPHOTO_TO_SRGB_M12 = -0.00291696;
-const PROPHOTO_TO_SRGB_M20 = -0.00856980;
-const PROPHOTO_TO_SRGB_M21 = -0.15328665;
-const PROPHOTO_TO_SRGB_M22 = 1.16185645;
-const PROPHOTO_TO_DISPLAY_P3_M00 = 1.63250441;
-const PROPHOTO_TO_DISPLAY_P3_M01 = -0.37966939;
-const PROPHOTO_TO_DISPLAY_P3_M02 = -0.25283503;
-const PROPHOTO_TO_DISPLAY_P3_M10 = -0.15368049;
-const PROPHOTO_TO_DISPLAY_P3_M11 = 1.16669036;
-const PROPHOTO_TO_DISPLAY_P3_M12 = -0.01300987;
-const PROPHOTO_TO_DISPLAY_P3_M20 = 0.01039021;
-const PROPHOTO_TO_DISPLAY_P3_M21 = -0.06280507;
-const PROPHOTO_TO_DISPLAY_P3_M22 = 1.05241486;
-
-// Inverse transforms used to normalize tagged TIFF RGB into the same linear
-// ProPhoto RGB (D50) working space as RAW after its baseline processing.
-const SRGB_TO_PROPHOTO_M00 = 0.52934593;
-const SRGB_TO_PROPHOTO_M01 = 0.33007280;
-const SRGB_TO_PROPHOTO_M02 = 0.14058125;
-const SRGB_TO_PROPHOTO_M10 = 0.09837429;
-const SRGB_TO_PROPHOTO_M11 = 0.87346103;
-const SRGB_TO_PROPHOTO_M12 = 0.02816470;
-const SRGB_TO_PROPHOTO_M20 = 0.01688320;
-const SRGB_TO_PROPHOTO_M21 = 0.11767252;
-const SRGB_TO_PROPHOTO_M22 = 0.86544429;
-const DISPLAY_P3_TO_PROPHOTO_M00 = 0.63170772;
-const DISPLAY_P3_TO_PROPHOTO_M01 = 0.21388506;
-const DISPLAY_P3_TO_PROPHOTO_M02 = 0.15440722;
-const DISPLAY_P3_TO_PROPHOTO_M10 = 0.08319654;
-const DISPLAY_P3_TO_PROPHOTO_M11 = 0.88586510;
-const DISPLAY_P3_TO_PROPHOTO_M12 = 0.03093836;
-const DISPLAY_P3_TO_PROPHOTO_M20 = -0.00127175;
-const DISPLAY_P3_TO_PROPHOTO_M21 = 0.05075423;
-const DISPLAY_P3_TO_PROPHOTO_M22 = 0.95051752;
-// Adobe RGB (1998) uses D65 primaries and a pure 2.19921875 transfer.
-// This fixed transform folds Adobe RGB (1998) -> XYZ(D65), Bradford D65 -> D50,
-// and XYZ(D50) -> linear ProPhoto RGB.
-const ADOBE_RGB_TO_PROPHOTO_M00 = 0.74021392;
-const ADOBE_RGB_TO_PROPHOTO_M01 = 0.11316980;
-const ADOBE_RGB_TO_PROPHOTO_M02 = 0.14661626;
-const ADOBE_RGB_TO_PROPHOTO_M10 = 0.13756225;
-const ADOBE_RGB_TO_PROPHOTO_M11 = 0.83306398;
-const ADOBE_RGB_TO_PROPHOTO_M12 = 0.02937378;
-const ADOBE_RGB_TO_PROPHOTO_M20 = 0.02360872;
-const ADOBE_RGB_TO_PROPHOTO_M21 = 0.07379435;
-const ADOBE_RGB_TO_PROPHOTO_M22 = 0.90259694;
-// Rec.2020 uses D65 primaries. This fixed transform folds Rec.2020 -> XYZ(D65),
-// Bradford D65 -> D50, and XYZ(D50) -> linear ProPhoto RGB.
-const REC_2020_TO_PROPHOTO_M00 = 0.83516439;
-const REC_2020_TO_PROPHOTO_M01 = 0.04879000;
-const REC_2020_TO_PROPHOTO_M02 = 0.11598029;
-const REC_2020_TO_PROPHOTO_M10 = 0.05401942;
-const REC_2020_TO_PROPHOTO_M11 = 0.92894837;
-const REC_2020_TO_PROPHOTO_M12 = 0.01705522;
-const REC_2020_TO_PROPHOTO_M20 = -0.00233881;
-const REC_2020_TO_PROPHOTO_M21 = 0.03632883;
-const REC_2020_TO_PROPHOTO_M22 = 0.96607458;
-const REC_2020_TRANSFER_ALPHA = 1.09929682680944;
-const REC_2020_TRANSFER_BETA = 0.018053968510807;
-
-// Y row of the standard linear ProPhoto RGB -> XYZ(D50) matrix.
-const PROPHOTO_LUMA_R = 0.2880402;
-const PROPHOTO_LUMA_G = 0.7118741;
-const PROPHOTO_LUMA_B = 0.0000857;
 const RAW_MEDIAN_DENOISE_WEAK_ISO = 800;
 const RAW_MEDIAN_DENOISE_STRONG_ISO = 3200;
 const RAW_BASELINE_ROLLOFF_PERCENTILE = 99.8;
@@ -481,7 +478,7 @@ const RAW_THUMBNAIL_MATCH_SATURATION_PERCENTILE = 95;
 const RAW_THUMBNAIL_MATCH_VIBRANCE_PERCENTILE = 50;
 const RAW_THUMBNAIL_MATCH_COLOR_VALUE_TRIM_FRACTION = 0.1;
 const DEBUG_PERCENTILES = [0, 1, 2, 5, 25, 50, 75, 95, 98, 99, 100] as const;
-const DEBUG_PERCENTILE_SAMPLE_MAX = 256;
+const RAW_THUMBNAIL_MATCH_SAMPLE_MAX_SIDE = 256;
 
 type DebugPercentileValues = number[];
 
@@ -595,38 +592,6 @@ function computeScale(w: number, h: number): number {
   const s1 = Config.IMAGE_OPTIMIZE_TARGET_LONGSIDE / longSide;
   const s2 = Math.sqrt(Config.IMAGE_OPTIMIZE_TARGET_PIXELS / (w * h));
   return Math.min(1, s1, s2);
-}
-
-function clamp01(v: number): number {
-  return Math.min(1, Math.max(0, v));
-}
-
-function clampExposureEv(v: number): number {
-  return Math.min(5, Math.max(-5, Math.round(v * 10) / 10));
-}
-
-function clampWhiteBalanceValue(v: number): number {
-  return Math.min(100, Math.max(-100, Math.round(v)));
-}
-
-function clampScaledLog(v: number): number {
-  return Math.min(16, Math.max(-16, Math.round(v * 10) / 10));
-}
-
-function clampSigmoid(v: number): number {
-  return Math.min(10, Math.max(-10, Math.round(v * 10) / 10));
-}
-
-function clampToneRangeAdjustment(v: number): number {
-  return Math.min(100, Math.max(-100, Math.round(v)));
-}
-
-function clampColorAdjustment(v: number): number {
-  return Math.min(100, Math.max(-100, Math.round(v)));
-}
-
-function clampSharpen(v: number): number {
-  return Math.min(3, Math.max(0, Math.round(Number.isFinite(v) ? v : 0)));
 }
 
 function defaultResizePercent(w?: number, h?: number): number {
@@ -749,12 +714,6 @@ function normalizeDrawOverlays(overlays?: ImageDrawOverlay[]): ImageDrawOverlay[
     .filter((overlay): overlay is ImageDrawOverlay => overlay !== null);
 }
 
-function normalizeRotationDegrees(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  const normalized = ((value + 180) % 360 + 360) % 360 - 180;
-  return Math.abs(normalized) < 1e-9 ? 0 : normalized;
-}
-
 export function buildDefaultEditParams(w?: number, h?: number): ImageEditParams {
   return {
     crop: { top: 0, bottom: 0, left: 0, right: 0 },
@@ -843,66 +802,8 @@ function isMeaningfullyEdited(
   );
 }
 
-function colorSaturationFactor(saturation: number): number {
-  return Math.max(0, 1 + clampColorAdjustment(saturation) / 100);
-}
-
-function colorVibranceFactor(vibrance: number): number {
-  return clampColorAdjustment(vibrance) * 3 / 100;
-}
-
 function formatSignedEv(v: number): string {
   return `${v >= 0 ? "+" : ""}${v.toFixed(1)}EV`;
-}
-
-function srgbChannelToLinear(v: number): number {
-  const x = clamp01(v / 255);
-  if (x <= 0.04045) return x / 12.92;
-  return Math.pow((x + 0.055) / 1.055, 2.4);
-}
-
-function linearChannelToSrgb(linear: number): number {
-  const x = clamp01(linear);
-  const srgb = x <= 0.0031308 ? x * 12.92 : 1.055 * Math.pow(x, 1 / 2.4) - 0.055;
-  return Math.round(clamp01(srgb) * 255);
-}
-
-type WhiteBalanceGains = { r: number; g: number; b: number };
-
-function whiteBalanceGains(temperature: number, tint: number): WhiteBalanceGains {
-  const t = clampWhiteBalanceValue(temperature) / 100;
-  const m = clampWhiteBalanceValue(tint) / 100;
-
-  // Work in log2 gain space so the three gains have a geometric mean of 1.
-  // Positive temperature warms (R up, B down); positive tint moves toward magenta
-  // (R/B up, G down) without introducing a global exposure shift.
-  const temperatureStops = t * 1.5;
-  const tintStops = m * 0.75;
-  const rStops = temperatureStops + tintStops / 2;
-  const gStops = -tintStops;
-  const bStops = -temperatureStops + tintStops / 2;
-  return {
-    r: Math.pow(2, rStops),
-    g: Math.pow(2, gStops),
-    b: Math.pow(2, bStops),
-  };
-}
-
-function applyWhiteBalanceLinear(
-  r: number,
-  g: number,
-  b: number,
-  gains: WhiteBalanceGains,
-): [number, number, number] {
-  // Progressively reduce correction toward white while retaining more WB
-  // through the midtones by applying gamma 0.5 to the protection mask.
-  const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-  const whiteThreshold = 0.98;
-  const weight = Math.sqrt(1 - clamp01((gray - (1 - whiteThreshold)) / whiteThreshold));
-  const wr = weight * gains.r + (1 - weight);
-  const wg = weight * gains.g + (1 - weight);
-  const wb = weight * gains.b + (1 - weight);
-  return [clamp01(r * wr), clamp01(g * wg), clamp01(b * wb)];
 }
 
 const EYEDROPPER_SAMPLE_WEIGHTS = [
@@ -1077,392 +978,6 @@ function neutralWhiteBalanceForRgb8(
   }
 
   return { temperature: bestTemperature, tint: bestTint };
-}
-
-function applyScaledLogLinear(value: number, factor: number): number {
-  const x = clamp01(value);
-  const f = clampScaledLog(factor);
-  if (f > 1e-6) {
-    return clamp01(Math.log1p(x * f) / Math.log1p(f));
-  }
-  if (f < -1e-6) {
-    const magnitude = -f;
-    return clamp01(Math.expm1(x * Math.log1p(magnitude)) / magnitude);
-  }
-  return x;
-}
-
-function naiveSigmoid(value: number, gain: number, mid: number): number {
-  return 1 / (1 + Math.exp((mid - value) * gain));
-}
-
-function naiveInverseSigmoid(value: number, gain: number, mid: number): number {
-  const minVal = naiveSigmoid(0, gain, mid);
-  const maxVal = naiveSigmoid(1, gain, mid);
-  const a = (maxVal - minVal) * value + minVal;
-  return -Math.log(1 / a - 1) / gain;
-}
-
-function applySigmoidLinear(value: number, gain: number): number {
-  const x = clamp01(value);
-  const g = clampSigmoid(gain);
-  const mid = 0.5;
-  const gamma = HISTOGRAM_DISPLAY_GAMMA;
-  const encoded = Math.pow(x, 1 / gamma);
-  if (g > 1e-6) {
-    const minVal = naiveSigmoid(0, g, mid);
-    const maxVal = naiveSigmoid(1, g, mid);
-    const adjusted = clamp01((naiveSigmoid(encoded, g, mid) - minVal) / (maxVal - minVal));
-    return clamp01(Math.pow(adjusted, gamma));
-  }
-  if (g < -1e-6) {
-    const magnitude = -g;
-    const minVal = naiveInverseSigmoid(0, magnitude, mid);
-    const maxVal = naiveInverseSigmoid(1, magnitude, mid);
-    const adjusted = clamp01(
-      (naiveInverseSigmoid(encoded, magnitude, mid) - minVal) / (maxVal - minVal),
-    );
-    return clamp01(Math.pow(adjusted, gamma));
-  }
-  return x;
-}
-
-function rgbToHsv(r: number, g: number, b: number): [number, number, number] {
-  const max = Math.max(r, g, b);
-  const min = Math.min(r, g, b);
-  const delta = max - min;
-  let h = 0;
-  if (delta > 1e-6) {
-    if (max === r) {
-      h = ((g - b) / delta) % 6;
-    } else if (max === g) {
-      h = (b - r) / delta + 2;
-    } else {
-      h = (r - g) / delta + 4;
-    }
-    h /= 6;
-    if (h < 0) h += 1;
-  }
-  const s = max <= 1e-6 ? 0 : delta / max;
-  const v = max;
-  return [h, clamp01(s), clamp01(v)];
-}
-
-function hsvToRgb(h: number, s: number, v: number): [number, number, number] {
-  const hh = ((h % 1) + 1) % 1 * 6;
-  const c = clamp01(v) * clamp01(s);
-  const x = c * (1 - Math.abs(hh % 2 - 1));
-  const m = clamp01(v) - c;
-  let rp = 0;
-  let gp = 0;
-  let bp = 0;
-  if (hh < 1) {
-    rp = c;
-    gp = x;
-  } else if (hh < 2) {
-    rp = x;
-    gp = c;
-  } else if (hh < 3) {
-    gp = c;
-    bp = x;
-  } else if (hh < 4) {
-    gp = x;
-    bp = c;
-  } else if (hh < 5) {
-    rp = x;
-    bp = c;
-  } else {
-    rp = c;
-    bp = x;
-  }
-  return [clamp01(rp + m), clamp01(gp + m), clamp01(bp + m)];
-}
-
-function rolloffParams(
-  maxVal: number,
-  asymptotic = 0.5,
-  savingLimit = 4,
-): { inflection: number; scale: number } | null {
-  if (maxVal <= 1) return null;
-  if (maxVal > savingLimit) {
-    asymptotic = Math.pow(asymptotic, savingLimit / maxVal);
-  }
-  const inflection = asymptotic + (1 - asymptotic) / maxVal;
-  const scale = (1 - inflection) / (maxVal - inflection + 1e-6);
-  return { inflection, scale };
-}
-
-function applyRolloffScalar(value: number, rolloff: { inflection: number; scale: number } | null): number {
-  if (!rolloff || value <= rolloff.inflection) return value;
-  return rolloff.inflection + (value - rolloff.inflection) * rolloff.scale;
-}
-
-function applyExposureLinearToRgb(
-  r: number,
-  g: number,
-  b: number,
-  factor: number,
-): [number, number, number] {
-  return [r * factor, g * factor, b * factor];
-}
-
-const SHADOW_ADJUSTMENT_END = 0.4;
-const SHADOW_MAX_POINT_X = 0.15;
-const SHADOW_MAX_POINT_Y = 0.05;
-const SHADOW_SOFT_POINT_CURVE_X =
-  SHADOW_MAX_POINT_X / (1 - Math.sqrt(SHADOW_MAX_POINT_Y / SHADOW_MAX_POINT_X));
-// With mid fixed at 1, the slider raises sigmoid gain up to 4.
-const HIGHLIGHT_MAX_SIGMOID_GAIN = 4;
-// Use a direct power exponent (not conventional display-gamma encoding):
-// z = u^2.4, then return with u = z^(1/2.4).
-const HIGHLIGHT_WORKING_EXPONENT = 2.4;
-
-type HighlightRange = {
-  p0: number;
-  p100: number;
-};
-
-function cubicHermiteScalar(
-  value: number,
-  x0: number,
-  y0: number,
-  slope0: number,
-  x1: number,
-  y1: number,
-  slope1: number,
-): number {
-  const span = x1 - x0;
-  if (span <= 0) return y1;
-  const t = Math.min(1, Math.max(0, (value - x0) / span));
-  const t2 = t * t;
-  const t3 = t2 * t;
-  const h00 = 2 * t3 - 3 * t2 + 1;
-  const h10 = t3 - 2 * t2 + t;
-  const h01 = -2 * t3 + 3 * t2;
-  const h11 = t3 - t2;
-  return h00 * y0 + h10 * span * slope0 + h01 * y1 + h11 * span * slope1;
-}
-
-function monotoneInteriorSlope(
-  leftWidth: number,
-  rightWidth: number,
-  leftSlope: number,
-  rightSlope: number,
-): number {
-  if (leftSlope <= 0 || rightSlope <= 0) return 0;
-  const w1 = 2 * rightWidth + leftWidth;
-  const w2 = rightWidth + 2 * leftWidth;
-  return (w1 + w2) / (w1 / leftSlope + w2 / rightSlope);
-}
-
-function applyShadowLinear(value: number, shadow: number): number {
-  const normalized = clampToneRangeAdjustment(shadow);
-  if (normalized === 0 || value >= SHADOW_ADJUSTMENT_END) return value;
-
-  const p = -(SHADOW_MAX_POINT_X / 100) * normalized;
-  if (normalized < 0) {
-    if (value <= 0) return 0;
-    const shadowPointY = p * Math.pow(1 - p / SHADOW_SOFT_POINT_CURVE_X, 2);
-    const leftSlope = shadowPointY / p;
-    const rightSlope = (SHADOW_ADJUSTMENT_END - shadowPointY) / (SHADOW_ADJUSTMENT_END - p);
-    const middleSlope = monotoneInteriorSlope(
-      p,
-      SHADOW_ADJUSTMENT_END - p,
-      leftSlope,
-      rightSlope,
-    );
-    if (value <= p) {
-      return cubicHermiteScalar(value, 0, 0, leftSlope, p, shadowPointY, middleSlope);
-    }
-    return cubicHermiteScalar(
-      value,
-      p,
-      shadowPointY,
-      middleSlope,
-      SHADOW_ADJUSTMENT_END,
-      SHADOW_ADJUSTMENT_END,
-      1,
-    );
-  }
-
-  if (value <= p) return 0;
-  const secantSlope = SHADOW_ADJUSTMENT_END / (SHADOW_ADJUSTMENT_END - p);
-  return cubicHermiteScalar(
-    value,
-    p,
-    0,
-    secantSlope,
-    SHADOW_ADJUSTMENT_END,
-    SHADOW_ADJUSTMENT_END,
-    1,
-  );
-}
-
-function applyHighlightLinear(
-  value: number,
-  highlight: number,
-  range: HighlightRange | null,
-): number {
-  const normalized = clampToneRangeAdjustment(highlight);
-  if (normalized === 0 || !range) return value;
-
-  const { p0, p100 } = range;
-  const span = p100 - p0;
-  if (!(span > 1e-12) || value <= p0 || value >= p100) return value;
-
-  const x = Math.min(1, Math.max(0, (value - p0) / span));
-  const workingX = Math.pow(x, HIGHLIGHT_WORKING_EXPONENT);
-  const gain = HIGHLIGHT_MAX_SIGMOID_GAIN * Math.abs(normalized) / 100;
-  if (!(gain > 1e-12)) return value;
-
-  // The Highlight knee is fixed at the top of the normalized working domain.
-  // Slider magnitude changes sigmoid gain itself rather than blending a fixed
-  // maximum-strength curve with identity.
-  const workingMid = 1;
-  const minVal = naiveSigmoid(0, gain, workingMid);
-  const maxVal = naiveSigmoid(1, gain, workingMid);
-  const sigmoidSpan = maxVal - minVal;
-  if (!(sigmoidSpan > 1e-12)) return value;
-
-  const workingSigmoid = Math.min(
-    1,
-    Math.max(
-      0,
-      (naiveSigmoid(workingX, gain, workingMid) - minVal) / sigmoidSpan,
-    ),
-  );
-  // Negative Highlight uses the endpoint-normalized sigmoid. Positive Highlight
-  // mirrors the same displacement around identity, keeping both directions tied
-  // to the same fixed knee at 1.
-  const adjustedWorking = normalized < 0
-    ? workingSigmoid
-    : 2 * workingX - workingSigmoid;
-  const adjusted = Math.pow(clamp01(adjustedWorking), 1 / HIGHLIGHT_WORKING_EXPONENT);
-
-  return p0 + span * adjusted;
-}
-
-function applyShadowHighlightLinearToRgb(
-  r: number,
-  g: number,
-  b: number,
-  shadow: number,
-  highlight: number,
-  highlightRange: HighlightRange | null,
-): [number, number, number] {
-  r = applyShadowLinear(r, shadow);
-  g = applyShadowLinear(g, shadow);
-  b = applyShadowLinear(b, shadow);
-
-  const maxChannel = Math.max(r, g, b);
-  if (maxChannel <= 0) return [r, g, b];
-  const adjustedMax = applyHighlightLinear(maxChannel, highlight, highlightRange);
-  const scale = adjustedMax / maxChannel;
-  return [r * scale, g * scale, b * scale];
-}
-
-function applyDisplayRolloffAndClipLinearToRgb(
-  r: number,
-  g: number,
-  b: number,
-  rolloff: { inflection: number; scale: number } | null,
-): [number, number, number] {
-  return [
-    clamp01(applyRolloffScalar(r, rolloff)),
-    clamp01(applyRolloffScalar(g, rolloff)),
-    clamp01(applyRolloffScalar(b, rolloff)),
-  ];
-}
-
-function applyToneLinearToRgb(
-  r: number,
-  g: number,
-  b: number,
-  gains: WhiteBalanceGains,
-  hasWhiteBalance: boolean,
-  factor: number,
-  shadow: number,
-  highlight: number,
-  highlightRange: HighlightRange | null,
-  rolloff: { inflection: number; scale: number } | null,
-  scaledLog: number,
-  sigmoid: number,
-): [number, number, number] {
-  if (hasWhiteBalance) {
-    [r, g, b] = applyWhiteBalanceLinear(r, g, b, gains);
-  }
-  [r, g, b] = applyExposureLinearToRgb(r, g, b, factor);
-  [r, g, b] = applyShadowHighlightLinearToRgb(
-    r,
-    g,
-    b,
-    shadow,
-    highlight,
-    highlightRange,
-  );
-
-  // Rolloff and clipping together form the boundary from extended-range linear
-  // editing into the bounded [0,1] tone domain used by Logarithm and Sigmoid.
-  [r, g, b] = applyDisplayRolloffAndClipLinearToRgb(r, g, b, rolloff);
-  r = applyScaledLogLinear(r, scaledLog);
-  g = applyScaledLogLinear(g, scaledLog);
-  b = applyScaledLogLinear(b, scaledLog);
-  r = applySigmoidLinear(r, sigmoid);
-  g = applySigmoidLinear(g, sigmoid);
-  b = applySigmoidLinear(b, sigmoid);
-  return [r, g, b];
-}
-
-type ColorAdjustmentContext = {
-  gains: WhiteBalanceGains;
-  hasWhiteBalance: boolean;
-  factor: number;
-  shadow: number;
-  highlight: number;
-  highlightRange: HighlightRange | null;
-  rolloff: { inflection: number; scale: number } | null;
-  scaledLog: number;
-  sigmoid: number;
-  normalizedVibrance: number;
-  normalizedSaturation: number;
-  saturationFactor: number;
-  vibranceFactor: number;
-  saturationRolloff: { inflection: number; scale: number } | null;
-};
-
-function applyColorAdjustmentsLinearRgb(
-  r: number,
-  g: number,
-  b: number,
-  context: ColorAdjustmentContext,
-): [number, number, number] {
-  [r, g, b] = applyToneLinearToRgb(
-    r,
-    g,
-    b,
-    context.gains,
-    context.hasWhiteBalance,
-    context.factor,
-    context.shadow,
-    context.highlight,
-    context.highlightRange,
-    context.rolloff,
-    context.scaledLog,
-    context.sigmoid,
-  );
-  if (context.normalizedSaturation !== 0 || context.normalizedVibrance !== 0) {
-    const [h, initialS, v] = rgbToHsv(r, g, b);
-    let s = initialS;
-    if (context.normalizedSaturation !== 0) {
-      s = applyRolloffScalar(s * context.saturationFactor, context.saturationRolloff);
-      s = clamp01(s);
-    }
-    if (context.normalizedVibrance !== 0) {
-      s = applyScaledLogLinear(s, context.vibranceFactor);
-    }
-    [r, g, b] = hsvToRgb(h, s, v);
-  }
-  return [r, g, b];
 }
 
 type SharpenPreset = {
@@ -2074,35 +1589,6 @@ function createTextOutlineSurface(
   return ctx ? { canvas, ctx } : null;
 }
 
-
-function rotatePoint(
-  x: number,
-  y: number,
-  centerX: number,
-  centerY: number,
-  degrees: number,
-): EditPoint {
-  const radians = normalizeRotationDegrees(degrees) * Math.PI / 180;
-  const cos = Math.cos(radians);
-  const sin = Math.sin(radians);
-  const dx = x - centerX;
-  const dy = y - centerY;
-  return {
-    x: centerX + dx * cos - dy * sin,
-    y: centerY + dx * sin + dy * cos,
-  };
-}
-
-function inverseRotatePoint(
-  x: number,
-  y: number,
-  centerX: number,
-  centerY: number,
-  degrees: number,
-): EditPoint {
-  return rotatePoint(x, y, centerX, centerY, -degrees);
-}
-
 type OffscreenCanvasCtor = new (width: number, height: number) => OffscreenCanvas;
 function getOffscreenCanvasCtor(): OffscreenCanvasCtor | null {
   const g = globalThis as unknown as { OffscreenCanvas?: OffscreenCanvasCtor };
@@ -2129,53 +1615,9 @@ async function decodeViaImg(file: File): Promise<HTMLImageElement> {
   }
 }
 
-type RawDevelopmentLuminanceSettings = {
-  exposureEv: number;
-  logarithm: number;
-  sigmoid: number;
-  toneSlopeAtWhite: number;
-};
-
-type RawDevelopmentHeadroomStatistics = {
-  step: number;
-  histogramMax: number;
-  bins: number[];
-  overflowCount: number;
-  pixelCount: number;
-  maxRgb: number;
-};
-
 type RawBaselineApplicationResult = {
   luminance: RawDevelopmentLuminanceSettings;
   headroom: RawDevelopmentHeadroomStatistics;
-};
-
-type RawDevelopmentSaturationSettings = {
-  saturation: number;
-  vibrance: number;
-};
-
-type RawDevelopmentLensfunSettings = {
-  name: string;
-  focal: number | null;
-  aperture: number | null;
-  cropFactor: number | null;
-  distortionPercent: number | null;
-  tcaRedPercent: number | null;
-  tcaBluePercent: number | null;
-  vignettingPercent: number | null;
-  vignettingEv: number | null;
-};
-
-type RawDevelopmentSettings = {
-  mode: "thumbnail-match" | "fallback";
-  iso: number | null;
-  medPasses: number;
-  luminance: RawDevelopmentLuminanceSettings | null;
-  saturation: RawDevelopmentSaturationSettings;
-  headroom?: RawDevelopmentHeadroomStatistics;
-  lensfun?: RawDevelopmentLensfunSettings;
-  elapsedSeconds: number;
 };
 
 type RawDevelopmentMemoryUsage = {
@@ -2184,35 +1626,16 @@ type RawDevelopmentMemoryUsage = {
   totalBytes?: number;
 };
 
-type DecodedRgbImage16 = {
-  colorSpace: "prophoto";
-  transfer: "linear" | "gamma20";
-  linearRangeMax: number;
-  width: number;
-  height: number;
-  data: Uint16Array;
-  lensCorrection?: LensfunCorrection;
-  rawDevelopment?: RawDevelopmentSettings;
-  cleanup: () => void;
-};
-
-export type DecodedImage = DecodedRgbImage16;
-
 type RawDevelopmentCacheEntry = {
   itemId: string;
   file: File;
   decoded: DecodedRgbImage16;
 };
-
-type Canvas2dContextLike = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 const PROFILE_SNIFF_BYTES = 1024 * 1024;
 const DISPLAY_P3_PROFILE_LABEL_RE = /display[ _-]?p3/i;
 const PROPHOTO_PROFILE_LABEL_RE = /(?:prophoto|romm)[ _-]?rgb/i;
 const ADOBE_RGB_PROFILE_LABEL_RE = /adobe[ _-]?rgb(?:[ _-]?\(?1998\)?)?/i;
 const REC_2020_PROFILE_LABEL_RE = /(?:rec(?:\.|ommendation)?|bt)[\s._-]*2020/i;
-
-type ImageInputColorProfile = "srgb" | "display-p3" | "prophoto" | "adobe-rgb" | "rec2020";
-type ImageEditCanvasColorSpace = ImageEditOutputColorProfile;
 
 function inputColorProfileToBestOutputProfile(profile: ImageInputColorProfile): ImageEditOutputColorProfile {
   return profile === "display-p3" || profile === "prophoto" || profile === "adobe-rgb" || profile === "rec2020"
@@ -2234,76 +1657,6 @@ type TiffIfdLike = {
   t339?: number[];
   t34675?: unknown;
 };
-
-function getCanvas2dContext(
-  canvas: HTMLCanvasElement | OffscreenCanvas,
-  colorSpace: ImageEditCanvasColorSpace = "srgb",
-  willReadFrequently = false,
-): Canvas2dContextLike | null {
-  const options: {
-    colorSpace?: ImageEditCanvasColorSpace;
-    willReadFrequently?: boolean;
-  } = { colorSpace };
-  if (willReadFrequently) options.willReadFrequently = true;
-  try {
-    const ctx = (canvas as HTMLCanvasElement).getContext(
-      "2d",
-      options as unknown as CanvasRenderingContext2DSettings,
-    );
-    if (ctx) return ctx as Canvas2dContextLike;
-  } catch {}
-  if (willReadFrequently) {
-    try {
-      const ctx = (canvas as HTMLCanvasElement).getContext(
-        "2d",
-        { willReadFrequently: true } as unknown as CanvasRenderingContext2DSettings,
-      );
-      if (ctx) return ctx as Canvas2dContextLike;
-    } catch {}
-  }
-  return (canvas as HTMLCanvasElement).getContext("2d") as Canvas2dContextLike | null;
-}
-
-function getCanvasImageData(
-  ctx: Canvas2dContextLike,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  colorSpace: ImageEditCanvasColorSpace = "srgb",
-): ImageData {
-  try {
-    return (ctx as CanvasRenderingContext2D & {
-      getImageData(
-        sx: number,
-        sy: number,
-        sw: number,
-        sh: number,
-        settings?: { colorSpace?: ImageEditCanvasColorSpace },
-      ): ImageData;
-    }).getImageData(x, y, width, height, { colorSpace });
-  } catch {
-    return ctx.getImageData(x, y, width, height);
-  }
-}
-
-function createCanvasImageData(
-  ctx: Canvas2dContextLike,
-  width: number,
-  height: number,
-  colorSpace: ImageEditCanvasColorSpace = "srgb",
-): ImageData {
-  try {
-    return new ImageData(
-      new Uint8ClampedArray(width * height * 4),
-      width,
-      height,
-      { colorSpace } as unknown as ImageDataSettings,
-    );
-  } catch {
-    return ctx.createImageData(width, height);
-  }
-}
 
 function profileLabelText(bytes: Uint8Array): string {
   // ICC v4 descriptions are often UTF-16BE. Removing NUL bytes lets the same
@@ -2559,13 +1912,6 @@ export async function detectBestEditableImageOutputColorProfile(
   return detectEditableImageColorProfile(file);
 }
 
-type LinearRgbSample = {
-  data: Float32Array;
-  width: number;
-  height: number;
-  valid?: Uint8Array;
-};
-
 type Rgb16RenderedPreviewCacheEntry = {
   width: number;
   height: number;
@@ -2581,124 +1927,21 @@ const RGB16_EDIT_RENDERED_PREVIEW_CACHE = new WeakMap<
   DecodedRgbImage16,
   Rgb16RenderedPreviewCacheEntry
 >();
-const RGB16_EDIT_PREVIEW_CONTEXT_CACHE = new WeakMap<
-  DecodedRgbImage16,
-  { rotationDegrees: number; sample: LinearRgbSample }
->();
 type Rgb16PercentileDebugCacheEntry = {
-  sample: Float32Array;
   input: DebugPercentileStatistics;
   outputKey?: string;
   output?: DebugPercentileStatistics;
 };
 const RGB16_EDIT_PERCENTILE_DEBUG_CACHE = new WeakMap<
-  DecodedRgbImage16,
+  LinearRgbSample,
   Rgb16PercentileDebugCacheEntry
 >();
-
-const COLOR_ADJUSTMENT_CONTEXT_SAMPLE_MAX = 256;
 
 function scaleSampleTo16(v: number, bits: number): number {
   const b = Math.max(1, Math.min(16, Math.round(bits || 16)));
   if (b >= 16) return Math.max(0, Math.min(65535, Math.round(v)));
   const max = (1 << b) - 1;
   return max > 0 ? Math.round((Math.max(0, v) / max) * 65535) : 0;
-}
-
-function normalizeLinearRangeMax(linearRangeMax: number): number {
-  return Number.isFinite(linearRangeMax) && linearRangeMax > 0 ? linearRangeMax : 1;
-}
-
-function decodeStoredRgb16Channel(
-  sample: number,
-  transfer: DecodedRgbImage16["transfer"],
-  linearRangeMax: number,
-): number {
-  const encoded = clamp01(sample / 65535);
-  const normalizedRange = normalizeLinearRangeMax(linearRangeMax);
-  if (transfer === "gamma20") return encoded * encoded * normalizedRange;
-  return encoded * normalizedRange;
-}
-
-function encodeStoredRgb16Channel(
-  linear: number,
-  transfer: DecodedRgbImage16["transfer"],
-  linearRangeMax: number,
-): number {
-  const normalizedRange = normalizeLinearRangeMax(linearRangeMax);
-  const normalized = clamp01(linear / normalizedRange);
-  const encoded = transfer === "gamma20" ? Math.sqrt(normalized) : normalized;
-  return Math.round(encoded * 65535);
-}
-
-function prophotoEncodedToLinear(encoded: number): number {
-  const x = clamp01(encoded);
-  return x <= 16 / 512 ? x / 16 : Math.pow(x, 1.8);
-}
-
-function adobeRgbEncodedToLinear(encoded: number): number {
-  return Math.pow(clamp01(encoded), 2.19921875);
-}
-
-function rec2020EncodedToLinear(encoded: number): number {
-  const x = clamp01(encoded);
-  const threshold = 4.5 * REC_2020_TRANSFER_BETA;
-  if (x < threshold) return x / 4.5;
-  return Math.pow(
-    (x + (REC_2020_TRANSFER_ALPHA - 1)) / REC_2020_TRANSFER_ALPHA,
-    1 / 0.45,
-  );
-}
-
-function encodedRgbToLinearProphoto(
-  r: number,
-  g: number,
-  b: number,
-  profile: ImageInputColorProfile,
-): [number, number, number] {
-  if (profile === "prophoto") {
-    return [
-      prophotoEncodedToLinear(r),
-      prophotoEncodedToLinear(g),
-      prophotoEncodedToLinear(b),
-    ];
-  }
-  if (profile === "adobe-rgb") {
-    const lr = adobeRgbEncodedToLinear(r);
-    const lg = adobeRgbEncodedToLinear(g);
-    const lb = adobeRgbEncodedToLinear(b);
-    return [
-      ADOBE_RGB_TO_PROPHOTO_M00 * lr + ADOBE_RGB_TO_PROPHOTO_M01 * lg + ADOBE_RGB_TO_PROPHOTO_M02 * lb,
-      ADOBE_RGB_TO_PROPHOTO_M10 * lr + ADOBE_RGB_TO_PROPHOTO_M11 * lg + ADOBE_RGB_TO_PROPHOTO_M12 * lb,
-      ADOBE_RGB_TO_PROPHOTO_M20 * lr + ADOBE_RGB_TO_PROPHOTO_M21 * lg + ADOBE_RGB_TO_PROPHOTO_M22 * lb,
-    ];
-  }
-  if (profile === "rec2020") {
-    const lr = rec2020EncodedToLinear(r);
-    const lg = rec2020EncodedToLinear(g);
-    const lb = rec2020EncodedToLinear(b);
-    return [
-      REC_2020_TO_PROPHOTO_M00 * lr + REC_2020_TO_PROPHOTO_M01 * lg + REC_2020_TO_PROPHOTO_M02 * lb,
-      REC_2020_TO_PROPHOTO_M10 * lr + REC_2020_TO_PROPHOTO_M11 * lg + REC_2020_TO_PROPHOTO_M12 * lb,
-      REC_2020_TO_PROPHOTO_M20 * lr + REC_2020_TO_PROPHOTO_M21 * lg + REC_2020_TO_PROPHOTO_M22 * lb,
-    ];
-  }
-
-  const lr = srgbChannelToLinear(clamp01(r) * 255);
-  const lg = srgbChannelToLinear(clamp01(g) * 255);
-  const lb = srgbChannelToLinear(clamp01(b) * 255);
-  if (profile === "display-p3") {
-    return [
-      DISPLAY_P3_TO_PROPHOTO_M00 * lr + DISPLAY_P3_TO_PROPHOTO_M01 * lg + DISPLAY_P3_TO_PROPHOTO_M02 * lb,
-      DISPLAY_P3_TO_PROPHOTO_M10 * lr + DISPLAY_P3_TO_PROPHOTO_M11 * lg + DISPLAY_P3_TO_PROPHOTO_M12 * lb,
-      DISPLAY_P3_TO_PROPHOTO_M20 * lr + DISPLAY_P3_TO_PROPHOTO_M21 * lg + DISPLAY_P3_TO_PROPHOTO_M22 * lb,
-    ];
-  }
-  return [
-    SRGB_TO_PROPHOTO_M00 * lr + SRGB_TO_PROPHOTO_M01 * lg + SRGB_TO_PROPHOTO_M02 * lb,
-    SRGB_TO_PROPHOTO_M10 * lr + SRGB_TO_PROPHOTO_M11 * lg + SRGB_TO_PROPHOTO_M12 * lb,
-    SRGB_TO_PROPHOTO_M20 * lr + SRGB_TO_PROPHOTO_M21 * lg + SRGB_TO_PROPHOTO_M22 * lb,
-  ];
 }
 
 function writeRgba8ToDecodedRgb16(
@@ -3108,7 +2351,7 @@ function applyRawThumbnailMatchedBaseline(
     return null;
   }
 
-  const sample = sampleLinearRgbFromRgb16(decoded);
+  const sample = sampleRawThumbnailMatchLinearRgbFromRgb16(decoded);
   if (!sample.length) return null;
   const rawPercentiles = debugPercentilesFromLinearRgbSample(sample, "prophoto");
   const rawP25 = rawPercentiles[p25Index];
@@ -3311,7 +2554,7 @@ function buildRawAutoColorSample(sample: Float32Array): RawAutoColorSample {
     hue,
     saturation,
     value,
-    saturationP99: percentileFromSortedValues(saturationValues, 99),
+    saturationP99: percentileFromValues(saturationValues, 99),
     statisticsMask: central.mask,
     statisticsCount: central.count,
   };
@@ -3425,7 +2668,7 @@ function applyRawThumbnailMatchedColor(
   thumbnailLinearSrgbSample: Float32Array,
 ): RawDevelopmentSaturationSettings | null {
   if (!thumbnailLinearSrgbSample.length) return null;
-  const rawLinearProPhotoSample = sampleLinearRgbFromRgb16(decoded);
+  const rawLinearProPhotoSample = sampleRawThumbnailMatchLinearRgbFromRgb16(decoded);
   if (!rawLinearProPhotoSample.length) return null;
 
   const targetP95 = hsvSaturationPercentileFromLinearSrgbSample(
@@ -3578,66 +2821,56 @@ function applyRawBaselineExposure(
 }
 
 function debugPercentilesFromLinearRgbSample(
-  sample: Float32Array,
+  sample: Float32Array | LinearRgbSample,
   colorSpace: "srgb" | "prophoto" = "srgb",
 ): DebugPercentileValues {
-  const count = Math.floor(sample.length / 3);
+  const data = sample instanceof Float32Array ? sample : sample.data;
+  const valid = sample instanceof Float32Array ? undefined : sample.valid;
+  const count = Math.floor(data.length / 3);
   if (count <= 0) return DEBUG_PERCENTILES.map(() => 0);
   const lumaR = colorSpace === "prophoto" ? PROPHOTO_LUMA_R : 0.2126;
   const lumaG = colorSpace === "prophoto" ? PROPHOTO_LUMA_G : 0.7152;
   const lumaB = colorSpace === "prophoto" ? PROPHOTO_LUMA_B : 0.0722;
-  const luma = new Array<number>(count);
+  const luma: number[] = [];
   for (let i = 0; i < count; i++) {
+    if (valid && !valid[i]) continue;
     const si = i * 3;
-    const r = sample[si] ?? 0;
-    const g = sample[si + 1] ?? 0;
-    const b = sample[si + 2] ?? 0;
-    luma[i] = clamp01(lumaR * r + lumaG * g + lumaB * b);
+    const r = data[si] ?? 0;
+    const g = data[si + 1] ?? 0;
+    const b = data[si + 2] ?? 0;
+    luma.push(clamp01(lumaR * r + lumaG * g + lumaB * b));
   }
-  luma.sort((a, b) => a - b);
-  return DEBUG_PERCENTILES.map((percentile) => {
-    const rank = (luma.length - 1) * percentile / 100;
-    const lower = Math.floor(rank);
-    const upper = Math.ceil(rank);
-    const fraction = rank - lower;
-    const lo = luma[lower] ?? 0;
-    const hi = luma[upper] ?? lo;
-    return lo + (hi - lo) * fraction;
-  });
+  if (!luma.length) return DEBUG_PERCENTILES.map(() => 0);
+  return percentilesFromValues(luma, DEBUG_PERCENTILES);
 }
 
 function debugSaturationPercentilesFromLinearRgbSample(
-  sample: Float32Array,
+  sample: Float32Array | LinearRgbSample,
   colorSpace: "srgb" | "prophoto" = "srgb",
 ): DebugPercentileValues {
-  const count = Math.floor(sample.length / 3);
+  const data = sample instanceof Float32Array ? sample : sample.data;
+  const valid = sample instanceof Float32Array ? undefined : sample.valid;
+  const count = Math.floor(data.length / 3);
   if (count <= 0) return DEBUG_PERCENTILES.map(() => 0);
-  const values = new Array<number>(count);
+  const values: number[] = [];
   for (let i = 0; i < count; i++) {
+    if (valid && !valid[i]) continue;
     const si = i * 3;
-    let r = sample[si] ?? 0;
-    let g = sample[si + 1] ?? 0;
-    let b = sample[si + 2] ?? 0;
+    let r = data[si] ?? 0;
+    let g = data[si + 1] ?? 0;
+    let b = data[si + 2] ?? 0;
     if (colorSpace === "prophoto") {
       [r, g, b] = convertLinearProPhotoToOutputRgb(r, g, b, "srgb");
     }
     const [, saturation] = rgbToHsv(clamp01(r), clamp01(g), clamp01(b));
-    values[i] = saturation;
+    values.push(saturation);
   }
-  values.sort((a, b) => a - b);
-  return DEBUG_PERCENTILES.map((percentile) => {
-    const rank = (values.length - 1) * percentile / 100;
-    const lower = Math.floor(rank);
-    const upper = Math.ceil(rank);
-    const fraction = rank - lower;
-    const lo = values[lower] ?? 0;
-    const hi = values[upper] ?? lo;
-    return lo + (hi - lo) * fraction;
-  });
+  if (!values.length) return DEBUG_PERCENTILES.map(() => 0);
+  return percentilesFromValues(values, DEBUG_PERCENTILES);
 }
 
 function debugStatisticsFromLinearRgbSample(
-  sample: Float32Array,
+  sample: Float32Array | LinearRgbSample,
   colorSpace: "srgb" | "prophoto" = "srgb",
 ): DebugPercentileStatistics {
   return {
@@ -3646,10 +2879,13 @@ function debugStatisticsFromLinearRgbSample(
   };
 }
 
-function sampleLinearRgbFromRgb16(decoded: DecodedRgbImage16): Float32Array {
+// RAW thumbnail matching is part of the existing development baseline, not the
+// editor analysis policy. Keep its historical max-side sampling unchanged in
+// this commit so the RAW baseline does not move together with editor statistics.
+function sampleRawThumbnailMatchLinearRgbFromRgb16(decoded: DecodedRgbImage16): Float32Array {
   const scale = Math.min(
     1,
-    DEBUG_PERCENTILE_SAMPLE_MAX / Math.max(decoded.width, decoded.height),
+    RAW_THUMBNAIL_MATCH_SAMPLE_MAX_SIDE / Math.max(decoded.width, decoded.height),
   );
   const sampleW = Math.max(1, Math.round(decoded.width * scale));
   const sampleH = Math.max(1, Math.round(decoded.height * scale));
@@ -3672,324 +2908,8 @@ function sampleLinearRgbFromRgb16(decoded: DecodedRgbImage16): Float32Array {
   return output;
 }
 
-
-function sampleLinearRgb16ChannelBilinearAtSource(
-  decoded: DecodedRgbImage16,
-  x: number,
-  y: number,
-  channel: 0 | 1 | 2,
-): number | null {
-  if (x < 0 || x > decoded.width - 1 || y < 0 || y > decoded.height - 1) return null;
-  const x0 = Math.floor(x);
-  const y0 = Math.floor(y);
-  const x1 = Math.min(decoded.width - 1, x0 + 1);
-  const y1 = Math.min(decoded.height - 1, y0 + 1);
-  const tx = x - x0;
-  const ty = y - y0;
-  const data = decoded.data;
-  const idx00 = (y0 * decoded.width + x0) * 3 + channel;
-  const idx10 = (y0 * decoded.width + x1) * 3 + channel;
-  const idx01 = (y1 * decoded.width + x0) * 3 + channel;
-  const idx11 = (y1 * decoded.width + x1) * 3 + channel;
-  const w00 = (1 - tx) * (1 - ty);
-  const w10 = tx * (1 - ty);
-  const w01 = (1 - tx) * ty;
-  const w11 = tx * ty;
-  const transfer = decoded.transfer;
-  const linearRangeMax = decoded.linearRangeMax;
-  return (
-    decodeStoredRgb16Channel(data[idx00] ?? 0, transfer, linearRangeMax) * w00 +
-    decodeStoredRgb16Channel(data[idx10] ?? 0, transfer, linearRangeMax) * w10 +
-    decodeStoredRgb16Channel(data[idx01] ?? 0, transfer, linearRangeMax) * w01 +
-    decodeStoredRgb16Channel(data[idx11] ?? 0, transfer, linearRangeMax) * w11
-  );
-}
-
-function sampleLinearRgb16BilinearAtSource(
-  decoded: DecodedRgbImage16,
-  x: number,
-  y: number,
-): [number, number, number] | null {
-  const r = sampleLinearRgb16ChannelBilinearAtSource(decoded, x, y, 0);
-  const g = sampleLinearRgb16ChannelBilinearAtSource(decoded, x, y, 1);
-  const b = sampleLinearRgb16ChannelBilinearAtSource(decoded, x, y, 2);
-  return r === null || g === null || b === null ? null : [r, g, b];
-}
-
-function sampleLinearRgb16Bilinear(
-  decoded: DecodedRgbImage16,
-  x: number,
-  y: number,
-): [number, number, number] | null {
-  const correction = decoded.lensCorrection;
-  if (!correction) return sampleLinearRgb16BilinearAtSource(decoded, x, y);
-
-  const coordinates = lensfunSourceCoordinates(correction, x, y);
-  if (correction.tca) {
-    let r = sampleLinearRgb16ChannelBilinearAtSource(decoded, coordinates.r[0], coordinates.r[1], 0);
-    let g = sampleLinearRgb16ChannelBilinearAtSource(decoded, coordinates.g[0], coordinates.g[1], 1);
-    let b = sampleLinearRgb16ChannelBilinearAtSource(decoded, coordinates.b[0], coordinates.b[1], 2);
-    if (r === null || g === null || b === null) return null;
-    if (correction.vignetting && !correction.vignettingBaked) {
-      r *= lensfunVignettingGain(correction, coordinates.r[0], coordinates.r[1])[0];
-      g *= lensfunVignettingGain(correction, coordinates.g[0], coordinates.g[1])[1];
-      b *= lensfunVignettingGain(correction, coordinates.b[0], coordinates.b[1])[2];
-    }
-    return [r, g, b];
-  }
-  const sample = sampleLinearRgb16BilinearAtSource(decoded, coordinates.g[0], coordinates.g[1]);
-  if (!sample) return null;
-  if (correction.vignetting && !correction.vignettingBaked) {
-    const [rGain, gGain, bGain] = lensfunVignettingGain(
-      correction,
-      coordinates.g[0],
-      coordinates.g[1],
-    );
-    return [sample[0] * rGain, sample[1] * gGain, sample[2] * bGain];
-  }
-  return sample;
-}
-
-
-function renderedPixelToSourcePoint(
-  x: number,
-  y: number,
-  sourceW: number,
-  sourceH: number,
-  cropX: number,
-  cropY: number,
-  scaleX: number,
-  scaleY: number,
-  rotationDegrees: number,
-): EditPoint {
-  const point = {
-    x: cropX + (x + 0.5) / scaleX,
-    y: cropY + (y + 0.5) / scaleY,
-  };
-  if (Math.abs(normalizeRotationDegrees(rotationDegrees)) < 1e-9) return point;
-  return inverseRotatePoint(point.x, point.y, sourceW / 2, sourceH / 2, rotationDegrees);
-}
-
-function sampleLinearRgbFromRgb16Region(
-  decoded: DecodedRgbImage16,
-  sourceRect: { x: number; y: number; w: number; h: number },
-  rotationDegrees: number,
-  maxSide = COLOR_ADJUSTMENT_CONTEXT_SAMPLE_MAX,
-): LinearRgbSample {
-  const sw = Math.max(1, sourceRect.w);
-  const sh = Math.max(1, sourceRect.h);
-  const scale = Math.min(1, maxSide / Math.max(sw, sh));
-  const sampleW = Math.max(1, Math.round(sw * scale));
-  const sampleH = Math.max(1, Math.round(sh * scale));
-  const data = new Float32Array(sampleW * sampleH * 3);
-  const valid = new Uint8Array(sampleW * sampleH);
-  const scaleX = sampleW / sw;
-  const scaleY = sampleH / sh;
-  for (let y = 0; y < sampleH; y++) {
-    for (let x = 0; x < sampleW; x++) {
-      const sourcePoint = renderedPixelToSourcePoint(
-        x,
-        y,
-        decoded.width,
-        decoded.height,
-        sourceRect.x,
-        sourceRect.y,
-        scaleX,
-        scaleY,
-        rotationDegrees,
-      );
-      if (
-        sourcePoint.x < 0 ||
-        sourcePoint.x >= decoded.width ||
-        sourcePoint.y < 0 ||
-        sourcePoint.y >= decoded.height
-      ) {
-        continue;
-      }
-      const di = (y * sampleW + x) * 3;
-      const vi = y * sampleW + x;
-      const sample = sampleLinearRgb16Bilinear(decoded, sourcePoint.x, sourcePoint.y);
-      if (!sample) continue;
-      const [r, g, b] = sample;
-      data[di] = r;
-      data[di + 1] = g;
-      data[di + 2] = b;
-      valid[vi] = 1;
-    }
-  }
-  return { data, width: sampleW, height: sampleH, valid };
-}
-
-function getRgb16EditPreviewContextSample(
-  decoded: DecodedRgbImage16,
-  rotationDegrees: number,
-): LinearRgbSample {
-  const normalizedRotation = normalizeRotationDegrees(rotationDegrees);
-  const cached = RGB16_EDIT_PREVIEW_CONTEXT_CACHE.get(decoded);
-  if (cached && Math.abs(cached.rotationDegrees - normalizedRotation) < 1e-9) {
-    return cached.sample;
-  }
-  const sample = sampleLinearRgbFromRgb16Region(
-    decoded,
-    { x: 0, y: 0, w: decoded.width, h: decoded.height },
-    normalizedRotation,
-    COLOR_ADJUSTMENT_CONTEXT_SAMPLE_MAX,
-  );
-  RGB16_EDIT_PREVIEW_CONTEXT_CACHE.set(decoded, {
-    rotationDegrees: normalizedRotation,
-    sample,
-  });
-  return sample;
-}
-
-function percentileFromSortedValues(values: number[], percentile: number): number {
-  if (!values.length) return 0;
-  values.sort((a, b) => a - b);
-  const rank = (values.length - 1) * Math.min(100, Math.max(0, percentile)) / 100;
-  const lower = Math.floor(rank);
-  const upper = Math.ceil(rank);
-  const fraction = rank - lower;
-  const lo = values[lower] ?? 0;
-  const hi = values[upper] ?? lo;
-  return lo + (hi - lo) * fraction;
-}
-
-function buildColorAdjustmentContextFromLinearRgbSample(
-  sample: LinearRgbSample,
-  temperature: number,
-  tint: number,
-  exposureEv: number,
-  shadow: number,
-  highlight: number,
-  scaledLog: number,
-  sigmoid: number,
-  vibrance: number,
-  saturation: number,
-  ignoreInvalid = false,
-): ColorAdjustmentContext {
-  const normalizedTemperature = clampWhiteBalanceValue(temperature);
-  const normalizedTint = clampWhiteBalanceValue(tint);
-  const normalizedShadow = clampToneRangeAdjustment(shadow);
-  const normalizedHighlight = clampToneRangeAdjustment(highlight);
-  const normalizedScaledLog = clampScaledLog(scaledLog);
-  const normalizedSigmoid = clampSigmoid(sigmoid);
-  const normalizedVibrance = clampColorAdjustment(vibrance);
-  const normalizedSaturation = clampColorAdjustment(saturation);
-  const factor = Math.pow(2, exposureEv);
-  const gains = whiteBalanceGains(normalizedTemperature, normalizedTint);
-  const hasWhiteBalance = normalizedTemperature !== 0 || normalizedTint !== 0;
-
-  const exposedValues: number[] = [];
-  const highlightMaxValues: number[] = [];
-  const data = sample.data;
-  const valid = sample.valid;
-  const count = Math.floor(data.length / 3);
-  for (let pixel = 0; pixel < count; pixel++) {
-    if (ignoreInvalid && valid && !valid[pixel]) continue;
-    const i = pixel * 3;
-    let r = data[i] ?? 0;
-    let g = data[i + 1] ?? 0;
-    let b = data[i + 2] ?? 0;
-    if (hasWhiteBalance) {
-      [r, g, b] = applyWhiteBalanceLinear(r, g, b, gains);
-    }
-    const exposedR = r * factor;
-    const exposedG = g * factor;
-    const exposedB = b * factor;
-    exposedValues.push(exposedR, exposedG, exposedB);
-    if (normalizedHighlight !== 0) {
-      highlightMaxValues.push(Math.max(
-        applyShadowLinear(exposedR, normalizedShadow),
-        applyShadowLinear(exposedG, normalizedShadow),
-        applyShadowLinear(exposedB, normalizedShadow),
-      ));
-    }
-  }
-  // Rolloff depends on the post-exposure signal range, not on the sign of the
-  // Exposure control. RAW buffers may already contain values above 1 at 0 EV.
-  const maxVal = percentileFromSortedValues(exposedValues, 99.8);
-  const rolloff = rolloffParams(maxVal, 0.5, 4);
-  const highlightRange: HighlightRange | null = normalizedHighlight !== 0 && highlightMaxValues.length > 0
-    ? {
-        p0: percentileFromSortedValues(highlightMaxValues, 0),
-        p100: percentileFromSortedValues(highlightMaxValues, 100),
-      }
-    : null;
-  const saturationFactor = colorSaturationFactor(normalizedSaturation);
-  const vibranceFactor = colorVibranceFactor(normalizedVibrance);
-  const saturationValues: number[] = [];
-  if (saturationFactor > 1) {
-    for (let pixel = 0; pixel < count; pixel++) {
-      if (ignoreInvalid && valid && !valid[pixel]) continue;
-      const i = pixel * 3;
-      const [r, g, b] = applyToneLinearToRgb(
-        data[i] ?? 0,
-        data[i + 1] ?? 0,
-        data[i + 2] ?? 0,
-        gains,
-        hasWhiteBalance,
-        factor,
-        normalizedShadow,
-        normalizedHighlight,
-        highlightRange,
-        rolloff,
-        normalizedScaledLog,
-        normalizedSigmoid,
-      );
-      const [, s] = rgbToHsv(r, g, b);
-      saturationValues.push(s * saturationFactor);
-    }
-  }
-  const saturationRolloff = saturationFactor > 1
-    ? rolloffParams(percentileFromSortedValues(saturationValues, 99), 0.7, 4)
-    : null;
-
-  return {
-    gains,
-    hasWhiteBalance,
-    factor,
-    shadow: normalizedShadow,
-    highlight: normalizedHighlight,
-    highlightRange,
-    rolloff,
-    scaledLog: normalizedScaledLog,
-    sigmoid: normalizedSigmoid,
-    normalizedVibrance,
-    normalizedSaturation,
-    saturationFactor,
-    vibranceFactor,
-    saturationRolloff,
-  };
-}
-
-function colorAdjustmentContextFromLinearRgbSample(
-  sample: Float32Array,
-  temperature: number,
-  tint: number,
-  exposureEv: number,
-  shadow: number,
-  highlight: number,
-  scaledLog: number,
-  sigmoid: number,
-  vibrance: number,
-  saturation: number,
-): ColorAdjustmentContext {
-  return buildColorAdjustmentContextFromLinearRgbSample(
-    { data: sample, width: Math.floor(sample.length / 3), height: 1 },
-    temperature,
-    tint,
-    exposureEv,
-    shadow,
-    highlight,
-    scaledLog,
-    sigmoid,
-    vibrance,
-    saturation,
-  );
-}
-
 function adjustedDebugStatisticsFromLinearRgbSample(
-  sample: Float32Array,
+  sample: LinearRgbSample,
   temperature: number,
   tint: number,
   exposureEv: number,
@@ -4001,7 +2921,7 @@ function adjustedDebugStatisticsFromLinearRgbSample(
   saturation: number,
   colorSpace: "srgb" | "prophoto" = "srgb",
 ): DebugPercentileStatistics {
-  const context = colorAdjustmentContextFromLinearRgbSample(
+  const context = buildColorAdjustmentContextFromLinearRgbSample(
     sample,
     temperature,
     tint,
@@ -4012,20 +2932,27 @@ function adjustedDebugStatisticsFromLinearRgbSample(
     sigmoid,
     vibrance,
     saturation,
+    true,
   );
-  const adjusted = new Float32Array(sample.length);
-  for (let i = 0; i < sample.length; i += 3) {
+  const adjusted = new Float32Array(sample.data.length);
+  const pixelCount = Math.floor(sample.data.length / 3);
+  for (let pixel = 0; pixel < pixelCount; pixel++) {
+    if (sample.valid && !sample.valid[pixel]) continue;
+    const i = pixel * 3;
     const [r, g, b] = applyColorAdjustmentsLinearRgb(
-      sample[i] ?? 0,
-      sample[i + 1] ?? 0,
-      sample[i + 2] ?? 0,
+      sample.data[i] ?? 0,
+      sample.data[i + 1] ?? 0,
+      sample.data[i + 2] ?? 0,
       context,
     );
     adjusted[i] = r;
     adjusted[i + 1] = g;
     adjusted[i + 2] = b;
   }
-  return debugStatisticsFromLinearRgbSample(adjusted, colorSpace);
+  return debugStatisticsFromLinearRgbSample(
+    { ...sample, data: adjusted },
+    colorSpace,
+  );
 }
 
 async function rawThumbnailMatchReferenceFromThumbnail(
@@ -4040,7 +2967,7 @@ async function rawThumbnailMatchReferenceFromThumbnail(
     if (thumbnail.data.length < pixelCount * channels) return undefined;
     const scale = Math.min(
       1,
-      DEBUG_PERCENTILE_SAMPLE_MAX / Math.max(thumbnail.width, thumbnail.height),
+      RAW_THUMBNAIL_MATCH_SAMPLE_MAX_SIDE / Math.max(thumbnail.width, thumbnail.height),
     );
     const sampleW = Math.max(1, Math.round(thumbnail.width * scale));
     const sampleH = Math.max(1, Math.round(thumbnail.height * scale));
@@ -4078,7 +3005,7 @@ async function rawThumbnailMatchReferenceFromThumbnail(
       }
       const width = Number((source as ImageBitmap).width || (source as HTMLImageElement).naturalWidth || thumbnail.width);
       const height = Number((source as ImageBitmap).height || (source as HTMLImageElement).naturalHeight || thumbnail.height);
-      const scale = Math.min(1, DEBUG_PERCENTILE_SAMPLE_MAX / Math.max(width, height));
+      const scale = Math.min(1, RAW_THUMBNAIL_MATCH_SAMPLE_MAX_SIDE / Math.max(width, height));
       const sampleW = Math.max(1, Math.round(width * scale));
       const sampleH = Math.max(1, Math.round(height * scale));
       const canvas = document.createElement("canvas");
@@ -4662,205 +3589,6 @@ async function decodeImage(
   }
 }
 
-function convertLinearProPhotoToOutputRgb(
-  r: number,
-  g: number,
-  b: number,
-  outputColorProfile: ImageEditOutputColorProfile,
-): [number, number, number] {
-  const m00 = outputColorProfile === "display-p3" ? PROPHOTO_TO_DISPLAY_P3_M00 : PROPHOTO_TO_SRGB_M00;
-  const m01 = outputColorProfile === "display-p3" ? PROPHOTO_TO_DISPLAY_P3_M01 : PROPHOTO_TO_SRGB_M01;
-  const m02 = outputColorProfile === "display-p3" ? PROPHOTO_TO_DISPLAY_P3_M02 : PROPHOTO_TO_SRGB_M02;
-  const m10 = outputColorProfile === "display-p3" ? PROPHOTO_TO_DISPLAY_P3_M10 : PROPHOTO_TO_SRGB_M10;
-  const m11 = outputColorProfile === "display-p3" ? PROPHOTO_TO_DISPLAY_P3_M11 : PROPHOTO_TO_SRGB_M11;
-  const m12 = outputColorProfile === "display-p3" ? PROPHOTO_TO_DISPLAY_P3_M12 : PROPHOTO_TO_SRGB_M12;
-  const m20 = outputColorProfile === "display-p3" ? PROPHOTO_TO_DISPLAY_P3_M20 : PROPHOTO_TO_SRGB_M20;
-  const m21 = outputColorProfile === "display-p3" ? PROPHOTO_TO_DISPLAY_P3_M21 : PROPHOTO_TO_SRGB_M21;
-  const m22 = outputColorProfile === "display-p3" ? PROPHOTO_TO_DISPLAY_P3_M22 : PROPHOTO_TO_SRGB_M22;
-  return [
-    m00 * r + m01 * g + m02 * b,
-    m10 * r + m11 * g + m12 * b,
-    m20 * r + m21 * g + m22 * b,
-  ];
-}
-
-function renderAdjustedRgb16ToCanvas(
-  canvas: HTMLCanvasElement | OffscreenCanvas,
-  decoded: DecodedRgbImage16,
-  sourceRect: { x: number; y: number; w: number; h: number },
-  rotationDegrees: number,
-  temperature: number,
-  tint: number,
-  exposureEv: number,
-  shadow: number,
-  highlight: number,
-  scaledLog: number,
-  sigmoid: number,
-  vibrance: number,
-  saturation: number,
-  outputColorProfile: ImageEditOutputColorProfile = "srgb",
-) {
-  const ctx = getCanvas2dContext(canvas, outputColorProfile);
-  if (!ctx) throw new Error("2D context unavailable");
-  const width = Math.max(1, canvas.width);
-  const height = Math.max(1, canvas.height);
-  const imageData = createCanvasImageData(ctx, width, height, outputColorProfile);
-  const output = imageData.data;
-  const isFullImagePreview =
-    sourceRect.x === 0 &&
-    sourceRect.y === 0 &&
-    sourceRect.w === decoded.width &&
-    sourceRect.h === decoded.height;
-  const contextSample = isFullImagePreview
-    ? getRgb16EditPreviewContextSample(decoded, rotationDegrees)
-    : sampleLinearRgbFromRgb16Region(
-        decoded,
-        sourceRect,
-        rotationDegrees,
-        COLOR_ADJUSTMENT_CONTEXT_SAMPLE_MAX,
-      );
-  const context = buildColorAdjustmentContextFromLinearRgbSample(
-    contextSample,
-    temperature,
-    tint,
-    exposureEv,
-    shadow,
-    highlight,
-    scaledLog,
-    sigmoid,
-    vibrance,
-    saturation,
-    true,
-  );
-  const scaleX = width / Math.max(1, sourceRect.w);
-  const scaleY = height / Math.max(1, sourceRect.h);
-  const sampleRenderedPixel = (x: number, y: number): [number, number, number] | null => {
-    const sourcePoint = renderedPixelToSourcePoint(
-      x,
-      y,
-      decoded.width,
-      decoded.height,
-      sourceRect.x,
-      sourceRect.y,
-      scaleX,
-      scaleY,
-      rotationDegrees,
-    );
-    if (
-      sourcePoint.x < 0 ||
-      sourcePoint.x >= decoded.width ||
-      sourcePoint.y < 0 ||
-      sourcePoint.y >= decoded.height
-    ) {
-      return null;
-    }
-    return sampleLinearRgb16Bilinear(decoded, sourcePoint.x, sourcePoint.y);
-  };
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const di = (y * width + x) * 4;
-      const sample = sampleRenderedPixel(x, y);
-      if (!sample) {
-        output[di] = 128;
-        output[di + 1] = 128;
-        output[di + 2] = 128;
-        output[di + 3] = 255;
-        continue;
-      }
-      let [r, g, b] = sample;
-      [r, g, b] = applyColorAdjustmentsLinearRgb(r, g, b, context);
-      [r, g, b] = convertLinearProPhotoToOutputRgb(r, g, b, outputColorProfile);
-      output[di] = linearChannelToSrgb(r);
-      output[di + 1] = linearChannelToSrgb(g);
-      output[di + 2] = linearChannelToSrgb(b);
-      output[di + 3] = 255;
-    }
-  }
-  ctx.putImageData(imageData, 0, 0);
-}
-
-
-function computeHistogramDataFromRgb16(
-  decoded: DecodedRgbImage16,
-  sourceRect: { x: number; y: number; w: number; h: number },
-  rotationDegrees: number,
-  temperature: number,
-  tint: number,
-  exposureEv: number,
-  shadow: number,
-  highlight: number,
-  scaledLog: number,
-  sigmoid: number,
-  vibrance: number,
-  saturation: number,
-): HistogramData | null {
-  if (decoded.width <= 0 || decoded.height <= 0) return null;
-  const sample = sampleLinearRgbFromRgb16Region(decoded, sourceRect, rotationDegrees, HISTOGRAM_SAMPLE_MAX);
-  if (!sample.data.length) return null;
-  const adjustment = buildColorAdjustmentContextFromLinearRgbSample(
-    sample,
-    temperature,
-    tint,
-    exposureEv,
-    shadow,
-    highlight,
-    scaledLog,
-    sigmoid,
-    vibrance,
-    saturation,
-    true,
-  );
-  const r = new Array<number>(HISTOGRAM_BINS).fill(0);
-  const g = new Array<number>(HISTOGRAM_BINS).fill(0);
-  const b = new Array<number>(HISTOGRAM_BINS).fill(0);
-  const luma = new Array<number>(HISTOGRAM_BINS).fill(0);
-  const areaWeight = sourceRect.w * sourceRect.h / Math.max(1, sample.width * sample.height);
-  const pixelCount = Math.floor(sample.data.length / 3);
-  for (let pixel = 0; pixel < pixelCount; pixel++) {
-    const i = pixel * 3;
-    if (sample.valid && !sample.valid[pixel]) {
-      const grayDisplay = histogramDisplayValue(srgbChannelToLinear(128));
-      addHistogramInterval(r, grayDisplay, grayDisplay, areaWeight);
-      addHistogramInterval(g, grayDisplay, grayDisplay, areaWeight);
-      addHistogramInterval(b, grayDisplay, grayDisplay, areaWeight);
-      addHistogramInterval(luma, grayDisplay, grayDisplay, areaWeight);
-      continue;
-    }
-    let rr = sample.data[i] ?? 0;
-    let gg = sample.data[i + 1] ?? 0;
-    let bb = sample.data[i + 2] ?? 0;
-    [rr, gg, bb] = applyColorAdjustmentsLinearRgb(rr, gg, bb, adjustment);
-    const sr = clamp01(PROPHOTO_TO_SRGB_M00 * rr + PROPHOTO_TO_SRGB_M01 * gg + PROPHOTO_TO_SRGB_M02 * bb);
-    const sg = clamp01(PROPHOTO_TO_SRGB_M10 * rr + PROPHOTO_TO_SRGB_M11 * gg + PROPHOTO_TO_SRGB_M12 * bb);
-    const sb = clamp01(PROPHOTO_TO_SRGB_M20 * rr + PROPHOTO_TO_SRGB_M21 * gg + PROPHOTO_TO_SRGB_M22 * bb);
-    const yy = clamp01(0.2126 * sr + 0.7152 * sg + 0.0722 * sb);
-    const dr = histogramDisplayValue(sr);
-    const dg = histogramDisplayValue(sg);
-    const db = histogramDisplayValue(sb);
-    const dy = histogramDisplayValue(yy);
-    addHistogramInterval(r, dr, dr, areaWeight);
-    addHistogramInterval(g, dg, dg, areaWeight);
-    addHistogramInterval(b, db, db, areaWeight);
-    addHistogramInterval(luma, dy, dy, areaWeight);
-  }
-  let maxCount = 0;
-  for (let i = 0; i < HISTOGRAM_BINS; i++) {
-    maxCount = Math.max(maxCount, r[i] ?? 0, g[i] ?? 0, b[i] ?? 0, luma[i] ?? 0);
-  }
-  return { r, g, b, luma, maxCount };
-}
-
-function createToneAutoSampleFromRgb16(
-  decoded: DecodedRgbImage16,
-  sourceRect: { x: number; y: number; w: number; h: number },
-  rotationDegrees: number,
-): ToneAutoSample | null {
-  const sample = sampleLinearRgbFromRgb16Region(decoded, sourceRect, rotationDegrees, HISTOGRAM_SAMPLE_MAX);
-  return sample.data.length
-    ? { data: sample.data, width: sample.width, height: sample.height, valid: sample.valid }
-    : null;
-}
-
 export type ImageEditPreparedVariant = {
   canvas: HTMLCanvasElement | OffscreenCanvas;
   width: number;
@@ -5154,7 +3882,6 @@ type EditDialogProps = {
 };
 
 type EditRect = { x: number; y: number; w: number; h: number };
-type EditPoint = { x: number; y: number };
 type EditCorner = "nw" | "ne" | "sw" | "se";
 type DrawHandle = EditCorner | "start" | "end";
 type DrawCreateState = {
@@ -5191,13 +3918,6 @@ type TextOverlayLayout = {
   fontIndex: number;
   colorIndex: number;
   outlineColorIndex: number | null;
-};
-type HistogramData = {
-  r: number[];
-  g: number[];
-  b: number[];
-  luma: number[];
-  maxCount: number;
 };
 
 type PercentileDebugData = {
@@ -5240,472 +3960,6 @@ const TEXT_OVERLAY_MIN_BOX_WIDTH =
   TEXT_OVERLAY_CONTROL_GAP * 5 +
   TEXT_OVERLAY_DELETE_BUTTON_SIZE +
   TEXT_OVERLAY_CONTROL_SAFE_GAP;
-const HISTOGRAM_BINS = 256;
-const HISTOGRAM_SAMPLE_MAX = 256;
-const HISTOGRAM_DISPLAY_GAMMA = 2.4;
-
-function histogramDisplayValue(linear: number): number {
-  return Math.pow(clamp01(linear), 1 / HISTOGRAM_DISPLAY_GAMMA);
-}
-
-function addHistogramInterval(
-  output: number[],
-  lo: number,
-  hi: number,
-  weight: number,
-) {
-  if (weight <= 0) return;
-  const displayLo = clamp01(Math.min(lo, hi));
-  const displayHi = clamp01(Math.max(lo, hi));
-  const width = displayHi - displayLo;
-  if (width <= 1e-12) {
-    const bin = Math.min(
-      HISTOGRAM_BINS - 1,
-      Math.max(0, Math.floor(displayLo * HISTOGRAM_BINS)),
-    );
-    output[bin] += weight;
-    return;
-  }
-
-  const firstBin = Math.min(
-    HISTOGRAM_BINS - 1,
-    Math.max(0, Math.floor(displayLo * HISTOGRAM_BINS)),
-  );
-  const lastBin = Math.min(
-    HISTOGRAM_BINS - 1,
-    Math.max(0, Math.ceil(displayHi * HISTOGRAM_BINS) - 1),
-  );
-  for (let bin = firstBin; bin <= lastBin; bin++) {
-    const binLo = bin / HISTOGRAM_BINS;
-    const binHi = (bin + 1) / HISTOGRAM_BINS;
-    const overlap = Math.min(displayHi, binHi) - Math.max(displayLo, binLo);
-    if (overlap > 0) output[bin] += weight * overlap / width;
-  }
-}
-
-type ToneAutoSample = {
-  data: Float32Array;
-  width: number;
-  height: number;
-  valid?: Uint8Array;
-};
-
-const TONE_AUTO_EXPOSURE_CLIP_PENALTY = 50;
-const TONE_AUTO_EXPOSURE_HIGHLIGHT_START = 0.95;
-const TONE_AUTO_EXPOSURE_HIGHLIGHT_PENALTY = 1;
-const TONE_AUTO_SHADOW_PERCENTILE = 2;
-const TONE_AUTO_LOG_MIN = -3;
-const TONE_AUTO_LOG_MAX = 3;
-const TONE_AUTO_LOG_LOWER = 0.42;
-const TONE_AUTO_LOG_UPPER = 0.58;
-const TONE_AUTO_SIGMOID_MAX = 3;
-const TONE_AUTO_SIGMOID_BLACK_THRESHOLD = 0.05;
-const TONE_AUTO_SIGMOID_WHITE_THRESHOLD = 0.95;
-const TONE_AUTO_SIGMOID_BLACK_PENALTY = 2;
-const TONE_AUTO_SIGMOID_WHITE_PENALTY = 2;
-
-
-function toneHistogramPercentile(histogram: Float64Array, total: number, percentile: number): number {
-  if (total <= 0) return 0;
-  const target = clamp01(percentile) * total;
-  let cumulative = 0;
-  for (let bin = 0; bin < histogram.length; bin++) {
-    const count = histogram[bin];
-    const next = cumulative + count;
-    if (target <= next || bin === histogram.length - 1) {
-      const fraction = count > 0 ? clamp01((target - cumulative) / count) : 0.5;
-      return clamp01((bin + fraction) / histogram.length);
-    }
-    cumulative = next;
-  }
-  return 1;
-}
-
-function toneHistogramTrimmedMean(
-  histogram: Float64Array,
-  total: number,
-  lowerFraction = 0.25,
-  upperFraction = 0.75,
-): number {
-  if (total <= 0) return 0.5;
-  const lower = clamp01(lowerFraction) * total;
-  const upper = clamp01(upperFraction) * total;
-  if (upper <= lower) return 0.5;
-  let cumulative = 0;
-  let weightedSum = 0;
-  let included = 0;
-  for (let bin = 0; bin < histogram.length; bin++) {
-    const count = histogram[bin];
-    const next = cumulative + count;
-    const overlap = Math.max(0, Math.min(next, upper) - Math.max(cumulative, lower));
-    if (overlap > 0) {
-      weightedSum += overlap * ((bin + 0.5) / histogram.length);
-      included += overlap;
-    }
-    cumulative = next;
-    if (cumulative >= upper) break;
-  }
-  return included > 0 ? weightedSum / included : 0.5;
-}
-
-function toneHistogramTailFraction(
-  histogram: Float64Array,
-  total: number,
-  lowerExclusive: number,
-  upperInclusive: number,
-): number {
-  if (total <= 0) return 0;
-  let count = 0;
-  for (let bin = 0; bin < histogram.length; bin++) {
-    const center = (bin + 0.5) / histogram.length;
-    if (center < lowerExclusive || center > upperInclusive) {
-      count += histogram[bin];
-    }
-  }
-  return count / total;
-}
-
-function buildToneLumaHistogram(
-  sample: ToneAutoSample,
-  temperature: number,
-  tint: number,
-  exposureEv: number,
-  shadow: number,
-  scaledLog: number,
-  sigmoid: number,
-): { histogram: Float64Array; total: number } {
-  const histogram = new Float64Array(HISTOGRAM_BINS);
-  const context = buildColorAdjustmentContextFromLinearRgbSample(
-    { data: sample.data, width: sample.width, height: sample.height, valid: sample.valid },
-    temperature,
-    tint,
-    exposureEv,
-    shadow,
-    0,
-    scaledLog,
-    sigmoid,
-    0,
-    0,
-    true,
-  );
-  let total = 0;
-  const pixelCount = Math.floor(sample.data.length / 3);
-  for (let pixel = 0; pixel < pixelCount; pixel++) {
-    if (sample.valid && !sample.valid[pixel]) continue;
-    const i = pixel * 3;
-    let r = sample.data[i] ?? 0;
-    let g = sample.data[i + 1] ?? 0;
-    let b = sample.data[i + 2] ?? 0;
-    [r, g, b] = applyToneLinearToRgb(
-      r,
-      g,
-      b,
-      context.gains,
-      context.hasWhiteBalance,
-      context.factor,
-      context.shadow,
-      context.highlight,
-      context.highlightRange,
-      context.rolloff,
-      context.scaledLog,
-      context.sigmoid,
-    );
-    const y = clamp01(PROPHOTO_LUMA_R * r + PROPHOTO_LUMA_G * g + PROPHOTO_LUMA_B * b);
-    const display = histogramDisplayValue(y);
-    const bin = Math.min(HISTOGRAM_BINS - 1, Math.max(0, Math.floor(display * HISTOGRAM_BINS)));
-    histogram[bin] += 1;
-    total += 1;
-  }
-  return { histogram, total };
-}
-
-function evaluateAutoExposure(
-  sample: ToneAutoSample,
-  temperature: number,
-  tint: number,
-  exposureEv: number,
-): { richness: number; clipRate: number; highlightPressure: number } {
-  const histogram = new Float64Array(HISTOGRAM_BINS);
-  let total = 0;
-  let clipped = 0;
-  let highlightPressure = 0;
-  const context = buildColorAdjustmentContextFromLinearRgbSample(
-    { data: sample.data, width: sample.width, height: sample.height, valid: sample.valid },
-    temperature,
-    tint,
-    exposureEv,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    true,
-  );
-  const pixelCount = Math.floor(sample.data.length / 3);
-  for (let pixel = 0; pixel < pixelCount; pixel++) {
-    if (sample.valid && !sample.valid[pixel]) continue;
-    const i = pixel * 3;
-    let r = sample.data[i] ?? 0;
-    let g = sample.data[i + 1] ?? 0;
-    let b = sample.data[i + 2] ?? 0;
-    if (context.hasWhiteBalance) {
-      [r, g, b] = applyWhiteBalanceLinear(r, g, b, context.gains);
-    }
-    r *= context.factor;
-    g *= context.factor;
-    b *= context.factor;
-    const maxChannel = Math.max(r, g, b);
-    if (maxChannel >= 1) clipped += 1;
-    if (maxChannel > TONE_AUTO_EXPOSURE_HIGHLIGHT_START) {
-      const pressure = clamp01(
-        (Math.min(maxChannel, 1) - TONE_AUTO_EXPOSURE_HIGHLIGHT_START) /
-          (1 - TONE_AUTO_EXPOSURE_HIGHLIGHT_START),
-      );
-      highlightPressure += pressure * pressure;
-    }
-    const y = clamp01(
-      PROPHOTO_LUMA_R * clamp01(r) +
-      PROPHOTO_LUMA_G * clamp01(g) +
-      PROPHOTO_LUMA_B * clamp01(b),
-    );
-    const display = histogramDisplayValue(y);
-    const bin = Math.min(HISTOGRAM_BINS - 1, Math.max(0, Math.floor(display * HISTOGRAM_BINS)));
-    histogram[bin] += 1;
-    total += 1;
-  }
-  if (total <= 0) return { richness: 0, clipRate: 0, highlightPressure: 0 };
-
-  let entropy = 0;
-  for (let bin = 0; bin < histogram.length; bin++) {
-    const count = histogram[bin];
-    if (count <= 0) continue;
-    const p = count / total;
-    entropy -= p * Math.log(p);
-  }
-  const normalizedEntropy = entropy / Math.log(HISTOGRAM_BINS);
-  const p2 = toneHistogramPercentile(histogram, total, 0.02);
-  const p98 = toneHistogramPercentile(histogram, total, 0.98);
-  return {
-    richness: normalizedEntropy * Math.max(0, p98 - p2),
-    clipRate: clipped / total,
-    highlightPressure: highlightPressure / total,
-  };
-}
-
-function findAutoExposure(
-  sample: ToneAutoSample,
-  temperature: number,
-  tint: number,
-): number {
-  const baseline = evaluateAutoExposure(sample, temperature, tint, 0);
-  const baselineClip = baseline.clipRate;
-  const baselineHighlightPressure = baseline.highlightPressure;
-  let bestEv = 0;
-  let bestScore = -Infinity;
-  for (let step = -30; step <= 30; step++) {
-    const ev = step / 10;
-    const evaluation = evaluateAutoExposure(sample, temperature, tint, ev);
-    const newClip = Math.max(0, evaluation.clipRate - baselineClip);
-    const newHighlightPressure = Math.max(
-      0,
-      evaluation.highlightPressure - baselineHighlightPressure,
-    );
-    const score =
-      evaluation.richness -
-      TONE_AUTO_EXPOSURE_CLIP_PENALTY * newClip -
-      TONE_AUTO_EXPOSURE_HIGHLIGHT_PENALTY * newHighlightPressure;
-    if (
-      score > bestScore + 1e-12 ||
-      (Math.abs(score - bestScore) <= 1e-12 && Math.abs(ev) < Math.abs(bestEv))
-    ) {
-      bestScore = score;
-      bestEv = ev;
-    }
-  }
-  return clampExposureEv(bestEv);
-}
-
-function findAutoShadow(
-  sample: ToneAutoSample,
-  temperature: number,
-  tint: number,
-  exposureEv: number,
-): number {
-  const normalizedTemperature = clampWhiteBalanceValue(temperature);
-  const normalizedTint = clampWhiteBalanceValue(tint);
-  const gains = whiteBalanceGains(normalizedTemperature, normalizedTint);
-  const hasWhiteBalance = normalizedTemperature !== 0 || normalizedTint !== 0;
-  const factor = Math.pow(2, exposureEv);
-  const lumaValues: number[] = [];
-  const pixelCount = Math.floor(sample.data.length / 3);
-  for (let pixel = 0; pixel < pixelCount; pixel++) {
-    if (sample.valid && !sample.valid[pixel]) continue;
-    const i = pixel * 3;
-    let r = sample.data[i] ?? 0;
-    let g = sample.data[i + 1] ?? 0;
-    let b = sample.data[i + 2] ?? 0;
-    if (hasWhiteBalance) {
-      [r, g, b] = applyWhiteBalanceLinear(r, g, b, gains);
-    }
-    r *= factor;
-    g *= factor;
-    b *= factor;
-    lumaValues.push(Math.max(0, PROPHOTO_LUMA_R * r + PROPHOTO_LUMA_G * g + PROPHOTO_LUMA_B * b));
-  }
-  if (lumaValues.length === 0) return 0;
-
-  const p2 = percentileFromSortedValues(lumaValues, TONE_AUTO_SHADOW_PERCENTILE);
-  // Negative Shadow places its soft shadow point at
-  // p = -(SHADOW_MAX_POINT_X / 100) * shadow. Choose the slider value so
-  // that this point lands on the post-exposure P2 luminance.
-  return clampToneRangeAdjustment(-100 * p2 / SHADOW_MAX_POINT_X);
-}
-
-function findAutoLogarithm(
-  sample: ToneAutoSample,
-  temperature: number,
-  tint: number,
-  exposureEv: number,
-  shadow: number,
-): number {
-  const initial = buildToneLumaHistogram(sample, temperature, tint, exposureEv, shadow, 0, 0);
-  const initialMean = toneHistogramTrimmedMean(initial.histogram, initial.total);
-  if (initialMean >= TONE_AUTO_LOG_LOWER && initialMean <= TONE_AUTO_LOG_UPPER) return 0;
-
-  if (initialMean < TONE_AUTO_LOG_LOWER) {
-    for (let step = 1; step <= Math.round(TONE_AUTO_LOG_MAX * 10); step++) {
-      const value = step / 10;
-      const result = buildToneLumaHistogram(sample, temperature, tint, exposureEv, shadow, value, 0);
-      if (toneHistogramTrimmedMean(result.histogram, result.total) >= TONE_AUTO_LOG_LOWER) {
-        return clampScaledLog(value);
-      }
-    }
-    return clampScaledLog(TONE_AUTO_LOG_MAX);
-  }
-
-  for (let step = 1; step <= Math.round(Math.abs(TONE_AUTO_LOG_MIN) * 10); step++) {
-    const value = -step / 10;
-    const result = buildToneLumaHistogram(sample, temperature, tint, exposureEv, shadow, value, 0);
-    if (toneHistogramTrimmedMean(result.histogram, result.total) <= TONE_AUTO_LOG_UPPER) {
-      return clampScaledLog(value);
-    }
-  }
-  return clampScaledLog(TONE_AUTO_LOG_MIN);
-}
-
-function findAutoSigmoid(
-  sample: ToneAutoSample,
-  temperature: number,
-  tint: number,
-  exposureEv: number,
-  shadow: number,
-  scaledLog: number,
-): number {
-  const baseline = buildToneLumaHistogram(
-    sample,
-    temperature,
-    tint,
-    exposureEv,
-    shadow,
-    scaledLog,
-    0,
-  );
-  const baselineBlack = toneHistogramTailFraction(
-    baseline.histogram,
-    baseline.total,
-    TONE_AUTO_SIGMOID_BLACK_THRESHOLD,
-    1,
-  );
-  const baselineWhite = toneHistogramTailFraction(
-    baseline.histogram,
-    baseline.total,
-    0,
-    TONE_AUTO_SIGMOID_WHITE_THRESHOLD,
-  );
-
-  let bestValue = 0;
-  let bestScore = -Infinity;
-
-  for (
-    let step = -Math.round(TONE_AUTO_SIGMOID_MAX * 10);
-    step <= Math.round(TONE_AUTO_SIGMOID_MAX * 10);
-    step++
-  ) {
-    const value = step / 10;
-    const result = buildToneLumaHistogram(
-      sample,
-      temperature,
-      tint,
-      exposureEv,
-      shadow,
-      scaledLog,
-      value,
-    );
-    if (result.total <= 0) continue;
-
-    let entropy = 0;
-    for (let bin = 0; bin < result.histogram.length; bin++) {
-      const count = result.histogram[bin];
-      if (count <= 0) continue;
-      const p = count / result.total;
-      entropy -= p * Math.log(p);
-    }
-    const normalizedEntropy = entropy / Math.log(HISTOGRAM_BINS);
-    const blackFraction = toneHistogramTailFraction(
-      result.histogram,
-      result.total,
-      TONE_AUTO_SIGMOID_BLACK_THRESHOLD,
-      1,
-    );
-    const whiteFraction = toneHistogramTailFraction(
-      result.histogram,
-      result.total,
-      0,
-      TONE_AUTO_SIGMOID_WHITE_THRESHOLD,
-    );
-    const newBlack = Math.max(0, blackFraction - baselineBlack);
-    const newWhite = Math.max(0, whiteFraction - baselineWhite);
-    const score =
-      normalizedEntropy -
-      TONE_AUTO_SIGMOID_BLACK_PENALTY * newBlack -
-      TONE_AUTO_SIGMOID_WHITE_PENALTY * newWhite;
-
-    if (
-      score > bestScore + 1e-12 ||
-      (Math.abs(score - bestScore) <= 1e-12 && Math.abs(value) < Math.abs(bestValue))
-    ) {
-      bestScore = score;
-      bestValue = value;
-    }
-  }
-
-  return clampSigmoid(bestValue);
-}
-
-// Test-only characterization surface. Keep these references pointed at the production
-// implementations so the regression suite freezes current image-editor behavior before
-// the processing code is split and optimized in later commits.
-export const __imageEditorCharacterization = {
-  applyScaledLogLinear,
-  applySigmoidLinear,
-  rolloffParams,
-  applyRolloffScalar,
-  applyShadowLinear,
-  applyHighlightLinear,
-  applyToneLinearToRgb,
-  decodeStoredRgb16Channel,
-  encodeStoredRgb16Channel,
-  sampleLinearRgb16BilinearAtSource,
-  sampleLinearRgb16Bilinear,
-  renderedPixelToSourcePoint,
-  renderAdjustedRgb16ToCanvas,
-  buildColorAdjustmentContextFromLinearRgbSample,
-  findAutoExposure,
-  findAutoShadow,
-  findAutoLogarithm,
-  findAutoSigmoid,
-};
 
 function histogramPath(values: number[], maxCount: number, width: number, height: number): string {
   if (!values.length || maxCount <= 0) {
@@ -6813,6 +5067,38 @@ export function ImageEditDialog({
 
   const usePortraitCropRatios = !!natural && natural.w / natural.h <= 0.95;
   const cropMarginsText = `T=${(displayed.h ? ((cropRect.y - displayed.y) / displayed.h) * 100 : 0).toFixed(1)}% B=${(displayed.h ? (1 - (cropRect.y + cropRect.h - displayed.y) / displayed.h) * 100 : 0).toFixed(1)}% L=${(displayed.w ? ((cropRect.x - displayed.x) / displayed.w) * 100 : 0).toFixed(1)}% R=${(displayed.w ? (1 - (cropRect.x + cropRect.w - displayed.x) / displayed.w) * 100 : 0).toFixed(1)}%`;
+  const analysisSourceRect = useMemo(() => {
+    if (!natural || !displayed.w || !displayed.h || !cropRect.w || !cropRect.h) {
+      return null;
+    }
+    const crop = normalizeCrop({
+      left: (cropRect.x - displayed.x) / displayed.w,
+      top: (cropRect.y - displayed.y) / displayed.h,
+      right: 1 - (cropRect.x + cropRect.w - displayed.x) / displayed.w,
+      bottom: 1 - (cropRect.y + cropRect.h - displayed.y) / displayed.h,
+    });
+    const sx = Math.max(0, Math.min(natural.w - 1, Math.round(natural.w * crop.left)));
+    const sy = Math.max(0, Math.min(natural.h - 1, Math.round(natural.h * crop.top)));
+    const ex = Math.max(
+      sx + 1,
+      Math.min(natural.w, Math.round(natural.w * (1 - crop.right))),
+    );
+    const ey = Math.max(
+      sy + 1,
+      Math.min(natural.h, Math.round(natural.h * (1 - crop.bottom))),
+    );
+    return { x: sx, y: sy, w: ex - sx, h: ey - sy };
+  }, [
+    natural,
+    displayed.x,
+    displayed.y,
+    displayed.w,
+    displayed.h,
+    cropRect.x,
+    cropRect.y,
+    cropRect.w,
+    cropRect.h,
+  ]);
   const cropAspectButtons = (
     <div className="flex items-center gap-1 shrink-0">
       {(usePortraitCropRatios
@@ -6963,37 +5249,14 @@ export function ImageEditDialog({
     }
     if (histogramGeometryDragging) return;
     const decoded = decodedImageRef.current;
-    if (
-      !decoded ||
-      !natural ||
-      !displayed.w ||
-      !displayed.h ||
-      !cropRect.w ||
-      !cropRect.h
-    ) {
+    if (!decoded || !analysisSourceRect) {
       setHistogram(null);
       return;
     }
-    const crop = normalizeCrop({
-      left: (cropRect.x - displayed.x) / displayed.w,
-      top: (cropRect.y - displayed.y) / displayed.h,
-      right: 1 - (cropRect.x + cropRect.w - displayed.x) / displayed.w,
-      bottom: 1 - (cropRect.y + cropRect.h - displayed.y) / displayed.h,
-    });
-    const sx = Math.max(0, Math.min(natural.w - 1, Math.round(natural.w * crop.left)));
-    const sy = Math.max(0, Math.min(natural.h - 1, Math.round(natural.h * crop.top)));
-    const ex = Math.max(
-      sx + 1,
-      Math.min(natural.w, Math.round(natural.w * (1 - crop.right))),
-    );
-    const ey = Math.max(
-      sy + 1,
-      Math.min(natural.h, Math.round(natural.h * (1 - crop.bottom))),
-    );
     setHistogram(
       computeHistogramDataFromRgb16(
         decoded,
-        { x: sx, y: sy, w: ex - sx, h: ey - sy },
+        analysisSourceRect,
         rotationDegrees,
         temperature,
         tint,
@@ -7009,14 +5272,7 @@ export function ImageEditDialog({
   }, [
     showHistogram,
     histogramGeometryDragging,
-    cropRect.x,
-    cropRect.y,
-    cropRect.w,
-    cropRect.h,
-    displayed.x,
-    displayed.y,
-    displayed.w,
-    displayed.h,
+    analysisSourceRect,
     temperature,
     tint,
     exposureEv,
@@ -7027,7 +5283,6 @@ export function ImageEditDialog({
     vibrance,
     saturation,
     rotationDegrees,
-    natural,
     eyedropperMode,
   ]);
 
@@ -7113,7 +5368,7 @@ export function ImageEditDialog({
       setPercentileDebug(null);
       return;
     }
-    if (!showPercentileDebug || !imageReady || !natural) {
+    if (!showPercentileDebug || !imageReady || !analysisSourceRect) {
       setPercentileDebug(null);
       return;
     }
@@ -7124,18 +5379,18 @@ export function ImageEditDialog({
       return;
     }
 
-    let cached = RGB16_EDIT_PERCENTILE_DEBUG_CACHE.get(decoded);
-    if (!cached) {
-      const sample = sampleLinearRgbFromRgb16(decoded);
-      cached = {
-        sample,
-        input: debugStatisticsFromLinearRgbSample(sample, "prophoto"),
-      };
-      RGB16_EDIT_PERCENTILE_DEBUG_CACHE.set(decoded, cached);
-    }
-    if (!cached.sample.length) {
+    const sample = getAnalysisLinearRgbSample(decoded, analysisSourceRect, rotationDegrees);
+    if (!sample.data.length) {
       setPercentileDebug(null);
       return;
+    }
+
+    let cached = RGB16_EDIT_PERCENTILE_DEBUG_CACHE.get(sample);
+    if (!cached) {
+      cached = {
+        input: debugStatisticsFromLinearRgbSample(sample, "prophoto"),
+      };
+      RGB16_EDIT_PERCENTILE_DEBUG_CACHE.set(sample, cached);
     }
 
     const outputKey = [
@@ -7154,7 +5409,7 @@ export function ImageEditDialog({
       : undefined;
     if (!outputStatistics) {
       outputStatistics = adjustedDebugStatisticsFromLinearRgbSample(
-        cached.sample,
+        sample,
         temperature,
         tint,
         exposureEv,
@@ -7178,7 +5433,8 @@ export function ImageEditDialog({
     showHistogram,
     showPercentileDebug,
     imageReady,
-    natural,
+    analysisSourceRect,
+    rotationDegrees,
     rawThumbnailDebugStatistics,
     temperature,
     tint,
@@ -7193,49 +5449,9 @@ export function ImageEditDialog({
 
   const currentToneAutoSample = useCallback((): ToneAutoSample | null => {
     const decoded = decodedImageRef.current;
-    if (
-      !decoded ||
-      !natural ||
-      !displayed.w ||
-      !displayed.h ||
-      !cropRect.w ||
-      !cropRect.h
-    ) {
-      return null;
-    }
-    const crop = normalizeCrop({
-      left: (cropRect.x - displayed.x) / displayed.w,
-      top: (cropRect.y - displayed.y) / displayed.h,
-      right: 1 - (cropRect.x + cropRect.w - displayed.x) / displayed.w,
-      bottom: 1 - (cropRect.y + cropRect.h - displayed.y) / displayed.h,
-    });
-    const sx = Math.max(0, Math.min(natural.w - 1, Math.round(natural.w * crop.left)));
-    const sy = Math.max(0, Math.min(natural.h - 1, Math.round(natural.h * crop.top)));
-    const ex = Math.max(
-      sx + 1,
-      Math.min(natural.w, Math.round(natural.w * (1 - crop.right))),
-    );
-    const ey = Math.max(
-      sy + 1,
-      Math.min(natural.h, Math.round(natural.h * (1 - crop.bottom))),
-    );
-    return createToneAutoSampleFromRgb16(
-      decoded,
-      { x: sx, y: sy, w: ex - sx, h: ey - sy },
-      rotationDegrees,
-    );
-  }, [
-    natural,
-    displayed.x,
-    displayed.y,
-    displayed.w,
-    displayed.h,
-    cropRect.x,
-    cropRect.y,
-    cropRect.w,
-    cropRect.h,
-    rotationDegrees,
-  ]);
+    if (!decoded || !analysisSourceRect) return null;
+    return createToneAutoSampleFromRgb16(decoded, analysisSourceRect, rotationDegrees);
+  }, [analysisSourceRect, rotationDegrees]);
 
   const runAutoToneTask = useCallback(async (task: () => void) => {
     setAutoToneBusy(true);
