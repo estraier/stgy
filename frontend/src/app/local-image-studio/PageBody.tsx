@@ -15,6 +15,7 @@ import {
   type ImageEditParams,
   type ImageEditPreparedVariant,
   type RawDemosaicQuality,
+  type RawHighlightMode,
 } from "@/components/ImageUploadDialog";
 import { Config } from "@/config";
 import { formatBytes } from "@/utils/format";
@@ -98,6 +99,19 @@ const RAW_DEMOSAIC_OPTIONS: { value: RawDemosaicQuality; label: string }[] = [
   { value: 12, label: "Modified AHD (12)" },
 ];
 
+const RAW_HIGHLIGHT_OPTIONS: { value: RawHighlightMode; label: string }[] = [
+  { value: 0, label: "Clip (0)" },
+  { value: 1, label: "Unclip (1)" },
+  { value: 2, label: "Blend (2)" },
+  { value: 3, label: "Rebuild (3)" },
+  { value: 4, label: "Rebuild (4)" },
+  { value: 5, label: "Rebuild (5)" },
+  { value: 6, label: "Rebuild (6)" },
+  { value: 7, label: "Rebuild (7)" },
+  { value: 8, label: "Rebuild (8)" },
+  { value: 9, label: "Rebuild (9)" },
+];
+
 function outputFilename(fileName: string | undefined, format: ImageEditOutputFormat): string {
   const extension = format === "image/jpeg" ? "jpg" : format === "image/png" ? "png" : "webp";
   const trimmedName = fileName?.trim() ?? "";
@@ -144,6 +158,7 @@ export default function LocalImageStudio() {
   const [outputFormat, setOutputFormat] = useState<ImageEditOutputFormat>("image/webp");
   const [outputColorProfileSelection, setOutputColorProfileSelection] = useState<OutputColorProfileSelection>("best");
   const [rawDemosaicQuality, setRawDemosaicQuality] = useState<RawDemosaicQuality>(11);
+  const [rawHighlightMode, setRawHighlightMode] = useState<RawHighlightMode>(2);
   const [showRawDemosaicSelector, setShowRawDemosaicSelector] = useState(false);
   const altOnlyPressRef = useRef(false);
   const resultZoomViewportRef = useRef<HTMLDivElement | null>(null);
@@ -458,6 +473,15 @@ export default function LocalImageStudio() {
     setEditing(true);
   }, [clearEditedVariant, clearRawDevelopment, clearResult, source]);
 
+  const onRawHighlightModeChange = useCallback((mode: RawHighlightMode) => {
+    setRawHighlightMode(mode);
+    if (!source || !isRawImageFile(source.file.name, source.file.type)) return;
+    clearResult();
+    clearEditedVariant();
+    clearRawDevelopment();
+    setEditing(true);
+  }, [clearEditedVariant, clearRawDevelopment, clearResult, source]);
+
   const onReEdit = useCallback(() => {
     clearEditedVariant();
     setEditing(true);
@@ -510,21 +534,39 @@ export default function LocalImageStudio() {
             </div>
 
             {showRawDemosaicSelector && (
-              <div>
-                <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-500">RAW demosaic</div>
-                <select
-                  value={rawDemosaicQuality}
-                  onChange={(e) => onRawDemosaicQualityChange(Number(e.target.value) as RawDemosaicQuality)}
-                  disabled={processing}
-                  className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"
-                >
-                  {RAW_DEMOSAIC_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <>
+                <div>
+                  <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-500">RAW demosaic</div>
+                  <select
+                    value={rawDemosaicQuality}
+                    onChange={(e) => onRawDemosaicQualityChange(Number(e.target.value) as RawDemosaicQuality)}
+                    disabled={processing}
+                    className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"
+                  >
+                    {RAW_DEMOSAIC_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-500">RAW highlight</div>
+                  <select
+                    value={rawHighlightMode}
+                    onChange={(e) => onRawHighlightModeChange(Number(e.target.value) as RawHighlightMode)}
+                    disabled={processing}
+                    className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"
+                  >
+                    {RAW_HIGHLIGHT_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </>
             )}
 
             <div>
@@ -659,6 +701,7 @@ export default function LocalImageStudio() {
           defaultParams={studioDefaultEditParams}
           initialDecodedImage={rawDevelopmentRef.current ?? undefined}
           rawDemosaicQuality={rawDemosaicQuality}
+          rawHighlightMode={rawHighlightMode}
           onRawDevelopmentReady={(decodedImage) => {
             const previous = rawDevelopmentRef.current;
             if (previous && previous !== decodedImage) previous.cleanup();

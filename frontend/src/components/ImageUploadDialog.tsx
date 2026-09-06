@@ -122,6 +122,7 @@ export type ImageEditParams = {
 export type ImageEditOutputFormat = "image/webp" | "image/jpeg" | "image/png";
 export type ImageEditOutputColorProfile = "srgb" | "display-p3";
 export type RawDemosaicQuality = 0 | 1 | 2 | 3 | 4 | 11 | 12;
+export type RawHighlightMode = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 
 type Props = {
   userId: string;
@@ -371,6 +372,7 @@ const RAW_DECODE_SETTINGS: LibRawSettingsLike = {
   adjustMaximumThr: 0,
   threshold: 0,
   fbddNoiserd: 0,
+  highlight: 2,
   userQual: 11,
 };
 
@@ -3940,6 +3942,7 @@ function readRawThumbnailDebugStatistics(
 async function decodeRawImage(
   file: File,
   rawDemosaicQuality?: RawDemosaicQuality,
+  rawHighlightMode?: RawHighlightMode,
 ): Promise<DecodedRgbImage16> {
   const rawDevelopmentStartedAt = performance.now();
   let raw: LibRawInstanceLike | null = null;
@@ -3948,9 +3951,11 @@ async function decodeRawImage(
     raw = await createLibRawInstance();
     workerFailure = createLibRawWorkerFailure(raw);
     const rawBytes = new Uint8Array(await file.arrayBuffer());
-    const rawDecodeSettings: LibRawSettingsLike = rawDemosaicQuality === undefined
-      ? RAW_DECODE_SETTINGS
-      : { ...RAW_DECODE_SETTINGS, userQual: rawDemosaicQuality };
+    const rawDecodeSettings: LibRawSettingsLike = {
+      ...RAW_DECODE_SETTINGS,
+      ...(rawDemosaicQuality === undefined ? {} : { userQual: rawDemosaicQuality }),
+      ...(rawHighlightMode === undefined ? {} : { highlight: rawHighlightMode }),
+    };
     await Promise.race([
       raw.open(rawBytes, rawDecodeSettings),
       workerFailure.promise,
@@ -4052,14 +4057,15 @@ async function decodeRawImage(
 // owned by ImageUploadDialog's one-entry RAW development cache.
 const RAW_DEVELOPMENT_IN_FLIGHT = new WeakMap<
   File,
-  Map<RawDemosaicQuality | "default", Promise<DecodedRgbImage16>>
+  Map<string, Promise<DecodedRgbImage16>>
 >();
 
 function decodeRawImageShared(
   file: File,
   rawDemosaicQuality?: RawDemosaicQuality,
+  rawHighlightMode?: RawHighlightMode,
 ): Promise<DecodedRgbImage16> {
-  const key: RawDemosaicQuality | "default" = rawDemosaicQuality ?? "default";
+  const key = `${rawDemosaicQuality ?? "default"}:${rawHighlightMode ?? "default"}`;
   let pendingByQuality = RAW_DEVELOPMENT_IN_FLIGHT.get(file);
   if (!pendingByQuality) {
     pendingByQuality = new Map();
@@ -4068,7 +4074,7 @@ function decodeRawImageShared(
   const existing = pendingByQuality.get(key);
   if (existing) return existing;
 
-  const promise = decodeRawImage(file, rawDemosaicQuality)
+  const promise = decodeRawImage(file, rawDemosaicQuality, rawHighlightMode)
     .finally(() => {
       const current = RAW_DEVELOPMENT_IN_FLIGHT.get(file);
       if (current?.get(key) === promise) {
@@ -4155,9 +4161,10 @@ async function decodeImage(
   name?: string,
   type?: string,
   rawDemosaicQuality?: RawDemosaicQuality,
+  rawHighlightMode?: RawHighlightMode,
 ): Promise<DecodedImage> {
   if (isRawImageFile(name || "", type || "")) {
-    return decodeRawImageShared(file, rawDemosaicQuality);
+    return decodeRawImageShared(file, rawDemosaicQuality, rawHighlightMode);
   }
 
   if (isTiff(name || "", type || "")) {
@@ -4711,6 +4718,7 @@ type EditDialogProps = {
   defaultParams?: ImageEditParams;
   initialDecodedImage?: DecodedImage;
   rawDemosaicQuality?: RawDemosaicQuality;
+  rawHighlightMode?: RawHighlightMode;
   onRawDevelopmentReady?: (decodedImage: DecodedRgbImage16) => void;
   onCancel: () => void;
   onApply: (params: ImageEditParams, decodedImage?: DecodedImage) => void;
@@ -5210,6 +5218,7 @@ export function ImageEditDialog({
   defaultParams,
   initialDecodedImage,
   rawDemosaicQuality,
+  rawHighlightMode,
   onRawDevelopmentReady,
   onCancel,
   onApply,
@@ -5352,6 +5361,7 @@ export function ImageEditDialog({
           file.name,
           file.type,
           rawDemosaicQuality,
+          rawHighlightMode,
         );
         decodedForEffect = decoded;
         if (isRawImageFile(file.name, file.type)) {
@@ -5396,7 +5406,7 @@ export function ImageEditDialog({
       }
       transferredDecodedImageRef.current = null;
     };
-  }, [file, initialDecodedImage, rawDemosaicQuality]);
+  }, [file, initialDecodedImage, rawDemosaicQuality, rawHighlightMode]);
 
   useEffect(() => {
     if (!mounted) return;
