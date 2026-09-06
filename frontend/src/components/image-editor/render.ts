@@ -2,7 +2,13 @@ import type { DecodedRgbImage16, ImageEditOutputColorProfile } from "./types";
 import { createCanvasImageData, getCanvas2dContext } from "./canvas";
 import { convertLinearProPhotoToOutputRgb } from "./color";
 import { buildColorAdjustmentContextFromLinearRgbSample } from "./analysis";
-import { getAnalysisLinearRgbSample, renderedPixelToSourcePoint, sampleLinearRgb16Bilinear } from "./sampling";
+import {
+  buildRenderedPixelToSourceTransform,
+  createRgb16SamplingScratch,
+  getAnalysisLinearRgbSample,
+  sampleLinearRgb16BilinearInto,
+} from "./sampling";
+import type { LinearRgbBuffer } from "./sampling";
 import { applyColorAdjustmentsLinearRgb, linearChannelToSrgb } from "./tone";
 
 // Pixel rendering is kept separate from React/UI state so later hot-loop optimization is isolated.
@@ -45,47 +51,51 @@ export function renderAdjustedRgb16ToCanvas(
   );
   const scaleX = width / Math.max(1, sourceRect.w);
   const scaleY = height / Math.max(1, sourceRect.h);
-  const sampleRenderedPixel = (x: number, y: number): [number, number, number] | null => {
-    const sourcePoint = renderedPixelToSourcePoint(
-      x,
-      y,
-      decoded.width,
-      decoded.height,
-      sourceRect.x,
-      sourceRect.y,
-      scaleX,
-      scaleY,
-      rotationDegrees,
-    );
-    if (
-      sourcePoint.x < 0 ||
-      sourcePoint.x >= decoded.width ||
-      sourcePoint.y < 0 ||
-      sourcePoint.y >= decoded.height
-    ) {
-      return null;
-    }
-    return sampleLinearRgb16Bilinear(decoded, sourcePoint.x, sourcePoint.y);
-  };
+  const transform = buildRenderedPixelToSourceTransform(
+    decoded.width,
+    decoded.height,
+    sourceRect.x,
+    sourceRect.y,
+    scaleX,
+    scaleY,
+    rotationDegrees,
+  );
+  const sample: LinearRgbBuffer = [0, 0, 0];
+  const samplingScratch = createRgb16SamplingScratch();
+  let rowSourceX = transform.originX;
+  let rowSourceY = transform.originY;
+  let di = 0;
   for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const di = (y * width + x) * 4;
-      const sample = sampleRenderedPixel(x, y);
-      if (!sample) {
+    let sourceX = rowSourceX;
+    let sourceY = rowSourceY;
+    for (let x = 0; x < width; x++, di += 4) {
+      if (
+        sourceX < 0 ||
+        sourceX >= decoded.width ||
+        sourceY < 0 ||
+        sourceY >= decoded.height ||
+        !sampleLinearRgb16BilinearInto(decoded, sourceX, sourceY, sample, samplingScratch)
+      ) {
         output[di] = 128;
         output[di + 1] = 128;
         output[di + 2] = 128;
         output[di + 3] = 255;
-        continue;
+      } else {
+        let r = sample[0];
+        let g = sample[1];
+        let b = sample[2];
+        [r, g, b] = applyColorAdjustmentsLinearRgb(r, g, b, context);
+        [r, g, b] = convertLinearProPhotoToOutputRgb(r, g, b, outputColorProfile);
+        output[di] = linearChannelToSrgb(r);
+        output[di + 1] = linearChannelToSrgb(g);
+        output[di + 2] = linearChannelToSrgb(b);
+        output[di + 3] = 255;
       }
-      let [r, g, b] = sample;
-      [r, g, b] = applyColorAdjustmentsLinearRgb(r, g, b, context);
-      [r, g, b] = convertLinearProPhotoToOutputRgb(r, g, b, outputColorProfile);
-      output[di] = linearChannelToSrgb(r);
-      output[di + 1] = linearChannelToSrgb(g);
-      output[di + 2] = linearChannelToSrgb(b);
-      output[di + 3] = 255;
+      sourceX += transform.columnStepX;
+      sourceY += transform.columnStepY;
     }
+    rowSourceX += transform.rowStepX;
+    rowSourceY += transform.rowStepY;
   }
   ctx.putImageData(imageData, 0, 0);
 }

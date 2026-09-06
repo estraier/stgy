@@ -1,4 +1,11 @@
-import { lensfunSourceCoordinates, lensfunVignettingGain } from "@/utils/lensfunCorrection";
+import {
+  lensfunSourceCoordinatesInto,
+  lensfunVignettingGainInto,
+} from "@/utils/lensfunCorrection";
+import type {
+  LensfunSourceCoordinatesBuffer,
+  LensfunVignettingGainBuffer,
+} from "@/utils/lensfunCorrection";
 import type { DecodedRgbImage16, EditPoint, LinearRgbSample } from "./types";
 import { clamp01 } from "./tone";
 
@@ -94,6 +101,20 @@ export function encodeStoredRgb16Channel(
   return Math.round(encoded * 65535);
 }
 
+export type LinearRgbBuffer = [number, number, number];
+
+export type Rgb16SamplingScratch = {
+  lensfunCoordinates: LensfunSourceCoordinatesBuffer;
+  lensfunGain: LensfunVignettingGainBuffer;
+};
+
+export function createRgb16SamplingScratch(): Rgb16SamplingScratch {
+  return {
+    lensfunCoordinates: [0, 0, 0, 0, 0, 0],
+    lensfunGain: [1, 1, 1],
+  };
+}
+
 export function sampleLinearRgb16ChannelBilinearAtSource(
   decoded: DecodedRgbImage16,
   x: number,
@@ -126,15 +147,115 @@ export function sampleLinearRgb16ChannelBilinearAtSource(
   );
 }
 
+export function sampleLinearRgb16BilinearAtSourceInto(
+  decoded: DecodedRgbImage16,
+  x: number,
+  y: number,
+  output: LinearRgbBuffer,
+): boolean {
+  if (x < 0 || x > decoded.width - 1 || y < 0 || y > decoded.height - 1) return false;
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const x1 = Math.min(decoded.width - 1, x0 + 1);
+  const y1 = Math.min(decoded.height - 1, y0 + 1);
+  const tx = x - x0;
+  const ty = y - y0;
+  const w00 = (1 - tx) * (1 - ty);
+  const w10 = tx * (1 - ty);
+  const w01 = (1 - tx) * ty;
+  const w11 = tx * ty;
+  const data = decoded.data;
+  const row00 = (y0 * decoded.width + x0) * 3;
+  const row10 = (y0 * decoded.width + x1) * 3;
+  const row01 = (y1 * decoded.width + x0) * 3;
+  const row11 = (y1 * decoded.width + x1) * 3;
+  const transfer = decoded.transfer;
+  const linearRangeMax = decoded.linearRangeMax;
+
+  for (let channel = 0; channel < 3; channel++) {
+    output[channel] =
+      decodeStoredRgb16Channel(data[row00 + channel] ?? 0, transfer, linearRangeMax) * w00 +
+      decodeStoredRgb16Channel(data[row10 + channel] ?? 0, transfer, linearRangeMax) * w10 +
+      decodeStoredRgb16Channel(data[row01 + channel] ?? 0, transfer, linearRangeMax) * w01 +
+      decodeStoredRgb16Channel(data[row11 + channel] ?? 0, transfer, linearRangeMax) * w11;
+  }
+  return true;
+}
+
 export function sampleLinearRgb16BilinearAtSource(
   decoded: DecodedRgbImage16,
   x: number,
   y: number,
 ): [number, number, number] | null {
-  const r = sampleLinearRgb16ChannelBilinearAtSource(decoded, x, y, 0);
-  const g = sampleLinearRgb16ChannelBilinearAtSource(decoded, x, y, 1);
-  const b = sampleLinearRgb16ChannelBilinearAtSource(decoded, x, y, 2);
-  return r === null || g === null || b === null ? null : [r, g, b];
+  const output: LinearRgbBuffer = [0, 0, 0];
+  return sampleLinearRgb16BilinearAtSourceInto(decoded, x, y, output) ? output : null;
+}
+
+export function sampleLinearRgb16BilinearInto(
+  decoded: DecodedRgbImage16,
+  x: number,
+  y: number,
+  output: LinearRgbBuffer,
+  scratch: Rgb16SamplingScratch,
+): boolean {
+  const correction = decoded.lensCorrection;
+  if (!correction) return sampleLinearRgb16BilinearAtSourceInto(decoded, x, y, output);
+
+  const coordinates = lensfunSourceCoordinatesInto(
+    correction,
+    x,
+    y,
+    scratch.lensfunCoordinates,
+  );
+  if (correction.tca) {
+    const r = sampleLinearRgb16ChannelBilinearAtSource(decoded, coordinates[0], coordinates[1], 0);
+    const g = sampleLinearRgb16ChannelBilinearAtSource(decoded, coordinates[2], coordinates[3], 1);
+    const b = sampleLinearRgb16ChannelBilinearAtSource(decoded, coordinates[4], coordinates[5], 2);
+    if (r === null || g === null || b === null) return false;
+    output[0] = r;
+    output[1] = g;
+    output[2] = b;
+    if (correction.vignetting && !correction.vignettingBaked) {
+      lensfunVignettingGainInto(
+        correction,
+        coordinates[0],
+        coordinates[1],
+        scratch.lensfunGain,
+      );
+      output[0] *= scratch.lensfunGain[0];
+      lensfunVignettingGainInto(
+        correction,
+        coordinates[2],
+        coordinates[3],
+        scratch.lensfunGain,
+      );
+      output[1] *= scratch.lensfunGain[1];
+      lensfunVignettingGainInto(
+        correction,
+        coordinates[4],
+        coordinates[5],
+        scratch.lensfunGain,
+      );
+      output[2] *= scratch.lensfunGain[2];
+    }
+    return true;
+  }
+
+  if (!sampleLinearRgb16BilinearAtSourceInto(decoded, coordinates[2], coordinates[3], output)) {
+    return false;
+  }
+  if (correction.vignetting && !correction.vignettingBaked) {
+    lensfunVignettingGainInto(
+      correction,
+      coordinates[2],
+      coordinates[3],
+      scratch.lensfunGain,
+    );
+    output[0] *= scratch.lensfunGain[0];
+    output[1] *= scratch.lensfunGain[1];
+    output[2] *= scratch.lensfunGain[2];
+  }
+  return true;
 }
 
 export function sampleLinearRgb16Bilinear(
@@ -142,33 +263,9 @@ export function sampleLinearRgb16Bilinear(
   x: number,
   y: number,
 ): [number, number, number] | null {
-  const correction = decoded.lensCorrection;
-  if (!correction) return sampleLinearRgb16BilinearAtSource(decoded, x, y);
-
-  const coordinates = lensfunSourceCoordinates(correction, x, y);
-  if (correction.tca) {
-    let r = sampleLinearRgb16ChannelBilinearAtSource(decoded, coordinates.r[0], coordinates.r[1], 0);
-    let g = sampleLinearRgb16ChannelBilinearAtSource(decoded, coordinates.g[0], coordinates.g[1], 1);
-    let b = sampleLinearRgb16ChannelBilinearAtSource(decoded, coordinates.b[0], coordinates.b[1], 2);
-    if (r === null || g === null || b === null) return null;
-    if (correction.vignetting && !correction.vignettingBaked) {
-      r *= lensfunVignettingGain(correction, coordinates.r[0], coordinates.r[1])[0];
-      g *= lensfunVignettingGain(correction, coordinates.g[0], coordinates.g[1])[1];
-      b *= lensfunVignettingGain(correction, coordinates.b[0], coordinates.b[1])[2];
-    }
-    return [r, g, b];
-  }
-  const sample = sampleLinearRgb16BilinearAtSource(decoded, coordinates.g[0], coordinates.g[1]);
-  if (!sample) return null;
-  if (correction.vignetting && !correction.vignettingBaked) {
-    const [rGain, gGain, bGain] = lensfunVignettingGain(
-      correction,
-      coordinates.g[0],
-      coordinates.g[1],
-    );
-    return [sample[0] * rGain, sample[1] * gGain, sample[2] * bGain];
-  }
-  return sample;
+  const output: LinearRgbBuffer = [0, 0, 0];
+  const scratch = createRgb16SamplingScratch();
+  return sampleLinearRgb16BilinearInto(decoded, x, y, output, scratch) ? output : null;
 }
 
 export function renderedPixelToSourcePoint(
@@ -190,6 +287,55 @@ export function renderedPixelToSourcePoint(
   return inverseRotatePoint(point.x, point.y, sourceW / 2, sourceH / 2, rotationDegrees);
 }
 
+export type RenderedPixelToSourceTransform = {
+  originX: number;
+  originY: number;
+  columnStepX: number;
+  columnStepY: number;
+  rowStepX: number;
+  rowStepY: number;
+};
+
+export function buildRenderedPixelToSourceTransform(
+  sourceW: number,
+  sourceH: number,
+  cropX: number,
+  cropY: number,
+  scaleX: number,
+  scaleY: number,
+  rotationDegrees: number,
+): RenderedPixelToSourceTransform {
+  const px = cropX + 0.5 / scaleX;
+  const py = cropY + 0.5 / scaleY;
+  const normalizedRotation = normalizeRotationDegrees(rotationDegrees);
+  if (Math.abs(normalizedRotation) < 1e-9) {
+    return {
+      originX: px,
+      originY: py,
+      columnStepX: 1 / scaleX,
+      columnStepY: 0,
+      rowStepX: 0,
+      rowStepY: 1 / scaleY,
+    };
+  }
+
+  const radians = normalizedRotation * Math.PI / 180;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  const centerX = sourceW / 2;
+  const centerY = sourceH / 2;
+  const dx = px - centerX;
+  const dy = py - centerY;
+  return {
+    originX: centerX + dx * cos + dy * sin,
+    originY: centerY - dx * sin + dy * cos,
+    columnStepX: cos / scaleX,
+    columnStepY: -sin / scaleX,
+    rowStepX: sin / scaleY,
+    rowStepY: cos / scaleY,
+  };
+}
+
 export function sampleLinearRgbFromRgb16Region(
   decoded: DecodedRgbImage16,
   sourceRect: { x: number; y: number; w: number; h: number },
@@ -205,37 +351,43 @@ export function sampleLinearRgbFromRgb16Region(
   const valid = new Uint8Array(sampleW * sampleH);
   const scaleX = sampleW / sw;
   const scaleY = sampleH / sh;
+  const transform = buildRenderedPixelToSourceTransform(
+    decoded.width,
+    decoded.height,
+    sourceRect.x,
+    sourceRect.y,
+    scaleX,
+    scaleY,
+    rotationDegrees,
+  );
+  const sample: LinearRgbBuffer = [0, 0, 0];
+  const samplingScratch = createRgb16SamplingScratch();
+  let rowSourceX = transform.originX;
+  let rowSourceY = transform.originY;
   for (let y = 0; y < sampleH; y++) {
+    let sourceX = rowSourceX;
+    let sourceY = rowSourceY;
     for (let x = 0; x < sampleW; x++) {
-      const sourcePoint = renderedPixelToSourcePoint(
-        x,
-        y,
-        decoded.width,
-        decoded.height,
-        sourceRect.x,
-        sourceRect.y,
-        scaleX,
-        scaleY,
-        rotationDegrees,
-      );
       if (
-        sourcePoint.x < 0 ||
-        sourcePoint.x >= decoded.width ||
-        sourcePoint.y < 0 ||
-        sourcePoint.y >= decoded.height
+        sourceX >= 0 &&
+        sourceX < decoded.width &&
+        sourceY >= 0 &&
+        sourceY < decoded.height
       ) {
-        continue;
+        const di = (y * sampleW + x) * 3;
+        const vi = y * sampleW + x;
+        if (sampleLinearRgb16BilinearInto(decoded, sourceX, sourceY, sample, samplingScratch)) {
+          data[di] = sample[0];
+          data[di + 1] = sample[1];
+          data[di + 2] = sample[2];
+          valid[vi] = 1;
+        }
       }
-      const di = (y * sampleW + x) * 3;
-      const vi = y * sampleW + x;
-      const sample = sampleLinearRgb16Bilinear(decoded, sourcePoint.x, sourcePoint.y);
-      if (!sample) continue;
-      const [r, g, b] = sample;
-      data[di] = r;
-      data[di + 1] = g;
-      data[di + 2] = b;
-      valid[vi] = 1;
+      sourceX += transform.columnStepX;
+      sourceY += transform.columnStepY;
     }
+    rowSourceX += transform.rowStepX;
+    rowSourceY += transform.rowStepY;
   }
   return { data, width: sampleW, height: sampleH, valid };
 }

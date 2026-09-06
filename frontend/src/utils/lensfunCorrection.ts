@@ -417,13 +417,15 @@ export function summarizeLensfunCorrection(
   };
 }
 
-function interpolateMapValues(
+function interpolateMapValuesInto(
   correction: LensfunCorrection,
   map: Float32Array,
   stride: number,
   x: number,
   y: number,
-): number[] {
+  output: number[],
+  outputOffset = 0,
+): void {
   const gx = Math.max(0, Math.min(correction.gridWidth - 1, x / correction.step));
   const gy = Math.max(0, Math.min(correction.gridHeight - 1, y / correction.step));
   const x0 = Math.floor(gx);
@@ -440,15 +442,69 @@ function interpolateMapValues(
   const i10 = (y0 * correction.gridWidth + x1) * stride;
   const i01 = (y1 * correction.gridWidth + x0) * stride;
   const i11 = (y1 * correction.gridWidth + x1) * stride;
-  const values = new Array<number>(stride);
   for (let channel = 0; channel < stride; channel++) {
-    values[channel] =
+    output[outputOffset + channel] =
       (map[i00 + channel] ?? 0) * w00 +
       (map[i10 + channel] ?? 0) * w10 +
       (map[i01 + channel] ?? 0) * w01 +
       (map[i11 + channel] ?? 0) * w11;
   }
+}
+
+function interpolateMapValues(
+  correction: LensfunCorrection,
+  map: Float32Array,
+  stride: number,
+  x: number,
+  y: number,
+): number[] {
+  const values = new Array<number>(stride);
+  interpolateMapValuesInto(correction, map, stride, x, y, values);
   return values;
+}
+
+export type LensfunSourceCoordinatesBuffer = [
+  number, number,
+  number, number,
+  number, number,
+];
+
+export function lensfunSourceCoordinatesInto(
+  correction: LensfunCorrection,
+  x: number,
+  y: number,
+  output: LensfunSourceCoordinatesBuffer,
+): LensfunSourceCoordinatesBuffer {
+  // Lensfun's reverse lookup order is geometry/distortion first, then TCA.
+  // The WASM wrapper exposes those maps separately, so compose them here by
+  // feeding the geometry result into the TCA map. The caller owns `output`,
+  // allowing pixel hot loops to reuse one buffer without allocating objects.
+  let geometryX = x;
+  let geometryY = y;
+  if (correction.distortion) {
+    interpolateMapValuesInto(correction, correction.geometry, 2, x, y, output);
+    geometryX = output[0] ?? x;
+    geometryY = output[1] ?? y;
+  }
+
+  if (correction.tca) {
+    interpolateMapValuesInto(correction, correction.tca, 6, geometryX, geometryY, output);
+    output[0] = output[0] ?? geometryX;
+    output[1] = output[1] ?? geometryY;
+    output[2] = output[2] ?? geometryX;
+    output[3] = output[3] ?? geometryY;
+    output[4] = output[4] ?? geometryX;
+    output[5] = output[5] ?? geometryY;
+    return output;
+  }
+
+  output[0] = geometryX;
+  output[1] = geometryY;
+  output[2] = geometryX;
+  output[3] = geometryY;
+  output[4] = geometryX;
+  output[5] = geometryY;
+  return output;
 }
 
 export function lensfunSourceCoordinates(
@@ -460,41 +516,38 @@ export function lensfunSourceCoordinates(
   g: [number, number];
   b: [number, number];
 } {
-  // Lensfun's reverse lookup order is geometry/distortion first, then TCA.
-  // The WASM wrapper exposes those maps separately, so compose them here by
-  // feeding the geometry result into the TCA map. Returning the TCA map
-  // directly would silently drop distortion whenever both corrections exist.
-  let geometryX = x;
-  let geometryY = y;
-  if (correction.distortion) {
-    const geometry = interpolateMapValues(
-      correction,
-      correction.geometry,
-      2,
-      x,
-      y,
-    );
-    geometryX = geometry[0] ?? x;
-    geometryY = geometry[1] ?? y;
+  const values: LensfunSourceCoordinatesBuffer = [0, 0, 0, 0, 0, 0];
+  lensfunSourceCoordinatesInto(correction, x, y, values);
+  if (!correction.tca) {
+    const point: [number, number] = [values[2], values[3]];
+    return { r: point, g: point, b: point };
   }
+  return {
+    r: [values[0], values[1]],
+    g: [values[2], values[3]],
+    b: [values[4], values[5]],
+  };
+}
 
-  if (correction.tca) {
-    const values = interpolateMapValues(
-      correction,
-      correction.tca,
-      6,
-      geometryX,
-      geometryY,
-    );
-    return {
-      r: [values[0] ?? geometryX, values[1] ?? geometryY],
-      g: [values[2] ?? geometryX, values[3] ?? geometryY],
-      b: [values[4] ?? geometryX, values[5] ?? geometryY],
-    };
+export type LensfunVignettingGainBuffer = [number, number, number];
+
+export function lensfunVignettingGainInto(
+  correction: LensfunCorrection,
+  x: number,
+  y: number,
+  output: LensfunVignettingGainBuffer,
+): LensfunVignettingGainBuffer {
+  if (!correction.vignetting) {
+    output[0] = 1;
+    output[1] = 1;
+    output[2] = 1;
+    return output;
   }
-
-  const point: [number, number] = [geometryX, geometryY];
-  return { r: point, g: point, b: point };
+  interpolateMapValuesInto(correction, correction.vignetting, 3, x, y, output);
+  output[0] = Number.isFinite(output[0]) ? Math.max(0, output[0] ?? 1) : 1;
+  output[1] = Number.isFinite(output[1]) ? Math.max(0, output[1] ?? 1) : 1;
+  output[2] = Number.isFinite(output[2]) ? Math.max(0, output[2] ?? 1) : 1;
+  return output;
 }
 
 export function lensfunVignettingGain(
@@ -502,11 +555,6 @@ export function lensfunVignettingGain(
   x: number,
   y: number,
 ): [number, number, number] {
-  if (!correction.vignetting) return [1, 1, 1];
-  const values = interpolateMapValues(correction, correction.vignetting, 3, x, y);
-  return [
-    Number.isFinite(values[0]) ? Math.max(0, values[0] ?? 1) : 1,
-    Number.isFinite(values[1]) ? Math.max(0, values[1] ?? 1) : 1,
-    Number.isFinite(values[2]) ? Math.max(0, values[2] ?? 1) : 1,
-  ];
+  const values: LensfunVignettingGainBuffer = [1, 1, 1];
+  return lensfunVignettingGainInto(correction, x, y, values);
 }

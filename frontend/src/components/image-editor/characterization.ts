@@ -1,5 +1,5 @@
 import { applyHighlightLinear, applyRolloffScalar, applyScaledLogLinear, applyShadowLinear, applySigmoidLinear, applyToneLinearToRgb, rolloffParams } from "./tone";
-import { analysisSampleDimensions, decodeStoredRgb16Channel, encodeStoredRgb16Channel, getAnalysisLinearRgbSample, renderedPixelToSourcePoint, sampleLinearRgb16Bilinear, sampleLinearRgb16BilinearAtSource } from "./sampling";
+import { analysisSampleDimensions, buildRenderedPixelToSourceTransform, createRgb16SamplingScratch, decodeStoredRgb16Channel, encodeStoredRgb16Channel, getAnalysisLinearRgbSample, renderedPixelToSourcePoint, sampleLinearRgb16Bilinear, sampleLinearRgb16BilinearAtSource, sampleLinearRgb16BilinearAtSourceInto, sampleLinearRgb16BilinearInto } from "./sampling";
 import { buildColorAdjustmentContextFromLinearRgbSample, findAutoExposure, findAutoLogarithm, findAutoShadow, findAutoSigmoid, percentileFromValues, percentilesFromValues } from "./analysis";
 import { renderAdjustedRgb16ToCanvas } from "./render";
 
@@ -16,7 +16,11 @@ export const __imageEditorCharacterization = {
   decodeStoredRgb16Channel,
   encodeStoredRgb16Channel,
   sampleLinearRgb16BilinearAtSource,
+  sampleLinearRgb16BilinearAtSourceInto,
   sampleLinearRgb16Bilinear,
+  sampleLinearRgb16BilinearInto,
+  createRgb16SamplingScratch,
+  buildRenderedPixelToSourceTransform,
   analysisSampleDimensions,
   getAnalysisLinearRgbSample,
   renderedPixelToSourcePoint,

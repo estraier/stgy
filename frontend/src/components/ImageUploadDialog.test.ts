@@ -12,11 +12,36 @@ jest.mock("@/utils/lensfunCorrection", () => ({
     g: [x, y],
     b: [x + 0.25, y],
   }),
+  lensfunSourceCoordinatesInto: (
+    _correction: unknown,
+    x: number,
+    y: number,
+    output: [number, number, number, number, number, number],
+  ) => {
+    output[0] = x - 0.25;
+    output[1] = y;
+    output[2] = x;
+    output[3] = y;
+    output[4] = x + 0.25;
+    output[5] = y;
+    return output;
+  },
   lensfunVignettingGain: (_correction: unknown, x: number, y: number) => [
     1 + x * 0.01,
     1 + y * 0.01,
     1,
   ],
+  lensfunVignettingGainInto: (
+    _correction: unknown,
+    x: number,
+    y: number,
+    output: [number, number, number],
+  ) => {
+    output[0] = 1 + x * 0.01;
+    output[1] = 1 + y * 0.01;
+    output[2] = 1;
+    return output;
+  },
 }));
 
 import { __imageEditorCharacterization as imageEditor } from "./image-editor/characterization";
@@ -273,9 +298,17 @@ describe("image editor RGB16 characterization", () => {
     expect(sample).not.toBeNull();
     expect(rounded(sample ?? [])).toEqual([0.437501933383, 0.712493470342, 0.987500333031]);
 
+    const intoSample: [number, number, number] = [0, 0, 0];
+    expect(imageEditor.sampleLinearRgb16BilinearAtSourceInto(decoded, 0.5, 0.5, intoSample)).toBe(true);
+    expect(rounded(intoSample)).toEqual([0.437501933383, 0.712493470342, 0.987500333031]);
+
     const point = imageEditor.renderedPixelToSourcePoint(7, 4, 400, 300, 10, 20, 2, 1.5, 33);
     expect(point.x).toBeCloseTo(-25.371550726743678, 12);
     expect(point.y).toBeCloseTo(144.92785814247995, 12);
+
+    const transform = imageEditor.buildRenderedPixelToSourceTransform(400, 300, 10, 20, 2, 1.5, 33);
+    expect(transform.originX + 7 * transform.columnStepX + 4 * transform.rowStepX).toBeCloseTo(point.x, 12);
+    expect(transform.originY + 7 * transform.columnStepY + 4 * transform.rowStepY).toBeCloseTo(point.y, 12);
   });
 
   test("freezes the TCA/vignetting integration path around Lensfun coordinates", () => {
@@ -297,6 +330,17 @@ describe("image editor RGB16 characterization", () => {
       0.712493470342,
       1.206246666426,
     ]);
+    const tcaIntoSample: [number, number, number] = [0, 0, 0];
+    expect(
+      imageEditor.sampleLinearRgb16BilinearInto(
+        tcaDecoded,
+        0.5,
+        0.5,
+        tcaIntoSample,
+        imageEditor.createRgb16SamplingScratch(),
+      ),
+    ).toBe(true);
+    expect(rounded(tcaIntoSample)).toEqual([0.268751031129, 0.712493470342, 1.206246666426]);
 
     const vignettingDecoded = makeDecodedRgb16(3, 2, values, 2, {
       tca: false,
