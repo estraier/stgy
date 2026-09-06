@@ -5683,6 +5683,30 @@ function findAutoSigmoid(
   return clampSigmoid(bestValue);
 }
 
+// Test-only characterization surface. Keep these references pointed at the production
+// implementations so the regression suite freezes current image-editor behavior before
+// the processing code is split and optimized in later commits.
+export const __imageEditorCharacterization = {
+  applyScaledLogLinear,
+  applySigmoidLinear,
+  rolloffParams,
+  applyRolloffScalar,
+  applyShadowLinear,
+  applyHighlightLinear,
+  applyToneLinearToRgb,
+  decodeStoredRgb16Channel,
+  encodeStoredRgb16Channel,
+  sampleLinearRgb16BilinearAtSource,
+  sampleLinearRgb16Bilinear,
+  renderedPixelToSourcePoint,
+  renderAdjustedRgb16ToCanvas,
+  buildColorAdjustmentContextFromLinearRgbSample,
+  findAutoExposure,
+  findAutoShadow,
+  findAutoLogarithm,
+  findAutoSigmoid,
+};
+
 function histogramPath(values: number[], maxCount: number, width: number, height: number): string {
   if (!values.length || maxCount <= 0) {
     return `M0,${height} L${width},${height}`;
