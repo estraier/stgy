@@ -378,6 +378,10 @@ const RAW_DECODE_SETTINGS: LibRawSettingsLike = {
 
 const RAW_BASELINE_PERCENTILE = 98;
 const RAW_BASELINE_TARGET = 0.9;
+const RAW_DEVELOPED_LINEAR_RANGE_MAX = 2;
+const RAW_HEADROOM_HISTOGRAM_STEP = 0.1;
+const RAW_HEADROOM_HISTOGRAM_MAX = 2;
+const RAW_TONE_SLOPE_EPSILON = 1e-5;
 
 // RAW editing uses linear ProPhoto RGB (D50). Canvas/file output may be standard sRGB (D65)
 // or Display P3 (D65). These fixed transforms fold ProPhoto RGB -> XYZ(D50),
@@ -1181,6 +1185,28 @@ function applyRolloffScalar(value: number, rolloff: { inflection: number; scale:
   return rolloff.inflection + (value - rolloff.inflection) * rolloff.scale;
 }
 
+function applyExposureLinearToRgb(
+  r: number,
+  g: number,
+  b: number,
+  factor: number,
+): [number, number, number] {
+  return [r * factor, g * factor, b * factor];
+}
+
+function applyDisplayRolloffAndClipLinearToRgb(
+  r: number,
+  g: number,
+  b: number,
+  rolloff: { inflection: number; scale: number } | null,
+): [number, number, number] {
+  return [
+    clamp01(applyRolloffScalar(r, rolloff)),
+    clamp01(applyRolloffScalar(g, rolloff)),
+    clamp01(applyRolloffScalar(b, rolloff)),
+  ];
+}
+
 function applyToneLinearToRgb(
   r: number,
   g: number,
@@ -1195,15 +1221,16 @@ function applyToneLinearToRgb(
   if (hasWhiteBalance) {
     [r, g, b] = applyWhiteBalanceLinear(r, g, b, gains);
   }
-  r *= factor;
-  g *= factor;
-  b *= factor;
-  r = applyRolloffScalar(r, rolloff);
-  g = applyRolloffScalar(g, rolloff);
-  b = applyRolloffScalar(b, rolloff);
-  r = applyScaledLogLinear(clamp01(r), scaledLog);
-  g = applyScaledLogLinear(clamp01(g), scaledLog);
-  b = applyScaledLogLinear(clamp01(b), scaledLog);
+  [r, g, b] = applyExposureLinearToRgb(r, g, b, factor);
+
+  // Shadow / Highlight operate here on the unclipped extended-range linear data.
+
+  // Rolloff and clipping together form the boundary from extended-range linear
+  // editing into the bounded [0,1] tone domain used by Logarithm and Sigmoid.
+  [r, g, b] = applyDisplayRolloffAndClipLinearToRgb(r, g, b, rolloff);
+  r = applyScaledLogLinear(r, scaledLog);
+  g = applyScaledLogLinear(g, scaledLog);
+  b = applyScaledLogLinear(b, scaledLog);
   r = applySigmoidLinear(r, sigmoid);
   g = applySigmoidLinear(g, sigmoid);
   b = applySigmoidLinear(b, sigmoid);
@@ -1924,6 +1951,21 @@ type RawDevelopmentLuminanceSettings = {
   exposureEv: number;
   logarithm: number;
   sigmoid: number;
+  toneSlopeAtWhite: number;
+};
+
+type RawDevelopmentHeadroomStatistics = {
+  step: number;
+  histogramMax: number;
+  bins: number[];
+  overflowCount: number;
+  pixelCount: number;
+  maxRgb: number;
+};
+
+type RawBaselineApplicationResult = {
+  luminance: RawDevelopmentLuminanceSettings;
+  headroom: RawDevelopmentHeadroomStatistics;
 };
 
 type RawDevelopmentSaturationSettings = {
@@ -1949,6 +1991,7 @@ type RawDevelopmentSettings = {
   medPasses: number;
   luminance: RawDevelopmentLuminanceSettings | null;
   saturation: RawDevelopmentSaturationSettings;
+  headroom?: RawDevelopmentHeadroomStatistics;
   lensfun?: RawDevelopmentLensfunSettings;
   elapsedSeconds: number;
 };
@@ -1962,6 +2005,7 @@ type RawDevelopmentMemoryUsage = {
 type DecodedRgbImage16 = {
   colorSpace: "prophoto";
   transfer: "linear" | "gamma20";
+  linearRangeMax: number;
   width: number;
   height: number;
   data: Uint16Array;
@@ -2379,21 +2423,29 @@ function scaleSampleTo16(v: number, bits: number): number {
   return max > 0 ? Math.round((Math.max(0, v) / max) * 65535) : 0;
 }
 
+function normalizeLinearRangeMax(linearRangeMax: number): number {
+  return Number.isFinite(linearRangeMax) && linearRangeMax > 0 ? linearRangeMax : 1;
+}
+
 function decodeStoredRgb16Channel(
   sample: number,
   transfer: DecodedRgbImage16["transfer"],
+  linearRangeMax: number,
 ): number {
   const encoded = clamp01(sample / 65535);
-  if (transfer === "gamma20") return encoded * encoded;
-  return encoded;
+  const normalizedRange = normalizeLinearRangeMax(linearRangeMax);
+  if (transfer === "gamma20") return encoded * encoded * normalizedRange;
+  return encoded * normalizedRange;
 }
 
 function encodeStoredRgb16Channel(
   linear: number,
   transfer: DecodedRgbImage16["transfer"],
+  linearRangeMax: number,
 ): number {
-  const clamped = clamp01(linear);
-  const encoded = transfer === "gamma20" ? Math.sqrt(clamped) : clamped;
+  const normalizedRange = normalizeLinearRangeMax(linearRangeMax);
+  const normalized = clamp01(linear / normalizedRange);
+  const encoded = transfer === "gamma20" ? Math.sqrt(normalized) : normalized;
   return Math.round(encoded * 65535);
 }
 
@@ -2483,9 +2535,9 @@ function writeRgba8ToDecodedRgb16(
       (rgba8[si + 2] ?? 0) / 255,
       profile,
     );
-    rgb16[di] = encodeStoredRgb16Channel(r, "gamma20");
-    rgb16[di + 1] = encodeStoredRgb16Channel(g, "gamma20");
-    rgb16[di + 2] = encodeStoredRgb16Channel(b, "gamma20");
+    rgb16[di] = encodeStoredRgb16Channel(r, "gamma20", 1);
+    rgb16[di + 1] = encodeStoredRgb16Channel(g, "gamma20", 1);
+    rgb16[di + 2] = encodeStoredRgb16Channel(b, "gamma20", 1);
   }
 }
 
@@ -2500,6 +2552,7 @@ function rgba8ToDecodedRgb16(
   return {
     colorSpace: "prophoto",
     transfer: "gamma20",
+    linearRangeMax: 1,
     width,
     height,
     data: rgb16,
@@ -2563,14 +2616,15 @@ function nativeRgbTiffToDecodedRgb16(
     }
     const [pr, pg, pb] = encodedRgbToLinearProphoto(r, g, b, profile);
     const di = i * 3;
-    rgb16[di] = encodeStoredRgb16Channel(pr, "gamma20");
-    rgb16[di + 1] = encodeStoredRgb16Channel(pg, "gamma20");
-    rgb16[di + 2] = encodeStoredRgb16Channel(pb, "gamma20");
+    rgb16[di] = encodeStoredRgb16Channel(pr, "gamma20", 1);
+    rgb16[di + 1] = encodeStoredRgb16Channel(pg, "gamma20", 1);
+    rgb16[di + 2] = encodeStoredRgb16Channel(pb, "gamma20", 1);
   }
 
   return {
     colorSpace: "prophoto",
     transfer: "gamma20",
+    linearRangeMax: 1,
     width,
     height,
     data: rgb16,
@@ -2586,16 +2640,19 @@ function convertDecodedRgb16Transfer(
   const data = decoded.data;
   for (let i = 0; i < data.length; i += 3) {
     data[i] = encodeStoredRgb16Channel(
-      decodeStoredRgb16Channel(data[i] ?? 0, decoded.transfer),
+      decodeStoredRgb16Channel(data[i] ?? 0, decoded.transfer, decoded.linearRangeMax),
       transfer,
+      decoded.linearRangeMax,
     );
     data[i + 1] = encodeStoredRgb16Channel(
-      decodeStoredRgb16Channel(data[i + 1] ?? 0, decoded.transfer),
+      decodeStoredRgb16Channel(data[i + 1] ?? 0, decoded.transfer, decoded.linearRangeMax),
       transfer,
+      decoded.linearRangeMax,
     );
     data[i + 2] = encodeStoredRgb16Channel(
-      decodeStoredRgb16Channel(data[i + 2] ?? 0, decoded.transfer),
+      decodeStoredRgb16Channel(data[i + 2] ?? 0, decoded.transfer, decoded.linearRangeMax),
       transfer,
+      decoded.linearRangeMax,
     );
   }
   decoded.transfer = transfer;
@@ -2669,14 +2726,96 @@ function applyRawBaselineSigmoidLinear(value: number, gain: number): number {
   return x;
 }
 
+function rawBaselineToneCurveValue(
+  value: number,
+  scaledLog: number,
+  sigmoid: number,
+): number {
+  const logarithmic = applyRawBaselineScaledLogLinear(value, scaledLog);
+  return applyRawBaselineSigmoidLinear(logarithmic, sigmoid);
+}
+
+function rawBaselineToneSlopeAtWhite(
+  scaledLog: number,
+  sigmoid: number,
+): number {
+  const epsilon = RAW_TONE_SLOPE_EPSILON;
+  const slope = (
+    rawBaselineToneCurveValue(1, scaledLog, sigmoid)
+    - rawBaselineToneCurveValue(1 - epsilon, scaledLog, sigmoid)
+  ) / epsilon;
+  return Number.isFinite(slope) && slope >= 0 ? slope : 1;
+}
+
 function transformedRawLumaValue(
   rawLuma: number,
   gain: number,
   scaledLog: number,
   sigmoid: number,
 ): number {
-  const logarithmic = applyRawBaselineScaledLogLinear(rawLuma * gain, scaledLog);
-  return applyRawBaselineSigmoidLinear(logarithmic, sigmoid);
+  return rawBaselineToneCurveValue(rawLuma * gain, scaledLog, sigmoid);
+}
+
+function transformedRawLumaValueExtended(
+  rawLuma: number,
+  gain: number,
+  scaledLog: number,
+  sigmoid: number,
+  toneSlopeAtWhite: number,
+): number {
+  const exposed = rawLuma * gain;
+  if (exposed <= 1) return rawBaselineToneCurveValue(exposed, scaledLog, sigmoid);
+  return 1 + toneSlopeAtWhite * (exposed - 1);
+}
+
+function createRawHeadroomStatisticsAccumulator(): {
+  bins: Uint32Array;
+  overflowCount: number;
+  pixelCount: number;
+  maxRgb: number;
+} {
+  const binCount = Math.round(RAW_HEADROOM_HISTOGRAM_MAX / RAW_HEADROOM_HISTOGRAM_STEP);
+  return {
+    bins: new Uint32Array(binCount),
+    overflowCount: 0,
+    pixelCount: 0,
+    maxRgb: 0,
+  };
+}
+
+function recordRawHeadroomPixel(
+  accumulator: ReturnType<typeof createRawHeadroomStatisticsAccumulator>,
+  r: number,
+  g: number,
+  b: number,
+): void {
+  const maxRgb = Math.max(r, g, b);
+  if (!Number.isFinite(maxRgb)) return;
+  accumulator.pixelCount++;
+  accumulator.maxRgb = Math.max(accumulator.maxRgb, maxRgb);
+  if (maxRgb > RAW_HEADROOM_HISTOGRAM_MAX) {
+    accumulator.overflowCount++;
+    return;
+  }
+  const normalized = Math.max(0, maxRgb);
+  const index = Math.min(
+    accumulator.bins.length - 1,
+    Math.floor(normalized / RAW_HEADROOM_HISTOGRAM_STEP),
+  );
+  accumulator.bins[Math.max(0, index)]++;
+}
+
+function finishRawHeadroomStatistics(
+  accumulator: ReturnType<typeof createRawHeadroomStatisticsAccumulator>,
+): RawDevelopmentHeadroomStatistics {
+  return {
+    step: RAW_HEADROOM_HISTOGRAM_STEP,
+    histogramMax: RAW_HEADROOM_HISTOGRAM_MAX,
+    bins: Array.from(accumulator.bins),
+    overflowCount: accumulator.overflowCount,
+    pixelCount: accumulator.pixelCount,
+    maxRgb: accumulator.maxRgb,
+  };
 }
 
 function solveRawThumbnailMatchGain(
@@ -2768,7 +2907,7 @@ function solveRawThumbnailMatchSigmoid(
 function applyRawThumbnailMatchedBaseline(
   decoded: DecodedRgbImage16,
   thumbnailPercentiles: DebugPercentileValues,
-): RawDevelopmentLuminanceSettings | null {
+): RawBaselineApplicationResult | null {
   const p25Index = DEBUG_PERCENTILES.indexOf(25);
   const p50Index = DEBUG_PERCENTILES.indexOf(50);
   const p75Index = DEBUG_PERCENTILES.indexOf(75);
@@ -2839,32 +2978,55 @@ function applyRawThumbnailMatchedBaseline(
 
   const data = decoded.data;
   const pixelCount = decoded.width * decoded.height;
+  const sourceLinearRangeMax = decoded.linearRangeMax;
+  const destinationLinearRangeMax = RAW_DEVELOPED_LINEAR_RANGE_MAX;
+  const toneSlopeAtWhite = rawBaselineToneSlopeAtWhite(scaledLog, sigmoid);
+  const headroom = createRawHeadroomStatisticsAccumulator();
   for (let pixel = 0; pixel < pixelCount; pixel++) {
     const i = pixel * 3;
     const x = pixel % decoded.width;
     const y = Math.floor(pixel / decoded.width);
     const [rGain, gGain, bGain] = pendingLensfunVignettingGain(decoded, x, y);
-    const r = decodeStoredRgb16Channel(data[i] ?? 0, decoded.transfer) * rGain;
-    const g = decodeStoredRgb16Channel(data[i + 1] ?? 0, decoded.transfer) * gGain;
-    const b = decodeStoredRgb16Channel(data[i + 2] ?? 0, decoded.transfer) * bGain;
+    const r = decodeStoredRgb16Channel(data[i] ?? 0, decoded.transfer, sourceLinearRangeMax) * rGain;
+    const g = decodeStoredRgb16Channel(data[i + 1] ?? 0, decoded.transfer, sourceLinearRangeMax) * gGain;
+    const b = decodeStoredRgb16Channel(data[i + 2] ?? 0, decoded.transfer, sourceLinearRangeMax) * bGain;
     const luma = PROPHOTO_LUMA_R * r + PROPHOTO_LUMA_G * g + PROPHOTO_LUMA_B * b;
     if (!(luma > 1e-12)) {
       data[i] = 0;
       data[i + 1] = 0;
       data[i + 2] = 0;
+      recordRawHeadroomPixel(headroom, 0, 0, 0);
       continue;
     }
-    const adjustedLuma = transformedRawLumaValue(luma, gain, scaledLog, sigmoid);
+    const adjustedLuma = transformedRawLumaValueExtended(
+      luma,
+      gain,
+      scaledLog,
+      sigmoid,
+      toneSlopeAtWhite,
+    );
     const scale = adjustedLuma / luma;
-    data[i] = encodeStoredRgb16Channel(r * scale, decoded.transfer);
-    data[i + 1] = encodeStoredRgb16Channel(g * scale, decoded.transfer);
-    data[i + 2] = encodeStoredRgb16Channel(b * scale, decoded.transfer);
+    const adjustedR = r * scale;
+    const adjustedG = g * scale;
+    const adjustedB = b * scale;
+    // Auto Color changes hue/saturation while preserving HSV Value, so max(R,G,B)
+    // remains unchanged. Recording here therefore represents the final developed
+    // headroom while still seeing values that the 0..linearRangeMax buffer will clip.
+    recordRawHeadroomPixel(headroom, adjustedR, adjustedG, adjustedB);
+    data[i] = encodeStoredRgb16Channel(adjustedR, decoded.transfer, destinationLinearRangeMax);
+    data[i + 1] = encodeStoredRgb16Channel(adjustedG, decoded.transfer, destinationLinearRangeMax);
+    data[i + 2] = encodeStoredRgb16Channel(adjustedB, decoded.transfer, destinationLinearRangeMax);
   }
+  decoded.linearRangeMax = destinationLinearRangeMax;
   finishLensfunVignettingBake(decoded);
   return {
-    exposureEv: Math.log2(Math.max(gain, Number.MIN_VALUE)),
-    logarithm: scaledLog,
-    sigmoid,
+    luminance: {
+      exposureEv: Math.log2(Math.max(gain, Number.MIN_VALUE)),
+      logarithm: scaledLog,
+      sigmoid,
+      toneSlopeAtWhite,
+    },
+    headroom: finishRawHeadroomStatistics(headroom),
   };
 }
 
@@ -3060,6 +3222,22 @@ function solveRawThumbnailMatchColorParameter(
     : upper;
 }
 
+function applyColorAdjustmentsLinearRgbPreservingExtendedRange(
+  r: number,
+  g: number,
+  b: number,
+  context: ColorAdjustmentContext,
+): [number, number, number] {
+  const scale = Math.max(1, r, g, b);
+  const [adjustedR, adjustedG, adjustedB] = applyColorAdjustmentsLinearRgb(
+    r / scale,
+    g / scale,
+    b / scale,
+    context,
+  );
+  return [adjustedR * scale, adjustedG * scale, adjustedB * scale];
+}
+
 function applyRawThumbnailMatchedColor(
   decoded: DecodedRgbImage16,
   thumbnailLinearSrgbSample: Float32Array,
@@ -3120,36 +3298,37 @@ function applyRawThumbnailMatchedColor(
   );
   const data = decoded.data;
   for (let i = 0; i < data.length; i += 3) {
-    const [r, g, b] = applyColorAdjustmentsLinearRgb(
-      decodeStoredRgb16Channel(data[i] ?? 0, decoded.transfer),
-      decodeStoredRgb16Channel(data[i + 1] ?? 0, decoded.transfer),
-      decodeStoredRgb16Channel(data[i + 2] ?? 0, decoded.transfer),
+    const [r, g, b] = applyColorAdjustmentsLinearRgbPreservingExtendedRange(
+      decodeStoredRgb16Channel(data[i] ?? 0, decoded.transfer, decoded.linearRangeMax),
+      decodeStoredRgb16Channel(data[i + 1] ?? 0, decoded.transfer, decoded.linearRangeMax),
+      decodeStoredRgb16Channel(data[i + 2] ?? 0, decoded.transfer, decoded.linearRangeMax),
       context,
     );
-    data[i] = encodeStoredRgb16Channel(r, decoded.transfer);
-    data[i + 1] = encodeStoredRgb16Channel(g, decoded.transfer);
-    data[i + 2] = encodeStoredRgb16Channel(b, decoded.transfer);
+    data[i] = encodeStoredRgb16Channel(r, decoded.transfer, decoded.linearRangeMax);
+    data[i + 1] = encodeStoredRgb16Channel(g, decoded.transfer, decoded.linearRangeMax);
+    data[i + 2] = encodeStoredRgb16Channel(b, decoded.transfer, decoded.linearRangeMax);
   }
   return { saturation, vibrance };
 }
 
 function applyRawBaselineExposure(
   decoded: DecodedRgbImage16,
-): RawDevelopmentLuminanceSettings | null {
+): RawBaselineApplicationResult | null {
   const data = decoded.data;
   const rmsHistogram = new Uint32Array(65536);
   const channelHistogram = new Uint32Array(65536);
   const pixelCount = decoded.width * decoded.height;
   if (pixelCount <= 0) return null;
 
+  const sourceLinearRangeMax = decoded.linearRangeMax;
   for (let pixel = 0; pixel < pixelCount; pixel++) {
     const i = pixel * 3;
     const x = pixel % decoded.width;
     const y = Math.floor(pixel / decoded.width);
     const [rGain, gGain, bGain] = pendingLensfunVignettingGain(decoded, x, y);
-    const r = decodeStoredRgb16Channel(data[i] ?? 0, decoded.transfer) * rGain;
-    const g = decodeStoredRgb16Channel(data[i + 1] ?? 0, decoded.transfer) * gGain;
-    const b = decodeStoredRgb16Channel(data[i + 2] ?? 0, decoded.transfer) * bGain;
+    const r = decodeStoredRgb16Channel(data[i] ?? 0, decoded.transfer, sourceLinearRangeMax) * rGain;
+    const g = decodeStoredRgb16Channel(data[i + 1] ?? 0, decoded.transfer, sourceLinearRangeMax) * gGain;
+    const b = decodeStoredRgb16Channel(data[i + 2] ?? 0, decoded.transfer, sourceLinearRangeMax) * bGain;
     const rms = Math.sqrt((r * r + g * g + b * b) / 3);
     const rmsLevel = Math.min(65535, Math.max(0, Math.round(rms * 65535)));
     rmsHistogram[rmsLevel]++;
@@ -3177,32 +3356,40 @@ function applyRawBaselineExposure(
     4,
   );
 
+  const destinationLinearRangeMax = RAW_DEVELOPED_LINEAR_RANGE_MAX;
+  const headroom = createRawHeadroomStatisticsAccumulator();
   for (let pixel = 0; pixel < pixelCount; pixel++) {
     const i = pixel * 3;
     const x = pixel % decoded.width;
     const y = Math.floor(pixel / decoded.width);
     const [rGain, gGain, bGain] = pendingLensfunVignettingGain(decoded, x, y);
     const r = applyRolloffScalar(
-      decodeStoredRgb16Channel(data[i] ?? 0, decoded.transfer) * rGain * factor,
+      decodeStoredRgb16Channel(data[i] ?? 0, decoded.transfer, sourceLinearRangeMax) * rGain * factor,
       rolloff,
     );
     const g = applyRolloffScalar(
-      decodeStoredRgb16Channel(data[i + 1] ?? 0, decoded.transfer) * gGain * factor,
+      decodeStoredRgb16Channel(data[i + 1] ?? 0, decoded.transfer, sourceLinearRangeMax) * gGain * factor,
       rolloff,
     );
     const b = applyRolloffScalar(
-      decodeStoredRgb16Channel(data[i + 2] ?? 0, decoded.transfer) * bGain * factor,
+      decodeStoredRgb16Channel(data[i + 2] ?? 0, decoded.transfer, sourceLinearRangeMax) * bGain * factor,
       rolloff,
     );
-    data[i] = encodeStoredRgb16Channel(r, decoded.transfer);
-    data[i + 1] = encodeStoredRgb16Channel(g, decoded.transfer);
-    data[i + 2] = encodeStoredRgb16Channel(b, decoded.transfer);
+    recordRawHeadroomPixel(headroom, r, g, b);
+    data[i] = encodeStoredRgb16Channel(r, decoded.transfer, destinationLinearRangeMax);
+    data[i + 1] = encodeStoredRgb16Channel(g, decoded.transfer, destinationLinearRangeMax);
+    data[i + 2] = encodeStoredRgb16Channel(b, decoded.transfer, destinationLinearRangeMax);
   }
+  decoded.linearRangeMax = destinationLinearRangeMax;
   finishLensfunVignettingBake(decoded);
   return {
-    exposureEv: Math.log2(Math.max(factor, Number.MIN_VALUE)),
-    logarithm: 0,
-    sigmoid: 0,
+    luminance: {
+      exposureEv: Math.log2(Math.max(factor, Number.MIN_VALUE)),
+      logarithm: 0,
+      sigmoid: 0,
+      toneSlopeAtWhite: 1,
+    },
+    headroom: finishRawHeadroomStatistics(headroom),
   };
 }
 
@@ -3291,11 +3478,11 @@ function sampleLinearRgbFromRgb16(decoded: DecodedRgbImage16): Float32Array {
       const targetIndex = (y * sampleW + x) * 3;
       const [rGain, gGain, bGain] = pendingLensfunVignettingGain(decoded, sx, sy);
       output[targetIndex] =
-        decodeStoredRgb16Channel(decoded.data[sourceIndex] ?? 0, decoded.transfer) * rGain;
+        decodeStoredRgb16Channel(decoded.data[sourceIndex] ?? 0, decoded.transfer, decoded.linearRangeMax) * rGain;
       output[targetIndex + 1] =
-        decodeStoredRgb16Channel(decoded.data[sourceIndex + 1] ?? 0, decoded.transfer) * gGain;
+        decodeStoredRgb16Channel(decoded.data[sourceIndex + 1] ?? 0, decoded.transfer, decoded.linearRangeMax) * gGain;
       output[targetIndex + 2] =
-        decodeStoredRgb16Channel(decoded.data[sourceIndex + 2] ?? 0, decoded.transfer) * bGain;
+        decodeStoredRgb16Channel(decoded.data[sourceIndex + 2] ?? 0, decoded.transfer, decoded.linearRangeMax) * bGain;
     }
   }
   return output;
@@ -3325,11 +3512,12 @@ function sampleLinearRgb16ChannelBilinearAtSource(
   const w01 = (1 - tx) * ty;
   const w11 = tx * ty;
   const transfer = decoded.transfer;
+  const linearRangeMax = decoded.linearRangeMax;
   return (
-    decodeStoredRgb16Channel(data[idx00] ?? 0, transfer) * w00 +
-    decodeStoredRgb16Channel(data[idx10] ?? 0, transfer) * w10 +
-    decodeStoredRgb16Channel(data[idx01] ?? 0, transfer) * w01 +
-    decodeStoredRgb16Channel(data[idx11] ?? 0, transfer) * w11
+    decodeStoredRgb16Channel(data[idx00] ?? 0, transfer, linearRangeMax) * w00 +
+    decodeStoredRgb16Channel(data[idx10] ?? 0, transfer, linearRangeMax) * w10 +
+    decodeStoredRgb16Channel(data[idx01] ?? 0, transfer, linearRangeMax) * w01 +
+    decodeStoredRgb16Channel(data[idx11] ?? 0, transfer, linearRangeMax) * w11
   );
 }
 
@@ -3518,8 +3706,10 @@ function buildColorAdjustmentContextFromLinearRgbSample(
     }
     exposedValues.push(r * factor, g * factor, b * factor);
   }
-  const maxVal = factor > 1 ? percentileFromSortedValues(exposedValues, 99.8) : 0;
-  const rolloff = factor > 1 ? rolloffParams(maxVal, 0.5, 4) : null;
+  // Rolloff depends on the post-exposure signal range, not on the sign of the
+  // Exposure control. RAW buffers may already contain values above 1 at 0 EV.
+  const maxVal = percentileFromSortedValues(exposedValues, 99.8);
+  const rolloff = rolloffParams(maxVal, 0.5, 4);
   const saturationFactor = colorSaturationFactor(normalizedSaturation);
   const vibranceFactor = colorVibranceFactor(normalizedVibrance);
   const saturationValues: number[] = [];
@@ -3821,6 +4011,7 @@ function libRawImageDataToDecoded(image: LibRawImageDataLike): DecodedRgbImage16
   return {
     colorSpace: "prophoto",
     transfer: "linear",
+    linearRangeMax: 1,
     width,
     height,
     data: rgb,
@@ -4010,18 +4201,20 @@ async function decodeRawImage(
     );
     let mode: RawDevelopmentSettings["mode"] = "fallback";
     let luminanceSettings: RawDevelopmentLuminanceSettings | null = null;
+    let headroomSettings: RawDevelopmentHeadroomStatistics | undefined;
     let saturationSettings: RawDevelopmentSaturationSettings = {
       saturation: 0,
       vibrance: 0,
     };
     if (thumbnailReference) {
-      const matchedLuminance = applyRawThumbnailMatchedBaseline(
+      const matchedBaseline = applyRawThumbnailMatchedBaseline(
         decoded,
         thumbnailReference.lumaPercentiles,
       );
-      if (matchedLuminance) {
+      if (matchedBaseline) {
         mode = "thumbnail-match";
-        luminanceSettings = matchedLuminance;
+        luminanceSettings = matchedBaseline.luminance;
+        headroomSettings = matchedBaseline.headroom;
         // Match color only after the thumbnail-driven tone baseline is fixed.
         // Saturation follows HSV P95 first, then Vibrance follows HSV P50.
         saturationSettings = applyRawThumbnailMatchedColor(
@@ -4029,10 +4222,14 @@ async function decodeRawImage(
           thumbnailReference.linearSrgbSample,
         ) ?? saturationSettings;
       } else {
-        luminanceSettings = applyRawBaselineExposure(decoded);
+        const fallbackBaseline = applyRawBaselineExposure(decoded);
+        luminanceSettings = fallbackBaseline?.luminance ?? null;
+        headroomSettings = fallbackBaseline?.headroom;
       }
     } else {
-      luminanceSettings = applyRawBaselineExposure(decoded);
+      const fallbackBaseline = applyRawBaselineExposure(decoded);
+      luminanceSettings = fallbackBaseline?.luminance ?? null;
+      headroomSettings = fallbackBaseline?.headroom;
     }
     convertDecodedRgb16Transfer(decoded, "gamma20");
     decoded.rawDevelopment = {
@@ -4041,6 +4238,7 @@ async function decodeRawImage(
       medPasses,
       luminance: luminanceSettings,
       saturation: saturationSettings,
+      headroom: headroomSettings,
       lensfun: lensfunSettings,
       elapsedSeconds: (performance.now() - rawDevelopmentStartedAt) / 1000,
     };
@@ -4121,6 +4319,7 @@ function canvasSourceToDecodedRgb16(
     return {
       colorSpace: "prophoto",
       transfer: "gamma20",
+      linearRangeMax: 1,
       width,
       height,
       data: rgb16,
@@ -7495,7 +7694,7 @@ export function ImageEditDialog({
                             <div className="mt-1 space-y-0.5 font-mono tabular-nums">
                               <div>
                                 luminance: {rawDevelopmentSettings.luminance
-                                  ? `exposure=${formatRawDevelopmentSetting(rawDevelopmentSettings.luminance.exposureEv)}, logarithm=${formatRawDevelopmentSetting(rawDevelopmentSettings.luminance.logarithm)}, sigmoid=${formatRawDevelopmentSetting(rawDevelopmentSettings.luminance.sigmoid)}`
+                                  ? `exposure=${formatRawDevelopmentSetting(rawDevelopmentSettings.luminance.exposureEv)}, logarithm=${formatRawDevelopmentSetting(rawDevelopmentSettings.luminance.logarithm)}, sigmoid=${formatRawDevelopmentSetting(rawDevelopmentSettings.luminance.sigmoid)}, tone slope@1=${rawDevelopmentSettings.luminance.toneSlopeAtWhite.toFixed(6)}`
                                   : "n/a"}
                               </div>
                               <div>
@@ -7538,7 +7737,33 @@ export function ImageEditDialog({
                                   ].join(", ")}
                                 </div>
                               )}
+                              <div>buffer linearRangeMax={formatRawDevelopmentSetting(decodedImageRef.current?.linearRangeMax ?? 1)}</div>
                               <div>elapsed time: real={formatRawDevelopmentSetting(rawDevelopmentSettings.elapsedSeconds)}s</div>
+                              {rawDevelopmentSettings.headroom && (
+                                <div className="mt-2 border-t border-gray-600 pt-2">
+                                  <div className="font-medium">RAW developed max RGB histogram (linear ProPhoto)</div>
+                                  <div>
+                                    max={rawDevelopmentSettings.headroom.maxRgb.toFixed(3)}, {`>${rawDevelopmentSettings.headroom.histogramMax.toFixed(1)}`}={rawDevelopmentSettings.headroom.overflowCount}
+                                    {rawDevelopmentSettings.headroom.pixelCount > 0
+                                      ? ` (${(rawDevelopmentSettings.headroom.overflowCount / rawDevelopmentSettings.headroom.pixelCount * 100).toFixed(4)}%)`
+                                      : ""}
+                                  </div>
+                                  <div className="mt-1 grid grid-cols-2 gap-x-4">
+                                    {rawDevelopmentSettings.headroom.bins.map((count, index) => {
+                                      const headroom = rawDevelopmentSettings.headroom!;
+                                      const low = index * headroom.step;
+                                      const percent = headroom.pixelCount > 0
+                                        ? count / headroom.pixelCount * 100
+                                        : 0;
+                                      return (
+                                        <div key={index}>
+                                          {low.toFixed(1)}: {count} ({percent.toFixed(4)}%)
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           </div>
                         )}
