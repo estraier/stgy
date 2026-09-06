@@ -1912,21 +1912,6 @@ export async function detectBestEditableImageOutputColorProfile(
   return detectEditableImageColorProfile(file);
 }
 
-type Rgb16RenderedPreviewCacheEntry = {
-  width: number;
-  height: number;
-  key: string;
-  canvas: HTMLCanvasElement | OffscreenCanvas;
-};
-
-// Preview generation is an ImageEditDialog implementation detail. Cache only the
-// completed preview Canvas for a decoded 16-bit input; do not expose preview state or
-// cache intermediate downsampled buffers through the upload dialog. WeakMap lets the
-// entry disappear together with the decoded input.
-const RGB16_EDIT_RENDERED_PREVIEW_CACHE = new WeakMap<
-  DecodedRgbImage16,
-  Rgb16RenderedPreviewCacheEntry
->();
 type Rgb16PercentileDebugCacheEntry = {
   input: DebugPercentileStatistics;
   outputKey?: string;
@@ -3610,17 +3595,6 @@ function releaseCanvasIfNeeded(canvas: HTMLCanvasElement | OffscreenCanvas): voi
   canvas.height = 0;
 }
 
-function cloneImageEditCanvas(
-  source: HTMLCanvasElement | OffscreenCanvas,
-  outputColorProfile: ImageEditOutputColorProfile,
-): HTMLCanvasElement | OffscreenCanvas {
-  const clone = createImageEditCanvas(source.width, source.height);
-  const ctx = getCanvas2dContext(clone, outputColorProfile);
-  if (!ctx) throw new Error("2D context unavailable");
-  ctx.drawImage(source, 0, 0);
-  return clone;
-}
-
 async function buildEditedVariantFromDecoded(
   decoded: DecodedRgbImage16,
   params: ImageEditParams,
@@ -3643,31 +3617,58 @@ async function buildEditedVariantFromDecoded(
 
   // Keep the common ProPhoto/gamma2.0 Uint16 RGB source representation through crop/rotation
   // sampling, all tone/color math, and output-primary conversion. Quantize only when
-  // the result must cross the browser's 8-bit Canvas ImageData boundary.
-  const cropped = createImageEditCanvas(sw, sh);
-  renderAdjustedRgb16ToCanvas(
-    cropped,
-    decoded,
-    { x: sx, y: sy, w: sw, h: sh },
-    params.rotationDegrees,
-    params.temperature,
-    params.tint,
-    params.exposureEv,
-    params.shadow,
-    params.highlight,
-    params.scaledLog,
-    params.sigmoid,
-    params.vibrance,
-    params.saturation,
-    outputColorProfile,
-  );
-
+  // the result must cross the browser's 8-bit Canvas ImageData boundary. When resize is
+  // effectively 1:1, render straight into the output canvas instead of allocating and
+  // copying an equally-sized intermediate canvas.
   const output = createImageEditCanvas(dw, dh);
+  if (dw === sw && dh === sh) {
+    renderAdjustedRgb16ToCanvas(
+      output,
+      decoded,
+      { x: sx, y: sy, w: sw, h: sh },
+      params.rotationDegrees,
+      params.temperature,
+      params.tint,
+      params.exposureEv,
+      params.shadow,
+      params.highlight,
+      params.scaledLog,
+      params.sigmoid,
+      params.vibrance,
+      params.saturation,
+      outputColorProfile,
+    );
+  } else {
+    const cropped = createImageEditCanvas(sw, sh);
+    try {
+      renderAdjustedRgb16ToCanvas(
+        cropped,
+        decoded,
+        { x: sx, y: sy, w: sw, h: sh },
+        params.rotationDegrees,
+        params.temperature,
+        params.tint,
+        params.exposureEv,
+        params.shadow,
+        params.highlight,
+        params.scaledLog,
+        params.sigmoid,
+        params.vibrance,
+        params.saturation,
+        outputColorProfile,
+      );
+      const outputCtx = getCanvas2dContext(output, outputColorProfile);
+      if (!outputCtx) throw new Error("2D context unavailable");
+      outputCtx.imageSmoothingEnabled = true;
+      outputCtx.imageSmoothingQuality = "high";
+      outputCtx.drawImage(cropped, 0, 0, sw, sh, 0, 0, dw, dh);
+    } finally {
+      releaseCanvasIfNeeded(cropped);
+    }
+  }
+
   const outputCtx = getCanvas2dContext(output, outputColorProfile);
   if (!outputCtx) throw new Error("2D context unavailable");
-  outputCtx.imageSmoothingEnabled = true;
-  outputCtx.imageSmoothingQuality = "high";
-  outputCtx.drawImage(cropped, 0, 0, sw, sh, 0, 0, dw, dh);
   applySharpenToCanvas(output, params.sharpen, outputColorProfile);
   applyMosaicRectsToCanvas(
     output,
@@ -3696,7 +3697,6 @@ async function buildEditedVariantFromDecoded(
     dh,
     outputColorProfile,
   );
-  releaseCanvasIfNeeded(cropped);
   return { canvas: output, width: dw, height: dh, colorProfile: outputColorProfile };
 }
 
@@ -3753,17 +3753,21 @@ export async function encodeEditedVariant(
   outputFormat: ImageEditOutputFormat = "image/webp",
   outputColorProfile: ImageEditOutputColorProfile = prepared.colorProfile,
 ): Promise<{ blob: Blob; width: number; height: number }> {
-  let canvas = prepared.canvas;
-  if (prepared.colorProfile !== outputColorProfile) {
-    const converted = createImageEditCanvas(prepared.width, prepared.height);
+  if (prepared.colorProfile === outputColorProfile) {
+    const blob = await encodeImageEditCanvas(prepared.canvas, outputFormat, quality);
+    return { blob, width: prepared.width, height: prepared.height };
+  }
+
+  const converted = createImageEditCanvas(prepared.width, prepared.height);
+  try {
     const ctx = getCanvas2dContext(converted, outputColorProfile);
     if (!ctx) throw new Error("2D context unavailable");
     ctx.drawImage(prepared.canvas, 0, 0, prepared.width, prepared.height);
-    canvas = converted;
+    const blob = await encodeImageEditCanvas(converted, outputFormat, quality);
+    return { blob, width: prepared.width, height: prepared.height };
+  } finally {
+    releaseCanvasIfNeeded(converted);
   }
-  const blob = await encodeImageEditCanvas(canvas, outputFormat, quality);
-  if (canvas !== prepared.canvas) releaseCanvasIfNeeded(canvas);
-  return { blob, width: prepared.width, height: prepared.height };
 }
 
 
@@ -3791,7 +3795,11 @@ export async function buildOptimizedVariant(
     decodedImage,
     resolvedOutputColorProfile,
   );
-  return encodeEditedVariant(prepared, quality, outputFormat, resolvedOutputColorProfile);
+  try {
+    return await encodeEditedVariant(prepared, quality, outputFormat, resolvedOutputColorProfile);
+  } finally {
+    releaseCanvasIfNeeded(prepared.canvas);
+  }
 }
 
 function shouldAutoOptimize(meta: Pick<SelectedItem, "width" | "height" | "size">): boolean {
@@ -3991,6 +3999,12 @@ export function ImageEditDialog({
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
+  const previewRenderedRef = useRef<{
+    decoded: DecodedRgbImage16;
+    width: number;
+    height: number;
+    key: string;
+  } | null>(null);
   const decodedImageRef = useRef<DecodedImage | null>(null);
   const transferredDecodedImageRef = useRef<DecodedImage | null>(null);
   const onErrorRef = useRef(onError);
@@ -4115,6 +4129,7 @@ export function ImageEditDialog({
     setRawDevelopmentMemoryUsage(undefined);
     decodedImageRef.current = null;
     transferredDecodedImageRef.current = null;
+    previewRenderedRef.current = null;
 
     void (async () => {
       try {
@@ -5140,50 +5155,12 @@ export function ImageEditDialog({
     if (!canvas || !decoded || !displayed.w || !displayed.h) return;
     const width = Math.max(1, Math.round(displayed.w));
     const height = Math.max(1, Math.round(displayed.h));
-    canvas.width = width;
-    canvas.height = height;
     const previewColorProfile: ImageEditOutputColorProfile = "srgb";
-    const ctx = getCanvas2dContext(canvas, previewColorProfile);
-    if (!ctx) return;
-    ctx.clearRect(0, 0, width, height);
-
-    const canUseRenderedPreviewCache = !rotationMode && !eyedropperMode;
-    const renderedPreviewCacheKey = canUseRenderedPreviewCache
-      ? JSON.stringify([
-          width,
-          height,
-          previewColorProfile,
-          rotationDegrees,
-          temperature,
-          tint,
-          exposureEv,
-          shadow,
-          highlight,
-          scaledLog,
-          sigmoid,
-          vibrance,
-          saturation,
-          sharpen,
-          mosaicRegions,
-          natural?.w ?? 0,
-        ])
-      : null;
-
-    const cached = RGB16_EDIT_RENDERED_PREVIEW_CACHE.get(decoded);
-    if (
-      renderedPreviewCacheKey &&
-      cached?.key === renderedPreviewCacheKey &&
-      cached.width === width &&
-      cached.height === height
-    ) {
-      ctx.drawImage(cached.canvas, 0, 0);
-      return;
-    }
-
-    renderAdjustedRgb16ToCanvas(
-      canvas,
-      decoded,
-      { x: 0, y: 0, w: decoded.width, h: decoded.height },
+    const includeMosaic = !eyedropperMode && !rotationMode && mosaicRegions.length > 0 && !!natural?.w;
+    const renderedPreviewKey = JSON.stringify([
+      width,
+      height,
+      previewColorProfile,
       rotationDegrees,
       temperature,
       tint,
@@ -5194,34 +5171,70 @@ export function ImageEditDialog({
       sigmoid,
       vibrance,
       saturation,
-      previewColorProfile,
-    );
-    applySharpenToCanvas(canvas, sharpen, previewColorProfile);
-    if (!eyedropperMode && !rotationMode && mosaicRegions.length && natural?.w) {
-      applyMosaicRectsToCanvas(
-        canvas,
-        mosaicRegions.map((region) => ({
-          x: region.left * canvas.width,
-          y: region.top * canvas.height,
-          w: (region.right - region.left) * canvas.width,
-          h: (region.bottom - region.top) * canvas.height,
-        })),
-        16,
-        previewColorProfile,
-      );
+      sharpen,
+      includeMosaic ? mosaicRegions : null,
+    ]);
+
+    const rendered = previewRenderedRef.current;
+    if (
+      rendered?.decoded === decoded &&
+      rendered.key === renderedPreviewKey &&
+      rendered.width === width &&
+      rendered.height === height &&
+      canvas.width === width &&
+      canvas.height === height
+    ) {
+      return;
     }
 
-    if (renderedPreviewCacheKey) {
-      const previous = RGB16_EDIT_RENDERED_PREVIEW_CACHE.get(decoded);
-      const snapshot = cloneImageEditCanvas(canvas, previewColorProfile);
-      RGB16_EDIT_RENDERED_PREVIEW_CACHE.set(decoded, {
+    // Preview rendering is intentionally coalesced to the next animation frame. During
+    // a rapid slider/pointer sequence React may commit several states before that frame;
+    // cleanup cancels the obsolete request so only the latest state is rendered.
+    const frameId = requestAnimationFrame(() => {
+      if (previewCanvasRef.current !== canvas || decodedImageRef.current !== decoded) return;
+      if (canvas.width !== width) canvas.width = width;
+      if (canvas.height !== height) canvas.height = height;
+
+      renderAdjustedRgb16ToCanvas(
+        canvas,
+        decoded,
+        { x: 0, y: 0, w: decoded.width, h: decoded.height },
+        rotationDegrees,
+        temperature,
+        tint,
+        exposureEv,
+        shadow,
+        highlight,
+        scaledLog,
+        sigmoid,
+        vibrance,
+        saturation,
+        previewColorProfile,
+      );
+      applySharpenToCanvas(canvas, sharpen, previewColorProfile);
+      if (includeMosaic) {
+        applyMosaicRectsToCanvas(
+          canvas,
+          mosaicRegions.map((region) => ({
+            x: region.left * canvas.width,
+            y: region.top * canvas.height,
+            w: (region.right - region.left) * canvas.width,
+            h: (region.bottom - region.top) * canvas.height,
+          })),
+          16,
+          previewColorProfile,
+        );
+      }
+
+      previewRenderedRef.current = {
+        decoded,
         width,
         height,
-        key: renderedPreviewCacheKey,
-        canvas: snapshot,
-      });
-      if (previous && previous.canvas !== snapshot) releaseCanvasIfNeeded(previous.canvas);
-    }
+        key: renderedPreviewKey,
+      };
+    });
+
+    return () => cancelAnimationFrame(frameId);
   }, [
     displayed.w,
     displayed.h,
