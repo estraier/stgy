@@ -7483,7 +7483,7 @@ export function ImageEditDialog({
       }}
     >
       <div
-        className="bg-white rounded shadow max-w-[95vw] max-h-[95dvh] overflow-y-auto w-[min(1100px,95vw)] p-4"
+        className="bg-white rounded shadow max-w-[95vw] max-h-[95dvh] overflow-y-auto w-[min(1400px,95vw)] p-4"
         onClick={(e) => {
           e.stopPropagation();
           if (eyedropperMode) setEyedropperMode(false);
@@ -7618,7 +7618,7 @@ export function ImageEditDialog({
                 <>
                   {!eyedropperMode && showHistogram && histogramPaths && (
                     <div
-                      className="absolute left-2 bottom-2 w-[294px] h-[138px] rounded bg-black pointer-events-none"
+                      className="absolute left-2 bottom-2 z-[33] w-[294px] h-[138px] rounded bg-black pointer-events-none"
                       aria-hidden="true"
                     />
                   )}
@@ -7931,7 +7931,7 @@ export function ImageEditDialog({
                     );
                   })}
                   {!eyedropperMode && showHistogram && histogramPaths && (
-                    <div className="absolute left-2 bottom-2 w-[294px] h-[138px] rounded border border-white/40 bg-black/80 shadow-sm pointer-events-none">
+                    <div className="absolute left-2 bottom-2 z-[33] w-[294px] h-[138px] rounded border border-white/40 bg-black/80 shadow-sm pointer-events-none">
                       <svg
                         className="absolute inset-[6px] w-[calc(100%-12px)] h-[calc(100%-12px)]"
                         viewBox={`0 0 ${histogramPaths.width} ${histogramPaths.height}`}

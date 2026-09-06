@@ -139,7 +139,7 @@ The backend accepts JPEG, PNG, and WEBP, while the file selector also supports H
 
 Avatar images are similarly converted to WEBP and resized so that the longest side is at most 1200 pixels. Clicking an avatar on the user-detail screen opens an enlarged view, so the system allows an uploaded image substantially larger than the icon size to preserve detail there.
 
-Browser Canvas cannot decode TIFF directly, so STGY preprocesses TIFF using the UTIF library. UTIF does not handle ICC profiles, so a TIFF carrying an ICC profile may exhibit color shifts. TIFF input is therefore best prepared in the sRGB color space, or an ICC-profiled PNG can be used instead.
+Browser Canvas cannot decode TIFF directly, so STGY preprocesses TIFF using the UTIF library.  It supports 16-bit TIFF too.
 
 ## Storage-Service Wrapper
 
