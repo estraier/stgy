@@ -8,11 +8,13 @@ import {
   detectBestEditableImageOutputColorProfile,
   encodeEditedVariant,
   probeEditableImage,
+  isRawImageFile,
   type DecodedImage,
   type ImageEditOutputColorProfile,
   type ImageEditOutputFormat,
   type ImageEditParams,
   type ImageEditPreparedVariant,
+  type RawDemosaicQuality,
 } from "@/components/ImageUploadDialog";
 import { Config } from "@/config";
 import { formatBytes } from "@/utils/format";
@@ -86,6 +88,16 @@ const OUTPUT_COLOR_PROFILE_OPTIONS: { value: OutputColorProfileSelection; label:
   { value: "display-p3", label: "Display P3" },
 ];
 
+const RAW_DEMOSAIC_OPTIONS: { value: RawDemosaicQuality; label: string }[] = [
+  { value: 0, label: "Linear (0)" },
+  { value: 1, label: "VNG (1)" },
+  { value: 2, label: "PPG (2)" },
+  { value: 3, label: "AHD (3)" },
+  { value: 4, label: "DCB (4)" },
+  { value: 11, label: "DHT (11)" },
+  { value: 12, label: "Modified AHD (12)" },
+];
+
 function outputFilename(fileName: string | undefined, format: ImageEditOutputFormat): string {
   const extension = format === "image/jpeg" ? "jpg" : format === "image/png" ? "png" : "webp";
   const trimmedName = fileName?.trim() ?? "";
@@ -131,6 +143,9 @@ export default function LocalImageStudio() {
   const [error, setError] = useState<string | null>(null);
   const [outputFormat, setOutputFormat] = useState<ImageEditOutputFormat>("image/webp");
   const [outputColorProfileSelection, setOutputColorProfileSelection] = useState<OutputColorProfileSelection>("best");
+  const [rawDemosaicQuality, setRawDemosaicQuality] = useState<RawDemosaicQuality>(11);
+  const [showRawDemosaicSelector, setShowRawDemosaicSelector] = useState(false);
+  const altOnlyPressRef = useRef(false);
   const resultZoomViewportRef = useRef<HTMLDivElement | null>(null);
   const resultZoomDragRef = useRef<ResultZoomDrag | null>(null);
   const resultZoomSuppressClickRef = useRef(false);
@@ -162,6 +177,42 @@ export default function LocalImageStudio() {
   useEffect(() => clearResult, [clearResult]);
   useEffect(() => clearEditedVariant, [clearEditedVariant]);
   useEffect(() => clearRawDevelopment, [clearRawDevelopment]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Alt") {
+        if (!event.repeat) {
+          altOnlyPressRef.current = !event.ctrlKey && !event.metaKey && !event.shiftKey;
+        }
+        return;
+      }
+      if (event.altKey) altOnlyPressRef.current = false;
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.key !== "Alt") return;
+      if (altOnlyPressRef.current) {
+        setShowRawDemosaicSelector((visible) => !visible);
+      }
+      altOnlyPressRef.current = false;
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.altKey) altOnlyPressRef.current = false;
+    };
+    const onBlur = () => {
+      altOnlyPressRef.current = false;
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, []);
 
   const closeResultZoom = useCallback(() => {
     resultZoomDragRef.current = null;
@@ -398,6 +449,15 @@ export default function LocalImageStudio() {
     }
   }, [generateResult, outputFormat, result, source]);
 
+  const onRawDemosaicQualityChange = useCallback((quality: RawDemosaicQuality) => {
+    setRawDemosaicQuality(quality);
+    if (!source || !isRawImageFile(source.file.name, source.file.type)) return;
+    clearResult();
+    clearEditedVariant();
+    clearRawDevelopment();
+    setEditing(true);
+  }, [clearEditedVariant, clearRawDevelopment, clearResult, source]);
+
   const onReEdit = useCallback(() => {
     clearEditedVariant();
     setEditing(true);
@@ -438,12 +498,34 @@ export default function LocalImageStudio() {
               <button
                 type="button"
                 onClick={() => inputRef.current?.click()}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  setShowRawDemosaicSelector((visible) => !visible);
+                }}
                 disabled={processing}
                 className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 shadow-sm hover:bg-gray-100 disabled:opacity-50"
               >
                 Choose file
               </button>
             </div>
+
+            {showRawDemosaicSelector && (
+              <div>
+                <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-500">RAW demosaic</div>
+                <select
+                  value={rawDemosaicQuality}
+                  onChange={(e) => onRawDemosaicQualityChange(Number(e.target.value) as RawDemosaicQuality)}
+                  disabled={processing}
+                  className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"
+                >
+                  {RAW_DEMOSAIC_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             <div>
               <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-500">Output</div>
@@ -576,6 +658,7 @@ export default function LocalImageStudio() {
           initialParams={source.edit}
           defaultParams={studioDefaultEditParams}
           initialDecodedImage={rawDevelopmentRef.current ?? undefined}
+          rawDemosaicQuality={rawDemosaicQuality}
           onRawDevelopmentReady={(decodedImage) => {
             const previous = rawDevelopmentRef.current;
             if (previous && previous !== decodedImage) previous.cleanup();

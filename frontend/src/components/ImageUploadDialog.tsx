@@ -121,6 +121,7 @@ export type ImageEditParams = {
 
 export type ImageEditOutputFormat = "image/webp" | "image/jpeg" | "image/png";
 export type ImageEditOutputColorProfile = "srgb" | "display-p3";
+export type RawDemosaicQuality = 0 | 1 | 2 | 3 | 4 | 11 | 12;
 
 type Props = {
   userId: string;
@@ -304,6 +305,7 @@ type LibRawSettingsLike = {
   fbddNoiserd?: number;
   highlight?: number;
   userFlip?: number;
+  userQual?: number;
 };
 
 type LibRawLensMakerNotesLike = {
@@ -369,6 +371,7 @@ const RAW_DECODE_SETTINGS: LibRawSettingsLike = {
   adjustMaximumThr: 0,
   threshold: 0,
   fbddNoiserd: 0,
+  userQual: 11,
 };
 
 const RAW_BASELINE_PERCENTILE = 98;
@@ -3934,7 +3937,10 @@ function readRawThumbnailDebugStatistics(
   return pending;
 }
 
-async function decodeRawImage(file: File): Promise<DecodedRgbImage16> {
+async function decodeRawImage(
+  file: File,
+  rawDemosaicQuality?: RawDemosaicQuality,
+): Promise<DecodedRgbImage16> {
   const rawDevelopmentStartedAt = performance.now();
   let raw: LibRawInstanceLike | null = null;
   let workerFailure: ReturnType<typeof createLibRawWorkerFailure> | null = null;
@@ -3942,8 +3948,11 @@ async function decodeRawImage(file: File): Promise<DecodedRgbImage16> {
     raw = await createLibRawInstance();
     workerFailure = createLibRawWorkerFailure(raw);
     const rawBytes = new Uint8Array(await file.arrayBuffer());
+    const rawDecodeSettings: LibRawSettingsLike = rawDemosaicQuality === undefined
+      ? RAW_DECODE_SETTINGS
+      : { ...RAW_DECODE_SETTINGS, userQual: rawDemosaicQuality };
     await Promise.race([
-      raw.open(rawBytes, RAW_DECODE_SETTINGS),
+      raw.open(rawBytes, rawDecodeSettings),
       workerFailure.promise,
     ]);
 
@@ -3968,7 +3977,7 @@ async function decodeRawImage(file: File): Promise<DecodedRgbImage16> {
     if (medPasses > 0) {
       const denoiseRawBytes = new Uint8Array(await file.arrayBuffer());
       await Promise.race([
-        raw.open(denoiseRawBytes, { ...RAW_DECODE_SETTINGS, medPasses }),
+        raw.open(denoiseRawBytes, { ...rawDecodeSettings, medPasses }),
         workerFailure.promise,
       ]);
     }
@@ -4043,20 +4052,31 @@ async function decodeRawImage(file: File): Promise<DecodedRgbImage16> {
 // owned by ImageUploadDialog's one-entry RAW development cache.
 const RAW_DEVELOPMENT_IN_FLIGHT = new WeakMap<
   File,
-  Promise<DecodedRgbImage16>
+  Map<RawDemosaicQuality | "default", Promise<DecodedRgbImage16>>
 >();
 
-function decodeRawImageShared(file: File): Promise<DecodedRgbImage16> {
-  const existing = RAW_DEVELOPMENT_IN_FLIGHT.get(file);
+function decodeRawImageShared(
+  file: File,
+  rawDemosaicQuality?: RawDemosaicQuality,
+): Promise<DecodedRgbImage16> {
+  const key: RawDemosaicQuality | "default" = rawDemosaicQuality ?? "default";
+  let pendingByQuality = RAW_DEVELOPMENT_IN_FLIGHT.get(file);
+  if (!pendingByQuality) {
+    pendingByQuality = new Map();
+    RAW_DEVELOPMENT_IN_FLIGHT.set(file, pendingByQuality);
+  }
+  const existing = pendingByQuality.get(key);
   if (existing) return existing;
 
-  const promise = decodeRawImage(file)
+  const promise = decodeRawImage(file, rawDemosaicQuality)
     .finally(() => {
-      if (RAW_DEVELOPMENT_IN_FLIGHT.get(file) === promise) {
-        RAW_DEVELOPMENT_IN_FLIGHT.delete(file);
+      const current = RAW_DEVELOPMENT_IN_FLIGHT.get(file);
+      if (current?.get(key) === promise) {
+        current.delete(key);
+        if (current.size === 0) RAW_DEVELOPMENT_IN_FLIGHT.delete(file);
       }
     });
-  RAW_DEVELOPMENT_IN_FLIGHT.set(file, promise);
+  pendingByQuality.set(key, promise);
   return promise;
 }
 
@@ -4134,9 +4154,10 @@ async function decodeImage(
   srcH = 0,
   name?: string,
   type?: string,
+  rawDemosaicQuality?: RawDemosaicQuality,
 ): Promise<DecodedImage> {
   if (isRawImageFile(name || "", type || "")) {
-    return decodeRawImageShared(file);
+    return decodeRawImageShared(file, rawDemosaicQuality);
   }
 
   if (isTiff(name || "", type || "")) {
@@ -4525,10 +4546,18 @@ export async function buildEditedVariant(
   edit?: ImageEditParams,
   decodedImage?: DecodedImage,
   outputColorProfile: ImageEditOutputColorProfile = "srgb",
+  rawDemosaicQuality?: RawDemosaicQuality,
 ): Promise<ImageEditPreparedVariant> {
   const params = normalizeEditParams(edit, srcW, srcH);
   const ownsDecodedImage = !decodedImage;
-  const decoded = decodedImage ?? await decodeImage(file, srcW, srcH, name, type);
+  const decoded = decodedImage ?? await decodeImage(
+    file,
+    srcW,
+    srcH,
+    name,
+    type,
+    rawDemosaicQuality,
+  );
   try {
     return await buildEditedVariantFromDecoded(decoded, params, outputColorProfile);
   } finally {
@@ -4681,6 +4710,7 @@ type EditDialogProps = {
   initialParams: ImageEditParams;
   defaultParams?: ImageEditParams;
   initialDecodedImage?: DecodedImage;
+  rawDemosaicQuality?: RawDemosaicQuality;
   onRawDevelopmentReady?: (decodedImage: DecodedRgbImage16) => void;
   onCancel: () => void;
   onApply: (params: ImageEditParams, decodedImage?: DecodedImage) => void;
@@ -5179,6 +5209,7 @@ export function ImageEditDialog({
   initialParams,
   defaultParams,
   initialDecodedImage,
+  rawDemosaicQuality,
   onRawDevelopmentReady,
   onCancel,
   onApply,
@@ -5314,7 +5345,14 @@ export function ImageEditDialog({
 
     void (async () => {
       try {
-        const decoded = initialDecodedImage ?? await decodeImage(file, 0, 0, file.name, file.type);
+        const decoded = initialDecodedImage ?? await decodeImage(
+          file,
+          0,
+          0,
+          file.name,
+          file.type,
+          rawDemosaicQuality,
+        );
         decodedForEffect = decoded;
         if (isRawImageFile(file.name, file.type)) {
           onRawDevelopmentReadyRef.current?.(decoded);
@@ -5358,7 +5396,7 @@ export function ImageEditDialog({
       }
       transferredDecodedImageRef.current = null;
     };
-  }, [file, initialDecodedImage]);
+  }, [file, initialDecodedImage, rawDemosaicQuality]);
 
   useEffect(() => {
     if (!mounted) return;
@@ -5642,7 +5680,7 @@ export function ImageEditDialog({
     });
     setTextOverlays((current) => [...current, overlay]);
     setActiveTextId(overlay.id);
-  }, [cropRect, natural, previewToOverlayPoint, textMode, toLocal]);
+  }, [cropRect, displayed.h, displayed.w, natural, previewToOverlayPoint, textMode, toLocal]);
 
   const updateDrawOverlay = useCallback((id: string, updater: (overlay: ImageDrawOverlay) => ImageDrawOverlay) => {
     setDrawOverlays((current) => current.map((overlay) => (overlay.id === id ? updater(overlay) : overlay)));
