@@ -771,7 +771,7 @@ function buildUploadDefaultEditParams(
   const defaults = buildDefaultEditParams(w, h);
   return {
     ...defaults,
-    sharpen: isRawImageFile(name, type) ? 2 : defaults.resizePercent !== 100 ? 1 : 0,
+    sharpen: isRawImageFile(name, type) ? 1 : defaults.resizePercent !== 100 ? 1 : 0,
   };
 }
 
