@@ -382,6 +382,14 @@ export function applyDisplayRolloffAndClipLinearToRgb(
   ];
 }
 
+export type ToneAdjustmentFlags = {
+  hasExposure: boolean;
+  hasShadow: boolean;
+  hasHighlight: boolean;
+  hasScaledLog: boolean;
+  hasSigmoid: boolean;
+};
+
 export function applyToneLinearToRgb(
   r: number,
   g: number,
@@ -395,35 +403,63 @@ export function applyToneLinearToRgb(
   rolloff: { inflection: number; scale: number } | null,
   scaledLog: number,
   sigmoid: number,
+  flags?: ToneAdjustmentFlags,
 ): [number, number, number] {
+  const hasExposure = flags?.hasExposure ?? factor !== 1;
+  const hasShadow = flags?.hasShadow ?? shadow !== 0;
+  const hasHighlight = flags?.hasHighlight ?? (highlight !== 0 && highlightRange !== null);
+  const hasScaledLog = flags?.hasScaledLog ?? scaledLog !== 0;
+  const hasSigmoid = flags?.hasSigmoid ?? sigmoid !== 0;
+
   if (hasWhiteBalance) {
     [r, g, b] = applyWhiteBalanceLinear(r, g, b, gains);
   }
-  [r, g, b] = applyExposureLinearToRgb(r, g, b, factor);
-  [r, g, b] = applyShadowHighlightLinearToRgb(
-    r,
-    g,
-    b,
-    shadow,
-    highlight,
-    highlightRange,
-  );
+  if (hasExposure) {
+    [r, g, b] = applyExposureLinearToRgb(r, g, b, factor);
+  }
+  if (hasShadow) {
+    r = applyShadowLinear(r, shadow);
+    g = applyShadowLinear(g, shadow);
+    b = applyShadowLinear(b, shadow);
+  }
+  if (hasHighlight) {
+    const maxChannel = Math.max(r, g, b);
+    if (maxChannel > 0) {
+      const adjustedMax = applyHighlightLinear(maxChannel, highlight, highlightRange);
+      const scale = adjustedMax / maxChannel;
+      r *= scale;
+      g *= scale;
+      b *= scale;
+    }
+  }
 
   // Rolloff and clipping together form the boundary from extended-range linear
   // editing into the bounded [0,1] tone domain used by Logarithm and Sigmoid.
   [r, g, b] = applyDisplayRolloffAndClipLinearToRgb(r, g, b, rolloff);
-  r = applyScaledLogLinear(r, scaledLog);
-  g = applyScaledLogLinear(g, scaledLog);
-  b = applyScaledLogLinear(b, scaledLog);
-  r = applySigmoidLinear(r, sigmoid);
-  g = applySigmoidLinear(g, sigmoid);
-  b = applySigmoidLinear(b, sigmoid);
+  if (hasScaledLog) {
+    r = applyScaledLogLinear(r, scaledLog);
+    g = applyScaledLogLinear(g, scaledLog);
+    b = applyScaledLogLinear(b, scaledLog);
+  }
+  if (hasSigmoid) {
+    r = applySigmoidLinear(r, sigmoid);
+    g = applySigmoidLinear(g, sigmoid);
+    b = applySigmoidLinear(b, sigmoid);
+  }
   return [r, g, b];
 }
 
 export type ColorAdjustmentContext = {
   gains: WhiteBalanceGains;
   hasWhiteBalance: boolean;
+  hasExposure: boolean;
+  hasShadow: boolean;
+  hasHighlight: boolean;
+  hasScaledLog: boolean;
+  hasSigmoid: boolean;
+  hasSaturation: boolean;
+  hasVibrance: boolean;
+  hasSaturationOrVibrance: boolean;
   factor: number;
   shadow: number;
   highlight: number;
@@ -457,15 +493,16 @@ export function applyColorAdjustmentsLinearRgb(
     context.rolloff,
     context.scaledLog,
     context.sigmoid,
+    context,
   );
-  if (context.normalizedSaturation !== 0 || context.normalizedVibrance !== 0) {
+  if (context.hasSaturationOrVibrance) {
     const [h, initialS, v] = rgbToHsv(r, g, b);
     let s = initialS;
-    if (context.normalizedSaturation !== 0) {
+    if (context.hasSaturation) {
       s = applyRolloffScalar(s * context.saturationFactor, context.saturationRolloff);
       s = clamp01(s);
     }
-    if (context.normalizedVibrance !== 0) {
+    if (context.hasVibrance) {
       s = applyScaledLogLinear(s, context.vibranceFactor);
     }
     [r, g, b] = hsvToRgb(h, s, v);

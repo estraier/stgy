@@ -323,6 +323,59 @@ describe("image editor RGB16 characterization", () => {
     expect(first.height).toBe(105);
   });
 
+  test("precomputes color/tone adjustment activity flags", () => {
+    const sample = { data: new Float32Array([0.1, 0.2, 0.3]), width: 1, height: 1 };
+    const inactive = imageEditor.buildColorAdjustmentContextFromLinearRgbSample(
+      sample, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    );
+    expect({
+      hasWhiteBalance: inactive.hasWhiteBalance,
+      hasExposure: inactive.hasExposure,
+      hasShadow: inactive.hasShadow,
+      hasHighlight: inactive.hasHighlight,
+      hasScaledLog: inactive.hasScaledLog,
+      hasSigmoid: inactive.hasSigmoid,
+      hasSaturation: inactive.hasSaturation,
+      hasVibrance: inactive.hasVibrance,
+      hasSaturationOrVibrance: inactive.hasSaturationOrVibrance,
+    }).toEqual({
+      hasWhiteBalance: false,
+      hasExposure: false,
+      hasShadow: false,
+      hasHighlight: false,
+      hasScaledLog: false,
+      hasSigmoid: false,
+      hasSaturation: false,
+      hasVibrance: false,
+      hasSaturationOrVibrance: false,
+    });
+
+    const active = imageEditor.buildColorAdjustmentContextFromLinearRgbSample(
+      sample, 5, -4, 0.3, -20, 15, 0.4, 0.8, 12, -6,
+    );
+    expect({
+      hasWhiteBalance: active.hasWhiteBalance,
+      hasExposure: active.hasExposure,
+      hasShadow: active.hasShadow,
+      hasHighlight: active.hasHighlight,
+      hasScaledLog: active.hasScaledLog,
+      hasSigmoid: active.hasSigmoid,
+      hasSaturation: active.hasSaturation,
+      hasVibrance: active.hasVibrance,
+      hasSaturationOrVibrance: active.hasSaturationOrVibrance,
+    }).toEqual({
+      hasWhiteBalance: true,
+      hasExposure: true,
+      hasShadow: true,
+      hasHighlight: true,
+      hasScaledLog: true,
+      hasSigmoid: true,
+      hasSaturation: true,
+      hasVibrance: true,
+      hasSaturationOrVibrance: true,
+    });
+  });
+
   test("avoids sorting endpoint-only percentiles and sorts once for percentile sets", () => {
     const endpointValues = [3, 1, 2];
     expect(imageEditor.percentilesFromValues(endpointValues, [0, 100])).toEqual([1, 3]);

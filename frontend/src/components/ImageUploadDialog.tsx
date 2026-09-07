@@ -426,6 +426,19 @@ type LibRawThumbnailDataLike = {
   data: Uint8Array;
 };
 
+type ImageLoadEmbeddedPreview = {
+  blob: Blob;
+  width: number;
+  height: number;
+};
+
+type ImageLoadProgress = {
+  stage: string;
+  embeddedPreview?: ImageLoadEmbeddedPreview;
+};
+
+type ImageLoadProgressListener = (progress: ImageLoadProgress) => void;
+
 type LibRawInstanceLike = {
   worker?: Worker;
   open(bytes: BufferSource, settings?: LibRawSettingsLike): Promise<void>;
@@ -495,6 +508,48 @@ type RawThumbnailMatchReference = {
 };
 
 const LIBRAW_BROWSER_MODULE_URL = "/vendor/libraw-wasm/index.js";
+
+function logImageLoadStage(file: File, stage: string, startedAt: number): void {
+  console.info(`[image-editor load] ${file.name}: ${stage} ${(performance.now() - startedAt).toFixed(1)}ms`);
+}
+
+async function rawEmbeddedPreviewFromThumbnail(
+  thumbnail: LibRawThumbnailDataLike | undefined,
+): Promise<ImageLoadEmbeddedPreview | undefined> {
+  if (!thumbnail?.data?.length || thumbnail.width <= 0 || thumbnail.height <= 0) return undefined;
+  if (thumbnail.format === "jpeg") {
+    const bytes = new Uint8Array(thumbnail.data.byteLength);
+    bytes.set(thumbnail.data);
+    return {
+      blob: new Blob([bytes.buffer], { type: "image/jpeg" }),
+      width: thumbnail.width,
+      height: thumbnail.height,
+    };
+  }
+  if (thumbnail.format !== "bitmap") return undefined;
+  const pixelCount = thumbnail.width * thumbnail.height;
+  const channels = thumbnail.data.length >= pixelCount * 4 ? 4 : 3;
+  if (thumbnail.data.length < pixelCount * channels) return undefined;
+  const canvas = document.createElement("canvas");
+  canvas.width = thumbnail.width;
+  canvas.height = thumbnail.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return undefined;
+  const imageData = ctx.createImageData(thumbnail.width, thumbnail.height);
+  for (let pixel = 0; pixel < pixelCount; pixel++) {
+    const si = pixel * channels;
+    const di = pixel * 4;
+    imageData.data[di] = thumbnail.data[si] ?? 0;
+    imageData.data[di + 1] = thumbnail.data[si + 1] ?? 0;
+    imageData.data[di + 2] = thumbnail.data[si + 2] ?? 0;
+    imageData.data[di + 3] = channels === 4 ? (thumbnail.data[si + 3] ?? 255) : 255;
+  }
+  ctx.putImageData(imageData, 0, 0);
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
+  canvas.width = 0;
+  canvas.height = 0;
+  return blob ? { blob, width: thumbnail.width, height: thumbnail.height } : undefined;
+}
 
 async function createLibRawInstance(): Promise<LibRawInstanceLike> {
   // Keep LibRaw's worker/WASM files out of Next/Webpack's chunk graph. STGY
@@ -3266,33 +3321,71 @@ async function decodeRawImage(
   file: File,
   rawDemosaicQuality?: RawDemosaicQuality,
   rawHighlightMode?: RawHighlightMode,
+  onProgress?: ImageLoadProgressListener,
 ): Promise<DecodedRgbImage16> {
   const rawDevelopmentStartedAt = performance.now();
+  async function runStage<T>(stage: string, task: () => Promise<T>): Promise<T> {
+    onProgress?.({ stage });
+    const startedAt = performance.now();
+    try {
+      return await task();
+    } finally {
+      if (onProgress) logImageLoadStage(file, stage.replace(/…$/, ""), startedAt);
+    }
+  }
+  async function runBlockingStage<T>(stage: string, task: () => T): Promise<T> {
+    onProgress?.({ stage });
+    if (onProgress) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+    const startedAt = performance.now();
+    try {
+      return task();
+    } finally {
+      if (onProgress) logImageLoadStage(file, stage.replace(/…$/, ""), startedAt);
+    }
+  }
+
   let raw: LibRawInstanceLike | null = null;
   let workerFailure: ReturnType<typeof createLibRawWorkerFailure> | null = null;
   try {
-    raw = await createLibRawInstance();
+    raw = await runStage("Loading RAW decoder…", () => createLibRawInstance());
     workerFailure = createLibRawWorkerFailure(raw);
-    const rawBytes = new Uint8Array(await file.arrayBuffer());
+    const rawBytes = await runStage("Reading file…", async () => new Uint8Array(await file.arrayBuffer()));
     const rawDecodeSettings: LibRawSettingsLike = {
       ...RAW_DECODE_SETTINGS,
       ...(rawDemosaicQuality === undefined ? {} : { userQual: rawDemosaicQuality }),
       ...(rawHighlightMode === undefined ? {} : { highlight: rawHighlightMode }),
     };
-    await Promise.race([
-      raw.open(rawBytes, rawDecodeSettings),
-      workerFailure.promise,
-    ]);
+    await runStage("Opening RAW…", () => Promise.race([
+      raw!.open(rawBytes, rawDecodeSettings),
+      workerFailure!.promise,
+    ]));
 
-    const metadata = await Promise.race([raw.metadata(true), workerFailure.promise]);
+    const metadata = await runStage("Reading metadata…", () => Promise.race([
+      raw!.metadata(true),
+      workerFailure!.promise,
+    ]));
     const isoValue = Number(metadata?.iso_speed);
     const medPasses = rawMedianDenoisePassesForIso(isoValue);
 
     let thumbnailReference: RawThumbnailMatchReference | undefined;
     if (raw.thumbnailData) {
       try {
-        const thumbnail = await Promise.race([raw.thumbnailData(), workerFailure.promise]);
-        thumbnailReference = await rawThumbnailMatchReferenceFromThumbnail(thumbnail);
+        const thumbnail = await runStage("Reading preview…", () => Promise.race([
+          raw!.thumbnailData!(),
+          workerFailure!.promise,
+        ]));
+        const embeddedPreview = onProgress
+          ? await runStage("Preparing preview…", () => rawEmbeddedPreviewFromThumbnail(thumbnail))
+          : undefined;
+        onProgress?.({ stage: "Analyzing preview…", embeddedPreview });
+        const startedAt = performance.now();
+        try {
+          thumbnailReference = await rawThumbnailMatchReferenceFromThumbnail(thumbnail);
+        } finally {
+          if (onProgress) logImageLoadStage(file, "Analyzing preview", startedAt);
+        }
       } catch {
         thumbnailReference = undefined;
       }
@@ -3303,25 +3396,30 @@ async function decodeRawImage(
     // medPasses, obtain a fresh buffer for the second open instead of reusing the
     // detached one.
     if (medPasses > 0) {
-      const denoiseRawBytes = new Uint8Array(await file.arrayBuffer());
-      await Promise.race([
-        raw.open(denoiseRawBytes, { ...rawDecodeSettings, medPasses }),
-        workerFailure.promise,
-      ]);
+      const denoiseRawBytes = await runStage("Reading file again…", async () =>
+        new Uint8Array(await file.arrayBuffer()),
+      );
+      await runStage("Reopening RAW…", () => Promise.race([
+        raw!.open(denoiseRawBytes, { ...rawDecodeSettings, medPasses }),
+        workerFailure!.promise,
+      ]));
     }
 
-    const image = await Promise.race([raw.imageData(), workerFailure.promise]);
+    const image = await runStage("Demosaicing…", () => Promise.race([
+      raw!.imageData(),
+      workerFailure!.promise,
+    ]));
     if (!image || !image.width || !image.height || !image.data) {
       throw new Error("RAW decode failed");
     }
 
-    const decoded = libRawImageDataToDecoded(image);
+    const decoded = await runBlockingStage("Converting pixels…", () => libRawImageDataToDecoded(image));
     const lensMetadata = rawLensMetadata(metadata);
-    decoded.lensCorrection = await buildRawLensfunCorrection(
+    decoded.lensCorrection = await runStage("Correcting lens…", () => buildRawLensfunCorrection(
       lensMetadata,
       decoded.width,
       decoded.height,
-    );
+    ));
     // Capture the effective Lensfun values while every generated map is still
     // present. Vignetting is baked into the RAW pixels during baseline tone
     // processing and its map is then discarded to release memory.
@@ -3339,9 +3437,8 @@ async function decodeRawImage(
       vibrance: 0,
     };
     if (thumbnailReference) {
-      const matchedBaseline = applyRawThumbnailMatchedBaseline(
-        decoded,
-        thumbnailReference.lumaPercentiles,
+      const matchedBaseline = await runBlockingStage("Developing tone…", () =>
+        applyRawThumbnailMatchedBaseline(decoded, thumbnailReference.lumaPercentiles),
       );
       if (matchedBaseline) {
         mode = "thumbnail-match";
@@ -3349,21 +3446,24 @@ async function decodeRawImage(
         headroomSettings = matchedBaseline.headroom;
         // Match color only after the thumbnail-driven tone baseline is fixed.
         // Saturation follows HSV P95 first, then Vibrance follows HSV P50.
-        saturationSettings = applyRawThumbnailMatchedColor(
-          decoded,
-          thumbnailReference.linearSrgbSample,
+        saturationSettings = await runBlockingStage("Developing color…", () =>
+          applyRawThumbnailMatchedColor(decoded, thumbnailReference.linearSrgbSample),
         ) ?? saturationSettings;
       } else {
-        const fallbackBaseline = applyRawBaselineExposure(decoded);
+        const fallbackBaseline = await runBlockingStage("Developing tone…", () =>
+          applyRawBaselineExposure(decoded),
+        );
         luminanceSettings = fallbackBaseline?.luminance ?? null;
         headroomSettings = fallbackBaseline?.headroom;
       }
     } else {
-      const fallbackBaseline = applyRawBaselineExposure(decoded);
+      const fallbackBaseline = await runBlockingStage("Developing tone…", () =>
+        applyRawBaselineExposure(decoded),
+      );
       luminanceSettings = fallbackBaseline?.luminance ?? null;
       headroomSettings = fallbackBaseline?.headroom;
     }
-    convertDecodedRgb16Transfer(decoded, "gamma20");
+    await runBlockingStage("Encoding buffer…", () => convertDecodedRgb16Transfer(decoded, "gamma20"));
     decoded.rawDevelopment = {
       mode,
       iso: Number.isFinite(isoValue) && isoValue > 0 ? isoValue : null,
@@ -3374,6 +3474,11 @@ async function decodeRawImage(
       lensfun: lensfunSettings,
       elapsedSeconds: (performance.now() - rawDevelopmentStartedAt) / 1000,
     };
+    if (onProgress) {
+      console.info(
+        `[image-editor load] ${file.name}: RAW total ${(performance.now() - rawDevelopmentStartedAt).toFixed(1)}ms`,
+      );
+    }
     return decoded;
   } finally {
     workerFailure?.cleanup();
@@ -3385,15 +3490,22 @@ async function decodeRawImage(
 // RAW development is expensive and React Strict Mode may start the same editor effect
 // twice in development. Share only the in-flight Promise; the durable decoded result is
 // owned by ImageUploadDialog's one-entry RAW development cache.
+type RawDevelopmentInFlightEntry = {
+  promise: Promise<DecodedRgbImage16>;
+  listeners: Set<ImageLoadProgressListener>;
+  lastProgress?: ImageLoadProgress;
+};
+
 const RAW_DEVELOPMENT_IN_FLIGHT = new WeakMap<
   File,
-  Map<string, Promise<DecodedRgbImage16>>
+  Map<string, RawDevelopmentInFlightEntry>
 >();
 
 function decodeRawImageShared(
   file: File,
   rawDemosaicQuality?: RawDemosaicQuality,
   rawHighlightMode?: RawHighlightMode,
+  onProgress?: ImageLoadProgressListener,
 ): Promise<DecodedRgbImage16> {
   const key = `${rawDemosaicQuality ?? "default"}:${rawHighlightMode ?? "default"}`;
   let pendingByQuality = RAW_DEVELOPMENT_IN_FLIGHT.get(file);
@@ -3402,17 +3514,37 @@ function decodeRawImageShared(
     RAW_DEVELOPMENT_IN_FLIGHT.set(file, pendingByQuality);
   }
   const existing = pendingByQuality.get(key);
-  if (existing) return existing;
+  if (existing) {
+    if (onProgress) {
+      existing.listeners.add(onProgress);
+      if (existing.lastProgress) onProgress(existing.lastProgress);
+    }
+    return existing.promise;
+  }
 
-  const promise = decodeRawImage(file, rawDemosaicQuality, rawHighlightMode)
-    .finally(() => {
+  const entry: RawDevelopmentInFlightEntry = {
+    promise: Promise.resolve(null as unknown as DecodedRgbImage16),
+    listeners: new Set(onProgress ? [onProgress] : []),
+  };
+  const emitProgress: ImageLoadProgressListener = (progress) => {
+    entry.lastProgress = progress;
+    for (const listener of entry.listeners) listener(progress);
+  };
+  const promise = decodeRawImage(
+    file,
+    rawDemosaicQuality,
+    rawHighlightMode,
+    onProgress ? emitProgress : undefined,
+  ).finally(() => {
       const current = RAW_DEVELOPMENT_IN_FLIGHT.get(file);
-      if (current?.get(key) === promise) {
+      if (current?.get(key) === entry) {
         current.delete(key);
         if (current.size === 0) RAW_DEVELOPMENT_IN_FLIGHT.delete(file);
       }
+      entry.listeners.clear();
     });
-  pendingByQuality.set(key, promise);
+  entry.promise = promise;
+  pendingByQuality.set(key, entry);
   return promise;
 }
 
@@ -3493,17 +3625,40 @@ async function decodeImage(
   type?: string,
   rawDemosaicQuality?: RawDemosaicQuality,
   rawHighlightMode?: RawHighlightMode,
+  onProgress?: ImageLoadProgressListener,
 ): Promise<DecodedImage> {
+  async function runStage<T>(stage: string, task: () => Promise<T>): Promise<T> {
+    onProgress?.({ stage });
+    const startedAt = performance.now();
+    try {
+      return await task();
+    } finally {
+      if (onProgress) logImageLoadStage(file, stage.replace(/…$/, ""), startedAt);
+    }
+  }
+  async function runBlockingStage<T>(stage: string, task: () => T): Promise<T> {
+    onProgress?.({ stage });
+    if (onProgress) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+    const startedAt = performance.now();
+    try {
+      return task();
+    } finally {
+      if (onProgress) logImageLoadStage(file, stage.replace(/…$/, ""), startedAt);
+    }
+  }
+
   if (isRawImageFile(name || "", type || "")) {
-    return decodeRawImageShared(file, rawDemosaicQuality, rawHighlightMode);
+    return decodeRawImageShared(file, rawDemosaicQuality, rawHighlightMode, onProgress);
   }
 
   if (isTiff(name || "", type || "")) {
-    return decodeTiffImage(file);
+    return runStage("Decoding TIFF…", () => decodeTiffImage(file));
   }
 
   if (isSvg(name || "", type || "")) {
-    const svgText = await file.text();
+    const svgText = await runStage("Reading SVG…", () => file.text());
     let size = parseSvgSize(svgText);
     if (!size) {
       const fallback = Math.max(1, Number(Config.IMAGE_OPTIMIZE_TARGET_LONGSIDE) || 1200);
@@ -3512,14 +3667,16 @@ async function decodeImage(
     const normalizedSvg = normalizeSvg(svgText, size.w, size.h);
     const svgBlob = new Blob([normalizedSvg], { type: "image/svg+xml" });
     try {
-      const bmp = await createImageBitmap(svgBlob, { colorSpaceConversion: "default" });
+      const bmp = await runStage("Decoding image…", () =>
+        createImageBitmap(svgBlob, { colorSpaceConversion: "default" }),
+      );
       try {
-        return canvasSourceToDecodedRgb16(
+        return await runBlockingStage("Converting pixels…", () => canvasSourceToDecodedRgb16(
           bmp,
-          bmp.width || size.w,
-          bmp.height || size.h,
+          bmp.width || size!.w,
+          bmp.height || size!.h,
           "srgb",
-        );
+        ));
       } finally {
         bmp.close?.();
       }
@@ -3528,18 +3685,18 @@ async function decodeImage(
       try {
         const img = document.createElement("img");
         img.decoding = "async";
-        const ok = await new Promise<boolean>((resolve) => {
+        const ok = await runStage("Decoding image…", () => new Promise<boolean>((resolve) => {
           img.onload = () => resolve(true);
           img.onerror = () => resolve(false);
           img.src = url;
-        });
+        }));
         if (!ok) throw new Error("svg decode via <img> failed");
-        return canvasSourceToDecodedRgb16(
+        return await runBlockingStage("Converting pixels…", () => canvasSourceToDecodedRgb16(
           img,
-          img.naturalWidth || size.w,
-          img.naturalHeight || size.h,
+          img.naturalWidth || size!.w,
+          img.naturalHeight || size!.h,
           "srgb",
-        );
+        ));
       } finally {
         URL.revokeObjectURL(url);
       }
@@ -3551,27 +3708,31 @@ async function decodeImage(
   // immediately normalize into the common ProPhoto/gamma2.0 Uint16 container.
   // 8-bit inputs do not gain source precision, but all subsequent editor math
   // shares the same 16-bit source representation as RAW/TIFF.
-  const decodeColorProfile = await detectEditableImageColorProfile(file);
+  const decodeColorProfile = await runStage("Detecting color…", () =>
+    detectEditableImageColorProfile(file),
+  );
   try {
-    const bmp = await createImageBitmap(file, { colorSpaceConversion: "default" });
+    const bmp = await runStage("Decoding image…", () =>
+      createImageBitmap(file, { colorSpaceConversion: "default" }),
+    );
     try {
-      return canvasSourceToDecodedRgb16(
+      return await runBlockingStage("Converting pixels…", () => canvasSourceToDecodedRgb16(
         bmp,
         bmp.width || srcW,
         bmp.height || srcH,
         decodeColorProfile,
-      );
+      ));
     } finally {
       bmp.close?.();
     }
   } catch {
-    const img = await decodeViaImg(file);
-    return canvasSourceToDecodedRgb16(
+    const img = await runStage("Decoding image…", () => decodeViaImg(file));
+    return await runBlockingStage("Converting pixels…", () => canvasSourceToDecodedRgb16(
       img,
       img.naturalWidth || srcW,
       img.naturalHeight || srcH,
       decodeColorProfile,
-    );
+    ));
   }
 }
 
@@ -3997,6 +4158,14 @@ export function ImageEditDialog({
 }: EditDialogProps) {
   const [mounted, setMounted] = useState(false);
   const [imageReady, setImageReady] = useState(false);
+  const [loadingStage, setLoadingStage] = useState<string | null>("Loading image…");
+  const [embeddedRawPreview, setEmbeddedRawPreview] = useState<{
+    url: string;
+    width: number;
+    height: number;
+  } | null>(null);
+  const embeddedRawPreviewUrlRef = useRef<string | null>(null);
+  const initialPreviewReadyRef = useRef(false);
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -4106,6 +4275,25 @@ export function ImageEditDialog({
     onRawDevelopmentReadyRef.current = onRawDevelopmentReady;
   }, [onRawDevelopmentReady]);
 
+  const clearEmbeddedRawPreview = useCallback(() => {
+    const currentUrl = embeddedRawPreviewUrlRef.current;
+    embeddedRawPreviewUrlRef.current = null;
+    setEmbeddedRawPreview(null);
+    if (currentUrl) URL.revokeObjectURL(currentUrl);
+  }, []);
+
+  const showEmbeddedRawPreview = useCallback((preview: ImageLoadEmbeddedPreview) => {
+    const nextUrl = URL.createObjectURL(preview.blob);
+    const previousUrl = embeddedRawPreviewUrlRef.current;
+    embeddedRawPreviewUrlRef.current = nextUrl;
+    setEmbeddedRawPreview({
+      url: nextUrl,
+      width: preview.width,
+      height: preview.height,
+    });
+    if (previousUrl) URL.revokeObjectURL(previousUrl);
+  }, []);
+
   useEffect(() => {
     if (!showPercentileDebug) return;
     const onDocumentClick = (event: MouseEvent) => {
@@ -4123,7 +4311,11 @@ export function ImageEditDialog({
     let decodedForEffect: DecodedImage | null = null;
     let cleanup: (() => void) | null = null;
     const ownsDecodedImage = !initialDecodedImage;
+    const interactiveLoadStartedAt = performance.now();
+    initialPreviewReadyRef.current = false;
     setImageReady(false);
+    setLoadingStage(initialDecodedImage ? "Preparing preview…" : "Loading image…");
+    clearEmbeddedRawPreview();
     setNatural(null);
     setShowPercentileDebug(false);
     setPercentileDebug(null);
@@ -4133,8 +4325,19 @@ export function ImageEditDialog({
     transferredDecodedImageRef.current = null;
     previewRenderedRef.current = null;
 
+    const onLoadProgress: ImageLoadProgressListener = (progress) => {
+      if (cancelled) return;
+      setLoadingStage(progress.stage);
+      if (progress.embeddedPreview) {
+        showEmbeddedRawPreview(progress.embeddedPreview);
+      }
+    };
+
     void (async () => {
       try {
+        if (initialDecodedImage) {
+          console.info(`[image-editor load] ${file.name}: using cached decode`);
+        }
         const decoded = initialDecodedImage ?? await decodeImage(
           file,
           0,
@@ -4143,6 +4346,7 @@ export function ImageEditDialog({
           file.type,
           rawDemosaicQuality,
           rawHighlightMode,
+          onLoadProgress,
         );
         decodedForEffect = decoded;
         if (isRawImageFile(file.name, file.type)) {
@@ -4159,13 +4363,19 @@ export function ImageEditDialog({
         }
         cleanup = decoded.cleanup;
         decodedImageRef.current = decoded;
+        setLoadingStage("Preparing preview…");
         setNatural({ w: decoded.width, h: decoded.height });
         setImageReady(true);
+        console.info(
+          `[image-editor load] ${file.name}: decoded ${(performance.now() - interactiveLoadStartedAt).toFixed(1)}ms total`,
+        );
       } catch (error) {
         if (!cancelled) {
           decodedImageRef.current = null;
           setNatural(null);
           setImageReady(false);
+          setLoadingStage(null);
+          clearEmbeddedRawPreview();
           onErrorRef.current?.(error instanceof Error ? error.message : String(error));
         }
       }
@@ -4174,6 +4384,9 @@ export function ImageEditDialog({
     return () => {
       cancelled = true;
       decodedImageRef.current = null;
+      const embeddedPreviewUrl = embeddedRawPreviewUrlRef.current;
+      embeddedRawPreviewUrlRef.current = null;
+      if (embeddedPreviewUrl) URL.revokeObjectURL(embeddedPreviewUrl);
       if (
         ownsDecodedImage &&
         !(
@@ -4187,7 +4400,14 @@ export function ImageEditDialog({
       }
       transferredDecodedImageRef.current = null;
     };
-  }, [file, initialDecodedImage, rawDemosaicQuality, rawHighlightMode]);
+  }, [
+    file,
+    initialDecodedImage,
+    rawDemosaicQuality,
+    rawHighlightMode,
+    clearEmbeddedRawPreview,
+    showEmbeddedRawPreview,
+  ]);
 
   useEffect(() => {
     if (!mounted) return;
@@ -5212,10 +5432,13 @@ export function ImageEditDialog({
     // cleanup cancels the obsolete request so only the latest state is rendered.
     const frameId = requestAnimationFrame(() => {
       if (previewCanvasRef.current !== canvas || decodedImageRef.current !== decoded) return;
+      const isInitialPreview = !initialPreviewReadyRef.current;
+      const initialPreviewStartedAt = isInitialPreview ? performance.now() : 0;
       if (canvas.width !== width) canvas.width = width;
       if (canvas.height !== height) canvas.height = height;
 
       const previewSourceRect = { x: 0, y: 0, w: decoded.width, h: decoded.height };
+      let stageStartedAt = isInitialPreview ? performance.now() : 0;
       const previewSourceSample = getRenderedLinearRgbSample(
         decoded,
         previewSourceRect,
@@ -5223,11 +5446,19 @@ export function ImageEditDialog({
         width,
         height,
       );
+      if (isInitialPreview) {
+        logImageLoadStage(file, "Sampling preview", stageStartedAt);
+        stageStartedAt = performance.now();
+      }
       const previewContextSample = getAnalysisLinearRgbSample(
         decoded,
         previewSourceRect,
         rotationDegrees,
       );
+      if (isInitialPreview) {
+        logImageLoadStage(file, "Analyzing preview", stageStartedAt);
+        stageStartedAt = performance.now();
+      }
       renderAdjustedLinearRgbSampleToCanvas(
         canvas,
         previewSourceSample,
@@ -5243,6 +5474,10 @@ export function ImageEditDialog({
         saturation,
         previewColorProfile,
       );
+      if (isInitialPreview) {
+        logImageLoadStage(file, "Rendering preview", stageStartedAt);
+        stageStartedAt = performance.now();
+      }
       applySharpenToCanvas(canvas, previewSharpen, previewColorProfile);
       if (includeMosaic) {
         applyMosaicRectsToCanvas(
@@ -5257,6 +5492,9 @@ export function ImageEditDialog({
           previewColorProfile,
         );
       }
+      if (isInitialPreview) {
+        logImageLoadStage(file, "Finishing preview", stageStartedAt);
+      }
 
       previewRenderedRef.current = {
         decoded,
@@ -5264,6 +5502,14 @@ export function ImageEditDialog({
         height,
         key: renderedPreviewKey,
       };
+      if (isInitialPreview) {
+        initialPreviewReadyRef.current = true;
+        setLoadingStage(null);
+        clearEmbeddedRawPreview();
+        console.info(
+          `[image-editor load] ${file.name}: preview total ${(performance.now() - initialPreviewStartedAt).toFixed(1)}ms`,
+        );
+      }
     });
 
     return () => cancelAnimationFrame(frameId);
@@ -5286,6 +5532,8 @@ export function ImageEditDialog({
     natural,
     mosaicRegions,
     eyedropperMode,
+    file,
+    clearEmbeddedRawPreview,
   ]);
 
   useEffect(() => {
@@ -5900,6 +6148,29 @@ export function ImageEditDialog({
             onPointerUp={eyedropperMode ? undefined : rotationMode ? onRotationPointerUp : drawMode ? (e) => finishDrawCreation(e) : mosaicMode ? onMosaicPointerUp : onPointerUp}
             onPointerCancel={eyedropperMode ? undefined : rotationMode ? onRotationPointerUp : drawMode ? (e) => finishDrawCreation(e, true) : mosaicMode ? onMosaicPointerCancel : onPointerUp}
           >
+              {embeddedRawPreview && (
+                <NextImage
+                  src={embeddedRawPreview.url}
+                  alt=""
+                  fill
+                  unoptimized
+                  className="object-contain p-[18px] select-none"
+                  sizes="(max-width: 1024px) 95vw, 1100px"
+                  aria-hidden="true"
+                />
+              )}
+              {loadingStage && (
+                <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/10 pointer-events-none">
+                  <div className="flex flex-col items-center gap-2 text-white">
+                    <div className="rounded bg-black/45 p-3 shadow">
+                      <div className="h-10 w-10 rounded-full border-4 border-white/40 border-t-white animate-spin" />
+                    </div>
+                    <div className="rounded bg-black/45 px-3 py-1.5 text-xs font-medium tracking-wide shadow">
+                      {loadingStage}
+                    </div>
+                  </div>
+                </div>
+              )}
               {imageReady && natural ? (
                 <>
                   {!eyedropperMode && showHistogram && histogramPaths && (

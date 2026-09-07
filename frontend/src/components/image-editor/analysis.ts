@@ -77,6 +77,14 @@ export function buildColorAdjustmentContextFromLinearRgbSample(
   const factor = Math.pow(2, exposureEv);
   const gains = whiteBalanceGains(normalizedTemperature, normalizedTint);
   const hasWhiteBalance = normalizedTemperature !== 0 || normalizedTint !== 0;
+  const hasExposure = factor !== 1;
+  const hasShadow = normalizedShadow !== 0;
+  const hasScaledLog = normalizedScaledLog !== 0;
+  const hasSigmoid = normalizedSigmoid !== 0;
+  const hasSaturation = normalizedSaturation !== 0;
+  const hasVibrance = normalizedVibrance !== 0;
+  const hasSaturationOrVibrance = hasSaturation || hasVibrance;
+  const needsHighlightRange = normalizedHighlight !== 0;
 
   const exposedValues: number[] = [];
   let highlightMin = Infinity;
@@ -93,16 +101,23 @@ export function buildColorAdjustmentContextFromLinearRgbSample(
     if (hasWhiteBalance) {
       [r, g, b] = applyWhiteBalanceLinear(r, g, b, gains);
     }
-    const exposedR = r * factor;
-    const exposedG = g * factor;
-    const exposedB = b * factor;
+    let exposedR = r;
+    let exposedG = g;
+    let exposedB = b;
+    if (hasExposure) {
+      exposedR *= factor;
+      exposedG *= factor;
+      exposedB *= factor;
+    }
     exposedValues.push(exposedR, exposedG, exposedB);
-    if (normalizedHighlight !== 0) {
-      const highlightValue = Math.max(
-        applyShadowLinear(exposedR, normalizedShadow),
-        applyShadowLinear(exposedG, normalizedShadow),
-        applyShadowLinear(exposedB, normalizedShadow),
-      );
+    if (needsHighlightRange) {
+      const highlightValue = hasShadow
+        ? Math.max(
+            applyShadowLinear(exposedR, normalizedShadow),
+            applyShadowLinear(exposedG, normalizedShadow),
+            applyShadowLinear(exposedB, normalizedShadow),
+          )
+        : Math.max(exposedR, exposedG, exposedB);
       highlightMin = Math.min(highlightMin, highlightValue);
       highlightMax = Math.max(highlightMax, highlightValue);
     }
@@ -117,6 +132,14 @@ export function buildColorAdjustmentContextFromLinearRgbSample(
         p100: highlightMax,
       }
     : null;
+  const hasHighlight = normalizedHighlight !== 0 && highlightRange !== null;
+  const toneFlags = {
+    hasExposure,
+    hasShadow,
+    hasHighlight,
+    hasScaledLog,
+    hasSigmoid,
+  };
   const saturationFactor = colorSaturationFactor(normalizedSaturation);
   const vibranceFactor = colorVibranceFactor(normalizedVibrance);
   const saturationValues: number[] = [];
@@ -137,6 +160,7 @@ export function buildColorAdjustmentContextFromLinearRgbSample(
         rolloff,
         normalizedScaledLog,
         normalizedSigmoid,
+        toneFlags,
       );
       const [, s] = rgbToHsv(r, g, b);
       saturationValues.push(s * saturationFactor);
@@ -149,6 +173,14 @@ export function buildColorAdjustmentContextFromLinearRgbSample(
   return {
     gains,
     hasWhiteBalance,
+    hasExposure,
+    hasShadow,
+    hasHighlight,
+    hasScaledLog,
+    hasSigmoid,
+    hasSaturation,
+    hasVibrance,
+    hasSaturationOrVibrance,
     factor,
     shadow: normalizedShadow,
     highlight: normalizedHighlight,
@@ -428,6 +460,7 @@ export function buildToneLumaHistogram(
       context.rolloff,
       context.scaledLog,
       context.sigmoid,
+      context,
     );
     const y = clamp01(PROPHOTO_LUMA_R * r + PROPHOTO_LUMA_G * g + PROPHOTO_LUMA_B * b);
     const display = histogramDisplayValue(y);
@@ -471,9 +504,11 @@ export function evaluateAutoExposure(
     if (context.hasWhiteBalance) {
       [r, g, b] = applyWhiteBalanceLinear(r, g, b, context.gains);
     }
-    r *= context.factor;
-    g *= context.factor;
-    b *= context.factor;
+    if (context.hasExposure) {
+      r *= context.factor;
+      g *= context.factor;
+      b *= context.factor;
+    }
     const maxChannel = Math.max(r, g, b);
     if (maxChannel >= 1) clipped += 1;
     if (maxChannel > TONE_AUTO_EXPOSURE_HIGHLIGHT_START) {
@@ -556,6 +591,7 @@ export function findAutoShadow(
   const gains = whiteBalanceGains(normalizedTemperature, normalizedTint);
   const hasWhiteBalance = normalizedTemperature !== 0 || normalizedTint !== 0;
   const factor = Math.pow(2, exposureEv);
+  const hasExposure = factor !== 1;
   const lumaValues: number[] = [];
   const pixelCount = Math.floor(sample.data.length / 3);
   for (let pixel = 0; pixel < pixelCount; pixel++) {
@@ -567,9 +603,11 @@ export function findAutoShadow(
     if (hasWhiteBalance) {
       [r, g, b] = applyWhiteBalanceLinear(r, g, b, gains);
     }
-    r *= factor;
-    g *= factor;
-    b *= factor;
+    if (hasExposure) {
+      r *= factor;
+      g *= factor;
+      b *= factor;
+    }
     lumaValues.push(Math.max(0, PROPHOTO_LUMA_R * r + PROPHOTO_LUMA_G * g + PROPHOTO_LUMA_B * b));
   }
   if (lumaValues.length === 0) return 0;
