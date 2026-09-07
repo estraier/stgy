@@ -16,6 +16,7 @@ export type LensfunCorrection = {
   step: number;
   geometry: Float32Array;
   distortion: boolean;
+  combined?: Float32Array;
   tca?: Float32Array;
   vignetting?: Float32Array;
   vignettingBaked?: boolean;
@@ -255,6 +256,89 @@ function searchLens(
   return undefined;
 }
 
+function interpolateGridMapValuesInto(
+  gridWidth: number,
+  gridHeight: number,
+  step: number,
+  map: Float32Array,
+  stride: number,
+  x: number,
+  y: number,
+  output: number[] | Float32Array,
+  outputOffset = 0,
+): void {
+  const gx = Math.max(0, Math.min(gridWidth - 1, x / step));
+  const gy = Math.max(0, Math.min(gridHeight - 1, y / step));
+  const x0 = Math.floor(gx);
+  const y0 = Math.floor(gy);
+  const x1 = Math.min(gridWidth - 1, x0 + 1);
+  const y1 = Math.min(gridHeight - 1, y0 + 1);
+  const tx = gx - x0;
+  const ty = gy - y0;
+  const w00 = (1 - tx) * (1 - ty);
+  const w10 = tx * (1 - ty);
+  const w01 = (1 - tx) * ty;
+  const w11 = tx * ty;
+  const i00 = (y0 * gridWidth + x0) * stride;
+  const i10 = (y0 * gridWidth + x1) * stride;
+  const i01 = (y1 * gridWidth + x0) * stride;
+  const i11 = (y1 * gridWidth + x1) * stride;
+  for (let channel = 0; channel < stride; channel++) {
+    output[outputOffset + channel] =
+      (map[i00 + channel] ?? 0) * w00 +
+      (map[i10 + channel] ?? 0) * w10 +
+      (map[i01 + channel] ?? 0) * w01 +
+      (map[i11 + channel] ?? 0) * w11;
+  }
+}
+
+function buildCombinedSourceCoordinateMap(
+  maps: LensfunCorrectionMaps,
+): Float32Array | undefined {
+  if (!maps.tca) return undefined;
+  const pointCount = maps.gridWidth * maps.gridHeight;
+  if (
+    pointCount <= 0 ||
+    maps.geometry.length < pointCount * 2 ||
+    maps.tca.length < pointCount * 6
+  ) {
+    return undefined;
+  }
+
+  // lensfun-wasm 0.1.3 exposes geometry and TCA maps separately. Compose them
+  // once at the correction-grid points so the pixel hot loop only interpolates
+  // one RGB source-coordinate map. This preserves Lensfun's reverse lookup order:
+  // geometry/distortion first, then TCA.
+  const combined = new Float32Array(pointCount * 6);
+  const tcaScratch = new Float32Array(6);
+  for (let gy = 0; gy < maps.gridHeight; gy++) {
+    for (let gx = 0; gx < maps.gridWidth; gx++) {
+      const point = gy * maps.gridWidth + gx;
+      const geometryIndex = point * 2;
+      const outputIndex = point * 6;
+      const geometryX = maps.geometry[geometryIndex] ?? gx * maps.step;
+      const geometryY = maps.geometry[geometryIndex + 1] ?? gy * maps.step;
+      interpolateGridMapValuesInto(
+        maps.gridWidth,
+        maps.gridHeight,
+        maps.step,
+        maps.tca,
+        6,
+        geometryX,
+        geometryY,
+        tcaScratch,
+      );
+      combined[outputIndex] = tcaScratch[0] ?? geometryX;
+      combined[outputIndex + 1] = tcaScratch[1] ?? geometryY;
+      combined[outputIndex + 2] = tcaScratch[2] ?? geometryX;
+      combined[outputIndex + 3] = tcaScratch[3] ?? geometryY;
+      combined[outputIndex + 4] = tcaScratch[4] ?? geometryX;
+      combined[outputIndex + 5] = tcaScratch[5] ?? geometryY;
+    }
+  }
+  return combined;
+}
+
 export async function buildRawLensfunCorrection(
   metadata: RawLensMetadata | null,
   width: number,
@@ -313,12 +397,17 @@ export async function buildRawLensfunCorrection(
       return undefined;
     }
 
+    const combined = includeDistortion && includeTca
+      ? buildCombinedSourceCoordinateMap(maps)
+      : undefined;
+
     const correction: LensfunCorrection = {
       gridWidth: maps.gridWidth,
       gridHeight: maps.gridHeight,
       step: maps.step,
       geometry: maps.geometry,
       distortion: includeDistortion,
+      ...(combined ? { combined } : {}),
       ...(maps.tca ? { tca: maps.tca } : {}),
       ...(maps.vignetting ? { vignetting: maps.vignetting } : {}),
       cameraMaker: camera?.maker || metadata.cameraMaker,
@@ -423,32 +512,20 @@ function interpolateMapValuesInto(
   stride: number,
   x: number,
   y: number,
-  output: number[],
+  output: number[] | Float32Array,
   outputOffset = 0,
 ): void {
-  const gx = Math.max(0, Math.min(correction.gridWidth - 1, x / correction.step));
-  const gy = Math.max(0, Math.min(correction.gridHeight - 1, y / correction.step));
-  const x0 = Math.floor(gx);
-  const y0 = Math.floor(gy);
-  const x1 = Math.min(correction.gridWidth - 1, x0 + 1);
-  const y1 = Math.min(correction.gridHeight - 1, y0 + 1);
-  const tx = gx - x0;
-  const ty = gy - y0;
-  const w00 = (1 - tx) * (1 - ty);
-  const w10 = tx * (1 - ty);
-  const w01 = (1 - tx) * ty;
-  const w11 = tx * ty;
-  const i00 = (y0 * correction.gridWidth + x0) * stride;
-  const i10 = (y0 * correction.gridWidth + x1) * stride;
-  const i01 = (y1 * correction.gridWidth + x0) * stride;
-  const i11 = (y1 * correction.gridWidth + x1) * stride;
-  for (let channel = 0; channel < stride; channel++) {
-    output[outputOffset + channel] =
-      (map[i00 + channel] ?? 0) * w00 +
-      (map[i10 + channel] ?? 0) * w10 +
-      (map[i01 + channel] ?? 0) * w01 +
-      (map[i11 + channel] ?? 0) * w11;
-  }
+  interpolateGridMapValuesInto(
+    correction.gridWidth,
+    correction.gridHeight,
+    correction.step,
+    map,
+    stride,
+    x,
+    y,
+    output,
+    outputOffset,
+  );
 }
 
 function interpolateMapValues(
@@ -475,10 +552,17 @@ export function lensfunSourceCoordinatesInto(
   y: number,
   output: LensfunSourceCoordinatesBuffer,
 ): LensfunSourceCoordinatesBuffer {
-  // Lensfun's reverse lookup order is geometry/distortion first, then TCA.
-  // The WASM wrapper exposes those maps separately, so compose them here by
-  // feeding the geometry result into the TCA map. The caller owns `output`,
-  // allowing pixel hot loops to reuse one buffer without allocating objects.
+  // When both distortion and TCA are present, buildRawLensfunCorrection()
+  // precomposes a six-channel RGB source-coordinate grid. Interpolating that
+  // single map avoids doing two map interpolations for every rendered pixel.
+  if (correction.combined) {
+    interpolateMapValuesInto(correction, correction.combined, 6, x, y, output);
+    return output;
+  }
+
+  // Compatibility/fallback path for distortion-only, TCA-only, and older
+  // corrections that do not carry the precomposed map. Lensfun's reverse
+  // lookup order is geometry/distortion first, then TCA.
   let geometryX = x;
   let geometryY = y;
   if (correction.distortion) {
@@ -558,3 +642,9 @@ export function lensfunVignettingGain(
   const values: LensfunVignettingGainBuffer = [1, 1, 1];
   return lensfunVignettingGainInto(correction, x, y, values);
 }
+
+// Test-only surface for freezing the STGY-side combined-map composition until
+// lensfun-wasm exposes Lensfun's native combined geometry+TCA mapping directly.
+export const __lensfunCorrectionCharacterization = {
+  buildCombinedSourceCoordinateMap,
+};

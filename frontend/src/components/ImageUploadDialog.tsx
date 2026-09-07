@@ -179,6 +179,7 @@ export type ImageDrawOverlay = {
   y2: number;
   strokeWidth: number;
   colorIndex: number;
+  fillColorIndex: number | null;
 };
 
 export type ImageEditParams = {
@@ -510,10 +511,6 @@ type RawThumbnailMatchReference = {
 
 const LIBRAW_BROWSER_MODULE_URL = "/vendor/libraw-wasm/index.js";
 
-function logImageLoadStage(file: File, stage: string, startedAt: number): void {
-  console.info(`[image-editor load] ${file.name}: ${stage} ${(performance.now() - startedAt).toFixed(1)}ms`);
-}
-
 async function rawEmbeddedPreviewFromThumbnail(
   thumbnail: LibRawThumbnailDataLike | undefined,
 ): Promise<ImageLoadEmbeddedPreview | undefined> {
@@ -747,6 +744,7 @@ function normalizeDrawOverlay(overlay: Partial<ImageDrawOverlay>): ImageDrawOver
   }
   const width = Math.max(1, Number.isFinite(overlay.strokeWidth) ? overlay.strokeWidth ?? 1 : 1);
   const colorIndex = normalizeTextColorIndex(overlay.colorIndex ?? 0);
+  const fillColorIndex = type === "line" ? null : normalizeOptionalTextColorIndex(overlay.fillColorIndex);
   if (type === "line") {
     if (Math.hypot(x2 - x1, y2 - y1) <= 1e-6) return null;
   } else if (x2 - x1 <= 1e-6 || y2 - y1 <= 1e-6) {
@@ -761,6 +759,7 @@ function normalizeDrawOverlay(overlay: Partial<ImageDrawOverlay>): ImageDrawOver
     y2,
     strokeWidth: width,
     colorIndex,
+    fillColorIndex,
   };
 }
 
@@ -1295,7 +1294,6 @@ function measureTextOverlayLayout(text: string, fontSize: number, fontIndex: num
   }
   return {
     width: Math.max(
-      TEXT_OVERLAY_MIN_BOX_WIDTH,
       size + paddingX * 2,
       Math.ceil(maxWidth + paddingX * 2),
     ),
@@ -1537,6 +1535,10 @@ function drawOverlaysToContext(
       const width = Math.abs(x2 - x1);
       const height = Math.abs(y2 - y1);
       ctx.ellipse(left + width / 2, top + height / 2, width / 2, height / 2, 0, 0, Math.PI * 2);
+    }
+    if (overlay.type !== "line" && overlay.fillColorIndex != null) {
+      ctx.fillStyle = TEXT_OVERLAY_COLORS[normalizeTextColorIndex(overlay.fillColorIndex)];
+      ctx.fill();
     }
     ctx.stroke();
   }
@@ -3205,26 +3207,21 @@ type RawWorkerToneResponse = {
   type: "tone-complete";
   headroom: RawDevelopmentHeadroomStatistics;
   colorSample: ArrayBuffer;
-  toneMs: number;
-  sampleMs: number;
 };
 
 type RawWorkerFallbackResponse = {
   type: "fallback-tone-complete";
   result: { exposureEv: number; headroom: RawDevelopmentHeadroomStatistics } | null;
-  toneMs: number;
 };
 
 type RawWorkerColorResponse = {
   type: "color-complete";
-  colorMs: number;
 };
 
 type RawWorkerEncodeResponse = {
   type: "encode-complete";
   dataBuffer: ArrayBuffer;
   linearRangeMax: number;
-  encodeMs: number;
 };
 
 function createRawDevelopmentWorker(): Worker | null {
@@ -3292,33 +3289,18 @@ type RawWorkerDevelopmentResult = {
 };
 
 async function developRawPixelsInWorker(
-  file: File,
   decoded: DecodedRgbImage16,
   thumbnailReference: RawThumbnailMatchReference | undefined,
   onProgress?: ImageLoadProgressListener,
 ): Promise<RawWorkerDevelopmentResult | null> {
   if (decoded.transfer !== "linear") return null;
   const worker = createRawDevelopmentWorker();
-  if (!worker) {
-    if (onProgress) {
-      console.info(`[image-editor load] ${file.name}: RAW development worker unavailable; using main thread`);
-    }
-    return null;
-  }
+  if (!worker) return null;
 
-  const logWorkerCore = (label: string, milliseconds: number) => {
-    if (!onProgress) return;
-    console.info(`[image-editor load] ${file.name}: ${label} worker core ${milliseconds.toFixed(1)}ms`);
-  };
   const stage = async <T,>(name: string, task: () => Promise<T>): Promise<T> => {
     onProgress?.({ stage: name });
     if (onProgress) await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    const startedAt = performance.now();
-    try {
-      return await task();
-    } finally {
-      if (onProgress) logImageLoadStage(file, name.replace(/…$/, ""), startedAt);
-    }
+    return task();
   };
 
   let transferred = false;
@@ -3333,12 +3315,7 @@ async function developRawPixelsInWorker(
     if (thumbnailReference) {
       onProgress?.({ stage: "Planning tone…" });
       if (onProgress) await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      const planningStartedAt = performance.now();
-      try {
-        matchedPlan = planRawThumbnailMatchedBaseline(decoded, thumbnailReference.lumaPercentiles);
-      } finally {
-        if (onProgress) logImageLoadStage(file, "Planning tone", planningStartedAt);
-      }
+      matchedPlan = planRawThumbnailMatchedBaseline(decoded, thumbnailReference.lumaPercentiles);
     }
 
     if (matchedPlan) {
@@ -3361,8 +3338,6 @@ async function developRawPixelsInWorker(
           [sourceBuffer],
         );
       });
-      logWorkerCore("Developing tone", toneResponse.toneMs);
-      logWorkerCore("Preparing color sample", toneResponse.sampleMs);
       decoded.linearRangeMax = RAW_DEVELOPED_LINEAR_RANGE_MAX;
       finishLensfunVignettingBake(decoded);
       mode = "thumbnail-match";
@@ -3370,7 +3345,7 @@ async function developRawPixelsInWorker(
       headroom = toneResponse.headroom;
 
       const rawColorSample = new Float32Array(toneResponse.colorSample);
-      const colorResponse = await stage<RawWorkerColorResponse>("Developing color…", async () => {
+      await stage<RawWorkerColorResponse>("Developing color…", async () => {
         const plannedColor = planRawThumbnailMatchedColor(
           rawColorSample,
           thumbnailReference!.linearSrgbSample,
@@ -3389,7 +3364,6 @@ async function developRawPixelsInWorker(
           } },
         );
       });
-      logWorkerCore("Developing color", colorResponse.colorMs);
     } else {
       const sourceBuffer = decoded.data.buffer as ArrayBuffer;
       const fallbackResponse = await stage<RawWorkerFallbackResponse>("Developing tone…", async () => {
@@ -3408,7 +3382,6 @@ async function developRawPixelsInWorker(
           [sourceBuffer],
         );
       });
-      logWorkerCore("Developing tone", fallbackResponse.toneMs);
       if (fallbackResponse.result) {
         decoded.linearRangeMax = RAW_DEVELOPED_LINEAR_RANGE_MAX;
         finishLensfunVignettingBake(decoded);
@@ -3429,7 +3402,6 @@ async function developRawPixelsInWorker(
         { type: "encode" },
       ),
     );
-    logWorkerCore("Encoding buffer", encodeResponse.encodeMs);
     decoded.data = new Uint16Array(encodeResponse.dataBuffer);
     decoded.linearRangeMax = encodeResponse.linearRangeMax;
     decoded.transfer = "gamma20";
@@ -3444,10 +3416,7 @@ async function developRawPixelsInWorker(
         decoded.linearRangeMax = workerError.linearRangeMax as number;
       }
     }
-    if (!hadTransferred) {
-      console.warn("[image-editor] RAW development worker unavailable; using synchronous fallback", error);
-      return null;
-    }
+    if (!hadTransferred) return null;
     throw error;
   } finally {
     worker.terminate();
@@ -3463,24 +3432,14 @@ async function decodeRawImage(
   const rawDevelopmentStartedAt = performance.now();
   async function runStage<T>(stage: string, task: () => Promise<T>): Promise<T> {
     onProgress?.({ stage });
-    const startedAt = performance.now();
-    try {
-      return await task();
-    } finally {
-      if (onProgress) logImageLoadStage(file, stage.replace(/…$/, ""), startedAt);
-    }
+    return task();
   }
   async function runBlockingStage<T>(stage: string, task: () => T): Promise<T> {
     onProgress?.({ stage });
     if (onProgress) {
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
-    const startedAt = performance.now();
-    try {
-      return task();
-    } finally {
-      if (onProgress) logImageLoadStage(file, stage.replace(/…$/, ""), startedAt);
-    }
+    return task();
   }
 
   let raw: LibRawInstanceLike | null = null;
@@ -3517,12 +3476,7 @@ async function decodeRawImage(
           ? await runStage("Preparing preview…", () => rawEmbeddedPreviewFromThumbnail(thumbnail))
           : undefined;
         onProgress?.({ stage: "Analyzing preview…", embeddedPreview });
-        const startedAt = performance.now();
-        try {
-          thumbnailReference = await rawThumbnailMatchReferenceFromThumbnail(thumbnail);
-        } finally {
-          if (onProgress) logImageLoadStage(file, "Analyzing preview", startedAt);
-        }
+        thumbnailReference = await rawThumbnailMatchReferenceFromThumbnail(thumbnail);
       } catch {
         thumbnailReference = undefined;
       }
@@ -3575,7 +3529,6 @@ async function decodeRawImage(
     };
 
     const workerDevelopment = await developRawPixelsInWorker(
-      file,
       decoded,
       thumbnailReference,
       onProgress,
@@ -3623,11 +3576,6 @@ async function decodeRawImage(
       lensfun: lensfunSettings,
       elapsedSeconds: (performance.now() - rawDevelopmentStartedAt) / 1000,
     };
-    if (onProgress) {
-      console.info(
-        `[image-editor load] ${file.name}: RAW total ${(performance.now() - rawDevelopmentStartedAt).toFixed(1)}ms`,
-      );
-    }
     return decoded;
   } finally {
     workerFailure?.cleanup();
@@ -3778,24 +3726,14 @@ async function decodeImage(
 ): Promise<DecodedImage> {
   async function runStage<T>(stage: string, task: () => Promise<T>): Promise<T> {
     onProgress?.({ stage });
-    const startedAt = performance.now();
-    try {
-      return await task();
-    } finally {
-      if (onProgress) logImageLoadStage(file, stage.replace(/…$/, ""), startedAt);
-    }
+    return task();
   }
   async function runBlockingStage<T>(stage: string, task: () => T): Promise<T> {
     onProgress?.({ stage });
     if (onProgress) {
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
-    const startedAt = performance.now();
-    try {
-      return task();
-    } finally {
-      if (onProgress) logImageLoadStage(file, stage.replace(/…$/, ""), startedAt);
-    }
+    return task();
   }
 
   if (isRawImageFile(name || "", type || "")) {
@@ -4257,10 +4195,6 @@ const TEXT_OVERLAY_FONTS = [
 const TEXT_OVERLAY_LINE_HEIGHT = 1.2;
 const TEXT_OVERLAY_TEXT_INSET_X_EM = 0.09;
 const TEXT_OVERLAY_TEXT_INSET_Y_EM = 0.06;
-const TEXT_OVERLAY_CONTROL_BUTTON_SIZE = 20;
-const TEXT_OVERLAY_CONTROL_GAP = 4;
-const TEXT_OVERLAY_DELETE_BUTTON_SIZE = 20;
-const TEXT_OVERLAY_CONTROL_SAFE_GAP = 8;
 const TEXT_OVERLAY_COLORS = [
   "#000000",
   "#808080",
@@ -4274,11 +4208,32 @@ const TEXT_OVERLAY_COLORS = [
 ] as const;
 const DRAW_STROKE_WIDTH_RATIOS = [0.001, 0.002, 0.004, 0.008] as const;
 const DRAW_STROKE_WIDTH_LABELS = ["Thin", "Medium", "Thick", "Extra thick"] as const;
-const TEXT_OVERLAY_MIN_BOX_WIDTH =
-  TEXT_OVERLAY_CONTROL_BUTTON_SIZE * 6 +
-  TEXT_OVERLAY_CONTROL_GAP * 5 +
-  TEXT_OVERLAY_DELETE_BUTTON_SIZE +
-  TEXT_OVERLAY_CONTROL_SAFE_GAP;
+const DRAW_DEFAULT_STROKE_WIDTH_INDEX = 1;
+const DRAW_DEFAULT_COLOR_INDEX = 0;
+
+function drawStrokeWidthIndexForOverlay(
+  strokeWidth: number,
+  sourceW: number,
+  sourceH: number,
+): number {
+  const diagonal = Math.max(1, Math.hypot(sourceW, sourceH));
+  const ratio = strokeWidth / diagonal;
+  let closest = 0;
+  let closestDistance = Infinity;
+  for (let index = 0; index < DRAW_STROKE_WIDTH_RATIOS.length; index++) {
+    const distance = Math.abs(ratio - DRAW_STROKE_WIDTH_RATIOS[index]);
+    if (distance < closestDistance) {
+      closest = index;
+      closestDistance = distance;
+    }
+  }
+  return closest;
+}
+
+function nextDrawFillColorIndex(value: number | null): number | null {
+  if (value == null) return 0;
+  return value + 1 >= TEXT_OVERLAY_COLORS.length ? null : value + 1;
+}
 
 function histogramPath(values: number[], maxCount: number, width: number, height: number): string {
   if (!values.length || maxCount <= 0) {
@@ -4354,7 +4309,6 @@ export function ImageEditDialog({
     Math.min(100, Math.max(1, Math.round(initialParams.resizePercent))),
   );
   const [sharpen, setSharpen] = useState<number>(clampSharpen(initialParams.sharpen ?? 0));
-  const [previewSharpenSuppressed, setPreviewSharpenSuppressed] = useState(false);
   const [textMode, setTextMode] = useState(false);
   const [textOverlays, setTextOverlays] = useState<ImageTextOverlay[]>(
     normalizeTextOverlays(initialParams.textOverlays),
@@ -4363,8 +4317,6 @@ export function ImageEditDialog({
   const [fontLoadingTextId, setFontLoadingTextId] = useState<string | null>(null);
   const [drawMode, setDrawMode] = useState(false);
   const [drawTool, setDrawTool] = useState<ImageDrawTool>("line");
-  const [drawStrokeWidthIndex, setDrawStrokeWidthIndex] = useState(1);
-  const [drawColorIndex, setDrawColorIndex] = useState(0);
   const [drawOverlays, setDrawOverlays] = useState<ImageDrawOverlay[]>(
     normalizeDrawOverlays(initialParams.drawOverlays),
   );
@@ -4461,7 +4413,6 @@ export function ImageEditDialog({
     let decodedForEffect: DecodedImage | null = null;
     let cleanup: (() => void) | null = null;
     const ownsDecodedImage = !initialDecodedImage;
-    const interactiveLoadStartedAt = performance.now();
     initialPreviewReadyRef.current = false;
     setImageReady(false);
     setLoadingStage(initialDecodedImage ? "Preparing preview…" : "Loading image…");
@@ -4485,9 +4436,6 @@ export function ImageEditDialog({
 
     void (async () => {
       try {
-        if (initialDecodedImage) {
-          console.info(`[image-editor load] ${file.name}: using cached decode`);
-        }
         const decoded = initialDecodedImage ?? await decodeImage(
           file,
           0,
@@ -4516,9 +4464,6 @@ export function ImageEditDialog({
         setLoadingStage("Preparing preview…");
         setNatural({ w: decoded.width, h: decoded.height });
         setImageReady(true);
-        console.info(
-          `[image-editor load] ${file.name}: decoded ${(performance.now() - interactiveLoadStartedAt).toFixed(1)}ms total`,
-        );
       } catch (error) {
         if (!cancelled) {
           decodedImageRef.current = null;
@@ -4852,6 +4797,39 @@ export function ImageEditDialog({
     drawEditState.current = null;
   }, []);
 
+  const cycleDrawOverlayStrokeWidth = useCallback((id: string) => {
+    if (!natural) return;
+    const diagonal = Math.max(1, Math.hypot(natural.w, natural.h));
+    updateDrawOverlay(id, (current) => {
+      const currentIndex = drawStrokeWidthIndexForOverlay(
+        current.strokeWidth,
+        natural.w,
+        natural.h,
+      );
+      const nextIndex = (currentIndex + 1) % DRAW_STROKE_WIDTH_RATIOS.length;
+      return {
+        ...current,
+        strokeWidth: Math.max(1, diagonal * DRAW_STROKE_WIDTH_RATIOS[nextIndex]),
+      };
+    });
+  }, [natural, updateDrawOverlay]);
+
+  const cycleDrawOverlayStrokeColor = useCallback((id: string) => {
+    updateDrawOverlay(id, (current) => ({
+      ...current,
+      colorIndex: (normalizeTextColorIndex(current.colorIndex) + 1) % TEXT_OVERLAY_COLORS.length,
+    }));
+  }, [updateDrawOverlay]);
+
+  const cycleDrawOverlayFillColor = useCallback((id: string) => {
+    updateDrawOverlay(id, (current) => current.type === "line"
+      ? current
+      : {
+          ...current,
+          fillColorIndex: nextDrawFillColorIndex(current.fillColorIndex),
+        });
+  }, [updateDrawOverlay]);
+
   const drawOverlayFromPreviewPoints = useCallback((
     id: string,
     type: ImageDrawTool,
@@ -4873,6 +4851,7 @@ export function ImageEditDialog({
         y2: b.y,
         strokeWidth,
         colorIndex: normalizeTextColorIndex(colorIndex),
+        fillColorIndex: null,
       };
     }
     return {
@@ -4884,6 +4863,7 @@ export function ImageEditDialog({
       y2: Math.max(a.y, b.y),
       strokeWidth,
       colorIndex: normalizeTextColorIndex(colorIndex),
+      fillColorIndex: null,
     };
   }, [cropPointToNormalized]);
 
@@ -4901,14 +4881,14 @@ export function ImageEditDialog({
     const startPoint = clampPointToCropRect(point);
     const strokeWidth = Math.max(
       1,
-      Math.hypot(natural.w, natural.h) * DRAW_STROKE_WIDTH_RATIOS[drawStrokeWidthIndex],
+      Math.hypot(natural.w, natural.h) * DRAW_STROKE_WIDTH_RATIOS[DRAW_DEFAULT_STROKE_WIDTH_INDEX],
     );
     drawCreateState.current = {
       pointerId: e.pointerId,
       startPoint,
       type: drawTool,
       strokeWidth,
-      colorIndex: drawColorIndex,
+      colorIndex: DRAW_DEFAULT_COLOR_INDEX,
     };
     e.currentTarget.setPointerCapture(e.pointerId);
     setDrawDraft(drawOverlayFromPreviewPoints(
@@ -4917,7 +4897,7 @@ export function ImageEditDialog({
       startPoint,
       startPoint,
       strokeWidth,
-      drawColorIndex,
+      DRAW_DEFAULT_COLOR_INDEX,
     ) ?? {
       id: "draw-draft",
       type: drawTool,
@@ -4926,17 +4906,16 @@ export function ImageEditDialog({
       x2: 0,
       y2: 0,
       strokeWidth,
-      colorIndex: drawColorIndex,
+      colorIndex: DRAW_DEFAULT_COLOR_INDEX,
+      fillColorIndex: null,
     });
     e.preventDefault();
     e.stopPropagation();
   }, [
     clampPointToCropRect,
     cropRect,
-    drawColorIndex,
     drawMode,
     drawOverlayFromPreviewPoints,
-    drawStrokeWidthIndex,
     drawTool,
     natural,
     toLocal,
@@ -5514,23 +5493,6 @@ export function ImageEditDialog({
     </div>
   );
 
-  const beginPreviewFastSliderInteraction = useCallback(() => {
-    setPreviewSharpenSuppressed(true);
-  }, []);
-
-  useEffect(() => {
-    if (!previewSharpenSuppressed) return;
-    const finishPreviewFastSliderInteraction = () => {
-      setPreviewSharpenSuppressed(false);
-    };
-    window.addEventListener("pointerup", finishPreviewFastSliderInteraction);
-    window.addEventListener("pointercancel", finishPreviewFastSliderInteraction);
-    return () => {
-      window.removeEventListener("pointerup", finishPreviewFastSliderInteraction);
-      window.removeEventListener("pointercancel", finishPreviewFastSliderInteraction);
-    };
-  }, [previewSharpenSuppressed]);
-
   const overlayPath = useMemo(() => {
     return {
       outer: `M${displayed.x},${displayed.y} H${displayed.x + displayed.w} V${displayed.y + displayed.h} H${displayed.x} Z`,
@@ -5546,7 +5508,6 @@ export function ImageEditDialog({
     const height = Math.max(1, Math.round(displayed.h));
     const previewColorProfile: ImageEditOutputColorProfile = "srgb";
     const includeMosaic = !eyedropperMode && !rotationMode && mosaicRegions.length > 0 && !!natural?.w;
-    const previewSharpen = previewSharpenSuppressed ? 0 : sharpen;
     const renderedPreviewKey = JSON.stringify([
       width,
       height,
@@ -5561,7 +5522,6 @@ export function ImageEditDialog({
       sigmoid,
       vibrance,
       saturation,
-      previewSharpen,
       includeMosaic ? mosaicRegions : null,
     ]);
 
@@ -5583,12 +5543,10 @@ export function ImageEditDialog({
     const frameId = requestAnimationFrame(() => {
       if (previewCanvasRef.current !== canvas || decodedImageRef.current !== decoded) return;
       const isInitialPreview = !initialPreviewReadyRef.current;
-      const initialPreviewStartedAt = isInitialPreview ? performance.now() : 0;
       if (canvas.width !== width) canvas.width = width;
       if (canvas.height !== height) canvas.height = height;
 
       const previewSourceRect = { x: 0, y: 0, w: decoded.width, h: decoded.height };
-      let stageStartedAt = isInitialPreview ? performance.now() : 0;
       const previewSourceSample = getRenderedLinearRgbSample(
         decoded,
         previewSourceRect,
@@ -5596,19 +5554,11 @@ export function ImageEditDialog({
         width,
         height,
       );
-      if (isInitialPreview) {
-        logImageLoadStage(file, "Sampling preview", stageStartedAt);
-        stageStartedAt = performance.now();
-      }
       const previewContextSample = getAnalysisLinearRgbSample(
         decoded,
         previewSourceRect,
         rotationDegrees,
       );
-      if (isInitialPreview) {
-        logImageLoadStage(file, "Analyzing preview", stageStartedAt);
-        stageStartedAt = performance.now();
-      }
       renderAdjustedLinearRgbSampleToCanvas(
         canvas,
         previewSourceSample,
@@ -5624,11 +5574,6 @@ export function ImageEditDialog({
         saturation,
         previewColorProfile,
       );
-      if (isInitialPreview) {
-        logImageLoadStage(file, "Rendering preview", stageStartedAt);
-        stageStartedAt = performance.now();
-      }
-      applySharpenToCanvas(canvas, previewSharpen, previewColorProfile);
       if (includeMosaic) {
         applyMosaicRectsToCanvas(
           canvas,
@@ -5642,9 +5587,6 @@ export function ImageEditDialog({
           previewColorProfile,
         );
       }
-      if (isInitialPreview) {
-        logImageLoadStage(file, "Finishing preview", stageStartedAt);
-      }
 
       previewRenderedRef.current = {
         decoded,
@@ -5656,9 +5598,6 @@ export function ImageEditDialog({
         initialPreviewReadyRef.current = true;
         setLoadingStage(null);
         clearEmbeddedRawPreview();
-        console.info(
-          `[image-editor load] ${file.name}: preview total ${(performance.now() - initialPreviewStartedAt).toFixed(1)}ms`,
-        );
       }
     });
 
@@ -5675,14 +5614,11 @@ export function ImageEditDialog({
     sigmoid,
     vibrance,
     saturation,
-    sharpen,
-    previewSharpenSuppressed,
     rotationDegrees,
     rotationMode,
     natural,
     mosaicRegions,
     eyedropperMode,
-    file,
     clearEmbeddedRawPreview,
   ]);
 
@@ -6147,8 +6083,6 @@ export function ImageEditDialog({
     setTextOverlays(params.textOverlays);
     setDrawMode(false);
     setDrawTool("line");
-    setDrawStrokeWidthIndex(1);
-    setDrawColorIndex(0);
     setDrawOverlays(params.drawOverlays);
     setDrawDraft(null);
     drawCreateState.current = null;
@@ -6499,30 +6433,6 @@ export function ImageEditDialog({
                           </svg>
                         </button>
                       ))}
-                      <button
-                        type="button"
-                        className="flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-white hover:bg-gray-100"
-                        onClick={() => setDrawStrokeWidthIndex((current) => (current + 1) % DRAW_STROKE_WIDTH_RATIOS.length)}
-                        aria-label={`Stroke width: ${DRAW_STROKE_WIDTH_LABELS[drawStrokeWidthIndex]}`}
-                        title={`Stroke width: ${DRAW_STROKE_WIDTH_LABELS[drawStrokeWidthIndex]}`}
-                      >
-                        <span
-                          className="block w-5 border-t border-current"
-                          style={{ borderTopWidth: 1 + drawStrokeWidthIndex * 1.5 }}
-                        />
-                      </button>
-                      <button
-                        type="button"
-                        className="flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-white hover:bg-gray-100"
-                        onClick={() => setDrawColorIndex((current) => (current + 1) % TEXT_OVERLAY_COLORS.length)}
-                        aria-label="Change drawing color"
-                        title="Drawing color"
-                      >
-                        <span
-                          className="h-4 w-4 rounded-full border border-black/40"
-                          style={{ backgroundColor: TEXT_OVERLAY_COLORS[drawColorIndex] }}
-                        />
-                      </button>
                     </div>
                   )}
                   {!eyedropperMode && cropRect.w > 0 && cropRect.h > 0 && (drawOverlays.length > 0 || drawDraft) && (
@@ -6546,6 +6456,9 @@ export function ImageEditDialog({
                         const y2 = overlay.y2 * displayed.h;
                         const strokeWidth = Math.max(1, overlay.strokeWidth * displayed.w / natural.w);
                         const stroke = TEXT_OVERLAY_COLORS[normalizeTextColorIndex(overlay.colorIndex)];
+                        const fill = overlay.type === "line" || overlay.fillColorIndex == null
+                          ? "none"
+                          : TEXT_OVERLAY_COLORS[normalizeTextColorIndex(overlay.fillColorIndex)];
                         const commonHitProps = {
                           onPointerDown: onDrawMovePointerDown(overlay),
                           onPointerMove: onDrawEditPointerMove,
@@ -6579,9 +6492,9 @@ export function ImageEditDialog({
                         return (
                           <g key={overlay.id}>
                             {overlay.type === "rect" ? (
-                              <rect x={left} y={top} width={width} height={height} fill="none" stroke={stroke} strokeWidth={strokeWidth} />
+                              <rect x={left} y={top} width={width} height={height} fill={fill} stroke={stroke} strokeWidth={strokeWidth} />
                             ) : (
-                              <ellipse cx={left + width / 2} cy={top + height / 2} rx={width / 2} ry={height / 2} fill="none" stroke={stroke} strokeWidth={strokeWidth} />
+                              <ellipse cx={left + width / 2} cy={top + height / 2} rx={width / 2} ry={height / 2} fill={fill} stroke={stroke} strokeWidth={strokeWidth} />
                             )}
                             {drawMode && (overlay.type === "rect" ? (
                               <rect
@@ -6646,10 +6559,67 @@ export function ImageEditDialog({
                           ["sw", Math.min(x1, x2), Math.max(y1, y2)],
                           ["se", Math.max(x1, x2), Math.max(y1, y2)],
                         ];
+                    const objectLeft = Math.min(x1, x2);
+                    const objectTop = Math.min(y1, y2);
                     const deleteX = Math.max(x1, x2) + 5;
-                    const deleteY = Math.min(y1, y2) - 10;
+                    const deleteY = objectTop - 10;
+                    const strokeWidthIndex = natural
+                      ? drawStrokeWidthIndexForOverlay(overlay.strokeWidth, natural.w, natural.h)
+                      : DRAW_DEFAULT_STROKE_WIDTH_INDEX;
+                    const fillColorIndex = overlay.type === "line"
+                      ? null
+                      : normalizeOptionalTextColorIndex(overlay.fillColorIndex);
                     return (
                       <div key={`${overlay.id}-controls`} className="contents">
+                        <div
+                          className="absolute z-[33] flex w-max items-center gap-1"
+                          style={{ left: objectLeft, top: objectTop - 24 }}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <button
+                            type="button"
+                            className="flex h-5 min-w-5 items-center justify-center rounded border border-white bg-black/80 px-1 text-white"
+                            onClick={() => cycleDrawOverlayStrokeWidth(overlay.id)}
+                            aria-label={`Stroke width: ${DRAW_STROKE_WIDTH_LABELS[strokeWidthIndex]}`}
+                            title={`Stroke width: ${DRAW_STROKE_WIDTH_LABELS[strokeWidthIndex]}`}
+                          >
+                            <span
+                              className="block w-4 border-t border-current"
+                              style={{ borderTopWidth: 1 + strokeWidthIndex * 1.25 }}
+                            />
+                          </button>
+                          <button
+                            type="button"
+                            className="flex h-5 min-w-5 items-center justify-center rounded border border-white bg-black/80 px-1 text-white"
+                            onClick={() => cycleDrawOverlayStrokeColor(overlay.id)}
+                            aria-label="Change stroke color"
+                            title="Stroke color"
+                          >
+                            <span
+                              className="h-3 w-3 rounded-full border border-white/70"
+                              style={{ backgroundColor: TEXT_OVERLAY_COLORS[normalizeTextColorIndex(overlay.colorIndex)] }}
+                            />
+                          </button>
+                          {overlay.type !== "line" && (
+                            <button
+                              type="button"
+                              className="flex h-5 min-w-5 items-center justify-center rounded border border-white bg-black/80 px-1 text-white"
+                              onClick={() => cycleDrawOverlayFillColor(overlay.id)}
+                              aria-label={fillColorIndex == null ? "Fill color: Transparent" : "Change fill color"}
+                              title={fillColorIndex == null ? "Fill: Transparent" : "Fill color"}
+                            >
+                              {fillColorIndex == null ? (
+                                <span className="flex h-3 w-3 items-center justify-center rounded-[2px] border border-white/70 text-[9px] leading-none">∅</span>
+                              ) : (
+                                <span
+                                  className="h-3 w-3 rounded-[2px] border border-white/70"
+                                  style={{ backgroundColor: TEXT_OVERLAY_COLORS[fillColorIndex] }}
+                                />
+                              )}
+                            </button>
+                          )}
+                        </div>
                         {handles.map(([handle, x, y]) => (
                           <button
                             key={handle}
@@ -6899,7 +6869,7 @@ export function ImageEditDialog({
                                 ...textOverlayOutlineStyle(layout.fontSize, layout.outlineColorIndex),
                               }}
                             />
-                            <div className="absolute -left-2.5 -top-2.5 flex items-center gap-1">
+                            <div className="absolute left-0 bottom-[calc(100%+4px)] flex w-max items-center gap-1">
                               <button
                                 type="button"
                                 className="flex h-5 w-5 cursor-move items-center justify-center rounded-full border border-white bg-black/80 text-white"
@@ -7218,7 +7188,6 @@ export function ImageEditDialog({
                 </span>
                 <input
                   type="range"
-                  onPointerDown={beginPreviewFastSliderInteraction}
                   min={-100}
                   max={100}
                   step={1}
@@ -7233,7 +7202,6 @@ export function ImageEditDialog({
                 <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{tint >= 0 ? "+" : ""}{tint}</span>
                 <input
                   type="range"
-                  onPointerDown={beginPreviewFastSliderInteraction}
                   min={-100}
                   max={100}
                   step={1}
@@ -7275,7 +7243,6 @@ export function ImageEditDialog({
                 <input
                   aria-label="Exposure"
                   type="range"
-                  onPointerDown={beginPreviewFastSliderInteraction}
                   min={-5}
                   max={5}
                   step={0.1}
@@ -7302,7 +7269,6 @@ export function ImageEditDialog({
                 <input
                   aria-label="Logarithm"
                   type="range"
-                  onPointerDown={beginPreviewFastSliderInteraction}
                   min={-16}
                   max={16}
                   step={0.1}
@@ -7329,7 +7295,6 @@ export function ImageEditDialog({
                 <input
                   aria-label="Sigmoid"
                   type="range"
-                  onPointerDown={beginPreviewFastSliderInteraction}
                   min={-10}
                   max={10}
                   step={0.1}
@@ -7356,7 +7321,6 @@ export function ImageEditDialog({
                 <input
                   aria-label="Shadow"
                   type="range"
-                  onPointerDown={beginPreviewFastSliderInteraction}
                   min={-100}
                   max={100}
                   step={1}
@@ -7372,7 +7336,6 @@ export function ImageEditDialog({
                 <input
                   aria-label="Highlight"
                   type="range"
-                  onPointerDown={beginPreviewFastSliderInteraction}
                   min={-100}
                   max={100}
                   step={1}
@@ -7391,7 +7354,6 @@ export function ImageEditDialog({
                 <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{vibrance >= 0 ? "+" : ""}{vibrance}</span>
                 <input
                   type="range"
-                  onPointerDown={beginPreviewFastSliderInteraction}
                   min={-100}
                   max={100}
                   step={1}
@@ -7406,7 +7368,6 @@ export function ImageEditDialog({
                 <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{saturation >= 0 ? "+" : ""}{saturation}</span>
                 <input
                   type="range"
-                  onPointerDown={beginPreviewFastSliderInteraction}
                   min={-100}
                   max={100}
                   step={1}
@@ -7440,7 +7401,6 @@ export function ImageEditDialog({
                 <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{resizePercent}%</span>
                 <input
                   type="range"
-                  onPointerDown={beginPreviewFastSliderInteraction}
                   aria-label="Resize"
                   min={1}
                   max={100}
@@ -7456,7 +7416,6 @@ export function ImageEditDialog({
                 <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{sharpen}</span>
                 <input
                   type="range"
-                  onPointerDown={beginPreviewFastSliderInteraction}
                   aria-label="Sharpen"
                   min={0}
                   max={3}

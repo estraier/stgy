@@ -61,7 +61,6 @@ workerScope.onmessage = (event: MessageEvent<RawDevelopmentWorkerRequest>) => {
         height: message.height,
         linearRangeMax: message.sourceLinearRangeMax,
       };
-      const startedAt = performance.now();
       const headroom = applyRawMatchedTonePass(
         data,
         message.width,
@@ -71,8 +70,6 @@ workerScope.onmessage = (event: MessageEvent<RawDevelopmentWorkerRequest>) => {
         message.plan,
       );
       state.linearRangeMax = 2;
-      const toneMs = performance.now() - startedAt;
-      const sampleStartedAt = performance.now();
       const colorSample = sampleRawLinearRgb(
         data,
         message.width,
@@ -80,9 +77,8 @@ workerScope.onmessage = (event: MessageEvent<RawDevelopmentWorkerRequest>) => {
         state.linearRangeMax,
         message.sampleMaxSide,
       );
-      const sampleMs = performance.now() - sampleStartedAt;
       workerScope.postMessage(
-        { type: "tone-complete", headroom, colorSample: colorSample.buffer, toneMs, sampleMs },
+        { type: "tone-complete", headroom, colorSample: colorSample.buffer },
         [colorSample.buffer],
       );
       return;
@@ -96,7 +92,6 @@ workerScope.onmessage = (event: MessageEvent<RawDevelopmentWorkerRequest>) => {
         height: message.height,
         linearRangeMax: message.sourceLinearRangeMax,
       };
-      const startedAt = performance.now();
       const result = applyRawFallbackBaselinePass(
         data,
         message.width,
@@ -105,34 +100,24 @@ workerScope.onmessage = (event: MessageEvent<RawDevelopmentWorkerRequest>) => {
         message.vignetting,
       );
       if (result) state.linearRangeMax = 2;
-      workerScope.postMessage({
-        type: "fallback-tone-complete",
-        result,
-        toneMs: performance.now() - startedAt,
-      });
+      workerScope.postMessage({ type: "fallback-tone-complete", result });
       return;
     }
 
     if (!state) throw new Error("RAW development worker has no active image");
 
     if (message.type === "color") {
-      const startedAt = performance.now();
       applyRawColorPass(state.data, state.linearRangeMax, message.plan);
-      workerScope.postMessage({
-        type: "color-complete",
-        colorMs: performance.now() - startedAt,
-      });
+      workerScope.postMessage({ type: "color-complete" });
       return;
     }
 
     if (message.type === "encode") {
-      const startedAt = performance.now();
       convertRawLinearToGamma20InPlace(state.data, state.linearRangeMax);
-      const encodeMs = performance.now() - startedAt;
       const buffer = state.data.buffer as ArrayBuffer;
       const linearRangeMax = state.linearRangeMax;
       workerScope.postMessage(
-        { type: "encode-complete", dataBuffer: buffer, linearRangeMax, encodeMs },
+        { type: "encode-complete", dataBuffer: buffer, linearRangeMax },
         [buffer],
       );
       state = null;
