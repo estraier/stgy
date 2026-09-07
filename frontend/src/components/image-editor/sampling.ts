@@ -47,6 +47,7 @@ export function inverseRotatePoint(
 
 export const ANALYSIS_SAMPLE_TARGET_PIXELS = 256 * 256;
 const ANALYSIS_SAMPLE_CACHE_MAX_ENTRIES = 4;
+const RENDERED_SAMPLE_CACHE_MAX_ENTRIES = 2;
 
 type AnalysisSampleCacheEntry = {
   key: string;
@@ -56,6 +57,16 @@ type AnalysisSampleCacheEntry = {
 const RGB16_ANALYSIS_SAMPLE_CACHE = new WeakMap<
   DecodedRgbImage16,
   AnalysisSampleCacheEntry[]
+>();
+
+type RenderedSampleCacheEntry = {
+  key: string;
+  sample: LinearRgbSample;
+};
+
+const RGB16_RENDERED_SAMPLE_CACHE = new WeakMap<
+  DecodedRgbImage16,
+  RenderedSampleCacheEntry[]
 >();
 
 export function analysisSampleDimensions(
@@ -336,17 +347,17 @@ export function buildRenderedPixelToSourceTransform(
   };
 }
 
-export function sampleLinearRgbFromRgb16Region(
+export function sampleLinearRgbFromRgb16RegionAtSize(
   decoded: DecodedRgbImage16,
   sourceRect: { x: number; y: number; w: number; h: number },
   rotationDegrees: number,
-  targetPixels = ANALYSIS_SAMPLE_TARGET_PIXELS,
+  sampleWidth: number,
+  sampleHeight: number,
 ): LinearRgbSample {
   const sw = Number.isFinite(sourceRect.w) && sourceRect.w > 0 ? sourceRect.w : 1;
   const sh = Number.isFinite(sourceRect.h) && sourceRect.h > 0 ? sourceRect.h : 1;
-  const sampleSize = analysisSampleDimensions(sw, sh, targetPixels);
-  const sampleW = sampleSize.width;
-  const sampleH = sampleSize.height;
+  const sampleW = Math.max(1, Math.round(Number.isFinite(sampleWidth) ? sampleWidth : 1));
+  const sampleH = Math.max(1, Math.round(Number.isFinite(sampleHeight) ? sampleHeight : 1));
   const data = new Float32Array(sampleW * sampleH * 3);
   const valid = new Uint8Array(sampleW * sampleH);
   const scaleX = sampleW / sw;
@@ -392,6 +403,24 @@ export function sampleLinearRgbFromRgb16Region(
   return { data, width: sampleW, height: sampleH, valid };
 }
 
+export function sampleLinearRgbFromRgb16Region(
+  decoded: DecodedRgbImage16,
+  sourceRect: { x: number; y: number; w: number; h: number },
+  rotationDegrees: number,
+  targetPixels = ANALYSIS_SAMPLE_TARGET_PIXELS,
+): LinearRgbSample {
+  const sw = Number.isFinite(sourceRect.w) && sourceRect.w > 0 ? sourceRect.w : 1;
+  const sh = Number.isFinite(sourceRect.h) && sourceRect.h > 0 ? sourceRect.h : 1;
+  const sampleSize = analysisSampleDimensions(sw, sh, targetPixels);
+  return sampleLinearRgbFromRgb16RegionAtSize(
+    decoded,
+    sourceRect,
+    rotationDegrees,
+    sampleSize.width,
+    sampleSize.height,
+  );
+}
+
 function analysisSampleCacheKey(
   sourceRect: { x: number; y: number; w: number; h: number },
   rotationDegrees: number,
@@ -406,6 +435,57 @@ function analysisSampleCacheKey(
     normalizedRotation,
     targetPixels,
   ].join("|");
+}
+
+function renderedSampleCacheKey(
+  sourceRect: { x: number; y: number; w: number; h: number },
+  rotationDegrees: number,
+  width: number,
+  height: number,
+): string {
+  const normalizedRotation = normalizeRotationDegrees(rotationDegrees);
+  return [
+    sourceRect.x,
+    sourceRect.y,
+    sourceRect.w,
+    sourceRect.h,
+    normalizedRotation,
+    Math.max(1, Math.round(width)),
+    Math.max(1, Math.round(height)),
+  ].join("|");
+}
+
+export function getRenderedLinearRgbSample(
+  decoded: DecodedRgbImage16,
+  sourceRect: { x: number; y: number; w: number; h: number },
+  rotationDegrees: number,
+  width: number,
+  height: number,
+): LinearRgbSample {
+  const normalizedRotation = normalizeRotationDegrees(rotationDegrees);
+  const sampleWidth = Math.max(1, Math.round(Number.isFinite(width) ? width : 1));
+  const sampleHeight = Math.max(1, Math.round(Number.isFinite(height) ? height : 1));
+  const key = renderedSampleCacheKey(sourceRect, normalizedRotation, sampleWidth, sampleHeight);
+  const entries = RGB16_RENDERED_SAMPLE_CACHE.get(decoded) ?? [];
+  const cachedIndex = entries.findIndex((entry) => entry.key === key);
+  if (cachedIndex >= 0) {
+    const [cached] = entries.splice(cachedIndex, 1);
+    entries.unshift(cached);
+    return cached.sample;
+  }
+  const sample = sampleLinearRgbFromRgb16RegionAtSize(
+    decoded,
+    sourceRect,
+    normalizedRotation,
+    sampleWidth,
+    sampleHeight,
+  );
+  entries.unshift({ key, sample });
+  if (entries.length > RENDERED_SAMPLE_CACHE_MAX_ENTRIES) {
+    entries.length = RENDERED_SAMPLE_CACHE_MAX_ENTRIES;
+  }
+  RGB16_RENDERED_SAMPLE_CACHE.set(decoded, entries);
+  return sample;
 }
 
 export function getAnalysisLinearRgbSample(

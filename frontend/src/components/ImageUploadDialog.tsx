@@ -74,6 +74,7 @@ import {
   decodeStoredRgb16Channel,
   encodeStoredRgb16Channel,
   getAnalysisLinearRgbSample,
+  getRenderedLinearRgbSample,
   inverseRotatePoint,
   normalizeRotationDegrees,
 } from "./image-editor/sampling";
@@ -89,7 +90,7 @@ import {
   percentileFromValues,
   percentilesFromValues,
 } from "./image-editor/analysis";
-import { renderAdjustedRgb16ToCanvas } from "./image-editor/render";
+import { renderAdjustedLinearRgbSampleToCanvas, renderAdjustedRgb16ToCanvas } from "./image-editor/render";
 export { __imageEditorCharacterization } from "./image-editor/characterization";
 
 
@@ -4035,6 +4036,7 @@ export function ImageEditDialog({
     Math.min(100, Math.max(1, Math.round(initialParams.resizePercent))),
   );
   const [sharpen, setSharpen] = useState<number>(clampSharpen(initialParams.sharpen ?? 0));
+  const [previewSharpenSuppressed, setPreviewSharpenSuppressed] = useState(false);
   const [textMode, setTextMode] = useState(false);
   const [textOverlays, setTextOverlays] = useState<ImageTextOverlay[]>(
     normalizeTextOverlays(initialParams.textOverlays),
@@ -5142,6 +5144,23 @@ export function ImageEditDialog({
     </div>
   );
 
+  const beginPreviewFastSliderInteraction = useCallback(() => {
+    setPreviewSharpenSuppressed(true);
+  }, []);
+
+  useEffect(() => {
+    if (!previewSharpenSuppressed) return;
+    const finishPreviewFastSliderInteraction = () => {
+      setPreviewSharpenSuppressed(false);
+    };
+    window.addEventListener("pointerup", finishPreviewFastSliderInteraction);
+    window.addEventListener("pointercancel", finishPreviewFastSliderInteraction);
+    return () => {
+      window.removeEventListener("pointerup", finishPreviewFastSliderInteraction);
+      window.removeEventListener("pointercancel", finishPreviewFastSliderInteraction);
+    };
+  }, [previewSharpenSuppressed]);
+
   const overlayPath = useMemo(() => {
     return {
       outer: `M${displayed.x},${displayed.y} H${displayed.x + displayed.w} V${displayed.y + displayed.h} H${displayed.x} Z`,
@@ -5157,6 +5176,7 @@ export function ImageEditDialog({
     const height = Math.max(1, Math.round(displayed.h));
     const previewColorProfile: ImageEditOutputColorProfile = "srgb";
     const includeMosaic = !eyedropperMode && !rotationMode && mosaicRegions.length > 0 && !!natural?.w;
+    const previewSharpen = previewSharpenSuppressed ? 0 : sharpen;
     const renderedPreviewKey = JSON.stringify([
       width,
       height,
@@ -5171,7 +5191,7 @@ export function ImageEditDialog({
       sigmoid,
       vibrance,
       saturation,
-      sharpen,
+      previewSharpen,
       includeMosaic ? mosaicRegions : null,
     ]);
 
@@ -5195,11 +5215,23 @@ export function ImageEditDialog({
       if (canvas.width !== width) canvas.width = width;
       if (canvas.height !== height) canvas.height = height;
 
-      renderAdjustedRgb16ToCanvas(
-        canvas,
+      const previewSourceRect = { x: 0, y: 0, w: decoded.width, h: decoded.height };
+      const previewSourceSample = getRenderedLinearRgbSample(
         decoded,
-        { x: 0, y: 0, w: decoded.width, h: decoded.height },
+        previewSourceRect,
         rotationDegrees,
+        width,
+        height,
+      );
+      const previewContextSample = getAnalysisLinearRgbSample(
+        decoded,
+        previewSourceRect,
+        rotationDegrees,
+      );
+      renderAdjustedLinearRgbSampleToCanvas(
+        canvas,
+        previewSourceSample,
+        previewContextSample,
         temperature,
         tint,
         exposureEv,
@@ -5211,7 +5243,7 @@ export function ImageEditDialog({
         saturation,
         previewColorProfile,
       );
-      applySharpenToCanvas(canvas, sharpen, previewColorProfile);
+      applySharpenToCanvas(canvas, previewSharpen, previewColorProfile);
       if (includeMosaic) {
         applyMosaicRectsToCanvas(
           canvas,
@@ -5248,6 +5280,7 @@ export function ImageEditDialog({
     vibrance,
     saturation,
     sharpen,
+    previewSharpenSuppressed,
     rotationDegrees,
     rotationMode,
     natural,
@@ -6722,6 +6755,7 @@ export function ImageEditDialog({
                 </span>
                 <input
                   type="range"
+                  onPointerDown={beginPreviewFastSliderInteraction}
                   min={-100}
                   max={100}
                   step={1}
@@ -6736,6 +6770,7 @@ export function ImageEditDialog({
                 <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{tint >= 0 ? "+" : ""}{tint}</span>
                 <input
                   type="range"
+                  onPointerDown={beginPreviewFastSliderInteraction}
                   min={-100}
                   max={100}
                   step={1}
@@ -6777,6 +6812,7 @@ export function ImageEditDialog({
                 <input
                   aria-label="Exposure"
                   type="range"
+                  onPointerDown={beginPreviewFastSliderInteraction}
                   min={-5}
                   max={5}
                   step={0.1}
@@ -6803,6 +6839,7 @@ export function ImageEditDialog({
                 <input
                   aria-label="Logarithm"
                   type="range"
+                  onPointerDown={beginPreviewFastSliderInteraction}
                   min={-16}
                   max={16}
                   step={0.1}
@@ -6829,6 +6866,7 @@ export function ImageEditDialog({
                 <input
                   aria-label="Sigmoid"
                   type="range"
+                  onPointerDown={beginPreviewFastSliderInteraction}
                   min={-10}
                   max={10}
                   step={0.1}
@@ -6855,6 +6893,7 @@ export function ImageEditDialog({
                 <input
                   aria-label="Shadow"
                   type="range"
+                  onPointerDown={beginPreviewFastSliderInteraction}
                   min={-100}
                   max={100}
                   step={1}
@@ -6870,6 +6909,7 @@ export function ImageEditDialog({
                 <input
                   aria-label="Highlight"
                   type="range"
+                  onPointerDown={beginPreviewFastSliderInteraction}
                   min={-100}
                   max={100}
                   step={1}
@@ -6888,6 +6928,7 @@ export function ImageEditDialog({
                 <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{vibrance >= 0 ? "+" : ""}{vibrance}</span>
                 <input
                   type="range"
+                  onPointerDown={beginPreviewFastSliderInteraction}
                   min={-100}
                   max={100}
                   step={1}
@@ -6902,6 +6943,7 @@ export function ImageEditDialog({
                 <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{saturation >= 0 ? "+" : ""}{saturation}</span>
                 <input
                   type="range"
+                  onPointerDown={beginPreviewFastSliderInteraction}
                   min={-100}
                   max={100}
                   step={1}
@@ -6935,6 +6977,7 @@ export function ImageEditDialog({
                 <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{resizePercent}%</span>
                 <input
                   type="range"
+                  onPointerDown={beginPreviewFastSliderInteraction}
                   aria-label="Resize"
                   min={1}
                   max={100}
@@ -6950,6 +6993,7 @@ export function ImageEditDialog({
                 <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{sharpen}</span>
                 <input
                   type="range"
+                  onPointerDown={beginPreviewFastSliderInteraction}
                   aria-label="Sharpen"
                   min={0}
                   max={3}

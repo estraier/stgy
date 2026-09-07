@@ -151,6 +151,64 @@ function renderToBytes(
   return captured;
 }
 
+function renderCachedPreviewToBytes(
+  decoded: ReturnType<typeof makeSyntheticDecodedRgb16>,
+  sourceRect: { x: number; y: number; w: number; h: number },
+  rotationDegrees: number,
+  temperature: number,
+  tint: number,
+  exposureEv: number,
+  shadow: number,
+  highlight: number,
+  scaledLog: number,
+  sigmoid: number,
+  vibrance: number,
+  saturation: number,
+  width = 4,
+  height = 3,
+): Uint8ClampedArray {
+  let captured = new Uint8ClampedArray();
+  const context = {
+    createImageData: (w: number, h: number) => ({
+      data: new Uint8ClampedArray(w * h * 4),
+      width: w,
+      height: h,
+    }),
+    putImageData: (imageData: { data: Uint8ClampedArray }) => {
+      captured = new Uint8ClampedArray(imageData.data);
+    },
+  };
+  const canvas = {
+    width,
+    height,
+    getContext: () => context,
+  } as unknown as HTMLCanvasElement;
+  const renderedSample = imageEditor.getRenderedLinearRgbSample(
+    decoded,
+    sourceRect,
+    rotationDegrees,
+    width,
+    height,
+  );
+  const contextSample = imageEditor.getAnalysisLinearRgbSample(decoded, sourceRect, rotationDegrees);
+  imageEditor.renderAdjustedLinearRgbSampleToCanvas(
+    canvas,
+    renderedSample,
+    contextSample,
+    temperature,
+    tint,
+    exposureEv,
+    shadow,
+    highlight,
+    scaledLog,
+    sigmoid,
+    vibrance,
+    saturation,
+    "srgb",
+  );
+  return captured;
+}
+
 describe("image editor tone characterization", () => {
   test("freezes the current Shadow curves", () => {
     const points = [0, 0.01, 0.02, 0.05, 0.1, 0.15, 0.2, 0.3, 0.4];
@@ -251,6 +309,18 @@ describe("image editor RGB16 characterization", () => {
     const differentRotation = imageEditor.getAnalysisLinearRgbSample(decoded, sourceRect, 18);
     expect(second).toBe(first);
     expect(differentRotation).not.toBe(first);
+  });
+
+  test("reuses preview-resolution rendered linear RGB samples for identical geometry", () => {
+    const decoded = makeSyntheticDecodedRgb16();
+    const sourceRect = { x: 0, y: 0, w: 4, h: 3 };
+    const first = imageEditor.getRenderedLinearRgbSample(decoded, sourceRect, 17, 140, 105);
+    const second = imageEditor.getRenderedLinearRgbSample(decoded, sourceRect, 17, 140, 105);
+    const differentSize = imageEditor.getRenderedLinearRgbSample(decoded, sourceRect, 17, 141, 105);
+    expect(second).toBe(first);
+    expect(differentSize).not.toBe(first);
+    expect(first.width).toBe(140);
+    expect(first.height).toBe(105);
   });
 
   test("avoids sorting endpoint-only percentiles and sorts once for percentile sets", () => {
@@ -397,6 +467,14 @@ describe("image editor render characterization", () => {
       0,
     );
     expect(fnv1a32(bytes)).toBe("a1950ca6");
+  });
+
+  test("matches direct preview rendering when using the preview-resolution linear RGB cache", () => {
+    const decoded = makeSyntheticDecodedRgb16();
+    const sourceRect = { x: 0.5, y: 0.25, w: 3, h: 2.5 };
+    const direct = renderToBytes(decoded, sourceRect, 33, 5, -4, 0.3, -20, 15, 0.4, 0.8, 12, -6, 7, 5);
+    const cached = renderCachedPreviewToBytes(decoded, sourceRect, 33, 5, -4, 0.3, -20, 15, 0.4, 0.8, 12, -6, 7, 5);
+    expect(Array.from(cached)).toEqual(Array.from(direct));
   });
 });
 

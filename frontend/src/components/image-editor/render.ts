@@ -1,4 +1,4 @@
-import type { DecodedRgbImage16, ImageEditOutputColorProfile } from "./types";
+import type { DecodedRgbImage16, ImageEditOutputColorProfile, LinearRgbSample } from "./types";
 import { createCanvasImageData, getCanvas2dContext } from "./canvas";
 import { convertLinearProPhotoToOutputRgb } from "./color";
 import { buildColorAdjustmentContextFromLinearRgbSample } from "./analysis";
@@ -12,6 +12,66 @@ import type { LinearRgbBuffer } from "./sampling";
 import { applyColorAdjustmentsLinearRgb, linearChannelToSrgb } from "./tone";
 
 // Pixel rendering is kept separate from React/UI state so later hot-loop optimization is isolated.
+
+export function renderAdjustedLinearRgbSampleToCanvas(
+  canvas: HTMLCanvasElement | OffscreenCanvas,
+  renderedSample: LinearRgbSample,
+  contextSample: LinearRgbSample,
+  temperature: number,
+  tint: number,
+  exposureEv: number,
+  shadow: number,
+  highlight: number,
+  scaledLog: number,
+  sigmoid: number,
+  vibrance: number,
+  saturation: number,
+  outputColorProfile: ImageEditOutputColorProfile = "srgb",
+) {
+  const ctx = getCanvas2dContext(canvas, outputColorProfile);
+  if (!ctx) throw new Error("2D context unavailable");
+  const width = Math.max(1, canvas.width);
+  const height = Math.max(1, canvas.height);
+  const imageData = createCanvasImageData(ctx, width, height, outputColorProfile);
+  const output = imageData.data;
+  const context = buildColorAdjustmentContextFromLinearRgbSample(
+    contextSample,
+    temperature,
+    tint,
+    exposureEv,
+    shadow,
+    highlight,
+    scaledLog,
+    sigmoid,
+    vibrance,
+    saturation,
+    true,
+  );
+  const data = renderedSample.data;
+  const valid = renderedSample.valid;
+  const pixelCount = Math.floor(data.length / 3);
+  let di = 0;
+  for (let pixel = 0; pixel < pixelCount; pixel++, di += 4) {
+    if (valid && !valid[pixel]) {
+      output[di] = 128;
+      output[di + 1] = 128;
+      output[di + 2] = 128;
+      output[di + 3] = 255;
+      continue;
+    }
+    const si = pixel * 3;
+    let r = data[si] ?? 0;
+    let g = data[si + 1] ?? 0;
+    let b = data[si + 2] ?? 0;
+    [r, g, b] = applyColorAdjustmentsLinearRgb(r, g, b, context);
+    [r, g, b] = convertLinearProPhotoToOutputRgb(r, g, b, outputColorProfile);
+    output[di] = linearChannelToSrgb(r);
+    output[di + 1] = linearChannelToSrgb(g);
+    output[di + 2] = linearChannelToSrgb(b);
+    output[di + 3] = 255;
+  }
+  ctx.putImageData(imageData, 0, 0);
+}
 
 export function renderAdjustedRgb16ToCanvas(
   canvas: HTMLCanvasElement | OffscreenCanvas,
