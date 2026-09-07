@@ -7,7 +7,7 @@ import { Move, Palette, Pipette, RotateCw } from "lucide-react";
 import { formatBytes } from "@/utils/format";
 import {
   buildRawLensfunCorrection,
-  lensfunVignettingGain,
+  lensfunVignettingGainInto,
   summarizeLensfunCorrection,
   type LensfunCorrection,
   type RawLensMetadata,
@@ -60,7 +60,6 @@ import {
   rolloffParams,
   srgbChannelToLinear,
   whiteBalanceGains,
-  type ColorAdjustmentContext,
 } from "./image-editor/tone";
 import {
   PROPHOTO_LUMA_B,
@@ -91,6 +90,14 @@ import {
   percentilesFromValues,
 } from "./image-editor/analysis";
 import { renderAdjustedLinearRgbSampleToCanvas, renderAdjustedRgb16ToCanvas } from "./image-editor/render";
+import {
+  applyRawColorPass,
+  applyRawFallbackBaselinePass,
+  applyRawMatchedTonePass,
+  type RawColorPassPlan,
+  type RawMatchedTonePlan,
+  type RawVignettingMap,
+} from "./image-editor/raw-development-core";
 export { __imageEditorCharacterization } from "./image-editor/characterization";
 
 
@@ -462,16 +469,10 @@ const RAW_DECODE_SETTINGS: LibRawSettingsLike = {
   userQual: 11,
 };
 
-const RAW_BASELINE_PERCENTILE = 98;
-const RAW_BASELINE_TARGET = 0.9;
 const RAW_DEVELOPED_LINEAR_RANGE_MAX = 2;
-const RAW_HEADROOM_HISTOGRAM_STEP = 0.1;
-const RAW_HEADROOM_HISTOGRAM_MAX = 2;
 const RAW_TONE_SLOPE_EPSILON = 1e-5;
 const RAW_MEDIAN_DENOISE_WEAK_ISO = 800;
 const RAW_MEDIAN_DENOISE_STRONG_ISO = 3200;
-const RAW_BASELINE_ROLLOFF_PERCENTILE = 99.8;
-const RAW_BASELINE_ROLLOFF_ASYMPTOTIC = 0.5;
 const RAW_THUMBNAIL_MATCH_ITERATIONS = 20;
 const RAW_THUMBNAIL_MATCH_SEARCH_STEPS = 24;
 const RAW_THUMBNAIL_MATCH_GAIN_MAX = 1 << 16;
@@ -1676,6 +1677,16 @@ type RawBaselineApplicationResult = {
   headroom: RawDevelopmentHeadroomStatistics;
 };
 
+type RawMatchedTonePlanningResult = {
+  plan: RawMatchedTonePlan;
+  luminance: RawDevelopmentLuminanceSettings;
+};
+
+type RawMatchedColorPlanningResult = {
+  settings: RawDevelopmentSaturationSettings;
+  pass: RawColorPassPlan | null;
+};
+
 type RawDevelopmentMemoryUsage = {
   bufferBytes: number;
   heapBytes?: number;
@@ -2222,68 +2233,6 @@ function transformedRawLumaValue(
   return rawBaselineToneCurveValue(rawLuma * gain, scaledLog, sigmoid);
 }
 
-function transformedRawLumaValueExtended(
-  rawLuma: number,
-  gain: number,
-  scaledLog: number,
-  sigmoid: number,
-  toneSlopeAtWhite: number,
-): number {
-  const exposed = rawLuma * gain;
-  if (exposed <= 1) return rawBaselineToneCurveValue(exposed, scaledLog, sigmoid);
-  return 1 + toneSlopeAtWhite * (exposed - 1);
-}
-
-function createRawHeadroomStatisticsAccumulator(): {
-  bins: Uint32Array;
-  overflowCount: number;
-  pixelCount: number;
-  maxRgb: number;
-} {
-  const binCount = Math.round(RAW_HEADROOM_HISTOGRAM_MAX / RAW_HEADROOM_HISTOGRAM_STEP);
-  return {
-    bins: new Uint32Array(binCount),
-    overflowCount: 0,
-    pixelCount: 0,
-    maxRgb: 0,
-  };
-}
-
-function recordRawHeadroomPixel(
-  accumulator: ReturnType<typeof createRawHeadroomStatisticsAccumulator>,
-  r: number,
-  g: number,
-  b: number,
-): void {
-  const maxRgb = Math.max(r, g, b);
-  if (!Number.isFinite(maxRgb)) return;
-  accumulator.pixelCount++;
-  accumulator.maxRgb = Math.max(accumulator.maxRgb, maxRgb);
-  if (maxRgb > RAW_HEADROOM_HISTOGRAM_MAX) {
-    accumulator.overflowCount++;
-    return;
-  }
-  const normalized = Math.max(0, maxRgb);
-  const index = Math.min(
-    accumulator.bins.length - 1,
-    Math.floor(normalized / RAW_HEADROOM_HISTOGRAM_STEP),
-  );
-  accumulator.bins[Math.max(0, index)]++;
-}
-
-function finishRawHeadroomStatistics(
-  accumulator: ReturnType<typeof createRawHeadroomStatisticsAccumulator>,
-): RawDevelopmentHeadroomStatistics {
-  return {
-    step: RAW_HEADROOM_HISTOGRAM_STEP,
-    histogramMax: RAW_HEADROOM_HISTOGRAM_MAX,
-    bins: Array.from(accumulator.bins),
-    overflowCount: accumulator.overflowCount,
-    pixelCount: accumulator.pixelCount,
-    maxRgb: accumulator.maxRgb,
-  };
-}
-
 function solveRawThumbnailMatchGain(
   rawP98: number,
   scaledLog: number,
@@ -2370,10 +2319,10 @@ function solveRawThumbnailMatchSigmoid(
   );
 }
 
-function applyRawThumbnailMatchedBaseline(
+function planRawThumbnailMatchedBaseline(
   decoded: DecodedRgbImage16,
   thumbnailPercentiles: DebugPercentileValues,
-): RawBaselineApplicationResult | null {
+): RawMatchedTonePlanningResult | null {
   const p25Index = DEBUG_PERCENTILES.indexOf(25);
   const p50Index = DEBUG_PERCENTILES.indexOf(50);
   const p75Index = DEBUG_PERCENTILES.indexOf(75);
@@ -2409,11 +2358,6 @@ function applyRawThumbnailMatchedBaseline(
   }
 
   const targetContrast = rawThumbnailContrast(targetP25, targetP75);
-
-  // All RAW baseline operations are monotonic functions of linear luminance and
-  // RGB is scaled only by Y'/Y. Pixel luminance ordering therefore never changes,
-  // so P25/P50/P75/P98 are selected once and the iterations are scalar-only.
-  // Under-relax each coupled update to suppress oscillation between the three targets.
   let gain = 1;
   let scaledLog = 0;
   let sigmoid = 0;
@@ -2442,58 +2386,35 @@ function applyRawThumbnailMatchedBaseline(
     sigmoid += RAW_THUMBNAIL_MATCH_SIGMOID_RELAXATION * relaxationScale * (targetSigmoid - sigmoid);
   }
 
-  const data = decoded.data;
-  const pixelCount = decoded.width * decoded.height;
-  const sourceLinearRangeMax = decoded.linearRangeMax;
-  const destinationLinearRangeMax = RAW_DEVELOPED_LINEAR_RANGE_MAX;
   const toneSlopeAtWhite = rawBaselineToneSlopeAtWhite(scaledLog, sigmoid);
-  const headroom = createRawHeadroomStatisticsAccumulator();
-  for (let pixel = 0; pixel < pixelCount; pixel++) {
-    const i = pixel * 3;
-    const x = pixel % decoded.width;
-    const y = Math.floor(pixel / decoded.width);
-    const [rGain, gGain, bGain] = pendingLensfunVignettingGain(decoded, x, y);
-    const r = decodeStoredRgb16Channel(data[i] ?? 0, decoded.transfer, sourceLinearRangeMax) * rGain;
-    const g = decodeStoredRgb16Channel(data[i + 1] ?? 0, decoded.transfer, sourceLinearRangeMax) * gGain;
-    const b = decodeStoredRgb16Channel(data[i + 2] ?? 0, decoded.transfer, sourceLinearRangeMax) * bGain;
-    const luma = PROPHOTO_LUMA_R * r + PROPHOTO_LUMA_G * g + PROPHOTO_LUMA_B * b;
-    if (!(luma > 1e-12)) {
-      data[i] = 0;
-      data[i + 1] = 0;
-      data[i + 2] = 0;
-      recordRawHeadroomPixel(headroom, 0, 0, 0);
-      continue;
-    }
-    const adjustedLuma = transformedRawLumaValueExtended(
-      luma,
-      gain,
-      scaledLog,
-      sigmoid,
-      toneSlopeAtWhite,
-    );
-    const scale = adjustedLuma / luma;
-    const adjustedR = r * scale;
-    const adjustedG = g * scale;
-    const adjustedB = b * scale;
-    // Auto Color changes hue/saturation while preserving HSV Value, so max(R,G,B)
-    // remains unchanged. Recording here therefore represents the final developed
-    // headroom while still seeing values that the 0..linearRangeMax buffer will clip.
-    recordRawHeadroomPixel(headroom, adjustedR, adjustedG, adjustedB);
-    data[i] = encodeStoredRgb16Channel(adjustedR, decoded.transfer, destinationLinearRangeMax);
-    data[i + 1] = encodeStoredRgb16Channel(adjustedG, decoded.transfer, destinationLinearRangeMax);
-    data[i + 2] = encodeStoredRgb16Channel(adjustedB, decoded.transfer, destinationLinearRangeMax);
-  }
-  decoded.linearRangeMax = destinationLinearRangeMax;
-  finishLensfunVignettingBake(decoded);
   return {
+    plan: { gain, scaledLog, sigmoid, toneSlopeAtWhite },
     luminance: {
       exposureEv: Math.log2(Math.max(gain, Number.MIN_VALUE)),
       logarithm: scaledLog,
       sigmoid,
       toneSlopeAtWhite,
     },
-    headroom: finishRawHeadroomStatistics(headroom),
   };
+}
+
+function applyRawThumbnailMatchedBaseline(
+  decoded: DecodedRgbImage16,
+  thumbnailPercentiles: DebugPercentileValues,
+): RawBaselineApplicationResult | null {
+  const planned = planRawThumbnailMatchedBaseline(decoded, thumbnailPercentiles);
+  if (!planned) return null;
+  const headroom = applyRawMatchedTonePass(
+    decoded.data,
+    decoded.width,
+    decoded.height,
+    decoded.linearRangeMax,
+    rawPendingVignettingMap(decoded),
+    planned.plan,
+  );
+  decoded.linearRangeMax = RAW_DEVELOPED_LINEAR_RANGE_MAX;
+  finishLensfunVignettingBake(decoded);
+  return { luminance: planned.luminance, headroom };
 }
 
 function buildCentralValueMask(
@@ -2688,29 +2609,11 @@ function solveRawThumbnailMatchColorParameter(
     : upper;
 }
 
-function applyColorAdjustmentsLinearRgbPreservingExtendedRange(
-  r: number,
-  g: number,
-  b: number,
-  context: ColorAdjustmentContext,
-): [number, number, number] {
-  const scale = Math.max(1, r, g, b);
-  const [adjustedR, adjustedG, adjustedB] = applyColorAdjustmentsLinearRgb(
-    r / scale,
-    g / scale,
-    b / scale,
-    context,
-  );
-  return [adjustedR * scale, adjustedG * scale, adjustedB * scale];
-}
-
-function applyRawThumbnailMatchedColor(
-  decoded: DecodedRgbImage16,
+function planRawThumbnailMatchedColor(
+  rawLinearProPhotoSample: Float32Array,
   thumbnailLinearSrgbSample: Float32Array,
-): RawDevelopmentSaturationSettings | null {
-  if (!thumbnailLinearSrgbSample.length) return null;
-  const rawLinearProPhotoSample = sampleRawThumbnailMatchLinearRgbFromRgb16(decoded);
-  if (!rawLinearProPhotoSample.length) return null;
+): RawMatchedColorPlanningResult | null {
+  if (!thumbnailLinearSrgbSample.length || !rawLinearProPhotoSample.length) return null;
 
   const targetP95 = hsvSaturationPercentileFromLinearSrgbSample(
     thumbnailLinearSrgbSample,
@@ -2749,8 +2652,9 @@ function applyRawThumbnailMatchedColor(
   }
   vibrance = clampColorAdjustment(vibrance);
 
+  const settings = { saturation, vibrance };
   if (Math.abs(saturation) < 1e-6 && Math.abs(vibrance) < 1e-6) {
-    return { saturation, vibrance };
+    return { settings, pass: null };
   }
   const context = colorAdjustmentContextFromLinearRgbSample(
     rawLinearProPhotoSample,
@@ -2764,100 +2668,53 @@ function applyRawThumbnailMatchedColor(
     vibrance,
     saturation,
   );
-  const data = decoded.data;
-  for (let i = 0; i < data.length; i += 3) {
-    const [r, g, b] = applyColorAdjustmentsLinearRgbPreservingExtendedRange(
-      decodeStoredRgb16Channel(data[i] ?? 0, decoded.transfer, decoded.linearRangeMax),
-      decodeStoredRgb16Channel(data[i + 1] ?? 0, decoded.transfer, decoded.linearRangeMax),
-      decodeStoredRgb16Channel(data[i + 2] ?? 0, decoded.transfer, decoded.linearRangeMax),
-      context,
-    );
-    data[i] = encodeStoredRgb16Channel(r, decoded.transfer, decoded.linearRangeMax);
-    data[i + 1] = encodeStoredRgb16Channel(g, decoded.transfer, decoded.linearRangeMax);
-    data[i + 2] = encodeStoredRgb16Channel(b, decoded.transfer, decoded.linearRangeMax);
+  return {
+    settings,
+    pass: {
+      rolloff: context.rolloff,
+      hasSaturation: context.hasSaturation,
+      hasVibrance: context.hasVibrance,
+      saturationFactor: context.saturationFactor,
+      vibranceFactor: context.vibranceFactor,
+      saturationRolloff: context.saturationRolloff,
+    },
+  };
+}
+
+function applyRawThumbnailMatchedColor(
+  decoded: DecodedRgbImage16,
+  thumbnailLinearSrgbSample: Float32Array,
+): RawDevelopmentSaturationSettings | null {
+  const rawLinearProPhotoSample = sampleRawThumbnailMatchLinearRgbFromRgb16(decoded);
+  const planned = planRawThumbnailMatchedColor(rawLinearProPhotoSample, thumbnailLinearSrgbSample);
+  if (!planned) return null;
+  if (planned.pass) {
+    applyRawColorPass(decoded.data, decoded.linearRangeMax, planned.pass);
   }
-  return { saturation, vibrance };
+  return planned.settings;
 }
 
 function applyRawBaselineExposure(
   decoded: DecodedRgbImage16,
 ): RawBaselineApplicationResult | null {
-  const data = decoded.data;
-  const rmsHistogram = new Uint32Array(65536);
-  const channelHistogram = new Uint32Array(65536);
-  const pixelCount = decoded.width * decoded.height;
-  if (pixelCount <= 0) return null;
-
-  const sourceLinearRangeMax = decoded.linearRangeMax;
-  for (let pixel = 0; pixel < pixelCount; pixel++) {
-    const i = pixel * 3;
-    const x = pixel % decoded.width;
-    const y = Math.floor(pixel / decoded.width);
-    const [rGain, gGain, bGain] = pendingLensfunVignettingGain(decoded, x, y);
-    const r = decodeStoredRgb16Channel(data[i] ?? 0, decoded.transfer, sourceLinearRangeMax) * rGain;
-    const g = decodeStoredRgb16Channel(data[i + 1] ?? 0, decoded.transfer, sourceLinearRangeMax) * gGain;
-    const b = decodeStoredRgb16Channel(data[i + 2] ?? 0, decoded.transfer, sourceLinearRangeMax) * bGain;
-    const rms = Math.sqrt((r * r + g * g + b * b) / 3);
-    const rmsLevel = Math.min(65535, Math.max(0, Math.round(rms * 65535)));
-    rmsHistogram[rmsLevel]++;
-    channelHistogram[Math.min(65535, Math.max(0, Math.round(r * 65535)))]++;
-    channelHistogram[Math.min(65535, Math.max(0, Math.round(g * 65535)))]++;
-    channelHistogram[Math.min(65535, Math.max(0, Math.round(b * 65535)))]++;
-  }
-
-  const p98 = histogramPercentile16(
-    rmsHistogram,
-    pixelCount,
-    RAW_BASELINE_PERCENTILE,
-  ) / 65535;
-  if (!(p98 > 0)) return null;
-
-  const factor = RAW_BASELINE_TARGET / p98;
-  const channelMax = histogramPercentile16(
-    channelHistogram,
-    pixelCount * 3,
-    RAW_BASELINE_ROLLOFF_PERCENTILE,
-  ) / 65535 * factor;
-  const rolloff = rolloffParams(
-    channelMax,
-    RAW_BASELINE_ROLLOFF_ASYMPTOTIC,
-    4,
+  const result = applyRawFallbackBaselinePass(
+    decoded.data,
+    decoded.width,
+    decoded.height,
+    decoded.linearRangeMax,
+    rawPendingVignettingMap(decoded),
   );
-
-  const destinationLinearRangeMax = RAW_DEVELOPED_LINEAR_RANGE_MAX;
-  const headroom = createRawHeadroomStatisticsAccumulator();
-  for (let pixel = 0; pixel < pixelCount; pixel++) {
-    const i = pixel * 3;
-    const x = pixel % decoded.width;
-    const y = Math.floor(pixel / decoded.width);
-    const [rGain, gGain, bGain] = pendingLensfunVignettingGain(decoded, x, y);
-    const r = applyRolloffScalar(
-      decodeStoredRgb16Channel(data[i] ?? 0, decoded.transfer, sourceLinearRangeMax) * rGain * factor,
-      rolloff,
-    );
-    const g = applyRolloffScalar(
-      decodeStoredRgb16Channel(data[i + 1] ?? 0, decoded.transfer, sourceLinearRangeMax) * gGain * factor,
-      rolloff,
-    );
-    const b = applyRolloffScalar(
-      decodeStoredRgb16Channel(data[i + 2] ?? 0, decoded.transfer, sourceLinearRangeMax) * bGain * factor,
-      rolloff,
-    );
-    recordRawHeadroomPixel(headroom, r, g, b);
-    data[i] = encodeStoredRgb16Channel(r, decoded.transfer, destinationLinearRangeMax);
-    data[i + 1] = encodeStoredRgb16Channel(g, decoded.transfer, destinationLinearRangeMax);
-    data[i + 2] = encodeStoredRgb16Channel(b, decoded.transfer, destinationLinearRangeMax);
-  }
-  decoded.linearRangeMax = destinationLinearRangeMax;
+  if (!result) return null;
+  decoded.linearRangeMax = RAW_DEVELOPED_LINEAR_RANGE_MAX;
   finishLensfunVignettingBake(decoded);
   return {
     luminance: {
-      exposureEv: Math.log2(Math.max(factor, Number.MIN_VALUE)),
+      exposureEv: result.exposureEv,
       logarithm: 0,
       sigmoid: 0,
       toneSlopeAtWhite: 1,
     },
-    headroom: finishRawHeadroomStatistics(headroom),
+    headroom: result.headroom,
   };
 }
 
@@ -2931,19 +2788,23 @@ function sampleRawThumbnailMatchLinearRgbFromRgb16(decoded: DecodedRgbImage16): 
   const sampleW = Math.max(1, Math.round(decoded.width * scale));
   const sampleH = Math.max(1, Math.round(decoded.height * scale));
   const output = new Float32Array(sampleW * sampleH * 3);
+  const vignettingGain: [number, number, number] = [1, 1, 1];
   for (let y = 0; y < sampleH; y++) {
     const sy = Math.min(decoded.height - 1, Math.floor((y + 0.5) * decoded.height / sampleH));
     for (let x = 0; x < sampleW; x++) {
       const sx = Math.min(decoded.width - 1, Math.floor((x + 0.5) * decoded.width / sampleW));
       const sourceIndex = (sy * decoded.width + sx) * 3;
       const targetIndex = (y * sampleW + x) * 3;
-      const [rGain, gGain, bGain] = pendingLensfunVignettingGain(decoded, sx, sy);
+      pendingLensfunVignettingGainInto(decoded, sx, sy, vignettingGain);
       output[targetIndex] =
-        decodeStoredRgb16Channel(decoded.data[sourceIndex] ?? 0, decoded.transfer, decoded.linearRangeMax) * rGain;
+        decodeStoredRgb16Channel(decoded.data[sourceIndex] ?? 0, decoded.transfer, decoded.linearRangeMax)
+        * vignettingGain[0];
       output[targetIndex + 1] =
-        decodeStoredRgb16Channel(decoded.data[sourceIndex + 1] ?? 0, decoded.transfer, decoded.linearRangeMax) * gGain;
+        decodeStoredRgb16Channel(decoded.data[sourceIndex + 1] ?? 0, decoded.transfer, decoded.linearRangeMax)
+        * vignettingGain[1];
       output[targetIndex + 2] =
-        decodeStoredRgb16Channel(decoded.data[sourceIndex + 2] ?? 0, decoded.transfer, decoded.linearRangeMax) * bGain;
+        decodeStoredRgb16Channel(decoded.data[sourceIndex + 2] ?? 0, decoded.transfer, decoded.linearRangeMax)
+        * vignettingGain[2];
     }
   }
   return output;
@@ -3154,14 +3015,31 @@ function buildRawDevelopmentLensfunSettings(
   };
 }
 
-function pendingLensfunVignettingGain(
+function pendingLensfunVignettingGainInto(
   decoded: DecodedRgbImage16,
   x: number,
   y: number,
+  output: [number, number, number],
 ): [number, number, number] {
   const correction = decoded.lensCorrection;
-  if (!correction?.vignetting || correction.vignettingBaked) return [1, 1, 1];
-  return lensfunVignettingGain(correction, x, y);
+  if (!correction?.vignetting || correction.vignettingBaked) {
+    output[0] = 1;
+    output[1] = 1;
+    output[2] = 1;
+    return output;
+  }
+  return lensfunVignettingGainInto(correction, x, y, output);
+}
+
+function rawPendingVignettingMap(decoded: DecodedRgbImage16): RawVignettingMap | undefined {
+  const correction = decoded.lensCorrection;
+  if (!correction?.vignetting || correction.vignettingBaked) return undefined;
+  return {
+    gridWidth: correction.gridWidth,
+    gridHeight: correction.gridHeight,
+    step: correction.step,
+    data: correction.vignetting,
+  };
 }
 
 function finishLensfunVignettingBake(decoded: DecodedRgbImage16): void {
@@ -3317,6 +3195,265 @@ function readRawThumbnailDebugStatistics(
   return pending;
 }
 
+
+type RawDevelopmentWorkerError = Error & {
+  dataBuffer?: ArrayBuffer;
+  linearRangeMax?: number;
+};
+
+type RawWorkerToneResponse = {
+  type: "tone-complete";
+  headroom: RawDevelopmentHeadroomStatistics;
+  colorSample: ArrayBuffer;
+  toneMs: number;
+  sampleMs: number;
+};
+
+type RawWorkerFallbackResponse = {
+  type: "fallback-tone-complete";
+  result: { exposureEv: number; headroom: RawDevelopmentHeadroomStatistics } | null;
+  toneMs: number;
+};
+
+type RawWorkerColorResponse = {
+  type: "color-complete";
+  colorMs: number;
+};
+
+type RawWorkerEncodeResponse = {
+  type: "encode-complete";
+  dataBuffer: ArrayBuffer;
+  linearRangeMax: number;
+  encodeMs: number;
+};
+
+function createRawDevelopmentWorker(): Worker | null {
+  if (typeof Worker !== "function") return null;
+  try {
+    return new Worker(new URL("./image-editor/raw-development.worker.ts", import.meta.url), {
+      type: "module",
+    });
+  } catch {
+    return null;
+  }
+}
+
+function requestRawDevelopmentWorker<T extends { type: string }>(
+  worker: Worker,
+  expectedType: T["type"],
+  message: unknown,
+  transfer: Transferable[] = [],
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const cleanup = () => {
+      worker.removeEventListener("message", onMessage);
+      worker.removeEventListener("error", onError);
+      worker.removeEventListener("messageerror", onMessageError);
+    };
+    const onMessage = (event: MessageEvent) => {
+      const response = event.data as {
+        type?: string;
+        message?: string;
+        dataBuffer?: ArrayBuffer;
+        linearRangeMax?: number;
+      };
+      if (response?.type === "error") {
+        cleanup();
+        const error = new Error(response.message || "RAW development worker failed") as RawDevelopmentWorkerError;
+        error.dataBuffer = response.dataBuffer;
+        error.linearRangeMax = response.linearRangeMax;
+        reject(error);
+        return;
+      }
+      if (response?.type !== expectedType) return;
+      cleanup();
+      resolve(event.data as T);
+    };
+    const onError = (event: ErrorEvent) => {
+      cleanup();
+      reject(new Error(event.message || "RAW development worker failed"));
+    };
+    const onMessageError = () => {
+      cleanup();
+      reject(new Error("RAW development worker communication failed"));
+    };
+    worker.addEventListener("message", onMessage);
+    worker.addEventListener("error", onError);
+    worker.addEventListener("messageerror", onMessageError);
+    worker.postMessage(message, transfer);
+  });
+}
+
+type RawWorkerDevelopmentResult = {
+  mode: RawDevelopmentSettings["mode"];
+  luminance: RawDevelopmentLuminanceSettings | null;
+  headroom?: RawDevelopmentHeadroomStatistics;
+  saturation: RawDevelopmentSaturationSettings;
+};
+
+async function developRawPixelsInWorker(
+  file: File,
+  decoded: DecodedRgbImage16,
+  thumbnailReference: RawThumbnailMatchReference | undefined,
+  onProgress?: ImageLoadProgressListener,
+): Promise<RawWorkerDevelopmentResult | null> {
+  if (decoded.transfer !== "linear") return null;
+  const worker = createRawDevelopmentWorker();
+  if (!worker) {
+    if (onProgress) {
+      console.info(`[image-editor load] ${file.name}: RAW development worker unavailable; using main thread`);
+    }
+    return null;
+  }
+
+  const logWorkerCore = (label: string, milliseconds: number) => {
+    if (!onProgress) return;
+    console.info(`[image-editor load] ${file.name}: ${label} worker core ${milliseconds.toFixed(1)}ms`);
+  };
+  const stage = async <T,>(name: string, task: () => Promise<T>): Promise<T> => {
+    onProgress?.({ stage: name });
+    if (onProgress) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const startedAt = performance.now();
+    try {
+      return await task();
+    } finally {
+      if (onProgress) logImageLoadStage(file, name.replace(/…$/, ""), startedAt);
+    }
+  };
+
+  let transferred = false;
+  try {
+    let mode: RawDevelopmentSettings["mode"] = "fallback";
+    let luminance: RawDevelopmentLuminanceSettings | null = null;
+    let headroom: RawDevelopmentHeadroomStatistics | undefined;
+    let saturation: RawDevelopmentSaturationSettings = { saturation: 0, vibrance: 0 };
+    const vignetting = rawPendingVignettingMap(decoded);
+
+    let matchedPlan: RawMatchedTonePlanningResult | null = null;
+    if (thumbnailReference) {
+      onProgress?.({ stage: "Planning tone…" });
+      if (onProgress) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      const planningStartedAt = performance.now();
+      try {
+        matchedPlan = planRawThumbnailMatchedBaseline(decoded, thumbnailReference.lumaPercentiles);
+      } finally {
+        if (onProgress) logImageLoadStage(file, "Planning tone", planningStartedAt);
+      }
+    }
+
+    if (matchedPlan) {
+      const sourceBuffer = decoded.data.buffer as ArrayBuffer;
+      const toneResponse = await stage<RawWorkerToneResponse>("Developing tone…", async () => {
+        transferred = true;
+        return requestRawDevelopmentWorker<RawWorkerToneResponse>(
+          worker,
+          "tone-complete",
+          {
+            type: "matched-tone",
+            dataBuffer: sourceBuffer,
+            width: decoded.width,
+            height: decoded.height,
+            sourceLinearRangeMax: decoded.linearRangeMax,
+            vignetting,
+            plan: matchedPlan!.plan,
+            sampleMaxSide: RAW_THUMBNAIL_MATCH_SAMPLE_MAX_SIDE,
+          },
+          [sourceBuffer],
+        );
+      });
+      logWorkerCore("Developing tone", toneResponse.toneMs);
+      logWorkerCore("Preparing color sample", toneResponse.sampleMs);
+      decoded.linearRangeMax = RAW_DEVELOPED_LINEAR_RANGE_MAX;
+      finishLensfunVignettingBake(decoded);
+      mode = "thumbnail-match";
+      luminance = matchedPlan.luminance;
+      headroom = toneResponse.headroom;
+
+      const rawColorSample = new Float32Array(toneResponse.colorSample);
+      const colorResponse = await stage<RawWorkerColorResponse>("Developing color…", async () => {
+        const plannedColor = planRawThumbnailMatchedColor(
+          rawColorSample,
+          thumbnailReference!.linearSrgbSample,
+        );
+        if (plannedColor) saturation = plannedColor.settings;
+        return requestRawDevelopmentWorker<RawWorkerColorResponse>(
+          worker,
+          "color-complete",
+          { type: "color", plan: plannedColor?.pass ?? {
+            rolloff: null,
+            hasSaturation: false,
+            hasVibrance: false,
+            saturationFactor: 1,
+            vibranceFactor: 0,
+            saturationRolloff: null,
+          } },
+        );
+      });
+      logWorkerCore("Developing color", colorResponse.colorMs);
+    } else {
+      const sourceBuffer = decoded.data.buffer as ArrayBuffer;
+      const fallbackResponse = await stage<RawWorkerFallbackResponse>("Developing tone…", async () => {
+        transferred = true;
+        return requestRawDevelopmentWorker<RawWorkerFallbackResponse>(
+          worker,
+          "fallback-tone-complete",
+          {
+            type: "fallback-tone",
+            dataBuffer: sourceBuffer,
+            width: decoded.width,
+            height: decoded.height,
+            sourceLinearRangeMax: decoded.linearRangeMax,
+            vignetting,
+          },
+          [sourceBuffer],
+        );
+      });
+      logWorkerCore("Developing tone", fallbackResponse.toneMs);
+      if (fallbackResponse.result) {
+        decoded.linearRangeMax = RAW_DEVELOPED_LINEAR_RANGE_MAX;
+        finishLensfunVignettingBake(decoded);
+        luminance = {
+          exposureEv: fallbackResponse.result.exposureEv,
+          logarithm: 0,
+          sigmoid: 0,
+          toneSlopeAtWhite: 1,
+        };
+        headroom = fallbackResponse.result.headroom;
+      }
+    }
+
+    const encodeResponse = await stage<RawWorkerEncodeResponse>("Encoding buffer…", () =>
+      requestRawDevelopmentWorker<RawWorkerEncodeResponse>(
+        worker,
+        "encode-complete",
+        { type: "encode" },
+      ),
+    );
+    logWorkerCore("Encoding buffer", encodeResponse.encodeMs);
+    decoded.data = new Uint16Array(encodeResponse.dataBuffer);
+    decoded.linearRangeMax = encodeResponse.linearRangeMax;
+    decoded.transfer = "gamma20";
+    transferred = false;
+    return { mode, luminance, headroom, saturation };
+  } catch (error) {
+    const hadTransferred = transferred;
+    const workerError = error as RawDevelopmentWorkerError;
+    if (workerError.dataBuffer) {
+      decoded.data = new Uint16Array(workerError.dataBuffer);
+      if (Number.isFinite(workerError.linearRangeMax)) {
+        decoded.linearRangeMax = workerError.linearRangeMax as number;
+      }
+    }
+    if (!hadTransferred) {
+      console.warn("[image-editor] RAW development worker unavailable; using synchronous fallback", error);
+      return null;
+    }
+    throw error;
+  } finally {
+    worker.terminate();
+  }
+}
+
 async function decodeRawImage(
   file: File,
   rawDemosaicQuality?: RawDemosaicQuality,
@@ -3436,19 +3573,37 @@ async function decodeRawImage(
       saturation: 0,
       vibrance: 0,
     };
-    if (thumbnailReference) {
-      const matchedBaseline = await runBlockingStage("Developing tone…", () =>
-        applyRawThumbnailMatchedBaseline(decoded, thumbnailReference.lumaPercentiles),
-      );
-      if (matchedBaseline) {
-        mode = "thumbnail-match";
-        luminanceSettings = matchedBaseline.luminance;
-        headroomSettings = matchedBaseline.headroom;
-        // Match color only after the thumbnail-driven tone baseline is fixed.
-        // Saturation follows HSV P95 first, then Vibrance follows HSV P50.
-        saturationSettings = await runBlockingStage("Developing color…", () =>
-          applyRawThumbnailMatchedColor(decoded, thumbnailReference.linearSrgbSample),
-        ) ?? saturationSettings;
+
+    const workerDevelopment = await developRawPixelsInWorker(
+      file,
+      decoded,
+      thumbnailReference,
+      onProgress,
+    );
+    if (workerDevelopment) {
+      mode = workerDevelopment.mode;
+      luminanceSettings = workerDevelopment.luminance;
+      headroomSettings = workerDevelopment.headroom;
+      saturationSettings = workerDevelopment.saturation;
+    } else {
+      if (thumbnailReference) {
+        const matchedBaseline = await runBlockingStage("Developing tone…", () =>
+          applyRawThumbnailMatchedBaseline(decoded, thumbnailReference.lumaPercentiles),
+        );
+        if (matchedBaseline) {
+          mode = "thumbnail-match";
+          luminanceSettings = matchedBaseline.luminance;
+          headroomSettings = matchedBaseline.headroom;
+          saturationSettings = await runBlockingStage("Developing color…", () =>
+            applyRawThumbnailMatchedColor(decoded, thumbnailReference.linearSrgbSample),
+          ) ?? saturationSettings;
+        } else {
+          const fallbackBaseline = await runBlockingStage("Developing tone…", () =>
+            applyRawBaselineExposure(decoded),
+          );
+          luminanceSettings = fallbackBaseline?.luminance ?? null;
+          headroomSettings = fallbackBaseline?.headroom;
+        }
       } else {
         const fallbackBaseline = await runBlockingStage("Developing tone…", () =>
           applyRawBaselineExposure(decoded),
@@ -3456,14 +3611,8 @@ async function decodeRawImage(
         luminanceSettings = fallbackBaseline?.luminance ?? null;
         headroomSettings = fallbackBaseline?.headroom;
       }
-    } else {
-      const fallbackBaseline = await runBlockingStage("Developing tone…", () =>
-        applyRawBaselineExposure(decoded),
-      );
-      luminanceSettings = fallbackBaseline?.luminance ?? null;
-      headroomSettings = fallbackBaseline?.headroom;
+      await runBlockingStage("Encoding buffer…", () => convertDecodedRgb16Transfer(decoded, "gamma20"));
     }
-    await runBlockingStage("Encoding buffer…", () => convertDecodedRgb16Transfer(decoded, "gamma20"));
     decoded.rawDevelopment = {
       mode,
       iso: Number.isFinite(isoValue) && isoValue > 0 ? isoValue : null,
@@ -4240,6 +4389,7 @@ export function ImageEditDialog({
   const [histogramGeometryDragging, setHistogramGeometryDragging] = useState(false);
   const [eyedropperMode, setEyedropperMode] = useState(false);
   const [autoToneBusy, setAutoToneBusy] = useState(false);
+  const [autoToneStage, setAutoToneStage] = useState<string | null>(null);
   const [applyBusy, setApplyBusy] = useState(false);
   const applyPendingRef = useRef(false);
   const percentilePanelRef = useRef<HTMLDivElement | null>(null);
@@ -5747,59 +5897,86 @@ export function ImageEditDialog({
     return createToneAutoSampleFromRgb16(decoded, analysisSourceRect, rotationDegrees);
   }, [analysisSourceRect, rotationDegrees]);
 
-  const runAutoToneTask = useCallback(async (task: () => void) => {
+  const waitForAutoToneStagePaint = useCallback(async () => {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  }, []);
+
+  const runAutoToneTask = useCallback(async (
+    task: (setStage: (stage: string) => Promise<void>) => void | Promise<void>,
+  ) => {
     setAutoToneBusy(true);
+    setAutoToneStage("Sampling image…");
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const setStage = async (stage: string) => {
+      setAutoToneStage(stage);
+      await waitForAutoToneStagePaint();
+    };
     try {
-      task();
+      await task(setStage);
     } finally {
+      setAutoToneStage(null);
       setAutoToneBusy(false);
     }
-  }, []);
+  }, [waitForAutoToneStagePaint]);
 
   const onAutoExposure = useCallback(() => {
     if (autoToneBusy) return;
-    void runAutoToneTask(() => {
+    void runAutoToneTask(async (setStage) => {
       const sample = currentToneAutoSample();
       if (!sample) return;
+      await setStage("Optimizing exposure…");
       setExposureEv(findAutoExposure(sample, temperature, tint));
+      await setStage("Rendering preview…");
+      await waitForAutoToneStagePaint();
     });
-  }, [autoToneBusy, currentToneAutoSample, runAutoToneTask, temperature, tint]);
+  }, [autoToneBusy, currentToneAutoSample, runAutoToneTask, temperature, tint, waitForAutoToneStagePaint]);
 
   const onAutoShadow = useCallback(() => {
     if (autoToneBusy) return;
-    void runAutoToneTask(() => {
+    void runAutoToneTask(async (setStage) => {
       const sample = currentToneAutoSample();
       if (!sample) return;
+      await setStage("Optimizing shadows…");
       setShadow(findAutoShadow(sample, temperature, tint, exposureEv));
+      await setStage("Rendering preview…");
+      await waitForAutoToneStagePaint();
     });
-  }, [autoToneBusy, currentToneAutoSample, exposureEv, runAutoToneTask, temperature, tint]);
+  }, [autoToneBusy, currentToneAutoSample, exposureEv, runAutoToneTask, temperature, tint, waitForAutoToneStagePaint]);
 
   const onAutoLogarithm = useCallback(() => {
     if (autoToneBusy) return;
-    void runAutoToneTask(() => {
+    void runAutoToneTask(async (setStage) => {
       const sample = currentToneAutoSample();
       if (!sample) return;
+      await setStage("Optimizing logarithm…");
       setScaledLog(findAutoLogarithm(sample, temperature, tint, exposureEv, shadow));
+      await setStage("Rendering preview…");
+      await waitForAutoToneStagePaint();
     });
-  }, [autoToneBusy, currentToneAutoSample, exposureEv, runAutoToneTask, shadow, temperature, tint]);
+  }, [autoToneBusy, currentToneAutoSample, exposureEv, runAutoToneTask, shadow, temperature, tint, waitForAutoToneStagePaint]);
 
   const onAutoSigmoid = useCallback(() => {
     if (autoToneBusy) return;
-    void runAutoToneTask(() => {
+    void runAutoToneTask(async (setStage) => {
       const sample = currentToneAutoSample();
       if (!sample) return;
+      await setStage("Optimizing sigmoid…");
       setSigmoid(findAutoSigmoid(sample, temperature, tint, exposureEv, shadow, scaledLog));
+      await setStage("Rendering preview…");
+      await waitForAutoToneStagePaint();
     });
-  }, [autoToneBusy, currentToneAutoSample, exposureEv, runAutoToneTask, scaledLog, shadow, temperature, tint]);
+  }, [autoToneBusy, currentToneAutoSample, exposureEv, runAutoToneTask, scaledLog, shadow, temperature, tint, waitForAutoToneStagePaint]);
 
   const onAutoTone = useCallback(() => {
     if (autoToneBusy) return;
-    void runAutoToneTask(() => {
+    void runAutoToneTask(async (setStage) => {
       const sample = currentToneAutoSample();
       if (!sample) return;
+      await setStage("Optimizing exposure…");
       const autoExposure = findAutoExposure(sample, temperature, tint);
+      await setStage("Optimizing shadows…");
       const autoShadow = findAutoShadow(sample, temperature, tint, autoExposure);
+      await setStage("Optimizing logarithm…");
       const autoLogarithm = findAutoLogarithm(
         sample,
         temperature,
@@ -5807,6 +5984,7 @@ export function ImageEditDialog({
         autoExposure,
         autoShadow,
       );
+      await setStage("Optimizing sigmoid…");
       const autoSigmoid = findAutoSigmoid(
         sample,
         temperature,
@@ -5820,8 +5998,10 @@ export function ImageEditDialog({
       setHighlight(0);
       setScaledLog(autoLogarithm);
       setSigmoid(autoSigmoid);
+      await setStage("Rendering preview…");
+      await waitForAutoToneStagePaint();
     });
-  }, [autoToneBusy, currentToneAutoSample, runAutoToneTask, temperature, tint]);
+  }, [autoToneBusy, currentToneAutoSample, runAutoToneTask, temperature, tint, waitForAutoToneStagePaint]);
 
   const histogramPaths = useMemo(() => {
     if (!histogram || histogram.maxCount <= 0) return null;
@@ -6189,7 +6369,19 @@ export function ImageEditDialog({
                       height: displayed.h,
                     }}
                   />
-                  {(autoToneBusy || applyBusy) && (
+                  {autoToneBusy && (
+                    <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/10 pointer-events-none">
+                      <div className="flex flex-col items-center gap-2 text-white">
+                        <div className="rounded bg-black/45 p-3 shadow">
+                          <div className="h-10 w-10 rounded-full border-4 border-white/40 border-t-white animate-spin" />
+                        </div>
+                        <div className="rounded bg-black/45 px-3 py-1.5 text-xs font-medium tracking-wide shadow">
+                          {autoToneStage ?? "Optimizing tone…"}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {!autoToneBusy && applyBusy && (
                     <div className="absolute inset-0 z-40 flex items-center justify-center pointer-events-none">
                       <div className="h-10 w-10 rounded-full border-4 border-white/40 border-t-white animate-spin shadow-[0_0_0_1px_rgba(0,0,0,0.25)]" />
                     </div>
