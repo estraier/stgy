@@ -223,7 +223,7 @@ export const SHADOW_MAX_POINT_Y = 0.05;
 export const SHADOW_SOFT_POINT_CURVE_X =
   SHADOW_MAX_POINT_X / (1 - Math.sqrt(SHADOW_MAX_POINT_Y / SHADOW_MAX_POINT_X));
 export const HIGHLIGHT_MAX_SIGMOID_GAIN = 4;
-export const HIGHLIGHT_WORKING_EXPONENT = 2.4;
+export const HIGHLIGHT_WORKING_EXPONENT = 3.2;
 
 export type HighlightRange = {
   p0: number;
@@ -316,38 +316,62 @@ export function applyHighlightLinear(
 
   const { p0, p100 } = range;
   const span = p100 - p0;
-  if (!(span > 1e-12) || value <= p0 || value >= p100) return value;
+  if (!(span > 1e-12) || value <= p0) return value;
 
-  const x = Math.min(1, Math.max(0, (value - p0) / span));
-  const workingX = Math.pow(x, HIGHLIGHT_WORKING_EXPONENT);
-  const gain = HIGHLIGHT_MAX_SIGMOID_GAIN * Math.abs(normalized) / 100;
-  if (!(gain > 1e-12)) return value;
+  let adjustedLinear = value;
+  if (value < p100) {
+    const x = Math.min(1, Math.max(0, (value - p0) / span));
+    const workingX = Math.pow(x, HIGHLIGHT_WORKING_EXPONENT);
+    const gain = HIGHLIGHT_MAX_SIGMOID_GAIN * Math.abs(normalized) / 100;
+    if (gain > 1e-12) {
+      // The Highlight knee is fixed at the top of the normalized working domain.
+      // Slider magnitude changes sigmoid gain itself rather than blending a fixed
+      // maximum-strength curve with identity.
+      const workingMid = 1;
+      const minVal = naiveSigmoid(0, gain, workingMid);
+      const maxVal = naiveSigmoid(1, gain, workingMid);
+      const sigmoidSpan = maxVal - minVal;
+      if (sigmoidSpan > 1e-12) {
+        const workingSigmoid = Math.min(
+          1,
+          Math.max(
+            0,
+            (naiveSigmoid(workingX, gain, workingMid) - minVal) / sigmoidSpan,
+          ),
+        );
+        // Negative Highlight uses the endpoint-normalized sigmoid. Positive Highlight
+        // mirrors the same displacement around identity, keeping both directions tied
+        // to the same fixed knee at 1.
+        const adjustedWorking = normalized < 0
+          ? workingSigmoid
+          : 2 * workingX - workingSigmoid;
+        const adjusted = Math.pow(
+          clamp01(adjustedWorking),
+          1 / HIGHLIGHT_WORKING_EXPONENT,
+        );
+        adjustedLinear = p0 + span * adjusted;
+      }
+    }
+  }
 
-  // The Highlight knee is fixed at the top of the normalized working domain.
-  // Slider magnitude changes sigmoid gain itself rather than blending a fixed
-  // maximum-strength curve with identity.
-  const workingMid = 1;
-  const minVal = naiveSigmoid(0, gain, workingMid);
-  const maxVal = naiveSigmoid(1, gain, workingMid);
-  const sigmoidSpan = maxVal - minVal;
-  if (!(sigmoidSpan > 1e-12)) return value;
+  // Lightroom-like endpoint movement: after returning to linear space, move P100
+  // toward 1 only when the slider direction calls for expanding a sub-white range
+  // (positive Highlight) or compressing RAW headroom above white (negative Highlight).
+  // Keep P0 fixed and apply the same affine scale above P0 so the mapping remains
+  // continuous at P100 even when an actual full-resolution pixel exceeds the sampled P100.
+  let targetP100 = p100;
+  if (normalized > 0 && p100 < 1) {
+    targetP100 = p100 + (1 - p100) * normalized / 100;
+  } else if (normalized < 0 && p100 > 1) {
+    targetP100 = p100 - (p100 - 1) * Math.abs(normalized) / 100;
+    // P0 is the fixed point. If the entire sampled range is already above 1,
+    // reaching 1 would invert the range, so collapse no farther than P0.
+    targetP100 = Math.max(p0, targetP100);
+  }
+  if (Math.abs(targetP100 - p100) <= 1e-12) return adjustedLinear;
 
-  const workingSigmoid = Math.min(
-    1,
-    Math.max(
-      0,
-      (naiveSigmoid(workingX, gain, workingMid) - minVal) / sigmoidSpan,
-    ),
-  );
-  // Negative Highlight uses the endpoint-normalized sigmoid. Positive Highlight
-  // mirrors the same displacement around identity, keeping both directions tied
-  // to the same fixed knee at 1.
-  const adjustedWorking = normalized < 0
-    ? workingSigmoid
-    : 2 * workingX - workingSigmoid;
-  const adjusted = Math.pow(clamp01(adjustedWorking), 1 / HIGHLIGHT_WORKING_EXPONENT);
-
-  return p0 + span * adjusted;
+  const endpointScale = (targetP100 - p0) / span;
+  return p0 + (adjustedLinear - p0) * endpointScale;
 }
 
 export function applyShadowHighlightLinearToRgb(

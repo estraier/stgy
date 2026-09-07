@@ -236,27 +236,47 @@ describe("image editor tone characterization", () => {
     ]);
   });
 
-  test("freezes Highlight endpoints and the current exponent-2.4 curve", () => {
-    const range = { p0: 0.02, p100: 1.2 };
+  test("freezes Highlight exponent-3.2 curve and P100 movement", () => {
+    const overWhiteRange = { p0: 0.02, p100: 1.2 };
     const points = [0.02, 0.1, 0.4, 0.8, 1, 1.2];
-    expect(rounded(points.map((x) => imageEditor.applyHighlightLinear(x, -100, range)))).toEqual([
+    expect(
+      rounded(points.map((x) => imageEditor.applyHighlightLinear(x, -100, overWhiteRange))),
+    ).toEqual([
       0.02,
-      0.05598825543,
-      0.200179998013,
-      0.503208348654,
-      0.791396432436,
+      0.056464873667,
+      0.196010131926,
+      0.441486998247,
+      0.662475251109,
+      1,
+    ]);
+    expect(
+      rounded(points.map((x) => imageEditor.applyHighlightLinear(x, 100, overWhiteRange))),
+    ).toEqual([
+      0.02,
+      0.117012672125,
+      0.480209020568,
+      0.948602612882,
+      1.139481994119,
       1.2,
     ]);
-    expect(rounded(points.map((x) => imageEditor.applyHighlightLinear(x, 100, range)))).toEqual([
-      0.02,
-      0.123443452301,
-      0.509163047948,
-      0.988967387899,
-      1.159805007103,
-      1.2,
-    ]);
-    expect(imageEditor.applyHighlightLinear(range.p0, -100, range)).toBe(range.p0);
-    expect(imageEditor.applyHighlightLinear(range.p100, 100, range)).toBe(range.p100);
+    expect(imageEditor.applyHighlightLinear(overWhiteRange.p0, -100, overWhiteRange)).toBe(
+      overWhiteRange.p0,
+    );
+    expect(imageEditor.applyHighlightLinear(overWhiteRange.p100, -100, overWhiteRange)).toBe(1);
+    expect(imageEditor.applyHighlightLinear(overWhiteRange.p100, -50, overWhiteRange)).toBeCloseTo(
+      1.1,
+      12,
+    );
+
+    const subWhiteRange = { p0: 0.02, p100: 0.8 };
+    expect(imageEditor.applyHighlightLinear(subWhiteRange.p100, 100, subWhiteRange)).toBe(1);
+    expect(imageEditor.applyHighlightLinear(subWhiteRange.p100, 50, subWhiteRange)).toBeCloseTo(
+      0.9,
+      12,
+    );
+    expect(imageEditor.applyHighlightLinear(subWhiteRange.p100, -100, subWhiteRange)).toBe(
+      subWhiteRange.p100,
+    );
   });
 
   test("freezes Logarithm, Sigmoid, rolloff and the combined tone pipeline", () => {
@@ -500,7 +520,7 @@ describe("image editor render characterization", () => {
           -5,
         ),
       ),
-    ).toBe("3c4cfc7a");
+    ).toBe("42e8912e");
   });
 
   test("freezes crop + arbitrary rotation render output", () => {
