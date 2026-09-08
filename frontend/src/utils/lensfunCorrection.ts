@@ -114,6 +114,7 @@ type LensfunBrowserModuleLike = {
   LF_MODIFY_DISTORTION: number;
 };
 
+export const LENSFUN_WASM_VERSION = "0.1.3";
 const LENSFUN_BASE_URL = "/vendor/lensfun-wasm";
 const LENSFUN_UMD_URL = `${LENSFUN_BASE_URL}/umd/index.iife.js`;
 const LENSFUN_CORE_JS_URL = `${LENSFUN_BASE_URL}/assets/lensfun-core.js`;
@@ -180,6 +181,11 @@ async function getLensfunClient(): Promise<{
   });
 
   return lensfunClientPromise;
+}
+
+export async function checkLensfunRuntime(): Promise<string> {
+  await getLensfunClient();
+  return `lensfun-wasm ${LENSFUN_WASM_VERSION}`;
 }
 
 function bestMatch<T extends { score: number }>(matches: T[]): T | undefined {
