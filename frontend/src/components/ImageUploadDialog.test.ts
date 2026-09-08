@@ -210,69 +210,68 @@ function renderCachedPreviewToBytes(
 }
 
 describe("image editor tone characterization", () => {
-  test("freezes the current Shadow curves", () => {
+  test("freezes the gamma-12 midpoint-zero Shadow curves", () => {
     const points = [0, 0.01, 0.02, 0.05, 0.1, 0.15, 0.2, 0.3, 0.4];
     expect(rounded(points.map((x) => imageEditor.applyShadowLinear(x, -100)))).toEqual([
       0,
-      0.003222041554,
-      0.0062532972,
-      0.01467931346,
-      0.02935862692,
-      0.05,
-      0.094790243902,
-      0.253092682927,
-      0.4,
+      0.000013811692,
+      0.000039508903,
+      0.000180986735,
+      0.00066298461,
+      0.001545339612,
+      0.002972067164,
+      0.008283236242,
+      0.018979390068,
     ]);
     expect(rounded(points.map((x) => imageEditor.applyShadowLinear(x, 100)))).toEqual([
-      0.100976709241,
-      0.107362283997,
-      0.113735236664,
-      0.132832456799,
-      0.164913598798,
-      0.197896318557,
-      0.232456799399,
-      0.309015777611,
-      0.4,
+      0,
+      0.321268772483,
+      0.406849642541,
+      0.535389208133,
+      0.641118273643,
+      0.704948703048,
+      0.750640685175,
+      0.81505184134,
+      0.860410991214,
     ]);
+    expect(imageEditor.applyShadowLinear(1.2, -100)).toBe(1.2);
+    expect(imageEditor.applyShadowLinear(1.2, 100)).toBe(1.2);
   });
 
-  test("freezes Highlight exponent-3.2 curve and P100 movement", () => {
-    const overWhiteRange = { p0: 0.02, p100: 1.2 };
+  test("freezes the gamma-0.48 P100-normalized Highlight curves", () => {
+    const overWhiteRange = { p100: 1.2 };
     const points = [0.02, 0.1, 0.4, 0.8, 1, 1.2];
     expect(
       rounded(points.map((x) => imageEditor.applyHighlightLinear(x, -100, overWhiteRange))),
     ).toEqual([
-      0.02,
-      0.056464873667,
-      0.196010131926,
-      0.441486998247,
-      0.662475251109,
-      1,
+      0.007958241286,
+      0.039992660814,
+      0.175226411521,
+      0.490345436836,
+      0.790991117902,
+      1.2,
     ]);
     expect(
       rounded(points.map((x) => imageEditor.applyHighlightLinear(x, 100, overWhiteRange))),
     ).toEqual([
-      0.02,
-      0.117012672125,
-      0.480209020568,
-      0.948602612882,
-      1.139481994119,
+      0.050209044858,
+      0.243062211261,
+      0.715986837441,
+      1.004882140752,
+      1.1053466268,
       1.2,
     ]);
-    expect(imageEditor.applyHighlightLinear(overWhiteRange.p0, -100, overWhiteRange)).toBe(
-      overWhiteRange.p0,
+    expect(imageEditor.applyHighlightLinear(1.1, -100, overWhiteRange)).toBeLessThan(1);
+    expect(imageEditor.applyHighlightLinear(overWhiteRange.p100, -100, overWhiteRange)).toBe(
+      overWhiteRange.p100,
     );
-    expect(imageEditor.applyHighlightLinear(overWhiteRange.p100, -100, overWhiteRange)).toBe(1);
-    expect(imageEditor.applyHighlightLinear(overWhiteRange.p100, -50, overWhiteRange)).toBeCloseTo(
-      1.1,
-      12,
+    expect(imageEditor.applyHighlightLinear(overWhiteRange.p100, 100, overWhiteRange)).toBe(
+      overWhiteRange.p100,
     );
 
-    const subWhiteRange = { p0: 0.02, p100: 0.8 };
-    expect(imageEditor.applyHighlightLinear(subWhiteRange.p100, 100, subWhiteRange)).toBe(1);
-    expect(imageEditor.applyHighlightLinear(subWhiteRange.p100, 50, subWhiteRange)).toBeCloseTo(
-      0.9,
-      12,
+    const subWhiteRange = { p100: 0.8 };
+    expect(imageEditor.applyHighlightLinear(subWhiteRange.p100, 100, subWhiteRange)).toBe(
+      subWhiteRange.p100,
     );
     expect(imageEditor.applyHighlightLinear(subWhiteRange.p100, -100, subWhiteRange)).toBe(
       subWhiteRange.p100,
@@ -305,12 +304,12 @@ describe("image editor tone characterization", () => {
       Math.pow(2, 0.7),
       -35,
       70,
-      { p0: 0.015, p100: 1.45 },
+      { p100: 1.45 },
       imageEditor.rolloffParams(2.1, 0.5, 4),
       0.8,
       -1.2,
     );
-    expect(rounded(tone)).toEqual([0.224081377671, 0.793269462975, 1]);
+    expect(rounded(tone)).toEqual([0.156523712174, 0.783680502116, 1]);
   });
 });
 
@@ -520,7 +519,7 @@ describe("image editor render characterization", () => {
           -5,
         ),
       ),
-    ).toBe("42e8912e");
+    ).toBe("2dbcc2dd");
   });
 
   test("freezes crop + arbitrary rotation render output", () => {
@@ -539,7 +538,7 @@ describe("image editor render characterization", () => {
       0,
       0,
     );
-    expect(fnv1a32(bytes)).toBe("a1950ca6");
+    expect(fnv1a32(bytes)).toBe("1eefa748");
   });
 
   test("matches direct preview rendering when using the preview-resolution linear RGB cache", () => {
@@ -552,19 +551,7 @@ describe("image editor render characterization", () => {
 });
 
 describe("image editor Auto Tone characterization", () => {
-  test("places Shadow Auto's soft point at post-exposure P2", () => {
-    const data = new Float32Array(101 * 3);
-    for (let i = 0; i <= 100; i++) {
-      const value = i * 0.015;
-      data[i * 3] = value;
-      data[i * 3 + 1] = value;
-      data[i * 3 + 2] = value;
-    }
-    const sample = { data, width: 101, height: 1 };
-    expect(imageEditor.findAutoShadow(sample, 0, 0, 0)).toBe(-20);
-  });
-
-  test("freezes the current Exposure -> Shadow -> Logarithm -> Sigmoid Auto sequence", () => {
+  test("freezes the current Exposure -> Logarithm -> Sigmoid Auto sequence with Shadow/Highlight at zero", () => {
     const data = new Float32Array(100 * 3);
     for (let i = 0; i < 100; i++) {
       const value = (i / 99) * 0.3;
@@ -574,14 +561,13 @@ describe("image editor Auto Tone characterization", () => {
     }
     const sample = { data, width: 10, height: 10 };
     const exposure = imageEditor.findAutoExposure(sample, 0, 0);
-    const shadow = imageEditor.findAutoShadow(sample, 0, 0, exposure);
-    const scaledLog = imageEditor.findAutoLogarithm(sample, 0, 0, exposure, shadow);
-    const sigmoid = imageEditor.findAutoSigmoid(sample, 0, 0, exposure, shadow, scaledLog);
+    const scaledLog = imageEditor.findAutoLogarithm(sample, 0, 0, exposure);
+    const sigmoid = imageEditor.findAutoSigmoid(sample, 0, 0, exposure, scaledLog);
 
-    // Highlight Auto is intentionally not implemented; Tone Auto resets Highlight to zero.
-    expect({ exposure, shadow, highlight: 0, scaledLog, sigmoid }).toEqual({
+    // Shadow and Highlight Auto are intentionally not implemented; Tone Auto resets both to zero.
+    expect({ exposure, shadow: 0, highlight: 0, scaledLog, sigmoid }).toEqual({
       exposure: 1.7,
-      shadow: -13,
+      shadow: 0,
       highlight: 0,
       scaledLog: -3,
       sigmoid: 0,

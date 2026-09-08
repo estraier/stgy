@@ -7,7 +7,7 @@ import {
 } from "./color";
 import { getAnalysisLinearRgbSample } from "./sampling";
 import {
-  HISTOGRAM_DISPLAY_GAMMA, SHADOW_MAX_POINT_X,
+  HISTOGRAM_DISPLAY_GAMMA,
   applyColorAdjustmentsLinearRgb, applyShadowLinear, applyToneLinearToRgb,
   applyWhiteBalanceLinear, clamp01, clampColorAdjustment, clampExposureEv,
   clampScaledLog, clampSigmoid, clampToneRangeAdjustment, clampWhiteBalanceValue,
@@ -87,7 +87,6 @@ export function buildColorAdjustmentContextFromLinearRgbSample(
   const needsHighlightRange = normalizedHighlight !== 0;
 
   const exposedValues: number[] = [];
-  let highlightMin = Infinity;
   let highlightMax = -Infinity;
   const data = sample.data;
   const valid = sample.valid;
@@ -118,7 +117,6 @@ export function buildColorAdjustmentContextFromLinearRgbSample(
             applyShadowLinear(exposedB, normalizedShadow),
           )
         : Math.max(exposedR, exposedG, exposedB);
-      highlightMin = Math.min(highlightMin, highlightValue);
       highlightMax = Math.max(highlightMax, highlightValue);
     }
   }
@@ -126,11 +124,8 @@ export function buildColorAdjustmentContextFromLinearRgbSample(
   // Exposure control. RAW buffers may already contain values above 1 at 0 EV.
   const maxVal = percentileFromValues(exposedValues, 99.8);
   const rolloff = rolloffParams(maxVal, 0.5, 4);
-  const highlightRange: HighlightRange | null = normalizedHighlight !== 0 && highlightMin <= highlightMax
-    ? {
-        p0: highlightMin,
-        p100: highlightMax,
-      }
+  const highlightRange: HighlightRange | null = normalizedHighlight !== 0 && Number.isFinite(highlightMax)
+    ? { p100: highlightMax }
     : null;
   const hasHighlight = normalizedHighlight !== 0 && highlightRange !== null;
   const toneFlags = {
@@ -345,7 +340,6 @@ export function addHistogramInterval(
 export const TONE_AUTO_EXPOSURE_CLIP_PENALTY = 50;
 export const TONE_AUTO_EXPOSURE_HIGHLIGHT_START = 0.95;
 export const TONE_AUTO_EXPOSURE_HIGHLIGHT_PENALTY = 1;
-export const TONE_AUTO_SHADOW_PERCENTILE = 2;
 export const TONE_AUTO_LOG_MIN = -3;
 export const TONE_AUTO_LOG_MAX = 3;
 export const TONE_AUTO_LOG_LOWER = 0.42;
@@ -421,7 +415,6 @@ export function buildToneLumaHistogram(
   temperature: number,
   tint: number,
   exposureEv: number,
-  shadow: number,
   scaledLog: number,
   sigmoid: number,
 ): { histogram: Float64Array; total: number } {
@@ -431,7 +424,7 @@ export function buildToneLumaHistogram(
     temperature,
     tint,
     exposureEv,
-    shadow,
+    0,
     0,
     scaledLog,
     sigmoid,
@@ -580,60 +573,20 @@ export function findAutoExposure(
   return clampExposureEv(bestEv);
 }
 
-export function findAutoShadow(
-  sample: ToneAutoSample,
-  temperature: number,
-  tint: number,
-  exposureEv: number,
-): number {
-  const normalizedTemperature = clampWhiteBalanceValue(temperature);
-  const normalizedTint = clampWhiteBalanceValue(tint);
-  const gains = whiteBalanceGains(normalizedTemperature, normalizedTint);
-  const hasWhiteBalance = normalizedTemperature !== 0 || normalizedTint !== 0;
-  const factor = Math.pow(2, exposureEv);
-  const hasExposure = factor !== 1;
-  const lumaValues: number[] = [];
-  const pixelCount = Math.floor(sample.data.length / 3);
-  for (let pixel = 0; pixel < pixelCount; pixel++) {
-    if (sample.valid && !sample.valid[pixel]) continue;
-    const i = pixel * 3;
-    let r = sample.data[i] ?? 0;
-    let g = sample.data[i + 1] ?? 0;
-    let b = sample.data[i + 2] ?? 0;
-    if (hasWhiteBalance) {
-      [r, g, b] = applyWhiteBalanceLinear(r, g, b, gains);
-    }
-    if (hasExposure) {
-      r *= factor;
-      g *= factor;
-      b *= factor;
-    }
-    lumaValues.push(Math.max(0, PROPHOTO_LUMA_R * r + PROPHOTO_LUMA_G * g + PROPHOTO_LUMA_B * b));
-  }
-  if (lumaValues.length === 0) return 0;
-
-  const p2 = percentileFromValues(lumaValues, TONE_AUTO_SHADOW_PERCENTILE);
-  // Negative Shadow places its soft shadow point at
-  // p = -(SHADOW_MAX_POINT_X / 100) * shadow. Choose the slider value so
-  // that this point lands on the post-exposure P2 luminance.
-  return clampToneRangeAdjustment(-100 * p2 / SHADOW_MAX_POINT_X);
-}
-
 export function findAutoLogarithm(
   sample: ToneAutoSample,
   temperature: number,
   tint: number,
   exposureEv: number,
-  shadow: number,
 ): number {
-  const initial = buildToneLumaHistogram(sample, temperature, tint, exposureEv, shadow, 0, 0);
+  const initial = buildToneLumaHistogram(sample, temperature, tint, exposureEv, 0, 0);
   const initialMean = toneHistogramTrimmedMean(initial.histogram, initial.total);
   if (initialMean >= TONE_AUTO_LOG_LOWER && initialMean <= TONE_AUTO_LOG_UPPER) return 0;
 
   if (initialMean < TONE_AUTO_LOG_LOWER) {
     for (let step = 1; step <= Math.round(TONE_AUTO_LOG_MAX * 10); step++) {
       const value = step / 10;
-      const result = buildToneLumaHistogram(sample, temperature, tint, exposureEv, shadow, value, 0);
+      const result = buildToneLumaHistogram(sample, temperature, tint, exposureEv, value, 0);
       if (toneHistogramTrimmedMean(result.histogram, result.total) >= TONE_AUTO_LOG_LOWER) {
         return clampScaledLog(value);
       }
@@ -643,7 +596,7 @@ export function findAutoLogarithm(
 
   for (let step = 1; step <= Math.round(Math.abs(TONE_AUTO_LOG_MIN) * 10); step++) {
     const value = -step / 10;
-    const result = buildToneLumaHistogram(sample, temperature, tint, exposureEv, shadow, value, 0);
+    const result = buildToneLumaHistogram(sample, temperature, tint, exposureEv, value, 0);
     if (toneHistogramTrimmedMean(result.histogram, result.total) <= TONE_AUTO_LOG_UPPER) {
       return clampScaledLog(value);
     }
@@ -656,7 +609,6 @@ export function findAutoSigmoid(
   temperature: number,
   tint: number,
   exposureEv: number,
-  shadow: number,
   scaledLog: number,
 ): number {
   const baseline = buildToneLumaHistogram(
@@ -664,7 +616,6 @@ export function findAutoSigmoid(
     temperature,
     tint,
     exposureEv,
-    shadow,
     scaledLog,
     0,
   );
@@ -695,7 +646,6 @@ export function findAutoSigmoid(
       temperature,
       tint,
       exposureEv,
-      shadow,
       scaledLog,
       value,
     );

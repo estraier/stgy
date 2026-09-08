@@ -84,7 +84,6 @@ import {
   createToneAutoSampleFromRgb16,
   findAutoExposure,
   findAutoLogarithm,
-  findAutoShadow,
   findAutoSigmoid,
   percentileFromValues,
   percentilesFromValues,
@@ -5867,29 +5866,17 @@ export function ImageEditDialog({
     });
   }, [autoToneBusy, currentToneAutoSample, runAutoToneTask, temperature, tint, waitForAutoToneStagePaint]);
 
-  const onAutoShadow = useCallback(() => {
-    if (autoToneBusy) return;
-    void runAutoToneTask(async (setStage) => {
-      const sample = currentToneAutoSample();
-      if (!sample) return;
-      await setStage("Optimizing shadows…");
-      setShadow(findAutoShadow(sample, temperature, tint, exposureEv));
-      await setStage("Rendering preview…");
-      await waitForAutoToneStagePaint();
-    });
-  }, [autoToneBusy, currentToneAutoSample, exposureEv, runAutoToneTask, temperature, tint, waitForAutoToneStagePaint]);
-
   const onAutoLogarithm = useCallback(() => {
     if (autoToneBusy) return;
     void runAutoToneTask(async (setStage) => {
       const sample = currentToneAutoSample();
       if (!sample) return;
       await setStage("Optimizing logarithm…");
-      setScaledLog(findAutoLogarithm(sample, temperature, tint, exposureEv, shadow));
+      setScaledLog(findAutoLogarithm(sample, temperature, tint, exposureEv));
       await setStage("Rendering preview…");
       await waitForAutoToneStagePaint();
     });
-  }, [autoToneBusy, currentToneAutoSample, exposureEv, runAutoToneTask, shadow, temperature, tint, waitForAutoToneStagePaint]);
+  }, [autoToneBusy, currentToneAutoSample, exposureEv, runAutoToneTask, temperature, tint, waitForAutoToneStagePaint]);
 
   const onAutoSigmoid = useCallback(() => {
     if (autoToneBusy) return;
@@ -5897,28 +5884,27 @@ export function ImageEditDialog({
       const sample = currentToneAutoSample();
       if (!sample) return;
       await setStage("Optimizing sigmoid…");
-      setSigmoid(findAutoSigmoid(sample, temperature, tint, exposureEv, shadow, scaledLog));
+      setSigmoid(findAutoSigmoid(sample, temperature, tint, exposureEv, scaledLog));
       await setStage("Rendering preview…");
       await waitForAutoToneStagePaint();
     });
-  }, [autoToneBusy, currentToneAutoSample, exposureEv, runAutoToneTask, scaledLog, shadow, temperature, tint, waitForAutoToneStagePaint]);
+  }, [autoToneBusy, currentToneAutoSample, exposureEv, runAutoToneTask, scaledLog, temperature, tint, waitForAutoToneStagePaint]);
 
   const onAutoTone = useCallback(() => {
     if (autoToneBusy) return;
     void runAutoToneTask(async (setStage) => {
       const sample = currentToneAutoSample();
       if (!sample) return;
+      setShadow(0);
+      setHighlight(0);
       await setStage("Optimizing exposure…");
       const autoExposure = findAutoExposure(sample, temperature, tint);
-      await setStage("Optimizing shadows…");
-      const autoShadow = findAutoShadow(sample, temperature, tint, autoExposure);
       await setStage("Optimizing logarithm…");
       const autoLogarithm = findAutoLogarithm(
         sample,
         temperature,
         tint,
         autoExposure,
-        autoShadow,
       );
       await setStage("Optimizing sigmoid…");
       const autoSigmoid = findAutoSigmoid(
@@ -5926,12 +5912,9 @@ export function ImageEditDialog({
         temperature,
         tint,
         autoExposure,
-        autoShadow,
         autoLogarithm,
       );
       setExposureEv(autoExposure);
-      setShadow(autoShadow);
-      setHighlight(0);
       setScaledLog(autoLogarithm);
       setSigmoid(autoSigmoid);
       await setStage("Rendering preview…");
@@ -7221,7 +7204,7 @@ export function ImageEditDialog({
                   className="h-5 rounded border border-gray-300 bg-white px-1.5 text-[10px] font-normal text-gray-700 hover:bg-gray-100 disabled:cursor-default disabled:opacity-60"
                   onClick={onAutoTone}
                   disabled={autoToneBusy}
-                  title="Auto tone: Exposure, Shadow, Logarithm, then Sigmoid; reset Highlight"
+                  title="Auto tone: reset Shadow/Highlight, then optimize Exposure, Logarithm, and Sigmoid"
                 >
                   Auto
                 </button>
@@ -7269,8 +7252,8 @@ export function ImageEditDialog({
                 <input
                   aria-label="Logarithm"
                   type="range"
-                  min={-16}
-                  max={16}
+                  min={-20}
+                  max={20}
                   step={0.1}
                   value={scaledLog}
                   onChange={(e) => setScaledLog(clampScaledLog(Number(e.target.value)))}
@@ -7307,15 +7290,6 @@ export function ImageEditDialog({
               <div className="grid grid-cols-[112px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
                 <div className="col-start-1 row-start-1 flex min-w-0 items-center gap-1">
                   <span>Shadow</span>
-                  <button
-                    type="button"
-                    className="h-5 rounded border border-gray-300 bg-white px-1 text-[10px] text-gray-700 hover:bg-gray-100 disabled:cursor-default disabled:opacity-60"
-                    onClick={onAutoShadow}
-                    disabled={autoToneBusy}
-                    title="Auto shadow: place the shadow point at post-exposure P2"
-                  >
-                    Auto
-                  </button>
                 </div>
                 <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{shadow >= 0 ? "+" : ""}{shadow}</span>
                 <input

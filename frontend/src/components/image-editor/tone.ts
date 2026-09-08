@@ -13,7 +13,7 @@ export function clampWhiteBalanceValue(v: number): number {
 }
 
 export function clampScaledLog(v: number): number {
-  return Math.min(16, Math.max(-16, Math.round(v * 10) / 10));
+  return Math.min(20, Math.max(-20, Math.round(v * 10) / 10));
 }
 
 export function clampSigmoid(v: number): number {
@@ -217,92 +217,53 @@ export function applyExposureLinearToRgb(
   return [r * factor, g * factor, b * factor];
 }
 
-export const SHADOW_ADJUSTMENT_END = 0.4;
-export const SHADOW_MAX_POINT_X = 0.15;
-export const SHADOW_MAX_POINT_Y = 0.05;
-export const SHADOW_SOFT_POINT_CURVE_X =
-  SHADOW_MAX_POINT_X / (1 - Math.sqrt(SHADOW_MAX_POINT_Y / SHADOW_MAX_POINT_X));
+export const SHADOW_MAX_SIGMOID_GAIN = 4;
+export const SHADOW_WORKING_GAMMA = 12;
 export const HIGHLIGHT_MAX_SIGMOID_GAIN = 4;
-export const HIGHLIGHT_WORKING_EXPONENT = 3.2;
+export const HIGHLIGHT_WORKING_GAMMA = 0.48;
 
 export type HighlightRange = {
-  p0: number;
   p100: number;
 };
 
-export function cubicHermiteScalar(
+export function applySigmoidLinearAtMidpointWithWorkingGamma(
   value: number,
-  x0: number,
-  y0: number,
-  slope0: number,
-  x1: number,
-  y1: number,
-  slope1: number,
+  gain: number,
+  midpoint: number,
+  workingGamma: number,
 ): number {
-  const span = x1 - x0;
-  if (span <= 0) return y1;
-  const t = Math.min(1, Math.max(0, (value - x0) / span));
-  const t2 = t * t;
-  const t3 = t2 * t;
-  const h00 = 2 * t3 - 3 * t2 + 1;
-  const h10 = t3 - 2 * t2 + t;
-  const h01 = -2 * t3 + 3 * t2;
-  const h11 = t3 - t2;
-  return h00 * y0 + h10 * span * slope0 + h01 * y1 + h11 * span * slope1;
-}
-
-export function monotoneInteriorSlope(
-  leftWidth: number,
-  rightWidth: number,
-  leftSlope: number,
-  rightSlope: number,
-): number {
-  if (leftSlope <= 0 || rightSlope <= 0) return 0;
-  const w1 = 2 * rightWidth + leftWidth;
-  const w2 = rightWidth + 2 * leftWidth;
-  return (w1 + w2) / (w1 / leftSlope + w2 / rightSlope);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  const g = clampSigmoid(gain);
+  if (Math.abs(g) <= 1e-6 || value >= 1) return value;
+  const mid = clamp01(midpoint);
+  const gamma = Number.isFinite(workingGamma) && workingGamma > 0
+    ? workingGamma
+    : HISTOGRAM_DISPLAY_GAMMA;
+  const encoded = Math.pow(clamp01(value), 1 / gamma);
+  if (g > 1e-6) {
+    const minVal = naiveSigmoid(0, g, mid);
+    const maxVal = naiveSigmoid(1, g, mid);
+    const adjusted = clamp01((naiveSigmoid(encoded, g, mid) - minVal) / (maxVal - minVal));
+    return Math.pow(adjusted, gamma);
+  }
+  const magnitude = -g;
+  const minVal = naiveInverseSigmoid(0, magnitude, mid);
+  const maxVal = naiveInverseSigmoid(1, magnitude, mid);
+  const adjusted = clamp01(
+    (naiveInverseSigmoid(encoded, magnitude, mid) - minVal) / (maxVal - minVal),
+  );
+  return Math.pow(adjusted, gamma);
 }
 
 export function applyShadowLinear(value: number, shadow: number): number {
   const normalized = clampToneRangeAdjustment(shadow);
-  if (normalized === 0 || value >= SHADOW_ADJUSTMENT_END) return value;
-
-  const p = -(SHADOW_MAX_POINT_X / 100) * normalized;
-  if (normalized < 0) {
-    if (value <= 0) return 0;
-    const shadowPointY = p * Math.pow(1 - p / SHADOW_SOFT_POINT_CURVE_X, 2);
-    const leftSlope = shadowPointY / p;
-    const rightSlope = (SHADOW_ADJUSTMENT_END - shadowPointY) / (SHADOW_ADJUSTMENT_END - p);
-    const middleSlope = monotoneInteriorSlope(
-      p,
-      SHADOW_ADJUSTMENT_END - p,
-      leftSlope,
-      rightSlope,
-    );
-    if (value <= p) {
-      return cubicHermiteScalar(value, 0, 0, leftSlope, p, shadowPointY, middleSlope);
-    }
-    return cubicHermiteScalar(
-      value,
-      p,
-      shadowPointY,
-      middleSlope,
-      SHADOW_ADJUSTMENT_END,
-      SHADOW_ADJUSTMENT_END,
-      1,
-    );
-  }
-
-  if (value <= p) return 0;
-  const secantSlope = SHADOW_ADJUSTMENT_END / (SHADOW_ADJUSTMENT_END - p);
-  return cubicHermiteScalar(
+  if (normalized === 0) return value;
+  const gain = SHADOW_MAX_SIGMOID_GAIN * normalized / 100;
+  return applySigmoidLinearAtMidpointWithWorkingGamma(
     value,
-    p,
+    gain,
     0,
-    secantSlope,
-    SHADOW_ADJUSTMENT_END,
-    SHADOW_ADJUSTMENT_END,
-    1,
+    SHADOW_WORKING_GAMMA,
   );
 }
 
@@ -314,64 +275,21 @@ export function applyHighlightLinear(
   const normalized = clampToneRangeAdjustment(highlight);
   if (normalized === 0 || !range) return value;
 
-  const { p0, p100 } = range;
-  const span = p100 - p0;
-  if (!(span > 1e-12) || value <= p0) return value;
+  const { p100 } = range;
+  if (!(Number.isFinite(p100) && p100 > 1e-12) || value <= 0 || value >= p100) return value;
 
-  let adjustedLinear = value;
-  if (value < p100) {
-    const x = Math.min(1, Math.max(0, (value - p0) / span));
-    const workingX = Math.pow(x, HIGHLIGHT_WORKING_EXPONENT);
-    const gain = HIGHLIGHT_MAX_SIGMOID_GAIN * Math.abs(normalized) / 100;
-    if (gain > 1e-12) {
-      // The Highlight knee is fixed at the top of the normalized working domain.
-      // Slider magnitude changes sigmoid gain itself rather than blending a fixed
-      // maximum-strength curve with identity.
-      const workingMid = 1;
-      const minVal = naiveSigmoid(0, gain, workingMid);
-      const maxVal = naiveSigmoid(1, gain, workingMid);
-      const sigmoidSpan = maxVal - minVal;
-      if (sigmoidSpan > 1e-12) {
-        const workingSigmoid = Math.min(
-          1,
-          Math.max(
-            0,
-            (naiveSigmoid(workingX, gain, workingMid) - minVal) / sigmoidSpan,
-          ),
-        );
-        // Negative Highlight uses the endpoint-normalized sigmoid. Positive Highlight
-        // mirrors the same displacement around identity, keeping both directions tied
-        // to the same fixed knee at 1.
-        const adjustedWorking = normalized < 0
-          ? workingSigmoid
-          : 2 * workingX - workingSigmoid;
-        const adjusted = Math.pow(
-          clamp01(adjustedWorking),
-          1 / HIGHLIGHT_WORKING_EXPONENT,
-        );
-        adjustedLinear = p0 + span * adjusted;
-      }
-    }
-  }
-
-  // Lightroom-like endpoint movement: after returning to linear space, move P100
-  // toward 1 only when the slider direction calls for expanding a sub-white range
-  // (positive Highlight) or compressing RAW headroom above white (negative Highlight).
-  // Keep P0 fixed and apply the same affine scale above P0 so the mapping remains
-  // continuous at P100 even when an actual full-resolution pixel exceeds the sampled P100.
-  let targetP100 = p100;
-  if (normalized > 0 && p100 < 1) {
-    targetP100 = p100 + (1 - p100) * normalized / 100;
-  } else if (normalized < 0 && p100 > 1) {
-    targetP100 = p100 - (p100 - 1) * Math.abs(normalized) / 100;
-    // P0 is the fixed point. If the entire sampled range is already above 1,
-    // reaching 1 would invert the range, so collapse no farther than P0.
-    targetP100 = Math.max(p0, targetP100);
-  }
-  if (Math.abs(targetP100 - p100) <= 1e-12) return adjustedLinear;
-
-  const endpointScale = (targetP100 - p0) / span;
-  return p0 + (adjustedLinear - p0) * endpointScale;
+  // Normalize sampled P100 to 1, apply a high-end-focused sigmoid there,
+  // then restore the original P100 scale. P100 itself stays fixed, while values
+  // between display white (1) and P100 can move back below 1 when Highlight is reduced.
+  const gain = -HIGHLIGHT_MAX_SIGMOID_GAIN * normalized / 100;
+  const normalizedValue = value / p100;
+  const adjustedNormalizedValue = applySigmoidLinearAtMidpointWithWorkingGamma(
+    normalizedValue,
+    gain,
+    1,
+    HIGHLIGHT_WORKING_GAMMA,
+  );
+  return adjustedNormalizedValue * p100;
 }
 
 export function applyShadowHighlightLinearToRgb(
