@@ -19,9 +19,9 @@ EXCLUDE_FILES = {
   "stgy-current-source.tar.gz",
 }
 
-def git_visible_paths():
+def git_tracked_paths():
   raw = subprocess.check_output(
-    ["git", "ls-files", "-z", "-c", "-o", "--exclude-standard"],
+    ["git", "ls-files", "-z"],
     cwd=ROOT,
   )
   return [p.decode() for p in raw.split(b"\0") if p]
@@ -36,7 +36,7 @@ def should_include(rel):
 
 def main():
   paths = [
-    rel for rel in git_visible_paths()
+    rel for rel in git_tracked_paths()
     if should_include(rel)
   ]
 
