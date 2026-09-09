@@ -106,14 +106,10 @@ import { renderAdjustedLinearRgbSampleToCanvas, renderAdjustedRgb16ToCanvas } fr
 import {
   applyRawColorPass,
   applyRawFallbackBaselinePass,
-  applyRawFallbackPlanPass,
   applyRawMatchedTonePass,
-  developRawMasterOnePassToGamma20,
-  resampleRawWithLensfunToGamma20,
   type RawColorPassPlan,
-  type RawFallbackPlan,
-  type RawLensfunCorrectionMaps,
   type RawMatchedTonePlan,
+  type RawVignettingMap,
 } from "./image-editor/raw-development-core";
 export { __imageEditorCharacterization } from "./image-editor/characterization";
 
@@ -374,8 +370,6 @@ const RAW_THUMBNAIL_MATCH_VIBRANCE_PERCENTILE = 50;
 const RAW_THUMBNAIL_MATCH_COLOR_VALUE_TRIM_FRACTION = 0.1;
 const DEBUG_PERCENTILES = [0, 1, 2, 5, 25, 50, 75, 95, 98, 99, 100] as const;
 const RAW_THUMBNAIL_MATCH_SAMPLE_MAX_SIDE = 256;
-const RAW_PREVIEW_DEVELOPMENT_MAX_SIDE = 1024;
-const RAW_PREVIEW_DEMOSAIC_QUALITY: RawDemosaicQuality = 0;
 
 type DebugPercentileValues = number[];
 
@@ -1542,6 +1536,11 @@ async function decodeViaImg(file: File): Promise<HTMLImageElement> {
   }
 }
 
+type RawBaselineApplicationResult = {
+  luminance: RawDevelopmentLuminanceSettings;
+  headroom: RawDevelopmentHeadroomStatistics;
+};
+
 type RawMatchedTonePlanningResult = {
   plan: RawMatchedTonePlan;
   luminance: RawDevelopmentLuminanceSettings;
@@ -1974,6 +1973,32 @@ function nativeRgbTiffToDecodedRgb16(
   };
 }
 
+function convertDecodedRgb16Transfer(
+  decoded: DecodedRgbImage16,
+  transfer: DecodedRgbImage16["transfer"],
+): void {
+  if (decoded.transfer === transfer) return;
+  const data = decoded.data;
+  for (let i = 0; i < data.length; i += 3) {
+    data[i] = encodeStoredRgb16Channel(
+      decodeStoredRgb16Channel(data[i] ?? 0, decoded.transfer, decoded.linearRangeMax),
+      transfer,
+      decoded.linearRangeMax,
+    );
+    data[i + 1] = encodeStoredRgb16Channel(
+      decodeStoredRgb16Channel(data[i + 1] ?? 0, decoded.transfer, decoded.linearRangeMax),
+      transfer,
+      decoded.linearRangeMax,
+    );
+    data[i + 2] = encodeStoredRgb16Channel(
+      decodeStoredRgb16Channel(data[i + 2] ?? 0, decoded.transfer, decoded.linearRangeMax),
+      transfer,
+      decoded.linearRangeMax,
+    );
+  }
+  decoded.transfer = transfer;
+}
+
 function histogramPercentile16(
   histogram: Uint32Array,
   sampleCount: number,
@@ -2237,6 +2262,26 @@ function planRawThumbnailMatchedBaseline(
   };
 }
 
+function applyRawThumbnailMatchedBaseline(
+  decoded: DecodedRgbImage16,
+  thumbnailPercentiles: DebugPercentileValues,
+): RawBaselineApplicationResult | null {
+  const planned = planRawThumbnailMatchedBaseline(decoded, thumbnailPercentiles);
+  if (!planned) return null;
+  const headroom = applyRawMatchedTonePass(
+    decoded.data,
+    decoded.width,
+    decoded.height,
+    decoded.linearRangeMax,
+    rawPendingVignettingMap(decoded),
+    planned.plan,
+  );
+  decoded.linearRangeMax = RAW_DEVELOPED_LINEAR_RANGE_MAX;
+  decoded.transfer = "gamma20";
+  finishLensfunVignettingBake(decoded);
+  return { luminance: planned.luminance, headroom };
+}
+
 function buildCentralValueMask(
   values: Float32Array,
 ): { mask: Uint8Array; count: number } {
@@ -2498,6 +2543,44 @@ function planRawThumbnailMatchedColor(
       vibranceFactor: context.vibranceFactor,
       saturationRolloff: context.saturationRolloff,
     },
+  };
+}
+
+function applyRawThumbnailMatchedColor(
+  decoded: DecodedRgbImage16,
+  thumbnailLinearSrgbSample: Float32Array,
+): RawDevelopmentSaturationSettings | null {
+  const rawLinearProPhotoSample = sampleRawThumbnailMatchLinearRgbFromRgb16(decoded);
+  const planned = planRawThumbnailMatchedColor(rawLinearProPhotoSample, thumbnailLinearSrgbSample);
+  if (!planned) return null;
+  if (planned.pass) {
+    applyRawColorPass(decoded.data, decoded.linearRangeMax, planned.pass);
+  }
+  return planned.settings;
+}
+
+function applyRawBaselineExposure(
+  decoded: DecodedRgbImage16,
+): RawBaselineApplicationResult | null {
+  const result = applyRawFallbackBaselinePass(
+    decoded.data,
+    decoded.width,
+    decoded.height,
+    decoded.linearRangeMax,
+    rawPendingVignettingMap(decoded),
+  );
+  if (!result) return null;
+  decoded.linearRangeMax = RAW_DEVELOPED_LINEAR_RANGE_MAX;
+  decoded.transfer = "gamma20";
+  finishLensfunVignettingBake(decoded);
+  return {
+    luminance: {
+      exposureEv: result.exposureEv,
+      logarithm: 0,
+      sigmoid: 0,
+      toneSlopeAtWhite: 1,
+    },
+    headroom: result.headroom,
   };
 }
 
@@ -2814,6 +2897,28 @@ function pendingLensfunVignettingGainInto(
   return lensfunVignettingGainInto(correction, x, y, output);
 }
 
+function rawPendingVignettingMap(decoded: DecodedRgbImage16): RawVignettingMap | undefined {
+  const correction = decoded.lensCorrection;
+  if (!correction?.vignetting || correction.vignettingBaked) return undefined;
+  return {
+    gridWidth: correction.gridWidth,
+    gridHeight: correction.gridHeight,
+    step: correction.step,
+    data: correction.vignetting,
+  };
+}
+
+function finishLensfunVignettingBake(decoded: DecodedRgbImage16): void {
+  const correction = decoded.lensCorrection;
+  if (!correction?.vignetting) return;
+
+  correction.vignettingBaked = true;
+  delete correction.vignetting;
+  if (!correction.distortion && !correction.tca) {
+    decoded.lensCorrection = undefined;
+  }
+}
+
 function libRawImageDataToDecoded(image: LibRawImageDataLike): DecodedRgbImage16 {
   const width = Math.max(1, Math.round(image.width || 0));
   const height = Math.max(1, Math.round(image.height || 0));
@@ -2944,11 +3049,7 @@ type RawWorkerToneResponse = {
 
 type RawWorkerFallbackResponse = {
   type: "fallback-tone-complete";
-  result: {
-    exposureEv: number;
-    headroom: RawDevelopmentHeadroomStatistics;
-    plan: RawFallbackPlan;
-  } | null;
+  result: { exposureEv: number; headroom: RawDevelopmentHeadroomStatistics } | null;
 };
 
 type RawWorkerColorResponse = {
@@ -2959,40 +3060,6 @@ type RawWorkerEncodeResponse = {
   type: "encode-complete";
   dataBuffer: ArrayBuffer;
   linearRangeMax: number;
-};
-
-type RawWorkerLensfunResampleResponse = {
-  type: "lensfun-resample-complete";
-  dataBuffer: ArrayBuffer;
-  width: number;
-  height: number;
-  linearRangeMax: number;
-  transfer: DecodedRgbImage16["transfer"];
-};
-
-type RawWorkerMasterOnePassResponse = {
-  type: "master-one-pass-complete";
-  dataBuffer: ArrayBuffer;
-  width: number;
-  height: number;
-  linearRangeMax: number;
-  transfer: DecodedRgbImage16["transfer"];
-  headroom?: RawDevelopmentHeadroomStatistics;
-};
-
-type RawProgressiveDevelopmentPlan = {
-  mode: RawDevelopmentSettings["mode"];
-  luminance: RawDevelopmentLuminanceSettings | null;
-  headroom?: RawDevelopmentHeadroomStatistics;
-  saturation: RawDevelopmentSaturationSettings;
-  tonePlan?: RawMatchedTonePlan;
-  fallbackPlan?: RawFallbackPlan;
-  colorPlan?: RawColorPassPlan;
-};
-
-type RawPreviewDevelopmentResult = {
-  decoded: DecodedRgbImage16;
-  plan: RawProgressiveDevelopmentPlan;
 };
 
 function createRawDevelopmentWorker(): Worker | null {
@@ -3054,264 +3121,21 @@ function requestRawDevelopmentWorker<T extends { type: string }>(
   });
 }
 
-function rawLensfunCorrectionMaps(
-  correction: LensfunCorrection | undefined,
-): RawLensfunCorrectionMaps | undefined {
-  if (!correction) return undefined;
-  return {
-    gridWidth: correction.gridWidth,
-    gridHeight: correction.gridHeight,
-    step: correction.step,
-    geometry: correction.geometry,
-    distortion: correction.distortion,
-    ...(correction.combined ? { combined: correction.combined } : {}),
-    ...(correction.tca ? { tca: correction.tca } : {}),
-    ...(correction.vignetting ? { vignetting: correction.vignetting } : {}),
-    ...(correction.vignettingBaked ? { vignettingBaked: true } : {}),
-  };
-}
+type RawWorkerDevelopmentResult = {
+  mode: RawDevelopmentSettings["mode"];
+  luminance: RawDevelopmentLuminanceSettings | null;
+  headroom?: RawDevelopmentHeadroomStatistics;
+  saturation: RawDevelopmentSaturationSettings;
+};
 
-function rawLensfunMapTransferables(correction: LensfunCorrection | undefined): Transferable[] {
-  if (!correction) return [];
-  const buffers = [
-    correction.geometry.buffer,
-    correction.combined?.buffer,
-    correction.tca?.buffer,
-    correction.vignetting?.buffer,
-  ];
-  const unique = new Set<ArrayBuffer>();
-  for (const buffer of buffers) {
-    if (buffer instanceof ArrayBuffer) unique.add(buffer);
-  }
-  return Array.from(unique);
-}
-
-function rawPreviewDimensions(width: number, height: number): { width: number; height: number } {
-  const sourceWidth = Math.max(1, Math.round(width));
-  const sourceHeight = Math.max(1, Math.round(height));
-  const scale = Math.min(
-    1,
-    RAW_PREVIEW_DEVELOPMENT_MAX_SIDE / Math.max(sourceWidth, sourceHeight),
-  );
-  return {
-    width: Math.max(1, Math.round(sourceWidth * scale)),
-    height: Math.max(1, Math.round(sourceHeight * scale)),
-  };
-}
-
-async function resampleRawDecodedInWorker(
-  decoded: DecodedRgbImage16,
-  targetWidth: number,
-  targetHeight: number,
-): Promise<DecodedRgbImage16> {
-  const correction = decoded.lensCorrection;
-  const correctionMaps = rawLensfunCorrectionMaps(correction);
-  const worker = createRawDevelopmentWorker();
-  if (!worker) {
-    const output = resampleRawWithLensfunToGamma20(
-      decoded.data,
-      decoded.width,
-      decoded.height,
-      decoded.linearRangeMax,
-      decoded.transfer,
-      correctionMaps,
-      targetWidth,
-      targetHeight,
-    );
-    return {
-      colorSpace: "prophoto",
-      transfer: "gamma20",
-      linearRangeMax: RAW_DEVELOPED_LINEAR_RANGE_MAX,
-      width: Math.max(1, Math.round(targetWidth)),
-      height: Math.max(1, Math.round(targetHeight)),
-      data: output,
-      cleanup: () => {},
-    };
-  }
-  const sourceBuffer = decoded.data.buffer as ArrayBuffer;
-  try {
-    const response = await requestRawDevelopmentWorker<RawWorkerLensfunResampleResponse>(
-      worker,
-      "lensfun-resample-complete",
-      {
-        type: "lensfun-resample",
-        dataBuffer: sourceBuffer,
-        width: decoded.width,
-        height: decoded.height,
-        sourceLinearRangeMax: decoded.linearRangeMax,
-        sourceTransfer: decoded.transfer,
-        correction: correctionMaps,
-        targetWidth,
-        targetHeight,
-      },
-      [sourceBuffer, ...rawLensfunMapTransferables(correction)],
-    );
-    return {
-      colorSpace: "prophoto",
-      transfer: "gamma20",
-      linearRangeMax: response.linearRangeMax,
-      width: response.width,
-      height: response.height,
-      data: new Uint16Array(response.dataBuffer),
-      cleanup: () => {},
-    };
-  } finally {
-    worker.terminate();
-  }
-}
-
-async function developRawMasterOnePassInWorker(
-  sourceDecoded: DecodedRgbImage16,
-  plan: RawProgressiveDevelopmentPlan,
-): Promise<{ decoded: DecodedRgbImage16; headroom?: RawDevelopmentHeadroomStatistics }> {
-  const correction = sourceDecoded.lensCorrection;
-  const correctionMaps = rawLensfunCorrectionMaps(correction);
-  const worker = createRawDevelopmentWorker();
-  if (!worker) {
-    const result = developRawMasterOnePassToGamma20(
-      sourceDecoded.data,
-      sourceDecoded.width,
-      sourceDecoded.height,
-      sourceDecoded.linearRangeMax,
-      sourceDecoded.transfer,
-      correctionMaps,
-      plan.tonePlan,
-      plan.fallbackPlan,
-      plan.colorPlan,
-    );
-    return {
-      decoded: {
-        colorSpace: "prophoto",
-        transfer: "gamma20",
-        linearRangeMax: RAW_DEVELOPED_LINEAR_RANGE_MAX,
-        width: sourceDecoded.width,
-        height: sourceDecoded.height,
-        data: result.data,
-        cleanup: () => {},
-      },
-      headroom: result.headroom,
-    };
-  }
-
-  const sourceBuffer = sourceDecoded.data.buffer as ArrayBuffer;
-  try {
-    const response = await requestRawDevelopmentWorker<RawWorkerMasterOnePassResponse>(
-      worker,
-      "master-one-pass-complete",
-      {
-        type: "master-one-pass",
-        dataBuffer: sourceBuffer,
-        width: sourceDecoded.width,
-        height: sourceDecoded.height,
-        sourceLinearRangeMax: sourceDecoded.linearRangeMax,
-        sourceTransfer: sourceDecoded.transfer,
-        correction: correctionMaps,
-        tonePlan: plan.tonePlan,
-        fallbackPlan: plan.fallbackPlan,
-        colorPlan: plan.colorPlan,
-      },
-      [sourceBuffer, ...rawLensfunMapTransferables(correction)],
-    );
-    return {
-      decoded: {
-        colorSpace: "prophoto",
-        transfer: response.transfer,
-        linearRangeMax: response.linearRangeMax,
-        width: response.width,
-        height: response.height,
-        data: new Uint16Array(response.dataBuffer),
-        cleanup: () => {},
-      },
-      headroom: response.headroom,
-    };
-  } finally {
-    worker.terminate();
-  }
-}
-
-function developRawPreviewPixelsSync(
-  decoded: DecodedRgbImage16,
-  thumbnailReference: RawThumbnailMatchReference | undefined,
-): RawProgressiveDevelopmentPlan {
-  let mode: RawDevelopmentSettings["mode"] = "fallback";
-  let luminance: RawDevelopmentLuminanceSettings | null = null;
-  let headroom: RawDevelopmentHeadroomStatistics | undefined;
-  let saturation: RawDevelopmentSaturationSettings = { saturation: 0, vibrance: 0 };
-  let tonePlan: RawMatchedTonePlan | undefined;
-  let fallbackPlan: RawFallbackPlan | undefined;
-  let colorPlan: RawColorPassPlan | undefined;
-
-  const matched = thumbnailReference
-    ? planRawThumbnailMatchedBaseline(decoded, thumbnailReference.lumaPercentiles)
-    : null;
-  if (matched) {
-    tonePlan = matched.plan;
-    headroom = applyRawMatchedTonePass(
-      decoded.data,
-      decoded.width,
-      decoded.height,
-      decoded.linearRangeMax,
-      undefined,
-      tonePlan,
-      decoded.transfer,
-    );
-    decoded.linearRangeMax = RAW_DEVELOPED_LINEAR_RANGE_MAX;
-    decoded.transfer = "gamma20";
-    mode = "thumbnail-match";
-    luminance = matched.luminance;
-
-    const rawColorSample = sampleRawThumbnailMatchLinearRgbFromRgb16(decoded);
-    const plannedColor = planRawThumbnailMatchedColor(
-      rawColorSample,
-      thumbnailReference!.linearSrgbSample,
-    );
-    if (plannedColor) {
-      saturation = plannedColor.settings;
-      colorPlan = plannedColor.pass ?? undefined;
-      if (colorPlan) applyRawColorPass(decoded.data, decoded.linearRangeMax, colorPlan);
-    }
-  } else {
-    const fallback = applyRawFallbackBaselinePass(
-      decoded.data,
-      decoded.width,
-      decoded.height,
-      decoded.linearRangeMax,
-      undefined,
-      decoded.transfer,
-    );
-    if (fallback) {
-      fallbackPlan = fallback.plan;
-      headroom = fallback.headroom;
-      decoded.linearRangeMax = RAW_DEVELOPED_LINEAR_RANGE_MAX;
-      decoded.transfer = "gamma20";
-      luminance = {
-        exposureEv: fallback.exposureEv,
-        logarithm: 0,
-        sigmoid: 0,
-        toneSlopeAtWhite: 1,
-      };
-    }
-  }
-
-  return {
-    mode,
-    luminance,
-    headroom,
-    saturation,
-    ...(tonePlan ? { tonePlan } : {}),
-    ...(fallbackPlan ? { fallbackPlan } : {}),
-    ...(colorPlan ? { colorPlan } : {}),
-  };
-}
-
-
-async function developRawPreviewPixels(
+async function developRawPixelsInWorker(
   decoded: DecodedRgbImage16,
   thumbnailReference: RawThumbnailMatchReference | undefined,
   onProgress?: ImageLoadProgressListener,
-): Promise<RawProgressiveDevelopmentPlan> {
+): Promise<RawWorkerDevelopmentResult | null> {
+  if (decoded.transfer !== "linear") return null;
   const worker = createRawDevelopmentWorker();
-  if (!worker) return developRawPreviewPixelsSync(decoded, thumbnailReference);
+  if (!worker) return null;
 
   const stage = async <T,>(name: string, task: () => Promise<T>): Promise<T> => {
     onProgress?.({ stage: name });
@@ -3321,14 +3145,22 @@ async function developRawPreviewPixels(
 
   let transferred = false;
   try {
-    const matched = thumbnailReference
-      ? planRawThumbnailMatchedBaseline(decoded, thumbnailReference.lumaPercentiles)
-      : null;
-    let plan: RawProgressiveDevelopmentPlan;
+    let mode: RawDevelopmentSettings["mode"] = "fallback";
+    let luminance: RawDevelopmentLuminanceSettings | null = null;
+    let headroom: RawDevelopmentHeadroomStatistics | undefined;
+    let saturation: RawDevelopmentSaturationSettings = { saturation: 0, vibrance: 0 };
+    const vignetting = rawPendingVignettingMap(decoded);
 
-    if (matched) {
+    let matchedPlan: RawMatchedTonePlanningResult | null = null;
+    if (thumbnailReference) {
+      onProgress?.({ stage: "Planning tone…" });
+      if (onProgress) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      matchedPlan = planRawThumbnailMatchedBaseline(decoded, thumbnailReference.lumaPercentiles);
+    }
+
+    if (matchedPlan) {
       const sourceBuffer = decoded.data.buffer as ArrayBuffer;
-      const toneResponse = await stage<RawWorkerToneResponse>("Developing preview tone…", () => {
+      const toneResponse = await stage<RawWorkerToneResponse>("Developing tone…", async () => {
         transferred = true;
         return requestRawDevelopmentWorker<RawWorkerToneResponse>(
           worker,
@@ -3339,8 +3171,8 @@ async function developRawPreviewPixels(
             width: decoded.width,
             height: decoded.height,
             sourceLinearRangeMax: decoded.linearRangeMax,
-            sourceTransfer: decoded.transfer,
-            plan: matched.plan,
+            vignetting,
+            plan: matchedPlan!.plan,
             sampleMaxSide: RAW_THUMBNAIL_MATCH_SAMPLE_MAX_SIDE,
           },
           [sourceBuffer],
@@ -3348,34 +3180,34 @@ async function developRawPreviewPixels(
       });
       decoded.linearRangeMax = RAW_DEVELOPED_LINEAR_RANGE_MAX;
       decoded.transfer = "gamma20";
+      finishLensfunVignettingBake(decoded);
+      mode = "thumbnail-match";
+      luminance = matchedPlan.luminance;
+      headroom = toneResponse.headroom;
 
       const rawColorSample = new Float32Array(toneResponse.colorSample);
-      onProgress?.({ stage: "Planning preview color…" });
-      if (onProgress) await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      const plannedColor = planRawThumbnailMatchedColor(
-        rawColorSample,
-        thumbnailReference!.linearSrgbSample,
-      );
-      if (plannedColor?.pass) {
-        await stage<RawWorkerColorResponse>("Developing preview color…", () =>
-          requestRawDevelopmentWorker<RawWorkerColorResponse>(
-            worker,
-            "color-complete",
-            { type: "color", plan: plannedColor.pass! },
-          ),
+      await stage<RawWorkerColorResponse>("Developing color…", async () => {
+        const plannedColor = planRawThumbnailMatchedColor(
+          rawColorSample,
+          thumbnailReference!.linearSrgbSample,
         );
-      }
-      plan = {
-        mode: "thumbnail-match",
-        luminance: matched.luminance,
-        headroom: toneResponse.headroom,
-        saturation: plannedColor?.settings ?? { saturation: 0, vibrance: 0 },
-        tonePlan: matched.plan,
-        ...(plannedColor?.pass ? { colorPlan: plannedColor.pass } : {}),
-      };
+        if (plannedColor) saturation = plannedColor.settings;
+        return requestRawDevelopmentWorker<RawWorkerColorResponse>(
+          worker,
+          "color-complete",
+          { type: "color", plan: plannedColor?.pass ?? {
+            rolloff: null,
+            hasSaturation: false,
+            hasVibrance: false,
+            saturationFactor: 1,
+            vibranceFactor: 0,
+            saturationRolloff: null,
+          } },
+        );
+      });
     } else {
       const sourceBuffer = decoded.data.buffer as ArrayBuffer;
-      const fallbackResponse = await stage<RawWorkerFallbackResponse>("Developing preview tone…", () => {
+      const fallbackResponse = await stage<RawWorkerFallbackResponse>("Developing tone…", async () => {
         transferred = true;
         return requestRawDevelopmentWorker<RawWorkerFallbackResponse>(
           worker,
@@ -3386,47 +3218,39 @@ async function developRawPreviewPixels(
             width: decoded.width,
             height: decoded.height,
             sourceLinearRangeMax: decoded.linearRangeMax,
-            sourceTransfer: decoded.transfer,
+            vignetting,
           },
           [sourceBuffer],
         );
       });
-      const fallback = fallbackResponse.result;
-      if (fallback) {
+      if (fallbackResponse.result) {
         decoded.linearRangeMax = RAW_DEVELOPED_LINEAR_RANGE_MAX;
         decoded.transfer = "gamma20";
-        plan = {
-          mode: "fallback",
-          luminance: {
-            exposureEv: fallback.exposureEv,
-            logarithm: 0,
-            sigmoid: 0,
-            toneSlopeAtWhite: 1,
-          },
-          headroom: fallback.headroom,
-          saturation: { saturation: 0, vibrance: 0 },
-          fallbackPlan: fallback.plan,
+        finishLensfunVignettingBake(decoded);
+        luminance = {
+          exposureEv: fallbackResponse.result.exposureEv,
+          logarithm: 0,
+          sigmoid: 0,
+          toneSlopeAtWhite: 1,
         };
-      } else {
-        plan = {
-          mode: "fallback",
-          luminance: null,
-          saturation: { saturation: 0, vibrance: 0 },
-        };
+        headroom = fallbackResponse.result.headroom;
       }
     }
 
-    const encodeResponse = await requestRawDevelopmentWorker<RawWorkerEncodeResponse>(
-      worker,
-      "encode-complete",
-      { type: "encode" },
+    const encodeResponse = await stage<RawWorkerEncodeResponse>("Encoding buffer…", () =>
+      requestRawDevelopmentWorker<RawWorkerEncodeResponse>(
+        worker,
+        "encode-complete",
+        { type: "encode" },
+      ),
     );
     decoded.data = new Uint16Array(encodeResponse.dataBuffer);
     decoded.linearRangeMax = encodeResponse.linearRangeMax;
     decoded.transfer = "gamma20";
     transferred = false;
-    return plan;
+    return { mode, luminance, headroom, saturation };
   } catch (error) {
+    const hadTransferred = transferred;
     const workerError = error as RawDevelopmentWorkerError;
     if (workerError.dataBuffer) {
       decoded.data = new Uint16Array(workerError.dataBuffer);
@@ -3437,184 +3261,10 @@ async function developRawPreviewPixels(
         decoded.transfer = workerError.transfer;
       }
     }
-    if (!transferred) return developRawPreviewPixelsSync(decoded, thumbnailReference);
+    if (!hadTransferred) return null;
     throw error;
   } finally {
     worker.terminate();
-  }
-}
-
-async function decodeRawPreviewImage(
-  file: File,
-  rawHighlightMode?: RawHighlightMode,
-  onProgress?: ImageLoadProgressListener,
-): Promise<RawPreviewDevelopmentResult> {
-  const startedAt = performance.now();
-  async function runStage<T>(stage: string, task: () => Promise<T>): Promise<T> {
-    onProgress?.({ stage });
-    return task();
-  }
-  async function runBlockingStage<T>(stage: string, task: () => T): Promise<T> {
-    onProgress?.({ stage });
-    if (onProgress) await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    return task();
-  }
-
-  let raw: LibRawInstanceLike | null = null;
-  let workerFailure: ReturnType<typeof createLibRawWorkerFailure> | null = null;
-  try {
-    raw = await runStage("Loading RAW preview decoder…", () => createLibRawInstance());
-    workerFailure = createLibRawWorkerFailure(raw);
-    const rawBytes = await runStage("Reading RAW for preview…", async () =>
-      new Uint8Array(await file.arrayBuffer()),
-    );
-    const settings: LibRawSettingsLike = {
-      ...RAW_DECODE_SETTINGS,
-      userQual: RAW_PREVIEW_DEMOSAIC_QUALITY,
-      ...(rawHighlightMode === undefined ? {} : { highlight: rawHighlightMode }),
-    };
-    await runStage("Opening RAW preview…", () => Promise.race([
-      raw!.open(rawBytes, settings),
-      workerFailure!.promise,
-    ]));
-    const metadata = await runStage("Reading preview metadata…", () => Promise.race([
-      raw!.metadata(true),
-      workerFailure!.promise,
-    ]));
-    const isoValue = Number(metadata?.iso_speed);
-
-    let thumbnailReference: RawThumbnailMatchReference | undefined;
-    if (raw.thumbnailData) {
-      try {
-        const thumbnail = await runStage("Reading embedded preview…", () => Promise.race([
-          raw!.thumbnailData!(),
-          workerFailure!.promise,
-        ]));
-        const embeddedPreview = onProgress
-          ? await runStage("Preparing embedded preview…", () => rawEmbeddedPreviewFromThumbnail(thumbnail))
-          : undefined;
-        onProgress?.({ stage: "Analyzing embedded preview…", embeddedPreview });
-        thumbnailReference = await rawThumbnailMatchReferenceFromThumbnail(thumbnail);
-      } catch {
-        thumbnailReference = undefined;
-      }
-    }
-
-    const image = await runStage("Demosaicing preview…", () => Promise.race([
-      raw!.imageData(),
-      workerFailure!.promise,
-    ]));
-    if (!image || !image.width || !image.height || !image.data) {
-      throw new Error("RAW preview decode failed");
-    }
-    const sourceDecoded = await runBlockingStage("Converting preview pixels…", () =>
-      libRawImageDataToDecoded(image),
-    );
-    const lensMetadata = rawLensMetadata(metadata);
-    sourceDecoded.lensCorrection = await runStage("Correcting preview lens…", () =>
-      buildRawLensfunCorrection(lensMetadata, sourceDecoded.width, sourceDecoded.height),
-    );
-    const lensfunSettings = buildRawDevelopmentLensfunSettings(
-      lensMetadata,
-      sourceDecoded.lensCorrection,
-      sourceDecoded.width,
-      sourceDecoded.height,
-    );
-    const dimensions = rawPreviewDimensions(sourceDecoded.width, sourceDecoded.height);
-    onProgress?.({ stage: "Building preview image…" });
-    const decoded = await resampleRawDecodedInWorker(
-      sourceDecoded,
-      dimensions.width,
-      dimensions.height,
-    );
-
-    onProgress?.({ stage: "Planning preview tone…" });
-    if (onProgress) await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    const plan = await developRawPreviewPixels(decoded, thumbnailReference, onProgress);
-    decoded.rawDevelopment = {
-      mode: plan.mode,
-      iso: Number.isFinite(isoValue) && isoValue > 0 ? isoValue : null,
-      medPasses: 0,
-      luminance: plan.luminance,
-      saturation: plan.saturation,
-      headroom: plan.headroom,
-      lensfun: lensfunSettings,
-      elapsedSeconds: (performance.now() - startedAt) / 1000,
-    };
-    onProgress?.({ stage: "Preparing preview…" });
-    return { decoded, plan };
-  } finally {
-    workerFailure?.cleanup();
-    if (raw?.dispose) raw.dispose();
-    else raw?.worker?.terminate();
-  }
-}
-
-async function decodeRawMasterImage(
-  file: File,
-  planPromise: Promise<RawProgressiveDevelopmentPlan>,
-  rawDemosaicQuality?: RawDemosaicQuality,
-  rawHighlightMode?: RawHighlightMode,
-): Promise<DecodedRgbImage16> {
-  const startedAt = performance.now();
-  let raw: LibRawInstanceLike | null = null;
-  let workerFailure: ReturnType<typeof createLibRawWorkerFailure> | null = null;
-  try {
-    raw = await createLibRawInstance();
-    workerFailure = createLibRawWorkerFailure(raw);
-    const rawBytes = new Uint8Array(await file.arrayBuffer());
-    const settings: LibRawSettingsLike = {
-      ...RAW_DECODE_SETTINGS,
-      userQual: rawDemosaicQuality ?? 11,
-      ...(rawHighlightMode === undefined ? {} : { highlight: rawHighlightMode }),
-    };
-    await Promise.race([raw.open(rawBytes, settings), workerFailure.promise]);
-    const metadata = await Promise.race([raw.metadata(true), workerFailure.promise]);
-    const isoValue = Number(metadata?.iso_speed);
-    const medPasses = rawMedianDenoisePassesForIso(isoValue);
-    if (medPasses > 0) {
-      const denoiseRawBytes = new Uint8Array(await file.arrayBuffer());
-      await Promise.race([
-        raw.open(denoiseRawBytes, { ...settings, medPasses }),
-        workerFailure.promise,
-      ]);
-    }
-
-    const image = await Promise.race([raw.imageData(), workerFailure.promise]);
-    if (!image || !image.width || !image.height || !image.data) {
-      throw new Error("RAW master decode failed");
-    }
-    const sourceDecoded = libRawImageDataToDecoded(image);
-    const lensMetadata = rawLensMetadata(metadata);
-    sourceDecoded.lensCorrection = await buildRawLensfunCorrection(
-      lensMetadata,
-      sourceDecoded.width,
-      sourceDecoded.height,
-    );
-    const lensfunSettings = buildRawDevelopmentLensfunSettings(
-      lensMetadata,
-      sourceDecoded.lensCorrection,
-      sourceDecoded.width,
-      sourceDecoded.height,
-    );
-    const plan = await planPromise;
-    const masterResult = await developRawMasterOnePassInWorker(sourceDecoded, plan);
-    const decoded = masterResult.decoded;
-    decoded.rawDevelopment = {
-      mode: plan.mode,
-      iso: Number.isFinite(isoValue) && isoValue > 0 ? isoValue : null,
-      medPasses,
-      luminance: plan.luminance,
-      saturation: plan.saturation,
-      headroom: masterResult.headroom ?? plan.headroom,
-      lensfun: lensfunSettings,
-      elapsedSeconds: (performance.now() - startedAt) / 1000,
-    };
-    return decoded;
-  } finally {
-    workerFailure?.cleanup();
-    if (raw?.dispose) raw.dispose();
-    else raw?.worker?.terminate();
   }
 }
 
@@ -3624,31 +3274,158 @@ async function decodeRawImage(
   rawHighlightMode?: RawHighlightMode,
   onProgress?: ImageLoadProgressListener,
 ): Promise<DecodedRgbImage16> {
-  let resolvePlan!: (plan: RawProgressiveDevelopmentPlan) => void;
-  let rejectPlan!: (error: unknown) => void;
-  const planPromise = new Promise<RawProgressiveDevelopmentPlan>((resolve, reject) => {
-    resolvePlan = resolve;
-    rejectPlan = reject;
-  });
+  const rawDevelopmentStartedAt = performance.now();
+  async function runStage<T>(stage: string, task: () => Promise<T>): Promise<T> {
+    onProgress?.({ stage });
+    return task();
+  }
+  async function runBlockingStage<T>(stage: string, task: () => T): Promise<T> {
+    onProgress?.({ stage });
+    if (onProgress) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+    return task();
+  }
 
-  const masterPromise = decodeRawMasterImage(
-    file,
-    planPromise,
-    rawDemosaicQuality,
-    rawHighlightMode,
-  );
-  // The preview is intentionally the foreground result. Master failures are
-  // surfaced when the full-resolution image is actually required.
-  void masterPromise.catch(() => {});
-
+  let raw: LibRawInstanceLike | null = null;
+  let workerFailure: ReturnType<typeof createLibRawWorkerFailure> | null = null;
   try {
-    const preview = await decodeRawPreviewImage(file, rawHighlightMode, onProgress);
-    resolvePlan(preview.plan);
-    preview.decoded.rawMasterPromise = masterPromise;
-    return preview.decoded;
-  } catch (error) {
-    rejectPlan(error);
-    throw error;
+    raw = await runStage("Loading RAW decoder…", () => createLibRawInstance());
+    workerFailure = createLibRawWorkerFailure(raw);
+    const rawBytes = await runStage("Reading file…", async () => new Uint8Array(await file.arrayBuffer()));
+    const rawDecodeSettings: LibRawSettingsLike = {
+      ...RAW_DECODE_SETTINGS,
+      ...(rawDemosaicQuality === undefined ? {} : { userQual: rawDemosaicQuality }),
+      ...(rawHighlightMode === undefined ? {} : { highlight: rawHighlightMode }),
+    };
+    await runStage("Opening RAW…", () => Promise.race([
+      raw!.open(rawBytes, rawDecodeSettings),
+      workerFailure!.promise,
+    ]));
+
+    const metadata = await runStage("Reading metadata…", () => Promise.race([
+      raw!.metadata(true),
+      workerFailure!.promise,
+    ]));
+    const isoValue = Number(metadata?.iso_speed);
+    const medPasses = rawMedianDenoisePassesForIso(isoValue);
+
+    let thumbnailReference: RawThumbnailMatchReference | undefined;
+    if (raw.thumbnailData) {
+      try {
+        const thumbnail = await runStage("Reading preview…", () => Promise.race([
+          raw!.thumbnailData!(),
+          workerFailure!.promise,
+        ]));
+        const embeddedPreview = onProgress
+          ? await runStage("Preparing preview…", () => rawEmbeddedPreviewFromThumbnail(thumbnail))
+          : undefined;
+        onProgress?.({ stage: "Analyzing preview…", embeddedPreview });
+        thumbnailReference = await rawThumbnailMatchReferenceFromThumbnail(thumbnail);
+      } catch {
+        thumbnailReference = undefined;
+      }
+    }
+
+    // LibRaw-Wasm transfers the Uint8Array's backing ArrayBuffer to its Worker
+    // on open(), which detaches rawBytes in this thread. If ISO metadata enables
+    // medPasses, obtain a fresh buffer for the second open instead of reusing the
+    // detached one.
+    if (medPasses > 0) {
+      const denoiseRawBytes = await runStage("Reading file again…", async () =>
+        new Uint8Array(await file.arrayBuffer()),
+      );
+      await runStage("Reopening RAW…", () => Promise.race([
+        raw!.open(denoiseRawBytes, { ...rawDecodeSettings, medPasses }),
+        workerFailure!.promise,
+      ]));
+    }
+
+    const image = await runStage("Demosaicing…", () => Promise.race([
+      raw!.imageData(),
+      workerFailure!.promise,
+    ]));
+    if (!image || !image.width || !image.height || !image.data) {
+      throw new Error("RAW decode failed");
+    }
+
+    const decoded = await runBlockingStage("Converting pixels…", () => libRawImageDataToDecoded(image));
+    const lensMetadata = rawLensMetadata(metadata);
+    decoded.lensCorrection = await runStage("Correcting lens…", () => buildRawLensfunCorrection(
+      lensMetadata,
+      decoded.width,
+      decoded.height,
+    ));
+    // Capture the effective Lensfun values while every generated map is still
+    // present. Vignetting is baked into the RAW pixels during baseline tone
+    // processing and its map is then discarded to release memory.
+    const lensfunSettings = buildRawDevelopmentLensfunSettings(
+      lensMetadata,
+      decoded.lensCorrection,
+      decoded.width,
+      decoded.height,
+    );
+    let mode: RawDevelopmentSettings["mode"] = "fallback";
+    let luminanceSettings: RawDevelopmentLuminanceSettings | null = null;
+    let headroomSettings: RawDevelopmentHeadroomStatistics | undefined;
+    let saturationSettings: RawDevelopmentSaturationSettings = {
+      saturation: 0,
+      vibrance: 0,
+    };
+
+    const workerDevelopment = await developRawPixelsInWorker(
+      decoded,
+      thumbnailReference,
+      onProgress,
+    );
+    if (workerDevelopment) {
+      mode = workerDevelopment.mode;
+      luminanceSettings = workerDevelopment.luminance;
+      headroomSettings = workerDevelopment.headroom;
+      saturationSettings = workerDevelopment.saturation;
+    } else {
+      if (thumbnailReference) {
+        const matchedBaseline = await runBlockingStage("Developing tone…", () =>
+          applyRawThumbnailMatchedBaseline(decoded, thumbnailReference.lumaPercentiles),
+        );
+        if (matchedBaseline) {
+          mode = "thumbnail-match";
+          luminanceSettings = matchedBaseline.luminance;
+          headroomSettings = matchedBaseline.headroom;
+          saturationSettings = await runBlockingStage("Developing color…", () =>
+            applyRawThumbnailMatchedColor(decoded, thumbnailReference.linearSrgbSample),
+          ) ?? saturationSettings;
+        } else {
+          const fallbackBaseline = await runBlockingStage("Developing tone…", () =>
+            applyRawBaselineExposure(decoded),
+          );
+          luminanceSettings = fallbackBaseline?.luminance ?? null;
+          headroomSettings = fallbackBaseline?.headroom;
+        }
+      } else {
+        const fallbackBaseline = await runBlockingStage("Developing tone…", () =>
+          applyRawBaselineExposure(decoded),
+        );
+        luminanceSettings = fallbackBaseline?.luminance ?? null;
+        headroomSettings = fallbackBaseline?.headroom;
+      }
+      await runBlockingStage("Encoding buffer…", () => convertDecodedRgb16Transfer(decoded, "gamma20"));
+    }
+    decoded.rawDevelopment = {
+      mode,
+      iso: Number.isFinite(isoValue) && isoValue > 0 ? isoValue : null,
+      medPasses,
+      luminance: luminanceSettings,
+      saturation: saturationSettings,
+      headroom: headroomSettings,
+      lensfun: lensfunSettings,
+      elapsedSeconds: (performance.now() - rawDevelopmentStartedAt) / 1000,
+    };
+    return decoded;
+  } finally {
+    workerFailure?.cleanup();
+    if (raw?.dispose) raw.dispose();
+    else raw?.worker?.terminate();
   }
 }
 
@@ -4687,16 +4464,11 @@ export function ImageEditDialog({
   } | null>(null);
   const decodedImageRef = useRef<DecodedImage | null>(null);
   const transferredDecodedImageRef = useRef<DecodedImage | null>(null);
-  const rawMasterPromiseRef = useRef<Promise<DecodedRgbImage16> | null>(null);
-  const [decodedRevision, setDecodedRevision] = useState(0);
   const onErrorRef = useRef(onError);
   const onRawDevelopmentReadyRef = useRef(onRawDevelopmentReady);
   const [containerSize, setContainerSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
   const [displayed, setDisplayed] = useState<EditRect>({ x: 0, y: 0, w: 0, h: 0 });
   const [cropRect, setCropRect] = useState<EditRect>({ x: 0, y: 0, w: 0, h: 0 });
-  const displayedRef = useRef<EditRect>({ x: 0, y: 0, w: 0, h: 0 });
-  const cropRectRef = useRef<EditRect>({ x: 0, y: 0, w: 0, h: 0 });
-  const layoutInitializedRef = useRef(false);
   const [rotationDegrees, setRotationDegrees] = useState<number>(
     normalizeRotationDegrees(initialParams.rotationDegrees ?? 0),
   );
@@ -4825,7 +4597,6 @@ export function ImageEditDialog({
     let cleanup: (() => void) | null = null;
     const ownsDecodedImage = !initialDecodedImage;
     initialPreviewReadyRef.current = false;
-    layoutInitializedRef.current = false;
     setImageReady(false);
     setLoadingStage(initialDecodedImage ? "Preparing preview…" : "Loading image…");
     clearEmbeddedRawPreview();
@@ -4836,7 +4607,6 @@ export function ImageEditDialog({
     setRawDevelopmentMemoryUsage(undefined);
     decodedImageRef.current = null;
     transferredDecodedImageRef.current = null;
-    rawMasterPromiseRef.current = null;
     previewRenderedRef.current = null;
 
     const onLoadProgress: ImageLoadProgressListener = (progress) => {
@@ -4860,12 +4630,14 @@ export function ImageEditDialog({
           onLoadProgress,
         );
         decodedForEffect = decoded;
-        const isRaw = isRawImageFile(file.name, file.type);
-        if (isRaw) {
+        if (isRawImageFile(file.name, file.type)) {
           onRawDevelopmentReadyRef.current?.(decoded);
         }
         if (cancelled) {
-          if (ownsDecodedImage && !(isRaw && onRawDevelopmentReadyRef.current)) {
+          if (
+            ownsDecodedImage &&
+            !(isRawImageFile(file.name, file.type) && onRawDevelopmentReadyRef.current)
+          ) {
             decoded.cleanup();
           }
           return;
@@ -4875,23 +4647,6 @@ export function ImageEditDialog({
         setLoadingStage("Preparing preview…");
         setNatural({ w: decoded.width, h: decoded.height });
         setImageReady(true);
-
-        if (isRaw && decoded.rawMasterPromise) {
-          const masterPromise = decoded.rawMasterPromise;
-          rawMasterPromiseRef.current = masterPromise;
-          void masterPromise.then((masterDecoded) => {
-            if (cancelled || rawMasterPromiseRef.current !== masterPromise) return;
-            decodedImageRef.current = masterDecoded;
-            cleanup = masterDecoded.cleanup;
-            previewRenderedRef.current = null;
-            setNatural({ w: masterDecoded.width, h: masterDecoded.height });
-            setDecodedRevision((revision) => revision + 1);
-            onRawDevelopmentReadyRef.current?.(masterDecoded);
-          }).catch(() => {
-            // Preview editing remains usable. The error is surfaced if an operation
-            // actually requires the full-resolution Master image.
-          });
-        }
       } catch (error) {
         if (!cancelled) {
           decodedImageRef.current = null;
@@ -4947,14 +4702,6 @@ export function ImageEditDialog({
     return () => ro.disconnect();
   }, [mounted]);
 
-  useEffect(() => {
-    displayedRef.current = displayed;
-  }, [displayed]);
-
-  useEffect(() => {
-    cropRectRef.current = cropRect;
-  }, [cropRect]);
-
   const fitImage = useCallback((nat: { w: number; h: number }, cw: number, ch: number): EditRect => {
     if (nat.w <= 0 || nat.h <= 0 || cw <= 0 || ch <= 0) return { x: 0, y: 0, w: 0, h: 0 };
     const margin = EDIT_PREVIEW_MARGIN_PX;
@@ -4973,39 +4720,19 @@ export function ImageEditDialog({
 
   useEffect(() => {
     if (!natural || containerSize.w <= 0 || containerSize.h <= 0) return;
-    const previousDisplayed = displayedRef.current;
-    const previousCropRect = cropRectRef.current;
     const d = fitImage(natural, containerSize.w, containerSize.h);
-    let crop = normalizeCrop(initialParams.crop);
-    if (
-      layoutInitializedRef.current &&
-      previousDisplayed.w > 0 &&
-      previousDisplayed.h > 0 &&
-      previousCropRect.w > 0 &&
-      previousCropRect.h > 0
-    ) {
-      crop = normalizeCrop({
-        left: (previousCropRect.x - previousDisplayed.x) / previousDisplayed.w,
-        top: (previousCropRect.y - previousDisplayed.y) / previousDisplayed.h,
-        right: 1 - (previousCropRect.x + previousCropRect.w - previousDisplayed.x) / previousDisplayed.w,
-        bottom: 1 - (previousCropRect.y + previousCropRect.h - previousDisplayed.y) / previousDisplayed.h,
-      });
-    }
+    setDisplayed(d);
+    const crop = normalizeCrop(initialParams.crop);
     const x = d.x + d.w * crop.left;
     const y = d.y + d.h * crop.top;
     const right = d.x + d.w * (1 - crop.right);
     const bottom = d.y + d.h * (1 - crop.bottom);
-    const nextCropRect = {
+    setCropRect({
       x,
       y,
       w: Math.max(40, right - x),
       h: Math.max(40, bottom - y),
-    };
-    layoutInitializedRef.current = true;
-    displayedRef.current = d;
-    cropRectRef.current = nextCropRect;
-    setDisplayed(d);
-    setCropRect(nextCropRect);
+    });
   }, [natural, containerSize.w, containerSize.h, fitImage, initialParams.crop]);
 
   const clampCropRect = useCallback(
@@ -6061,7 +5788,6 @@ export function ImageEditDialog({
   }, [
     displayed.w,
     displayed.h,
-    decodedRevision,
     temperature,
     tint,
     exposureEv,
@@ -6109,7 +5835,6 @@ export function ImageEditDialog({
   }, [
     showHistogram,
     histogramGeometryDragging,
-    decodedRevision,
     analysisSourceRect,
     temperature,
     tint,
@@ -6198,7 +5923,7 @@ export function ImageEditDialog({
     return () => {
       cancelled = true;
     };
-  }, [showHistogram, showPercentileDebug, imageReady, decodedRevision, file]);
+  }, [showHistogram, showPercentileDebug, imageReady, file]);
 
   useEffect(() => {
     if (!showHistogram) {
@@ -6271,7 +5996,6 @@ export function ImageEditDialog({
     showHistogram,
     showPercentileDebug,
     imageReady,
-    decodedRevision,
     analysisSourceRect,
     rotationDegrees,
     rawThumbnailDebugStatistics,
@@ -6471,23 +6195,9 @@ export function ImageEditDialog({
     setApplyBusy(true);
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        void (async () => {
-          try {
-            const masterPromise = rawMasterPromiseRef.current;
-            if (masterPromise) {
-              const masterDecoded = await masterPromise;
-              decodedImageRef.current = masterDecoded;
-              rawMasterPromiseRef.current = null;
-            }
-            const decodedImage = decodedImageRef.current;
-            if (decodedImage) transferredDecodedImageRef.current = decodedImage;
-            onApply(params, decodedImage ?? undefined);
-          } catch (error) {
-            applyPendingRef.current = false;
-            setApplyBusy(false);
-            onErrorRef.current?.(error instanceof Error ? error.message : String(error));
-          }
-        })();
+        const decodedImage = decodedImageRef.current;
+        if (decodedImage) transferredDecodedImageRef.current = decodedImage;
+        onApply(params, decodedImage ?? undefined);
       });
     });
   }, [
@@ -7678,7 +7388,7 @@ export function ImageEditDialog({
                   className="h-5 rounded border border-gray-300 bg-white px-1.5 text-[10px] font-normal text-gray-700 hover:bg-gray-100 disabled:cursor-default disabled:opacity-60"
                   onClick={onAutoTone}
                   disabled={autoToneBusy}
-                  title="Auto tone: reset Shadow/Highlight, then optimize Exposure, Logarithm, and Sigmoid"
+                  title="Auto tone: reset Shadow/Highlight, then optimize Exposure, Midtone, and Contrast"
                 >
                   Auto
                 </button>
@@ -7711,20 +7421,20 @@ export function ImageEditDialog({
               </div>
               <div className="grid grid-cols-[112px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
                 <div className="col-start-1 row-start-1 flex min-w-0 items-center gap-1">
-                  <span>Logarithm</span>
+                  <span>Midtone</span>
                   <button
                     type="button"
                     className="h-5 rounded border border-gray-300 bg-white px-1 text-[10px] text-gray-700 hover:bg-gray-100 disabled:cursor-default disabled:opacity-60"
                     onClick={onAutoLogarithm}
                     disabled={autoToneBusy}
-                    title="Auto logarithm"
+                    title="Auto midtone"
                   >
                     Auto
                   </button>
                 </div>
                 <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{scaledLog >= 0 ? "+" : ""}{scaledLog.toFixed(1)}</span>
                 <input
-                  aria-label="Logarithm"
+                  aria-label="Midtone"
                   type="range"
                   min={-20}
                   max={20}
@@ -7737,20 +7447,20 @@ export function ImageEditDialog({
               </div>
               <div className="grid grid-cols-[112px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
                 <div className="col-start-1 row-start-1 flex min-w-0 items-center gap-1">
-                  <span>Sigmoid</span>
+                  <span>Contrast</span>
                   <button
                     type="button"
                     className="h-5 rounded border border-gray-300 bg-white px-1 text-[10px] text-gray-700 hover:bg-gray-100 disabled:cursor-default disabled:opacity-60"
                     onClick={onAutoSigmoid}
                     disabled={autoToneBusy}
-                    title="Auto sigmoid"
+                    title="Auto contrast"
                   >
                     Auto
                   </button>
                 </div>
                 <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{sigmoid >= 0 ? "+" : ""}{sigmoid.toFixed(1)}</span>
                 <input
-                  aria-label="Sigmoid"
+                  aria-label="Contrast"
                   type="range"
                   min={-10}
                   max={10}
