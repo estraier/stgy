@@ -1,12 +1,63 @@
 "use client";
 
-import { useEffect } from "react";
-import { mountLocalStackStudio } from "./stack/controller";
+import { useCallback, useEffect, useState } from "react";
+import {
+  ImageEditDialog,
+  buildDefaultEditParams,
+  buildEditedDecodedRgb16,
+  type ImageEditParams,
+} from "@/components/ImageUploadDialog";
+import type { DecodedRgbImage16, ImageEditOutputColorProfile } from "@/components/image-editor/types";
+import {
+  mountLocalStackStudio,
+  type LocalStackStudioEditRequest,
+} from "./stack/controller";
 
 const INPUT_ACCEPT = ".jpg,.jpeg,.webp,.png,.tif,.tiff,.3fr,.ari,.arw,.bay,.cap,.cr2,.cr3,.crw,.dcr,.dcs,.dng,.drf,.eip,.erf,.fff,.gpr,.iiq,.k25,.kdc,.mdc,.mef,.mos,.mrw,.nef,.nrw,.obm,.orf,.pef,.ptx,.pxn,.raf,.raw,.rwl,.rw2,.rwz,.sr2,.srf,.srw,.x3f,image/jpeg,image/png,image/webp,image/tiff,image/x-adobe-dng,image/x-canon-cr2,image/x-canon-cr3,image/x-epson-erf,image/x-fuji-raf,image/x-kodak-dcr,image/x-kodak-k25,image/x-minolta-mrw,image/x-nikon-nef,image/x-olympus-orf,image/x-panasonic-rw2,image/x-pentax-pef,image/x-sony-arw,image/x-sony-sr2,image/x-sony-srf,image/x-sigma-x3f,image/dng";
 
 export default function PageBody() {
-  useEffect(() => mountLocalStackStudio(), []);
+  const [editRequest, setEditRequest] = useState<LocalStackStudioEditRequest | null>(null);
+
+  const handleEditRequest = useCallback((request: LocalStackStudioEditRequest) => {
+    setEditRequest(request);
+  }, []);
+
+  useEffect(() => mountLocalStackStudio({ onEditRequest: handleEditRequest }), [handleEditRequest]);
+
+  const closeEditor = useCallback(() => {
+    setEditRequest((current) => {
+      current?.onCancel();
+      return null;
+    });
+  }, []);
+
+  const applyEditorResult = useCallback(async (
+    params: ImageEditParams,
+    decodedImage?: DecodedRgbImage16,
+  ) => {
+    const request = editRequest;
+    if (!request) return;
+    const source = decodedImage ?? request.decodedImage;
+    try {
+      const edited = await buildEditedDecodedRgb16(
+        source,
+        params,
+        request.outputColorProfile as ImageEditOutputColorProfile,
+      );
+      request.onApply(edited);
+      setEditRequest(null);
+    } catch (error) {
+      request.onError(error instanceof Error ? error.message : String(error));
+      setEditRequest(null);
+    }
+  }, [editRequest]);
+
+  const editorDefaults = editRequest
+    ? {
+        ...buildDefaultEditParams(editRequest.decodedImage.width, editRequest.decodedImage.height),
+        resizePercent: 100,
+      }
+    : null;
 
   return (
     <main className="mx-auto max-w-5xl p-4 sm:p-6 lg:py-8">
@@ -106,20 +157,29 @@ export default function PageBody() {
               <ToneControl id="preview-highlight" label="Highlight" min="-100" max="100" step="1" value="0" valueId="preview-highlight-value" valueText="0" />
               <ToneControl id="preview-clahe" label="CLAHE" min="0" max="100" step="1" value="0" valueId="preview-clahe-value" valueText="0" />
 
-              <div className="mt-1 flex flex-wrap items-center gap-2.5">
-                <label htmlFor="output-format" className="text-sm font-medium text-gray-900">Format:</label>
-                <select id="output-format" className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm">
-                  <option value="jpeg">JPEG</option>
-                  <option value="tiff8">TIFF-8</option>
-                  <option value="tiff16">TIFF-16</option>
-                </select>
+              <div className="mt-1 flex flex-wrap items-center justify-between gap-3">
                 <button
-                  id="download-button"
+                  id="edit-button"
                   type="button"
-                  className="ml-auto rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 shadow-sm hover:bg-gray-100 disabled:opacity-50"
+                  className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 shadow-sm hover:bg-gray-100 disabled:opacity-50"
                 >
-                  Download
+                  Edit
                 </button>
+                <div className="ml-auto flex flex-wrap items-center gap-2.5">
+                  <label htmlFor="output-format" className="text-sm font-medium text-gray-900">Format:</label>
+                  <select id="output-format" className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm">
+                    <option value="jpeg">JPEG</option>
+                    <option value="tiff8">TIFF-8</option>
+                    <option value="tiff16">TIFF-16</option>
+                  </select>
+                  <button
+                    id="download-button"
+                    type="button"
+                    className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 shadow-sm hover:bg-gray-100 disabled:opacity-50"
+                  >
+                    Download
+                  </button>
+                </div>
               </div>
             </div>
           </section>
@@ -154,6 +214,23 @@ export default function PageBody() {
           </div>
         </div>
       </div>
+
+      {editRequest && editorDefaults && (
+        <ImageEditDialog
+          file={editRequest.file}
+          initialParams={editorDefaults}
+          defaultParams={editorDefaults}
+          initialDecodedImage={editRequest.decodedImage}
+          onCancel={closeEditor}
+          onApply={(params, decodedImage) => {
+            void applyEditorResult(params, decodedImage);
+          }}
+          onError={(message) => {
+            editRequest.onError(message);
+            setEditRequest(null);
+          }}
+        />
+      )}
     </main>
   );
 }

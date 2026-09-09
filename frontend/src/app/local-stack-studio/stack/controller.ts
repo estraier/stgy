@@ -16,6 +16,7 @@ import {
 import { createLibRawInstance, createLibRawWorkerFailure, isRawImageFile } from "@/image/libraw";
 import { getOpenCv } from "@/image/opencv";
 import { encodeFromLinearProPhoto } from "@/image/tiff";
+import type { DecodedRgbImage16, ImageEditOutputColorProfile } from "@/components/image-editor/types";
 import {
   adjustStackLinearData,
   clampStackClahe,
@@ -42,7 +43,20 @@ import {
   rolloffParams,
 } from "@/image/tone";
 
-export function mountLocalStackStudio(): () => void {
+export type LocalStackStudioEditRequest = {
+  file: File;
+  decodedImage: DecodedRgbImage16;
+  outputColorProfile: ImageEditOutputColorProfile;
+  onApply: (editedImage: DecodedRgbImage16) => void;
+  onCancel: () => void;
+  onError: (message: string) => void;
+};
+
+type LocalStackStudioOptions = {
+  onEditRequest?: (request: LocalStackStudioEditRequest) => void;
+};
+
+export function mountLocalStackStudio(options: LocalStackStudioOptions = {}): () => void {
 const RAW_DECODE_SETTINGS = {
   outputColor: 4,
   outputBps: 16,
@@ -100,6 +114,7 @@ const previewSigmoid = getElement("preview-sigmoid");
 const previewSigmoidValue = getElement("preview-sigmoid-value");
 const previewClahe = getElement("preview-clahe");
 const previewClaheValue = getElement("preview-clahe-value");
+const editButton = getElement("edit-button");
 const outputFormat = getElement("output-format");
 const downloadButton = getElement("download-button");
 const zoomModal = getElement("zoom-modal");
@@ -135,6 +150,7 @@ previewHighlight.disabled = true;
 previewLogarithm.disabled = true;
 previewSigmoid.disabled = true;
 previewClahe.disabled = true;
+editButton.disabled = true;
 
 listen(inputFiles, "change", () => {
   const count = inputFiles.files ? inputFiles.files.length : 0;
@@ -304,11 +320,113 @@ ${buildInfo}` : "OpenCV.js is ready.");
   }
 });
 
+listen(editButton, "click", () => {
+  if (!currentStackResult) return;
+  clearError();
+  if (!options.onEditRequest) {
+    showError(new Error("The image editor is not available."));
+    return;
+  }
+
+  try {
+    const hasToneAdjustments =
+      currentPreviewExposureEv !== 0 ||
+      currentPreviewShadow !== 0 ||
+      currentPreviewHighlight !== 0 ||
+      currentPreviewLogarithm !== 0 ||
+      currentPreviewSigmoid !== 0 ||
+      currentPreviewClahe !== 0;
+    const bakedGamma2 = hasToneAdjustments
+      ? encodeLinearToStoredGamma2(
+          adjustStackLinearData(
+            decodeStoredGamma2ToLinear(currentStackResult.gamma2ProPhotoRgb16),
+            currentStackResult.width,
+            currentStackResult.height,
+            currentPreviewExposureEv,
+            currentPreviewShadow,
+            currentPreviewHighlight,
+            currentPreviewLogarithm,
+            currentPreviewSigmoid,
+            currentPreviewClahe,
+            currentStackResult.exposureRolloffBaseP998,
+            getCurrentHighlightP100(),
+          ),
+        )
+      : currentStackResult.gamma2ProPhotoRgb16;
+    const decodedImage = {
+      colorSpace: "prophoto",
+      transfer: "gamma20",
+      linearRangeMax: 1,
+      width: currentStackResult.width,
+      height: currentStackResult.height,
+      data: bakedGamma2,
+      cleanup: () => {},
+    };
+    const editFile = new File([], buildOutputFileName(currentInputFiles, "tiff16"), {
+      type: "image/tiff",
+    });
+    let finished = false;
+    editButton.disabled = true;
+
+    options.onEditRequest({
+      file: editFile,
+      decodedImage,
+      outputColorProfile: currentPreviewColorSpace === "display-p3" ? "display-p3" : "srgb",
+      onApply: (editedImage) => {
+        if (finished) return;
+        finished = true;
+        try {
+          if (
+            !editedImage ||
+            editedImage.colorSpace !== "prophoto" ||
+            editedImage.transfer !== "gamma20" ||
+            !(editedImage.data instanceof Uint16Array) ||
+            editedImage.width <= 0 ||
+            editedImage.height <= 0 ||
+            editedImage.data.length !== editedImage.width * editedImage.height * 3
+          ) {
+            throw new Error("The image editor returned an invalid image buffer.");
+          }
+          currentStackResult = finalizeStoredGamma2Result(
+            new Uint16Array(editedImage.data),
+            editedImage.width,
+            editedImage.height,
+            currentPreviewColorSpace,
+          );
+          resetAllToneControls();
+          closeZoomModal();
+          renderPreviewForCurrentTone();
+          resultPanel.classList.remove("hidden");
+        } catch (error) {
+          showError(error);
+        } finally {
+          editButton.disabled = !currentStackResult;
+        }
+      },
+      onCancel: () => {
+        if (finished) return;
+        finished = true;
+        editButton.disabled = !currentStackResult;
+      },
+      onError: (message) => {
+        if (finished) return;
+        finished = true;
+        editButton.disabled = !currentStackResult;
+        showError(new Error(message));
+      },
+    });
+  } catch (error) {
+    editButton.disabled = !currentStackResult;
+    showError(error);
+  }
+});
+
 listen(downloadButton, "click", async () => {
   if (!currentStackResult) return;
   clearError();
   const previousText = downloadButton.textContent;
   downloadButton.disabled = true;
+  editButton.disabled = true;
   outputFormat.disabled = true;
   previewExposure.disabled = true;
   previewShadow.disabled = true;
@@ -362,6 +480,7 @@ listen(downloadButton, "click", async () => {
     showError(error);
   } finally {
     downloadButton.disabled = false;
+    editButton.disabled = !currentStackResult;
     outputFormat.disabled = false;
     previewExposure.disabled = false;
     previewShadow.disabled = false;
@@ -390,6 +509,22 @@ function formatToneControlValue(value) {
 function formatIntegerToneControlValue(value) {
   if (!Number.isFinite(value) || value === 0) return "0";
   return `${value > 0 ? "+" : ""}${Math.round(value)}`;
+}
+
+function resetAllToneControls() {
+  currentPreviewExposureEv = 0;
+  currentPreviewShadow = 0;
+  currentPreviewHighlight = 0;
+  currentPreviewLogarithm = 0;
+  currentPreviewSigmoid = 0;
+  currentPreviewClahe = 0;
+  previewExposure.value = "0";
+  previewShadow.value = "0";
+  previewHighlight.value = "0";
+  previewLogarithm.value = "0";
+  previewSigmoid.value = "0";
+  previewClahe.value = "0";
+  updateToneControlLabels();
 }
 
 function resetToneControl(name) {
@@ -3603,6 +3738,7 @@ function setProcessing(processing) {
   previewLogarithm.disabled = processing || !currentStackResult;
   previewSigmoid.disabled = processing || !currentStackResult;
   previewClahe.disabled = processing || !currentStackResult;
+  editButton.disabled = processing || !currentStackResult;
   processButton.disabled = processing;
   progressPanel.classList.toggle("hidden", !processing);
 }
@@ -3635,6 +3771,8 @@ function clearResult() {
   previewHighlight.disabled = true;
   previewLogarithm.disabled = true;
   previewSigmoid.disabled = true;
+  previewClahe.disabled = true;
+  editButton.disabled = true;
   closeZoomModal();
   resultPanel.classList.add("hidden");
 }

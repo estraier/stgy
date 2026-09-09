@@ -142,19 +142,56 @@ function claheClipLimitFromStrength(strength: number): number {
   const normalized = clampStackClahe(strength);
   if (normalized <= 0) return 0;
   const t = normalized / 100;
-  return 1 + t * t * 7;
+  return 8 * t * t;
 }
 
 function computeClaheTileGrid(width: number, height: number) {
-  const longSide = Math.max(width, height);
-  const targetTileSize = Math.max(64, Math.round(longSide / 8));
-  const tilesX = Math.max(1, Math.ceil(width / targetTileSize));
-  const tilesY = Math.max(1, Math.ceil(height / targetTileSize));
+  const normalizedWidth = Math.max(1, Math.round(width));
+  const normalizedHeight = Math.max(1, Math.round(height));
+  const targetTileCount = 80;
+  const minTileSize = 64;
+  const maxTilesX = Math.max(1, Math.ceil(normalizedWidth / minTileSize));
+  const maxTilesY = Math.max(1, Math.ceil(normalizedHeight / minTileSize));
+
+  let bestTilesX = 1;
+  let bestTilesY = 1;
+  let bestScore = Number.POSITIVE_INFINITY;
+  let bestCountError = Number.POSITIVE_INFINITY;
+  let bestShapeError = Number.POSITIVE_INFINITY;
+
+  for (let candidateTilesX = 1; candidateTilesX <= maxTilesX; candidateTilesX += 1) {
+    for (let candidateTilesY = 1; candidateTilesY <= maxTilesY; candidateTilesY += 1) {
+      const tileCount = candidateTilesX * candidateTilesY;
+      const tileWidth = normalizedWidth / candidateTilesX;
+      const tileHeight = normalizedHeight / candidateTilesY;
+      const tileAspectRatio = tileHeight > 0 ? tileWidth / tileHeight : 1;
+      const countError = Math.abs(tileCount - targetTileCount) / targetTileCount;
+      const shapeError = Math.abs(Math.log(tileAspectRatio));
+      const score = countError + shapeError * 2;
+
+      if (
+        score < bestScore - 1e-9 ||
+        (Math.abs(score - bestScore) <= 1e-9 && countError < bestCountError - 1e-9) ||
+        (
+          Math.abs(score - bestScore) <= 1e-9 &&
+          Math.abs(countError - bestCountError) <= 1e-9 &&
+          shapeError < bestShapeError - 1e-9
+        )
+      ) {
+        bestTilesX = candidateTilesX;
+        bestTilesY = candidateTilesY;
+        bestScore = score;
+        bestCountError = countError;
+        bestShapeError = shapeError;
+      }
+    }
+  }
+
   return {
-    tilesX,
-    tilesY,
-    tileWidth: Math.max(1, Math.ceil(width / tilesX)),
-    tileHeight: Math.max(1, Math.ceil(height / tilesY)),
+    tilesX: bestTilesX,
+    tilesY: bestTilesY,
+    tileWidth: Math.max(1, Math.ceil(normalizedWidth / bestTilesX)),
+    tileHeight: Math.max(1, Math.ceil(normalizedHeight / bestTilesY)),
   };
 }
 

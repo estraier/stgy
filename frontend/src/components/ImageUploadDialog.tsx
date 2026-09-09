@@ -80,12 +80,16 @@ import {
 } from "@/image/color";
 import { getCanvas2dContext, getCanvasImageData } from "./image-editor/canvas";
 import {
+  buildRenderedPixelToSourceTransform,
+  createRgb16SamplingScratch,
   decodeStoredRgb16Channel,
   encodeStoredRgb16Channel,
   getAnalysisLinearRgbSample,
   getRenderedLinearRgbSample,
   inverseRotatePoint,
   normalizeRotationDegrees,
+  sampleLinearRgb16BilinearInto,
+  type LinearRgbBuffer,
 } from "./image-editor/sampling";
 import {
   buildColorAdjustmentContextFromLinearRgbSample,
@@ -3805,6 +3809,344 @@ export async function buildEditedVariant(
     return await buildEditedVariantFromDecoded(decoded, params, outputColorProfile);
   } finally {
     if (ownsDecodedImage) decoded.cleanup();
+  }
+}
+
+export async function buildEditedDecodedRgb16(
+  decoded: DecodedRgbImage16,
+  edit: ImageEditParams,
+  outputColorProfile: ImageEditOutputColorProfile = "display-p3",
+): Promise<DecodedRgbImage16> {
+  const params = normalizeEditParams(edit, decoded.width, decoded.height);
+  const sourceW = decoded.width;
+  const sourceH = decoded.height;
+  const crop = normalizeCrop(params.crop);
+  const sx = Math.max(0, Math.min(sourceW - 1, Math.round(sourceW * crop.left)));
+  const sy = Math.max(0, Math.min(sourceH - 1, Math.round(sourceH * crop.top)));
+  const ex = Math.max(sx + 1, Math.min(sourceW, Math.round(sourceW * (1 - crop.right))));
+  const ey = Math.max(sy + 1, Math.min(sourceH, Math.round(sourceH * (1 - crop.bottom))));
+  const cropW = Math.max(1, ex - sx);
+  const cropH = Math.max(1, ey - sy);
+  const outputW = Math.max(1, Math.round(cropW * params.resizePercent / 100));
+  const outputH = Math.max(1, Math.round(cropH * params.resizePercent / 100));
+
+  if (params.textOverlays.length > 0) {
+    await ensureTextOverlayFontsReady(params.textOverlays);
+  }
+
+  const sourceRect = { x: sx, y: sy, w: cropW, h: cropH };
+  const contextSample = getAnalysisLinearRgbSample(decoded, sourceRect, params.rotationDegrees);
+  const adjustmentContext = buildColorAdjustmentContextFromLinearRgbSample(
+    contextSample,
+    params.temperature,
+    params.tint,
+    params.exposureEv,
+    params.shadow,
+    params.highlight,
+    params.scaledLog,
+    params.sigmoid,
+    params.vibrance,
+    params.saturation,
+    true,
+  );
+  const transform = buildRenderedPixelToSourceTransform(
+    sourceW,
+    sourceH,
+    sx,
+    sy,
+    outputW / cropW,
+    outputH / cropH,
+    params.rotationDegrees,
+  );
+  const result = new Uint16Array(outputW * outputH * 3);
+  const canUseExactGeometry =
+    sx === 0 &&
+    sy === 0 &&
+    cropW === sourceW &&
+    cropH === sourceH &&
+    outputW === sourceW &&
+    outputH === sourceH &&
+    normalizeRotationDegrees(params.rotationDegrees) === 0 &&
+    !decoded.lensCorrection;
+  const canCopyBaseExactly =
+    canUseExactGeometry &&
+    params.temperature === 0 &&
+    params.tint === 0 &&
+    params.exposureEv === 0 &&
+    params.shadow === 0 &&
+    params.highlight === 0 &&
+    params.scaledLog === 0 &&
+    params.sigmoid === 0 &&
+    params.vibrance === 0 &&
+    params.saturation === 0 &&
+    decoded.transfer === "gamma20" &&
+    decoded.linearRangeMax === 1;
+  if (canCopyBaseExactly) {
+    result.set(decoded.data);
+  }
+  const sample: LinearRgbBuffer = [0, 0, 0];
+  const samplingScratch = createRgb16SamplingScratch();
+  const fallbackProfile: ImageInputColorProfile = outputColorProfile === "display-p3" ? "display-p3" : "srgb";
+  const fallbackLinear = encodedRgbToLinearProphoto(128 / 255, 128 / 255, 128 / 255, fallbackProfile);
+
+  if (!canCopyBaseExactly && canUseExactGeometry) {
+    for (let pixel = 0; pixel < outputW * outputH; pixel += 1) {
+      const index = pixel * 3;
+      let r = decodeStoredRgb16Channel(decoded.data[index] ?? 0, decoded.transfer, decoded.linearRangeMax);
+      let g = decodeStoredRgb16Channel(decoded.data[index + 1] ?? 0, decoded.transfer, decoded.linearRangeMax);
+      let b = decodeStoredRgb16Channel(decoded.data[index + 2] ?? 0, decoded.transfer, decoded.linearRangeMax);
+      [r, g, b] = applyColorAdjustmentsLinearRgb(r, g, b, adjustmentContext);
+      result[index] = encodeStoredRgb16Channel(r, "gamma20", 1);
+      result[index + 1] = encodeStoredRgb16Channel(g, "gamma20", 1);
+      result[index + 2] = encodeStoredRgb16Channel(b, "gamma20", 1);
+    }
+  } else if (!canCopyBaseExactly) {
+    let rowSourceX = transform.originX;
+    let rowSourceY = transform.originY;
+    for (let y = 0; y < outputH; y += 1) {
+      let sourceX = rowSourceX;
+      let sourceY = rowSourceY;
+      for (let x = 0; x < outputW; x += 1) {
+        const dst = (y * outputW + x) * 3;
+        let r = fallbackLinear[0];
+        let g = fallbackLinear[1];
+        let b = fallbackLinear[2];
+        if (
+          sourceX >= 0 &&
+          sourceX < sourceW &&
+          sourceY >= 0 &&
+          sourceY < sourceH &&
+          sampleLinearRgb16BilinearInto(decoded, sourceX, sourceY, sample, samplingScratch)
+        ) {
+          [r, g, b] = applyColorAdjustmentsLinearRgb(
+            sample[0],
+            sample[1],
+            sample[2],
+            adjustmentContext,
+          );
+        }
+        result[dst] = encodeStoredRgb16Channel(r, "gamma20", 1);
+        result[dst + 1] = encodeStoredRgb16Channel(g, "gamma20", 1);
+        result[dst + 2] = encodeStoredRgb16Channel(b, "gamma20", 1);
+        sourceX += transform.columnStepX;
+        sourceY += transform.columnStepY;
+      }
+      rowSourceX += transform.rowStepX;
+      rowSourceY += transform.rowStepY;
+    }
+  }
+
+  applySharpenToRgb16(result, outputW, outputH, params.sharpen);
+  applyMosaicRectsToRgb16(
+    result,
+    outputW,
+    outputH,
+    mosaicRegionsToOutputRects(
+      params.mosaicRegions,
+      sourceW,
+      sourceH,
+      sx,
+      sy,
+      cropW,
+      cropH,
+      outputW,
+      outputH,
+    ),
+  );
+  applyOverlaysToRgb16(
+    result,
+    outputW,
+    outputH,
+    params,
+    sourceW,
+    sourceH,
+    cropW,
+    cropH,
+    outputColorProfile,
+  );
+
+  return {
+    colorSpace: "prophoto",
+    transfer: "gamma20",
+    linearRangeMax: 1,
+    width: outputW,
+    height: outputH,
+    data: result,
+    cleanup: () => {},
+  };
+}
+
+function applySharpenToRgb16(
+  data: Uint16Array,
+  width: number,
+  height: number,
+  level: number,
+): void {
+  const sharpen = clampSharpen(level);
+  if (sharpen === 0 || width <= 0 || height <= 0) return;
+  const preset = SHARPEN_PRESETS[sharpen as 1 | 2 | 3];
+  const pixelCount = width * height;
+  const scratch = new Float32Array(pixelCount);
+  const kernel = buildSharpenGaussianKernel(preset.radius, preset.sigma);
+  const half = Math.floor(kernel.length / 2);
+  const inverseGamma = 1 / SHARPEN_GAMMA;
+
+  for (let channel = 0; channel < 3; channel += 1) {
+    // Store the gamma=1.4 working value temporarily in the Uint16 channel. This
+    // keeps the high-precision path to one Float32 blur plane instead of two.
+    for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+      const index = pixel * 3 + channel;
+      const linear = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
+      data[index] = Math.round(clamp01(Math.pow(linear, inverseGamma)) * 65535);
+    }
+
+    for (let y = 0; y < height; y += 1) {
+      const row = y * width;
+      for (let x = 0; x < width; x += 1) {
+        let sum = 0;
+        for (let k = -half; k <= half; k += 1) {
+          const sx = sharpenReflect101Index(x + k, width);
+          sum += ((data[(row + sx) * 3 + channel] ?? 0) / 65535) * kernel[k + half];
+        }
+        scratch[row + x] = sum;
+      }
+    }
+
+    for (let y = 0; y < height; y += 1) {
+      const row = y * width;
+      for (let x = 0; x < width; x += 1) {
+        let blurred = 0;
+        for (let k = -half; k <= half; k += 1) {
+          const sy = sharpenReflect101Index(y + k, height);
+          blurred += scratch[sy * width + x] * kernel[k + half];
+        }
+        const index = (row + x) * 3 + channel;
+        const originalGamma = (data[index] ?? 0) / 65535;
+        const diff = originalGamma - blurred;
+        const sharpenedGamma = Math.abs(diff) > preset.threshold
+          ? originalGamma + preset.amount * diff
+          : originalGamma;
+        const linear = Math.pow(clamp01(sharpenedGamma), SHARPEN_GAMMA);
+        data[index] = encodeStoredRgb16Channel(linear, "gamma20", 1);
+      }
+    }
+  }
+}
+
+function applyMosaicRectsToRgb16(
+  data: Uint16Array,
+  width: number,
+  height: number,
+  rects: MosaicPixelRect[],
+  divisions = 16,
+): void {
+  if (!rects.length || divisions <= 0) return;
+  const grid = Math.max(1, Math.round(divisions));
+  for (const rect of rects) {
+    const x0 = Math.max(0, Math.min(width, Math.floor(rect.x)));
+    const y0 = Math.max(0, Math.min(height, Math.floor(rect.y)));
+    const x1 = Math.max(x0, Math.min(width, Math.ceil(rect.x + rect.w)));
+    const y1 = Math.max(y0, Math.min(height, Math.ceil(rect.y + rect.h)));
+    const rw = x1 - x0;
+    const rh = y1 - y0;
+    if (rw <= 0 || rh <= 0) continue;
+    for (let gy = 0; gy < grid; gy += 1) {
+      const ty = y0 + Math.floor((gy * rh) / grid);
+      const yEnd = y0 + Math.floor(((gy + 1) * rh) / grid);
+      if (yEnd <= ty) continue;
+      for (let gx = 0; gx < grid; gx += 1) {
+        const tx = x0 + Math.floor((gx * rw) / grid);
+        const xEnd = x0 + Math.floor(((gx + 1) * rw) / grid);
+        if (xEnd <= tx) continue;
+        let sumR = 0;
+        let sumG = 0;
+        let sumB = 0;
+        let count = 0;
+        for (let py = ty; py < yEnd; py += 1) {
+          for (let px = tx; px < xEnd; px += 1) {
+            const index = (py * width + px) * 3;
+            sumR += data[index] ?? 0;
+            sumG += data[index + 1] ?? 0;
+            sumB += data[index + 2] ?? 0;
+            count += 1;
+          }
+        }
+        if (!count) continue;
+        const averageR = Math.round(sumR / count);
+        const averageG = Math.round(sumG / count);
+        const averageB = Math.round(sumB / count);
+        for (let py = ty; py < yEnd; py += 1) {
+          for (let px = tx; px < xEnd; px += 1) {
+            const index = (py * width + px) * 3;
+            data[index] = averageR;
+            data[index + 1] = averageG;
+            data[index + 2] = averageB;
+          }
+        }
+      }
+    }
+  }
+}
+
+function applyOverlaysToRgb16(
+  data: Uint16Array,
+  width: number,
+  height: number,
+  params: ImageEditParams,
+  sourceW: number,
+  sourceH: number,
+  cropW: number,
+  cropH: number,
+  outputColorProfile: ImageEditOutputColorProfile,
+): void {
+  if (!params.drawOverlays.length && !params.textOverlays.length) return;
+  const canvas = createImageEditCanvas(width, height);
+  try {
+    const ctx = getCanvas2dContext(canvas, outputColorProfile, true);
+    if (!ctx) throw new Error("2D context unavailable");
+    ctx.clearRect(0, 0, width, height);
+    drawOverlaysToContext(
+      ctx,
+      params.drawOverlays,
+      sourceW,
+      sourceH,
+      cropW,
+      cropH,
+      width,
+      height,
+    );
+    drawTextOverlaysToContext(
+      ctx,
+      params.textOverlays,
+      sourceW,
+      sourceH,
+      cropW,
+      cropH,
+      width,
+      height,
+      outputColorProfile,
+    );
+    const overlay = getCanvasImageData(ctx, 0, 0, width, height, outputColorProfile).data;
+    const profile: ImageInputColorProfile = outputColorProfile === "display-p3" ? "display-p3" : "srgb";
+    for (let pixel = 0; pixel < width * height; pixel += 1) {
+      const overlayIndex = pixel * 4;
+      const alpha = (overlay[overlayIndex + 3] ?? 0) / 255;
+      if (alpha <= 0) continue;
+      const overlayLinear = encodedRgbToLinearProphoto(
+        (overlay[overlayIndex] ?? 0) / 255,
+        (overlay[overlayIndex + 1] ?? 0) / 255,
+        (overlay[overlayIndex + 2] ?? 0) / 255,
+        profile,
+      );
+      const index = pixel * 3;
+      for (let channel = 0; channel < 3; channel += 1) {
+        const baseLinear = decodeStoredRgb16Channel(data[index + channel] ?? 0, "gamma20", 1);
+        const composed = baseLinear * (1 - alpha) + overlayLinear[channel] * alpha;
+        data[index + channel] = encodeStoredRgb16Channel(composed, "gamma20", 1);
+      }
+    }
+  } finally {
+    releaseCanvasIfNeeded(canvas);
   }
 }
 
