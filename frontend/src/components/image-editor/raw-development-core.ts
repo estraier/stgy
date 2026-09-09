@@ -21,6 +21,25 @@ export type RawMatchedTonePlan = {
   toneSlopeAtWhite: number;
 };
 
+export type RawStorageTransfer = "linear" | "gamma20";
+
+export type RawFallbackPlan = {
+  factor: number;
+  rolloff: { inflection: number; scale: number } | null;
+};
+
+export type RawLensfunCorrectionMaps = {
+  gridWidth: number;
+  gridHeight: number;
+  step: number;
+  geometry: Float32Array;
+  distortion: boolean;
+  combined?: Float32Array;
+  tca?: Float32Array;
+  vignetting?: Float32Array;
+  vignettingBaked?: boolean;
+};
+
 export type RawColorPassPlan = {
   rolloff: { inflection: number; scale: number } | null;
   hasSaturation: boolean;
@@ -33,6 +52,7 @@ export type RawColorPassPlan = {
 export type RawFallbackResult = {
   exposureEv: number;
   headroom: RawHeadroomStatistics;
+  plan: RawFallbackPlan;
 };
 
 const HISTOGRAM_DISPLAY_GAMMA = 2.4;
@@ -62,6 +82,16 @@ function decodeLinearUint16(value: number, linearRangeMax: number): number {
 function decodeGamma20Uint16(value: number, linearRangeMax: number): number {
   const encoded = clamp01(value / 65535);
   return encoded * encoded * linearRangeMax;
+}
+
+function decodeStoredUint16(
+  value: number,
+  linearRangeMax: number,
+  transfer: RawStorageTransfer,
+): number {
+  return transfer === "gamma20"
+    ? decodeGamma20Uint16(value, linearRangeMax)
+    : decodeLinearUint16(value, linearRangeMax);
 }
 
 function encodeGamma20Uint16(value: number, linearRangeMax: number): number {
@@ -274,6 +304,7 @@ export function applyRawMatchedTonePass(
   sourceLinearRangeMax: number,
   vignetting: RawVignettingMap | undefined,
   plan: RawMatchedTonePlan,
+  sourceTransfer: RawStorageTransfer = "linear",
 ): RawHeadroomStatistics {
   const headroom = createHeadroomAccumulator();
   const gains: [number, number, number] = [1, 1, 1];
@@ -281,9 +312,9 @@ export function applyRawMatchedTonePass(
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++, i += 3) {
       vignettingGainInto(vignetting, x, y, gains);
-      const r = decodeLinearUint16(data[i] ?? 0, sourceLinearRangeMax) * gains[0];
-      const g = decodeLinearUint16(data[i + 1] ?? 0, sourceLinearRangeMax) * gains[1];
-      const b = decodeLinearUint16(data[i + 2] ?? 0, sourceLinearRangeMax) * gains[2];
+      const r = decodeStoredUint16(data[i] ?? 0, sourceLinearRangeMax, sourceTransfer) * gains[0];
+      const g = decodeStoredUint16(data[i + 1] ?? 0, sourceLinearRangeMax, sourceTransfer) * gains[1];
+      const b = decodeStoredUint16(data[i + 2] ?? 0, sourceLinearRangeMax, sourceTransfer) * gains[2];
       const luma = PROPHOTO_LUMA_R * r + PROPHOTO_LUMA_G * g + PROPHOTO_LUMA_B * b;
       if (!(luma > 1e-12)) {
         data[i] = 0;
@@ -425,12 +456,49 @@ export function applyRawColorPass(
   }
 }
 
+export function applyRawFallbackPlanPass(
+  data: Uint16Array,
+  width: number,
+  height: number,
+  sourceLinearRangeMax: number,
+  vignetting: RawVignettingMap | undefined,
+  plan: RawFallbackPlan,
+  sourceTransfer: RawStorageTransfer = "linear",
+): RawHeadroomStatistics {
+  const headroom = createHeadroomAccumulator();
+  const gains: [number, number, number] = [1, 1, 1];
+  let i = 0;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++, i += 3) {
+      vignettingGainInto(vignetting, x, y, gains);
+      const r = applyRolloffScalar(
+        decodeStoredUint16(data[i] ?? 0, sourceLinearRangeMax, sourceTransfer) * gains[0] * plan.factor,
+        plan.rolloff,
+      );
+      const g = applyRolloffScalar(
+        decodeStoredUint16(data[i + 1] ?? 0, sourceLinearRangeMax, sourceTransfer) * gains[1] * plan.factor,
+        plan.rolloff,
+      );
+      const b = applyRolloffScalar(
+        decodeStoredUint16(data[i + 2] ?? 0, sourceLinearRangeMax, sourceTransfer) * gains[2] * plan.factor,
+        plan.rolloff,
+      );
+      recordHeadroom(headroom, r, g, b);
+      data[i] = encodeGamma20Uint16(r, RAW_DEVELOPED_LINEAR_RANGE_MAX);
+      data[i + 1] = encodeGamma20Uint16(g, RAW_DEVELOPED_LINEAR_RANGE_MAX);
+      data[i + 2] = encodeGamma20Uint16(b, RAW_DEVELOPED_LINEAR_RANGE_MAX);
+    }
+  }
+  return finishHeadroom(headroom);
+}
+
 export function applyRawFallbackBaselinePass(
   data: Uint16Array,
   width: number,
   height: number,
   sourceLinearRangeMax: number,
   vignetting: RawVignettingMap | undefined,
+  sourceTransfer: RawStorageTransfer = "linear",
 ): RawFallbackResult | null {
   const rmsHistogram = new Uint32Array(65536);
   const channelHistogram = new Uint32Array(65536);
@@ -441,9 +509,9 @@ export function applyRawFallbackBaselinePass(
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++, i += 3) {
       vignettingGainInto(vignetting, x, y, gains);
-      const r = decodeLinearUint16(data[i] ?? 0, sourceLinearRangeMax) * gains[0];
-      const g = decodeLinearUint16(data[i + 1] ?? 0, sourceLinearRangeMax) * gains[1];
-      const b = decodeLinearUint16(data[i + 2] ?? 0, sourceLinearRangeMax) * gains[2];
+      const r = decodeStoredUint16(data[i] ?? 0, sourceLinearRangeMax, sourceTransfer) * gains[0];
+      const g = decodeStoredUint16(data[i + 1] ?? 0, sourceLinearRangeMax, sourceTransfer) * gains[1];
+      const b = decodeStoredUint16(data[i + 2] ?? 0, sourceLinearRangeMax, sourceTransfer) * gains[2];
       const rms = Math.sqrt((r * r + g * g + b * b) / 3);
       rmsHistogram[Math.min(65535, Math.max(0, Math.round(rms * 65535)))]++;
       channelHistogram[Math.min(65535, Math.max(0, Math.round(r * 65535)))]++;
@@ -459,34 +527,192 @@ export function applyRawFallbackBaselinePass(
     pixelCount * 3,
     RAW_BASELINE_ROLLOFF_PERCENTILE,
   ) / 65535 * factor;
-  const rolloff = rolloffParams(channelMax, RAW_BASELINE_ROLLOFF_ASYMPTOTIC, 4);
-  const headroom = createHeadroomAccumulator();
-  i = 0;
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++, i += 3) {
-      vignettingGainInto(vignetting, x, y, gains);
-      const r = applyRolloffScalar(
-        decodeLinearUint16(data[i] ?? 0, sourceLinearRangeMax) * gains[0] * factor,
-        rolloff,
-      );
-      const g = applyRolloffScalar(
-        decodeLinearUint16(data[i + 1] ?? 0, sourceLinearRangeMax) * gains[1] * factor,
-        rolloff,
-      );
-      const b = applyRolloffScalar(
-        decodeLinearUint16(data[i + 2] ?? 0, sourceLinearRangeMax) * gains[2] * factor,
-        rolloff,
-      );
-      recordHeadroom(headroom, r, g, b);
-      data[i] = encodeGamma20Uint16(r, RAW_DEVELOPED_LINEAR_RANGE_MAX);
-      data[i + 1] = encodeGamma20Uint16(g, RAW_DEVELOPED_LINEAR_RANGE_MAX);
-      data[i + 2] = encodeGamma20Uint16(b, RAW_DEVELOPED_LINEAR_RANGE_MAX);
-    }
-  }
+  const plan: RawFallbackPlan = {
+    factor,
+    rolloff: rolloffParams(channelMax, RAW_BASELINE_ROLLOFF_ASYMPTOTIC, 4),
+  };
+  const headroom = applyRawFallbackPlanPass(
+    data,
+    width,
+    height,
+    sourceLinearRangeMax,
+    vignetting,
+    plan,
+    sourceTransfer,
+  );
   return {
     exposureEv: Math.log2(Math.max(factor, Number.MIN_VALUE)),
-    headroom: finishHeadroom(headroom),
+    headroom,
+    plan,
   };
+}
+
+function interpolateRawLensfunMapInto(
+  correction: RawLensfunCorrectionMaps,
+  map: Float32Array,
+  stride: number,
+  x: number,
+  y: number,
+  output: number[] | Float32Array,
+): void {
+  const gx = Math.max(0, Math.min(correction.gridWidth - 1, x / correction.step));
+  const gy = Math.max(0, Math.min(correction.gridHeight - 1, y / correction.step));
+  const x0 = Math.floor(gx);
+  const y0 = Math.floor(gy);
+  const x1 = Math.min(correction.gridWidth - 1, x0 + 1);
+  const y1 = Math.min(correction.gridHeight - 1, y0 + 1);
+  const tx = gx - x0;
+  const ty = gy - y0;
+  const w00 = (1 - tx) * (1 - ty);
+  const w10 = tx * (1 - ty);
+  const w01 = (1 - tx) * ty;
+  const w11 = tx * ty;
+  const i00 = (y0 * correction.gridWidth + x0) * stride;
+  const i10 = (y0 * correction.gridWidth + x1) * stride;
+  const i01 = (y1 * correction.gridWidth + x0) * stride;
+  const i11 = (y1 * correction.gridWidth + x1) * stride;
+  for (let channel = 0; channel < stride; channel++) {
+    output[channel] =
+      (map[i00 + channel] ?? 0) * w00 +
+      (map[i10 + channel] ?? 0) * w10 +
+      (map[i01 + channel] ?? 0) * w01 +
+      (map[i11 + channel] ?? 0) * w11;
+  }
+}
+
+function rawLensfunSourceCoordinatesInto(
+  correction: RawLensfunCorrectionMaps | undefined,
+  x: number,
+  y: number,
+  output: [number, number, number, number, number, number],
+): void {
+  if (!correction) {
+    output[0] = x; output[1] = y;
+    output[2] = x; output[3] = y;
+    output[4] = x; output[5] = y;
+    return;
+  }
+  if (correction.combined) {
+    interpolateRawLensfunMapInto(correction, correction.combined, 6, x, y, output);
+    return;
+  }
+  let geometryX = x;
+  let geometryY = y;
+  if (correction.distortion) {
+    const geometry: [number, number, number, number, number, number] = [0, 0, 0, 0, 0, 0];
+    interpolateRawLensfunMapInto(correction, correction.geometry, 2, x, y, geometry);
+    geometryX = geometry[0] ?? x;
+    geometryY = geometry[1] ?? y;
+  }
+  if (correction.tca) {
+    interpolateRawLensfunMapInto(correction, correction.tca, 6, geometryX, geometryY, output);
+    return;
+  }
+  output[0] = geometryX; output[1] = geometryY;
+  output[2] = geometryX; output[3] = geometryY;
+  output[4] = geometryX; output[5] = geometryY;
+}
+
+function rawLensfunVignettingGainInto(
+  correction: RawLensfunCorrectionMaps | undefined,
+  x: number,
+  y: number,
+  output: [number, number, number],
+): void {
+  if (!correction?.vignetting || correction.vignettingBaked) {
+    output[0] = 1; output[1] = 1; output[2] = 1;
+    return;
+  }
+  interpolateRawLensfunMapInto(correction, correction.vignetting, 3, x, y, output);
+  output[0] = Number.isFinite(output[0]) ? Math.max(0, output[0]) : 1;
+  output[1] = Number.isFinite(output[1]) ? Math.max(0, output[1]) : 1;
+  output[2] = Number.isFinite(output[2]) ? Math.max(0, output[2]) : 1;
+}
+
+function sampleRawStoredChannelBilinear(
+  data: Uint16Array,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+  channel: 0 | 1 | 2,
+  linearRangeMax: number,
+  transfer: RawStorageTransfer,
+): number | null {
+  if (x < 0 || x > width - 1 || y < 0 || y > height - 1) return null;
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const x1 = Math.min(width - 1, x0 + 1);
+  const y1 = Math.min(height - 1, y0 + 1);
+  const tx = x - x0;
+  const ty = y - y0;
+  const w00 = (1 - tx) * (1 - ty);
+  const w10 = tx * (1 - ty);
+  const w01 = (1 - tx) * ty;
+  const w11 = tx * ty;
+  const i00 = (y0 * width + x0) * 3 + channel;
+  const i10 = (y0 * width + x1) * 3 + channel;
+  const i01 = (y1 * width + x0) * 3 + channel;
+  const i11 = (y1 * width + x1) * 3 + channel;
+  return (
+    decodeStoredUint16(data[i00] ?? 0, linearRangeMax, transfer) * w00 +
+    decodeStoredUint16(data[i10] ?? 0, linearRangeMax, transfer) * w10 +
+    decodeStoredUint16(data[i01] ?? 0, linearRangeMax, transfer) * w01 +
+    decodeStoredUint16(data[i11] ?? 0, linearRangeMax, transfer) * w11
+  );
+}
+
+export function resampleRawWithLensfunToGamma20(
+  data: Uint16Array,
+  sourceWidth: number,
+  sourceHeight: number,
+  sourceLinearRangeMax: number,
+  sourceTransfer: RawStorageTransfer,
+  correction: RawLensfunCorrectionMaps | undefined,
+  targetWidth: number,
+  targetHeight: number,
+): Uint16Array {
+  const outputWidth = Math.max(1, Math.round(targetWidth));
+  const outputHeight = Math.max(1, Math.round(targetHeight));
+  const output = new Uint16Array(outputWidth * outputHeight * 3);
+  const coordinates: [number, number, number, number, number, number] = [0, 0, 0, 0, 0, 0];
+  const gains: [number, number, number] = [1, 1, 1];
+  let targetIndex = 0;
+  for (let y = 0; y < outputHeight; y++) {
+    const outputY = (y + 0.5) * sourceHeight / outputHeight - 0.5;
+    for (let x = 0; x < outputWidth; x++, targetIndex += 3) {
+      const outputX = (x + 0.5) * sourceWidth / outputWidth - 0.5;
+      rawLensfunSourceCoordinatesInto(correction, outputX, outputY, coordinates);
+      const r = sampleRawStoredChannelBilinear(
+        data, sourceWidth, sourceHeight, coordinates[0], coordinates[1], 0,
+        sourceLinearRangeMax, sourceTransfer,
+      );
+      const g = sampleRawStoredChannelBilinear(
+        data, sourceWidth, sourceHeight, coordinates[2], coordinates[3], 1,
+        sourceLinearRangeMax, sourceTransfer,
+      );
+      const b = sampleRawStoredChannelBilinear(
+        data, sourceWidth, sourceHeight, coordinates[4], coordinates[5], 2,
+        sourceLinearRangeMax, sourceTransfer,
+      );
+      if (r === null || g === null || b === null) continue;
+      let rr = r;
+      let gg = g;
+      let bb = b;
+      if (correction?.vignetting && !correction.vignettingBaked) {
+        rawLensfunVignettingGainInto(correction, coordinates[0], coordinates[1], gains);
+        rr *= gains[0];
+        rawLensfunVignettingGainInto(correction, coordinates[2], coordinates[3], gains);
+        gg *= gains[1];
+        rawLensfunVignettingGainInto(correction, coordinates[4], coordinates[5], gains);
+        bb *= gains[2];
+      }
+      output[targetIndex] = encodeGamma20Uint16(rr, RAW_DEVELOPED_LINEAR_RANGE_MAX);
+      output[targetIndex + 1] = encodeGamma20Uint16(gg, RAW_DEVELOPED_LINEAR_RANGE_MAX);
+      output[targetIndex + 2] = encodeGamma20Uint16(bb, RAW_DEVELOPED_LINEAR_RANGE_MAX);
+    }
+  }
+  return output;
 }
 
 export function convertRawLinearToGamma20InPlace(

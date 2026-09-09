@@ -3,11 +3,16 @@
 import {
   applyRawColorPass,
   applyRawFallbackBaselinePass,
+  applyRawFallbackPlanPass,
   applyRawMatchedTonePass,
   convertRawLinearToGamma20InPlace,
+  resampleRawWithLensfunToGamma20,
   sampleRawLinearRgb,
   type RawColorPassPlan,
+  type RawFallbackPlan,
+  type RawLensfunCorrectionMaps,
   type RawMatchedTonePlan,
+  type RawStorageTransfer,
   type RawVignettingMap,
 } from "./raw-development-core";
 
@@ -16,7 +21,7 @@ type WorkerState = {
   width: number;
   height: number;
   linearRangeMax: number;
-  transfer: "linear" | "gamma20";
+  transfer: RawStorageTransfer;
 };
 
 type StartMessageBase = {
@@ -24,6 +29,7 @@ type StartMessageBase = {
   width: number;
   height: number;
   sourceLinearRangeMax: number;
+  sourceTransfer?: RawStorageTransfer;
   vignetting?: RawVignettingMap;
 };
 
@@ -31,7 +37,19 @@ type RawDevelopmentWorkerRequest =
   | ({ type: "matched-tone"; plan: RawMatchedTonePlan; sampleMaxSide: number } & StartMessageBase)
   | ({ type: "fallback-tone" } & StartMessageBase)
   | { type: "color"; plan: RawColorPassPlan }
-  | { type: "encode" };
+  | { type: "encode" }
+  | ({
+      type: "lensfun-resample";
+      correction?: RawLensfunCorrectionMaps;
+      targetWidth: number;
+      targetHeight: number;
+    } & StartMessageBase)
+  | ({
+      type: "apply-development-plans";
+      tonePlan?: RawMatchedTonePlan;
+      fallbackPlan?: RawFallbackPlan;
+      colorPlan?: RawColorPassPlan;
+    } & StartMessageBase);
 
 const workerScope = self as unknown as DedicatedWorkerGlobalScope;
 let state: WorkerState | null = null;
@@ -55,6 +73,96 @@ function postError(error: unknown): void {
 workerScope.onmessage = (event: MessageEvent<RawDevelopmentWorkerRequest>) => {
   try {
     const message = event.data;
+
+    if (message.type === "lensfun-resample") {
+      const data = new Uint16Array(message.dataBuffer);
+      state = {
+        data,
+        width: message.width,
+        height: message.height,
+        linearRangeMax: message.sourceLinearRangeMax,
+        transfer: message.sourceTransfer ?? "linear",
+      };
+      const output = resampleRawWithLensfunToGamma20(
+        data,
+        message.width,
+        message.height,
+        message.sourceLinearRangeMax,
+        state.transfer,
+        message.correction,
+        message.targetWidth,
+        message.targetHeight,
+      );
+      state = null;
+      const outputBuffer = output.buffer as ArrayBuffer;
+      workerScope.postMessage(
+        {
+          type: "lensfun-resample-complete",
+          dataBuffer: outputBuffer,
+          width: Math.max(1, Math.round(message.targetWidth)),
+          height: Math.max(1, Math.round(message.targetHeight)),
+          linearRangeMax: 2,
+          transfer: "gamma20",
+        },
+        [outputBuffer],
+      );
+      return;
+    }
+
+    if (message.type === "apply-development-plans") {
+      const data = new Uint16Array(message.dataBuffer);
+      state = {
+        data,
+        width: message.width,
+        height: message.height,
+        linearRangeMax: message.sourceLinearRangeMax,
+        transfer: message.sourceTransfer ?? "gamma20",
+      };
+      let headroom;
+      if (message.tonePlan) {
+        headroom = applyRawMatchedTonePass(
+          data,
+          message.width,
+          message.height,
+          message.sourceLinearRangeMax,
+          undefined,
+          message.tonePlan,
+          state.transfer,
+        );
+        state.linearRangeMax = 2;
+        state.transfer = "gamma20";
+      } else if (message.fallbackPlan) {
+        headroom = applyRawFallbackPlanPass(
+          data,
+          message.width,
+          message.height,
+          message.sourceLinearRangeMax,
+          undefined,
+          message.fallbackPlan,
+          state.transfer,
+        );
+        state.linearRangeMax = 2;
+        state.transfer = "gamma20";
+      }
+      if (message.colorPlan) {
+        applyRawColorPass(data, state.linearRangeMax, message.colorPlan);
+      }
+      const buffer = data.buffer as ArrayBuffer;
+      const linearRangeMax = state.linearRangeMax;
+      state = null;
+      workerScope.postMessage(
+        {
+          type: "development-plans-complete",
+          dataBuffer: buffer,
+          linearRangeMax,
+          transfer: "gamma20",
+          headroom,
+        },
+        [buffer],
+      );
+      return;
+    }
+
     if (message.type === "matched-tone") {
       const data = new Uint16Array(message.dataBuffer);
       state = {
@@ -62,7 +170,7 @@ workerScope.onmessage = (event: MessageEvent<RawDevelopmentWorkerRequest>) => {
         width: message.width,
         height: message.height,
         linearRangeMax: message.sourceLinearRangeMax,
-        transfer: "linear",
+        transfer: message.sourceTransfer ?? "linear",
       };
       const headroom = applyRawMatchedTonePass(
         data,
@@ -71,6 +179,7 @@ workerScope.onmessage = (event: MessageEvent<RawDevelopmentWorkerRequest>) => {
         message.sourceLinearRangeMax,
         message.vignetting,
         message.plan,
+        state.transfer,
       );
       state.linearRangeMax = 2;
       state.transfer = "gamma20";
@@ -95,7 +204,7 @@ workerScope.onmessage = (event: MessageEvent<RawDevelopmentWorkerRequest>) => {
         width: message.width,
         height: message.height,
         linearRangeMax: message.sourceLinearRangeMax,
-        transfer: "linear",
+        transfer: message.sourceTransfer ?? "linear",
       };
       const result = applyRawFallbackBaselinePass(
         data,
@@ -103,6 +212,7 @@ workerScope.onmessage = (event: MessageEvent<RawDevelopmentWorkerRequest>) => {
         message.height,
         message.sourceLinearRangeMax,
         message.vignetting,
+        state.transfer,
       );
       if (result) {
         state.linearRangeMax = 2;

@@ -57,6 +57,7 @@ export type DecodedRgbImage16 = {
   data: Uint16Array;
   lensCorrection?: LensfunCorrection;
   rawDevelopment?: RawDevelopmentSettings;
+  rawMasterPromise?: Promise<DecodedRgbImage16>;
   cleanup: () => void;
 };
 
