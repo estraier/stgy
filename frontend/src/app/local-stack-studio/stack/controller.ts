@@ -17,6 +17,8 @@ import { createLibRawInstance, createLibRawWorkerFailure, isRawImageFile } from 
 import { getOpenCv } from "@/image/opencv";
 import { encodeFromLinearProPhoto } from "@/image/tiff";
 import type { DecodedRgbImage16, ImageEditOutputColorProfile } from "@/components/image-editor/types";
+import { applySharpenToCanvas, applySharpenToRgb16 } from "@/components/image-editor/sharpen";
+import { getCanvas2dContext, getCanvasImageData } from "@/components/image-editor/canvas";
 import {
   adjustStackLinearData,
   clampStackClahe,
@@ -75,6 +77,13 @@ const RAW_DECODE_SETTINGS = {
 const PREVIEW_MAX_DIMENSION = 1024;
 const PREVIEW_COLOR_SPACE = "srgb";
 const LINEAR_TO_SRGB_BYTE_LUT = buildLinearToSrgbByteLut(16384);
+const OUTPUT_SIZE_PRESETS = [
+  { value: "16mp", label: "16MP", pixels: 16_000_000 },
+  { value: "8mp", label: "8MP", pixels: 8_000_000 },
+  { value: "4mp", label: "4MP", pixels: 4_000_000 },
+  { value: "2mp", label: "2MP", pixels: 2_000_000 },
+  { value: "1mp", label: "1MP", pixels: 1_000_000 },
+];
 
 
 const TONE_ANALYSIS_TARGET_PIXELS = 256 * 256;
@@ -122,6 +131,7 @@ const previewSaturationValue = getElement("preview-saturation-value");
 const editButton = getElement("edit-button");
 const editButtonSpinner = getElement("edit-button-spinner");
 const outputFormat = getElement("output-format");
+const outputSize = getElement("output-size");
 const downloadButton = getElement("download-button");
 const downloadButtonSpinner = getElement("download-button-spinner");
 const downloadButtonLabel = getElement("download-button-label");
@@ -166,6 +176,7 @@ previewClahe.disabled = true;
 previewVibrance.disabled = true;
 previewSaturation.disabled = true;
 editButton.disabled = true;
+outputSize.disabled = true;
 
 listen(inputFiles, "change", () => {
   const count = inputFiles.files ? inputFiles.files.length : 0;
@@ -352,6 +363,7 @@ ${buildInfo}` : "OpenCV.js is ready.");
     previewVibrance.value = "0";
     previewSaturation.value = "0";
     updateToneControlLabels();
+    updateOutputSizeOptions();
     renderPreviewForCurrentTone();
     resultPanel.classList.remove("hidden");
     setProgress("Done.");
@@ -418,6 +430,7 @@ listen(editButton, "click", async () => {
           currentStackResultRevision += 1;
           clearFullSizeRenderCache();
           resetAllToneControls();
+          updateOutputSizeOptions();
           closeZoomModal();
           renderPreviewForCurrentTone();
           resultPanel.classList.remove("hidden");
@@ -454,6 +467,7 @@ listen(downloadButton, "click", async () => {
   downloadButton.disabled = true;
   editButton.disabled = true;
   outputFormat.disabled = true;
+  outputSize.disabled = true;
   previewExposure.disabled = true;
   previewShadow.disabled = true;
   previewHighlight.disabled = true;
@@ -468,8 +482,13 @@ listen(downloadButton, "click", async () => {
     await waitForBusyPaint();
     const format = outputFormat.value;
     const cache = ensureFullSizeRenderCache();
+    const outputDimensions = getSelectedOutputDimensions(
+      currentStackResult.width,
+      currentStackResult.height,
+    );
+    const resized = outputDimensions.width !== currentStackResult.width || outputDimensions.height !== currentStackResult.height;
 
-    if (format === "jpeg") {
+    if (format === "jpeg" && !resized) {
       downloadButtonLabel.textContent = "Encoding JPEG...";
       let jpegBlob = cache.jpegBlob;
       if (!jpegBlob) {
@@ -487,20 +506,88 @@ listen(downloadButton, "click", async () => {
       return;
     }
 
-    const bitsPerSample = format === "tiff16" ? 16 : format === "tiff8" ? 8 : null;
-    if (!bitsPerSample) {
-      throw new Error(`Unsupported output format: ${format}`);
+    if (format === "tiff8" && !resized) {
+      downloadButtonLabel.textContent = "Encoding TIFF-8...";
+      const encoded = await encodeFromLinearProPhoto({
+        data: cache.adjustedLinear,
+        width: currentStackResult.width,
+        height: currentStackResult.height,
+        bitsPerSample: 8,
+        outputColorSpace: currentPreviewColorSpace,
+        preferDeflate: true,
+      });
+      downloadBlob(encoded.blob, buildOutputFileName(currentInputFiles, "tiff8"));
+      return;
     }
-    downloadButtonLabel.textContent = `Encoding TIFF-${bitsPerSample}...`;
-    const encoded = await encodeFromLinearProPhoto({
-      data: cache.adjustedLinear,
-      width: currentStackResult.width,
-      height: currentStackResult.height,
-      bitsPerSample,
-      outputColorSpace: currentPreviewColorSpace,
-      preferDeflate: true,
-    });
-    downloadBlob(encoded.blob, buildOutputFileName(currentInputFiles, format));
+
+    if (format === "tiff16") {
+      downloadButtonLabel.textContent = resized ? "Resizing TIFF-16..." : "Encoding TIFF-16...";
+      let linearForTiff = cache.adjustedLinear;
+      if (resized) {
+        const resizedLinear = resizeLinearProPhotoBilinear(
+          cache.adjustedLinear,
+          currentStackResult.width,
+          currentStackResult.height,
+          outputDimensions.width,
+          outputDimensions.height,
+        );
+        const sharpenedStored = encodeLinearToStoredGamma2(resizedLinear);
+        applySharpenToRgb16(sharpenedStored, outputDimensions.width, outputDimensions.height, 1);
+        linearForTiff = decodeStoredGamma2ToLinear(sharpenedStored);
+        downloadButtonLabel.textContent = "Encoding TIFF-16...";
+        await waitForBusyPaint();
+      }
+      const encoded = await encodeFromLinearProPhoto({
+        data: linearForTiff,
+        width: outputDimensions.width,
+        height: outputDimensions.height,
+        bitsPerSample: 16,
+        outputColorSpace: currentPreviewColorSpace,
+        preferDeflate: true,
+      });
+      downloadBlob(encoded.blob, buildOutputFileName(currentInputFiles, "tiff16"));
+      return;
+    }
+
+    if (format === "jpeg" || format === "webp" || format === "tiff8") {
+      downloadButtonLabel.textContent = resized ? "Resizing..." : `Encoding ${format === "webp" ? "WebP" : format === "jpeg" ? "JPEG" : "TIFF-8"}...`;
+      const canvas = buildOutputCanvas(
+        cache.adjustedLinear,
+        currentStackResult.width,
+        currentStackResult.height,
+        outputDimensions.width,
+        outputDimensions.height,
+        currentPreviewColorSpace,
+        resized,
+      );
+      if (resized) {
+        applySharpenToCanvas(canvas, 1, currentPreviewColorSpace);
+      }
+
+      if (format === "jpeg" || format === "webp") {
+        downloadButtonLabel.textContent = `Encoding ${format === "webp" ? "WebP" : "JPEG"}...`;
+        await waitForBusyPaint();
+        const blob = await canvasToImageBlob(canvas, format);
+        downloadBlob(blob, buildOutputFileName(currentInputFiles, format));
+        return;
+      }
+
+      downloadButtonLabel.textContent = "Encoding TIFF-8...";
+      await waitForBusyPaint();
+      const resizedLinear = canvasToLinearProPhoto(canvas, currentPreviewColorSpace);
+      const encoded = await encodeFromLinearProPhoto({
+        data: resizedLinear,
+        width: outputDimensions.width,
+        height: outputDimensions.height,
+        bitsPerSample: 8,
+        outputColorSpace: currentPreviewColorSpace,
+        preferDeflate: true,
+      });
+      downloadBlob(encoded.blob, buildOutputFileName(currentInputFiles, "tiff8"));
+      return;
+    }
+
+    throw new Error(`Unsupported output format: ${format}`);
   } catch (error) {
     showError(error);
   } finally {
@@ -508,6 +595,7 @@ listen(downloadButton, "click", async () => {
     downloadButton.disabled = false;
     editButton.disabled = !currentStackResult;
     outputFormat.disabled = false;
+    outputSize.disabled = !currentStackResult;
     previewExposure.disabled = false;
     previewShadow.disabled = false;
     previewHighlight.disabled = false;
@@ -929,6 +1017,46 @@ function downloadBlob(blob, fileName) {
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+function updateOutputSizeOptions() {
+  const previousValue = outputSize.value || "full";
+  const sourcePixels = currentStackResult
+    ? currentStackResult.width * currentStackResult.height
+    : 0;
+  outputSize.replaceChildren();
+
+  const fullOption = document.createElement("option");
+  fullOption.value = "full";
+  fullOption.textContent = "Full-size";
+  outputSize.appendChild(fullOption);
+
+  if (currentStackResult) {
+    for (const preset of OUTPUT_SIZE_PRESETS) {
+      if (preset.pixels > sourcePixels) continue;
+      const option = document.createElement("option");
+      option.value = preset.value;
+      option.textContent = preset.label;
+      outputSize.appendChild(option);
+    }
+  }
+
+  const previousStillAvailable = Array.from(outputSize.options).some((option) => option.value === previousValue);
+  outputSize.value = previousStillAvailable ? previousValue : "full";
+  outputSize.disabled = !currentStackResult;
+}
+
+function getSelectedOutputDimensions(sourceWidth, sourceHeight) {
+  const sourcePixels = sourceWidth * sourceHeight;
+  const preset = OUTPUT_SIZE_PRESETS.find((item) => item.value === outputSize.value);
+  if (!preset || preset.pixels >= sourcePixels) {
+    return { width: sourceWidth, height: sourceHeight };
+  }
+  const scale = Math.sqrt(preset.pixels / sourcePixels);
+  return {
+    width: Math.max(1, Math.round(sourceWidth * scale)),
+    height: Math.max(1, Math.round(sourceHeight * scale)),
+  };
+}
+
 function buildOutputFileName(files, format) {
   const names = files.map((file) => basename(file.name)).filter((name) => name.length > 0);
   const firstName = names[0] || "merged";
@@ -937,7 +1065,7 @@ function buildOutputFileName(files, format) {
   const withoutExtension = removeFileExtension(selectedPrefix);
   const cleanedPrefix = withoutExtension.replace(/[-_]+$/, "");
   const stem = `${cleanedPrefix}-merged`;
-  const extension = format === "jpeg" ? ".jpg" : ".tif";
+  const extension = format === "jpeg" ? ".jpg" : format === "webp" ? ".webp" : ".tif";
   return `${stem}${extension}`;
 }
 
@@ -2969,7 +3097,138 @@ async function linearAccumulatorToJpeg(accumulator, width, height, outputColorSp
     throw new Error("Could not create a 2D canvas context for the JPEG preview.");
   }
   context.putImageData(imageData, 0, 0);
-  return await canvasToJpegBlob(canvas);
+  return await canvasToImageBlob(canvas, "jpeg");
+}
+
+function linearAccumulatorToCanvas(accumulator, width, height, outputColorSpace) {
+  const output = new Uint8ClampedArray(width * height * 4);
+  const converted = new Float32Array(3);
+
+  for (let outputIndex = 0, sourceIndex = 0; outputIndex < output.length; outputIndex += 4, sourceIndex += 3) {
+    convertLinearProPhotoToOutputRgbInto(
+      accumulator[sourceIndex],
+      accumulator[sourceIndex + 1],
+      accumulator[sourceIndex + 2],
+      outputColorSpace,
+      converted,
+    );
+    output[outputIndex] = linearToSrgbByteFast(converted[0]);
+    output[outputIndex + 1] = linearToSrgbByteFast(converted[1]);
+    output[outputIndex + 2] = linearToSrgbByteFast(converted[2]);
+    output[outputIndex + 3] = 255;
+  }
+
+  const imageData = createColorManagedImageData(output, width, height, outputColorSpace);
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = getCanvas2dContext(canvas, outputColorSpace, false);
+  if (!context) {
+    throw new Error("Could not create a 2D canvas context for the stacked image.");
+  }
+  context.putImageData(imageData, 0, 0);
+  return canvas;
+}
+
+function buildOutputCanvas(
+  accumulator,
+  sourceWidth,
+  sourceHeight,
+  outputWidth,
+  outputHeight,
+  outputColorSpace,
+  resized,
+) {
+  const sourceCanvas = linearAccumulatorToCanvas(
+    accumulator,
+    sourceWidth,
+    sourceHeight,
+    outputColorSpace,
+  );
+  if (!resized) return sourceCanvas;
+
+  const outputCanvas = document.createElement("canvas");
+  outputCanvas.width = outputWidth;
+  outputCanvas.height = outputHeight;
+  const context = getCanvas2dContext(outputCanvas, outputColorSpace, false);
+  if (!context) {
+    throw new Error("Could not create a 2D canvas context for resizing the stacked image.");
+  }
+  context.imageSmoothingEnabled = true;
+  try {
+    context.imageSmoothingQuality = "high";
+  } catch {
+    // Older canvas implementations may not expose imageSmoothingQuality.
+  }
+  context.drawImage(sourceCanvas, 0, 0, outputWidth, outputHeight);
+  return outputCanvas;
+}
+
+function canvasToLinearProPhoto(canvas, outputColorSpace) {
+  const context = getCanvas2dContext(canvas, outputColorSpace, true);
+  if (!context) {
+    throw new Error("Could not read the resized canvas.");
+  }
+  const imageData = getCanvasImageData(
+    context,
+    0,
+    0,
+    canvas.width,
+    canvas.height,
+    outputColorSpace,
+  );
+  const values = imageData.data;
+  const linear = new Float32Array(canvas.width * canvas.height * 3);
+  const convertRgb8 = createRgb8ToLinearProphotoConverter(outputColorSpace);
+  const converted = new Float32Array(3);
+  for (let sourceIndex = 0, targetIndex = 0; sourceIndex < values.length; sourceIndex += 4, targetIndex += 3) {
+    convertRgb8(
+      values[sourceIndex] ?? 0,
+      values[sourceIndex + 1] ?? 0,
+      values[sourceIndex + 2] ?? 0,
+      converted,
+    );
+    linear[targetIndex] = converted[0];
+    linear[targetIndex + 1] = converted[1];
+    linear[targetIndex + 2] = converted[2];
+  }
+  return linear;
+}
+
+function resizeLinearProPhotoBilinear(source, sourceWidth, sourceHeight, outputWidth, outputHeight) {
+  if (sourceWidth === outputWidth && sourceHeight === outputHeight) {
+    return new Float32Array(source);
+  }
+  const output = new Float32Array(outputWidth * outputHeight * 3);
+  const xScale = sourceWidth / outputWidth;
+  const yScale = sourceHeight / outputHeight;
+
+  for (let y = 0; y < outputHeight; y += 1) {
+    const sourceY = (y + 0.5) * yScale - 0.5;
+    const y0 = Math.max(0, Math.min(sourceHeight - 1, Math.floor(sourceY)));
+    const y1 = Math.min(sourceHeight - 1, y0 + 1);
+    const fy = Math.max(0, Math.min(1, sourceY - y0));
+    for (let x = 0; x < outputWidth; x += 1) {
+      const sourceX = (x + 0.5) * xScale - 0.5;
+      const x0 = Math.max(0, Math.min(sourceWidth - 1, Math.floor(sourceX)));
+      const x1 = Math.min(sourceWidth - 1, x0 + 1);
+      const fx = Math.max(0, Math.min(1, sourceX - x0));
+      const w00 = (1 - fx) * (1 - fy);
+      const w10 = fx * (1 - fy);
+      const w01 = (1 - fx) * fy;
+      const w11 = fx * fy;
+      const dst = (y * outputWidth + x) * 3;
+      const s00 = (y0 * sourceWidth + x0) * 3;
+      const s10 = (y0 * sourceWidth + x1) * 3;
+      const s01 = (y1 * sourceWidth + x0) * 3;
+      const s11 = (y1 * sourceWidth + x1) * 3;
+      output[dst] = source[s00] * w00 + source[s10] * w10 + source[s01] * w01 + source[s11] * w11;
+      output[dst + 1] = source[s00 + 1] * w00 + source[s10 + 1] * w10 + source[s01 + 1] * w01 + source[s11 + 1] * w11;
+      output[dst + 2] = source[s00 + 2] * w00 + source[s10 + 2] * w10 + source[s01 + 2] * w01 + source[s11 + 2] * w11;
+    }
+  }
+
+  return output;
 }
 
 function createColorManagedImageData(data, width, height, outputColorSpace) {
@@ -3784,11 +4043,23 @@ function linearProPhotoToAlignmentImageData(linear, width, height) {
   return new ImageData(rgba, width, height);
 }
 
-function canvasToJpegBlob(canvas) {
+function canvasToImageBlob(canvas, format) {
+  const mimeType = format === "webp" ? "image/webp" : "image/jpeg";
+  const formatName = format === "webp" ? "WebP" : "JPEG";
   return new Promise((resolve, reject) => {
     canvas.toBlob(
-      (blob) => blob ? resolve(blob) : reject(new Error("Failed to encode the stacked image as JPEG.")),
-      "image/jpeg",
+      (blob) => {
+        if (!blob) {
+          reject(new Error(`Failed to encode the stacked image as ${formatName}.`));
+          return;
+        }
+        if (format === "webp" && blob.type !== "image/webp") {
+          reject(new Error("This browser does not support WebP encoding through Canvas."));
+          return;
+        }
+        resolve(blob);
+      },
+      mimeType,
       0.92,
     );
   });
@@ -3860,6 +4131,7 @@ function setProcessing(processing) {
   inputFiles.disabled = processing;
   mergeMode.disabled = processing;
   outputFormat.disabled = processing;
+  outputSize.disabled = processing || !currentStackResult;
   previewExposure.disabled = processing || !currentStackResult;
   previewShadow.disabled = processing || !currentStackResult;
   previewHighlight.disabled = processing || !currentStackResult;
@@ -3900,6 +4172,7 @@ function clearResult() {
   previewVibrance.value = "0";
   previewSaturation.value = "0";
   updateToneControlLabels();
+  updateOutputSizeOptions();
   previewImage.width = 1;
   previewImage.height = 1;
   previewExposure.disabled = true;

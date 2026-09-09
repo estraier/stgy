@@ -219,11 +219,14 @@ export default function PageBody() {
                   <span>Edit</span>
                 </button>
                 <div className="ml-auto flex flex-wrap items-center gap-2.5">
-                  <label htmlFor="output-format" className="text-sm font-medium text-gray-900">Format:</label>
-                  <select id="output-format" className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm">
+                  <select id="output-format" aria-label="Output format" className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm">
                     <option value="jpeg">JPEG</option>
+                    <option value="webp">WebP</option>
                     <option value="tiff8">TIFF-8</option>
                     <option value="tiff16">TIFF-16</option>
+                  </select>
+                  <select id="output-size" aria-label="Output size" className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm">
+                    <option value="full">Full-size</option>
                   </select>
                   <button
                     id="download-button"
