@@ -37,6 +37,7 @@ import {
   applySigmoidLinear,
   applySigmoidLinearAtMidpoint,
   clamp01,
+  clampColorAdjustment,
   clampExposureEv,
   clampSigmoid,
   clampToneRangeAdjustment,
@@ -114,6 +115,10 @@ const previewSigmoid = getElement("preview-sigmoid");
 const previewSigmoidValue = getElement("preview-sigmoid-value");
 const previewClahe = getElement("preview-clahe");
 const previewClaheValue = getElement("preview-clahe-value");
+const previewVibrance = getElement("preview-vibrance");
+const previewVibranceValue = getElement("preview-vibrance-value");
+const previewSaturation = getElement("preview-saturation");
+const previewSaturationValue = getElement("preview-saturation-value");
 const editButton = getElement("edit-button");
 const editButtonSpinner = getElement("edit-button-spinner");
 const outputFormat = getElement("output-format");
@@ -136,6 +141,8 @@ let currentPreviewHighlight = 0;
 let currentPreviewLogarithm = 0;
 let currentPreviewSigmoid = 0;
 let currentPreviewClahe = 0;
+let currentPreviewVibrance = 0;
+let currentPreviewSaturation = 0;
 let previewRenderScheduled = false;
 let currentZoomViewUrl = null;
 let currentStackResultRevision = 0;
@@ -156,6 +163,8 @@ previewHighlight.disabled = true;
 previewLogarithm.disabled = true;
 previewSigmoid.disabled = true;
 previewClahe.disabled = true;
+previewVibrance.disabled = true;
+previewSaturation.disabled = true;
 editButton.disabled = true;
 
 listen(inputFiles, "change", () => {
@@ -210,12 +219,28 @@ listen(previewClahe, "input", () => {
   if (currentStackResult) schedulePreviewRender();
 });
 
+listen(previewVibrance, "input", () => {
+  currentPreviewVibrance = clampColorAdjustment(Number.parseFloat(previewVibrance.value));
+  previewVibrance.value = String(currentPreviewVibrance);
+  updateToneControlLabels();
+  if (currentStackResult) schedulePreviewRender();
+});
+
+listen(previewSaturation, "input", () => {
+  currentPreviewSaturation = clampColorAdjustment(Number.parseFloat(previewSaturation.value));
+  previewSaturation.value = String(currentPreviewSaturation);
+  updateToneControlLabels();
+  if (currentStackResult) schedulePreviewRender();
+});
+
 listen(previewExposure, "dblclick", () => resetToneControl("exposure"));
 listen(previewShadow, "dblclick", () => resetToneControl("shadow"));
 listen(previewHighlight, "dblclick", () => resetToneControl("highlight"));
 listen(previewLogarithm, "dblclick", () => resetToneControl("logarithm"));
 listen(previewSigmoid, "dblclick", () => resetToneControl("sigmoid"));
 listen(previewClahe, "dblclick", () => resetToneControl("clahe"));
+listen(previewVibrance, "dblclick", () => resetToneControl("vibrance"));
+listen(previewSaturation, "dblclick", () => resetToneControl("saturation"));
 
 listen(previewImage, "click", async (event) => {
   if (!currentStackResult) {
@@ -316,12 +341,16 @@ ${buildInfo}` : "OpenCV.js is ready.");
     currentPreviewLogarithm = 0;
     currentPreviewSigmoid = 0;
     currentPreviewClahe = 0;
+    currentPreviewVibrance = 0;
+    currentPreviewSaturation = 0;
     previewExposure.value = "0";
     previewShadow.value = "0";
     previewHighlight.value = "0";
     previewLogarithm.value = "0";
     previewSigmoid.value = "0";
     previewClahe.value = "0";
+    previewVibrance.value = "0";
+    previewSaturation.value = "0";
     updateToneControlLabels();
     renderPreviewForCurrentTone();
     resultPanel.classList.remove("hidden");
@@ -431,6 +460,8 @@ listen(downloadButton, "click", async () => {
   previewLogarithm.disabled = true;
   previewSigmoid.disabled = true;
   previewClahe.disabled = true;
+  previewVibrance.disabled = true;
+  previewSaturation.disabled = true;
   setDownloadButtonBusy(true);
 
   try {
@@ -483,6 +514,8 @@ listen(downloadButton, "click", async () => {
     previewLogarithm.disabled = false;
     previewSigmoid.disabled = false;
     previewClahe.disabled = false;
+    previewVibrance.disabled = false;
+    previewSaturation.disabled = false;
     downloadButtonLabel.textContent = previousText;
   }
 });
@@ -494,6 +527,8 @@ function updateToneControlLabels() {
   previewLogarithmValue.textContent = formatToneControlValue(currentPreviewLogarithm);
   previewSigmoidValue.textContent = formatToneControlValue(currentPreviewSigmoid);
   previewClaheValue.textContent = formatIntegerToneControlValue(currentPreviewClahe);
+  previewVibranceValue.textContent = formatIntegerToneControlValue(currentPreviewVibrance);
+  previewSaturationValue.textContent = formatIntegerToneControlValue(currentPreviewSaturation);
 }
 
 function formatToneControlValue(value) {
@@ -513,12 +548,16 @@ function resetAllToneControls() {
   currentPreviewLogarithm = 0;
   currentPreviewSigmoid = 0;
   currentPreviewClahe = 0;
+  currentPreviewVibrance = 0;
+  currentPreviewSaturation = 0;
   previewExposure.value = "0";
   previewShadow.value = "0";
   previewHighlight.value = "0";
   previewLogarithm.value = "0";
   previewSigmoid.value = "0";
   previewClahe.value = "0";
+  previewVibrance.value = "0";
+  previewSaturation.value = "0";
   updateToneControlLabels();
 }
 
@@ -541,6 +580,12 @@ function resetToneControl(name) {
   } else if (name === "clahe") {
     currentPreviewClahe = 0;
     previewClahe.value = "0";
+  } else if (name === "vibrance") {
+    currentPreviewVibrance = 0;
+    previewVibrance.value = "0";
+  } else if (name === "saturation") {
+    currentPreviewSaturation = 0;
+    previewSaturation.value = "0";
   }
   updateToneControlLabels();
   if (currentStackResult) schedulePreviewRender();
@@ -571,6 +616,8 @@ function renderPreviewForCurrentTone() {
     currentPreviewLogarithm,
     currentPreviewSigmoid,
     currentPreviewClahe,
+    currentPreviewVibrance,
+    currentPreviewSaturation,
     currentStackResult.exposureRolloffBaseP998,
     getCurrentHighlightP100(),
   );
@@ -588,6 +635,8 @@ function renderPreviewForCurrentTone() {
   previewLogarithm.disabled = false;
   previewSigmoid.disabled = false;
   previewClahe.disabled = false;
+  previewVibrance.disabled = false;
+  previewSaturation.disabled = false;
   resultPanel.classList.remove("hidden");
 }
 
@@ -623,6 +672,8 @@ function getFullSizeRenderCacheKey() {
     currentPreviewLogarithm,
     currentPreviewSigmoid,
     currentPreviewClahe,
+    currentPreviewVibrance,
+    currentPreviewSaturation,
   ]);
 }
 
@@ -633,7 +684,9 @@ function hasCurrentToneAdjustments() {
     currentPreviewHighlight !== 0 ||
     currentPreviewLogarithm !== 0 ||
     currentPreviewSigmoid !== 0 ||
-    currentPreviewClahe !== 0
+    currentPreviewClahe !== 0 ||
+    currentPreviewVibrance !== 0 ||
+    currentPreviewSaturation !== 0
   );
 }
 
@@ -658,6 +711,8 @@ function ensureFullSizeRenderCache() {
         currentPreviewLogarithm,
         currentPreviewSigmoid,
         currentPreviewClahe,
+        currentPreviewVibrance,
+        currentPreviewSaturation,
         currentStackResult.exposureRolloffBaseP998,
         getCurrentHighlightP100(),
       )
@@ -3811,6 +3866,8 @@ function setProcessing(processing) {
   previewLogarithm.disabled = processing || !currentStackResult;
   previewSigmoid.disabled = processing || !currentStackResult;
   previewClahe.disabled = processing || !currentStackResult;
+  previewVibrance.disabled = processing || !currentStackResult;
+  previewSaturation.disabled = processing || !currentStackResult;
   editButton.disabled = processing || !currentStackResult;
   processButton.disabled = processing;
   progressPanel.classList.toggle("hidden", !processing);
@@ -3832,12 +3889,16 @@ function clearResult() {
   currentPreviewLogarithm = 0;
   currentPreviewSigmoid = 0;
   currentPreviewClahe = 0;
+  currentPreviewVibrance = 0;
+  currentPreviewSaturation = 0;
   previewExposure.value = "0";
   previewShadow.value = "0";
   previewHighlight.value = "0";
   previewLogarithm.value = "0";
   previewSigmoid.value = "0";
   previewClahe.value = "0";
+  previewVibrance.value = "0";
+  previewSaturation.value = "0";
   updateToneControlLabels();
   previewImage.width = 1;
   previewImage.height = 1;
@@ -3847,6 +3908,8 @@ function clearResult() {
   previewLogarithm.disabled = true;
   previewSigmoid.disabled = true;
   previewClahe.disabled = true;
+  previewVibrance.disabled = true;
+  previewSaturation.disabled = true;
   editButton.disabled = true;
   closeZoomModal();
   resultPanel.classList.add("hidden");

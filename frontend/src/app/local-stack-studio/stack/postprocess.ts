@@ -5,9 +5,14 @@ import {
   applyShadowLinear,
   applySigmoidLinear,
   clamp01,
+  clampColorAdjustment,
   clampScaledLog,
   clampSigmoid,
   clampToneRangeAdjustment,
+  colorSaturationFactor,
+  colorVibranceFactor,
+  hsvToRgb,
+  rgbToHsv,
   rolloffParams,
 } from "@/image/tone";
 
@@ -54,6 +59,8 @@ export function adjustStackLinearData(
   scaledLog: number,
   sigmoid: number,
   clahe: number,
+  vibrance: number,
+  saturation: number,
   exposureRolloffBaseP998: number | null = null,
   highlightP100: number | null = null,
 ): Float32Array {
@@ -63,6 +70,8 @@ export function adjustStackLinearData(
   const normalizedLog = clampStackScaledLog(scaledLog);
   const normalizedSigmoid = clampSigmoid(sigmoid);
   const normalizedClahe = clampStackClahe(clahe);
+  const normalizedVibrance = clampColorAdjustment(vibrance);
+  const normalizedSaturation = clampColorAdjustment(saturation);
   const maxVal = Number.isFinite(exposureRolloffBaseP998)
     ? Number(exposureRolloffBaseP998) * gain
     : null;
@@ -74,6 +83,8 @@ export function adjustStackLinearData(
   const hasLogarithm = normalizedLog !== 0;
   const hasSigmoid = normalizedSigmoid !== 0;
   const hasClahe = normalizedClahe !== 0;
+  const hasVibrance = normalizedVibrance !== 0;
+  const hasSaturation = normalizedSaturation !== 0;
   if (
     !hasExposure &&
     !hasShadow &&
@@ -81,6 +92,8 @@ export function adjustStackLinearData(
     !hasLogarithm &&
     !hasSigmoid &&
     !hasClahe &&
+    !hasVibrance &&
+    !hasSaturation &&
     !rolloff
   ) {
     return sourceLinear;
@@ -126,7 +139,82 @@ export function adjustStackLinearData(
     copy[i + 1] = g;
     copy[i + 2] = b;
   }
-  return hasClahe ? applyClaheToLinearLuminance(copy, width, height, normalizedClahe) : copy;
+  const toneAdjusted = hasClahe
+    ? applyClaheToLinearLuminance(copy, width, height, normalizedClahe)
+    : copy;
+  if (!hasVibrance && !hasSaturation) return toneAdjusted;
+  return applyStackColorAdjustmentsLinearRgb(
+    toneAdjusted,
+    normalizedVibrance,
+    normalizedSaturation,
+  );
+}
+
+function applyStackColorAdjustmentsLinearRgb(
+  sourceLinear: Float32Array,
+  vibrance: number,
+  saturation: number,
+): Float32Array {
+  const normalizedVibrance = clampColorAdjustment(vibrance);
+  const normalizedSaturation = clampColorAdjustment(saturation);
+  const hasVibrance = normalizedVibrance !== 0;
+  const hasSaturation = normalizedSaturation !== 0;
+  if (!hasVibrance && !hasSaturation) return sourceLinear;
+
+  const saturationFactor = colorSaturationFactor(normalizedSaturation);
+  const vibranceFactor = colorVibranceFactor(normalizedVibrance);
+  const saturationRolloff = saturationFactor > 1
+    ? computeStackSaturationRolloff(sourceLinear, saturationFactor)
+    : null;
+  const result = new Float32Array(sourceLinear.length);
+
+  for (let i = 0; i + 2 < sourceLinear.length; i += 3) {
+    const [h, initialS, v] = rgbToHsv(
+      sourceLinear[i] ?? 0,
+      sourceLinear[i + 1] ?? 0,
+      sourceLinear[i + 2] ?? 0,
+    );
+    let adjustedS = initialS;
+    if (hasSaturation) {
+      adjustedS = clamp01(applyRolloffScalar(adjustedS * saturationFactor, saturationRolloff));
+    }
+    if (hasVibrance) {
+      adjustedS = applyScaledLogLinear(adjustedS, vibranceFactor);
+    }
+    const [r, g, b] = hsvToRgb(h, adjustedS, v);
+    result[i] = r;
+    result[i + 1] = g;
+    result[i + 2] = b;
+  }
+  return result;
+}
+
+function computeStackSaturationRolloff(
+  sourceLinear: Float32Array,
+  saturationFactor: number,
+): { inflection: number; scale: number } | null {
+  const pixelCount = Math.floor(sourceLinear.length / 3);
+  if (pixelCount <= 0 || saturationFactor <= 1) return null;
+  const targetSamples = 256 * 256;
+  const stride = Math.max(1, Math.ceil(pixelCount / targetSamples));
+  const values: number[] = [];
+  for (let pixel = 0; pixel < pixelCount; pixel += stride) {
+    const i = pixel * 3;
+    const [, s] = rgbToHsv(
+      sourceLinear[i] ?? 0,
+      sourceLinear[i + 1] ?? 0,
+      sourceLinear[i + 2] ?? 0,
+    );
+    values.push(s * saturationFactor);
+  }
+  values.sort((a, b) => a - b);
+  if (values.length === 0) return null;
+  const rank = 0.99 * (values.length - 1);
+  const lower = Math.floor(rank);
+  const upper = Math.ceil(rank);
+  const weight = rank - lower;
+  const p99 = (values[lower] ?? 0) * (1 - weight) + (values[upper] ?? 0) * weight;
+  return rolloffParams(p99, 0.7, 4);
 }
 
 function applyDisplayRolloffLinear(
