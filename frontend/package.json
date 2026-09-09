@@ -11,14 +11,15 @@
     "test": "jest",
     "fmt": "prettier --write .",
     "lint": "eslint src --ext .js,.jsx,.ts,.tsx",
-    "clean": "rm -rf node_modules dist out .next .turbo public/export-assets public/vendor/libraw-wasm public/vendor/lensfun-wasm public/vendor/opencv",
+    "clean": "rm -rf node_modules dist out .next .turbo public/export-assets public/generated/local-stack-studio public/vendor/libraw-wasm public/vendor/lensfun-wasm public/vendor/opencv",
     "build:export-track-assets": "node scripts/build-export-track-assets.mjs",
     "build:libraw-assets": "node scripts/build-libraw-assets.mjs",
-    "prebuild": "npm run build:export-track-assets && npm run build:libraw-assets && npm run build:lensfun-assets && npm run build:opencv-assets",
-    "predev": "npm run build:export-track-assets && npm run build:libraw-assets && npm run build:lensfun-assets && npm run build:opencv-assets",
+    "prebuild": "npm run build:export-track-assets && npm run build:libraw-assets && npm run build:lensfun-assets && npm run build:opencv-assets && npm run build:local-stack-workers",
+    "predev": "npm run build:export-track-assets && npm run build:libraw-assets && npm run build:lensfun-assets && npm run build:opencv-assets && npm run build:local-stack-workers",
     "build:libraw-wasm": "node scripts/build-libraw-wasm.mjs",
     "build:lensfun-assets": "node scripts/build-lensfun-assets.mjs",
-    "build:opencv-assets": "node scripts/build-opencv-assets.mjs"
+    "build:opencv-assets": "node scripts/build-opencv-assets.mjs",
+    "build:local-stack-workers": "node scripts/build-local-stack-workers.mjs"
   },
   "dependencies": {
     "@neoanaloglabkk/lensfun-wasm": "0.1.3",
@@ -35,8 +36,8 @@
     "react-icons": "^5.5.0",
     "react-leaflet": "^5.0.0",
     "stgy-markdown": "^1",
-    "utif": "^3.1.0",
-    "stgy-track": "file:../packages/track"
+    "stgy-track": "file:../packages/track",
+    "utif": "^3.1.0"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",

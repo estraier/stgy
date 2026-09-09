@@ -38,21 +38,19 @@ async function initializedOpenCvFromGlobal(): Promise<OpenCvRuntime> {
 
   if (typeof globalCv.Mat === "function") return globalCv;
 
-  await new Promise<void>((resolve, reject) => {
-    const timeout = window.setTimeout(
-      () => reject(new Error("OpenCV runtime initialization timed out")),
-      30_000,
-    );
-    const previous = globalCv.onRuntimeInitialized;
-    globalCv.onRuntimeInitialized = () => {
-      window.clearTimeout(timeout);
-      previous?.();
-      resolve();
-    };
-  });
-
-  if (typeof globalCv.Mat !== "function") throw new Error("OpenCV runtime did not initialize");
-  return globalCv;
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 20));
+    const current = window.cv;
+    if (!current) continue;
+    if (isPromiseLike(current)) {
+      const cv = await current;
+      if (typeof cv?.Mat === "function") return cv;
+      continue;
+    }
+    if (typeof current.Mat === "function") return current;
+  }
+  throw new Error("OpenCV runtime initialization timed out");
 }
 
 function loadOpenCvScript(): Promise<void> {

@@ -2,7 +2,7 @@ import {
   __lensfunCorrectionCharacterization,
   lensfunSourceCoordinatesInto,
   type LensfunCorrection,
-} from "./lensfunCorrection";
+} from "./lensfun";
 
 function correctionBase(overrides: Partial<LensfunCorrection> = {}): LensfunCorrection {
   return {

@@ -1,4 +1,4 @@
-import { applyHighlightLinear, applyRolloffScalar, applyScaledLogLinear, applyShadowLinear, applySigmoidLinear, applyToneLinearToRgb, rolloffParams } from "./tone";
+import { applyHighlightLinear, applyRolloffScalar, applyScaledLogLinear, applyShadowLinear, applySigmoidLinear, applyToneLinearToRgb, rolloffParams } from "@/image/tone";
 import { analysisSampleDimensions, buildRenderedPixelToSourceTransform, createRgb16SamplingScratch, decodeStoredRgb16Channel, encodeStoredRgb16Channel, getAnalysisLinearRgbSample, getRenderedLinearRgbSample, renderedPixelToSourcePoint, sampleLinearRgb16Bilinear, sampleLinearRgb16BilinearAtSource, sampleLinearRgb16BilinearAtSourceInto, sampleLinearRgb16BilinearInto, sampleLinearRgbFromRgb16RegionAtSize } from "./sampling";
 import { buildColorAdjustmentContextFromLinearRgbSample, findAutoExposure, findAutoLogarithm, findAutoSigmoid, percentileFromValues, percentilesFromValues } from "./analysis";
 import { renderAdjustedLinearRgbSampleToCanvas, renderAdjustedRgb16ToCanvas } from "./render";

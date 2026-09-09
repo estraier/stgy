@@ -1,13 +1,13 @@
 import {
   lensfunSourceCoordinatesInto,
   lensfunVignettingGainInto,
-} from "@/utils/lensfunCorrection";
+} from "@/image/lensfun";
 import type {
   LensfunSourceCoordinatesBuffer,
   LensfunVignettingGainBuffer,
-} from "@/utils/lensfunCorrection";
+} from "@/image/lensfun";
 import type { DecodedRgbImage16, EditPoint, LinearRgbSample } from "./types";
-import { clamp01 } from "./tone";
+import { clamp01 } from "@/image/tone";
 
 // RGB16 storage decoding, geometry mapping and source sampling.
 

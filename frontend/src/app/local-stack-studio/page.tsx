@@ -3,8 +3,8 @@ import { Suspense } from "react";
 import { Config } from "@/config";
 import PageBody from "./PageBody";
 
-const title = "Local Stack Studio | STGY";
-const description = "Combine multiple images in your browser.";
+const title = "Local Stack Studio";
+const description = "Combine photos with various stacking methods for multiple exposure blending, noise reduction, HDR, and focus stacking, then fine-tune the result with tone adjustments.";
 const canonicalUrl = new URL("/local-stack-studio", Config.FRONTEND_CANONICAL_URL).toString();
 const imageUrl = new URL(
   "/data/local-stack-studio-ogp.jpg",
@@ -26,7 +26,7 @@ export const metadata: Metadata = {
     images: [
       {
         url: imageUrl,
-        alt: "STGY Local Stack Studio",
+        alt: "Local Stack Studio",
       },
     ],
   },

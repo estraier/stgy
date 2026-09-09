@@ -5,6 +5,7 @@ export function clamp01(v: number): number {
 }
 
 export function clampExposureEv(v: number): number {
+  if (!Number.isFinite(v)) return 0;
   return Math.min(5, Math.max(-5, Math.round(v * 10) / 10));
 }
 
@@ -12,15 +13,19 @@ export function clampWhiteBalanceValue(v: number): number {
   return Math.min(100, Math.max(-100, Math.round(v)));
 }
 
-export function clampScaledLog(v: number): number {
-  return Math.min(20, Math.max(-20, Math.round(v * 10) / 10));
+export function clampScaledLog(v: number, limit = 20): number {
+  if (!Number.isFinite(v)) return 0;
+  const bound = Number.isFinite(limit) && limit > 0 ? limit : 20;
+  return Math.min(bound, Math.max(-bound, Math.round(v * 10) / 10));
 }
 
 export function clampSigmoid(v: number): number {
+  if (!Number.isFinite(v)) return 0;
   return Math.min(10, Math.max(-10, Math.round(v * 10) / 10));
 }
 
 export function clampToneRangeAdjustment(v: number): number {
+  if (!Number.isFinite(v)) return 0;
   return Math.min(100, Math.max(-100, Math.round(v)));
 }
 
@@ -90,9 +95,9 @@ export function applyWhiteBalanceLinear(
   return [clamp01(r * wr), clamp01(g * wg), clamp01(b * wb)];
 }
 
-export function applyScaledLogLinear(value: number, factor: number): number {
+export function applyScaledLogLinear(value: number, factor: number, limit = 20): number {
   const x = clamp01(value);
-  const f = clampScaledLog(factor);
+  const f = clampScaledLog(factor, limit);
   if (f > 1e-6) {
     return clamp01(Math.log1p(x * f) / Math.log1p(f));
   }
@@ -194,7 +199,7 @@ export function rolloffParams(
   asymptotic = 0.5,
   savingLimit = 4,
 ): { inflection: number; scale: number } | null {
-  if (maxVal <= 1) return null;
+  if (!(Number.isFinite(maxVal) && maxVal > 1)) return null;
   if (maxVal > savingLimit) {
     asymptotic = Math.pow(asymptotic, savingLimit / maxVal);
   }
@@ -225,6 +230,34 @@ export const HIGHLIGHT_WORKING_GAMMA = 0.48;
 export type HighlightRange = {
   p100: number;
 };
+
+export function applySigmoidLinearAtMidpoint(
+  value: number,
+  gain: number,
+  midpoint: number,
+): number {
+  const x = clamp01(value);
+  const g = clampSigmoid(gain);
+  const mid = clamp01(midpoint);
+  const gamma = HISTOGRAM_DISPLAY_GAMMA;
+  const encoded = Math.pow(x, 1 / gamma);
+  if (g > 1e-6) {
+    const minVal = naiveSigmoid(0, g, mid);
+    const maxVal = naiveSigmoid(1, g, mid);
+    const adjusted = clamp01((naiveSigmoid(encoded, g, mid) - minVal) / (maxVal - minVal));
+    return clamp01(Math.pow(adjusted, gamma));
+  }
+  if (g < -1e-6) {
+    const magnitude = -g;
+    const minVal = naiveInverseSigmoid(0, magnitude, mid);
+    const maxVal = naiveInverseSigmoid(1, magnitude, mid);
+    const adjusted = clamp01(
+      (naiveInverseSigmoid(encoded, magnitude, mid) - minVal) / (maxVal - minVal),
+    );
+    return clamp01(Math.pow(adjusted, gamma));
+  }
+  return x;
+}
 
 export function applySigmoidLinearAtMidpointWithWorkingGamma(
   value: number,

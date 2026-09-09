@@ -45,3 +45,6 @@ next-env.d.ts
 
 # generated LibRaw-Wasm runtime
 /public/vendor/libraw-wasm/
+
+# generated Local Stack Studio workers
+/public/generated/local-stack-studio/

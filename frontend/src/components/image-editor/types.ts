@@ -1,8 +1,8 @@
-import type { LensfunCorrection } from "@/utils/lensfunCorrection";
+import type { LensfunCorrection } from "@/image/lensfun";
+export type { ImageEditOutputColorProfile, ImageInputColorProfile } from "@/image/types";
 
 // Shared data contracts for the image editor processing pipeline.
 
-export type ImageEditOutputColorProfile = "srgb" | "display-p3";
 
 export type RawDevelopmentLuminanceSettings = {
   exposureEv: number;
@@ -62,7 +62,6 @@ export type DecodedRgbImage16 = {
 
 export type DecodedImage = DecodedRgbImage16;
 
-export type ImageInputColorProfile = "srgb" | "display-p3" | "prophoto" | "adobe-rgb" | "rec2020";
 
 export type LinearRgbSample = {
   data: Float32Array;

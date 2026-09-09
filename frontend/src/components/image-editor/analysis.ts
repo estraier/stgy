@@ -4,7 +4,7 @@ import {
   PROPHOTO_TO_SRGB_M00, PROPHOTO_TO_SRGB_M01, PROPHOTO_TO_SRGB_M02,
   PROPHOTO_TO_SRGB_M10, PROPHOTO_TO_SRGB_M11, PROPHOTO_TO_SRGB_M12,
   PROPHOTO_TO_SRGB_M20, PROPHOTO_TO_SRGB_M21, PROPHOTO_TO_SRGB_M22,
-} from "./color";
+} from "@/image/color";
 import { getAnalysisLinearRgbSample } from "./sampling";
 import {
   HISTOGRAM_DISPLAY_GAMMA,
@@ -13,7 +13,7 @@ import {
   clampScaledLog, clampSigmoid, clampToneRangeAdjustment, clampWhiteBalanceValue,
   colorSaturationFactor, colorVibranceFactor, rgbToHsv, rolloffParams,
   srgbChannelToLinear, whiteBalanceGains, type ColorAdjustmentContext, type HighlightRange,
-} from "./tone";
+} from "@/image/tone";
 
 // Statistical analysis and Auto Tone share the fixed-area analysis sample.
 

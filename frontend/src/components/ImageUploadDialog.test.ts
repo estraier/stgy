@@ -2,9 +2,9 @@
 // depend on React/Next.js or on the ImageUploadDialog component module.
 
 // Sampling integration is characterized with deterministic Lensfun coordinates here.
-// lensfunCorrection.ts itself remains responsible for calculating the real
+// image/lensfun.ts remains responsible for calculating the real
 // distortion/TCA/vignetting maps.
-jest.mock("@/utils/lensfunCorrection", () => ({
+jest.mock("@/image/lensfun", () => ({
   buildRawLensfunCorrection: jest.fn(),
   summarizeLensfunCorrection: jest.fn(() => ""),
   lensfunSourceCoordinates: (_correction: unknown, x: number, y: number) => ({

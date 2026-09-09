@@ -3,8 +3,8 @@ import { Suspense } from "react";
 import { Config } from "@/config";
 import PageBody from "./PageBody";
 
-const title = "Local Image Studio | STGY";
-const description = "Edit images and develop RAW photos in your browser.";
+const title = "Local Image Studio";
+const description = "Crop, resize, rotate, adjust tone and color, and develop RAW photos with a simple set of editing tools. It also includes auto tone adjustment, text and drawing tools, mosaic effects, and sharpening.";
 const canonicalUrl = new URL("/local-image-studio", Config.FRONTEND_CANONICAL_URL).toString();
 const imageUrl = new URL(
   "/data/local-image-studio-ogp.jpg",
@@ -26,7 +26,7 @@ export const metadata: Metadata = {
     images: [
       {
         url: imageUrl,
-        alt: "STGY Local Image Studio",
+        alt: "Local Image Studio",
       },
     ],
   },

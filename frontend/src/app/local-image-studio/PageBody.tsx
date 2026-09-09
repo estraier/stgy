@@ -8,7 +8,6 @@ import {
   detectBestEditableImageOutputColorProfile,
   encodeEditedVariant,
   probeEditableImage,
-  isRawImageFile,
   type DecodedImage,
   type ImageEditOutputColorProfile,
   type ImageEditOutputFormat,
@@ -18,6 +17,7 @@ import {
   type RawHighlightMode,
 } from "@/components/ImageUploadDialog";
 import { Config } from "@/config";
+import { isRawImageFile } from "@/image/libraw";
 import { formatBytes } from "@/utils/format";
 
 type SourceImage = {
@@ -498,11 +498,11 @@ export default function LocalImageStudio() {
           <div className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">
             Local Image Studio
           </div>
-          <h1 className="mt-2 max-w-3xl text-2xl font-semibold tracking-tight text-gray-950 sm:text-3xl">
-            Edit images and develop RAW photos in your browser.
+          <h1 className="mt-2 text-2xl font-semibold tracking-tight text-gray-950 sm:text-3xl">
+            Edit and finish your photos in the browser.
           </h1>
-          <p className="mt-3 max-w-2xl text-sm leading-6 text-gray-600 sm:text-base">
-            Crop, rotate, tune tone and color, add text or mosaic, and process RAW files locally. Your image stays in the browser while you edit.
+          <p className="mt-3 text-sm leading-6 text-gray-600 sm:text-base">
+            Crop, resize, rotate, adjust tone and color, and develop RAW photos with a simple set of editing tools. It also includes auto tone adjustment, text and drawing tools, mosaic effects, and sharpening.
           </p>
         </div>
 

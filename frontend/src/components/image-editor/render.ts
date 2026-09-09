@@ -1,6 +1,6 @@
 import type { DecodedRgbImage16, ImageEditOutputColorProfile, LinearRgbSample } from "./types";
 import { createCanvasImageData, getCanvas2dContext } from "./canvas";
-import { convertLinearProPhotoToOutputRgb } from "./color";
+import { convertLinearProPhotoToOutputRgb } from "@/image/color";
 import { buildColorAdjustmentContextFromLinearRgbSample } from "./analysis";
 import {
   buildRenderedPixelToSourceTransform,
@@ -9,7 +9,7 @@ import {
   sampleLinearRgb16BilinearInto,
 } from "./sampling";
 import type { LinearRgbBuffer } from "./sampling";
-import { applyColorAdjustmentsLinearRgb, linearChannelToSrgb } from "./tone";
+import { applyColorAdjustmentsLinearRgb, linearChannelToSrgb } from "@/image/tone";
 
 // Pixel rendering is kept separate from React/UI state so later hot-loop optimization is isolated.
 

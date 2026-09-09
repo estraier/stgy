@@ -49,3 +49,6 @@ pnpm-debug.log*
 *.log
 
 search-index/
+
+# generated Local Stack Studio workers
+/frontend/public/generated/local-stack-studio/

@@ -654,3 +654,126 @@ export function lensfunVignettingGain(
 export const __lensfunCorrectionCharacterization = {
   buildCombinedSourceCoordinateMap,
 };
+
+function sampleChannelBilinear(
+  source: Float32Array,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+  channel: number,
+): number | null {
+  if (x < 0 || x > width - 1 || y < 0 || y > height - 1) return null;
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const x1 = Math.min(width - 1, x0 + 1);
+  const y1 = Math.min(height - 1, y0 + 1);
+  const tx = x - x0;
+  const ty = y - y0;
+  const w00 = (1 - tx) * (1 - ty);
+  const w10 = tx * (1 - ty);
+  const w01 = (1 - tx) * ty;
+  const w11 = tx * ty;
+  const i00 = (y0 * width + x0) * 3 + channel;
+  const i10 = (y0 * width + x1) * 3 + channel;
+  const i01 = (y1 * width + x0) * 3 + channel;
+  const i11 = (y1 * width + x1) * 3 + channel;
+  return (
+    (source[i00] ?? 0) * w00 +
+    (source[i10] ?? 0) * w10 +
+    (source[i01] ?? 0) * w01 +
+    (source[i11] ?? 0) * w11
+  );
+}
+
+function sampleRgbBilinearInto(
+  source: Float32Array,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+  output: Float32Array,
+): boolean {
+  if (x < 0 || x > width - 1 || y < 0 || y > height - 1) return false;
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const x1 = Math.min(width - 1, x0 + 1);
+  const y1 = Math.min(height - 1, y0 + 1);
+  const tx = x - x0;
+  const ty = y - y0;
+  const w00 = (1 - tx) * (1 - ty);
+  const w10 = tx * (1 - ty);
+  const w01 = (1 - tx) * ty;
+  const w11 = tx * ty;
+  const i00 = (y0 * width + x0) * 3;
+  const i10 = (y0 * width + x1) * 3;
+  const i01 = (y1 * width + x0) * 3;
+  const i11 = (y1 * width + x1) * 3;
+  for (let channel = 0; channel < 3; channel += 1) {
+    output[channel] =
+      (source[i00 + channel] ?? 0) * w00 +
+      (source[i10 + channel] ?? 0) * w10 +
+      (source[i01 + channel] ?? 0) * w01 +
+      (source[i11 + channel] ?? 0) * w11;
+  }
+  return true;
+}
+
+export async function applyLensfunCorrectionToLinearRgb(
+  source: Float32Array,
+  width: number,
+  height: number,
+  correction: LensfunCorrection | null | undefined,
+  onProgress?: (progress: number) => void,
+): Promise<Float32Array> {
+  if (source.length < width * height * 3 || !correction) return source;
+
+  const result = new Float32Array(width * height * 3);
+  const coordinates: LensfunSourceCoordinatesBuffer = [0, 0, 0, 0, 0, 0];
+  const gain: LensfunVignettingGainBuffer = [1, 1, 1];
+  const sampled = new Float32Array(3);
+  const reportStride = Math.max(32, Math.floor(height / 50));
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const outputIndex = (y * width + x) * 3;
+      lensfunSourceCoordinatesInto(correction, x, y, coordinates);
+
+      if (correction.tca) {
+        const r = sampleChannelBilinear(source, width, height, coordinates[0], coordinates[1], 0);
+        const g = sampleChannelBilinear(source, width, height, coordinates[2], coordinates[3], 1);
+        const b = sampleChannelBilinear(source, width, height, coordinates[4], coordinates[5], 2);
+        if (r === null || g === null || b === null) continue;
+        result[outputIndex] = r;
+        result[outputIndex + 1] = g;
+        result[outputIndex + 2] = b;
+        if (correction.vignetting) {
+          lensfunVignettingGainInto(correction, coordinates[0], coordinates[1], gain);
+          result[outputIndex] *= gain[0];
+          lensfunVignettingGainInto(correction, coordinates[2], coordinates[3], gain);
+          result[outputIndex + 1] *= gain[1];
+          lensfunVignettingGainInto(correction, coordinates[4], coordinates[5], gain);
+          result[outputIndex + 2] *= gain[2];
+        }
+        continue;
+      }
+
+      if (!sampleRgbBilinearInto(source, width, height, coordinates[2], coordinates[3], sampled)) continue;
+      if (correction.vignetting) {
+        lensfunVignettingGainInto(correction, coordinates[2], coordinates[3], gain);
+        sampled[0] *= gain[0];
+        sampled[1] *= gain[1];
+        sampled[2] *= gain[2];
+      }
+      result[outputIndex] = sampled[0];
+      result[outputIndex + 1] = sampled[1];
+      result[outputIndex + 2] = sampled[2];
+    }
+
+    if (onProgress && (y % reportStride === 0 || y === height - 1)) {
+      onProgress((y + 1) / height);
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+  }
+  return result;
+}
