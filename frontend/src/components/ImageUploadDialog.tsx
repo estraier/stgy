@@ -108,9 +108,11 @@ import {
   applyRawFallbackBaselinePass,
   applyRawFallbackPlanPass,
   applyRawMatchedTonePass,
+  developRawMasterOnePassToGamma20,
   resampleRawWithLensfunToGamma20,
   type RawColorPassPlan,
   type RawFallbackPlan,
+  type RawLensfunCorrectionMaps,
   type RawMatchedTonePlan,
 } from "./image-editor/raw-development-core";
 export { __imageEditorCharacterization } from "./image-editor/characterization";
@@ -2968,9 +2970,11 @@ type RawWorkerLensfunResampleResponse = {
   transfer: DecodedRgbImage16["transfer"];
 };
 
-type RawWorkerApplyPlansResponse = {
-  type: "development-plans-complete";
+type RawWorkerMasterOnePassResponse = {
+  type: "master-one-pass-complete";
   dataBuffer: ArrayBuffer;
+  width: number;
+  height: number;
   linearRangeMax: number;
   transfer: DecodedRgbImage16["transfer"];
   headroom?: RawDevelopmentHeadroomStatistics;
@@ -3050,6 +3054,23 @@ function requestRawDevelopmentWorker<T extends { type: string }>(
   });
 }
 
+function rawLensfunCorrectionMaps(
+  correction: LensfunCorrection | undefined,
+): RawLensfunCorrectionMaps | undefined {
+  if (!correction) return undefined;
+  return {
+    gridWidth: correction.gridWidth,
+    gridHeight: correction.gridHeight,
+    step: correction.step,
+    geometry: correction.geometry,
+    distortion: correction.distortion,
+    ...(correction.combined ? { combined: correction.combined } : {}),
+    ...(correction.tca ? { tca: correction.tca } : {}),
+    ...(correction.vignetting ? { vignetting: correction.vignetting } : {}),
+    ...(correction.vignettingBaked ? { vignettingBaked: true } : {}),
+  };
+}
+
 function rawLensfunMapTransferables(correction: LensfunCorrection | undefined): Transferable[] {
   if (!correction) return [];
   const buffers = [
@@ -3084,17 +3105,7 @@ async function resampleRawDecodedInWorker(
   targetHeight: number,
 ): Promise<DecodedRgbImage16> {
   const correction = decoded.lensCorrection;
-  const correctionMaps = correction ? {
-    gridWidth: correction.gridWidth,
-    gridHeight: correction.gridHeight,
-    step: correction.step,
-    geometry: correction.geometry,
-    distortion: correction.distortion,
-    ...(correction.combined ? { combined: correction.combined } : {}),
-    ...(correction.tca ? { tca: correction.tca } : {}),
-    ...(correction.vignetting ? { vignetting: correction.vignetting } : {}),
-    ...(correction.vignettingBaked ? { vignettingBaked: true } : {}),
-  } : undefined;
+  const correctionMaps = rawLensfunCorrectionMaps(correction);
   const worker = createRawDevelopmentWorker();
   if (!worker) {
     const output = resampleRawWithLensfunToGamma20(
@@ -3149,76 +3160,70 @@ async function resampleRawDecodedInWorker(
   }
 }
 
-async function applyRawDevelopmentPlansInWorker(
-  decoded: DecodedRgbImage16,
+async function developRawMasterOnePassInWorker(
+  sourceDecoded: DecodedRgbImage16,
   plan: RawProgressiveDevelopmentPlan,
-): Promise<RawDevelopmentHeadroomStatistics | undefined> {
+): Promise<{ decoded: DecodedRgbImage16; headroom?: RawDevelopmentHeadroomStatistics }> {
+  const correction = sourceDecoded.lensCorrection;
+  const correctionMaps = rawLensfunCorrectionMaps(correction);
   const worker = createRawDevelopmentWorker();
   if (!worker) {
-    let headroom: RawDevelopmentHeadroomStatistics | undefined;
-    if (plan.tonePlan) {
-      headroom = applyRawMatchedTonePass(
-        decoded.data,
-        decoded.width,
-        decoded.height,
-        decoded.linearRangeMax,
-        undefined,
-        plan.tonePlan,
-        decoded.transfer,
-      );
-      decoded.linearRangeMax = RAW_DEVELOPED_LINEAR_RANGE_MAX;
-      decoded.transfer = "gamma20";
-    } else if (plan.fallbackPlan) {
-      headroom = applyRawFallbackPlanPass(
-        decoded.data,
-        decoded.width,
-        decoded.height,
-        decoded.linearRangeMax,
-        undefined,
-        plan.fallbackPlan,
-        decoded.transfer,
-      );
-      decoded.linearRangeMax = RAW_DEVELOPED_LINEAR_RANGE_MAX;
-      decoded.transfer = "gamma20";
-    }
-    if (plan.colorPlan) applyRawColorPass(decoded.data, decoded.linearRangeMax, plan.colorPlan);
-    return headroom;
+    const result = developRawMasterOnePassToGamma20(
+      sourceDecoded.data,
+      sourceDecoded.width,
+      sourceDecoded.height,
+      sourceDecoded.linearRangeMax,
+      sourceDecoded.transfer,
+      correctionMaps,
+      plan.tonePlan,
+      plan.fallbackPlan,
+      plan.colorPlan,
+    );
+    return {
+      decoded: {
+        colorSpace: "prophoto",
+        transfer: "gamma20",
+        linearRangeMax: RAW_DEVELOPED_LINEAR_RANGE_MAX,
+        width: sourceDecoded.width,
+        height: sourceDecoded.height,
+        data: result.data,
+        cleanup: () => {},
+      },
+      headroom: result.headroom,
+    };
   }
 
-  const sourceBuffer = decoded.data.buffer as ArrayBuffer;
+  const sourceBuffer = sourceDecoded.data.buffer as ArrayBuffer;
   try {
-    const response = await requestRawDevelopmentWorker<RawWorkerApplyPlansResponse>(
+    const response = await requestRawDevelopmentWorker<RawWorkerMasterOnePassResponse>(
       worker,
-      "development-plans-complete",
+      "master-one-pass-complete",
       {
-        type: "apply-development-plans",
+        type: "master-one-pass",
         dataBuffer: sourceBuffer,
-        width: decoded.width,
-        height: decoded.height,
-        sourceLinearRangeMax: decoded.linearRangeMax,
-        sourceTransfer: decoded.transfer,
+        width: sourceDecoded.width,
+        height: sourceDecoded.height,
+        sourceLinearRangeMax: sourceDecoded.linearRangeMax,
+        sourceTransfer: sourceDecoded.transfer,
+        correction: correctionMaps,
         tonePlan: plan.tonePlan,
         fallbackPlan: plan.fallbackPlan,
         colorPlan: plan.colorPlan,
       },
-      [sourceBuffer],
+      [sourceBuffer, ...rawLensfunMapTransferables(correction)],
     );
-    decoded.data = new Uint16Array(response.dataBuffer);
-    decoded.linearRangeMax = response.linearRangeMax;
-    decoded.transfer = response.transfer;
-    return response.headroom;
-  } catch (error) {
-    const workerError = error as RawDevelopmentWorkerError;
-    if (workerError.dataBuffer) {
-      decoded.data = new Uint16Array(workerError.dataBuffer);
-      if (Number.isFinite(workerError.linearRangeMax)) {
-        decoded.linearRangeMax = workerError.linearRangeMax as number;
-      }
-      if (workerError.transfer === "linear" || workerError.transfer === "gamma20") {
-        decoded.transfer = workerError.transfer;
-      }
-    }
-    throw error;
+    return {
+      decoded: {
+        colorSpace: "prophoto",
+        transfer: response.transfer,
+        linearRangeMax: response.linearRangeMax,
+        width: response.width,
+        height: response.height,
+        data: new Uint16Array(response.dataBuffer),
+        cleanup: () => {},
+      },
+      headroom: response.headroom,
+    };
   } finally {
     worker.terminate();
   }
@@ -3298,6 +3303,7 @@ function developRawPreviewPixelsSync(
     ...(colorPlan ? { colorPlan } : {}),
   };
 }
+
 
 async function developRawPreviewPixels(
   decoded: DecodedRgbImage16,
@@ -3591,21 +3597,16 @@ async function decodeRawMasterImage(
       sourceDecoded.width,
       sourceDecoded.height,
     );
-    const decoded = await resampleRawDecodedInWorker(
-      sourceDecoded,
-      sourceDecoded.width,
-      sourceDecoded.height,
-    );
-
     const plan = await planPromise;
-    const masterHeadroom = await applyRawDevelopmentPlansInWorker(decoded, plan);
+    const masterResult = await developRawMasterOnePassInWorker(sourceDecoded, plan);
+    const decoded = masterResult.decoded;
     decoded.rawDevelopment = {
       mode: plan.mode,
       iso: Number.isFinite(isoValue) && isoValue > 0 ? isoValue : null,
       medPasses,
       luminance: plan.luminance,
       saturation: plan.saturation,
-      headroom: masterHeadroom ?? plan.headroom,
+      headroom: masterResult.headroom ?? plan.headroom,
       lensfun: lensfunSettings,
       elapsedSeconds: (performance.now() - startedAt) / 1000,
     };

@@ -368,16 +368,14 @@ export function sampleRawLinearRgb(
   return output;
 }
 
-function applyColorPixelInPlace(
-  data: Uint16Array,
-  i: number,
-  linearRangeMax: number,
+function applyRawColorToLinearRgb(
+  r: number,
+  g: number,
+  b: number,
   plan: RawColorPassPlan,
   vibranceFactor: number,
+  output: [number, number, number],
 ): void {
-  let r = decodeGamma20Uint16(data[i] ?? 0, linearRangeMax);
-  let g = decodeGamma20Uint16(data[i + 1] ?? 0, linearRangeMax);
-  let b = decodeGamma20Uint16(data[i + 2] ?? 0, linearRangeMax);
   const extendedScale = Math.max(1, r, g, b);
   r /= extendedScale;
   g /= extendedScale;
@@ -398,26 +396,28 @@ function applyColorPixelInPlace(
     h /= 6;
     if (h < 0) h += 1;
   }
-  let s = max <= 1e-6 ? 0 : delta / max;
-  const v = max;
-  s = clamp01(s);
+  let saturation = max <= 1e-6 ? 0 : delta / max;
+  const value = max;
+  saturation = clamp01(saturation);
   if (plan.hasSaturation) {
-    s = clamp01(applyRolloffScalar(s * plan.saturationFactor, plan.saturationRolloff));
+    saturation = clamp01(
+      applyRolloffScalar(saturation * plan.saturationFactor, plan.saturationRolloff),
+    );
   }
   if (plan.hasVibrance) {
-    const x = clamp01(s);
+    const x = clamp01(saturation);
     if (vibranceFactor > 1e-6) {
-      s = clamp01(Math.log1p(x * vibranceFactor) / Math.log1p(vibranceFactor));
+      saturation = clamp01(Math.log1p(x * vibranceFactor) / Math.log1p(vibranceFactor));
     } else if (vibranceFactor < -1e-6) {
       const magnitude = -vibranceFactor;
-      s = clamp01(Math.expm1(x * Math.log1p(magnitude)) / magnitude);
-    } else s = x;
+      saturation = clamp01(Math.expm1(x * Math.log1p(magnitude)) / magnitude);
+    } else saturation = x;
   }
 
   const hh = ((h % 1) + 1) % 1 * 6;
-  const c = clamp01(v) * clamp01(s);
+  const c = clamp01(value) * clamp01(saturation);
   const xx = c * (1 - Math.abs(hh % 2 - 1));
-  const m = clamp01(v) - c;
+  const m = clamp01(value) - c;
   let rp = 0;
   let gp = 0;
   let bp = 0;
@@ -434,12 +434,30 @@ function applyColorPixelInPlace(
   } else {
     rp = c; bp = xx;
   }
-  r = clamp01(rp + m) * extendedScale;
-  g = clamp01(gp + m) * extendedScale;
-  b = clamp01(bp + m) * extendedScale;
-  data[i] = encodeGamma20Uint16(r, linearRangeMax);
-  data[i + 1] = encodeGamma20Uint16(g, linearRangeMax);
-  data[i + 2] = encodeGamma20Uint16(b, linearRangeMax);
+  output[0] = clamp01(rp + m) * extendedScale;
+  output[1] = clamp01(gp + m) * extendedScale;
+  output[2] = clamp01(bp + m) * extendedScale;
+}
+
+function applyColorPixelInPlace(
+  data: Uint16Array,
+  i: number,
+  linearRangeMax: number,
+  plan: RawColorPassPlan,
+  vibranceFactor: number,
+  output: [number, number, number],
+): void {
+  applyRawColorToLinearRgb(
+    decodeGamma20Uint16(data[i] ?? 0, linearRangeMax),
+    decodeGamma20Uint16(data[i + 1] ?? 0, linearRangeMax),
+    decodeGamma20Uint16(data[i + 2] ?? 0, linearRangeMax),
+    plan,
+    vibranceFactor,
+    output,
+  );
+  data[i] = encodeGamma20Uint16(output[0], linearRangeMax);
+  data[i + 1] = encodeGamma20Uint16(output[1], linearRangeMax);
+  data[i + 2] = encodeGamma20Uint16(output[2], linearRangeMax);
 }
 
 export function applyRawColorPass(
@@ -451,8 +469,9 @@ export function applyRawColorPass(
   const vibranceFactor = plan.hasVibrance
     ? Math.min(16, Math.max(-16, Math.round(plan.vibranceFactor * 10) / 10))
     : 0;
+  const output: [number, number, number] = [0, 0, 0];
   for (let i = 0; i < data.length; i += 3) {
-    applyColorPixelInPlace(data, i, linearRangeMax, plan, vibranceFactor);
+    applyColorPixelInPlace(data, i, linearRangeMax, plan, vibranceFactor, output);
   }
 }
 
@@ -660,6 +679,113 @@ function sampleRawStoredChannelBilinear(
     decodeStoredUint16(data[i01] ?? 0, linearRangeMax, transfer) * w01 +
     decodeStoredUint16(data[i11] ?? 0, linearRangeMax, transfer) * w11
   );
+}
+
+export function developRawMasterOnePassToGamma20(
+  data: Uint16Array,
+  sourceWidth: number,
+  sourceHeight: number,
+  sourceLinearRangeMax: number,
+  sourceTransfer: RawStorageTransfer,
+  correction: RawLensfunCorrectionMaps | undefined,
+  tonePlan: RawMatchedTonePlan | undefined,
+  fallbackPlan: RawFallbackPlan | undefined,
+  colorPlan: RawColorPassPlan | undefined,
+): { data: Uint16Array; headroom?: RawHeadroomStatistics } {
+  const outputWidth = Math.max(1, Math.round(sourceWidth));
+  const outputHeight = Math.max(1, Math.round(sourceHeight));
+  const output = new Uint16Array(outputWidth * outputHeight * 3);
+  const coordinates: [number, number, number, number, number, number] = [0, 0, 0, 0, 0, 0];
+  const gains: [number, number, number] = [1, 1, 1];
+  const colorOutput: [number, number, number] = [0, 0, 0];
+  const headroomAccumulator = tonePlan || fallbackPlan ? createHeadroomAccumulator() : null;
+  const vibranceFactor = colorPlan?.hasVibrance
+    ? Math.min(16, Math.max(-16, Math.round(colorPlan.vibranceFactor * 10) / 10))
+    : 0;
+
+  let targetIndex = 0;
+  for (let y = 0; y < outputHeight; y++) {
+    for (let x = 0; x < outputWidth; x++, targetIndex += 3) {
+      rawLensfunSourceCoordinatesInto(correction, x, y, coordinates);
+      const sampledR = sampleRawStoredChannelBilinear(
+        data, sourceWidth, sourceHeight, coordinates[0], coordinates[1], 0,
+        sourceLinearRangeMax, sourceTransfer,
+      );
+      const sampledG = sampleRawStoredChannelBilinear(
+        data, sourceWidth, sourceHeight, coordinates[2], coordinates[3], 1,
+        sourceLinearRangeMax, sourceTransfer,
+      );
+      const sampledB = sampleRawStoredChannelBilinear(
+        data, sourceWidth, sourceHeight, coordinates[4], coordinates[5], 2,
+        sourceLinearRangeMax, sourceTransfer,
+      );
+      if (sampledR === null || sampledG === null || sampledB === null) {
+        if (headroomAccumulator) recordHeadroom(headroomAccumulator, 0, 0, 0);
+        continue;
+      }
+
+      let r = sampledR;
+      let g = sampledG;
+      let b = sampledB;
+      if (correction?.vignetting && !correction.vignettingBaked) {
+        rawLensfunVignettingGainInto(correction, coordinates[0], coordinates[1], gains);
+        r *= gains[0];
+        rawLensfunVignettingGainInto(correction, coordinates[2], coordinates[3], gains);
+        g *= gains[1];
+        rawLensfunVignettingGainInto(correction, coordinates[4], coordinates[5], gains);
+        b *= gains[2];
+      }
+
+      // Preserve the former LensFun-resample buffer's [0,2] representable range,
+      // but keep the values in float until the final gamma-2.0 encode.
+      r = Math.min(RAW_DEVELOPED_LINEAR_RANGE_MAX, Math.max(0, r));
+      g = Math.min(RAW_DEVELOPED_LINEAR_RANGE_MAX, Math.max(0, g));
+      b = Math.min(RAW_DEVELOPED_LINEAR_RANGE_MAX, Math.max(0, b));
+
+      if (tonePlan) {
+        const luma = PROPHOTO_LUMA_R * r + PROPHOTO_LUMA_G * g + PROPHOTO_LUMA_B * b;
+        if (luma > 1e-12) {
+          const adjustedLuma = transformedRawLumaValueExtended(
+            luma,
+            tonePlan.gain,
+            tonePlan.scaledLog,
+            tonePlan.sigmoid,
+            tonePlan.toneSlopeAtWhite,
+          );
+          const scale = adjustedLuma / luma;
+          r *= scale;
+          g *= scale;
+          b *= scale;
+        } else {
+          r = 0;
+          g = 0;
+          b = 0;
+        }
+      } else if (fallbackPlan) {
+        r = applyRolloffScalar(r * fallbackPlan.factor, fallbackPlan.rolloff);
+        g = applyRolloffScalar(g * fallbackPlan.factor, fallbackPlan.rolloff);
+        b = applyRolloffScalar(b * fallbackPlan.factor, fallbackPlan.rolloff);
+      }
+
+      if (headroomAccumulator) recordHeadroom(headroomAccumulator, r, g, b);
+
+      if (colorPlan && (colorPlan.hasSaturation || colorPlan.hasVibrance)) {
+        applyRawColorToLinearRgb(r, g, b, colorPlan, vibranceFactor, colorOutput);
+        r = colorOutput[0];
+        g = colorOutput[1];
+        b = colorOutput[2];
+      }
+
+      output[targetIndex] = encodeGamma20Uint16(r, RAW_DEVELOPED_LINEAR_RANGE_MAX);
+      output[targetIndex + 1] = encodeGamma20Uint16(g, RAW_DEVELOPED_LINEAR_RANGE_MAX);
+      output[targetIndex + 2] = encodeGamma20Uint16(b, RAW_DEVELOPED_LINEAR_RANGE_MAX);
+    }
+  }
+
+  return {
+    data: output,
+    ...(headroomAccumulator ? { headroom: finishHeadroom(headroomAccumulator) } : {}),
+  };
 }
 
 export function resampleRawWithLensfunToGamma20(

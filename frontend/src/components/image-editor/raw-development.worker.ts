@@ -3,9 +3,9 @@
 import {
   applyRawColorPass,
   applyRawFallbackBaselinePass,
-  applyRawFallbackPlanPass,
   applyRawMatchedTonePass,
   convertRawLinearToGamma20InPlace,
+  developRawMasterOnePassToGamma20,
   resampleRawWithLensfunToGamma20,
   sampleRawLinearRgb,
   type RawColorPassPlan,
@@ -45,7 +45,8 @@ type RawDevelopmentWorkerRequest =
       targetHeight: number;
     } & StartMessageBase)
   | ({
-      type: "apply-development-plans";
+      type: "master-one-pass";
+      correction?: RawLensfunCorrectionMaps;
       tonePlan?: RawMatchedTonePlan;
       fallbackPlan?: RawFallbackPlan;
       colorPlan?: RawColorPassPlan;
@@ -109,56 +110,39 @@ workerScope.onmessage = (event: MessageEvent<RawDevelopmentWorkerRequest>) => {
       return;
     }
 
-    if (message.type === "apply-development-plans") {
-      const data = new Uint16Array(message.dataBuffer);
+    if (message.type === "master-one-pass") {
+      const sourceData = new Uint16Array(message.dataBuffer);
       state = {
-        data,
+        data: sourceData,
         width: message.width,
         height: message.height,
         linearRangeMax: message.sourceLinearRangeMax,
-        transfer: message.sourceTransfer ?? "gamma20",
+        transfer: message.sourceTransfer ?? "linear",
       };
-      let headroom;
-      if (message.tonePlan) {
-        headroom = applyRawMatchedTonePass(
-          data,
-          message.width,
-          message.height,
-          message.sourceLinearRangeMax,
-          undefined,
-          message.tonePlan,
-          state.transfer,
-        );
-        state.linearRangeMax = 2;
-        state.transfer = "gamma20";
-      } else if (message.fallbackPlan) {
-        headroom = applyRawFallbackPlanPass(
-          data,
-          message.width,
-          message.height,
-          message.sourceLinearRangeMax,
-          undefined,
-          message.fallbackPlan,
-          state.transfer,
-        );
-        state.linearRangeMax = 2;
-        state.transfer = "gamma20";
-      }
-      if (message.colorPlan) {
-        applyRawColorPass(data, state.linearRangeMax, message.colorPlan);
-      }
-      const buffer = data.buffer as ArrayBuffer;
-      const linearRangeMax = state.linearRangeMax;
+      const result = developRawMasterOnePassToGamma20(
+        sourceData,
+        message.width,
+        message.height,
+        message.sourceLinearRangeMax,
+        state.transfer,
+        message.correction,
+        message.tonePlan,
+        message.fallbackPlan,
+        message.colorPlan,
+      );
       state = null;
+      const outputBuffer = result.data.buffer as ArrayBuffer;
       workerScope.postMessage(
         {
-          type: "development-plans-complete",
-          dataBuffer: buffer,
-          linearRangeMax,
+          type: "master-one-pass-complete",
+          dataBuffer: outputBuffer,
+          width: message.width,
+          height: message.height,
+          linearRangeMax: 2,
           transfer: "gamma20",
-          headroom,
+          headroom: result.headroom,
         },
-        [buffer],
+        [outputBuffer],
       );
       return;
     }
