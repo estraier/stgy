@@ -59,8 +59,9 @@ function decodeLinearUint16(value: number, linearRangeMax: number): number {
   return clamp01(value / 65535) * linearRangeMax;
 }
 
-function encodeLinearUint16(value: number, linearRangeMax: number): number {
-  return Math.round(clamp01(value / linearRangeMax) * 65535);
+function decodeGamma20Uint16(value: number, linearRangeMax: number): number {
+  const encoded = clamp01(value / 65535);
+  return encoded * encoded * linearRangeMax;
 }
 
 function encodeGamma20Uint16(value: number, linearRangeMax: number): number {
@@ -303,9 +304,9 @@ export function applyRawMatchedTonePass(
       const adjustedG = g * scale;
       const adjustedB = b * scale;
       recordHeadroom(headroom, adjustedR, adjustedG, adjustedB);
-      data[i] = encodeLinearUint16(adjustedR, RAW_DEVELOPED_LINEAR_RANGE_MAX);
-      data[i + 1] = encodeLinearUint16(adjustedG, RAW_DEVELOPED_LINEAR_RANGE_MAX);
-      data[i + 2] = encodeLinearUint16(adjustedB, RAW_DEVELOPED_LINEAR_RANGE_MAX);
+      data[i] = encodeGamma20Uint16(adjustedR, RAW_DEVELOPED_LINEAR_RANGE_MAX);
+      data[i + 1] = encodeGamma20Uint16(adjustedG, RAW_DEVELOPED_LINEAR_RANGE_MAX);
+      data[i + 2] = encodeGamma20Uint16(adjustedB, RAW_DEVELOPED_LINEAR_RANGE_MAX);
     }
   }
   return finishHeadroom(headroom);
@@ -328,9 +329,9 @@ export function sampleRawLinearRgb(
       const sx = Math.min(width - 1, Math.floor((x + 0.5) * width / sampleW));
       const sourceIndex = (sy * width + sx) * 3;
       const targetIndex = (y * sampleW + x) * 3;
-      output[targetIndex] = decodeLinearUint16(data[sourceIndex] ?? 0, linearRangeMax);
-      output[targetIndex + 1] = decodeLinearUint16(data[sourceIndex + 1] ?? 0, linearRangeMax);
-      output[targetIndex + 2] = decodeLinearUint16(data[sourceIndex + 2] ?? 0, linearRangeMax);
+      output[targetIndex] = decodeGamma20Uint16(data[sourceIndex] ?? 0, linearRangeMax);
+      output[targetIndex + 1] = decodeGamma20Uint16(data[sourceIndex + 1] ?? 0, linearRangeMax);
+      output[targetIndex + 2] = decodeGamma20Uint16(data[sourceIndex + 2] ?? 0, linearRangeMax);
     }
   }
   return output;
@@ -343,9 +344,9 @@ function applyColorPixelInPlace(
   plan: RawColorPassPlan,
   vibranceFactor: number,
 ): void {
-  let r = decodeLinearUint16(data[i] ?? 0, linearRangeMax);
-  let g = decodeLinearUint16(data[i + 1] ?? 0, linearRangeMax);
-  let b = decodeLinearUint16(data[i + 2] ?? 0, linearRangeMax);
+  let r = decodeGamma20Uint16(data[i] ?? 0, linearRangeMax);
+  let g = decodeGamma20Uint16(data[i + 1] ?? 0, linearRangeMax);
+  let b = decodeGamma20Uint16(data[i + 2] ?? 0, linearRangeMax);
   const extendedScale = Math.max(1, r, g, b);
   r /= extendedScale;
   g /= extendedScale;
@@ -405,9 +406,9 @@ function applyColorPixelInPlace(
   r = clamp01(rp + m) * extendedScale;
   g = clamp01(gp + m) * extendedScale;
   b = clamp01(bp + m) * extendedScale;
-  data[i] = encodeLinearUint16(r, linearRangeMax);
-  data[i + 1] = encodeLinearUint16(g, linearRangeMax);
-  data[i + 2] = encodeLinearUint16(b, linearRangeMax);
+  data[i] = encodeGamma20Uint16(r, linearRangeMax);
+  data[i + 1] = encodeGamma20Uint16(g, linearRangeMax);
+  data[i + 2] = encodeGamma20Uint16(b, linearRangeMax);
 }
 
 export function applyRawColorPass(
@@ -477,9 +478,9 @@ export function applyRawFallbackBaselinePass(
         rolloff,
       );
       recordHeadroom(headroom, r, g, b);
-      data[i] = encodeLinearUint16(r, RAW_DEVELOPED_LINEAR_RANGE_MAX);
-      data[i + 1] = encodeLinearUint16(g, RAW_DEVELOPED_LINEAR_RANGE_MAX);
-      data[i + 2] = encodeLinearUint16(b, RAW_DEVELOPED_LINEAR_RANGE_MAX);
+      data[i] = encodeGamma20Uint16(r, RAW_DEVELOPED_LINEAR_RANGE_MAX);
+      data[i + 1] = encodeGamma20Uint16(g, RAW_DEVELOPED_LINEAR_RANGE_MAX);
+      data[i + 2] = encodeGamma20Uint16(b, RAW_DEVELOPED_LINEAR_RANGE_MAX);
     }
   }
   return {

@@ -2277,6 +2277,7 @@ function applyRawThumbnailMatchedBaseline(
     planned.plan,
   );
   decoded.linearRangeMax = RAW_DEVELOPED_LINEAR_RANGE_MAX;
+  decoded.transfer = "gamma20";
   finishLensfunVignettingBake(decoded);
   return { luminance: planned.luminance, headroom };
 }
@@ -2570,6 +2571,7 @@ function applyRawBaselineExposure(
   );
   if (!result) return null;
   decoded.linearRangeMax = RAW_DEVELOPED_LINEAR_RANGE_MAX;
+  decoded.transfer = "gamma20";
   finishLensfunVignettingBake(decoded);
   return {
     luminance: {
@@ -3036,6 +3038,7 @@ function readRawThumbnailDebugStatistics(
 type RawDevelopmentWorkerError = Error & {
   dataBuffer?: ArrayBuffer;
   linearRangeMax?: number;
+  transfer?: DecodedRgbImage16["transfer"];
 };
 
 type RawWorkerToneResponse = {
@@ -3088,12 +3091,14 @@ function requestRawDevelopmentWorker<T extends { type: string }>(
         message?: string;
         dataBuffer?: ArrayBuffer;
         linearRangeMax?: number;
+        transfer?: DecodedRgbImage16["transfer"];
       };
       if (response?.type === "error") {
         cleanup();
         const error = new Error(response.message || "RAW development worker failed") as RawDevelopmentWorkerError;
         error.dataBuffer = response.dataBuffer;
         error.linearRangeMax = response.linearRangeMax;
+        error.transfer = response.transfer;
         reject(error);
         return;
       }
@@ -3174,6 +3179,7 @@ async function developRawPixelsInWorker(
         );
       });
       decoded.linearRangeMax = RAW_DEVELOPED_LINEAR_RANGE_MAX;
+      decoded.transfer = "gamma20";
       finishLensfunVignettingBake(decoded);
       mode = "thumbnail-match";
       luminance = matchedPlan.luminance;
@@ -3219,6 +3225,7 @@ async function developRawPixelsInWorker(
       });
       if (fallbackResponse.result) {
         decoded.linearRangeMax = RAW_DEVELOPED_LINEAR_RANGE_MAX;
+        decoded.transfer = "gamma20";
         finishLensfunVignettingBake(decoded);
         luminance = {
           exposureEv: fallbackResponse.result.exposureEv,
@@ -3249,6 +3256,9 @@ async function developRawPixelsInWorker(
       decoded.data = new Uint16Array(workerError.dataBuffer);
       if (Number.isFinite(workerError.linearRangeMax)) {
         decoded.linearRangeMax = workerError.linearRangeMax as number;
+      }
+      if (workerError.transfer === "linear" || workerError.transfer === "gamma20") {
+        decoded.transfer = workerError.transfer;
       }
     }
     if (!hadTransferred) return null;

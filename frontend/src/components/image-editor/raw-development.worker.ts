@@ -16,6 +16,7 @@ type WorkerState = {
   width: number;
   height: number;
   linearRangeMax: number;
+  transfer: "linear" | "gamma20";
 };
 
 type StartMessageBase = {
@@ -40,8 +41,9 @@ function postError(error: unknown): void {
   if (state && state.data.buffer.byteLength > 0) {
     const buffer = state.data.buffer as ArrayBuffer;
     const linearRangeMax = state.linearRangeMax;
+    const transfer = state.transfer;
     workerScope.postMessage(
-      { type: "error", message, dataBuffer: buffer, linearRangeMax },
+      { type: "error", message, dataBuffer: buffer, linearRangeMax, transfer },
       [buffer],
     );
     state = null;
@@ -60,6 +62,7 @@ workerScope.onmessage = (event: MessageEvent<RawDevelopmentWorkerRequest>) => {
         width: message.width,
         height: message.height,
         linearRangeMax: message.sourceLinearRangeMax,
+        transfer: "linear",
       };
       const headroom = applyRawMatchedTonePass(
         data,
@@ -70,6 +73,7 @@ workerScope.onmessage = (event: MessageEvent<RawDevelopmentWorkerRequest>) => {
         message.plan,
       );
       state.linearRangeMax = 2;
+      state.transfer = "gamma20";
       const colorSample = sampleRawLinearRgb(
         data,
         message.width,
@@ -91,6 +95,7 @@ workerScope.onmessage = (event: MessageEvent<RawDevelopmentWorkerRequest>) => {
         width: message.width,
         height: message.height,
         linearRangeMax: message.sourceLinearRangeMax,
+        transfer: "linear",
       };
       const result = applyRawFallbackBaselinePass(
         data,
@@ -99,7 +104,10 @@ workerScope.onmessage = (event: MessageEvent<RawDevelopmentWorkerRequest>) => {
         message.sourceLinearRangeMax,
         message.vignetting,
       );
-      if (result) state.linearRangeMax = 2;
+      if (result) {
+        state.linearRangeMax = 2;
+        state.transfer = "gamma20";
+      }
       workerScope.postMessage({ type: "fallback-tone-complete", result });
       return;
     }
@@ -113,7 +121,10 @@ workerScope.onmessage = (event: MessageEvent<RawDevelopmentWorkerRequest>) => {
     }
 
     if (message.type === "encode") {
-      convertRawLinearToGamma20InPlace(state.data, state.linearRangeMax);
+      if (state.transfer === "linear") {
+        convertRawLinearToGamma20InPlace(state.data, state.linearRangeMax);
+        state.transfer = "gamma20";
+      }
       const buffer = state.data.buffer as ArrayBuffer;
       const linearRangeMax = state.linearRangeMax;
       workerScope.postMessage(

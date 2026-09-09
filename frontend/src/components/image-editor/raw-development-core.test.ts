@@ -34,7 +34,7 @@ function makeFixture() {
 }
 
 describe("RAW development hot-loop characterization", () => {
-  test("keeps the legacy matched-tone Uint16 result", () => {
+  test("stores the matched-tone result directly as gamma20 Uint16", () => {
     const fixture = makeFixture();
     const data = new Uint16Array(fixture.data);
     const headroom = applyRawMatchedTonePass(
@@ -45,7 +45,7 @@ describe("RAW development hot-loop characterization", () => {
       fixture.vignetting,
       { gain: 1.23, scaledLog: 0.7, sigmoid: -0.6, toneSlopeAtWhite: 0.82 },
     );
-    expect(fnv1a16(data)).toBe("7d1504fe");
+    expect(fnv1a16(data)).toBe("4d707378");
     expect(headroom.bins).toEqual([
       0, 0, 0, 0, 0, 5, 41, 28, 41, 61,
       72, 71, 48, 19, 5, 0, 0, 0, 0, 0,
@@ -53,7 +53,7 @@ describe("RAW development hot-loop characterization", () => {
     expect(headroom.maxRgb).toBeCloseTo(1.4372515896129021, 14);
   });
 
-  test("keeps the legacy color and gamma20 results", () => {
+  test("keeps the color pass in gamma20 Uint16", () => {
     const fixture = makeFixture();
     const data = new Uint16Array(fixture.data);
     applyRawMatchedTonePass(
@@ -72,12 +72,16 @@ describe("RAW development hot-loop characterization", () => {
       vibranceFactor: 0.3,
       saturationRolloff: { inflection: 0.8, scale: 0.25 },
     });
-    expect(fnv1a16(data)).toBe("71fa1e61");
-    convertRawLinearToGamma20InPlace(data, 2);
-    expect(fnv1a16(data)).toBe("b774fe74");
+    expect(fnv1a16(data)).toBe("91e9f6c0");
   });
 
-  test("keeps the legacy fallback baseline result", () => {
+  test("still converts untouched linear fallback data to gamma20", () => {
+    const data = new Uint16Array([0, 16384, 32768, 65535]);
+    convertRawLinearToGamma20InPlace(data, 2);
+    expect(Array.from(data)).toEqual([0, 32768, 46341, 65535]);
+  });
+
+  test("stores the fallback baseline result directly as gamma20 Uint16", () => {
     const fixture = makeFixture();
     const data = new Uint16Array(fixture.data);
     const result = applyRawFallbackBaselinePass(
@@ -88,7 +92,7 @@ describe("RAW development hot-loop characterization", () => {
       fixture.vignetting,
     );
     expect(result).not.toBeNull();
-    expect(fnv1a16(data)).toBe("37993dbf");
+    expect(fnv1a16(data)).toBe("4b027828");
     expect(result?.exposureEv).toBeCloseTo(0.17376055157331727, 14);
     expect(result?.headroom.maxRgb).toBeCloseTo(1.0193448963146376, 14);
   });
