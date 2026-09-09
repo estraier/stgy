@@ -106,7 +106,6 @@ import { renderAdjustedLinearRgbSampleToCanvas, renderAdjustedRgb16ToCanvas } fr
 import {
   applyRawColorPass,
   applyRawFallbackBaselinePass,
-  applyRawFallbackPlanPass,
   applyRawMatchedTonePass,
   developRawMasterOnePassToGamma20,
   resampleRawWithLensfunToGamma20,
