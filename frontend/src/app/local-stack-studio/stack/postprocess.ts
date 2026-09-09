@@ -24,7 +24,7 @@ export function clampStackScaledLog(value: number): number {
 
 export function clampStackClahe(value: number): number {
   if (!Number.isFinite(value)) return 0;
-  return Math.max(0, Math.min(100, Math.round(value)));
+  return Math.max(-100, Math.min(100, Math.round(value)));
 }
 
 export function computeStackHighlightP100(
@@ -227,7 +227,7 @@ function applyDisplayRolloffLinear(
 }
 
 function claheClipLimitFromStrength(strength: number): number {
-  const normalized = clampStackClahe(strength);
+  const normalized = Math.abs(clampStackClahe(strength));
   if (normalized <= 0) return 0;
   const t = normalized / 100;
   return 8 * t * t;
@@ -283,6 +283,103 @@ function computeClaheTileGrid(width: number, height: number) {
   };
 }
 
+function boxBlurLinearLuminance(
+  source: Float32Array,
+  width: number,
+  height: number,
+  radiusX: number,
+  radiusY: number,
+): Float32Array {
+  const pixelCount = width * height;
+  if (pixelCount <= 0 || source.length !== pixelCount) return source;
+  const rx = Math.max(0, Math.floor(radiusX));
+  const ry = Math.max(0, Math.floor(radiusY));
+  if (rx === 0 && ry === 0) return new Float32Array(source);
+
+  const horizontal = new Float32Array(pixelCount);
+  if (rx === 0) {
+    horizontal.set(source);
+  } else {
+    for (let y = 0; y < height; y += 1) {
+      const rowOffset = y * width;
+      let left = 0;
+      let right = Math.min(width - 1, rx);
+      let sum = 0;
+      for (let x = left; x <= right; x += 1) sum += source[rowOffset + x] ?? 0;
+      for (let x = 0; x < width; x += 1) {
+        horizontal[rowOffset + x] = sum / Math.max(1, right - left + 1);
+        const nextLeft = Math.max(0, x + 1 - rx);
+        const nextRight = Math.min(width - 1, x + 1 + rx);
+        while (left < nextLeft) {
+          sum -= source[rowOffset + left] ?? 0;
+          left += 1;
+        }
+        while (right < nextRight) {
+          right += 1;
+          sum += source[rowOffset + right] ?? 0;
+        }
+      }
+    }
+  }
+
+  if (ry === 0) return horizontal;
+  const blurred = new Float32Array(pixelCount);
+  for (let x = 0; x < width; x += 1) {
+    let top = 0;
+    let bottom = Math.min(height - 1, ry);
+    let sum = 0;
+    for (let y = top; y <= bottom; y += 1) sum += horizontal[y * width + x] ?? 0;
+    for (let y = 0; y < height; y += 1) {
+      blurred[y * width + x] = sum / Math.max(1, bottom - top + 1);
+      const nextTop = Math.max(0, y + 1 - ry);
+      const nextBottom = Math.min(height - 1, y + 1 + ry);
+      while (top < nextTop) {
+        sum -= horizontal[top * width + x] ?? 0;
+        top += 1;
+      }
+      while (bottom < nextBottom) {
+        bottom += 1;
+        sum += horizontal[bottom * width + x] ?? 0;
+      }
+    }
+  }
+  return blurred;
+}
+
+function applyLocalContrastSofteningLinearLuminance(
+  sourceLinear: Float32Array,
+  luminance: Float32Array,
+  width: number,
+  height: number,
+  strength: number,
+  tileWidth: number,
+  tileHeight: number,
+): Float32Array {
+  const t = Math.abs(clampStackClahe(strength)) / 100;
+  if (t <= 0) return sourceLinear;
+
+  const radiusX = Math.max(1, Math.round(tileWidth / 2));
+  const radiusY = Math.max(1, Math.round(tileHeight / 2));
+  const localMean = boxBlurLinearLuminance(luminance, width, height, radiusX, radiusY);
+  const detailAttenuation = 1 / (1 + 4 * t);
+  const result = new Float32Array(sourceLinear.length);
+
+  for (let pixelIndex = 0; pixelIndex < luminance.length; pixelIndex += 1) {
+    const sourceLinearLuma = luminance[pixelIndex] ?? 0;
+    const meanLinearLuma = localMean[pixelIndex] ?? sourceLinearLuma;
+    const targetLinearLuma = Math.max(
+      0,
+      meanLinearLuma + (sourceLinearLuma - meanLinearLuma) * detailAttenuation,
+    );
+    const scale = sourceLinearLuma > 1e-8 ? targetLinearLuma / sourceLinearLuma : 0;
+    const sourceIndex = pixelIndex * 3;
+    result[sourceIndex] = Math.max(0, (sourceLinear[sourceIndex] ?? 0) * scale);
+    result[sourceIndex + 1] = Math.max(0, (sourceLinear[sourceIndex + 1] ?? 0) * scale);
+    result[sourceIndex + 2] = Math.max(0, (sourceLinear[sourceIndex + 2] ?? 0) * scale);
+  }
+  return result;
+}
+
 function applyClaheToLinearLuminance(
   sourceLinear: Float32Array,
   width: number,
@@ -297,6 +394,25 @@ function applyClaheToLinearLuminance(
   }
 
   const luminance = new Float32Array(pixelCount);
+  if (normalized < 0) {
+    for (let pixelIndex = 0, sourceIndex = 0; pixelIndex < pixelCount; pixelIndex += 1, sourceIndex += 3) {
+      const r = Math.max(0, sourceLinear[sourceIndex] ?? 0);
+      const g = Math.max(0, sourceLinear[sourceIndex + 1] ?? 0);
+      const b = Math.max(0, sourceLinear[sourceIndex + 2] ?? 0);
+      luminance[pixelIndex] = Math.max(0, 0.299 * r + 0.587 * g + 0.114 * b);
+    }
+    const { tileWidth, tileHeight } = computeClaheTileGrid(width, height);
+    return applyLocalContrastSofteningLinearLuminance(
+      sourceLinear,
+      luminance,
+      width,
+      height,
+      normalized,
+      tileWidth,
+      tileHeight,
+    );
+  }
+
   const encodedLuminance = new Uint8Array(pixelCount);
   for (let pixelIndex = 0, sourceIndex = 0; pixelIndex < pixelCount; pixelIndex += 1, sourceIndex += 3) {
     const r = Math.max(0, sourceLinear[sourceIndex] ?? 0);
