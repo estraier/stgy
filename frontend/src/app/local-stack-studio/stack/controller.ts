@@ -115,9 +115,13 @@ const previewSigmoidValue = getElement("preview-sigmoid-value");
 const previewClahe = getElement("preview-clahe");
 const previewClaheValue = getElement("preview-clahe-value");
 const editButton = getElement("edit-button");
+const editButtonSpinner = getElement("edit-button-spinner");
 const outputFormat = getElement("output-format");
 const downloadButton = getElement("download-button");
+const downloadButtonSpinner = getElement("download-button-spinner");
+const downloadButtonLabel = getElement("download-button-label");
 const zoomModal = getElement("zoom-modal");
+const zoomCloseButton = getElement("zoom-close-button");
 const zoomLoading = getElement("zoom-loading");
 const zoomMessage = getElement("zoom-message");
 const zoomScrollContainer = getElement("zoom-scroll-container");
@@ -134,6 +138,8 @@ let currentPreviewSigmoid = 0;
 let currentPreviewClahe = 0;
 let previewRenderScheduled = false;
 let currentZoomViewUrl = null;
+let currentStackResultRevision = 0;
+let fullSizeRenderCache = null;
 let zoomRenderRequestId = 0;
 let zoomPanState = null;
 
@@ -227,6 +233,11 @@ listen(zoomModal, "click", (event) => {
     closeZoomModal();
   }
 });
+listen(zoomCloseButton, "click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  closeZoomModal();
+});
 zoomImage.draggable = false;
 listen(zoomImage, "dragstart", (event) => event.preventDefault());
 listen(zoomScrollContainer, "pointerdown", beginZoomPan);
@@ -296,6 +307,8 @@ ${buildInfo}` : "OpenCV.js is ready.");
       alignmentPlan,
       currentPreviewColorSpace,
     );
+    currentStackResultRevision += 1;
+    clearFullSizeRenderCache();
     currentInputFiles = files.slice();
     currentPreviewExposureEv = 0;
     currentPreviewShadow = 0;
@@ -320,7 +333,7 @@ ${buildInfo}` : "OpenCV.js is ready.");
   }
 });
 
-listen(editButton, "click", () => {
+listen(editButton, "click", async () => {
   if (!currentStackResult) return;
   clearError();
   if (!options.onEditRequest) {
@@ -328,45 +341,25 @@ listen(editButton, "click", () => {
     return;
   }
 
+  editButton.disabled = true;
+  setEditButtonBusy(true);
+
   try {
-    const hasToneAdjustments =
-      currentPreviewExposureEv !== 0 ||
-      currentPreviewShadow !== 0 ||
-      currentPreviewHighlight !== 0 ||
-      currentPreviewLogarithm !== 0 ||
-      currentPreviewSigmoid !== 0 ||
-      currentPreviewClahe !== 0;
-    const bakedGamma2 = hasToneAdjustments
-      ? encodeLinearToStoredGamma2(
-          adjustStackLinearData(
-            decodeStoredGamma2ToLinear(currentStackResult.gamma2ProPhotoRgb16),
-            currentStackResult.width,
-            currentStackResult.height,
-            currentPreviewExposureEv,
-            currentPreviewShadow,
-            currentPreviewHighlight,
-            currentPreviewLogarithm,
-            currentPreviewSigmoid,
-            currentPreviewClahe,
-            currentStackResult.exposureRolloffBaseP998,
-            getCurrentHighlightP100(),
-          ),
-        )
-      : currentStackResult.gamma2ProPhotoRgb16;
+    await waitForBusyPaint();
+    const cache = ensureFullSizeRenderCache();
     const decodedImage = {
       colorSpace: "prophoto",
       transfer: "gamma20",
       linearRangeMax: 1,
       width: currentStackResult.width,
       height: currentStackResult.height,
-      data: bakedGamma2,
+      data: encodeLinearToStoredGamma2(cache.adjustedLinear),
       cleanup: () => {},
     };
     const editFile = new File([], buildOutputFileName(currentInputFiles, "tiff16"), {
       type: "image/tiff",
     });
     let finished = false;
-    editButton.disabled = true;
 
     options.onEditRequest({
       file: editFile,
@@ -393,6 +386,8 @@ listen(editButton, "click", () => {
             editedImage.height,
             currentPreviewColorSpace,
           );
+          currentStackResultRevision += 1;
+          clearFullSizeRenderCache();
           resetAllToneControls();
           closeZoomModal();
           renderPreviewForCurrentTone();
@@ -415,7 +410,9 @@ listen(editButton, "click", () => {
         showError(new Error(message));
       },
     });
+    setEditButtonBusy(false);
   } catch (error) {
+    setEditButtonBusy(false);
     editButton.disabled = !currentStackResult;
     showError(error);
   }
@@ -424,7 +421,7 @@ listen(editButton, "click", () => {
 listen(downloadButton, "click", async () => {
   if (!currentStackResult) return;
   clearError();
-  const previousText = downloadButton.textContent;
+  const previousText = downloadButtonLabel.textContent;
   downloadButton.disabled = true;
   editButton.disabled = true;
   outputFormat.disabled = true;
@@ -434,30 +431,27 @@ listen(downloadButton, "click", async () => {
   previewLogarithm.disabled = true;
   previewSigmoid.disabled = true;
   previewClahe.disabled = true;
+  setDownloadButtonBusy(true);
 
   try {
+    await waitForBusyPaint();
     const format = outputFormat.value;
-    const adjustedLinear = adjustStackLinearData(
-      decodeStoredGamma2ToLinear(currentStackResult.gamma2ProPhotoRgb16),
-      currentStackResult.width,
-      currentStackResult.height,
-      currentPreviewExposureEv,
-      currentPreviewShadow,
-      currentPreviewHighlight,
-      currentPreviewLogarithm,
-      currentPreviewSigmoid,
-      currentPreviewClahe,
-      currentStackResult.exposureRolloffBaseP998,
-      getCurrentHighlightP100(),
-    );
+    const cache = ensureFullSizeRenderCache();
+
     if (format === "jpeg") {
-      downloadButton.textContent = "Encoding JPEG...";
-      const jpegBlob = await linearAccumulatorToJpeg(
-        adjustedLinear,
-        currentStackResult.width,
-        currentStackResult.height,
-        currentPreviewColorSpace,
-      );
+      downloadButtonLabel.textContent = "Encoding JPEG...";
+      let jpegBlob = cache.jpegBlob;
+      if (!jpegBlob) {
+        jpegBlob = await linearAccumulatorToJpeg(
+          cache.adjustedLinear,
+          currentStackResult.width,
+          currentStackResult.height,
+          currentPreviewColorSpace,
+        );
+        if (fullSizeRenderCache === cache && cache.key === getFullSizeRenderCacheKey()) {
+          cache.jpegBlob = jpegBlob;
+        }
+      }
       downloadBlob(jpegBlob, buildOutputFileName(currentInputFiles, "jpeg"));
       return;
     }
@@ -466,9 +460,9 @@ listen(downloadButton, "click", async () => {
     if (!bitsPerSample) {
       throw new Error(`Unsupported output format: ${format}`);
     }
-    downloadButton.textContent = `Encoding TIFF-${bitsPerSample}...`;
+    downloadButtonLabel.textContent = `Encoding TIFF-${bitsPerSample}...`;
     const encoded = await encodeFromLinearProPhoto({
-      data: adjustedLinear,
+      data: cache.adjustedLinear,
       width: currentStackResult.width,
       height: currentStackResult.height,
       bitsPerSample,
@@ -479,6 +473,7 @@ listen(downloadButton, "click", async () => {
   } catch (error) {
     showError(error);
   } finally {
+    setDownloadButtonBusy(false);
     downloadButton.disabled = false;
     editButton.disabled = !currentStackResult;
     outputFormat.disabled = false;
@@ -488,7 +483,7 @@ listen(downloadButton, "click", async () => {
     previewLogarithm.disabled = false;
     previewSigmoid.disabled = false;
     previewClahe.disabled = false;
-    downloadButton.textContent = previousText;
+    downloadButtonLabel.textContent = previousText;
   }
 });
 
@@ -605,6 +600,81 @@ function getCurrentHighlightP100() {
   );
 }
 
+function setEditButtonBusy(busy) {
+  editButtonSpinner.classList.toggle("hidden", !busy);
+  editButton.setAttribute("aria-busy", busy ? "true" : "false");
+}
+
+function setDownloadButtonBusy(busy) {
+  downloadButtonSpinner.classList.toggle("hidden", !busy);
+  downloadButton.setAttribute("aria-busy", busy ? "true" : "false");
+}
+
+function getFullSizeRenderCacheKey() {
+  if (!currentStackResult) return null;
+  return JSON.stringify([
+    currentStackResultRevision,
+    currentStackResult.width,
+    currentStackResult.height,
+    currentPreviewColorSpace,
+    currentPreviewExposureEv,
+    currentPreviewShadow,
+    currentPreviewHighlight,
+    currentPreviewLogarithm,
+    currentPreviewSigmoid,
+    currentPreviewClahe,
+  ]);
+}
+
+function hasCurrentToneAdjustments() {
+  return (
+    currentPreviewExposureEv !== 0 ||
+    currentPreviewShadow !== 0 ||
+    currentPreviewHighlight !== 0 ||
+    currentPreviewLogarithm !== 0 ||
+    currentPreviewSigmoid !== 0 ||
+    currentPreviewClahe !== 0
+  );
+}
+
+function ensureFullSizeRenderCache() {
+  if (!currentStackResult) {
+    throw new Error("No stacked image is available.");
+  }
+  const key = getFullSizeRenderCacheKey();
+  if (fullSizeRenderCache && fullSizeRenderCache.key === key) {
+    return fullSizeRenderCache;
+  }
+
+  const sourceLinear = decodeStoredGamma2ToLinear(currentStackResult.gamma2ProPhotoRgb16);
+  const adjustedLinear = hasCurrentToneAdjustments()
+    ? adjustStackLinearData(
+        sourceLinear,
+        currentStackResult.width,
+        currentStackResult.height,
+        currentPreviewExposureEv,
+        currentPreviewShadow,
+        currentPreviewHighlight,
+        currentPreviewLogarithm,
+        currentPreviewSigmoid,
+        currentPreviewClahe,
+        currentStackResult.exposureRolloffBaseP998,
+        getCurrentHighlightP100(),
+      )
+    : sourceLinear;
+
+  fullSizeRenderCache = {
+    key,
+    adjustedLinear,
+    jpegBlob: null,
+  };
+  return fullSizeRenderCache;
+}
+
+function clearFullSizeRenderCache() {
+  fullSizeRenderCache = null;
+}
+
 function renderLinearDataToCanvas(
   canvas,
   sourceLinear,
@@ -655,7 +725,7 @@ function getNormalizedImageClickPoint(event, imageElement) {
   };
 }
 
-function waitForZoomLoadingPaint() {
+function waitForBusyPaint() {
   return new Promise((resolve) => {
     requestAnimationFrame(() => {
       requestAnimationFrame(resolve);
@@ -666,39 +736,42 @@ function waitForZoomLoadingPaint() {
 async function openZoomModalForPoint(normalizedX, normalizedY) {
   if (!currentStackResult) return;
   const requestId = ++zoomRenderRequestId;
+  const cacheKey = getFullSizeRenderCacheKey();
+  const hasCachedJpeg = Boolean(
+    fullSizeRenderCache &&
+    fullSizeRenderCache.key === cacheKey &&
+    fullSizeRenderCache.jpegBlob,
+  );
+
   zoomModal.classList.remove("hidden");
-  zoomLoading.classList.remove("hidden");
+  zoomLoading.classList.toggle("hidden", hasCachedJpeg);
   zoomScrollContainer.classList.add("hidden");
   zoomMessage.textContent = "Rendering full-size view...";
   clearZoomView();
 
-  // Give the browser a chance to paint the modal and spinner before the
-  // full-size tone/color conversion starts blocking the main thread.
-  await waitForZoomLoadingPaint();
-  if (requestId !== zoomRenderRequestId) {
-    return;
+  if (!hasCachedJpeg) {
+    // Give the browser a chance to paint the modal and spinner before the
+    // full-size tone/color conversion starts blocking the main thread.
+    await waitForBusyPaint();
+    if (requestId !== zoomRenderRequestId) {
+      return;
+    }
   }
 
   try {
-    const adjustedLinear = adjustStackLinearData(
-      decodeStoredGamma2ToLinear(currentStackResult.gamma2ProPhotoRgb16),
-      currentStackResult.width,
-      currentStackResult.height,
-      currentPreviewExposureEv,
-      currentPreviewShadow,
-      currentPreviewHighlight,
-      currentPreviewLogarithm,
-      currentPreviewSigmoid,
-      currentPreviewClahe,
-      currentStackResult.exposureRolloffBaseP998,
-      getCurrentHighlightP100(),
-    );
-    const blob = await linearAccumulatorToJpeg(
-      adjustedLinear,
-      currentStackResult.width,
-      currentStackResult.height,
-      currentPreviewColorSpace,
-    );
+    const cache = ensureFullSizeRenderCache();
+    let blob = cache.jpegBlob;
+    if (!blob) {
+      blob = await linearAccumulatorToJpeg(
+        cache.adjustedLinear,
+        currentStackResult.width,
+        currentStackResult.height,
+        currentPreviewColorSpace,
+      );
+      if (fullSizeRenderCache === cache && cache.key === getFullSizeRenderCacheKey()) {
+        cache.jpegBlob = blob;
+      }
+    }
     if (requestId !== zoomRenderRequestId) {
       return;
     }
@@ -3749,6 +3822,8 @@ function setProgress(message) {
 
 function clearResult() {
   currentStackResult = null;
+  currentStackResultRevision += 1;
+  clearFullSizeRenderCache();
   currentPreviewColorSpace = "srgb";
   currentInputFiles = [];
   currentPreviewExposureEv = 0;
@@ -3925,5 +4000,6 @@ return () => {
     listenerCleanups[i]();
   }
   clearZoomView();
+  clearFullSizeRenderCache();
 };
 }

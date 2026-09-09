@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type DragEvent } from "react";
 import {
   ImageEditDialog,
   buildDefaultEditParams,
@@ -15,8 +15,54 @@ import {
 
 const INPUT_ACCEPT = ".jpg,.jpeg,.webp,.png,.tif,.tiff,.3fr,.ari,.arw,.bay,.cap,.cr2,.cr3,.crw,.dcr,.dcs,.dng,.drf,.eip,.erf,.fff,.gpr,.iiq,.k25,.kdc,.mdc,.mef,.mos,.mrw,.nef,.nrw,.obm,.orf,.pef,.ptx,.pxn,.raf,.raw,.rwl,.rw2,.rwz,.sr2,.srf,.srw,.x3f,image/jpeg,image/png,image/webp,image/tiff,image/x-adobe-dng,image/x-canon-cr2,image/x-canon-cr3,image/x-epson-erf,image/x-fuji-raf,image/x-kodak-dcr,image/x-kodak-k25,image/x-minolta-mrw,image/x-nikon-nef,image/x-olympus-orf,image/x-panasonic-rw2,image/x-pentax-pef,image/x-sony-arw,image/x-sony-sr2,image/x-sony-srf,image/x-sigma-x3f,image/dng";
 
+const INPUT_ACCEPT_PARTS = INPUT_ACCEPT.split(",").map((value) => value.trim().toLowerCase());
+const INPUT_ACCEPT_EXTENSIONS = new Set(INPUT_ACCEPT_PARTS.filter((value) => value.startsWith(".")));
+const INPUT_ACCEPT_MIME_TYPES = new Set(INPUT_ACCEPT_PARTS.filter((value) => value.includes("/")));
+
+function isAcceptedInputFile(file: File): boolean {
+  const mimeType = file.type.trim().toLowerCase();
+  if (mimeType && INPUT_ACCEPT_MIME_TYPES.has(mimeType)) return true;
+  const dotIndex = file.name.lastIndexOf(".");
+  if (dotIndex < 0) return false;
+  return INPUT_ACCEPT_EXTENSIONS.has(file.name.slice(dotIndex).toLowerCase());
+}
+
+function dataTransferContainsFiles(dataTransfer: DataTransfer): boolean {
+  if (dataTransfer.files.length > 0) return true;
+  for (let index = 0; index < dataTransfer.items.length; index += 1) {
+    if (dataTransfer.items[index]?.kind === "file") return true;
+  }
+  return false;
+}
+
 export default function PageBody() {
   const [editRequest, setEditRequest] = useState<LocalStackStudioEditRequest | null>(null);
+
+  const handleInputDrop = useCallback((event: DragEvent<HTMLElement>) => {
+    if (!dataTransferContainsFiles(event.dataTransfer)) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const input = document.getElementById("input-files") as HTMLInputElement | null;
+    if (!input || input.disabled) return;
+
+    const transfer = new DataTransfer();
+    for (let index = 0; index < event.dataTransfer.files.length; index += 1) {
+      const file = event.dataTransfer.files.item(index);
+      if (file && isAcceptedInputFile(file)) transfer.items.add(file);
+    }
+    if (transfer.files.length === 0) return;
+
+    input.files = transfer.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }, []);
+
+  const handleInputDragOver = useCallback((event: DragEvent<HTMLElement>) => {
+    if (!dataTransferContainsFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  }, []);
 
   const handleEditRequest = useCallback((request: LocalStackStudioEditRequest) => {
     setEditRequest(request);
@@ -61,7 +107,11 @@ export default function PageBody() {
 
   return (
     <main className="mx-auto max-w-5xl p-4 sm:p-6 lg:py-8">
-      <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+      <section
+        className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm"
+        onDragOver={handleInputDragOver}
+        onDrop={handleInputDrop}
+      >
         <div className="border-b border-gray-200 bg-gradient-to-br from-white via-gray-50 to-gray-100 px-5 py-6 sm:px-7 sm:py-8">
           <div className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">
             Local Stack Studio
@@ -161,9 +211,10 @@ export default function PageBody() {
                 <button
                   id="edit-button"
                   type="button"
-                  className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 shadow-sm hover:bg-gray-100 disabled:opacity-50"
+                  className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 shadow-sm hover:bg-gray-100 disabled:opacity-50"
                 >
-                  Edit
+                  <span id="edit-button-spinner" className="hidden h-4 w-4 animate-spin rounded-full border-2 border-gray-300 border-t-gray-700" aria-hidden="true" />
+                  <span>Edit</span>
                 </button>
                 <div className="ml-auto flex flex-wrap items-center gap-2.5">
                   <label htmlFor="output-format" className="text-sm font-medium text-gray-900">Format:</label>
@@ -175,9 +226,10 @@ export default function PageBody() {
                   <button
                     id="download-button"
                     type="button"
-                    className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 shadow-sm hover:bg-gray-100 disabled:opacity-50"
+                    className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 shadow-sm hover:bg-gray-100 disabled:opacity-50"
                   >
-                    Download
+                    <span id="download-button-spinner" className="hidden h-4 w-4 animate-spin rounded-full border-2 border-gray-300 border-t-gray-700" aria-hidden="true" />
+                    <span id="download-button-label">Download</span>
                   </button>
                 </div>
               </div>
@@ -195,6 +247,14 @@ export default function PageBody() {
         aria-label="Full-size preview"
       >
         <div className="relative h-[95vh] w-[96vw] overflow-hidden rounded border border-gray-500 bg-black sm:h-[90vh] sm:w-[92vw]">
+          <button
+            id="zoom-close-button"
+            type="button"
+            aria-label="Close full-size preview"
+            className="absolute right-2 top-2 z-20 flex h-7 w-7 items-center justify-center rounded-full bg-black/45 text-lg cursor-pointer leading-none text-white/80 shadow-sm backdrop-blur-sm hover:bg-black/65 hover:text-white focus:outline-none focus:ring-2 focus:ring-white/70"
+          >
+            ×
+          </button>
           <div id="zoom-loading" className="absolute inset-0 z-10 hidden flex-col items-center justify-center gap-3 bg-black text-gray-400 [&:not(.hidden)]:flex">
             <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-gray-700 border-t-gray-300" aria-hidden="true" />
             <div id="zoom-message">Rendering full-size view...</div>

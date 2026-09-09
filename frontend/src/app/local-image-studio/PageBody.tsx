@@ -112,6 +112,32 @@ const RAW_HIGHLIGHT_OPTIONS: { value: RawHighlightMode; label: string }[] = [
   { value: 9, label: "Rebuild (9)" },
 ];
 
+const IMAGE_ALLOWED_TYPE_TOKENS = Config.IMAGE_ALLOWED_TYPES
+  .split(",")
+  .map((value) => value.trim().toLowerCase())
+  .filter(Boolean);
+
+const CLIPBOARD_IMAGE_MIME_TYPES = new Set<string>(
+  IMAGE_ALLOWED_TYPE_TOKENS.filter((value) => value.startsWith("image/")),
+);
+
+const DROP_IMAGE_EXTENSIONS = new Set<string>(
+  IMAGE_ALLOWED_TYPE_TOKENS.filter((value) => value.startsWith(".")),
+);
+
+function isAllowedDroppedImageFile(file: File): boolean {
+  const mimeType = file.type.trim().toLowerCase();
+  if (mimeType && CLIPBOARD_IMAGE_MIME_TYPES.has(mimeType)) return true;
+  const lowerName = file.name.trim().toLowerCase();
+  return Array.from(DROP_IMAGE_EXTENSIONS).some((extension) => lowerName.endsWith(extension));
+}
+
+function isEditablePasteTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  return target.closest("input, textarea") !== null;
+}
+
 function outputFilename(fileName: string | undefined, format: ImageEditOutputFormat): string {
   const extension = format === "image/jpeg" ? "jpg" : format === "image/png" ? "png" : "webp";
   const trimmedName = fileName?.trim() ?? "";
@@ -375,6 +401,60 @@ export default function LocalImageStudio() {
     }
   }, [clearEditedVariant, clearRawDevelopment, clearResult]);
 
+  const onStudioDragOver = useCallback((event: React.DragEvent<HTMLElement>) => {
+    const fileItems = Array.from(event.dataTransfer.items).filter((item) => item.kind === "file");
+    const hasFiles = fileItems.length > 0 || Array.from(event.dataTransfer.types).includes("Files");
+    if (!hasFiles) return;
+    event.preventDefault();
+    if (editing || processing || resultZoomFocus || fileItems.length > 1) {
+      event.dataTransfer.dropEffect = "none";
+      return;
+    }
+    event.dataTransfer.dropEffect = "copy";
+  }, [editing, processing, resultZoomFocus]);
+
+  const onStudioDrop = useCallback((event: React.DragEvent<HTMLElement>) => {
+    const files = Array.from(event.dataTransfer.files);
+    if (files.length === 0) return;
+    event.preventDefault();
+    if (editing || processing || resultZoomFocus) return;
+
+    if (files.length !== 1) {
+      setError("Drop one image file at a time.");
+      return;
+    }
+
+    const file = files[0];
+    if (!isAllowedDroppedImageFile(file)) {
+      setError("Unsupported image format.");
+      return;
+    }
+
+    void onChooseFile(file);
+  }, [editing, onChooseFile, processing, resultZoomFocus]);
+
+  useEffect(() => {
+    const onPaste = (event: ClipboardEvent) => {
+      if (editing || processing || resultZoomFocus || isEditablePasteTarget(event.target)) return;
+      const clipboardData = event.clipboardData;
+      if (!clipboardData) return;
+
+      const item = Array.from(clipboardData.items).find((candidate) => (
+        candidate.kind === "file" &&
+        CLIPBOARD_IMAGE_MIME_TYPES.has(candidate.type.trim().toLowerCase())
+      ));
+      if (!item) return;
+
+      const file = item.getAsFile();
+      if (!file) return;
+      event.preventDefault();
+      void onChooseFile(file);
+    };
+
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [editing, onChooseFile, processing, resultZoomFocus]);
+
   const generateResult = useCallback(async (
     sourceImage: SourceImage,
     params: ImageEditParams,
@@ -493,7 +573,11 @@ export default function LocalImageStudio() {
 
   return (
     <main className="mx-auto max-w-5xl p-4 sm:p-6 lg:py-8">
-      <section className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+      <section
+        className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm"
+        onDragOver={onStudioDragOver}
+        onDrop={onStudioDrop}
+      >
         <div className="border-b border-gray-200 bg-gradient-to-br from-white via-gray-50 to-gray-100 px-5 py-6 sm:px-7 sm:py-8">
           <div className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">
             Local Image Studio
@@ -678,6 +762,19 @@ export default function LocalImageStudio() {
             onPointerCancel={onResultZoomPointerCancel}
             onClick={onResultZoomClick}
           >
+            <button
+              type="button"
+              aria-label="Close full-size preview"
+              className="absolute right-2 top-2 z-20 flex h-7 w-7 items-center justify-center rounded-full bg-black/45 text-lg cursor-pointer leading-none text-white/80 shadow-sm backdrop-blur-sm hover:bg-black/65 hover:text-white focus:outline-none focus:ring-2 focus:ring-white/70"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                closeResultZoom();
+              }}
+            >
+              ×
+            </button>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={result.url}
