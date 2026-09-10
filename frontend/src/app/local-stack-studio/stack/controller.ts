@@ -731,6 +731,7 @@ function getCurrentPreviewAdjustedLinear(highlightP100) {
       currentPreviewVibrance,
       currentPreviewSaturation,
       null,
+      currentPreviewColorSpace,
     );
   }
 
@@ -744,6 +745,7 @@ function getCurrentPreviewAdjustedLinear(highlightP100) {
     currentPreviewVibrance,
     currentPreviewSaturation,
     claheMap,
+    currentPreviewColorSpace,
   );
 }
 
@@ -871,6 +873,7 @@ function getCurrentPreviewPostClaheBase(highlightP100) {
     currentPreviewLogarithm,
     currentPreviewSigmoid,
     currentPreviewClahe,
+    currentPreviewColorSpace,
     currentStackResult.exposureRolloffBaseP998,
     highlightP100,
   ]);
@@ -887,6 +890,7 @@ function getCurrentPreviewPostClaheBase(highlightP100) {
     0,
     0,
     claheMap,
+    currentPreviewColorSpace,
   );
   previewPostClaheCache = { key, data };
   return data;
@@ -1010,6 +1014,7 @@ function ensureFullSizeRenderCache() {
         currentStackResult.exposureRolloffBaseP998,
         getCurrentHighlightP100(),
         claheMap,
+        currentPreviewColorSpace,
       )
     : sourceLinear;
 

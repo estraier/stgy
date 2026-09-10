@@ -8,6 +8,7 @@ import {
 import { buildRenderedPixelToSourceTransform, getAnalysisLinearRgbSample } from "./sampling";
 import {
   isUsableImageEditClarityMap,
+  restorePositiveImageEditClaritySaturationInto,
   sampleImageEditClarityGain,
   type ImageEditClarityMap,
 } from "./clarity";
@@ -256,6 +257,9 @@ export function computeHistogramDataFromRgb16(
   );
   const activeClarityMap = isUsableImageEditClarityMap(clarityMap) ? clarityMap : null;
   const hasClarity = activeClarityMap !== null;
+  const restoreOldOutput = activeClarityMap && activeClarityMap.strength > 0 ? new Float32Array(3) : null;
+  const restoreNewOutput = activeClarityMap && activeClarityMap.strength > 0 ? new Float32Array(3) : null;
+  const restoreProPhoto = activeClarityMap && activeClarityMap.strength > 0 ? new Float32Array(3) : null;
   const r = new Array<number>(HISTOGRAM_BINS).fill(0);
   const g = new Array<number>(HISTOGRAM_BINS).fill(0);
   const b = new Array<number>(HISTOGRAM_BINS).fill(0);
@@ -288,6 +292,9 @@ export function computeHistogramDataFromRgb16(
     let bb = sample.data[i + 2] ?? 0;
     if (hasClarity) {
       [rr, gg, bb] = applyToneAdjustmentsLinearRgb(rr, gg, bb, adjustment);
+      const preClarityR = rr;
+      const preClarityG = gg;
+      const preClarityB = bb;
       const x = pixel % sample.width;
       const y = Math.floor(pixel / sample.width);
       const sourceX = clarityTransform
@@ -306,6 +313,23 @@ export function computeHistogramDataFromRgb16(
       rr = Math.max(0, rr * clarityGain);
       gg = Math.max(0, gg * clarityGain);
       bb = Math.max(0, bb * clarityGain);
+      if (activeClarityMap.strength > 0 && restoreOldOutput && restoreNewOutput && restoreProPhoto) {
+        restorePositiveImageEditClaritySaturationInto(
+          preClarityR,
+          preClarityG,
+          preClarityB,
+          rr,
+          gg,
+          bb,
+          "srgb",
+          restoreOldOutput,
+          restoreNewOutput,
+          restoreProPhoto,
+        );
+        rr = restoreProPhoto[0];
+        gg = restoreProPhoto[1];
+        bb = restoreProPhoto[2];
+      }
       [rr, gg, bb] = applyColorAdjustmentsAfterToneLinearRgb(rr, gg, bb, adjustment);
     } else {
       [rr, gg, bb] = applyColorAdjustmentsLinearRgb(rr, gg, bb, adjustment);

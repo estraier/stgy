@@ -88,6 +88,7 @@ import {
   buildImageEditToneSample,
   clampClarity,
   isUsableImageEditClarityMap,
+  restorePositiveImageEditClaritySaturationInto,
   sampleImageEditClarityGain,
   type ImageEditClarityMap,
 } from "./image-editor/clarity";
@@ -4013,6 +4014,9 @@ export async function buildEditedDecodedRgb16(
   }
   const clarityMap = resolveImageEditClarityMap(decoded, params, previewClarityMap);
   const hasClarity = clarityMap !== null;
+  const restoreOldOutput = clarityMap && clarityMap.strength > 0 ? new Float32Array(3) : null;
+  const restoreNewOutput = clarityMap && clarityMap.strength > 0 ? new Float32Array(3) : null;
+  const restoreProPhoto = clarityMap && clarityMap.strength > 0 ? new Float32Array(3) : null;
 
   const sourceRect = { x: sx, y: sy, w: cropW, h: cropH };
   const contextSample = getAnalysisLinearRgbSample(decoded, sourceRect, params.rotationDegrees);
@@ -4078,6 +4082,9 @@ export async function buildEditedDecodedRgb16(
       let b = decodeStoredRgb16Channel(decoded.data[index + 2] ?? 0, decoded.transfer, decoded.linearRangeMax);
       if (hasClarity) {
         [r, g, b] = applyToneAdjustmentsLinearRgb(r, g, b, adjustmentContext);
+        const preClarityR = r;
+        const preClarityG = g;
+        const preClarityB = b;
         const x = pixel % outputW;
         const y = Math.floor(pixel / outputW);
         const clarityGain = sampleImageEditClarityGain(
@@ -4090,6 +4097,23 @@ export async function buildEditedDecodedRgb16(
         r = Math.max(0, r * clarityGain);
         g = Math.max(0, g * clarityGain);
         b = Math.max(0, b * clarityGain);
+        if (clarityMap.strength > 0 && restoreOldOutput && restoreNewOutput && restoreProPhoto) {
+          restorePositiveImageEditClaritySaturationInto(
+            preClarityR,
+            preClarityG,
+            preClarityB,
+            r,
+            g,
+            b,
+            outputColorProfile,
+            restoreOldOutput,
+            restoreNewOutput,
+            restoreProPhoto,
+          );
+          r = restoreProPhoto[0];
+          g = restoreProPhoto[1];
+          b = restoreProPhoto[2];
+        }
         [r, g, b] = applyColorAdjustmentsAfterToneLinearRgb(r, g, b, adjustmentContext);
       } else {
         [r, g, b] = applyColorAdjustmentsLinearRgb(r, g, b, adjustmentContext);
@@ -4123,6 +4147,9 @@ export async function buildEditedDecodedRgb16(
               sample[2],
               adjustmentContext,
             );
+            const preClarityR = r;
+            const preClarityG = g;
+            const preClarityB = b;
             const clarityGain = sampleImageEditClarityGain(
               clarityMap,
               sourceX,
@@ -4133,6 +4160,23 @@ export async function buildEditedDecodedRgb16(
             r = Math.max(0, r * clarityGain);
             g = Math.max(0, g * clarityGain);
             b = Math.max(0, b * clarityGain);
+            if (clarityMap.strength > 0 && restoreOldOutput && restoreNewOutput && restoreProPhoto) {
+              restorePositiveImageEditClaritySaturationInto(
+                preClarityR,
+                preClarityG,
+                preClarityB,
+                r,
+                g,
+                b,
+                outputColorProfile,
+                restoreOldOutput,
+                restoreNewOutput,
+                restoreProPhoto,
+              );
+              r = restoreProPhoto[0];
+              g = restoreProPhoto[1];
+              b = restoreProPhoto[2];
+            }
             [r, g, b] = applyColorAdjustmentsAfterToneLinearRgb(r, g, b, adjustmentContext);
           } else {
             [r, g, b] = applyColorAdjustmentsLinearRgb(
