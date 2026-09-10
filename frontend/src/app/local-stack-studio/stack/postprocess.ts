@@ -476,15 +476,6 @@ function buildStackToneContext(
   };
 }
 
-function applyStackToneAdjustmentsLinearRgb(
-  r: number,
-  g: number,
-  b: number,
-  context: StackToneContext,
-): [number, number, number] {
-  return applyStackToneAdjustmentsLinearRgbRange(r, g, b, context, "source", "sigmoid");
-}
-
 function applyStackToneAdjustmentsLinearRgbRange(
   r: number,
   g: number,
