@@ -94,7 +94,6 @@ const SINGLE_SHOT_HDR1_EXPOSURE_TIMES = new Float32Array([1, 4, 16]);
 const SINGLE_SHOT_HDR2_EXPOSURE_EVS = new Float32Array([-2, 0, 2]);
 const SINGLE_SHOT_HDR_OUTER_SIGMOID_GAIN = 2;
 const MULTI_SHOT_HDR2_SIGMOID_GAIN = 4;
-const SINGLE_SHOT_HDR_CONTRAST_WEIGHT = 1.0;
 const SINGLE_SHOT_HDR_SATURATION_WEIGHT = 0.1;
 const SINGLE_SHOT_HDR_EXPOSURE_WEIGHT = 1.0;
 const RESULT_BUFFER_GAMMA = 2.0;
@@ -1242,12 +1241,13 @@ function buildMergePlan(files, inputInfos, mode) {
 
   if (mode === "hdr1" || mode === "hdr2") {
     if (imageCount === 1) {
+      const syntheticMaterials = buildSingleShotHdrSyntheticMaterials(mode);
       return {
         mode,
-        weights: new Float32Array([1, 1, 1]),
-        gains: new Float32Array([1, 1, 1]),
+        weights: new Float32Array(syntheticMaterials.length).fill(1),
+        gains: new Float32Array(syntheticMaterials.length).fill(1),
         hdrExposureTimes: mode === "hdr1" ? SINGLE_SHOT_HDR1_EXPOSURE_TIMES : null,
-        syntheticMaterials: buildSingleShotHdrSyntheticMaterials(mode),
+        syntheticMaterials,
       };
     }
     return {
@@ -2720,7 +2720,6 @@ function mergeHdrMertensInWorker(images, brightnesses, width, height, preBrightn
         height,
         imageBuffers,
         brightnessesBuffer: inputBrightnesses.buffer,
-        contrastWeight: SINGLE_SHOT_HDR_CONTRAST_WEIGHT,
         saturationWeight: SINGLE_SHOT_HDR_SATURATION_WEIGHT,
         exposureWeight: SINGLE_SHOT_HDR_EXPOSURE_WEIGHT,
         preBrightnessSigmoidGain,
@@ -2752,8 +2751,9 @@ async function processSingleInputHdrWithOpenCv(cv, file, inputInfo, mergePlan, o
     }
 
     const materials = mergePlan.syntheticMaterials;
-    if (!Array.isArray(materials) || materials.length !== 3) {
-      throw new Error("Single-input HDR requires three synthetic materials.");
+    const expectedMaterialCount = 3;
+    if (!Array.isArray(materials) || materials.length !== expectedMaterialCount) {
+      throw new Error(`Single-input ${mergePlan.mode.toUpperCase()} requires ${expectedMaterialCount} synthetic materials.`);
     }
 
     const contrastStretch = prepareSingleShotHdrContrastStretch(baseLinear, width, height);

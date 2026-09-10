@@ -1,8 +1,6 @@
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-nocheck
 // Local Stack Studio worker source. Built to public/generated/local-stack-studio.
-import { loadWorkerOpenCv } from "./opencv-runtime";
-
 const HDR_FLOAT_MIN_RESPONSE = 1e-12;
 const HDR_FLOAT_WEIGHT_EPSILON = 1e-12;
 const REINHARD_GAMMA = 1.0;
@@ -11,17 +9,6 @@ const REINHARD_LIGHT_ADAPT = 0.5;
 const REINHARD_COLOR_ADAPT = 0.5;
 const BRIGHTNESS_MAX_TRIES = 10;
 const BRIGHTNESS_MAX_DIST = 0.01;
-
-// Keep HDR2 contrast analysis aligned with the Focus sharpness detector.
-const MERTENS_SHARPNESS_BASE_AREA = 1000000;
-const MERTENS_SHARPNESS_BLUR_RADIUS = 2;
-const MERTENS_SHARPNESS_CLAHE_CLIP_LIMIT = 0.3;
-const MERTENS_SHARPNESS_CLAHE_GAMMA = 2.8;
-const MERTENS_SHARPNESS_HIGH_LOW_BALANCE = 0.5;
-const MERTENS_SHARPNESS_SUPPRESS_NOISE = 0.5;
-const MERTENS_SHARPNESS_SMOOTHNESS = 0.1;
-
-let cvPromise = null;
 
 self.onmessage = async (event) => {
   const message = event.data || {};
@@ -92,7 +79,6 @@ async function processMertensMessage(message) {
   const brightnesses = new Float32Array(message.brightnessesBuffer || new ArrayBuffer(0));
   validateMertensInputs(width, height, imageBuffers, brightnesses);
   const images = imageBuffers.map((buffer) => new Float32Array(buffer));
-  const contrastWeight = Number.isFinite(message.contrastWeight) ? Number(message.contrastWeight) : 1;
   const saturationWeight = Number.isFinite(message.saturationWeight) ? Number(message.saturationWeight) : 0.1;
   const exposureWeight = Number.isFinite(message.exposureWeight) ? Number(message.exposureWeight) : 1;
   const targetBrightness = meanArray(brightnesses);
@@ -100,15 +86,11 @@ async function processMertensMessage(message) {
     ? Number(message.preBrightnessSigmoidGain)
     : 0;
 
-  const cv = contrastWeight !== 0 ? await getOpenCv() : null;
-
   postProgress("Merging HDR2 with Mertens exposure fusion...");
   const merged = mergeMertensExposureFusion(
-    cv,
     images,
     width,
     height,
-    contrastWeight,
     saturationWeight,
     exposureWeight,
   );
@@ -485,28 +467,21 @@ function validateMertensInputs(width, height, imageBuffers, brightnesses) {
   }
 }
 
-function mergeMertensExposureFusion(cv, images, width, height, contrastWeight, saturationWeight, exposureWeight) {
+function mergeMertensExposureFusion(images, width, height, saturationWeight, exposureWeight) {
   const pixelCount = width * height;
   const weightSums = new Float32Array(pixelCount);
-  const contrastScores = contrastWeight !== 0
-    ? buildMertensContrastScoreMaps(cv, images, width, height)
-    : null;
 
   // First pass: compute the full-resolution denominator for normalized Mertens
-  // weights. Contrast comes from Focus-style sharpness maps normalized to [0,1]
-  // across the exposure stack, then sampled back at full resolution.
+  // weights using only saturation and well-exposedness.
   for (let imageIndex = 0; imageIndex < images.length; imageIndex += 1) {
     postProgress(`Computing HDR2 Mertens weights ${imageIndex + 1}/${images.length}...`);
     accumulateMertensWeightSums(
       images[imageIndex],
       width,
       height,
-      contrastWeight,
       saturationWeight,
       exposureWeight,
       weightSums,
-      contrastScores,
-      imageIndex,
     );
   }
 
@@ -526,15 +501,10 @@ function mergeMertensExposureFusion(cv, images, width, height, contrastWeight, s
       images[imageIndex],
       width,
       height,
-      contrastWeight,
       saturationWeight,
       exposureWeight,
       weightSums,
-      contrastScores,
-      imageIndex,
     );
-
-    if (contrastScores) contrastScores.maps[imageIndex] = null;
 
     // This image is no longer needed in full-resolution form after the second-pass base
     // arrays have been constructed, so release the reference before building
@@ -605,12 +575,9 @@ function accumulateMertensWeightSums(
   image,
   width,
   height,
-  contrastWeight,
   saturationWeight,
   exposureWeight,
   sums,
-  contrastScores,
-  imageIndex,
 ) {
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
@@ -621,11 +588,8 @@ function accumulateMertensWeightSums(
         height,
         x,
         y,
-        contrastWeight,
         saturationWeight,
         exposureWeight,
-        contrastScores,
-        imageIndex,
       );
     }
   }
@@ -635,12 +599,9 @@ function buildNormalizedMertensWeights(
   image,
   width,
   height,
-  contrastWeight,
   saturationWeight,
   exposureWeight,
   sums,
-  contrastScores,
-  imageIndex,
 ) {
   const weights = new Float32Array(width * height);
   for (let y = 0; y < height; y += 1) {
@@ -652,11 +613,8 @@ function buildNormalizedMertensWeights(
         height,
         x,
         y,
-        contrastWeight,
         saturationWeight,
         exposureWeight,
-        contrastScores,
-        imageIndex,
       );
       const denominator = sums[pixel];
       weights[pixel] = denominator > 1e-20 ? weight / denominator : 1;
@@ -665,20 +623,12 @@ function buildNormalizedMertensWeights(
   return weights;
 }
 
-function mertensPixelWeight(image, width, height, x, y, contrastWeight, saturationWeight, exposureWeight, contrastScores, imageIndex) {
+function mertensPixelWeight(image, width, height, x, y, saturationWeight, exposureWeight) {
   const offset = (y * width + x) * 3;
   const r = clamp01(image[offset]);
   const g = clamp01(image[offset + 1]);
   const b = clamp01(image[offset + 2]);
   let weight = 1;
-
-  if (contrastWeight !== 0) {
-    const contrast = Math.max(
-      sampleMertensContrastScore(contrastScores, imageIndex, x, y, width, height),
-      1e-12,
-    );
-    weight *= Math.pow(contrast, contrastWeight);
-  }
 
   if (saturationWeight !== 0) {
     const mean = (r + g + b) / 3;
@@ -702,310 +652,6 @@ function mertensPixelWeight(image, width, height, x, y, contrastWeight, saturati
 
   return weight + 1e-12;
 }
-
-function getOpenCv() {
-  if (!cvPromise) {
-    cvPromise = loadWorkerOpenCv("HDR2").then((cv) => {
-      assertMertensSharpnessApis(cv);
-      return cv;
-    });
-  }
-  return cvPromise;
-}
-
-function assertMertensSharpnessApis(cv) {
-  const missing = [];
-  if (!cv.createCLAHE && !cv.CLAHE) missing.push("CLAHE");
-  if (!cv.GaussianBlur) missing.push("GaussianBlur");
-  if (!cv.Laplacian) missing.push("Laplacian");
-  if (!cv.Sobel) missing.push("Sobel");
-  if (!cv.resize) missing.push("resize");
-  if (cv.CV_8UC1 === undefined) missing.push("CV_8UC1");
-  if (cv.CV_32FC1 === undefined) missing.push("CV_32FC1");
-  if (missing.length > 0) {
-    throw new Error(`This OpenCV.js build is missing HDR2 contrast APIs: ${missing.join(", ")}`);
-  }
-}
-
-function buildMertensContrastScoreMaps(cv, images, width, height) {
-  if (!cv) throw new Error("HDR2 contrast analysis requires OpenCV.js.");
-  postProgress("Computing HDR2 Focus-style contrast maps...");
-
-  const sharpnessMaps = new Array(images.length);
-  let analysisWidth = 0;
-  let analysisHeight = 0;
-  for (let imageIndex = 0; imageIndex < images.length; imageIndex += 1) {
-    postProgress(`Computing HDR2 contrast sharpness ${imageIndex + 1}/${images.length}...`);
-    const result = computeMertensSharpnessMap(cv, images[imageIndex], width, height);
-    if (imageIndex === 0) {
-      analysisWidth = result.width;
-      analysisHeight = result.height;
-    } else if (result.width !== analysisWidth || result.height !== analysisHeight) {
-      throw new Error("HDR2 contrast analysis dimensions do not match across inputs.");
-    }
-    sharpnessMaps[imageIndex] = result.sharpness;
-  }
-
-  const pixelCount = analysisWidth * analysisHeight;
-  const maxValues = new Float32Array(pixelCount);
-  maxValues.fill(-Infinity);
-  for (const sharpness of sharpnessMaps) {
-    for (let pixel = 0; pixel < pixelCount; pixel += 1) {
-      if (sharpness[pixel] > maxValues[pixel]) maxValues[pixel] = sharpness[pixel];
-    }
-  }
-
-  let sum = 0;
-  let sumSq = 0;
-  let count = 0;
-  for (const sharpness of sharpnessMaps) {
-    for (let pixel = 0; pixel < pixelCount; pixel += 1) {
-      const adjusted = sharpness[pixel] - maxValues[pixel];
-      sum += adjusted;
-      sumSq += adjusted * adjusted;
-      count += 1;
-    }
-  }
-  if (!(count > 0)) throw new Error("HDR2 contrast sharpness statistics are empty.");
-  const mean = sum / count;
-  const variance = Math.max(0, sumSq / count - mean * mean);
-  const tau = Math.max(Math.sqrt(variance) * MERTENS_SHARPNESS_SMOOTHNESS, 1e-4);
-  console.info(`HDR2 contrast tau=${tau.toFixed(6)}, smoothness=${MERTENS_SHARPNESS_SMOOTHNESS}`);
-
-  // Reuse the sharpness buffers for the [0,1] contrast scores. At every
-  // analysis pixel the sharpest exposure receives exactly 1.0.
-  for (const sharpness of sharpnessMaps) {
-    for (let pixel = 0; pixel < pixelCount; pixel += 1) {
-      const score = Math.exp((sharpness[pixel] - maxValues[pixel]) / tau);
-      sharpness[pixel] = Math.max(0, Math.min(1, score));
-    }
-  }
-
-  return { maps: sharpnessMaps, width: analysisWidth, height: analysisHeight, tau };
-}
-
-function computeMertensSharpnessMap(cv, gamma2Rgb, width, height) {
-  const expectedLength = width * height * 3;
-  if (!(gamma2Rgb instanceof Float32Array) || gamma2Rgb.length !== expectedLength) {
-    throw new Error("HDR2 contrast sharpness received an invalid gamma-2 RGB buffer.");
-  }
-
-  const gray = new cv.Mat(height, width, cv.CV_32FC1);
-  for (let pixel = 0, source = 0; pixel < width * height; pixel += 1, source += 3) {
-    const rEncoded = clamp01(gamma2Rgb[source]);
-    const gEncoded = clamp01(gamma2Rgb[source + 1]);
-    const bEncoded = clamp01(gamma2Rgb[source + 2]);
-    const r = rEncoded * rEncoded;
-    const g = gEncoded * gEncoded;
-    const b = bEncoded * bEncoded;
-    gray.data32F[pixel] = 0.299 * r + 0.587 * g + 0.114 * b;
-  }
-
-  let working = null;
-  let claheGray = null;
-  let blurred = null;
-  let laplacian = null;
-  let sobelX = null;
-  let sobelY = null;
-  try {
-    const area = width * height;
-    let workingWidth = width;
-    let workingHeight = height;
-    const isScaled = area > MERTENS_SHARPNESS_BASE_AREA * 2;
-    if (isScaled) {
-      const scale = Math.sqrt(MERTENS_SHARPNESS_BASE_AREA / area);
-      workingWidth = Math.ceil(width * scale);
-      workingHeight = Math.ceil(height * scale);
-      working = new cv.Mat();
-      cv.resize(gray, working, new cv.Size(workingWidth, workingHeight), 0, 0, cv.INTER_AREA);
-    } else {
-      working = gray.clone();
-    }
-
-    // Unlike the historical full-resolution Mertens Laplacian, perform local
-    // contrast conditioning at the fixed sharpness-analysis scale.
-    claheGray = applyMertensSharpnessClahe(
-      cv,
-      working,
-      MERTENS_SHARPNESS_CLAHE_CLIP_LIMIT,
-      MERTENS_SHARPNESS_CLAHE_GAMMA,
-    );
-
-    if (MERTENS_SHARPNESS_BLUR_RADIUS > 1) {
-      const ksize = Math.ceil(2 * MERTENS_SHARPNESS_BLUR_RADIUS) + 1;
-      blurred = new cv.Mat();
-      cv.GaussianBlur(claheGray, blurred, new cv.Size(ksize, ksize), 0, 0, cv.BORDER_DEFAULT);
-    } else {
-      blurred = claheGray.clone();
-    }
-
-    laplacian = new cv.Mat();
-    cv.Laplacian(blurred, laplacian, cv.CV_32F ?? cv.CV_32FC1, 3);
-    const absLap = new Float32Array(laplacian.data32F.length);
-    let lapMean = 0;
-    for (let i = 0; i < absLap.length; i += 1) {
-      const value = Math.abs(laplacian.data32F[i]);
-      absLap[i] = value;
-      lapMean += value;
-    }
-    lapMean = absLap.length > 0 ? lapMean / absLap.length : 0;
-    if (MERTENS_SHARPNESS_SUPPRESS_NOISE > 0) {
-      const noiseFloor = Math.min(
-        estimateMertensWhiteNoiseLevelFromLaplacian(absLap, workingWidth, workingHeight),
-        lapMean * 0.5,
-      );
-      const subtract = MERTENS_SHARPNESS_SUPPRESS_NOISE * noiseFloor;
-      for (let i = 0; i < absLap.length; i += 1) {
-        absLap[i] = Math.max(0, absLap[i] - subtract);
-      }
-    }
-    zScoreMertensInPlace(absLap);
-
-    sobelX = new cv.Mat();
-    sobelY = new cv.Mat();
-    cv.Sobel(blurred, sobelX, cv.CV_32F ?? cv.CV_32FC1, 1, 0, 3);
-    cv.Sobel(blurred, sobelY, cv.CV_32F ?? cv.CV_32FC1, 0, 1, 3);
-    const sobel = new Float32Array(sobelX.data32F.length);
-    for (let i = 0; i < sobel.length; i += 1) {
-      sobel[i] = Math.hypot(sobelX.data32F[i], sobelY.data32F[i]);
-    }
-    zScoreMertensInPlace(sobel);
-
-    const sharpness = new Float32Array(absLap.length);
-    for (let i = 0; i < sharpness.length; i += 1) {
-      sharpness[i] = MERTENS_SHARPNESS_HIGH_LOW_BALANCE * absLap[i] +
-        (1 - MERTENS_SHARPNESS_HIGH_LOW_BALANCE) * sobel[i];
-    }
-    zScoreMertensInPlace(sharpness);
-    for (let i = 0; i < sharpness.length; i += 1) {
-      sharpness[i] = Math.max(-10, Math.min(10, sharpness[i]));
-    }
-    return { sharpness, width: workingWidth, height: workingHeight };
-  } finally {
-    if (sobelY) sobelY.delete();
-    if (sobelX) sobelX.delete();
-    if (laplacian) laplacian.delete();
-    if (blurred) blurred.delete();
-    if (claheGray) claheGray.delete();
-    if (working) working.delete();
-    if (gray) gray.delete();
-  }
-}
-
-function applyMertensSharpnessClahe(cv, gray, clipLimit, gamma) {
-  const pixelCount = gray.rows * gray.cols;
-  const bytes = new Uint8Array(pixelCount);
-  const floatRatio = new Float32Array(pixelCount);
-  const image255 = new Float32Array(pixelCount);
-  for (let i = 0; i < pixelCount; i += 1) {
-    const value255 = Math.pow(clamp01(gray.data32F[i]), 1 / gamma) * 255;
-    image255[i] = value255;
-    const byteValue = Math.max(0, Math.min(255, Math.trunc(value255)));
-    bytes[i] = byteValue;
-    floatRatio[i] = byteValue > 0 ? byteValue / Math.max(value255, 1e-6) : 1;
-  }
-
-  const src = new cv.Mat(gray.rows, gray.cols, cv.CV_8UC1);
-  const dst = new cv.Mat();
-  src.data.set(bytes);
-  const tileGridSize = new cv.Size(8, 8);
-  const clahe = cv.createCLAHE
-    ? cv.createCLAHE(clipLimit, tileGridSize)
-    : new cv.CLAHE(clipLimit, tileGridSize);
-  try {
-    clahe.apply(src, dst);
-    const restored = new cv.Mat(gray.rows, gray.cols, cv.CV_32FC1);
-    for (let i = 0; i < pixelCount; i += 1) {
-      const converted = dst.data[i];
-      let restored255 = converted / Math.max(floatRatio[i], 0.5);
-      if (converted === 0) restored255 = Math.min(image255[i] * 0.9, 0.9);
-      restored.data32F[i] = clamp01(Math.pow(Math.max(0, restored255) / 255, gamma));
-    }
-    return restored;
-  } finally {
-    if (clahe && typeof clahe.delete === "function") clahe.delete();
-    src.delete();
-    dst.delete();
-  }
-}
-
-function estimateMertensWhiteNoiseLevelFromLaplacian(absLap, width, height, numTiles = 400, percentile = 10) {
-  const area = width * height;
-  const tileUnit = Math.max(Math.round(Math.sqrt(area) / Math.sqrt(numTiles)), 1);
-  const tileSizeMax = Math.trunc(tileUnit * 1.5);
-  const means = [];
-  let x = 0;
-  while (x < width) {
-    let tileWidth = tileUnit;
-    if (x + tileSizeMax >= width) tileWidth = width - x;
-    let y = 0;
-    while (y < height) {
-      let tileHeight = tileUnit;
-      if (y + tileSizeMax >= height) tileHeight = height - y;
-      let sum = 0;
-      let count = 0;
-      for (let localY = 0; localY < tileHeight; localY += 1) {
-        const rowStart = (y + localY) * width + x;
-        for (let localX = 0; localX < tileWidth; localX += 1) {
-          sum += absLap[rowStart + localX];
-          count += 1;
-        }
-      }
-      if (count > 0) means.push(sum / count);
-      y += tileHeight;
-    }
-    x += tileWidth;
-  }
-  if (means.length === 0) return 0;
-  means.sort((a, b) => a - b);
-  const k = Math.max(1, Math.trunc(means.length * percentile / 100));
-  let sum = 0;
-  for (let i = 0; i < k; i += 1) sum += means[i];
-  return sum / k;
-}
-
-function zScoreMertensInPlace(values) {
-  if (values.length === 0) return;
-  let sum = 0;
-  for (let i = 0; i < values.length; i += 1) sum += values[i];
-  const mean = sum / values.length;
-  let varianceSum = 0;
-  for (let i = 0; i < values.length; i += 1) {
-    const delta = values[i] - mean;
-    varianceSum += delta * delta;
-  }
-  const std = Math.sqrt(varianceSum / values.length);
-  const divisor = std + 1e-6;
-  for (let i = 0; i < values.length; i += 1) values[i] = (values[i] - mean) / divisor;
-}
-
-function sampleMertensContrastScore(contrastScores, imageIndex, x, y, fullWidth, fullHeight) {
-  if (!contrastScores || !Array.isArray(contrastScores.maps)) return 1;
-  const map = contrastScores.maps[imageIndex];
-  if (!(map instanceof Float32Array)) return 1;
-  const mapWidth = contrastScores.width;
-  const mapHeight = contrastScores.height;
-  if (mapWidth === fullWidth && mapHeight === fullHeight) {
-    return clamp01(map[y * mapWidth + x]);
-  }
-
-  const fx = Math.max(0, Math.min(mapWidth - 1, ((x + 0.5) * mapWidth / fullWidth) - 0.5));
-  const fy = Math.max(0, Math.min(mapHeight - 1, ((y + 0.5) * mapHeight / fullHeight) - 0.5));
-  const x0 = Math.floor(fx);
-  const y0 = Math.floor(fy);
-  const x1 = Math.min(mapWidth - 1, x0 + 1);
-  const y1 = Math.min(mapHeight - 1, y0 + 1);
-  const tx = fx - x0;
-  const ty = fy - y0;
-  const a = map[y0 * mapWidth + x0];
-  const b = map[y0 * mapWidth + x1];
-  const c = map[y1 * mapWidth + x0];
-  const d = map[y1 * mapWidth + x1];
-  const top = a + (b - a) * tx;
-  const bottom = c + (d - c) * tx;
-  return clamp01(top + (bottom - top) * ty);
-}
-
 
 function downsampleScalar2x2(source, width, height, targetWidth, targetHeight) {
   const target = new Float32Array(targetWidth * targetHeight);
