@@ -16,6 +16,7 @@ import {
   type RawDemosaicQuality,
   type RawHighlightMode,
 } from "@/components/ImageUploadDialog";
+import type { ImageEditClarityMap } from "@/components/image-editor/clarity";
 import { Config } from "@/config";
 import { isRawImageFile } from "@/image/libraw";
 import { formatBytes } from "@/utils/format";
@@ -462,6 +463,7 @@ export default function LocalImageStudio() {
     outputColorProfileSelectionValue: OutputColorProfileSelection,
     decodedImage?: DecodedImage,
     rebuildEditedVariant = false,
+    previewClarityMap?: ImageEditClarityMap | null,
   ) => {
     setProcessing(true);
     setError(null);
@@ -478,6 +480,8 @@ export default function LocalImageStudio() {
           params,
           decodedImage,
           cacheColorProfile,
+          undefined,
+          previewClarityMap,
         );
         releasePreparedVariant(editedVariantRef.current);
         editedVariantRef.current = nextPrepared;
@@ -515,7 +519,11 @@ export default function LocalImageStudio() {
     setError(message || "Failed to load image preview.");
   }, []);
 
-  const onApply = useCallback(async (params: ImageEditParams, decodedImage?: DecodedImage) => {
+  const onApply = useCallback(async (
+    params: ImageEditParams,
+    decodedImage?: DecodedImage,
+    previewClarityMap?: ImageEditClarityMap | null,
+  ) => {
     if (!source) {
       if (decodedImage && rawDevelopmentRef.current !== decodedImage) decodedImage.cleanup();
       return;
@@ -524,7 +532,15 @@ export default function LocalImageStudio() {
     const nextSource = { ...source, edit: params };
     setSource(nextSource);
     try {
-      await generateResult(nextSource, params, outputFormat, outputColorProfileSelection, decodedImage, true);
+      await generateResult(
+        nextSource,
+        params,
+        outputFormat,
+        outputColorProfileSelection,
+        decodedImage,
+        true,
+        previewClarityMap,
+      );
     } finally {
       if (decodedImage && rawDevelopmentRef.current !== decodedImage) decodedImage.cleanup();
     }
@@ -806,7 +822,9 @@ export default function LocalImageStudio() {
           }}
           onCancel={() => setEditing(false)}
           onError={onEditError}
-          onApply={(params, decodedImage) => void onApply(params, decodedImage)}
+          onApply={(params, decodedImage, previewClarityMap) =>
+            void onApply(params, decodedImage, previewClarityMap)
+          }
         />
       )}
     </main>

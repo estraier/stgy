@@ -449,13 +449,13 @@ export type ColorAdjustmentContext = {
   saturationRolloff: { inflection: number; scale: number } | null;
 };
 
-export function applyColorAdjustmentsLinearRgb(
+export function applyToneAdjustmentsLinearRgb(
   r: number,
   g: number,
   b: number,
   context: ColorAdjustmentContext,
 ): [number, number, number] {
-  [r, g, b] = applyToneLinearToRgb(
+  return applyToneLinearToRgb(
     r,
     g,
     b,
@@ -470,6 +470,14 @@ export function applyColorAdjustmentsLinearRgb(
     context.sigmoid,
     context,
   );
+}
+
+export function applyColorAdjustmentsAfterToneLinearRgb(
+  r: number,
+  g: number,
+  b: number,
+  context: ColorAdjustmentContext,
+): [number, number, number] {
   if (context.hasSaturationOrVibrance) {
     const [h, initialS, v] = rgbToHsv(r, g, b);
     let s = initialS;
@@ -483,6 +491,16 @@ export function applyColorAdjustmentsLinearRgb(
     [r, g, b] = hsvToRgb(h, s, v);
   }
   return [r, g, b];
+}
+
+export function applyColorAdjustmentsLinearRgb(
+  r: number,
+  g: number,
+  b: number,
+  context: ColorAdjustmentContext,
+): [number, number, number] {
+  [r, g, b] = applyToneAdjustmentsLinearRgb(r, g, b, context);
+  return applyColorAdjustmentsAfterToneLinearRgb(r, g, b, context);
 }
 
 export const HISTOGRAM_DISPLAY_GAMMA = 2.4;

@@ -5,10 +5,16 @@ import {
   PROPHOTO_TO_SRGB_M10, PROPHOTO_TO_SRGB_M11, PROPHOTO_TO_SRGB_M12,
   PROPHOTO_TO_SRGB_M20, PROPHOTO_TO_SRGB_M21, PROPHOTO_TO_SRGB_M22,
 } from "@/image/color";
-import { getAnalysisLinearRgbSample } from "./sampling";
+import { buildRenderedPixelToSourceTransform, getAnalysisLinearRgbSample } from "./sampling";
+import {
+  isUsableImageEditClarityMap,
+  sampleImageEditClarityGain,
+  type ImageEditClarityMap,
+} from "./clarity";
 import {
   HISTOGRAM_DISPLAY_GAMMA,
-  applyColorAdjustmentsLinearRgb, applyShadowLinear, applyToneLinearToRgb,
+  applyColorAdjustmentsAfterToneLinearRgb, applyColorAdjustmentsLinearRgb,
+  applyShadowLinear, applyToneAdjustmentsLinearRgb, applyToneLinearToRgb,
   applyWhiteBalanceLinear, clamp01, clampColorAdjustment, clampExposureEv,
   clampScaledLog, clampSigmoid, clampToneRangeAdjustment, clampWhiteBalanceValue,
   colorSaturationFactor, colorVibranceFactor, rgbToHsv, rolloffParams,
@@ -230,6 +236,7 @@ export function computeHistogramDataFromRgb16(
   sigmoid: number,
   vibrance: number,
   saturation: number,
+  clarityMap: ImageEditClarityMap | null = null,
 ): HistogramData | null {
   if (decoded.width <= 0 || decoded.height <= 0) return null;
   const sample = getAnalysisLinearRgbSample(decoded, sourceRect, rotationDegrees);
@@ -247,11 +254,24 @@ export function computeHistogramDataFromRgb16(
     saturation,
     true,
   );
+  const activeClarityMap = isUsableImageEditClarityMap(clarityMap) ? clarityMap : null;
+  const hasClarity = activeClarityMap !== null;
   const r = new Array<number>(HISTOGRAM_BINS).fill(0);
   const g = new Array<number>(HISTOGRAM_BINS).fill(0);
   const b = new Array<number>(HISTOGRAM_BINS).fill(0);
   const luma = new Array<number>(HISTOGRAM_BINS).fill(0);
   const areaWeight = sourceRect.w * sourceRect.h / Math.max(1, sample.width * sample.height);
+  const clarityTransform = hasClarity
+    ? buildRenderedPixelToSourceTransform(
+        decoded.width,
+        decoded.height,
+        sourceRect.x,
+        sourceRect.y,
+        sample.width / Math.max(1, sourceRect.w),
+        sample.height / Math.max(1, sourceRect.h),
+        rotationDegrees,
+      )
+    : null;
   const pixelCount = Math.floor(sample.data.length / 3);
   for (let pixel = 0; pixel < pixelCount; pixel++) {
     const i = pixel * 3;
@@ -266,7 +286,30 @@ export function computeHistogramDataFromRgb16(
     let rr = sample.data[i] ?? 0;
     let gg = sample.data[i + 1] ?? 0;
     let bb = sample.data[i + 2] ?? 0;
-    [rr, gg, bb] = applyColorAdjustmentsLinearRgb(rr, gg, bb, adjustment);
+    if (hasClarity) {
+      [rr, gg, bb] = applyToneAdjustmentsLinearRgb(rr, gg, bb, adjustment);
+      const x = pixel % sample.width;
+      const y = Math.floor(pixel / sample.width);
+      const sourceX = clarityTransform
+        ? clarityTransform.originX + x * clarityTransform.columnStepX + y * clarityTransform.rowStepX
+        : sourceRect.x + (x + 0.5) * sourceRect.w / sample.width;
+      const sourceY = clarityTransform
+        ? clarityTransform.originY + x * clarityTransform.columnStepY + y * clarityTransform.rowStepY
+        : sourceRect.y + (y + 0.5) * sourceRect.h / sample.height;
+      const clarityGain = sampleImageEditClarityGain(
+        activeClarityMap,
+        sourceX,
+        sourceY,
+        decoded.width,
+        decoded.height,
+      );
+      rr = Math.max(0, rr * clarityGain);
+      gg = Math.max(0, gg * clarityGain);
+      bb = Math.max(0, bb * clarityGain);
+      [rr, gg, bb] = applyColorAdjustmentsAfterToneLinearRgb(rr, gg, bb, adjustment);
+    } else {
+      [rr, gg, bb] = applyColorAdjustmentsLinearRgb(rr, gg, bb, adjustment);
+    }
     const sr = clamp01(PROPHOTO_TO_SRGB_M00 * rr + PROPHOTO_TO_SRGB_M01 * gg + PROPHOTO_TO_SRGB_M02 * bb);
     const sg = clamp01(PROPHOTO_TO_SRGB_M10 * rr + PROPHOTO_TO_SRGB_M11 * gg + PROPHOTO_TO_SRGB_M12 * bb);
     const sb = clamp01(PROPHOTO_TO_SRGB_M20 * rr + PROPHOTO_TO_SRGB_M21 * gg + PROPHOTO_TO_SRGB_M22 * bb);

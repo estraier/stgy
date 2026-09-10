@@ -21,6 +21,7 @@ import { applySharpenToCanvas, applySharpenToRgb16 } from "@/components/image-ed
 import { getCanvas2dContext, getCanvasImageData } from "@/components/image-editor/canvas";
 import {
   adjustStackLinearData,
+  buildStackClaheMap,
   clampStackClahe,
   clampStackScaledLog,
   computeStackHighlightP100,
@@ -87,6 +88,7 @@ const OUTPUT_SIZE_PRESETS = [
 
 
 const TONE_ANALYSIS_TARGET_PIXELS = 256 * 256;
+const CLAHE_ANALYSIS_TARGET_PIXELS = 1_000_000;
 const SINGLE_SHOT_HDR1_EXPOSURE_EVS = new Float32Array([-2, 0, 2]);
 const SINGLE_SHOT_HDR1_EXPOSURE_TIMES = new Float32Array([1, 4, 16]);
 const SINGLE_SHOT_HDR2_EXPOSURE_EVS = new Float32Array([-2, 0, 2]);
@@ -157,6 +159,7 @@ let previewRenderScheduled = false;
 let currentZoomViewUrl = null;
 let currentStackResultRevision = 0;
 let fullSizeRenderCache = null;
+let previewClaheMapCache = null;
 let zoomRenderRequestId = 0;
 let zoomPanState = null;
 
@@ -323,7 +326,7 @@ ${buildInfo}` : "OpenCV.js is ready.");
       );
     }
     const mergePlan = buildMergePlan(files, inputInfos, effectiveMergeMode);
-    const alignmentPlan = buildAlignmentPlan(files, inputInfos, alignmentMode.value);
+    const alignmentPlan = buildAlignmentPlan(files, inputInfos, alignmentMode.value, effectiveMergeMode);
     currentPreviewColorSpace = chooseOutputColorSpace(inputInfos);
     console.info(`Output color space: ${formatColorSpaceName(currentPreviewColorSpace)}`);
     console.info(
@@ -345,6 +348,7 @@ ${buildInfo}` : "OpenCV.js is ready.");
     );
     currentStackResultRevision += 1;
     clearFullSizeRenderCache();
+    previewClaheMapCache = null;
     currentInputFiles = files.slice();
     currentPreviewExposureEv = 0;
     currentPreviewShadow = 0;
@@ -429,6 +433,7 @@ listen(editButton, "click", async () => {
           );
           currentStackResultRevision += 1;
           clearFullSizeRenderCache();
+          previewClaheMapCache = null;
           resetAllToneControls();
           updateOutputSizeOptions();
           closeZoomModal();
@@ -694,6 +699,7 @@ function schedulePreviewRender() {
 
 function renderPreviewForCurrentTone() {
   if (!currentStackResult) return;
+  const claheMap = getCurrentClaheMap();
   const adjustedLinear = adjustStackLinearData(
     currentStackResult.previewLinearProPhotoRgb,
     currentStackResult.previewWidth,
@@ -708,6 +714,7 @@ function renderPreviewForCurrentTone() {
     currentPreviewSaturation,
     currentStackResult.exposureRolloffBaseP998,
     getCurrentHighlightP100(),
+    claheMap,
   );
   renderLinearDataToCanvas(
     previewImage,
@@ -735,6 +742,46 @@ function getCurrentHighlightP100() {
     Math.pow(2, currentPreviewExposureEv),
     currentPreviewShadow,
   );
+}
+
+function getCurrentClaheMap() {
+  if (!currentStackResult) return null;
+  const normalizedClahe = clampStackClahe(currentPreviewClahe);
+  if (normalizedClahe === 0) {
+    previewClaheMapCache = null;
+    return null;
+  }
+  const key = JSON.stringify([
+    currentStackResultRevision,
+    currentStackResult.claheAnalysisWidth,
+    currentStackResult.claheAnalysisHeight,
+    currentPreviewExposureEv,
+    currentPreviewShadow,
+    currentPreviewHighlight,
+    currentPreviewLogarithm,
+    currentPreviewSigmoid,
+    normalizedClahe,
+    currentStackResult.exposureRolloffBaseP998,
+    getCurrentHighlightP100(),
+  ]);
+  if (previewClaheMapCache && previewClaheMapCache.key === key) {
+    return previewClaheMapCache.map;
+  }
+  const map = buildStackClaheMap(
+    currentStackResult.claheAnalysisLinearProPhotoRgb,
+    currentStackResult.claheAnalysisWidth,
+    currentStackResult.claheAnalysisHeight,
+    currentPreviewExposureEv,
+    currentPreviewShadow,
+    currentPreviewHighlight,
+    currentPreviewLogarithm,
+    currentPreviewSigmoid,
+    normalizedClahe,
+    currentStackResult.exposureRolloffBaseP998,
+    getCurrentHighlightP100(),
+  );
+  previewClaheMapCache = map ? { key, map } : null;
+  return map;
 }
 
 function setEditButtonBusy(busy) {
@@ -788,6 +835,7 @@ function ensureFullSizeRenderCache() {
   }
 
   const sourceLinear = decodeStoredGamma2ToLinear(currentStackResult.gamma2ProPhotoRgb16);
+  const claheMap = getCurrentClaheMap();
   const adjustedLinear = hasCurrentToneAdjustments()
     ? adjustStackLinearData(
         sourceLinear,
@@ -803,6 +851,7 @@ function ensureFullSizeRenderCache() {
         currentPreviewSaturation,
         currentStackResult.exposureRolloffBaseP998,
         getCurrentHighlightP100(),
+        claheMap,
       )
     : sourceLinear;
 
@@ -1111,7 +1160,7 @@ function formatAlignmentModeName(mode) {
   return "Auto";
 }
 
-function buildAlignmentPlan(files, inputInfos, selectedMode) {
+function buildAlignmentPlan(files, inputInfos, selectedMode, mergeMode) {
   const validModes = ["auto", "center-crop", "fit", "feature-match"];
   if (!validModes.includes(selectedMode)) {
     throw new Error(`Unsupported alignment mode: ${selectedMode}`);
@@ -1144,7 +1193,7 @@ function buildAlignmentPlan(files, inputInfos, selectedMode) {
   const centerCropWidth = Math.min(...dimensions.map((entry) => entry.width));
   const centerCropHeight = Math.min(...dimensions.map((entry) => entry.height));
   const effectiveMode = selectedMode === "auto"
-    ? (allSameSize ? "feature-match" : "center-crop")
+    ? (mergeMode === "average" ? "center-crop" : "feature-match")
     : selectedMode;
 
   if (effectiveMode === "feature-match") {
@@ -2901,9 +2950,8 @@ function finalizeStoredGamma2Result(gamma2ProPhotoRgb16, width, height, outputCo
   const linear = decodeStoredGamma2ToLinear(gamma2ProPhotoRgb16);
   setProgress(`Preparing ${formatColorSpaceName(outputColorSpace)} preview buffer...`);
   const preview = buildPreviewLinearProPhoto(linear, width, height, PREVIEW_MAX_DIMENSION);
-  const analysisScale = Math.min(1, Math.sqrt(TONE_ANALYSIS_TARGET_PIXELS / (width * height)));
-  const analysisMaxDimension = Math.max(1, Math.round(Math.max(width, height) * analysisScale));
-  const analysis = buildPreviewLinearProPhoto(linear, width, height, analysisMaxDimension);
+  const analysis = buildPreviewLinearProPhotoForTargetPixels(linear, width, height, TONE_ANALYSIS_TARGET_PIXELS);
+  const claheAnalysis = buildPreviewLinearProPhotoForTargetPixels(linear, width, height, CLAHE_ANALYSIS_TARGET_PIXELS);
   const exposureRolloffBaseP998 = estimateMaxChannelPercentileSampled(linear, width, height, 0.998, 256);
   return {
     width,
@@ -2913,6 +2961,9 @@ function finalizeStoredGamma2Result(gamma2ProPhotoRgb16, width, height, outputCo
     previewWidth: preview.width,
     previewHeight: preview.height,
     analysisLinearProPhotoRgb: analysis.data,
+    claheAnalysisLinearProPhotoRgb: claheAnalysis.data,
+    claheAnalysisWidth: claheAnalysis.width,
+    claheAnalysisHeight: claheAnalysis.height,
     previewRgba8: new Uint8ClampedArray(preview.width * preview.height * 4),
     exposureRolloffBaseP998,
   };
@@ -3019,6 +3070,12 @@ function addWeightedLinearToAccumulator(accumulator, linear, weight) {
   for (let i = 0; i < accumulator.length; i += 1) {
     accumulator[i] += linear[i] * weight;
   }
+}
+
+function buildPreviewLinearProPhotoForTargetPixels(source, width, height, targetPixels) {
+  const scale = Math.min(1, Math.sqrt(targetPixels / Math.max(1, width * height)));
+  const maxDimension = Math.max(1, Math.round(Math.max(width, height) * scale));
+  return buildPreviewLinearProPhoto(source, width, height, maxDimension);
 }
 
 function buildPreviewLinearProPhoto(source, width, height, maxDimension) {
@@ -4153,6 +4210,7 @@ function clearResult() {
   currentStackResult = null;
   currentStackResultRevision += 1;
   clearFullSizeRenderCache();
+  previewClaheMapCache = null;
   currentPreviewColorSpace = "srgb";
   currentInputFiles = [];
   currentPreviewExposureEv = 0;

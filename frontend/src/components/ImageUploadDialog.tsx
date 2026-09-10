@@ -48,7 +48,9 @@ import type {
 export type { DecodedImage, ImageEditOutputColorProfile } from "./image-editor/types";
 import {
   HISTOGRAM_DISPLAY_GAMMA,
+  applyColorAdjustmentsAfterToneLinearRgb,
   applyColorAdjustmentsLinearRgb,
+  applyToneAdjustmentsLinearRgb,
   applyRolloffScalar,
   applyScaledLogLinear,
   applyWhiteBalanceLinear,
@@ -80,10 +82,18 @@ import {
 import { getCanvas2dContext, getCanvasImageData } from "./image-editor/canvas";
 import { applySharpenToCanvas, applySharpenToRgb16 } from "./image-editor/sharpen";
 import {
+  buildImageEditClarityMap,
+  clampClarity,
+  isUsableImageEditClarityMap,
+  sampleImageEditClarityGain,
+  type ImageEditClarityMap,
+} from "./image-editor/clarity";
+import {
   buildRenderedPixelToSourceTransform,
   createRgb16SamplingScratch,
   decodeStoredRgb16Channel,
   encodeStoredRgb16Channel,
+  analysisSampleDimensions,
   getAnalysisLinearRgbSample,
   getRenderedLinearRgbSample,
   inverseRotatePoint,
@@ -208,6 +218,7 @@ export type ImageEditParams = {
   highlight: number;
   scaledLog: number;
   sigmoid: number;
+  clarity: number;
   vibrance: number;
   saturation: number;
   resizePercent: number;
@@ -373,7 +384,7 @@ const RAW_THUMBNAIL_MATCH_VIBRANCE_PERCENTILE = 50;
 const RAW_THUMBNAIL_MATCH_COLOR_VALUE_TRIM_FRACTION = 0.1;
 const DEBUG_PERCENTILES = [0, 1, 2, 5, 25, 50, 75, 95, 98, 99, 100] as const;
 const RAW_THUMBNAIL_MATCH_SAMPLE_MAX_SIDE = 256;
-const RAW_PREVIEW_DEVELOPMENT_MAX_SIDE = 1024;
+const IMAGE_EDIT_INTERNAL_PREVIEW_TARGET_PIXELS = 1_000_000;
 const RAW_PREVIEW_DEMOSAIC_QUALITY: RawDemosaicQuality = 0;
 
 type DebugPercentileValues = number[];
@@ -648,6 +659,7 @@ export function buildDefaultEditParams(w?: number, h?: number): ImageEditParams 
     highlight: 0,
     scaledLog: 0,
     sigmoid: 0,
+    clarity: 0,
     vibrance: 0,
     saturation: 0,
     resizePercent: defaultResizePercent(w, h),
@@ -683,6 +695,7 @@ function normalizeEditParams(params: ImageEditParams | undefined, w?: number, h?
     highlight: clampToneRangeAdjustment(params?.highlight ?? defaults.highlight),
     scaledLog: clampScaledLog(params?.scaledLog ?? defaults.scaledLog),
     sigmoid: clampSigmoid(params?.sigmoid ?? defaults.sigmoid),
+    clarity: clampClarity(params?.clarity ?? defaults.clarity),
     vibrance: clampColorAdjustment(params?.vibrance ?? defaults.vibrance),
     saturation: clampColorAdjustment(params?.saturation ?? defaults.saturation),
     resizePercent: Math.min(100, Math.max(1, Math.round(params?.resizePercent ?? defaults.resizePercent))),
@@ -715,6 +728,7 @@ function isMeaningfullyEdited(
     normalized.highlight !== 0 ||
     Math.abs(normalized.scaledLog) > 0.0001 ||
     Math.abs(normalized.sigmoid) > 0.0001 ||
+    normalized.clarity !== 0 ||
     normalized.vibrance !== 0 ||
     normalized.saturation !== 0 ||
     normalized.resizePercent !== defaults.resizePercent ||
@@ -2972,16 +2986,7 @@ function rawLensfunMapTransferables(correction: LensfunCorrection | undefined): 
 }
 
 function rawPreviewDimensions(width: number, height: number): { width: number; height: number } {
-  const sourceWidth = Math.max(1, Math.round(width));
-  const sourceHeight = Math.max(1, Math.round(height));
-  const scale = Math.min(
-    1,
-    RAW_PREVIEW_DEVELOPMENT_MAX_SIDE / Math.max(sourceWidth, sourceHeight),
-  );
-  return {
-    width: Math.max(1, Math.round(sourceWidth * scale)),
-    height: Math.max(1, Math.round(sourceHeight * scale)),
-  };
+  return analysisSampleDimensions(width, height, IMAGE_EDIT_INTERNAL_PREVIEW_TARGET_PIXELS);
 }
 
 async function resampleRawDecodedInWorker(
@@ -3797,10 +3802,51 @@ function releaseCanvasIfNeeded(canvas: HTMLCanvasElement | OffscreenCanvas): voi
   canvas.height = 0;
 }
 
+function buildFallbackImageEditClarityMap(
+  decoded: DecodedRgbImage16,
+  params: ImageEditParams,
+): ImageEditClarityMap | null {
+  const normalizedClarity = clampClarity(params.clarity);
+  if (normalizedClarity === 0) return null;
+  const sourceRect = { x: 0, y: 0, w: decoded.width, h: decoded.height };
+  const internalPreview = getAnalysisLinearRgbSample(
+    decoded,
+    sourceRect,
+    0,
+    IMAGE_EDIT_INTERNAL_PREVIEW_TARGET_PIXELS,
+  );
+  const contextSample = getAnalysisLinearRgbSample(decoded, sourceRect, 0);
+  const context = buildColorAdjustmentContextFromLinearRgbSample(
+    contextSample,
+    params.temperature,
+    params.tint,
+    params.exposureEv,
+    params.shadow,
+    params.highlight,
+    params.scaledLog,
+    params.sigmoid,
+    0,
+    0,
+    true,
+  );
+  return buildImageEditClarityMap(internalPreview, context, normalizedClarity);
+}
+
+function resolveImageEditClarityMap(
+  decoded: DecodedRgbImage16,
+  params: ImageEditParams,
+  previewClarityMap?: ImageEditClarityMap | null,
+): ImageEditClarityMap | null {
+  if (clampClarity(params.clarity) === 0) return null;
+  if (isUsableImageEditClarityMap(previewClarityMap)) return previewClarityMap;
+  return buildFallbackImageEditClarityMap(decoded, params);
+}
+
 async function buildEditedVariantFromDecoded(
   decoded: DecodedRgbImage16,
   params: ImageEditParams,
   outputColorProfile: ImageEditOutputColorProfile,
+  previewClarityMap?: ImageEditClarityMap | null,
 ): Promise<ImageEditPreparedVariant> {
   const w = decoded.width;
   const h = decoded.height;
@@ -3816,6 +3862,7 @@ async function buildEditedVariantFromDecoded(
   if (params.textOverlays.length > 0) {
     await ensureTextOverlayFontsReady(params.textOverlays);
   }
+  const clarityMap = resolveImageEditClarityMap(decoded, params, previewClarityMap);
 
   // Keep the common ProPhoto/gamma2.0 Uint16 RGB source representation through crop/rotation
   // sampling, all tone/color math, and output-primary conversion. Quantize only when
@@ -3839,6 +3886,7 @@ async function buildEditedVariantFromDecoded(
       params.vibrance,
       params.saturation,
       outputColorProfile,
+      clarityMap,
     );
   } else {
     const cropped = createImageEditCanvas(sw, sh);
@@ -3858,6 +3906,7 @@ async function buildEditedVariantFromDecoded(
         params.vibrance,
         params.saturation,
         outputColorProfile,
+        clarityMap,
       );
       const outputCtx = getCanvas2dContext(output, outputColorProfile);
       if (!outputCtx) throw new Error("2D context unavailable");
@@ -3912,6 +3961,7 @@ export async function buildEditedVariant(
   decodedImage?: DecodedImage,
   outputColorProfile: ImageEditOutputColorProfile = "srgb",
   rawDemosaicQuality?: RawDemosaicQuality,
+  previewClarityMap?: ImageEditClarityMap | null,
 ): Promise<ImageEditPreparedVariant> {
   const params = normalizeEditParams(edit, srcW, srcH);
   const ownsDecodedImage = !decodedImage;
@@ -3924,7 +3974,7 @@ export async function buildEditedVariant(
     rawDemosaicQuality,
   );
   try {
-    return await buildEditedVariantFromDecoded(decoded, params, outputColorProfile);
+    return await buildEditedVariantFromDecoded(decoded, params, outputColorProfile, previewClarityMap);
   } finally {
     if (ownsDecodedImage) decoded.cleanup();
   }
@@ -3934,6 +3984,7 @@ export async function buildEditedDecodedRgb16(
   decoded: DecodedRgbImage16,
   edit: ImageEditParams,
   outputColorProfile: ImageEditOutputColorProfile = "display-p3",
+  previewClarityMap?: ImageEditClarityMap | null,
 ): Promise<DecodedRgbImage16> {
   const params = normalizeEditParams(edit, decoded.width, decoded.height);
   const sourceW = decoded.width;
@@ -3951,6 +4002,8 @@ export async function buildEditedDecodedRgb16(
   if (params.textOverlays.length > 0) {
     await ensureTextOverlayFontsReady(params.textOverlays);
   }
+  const clarityMap = resolveImageEditClarityMap(decoded, params, previewClarityMap);
+  const hasClarity = clarityMap !== null;
 
   const sourceRect = { x: sx, y: sy, w: cropW, h: cropH };
   const contextSample = getAnalysisLinearRgbSample(decoded, sourceRect, params.rotationDegrees);
@@ -3995,6 +4048,7 @@ export async function buildEditedDecodedRgb16(
     params.highlight === 0 &&
     params.scaledLog === 0 &&
     params.sigmoid === 0 &&
+    params.clarity === 0 &&
     params.vibrance === 0 &&
     params.saturation === 0 &&
     decoded.transfer === "gamma20" &&
@@ -4013,7 +4067,24 @@ export async function buildEditedDecodedRgb16(
       let r = decodeStoredRgb16Channel(decoded.data[index] ?? 0, decoded.transfer, decoded.linearRangeMax);
       let g = decodeStoredRgb16Channel(decoded.data[index + 1] ?? 0, decoded.transfer, decoded.linearRangeMax);
       let b = decodeStoredRgb16Channel(decoded.data[index + 2] ?? 0, decoded.transfer, decoded.linearRangeMax);
-      [r, g, b] = applyColorAdjustmentsLinearRgb(r, g, b, adjustmentContext);
+      if (hasClarity) {
+        [r, g, b] = applyToneAdjustmentsLinearRgb(r, g, b, adjustmentContext);
+        const x = pixel % outputW;
+        const y = Math.floor(pixel / outputW);
+        const clarityGain = sampleImageEditClarityGain(
+          clarityMap,
+          x + 0.5,
+          y + 0.5,
+          sourceW,
+          sourceH,
+        );
+        r = Math.max(0, r * clarityGain);
+        g = Math.max(0, g * clarityGain);
+        b = Math.max(0, b * clarityGain);
+        [r, g, b] = applyColorAdjustmentsAfterToneLinearRgb(r, g, b, adjustmentContext);
+      } else {
+        [r, g, b] = applyColorAdjustmentsLinearRgb(r, g, b, adjustmentContext);
+      }
       result[index] = encodeStoredRgb16Channel(r, "gamma20", 1);
       result[index + 1] = encodeStoredRgb16Channel(g, "gamma20", 1);
       result[index + 2] = encodeStoredRgb16Channel(b, "gamma20", 1);
@@ -4036,12 +4107,32 @@ export async function buildEditedDecodedRgb16(
           sourceY < sourceH &&
           sampleLinearRgb16BilinearInto(decoded, sourceX, sourceY, sample, samplingScratch)
         ) {
-          [r, g, b] = applyColorAdjustmentsLinearRgb(
-            sample[0],
-            sample[1],
-            sample[2],
-            adjustmentContext,
-          );
+          if (hasClarity) {
+            [r, g, b] = applyToneAdjustmentsLinearRgb(
+              sample[0],
+              sample[1],
+              sample[2],
+              adjustmentContext,
+            );
+            const clarityGain = sampleImageEditClarityGain(
+              clarityMap,
+              sourceX,
+              sourceY,
+              sourceW,
+              sourceH,
+            );
+            r = Math.max(0, r * clarityGain);
+            g = Math.max(0, g * clarityGain);
+            b = Math.max(0, b * clarityGain);
+            [r, g, b] = applyColorAdjustmentsAfterToneLinearRgb(r, g, b, adjustmentContext);
+          } else {
+            [r, g, b] = applyColorAdjustmentsLinearRgb(
+              sample[0],
+              sample[1],
+              sample[2],
+              adjustmentContext,
+            );
+          }
         }
         result[dst] = encodeStoredRgb16Channel(r, "gamma20", 1);
         result[dst + 1] = encodeStoredRgb16Channel(g, "gamma20", 1);
@@ -4265,6 +4356,7 @@ export async function buildOptimizedVariant(
   outputFormat: ImageEditOutputFormat = "image/webp",
   decodedImage?: DecodedImage,
   outputColorProfile?: ImageEditOutputColorProfile,
+  previewClarityMap?: ImageEditClarityMap | null,
 ): Promise<{ blob: Blob; width: number; height: number }> {
   const resolvedOutputColorProfile =
     outputColorProfile ?? (await detectBestEditableImageOutputColorProfile(file));
@@ -4277,6 +4369,8 @@ export async function buildOptimizedVariant(
     edit,
     decodedImage,
     resolvedOutputColorProfile,
+    undefined,
+    previewClarityMap,
   );
   try {
     return await encodeEditedVariant(prepared, quality, outputFormat, resolvedOutputColorProfile);
@@ -4368,7 +4462,11 @@ type EditDialogProps = {
   rawHighlightMode?: RawHighlightMode;
   onRawDevelopmentReady?: (decodedImage: DecodedRgbImage16) => void;
   onCancel: () => void;
-  onApply: (params: ImageEditParams, decodedImage?: DecodedImage) => void;
+  onApply: (
+    params: ImageEditParams,
+    decodedImage?: DecodedImage,
+    clarityMap?: ImageEditClarityMap | null,
+  ) => void;
   onError?: (message: string) => void;
 };
 
@@ -4513,6 +4611,16 @@ export function ImageEditDialog({
     height: number;
     key: string;
   } | null>(null);
+  const clarityAnalysisSourceDecodedRef = useRef<DecodedRgbImage16 | null>(null);
+  const clarityAnalysisPreviewRef = useRef<{
+    sample: LinearRgbSample;
+    contextSample: LinearRgbSample;
+  } | null>(null);
+  const previewClarityMapCacheRef = useRef<{
+    source: LinearRgbSample;
+    key: string;
+    map: ImageEditClarityMap;
+  } | null>(null);
   const decodedImageRef = useRef<DecodedImage | null>(null);
   const transferredDecodedImageRef = useRef<DecodedImage | null>(null);
   const rawMasterPromiseRef = useRef<Promise<DecodedRgbImage16> | null>(null);
@@ -4542,6 +4650,7 @@ export function ImageEditDialog({
   const [highlight, setHighlight] = useState<number>(clampToneRangeAdjustment(initialParams.highlight ?? 0));
   const [scaledLog, setScaledLog] = useState<number>(clampScaledLog(initialParams.scaledLog));
   const [sigmoid, setSigmoid] = useState<number>(clampSigmoid(initialParams.sigmoid));
+  const [clarity, setClarity] = useState<number>(clampClarity(initialParams.clarity ?? 0));
   const [vibrance, setVibrance] = useState<number>(clampColorAdjustment(initialParams.vibrance));
   const [saturation, setSaturation] = useState<number>(clampColorAdjustment(initialParams.saturation));
   const [resizePercent, setResizePercent] = useState<number>(
@@ -4666,6 +4775,9 @@ export function ImageEditDialog({
     transferredDecodedImageRef.current = null;
     rawMasterPromiseRef.current = null;
     previewRenderedRef.current = null;
+    clarityAnalysisSourceDecodedRef.current = null;
+    clarityAnalysisPreviewRef.current = null;
+    previewClarityMapCacheRef.current = null;
 
     const onLoadProgress: ImageLoadProgressListener = (progress) => {
       if (cancelled) return;
@@ -4700,6 +4812,10 @@ export function ImageEditDialog({
         }
         cleanup = decoded.cleanup;
         decodedImageRef.current = decoded;
+        // Preserve the foreground RAW development preview as the deterministic
+        // Clarity-analysis source even after the full-resolution master replaces
+        // decodedImageRef. Non-RAW images simply retain their original decoded source.
+        clarityAnalysisSourceDecodedRef.current = decoded;
         setLoadingStage("Preparing preview…");
         setNatural({ w: decoded.width, h: decoded.height });
         setImageReady(true);
@@ -4735,6 +4851,9 @@ export function ImageEditDialog({
     return () => {
       cancelled = true;
       decodedImageRef.current = null;
+      clarityAnalysisSourceDecodedRef.current = null;
+      clarityAnalysisPreviewRef.current = null;
+      previewClarityMapCacheRef.current = null;
       const embeddedPreviewUrl = embeddedRawPreviewUrlRef.current;
       embeddedRawPreviewUrlRef.current = null;
       if (embeddedPreviewUrl) URL.revokeObjectURL(embeddedPreviewUrl);
@@ -5784,6 +5903,74 @@ export function ImageEditDialog({
     };
   }, [cropRect, displayed.x, displayed.y, displayed.w, displayed.h]);
 
+  const resolvePreviewClarityMap = useCallback((
+    decoded: DecodedRgbImage16,
+  ): ImageEditClarityMap | null => {
+    const normalizedClarity = clampClarity(clarity);
+    if (normalizedClarity === 0) {
+      previewClarityMapCacheRef.current = null;
+      return null;
+    }
+
+    let internalPreview = clarityAnalysisPreviewRef.current;
+    if (!internalPreview) {
+      const analysisSource = clarityAnalysisSourceDecodedRef.current ?? decoded;
+      const sourceRect = { x: 0, y: 0, w: analysisSource.width, h: analysisSource.height };
+      internalPreview = {
+        sample: getAnalysisLinearRgbSample(
+          analysisSource,
+          sourceRect,
+          0,
+          IMAGE_EDIT_INTERNAL_PREVIEW_TARGET_PIXELS,
+        ),
+        contextSample: getAnalysisLinearRgbSample(analysisSource, sourceRect, 0),
+      };
+      clarityAnalysisPreviewRef.current = internalPreview;
+    }
+
+    const key = JSON.stringify([
+      clampWhiteBalanceValue(temperature),
+      clampWhiteBalanceValue(tint),
+      clampExposureEv(exposureEv),
+      clampToneRangeAdjustment(shadow),
+      clampToneRangeAdjustment(highlight),
+      clampScaledLog(scaledLog),
+      clampSigmoid(sigmoid),
+      normalizedClarity,
+    ]);
+    const cached = previewClarityMapCacheRef.current;
+    if (cached?.source === internalPreview.sample && cached.key === key) return cached.map;
+
+    // The internal preview is immutable. Rebuilding Clarity only reevaluates the
+    // current tone controls through Sigmoid against that same ~1 MP source.
+    const context = buildColorAdjustmentContextFromLinearRgbSample(
+      internalPreview.contextSample,
+      temperature,
+      tint,
+      exposureEv,
+      shadow,
+      highlight,
+      scaledLog,
+      sigmoid,
+      0,
+      0,
+      true,
+    );
+    const map = buildImageEditClarityMap(internalPreview.sample, context, normalizedClarity);
+    if (!map) return null;
+    previewClarityMapCacheRef.current = { source: internalPreview.sample, key, map };
+    return map;
+  }, [
+    clarity,
+    temperature,
+    tint,
+    exposureEv,
+    shadow,
+    highlight,
+    scaledLog,
+    sigmoid,
+  ]);
+
   useEffect(() => {
     const canvas = previewCanvasRef.current;
     const decoded = decodedImageRef.current;
@@ -5804,6 +5991,7 @@ export function ImageEditDialog({
       highlight,
       scaledLog,
       sigmoid,
+      clarity,
       vibrance,
       saturation,
       includeMosaic ? mosaicRegions : null,
@@ -5843,6 +6031,20 @@ export function ImageEditDialog({
         previewSourceRect,
         rotationDegrees,
       );
+      const adjustmentContext = buildColorAdjustmentContextFromLinearRgbSample(
+        previewContextSample,
+        temperature,
+        tint,
+        exposureEv,
+        shadow,
+        highlight,
+        scaledLog,
+        sigmoid,
+        vibrance,
+        saturation,
+        true,
+      );
+      const clarityMap = resolvePreviewClarityMap(decoded);
       renderAdjustedLinearRgbSampleToCanvas(
         canvas,
         previewSourceSample,
@@ -5857,6 +6059,14 @@ export function ImageEditDialog({
         vibrance,
         saturation,
         previewColorProfile,
+        clarityMap,
+        adjustmentContext,
+        {
+          sourceWidth: decoded.width,
+          sourceHeight: decoded.height,
+          sourceRect: previewSourceRect,
+          rotationDegrees,
+        },
       );
       if (includeMosaic) {
         applyMosaicRectsToCanvas(
@@ -5897,6 +6107,7 @@ export function ImageEditDialog({
     highlight,
     scaledLog,
     sigmoid,
+    clarity,
     vibrance,
     saturation,
     rotationDegrees,
@@ -5905,6 +6116,7 @@ export function ImageEditDialog({
     mosaicRegions,
     eyedropperMode,
     clearEmbeddedRawPreview,
+    resolvePreviewClarityMap,
   ]);
 
   useEffect(() => {
@@ -5918,6 +6130,7 @@ export function ImageEditDialog({
       setHistogram(null);
       return;
     }
+    const clarityMap = resolvePreviewClarityMap(decoded);
     setHistogram(
       computeHistogramDataFromRgb16(
         decoded,
@@ -5932,6 +6145,7 @@ export function ImageEditDialog({
         sigmoid,
         vibrance,
         saturation,
+        clarityMap,
       ),
     );
   }, [
@@ -5946,10 +6160,14 @@ export function ImageEditDialog({
     highlight,
     scaledLog,
     sigmoid,
+    clarity,
     vibrance,
     saturation,
     rotationDegrees,
     eyedropperMode,
+    displayed.w,
+    displayed.h,
+    resolvePreviewClarityMap,
   ]);
 
   useEffect(() => {
@@ -6287,6 +6505,7 @@ export function ImageEditDialog({
       highlight: clampToneRangeAdjustment(highlight),
       scaledLog: clampScaledLog(scaledLog),
       sigmoid: clampSigmoid(sigmoid),
+      clarity: clampClarity(clarity),
       vibrance: clampColorAdjustment(vibrance),
       saturation: clampColorAdjustment(saturation),
       resizePercent: Math.min(100, Math.max(1, Math.round(resizePercent))),
@@ -6308,8 +6527,9 @@ export function ImageEditDialog({
               rawMasterPromiseRef.current = null;
             }
             const decodedImage = decodedImageRef.current;
+            const clarityMap = decodedImage ? resolvePreviewClarityMap(decodedImage) : null;
             if (decodedImage) transferredDecodedImageRef.current = decodedImage;
-            onApply(params, decodedImage ?? undefined);
+            onApply(params, decodedImage ?? undefined, clarityMap);
           } catch (error) {
             applyPendingRef.current = false;
             setApplyBusy(false);
@@ -6332,6 +6552,7 @@ export function ImageEditDialog({
     highlight,
     scaledLog,
     sigmoid,
+    clarity,
     vibrance,
     saturation,
     resizePercent,
@@ -6339,6 +6560,7 @@ export function ImageEditDialog({
     mosaicRegions,
     textOverlays,
     drawOverlays,
+    resolvePreviewClarityMap,
     onApply,
   ]);
 
@@ -6358,6 +6580,7 @@ export function ImageEditDialog({
     setHighlight(params.highlight);
     setScaledLog(params.scaledLog);
     setSigmoid(params.sigmoid);
+    setClarity(params.clarity);
     setVibrance(params.vibrance);
     setSaturation(params.saturation);
     setResizePercent(params.resizePercent);
@@ -7621,6 +7844,21 @@ export function ImageEditDialog({
                   className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
               </label>
+              <label className="grid grid-cols-[112px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+                <span className="col-start-1 row-start-1">Clarity</span>
+                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{clarity >= 0 ? "+" : ""}{clarity}</span>
+                <input
+                  aria-label="Clarity"
+                  type="range"
+                  min={-100}
+                  max={100}
+                  step={1}
+                  value={clarity}
+                  onChange={(e) => setClarity(clampClarity(Number(e.target.value)))}
+                  onDoubleClick={() => setClarity(sliderDefaults.clarity)}
+                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
+                />
+              </label>
             </div>
 
             <div className="rounded border p-3 space-y-2 lg:space-y-3">
@@ -7989,6 +8227,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
     snapshot: SelectedItem,
     nextEdit: ImageEditParams,
     decodedImage?: DecodedImage,
+    previewClarityMap?: ImageEditClarityMap | null,
   ) => {
     let processingDecoded = decodedImage;
     let cleanupProcessingDecoded = !!decodedImage;
@@ -8045,6 +8284,8 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
         nextEdit,
         "image/webp",
         processingDecoded,
+        undefined,
+        previewClarityMap,
       );
       if (optimizeJobs.current.get(snapshot.id) !== token) return;
       const processedPreviewUrl = URL.createObjectURL(out.blob);
@@ -8274,9 +8515,9 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
               ),
             );
           }}
-          onApply={(params, decodedImage) => {
+          onApply={(params, decodedImage, previewClarityMap) => {
             setEditingItemId(null);
-            void reprocessItem(editingItem, params, decodedImage);
+            void reprocessItem(editingItem, params, decodedImage, previewClarityMap);
           }}
         />
       )}
