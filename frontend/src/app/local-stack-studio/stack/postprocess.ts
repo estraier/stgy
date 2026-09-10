@@ -24,6 +24,8 @@ export type StackClaheMap = {
   gain: Float32Array;
 };
 
+export type StackToneStage = "source" | "exposure" | "shadow" | "highlight" | "logarithm" | "sigmoid";
+
 type StackToneContext = {
   gain: number;
   normalizedShadow: number;
@@ -111,18 +113,10 @@ export function buildStackClaheMap(
   exposureRolloffBaseP998: number | null = null,
   highlightP100: number | null = null,
 ): StackClaheMap | null {
-  const normalizedClahe = clampStackClahe(clahe);
-  if (normalizedClahe === 0) return null;
-  const pixelCount = width * height;
-  if (
-    !Number.isFinite(pixelCount) ||
-    pixelCount <= 0 ||
-    sourceLinear.length !== pixelCount * 3
-  ) {
-    return null;
-  }
-
-  const toneContext = buildStackToneContext(
+  const toneAdjusted = buildStackToneAdjustedLinearData(
+    sourceLinear,
+    width,
+    height,
     exposureEv,
     shadow,
     highlight,
@@ -131,18 +125,35 @@ export function buildStackClaheMap(
     exposureRolloffBaseP998,
     highlightP100,
   );
+  return buildStackClaheMapFromToneAdjusted(toneAdjusted, width, height, clahe);
+}
+
+export function buildStackClaheMapFromToneAdjusted(
+  toneAdjustedLinear: Float32Array,
+  width: number,
+  height: number,
+  clahe: number,
+): StackClaheMap | null {
+  const normalizedClahe = clampStackClahe(clahe);
+  if (normalizedClahe === 0) return null;
+  const pixelCount = width * height;
+  if (
+    !Number.isFinite(pixelCount) ||
+    pixelCount <= 0 ||
+    toneAdjustedLinear.length !== pixelCount * 3
+  ) {
+    return null;
+  }
+
   const luminance = new Float32Array(pixelCount);
   const gain = new Float32Array(pixelCount);
   gain.fill(1);
 
   if (normalizedClahe < 0) {
     for (let pixelIndex = 0, sourceIndex = 0; pixelIndex < pixelCount; pixelIndex += 1, sourceIndex += 3) {
-      const [r, g, b] = applyStackToneAdjustmentsLinearRgb(
-        sourceLinear[sourceIndex] ?? 0,
-        sourceLinear[sourceIndex + 1] ?? 0,
-        sourceLinear[sourceIndex + 2] ?? 0,
-        toneContext,
-      );
+      const r = toneAdjustedLinear[sourceIndex] ?? 0;
+      const g = toneAdjustedLinear[sourceIndex + 1] ?? 0;
+      const b = toneAdjustedLinear[sourceIndex + 2] ?? 0;
       luminance[pixelIndex] = Math.max(0, 0.299 * Math.max(0, r) + 0.587 * Math.max(0, g) + 0.114 * Math.max(0, b));
     }
     const { tileWidth, tileHeight } = computeClaheTileGrid(width, height);
@@ -165,12 +176,9 @@ export function buildStackClaheMap(
 
   const encodedLuminance = new Uint8Array(pixelCount);
   for (let pixelIndex = 0, sourceIndex = 0; pixelIndex < pixelCount; pixelIndex += 1, sourceIndex += 3) {
-    const [r, g, b] = applyStackToneAdjustmentsLinearRgb(
-      sourceLinear[sourceIndex] ?? 0,
-      sourceLinear[sourceIndex + 1] ?? 0,
-      sourceLinear[sourceIndex + 2] ?? 0,
-      toneContext,
-    );
+    const r = toneAdjustedLinear[sourceIndex] ?? 0;
+    const g = toneAdjustedLinear[sourceIndex + 1] ?? 0;
+    const b = toneAdjustedLinear[sourceIndex + 2] ?? 0;
     const linearLuma = Math.max(0, 0.299 * Math.max(0, r) + 0.587 * Math.max(0, g) + 0.114 * Math.max(0, b));
     luminance[pixelIndex] = linearLuma;
     encodedLuminance[pixelIndex] = Math.max(
@@ -296,6 +304,43 @@ export function adjustStackLinearData(
   highlightP100: number | null = null,
   claheMap: StackClaheMap | null = null,
 ): Float32Array {
+  const toneAdjusted = buildStackToneAdjustedLinearData(
+    sourceLinear,
+    width,
+    height,
+    exposureEv,
+    shadow,
+    highlight,
+    scaledLog,
+    sigmoid,
+    exposureRolloffBaseP998,
+    highlightP100,
+  );
+  return adjustStackLinearDataPostTone(
+    toneAdjusted,
+    width,
+    height,
+    clahe,
+    vibrance,
+    saturation,
+    claheMap,
+  );
+}
+
+export function buildStackToneAdjustedLinearData(
+  sourceLinear: Float32Array,
+  width: number,
+  height: number,
+  exposureEv: number,
+  shadow: number,
+  highlight: number,
+  scaledLog: number,
+  sigmoid: number,
+  exposureRolloffBaseP998: number | null = null,
+  highlightP100: number | null = null,
+  startStage: StackToneStage = "source",
+  endStage: StackToneStage = "sigmoid",
+): Float32Array {
   const toneContext = buildStackToneContext(
     exposureEv,
     shadow,
@@ -305,6 +350,31 @@ export function adjustStackLinearData(
     exposureRolloffBaseP998,
     highlightP100,
   );
+  if (startStage === endStage) {
+    return sourceLinear;
+  }
+  const result = new Float32Array(sourceLinear.length);
+  for (let sourceIndex = 0; sourceIndex < sourceLinear.length; sourceIndex += 3) {
+    let r = sourceLinear[sourceIndex] ?? 0;
+    let g = sourceLinear[sourceIndex + 1] ?? 0;
+    let b = sourceLinear[sourceIndex + 2] ?? 0;
+    [r, g, b] = applyStackToneAdjustmentsLinearRgbRange(r, g, b, toneContext, startStage, endStage);
+    result[sourceIndex] = r;
+    result[sourceIndex + 1] = g;
+    result[sourceIndex + 2] = b;
+  }
+  return result;
+}
+
+export function adjustStackLinearDataPostTone(
+  toneAdjustedLinear: Float32Array,
+  width: number,
+  height: number,
+  clahe: number,
+  vibrance: number,
+  saturation: number,
+  claheMap: StackClaheMap | null = null,
+): Float32Array {
   const normalizedClahe = clampStackClahe(clahe);
   const normalizedVibrance = clampColorAdjustment(vibrance);
   const normalizedSaturation = clampColorAdjustment(saturation);
@@ -315,39 +385,27 @@ export function adjustStackLinearData(
   const saturationFactor = colorSaturationFactor(normalizedSaturation);
   const vibranceFactor = colorVibranceFactor(normalizedVibrance);
   const saturationRolloff = hasSaturation && saturationFactor > 1
-    ? computeStackSaturationRolloff(
-        sourceLinear,
+    ? computeStackSaturationRolloffFromToneAdjusted(
+        toneAdjustedLinear,
         width,
         height,
-        toneContext,
         activeClaheMap,
         saturationFactor,
       )
     : null;
 
-  if (
-    !toneContext.hasExposure &&
-    !toneContext.hasShadow &&
-    !toneContext.hasHighlight &&
-    !toneContext.hasLogarithm &&
-    !toneContext.hasSigmoid &&
-    !hasClahe &&
-    !hasVibrance &&
-    !hasSaturation &&
-    !toneContext.rolloff
-  ) {
-    return sourceLinear;
+  if (!hasClahe && !hasVibrance && !hasSaturation) {
+    return toneAdjustedLinear;
   }
 
-  const result = new Float32Array(sourceLinear.length);
+  const result = new Float32Array(toneAdjustedLinear.length);
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       const pixelIndex = y * width + x;
       const sourceIndex = pixelIndex * 3;
-      let r = sourceLinear[sourceIndex] ?? 0;
-      let g = sourceLinear[sourceIndex + 1] ?? 0;
-      let b = sourceLinear[sourceIndex + 2] ?? 0;
-      [r, g, b] = applyStackToneAdjustmentsLinearRgb(r, g, b, toneContext);
+      let r = toneAdjustedLinear[sourceIndex] ?? 0;
+      let g = toneAdjustedLinear[sourceIndex + 1] ?? 0;
+      let b = toneAdjustedLinear[sourceIndex + 2] ?? 0;
 
       if (hasClahe && activeClaheMap) {
         const clarityGain = sampleStackClaheGain(activeClaheMap, x + 0.5, y + 0.5, width, height);
@@ -424,47 +482,61 @@ function applyStackToneAdjustmentsLinearRgb(
   b: number,
   context: StackToneContext,
 ): [number, number, number] {
-  if (context.hasExposure) {
-    r *= context.gain;
-    g *= context.gain;
-    b *= context.gain;
-  }
-  if (context.hasShadow) {
-    r = applyShadowLinear(r, context.normalizedShadow);
-    g = applyShadowLinear(g, context.normalizedShadow);
-    b = applyShadowLinear(b, context.normalizedShadow);
-  }
-  if (context.hasHighlight && context.highlightRange) {
-    const maxChannel = Math.max(r, g, b);
-    if (maxChannel > 0) {
-      const adjustedMax = applyHighlightLinear(maxChannel, context.normalizedHighlight, context.highlightRange);
-      const scale = adjustedMax / maxChannel;
-      r *= scale;
-      g *= scale;
-      b *= scale;
+  return applyStackToneAdjustmentsLinearRgbRange(r, g, b, context, "source", "sigmoid");
+}
+
+function applyStackToneAdjustmentsLinearRgbRange(
+  r: number,
+  g: number,
+  b: number,
+  context: StackToneContext,
+  startStage: StackToneStage,
+  endStage: StackToneStage,
+): [number, number, number] {
+  const stageOrder: StackToneStage[] = ["source", "exposure", "shadow", "highlight", "logarithm", "sigmoid"];
+  const startIndex = Math.max(0, stageOrder.indexOf(startStage));
+  const endIndex = Math.max(0, stageOrder.indexOf(endStage));
+  for (let index = startIndex + 1; index <= endIndex; index += 1) {
+    const stage = stageOrder[index];
+    if (stage === "exposure" && context.hasExposure) {
+      r *= context.gain;
+      g *= context.gain;
+      b *= context.gain;
+    } else if (stage === "shadow" && context.hasShadow) {
+      r = applyShadowLinear(r, context.normalizedShadow);
+      g = applyShadowLinear(g, context.normalizedShadow);
+      b = applyShadowLinear(b, context.normalizedShadow);
+    } else if (stage === "highlight") {
+      if (context.hasHighlight && context.highlightRange) {
+        const maxChannel = Math.max(r, g, b);
+        if (maxChannel > 0) {
+          const adjustedMax = applyHighlightLinear(maxChannel, context.normalizedHighlight, context.highlightRange);
+          const scale = adjustedMax / maxChannel;
+          r *= scale;
+          g *= scale;
+          b *= scale;
+        }
+      }
+      r = applyDisplayRolloffLinear(r, context.rolloff);
+      g = applyDisplayRolloffLinear(g, context.rolloff);
+      b = applyDisplayRolloffLinear(b, context.rolloff);
+    } else if (stage === "logarithm" && context.hasLogarithm) {
+      r = applyScaledLogLinear(r, context.normalizedLog, STACK_LOGARITHM_LIMIT);
+      g = applyScaledLogLinear(g, context.normalizedLog, STACK_LOGARITHM_LIMIT);
+      b = applyScaledLogLinear(b, context.normalizedLog, STACK_LOGARITHM_LIMIT);
+    } else if (stage === "sigmoid" && context.hasSigmoid) {
+      r = applySigmoidLinear(r, context.normalizedSigmoid);
+      g = applySigmoidLinear(g, context.normalizedSigmoid);
+      b = applySigmoidLinear(b, context.normalizedSigmoid);
     }
-  }
-  r = applyDisplayRolloffLinear(r, context.rolloff);
-  g = applyDisplayRolloffLinear(g, context.rolloff);
-  b = applyDisplayRolloffLinear(b, context.rolloff);
-  if (context.hasLogarithm) {
-    r = applyScaledLogLinear(r, context.normalizedLog, STACK_LOGARITHM_LIMIT);
-    g = applyScaledLogLinear(g, context.normalizedLog, STACK_LOGARITHM_LIMIT);
-    b = applyScaledLogLinear(b, context.normalizedLog, STACK_LOGARITHM_LIMIT);
-  }
-  if (context.hasSigmoid) {
-    r = applySigmoidLinear(r, context.normalizedSigmoid);
-    g = applySigmoidLinear(g, context.normalizedSigmoid);
-    b = applySigmoidLinear(b, context.normalizedSigmoid);
   }
   return [r, g, b];
 }
 
-function computeStackSaturationRolloff(
-  sourceLinear: Float32Array,
+function computeStackSaturationRolloffFromToneAdjusted(
+  toneAdjustedLinear: Float32Array,
   width: number,
   height: number,
-  toneContext: StackToneContext,
   claheMap: StackClaheMap | null,
   saturationFactor: number,
 ): { inflection: number; scale: number } | null {
@@ -480,10 +552,9 @@ function computeStackSaturationRolloff(
     for (let x = 0; x < sampleWidth; x += 1) {
       const sourceX = Math.min(width - 1, Math.floor((x + 0.5) * width / sampleWidth));
       const sourceIndex = (sourceY * width + sourceX) * 3;
-      let r = sourceLinear[sourceIndex] ?? 0;
-      let g = sourceLinear[sourceIndex + 1] ?? 0;
-      let b = sourceLinear[sourceIndex + 2] ?? 0;
-      [r, g, b] = applyStackToneAdjustmentsLinearRgb(r, g, b, toneContext);
+      let r = toneAdjustedLinear[sourceIndex] ?? 0;
+      let g = toneAdjustedLinear[sourceIndex + 1] ?? 0;
+      let b = toneAdjustedLinear[sourceIndex + 2] ?? 0;
       if (claheMap) {
         const clarityGain = sampleStackClaheGain(claheMap, sourceX + 0.5, sourceY + 0.5, width, height);
         r = Math.max(0, r * clarityGain);
