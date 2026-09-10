@@ -449,6 +449,87 @@ export type ColorAdjustmentContext = {
   saturationRolloff: { inflection: number; scale: number } | null;
 };
 
+export type ToneAdjustmentStage =
+  | "white-balance"
+  | "exposure"
+  | "shadow"
+  | "highlight"
+  | "scaled-log"
+  | "sigmoid"
+  | "after-tone";
+
+const TONE_ADJUSTMENT_STAGE_INDEX: Record<ToneAdjustmentStage, number> = {
+  "white-balance": 0,
+  exposure: 1,
+  shadow: 2,
+  highlight: 3,
+  "scaled-log": 4,
+  sigmoid: 5,
+  "after-tone": 6,
+};
+
+/**
+ * Apply a contiguous suffix/subrange of the Tone pipeline. `endStage` is
+ * exclusive. The rolloff/clip boundary belongs immediately before scaled-log,
+ * so a sample cached "before scaled-log" already includes that boundary.
+ */
+export function applyToneAdjustmentsLinearRgbRange(
+  r: number,
+  g: number,
+  b: number,
+  context: ColorAdjustmentContext,
+  startStage: ToneAdjustmentStage = "white-balance",
+  endStage: ToneAdjustmentStage = "after-tone",
+): [number, number, number] {
+  const start = TONE_ADJUSTMENT_STAGE_INDEX[startStage];
+  const end = TONE_ADJUSTMENT_STAGE_INDEX[endStage];
+  if (start >= end) return [r, g, b];
+
+  if (start <= 0 && end > 0 && context.hasWhiteBalance) {
+    [r, g, b] = applyWhiteBalanceLinear(r, g, b, context.gains);
+  }
+  if (start <= 1 && end > 1 && context.hasExposure) {
+    [r, g, b] = applyExposureLinearToRgb(r, g, b, context.factor);
+  }
+  if (start <= 2 && end > 2 && context.hasShadow) {
+    r = applyShadowLinear(r, context.shadow);
+    g = applyShadowLinear(g, context.shadow);
+    b = applyShadowLinear(b, context.shadow);
+  }
+  if (start <= 3 && end > 3 && context.hasHighlight) {
+    const maxChannel = Math.max(r, g, b);
+    if (maxChannel > 0) {
+      const adjustedMax = applyHighlightLinear(
+        maxChannel,
+        context.highlight,
+        context.highlightRange,
+      );
+      const scale = adjustedMax / maxChannel;
+      r *= scale;
+      g *= scale;
+      b *= scale;
+    }
+  }
+
+  // The bounded tone-domain boundary is crossed only when this range enters
+  // scaled-log from an earlier stage. A cached pre-scaled-log sample has
+  // already crossed it and therefore must not be rolled off again.
+  if (start < 4 && end >= 4) {
+    [r, g, b] = applyDisplayRolloffAndClipLinearToRgb(r, g, b, context.rolloff);
+  }
+  if (start <= 4 && end > 4 && context.hasScaledLog) {
+    r = applyScaledLogLinear(r, context.scaledLog);
+    g = applyScaledLogLinear(g, context.scaledLog);
+    b = applyScaledLogLinear(b, context.scaledLog);
+  }
+  if (start <= 5 && end > 5 && context.hasSigmoid) {
+    r = applySigmoidLinear(r, context.sigmoid);
+    g = applySigmoidLinear(g, context.sigmoid);
+    b = applySigmoidLinear(b, context.sigmoid);
+  }
+  return [r, g, b];
+}
+
 export function applyToneAdjustmentsLinearRgb(
   r: number,
   g: number,

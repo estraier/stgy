@@ -1,7 +1,8 @@
 import {
-  applyToneAdjustmentsLinearRgb,
+  applyToneAdjustmentsLinearRgbRange,
   clamp01,
   type ColorAdjustmentContext,
+  type ToneAdjustmentStage,
 } from "@/image/tone";
 import type { LinearRgbSample } from "./types";
 
@@ -163,40 +164,64 @@ function boxBlurLinearLuminance(
 }
 
 /**
- * Build the Clarity gain field from the immutable internal analysis preview.
- * Tone is evaluated only for this preview-sized analysis; full-size rendering later
- * reuses the resulting gain field and therefore keeps its expensive RGB processing
- * to one output pass.
+ * Apply all adjustments that precede Clarity to a preview-sized RGB sample.
+ * The result can be shared by Clarity analysis and preview rendering so Tone
+ * is not evaluated twice for the same preview pixels.
  */
-export function buildImageEditClarityMap(
+export function buildImageEditToneSample(
   sample: LinearRgbSample,
   context: ColorAdjustmentContext,
+  startStage: ToneAdjustmentStage = "white-balance",
+): LinearRgbSample {
+  const width = Math.max(1, Math.round(sample.width));
+  const height = Math.max(1, Math.round(sample.height));
+  const pixelCount = width * height;
+  if (sample.data.length !== pixelCount * 3) return sample;
+
+  const data = new Float32Array(sample.data.length);
+  const valid = sample.valid;
+  for (let pixelIndex = 0, sourceIndex = 0; pixelIndex < pixelCount; pixelIndex += 1, sourceIndex += 3) {
+    if (valid && !valid[pixelIndex]) continue;
+    const [toneR, toneG, toneB] = applyToneAdjustmentsLinearRgbRange(
+      sample.data[sourceIndex] ?? 0,
+      sample.data[sourceIndex + 1] ?? 0,
+      sample.data[sourceIndex + 2] ?? 0,
+      context,
+      startStage,
+      "after-tone",
+    );
+    data[sourceIndex] = Math.fround(toneR);
+    data[sourceIndex + 1] = Math.fround(toneG);
+    data[sourceIndex + 2] = Math.fround(toneB);
+  }
+  return { data, width, height, ...(valid ? { valid } : {}) };
+}
+
+/**
+ * Build the Clarity gain field from an already Tone-adjusted preview sample.
+ */
+export function buildImageEditClarityMapFromToneSample(
+  toneSample: LinearRgbSample,
   clarity: number,
 ): ImageEditClarityMap | null {
   const normalized = clampClarity(clarity);
   if (normalized === 0) return null;
-  const width = Math.max(1, Math.round(sample.width));
-  const height = Math.max(1, Math.round(sample.height));
+  const width = Math.max(1, Math.round(toneSample.width));
+  const height = Math.max(1, Math.round(toneSample.height));
   const pixelCount = width * height;
-  if (sample.data.length !== pixelCount * 3) return null;
+  if (toneSample.data.length !== pixelCount * 3) return null;
 
-  const valid = sample.valid;
+  const valid = toneSample.valid;
   const luminance = new Float32Array(pixelCount);
   const encodedLuminance = normalized > 0 ? new Uint8Array(pixelCount) : null;
 
   for (let pixelIndex = 0, sourceIndex = 0; pixelIndex < pixelCount; pixelIndex += 1, sourceIndex += 3) {
     if (valid && !valid[pixelIndex]) continue;
-    const [toneR, toneG, toneB] = applyToneAdjustmentsLinearRgb(
-      sample.data[sourceIndex] ?? 0,
-      sample.data[sourceIndex + 1] ?? 0,
-      sample.data[sourceIndex + 2] ?? 0,
-      context,
-    );
     // Keep the preview-map behavior aligned with LSS: CLAHE operates on a
     // perceptually encoded Rec.601-style luminance while RGB itself stays linear.
-    const r = Math.fround(toneR);
-    const g = Math.fround(toneG);
-    const b = Math.fround(toneB);
+    const r = toneSample.data[sourceIndex] ?? 0;
+    const g = toneSample.data[sourceIndex + 1] ?? 0;
+    const b = toneSample.data[sourceIndex + 2] ?? 0;
     const linearLuma = Math.max(
       0,
       0.299 * Math.max(0, r) + 0.587 * Math.max(0, g) + 0.114 * Math.max(0, b),
@@ -350,6 +375,24 @@ export function buildImageEditClarityMap(
   }
 
   return { width, height, gain };
+}
+
+/**
+ * Build the Clarity gain field from a source sample. Full-resolution/fallback
+ * callers retain the previous one-shot API; the interactive preview uses the
+ * split Tone + Clarity functions above so it can reuse its ~1 MP Tone buffer.
+ */
+export function buildImageEditClarityMap(
+  sample: LinearRgbSample,
+  context: ColorAdjustmentContext,
+  clarity: number,
+): ImageEditClarityMap | null {
+  const normalized = clampClarity(clarity);
+  if (normalized === 0) return null;
+  return buildImageEditClarityMapFromToneSample(
+    buildImageEditToneSample(sample, context),
+    normalized,
+  );
 }
 
 export function isUsableImageEditClarityMap(

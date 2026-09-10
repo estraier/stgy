@@ -71,6 +71,7 @@ import {
   rolloffParams,
   srgbChannelToLinear,
   whiteBalanceGains,
+  type ColorAdjustmentContext,
 } from "@/image/tone";
 import {
   PROPHOTO_LUMA_B,
@@ -83,6 +84,8 @@ import { getCanvas2dContext, getCanvasImageData } from "./image-editor/canvas";
 import { applySharpenToCanvas, applySharpenToRgb16 } from "./image-editor/sharpen";
 import {
   buildImageEditClarityMap,
+  buildImageEditClarityMapFromToneSample,
+  buildImageEditToneSample,
   clampClarity,
   isUsableImageEditClarityMap,
   sampleImageEditClarityGain,
@@ -112,7 +115,13 @@ import {
   percentileFromValues,
   percentilesFromValues,
 } from "./image-editor/analysis";
-import { renderAdjustedLinearRgbSampleToCanvas, renderAdjustedRgb16ToCanvas } from "./image-editor/render";
+import {
+  buildImageEditPreviewSliderPrefixSample,
+  isTonePreviewSliderStage,
+  renderAdjustedLinearRgbSampleToCanvas,
+  renderAdjustedRgb16ToCanvas,
+  type ImageEditPreviewSliderStage,
+} from "./image-editor/render";
 import {
   applyRawColorPass,
   applyRawFallbackBaselinePass,
@@ -4611,15 +4620,28 @@ export function ImageEditDialog({
     height: number;
     key: string;
   } | null>(null);
-  const clarityAnalysisSourceDecodedRef = useRef<DecodedRgbImage16 | null>(null);
-  const clarityAnalysisPreviewRef = useRef<{
+  const previewSourceSampleRef = useRef<{
+    decoded: DecodedRgbImage16;
     sample: LinearRgbSample;
     contextSample: LinearRgbSample;
+  } | null>(null);
+  const previewToneSampleCacheRef = useRef<{
+    source: LinearRgbSample;
+    key: string;
+    sample: LinearRgbSample;
   } | null>(null);
   const previewClarityMapCacheRef = useRef<{
     source: LinearRgbSample;
     key: string;
     map: ImageEditClarityMap;
+  } | null>(null);
+  const previewContinuousSliderRef = useRef<ImageEditPreviewSliderStage | null>(null);
+  const previewContinuousPrefixCacheRef = useRef<{
+    source: LinearRgbSample;
+    stage: ImageEditPreviewSliderStage;
+    key: string;
+    clarityMap: ImageEditClarityMap | null;
+    sample: LinearRgbSample;
   } | null>(null);
   const decodedImageRef = useRef<DecodedImage | null>(null);
   const transferredDecodedImageRef = useRef<DecodedImage | null>(null);
@@ -4775,9 +4797,10 @@ export function ImageEditDialog({
     transferredDecodedImageRef.current = null;
     rawMasterPromiseRef.current = null;
     previewRenderedRef.current = null;
-    clarityAnalysisSourceDecodedRef.current = null;
-    clarityAnalysisPreviewRef.current = null;
+    previewSourceSampleRef.current = null;
+    previewToneSampleCacheRef.current = null;
     previewClarityMapCacheRef.current = null;
+    previewContinuousPrefixCacheRef.current = null;
 
     const onLoadProgress: ImageLoadProgressListener = (progress) => {
       if (cancelled) return;
@@ -4812,10 +4835,6 @@ export function ImageEditDialog({
         }
         cleanup = decoded.cleanup;
         decodedImageRef.current = decoded;
-        // Preserve the foreground RAW development preview as the deterministic
-        // Clarity-analysis source even after the full-resolution master replaces
-        // decodedImageRef. Non-RAW images simply retain their original decoded source.
-        clarityAnalysisSourceDecodedRef.current = decoded;
         setLoadingStage("Preparing preview…");
         setNatural({ w: decoded.width, h: decoded.height });
         setImageReady(true);
@@ -4851,8 +4870,8 @@ export function ImageEditDialog({
     return () => {
       cancelled = true;
       decodedImageRef.current = null;
-      clarityAnalysisSourceDecodedRef.current = null;
-      clarityAnalysisPreviewRef.current = null;
+      previewSourceSampleRef.current = null;
+      previewToneSampleCacheRef.current = null;
       previewClarityMapCacheRef.current = null;
       const embeddedPreviewUrl = embeddedRawPreviewUrlRef.current;
       embeddedRawPreviewUrlRef.current = null;
@@ -5658,8 +5677,8 @@ export function ImageEditDialog({
 
     // Sample the bicubic-resized preview rather than one raw source pixel. The
     // clicked pixel has weight 1.0, orthogonal neighbors 0.8, and diagonals 0.5.
-    const sampleSourceWidth = resizedWidth;
-    const sampleSourceHeight = resizedHeight;
+    const sampleSourceWidth = Math.max(1, img.width);
+    const sampleSourceHeight = Math.max(1, img.height);
     const rgb = sampleEyedropperRgb8(
       img,
       sampleSourceWidth,
@@ -5903,31 +5922,119 @@ export function ImageEditDialog({
     };
   }, [cropRect, displayed.x, displayed.y, displayed.w, displayed.h]);
 
-  const resolvePreviewClarityMap = useCallback((
+  const resolvePreviewSourceSample = useCallback((
     decoded: DecodedRgbImage16,
-  ): ImageEditClarityMap | null => {
-    const normalizedClarity = clampClarity(clarity);
-    if (normalizedClarity === 0) {
-      previewClarityMapCacheRef.current = null;
-      return null;
+  ): { decoded: DecodedRgbImage16; sample: LinearRgbSample; contextSample: LinearRgbSample } => {
+    const previewSource = decoded;
+    const cached = previewSourceSampleRef.current;
+    if (cached?.decoded === previewSource) return cached;
+
+    const sourceRect = { x: 0, y: 0, w: previewSource.width, h: previewSource.height };
+    const next = {
+      decoded: previewSource,
+      sample: getAnalysisLinearRgbSample(
+        previewSource,
+        sourceRect,
+        0,
+        IMAGE_EDIT_INTERNAL_PREVIEW_TARGET_PIXELS,
+      ),
+      contextSample: getAnalysisLinearRgbSample(previewSource, sourceRect, 0),
+    };
+    previewSourceSampleRef.current = next;
+    previewToneSampleCacheRef.current = null;
+    previewClarityMapCacheRef.current = null;
+    previewContinuousPrefixCacheRef.current = null;
+    return next;
+  }, []);
+
+  const previewContinuousPrefixKey = useCallback((stage: ImageEditPreviewSliderStage): string => {
+    const values: Array<number | null> = [
+      clampWhiteBalanceValue(temperature),
+      clampWhiteBalanceValue(tint),
+      clampExposureEv(exposureEv),
+      clampToneRangeAdjustment(shadow),
+      clampToneRangeAdjustment(highlight),
+      clampScaledLog(scaledLog),
+      clampSigmoid(sigmoid),
+      clampClarity(clarity),
+      clampColorAdjustment(saturation),
+      clampColorAdjustment(vibrance),
+    ];
+    if (stage === "white-balance") {
+      values[0] = null;
+      values[1] = null;
+    } else if (stage === "exposure") {
+      values[2] = null;
+    } else if (stage === "shadow") {
+      values[3] = null;
+    } else if (stage === "highlight") {
+      values[4] = null;
+    } else if (stage === "scaled-log") {
+      values[5] = null;
+    } else if (stage === "sigmoid") {
+      values[6] = null;
+    } else if (stage === "clarity") {
+      values[7] = null;
+    } else if (stage === "color") {
+      values[8] = null;
+      values[9] = null;
+    }
+    return JSON.stringify(values);
+  }, [
+    temperature,
+    tint,
+    exposureEv,
+    shadow,
+    highlight,
+    scaledLog,
+    sigmoid,
+    clarity,
+    saturation,
+    vibrance,
+  ]);
+
+  const resolvePreviewContinuousPrefixSample = useCallback((
+    sourceSample: LinearRgbSample,
+    context: ColorAdjustmentContext,
+    clarityMap: ImageEditClarityMap | null = null,
+    fullToneSample: LinearRgbSample | null = null,
+  ): { stage: ImageEditPreviewSliderStage; sample: LinearRgbSample } | null => {
+    const stage = previewContinuousSliderRef.current;
+    if (!stage) return null;
+    const key = previewContinuousPrefixKey(stage);
+    const prefixClarityMap = stage === "color" ? clarityMap : null;
+    const cached = previewContinuousPrefixCacheRef.current;
+    if (
+      cached?.source === sourceSample
+      && cached.stage === stage
+      && cached.key === key
+      && cached.clarityMap === prefixClarityMap
+    ) {
+      return { stage, sample: cached.sample };
     }
 
-    let internalPreview = clarityAnalysisPreviewRef.current;
-    if (!internalPreview) {
-      const analysisSource = clarityAnalysisSourceDecodedRef.current ?? decoded;
-      const sourceRect = { x: 0, y: 0, w: analysisSource.width, h: analysisSource.height };
-      internalPreview = {
-        sample: getAnalysisLinearRgbSample(
-          analysisSource,
-          sourceRect,
-          0,
-          IMAGE_EDIT_INTERNAL_PREVIEW_TARGET_PIXELS,
-        ),
-        contextSample: getAnalysisLinearRgbSample(analysisSource, sourceRect, 0),
-      };
-      clarityAnalysisPreviewRef.current = internalPreview;
-    }
+    const sample = buildImageEditPreviewSliderPrefixSample(
+      sourceSample,
+      context,
+      stage,
+      prefixClarityMap,
+      fullToneSample,
+    );
+    previewContinuousPrefixCacheRef.current = {
+      source: sourceSample,
+      stage,
+      key,
+      clarityMap: prefixClarityMap,
+      sample,
+    };
+    return { stage, sample };
+  }, [previewContinuousPrefixKey]);
 
+  const resolvePreviewToneSample = useCallback((
+    decoded: DecodedRgbImage16,
+  ): LinearRgbSample | null => {
+    if (clampClarity(clarity) === 0) return null;
+    const internalPreview = resolvePreviewSourceSample(decoded);
     const key = JSON.stringify([
       clampWhiteBalanceValue(temperature),
       clampWhiteBalanceValue(tint),
@@ -5936,13 +6043,10 @@ export function ImageEditDialog({
       clampToneRangeAdjustment(highlight),
       clampScaledLog(scaledLog),
       clampSigmoid(sigmoid),
-      normalizedClarity,
     ]);
-    const cached = previewClarityMapCacheRef.current;
-    if (cached?.source === internalPreview.sample && cached.key === key) return cached.map;
+    const cached = previewToneSampleCacheRef.current;
+    if (cached?.source === internalPreview.sample && cached.key === key) return cached.sample;
 
-    // The internal preview is immutable. Rebuilding Clarity only reevaluates the
-    // current tone controls through Sigmoid against that same ~1 MP source.
     const context = buildColorAdjustmentContextFromLinearRgbSample(
       internalPreview.contextSample,
       temperature,
@@ -5956,10 +6060,16 @@ export function ImageEditDialog({
       0,
       true,
     );
-    const map = buildImageEditClarityMap(internalPreview.sample, context, normalizedClarity);
-    if (!map) return null;
-    previewClarityMapCacheRef.current = { source: internalPreview.sample, key, map };
-    return map;
+    const activeStage = previewContinuousSliderRef.current;
+    const tonePrefix = isTonePreviewSliderStage(activeStage)
+      ? resolvePreviewContinuousPrefixSample(internalPreview.sample, context)
+      : null;
+    const sample = tonePrefix && isTonePreviewSliderStage(tonePrefix.stage)
+      ? buildImageEditToneSample(tonePrefix.sample, context, tonePrefix.stage)
+      : buildImageEditToneSample(internalPreview.sample, context);
+    previewToneSampleCacheRef.current = { source: internalPreview.sample, key, sample };
+    previewClarityMapCacheRef.current = null;
+    return sample;
   }, [
     clarity,
     temperature,
@@ -5969,14 +6079,43 @@ export function ImageEditDialog({
     highlight,
     scaledLog,
     sigmoid,
+    resolvePreviewSourceSample,
+    resolvePreviewContinuousPrefixSample,
   ]);
+
+  const resolvePreviewClarityMap = useCallback((
+    decoded: DecodedRgbImage16,
+  ): ImageEditClarityMap | null => {
+    const normalizedClarity = clampClarity(clarity);
+    if (normalizedClarity === 0) {
+      previewClarityMapCacheRef.current = null;
+      return null;
+    }
+
+    const toneSample = resolvePreviewToneSample(decoded);
+    if (!toneSample) return null;
+    const key = String(normalizedClarity);
+    const cached = previewClarityMapCacheRef.current;
+    if (cached?.source === toneSample && cached.key === key) return cached.map;
+
+    const map = buildImageEditClarityMapFromToneSample(toneSample, normalizedClarity);
+    if (!map) return null;
+    previewClarityMapCacheRef.current = { source: toneSample, key, map };
+    return map;
+  }, [clarity, resolvePreviewToneSample]);
 
   useEffect(() => {
     const canvas = previewCanvasRef.current;
     const decoded = decodedImageRef.current;
     if (!canvas || !decoded || !displayed.w || !displayed.h) return;
-    const width = Math.max(1, Math.round(displayed.w));
-    const height = Math.max(1, Math.round(displayed.h));
+
+    // Keep one ~1 MP backing sample for the editable preview. CSS scales this canvas
+    // to the on-screen rectangle; the same immutable sample is also the Clarity
+    // analysis source, avoiding a second preview-sized source buffer.
+    const internalPreview = resolvePreviewSourceSample(decoded);
+    const previewSource = internalPreview.decoded;
+    const width = internalPreview.sample.width;
+    const height = internalPreview.sample.height;
     const previewColorProfile: ImageEditOutputColorProfile = "srgb";
     const includeMosaic = !eyedropperMode && !rotationMode && mosaicRegions.length > 0 && !!natural?.w;
     const renderedPreviewKey = JSON.stringify([
@@ -5999,7 +6138,7 @@ export function ImageEditDialog({
 
     const rendered = previewRenderedRef.current;
     if (
-      rendered?.decoded === decoded &&
+      rendered?.decoded === previewSource &&
       rendered.key === renderedPreviewKey &&
       rendered.width === width &&
       rendered.height === height &&
@@ -6018,19 +6157,24 @@ export function ImageEditDialog({
       if (canvas.width !== width) canvas.width = width;
       if (canvas.height !== height) canvas.height = height;
 
-      const previewSourceRect = { x: 0, y: 0, w: decoded.width, h: decoded.height };
-      const previewSourceSample = getRenderedLinearRgbSample(
-        decoded,
-        previewSourceRect,
-        rotationDegrees,
-        width,
-        height,
-      );
-      const previewContextSample = getAnalysisLinearRgbSample(
-        decoded,
-        previewSourceRect,
-        rotationDegrees,
-      );
+      const previewSourceRect = { x: 0, y: 0, w: previewSource.width, h: previewSource.height };
+      const normalizedRotation = normalizeRotationDegrees(rotationDegrees);
+      const previewSourceSample = normalizedRotation === 0
+        ? internalPreview.sample
+        : getRenderedLinearRgbSample(
+            previewSource,
+            previewSourceRect,
+            normalizedRotation,
+            width,
+            height,
+          );
+      const previewContextSample = normalizedRotation === 0
+        ? internalPreview.contextSample
+        : getAnalysisLinearRgbSample(
+            previewSource,
+            previewSourceRect,
+            normalizedRotation,
+          );
       const adjustmentContext = buildColorAdjustmentContextFromLinearRgbSample(
         previewContextSample,
         temperature,
@@ -6045,6 +6189,17 @@ export function ImageEditDialog({
         true,
       );
       const clarityMap = resolvePreviewClarityMap(decoded);
+      const previewToneSample = clarityMap && normalizedRotation === 0
+        ? resolvePreviewToneSample(decoded)
+        : null;
+      const continuousPrefix = normalizedRotation === 0
+        ? resolvePreviewContinuousPrefixSample(
+            internalPreview.sample,
+            adjustmentContext,
+            clarityMap,
+            previewToneSample,
+          )
+        : null;
       renderAdjustedLinearRgbSampleToCanvas(
         canvas,
         previewSourceSample,
@@ -6061,14 +6216,20 @@ export function ImageEditDialog({
         previewColorProfile,
         clarityMap,
         adjustmentContext,
-        {
-          sourceWidth: decoded.width,
-          sourceHeight: decoded.height,
-          sourceRect: previewSourceRect,
-          rotationDegrees,
-        },
+        clarityMap && normalizedRotation !== 0
+          ? {
+              sourceWidth: previewSource.width,
+              sourceHeight: previewSource.height,
+              sourceRect: previewSourceRect,
+              rotationDegrees: normalizedRotation,
+            }
+          : undefined,
+        previewToneSample ?? undefined,
+        continuousPrefix?.stage,
+        continuousPrefix?.sample,
       );
       if (includeMosaic) {
+        const previewScale = width / Math.max(1, displayed.w);
         applyMosaicRectsToCanvas(
           canvas,
           mosaicRegions.map((region) => ({
@@ -6077,13 +6238,13 @@ export function ImageEditDialog({
             w: (region.right - region.left) * canvas.width,
             h: (region.bottom - region.top) * canvas.height,
           })),
-          16,
+          Math.max(1, Math.round(16 * previewScale)),
           previewColorProfile,
         );
       }
 
       previewRenderedRef.current = {
-        decoded,
+        decoded: previewSource,
         width,
         height,
         key: renderedPreviewKey,
@@ -6116,7 +6277,10 @@ export function ImageEditDialog({
     mosaicRegions,
     eyedropperMode,
     clearEmbeddedRawPreview,
+    resolvePreviewSourceSample,
+    resolvePreviewToneSample,
     resolvePreviewClarityMap,
+    resolvePreviewContinuousPrefixSample,
   ]);
 
   useEffect(() => {
@@ -7700,8 +7864,8 @@ export function ImageEditDialog({
                   max={100}
                   step={1}
                   value={temperature}
-                  onChange={(e) => setTemperature(clampWhiteBalanceValue(Number(e.target.value)))}
-                  onDoubleClick={() => setTemperature(sliderDefaults.temperature)}
+                  onChange={(e) => { previewContinuousSliderRef.current = "white-balance"; setTemperature(clampWhiteBalanceValue(Number(e.target.value))); }}
+                  onDoubleClick={() => { previewContinuousSliderRef.current = "white-balance"; setTemperature(sliderDefaults.temperature); }}
                   className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
               </label>
@@ -7714,8 +7878,8 @@ export function ImageEditDialog({
                   max={100}
                   step={1}
                   value={tint}
-                  onChange={(e) => setTint(clampWhiteBalanceValue(Number(e.target.value)))}
-                  onDoubleClick={() => setTint(sliderDefaults.tint)}
+                  onChange={(e) => { previewContinuousSliderRef.current = "white-balance"; setTint(clampWhiteBalanceValue(Number(e.target.value))); }}
+                  onDoubleClick={() => { previewContinuousSliderRef.current = "white-balance"; setTint(sliderDefaults.tint); }}
                   className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
               </label>
@@ -7755,8 +7919,8 @@ export function ImageEditDialog({
                   max={5}
                   step={0.1}
                   value={exposureEv}
-                  onChange={(e) => setExposureEv(clampExposureEv(Number(e.target.value)))}
-                  onDoubleClick={() => setExposureEv(sliderDefaults.exposureEv)}
+                  onChange={(e) => { previewContinuousSliderRef.current = "exposure"; setExposureEv(clampExposureEv(Number(e.target.value))); }}
+                  onDoubleClick={() => { previewContinuousSliderRef.current = "exposure"; setExposureEv(sliderDefaults.exposureEv); }}
                   className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
               </div>
@@ -7781,8 +7945,8 @@ export function ImageEditDialog({
                   max={20}
                   step={0.1}
                   value={scaledLog}
-                  onChange={(e) => setScaledLog(clampScaledLog(Number(e.target.value)))}
-                  onDoubleClick={() => setScaledLog(sliderDefaults.scaledLog)}
+                  onChange={(e) => { previewContinuousSliderRef.current = "scaled-log"; setScaledLog(clampScaledLog(Number(e.target.value))); }}
+                  onDoubleClick={() => { previewContinuousSliderRef.current = "scaled-log"; setScaledLog(sliderDefaults.scaledLog); }}
                   className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
               </div>
@@ -7807,8 +7971,8 @@ export function ImageEditDialog({
                   max={10}
                   step={0.1}
                   value={sigmoid}
-                  onChange={(e) => setSigmoid(clampSigmoid(Number(e.target.value)))}
-                  onDoubleClick={() => setSigmoid(sliderDefaults.sigmoid)}
+                  onChange={(e) => { previewContinuousSliderRef.current = "sigmoid"; setSigmoid(clampSigmoid(Number(e.target.value))); }}
+                  onDoubleClick={() => { previewContinuousSliderRef.current = "sigmoid"; setSigmoid(sliderDefaults.sigmoid); }}
                   className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
               </div>
@@ -7824,8 +7988,8 @@ export function ImageEditDialog({
                   max={100}
                   step={1}
                   value={shadow}
-                  onChange={(e) => setShadow(clampToneRangeAdjustment(Number(e.target.value)))}
-                  onDoubleClick={() => setShadow(sliderDefaults.shadow)}
+                  onChange={(e) => { previewContinuousSliderRef.current = "shadow"; setShadow(clampToneRangeAdjustment(Number(e.target.value))); }}
+                  onDoubleClick={() => { previewContinuousSliderRef.current = "shadow"; setShadow(sliderDefaults.shadow); }}
                   className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
               </div>
@@ -7839,8 +8003,8 @@ export function ImageEditDialog({
                   max={100}
                   step={1}
                   value={highlight}
-                  onChange={(e) => setHighlight(clampToneRangeAdjustment(Number(e.target.value)))}
-                  onDoubleClick={() => setHighlight(sliderDefaults.highlight)}
+                  onChange={(e) => { previewContinuousSliderRef.current = "highlight"; setHighlight(clampToneRangeAdjustment(Number(e.target.value))); }}
+                  onDoubleClick={() => { previewContinuousSliderRef.current = "highlight"; setHighlight(sliderDefaults.highlight); }}
                   className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
               </label>
@@ -7854,8 +8018,8 @@ export function ImageEditDialog({
                   max={100}
                   step={1}
                   value={clarity}
-                  onChange={(e) => setClarity(clampClarity(Number(e.target.value)))}
-                  onDoubleClick={() => setClarity(sliderDefaults.clarity)}
+                  onChange={(e) => { previewContinuousSliderRef.current = "clarity"; setClarity(clampClarity(Number(e.target.value))); }}
+                  onDoubleClick={() => { previewContinuousSliderRef.current = "clarity"; setClarity(sliderDefaults.clarity); }}
                   className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
               </label>
@@ -7872,8 +8036,8 @@ export function ImageEditDialog({
                   max={100}
                   step={1}
                   value={vibrance}
-                  onChange={(e) => setVibrance(clampColorAdjustment(Number(e.target.value)))}
-                  onDoubleClick={() => setVibrance(sliderDefaults.vibrance)}
+                  onChange={(e) => { previewContinuousSliderRef.current = "color"; setVibrance(clampColorAdjustment(Number(e.target.value))); }}
+                  onDoubleClick={() => { previewContinuousSliderRef.current = "color"; setVibrance(sliderDefaults.vibrance); }}
                   className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
               </label>
@@ -7886,8 +8050,8 @@ export function ImageEditDialog({
                   max={100}
                   step={1}
                   value={saturation}
-                  onChange={(e) => setSaturation(clampColorAdjustment(Number(e.target.value)))}
-                  onDoubleClick={() => setSaturation(sliderDefaults.saturation)}
+                  onChange={(e) => { previewContinuousSliderRef.current = "color"; setSaturation(clampColorAdjustment(Number(e.target.value))); }}
+                  onDoubleClick={() => { previewContinuousSliderRef.current = "color"; setSaturation(sliderDefaults.saturation); }}
                   className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
               </label>

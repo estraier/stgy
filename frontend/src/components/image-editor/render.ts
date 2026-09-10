@@ -13,8 +13,10 @@ import {
   applyColorAdjustmentsAfterToneLinearRgb,
   applyColorAdjustmentsLinearRgb,
   applyToneAdjustmentsLinearRgb,
+  applyToneAdjustmentsLinearRgbRange,
   linearChannelToSrgb,
   type ColorAdjustmentContext,
+  type ToneAdjustmentStage,
 } from "@/image/tone";
 import {
   isUsableImageEditClarityMap,
@@ -28,6 +30,84 @@ type ImageEditClaritySourceGeometry = {
   sourceRect: { x: number; y: number; w: number; h: number };
   rotationDegrees: number;
 };
+
+export type ImageEditPreviewSliderStage =
+  | Exclude<ToneAdjustmentStage, "after-tone">
+  | "clarity"
+  | "color";
+
+export function isTonePreviewSliderStage(
+  stage: ImageEditPreviewSliderStage | null | undefined,
+): stage is Exclude<ToneAdjustmentStage, "after-tone"> {
+  return !!stage && stage !== "clarity" && stage !== "color";
+}
+
+export function buildImageEditPreviewSliderPrefixSample(
+  sample: LinearRgbSample,
+  context: ColorAdjustmentContext,
+  stage: ImageEditPreviewSliderStage,
+  clarityMap: ImageEditClarityMap | null = null,
+  fullToneSample?: LinearRgbSample | null,
+): LinearRgbSample {
+  if (stage === "white-balance") return sample;
+  if (stage === "clarity" && fullToneSample) return fullToneSample;
+
+  const width = Math.max(1, Math.round(sample.width));
+  const height = Math.max(1, Math.round(sample.height));
+  const pixelCount = width * height;
+  if (sample.data.length !== pixelCount * 3) return sample;
+
+  const data = new Float32Array(sample.data.length);
+  const valid = sample.valid;
+  const activeClarityMap = isUsableImageEditClarityMap(clarityMap) ? clarityMap : null;
+  const tonePrefixEnd: ToneAdjustmentStage = isTonePreviewSliderStage(stage)
+    ? stage
+    : "after-tone";
+  const toneSource = !isTonePreviewSliderStage(stage) && fullToneSample
+    && fullToneSample.width === width
+    && fullToneSample.height === height
+    && fullToneSample.data.length === sample.data.length
+    ? fullToneSample.data
+    : null;
+
+  for (let pixel = 0, si = 0; pixel < pixelCount; pixel += 1, si += 3) {
+    if (valid && !valid[pixel]) continue;
+    let r = toneSource ? (toneSource[si] ?? 0) : (sample.data[si] ?? 0);
+    let g = toneSource ? (toneSource[si + 1] ?? 0) : (sample.data[si + 1] ?? 0);
+    let b = toneSource ? (toneSource[si + 2] ?? 0) : (sample.data[si + 2] ?? 0);
+
+    if (!toneSource) {
+      [r, g, b] = applyToneAdjustmentsLinearRgbRange(
+        r,
+        g,
+        b,
+        context,
+        "white-balance",
+        tonePrefixEnd,
+      );
+    }
+
+    if (stage === "color" && activeClarityMap) {
+      const clarityGain = activeClarityMap.width === width && activeClarityMap.height === height
+        ? (activeClarityMap.gain[pixel] ?? 1)
+        : sampleImageEditClarityGain(
+            activeClarityMap,
+            (pixel % width) + 0.5,
+            Math.floor(pixel / width) + 0.5,
+            width,
+            height,
+          );
+      r = Math.max(0, r * clarityGain);
+      g = Math.max(0, g * clarityGain);
+      b = Math.max(0, b * clarityGain);
+    }
+
+    data[si] = Math.fround(r);
+    data[si + 1] = Math.fround(g);
+    data[si + 2] = Math.fround(b);
+  }
+  return { data, width, height, ...(valid ? { valid } : {}) };
+}
 
 // Pixel rendering is kept separate from React/UI state so later hot-loop optimization is isolated.
 
@@ -48,6 +128,9 @@ export function renderAdjustedLinearRgbSampleToCanvas(
   clarityMap: ImageEditClarityMap | null = null,
   suppliedContext?: ColorAdjustmentContext,
   claritySourceGeometry?: ImageEditClaritySourceGeometry,
+  preTonedSample?: LinearRgbSample,
+  continuousEditStage?: ImageEditPreviewSliderStage,
+  continuousPrefixSample?: LinearRgbSample,
 ) {
   const ctx = getCanvas2dContext(canvas, outputColorProfile);
   if (!ctx) throw new Error("2D context unavailable");
@@ -85,6 +168,22 @@ export function renderAdjustedLinearRgbSampleToCanvas(
     activeClarityMap.width === width && activeClarityMap.height === height;
   const data = renderedSample.data;
   const valid = renderedSample.valid;
+  const reusableToneSample = hasClarity
+    && preTonedSample
+    && preTonedSample.width === renderedSample.width
+    && preTonedSample.height === renderedSample.height
+    && preTonedSample.data.length === renderedSample.data.length
+    ? preTonedSample
+    : null;
+  const toneData = reusableToneSample?.data;
+  const reusableContinuousPrefix = continuousEditStage
+    && continuousPrefixSample
+    && continuousPrefixSample.width === renderedSample.width
+    && continuousPrefixSample.height === renderedSample.height
+    && continuousPrefixSample.data.length === renderedSample.data.length
+    ? continuousPrefixSample
+    : null;
+  const continuousData = reusableContinuousPrefix?.data;
   const pixelCount = Math.floor(data.length / 3);
   let di = 0;
   for (let pixel = 0; pixel < pixelCount; pixel++, di += 4) {
@@ -96,11 +195,66 @@ export function renderAdjustedLinearRgbSampleToCanvas(
       continue;
     }
     const si = pixel * 3;
-    let r = data[si] ?? 0;
-    let g = data[si + 1] ?? 0;
-    let b = data[si + 2] ?? 0;
-    if (hasClarity) {
-      [r, g, b] = applyToneAdjustmentsLinearRgb(r, g, b, context);
+    let r: number;
+    let g: number;
+    let b: number;
+    const stage = continuousData ? continuousEditStage : undefined;
+    const useFullToneCache = hasClarity && toneData && (!stage || isTonePreviewSliderStage(stage));
+    if (stage && continuousData && !useFullToneCache) {
+      r = continuousData[si] ?? 0;
+      g = continuousData[si + 1] ?? 0;
+      b = continuousData[si + 2] ?? 0;
+    } else if (useFullToneCache) {
+      r = toneData[si] ?? 0;
+      g = toneData[si + 1] ?? 0;
+      b = toneData[si + 2] ?? 0;
+    } else {
+      r = data[si] ?? 0;
+      g = data[si + 1] ?? 0;
+      b = data[si + 2] ?? 0;
+    }
+
+    if (stage && continuousData && !useFullToneCache) {
+      if (isTonePreviewSliderStage(stage)) {
+        [r, g, b] = applyToneAdjustmentsLinearRgbRange(r, g, b, context, stage, "after-tone");
+      }
+
+      if (stage !== "color") {
+        if (hasClarity) {
+          let clarityGain: number;
+          if (clarityTransform && claritySourceGeometry) {
+            const x = pixel % width;
+            const y = Math.floor(pixel / width);
+            const sourceX = clarityTransform.originX
+              + x * clarityTransform.columnStepX
+              + y * clarityTransform.rowStepX;
+            const sourceY = clarityTransform.originY
+              + x * clarityTransform.columnStepY
+              + y * clarityTransform.rowStepY;
+            clarityGain = sampleImageEditClarityGain(
+              activeClarityMap,
+              sourceX,
+              sourceY,
+              claritySourceGeometry.sourceWidth,
+              claritySourceGeometry.sourceHeight,
+            );
+          } else if (claritySameSize) {
+            clarityGain = activeClarityMap.gain[pixel] ?? 1;
+          } else {
+            const x = pixel % width;
+            const y = Math.floor(pixel / width);
+            clarityGain = sampleImageEditClarityGain(activeClarityMap, x + 0.5, y + 0.5, width, height);
+          }
+          r = Math.max(0, r * clarityGain);
+          g = Math.max(0, g * clarityGain);
+          b = Math.max(0, b * clarityGain);
+        }
+      }
+      [r, g, b] = applyColorAdjustmentsAfterToneLinearRgb(r, g, b, context);
+    } else if (hasClarity) {
+      if (!toneData) {
+        [r, g, b] = applyToneAdjustmentsLinearRgb(r, g, b, context);
+      }
       let clarityGain: number;
       if (clarityTransform && claritySourceGeometry) {
         const x = pixel % width;
