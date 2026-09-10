@@ -3,8 +3,6 @@
 // Local Stack Studio worker source. Built to public/generated/local-stack-studio.
 import { loadWorkerOpenCv } from "./opencv-runtime";
 
-"use strict";
-
 const HDR_FLOAT_MIN_RESPONSE = 1e-12;
 const HDR_FLOAT_WEIGHT_EPSILON = 1e-12;
 const REINHARD_GAMMA = 1.0;
@@ -21,7 +19,7 @@ const MERTENS_SHARPNESS_CLAHE_CLIP_LIMIT = 0.3;
 const MERTENS_SHARPNESS_CLAHE_GAMMA = 2.8;
 const MERTENS_SHARPNESS_HIGH_LOW_BALANCE = 0.5;
 const MERTENS_SHARPNESS_SUPPRESS_NOISE = 0.5;
-const MERTENS_SHARPNESS_SMOOTHNESS = 0.5;
+const MERTENS_SHARPNESS_SMOOTHNESS = 0.1;
 
 let cvPromise = null;
 
@@ -792,7 +790,7 @@ function computeMertensSharpnessMap(cv, gamma2Rgb, width, height) {
     throw new Error("HDR2 contrast sharpness received an invalid gamma-2 RGB buffer.");
   }
 
-  let gray = new cv.Mat(height, width, cv.CV_32FC1);
+  const gray = new cv.Mat(height, width, cv.CV_32FC1);
   for (let pixel = 0, source = 0; pixel < width * height; pixel += 1, source += 3) {
     const rEncoded = clamp01(gamma2Rgb[source]);
     const gEncoded = clamp01(gamma2Rgb[source + 1]);
