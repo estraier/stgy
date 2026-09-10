@@ -1658,7 +1658,6 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
       return finalizeStoredGamma2Result(focusStored, width, height, outputColorSpace);
     }
 
-    let resultIsGamma2 = false;
     if (mergePlan.mode === "hdr1" || mergePlan.mode === "hdr2") {
       for (let index = 0; index < files.length; index += 1) {
         const validImage = mergePlan.mode === "hdr1"
@@ -1679,7 +1678,6 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
       } else {
         setProgress("Merging HDR2 with Mertens exposure fusion...");
         accumulator = await mergeHdrMertensInWorker(hdrImages, hdrBrightnesses, width, height);
-        resultIsGamma2 = true;
       }
       hdrImages.length = 0;
       hdrBrightnesses.length = 0;
@@ -1689,7 +1687,7 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
       throw new Error("No input images were processed.");
     }
 
-    return finalizeStoredResult(accumulator, width, height, outputColorSpace, resultIsGamma2);
+    return finalizeStoredResult(accumulator, width, height, outputColorSpace);
   } finally {
     if (alignmentWorker) alignmentWorker.terminate();
     if (focusWorker) focusWorker.terminate();
@@ -1982,12 +1980,12 @@ function mergeStackSource(
   hdrBrightnesses,
 ) {
   if (mergePlan.mode === "hdr1" || mergePlan.mode === "hdr2") {
-    const useGamma2 = mergePlan.mode === "hdr2";
+    const useHdr2Preparation = mergePlan.mode === "hdr2";
     const prepared = hasLinearProPhoto
-      ? (useGamma2
+      ? (useHdr2Preparation
         ? linearProPhotoMatToHdr2FloatsAndBrightness(mergeSource)
         : linearProPhotoMatToFloatsAndBrightness(mergeSource))
-      : (useGamma2
+      : (useHdr2Preparation
         ? rgbMatToHdr2FloatsAndBrightness(mergeSource, inputInfo.sourceColorSpace)
         : rgbMatToLinearProPhotoFloatsAndBrightness(mergeSource, inputInfo.sourceColorSpace));
     hdrImages[index] = prepared.floats;
@@ -2634,7 +2632,7 @@ function rgbMatToHdr2FloatsAndBrightness(rgb, sourceColorSpace) {
   return linearProPhotoArrayToHdr2FloatsAndBrightness(linear);
 }
 
-function mergeHdrDebevecReinhardInWorker(images, exposureTimes, brightnesses, width, height, _preBrightnessSigmoidGain = 0) {
+function mergeHdrDebevecReinhardInWorker(images, exposureTimes, brightnesses, width, height) {
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL("/generated/local-stack-studio/hdr.worker.js", window.location.origin));
     let settled = false;
@@ -2695,6 +2693,8 @@ function mergeHdrMertensInWorker(images, brightnesses, width, height, preBrightn
       if (message.type === "mertens-result") {
         settled = true;
         cleanup();
+        // Keep the legacy transport field name for compatibility with the generated worker asset.
+        // Its payload is linear ProPhoto RGB after the HDR2 processing-space gamma removal.
         resolve(new Float32Array(message.gamma2Buffer));
         return;
       }
@@ -2763,7 +2763,7 @@ async function processSingleInputHdrWithOpenCv(cv, file, inputInfo, mergePlan, o
       const hdrBaseLinear = hdrBase.linear;
       const images = [];
       const brightnesses = new Float32Array(materials.length);
-      brightnesses.fill(computeAverageBrightnessFromLinear(hdrBaseLinear, false));
+      brightnesses.fill(computeAverageBrightnessFromLinear(hdrBaseLinear));
       for (let i = 0; i < materials.length; i += 1) {
         const material = materials[i];
         setProgress(`Preparing HDR1 synthetic material ${i + 1}/${materials.length} (${material.label})...`);
@@ -2776,9 +2776,8 @@ async function processSingleInputHdrWithOpenCv(cv, file, inputInfo, mergePlan, o
         brightnesses,
         width,
         height,
-        2,
       );
-      return finalizeStoredResult(linearResult, width, height, outputColorSpace, false);
+      return finalizeStoredResult(linearResult, width, height, outputColorSpace);
     }
 
     if (mergePlan.mode !== "hdr2") {
@@ -2789,7 +2788,7 @@ async function processSingleInputHdrWithOpenCv(cv, file, inputInfo, mergePlan, o
     const hdrBaseLinear = hdrBase.linear;
     const images = [];
     const brightnesses = new Float32Array(materials.length);
-    brightnesses.fill(computeAverageBrightnessFromLinear(hdrBaseLinear, true));
+    brightnesses.fill(computeAverageBrightnessFromLinear(hdrBaseLinear));
     for (let i = 0; i < materials.length; i += 1) {
       const material = materials[i];
       setProgress(`Preparing HDR2 synthetic material ${i + 1}/${materials.length} (${material.label})...`);
@@ -2797,8 +2796,8 @@ async function processSingleInputHdrWithOpenCv(cv, file, inputInfo, mergePlan, o
       await yieldToBrowser();
     }
     setProgress("Merging HDR2 with Mertens exposure fusion...");
-    const gamma2Result = await mergeHdrMertensInWorker(images, brightnesses, width, height, 2);
-    return finalizeStoredResult(gamma2Result, width, height, outputColorSpace, true);
+    const linearResult = await mergeHdrMertensInWorker(images, brightnesses, width, height, 2);
+    return finalizeStoredResult(linearResult, width, height, outputColorSpace);
   } finally {
     if (rgb) rgb.delete();
     if (rgba) rgba.delete();
@@ -2820,9 +2819,9 @@ function buildSingleShotHdr2Material(sourceLinear, baseP998, material) {
   const adjusted = applySingleShotHdrExposureToLinear(sourceLinear, baseP998, material, true);
   const floats = new Float32Array(adjusted.length);
   for (let i = 0; i < adjusted.length; i += 3) {
-    floats[i] = Math.sqrt(clamp01(applySigmoidLinearAtMidpoint(adjusted[i], material.sigmoidGain, material.sigmoidMidpoint)));
-    floats[i + 1] = Math.sqrt(clamp01(applySigmoidLinearAtMidpoint(adjusted[i + 1], material.sigmoidGain, material.sigmoidMidpoint)));
-    floats[i + 2] = Math.sqrt(clamp01(applySigmoidLinearAtMidpoint(adjusted[i + 2], material.sigmoidGain, material.sigmoidMidpoint)));
+    floats[i] = clamp01(applySigmoidLinearAtMidpoint(adjusted[i], material.sigmoidGain, material.sigmoidMidpoint));
+    floats[i + 1] = clamp01(applySigmoidLinearAtMidpoint(adjusted[i + 1], material.sigmoidGain, material.sigmoidMidpoint));
+    floats[i + 2] = clamp01(applySigmoidLinearAtMidpoint(adjusted[i + 2], material.sigmoidGain, material.sigmoidMidpoint));
   }
   return floats;
 }
@@ -2868,15 +2867,12 @@ function applySingleShotHdrExposureToLinear(baseLinear, baseP998, material, useR
   return result;
 }
 
-function computeAverageBrightnessFromLinear(sourceLinear, useGamma2 = false) {
+function computeAverageBrightnessFromLinear(sourceLinear) {
   const pixelCount = sourceLinear.length / 3;
   if (pixelCount <= 0) return 0;
   let brightnessSum = 0;
   for (let i = 0; i < sourceLinear.length; i += 3) {
-    const r = useGamma2 ? Math.sqrt(clamp01(sourceLinear[i])) : sourceLinear[i];
-    const g = useGamma2 ? Math.sqrt(clamp01(sourceLinear[i + 1])) : sourceLinear[i + 1];
-    const b = useGamma2 ? Math.sqrt(clamp01(sourceLinear[i + 2])) : sourceLinear[i + 2];
-    brightnessSum += 0.299 * r + 0.587 * g + 0.114 * b;
+    brightnessSum += 0.299 * sourceLinear[i] + 0.587 * sourceLinear[i + 1] + 0.114 * sourceLinear[i + 2];
   }
   return brightnessSum / pixelCount;
 }
@@ -2896,9 +2892,9 @@ function linearProPhotoArrayToHdr2FloatsAndBrightness(linear) {
   let brightnessSum = 0;
   const pixelCount = linear.length / 3;
   for (let i = 0; i < linear.length; i += 3) {
-    const r = Math.sqrt(applySigmoidLinear(linear[i], MULTI_SHOT_HDR2_SIGMOID_GAIN));
-    const g = Math.sqrt(applySigmoidLinear(linear[i + 1], MULTI_SHOT_HDR2_SIGMOID_GAIN));
-    const b = Math.sqrt(applySigmoidLinear(linear[i + 2], MULTI_SHOT_HDR2_SIGMOID_GAIN));
+    const r = applySigmoidLinear(linear[i], MULTI_SHOT_HDR2_SIGMOID_GAIN);
+    const g = applySigmoidLinear(linear[i + 1], MULTI_SHOT_HDR2_SIGMOID_GAIN);
+    const b = applySigmoidLinear(linear[i + 2], MULTI_SHOT_HDR2_SIGMOID_GAIN);
     brightnessSum += 0.299 * r + 0.587 * g + 0.114 * b;
     floats[i] = clamp01(r);
     floats[i + 1] = clamp01(g);
@@ -2911,14 +2907,6 @@ function encodeLinearToStoredGamma2(linear) {
   const stored = new Uint16Array(linear.length);
   for (let i = 0; i < linear.length; i += 1) {
     stored[i] = Math.round(Math.sqrt(clamp01(linear[i])) * RESULT_BUFFER_MAX_UINT16);
-  }
-  return stored;
-}
-
-function encodeGamma2FloatToStoredGamma2(gamma2) {
-  const stored = new Uint16Array(gamma2.length);
-  for (let i = 0; i < gamma2.length; i += 1) {
-    stored[i] = Math.round(clamp01(gamma2[i]) * RESULT_BUFFER_MAX_UINT16);
   }
   return stored;
 }
@@ -2936,10 +2924,8 @@ function decodeStoredGamma2ToLinear(stored) {
   return linear;
 }
 
-function finalizeStoredResult(source, width, height, outputColorSpace, sourceIsGamma2) {
-  const gamma2ProPhotoRgb16 = sourceIsGamma2
-    ? encodeGamma2FloatToStoredGamma2(source)
-    : encodeLinearToStoredGamma2(source);
+function finalizeStoredResult(source, width, height, outputColorSpace) {
+  const gamma2ProPhotoRgb16 = encodeLinearToStoredGamma2(source);
   return finalizeStoredGamma2Result(gamma2ProPhotoRgb16, width, height, outputColorSpace);
 }
 

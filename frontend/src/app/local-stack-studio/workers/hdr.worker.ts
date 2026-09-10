@@ -95,9 +95,8 @@ async function processMertensMessage(message) {
     exposureWeight,
   );
 
-  // Mertens/Laplacian reconstruction can overshoot its nominal LDR range.
-  // HDR2 deliberately clips immediately after Mertens, before the stored
-  // gamma-2 result buffer is created on the main thread.
+  // Mertens/Laplacian reconstruction can overshoot its nominal range.
+  // HDR2 clips immediately after Mertens before the linear result is returned.
   for (let i = 0; i < merged.length; i += 1) merged[i] = clamp01(merged[i]);
 
   if (Math.abs(preBrightnessSigmoidGain) > 1e-6) {
@@ -108,6 +107,8 @@ async function processMertensMessage(message) {
   postProgress("Restoring HDR2 brightness...");
   adjustExposureToBrightnessInPlace(merged, targetBrightness);
 
+  // `gamma2Buffer` is retained as the transport field name for compatibility.
+  // The buffer contents are linear ProPhoto RGB; no gamma-2 transform is applied here.
   self.postMessage(
     { type: "mertens-result", gamma2Buffer: merged.buffer },
     [merged.buffer],
