@@ -4,12 +4,14 @@ import { useEffect } from "react";
 import { usePathname } from "next/navigation";
 import { getSessionInfo } from "@/api/auth";
 import { makeAgreementPageUrl, needsAgreement } from "@/utils/agreement";
+import { isSessionIndependentPath } from "@/utils/authRoutes";
 
 export default function SessionAgreementGuard() {
   const pathname = usePathname();
 
   useEffect(() => {
     if (pathname === "/user-agreement" || pathname.startsWith("/user-agreement/")) return;
+    if (isSessionIndependentPath(pathname)) return;
 
     let canceled = false;
 
