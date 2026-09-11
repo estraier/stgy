@@ -4641,6 +4641,7 @@ export function ImageEditDialog({
     clarityMap: ImageEditClarityMap | null;
     sample: LinearRgbSample;
   } | null>(null);
+  const previewRgba8Ref = useRef<Uint8ClampedArray | null>(null);
   const decodedImageRef = useRef<DecodedImage | null>(null);
   const transferredDecodedImageRef = useRef<DecodedImage | null>(null);
   const rawMasterPromiseRef = useRef<Promise<DecodedRgbImage16> | null>(null);
@@ -4799,6 +4800,7 @@ export function ImageEditDialog({
     previewToneSampleCacheRef.current = null;
     previewClarityMapCacheRef.current = null;
     previewContinuousPrefixCacheRef.current = null;
+    previewRgba8Ref.current = null;
 
     const onLoadProgress: ImageLoadProgressListener = (progress) => {
       if (cancelled) return;
@@ -4871,6 +4873,7 @@ export function ImageEditDialog({
       previewSourceSampleRef.current = null;
       previewToneSampleCacheRef.current = null;
       previewClarityMapCacheRef.current = null;
+      previewRgba8Ref.current = null;
       const embeddedPreviewUrl = embeddedRawPreviewUrlRef.current;
       embeddedRawPreviewUrlRef.current = null;
       if (embeddedPreviewUrl) URL.revokeObjectURL(embeddedPreviewUrl);
@@ -6198,6 +6201,10 @@ export function ImageEditDialog({
             previewToneSample,
           )
         : null;
+      const previewPixelCount = width * height;
+      if (!previewRgba8Ref.current || previewRgba8Ref.current.length !== previewPixelCount * 4) {
+        previewRgba8Ref.current = new Uint8ClampedArray(previewPixelCount * 4);
+      }
       renderAdjustedLinearRgbSampleToCanvas(
         canvas,
         previewSourceSample,
@@ -6225,6 +6232,7 @@ export function ImageEditDialog({
         previewToneSample ?? undefined,
         continuousPrefix?.stage,
         continuousPrefix?.sample,
+        previewRgba8Ref.current,
       );
       if (includeMosaic) {
         const previewScale = width / Math.max(1, displayed.w);

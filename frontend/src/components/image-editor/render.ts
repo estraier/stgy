@@ -1,6 +1,6 @@
 import type { DecodedRgbImage16, ImageEditOutputColorProfile, LinearRgbSample } from "./types";
 import { createCanvasImageData, getCanvas2dContext } from "./canvas";
-import { convertLinearProPhotoToOutputRgb } from "@/image/color";
+import { convertLinearProPhotoToOutputRgbInto } from "@/image/color";
 import { buildColorAdjustmentContextFromLinearRgbSample } from "./analysis";
 import {
   buildRenderedPixelToSourceTransform,
@@ -15,8 +15,8 @@ import {
   applyLuminanceGainPreservingAboveOneLinearRgb,
   applyToneAdjustmentsLinearRgb,
   applyToneAdjustmentsLinearRgbRange,
+  clamp01,
   hasColorAdjustmentContextChanges,
-  linearChannelToSrgb,
   type ColorAdjustmentContext,
   type ToneAdjustmentStage,
 } from "@/image/tone";
@@ -32,6 +32,51 @@ type ImageEditClaritySourceGeometry = {
   sourceRect: { x: number; y: number; w: number; h: number };
   rotationDegrees: number;
 };
+
+
+const LINEAR_TO_SRGB_BYTE_LUT = buildLinearToSrgbByteLut(16384);
+
+function buildLinearToSrgbByteLut(size: number): Uint8ClampedArray {
+  const length = Math.max(2, Math.round(size));
+  const lut = new Uint8ClampedArray(length);
+  const scale = length - 1;
+  for (let index = 0; index < length; index += 1) {
+    const x = index / scale;
+    const srgb = x <= 0.0031308 ? x * 12.92 : 1.055 * Math.pow(x, 1 / 2.4) - 0.055;
+    lut[index] = Math.round(clamp01(srgb) * 255);
+  }
+  return lut;
+}
+
+function linearChannelToSrgbByteFromLut(linear: number): number {
+  if (!(linear > 0)) return 0;
+  if (linear >= 1) return 255;
+  return LINEAR_TO_SRGB_BYTE_LUT[Math.round(linear * (LINEAR_TO_SRGB_BYTE_LUT.length - 1))] ?? 0;
+}
+
+function createCanvasImageDataFromReusableBuffer(
+  ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+  width: number,
+  height: number,
+  outputColorProfile: ImageEditOutputColorProfile,
+  reusableRgba8: Uint8ClampedArray | null | undefined,
+): ImageData {
+  if (reusableRgba8 && reusableRgba8.length === width * height * 4) {
+    try {
+      return new ImageData(
+        reusableRgba8,
+        width,
+        height,
+        { colorSpace: outputColorProfile } as unknown as ImageDataSettings,
+      );
+    } catch {
+      try {
+        return new ImageData(reusableRgba8, width, height);
+      } catch {}
+    }
+  }
+  return createCanvasImageData(ctx, width, height, outputColorProfile);
+}
 
 export type ImageEditPreviewSliderStage =
   | Exclude<ToneAdjustmentStage, "after-tone">
@@ -132,12 +177,19 @@ export function renderAdjustedLinearRgbSampleToCanvas(
   preTonedSample?: LinearRgbSample,
   continuousEditStage?: ImageEditPreviewSliderStage,
   continuousPrefixSample?: LinearRgbSample,
+  reusableRgba8?: Uint8ClampedArray | null,
 ) {
   const ctx = getCanvas2dContext(canvas, outputColorProfile);
   if (!ctx) throw new Error("2D context unavailable");
   const width = Math.max(1, canvas.width);
   const height = Math.max(1, canvas.height);
-  const imageData = createCanvasImageData(ctx, width, height, outputColorProfile);
+  const imageData = createCanvasImageDataFromReusableBuffer(
+    ctx,
+    width,
+    height,
+    outputColorProfile,
+    reusableRgba8,
+  );
   const output = imageData.data;
   const context = suppliedContext ?? buildColorAdjustmentContextFromLinearRgbSample(
     contextSample,
@@ -186,6 +238,7 @@ export function renderAdjustedLinearRgbSampleToCanvas(
     : null;
   const continuousData = reusableContinuousPrefix?.data;
   const pixelCount = Math.floor(data.length / 3);
+  const converted: [number, number, number] = [0, 0, 0];
   let di = 0;
   for (let pixel = 0; pixel < pixelCount; pixel++, di += 4) {
     if (valid && !valid[pixel]) {
@@ -289,10 +342,10 @@ export function renderAdjustedLinearRgbSampleToCanvas(
     } else {
       [r, g, b] = applyColorAdjustmentsLinearRgb(r, g, b, context);
     }
-    [r, g, b] = convertLinearProPhotoToOutputRgb(r, g, b, outputColorProfile);
-    output[di] = linearChannelToSrgb(r);
-    output[di + 1] = linearChannelToSrgb(g);
-    output[di + 2] = linearChannelToSrgb(b);
+    convertLinearProPhotoToOutputRgbInto(r, g, b, outputColorProfile, converted);
+    output[di] = linearChannelToSrgbByteFromLut(converted[0]);
+    output[di + 1] = linearChannelToSrgbByteFromLut(converted[1]);
+    output[di + 2] = linearChannelToSrgbByteFromLut(converted[2]);
     output[di + 3] = 255;
   }
   ctx.putImageData(imageData, 0, 0);
@@ -349,6 +402,7 @@ export function renderAdjustedRgb16ToCanvas(
     rotationDegrees,
   );
   const sample: LinearRgbBuffer = [0, 0, 0];
+  const converted: [number, number, number] = [0, 0, 0];
   const samplingScratch = createRgb16SamplingScratch();
   let rowSourceX = transform.originX;
   let rowSourceY = transform.originY;
@@ -386,10 +440,10 @@ export function renderAdjustedRgb16ToCanvas(
         } else {
           [r, g, b] = applyColorAdjustmentsLinearRgb(r, g, b, context);
         }
-        [r, g, b] = convertLinearProPhotoToOutputRgb(r, g, b, outputColorProfile);
-        output[di] = linearChannelToSrgb(r);
-        output[di + 1] = linearChannelToSrgb(g);
-        output[di + 2] = linearChannelToSrgb(b);
+        convertLinearProPhotoToOutputRgbInto(r, g, b, outputColorProfile, converted);
+        output[di] = linearChannelToSrgbByteFromLut(converted[0]);
+        output[di + 1] = linearChannelToSrgbByteFromLut(converted[1]);
+        output[di + 2] = linearChannelToSrgbByteFromLut(converted[2]);
         output[di + 3] = 255;
       }
       sourceX += transform.columnStepX;
