@@ -395,7 +395,8 @@ const RAW_THUMBNAIL_MATCH_VIBRANCE_PERCENTILE = 50;
 const RAW_THUMBNAIL_MATCH_COLOR_VALUE_TRIM_FRACTION = 0.1;
 const DEBUG_PERCENTILES = [0, 1, 2, 5, 25, 50, 75, 95, 98, 99, 100] as const;
 const RAW_THUMBNAIL_MATCH_SAMPLE_MAX_SIDE = 256;
-const IMAGE_EDIT_INTERNAL_PREVIEW_TARGET_PIXELS = 1_000_000;
+const RAW_EDITOR_PREVIEW_TARGET_PIXELS = 1_000_000;
+const IMAGE_EDIT_CLAHE_MIN_PIXELS = 80 * 256 * 20; // 409,600 pixels.
 const RAW_PREVIEW_DEMOSAIC_QUALITY: RawDemosaicQuality = 0;
 
 type DebugPercentileValues = number[];
@@ -2997,7 +2998,60 @@ function rawLensfunMapTransferables(correction: LensfunCorrection | undefined): 
 }
 
 function rawPreviewDimensions(width: number, height: number): { width: number; height: number } {
-  return analysisSampleDimensions(width, height, IMAGE_EDIT_INTERNAL_PREVIEW_TARGET_PIXELS);
+  return analysisSampleDimensions(width, height, RAW_EDITOR_PREVIEW_TARGET_PIXELS);
+}
+
+function imageEditPreviewDimensions(
+  sourceWidth: number,
+  sourceHeight: number,
+  displayCssWidth: number,
+  displayCssHeight: number,
+): { width: number; height: number } {
+  const sourceW = Math.max(1, Math.round(Number.isFinite(sourceWidth) ? sourceWidth : 1));
+  const sourceH = Math.max(1, Math.round(Number.isFinite(sourceHeight) ? sourceHeight : 1));
+  const sourcePixels = sourceW * sourceH;
+  if (sourcePixels <= IMAGE_EDIT_CLAHE_MIN_PIXELS) {
+    return { width: sourceW, height: sourceH };
+  }
+
+  const cssW = Number.isFinite(displayCssWidth) && displayCssWidth > 0 ? displayCssWidth : 1;
+  const cssH = Number.isFinite(displayCssHeight) && displayCssHeight > 0 ? displayCssHeight : 1;
+
+  // Prefer a backing image that matches the CSS display one-for-one. If that
+  // already gives CLAHE enough samples, there is no benefit in rendering more
+  // pixels than the user can see.
+  const displayScale = Math.min(1, cssW / sourceW, cssH / sourceH);
+  const displayWidth = Math.max(1, Math.min(sourceW, Math.round(sourceW * displayScale)));
+  const displayHeight = Math.max(1, Math.min(sourceH, Math.round(sourceH * displayScale)));
+  if (displayWidth * displayHeight >= IMAGE_EDIT_CLAHE_MIN_PIXELS || displayScale >= 1) {
+    return { width: displayWidth, height: displayHeight };
+  }
+
+  // The display is too small for CLAHE. Grow the backing image by simple ratios
+  // so browser downsampling stays regular, and stop at the first ratio that
+  // reaches the CLAHE floor. Never upscale beyond the source itself.
+  const simpleScales = [4 / 3, 3 / 2, 2, 5 / 2, 3, 4] as const;
+  for (const scale of simpleScales) {
+    const width = Math.max(1, Math.min(sourceW, Math.round(displayWidth * scale)));
+    const height = Math.max(1, Math.min(sourceH, Math.round(displayHeight * scale)));
+    if (width >= sourceW || height >= sourceH) {
+      return { width: sourceW, height: sourceH };
+    }
+    if (width * height >= IMAGE_EDIT_CLAHE_MIN_PIXELS) {
+      return { width, height };
+    }
+  }
+
+  for (let scale = 5; ; scale += 1) {
+    const width = Math.max(1, Math.min(sourceW, Math.round(displayWidth * scale)));
+    const height = Math.max(1, Math.min(sourceH, Math.round(displayHeight * scale)));
+    if (width >= sourceW || height >= sourceH) {
+      return { width: sourceW, height: sourceH };
+    }
+    if (width * height >= IMAGE_EDIT_CLAHE_MIN_PIXELS) {
+      return { width, height };
+    }
+  }
 }
 
 async function resampleRawDecodedInWorker(
@@ -3824,7 +3878,7 @@ function buildFallbackImageEditClarityMap(
     decoded,
     sourceRect,
     0,
-    IMAGE_EDIT_INTERNAL_PREVIEW_TARGET_PIXELS,
+    IMAGE_EDIT_CLAHE_MIN_PIXELS,
   );
   const contextSample = getAnalysisLinearRgbSample(decoded, sourceRect, 0);
   const context = buildColorAdjustmentContextFromLinearRgbSample(
@@ -5927,17 +5981,30 @@ export function ImageEditDialog({
     decoded: DecodedRgbImage16,
   ): { decoded: DecodedRgbImage16; sample: LinearRgbSample; contextSample: LinearRgbSample } => {
     const previewSource = decoded;
+    const previewSize = imageEditPreviewDimensions(
+      previewSource.width,
+      previewSource.height,
+      displayed.w,
+      displayed.h,
+    );
     const cached = previewSourceSampleRef.current;
-    if (cached?.decoded === previewSource) return cached;
+    if (
+      cached?.decoded === previewSource
+      && cached.sample.width === previewSize.width
+      && cached.sample.height === previewSize.height
+    ) {
+      return cached;
+    }
 
     const sourceRect = { x: 0, y: 0, w: previewSource.width, h: previewSource.height };
     const next = {
       decoded: previewSource,
-      sample: getAnalysisLinearRgbSample(
+      sample: getRenderedLinearRgbSample(
         previewSource,
         sourceRect,
         0,
-        IMAGE_EDIT_INTERNAL_PREVIEW_TARGET_PIXELS,
+        previewSize.width,
+        previewSize.height,
       ),
       contextSample: getAnalysisLinearRgbSample(previewSource, sourceRect, 0),
     };
@@ -5946,7 +6013,7 @@ export function ImageEditDialog({
     previewClarityMapCacheRef.current = null;
     previewContinuousPrefixCacheRef.current = null;
     return next;
-  }, []);
+  }, [displayed.h, displayed.w]);
 
   const previewContinuousPrefixKey = useCallback((stage: ImageEditPreviewSliderStage): string => {
     const values: Array<number | null> = [
@@ -6110,9 +6177,10 @@ export function ImageEditDialog({
     const decoded = decodedImageRef.current;
     if (!canvas || !decoded || !displayed.w || !displayed.h) return;
 
-    // Keep one ~1 MP backing sample for the editable preview. CSS scales this canvas
-    // to the on-screen rectangle; the same immutable sample is also the Clarity
-    // analysis source, avoiding a second preview-sized source buffer.
+    // Match the backing sample to the physical on-screen image when that already
+    // provides enough CLAHE data. Otherwise use the smallest integer backing
+    // multiplier that reaches the 409,600-pixel CLAHE floor. The same immutable
+    // sample is shared by Clarity analysis and preview rendering.
     const internalPreview = resolvePreviewSourceSample(decoded);
     const previewSource = internalPreview.decoded;
     const width = internalPreview.sample.width;
@@ -6936,7 +7004,7 @@ export function ImageEditDialog({
         <div className="mt-3 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_250px] gap-4 lg:items-stretch">
           <div
             ref={containerRef}
-            className={`relative w-full h-[42vh] min-h-[270px] lg:h-auto rounded border bg-gray-200 overflow-hidden touch-none ${textMode ? "cursor-text" : !eyedropperMode && !rotationMode && (drawMode || mosaicMode) ? "cursor-crosshair" : ""}`}
+            className={`relative w-full h-[42vh] min-h-[270px] lg:h-[calc(100dvh-120px)] lg:max-h-[900px] rounded border bg-gray-200 overflow-hidden touch-none ${textMode ? "cursor-text" : !eyedropperMode && !rotationMode && (drawMode || mosaicMode) ? "cursor-crosshair" : ""}`}
             onPointerDown={eyedropperMode || rotationMode ? undefined : textMode ? onTextPointerDown : drawMode ? onDrawPointerDown : mosaicMode ? onMosaicPointerDown : undefined}
             onPointerMove={eyedropperMode ? undefined : rotationMode ? onRotationPointerMove : drawMode ? onDrawPointerMove : mosaicMode ? onMosaicPointerMove : onPointerMove}
             onPointerUp={eyedropperMode ? undefined : rotationMode ? onRotationPointerUp : drawMode ? (e) => finishDrawCreation(e) : mosaicMode ? onMosaicPointerUp : onPointerUp}
@@ -7415,6 +7483,21 @@ export function ImageEditDialog({
                             </div>
                           ))}
                         </div>
+                        {(() => {
+                          const previewSample = previewSourceSampleRef.current?.sample;
+                          const previewWidth = previewSample?.width ?? previewRenderedRef.current?.width ?? 0;
+                          const previewHeight = previewSample?.height ?? previewRenderedRef.current?.height ?? 0;
+                          const previewPixels = previewWidth * previewHeight;
+                          const previewBytes = previewSample?.data.byteLength ?? previewPixels * 3 * Float32Array.BYTES_PER_ELEMENT;
+                          return (
+                            <div className="mt-2 border-t border-gray-600 pt-2">
+                              <div className="font-medium">Preview settings</div>
+                              <div className="mt-1 font-mono tabular-nums">
+                                Size: width={previewWidth}, height={previewHeight}, pixels={previewPixels}, bytes={formatMemoryMiB(previewBytes)}
+                              </div>
+                            </div>
+                          );
+                        })()}
                         {rawDevelopmentSettings && (
                           <div className="mt-2 border-t border-gray-600 pt-2">
                             <div className="font-medium">RAW development settings</div>
