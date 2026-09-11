@@ -370,7 +370,7 @@ type ImageLoadProgress = {
 type ImageLoadProgressListener = (progress: ImageLoadProgress) => void;
 
 const RAW_DEVELOPED_LINEAR_RANGE_MAX = 2;
-const RAW_USE_THUMBNAIL = false; // Temporary test setting.
+const RAW_USE_THUMBNAIL = true;
 const RAW_TONE_SLOPE_EPSILON = 1e-5;
 const RAW_MEDIAN_DENOISE_WEAK_ISO = 800;
 const RAW_MEDIAN_DENOISE_STRONG_ISO = 3200;
@@ -6566,6 +6566,7 @@ export function ImageEditDialog({
       if (!sample) return;
       setShadow(0);
       setHighlight(0);
+      setClarity(0);
       await setStage("Optimizing exposure…");
       const autoExposure = findAutoExposure(sample, temperature, tint);
       await setStage("Optimizing logarithm…");
@@ -7892,7 +7893,7 @@ export function ImageEditDialog({
                   className="h-5 rounded border border-gray-300 bg-white px-1.5 text-[10px] font-normal text-gray-700 hover:bg-gray-100 disabled:cursor-default disabled:opacity-60"
                   onClick={onAutoTone}
                   disabled={autoToneBusy}
-                  title="Auto tone: reset Shadow/Highlight, then optimize Exposure, Midtone, and Contrast"
+                  title="Auto tone: reset Shadow/Highlight/Clarity, then optimize Exposure, Midtone, and Contrast"
                 >
                   Auto
                 </button>
@@ -8027,20 +8028,6 @@ export function ImageEditDialog({
             <div className="rounded border p-3 space-y-2 lg:space-y-3">
               <div className="hidden lg:block font-medium">Color</div>
               <label className="grid grid-cols-[96px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
-                <span className="col-start-1 row-start-1">Vibrance</span>
-                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{vibrance >= 0 ? "+" : ""}{vibrance}</span>
-                <input
-                  type="range"
-                  min={-100}
-                  max={100}
-                  step={1}
-                  value={vibrance}
-                  onChange={(e) => { previewContinuousSliderRef.current = "color"; setVibrance(clampColorAdjustment(Number(e.target.value))); }}
-                  onDoubleClick={() => { previewContinuousSliderRef.current = "color"; setVibrance(sliderDefaults.vibrance); }}
-                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
-                />
-              </label>
-              <label className="grid grid-cols-[96px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
                 <span className="col-start-1 row-start-1">Saturation</span>
                 <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{saturation >= 0 ? "+" : ""}{saturation}</span>
                 <input
@@ -8051,6 +8038,20 @@ export function ImageEditDialog({
                   value={saturation}
                   onChange={(e) => { previewContinuousSliderRef.current = "color"; setSaturation(clampColorAdjustment(Number(e.target.value))); }}
                   onDoubleClick={() => { previewContinuousSliderRef.current = "color"; setSaturation(sliderDefaults.saturation); }}
+                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
+                />
+              </label>
+              <label className="grid grid-cols-[96px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+                <span className="col-start-1 row-start-1">Vibrance</span>
+                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{vibrance >= 0 ? "+" : ""}{vibrance}</span>
+                <input
+                  type="range"
+                  min={-100}
+                  max={100}
+                  step={1}
+                  value={vibrance}
+                  onChange={(e) => { previewContinuousSliderRef.current = "color"; setVibrance(clampColorAdjustment(Number(e.target.value))); }}
+                  onDoubleClick={() => { previewContinuousSliderRef.current = "color"; setVibrance(sliderDefaults.vibrance); }}
                   className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
               </label>
