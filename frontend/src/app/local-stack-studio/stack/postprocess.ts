@@ -1,24 +1,3 @@
-import {
-  convertLinearProPhotoToOutputRgbInto,
-  DISPLAY_P3_TO_PROPHOTO_M00,
-  DISPLAY_P3_TO_PROPHOTO_M01,
-  DISPLAY_P3_TO_PROPHOTO_M02,
-  DISPLAY_P3_TO_PROPHOTO_M10,
-  DISPLAY_P3_TO_PROPHOTO_M11,
-  DISPLAY_P3_TO_PROPHOTO_M12,
-  DISPLAY_P3_TO_PROPHOTO_M20,
-  DISPLAY_P3_TO_PROPHOTO_M21,
-  DISPLAY_P3_TO_PROPHOTO_M22,
-  SRGB_TO_PROPHOTO_M00,
-  SRGB_TO_PROPHOTO_M01,
-  SRGB_TO_PROPHOTO_M02,
-  SRGB_TO_PROPHOTO_M10,
-  SRGB_TO_PROPHOTO_M11,
-  SRGB_TO_PROPHOTO_M12,
-  SRGB_TO_PROPHOTO_M20,
-  SRGB_TO_PROPHOTO_M21,
-  SRGB_TO_PROPHOTO_M22,
-} from "@/image/color";
 import type { ImageEditOutputColorProfile } from "@/image/types";
 import {
   applyHighlightLinear,
@@ -40,9 +19,7 @@ import {
 
 export const STACK_LOGARITHM_LIMIT = 30;
 
-const CLAHE_COLOR_RESTORE_LUT_SIZE = 16384;
-const CLAHE_COLOR_RESTORE_LINEAR_TO_ENCODED = buildLinearToEncodedLut(CLAHE_COLOR_RESTORE_LUT_SIZE);
-const CLAHE_COLOR_RESTORE_ENCODED_TO_LINEAR = buildEncodedToLinearLut(CLAHE_COLOR_RESTORE_LUT_SIZE);
+const CLAHE_PROPHOTO_ROLLOFF_START = 0.8;
 
 export type StackClaheMap = {
   width: number;
@@ -430,9 +407,8 @@ export function adjustStackLinearDataPostTone(
   }
 
   const result = new Float32Array(toneAdjustedLinear.length);
-  const restoreOldOutput = normalizedClahe > 0 ? new Float32Array(3) : null;
-  const restoreNewOutput = normalizedClahe > 0 ? new Float32Array(3) : null;
-  const restoreProPhoto = normalizedClahe > 0 ? new Float32Array(3) : null;
+  const claheRolloffOutput = normalizedClahe > 0 ? new Float32Array(3) : null;
+  const claheRolloffProPhoto = normalizedClahe > 0 ? new Float32Array(3) : null;
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       const pixelIndex = y * width + x;
@@ -442,34 +418,26 @@ export function adjustStackLinearDataPostTone(
       let b = toneAdjustedLinear[sourceIndex + 2] ?? 0;
 
       if (hasClahe && activeClaheMap) {
-        const preClaheR = r;
-        const preClaheG = g;
-        const preClaheB = b;
         const clarityGain = sampleStackClaheGain(activeClaheMap, x + 0.5, y + 0.5, width, height);
         r = Math.max(0, r * clarityGain);
         g = Math.max(0, g * clarityGain);
         b = Math.max(0, b * clarityGain);
         if (
           normalizedClahe > 0 &&
-          restoreOldOutput &&
-          restoreNewOutput &&
-          restoreProPhoto
+          claheRolloffOutput &&
+          claheRolloffProPhoto
         ) {
-          restorePositiveClaheSaturationInto(
-            preClaheR,
-            preClaheG,
-            preClaheB,
+          applyPositiveClaheOutputRolloffInto(
             r,
             g,
             b,
             outputColorProfile,
-            restoreOldOutput,
-            restoreNewOutput,
-            restoreProPhoto,
+            claheRolloffOutput,
+            claheRolloffProPhoto,
           );
-          r = restoreProPhoto[0];
-          g = restoreProPhoto[1];
-          b = restoreProPhoto[2];
+          r = claheRolloffProPhoto[0];
+          g = claheRolloffProPhoto[1];
+          b = claheRolloffProPhoto[2];
         }
       }
 
@@ -598,9 +566,8 @@ function computeStackSaturationRolloffFromToneAdjusted(
   const sampleWidth = Math.max(1, Math.round(width * scale));
   const sampleHeight = Math.max(1, Math.round(height * scale));
   const values = new Float32Array(sampleWidth * sampleHeight);
-  const restoreOldOutput = normalizedClahe > 0 ? new Float32Array(3) : null;
-  const restoreNewOutput = normalizedClahe > 0 ? new Float32Array(3) : null;
-  const restoreProPhoto = normalizedClahe > 0 ? new Float32Array(3) : null;
+  const claheRolloffOutput = normalizedClahe > 0 ? new Float32Array(3) : null;
+  const claheRolloffProPhoto = normalizedClahe > 0 ? new Float32Array(3) : null;
   let count = 0;
   for (let y = 0; y < sampleHeight; y += 1) {
     const sourceY = Math.min(height - 1, Math.floor((y + 0.5) * height / sampleHeight));
@@ -611,34 +578,26 @@ function computeStackSaturationRolloffFromToneAdjusted(
       let g = toneAdjustedLinear[sourceIndex + 1] ?? 0;
       let b = toneAdjustedLinear[sourceIndex + 2] ?? 0;
       if (claheMap) {
-        const preClaheR = r;
-        const preClaheG = g;
-        const preClaheB = b;
         const clarityGain = sampleStackClaheGain(claheMap, sourceX + 0.5, sourceY + 0.5, width, height);
         r = Math.max(0, r * clarityGain);
         g = Math.max(0, g * clarityGain);
         b = Math.max(0, b * clarityGain);
         if (
           normalizedClahe > 0 &&
-          restoreOldOutput &&
-          restoreNewOutput &&
-          restoreProPhoto
+          claheRolloffOutput &&
+          claheRolloffProPhoto
         ) {
-          restorePositiveClaheSaturationInto(
-            preClaheR,
-            preClaheG,
-            preClaheB,
+          applyPositiveClaheOutputRolloffInto(
             r,
             g,
             b,
             outputColorProfile,
-            restoreOldOutput,
-            restoreNewOutput,
-            restoreProPhoto,
+            claheRolloffOutput,
+            claheRolloffProPhoto,
           );
-          r = restoreProPhoto[0];
-          g = restoreProPhoto[1];
-          b = restoreProPhoto[2];
+          r = claheRolloffProPhoto[0];
+          g = claheRolloffProPhoto[1];
+          b = claheRolloffProPhoto[2];
         }
       }
       const [, s] = rgbToHsv(r, g, b);
@@ -656,125 +615,29 @@ function computeStackSaturationRolloffFromToneAdjusted(
   return rolloffParams(p99, 0.7, 4);
 }
 
-function restorePositiveClaheSaturationInto(
-  preClaheR: number,
-  preClaheG: number,
-  preClaheB: number,
+function applyPositiveClaheOutputRolloffInto(
   postClaheR: number,
   postClaheG: number,
   postClaheB: number,
-  outputColorProfile: ImageEditOutputColorProfile,
-  oldOutputLinear: Float32Array,
-  newOutputLinear: Float32Array,
-  restoredProPhoto: Float32Array,
+  _outputColorProfile: ImageEditOutputColorProfile,
+  _outputLinear: Float32Array,
+  rolledProPhoto: Float32Array,
 ): void {
-  convertLinearProPhotoToOutputRgbInto(
-    preClaheR,
-    preClaheG,
-    preClaheB,
-    outputColorProfile,
-    oldOutputLinear,
-  );
-  convertLinearProPhotoToOutputRgbInto(
-    postClaheR,
-    postClaheG,
-    postClaheB,
-    outputColorProfile,
-    newOutputLinear,
-  );
-
-  const oldR = linearOutputToEncoded(oldOutputLinear[0] ?? 0);
-  const oldG = linearOutputToEncoded(oldOutputLinear[1] ?? 0);
-  const oldB = linearOutputToEncoded(oldOutputLinear[2] ?? 0);
-  const newR = linearOutputToEncoded(newOutputLinear[0] ?? 0);
-  const newG = linearOutputToEncoded(newOutputLinear[1] ?? 0);
-  const newB = linearOutputToEncoded(newOutputLinear[2] ?? 0);
-
-  const oldV = Math.max(oldR, oldG, oldB);
-  const oldMin = Math.min(oldR, oldG, oldB);
-  const oldS = oldV > 1e-8 ? (oldV - oldMin) / oldV : 0;
-  const newV = Math.max(newR, newG, newB);
-  const newMin = Math.min(newR, newG, newB);
-  const newS = newV > 1e-8 ? (newV - newMin) / newV : 0;
-
-  const highlightRisk = clampClaheColorRisk((newV - oldV) / (1 - oldV + 1e-6));
-  const shadowRisk = clampClaheColorRisk((oldV - newV) / (oldV + 1e-6));
-  const risk = Math.max(highlightRisk, shadowRisk);
-  const restoredS = oldS * (1 - risk) + newS * risk;
-
-  let restoredR = newR;
-  let restoredG = newG;
-  let restoredB = newB;
-  if (newV > 1e-8 && newS > 1e-8) {
-    const saturationScale = restoredS / newS;
-    restoredR = clamp01(newV - (newV - newR) * saturationScale);
-    restoredG = clamp01(newV - (newV - newG) * saturationScale);
-    restoredB = clamp01(newV - (newV - newB) * saturationScale);
-  }
-
-  const lr = encodedOutputToLinear(restoredR);
-  const lg = encodedOutputToLinear(restoredG);
-  const lb = encodedOutputToLinear(restoredB);
-  convertLinearOutputToProPhotoInto(lr, lg, lb, outputColorProfile, restoredProPhoto);
-}
-
-function clampClaheColorRisk(value: number): number {
-  if (!Number.isFinite(value)) return 0.9;
-  return Math.max(0.1, Math.min(0.9, value));
-}
-
-function buildLinearToEncodedLut(size: number): Float32Array {
-  const lut = new Float32Array(size);
-  const denominator = Math.max(1, size - 1);
-  for (let index = 0; index < size; index += 1) {
-    const linear = index / denominator;
-    lut[index] = linear <= 0.0031308
-      ? linear * 12.92
-      : 1.055 * Math.pow(linear, 1 / 2.4) - 0.055;
-  }
-  return lut;
-}
-
-function buildEncodedToLinearLut(size: number): Float32Array {
-  const lut = new Float32Array(size);
-  const denominator = Math.max(1, size - 1);
-  for (let index = 0; index < size; index += 1) {
-    const encoded = index / denominator;
-    lut[index] = encoded <= 0.04045
-      ? encoded / 12.92
-      : Math.pow((encoded + 0.055) / 1.055, 2.4);
-  }
-  return lut;
-}
-
-function linearOutputToEncoded(value: number): number {
-  const normalized = clamp01(Number.isFinite(value) ? value : 0);
-  const index = Math.round(normalized * (CLAHE_COLOR_RESTORE_LUT_SIZE - 1));
-  return CLAHE_COLOR_RESTORE_LINEAR_TO_ENCODED[index] ?? normalized;
-}
-
-function encodedOutputToLinear(value: number): number {
-  const normalized = clamp01(Number.isFinite(value) ? value : 0);
-  const index = Math.round(normalized * (CLAHE_COLOR_RESTORE_LUT_SIZE - 1));
-  return CLAHE_COLOR_RESTORE_ENCODED_TO_LINEAR[index] ?? normalized;
-}
-
-function convertLinearOutputToProPhotoInto(
-  r: number,
-  g: number,
-  b: number,
-  outputColorProfile: ImageEditOutputColorProfile,
-  output: Float32Array,
-): void {
-  if (outputColorProfile === "display-p3") {
-    output[0] = DISPLAY_P3_TO_PROPHOTO_M00 * r + DISPLAY_P3_TO_PROPHOTO_M01 * g + DISPLAY_P3_TO_PROPHOTO_M02 * b;
-    output[1] = DISPLAY_P3_TO_PROPHOTO_M10 * r + DISPLAY_P3_TO_PROPHOTO_M11 * g + DISPLAY_P3_TO_PROPHOTO_M12 * b;
-    output[2] = DISPLAY_P3_TO_PROPHOTO_M20 * r + DISPLAY_P3_TO_PROPHOTO_M21 * g + DISPLAY_P3_TO_PROPHOTO_M22 * b;
+  const maxChannel = Math.max(postClaheR, postClaheG, postClaheB);
+  if (!Number.isFinite(maxChannel) || maxChannel <= CLAHE_PROPHOTO_ROLLOFF_START) {
+    rolledProPhoto[0] = postClaheR;
+    rolledProPhoto[1] = postClaheG;
+    rolledProPhoto[2] = postClaheB;
     return;
   }
-  output[0] = SRGB_TO_PROPHOTO_M00 * r + SRGB_TO_PROPHOTO_M01 * g + SRGB_TO_PROPHOTO_M02 * b;
-  output[1] = SRGB_TO_PROPHOTO_M10 * r + SRGB_TO_PROPHOTO_M11 * g + SRGB_TO_PROPHOTO_M12 * b;
-  output[2] = SRGB_TO_PROPHOTO_M20 * r + SRGB_TO_PROPHOTO_M21 * g + SRGB_TO_PROPHOTO_M22 * b;
+
+  const shoulder = 1 - CLAHE_PROPHOTO_ROLLOFF_START;
+  const rolledMax = CLAHE_PROPHOTO_ROLLOFF_START
+    + shoulder * (1 - Math.exp(-(maxChannel - CLAHE_PROPHOTO_ROLLOFF_START) / shoulder));
+  const scale = rolledMax / maxChannel;
+  rolledProPhoto[0] = postClaheR * scale;
+  rolledProPhoto[1] = postClaheG * scale;
+  rolledProPhoto[2] = postClaheB * scale;
 }
 
 function applyDisplayRolloffLinear(

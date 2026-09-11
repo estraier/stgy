@@ -4,27 +4,6 @@ import {
   type ColorAdjustmentContext,
   type ToneAdjustmentStage,
 } from "@/image/tone";
-import {
-  convertLinearProPhotoToOutputRgbInto,
-  DISPLAY_P3_TO_PROPHOTO_M00,
-  DISPLAY_P3_TO_PROPHOTO_M01,
-  DISPLAY_P3_TO_PROPHOTO_M02,
-  DISPLAY_P3_TO_PROPHOTO_M10,
-  DISPLAY_P3_TO_PROPHOTO_M11,
-  DISPLAY_P3_TO_PROPHOTO_M12,
-  DISPLAY_P3_TO_PROPHOTO_M20,
-  DISPLAY_P3_TO_PROPHOTO_M21,
-  DISPLAY_P3_TO_PROPHOTO_M22,
-  SRGB_TO_PROPHOTO_M00,
-  SRGB_TO_PROPHOTO_M01,
-  SRGB_TO_PROPHOTO_M02,
-  SRGB_TO_PROPHOTO_M10,
-  SRGB_TO_PROPHOTO_M11,
-  SRGB_TO_PROPHOTO_M12,
-  SRGB_TO_PROPHOTO_M20,
-  SRGB_TO_PROPHOTO_M21,
-  SRGB_TO_PROPHOTO_M22,
-} from "@/image/color";
 import type { ImageEditOutputColorProfile, LinearRgbSample } from "./types";
 
 export type ImageEditClarityMap = {
@@ -34,9 +13,7 @@ export type ImageEditClarityMap = {
   strength: number;
 };
 
-const CLARITY_COLOR_RESTORE_LUT_SIZE = 16384;
-const CLARITY_COLOR_RESTORE_LINEAR_TO_ENCODED = buildLinearToEncodedLut(CLARITY_COLOR_RESTORE_LUT_SIZE);
-const CLARITY_COLOR_RESTORE_ENCODED_TO_LINEAR = buildEncodedToLinearLut(CLARITY_COLOR_RESTORE_LUT_SIZE);
+const CLARITY_PROPHOTO_ROLLOFF_START = 0.8;
 
 export function clampClarity(value: number): number {
   if (!Number.isFinite(value)) return 0;
@@ -428,126 +405,31 @@ export function isUsableImageEditClarityMap(
 }
 
 
-export function restorePositiveImageEditClaritySaturationInto(
-  preClarityR: number,
-  preClarityG: number,
-  preClarityB: number,
+export function applyPositiveImageEditClarityOutputRolloffInto(
   postClarityR: number,
   postClarityG: number,
   postClarityB: number,
-  outputColorProfile: ImageEditOutputColorProfile,
-  oldOutputLinear: Float32Array,
-  newOutputLinear: Float32Array,
-  restoredProPhoto: Float32Array,
+  _outputColorProfile: ImageEditOutputColorProfile,
+  _outputLinear: Float32Array,
+  rolledProPhoto: Float32Array,
 ): void {
-  convertLinearProPhotoToOutputRgbInto(
-    preClarityR,
-    preClarityG,
-    preClarityB,
-    outputColorProfile,
-    oldOutputLinear,
-  );
-  convertLinearProPhotoToOutputRgbInto(
-    postClarityR,
-    postClarityG,
-    postClarityB,
-    outputColorProfile,
-    newOutputLinear,
-  );
-
-  const oldR = linearOutputToEncoded(oldOutputLinear[0] ?? 0);
-  const oldG = linearOutputToEncoded(oldOutputLinear[1] ?? 0);
-  const oldB = linearOutputToEncoded(oldOutputLinear[2] ?? 0);
-  const newR = linearOutputToEncoded(newOutputLinear[0] ?? 0);
-  const newG = linearOutputToEncoded(newOutputLinear[1] ?? 0);
-  const newB = linearOutputToEncoded(newOutputLinear[2] ?? 0);
-
-  const oldV = Math.max(oldR, oldG, oldB);
-  const oldMin = Math.min(oldR, oldG, oldB);
-  const oldS = oldV > 1e-8 ? (oldV - oldMin) / oldV : 0;
-  const newV = Math.max(newR, newG, newB);
-  const newMin = Math.min(newR, newG, newB);
-  const newS = newV > 1e-8 ? (newV - newMin) / newV : 0;
-
-  const highlightRisk = clampClarityColorRisk((newV - oldV) / (1 - oldV + 1e-6));
-  const shadowRisk = clampClarityColorRisk((oldV - newV) / (oldV + 1e-6));
-  const risk = Math.max(highlightRisk, shadowRisk);
-  const restoredS = oldS * (1 - risk) + newS * risk;
-
-  let restoredR = newR;
-  let restoredG = newG;
-  let restoredB = newB;
-  if (newV > 1e-8 && newS > 1e-8) {
-    const saturationScale = restoredS / newS;
-    restoredR = clamp01(newV - (newV - newR) * saturationScale);
-    restoredG = clamp01(newV - (newV - newG) * saturationScale);
-    restoredB = clamp01(newV - (newV - newB) * saturationScale);
-  }
-
-  const lr = encodedOutputToLinear(restoredR);
-  const lg = encodedOutputToLinear(restoredG);
-  const lb = encodedOutputToLinear(restoredB);
-  convertLinearOutputToProPhotoInto(lr, lg, lb, outputColorProfile, restoredProPhoto);
-}
-
-function clampClarityColorRisk(value: number): number {
-  if (!Number.isFinite(value)) return 0.9;
-  return Math.max(0.1, Math.min(0.9, value));
-}
-
-function buildLinearToEncodedLut(size: number): Float32Array {
-  const lut = new Float32Array(size);
-  const denominator = Math.max(1, size - 1);
-  for (let index = 0; index < size; index += 1) {
-    const linear = index / denominator;
-    lut[index] = linear <= 0.0031308
-      ? linear * 12.92
-      : 1.055 * Math.pow(linear, 1 / 2.4) - 0.055;
-  }
-  return lut;
-}
-
-function buildEncodedToLinearLut(size: number): Float32Array {
-  const lut = new Float32Array(size);
-  const denominator = Math.max(1, size - 1);
-  for (let index = 0; index < size; index += 1) {
-    const encoded = index / denominator;
-    lut[index] = encoded <= 0.04045
-      ? encoded / 12.92
-      : Math.pow((encoded + 0.055) / 1.055, 2.4);
-  }
-  return lut;
-}
-
-function linearOutputToEncoded(value: number): number {
-  const normalized = clamp01(Number.isFinite(value) ? value : 0);
-  const index = Math.round(normalized * (CLARITY_COLOR_RESTORE_LUT_SIZE - 1));
-  return CLARITY_COLOR_RESTORE_LINEAR_TO_ENCODED[index] ?? normalized;
-}
-
-function encodedOutputToLinear(value: number): number {
-  const normalized = clamp01(Number.isFinite(value) ? value : 0);
-  const index = Math.round(normalized * (CLARITY_COLOR_RESTORE_LUT_SIZE - 1));
-  return CLARITY_COLOR_RESTORE_ENCODED_TO_LINEAR[index] ?? normalized;
-}
-
-function convertLinearOutputToProPhotoInto(
-  r: number,
-  g: number,
-  b: number,
-  outputColorProfile: ImageEditOutputColorProfile,
-  output: Float32Array,
-): void {
-  if (outputColorProfile === "display-p3") {
-    output[0] = DISPLAY_P3_TO_PROPHOTO_M00 * r + DISPLAY_P3_TO_PROPHOTO_M01 * g + DISPLAY_P3_TO_PROPHOTO_M02 * b;
-    output[1] = DISPLAY_P3_TO_PROPHOTO_M10 * r + DISPLAY_P3_TO_PROPHOTO_M11 * g + DISPLAY_P3_TO_PROPHOTO_M12 * b;
-    output[2] = DISPLAY_P3_TO_PROPHOTO_M20 * r + DISPLAY_P3_TO_PROPHOTO_M21 * g + DISPLAY_P3_TO_PROPHOTO_M22 * b;
+  const maxChannel = Math.max(postClarityR, postClarityG, postClarityB);
+  if (!Number.isFinite(maxChannel) || maxChannel <= CLARITY_PROPHOTO_ROLLOFF_START) {
+    rolledProPhoto[0] = postClarityR;
+    rolledProPhoto[1] = postClarityG;
+    rolledProPhoto[2] = postClarityB;
     return;
   }
-  output[0] = SRGB_TO_PROPHOTO_M00 * r + SRGB_TO_PROPHOTO_M01 * g + SRGB_TO_PROPHOTO_M02 * b;
-  output[1] = SRGB_TO_PROPHOTO_M10 * r + SRGB_TO_PROPHOTO_M11 * g + SRGB_TO_PROPHOTO_M12 * b;
-  output[2] = SRGB_TO_PROPHOTO_M20 * r + SRGB_TO_PROPHOTO_M21 * g + SRGB_TO_PROPHOTO_M22 * b;
+
+  const shoulder = 1 - CLARITY_PROPHOTO_ROLLOFF_START;
+  const rolledMax = CLARITY_PROPHOTO_ROLLOFF_START
+    + shoulder * (1 - Math.exp(-(maxChannel - CLARITY_PROPHOTO_ROLLOFF_START) / shoulder));
+  const scale = rolledMax / maxChannel;
+  rolledProPhoto[0] = postClarityR * scale;
+  rolledProPhoto[1] = postClarityG * scale;
+  rolledProPhoto[2] = postClarityB * scale;
 }
+
 export function sampleImageEditClarityGain(
   map: ImageEditClarityMap,
   renderedSourceX: number,
