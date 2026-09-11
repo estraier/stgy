@@ -1,7 +1,7 @@
 import type { DecodedRgbImage16, ImageEditOutputColorProfile, LinearRgbSample } from "./types";
 import { createCanvasImageData, getCanvas2dContext } from "./canvas";
 import { convertLinearProPhotoToOutputRgbInto } from "@/image/color";
-import { buildColorAdjustmentContextFromLinearRgbSample } from "./analysis";
+import { buildInteractiveColorAdjustmentContextFromLinearRgbSample } from "./analysis";
 import {
   buildRenderedPixelToSourceTransform,
   createRgb16SamplingScratch,
@@ -191,7 +191,7 @@ export function renderAdjustedLinearRgbSampleToCanvas(
     reusableRgba8,
   );
   const output = imageData.data;
-  const context = suppliedContext ?? buildColorAdjustmentContextFromLinearRgbSample(
+  const context = suppliedContext ?? buildInteractiveColorAdjustmentContextFromLinearRgbSample(
     contextSample,
     temperature,
     tint,
@@ -375,7 +375,7 @@ export function renderAdjustedRgb16ToCanvas(
   const imageData = createCanvasImageData(ctx, width, height, outputColorProfile);
   const output = imageData.data;
   const contextSample = getAnalysisLinearRgbSample(decoded, sourceRect, rotationDegrees);
-  const context = buildColorAdjustmentContextFromLinearRgbSample(
+  const context = buildInteractiveColorAdjustmentContextFromLinearRgbSample(
     contextSample,
     temperature,
     tint,

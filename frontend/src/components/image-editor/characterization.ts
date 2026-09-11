@@ -1,6 +1,6 @@
 import { applyFinalMaxChannelRolloffLinearRgb, applyHighlightLinear, applyRolloffScalar, applySaturationVibranceAndFinalRolloffLinearRgb, applyScaledLogLinear, applyScaledLogLinearExtended, applyShadowLinear, applySigmoidLinear, applySigmoidLinearExtended, applyToneLinearToRgb, applyWhiteBalanceLinear, proPhotoLinearLuminance, rolloffParams, whiteBalanceGains } from "@/image/tone";
 import { analysisSampleDimensions, buildRenderedPixelToSourceTransform, createRgb16SamplingScratch, decodeStoredRgb16Channel, encodeStoredRgb16Channel, getAnalysisLinearRgbSample, getRenderedLinearRgbSample, renderedPixelToSourcePoint, sampleLinearRgb16Bilinear, sampleLinearRgb16BilinearAtSource, sampleLinearRgb16BilinearAtSourceInto, sampleLinearRgb16BilinearInto, sampleLinearRgbFromRgb16RegionAtSize } from "./sampling";
-import { buildColorAdjustmentContextFromLinearRgbSample, findAutoExposure, findAutoLogarithm, findAutoSigmoid, percentileFromValues, percentilesFromValues } from "./analysis";
+import { buildColorAdjustmentContextFromLinearRgbSample, buildInteractiveColorAdjustmentContextFromLinearRgbSample, findAutoExposure, findAutoLogarithm, findAutoSigmoid, percentileFromValues, percentilesFromValues } from "./analysis";
 import { renderAdjustedLinearRgbSampleToCanvas, renderAdjustedRgb16ToCanvas } from "./render";
 
 // Test-only characterization surface. Keep these references pointed at the production
@@ -36,6 +36,7 @@ export const __imageEditorCharacterization = {
   renderAdjustedLinearRgbSampleToCanvas,
   renderAdjustedRgb16ToCanvas,
   buildColorAdjustmentContextFromLinearRgbSample,
+  buildInteractiveColorAdjustmentContextFromLinearRgbSample,
   percentileFromValues,
   percentilesFromValues,
   findAutoExposure,

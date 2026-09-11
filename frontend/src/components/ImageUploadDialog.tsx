@@ -106,7 +106,7 @@ import {
   type LinearRgbBuffer,
 } from "./image-editor/sampling";
 import {
-  buildColorAdjustmentContextFromLinearRgbSample,
+  buildInteractiveColorAdjustmentContextFromLinearRgbSample,
   colorAdjustmentContextFromLinearRgbSample,
   computeHistogramDataFromRgb16,
   createToneAutoSampleFromRgb16,
@@ -2517,7 +2517,7 @@ function adjustedDebugStatisticsFromLinearRgbSample(
   saturation: number,
   colorSpace: "srgb" | "prophoto" = "srgb",
 ): DebugPercentileStatistics {
-  const context = buildColorAdjustmentContextFromLinearRgbSample(
+  const context = buildInteractiveColorAdjustmentContextFromLinearRgbSample(
     sample,
     temperature,
     tint,
@@ -3881,7 +3881,7 @@ function buildFallbackImageEditClarityMap(
     IMAGE_EDIT_CLAHE_MIN_PIXELS,
   );
   const contextSample = getAnalysisLinearRgbSample(decoded, sourceRect, 0);
-  const context = buildColorAdjustmentContextFromLinearRgbSample(
+  const context = buildInteractiveColorAdjustmentContextFromLinearRgbSample(
     contextSample,
     params.temperature,
     params.tint,
@@ -4072,7 +4072,7 @@ export async function buildEditedDecodedRgb16(
 
   const sourceRect = { x: sx, y: sy, w: cropW, h: cropH };
   const contextSample = getAnalysisLinearRgbSample(decoded, sourceRect, params.rotationDegrees);
-  const adjustmentContext = buildColorAdjustmentContextFromLinearRgbSample(
+  const adjustmentContext = buildInteractiveColorAdjustmentContextFromLinearRgbSample(
     contextSample,
     params.temperature,
     params.tint,
@@ -4662,6 +4662,9 @@ export function ImageEditDialog({
     height: number;
   } | null>(null);
   const embeddedRawPreviewUrlRef = useRef<string | null>(null);
+  const [previewRasterSize, setPreviewRasterSize] = useState<{ width: number; height: number } | null>(null);
+  const previewRasterSizeRef = useRef<{ width: number; height: number } | null>(null);
+  const [fullResolutionReady, setFullResolutionReady] = useState(false);
   const initialPreviewReadyRef = useRef(false);
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -4850,6 +4853,9 @@ export function ImageEditDialog({
     transferredDecodedImageRef.current = null;
     rawMasterPromiseRef.current = null;
     previewRenderedRef.current = null;
+    previewRasterSizeRef.current = null;
+    setPreviewRasterSize(null);
+    setFullResolutionReady(false);
     previewSourceSampleRef.current = null;
     previewToneSampleCacheRef.current = null;
     previewClarityMapCacheRef.current = null;
@@ -4892,6 +4898,7 @@ export function ImageEditDialog({
         setLoadingStage("Preparing preview…");
         setNatural({ w: decoded.width, h: decoded.height });
         setImageReady(true);
+        setFullResolutionReady(!(isRaw && decoded.rawMasterPromise));
 
         if (isRaw && decoded.rawMasterPromise) {
           const masterPromise = decoded.rawMasterPromise;
@@ -4902,6 +4909,7 @@ export function ImageEditDialog({
             cleanup = masterDecoded.cleanup;
             previewRenderedRef.current = null;
             setNatural({ w: masterDecoded.width, h: masterDecoded.height });
+            setFullResolutionReady(true);
             setDecodedRevision((revision) => revision + 1);
             onRawDevelopmentReadyRef.current?.(masterDecoded);
           }).catch(() => {
@@ -6115,7 +6123,7 @@ export function ImageEditDialog({
     const cached = previewToneSampleCacheRef.current;
     if (cached?.source === internalPreview.sample && cached.key === key) return cached.sample;
 
-    const context = buildColorAdjustmentContextFromLinearRgbSample(
+    const context = buildInteractiveColorAdjustmentContextFromLinearRgbSample(
       internalPreview.contextSample,
       temperature,
       tint,
@@ -6244,7 +6252,7 @@ export function ImageEditDialog({
             previewSourceRect,
             normalizedRotation,
           );
-      const adjustmentContext = buildColorAdjustmentContextFromLinearRgbSample(
+      const adjustmentContext = buildInteractiveColorAdjustmentContextFromLinearRgbSample(
         previewContextSample,
         temperature,
         tint,
@@ -6323,6 +6331,16 @@ export function ImageEditDialog({
         height,
         key: renderedPreviewKey,
       };
+      const currentPreviewRasterSize = previewRasterSizeRef.current;
+      if (
+        !currentPreviewRasterSize ||
+        currentPreviewRasterSize.width !== width ||
+        currentPreviewRasterSize.height !== height
+      ) {
+        const nextPreviewRasterSize = { width, height };
+        previewRasterSizeRef.current = nextPreviewRasterSize;
+        setPreviewRasterSize(nextPreviewRasterSize);
+      }
       if (isInitialPreview) {
         initialPreviewReadyRef.current = true;
         setLoadingStage(null);
@@ -8202,10 +8220,16 @@ export function ImageEditDialog({
         <div className="mt-4 flex flex-col gap-2 lg:flex-row lg:items-center">
           <div className="flex flex-col gap-y-0.5 text-[12px] text-gray-600 font-mono whitespace-nowrap lg:mr-auto lg:flex-row lg:flex-nowrap lg:gap-x-6 lg:gap-y-0">
             <span>
-              Input ({natural ? `${natural.w}x${natural.h}, ${(natural.w * natural.h / 1_000_000).toFixed(1)}MP` : "—"})
+              Input: {natural ? `${natural.w}x${natural.h}, ${(natural.w * natural.h / 1_000_000).toFixed(1)}MP` : "—"}
             </span>
             <span>
-              Output ({outputDimensions ? `${outputDimensions.w}x${outputDimensions.h}, ${(outputDimensions.w * outputDimensions.h / 1_000_000).toFixed(1)}MP` : "—"})
+              {embeddedRawPreview
+                ? `Thumbnail: ${embeddedRawPreview.width}x${embeddedRawPreview.height}, ${(embeddedRawPreview.width * embeddedRawPreview.height / 1_000_000).toFixed(1)}MP`
+                : fullResolutionReady
+                  ? `Output: ${outputDimensions ? `${outputDimensions.w}x${outputDimensions.h}, ${(outputDimensions.w * outputDimensions.h / 1_000_000).toFixed(1)}MP` : "—"}`
+                  : previewRasterSize
+                    ? `Preview: ${previewRasterSize.width}x${previewRasterSize.height}, ${(previewRasterSize.width * previewRasterSize.height / 1_000_000).toFixed(1)}MP`
+                    : "Preview: —"}
             </span>
           </div>
           <div className="flex justify-end gap-2">

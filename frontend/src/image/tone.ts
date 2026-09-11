@@ -551,8 +551,11 @@ export type ColorAdjustmentContext = {
   highlight: number;
   highlightRange: HighlightRange | null;
   // Retained for the separate RAW thumbnail-matching preprocessing plan.
-  // The interactive Tone pipeline no longer uses an intermediate rolloff.
+  // This is the historical post-exposure rolloff statistic used by the RAW
+  // thumbnail-matching preprocessing path.
   rolloff: { inflection: number; scale: number } | null;
+  // Final display rolloff applied per channel after Tone + Saturation/Vibrance.
+  finalRolloff: { inflection: number; scale: number } | null;
   scaledLog: number;
   sigmoid: number;
   normalizedVibrance: number;
@@ -651,6 +654,7 @@ export function applySaturationVibranceAndFinalRolloffLinearRgb(
   saturation: number,
   vibrance: number,
   applyFinalRolloff = true,
+  finalRolloff: { inflection: number; scale: number } | null | undefined = undefined,
 ): [number, number, number] {
   const normalizedSaturation = clampColorAdjustment(saturation);
   const normalizedVibrance = clampColorAdjustment(vibrance);
@@ -672,7 +676,16 @@ export function applySaturationVibranceAndFinalRolloffLinearRgb(
       targetSaturation,
     );
   }
-  return applyFinalRolloff ? applyFinalMaxChannelRolloffLinearRgb(r, g, b) : [r, g, b];
+  if (!applyFinalRolloff) return [r, g, b];
+  // Passing finalRolloff explicitly selects the percentile-based final display
+  // path. A null value means that P99.8 did not exceed display white, so only
+  // clip the exceptional channels above 1 instead of falling back to the old
+  // per-pixel max-channel normalization. Omitting the argument preserves the
+  // legacy behavior for callers that have not migrated yet.
+  if (finalRolloff !== undefined) {
+    return applyDisplayRolloffAndClipLinearToRgb(r, g, b, finalRolloff);
+  }
+  return applyFinalMaxChannelRolloffLinearRgb(r, g, b);
 }
 
 export function applyColorAdjustmentsAfterToneLinearRgb(
@@ -689,6 +702,7 @@ export function applyColorAdjustmentsAfterToneLinearRgb(
     context.normalizedSaturation,
     context.normalizedVibrance,
     applyFinalRolloff,
+    context.finalRolloff,
   );
 }
 

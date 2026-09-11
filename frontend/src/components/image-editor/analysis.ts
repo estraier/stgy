@@ -60,7 +60,7 @@ export function percentileFromValues(values: number[], percentile: number): numb
   return percentilesFromValues(values, [percentile])[0] ?? 0;
 }
 
-export function buildColorAdjustmentContextFromLinearRgbSample(
+function buildColorAdjustmentContextFromLinearRgbSampleInternal(
   sample: LinearRgbSample,
   temperature: number,
   tint: number,
@@ -71,7 +71,8 @@ export function buildColorAdjustmentContextFromLinearRgbSample(
   sigmoid: number,
   vibrance: number,
   saturation: number,
-  ignoreInvalid = false,
+  ignoreInvalid: boolean,
+  includeLegacyRolloffStatistics: boolean,
 ): ColorAdjustmentContext {
   const normalizedTemperature = clampWhiteBalanceValue(temperature);
   const normalizedTint = clampWhiteBalanceValue(tint);
@@ -92,42 +93,54 @@ export function buildColorAdjustmentContextFromLinearRgbSample(
   const hasVibrance = normalizedVibrance !== 0;
   const hasSaturationOrVibrance = hasSaturation || hasVibrance;
   const needsHighlightRange = normalizedHighlight !== 0;
+  const needsFinalRolloff = hasWhiteBalance
+    || hasExposure
+    || hasShadow
+    || needsHighlightRange
+    || hasScaledLog
+    || hasSigmoid
+    || hasSaturation
+    || hasVibrance;
 
-  const exposedValues: number[] = [];
+  // The interactive editor no longer consumes the historical intermediate
+  // rolloff values. Avoid allocating/sorting ~3 values per sampled pixel unless
+  // a legacy RAW-thumbnail-matching caller explicitly needs those fields.
+  const exposedValues = includeLegacyRolloffStatistics ? [] as number[] : null;
   let highlightMax = -Infinity;
   const data = sample.data;
   const valid = sample.valid;
   const count = Math.floor(data.length / 3);
-  for (let pixel = 0; pixel < count; pixel++) {
-    if (ignoreInvalid && valid && !valid[pixel]) continue;
-    const i = pixel * 3;
-    let r = data[i] ?? 0;
-    let g = data[i + 1] ?? 0;
-    let b = data[i + 2] ?? 0;
-    if (hasWhiteBalance) {
-      [r, g, b] = applyWhiteBalanceLinear(r, g, b, gains);
-    }
-    let exposedR = r;
-    let exposedG = g;
-    let exposedB = b;
-    if (hasExposure) {
-      exposedR *= factor;
-      exposedG *= factor;
-      exposedB *= factor;
-    }
-    exposedValues.push(exposedR, exposedG, exposedB);
-    if (needsHighlightRange) {
-      let highlightValue = proPhotoLinearLuminance(exposedR, exposedG, exposedB);
-      if (hasScaledLog) highlightValue = applyScaledLogLinearExtended(highlightValue, normalizedScaledLog);
-      if (hasSigmoid) highlightValue = applySigmoidLinearExtended(highlightValue, normalizedSigmoid);
-      if (hasShadow) highlightValue = applyShadowLinear(highlightValue, normalizedShadow);
-      highlightMax = Math.max(highlightMax, highlightValue);
+  if (includeLegacyRolloffStatistics || needsHighlightRange) {
+    for (let pixel = 0; pixel < count; pixel++) {
+      if (ignoreInvalid && valid && !valid[pixel]) continue;
+      const i = pixel * 3;
+      let r = data[i] ?? 0;
+      let g = data[i + 1] ?? 0;
+      let b = data[i + 2] ?? 0;
+      if (hasWhiteBalance) {
+        [r, g, b] = applyWhiteBalanceLinear(r, g, b, gains);
+      }
+      let exposedR = r;
+      let exposedG = g;
+      let exposedB = b;
+      if (hasExposure) {
+        exposedR *= factor;
+        exposedG *= factor;
+        exposedB *= factor;
+      }
+      if (exposedValues) exposedValues.push(exposedR, exposedG, exposedB);
+      if (needsHighlightRange) {
+        let highlightValue = proPhotoLinearLuminance(exposedR, exposedG, exposedB);
+        if (hasScaledLog) highlightValue = applyScaledLogLinearExtended(highlightValue, normalizedScaledLog);
+        if (hasSigmoid) highlightValue = applySigmoidLinearExtended(highlightValue, normalizedSigmoid);
+        if (hasShadow) highlightValue = applyShadowLinear(highlightValue, normalizedShadow);
+        highlightMax = Math.max(highlightMax, highlightValue);
+      }
     }
   }
-  // Rolloff depends on the post-exposure signal range, not on the sign of the
-  // Exposure control. RAW buffers may already contain values above 1 at 0 EV.
-  const maxVal = percentileFromValues(exposedValues, 99.8);
-  const rolloff = rolloffParams(maxVal, 0.5, 4);
+  const rolloff = exposedValues
+    ? rolloffParams(percentileFromValues(exposedValues, 99.8), 0.5, 4)
+    : null;
   const highlightRange: HighlightRange | null = normalizedHighlight !== 0 && Number.isFinite(highlightMax)
     ? { p100: highlightMax }
     : null;
@@ -141,12 +154,17 @@ export function buildColorAdjustmentContextFromLinearRgbSample(
   };
   const saturationFactor = colorSaturationFactor(normalizedSaturation);
   const vibranceFactor = colorVibranceFactor(normalizedVibrance);
-  const saturationValues: number[] = [];
-  if (saturationFactor > 1) {
+  const saturationValues = includeLegacyRolloffStatistics && saturationFactor > 1
+    ? [] as number[]
+    : null;
+  const finalMaxValues = needsFinalRolloff
+    ? [] as number[]
+    : null;
+  if (saturationValues || finalMaxValues) {
     for (let pixel = 0; pixel < count; pixel++) {
       if (ignoreInvalid && valid && !valid[pixel]) continue;
       const i = pixel * 3;
-      const [r, g, b] = applyToneLinearToRgb(
+      let [r, g, b] = applyToneLinearToRgb(
         data[i] ?? 0,
         data[i + 1] ?? 0,
         data[i + 2] ?? 0,
@@ -160,12 +178,51 @@ export function buildColorAdjustmentContextFromLinearRgbSample(
         normalizedSigmoid,
         toneFlags,
       );
-      const [, s] = rgbToHsv(r, g, b);
-      saturationValues.push(s * saturationFactor);
+      if (saturationValues) {
+        const [, s] = rgbToHsv(r, g, b);
+        saturationValues.push(s * saturationFactor);
+      }
+      if (finalMaxValues) {
+        [r, g, b] = applyColorAdjustmentsAfterToneLinearRgb(
+          r,
+          g,
+          b,
+          {
+            gains,
+            hasWhiteBalance,
+            hasExposure,
+            hasShadow,
+            hasHighlight,
+            hasScaledLog,
+            hasSigmoid,
+            hasSaturation,
+            hasVibrance,
+            hasSaturationOrVibrance,
+            factor,
+            shadow: normalizedShadow,
+            highlight: normalizedHighlight,
+            highlightRange,
+            rolloff: null,
+            finalRolloff: null,
+            scaledLog: normalizedScaledLog,
+            sigmoid: normalizedSigmoid,
+            normalizedVibrance,
+            normalizedSaturation,
+            saturationFactor,
+            vibranceFactor,
+            saturationRolloff: null,
+          },
+          false,
+        );
+        finalMaxValues.push(Math.max(r, g, b));
+      }
     }
   }
-  const saturationRolloff = saturationFactor > 1
+  const saturationRolloff = saturationValues
     ? rolloffParams(percentileFromValues(saturationValues, 99), 0.7, 4)
+    : null;
+  const finalRolloff = finalMaxValues
+    ? rolloffParams(percentileFromValues(finalMaxValues, 99.8), 0.9, 4)
     : null;
 
   return {
@@ -184,6 +241,7 @@ export function buildColorAdjustmentContextFromLinearRgbSample(
     highlight: normalizedHighlight,
     highlightRange,
     rolloff,
+    finalRolloff,
     scaledLog: normalizedScaledLog,
     sigmoid: normalizedSigmoid,
     normalizedVibrance,
@@ -192,6 +250,74 @@ export function buildColorAdjustmentContextFromLinearRgbSample(
     vibranceFactor,
     saturationRolloff,
   };
+}
+
+/**
+ * Full compatibility context for RAW thumbnail matching. This retains the
+ * historical percentile-based rolloff statistics even though the interactive
+ * Tone pipeline no longer consumes them.
+ */
+export function buildColorAdjustmentContextFromLinearRgbSample(
+  sample: LinearRgbSample,
+  temperature: number,
+  tint: number,
+  exposureEv: number,
+  shadow: number,
+  highlight: number,
+  scaledLog: number,
+  sigmoid: number,
+  vibrance: number,
+  saturation: number,
+  ignoreInvalid = false,
+): ColorAdjustmentContext {
+  return buildColorAdjustmentContextFromLinearRgbSampleInternal(
+    sample,
+    temperature,
+    tint,
+    exposureEv,
+    shadow,
+    highlight,
+    scaledLog,
+    sigmoid,
+    vibrance,
+    saturation,
+    ignoreInvalid,
+    true,
+  );
+}
+
+/**
+ * Context for normal editor rendering/analysis. Historical RAW-matching
+ * percentile statistics remain null, but the final display rolloff percentile
+ * is computed from max(r,g,b) after Tone + Saturation/Vibrance.
+ */
+export function buildInteractiveColorAdjustmentContextFromLinearRgbSample(
+  sample: LinearRgbSample,
+  temperature: number,
+  tint: number,
+  exposureEv: number,
+  shadow: number,
+  highlight: number,
+  scaledLog: number,
+  sigmoid: number,
+  vibrance: number,
+  saturation: number,
+  ignoreInvalid = false,
+): ColorAdjustmentContext {
+  return buildColorAdjustmentContextFromLinearRgbSampleInternal(
+    sample,
+    temperature,
+    tint,
+    exposureEv,
+    shadow,
+    highlight,
+    scaledLog,
+    sigmoid,
+    vibrance,
+    saturation,
+    ignoreInvalid,
+    false,
+  );
 }
 
 export function colorAdjustmentContextFromLinearRgbSample(
@@ -238,7 +364,7 @@ export function computeHistogramDataFromRgb16(
   if (decoded.width <= 0 || decoded.height <= 0) return null;
   const sample = getAnalysisLinearRgbSample(decoded, sourceRect, rotationDegrees);
   if (!sample.data.length) return null;
-  const adjustment = buildColorAdjustmentContextFromLinearRgbSample(
+  const adjustment = buildInteractiveColorAdjustmentContextFromLinearRgbSample(
     sample,
     temperature,
     tint,
@@ -459,7 +585,7 @@ export function buildToneLumaHistogram(
   sigmoid: number,
 ): { histogram: Float64Array; total: number } {
   const histogram = new Float64Array(HISTOGRAM_BINS);
-  const context = buildColorAdjustmentContextFromLinearRgbSample(
+  const context = buildInteractiveColorAdjustmentContextFromLinearRgbSample(
     { data: sample.data, width: sample.width, height: sample.height, valid: sample.valid },
     temperature,
     tint,
@@ -513,7 +639,7 @@ export function evaluateAutoExposure(
   let total = 0;
   let clipped = 0;
   let highlightPressure = 0;
-  const context = buildColorAdjustmentContextFromLinearRgbSample(
+  const context = buildInteractiveColorAdjustmentContextFromLinearRgbSample(
     { data: sample.data, width: sample.width, height: sample.height, valid: sample.valid },
     temperature,
     tint,

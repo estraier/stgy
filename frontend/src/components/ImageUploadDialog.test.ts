@@ -418,6 +418,40 @@ describe("image editor RGB16 characterization", () => {
     });
   });
 
+  test("skips obsolete RAW-matching rolloff stats while computing final display rolloff for interactive contexts", () => {
+    const sample = {
+      data: new Float32Array([
+        2, 0.1, 0.05,
+        0.2, 1.5, 0.1,
+        0.1, 0.2, 1.25,
+      ]),
+      width: 3,
+      height: 1,
+    };
+    const legacy = imageEditor.buildColorAdjustmentContextFromLinearRgbSample(
+      sample, 0, 0, 0, 0, 0, 0, 0, 0, 100,
+    );
+    const interactive = imageEditor.buildInteractiveColorAdjustmentContextFromLinearRgbSample(
+      sample, 0, 0, 0, 0, 0, 0, 0, 0, 100,
+    );
+
+    expect(legacy.rolloff).not.toBeNull();
+    expect(legacy.finalRolloff).not.toBeNull();
+    expect(legacy.saturationRolloff).not.toBeNull();
+    expect(interactive.rolloff).toBeNull();
+    expect(interactive.finalRolloff).not.toBeNull();
+    expect(interactive.saturationRolloff).toBeNull();
+    expect({
+      hasSaturation: interactive.hasSaturation,
+      saturationFactor: interactive.saturationFactor,
+      normalizedSaturation: interactive.normalizedSaturation,
+    }).toEqual({
+      hasSaturation: legacy.hasSaturation,
+      saturationFactor: legacy.saturationFactor,
+      normalizedSaturation: legacy.normalizedSaturation,
+    });
+  });
+
   test("avoids sorting endpoint-only percentiles and sorts once for percentile sets", () => {
     const endpointValues = [3, 1, 2];
     expect(imageEditor.percentilesFromValues(endpointValues, [0, 100])).toEqual([1, 3]);

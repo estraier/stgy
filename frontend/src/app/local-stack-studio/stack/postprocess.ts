@@ -12,9 +12,13 @@ import {
   clampSigmoid,
   clampToneRangeAdjustment,
   proPhotoLinearLuminance,
+  rolloffParams,
 } from "@/image/tone";
 
 export const STACK_LOGARITHM_LIMIT = 30;
+const STACK_FINAL_ROLLOFF_PERCENTILE = 0.998;
+const STACK_FINAL_ROLLOFF_ASYMPTOTIC = 0.9;
+const STACK_FINAL_ROLLOFF_SAVING_LIMIT = 4;
 
 export type StackClaheMap = {
   width: number;
@@ -29,6 +33,8 @@ export type StackToneStage =
   | "sigmoid"
   | "shadow"
   | "highlight";
+
+export type StackFinalRolloff = { inflection: number; scale: number } | null;
 
 type StackToneContext = {
   gain: number;
@@ -83,6 +89,67 @@ export function computeStackHighlightP100(
     p100 = Math.max(p100, luminance);
   }
   return Number.isFinite(p100) ? p100 : null;
+}
+
+export function computeStackFinalRolloff(
+  sourceLinear: Float32Array | null | undefined,
+  exposureEv: number,
+  shadow: number,
+  highlight: number,
+  scaledLog: number,
+  sigmoid: number,
+  vibrance: number,
+  saturation: number,
+  highlightP100: number | null = null,
+): StackFinalRolloff {
+  if (!sourceLinear || sourceLinear.length < 3) return null;
+  const toneContext = buildStackToneContext(
+    exposureEv,
+    shadow,
+    highlight,
+    scaledLog,
+    sigmoid,
+    highlightP100,
+  );
+  const pixelCount = Math.floor(sourceLinear.length / 3);
+  if (pixelCount <= 0) return null;
+  const maxima = new Float32Array(pixelCount);
+  let count = 0;
+  for (let sourceIndex = 0; sourceIndex + 2 < sourceLinear.length; sourceIndex += 3) {
+    let [r, g, b] = applyStackToneAdjustmentsLinearRgbRange(
+      sourceLinear[sourceIndex] ?? 0,
+      sourceLinear[sourceIndex + 1] ?? 0,
+      sourceLinear[sourceIndex + 2] ?? 0,
+      toneContext,
+      "source",
+      "highlight",
+    );
+    [r, g, b] = applySaturationVibranceAndFinalRolloffLinearRgb(
+      r,
+      g,
+      b,
+      saturation,
+      vibrance,
+      false,
+    );
+    const maxChannel = Math.max(r, g, b);
+    if (Number.isFinite(maxChannel)) maxima[count++] = maxChannel;
+  }
+  if (count <= 0) return null;
+  const sorted = count === maxima.length ? maxima : maxima.slice(0, count);
+  sorted.sort();
+  const rank = (sorted.length - 1) * STACK_FINAL_ROLLOFF_PERCENTILE;
+  const lower = Math.floor(rank);
+  const upper = Math.ceil(rank);
+  const fraction = rank - lower;
+  const lo = sorted[lower] ?? 0;
+  const hi = sorted[upper] ?? lo;
+  const p998 = lo + (hi - lo) * fraction;
+  return rolloffParams(
+    p998,
+    STACK_FINAL_ROLLOFF_ASYMPTOTIC,
+    STACK_FINAL_ROLLOFF_SAVING_LIMIT,
+  );
 }
 
 export function isUsableStackClaheMap(
@@ -315,6 +382,7 @@ export function adjustStackLinearData(
   highlightP100: number | null = null,
   claheMap: StackClaheMap | null = null,
   outputColorProfile: ImageEditOutputColorProfile = "srgb",
+  finalRolloff: StackFinalRolloff | undefined = undefined,
 ): Float32Array {
   const toneAdjusted = buildStackToneAdjustedLinearData(
     sourceLinear,
@@ -340,6 +408,7 @@ export function adjustStackLinearData(
     claheMap,
     outputColorProfile,
     hasAnyAdjustment,
+    finalRolloff,
   );
 }
 
@@ -393,6 +462,7 @@ export function adjustStackLinearDataPostTone(
   claheMap: StackClaheMap | null = null,
   _outputColorProfile: ImageEditOutputColorProfile = "srgb",
   applyFinalRolloff = true,
+  finalRolloff: StackFinalRolloff | undefined = undefined,
 ): Float32Array {
   const normalizedClahe = clampStackClahe(clahe);
   const activeClaheMap = normalizedClahe !== 0 && isUsableStackClaheMap(claheMap) ? claheMap : null;
@@ -420,6 +490,7 @@ export function adjustStackLinearDataPostTone(
         saturation,
         vibrance,
         applyFinalRolloff,
+        finalRolloff,
       );
       result[sourceIndex] = r;
       result[sourceIndex + 1] = g;
