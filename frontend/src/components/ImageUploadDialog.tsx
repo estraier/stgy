@@ -7022,7 +7022,7 @@ export function ImageEditDialog({
         <div className="mt-3 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_250px] gap-4 lg:items-stretch">
           <div
             ref={containerRef}
-            className={`relative w-full h-[42vh] min-h-[270px] lg:h-[calc(100dvh-120px)] lg:max-h-[900px] rounded border bg-gray-200 overflow-hidden touch-none ${textMode ? "cursor-text" : !eyedropperMode && !rotationMode && (drawMode || mosaicMode) ? "cursor-crosshair" : ""}`}
+            className={`relative w-full h-[42vh] min-h-[270px] lg:h-[calc(100dvh-120px)] lg:max-h-[950px] rounded border bg-gray-200 overflow-hidden touch-none ${textMode ? "cursor-text" : !eyedropperMode && !rotationMode && (drawMode || mosaicMode) ? "cursor-crosshair" : ""}`}
             onPointerDown={eyedropperMode || rotationMode ? undefined : textMode ? onTextPointerDown : drawMode ? onDrawPointerDown : mosaicMode ? onMosaicPointerDown : undefined}
             onPointerMove={eyedropperMode ? undefined : rotationMode ? onRotationPointerMove : drawMode ? onDrawPointerMove : mosaicMode ? onMosaicPointerMove : onPointerMove}
             onPointerUp={eyedropperMode ? undefined : rotationMode ? onRotationPointerUp : drawMode ? (e) => finishDrawCreation(e) : mosaicMode ? onMosaicPointerUp : onPointerUp}
