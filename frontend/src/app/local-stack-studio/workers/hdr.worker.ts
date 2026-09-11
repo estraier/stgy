@@ -9,6 +9,8 @@ const REINHARD_LIGHT_ADAPT = 0.5;
 const REINHARD_COLOR_ADAPT = 0.5;
 const BRIGHTNESS_MAX_TRIES = 10;
 const BRIGHTNESS_MAX_DIST = 0.01;
+const MERTENS_SATURATION_GATE_GEOMEAN_MIN = 0.1;
+const MERTENS_SATURATION_GATE_GEOMEAN_MAX = 0.3;
 
 self.onmessage = async (event) => {
   const message = event.data || {};
@@ -624,6 +626,21 @@ function buildNormalizedMertensWeights(
   return weights;
 }
 
+function smootherstep01(value) {
+  const t = Math.max(0, Math.min(1, value));
+  return t * t * t * (t * (t * 6 - 15) + 10);
+}
+
+function mertensSaturationConfidenceWeight(r, g, b) {
+  const geomean = Math.cbrt(Math.max(0, r * g * b));
+  if (geomean <= MERTENS_SATURATION_GATE_GEOMEAN_MIN) return 0;
+  if (geomean >= MERTENS_SATURATION_GATE_GEOMEAN_MAX) return 1;
+  return smootherstep01(
+    (geomean - MERTENS_SATURATION_GATE_GEOMEAN_MIN)
+      / (MERTENS_SATURATION_GATE_GEOMEAN_MAX - MERTENS_SATURATION_GATE_GEOMEAN_MIN),
+  );
+}
+
 function mertensPixelWeight(image, width, height, x, y, saturationWeight, exposureWeight) {
   const offset = (y * width + x) * 3;
   const r = clamp01(image[offset]);
@@ -636,7 +653,10 @@ function mertensPixelWeight(image, width, height, x, y, saturationWeight, exposu
     const saturation = Math.sqrt(
       ((r - mean) * (r - mean) + (g - mean) * (g - mean) + (b - mean) * (b - mean)) / 3,
     );
-    weight *= Math.pow(Math.max(saturation, 1e-12), saturationWeight);
+    const effectiveSaturationWeight = saturationWeight * mertensSaturationConfidenceWeight(r, g, b);
+    if (effectiveSaturationWeight !== 0) {
+      weight *= Math.pow(Math.max(saturation, 1e-12), effectiveSaturationWeight);
+    }
   }
 
   if (exposureWeight !== 0) {

@@ -40,6 +40,7 @@ import {
 } from "./scratch";
 import { FocusWorkerClient, OrbWorkerClient } from "./worker-clients";
 import {
+  applyScaledLogLinear,
   applySigmoidLinear,
   applySigmoidLinearAtMidpoint,
   clamp01,
@@ -93,7 +94,11 @@ const OUTPUT_SIZE_PRESETS = [
 const TONE_ANALYSIS_TARGET_PIXELS = 256 * 256;
 const SINGLE_SHOT_HDR1_EXPOSURE_EVS = new Float32Array([-2, 0, 2]);
 const SINGLE_SHOT_HDR1_EXPOSURE_TIMES = new Float32Array([1, 4, 16]);
-const SINGLE_SHOT_HDR2_EXPOSURE_EVS = new Float32Array([-2, 0, 2]);
+// Single-shot HDR2 follows the scaled-log pair used by jkzr_proc DRO:
+//   light: log(1 + c*x) / log(1 + c)
+//   dark:  ((1 + c)^x - 1) / c
+// c=4 matches the previous ±2 EV material strength while avoiding linear exposure scaling.
+const SINGLE_SHOT_HDR2_SCALED_LOGS = new Float32Array([-4, 0, 4]);
 const SINGLE_SHOT_HDR_OUTER_SIGMOID_GAIN = 2;
 const MULTI_SHOT_HDR2_SIGMOID_GAIN = 4;
 const SINGLE_SHOT_HDR_SATURATION_WEIGHT = 0.1;
@@ -1547,19 +1552,19 @@ function buildSingleShotHdrSyntheticMaterials(mode) {
   return [
     {
       label: "dark",
-      exposureEv: SINGLE_SHOT_HDR2_EXPOSURE_EVS[0],
+      scaledLog: SINGLE_SHOT_HDR2_SCALED_LOGS[0],
       sigmoidGain: SINGLE_SHOT_HDR_OUTER_SIGMOID_GAIN,
       sigmoidMidpoint: 1,
     },
     {
       label: "medium",
-      exposureEv: SINGLE_SHOT_HDR2_EXPOSURE_EVS[1],
+      scaledLog: SINGLE_SHOT_HDR2_SCALED_LOGS[1],
       sigmoidGain: 4,
       sigmoidMidpoint: 0.5,
     },
     {
       label: "light",
-      exposureEv: SINGLE_SHOT_HDR2_EXPOSURE_EVS[2],
+      scaledLog: SINGLE_SHOT_HDR2_SCALED_LOGS[2],
       sigmoidGain: SINGLE_SHOT_HDR_OUTER_SIGMOID_GAIN,
       sigmoidMidpoint: 0,
     },
@@ -3005,7 +3010,7 @@ async function processSingleInputHdrWithOpenCv(cv, file, inputInfo, mergePlan, o
     for (let i = 0; i < materials.length; i += 1) {
       const material = materials[i];
       setProgress(`Preparing HDR2 synthetic material ${i + 1}/${materials.length} (${material.label})...`);
-      images.push(buildSingleShotHdr2Material(hdrBaseLinear, hdrBase.p998, material));
+      images.push(buildSingleShotHdr2Material(hdrBaseLinear, material));
       await yieldToBrowser();
     }
     setProgress("Merging HDR2 with Mertens exposure fusion...");
@@ -3028,13 +3033,16 @@ function buildSingleShotHdr1Material(sourceLinear, material) {
   return floats;
 }
 
-function buildSingleShotHdr2Material(sourceLinear, baseP998, material) {
-  const adjusted = applySingleShotHdrExposureToLinear(sourceLinear, baseP998, material, true);
-  const floats = new Float32Array(adjusted.length);
-  for (let i = 0; i < adjusted.length; i += 3) {
-    floats[i] = clamp01(applySigmoidLinearAtMidpoint(adjusted[i], material.sigmoidGain, material.sigmoidMidpoint));
-    floats[i + 1] = clamp01(applySigmoidLinearAtMidpoint(adjusted[i + 1], material.sigmoidGain, material.sigmoidMidpoint));
-    floats[i + 2] = clamp01(applySigmoidLinearAtMidpoint(adjusted[i + 2], material.sigmoidGain, material.sigmoidMidpoint));
+function buildSingleShotHdr2Material(sourceLinear, material) {
+  const scaledLog = Number.isFinite(material.scaledLog) ? material.scaledLog : 0;
+  const floats = new Float32Array(sourceLinear.length);
+  for (let i = 0; i < sourceLinear.length; i += 3) {
+    const r = applyScaledLogLinear(sourceLinear[i], scaledLog);
+    const g = applyScaledLogLinear(sourceLinear[i + 1], scaledLog);
+    const b = applyScaledLogLinear(sourceLinear[i + 2], scaledLog);
+    floats[i] = clamp01(applySigmoidLinearAtMidpoint(r, material.sigmoidGain, material.sigmoidMidpoint));
+    floats[i + 1] = clamp01(applySigmoidLinearAtMidpoint(g, material.sigmoidGain, material.sigmoidMidpoint));
+    floats[i + 2] = clamp01(applySigmoidLinearAtMidpoint(b, material.sigmoidGain, material.sigmoidMidpoint));
   }
   return floats;
 }
@@ -3671,8 +3679,18 @@ async function extractEmbeddedIccProfile(lowerName, buffer) {
   return null;
 }
 
+function getTiffIfdDimensions(ifd) {
+  const width = Math.max(0, Math.round(
+    Number(ifd?.width) || Number(ifd?.t256?.[0]) || 0,
+  ));
+  const height = Math.max(0, Math.round(
+    Number(ifd?.height) || Number(ifd?.t257?.[0]) || 0,
+  ));
+  return { width, height };
+}
+
 async function parseTiffInfo(buffer) {
-    const ifds = UTIF.decode(buffer);
+  const ifds = UTIF.decode(buffer);
   if (!ifds || ifds.length === 0) {
     return {
       fNumber: null,
@@ -3685,6 +3703,7 @@ async function parseTiffInfo(buffer) {
     };
   }
   const ifd = ifds[0];
+  const dimensions = getTiffIfdDimensions(ifd);
   const iccProfile = getTiffTagBytes(ifd, 34675);
   const exposureTime = getFirstNumericTagValue(ifd, [33434]);
   const fNumber = getFirstNumericTagValue(ifd, [33437]);
@@ -3700,8 +3719,8 @@ async function parseTiffInfo(buffer) {
     iso,
     exposureScalar,
     iccProfile,
-    width: Math.round(Number(ifd.width) || 0),
-    height: Math.round(Number(ifd.height) || 0),
+    width: dimensions.width,
+    height: dimensions.height,
   };
 }
 
@@ -4058,6 +4077,10 @@ async function decodeFileToDecodedImage(file, inputInfo) {
     }
     const ifd = ifds[0];
     UTIF.decodeImage(buffer, ifd);
+    const dimensions = getTiffIfdDimensions(ifd);
+    if (!(dimensions.width > 0 && dimensions.height > 0)) {
+      throw new Error(`Could not determine TIFF dimensions for ${file.name}.`);
+    }
 
     const linearProPhotoRgb = decodeTiff16RgbToLinearProPhoto(
       buffer,
@@ -4068,12 +4091,12 @@ async function decodeFileToDecodedImage(file, inputInfo) {
       console.info(`${file.name}: preserving 16-bit TIFF samples through the linear Float32 path`);
       const alignmentImageData = linearProPhotoToAlignmentImageData(
         linearProPhotoRgb,
-        ifd.width,
-        ifd.height,
+        dimensions.width,
+        dimensions.height,
       );
       return {
-        width: ifd.width,
-        height: ifd.height,
+        width: dimensions.width,
+        height: dimensions.height,
         sourceColorSpace: "prophoto-rgb",
         linearProPhotoRgb,
         alignmentImageData,
@@ -4081,8 +4104,17 @@ async function decodeFileToDecodedImage(file, inputInfo) {
     }
 
     const rgbaBytes = UTIF.toRGBA8(ifd);
-    const imageData = new ImageData(new Uint8ClampedArray(rgbaBytes), ifd.width, ifd.height);
-    return { imageData, sourceColorSpace: inputInfo.sourceColorSpace, width: ifd.width, height: ifd.height };
+    const imageData = new ImageData(
+      new Uint8ClampedArray(rgbaBytes),
+      dimensions.width,
+      dimensions.height,
+    );
+    return {
+      imageData,
+      sourceColorSpace: inputInfo.sourceColorSpace,
+      width: dimensions.width,
+      height: dimensions.height,
+    };
   }
 
   let bitmap;
@@ -4131,8 +4163,7 @@ function decodeTiff16RgbToLinearProPhoto(buffer, ifd, sourceColorSpace) {
     return null;
   }
 
-  const width = Math.max(0, Math.round(Number(ifd.width) || 0));
-  const height = Math.max(0, Math.round(Number(ifd.height) || 0));
+  const { width, height } = getTiffIfdDimensions(ifd);
   if (!(width > 0 && height > 0)) return null;
 
   const raw = tiffDecodedByteView(ifd.data);
