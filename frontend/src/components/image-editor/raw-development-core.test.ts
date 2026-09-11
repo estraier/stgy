@@ -92,8 +92,29 @@ describe("RAW development hot-loop characterization", () => {
       fixture.vignetting,
     );
     expect(result).not.toBeNull();
-    expect(fnv1a16(data)).toBe("4b027828");
+    expect(fnv1a16(data)).toBe("1fec0a4a");
     expect(result?.exposureEv).toBeCloseTo(0.17376055157331727, 14);
-    expect(result?.headroom.maxRgb).toBeCloseTo(1.0193448963146376, 14);
+    expect(result?.headroom.maxRgb).toBeCloseTo(1.1909830314689662, 14);
+    expect(result?.plan.rolloff).toBeNull();
+  });
+
+  test("uses the full 0..2 RAW headroom for fallback rolloff", () => {
+    const width = 1000;
+    const data = new Uint16Array(width * 3);
+    const low = Math.round(0.1 * 65535);
+    for (let x = 0; x < width; x++) {
+      const value = x < 990 ? low : 65535;
+      const i = x * 3;
+      data[i] = value;
+      data[i + 1] = value;
+      data[i + 2] = value;
+    }
+
+    const result = applyRawFallbackBaselinePass(data, width, 1, 1, undefined);
+    expect(result).not.toBeNull();
+    expect(result?.plan.factor).toBeCloseTo(8.999313396399145, 12);
+    expect(result?.plan.rolloff?.inflection).toBeCloseTo(1.2844670182046447, 12);
+    expect(result?.plan.rolloff?.scale).toBeCloseTo(0.09274752262990468, 12);
+    expect(result?.headroom.maxRgb).toBeCloseTo(1.9999999072524774, 12);
   });
 });

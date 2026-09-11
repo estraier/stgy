@@ -8,17 +8,17 @@ import {
 import { buildRenderedPixelToSourceTransform, getAnalysisLinearRgbSample } from "./sampling";
 import {
   isUsableImageEditClarityMap,
-  applyPositiveImageEditClarityOutputRolloffInto,
   sampleImageEditClarityGain,
   type ImageEditClarityMap,
 } from "./clarity";
 import {
   HISTOGRAM_DISPLAY_GAMMA,
   applyColorAdjustmentsAfterToneLinearRgb, applyColorAdjustmentsLinearRgb,
-  applyShadowLinear, applyToneAdjustmentsLinearRgb, applyToneLinearToRgb,
+  applyLuminanceGainPreservingAboveOneLinearRgb, applyScaledLogLinearExtended, applyShadowLinear, applySigmoidLinearExtended,
+  applyToneAdjustmentsLinearRgb, applyToneLinearToRgb,
   applyWhiteBalanceLinear, clamp01, clampColorAdjustment, clampExposureEv,
   clampScaledLog, clampSigmoid, clampToneRangeAdjustment, clampWhiteBalanceValue,
-  colorSaturationFactor, colorVibranceFactor, rgbToHsv, rolloffParams,
+  colorSaturationFactor, colorVibranceFactor, proPhotoLinearLuminance, rgbToHsv, rolloffParams,
   srgbChannelToLinear, whiteBalanceGains, type ColorAdjustmentContext, type HighlightRange,
 } from "@/image/tone";
 
@@ -117,13 +117,10 @@ export function buildColorAdjustmentContextFromLinearRgbSample(
     }
     exposedValues.push(exposedR, exposedG, exposedB);
     if (needsHighlightRange) {
-      const highlightValue = hasShadow
-        ? Math.max(
-            applyShadowLinear(exposedR, normalizedShadow),
-            applyShadowLinear(exposedG, normalizedShadow),
-            applyShadowLinear(exposedB, normalizedShadow),
-          )
-        : Math.max(exposedR, exposedG, exposedB);
+      let highlightValue = proPhotoLinearLuminance(exposedR, exposedG, exposedB);
+      if (hasScaledLog) highlightValue = applyScaledLogLinearExtended(highlightValue, normalizedScaledLog);
+      if (hasSigmoid) highlightValue = applySigmoidLinearExtended(highlightValue, normalizedSigmoid);
+      if (hasShadow) highlightValue = applyShadowLinear(highlightValue, normalizedShadow);
       highlightMax = Math.max(highlightMax, highlightValue);
     }
   }
@@ -159,7 +156,6 @@ export function buildColorAdjustmentContextFromLinearRgbSample(
         normalizedShadow,
         normalizedHighlight,
         highlightRange,
-        rolloff,
         normalizedScaledLog,
         normalizedSigmoid,
         toneFlags,
@@ -257,8 +253,6 @@ export function computeHistogramDataFromRgb16(
   );
   const activeClarityMap = isUsableImageEditClarityMap(clarityMap) ? clarityMap : null;
   const hasClarity = activeClarityMap !== null;
-  const clarityRolloffOutput = activeClarityMap && activeClarityMap.strength > 0 ? new Float32Array(3) : null;
-  const clarityRolloffProPhoto = activeClarityMap && activeClarityMap.strength > 0 ? new Float32Array(3) : null;
   const r = new Array<number>(HISTOGRAM_BINS).fill(0);
   const g = new Array<number>(HISTOGRAM_BINS).fill(0);
   const b = new Array<number>(HISTOGRAM_BINS).fill(0);
@@ -306,22 +300,9 @@ export function computeHistogramDataFromRgb16(
         decoded.width,
         decoded.height,
       );
-      rr = Math.max(0, rr * clarityGain);
-      gg = Math.max(0, gg * clarityGain);
-      bb = Math.max(0, bb * clarityGain);
-      if (activeClarityMap.strength > 0 && clarityRolloffOutput && clarityRolloffProPhoto) {
-        applyPositiveImageEditClarityOutputRolloffInto(
-          rr,
-          gg,
-          bb,
-          "srgb",
-          clarityRolloffOutput,
-          clarityRolloffProPhoto,
-        );
-        rr = clarityRolloffProPhoto[0];
-        gg = clarityRolloffProPhoto[1];
-        bb = clarityRolloffProPhoto[2];
-      }
+      [rr, gg, bb] = applyLuminanceGainPreservingAboveOneLinearRgb(
+        rr, gg, bb, clarityGain,
+      );
       [rr, gg, bb] = applyColorAdjustmentsAfterToneLinearRgb(rr, gg, bb, adjustment);
     } else {
       [rr, gg, bb] = applyColorAdjustmentsLinearRgb(rr, gg, bb, adjustment);
@@ -509,7 +490,6 @@ export function buildToneLumaHistogram(
       context.shadow,
       context.highlight,
       context.highlightRange,
-      context.rolloff,
       context.scaledLog,
       context.sigmoid,
       context,

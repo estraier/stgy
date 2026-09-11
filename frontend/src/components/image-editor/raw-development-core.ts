@@ -62,7 +62,9 @@ const RAW_HEADROOM_HISTOGRAM_MAX = 2;
 const RAW_BASELINE_PERCENTILE = 98;
 const RAW_BASELINE_TARGET = 0.9;
 const RAW_BASELINE_ROLLOFF_PERCENTILE = 99.8;
-const RAW_BASELINE_ROLLOFF_ASYMPTOTIC = 0.5;
+const RAW_BASELINE_ROLLOFF_TARGET = RAW_DEVELOPED_LINEAR_RANGE_MAX;
+const RAW_BASELINE_ROLLOFF_ASYMPTOTIC = 1;
+const RAW_BASELINE_ROLLOFF_SAVING_LIMIT = 8;
 const RAW_THUMBNAIL_MATCH_LOG_MIN = -16;
 const RAW_THUMBNAIL_MATCH_LOG_MAX = 16;
 const RAW_THUMBNAIL_MATCH_SIGMOID_MIN = -10;
@@ -108,15 +110,16 @@ function applyRolloffScalar(
 
 function rolloffParams(
   maxVal: number,
-  asymptotic = 0.5,
-  savingLimit = 4,
+  target: number,
+  asymptotic: number,
+  savingLimit: number,
 ): { inflection: number; scale: number } | null {
-  if (maxVal <= 1) return null;
+  if (maxVal <= target) return null;
   if (maxVal > savingLimit) {
-    asymptotic = Math.pow(asymptotic, savingLimit / maxVal);
+    asymptotic = target * Math.pow(asymptotic / target, savingLimit / maxVal);
   }
-  const inflection = asymptotic + (1 - asymptotic) / maxVal;
-  const scale = (1 - inflection) / (maxVal - inflection + 1e-6);
+  const inflection = asymptotic + target * (target - asymptotic) / maxVal;
+  const scale = (target - inflection) / (maxVal - inflection + 1e-6);
   return { inflection, scale };
 }
 
@@ -548,7 +551,12 @@ export function applyRawFallbackBaselinePass(
   ) / 65535 * factor;
   const plan: RawFallbackPlan = {
     factor,
-    rolloff: rolloffParams(channelMax, RAW_BASELINE_ROLLOFF_ASYMPTOTIC, 4),
+    rolloff: rolloffParams(
+      channelMax,
+      RAW_BASELINE_ROLLOFF_TARGET,
+      RAW_BASELINE_ROLLOFF_ASYMPTOTIC,
+      RAW_BASELINE_ROLLOFF_SAVING_LIMIT,
+    ),
   };
   const headroom = applyRawFallbackPlanPass(
     data,

@@ -1,10 +1,11 @@
 import {
   applyToneAdjustmentsLinearRgbRange,
   clamp01,
+  proPhotoLinearLuminance,
   type ColorAdjustmentContext,
   type ToneAdjustmentStage,
 } from "@/image/tone";
-import type { ImageEditOutputColorProfile, LinearRgbSample } from "./types";
+import type { LinearRgbSample } from "./types";
 
 export type ImageEditClarityMap = {
   width: number;
@@ -13,7 +14,6 @@ export type ImageEditClarityMap = {
   strength: number;
 };
 
-const CLARITY_PROPHOTO_ROLLOFF_START = 0.8;
 
 export function clampClarity(value: number): number {
   if (!Number.isFinite(value)) return 0;
@@ -220,15 +220,10 @@ export function buildImageEditClarityMapFromToneSample(
 
   for (let pixelIndex = 0, sourceIndex = 0; pixelIndex < pixelCount; pixelIndex += 1, sourceIndex += 3) {
     if (valid && !valid[pixelIndex]) continue;
-    // Keep the preview-map behavior aligned with LSS: CLAHE operates on a
-    // perceptually encoded Rec.601-style luminance while RGB itself stays linear.
     const r = toneSample.data[sourceIndex] ?? 0;
     const g = toneSample.data[sourceIndex + 1] ?? 0;
     const b = toneSample.data[sourceIndex + 2] ?? 0;
-    const linearLuma = Math.max(
-      0,
-      0.299 * Math.max(0, r) + 0.587 * Math.max(0, g) + 0.114 * Math.max(0, b),
-    );
+    const linearLuma = Math.max(0, proPhotoLinearLuminance(r, g, b));
     luminance[pixelIndex] = linearLuma;
     if (encodedLuminance) {
       encodedLuminance[pixelIndex] = Math.max(
@@ -258,6 +253,10 @@ export function buildImageEditClarityMapFromToneSample(
     for (let pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += 1) {
       if (valid && !valid[pixelIndex]) continue;
       const sourceLinearLuma = luminance[pixelIndex] ?? 0;
+      if (sourceLinearLuma > 1) {
+        gain[pixelIndex] = 1;
+        continue;
+      }
       const meanLinearLuma = localMean[pixelIndex] ?? sourceLinearLuma;
       const targetLinearLuma = Math.max(
         0,
@@ -373,7 +372,13 @@ export function buildImageEditClarityMapFromToneSample(
       const encodedEqualized = top * (1 - fy) + bottom * fy;
       const targetLinearLuma = encodedEqualized * encodedEqualized;
       const sourceLinearLuma = luminance[pixelIndex] ?? 0;
-      gain[pixelIndex] = sourceLinearLuma > 1e-8 ? targetLinearLuma / sourceLinearLuma : 0;
+      // Values above display white remain extended-range data. They participate
+      // in the top histogram bin but CLAHE itself leaves their magnitude intact.
+      gain[pixelIndex] = sourceLinearLuma > 1
+        ? 1
+        : sourceLinearLuma > 1e-8
+          ? targetLinearLuma / sourceLinearLuma
+          : 0;
     }
   }
 
@@ -405,30 +410,6 @@ export function isUsableImageEditClarityMap(
 }
 
 
-export function applyPositiveImageEditClarityOutputRolloffInto(
-  postClarityR: number,
-  postClarityG: number,
-  postClarityB: number,
-  _outputColorProfile: ImageEditOutputColorProfile,
-  _outputLinear: Float32Array,
-  rolledProPhoto: Float32Array,
-): void {
-  const maxChannel = Math.max(postClarityR, postClarityG, postClarityB);
-  if (!Number.isFinite(maxChannel) || maxChannel <= CLARITY_PROPHOTO_ROLLOFF_START) {
-    rolledProPhoto[0] = postClarityR;
-    rolledProPhoto[1] = postClarityG;
-    rolledProPhoto[2] = postClarityB;
-    return;
-  }
-
-  const shoulder = 1 - CLARITY_PROPHOTO_ROLLOFF_START;
-  const rolledMax = CLARITY_PROPHOTO_ROLLOFF_START
-    + shoulder * (1 - Math.exp(-(maxChannel - CLARITY_PROPHOTO_ROLLOFF_START) / shoulder));
-  const scale = rolledMax / maxChannel;
-  rolledProPhoto[0] = postClarityR * scale;
-  rolledProPhoto[1] = postClarityG * scale;
-  rolledProPhoto[2] = postClarityB * scale;
-}
 
 export function sampleImageEditClarityGain(
   map: ImageEditClarityMap,

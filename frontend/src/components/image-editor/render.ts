@@ -12,15 +12,16 @@ import type { LinearRgbBuffer } from "./sampling";
 import {
   applyColorAdjustmentsAfterToneLinearRgb,
   applyColorAdjustmentsLinearRgb,
+  applyLuminanceGainPreservingAboveOneLinearRgb,
   applyToneAdjustmentsLinearRgb,
   applyToneAdjustmentsLinearRgbRange,
+  hasColorAdjustmentContextChanges,
   linearChannelToSrgb,
   type ColorAdjustmentContext,
   type ToneAdjustmentStage,
 } from "@/image/tone";
 import {
   isUsableImageEditClarityMap,
-  applyPositiveImageEditClarityOutputRolloffInto,
   sampleImageEditClarityGain,
   type ImageEditClarityMap,
 } from "./clarity";
@@ -49,7 +50,7 @@ export function buildImageEditPreviewSliderPrefixSample(
   stage: ImageEditPreviewSliderStage,
   clarityMap: ImageEditClarityMap | null = null,
   fullToneSample?: LinearRgbSample | null,
-  outputColorProfile: ImageEditOutputColorProfile = "srgb",
+  _outputColorProfile: ImageEditOutputColorProfile = "srgb",
 ): LinearRgbSample {
   if (stage === "white-balance") return sample;
   if (stage === "clarity" && fullToneSample) return fullToneSample;
@@ -62,8 +63,6 @@ export function buildImageEditPreviewSliderPrefixSample(
   const data = new Float32Array(sample.data.length);
   const valid = sample.valid;
   const activeClarityMap = isUsableImageEditClarityMap(clarityMap) ? clarityMap : null;
-  const clarityRolloffOutput = activeClarityMap && activeClarityMap.strength > 0 ? new Float32Array(3) : null;
-  const clarityRolloffProPhoto = activeClarityMap && activeClarityMap.strength > 0 ? new Float32Array(3) : null;
   const tonePrefixEnd: ToneAdjustmentStage = isTonePreviewSliderStage(stage)
     ? stage
     : "after-tone";
@@ -101,22 +100,7 @@ export function buildImageEditPreviewSliderPrefixSample(
             width,
             height,
           );
-      r = Math.max(0, r * clarityGain);
-      g = Math.max(0, g * clarityGain);
-      b = Math.max(0, b * clarityGain);
-      if (activeClarityMap.strength > 0 && clarityRolloffOutput && clarityRolloffProPhoto) {
-        applyPositiveImageEditClarityOutputRolloffInto(
-          r,
-          g,
-          b,
-          outputColorProfile,
-          clarityRolloffOutput,
-          clarityRolloffProPhoto,
-        );
-        r = clarityRolloffProPhoto[0];
-        g = clarityRolloffProPhoto[1];
-        b = clarityRolloffProPhoto[2];
-      }
+      [r, g, b] = applyLuminanceGainPreservingAboveOneLinearRgb(r, g, b, clarityGain);
     }
 
     data[si] = Math.fround(r);
@@ -170,8 +154,6 @@ export function renderAdjustedLinearRgbSampleToCanvas(
   );
   const activeClarityMap = isUsableImageEditClarityMap(clarityMap) ? clarityMap : null;
   const hasClarity = activeClarityMap !== null;
-  const clarityRolloffOutput = activeClarityMap && activeClarityMap.strength > 0 ? new Float32Array(3) : null;
-  const clarityRolloffProPhoto = activeClarityMap && activeClarityMap.strength > 0 ? new Float32Array(3) : null;
   const clarityTransform = hasClarity && claritySourceGeometry
     ? buildRenderedPixelToSourceTransform(
         claritySourceGeometry.sourceWidth,
@@ -264,25 +246,16 @@ export function renderAdjustedLinearRgbSampleToCanvas(
             const y = Math.floor(pixel / width);
             clarityGain = sampleImageEditClarityGain(activeClarityMap, x + 0.5, y + 0.5, width, height);
           }
-          r = Math.max(0, r * clarityGain);
-          g = Math.max(0, g * clarityGain);
-          b = Math.max(0, b * clarityGain);
-          if (activeClarityMap.strength > 0 && clarityRolloffOutput && clarityRolloffProPhoto) {
-            applyPositiveImageEditClarityOutputRolloffInto(
-              r,
-              g,
-              b,
-              outputColorProfile,
-              clarityRolloffOutput,
-              clarityRolloffProPhoto,
-            );
-            r = clarityRolloffProPhoto[0];
-            g = clarityRolloffProPhoto[1];
-            b = clarityRolloffProPhoto[2];
-          }
+          [r, g, b] = applyLuminanceGainPreservingAboveOneLinearRgb(r, g, b, clarityGain);
         }
       }
-      [r, g, b] = applyColorAdjustmentsAfterToneLinearRgb(r, g, b, context);
+      [r, g, b] = applyColorAdjustmentsAfterToneLinearRgb(
+        r,
+        g,
+        b,
+        context,
+        hasClarity || hasColorAdjustmentContextChanges(context),
+      );
     } else if (hasClarity) {
       if (!toneData) {
         [r, g, b] = applyToneAdjustmentsLinearRgb(r, g, b, context);
@@ -311,22 +284,7 @@ export function renderAdjustedLinearRgbSampleToCanvas(
         const y = Math.floor(pixel / width);
         clarityGain = sampleImageEditClarityGain(activeClarityMap, x + 0.5, y + 0.5, width, height);
       }
-      r = Math.max(0, r * clarityGain);
-      g = Math.max(0, g * clarityGain);
-      b = Math.max(0, b * clarityGain);
-      if (activeClarityMap.strength > 0 && clarityRolloffOutput && clarityRolloffProPhoto) {
-        applyPositiveImageEditClarityOutputRolloffInto(
-          r,
-          g,
-          b,
-          outputColorProfile,
-          clarityRolloffOutput,
-          clarityRolloffProPhoto,
-        );
-        r = clarityRolloffProPhoto[0];
-        g = clarityRolloffProPhoto[1];
-        b = clarityRolloffProPhoto[2];
-      }
+      [r, g, b] = applyLuminanceGainPreservingAboveOneLinearRgb(r, g, b, clarityGain);
       [r, g, b] = applyColorAdjustmentsAfterToneLinearRgb(r, g, b, context);
     } else {
       [r, g, b] = applyColorAdjustmentsLinearRgb(r, g, b, context);
@@ -379,8 +337,6 @@ export function renderAdjustedRgb16ToCanvas(
   );
   const activeClarityMap = isUsableImageEditClarityMap(clarityMap) ? clarityMap : null;
   const hasClarity = activeClarityMap !== null;
-  const clarityRolloffOutput = activeClarityMap && activeClarityMap.strength > 0 ? new Float32Array(3) : null;
-  const clarityRolloffProPhoto = activeClarityMap && activeClarityMap.strength > 0 ? new Float32Array(3) : null;
   const scaleX = width / Math.max(1, sourceRect.w);
   const scaleY = height / Math.max(1, sourceRect.h);
   const transform = buildRenderedPixelToSourceTransform(
@@ -425,22 +381,7 @@ export function renderAdjustedRgb16ToCanvas(
             decoded.width,
             decoded.height,
           );
-          r = Math.max(0, r * clarityGain);
-          g = Math.max(0, g * clarityGain);
-          b = Math.max(0, b * clarityGain);
-          if (activeClarityMap.strength > 0 && clarityRolloffOutput && clarityRolloffProPhoto) {
-            applyPositiveImageEditClarityOutputRolloffInto(
-              r,
-              g,
-              b,
-              outputColorProfile,
-              clarityRolloffOutput,
-              clarityRolloffProPhoto,
-            );
-            r = clarityRolloffProPhoto[0];
-            g = clarityRolloffProPhoto[1];
-            b = clarityRolloffProPhoto[2];
-          }
+          [r, g, b] = applyLuminanceGainPreservingAboveOneLinearRgb(r, g, b, clarityGain);
           [r, g, b] = applyColorAdjustmentsAfterToneLinearRgb(r, g, b, context);
         } else {
           [r, g, b] = applyColorAdjustmentsLinearRgb(r, g, b, context);

@@ -50,6 +50,7 @@ import {
   HISTOGRAM_DISPLAY_GAMMA,
   applyColorAdjustmentsAfterToneLinearRgb,
   applyColorAdjustmentsLinearRgb,
+  applyLuminanceGainPreservingAboveOneLinearRgb,
   applyToneAdjustmentsLinearRgb,
   applyRolloffScalar,
   applyScaledLogLinear,
@@ -88,7 +89,6 @@ import {
   buildImageEditToneSample,
   clampClarity,
   isUsableImageEditClarityMap,
-  applyPositiveImageEditClarityOutputRolloffInto,
   sampleImageEditClarityGain,
   type ImageEditClarityMap,
 } from "./image-editor/clarity";
@@ -370,6 +370,7 @@ type ImageLoadProgress = {
 type ImageLoadProgressListener = (progress: ImageLoadProgress) => void;
 
 const RAW_DEVELOPED_LINEAR_RANGE_MAX = 2;
+const RAW_USE_THUMBNAIL = false; // Temporary test setting.
 const RAW_TONE_SLOPE_EPSILON = 1e-5;
 const RAW_MEDIAN_DENOISE_WEAK_ISO = 800;
 const RAW_MEDIAN_DENOISE_STRONG_ISO = 3200;
@@ -3384,7 +3385,7 @@ async function decodeRawPreviewImage(
     const isoValue = Number(metadata?.iso_speed);
 
     let thumbnailReference: RawThumbnailMatchReference | undefined;
-    if (raw.thumbnailData) {
+    if (RAW_USE_THUMBNAIL && raw.thumbnailData) {
       try {
         const thumbnail = await runStage("Reading embedded preview…", () => Promise.race([
           raw!.thumbnailData!(),
@@ -4014,8 +4015,6 @@ export async function buildEditedDecodedRgb16(
   }
   const clarityMap = resolveImageEditClarityMap(decoded, params, previewClarityMap);
   const hasClarity = clarityMap !== null;
-  const clarityRolloffOutput = clarityMap && clarityMap.strength > 0 ? new Float32Array(3) : null;
-  const clarityRolloffProPhoto = clarityMap && clarityMap.strength > 0 ? new Float32Array(3) : null;
 
   const sourceRect = { x: sx, y: sy, w: cropW, h: cropH };
   const contextSample = getAnalysisLinearRgbSample(decoded, sourceRect, params.rotationDegrees);
@@ -4090,22 +4089,7 @@ export async function buildEditedDecodedRgb16(
           sourceW,
           sourceH,
         );
-        r = Math.max(0, r * clarityGain);
-        g = Math.max(0, g * clarityGain);
-        b = Math.max(0, b * clarityGain);
-        if (clarityMap.strength > 0 && clarityRolloffOutput && clarityRolloffProPhoto) {
-          applyPositiveImageEditClarityOutputRolloffInto(
-            r,
-            g,
-            b,
-            outputColorProfile,
-            clarityRolloffOutput,
-            clarityRolloffProPhoto,
-          );
-          r = clarityRolloffProPhoto[0];
-          g = clarityRolloffProPhoto[1];
-          b = clarityRolloffProPhoto[2];
-        }
+        [r, g, b] = applyLuminanceGainPreservingAboveOneLinearRgb(r, g, b, clarityGain);
         [r, g, b] = applyColorAdjustmentsAfterToneLinearRgb(r, g, b, adjustmentContext);
       } else {
         [r, g, b] = applyColorAdjustmentsLinearRgb(r, g, b, adjustmentContext);
@@ -4146,22 +4130,7 @@ export async function buildEditedDecodedRgb16(
               sourceW,
               sourceH,
             );
-            r = Math.max(0, r * clarityGain);
-            g = Math.max(0, g * clarityGain);
-            b = Math.max(0, b * clarityGain);
-            if (clarityMap.strength > 0 && clarityRolloffOutput && clarityRolloffProPhoto) {
-              applyPositiveImageEditClarityOutputRolloffInto(
-                r,
-                g,
-                b,
-                outputColorProfile,
-                clarityRolloffOutput,
-                clarityRolloffProPhoto,
-              );
-              r = clarityRolloffProPhoto[0];
-              g = clarityRolloffProPhoto[1];
-              b = clarityRolloffProPhoto[2];
-            }
+            [r, g, b] = applyLuminanceGainPreservingAboveOneLinearRgb(r, g, b, clarityGain);
             [r, g, b] = applyColorAdjustmentsAfterToneLinearRgb(r, g, b, adjustmentContext);
           } else {
             [r, g, b] = applyColorAdjustmentsLinearRgb(
@@ -6366,6 +6335,7 @@ export function ImageEditDialog({
   useEffect(() => {
     let cancelled = false;
     if (
+      !RAW_USE_THUMBNAIL ||
       !showHistogram ||
       !showPercentileDebug ||
       !isRawImageFile(file.name, file.type) ||

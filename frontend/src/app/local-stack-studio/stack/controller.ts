@@ -714,6 +714,8 @@ function getCurrentHighlightP100() {
     currentStackResult.analysisLinearProPhotoRgb,
     Math.pow(2, currentPreviewExposureEv),
     currentPreviewShadow,
+    currentPreviewLogarithm,
+    currentPreviewSigmoid,
   );
 }
 
@@ -732,6 +734,7 @@ function getCurrentPreviewAdjustedLinear(highlightP100) {
       currentPreviewSaturation,
       null,
       currentPreviewColorSpace,
+      hasCurrentToneAdjustments(),
     );
   }
 
@@ -746,6 +749,7 @@ function getCurrentPreviewAdjustedLinear(highlightP100) {
     currentPreviewSaturation,
     claheMap,
     currentPreviewColorSpace,
+    hasCurrentToneAdjustments(),
   );
 }
 
@@ -855,7 +859,7 @@ function getPreviewToneAdjustedForActiveControl(highlightP100) {
     currentStackResult.exposureRolloffBaseP998,
     highlightP100,
     config.prefixStage,
-    "sigmoid",
+    "highlight",
   );
 }
 
@@ -891,6 +895,7 @@ function getCurrentPreviewPostClaheBase(highlightP100) {
     0,
     claheMap,
     currentPreviewColorSpace,
+    false,
   );
   previewPostClaheCache = { key, data };
   return data;
@@ -901,18 +906,22 @@ function getCachedPreviewToneStage(stage, highlightP100) {
     throw new Error("No stacked image is available.");
   }
   if (stage === "source") return currentStackResult.previewLinearProPhotoRgb;
+
+  const stageOrder = ["source", "exposure", "logarithm", "sigmoid", "shadow", "highlight"];
+  const stageIndex = stageOrder.indexOf(stage);
+  const includes = (candidate) => stageIndex >= stageOrder.indexOf(candidate);
   const key = JSON.stringify([
     currentStackResultRevision,
     stage,
     currentStackResult.previewWidth,
     currentStackResult.previewHeight,
-    currentPreviewExposureEv,
-    stage === "exposure" ? null : currentPreviewShadow,
-    stage === "exposure" || stage === "shadow" ? null : currentPreviewHighlight,
-    stage === "exposure" || stage === "shadow" || stage === "highlight" ? null : currentPreviewLogarithm,
-    stage === "exposure" || stage === "shadow" || stage === "highlight" || stage === "logarithm" ? null : currentPreviewSigmoid,
+    includes("exposure") ? currentPreviewExposureEv : null,
+    includes("logarithm") ? currentPreviewLogarithm : null,
+    includes("sigmoid") ? currentPreviewSigmoid : null,
+    includes("shadow") ? currentPreviewShadow : null,
+    includes("highlight") ? currentPreviewHighlight : null,
     currentStackResult.exposureRolloffBaseP998,
-    stage === "exposure" || stage === "shadow" ? null : highlightP100,
+    includes("highlight") ? highlightP100 : null,
   ]);
   if (previewStageCache && previewStageCache.key === key) {
     return previewStageCache.data;
@@ -936,12 +945,12 @@ function getCachedPreviewToneStage(stage, highlightP100) {
 }
 
 function getPreviewTonePrefixConfig(control) {
-  if (control === "shadow") return { prefixStage: "exposure" };
-  if (control === "highlight") return { prefixStage: "shadow" };
-  if (control === "logarithm") return { prefixStage: "highlight" };
+  if (control === "logarithm") return { prefixStage: "exposure" };
   if (control === "sigmoid") return { prefixStage: "logarithm" };
+  if (control === "shadow") return { prefixStage: "sigmoid" };
+  if (control === "highlight") return { prefixStage: "shadow" };
   if (control === "clahe" || control === "vibrance" || control === "saturation") {
-    return { prefixStage: "sigmoid" };
+    return { prefixStage: "highlight" };
   }
   return { prefixStage: "source" };
 }

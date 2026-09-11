@@ -45,6 +45,64 @@ export function colorVibranceFactor(vibrance: number): number {
   return clampColorAdjustment(vibrance) * 3 / 100;
 }
 
+// Linear ProPhoto RGB luminance (XYZ D50 Y row). Keep these here instead of
+// importing color.ts because color.ts already depends on this module.
+export const PROPHOTO_TONE_LUMA_R = 0.2880402;
+export const PROPHOTO_TONE_LUMA_G = 0.7118741;
+export const PROPHOTO_TONE_LUMA_B = 0.0000857;
+export const FINAL_MAX_CHANNEL_ROLLOFF_START = 0.9;
+const TONE_ENDPOINT_SLOPE_EPSILON = 1e-5;
+const TONE_LUMINANCE_EPSILON = 1e-12;
+
+export function proPhotoLinearLuminance(r: number, g: number, b: number): number {
+  return PROPHOTO_TONE_LUMA_R * r + PROPHOTO_TONE_LUMA_G * g + PROPHOTO_TONE_LUMA_B * b;
+}
+
+function applyUnitIntervalTangentExtension(
+  value: number,
+  evaluator: (x: number) => number,
+): number {
+  if (!Number.isFinite(value)) return value;
+  if (value >= 0 && value <= 1) return evaluator(value);
+  const epsilon = TONE_ENDPOINT_SLOPE_EPSILON;
+  if (value > 1) {
+    const atOne = evaluator(1);
+    const beforeOne = evaluator(1 - epsilon);
+    const slope = (atOne - beforeOne) / epsilon;
+    return atOne + (Number.isFinite(slope) ? slope : 1) * (value - 1);
+  }
+  const atZero = evaluator(0);
+  const afterZero = evaluator(epsilon);
+  const slope = (afterZero - atZero) / epsilon;
+  return atZero + (Number.isFinite(slope) ? slope : 1) * value;
+}
+
+export function applyLuminanceMappingToRgb(
+  r: number,
+  g: number,
+  b: number,
+  mapper: (luminance: number) => number,
+): [number, number, number] {
+  const sourceLuminance = proPhotoLinearLuminance(r, g, b);
+  if (!(sourceLuminance > TONE_LUMINANCE_EPSILON)) return [r, g, b];
+  const targetLuminance = mapper(sourceLuminance);
+  if (!Number.isFinite(targetLuminance)) return [r, g, b];
+  const scale = targetLuminance / sourceLuminance;
+  return [r * scale, g * scale, b * scale];
+}
+
+export function applyLuminanceGainPreservingAboveOneLinearRgb(
+  r: number,
+  g: number,
+  b: number,
+  gain: number,
+): [number, number, number] {
+  // CLAHE only defines a mapping through display white. Keep extended highlights
+  // untouched even when a lower-resolution gain map is sampled at this pixel.
+  if (proPhotoLinearLuminance(r, g, b) > 1 || !Number.isFinite(gain)) return [r, g, b];
+  return [Math.max(0, r * gain), Math.max(0, g * gain), Math.max(0, b * gain)];
+}
+
 export function srgbChannelToLinear(v: number): number {
   const x = clamp01(v / 255);
   if (x <= 0.04045) return x / 12.92;
@@ -86,13 +144,14 @@ export function applyWhiteBalanceLinear(
 ): [number, number, number] {
   // Progressively reduce correction toward white while retaining more WB
   // through the midtones by applying gamma 0.5 to the protection mask.
-  const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+  const gray = proPhotoLinearLuminance(r, g, b);
   const whiteThreshold = 0.98;
   const weight = Math.sqrt(1 - clamp01((gray - (1 - whiteThreshold)) / whiteThreshold));
   const wr = weight * gains.r + (1 - weight);
   const wg = weight * gains.g + (1 - weight);
   const wb = weight * gains.b + (1 - weight);
-  return [clamp01(r * wr), clamp01(g * wg), clamp01(b * wb)];
+  // Preserve extended linear values; WB may carry values above 1 into Tone.
+  return [r * wr, g * wg, b * wb];
 }
 
 export function applyScaledLogLinear(value: number, factor: number, limit = 20): number {
@@ -106,6 +165,10 @@ export function applyScaledLogLinear(value: number, factor: number, limit = 20):
     return clamp01(Math.expm1(x * Math.log1p(magnitude)) / magnitude);
   }
   return x;
+}
+
+export function applyScaledLogLinearExtended(value: number, factor: number, limit = 20): number {
+  return applyUnitIntervalTangentExtension(value, (x) => applyScaledLogLinear(x, factor, limit));
 }
 
 export function naiveSigmoid(value: number, gain: number, mid: number): number {
@@ -141,6 +204,10 @@ export function applySigmoidLinear(value: number, gain: number): number {
     return clamp01(Math.pow(adjusted, gamma));
   }
   return x;
+}
+
+export function applySigmoidLinearExtended(value: number, gain: number): number {
+  return applyUnitIntervalTangentExtension(value, (x) => applySigmoidLinear(x, gain));
 }
 
 export function rgbToHsv(r: number, g: number, b: number): [number, number, number] {
@@ -192,6 +259,73 @@ export function hsvToRgb(h: number, s: number, v: number): [number, number, numb
     bp = x;
   }
   return [clamp01(rp + m), clamp01(gp + m), clamp01(bp + m)];
+}
+
+export function rgbToHsvExtended(r: number, g: number, b: number): [number, number, number] {
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const delta = max - min;
+  let h = 0;
+  if (delta > 1e-12) {
+    if (max === r) h = ((g - b) / delta) % 6;
+    else if (max === g) h = (b - r) / delta + 2;
+    else h = (r - g) / delta + 4;
+    h /= 6;
+    if (h < 0) h += 1;
+  }
+  const saturation = max > 1e-12 ? delta / max : 0;
+  return [h, Math.max(0, Number.isFinite(saturation) ? saturation : 0), max];
+}
+
+function hsvUnitValueShape(h: number, saturation: number): [number, number, number] {
+  const hh = ((h % 1) + 1) % 1 * 6;
+  const s = Math.max(0, Number.isFinite(saturation) ? saturation : 0);
+  const c = s;
+  const x = c * (1 - Math.abs(hh % 2 - 1));
+  const m = 1 - c;
+  let rp = 0;
+  let gp = 0;
+  let bp = 0;
+  if (hh < 1) { rp = c; gp = x; }
+  else if (hh < 2) { rp = x; gp = c; }
+  else if (hh < 3) { gp = c; bp = x; }
+  else if (hh < 4) { gp = x; bp = c; }
+  else if (hh < 5) { rp = x; bp = c; }
+  else { rp = c; bp = x; }
+  return [rp + m, gp + m, bp + m];
+}
+
+export function applyHsvSaturationPreservingProPhotoLuminance(
+  r: number,
+  g: number,
+  b: number,
+  targetSaturation: number,
+): [number, number, number] {
+  const luminance = proPhotoLinearLuminance(r, g, b);
+  if (!(luminance > TONE_LUMINANCE_EPSILON)) return [r, g, b];
+  const [h] = rgbToHsvExtended(r, g, b);
+  const [shapeR, shapeG, shapeB] = hsvUnitValueShape(h, targetSaturation);
+  const shapeLuminance = proPhotoLinearLuminance(shapeR, shapeG, shapeB);
+  if (!(shapeLuminance > TONE_LUMINANCE_EPSILON) || !Number.isFinite(shapeLuminance)) return [r, g, b];
+  const scale = luminance / shapeLuminance;
+  return [shapeR * scale, shapeG * scale, shapeB * scale];
+}
+
+export function applyFinalMaxChannelRolloffLinearRgb(
+  r: number,
+  g: number,
+  b: number,
+  start = FINAL_MAX_CHANNEL_ROLLOFF_START,
+): [number, number, number] {
+  const maxChannel = Math.max(r, g, b);
+  const k = Number.isFinite(start)
+    ? Math.min(0.999999, Math.max(0, start))
+    : FINAL_MAX_CHANNEL_ROLLOFF_START;
+  if (!Number.isFinite(maxChannel) || maxChannel <= k || maxChannel <= 0) return [r, g, b];
+  const shoulder = 1 - k;
+  const rolledMax = k + shoulder * (1 - Math.exp(-(maxChannel - k) / shoulder));
+  const scale = rolledMax / maxChannel;
+  return [r * scale, g * scale, b * scale];
 }
 
 export function rolloffParams(
@@ -375,7 +509,6 @@ export function applyToneLinearToRgb(
   shadow: number,
   highlight: number,
   highlightRange: HighlightRange | null,
-  rolloff: { inflection: number; scale: number } | null,
   scaledLog: number,
   sigmoid: number,
   flags?: ToneAdjustmentFlags,
@@ -386,42 +519,20 @@ export function applyToneLinearToRgb(
   const hasScaledLog = flags?.hasScaledLog ?? scaledLog !== 0;
   const hasSigmoid = flags?.hasSigmoid ?? sigmoid !== 0;
 
-  if (hasWhiteBalance) {
-    [r, g, b] = applyWhiteBalanceLinear(r, g, b, gains);
-  }
-  if (hasExposure) {
-    [r, g, b] = applyExposureLinearToRgb(r, g, b, factor);
-  }
-  if (hasShadow) {
-    r = applyShadowLinear(r, shadow);
-    g = applyShadowLinear(g, shadow);
-    b = applyShadowLinear(b, shadow);
-  }
-  if (hasHighlight) {
-    const maxChannel = Math.max(r, g, b);
-    if (maxChannel > 0) {
-      const adjustedMax = applyHighlightLinear(maxChannel, highlight, highlightRange);
-      const scale = adjustedMax / maxChannel;
-      r *= scale;
-      g *= scale;
-      b *= scale;
-    }
-  }
+  if (hasWhiteBalance) [r, g, b] = applyWhiteBalanceLinear(r, g, b, gains);
+  const sourceLuminance = proPhotoLinearLuminance(r, g, b);
+  if (!(sourceLuminance > TONE_LUMINANCE_EPSILON)) return [r, g, b];
 
-  // Rolloff and clipping together form the boundary from extended-range linear
-  // editing into the bounded [0,1] tone domain used by Logarithm and Sigmoid.
-  [r, g, b] = applyDisplayRolloffAndClipLinearToRgb(r, g, b, rolloff);
-  if (hasScaledLog) {
-    r = applyScaledLogLinear(r, scaledLog);
-    g = applyScaledLogLinear(g, scaledLog);
-    b = applyScaledLogLinear(b, scaledLog);
-  }
-  if (hasSigmoid) {
-    r = applySigmoidLinear(r, sigmoid);
-    g = applySigmoidLinear(g, sigmoid);
-    b = applySigmoidLinear(b, sigmoid);
-  }
-  return [r, g, b];
+  let luminance = sourceLuminance;
+  if (hasExposure) luminance *= factor;
+  if (hasScaledLog) luminance = applyScaledLogLinearExtended(luminance, scaledLog);
+  if (hasSigmoid) luminance = applySigmoidLinearExtended(luminance, sigmoid);
+  if (hasShadow) luminance = applyShadowLinear(luminance, shadow);
+  if (hasHighlight) luminance = applyHighlightLinear(luminance, highlight, highlightRange);
+
+  if (!Number.isFinite(luminance)) return [r, g, b];
+  const scale = luminance / sourceLuminance;
+  return [r * scale, g * scale, b * scale];
 }
 
 export type ColorAdjustmentContext = {
@@ -439,6 +550,8 @@ export type ColorAdjustmentContext = {
   shadow: number;
   highlight: number;
   highlightRange: HighlightRange | null;
+  // Retained for the separate RAW thumbnail-matching preprocessing plan.
+  // The interactive Tone pipeline no longer uses an intermediate rolloff.
   rolloff: { inflection: number; scale: number } | null;
   scaledLog: number;
   sigmoid: number;
@@ -446,33 +559,30 @@ export type ColorAdjustmentContext = {
   normalizedSaturation: number;
   saturationFactor: number;
   vibranceFactor: number;
+  // Retained only for RAW thumbnail-matching preprocessing compatibility.
   saturationRolloff: { inflection: number; scale: number } | null;
 };
 
 export type ToneAdjustmentStage =
   | "white-balance"
   | "exposure"
-  | "shadow"
-  | "highlight"
   | "scaled-log"
   | "sigmoid"
+  | "shadow"
+  | "highlight"
   | "after-tone";
 
 const TONE_ADJUSTMENT_STAGE_INDEX: Record<ToneAdjustmentStage, number> = {
   "white-balance": 0,
   exposure: 1,
-  shadow: 2,
-  highlight: 3,
-  "scaled-log": 4,
-  sigmoid: 5,
+  "scaled-log": 2,
+  sigmoid: 3,
+  shadow: 4,
+  highlight: 5,
   "after-tone": 6,
 };
 
-/**
- * Apply a contiguous suffix/subrange of the Tone pipeline. `endStage` is
- * exclusive. The rolloff/clip boundary belongs immediately before scaled-log,
- * so a sample cached "before scaled-log" already includes that boundary.
- */
+/** Apply a contiguous subrange of the luminance Tone pipeline. `endStage` is exclusive. */
 export function applyToneAdjustmentsLinearRgbRange(
   r: number,
   g: number,
@@ -488,46 +598,28 @@ export function applyToneAdjustmentsLinearRgbRange(
   if (start <= 0 && end > 0 && context.hasWhiteBalance) {
     [r, g, b] = applyWhiteBalanceLinear(r, g, b, context.gains);
   }
-  if (start <= 1 && end > 1 && context.hasExposure) {
-    [r, g, b] = applyExposureLinearToRgb(r, g, b, context.factor);
+
+  const sourceLuminance = proPhotoLinearLuminance(r, g, b);
+  if (!(sourceLuminance > TONE_LUMINANCE_EPSILON)) return [r, g, b];
+  let luminance = sourceLuminance;
+
+  if (start <= 1 && end > 1 && context.hasExposure) luminance *= context.factor;
+  if (start <= 2 && end > 2 && context.hasScaledLog) {
+    luminance = applyScaledLogLinearExtended(luminance, context.scaledLog);
   }
-  if (start <= 2 && end > 2 && context.hasShadow) {
-    r = applyShadowLinear(r, context.shadow);
-    g = applyShadowLinear(g, context.shadow);
-    b = applyShadowLinear(b, context.shadow);
+  if (start <= 3 && end > 3 && context.hasSigmoid) {
+    luminance = applySigmoidLinearExtended(luminance, context.sigmoid);
   }
-  if (start <= 3 && end > 3 && context.hasHighlight) {
-    const maxChannel = Math.max(r, g, b);
-    if (maxChannel > 0) {
-      const adjustedMax = applyHighlightLinear(
-        maxChannel,
-        context.highlight,
-        context.highlightRange,
-      );
-      const scale = adjustedMax / maxChannel;
-      r *= scale;
-      g *= scale;
-      b *= scale;
-    }
+  if (start <= 4 && end > 4 && context.hasShadow) {
+    luminance = applyShadowLinear(luminance, context.shadow);
+  }
+  if (start <= 5 && end > 5 && context.hasHighlight) {
+    luminance = applyHighlightLinear(luminance, context.highlight, context.highlightRange);
   }
 
-  // The bounded tone-domain boundary is crossed only when this range enters
-  // scaled-log from an earlier stage. A cached pre-scaled-log sample has
-  // already crossed it and therefore must not be rolled off again.
-  if (start < 4 && end >= 4) {
-    [r, g, b] = applyDisplayRolloffAndClipLinearToRgb(r, g, b, context.rolloff);
-  }
-  if (start <= 4 && end > 4 && context.hasScaledLog) {
-    r = applyScaledLogLinear(r, context.scaledLog);
-    g = applyScaledLogLinear(g, context.scaledLog);
-    b = applyScaledLogLinear(b, context.scaledLog);
-  }
-  if (start <= 5 && end > 5 && context.hasSigmoid) {
-    r = applySigmoidLinear(r, context.sigmoid);
-    g = applySigmoidLinear(g, context.sigmoid);
-    b = applySigmoidLinear(b, context.sigmoid);
-  }
-  return [r, g, b];
+  if (!Number.isFinite(luminance)) return [r, g, b];
+  const scale = luminance / sourceLuminance;
+  return [r * scale, g * scale, b * scale];
 }
 
 export function applyToneAdjustmentsLinearRgb(
@@ -546,11 +638,41 @@ export function applyToneAdjustmentsLinearRgb(
     context.shadow,
     context.highlight,
     context.highlightRange,
-    context.rolloff,
     context.scaledLog,
     context.sigmoid,
     context,
   );
+}
+
+export function applySaturationVibranceAndFinalRolloffLinearRgb(
+  r: number,
+  g: number,
+  b: number,
+  saturation: number,
+  vibrance: number,
+  applyFinalRolloff = true,
+): [number, number, number] {
+  const normalizedSaturation = clampColorAdjustment(saturation);
+  const normalizedVibrance = clampColorAdjustment(vibrance);
+  if (normalizedSaturation !== 0) {
+    const [, currentSaturation] = rgbToHsvExtended(r, g, b);
+    [r, g, b] = applyHsvSaturationPreservingProPhotoLuminance(
+      r, g, b,
+      currentSaturation * colorSaturationFactor(normalizedSaturation),
+    );
+  }
+  if (normalizedVibrance !== 0) {
+    const [, currentSaturation] = rgbToHsvExtended(r, g, b);
+    const targetSaturation = applyScaledLogLinearExtended(
+      currentSaturation,
+      colorVibranceFactor(normalizedVibrance),
+    );
+    [r, g, b] = applyHsvSaturationPreservingProPhotoLuminance(
+      r, g, b,
+      targetSaturation,
+    );
+  }
+  return applyFinalRolloff ? applyFinalMaxChannelRolloffLinearRgb(r, g, b) : [r, g, b];
 }
 
 export function applyColorAdjustmentsAfterToneLinearRgb(
@@ -558,20 +680,27 @@ export function applyColorAdjustmentsAfterToneLinearRgb(
   g: number,
   b: number,
   context: ColorAdjustmentContext,
+  applyFinalRolloff = true,
 ): [number, number, number] {
-  if (context.hasSaturationOrVibrance) {
-    const [h, initialS, v] = rgbToHsv(r, g, b);
-    let s = initialS;
-    if (context.hasSaturation) {
-      s = applyRolloffScalar(s * context.saturationFactor, context.saturationRolloff);
-      s = clamp01(s);
-    }
-    if (context.hasVibrance) {
-      s = applyScaledLogLinear(s, context.vibranceFactor);
-    }
-    [r, g, b] = hsvToRgb(h, s, v);
-  }
-  return [r, g, b];
+  return applySaturationVibranceAndFinalRolloffLinearRgb(
+    r,
+    g,
+    b,
+    context.normalizedSaturation,
+    context.normalizedVibrance,
+    applyFinalRolloff,
+  );
+}
+
+export function hasColorAdjustmentContextChanges(context: ColorAdjustmentContext): boolean {
+  return context.hasWhiteBalance
+    || context.hasExposure
+    || context.hasScaledLog
+    || context.hasSigmoid
+    || context.hasShadow
+    || context.hasHighlight
+    || context.hasSaturation
+    || context.hasVibrance;
 }
 
 export function applyColorAdjustmentsLinearRgb(
@@ -581,7 +710,13 @@ export function applyColorAdjustmentsLinearRgb(
   context: ColorAdjustmentContext,
 ): [number, number, number] {
   [r, g, b] = applyToneAdjustmentsLinearRgb(r, g, b, context);
-  return applyColorAdjustmentsAfterToneLinearRgb(r, g, b, context);
+  return applyColorAdjustmentsAfterToneLinearRgb(
+    r,
+    g,
+    b,
+    context,
+    hasColorAdjustmentContextChanges(context),
+  );
 }
 
 export const HISTOGRAM_DISPLAY_GAMMA = 2.4;

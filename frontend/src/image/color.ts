@@ -1,5 +1,11 @@
 import type { ImageEditOutputColorProfile, ImageInputColorProfile } from "./types";
-import { clamp01, srgbChannelToLinear } from "./tone";
+import {
+  PROPHOTO_TONE_LUMA_B,
+  PROPHOTO_TONE_LUMA_G,
+  PROPHOTO_TONE_LUMA_R,
+  clamp01,
+  srgbChannelToLinear,
+} from "./tone";
 
 // Fixed transforms between the editor's linear ProPhoto RGB working space and file/display spaces.
 
@@ -59,9 +65,9 @@ export const REC_2020_TO_PROPHOTO_M21 = 0.03632883;
 export const REC_2020_TO_PROPHOTO_M22 = 0.96607458;
 export const REC_2020_TRANSFER_ALPHA = 1.09929682680944;
 export const REC_2020_TRANSFER_BETA = 0.018053968510807;
-export const PROPHOTO_LUMA_R = 0.2880402;
-export const PROPHOTO_LUMA_G = 0.7118741;
-export const PROPHOTO_LUMA_B = 0.0000857;
+export const PROPHOTO_LUMA_R = PROPHOTO_TONE_LUMA_R;
+export const PROPHOTO_LUMA_G = PROPHOTO_TONE_LUMA_G;
+export const PROPHOTO_LUMA_B = PROPHOTO_TONE_LUMA_B;
 
 
 export const D65_TO_D50 = [

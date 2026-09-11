@@ -278,6 +278,30 @@ describe("image editor tone characterization", () => {
     );
   });
 
+  test("preserves extended-range Tone and luminance-preserving Color behavior", () => {
+    const gains = imageEditor.whiteBalanceGains(50, 0);
+    expect(Math.max(...imageEditor.applyWhiteBalanceLinear(1.2, 0.8, 0.6, gains))).toBeGreaterThan(1);
+
+    expect(imageEditor.applyScaledLogLinearExtended(1.2, 5)).toBeGreaterThan(1);
+    expect(imageEditor.applySigmoidLinearExtended(1.2, 5)).toBeGreaterThan(1);
+
+    const source: [number, number, number] = [0.7, 0.3, 0.1];
+    const sourceY = imageEditor.proPhotoLinearLuminance(...source);
+    const saturated = imageEditor.applySaturationVibranceAndFinalRolloffLinearRgb(
+      ...source,
+      50,
+      0,
+      false,
+    );
+    expect(imageEditor.proPhotoLinearLuminance(...saturated)).toBeCloseTo(sourceY, 12);
+
+    const rolled = imageEditor.applyFinalMaxChannelRolloffLinearRgb(1.2, 0.6, 0.3);
+    expect(rolled[0]).toBeGreaterThan(0.9);
+    expect(rolled[0]).toBeLessThan(1);
+    expect(rolled[0] / rolled[1]).toBeCloseTo(2, 12);
+    expect(rolled[1] / rolled[2]).toBeCloseTo(2, 12);
+  });
+
   test("freezes Logarithm, Sigmoid, rolloff and the combined tone pipeline", () => {
     expect(rounded([0.1, 0.5, 0.9].map((x) => imageEditor.applyScaledLogLinear(x, 1)))).toEqual([
       0.13750352375,
@@ -305,11 +329,10 @@ describe("image editor tone characterization", () => {
       -35,
       70,
       { p100: 1.45 },
-      imageEditor.rolloffParams(2.1, 0.5, 4),
       0.8,
       -1.2,
     );
-    expect(rounded(tone)).toEqual([0.156523712174, 0.783680502116, 1]);
+    expect(rounded(tone)).toEqual([0.257110835394, 1.071295147476, 2.785367383439]);
   });
 });
 
@@ -519,7 +542,7 @@ describe("image editor render characterization", () => {
           -5,
         ),
       ),
-    ).toBe("2dbcc2dd");
+    ).toBe("b8a66e9e");
   });
 
   test("freezes crop + arbitrary rotation render output", () => {
@@ -538,7 +561,7 @@ describe("image editor render characterization", () => {
       0,
       0,
     );
-    expect(fnv1a32(bytes)).toBe("1eefa748");
+    expect(fnv1a32(bytes)).toBe("1a815ffb");
   });
 
   test("matches direct preview rendering when using the preview-resolution linear RGB cache", () => {
