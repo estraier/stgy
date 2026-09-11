@@ -1,6 +1,7 @@
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-nocheck
 // Local Stack Studio worker source. Built to public/generated/local-stack-studio.
+import { loadWorkerOpenCv } from "./opencv-runtime";
 const HDR_FLOAT_MIN_RESPONSE = 1e-12;
 const HDR_FLOAT_WEIGHT_EPSILON = 1e-12;
 const REINHARD_GAMMA = 1.0;
@@ -9,8 +10,6 @@ const REINHARD_LIGHT_ADAPT = 0.5;
 const REINHARD_COLOR_ADAPT = 0.5;
 const BRIGHTNESS_MAX_TRIES = 10;
 const BRIGHTNESS_MAX_DIST = 0.01;
-const MERTENS_SATURATION_GATE_GEOMEAN_MIN = 0.1;
-const MERTENS_SATURATION_GATE_GEOMEAN_MAX = 0.3;
 
 self.onmessage = async (event) => {
   const message = event.data || {};
@@ -88,18 +87,21 @@ async function processMertensMessage(message) {
     ? Number(message.preBrightnessSigmoidGain)
     : 0;
 
-  postProgress("Merging HDR2 with Mertens exposure fusion...");
-  const merged = mergeMertensExposureFusion(
+  postProgress("Loading OpenCV for HDR2 Mertens exposure fusion...");
+  const cv = await loadWorkerOpenCv("HDR2");
+  if (typeof cv.pyrDown !== "function" || typeof cv.pyrUp !== "function") {
+    throw new Error("OpenCV.js does not provide pyrDown()/pyrUp() required for HDR2 Mertens fusion.");
+  }
+
+  postProgress("Merging HDR2 with OpenCV Gaussian/Laplacian Mertens fusion...");
+  const merged = mergeMertensWithOpenCvPyramids(
+    cv,
     images,
     width,
     height,
     saturationWeight,
     exposureWeight,
   );
-
-  // Mertens/Laplacian reconstruction can overshoot its nominal range.
-  // HDR2 clips immediately after Mertens before the linear result is returned.
-  for (let i = 0; i < merged.length; i += 1) merged[i] = clamp01(merged[i]);
 
   if (Math.abs(preBrightnessSigmoidGain) > 1e-6) {
     postProgress("Applying single-shot HDR2 sigmoid...");
@@ -115,6 +117,202 @@ async function processMertensMessage(message) {
     { type: "mertens-result", gamma2Buffer: merged.buffer },
     [merged.buffer],
   );
+}
+
+const MERTENS_PROCESSING_GAMMA = 2.4;
+const MERTENS_WEIGHT_EPSILON = 1e-12;
+
+function mergeMertensWithOpenCvPyramids(cv, images, width, height, saturationWeight, exposureWeight) {
+  const pixelCount = width * height;
+  const weightSums = new Float32Array(pixelCount);
+
+  // Build full-resolution Mertens weights in the gamma-2.4
+  // processing domain. contrastWeight is fixed to zero for LSS HDR2.
+  for (let imageIndex = 0; imageIndex < images.length; imageIndex += 1) {
+    accumulateOpenCvMertensWeightSums(
+      images[imageIndex],
+      width,
+      height,
+      saturationWeight,
+      exposureWeight,
+      weightSums,
+    );
+  }
+
+  const dimensions = buildOpenCvMertensPyramidDimensions(width, height);
+  const fusedLevels = dimensions.map(({ width: levelWidth, height: levelHeight }) =>
+    new Float32Array(levelWidth * levelHeight * 3));
+
+  for (let imageIndex = 0; imageIndex < images.length; imageIndex += 1) {
+    const source = images[imageIndex];
+    let currentRgb = new cv.Mat(height, width, cv.CV_32FC3);
+    let currentWeight = new cv.Mat(height, width, cv.CV_32FC1);
+    try {
+      const rgbData = currentRgb.data32F;
+      const weightData = currentWeight.data32F;
+      for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+        const offset = pixel * 3;
+        const r = mertensGammaEncode(source[offset]);
+        const g = mertensGammaEncode(source[offset + 1]);
+        const b = mertensGammaEncode(source[offset + 2]);
+        rgbData[offset] = r;
+        rgbData[offset + 1] = g;
+        rgbData[offset + 2] = b;
+        const denominator = weightSums[pixel];
+        const weight = openCvMertensPixelWeightEncoded(
+          r,
+          g,
+          b,
+          saturationWeight,
+          exposureWeight,
+        );
+        weightData[pixel] = denominator > 1e-20 ? weight / denominator : 1 / images.length;
+      }
+
+      // Release the original full-resolution source reference once this image's
+      // OpenCV mats have been populated. Only one image pyramid is resident.
+      images[imageIndex] = null;
+
+      for (let level = 0; level < dimensions.length - 1; level += 1) {
+        const nextDim = dimensions[level + 1];
+        const nextRgb = new cv.Mat();
+        const nextWeight = new cv.Mat();
+        const upRgb = new cv.Mat();
+        try {
+          cv.pyrDown(currentRgb, nextRgb, new cv.Size(nextDim.width, nextDim.height));
+          cv.pyrDown(currentWeight, nextWeight, new cv.Size(nextDim.width, nextDim.height));
+          cv.pyrUp(nextRgb, upRgb, new cv.Size(currentRgb.cols, currentRgb.rows));
+
+          const currentRgbData = currentRgb.data32F;
+          const expandedRgbData = upRgb.data32F;
+          const currentWeightData = currentWeight.data32F;
+          const fused = fusedLevels[level];
+          for (let pixel = 0; pixel < currentWeightData.length; pixel += 1) {
+            const weight = currentWeightData[pixel];
+            const offset = pixel * 3;
+            fused[offset] += (currentRgbData[offset] - expandedRgbData[offset]) * weight;
+            fused[offset + 1] += (currentRgbData[offset + 1] - expandedRgbData[offset + 1]) * weight;
+            fused[offset + 2] += (currentRgbData[offset + 2] - expandedRgbData[offset + 2]) * weight;
+          }
+        } catch (error) {
+          nextRgb.delete();
+          nextWeight.delete();
+          throw error;
+        } finally {
+          upRgb.delete();
+        }
+        currentRgb.delete();
+        currentWeight.delete();
+        currentRgb = nextRgb;
+        currentWeight = nextWeight;
+      }
+
+      const lowestLevel = fusedLevels[fusedLevels.length - 1];
+      const lowestRgb = currentRgb.data32F;
+      const lowestWeight = currentWeight.data32F;
+      for (let pixel = 0; pixel < lowestWeight.length; pixel += 1) {
+        const weight = lowestWeight[pixel];
+        const offset = pixel * 3;
+        lowestLevel[offset] += lowestRgb[offset] * weight;
+        lowestLevel[offset + 1] += lowestRgb[offset + 1] * weight;
+        lowestLevel[offset + 2] += lowestRgb[offset + 2] * weight;
+      }
+    } finally {
+      if (currentRgb) currentRgb.delete();
+      if (currentWeight) currentWeight.delete();
+    }
+  }
+
+  let reconstructed = fusedLevels[fusedLevels.length - 1];
+  for (let level = fusedLevels.length - 2; level >= 0; level -= 1) {
+    const sourceDim = dimensions[level + 1];
+    const targetDim = dimensions[level];
+    const sourceMat = new cv.Mat(sourceDim.height, sourceDim.width, cv.CV_32FC3);
+    const up = new cv.Mat();
+    sourceMat.data32F.set(reconstructed);
+    try {
+      cv.pyrUp(sourceMat, up, new cv.Size(targetDim.width, targetDim.height));
+      const next = fusedLevels[level];
+      const upData = up.data32F;
+      for (let i = 0; i < next.length; i += 1) next[i] += upData[i];
+      reconstructed = next;
+    } finally {
+      sourceMat.delete();
+      up.delete();
+    }
+  }
+
+  return decodeMertensGammaBuffer(reconstructed, width * height * 3);
+}
+
+function buildOpenCvMertensPyramidDimensions(width, height) {
+  // OpenCV MergeMertens uses floor(log2(min(width,height))) as maxlevel.
+  const maxLevel = Math.max(0, Math.floor(Math.log2(Math.max(1, Math.min(width, height)))));
+  const dimensions = [{ width, height }];
+  for (let level = 0; level < maxLevel; level += 1) {
+    const previous = dimensions[dimensions.length - 1];
+    dimensions.push({
+      width: Math.max(1, Math.ceil(previous.width / 2)),
+      height: Math.max(1, Math.ceil(previous.height / 2)),
+    });
+  }
+  return dimensions;
+}
+
+function accumulateOpenCvMertensWeightSums(
+  image,
+  width,
+  height,
+  saturationWeight,
+  exposureWeight,
+  sums,
+) {
+  const pixelCount = width * height;
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const offset = pixel * 3;
+    const r = mertensGammaEncode(image[offset]);
+    const g = mertensGammaEncode(image[offset + 1]);
+    const b = mertensGammaEncode(image[offset + 2]);
+    sums[pixel] += openCvMertensPixelWeightEncoded(r, g, b, saturationWeight, exposureWeight);
+  }
+}
+
+function openCvMertensPixelWeightEncoded(r, g, b, saturationWeight, exposureWeight) {
+  let weight = 1;
+  if (saturationWeight !== 0) {
+    const mean = (r + g + b) / 3;
+    // OpenCV uses sqrt(sum((channel - mean)^2)); it does not divide by the
+    // number of channels before sqrt.
+    const saturation = Math.sqrt(
+      (r - mean) * (r - mean)
+      + (g - mean) * (g - mean)
+      + (b - mean) * (b - mean),
+    );
+    weight *= Math.pow(Math.max(saturation, MERTENS_WEIGHT_EPSILON), saturationWeight);
+  }
+  if (exposureWeight !== 0) {
+    // Well-exposedness: exp(-(channel - 0.5)^2 / 0.08), multiplied across RGB.
+    const dr = r - 0.5;
+    const dg = g - 0.5;
+    const db = b - 0.5;
+    const exposedness = Math.exp(-(dr * dr + dg * dg + db * db) / 0.08);
+    weight *= Math.pow(Math.max(exposedness, MERTENS_WEIGHT_EPSILON), exposureWeight);
+  }
+  return weight + MERTENS_WEIGHT_EPSILON;
+}
+
+function mertensGammaEncode(value) {
+  return Math.pow(clamp01(value), 1 / MERTENS_PROCESSING_GAMMA);
+}
+
+function decodeMertensGammaBuffer(encoded, expectedLength) {
+  const output = new Float32Array(expectedLength);
+  for (let i = 0; i < expectedLength; i += 1) {
+    // Laplacian reconstruction can overshoot its nominal range. Clamp before
+    // inverse gamma so negative values cannot generate NaNs.
+    output[i] = Math.pow(clamp01(encoded[i]), MERTENS_PROCESSING_GAMMA);
+  }
+  return output;
 }
 
 function validateInputs(width, height, imageBuffers, exposureTimes, brightnesses) {
@@ -468,332 +666,4 @@ function validateMertensInputs(width, height, imageBuffers, brightnesses) {
       throw new Error(`HDR2 input ${i + 1} has an invalid brightness value.`);
     }
   }
-}
-
-function mergeMertensExposureFusion(images, width, height, saturationWeight, exposureWeight) {
-  const pixelCount = width * height;
-  const weightSums = new Float32Array(pixelCount);
-
-  // First pass: compute the full-resolution denominator for normalized Mertens
-  // weights using only saturation and well-exposedness.
-  for (let imageIndex = 0; imageIndex < images.length; imageIndex += 1) {
-    postProgress(`Computing HDR2 Mertens weights ${imageIndex + 1}/${images.length}...`);
-    accumulateMertensWeightSums(
-      images[imageIndex],
-      width,
-      height,
-      saturationWeight,
-      exposureWeight,
-      weightSums,
-    );
-  }
-
-  const dimensions = buildPyramidDimensions(width, height);
-  const fusedLevels = dimensions.map(({ width: levelWidth, height: levelHeight }) =>
-    new Float32Array(levelWidth * levelHeight * 3));
-
-  // Second pass: normalize each image's base weights, build the weight Gaussian
-  // pyramid and image Laplacian pyramid incrementally, and accumulate each
-  // weighted level. Only one image pyramid is resident at a time.
-  for (let imageIndex = 0; imageIndex < images.length; imageIndex += 1) {
-    postProgress(`Fusing HDR2 Mertens pyramid ${imageIndex + 1}/${images.length}...`);
-    let currentWidth = width;
-    let currentHeight = height;
-    let currentRgb = images[imageIndex];
-    let currentWeight = buildNormalizedMertensWeights(
-      images[imageIndex],
-      width,
-      height,
-      saturationWeight,
-      exposureWeight,
-      weightSums,
-    );
-
-    // This image is no longer needed in full-resolution form after the second-pass base
-    // arrays have been constructed, so release the reference before building
-    // the pyramid to keep peak memory down on large RAW files.
-    images[imageIndex] = null;
-
-    for (let level = 0; level < dimensions.length; level += 1) {
-      const fused = fusedLevels[level];
-      if (level === dimensions.length - 1) {
-        accumulateWeightedRgb(fused, currentRgb, currentWeight);
-        break;
-      }
-
-      const nextWidth = dimensions[level + 1].width;
-      const nextHeight = dimensions[level + 1].height;
-      const nextRgb = downsampleRgb2x2(currentRgb, currentWidth, currentHeight, nextWidth, nextHeight);
-      const nextWeight = downsampleScalar2x2(currentWeight, currentWidth, currentHeight, nextWidth, nextHeight);
-      accumulateWeightedLaplacian(
-        fused,
-        currentRgb,
-        currentWeight,
-        currentWidth,
-        currentHeight,
-        nextRgb,
-        nextWidth,
-        nextHeight,
-      );
-      currentRgb = nextRgb;
-      currentWeight = nextWeight;
-      currentWidth = nextWidth;
-      currentHeight = nextHeight;
-    }
-  }
-
-  postProgress("Reconstructing HDR2 Mertens pyramid...");
-  let reconstructed = fusedLevels[fusedLevels.length - 1];
-  for (let level = fusedLevels.length - 2; level >= 0; level -= 1) {
-    const { width: levelWidth, height: levelHeight } = dimensions[level];
-    const { width: sourceWidth, height: sourceHeight } = dimensions[level + 1];
-    const expanded = upsampleRgbBilinear(
-      reconstructed,
-      sourceWidth,
-      sourceHeight,
-      levelWidth,
-      levelHeight,
-    );
-    const laplacian = fusedLevels[level];
-    for (let i = 0; i < expanded.length; i += 1) expanded[i] += laplacian[i];
-    reconstructed = expanded;
-  }
-  return reconstructed;
-}
-
-function buildPyramidDimensions(width, height) {
-  const dimensions = [];
-  let currentWidth = width;
-  let currentHeight = height;
-  while (true) {
-    dimensions.push({ width: currentWidth, height: currentHeight });
-    if (currentWidth === 1 && currentHeight === 1) break;
-    currentWidth = Math.max(1, Math.ceil(currentWidth / 2));
-    currentHeight = Math.max(1, Math.ceil(currentHeight / 2));
-  }
-  return dimensions;
-}
-
-function accumulateMertensWeightSums(
-  image,
-  width,
-  height,
-  saturationWeight,
-  exposureWeight,
-  sums,
-) {
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const pixel = y * width + x;
-      sums[pixel] += mertensPixelWeight(
-        image,
-        width,
-        height,
-        x,
-        y,
-        saturationWeight,
-        exposureWeight,
-      );
-    }
-  }
-}
-
-function buildNormalizedMertensWeights(
-  image,
-  width,
-  height,
-  saturationWeight,
-  exposureWeight,
-  sums,
-) {
-  const weights = new Float32Array(width * height);
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const pixel = y * width + x;
-      const weight = mertensPixelWeight(
-        image,
-        width,
-        height,
-        x,
-        y,
-        saturationWeight,
-        exposureWeight,
-      );
-      const denominator = sums[pixel];
-      weights[pixel] = denominator > 1e-20 ? weight / denominator : 1;
-    }
-  }
-  return weights;
-}
-
-function smootherstep01(value) {
-  const t = Math.max(0, Math.min(1, value));
-  return t * t * t * (t * (t * 6 - 15) + 10);
-}
-
-function mertensSaturationConfidenceWeight(r, g, b) {
-  const geomean = Math.cbrt(Math.max(0, r * g * b));
-  if (geomean <= MERTENS_SATURATION_GATE_GEOMEAN_MIN) return 0;
-  if (geomean >= MERTENS_SATURATION_GATE_GEOMEAN_MAX) return 1;
-  return smootherstep01(
-    (geomean - MERTENS_SATURATION_GATE_GEOMEAN_MIN)
-      / (MERTENS_SATURATION_GATE_GEOMEAN_MAX - MERTENS_SATURATION_GATE_GEOMEAN_MIN),
-  );
-}
-
-function mertensPixelWeight(image, width, height, x, y, saturationWeight, exposureWeight) {
-  const offset = (y * width + x) * 3;
-  const r = clamp01(image[offset]);
-  const g = clamp01(image[offset + 1]);
-  const b = clamp01(image[offset + 2]);
-  let weight = 1;
-
-  if (saturationWeight !== 0) {
-    const mean = (r + g + b) / 3;
-    const saturation = Math.sqrt(
-      ((r - mean) * (r - mean) + (g - mean) * (g - mean) + (b - mean) * (b - mean)) / 3,
-    );
-    const effectiveSaturationWeight = saturationWeight * mertensSaturationConfidenceWeight(r, g, b);
-    if (effectiveSaturationWeight !== 0) {
-      weight *= Math.pow(Math.max(saturation, 1e-12), effectiveSaturationWeight);
-    }
-  }
-
-  if (exposureWeight !== 0) {
-    // Mertens well-exposedness: a Gaussian centered at 0.5 with sigma=0.2,
-    // multiplied across RGB channels.
-    const sigma = 0.2;
-    const denominator = 2 * sigma * sigma;
-    const exposedness =
-      Math.exp(-((r - 0.5) * (r - 0.5)) / denominator) *
-      Math.exp(-((g - 0.5) * (g - 0.5)) / denominator) *
-      Math.exp(-((b - 0.5) * (b - 0.5)) / denominator);
-    weight *= Math.pow(Math.max(exposedness, 1e-12), exposureWeight);
-  }
-
-  return weight + 1e-12;
-}
-
-function downsampleScalar2x2(source, width, height, targetWidth, targetHeight) {
-  const target = new Float32Array(targetWidth * targetHeight);
-  for (let ty = 0; ty < targetHeight; ty += 1) {
-    const sy0 = Math.min(height - 1, ty * 2);
-    const sy1 = Math.min(height - 1, sy0 + 1);
-    for (let tx = 0; tx < targetWidth; tx += 1) {
-      const sx0 = Math.min(width - 1, tx * 2);
-      const sx1 = Math.min(width - 1, sx0 + 1);
-      const a = source[sy0 * width + sx0];
-      const b = source[sy0 * width + sx1];
-      const c = source[sy1 * width + sx0];
-      const d = source[sy1 * width + sx1];
-      target[ty * targetWidth + tx] = (a + b + c + d) * 0.25;
-    }
-  }
-  return target;
-}
-
-function downsampleRgb2x2(source, width, height, targetWidth, targetHeight) {
-  const target = new Float32Array(targetWidth * targetHeight * 3);
-  for (let ty = 0; ty < targetHeight; ty += 1) {
-    const sy0 = Math.min(height - 1, ty * 2);
-    const sy1 = Math.min(height - 1, sy0 + 1);
-    for (let tx = 0; tx < targetWidth; tx += 1) {
-      const sx0 = Math.min(width - 1, tx * 2);
-      const sx1 = Math.min(width - 1, sx0 + 1);
-      const o00 = (sy0 * width + sx0) * 3;
-      const o01 = (sy0 * width + sx1) * 3;
-      const o10 = (sy1 * width + sx0) * 3;
-      const o11 = (sy1 * width + sx1) * 3;
-      const targetOffset = (ty * targetWidth + tx) * 3;
-      target[targetOffset] = (source[o00] + source[o01] + source[o10] + source[o11]) * 0.25;
-      target[targetOffset + 1] = (source[o00 + 1] + source[o01 + 1] + source[o10 + 1] + source[o11 + 1]) * 0.25;
-      target[targetOffset + 2] = (source[o00 + 2] + source[o01 + 2] + source[o10 + 2] + source[o11 + 2]) * 0.25;
-    }
-  }
-  return target;
-}
-
-function accumulateWeightedRgb(target, source, weights) {
-  for (let pixel = 0, offset = 0; pixel < weights.length; pixel += 1, offset += 3) {
-    const weight = weights[pixel];
-    target[offset] += source[offset] * weight;
-    target[offset + 1] += source[offset + 1] * weight;
-    target[offset + 2] += source[offset + 2] * weight;
-  }
-}
-
-function accumulateWeightedLaplacian(
-  target,
-  source,
-  weights,
-  width,
-  height,
-  coarse,
-  coarseWidth,
-  coarseHeight,
-) {
-  for (let y = 0; y < height; y += 1) {
-    const fy = coarseHeight === 1 || height === 1 ? 0 : y * (coarseHeight - 1) / (height - 1);
-    const y0 = Math.floor(fy);
-    const y1 = Math.min(coarseHeight - 1, y0 + 1);
-    const wy = fy - y0;
-    for (let x = 0; x < width; x += 1) {
-      const fx = coarseWidth === 1 || width === 1 ? 0 : x * (coarseWidth - 1) / (width - 1);
-      const x0 = Math.floor(fx);
-      const x1 = Math.min(coarseWidth - 1, x0 + 1);
-      const wx = fx - x0;
-      const w00 = (1 - wx) * (1 - wy);
-      const w01 = wx * (1 - wy);
-      const w10 = (1 - wx) * wy;
-      const w11 = wx * wy;
-      const c00 = (y0 * coarseWidth + x0) * 3;
-      const c01 = (y0 * coarseWidth + x1) * 3;
-      const c10 = (y1 * coarseWidth + x0) * 3;
-      const c11 = (y1 * coarseWidth + x1) * 3;
-      const pixel = y * width + x;
-      const offset = pixel * 3;
-      const weight = weights[pixel];
-      for (let channel = 0; channel < 3; channel += 1) {
-        const expanded =
-          coarse[c00 + channel] * w00 +
-          coarse[c01 + channel] * w01 +
-          coarse[c10 + channel] * w10 +
-          coarse[c11 + channel] * w11;
-        target[offset + channel] += (source[offset + channel] - expanded) * weight;
-      }
-    }
-  }
-}
-
-function upsampleRgbBilinear(source, width, height, targetWidth, targetHeight) {
-  const target = new Float32Array(targetWidth * targetHeight * 3);
-  for (let y = 0; y < targetHeight; y += 1) {
-    const fy = height === 1 || targetHeight === 1 ? 0 : y * (height - 1) / (targetHeight - 1);
-    const y0 = Math.floor(fy);
-    const y1 = Math.min(height - 1, y0 + 1);
-    const wy = fy - y0;
-    for (let x = 0; x < targetWidth; x += 1) {
-      const fx = width === 1 || targetWidth === 1 ? 0 : x * (width - 1) / (targetWidth - 1);
-      const x0 = Math.floor(fx);
-      const x1 = Math.min(width - 1, x0 + 1);
-      const wx = fx - x0;
-      const w00 = (1 - wx) * (1 - wy);
-      const w01 = wx * (1 - wy);
-      const w10 = (1 - wx) * wy;
-      const w11 = wx * wy;
-      const o00 = (y0 * width + x0) * 3;
-      const o01 = (y0 * width + x1) * 3;
-      const o10 = (y1 * width + x0) * 3;
-      const o11 = (y1 * width + x1) * 3;
-      const targetOffset = (y * targetWidth + x) * 3;
-      for (let channel = 0; channel < 3; channel += 1) {
-        target[targetOffset + channel] =
-          source[o00 + channel] * w00 +
-          source[o01 + channel] * w01 +
-          source[o10 + channel] * w10 +
-          source[o11 + channel] * w11;
-      }
-    }
-  }
-  return target;
 }

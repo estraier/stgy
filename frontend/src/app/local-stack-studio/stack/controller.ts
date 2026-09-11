@@ -1559,7 +1559,7 @@ function buildSingleShotHdrSyntheticMaterials(mode) {
     {
       label: "medium",
       scaledLog: SINGLE_SHOT_HDR2_SCALED_LOGS[1],
-      sigmoidGain: 4,
+      sigmoidGain: 0,
       sigmoidMidpoint: 0.5,
     },
     {
@@ -3035,14 +3035,22 @@ function buildSingleShotHdr1Material(sourceLinear, material) {
 
 function buildSingleShotHdr2Material(sourceLinear, material) {
   const scaledLog = Number.isFinite(material.scaledLog) ? material.scaledLog : 0;
+  const sigmoidGain = Number.isFinite(material.sigmoidGain) ? material.sigmoidGain : 0;
+  const hasSigmoid = Math.abs(sigmoidGain) > 1e-6;
+  const sigmoidMidpoint = Number.isFinite(material.sigmoidMidpoint) ? material.sigmoidMidpoint : 0.5;
   const floats = new Float32Array(sourceLinear.length);
   for (let i = 0; i < sourceLinear.length; i += 3) {
-    const r = applyScaledLogLinear(sourceLinear[i], scaledLog);
-    const g = applyScaledLogLinear(sourceLinear[i + 1], scaledLog);
-    const b = applyScaledLogLinear(sourceLinear[i + 2], scaledLog);
-    floats[i] = clamp01(applySigmoidLinearAtMidpoint(r, material.sigmoidGain, material.sigmoidMidpoint));
-    floats[i + 1] = clamp01(applySigmoidLinearAtMidpoint(g, material.sigmoidGain, material.sigmoidMidpoint));
-    floats[i + 2] = clamp01(applySigmoidLinearAtMidpoint(b, material.sigmoidGain, material.sigmoidMidpoint));
+    let r = applyScaledLogLinear(sourceLinear[i], scaledLog);
+    let g = applyScaledLogLinear(sourceLinear[i + 1], scaledLog);
+    let b = applyScaledLogLinear(sourceLinear[i + 2], scaledLog);
+    if (hasSigmoid) {
+      r = applySigmoidLinearAtMidpoint(r, sigmoidGain, sigmoidMidpoint);
+      g = applySigmoidLinearAtMidpoint(g, sigmoidGain, sigmoidMidpoint);
+      b = applySigmoidLinearAtMidpoint(b, sigmoidGain, sigmoidMidpoint);
+    }
+    floats[i] = clamp01(r);
+    floats[i + 1] = clamp01(g);
+    floats[i + 2] = clamp01(b);
   }
   return floats;
 }
