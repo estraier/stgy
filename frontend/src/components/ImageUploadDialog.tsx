@@ -218,6 +218,15 @@ export type ImageDrawOverlay = {
   fillColorIndex: number | null;
 };
 
+export type ImageVignetteOverlay = {
+  id: string;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  strengthEv: number;
+};
+
 export type ImageEditParams = {
   crop: ImageCropInsets;
   rotationDegrees: number;
@@ -236,6 +245,7 @@ export type ImageEditParams = {
   mosaicRegions: ImageMosaicRegion[];
   textOverlays: ImageTextOverlay[];
   drawOverlays: ImageDrawOverlay[];
+  vignetteOverlay: ImageVignetteOverlay | null;
 };
 
 export type ImageEditOutputFormat = "image/webp" | "image/jpeg" | "image/png";
@@ -660,6 +670,33 @@ function normalizeDrawOverlays(overlays?: ImageDrawOverlay[]): ImageDrawOverlay[
     .filter((overlay): overlay is ImageDrawOverlay => overlay !== null);
 }
 
+function clampVignetteStrengthEv(value: number): number {
+  if (!Number.isFinite(value)) return 1;
+  return Math.min(4, Math.max(0, value));
+}
+
+function clampVignetteCoordinate(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(8, Math.max(-8, value));
+}
+
+function normalizeVignetteOverlay(overlay?: Partial<ImageVignetteOverlay> | null): ImageVignetteOverlay | null {
+  if (!overlay) return null;
+  const x1 = clampVignetteCoordinate(Math.min(overlay.x1 ?? 0, overlay.x2 ?? 0));
+  const y1 = clampVignetteCoordinate(Math.min(overlay.y1 ?? 0, overlay.y2 ?? 0));
+  const x2 = clampVignetteCoordinate(Math.max(overlay.x1 ?? 0, overlay.x2 ?? 0));
+  const y2 = clampVignetteCoordinate(Math.max(overlay.y1 ?? 0, overlay.y2 ?? 0));
+  if (x2 - x1 <= 1e-6 || y2 - y1 <= 1e-6) return null;
+  return {
+    id: typeof overlay.id === "string" && overlay.id ? overlay.id : makeOverlayId("vignette"),
+    x1,
+    y1,
+    x2,
+    y2,
+    strengthEv: clampVignetteStrengthEv(overlay.strengthEv ?? 1),
+  };
+}
+
 export function buildDefaultEditParams(w?: number, h?: number): ImageEditParams {
   return {
     crop: { top: 0, bottom: 0, left: 0, right: 0 },
@@ -679,6 +716,7 @@ export function buildDefaultEditParams(w?: number, h?: number): ImageEditParams 
     mosaicRegions: [],
     textOverlays: [],
     drawOverlays: [],
+    vignetteOverlay: null,
   };
 }
 
@@ -715,6 +753,7 @@ function normalizeEditParams(params: ImageEditParams | undefined, w?: number, h?
     mosaicRegions: normalizeMosaicRegions(params?.mosaicRegions ?? defaults.mosaicRegions),
     textOverlays: normalizeTextOverlays(params?.textOverlays ?? defaults.textOverlays),
     drawOverlays: normalizeDrawOverlays(params?.drawOverlays ?? defaults.drawOverlays),
+    vignetteOverlay: normalizeVignetteOverlay(params?.vignetteOverlay ?? defaults.vignetteOverlay),
   };
 }
 
@@ -747,7 +786,8 @@ function isMeaningfullyEdited(
     normalized.sharpen !== defaults.sharpen ||
     normalized.mosaicRegions.length > 0 ||
     normalized.textOverlays.length > 0 ||
-    normalized.drawOverlays.length > 0
+    normalized.drawOverlays.length > 0 ||
+    normalized.vignetteOverlay !== null
   );
 }
 
@@ -998,6 +1038,156 @@ function applyMosaicRectsToCanvas(
   }
 }
 
+
+type VignetteGeometry = {
+  frameX: number;
+  frameY: number;
+  frameW: number;
+  frameH: number;
+  cx: number;
+  cy: number;
+  rx: number;
+  ry: number;
+  maxDistance: number;
+  strengthEv: number;
+};
+
+function resolveVignetteGeometry(
+  overlay: ImageVignetteOverlay | null | undefined,
+  sourceW: number,
+  sourceH: number,
+  cropX: number,
+  cropY: number,
+  cropW: number,
+  cropH: number,
+  frameX: number,
+  frameY: number,
+  frameW: number,
+  frameH: number,
+): VignetteGeometry | null {
+  if (!overlay || sourceW <= 0 || sourceH <= 0 || cropW <= 0 || cropH <= 0 || frameW <= 0 || frameH <= 0) {
+    return null;
+  }
+  const scaleX = frameW / cropW;
+  const scaleY = frameH / cropH;
+  const left = frameX + ((overlay.x1 * sourceW) - cropX) * scaleX;
+  const top = frameY + ((overlay.y1 * sourceH) - cropY) * scaleY;
+  const right = frameX + ((overlay.x2 * sourceW) - cropX) * scaleX;
+  const bottom = frameY + ((overlay.y2 * sourceH) - cropY) * scaleY;
+  const width = Math.max(0, right - left);
+  const height = Math.max(0, bottom - top);
+  if (width <= 1e-6 || height <= 1e-6) return null;
+  const cx = left + width / 2;
+  const cy = top + height / 2;
+  const rx = width / 2;
+  const ry = height / 2;
+  const corners: Array<[number, number]> = [
+    [frameX + 0.5, frameY + 0.5],
+    [frameX + frameW - 0.5, frameY + 0.5],
+    [frameX + 0.5, frameY + frameH - 0.5],
+    [frameX + frameW - 0.5, frameY + frameH - 0.5],
+  ];
+  const maxDistance = corners.reduce((best, [x, y]) => Math.max(best, Math.hypot(x - cx, y - cy)), 0);
+  if (!(maxDistance > 0)) return null;
+  return {
+    frameX,
+    frameY,
+    frameW,
+    frameH,
+    cx,
+    cy,
+    rx,
+    ry,
+    maxDistance,
+    strengthEv: clampVignetteStrengthEv(overlay.strengthEv),
+  };
+}
+
+function vignetteStrengthAtPoint(geometry: VignetteGeometry, x: number, y: number): number {
+  const dx = x - geometry.cx;
+  const dy = y - geometry.cy;
+  const normalizedRadius = Math.hypot(dx / Math.max(1e-6, geometry.rx), dy / Math.max(1e-6, geometry.ry));
+  if (normalizedRadius <= 1) return 0;
+  const distance = Math.hypot(dx, dy);
+  if (!(distance > 0)) return 0;
+  const boundaryDistance = distance / normalizedRadius;
+  const denominator = geometry.maxDistance - boundaryDistance;
+  if (denominator <= 1e-6) return geometry.strengthEv;
+  return geometry.strengthEv * clamp01((distance - boundaryDistance) / denominator);
+}
+
+function applyVignetteToCanvas(
+  canvas: HTMLCanvasElement | OffscreenCanvas,
+  overlay: ImageVignetteOverlay | null | undefined,
+  sourceW: number,
+  sourceH: number,
+  cropX: number,
+  cropY: number,
+  cropW: number,
+  cropH: number,
+  frameX: number,
+  frameY: number,
+  frameW: number,
+  frameH: number,
+  outputColorProfile: ImageEditOutputColorProfile = "srgb",
+): void {
+  const geometry = resolveVignetteGeometry(overlay, sourceW, sourceH, cropX, cropY, cropW, cropH, frameX, frameY, frameW, frameH);
+  if (!geometry || geometry.strengthEv <= 0) return;
+  const ctx = getCanvas2dContext(canvas, outputColorProfile, true);
+  if (!ctx) return;
+  const x0 = Math.max(0, Math.floor(geometry.frameX));
+  const y0 = Math.max(0, Math.floor(geometry.frameY));
+  const x1 = Math.min(canvas.width, Math.ceil(geometry.frameX + geometry.frameW));
+  const y1 = Math.min(canvas.height, Math.ceil(geometry.frameY + geometry.frameH));
+  const width = x1 - x0;
+  const height = y1 - y0;
+  if (width <= 0 || height <= 0) return;
+  const imageData = getCanvasImageData(ctx, x0, y0, width, height, outputColorProfile);
+  const rgba = imageData.data;
+  for (let py = 0; py < height; py += 1) {
+    const y = y0 + py + 0.5;
+    for (let px = 0; px < width; px += 1) {
+      const x = x0 + px + 0.5;
+      const ev = vignetteStrengthAtPoint(geometry, x, y);
+      if (ev <= 0) continue;
+      const gain = Math.pow(2, -ev);
+      const index = (py * width + px) * 4;
+      rgba[index] = Math.max(0, Math.min(255, Math.round((rgba[index] ?? 0) * gain)));
+      rgba[index + 1] = Math.max(0, Math.min(255, Math.round((rgba[index + 1] ?? 0) * gain)));
+      rgba[index + 2] = Math.max(0, Math.min(255, Math.round((rgba[index + 2] ?? 0) * gain)));
+    }
+  }
+  ctx.putImageData(imageData, x0, y0);
+}
+
+function applyVignetteToRgb16(
+  data: Uint16Array,
+  width: number,
+  height: number,
+  overlay: ImageVignetteOverlay | null | undefined,
+  sourceW: number,
+  sourceH: number,
+  cropX: number,
+  cropY: number,
+  cropW: number,
+  cropH: number,
+): void {
+  const geometry = resolveVignetteGeometry(overlay, sourceW, sourceH, cropX, cropY, cropW, cropH, 0, 0, width, height);
+  if (!geometry || geometry.strengthEv <= 0) return;
+  for (let py = 0; py < height; py += 1) {
+    const y = py + 0.5;
+    for (let px = 0; px < width; px += 1) {
+      const x = px + 0.5;
+      const ev = vignetteStrengthAtPoint(geometry, x, y);
+      if (ev <= 0) continue;
+      const gain = Math.pow(2, -ev);
+      const index = (py * width + px) * 3;
+      data[index] = encodeStoredRgb16Channel(decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1) * gain, "gamma20", 1);
+      data[index + 1] = encodeStoredRgb16Channel(decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1) * gain, "gamma20", 1);
+      data[index + 2] = encodeStoredRgb16Channel(decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1) * gain, "gamma20", 1);
+    }
+  }
+}
 
 function mosaicRegionsToOutputRects(
   regions: ImageMosaicRegion[],
@@ -3992,6 +4182,21 @@ async function buildEditedVariantFromDecoded(
     16,
     outputColorProfile,
   );
+  applyVignetteToCanvas(
+    output,
+    params.vignetteOverlay,
+    w,
+    h,
+    sx,
+    sy,
+    sw,
+    sh,
+    0,
+    0,
+    dw,
+    dh,
+    outputColorProfile,
+  );
   drawOverlaysToContext(
     outputCtx,
     params.drawOverlays,
@@ -4222,6 +4427,18 @@ export async function buildEditedDecodedRgb16(
       outputW,
       outputH,
     ),
+  );
+  applyVignetteToRgb16(
+    result,
+    outputW,
+    outputH,
+    params.vignetteOverlay,
+    sourceW,
+    sourceH,
+    sx,
+    sy,
+    cropW,
+    cropH,
   );
   applyOverlaysToRgb16(
     result,
@@ -4556,6 +4773,24 @@ type DrawEditState =
       handle: DrawHandle;
       startOverlay: ImageDrawOverlay;
     };
+type VignetteCreateState = {
+  pointerId: number;
+  startPoint: EditPoint;
+  strengthEv: number;
+};
+type VignetteEditState =
+  | {
+      mode: "move";
+      pointerId: number;
+      startPoint: EditPoint;
+      startOverlay: ImageVignetteOverlay;
+    }
+  | {
+      mode: "handle";
+      pointerId: number;
+      handle: EditCorner;
+      startOverlay: ImageVignetteOverlay;
+    };
 type TextOverlayLayout = {
   id: string;
   x: number;
@@ -4603,6 +4838,8 @@ const DRAW_STROKE_WIDTH_RATIOS = [0.001, 0.002, 0.004, 0.008] as const;
 const DRAW_STROKE_WIDTH_LABELS = ["Thin", "Medium", "Thick", "Extra thick"] as const;
 const DRAW_DEFAULT_STROKE_WIDTH_INDEX = 1;
 const DRAW_DEFAULT_COLOR_INDEX = 0;
+const VIGNETTE_DEFAULT_STRENGTH_EV = 1;
+const VIGNETTE_OUTLINE_COLOR = "rgba(70,70,70,0.95)";
 
 function drawStrokeWidthIndexForOverlay(
   strokeWidth: number,
@@ -4757,6 +4994,13 @@ export function ImageEditDialog({
     | null
     | { pointerId: number; index: number; startPoint: EditPoint; startRegion: ImageMosaicRegion }
   >(null);
+  const [vignetteMode, setVignetteMode] = useState(false);
+  const [vignetteOverlay, setVignetteOverlay] = useState<ImageVignetteOverlay | null>(
+    normalizeVignetteOverlay(initialParams.vignetteOverlay),
+  );
+  const [vignetteDraft, setVignetteDraft] = useState<ImageVignetteOverlay | null>(null);
+  const vignetteCreateState = useRef<VignetteCreateState | null>(null);
+  const vignetteEditState = useRef<VignetteEditState | null>(null);
   const [showHistogram, setShowHistogram] = useState(false);
   const [showPercentileDebug, setShowPercentileDebug] = useState(false);
   const [percentileDebug, setPercentileDebug] = useState<PercentileDebugData | null>(null);
@@ -5085,6 +5329,19 @@ export function ImageEditDialog({
     y: cropRect.y + y * displayed.h,
   }), [cropRect.x, cropRect.y, displayed.h, displayed.w]);
 
+  const displayPointToNormalized = useCallback((point: EditPoint): EditPoint | null => {
+    if (displayed.w <= 0 || displayed.h <= 0) return null;
+    return {
+      x: (point.x - displayed.x) / displayed.w,
+      y: (point.y - displayed.y) / displayed.h,
+    };
+  }, [displayed.h, displayed.w, displayed.x, displayed.y]);
+
+  const normalizedToDisplayPoint = useCallback((x: number, y: number): EditPoint => ({
+    x: displayed.x + x * displayed.w,
+    y: displayed.y + y * displayed.h,
+  }), [displayed.h, displayed.w, displayed.x, displayed.y]);
+
   const constrainDrawEndPoint = useCallback((
     type: ImageDrawTool,
     start: EditPoint,
@@ -5120,6 +5377,24 @@ export function ImageEditDialog({
     const size = Math.max(0, Math.min(wantedSize, availableX, availableY));
     return { x: start.x + signX * size, y: start.y + signY * size };
   }, [clampPointToCropRect, cropRect]);
+
+  const constrainVignetteEndPoint = useCallback((
+    start: EditPoint,
+    rawEnd: EditPoint,
+    constrain: boolean,
+  ): EditPoint => {
+    const end = clampPointToDisplayed(rawEnd);
+    if (!constrain) return end;
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const signX = dx < 0 ? -1 : 1;
+    const signY = dy < 0 ? -1 : 1;
+    const wantedSize = Math.max(Math.abs(dx), Math.abs(dy));
+    const availableX = signX > 0 ? displayed.x + displayed.w - start.x : start.x - displayed.x;
+    const availableY = signY > 0 ? displayed.y + displayed.h - start.y : start.y - displayed.y;
+    const size = Math.max(0, Math.min(wantedSize, availableX, availableY));
+    return { x: start.x + signX * size, y: start.y + signY * size };
+  }, [clampPointToDisplayed, displayed]);
 
   const previewToOverlayPoint = useCallback((point: EditPoint): { left: number; top: number } | null => {
     if (displayed.w <= 0 || displayed.h <= 0) return null;
@@ -5350,7 +5625,7 @@ export function ImageEditDialog({
       colorIndex: normalizeTextColorIndex(colorIndex),
       fillColorIndex: null,
     };
-  }, [cropPointToNormalized]);
+  }, [displayPointToNormalized]);
 
   const onDrawPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (!drawMode || e.button !== 0 || !natural || cropRect.w <= 0 || cropRect.h <= 0) return;
@@ -5703,6 +5978,181 @@ export function ImageEditDialog({
 
   const removeMosaicRegion = useCallback((index: number) => {
     setMosaicRegions((current) => current.filter((_, i) => i !== index));
+  }, []);
+
+  const vignetteOverlayFromPreviewPoints = useCallback((
+    id: string,
+    start: EditPoint,
+    end: EditPoint,
+    strengthEv: number,
+  ): ImageVignetteOverlay | null => {
+    const a = displayPointToNormalized(start);
+    const b = displayPointToNormalized(end);
+    if (!a || !b) return null;
+    return normalizeVignetteOverlay({
+      id,
+      x1: Math.min(a.x, b.x),
+      y1: Math.min(a.y, b.y),
+      x2: Math.max(a.x, b.x),
+      y2: Math.max(a.y, b.y),
+      strengthEv,
+    });
+  }, [displayPointToNormalized]);
+
+  const onVignettePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!vignetteMode || e.button !== 0 || displayed.w <= 0 || displayed.h <= 0) return;
+    const point = toLocal(e);
+    if (
+      point.x < displayed.x ||
+      point.x > displayed.x + displayed.w ||
+      point.y < displayed.y ||
+      point.y > displayed.y + displayed.h
+    ) {
+      return;
+    }
+    const startPoint = clampPointToDisplayed(point);
+    vignetteCreateState.current = {
+      pointerId: e.pointerId,
+      startPoint,
+      strengthEv: vignetteOverlay?.strengthEv ?? VIGNETTE_DEFAULT_STRENGTH_EV,
+    };
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setVignetteDraft(vignetteOverlayFromPreviewPoints(
+      "vignette-draft",
+      startPoint,
+      startPoint,
+      vignetteOverlay?.strengthEv ?? VIGNETTE_DEFAULT_STRENGTH_EV,
+    ) ?? {
+      id: "vignette-draft",
+      x1: 0,
+      y1: 0,
+      x2: 0,
+      y2: 0,
+      strengthEv: vignetteOverlay?.strengthEv ?? VIGNETTE_DEFAULT_STRENGTH_EV,
+    });
+    e.preventDefault();
+    e.stopPropagation();
+  }, [clampPointToDisplayed, displayed.h, displayed.w, displayed.x, displayed.y, toLocal, vignetteMode, vignetteOverlay, vignetteOverlayFromPreviewPoints]);
+
+  const onVignettePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const state = vignetteCreateState.current;
+    if (!state || state.pointerId !== e.pointerId) return;
+    const endPoint = constrainVignetteEndPoint(state.startPoint, toLocal(e), e.shiftKey);
+    const draft = vignetteOverlayFromPreviewPoints(
+      "vignette-draft",
+      state.startPoint,
+      endPoint,
+      state.strengthEv,
+    );
+    if (draft) setVignetteDraft(draft);
+    e.preventDefault();
+    e.stopPropagation();
+  }, [constrainVignetteEndPoint, toLocal, vignetteOverlayFromPreviewPoints]);
+
+  const finishVignetteCreation = useCallback((e: React.PointerEvent<HTMLDivElement>, cancelled = false) => {
+    const state = vignetteCreateState.current;
+    if (!state || state.pointerId !== e.pointerId) return;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {}
+    if (!cancelled) {
+      const endPoint = constrainVignetteEndPoint(state.startPoint, toLocal(e), e.shiftKey);
+      const distance = Math.max(Math.abs(endPoint.x - state.startPoint.x), Math.abs(endPoint.y - state.startPoint.y));
+      if (distance >= 3) {
+        const overlay = vignetteOverlayFromPreviewPoints(
+          vignetteOverlay?.id ?? makeOverlayId("vignette"),
+          state.startPoint,
+          endPoint,
+          state.strengthEv,
+        );
+        if (overlay) setVignetteOverlay(overlay);
+      }
+    }
+    vignetteCreateState.current = null;
+    setVignetteDraft(null);
+    e.preventDefault();
+    e.stopPropagation();
+  }, [constrainVignetteEndPoint, toLocal, vignetteOverlay, vignetteOverlayFromPreviewPoints]);
+
+  const onVignetteMovePointerDown = useCallback((overlay: ImageVignetteOverlay) =>
+    (e: React.PointerEvent<SVGSVGElement>) => {
+      if (!vignetteMode || e.button !== 0) return;
+      vignetteEditState.current = {
+        mode: "move",
+        pointerId: e.pointerId,
+        startPoint: toLocal(e),
+        startOverlay: overlay,
+      };
+      e.currentTarget.setPointerCapture(e.pointerId);
+      e.preventDefault();
+      e.stopPropagation();
+    },
+  [toLocal, vignetteMode]);
+
+  const onVignetteHandlePointerDown = useCallback((overlay: ImageVignetteOverlay, handle: EditCorner) =>
+    (e: React.PointerEvent<HTMLButtonElement>) => {
+      if (!vignetteMode || e.button !== 0) return;
+      vignetteEditState.current = {
+        mode: "handle",
+        pointerId: e.pointerId,
+        handle,
+        startOverlay: overlay,
+      };
+      e.currentTarget.setPointerCapture(e.pointerId);
+      e.preventDefault();
+      e.stopPropagation();
+    },
+  [vignetteMode]);
+
+  const onVignetteEditPointerMove = useCallback((e: React.PointerEvent<Element>) => {
+    const state = vignetteEditState.current;
+    if (!state || state.pointerId !== e.pointerId || displayed.w <= 0 || displayed.h <= 0) return;
+    const point = clampPointToDisplayed(toLocal(e));
+    if (state.mode === "move") {
+      const dx = (point.x - state.startPoint.x) / displayed.w;
+      const dy = (point.y - state.startPoint.y) / displayed.h;
+      const start = state.startOverlay;
+      setVignetteOverlay(normalizeVignetteOverlay({
+        ...start,
+        x1: start.x1 + dx,
+        y1: start.y1 + dy,
+        x2: start.x2 + dx,
+        y2: start.y2 + dy,
+      }));
+    } else {
+      const start = state.startOverlay;
+      const fixedNormalized = state.handle === "nw"
+        ? { x: start.x2, y: start.y2 }
+        : state.handle === "ne"
+          ? { x: start.x1, y: start.y2 }
+          : state.handle === "sw"
+            ? { x: start.x2, y: start.y1 }
+            : { x: start.x1, y: start.y1 };
+      const fixed = normalizedToDisplayPoint(fixedNormalized.x, fixedNormalized.y);
+      const moving = constrainVignetteEndPoint(fixed, point, e.shiftKey);
+      const normalized = displayPointToNormalized(moving);
+      if (!normalized) return;
+      setVignetteOverlay(normalizeVignetteOverlay({
+        ...start,
+        x1: Math.min(fixedNormalized.x, normalized.x),
+        y1: Math.min(fixedNormalized.y, normalized.y),
+        x2: Math.max(fixedNormalized.x, normalized.x),
+        y2: Math.max(fixedNormalized.y, normalized.y),
+      }));
+    }
+    e.preventDefault();
+    e.stopPropagation();
+  }, [clampPointToDisplayed, constrainVignetteEndPoint, displayPointToNormalized, displayed.h, displayed.w, normalizedToDisplayPoint, toLocal]);
+
+  const onVignetteEditPointerUp = useCallback((e: React.PointerEvent<Element>) => {
+    const state = vignetteEditState.current;
+    if (!state || state.pointerId !== e.pointerId) return;
+    try {
+      (e.currentTarget as Element).releasePointerCapture(e.pointerId);
+    } catch {}
+    vignetteEditState.current = null;
+    e.preventDefault();
+    e.stopPropagation();
   }, []);
 
   const onEyedropperPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
@@ -6195,6 +6645,7 @@ export function ImageEditDialog({
     const height = internalPreview.sample.height;
     const previewColorProfile: ImageEditOutputColorProfile = "srgb";
     const includeMosaic = !eyedropperMode && !rotationMode && mosaicRegions.length > 0 && !!natural?.w;
+    const previewVignetteOverlay = !eyedropperMode && !rotationMode ? (vignetteDraft ?? vignetteOverlay) : null;
     const renderedPreviewKey = JSON.stringify([
       width,
       height,
@@ -6211,6 +6662,7 @@ export function ImageEditDialog({
       vibrance,
       saturation,
       includeMosaic ? mosaicRegions : null,
+      previewVignetteOverlay,
     ]);
 
     const rendered = previewRenderedRef.current;
@@ -6324,6 +6776,23 @@ export function ImageEditDialog({
           previewColorProfile,
         );
       }
+      if (previewVignetteOverlay && cropRect.w > 0 && cropRect.h > 0 && displayed.w > 0 && displayed.h > 0) {
+        applyVignetteToCanvas(
+          canvas,
+          previewVignetteOverlay,
+          displayed.w,
+          displayed.h,
+          cropRect.x - displayed.x,
+          cropRect.y - displayed.y,
+          cropRect.w,
+          cropRect.h,
+          ((cropRect.x - displayed.x) / displayed.w) * canvas.width,
+          ((cropRect.y - displayed.y) / displayed.h) * canvas.height,
+          (cropRect.w / displayed.w) * canvas.width,
+          (cropRect.h / displayed.h) * canvas.height,
+          previewColorProfile,
+        );
+      }
 
       previewRenderedRef.current = {
         decoded: previewSource,
@@ -6350,8 +6819,14 @@ export function ImageEditDialog({
 
     return () => cancelAnimationFrame(frameId);
   }, [
+    displayed.x,
+    displayed.y,
     displayed.w,
     displayed.h,
+    cropRect.x,
+    cropRect.y,
+    cropRect.w,
+    cropRect.h,
     decodedRevision,
     temperature,
     tint,
@@ -6367,6 +6842,8 @@ export function ImageEditDialog({
     rotationMode,
     natural,
     mosaicRegions,
+    vignetteOverlay,
+    vignetteDraft,
     eyedropperMode,
     clearEmbeddedRawPreview,
     resolvePreviewSourceSample,
@@ -6771,6 +7248,7 @@ export function ImageEditDialog({
       mosaicRegions: normalizeMosaicRegions(mosaicRegions),
       textOverlays: normalizeTextOverlays(textOverlays),
       drawOverlays: normalizeDrawOverlays(drawOverlays),
+      vignetteOverlay: normalizeVignetteOverlay(vignetteOverlay),
     };
     applyPendingRef.current = true;
     setApplyBusy(true);
@@ -6856,6 +7334,11 @@ export function ImageEditDialog({
     setMosaicRegions(params.mosaicRegions);
     mosaicMoveState.current = null;
     setMosaicDraft(null);
+    setVignetteMode(false);
+    setVignetteOverlay(params.vignetteOverlay);
+    setVignetteDraft(null);
+    vignetteCreateState.current = null;
+    vignetteEditState.current = null;
     if (displayed.w > 0 && displayed.h > 0) {
       const crop = normalizeCrop(params.crop);
       const x = displayed.x + displayed.w * crop.left;
@@ -6924,6 +7407,10 @@ export function ImageEditDialog({
                     setDrawDraft(null);
                     drawCreateState.current = null;
                     drawEditState.current = null;
+                    setVignetteMode(false);
+                    setVignetteDraft(null);
+                    vignetteCreateState.current = null;
+                    vignetteEditState.current = null;
                     setEyedropperMode(false);
                     setRotationMode(false);
                     rotationDragState.current = null;
@@ -6959,6 +7446,10 @@ export function ImageEditDialog({
                     mosaicDragStart.current = null;
                     mosaicMoveState.current = null;
                     setMosaicDraft(null);
+                    setVignetteMode(false);
+                    setVignetteDraft(null);
+                    vignetteCreateState.current = null;
+                    vignetteEditState.current = null;
                     setEyedropperMode(false);
                     setRotationMode(false);
                     rotationDragState.current = null;
@@ -6983,6 +7474,10 @@ export function ImageEditDialog({
                     setDrawDraft(null);
                     drawCreateState.current = null;
                     drawEditState.current = null;
+                    setVignetteMode(false);
+                    setVignetteDraft(null);
+                    vignetteCreateState.current = null;
+                    vignetteEditState.current = null;
                     setEyedropperMode(false);
                     setRotationMode(false);
                     rotationDragState.current = null;
@@ -6993,6 +7488,48 @@ export function ImageEditDialog({
                 }}
               />
               <span>Mosaic</span>
+            </label>
+            <label className="inline-flex items-center gap-2 text-sm text-gray-700 select-none">
+              <input
+                type="checkbox"
+                checked={vignetteMode}
+                onChange={(e) => {
+                  const next = e.target.checked;
+                  setVignetteMode(next);
+                  vignetteCreateState.current = null;
+                  vignetteEditState.current = null;
+                  setVignetteDraft(null);
+                  if (next) {
+                    setTextMode(false);
+                    setActiveTextId(null);
+                    textMoveState.current = null;
+                    setDrawMode(false);
+                    setDrawDraft(null);
+                    drawCreateState.current = null;
+                    drawEditState.current = null;
+                    setMosaicMode(false);
+                    mosaicDragStart.current = null;
+                    mosaicMoveState.current = null;
+                    setMosaicDraft(null);
+                    setEyedropperMode(false);
+                    setRotationMode(false);
+                    rotationDragState.current = null;
+                    dragState.current = null;
+                    if (!vignetteOverlay && displayed.w > 0 && displayed.h > 0) {
+                      const radius = 0.6 * Math.hypot(displayed.w / 2, displayed.h / 2);
+                      setVignetteOverlay(normalizeVignetteOverlay({
+                        id: makeOverlayId("vignette"),
+                        x1: 0.5 - radius / displayed.w,
+                        y1: 0.5 - radius / displayed.h,
+                        x2: 0.5 + radius / displayed.w,
+                        y2: 0.5 + radius / displayed.h,
+                        strengthEv: VIGNETTE_DEFAULT_STRENGTH_EV,
+                      }));
+                    }
+                  }
+                }}
+              />
+              <span>Vignette</span>
             </label>
             <label className="inline-flex items-center gap-2 text-sm text-gray-700 select-none">
               <input
@@ -7022,11 +7559,11 @@ export function ImageEditDialog({
         <div className="mt-3 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_250px] gap-4 lg:items-stretch">
           <div
             ref={containerRef}
-            className={`relative w-full h-[42vh] min-h-[270px] lg:h-[calc(100dvh-120px)] lg:max-h-[950px] rounded border bg-gray-200 overflow-hidden touch-none ${textMode ? "cursor-text" : !eyedropperMode && !rotationMode && (drawMode || mosaicMode) ? "cursor-crosshair" : ""}`}
-            onPointerDown={eyedropperMode || rotationMode ? undefined : textMode ? onTextPointerDown : drawMode ? onDrawPointerDown : mosaicMode ? onMosaicPointerDown : undefined}
-            onPointerMove={eyedropperMode ? undefined : rotationMode ? onRotationPointerMove : drawMode ? onDrawPointerMove : mosaicMode ? onMosaicPointerMove : onPointerMove}
-            onPointerUp={eyedropperMode ? undefined : rotationMode ? onRotationPointerUp : drawMode ? (e) => finishDrawCreation(e) : mosaicMode ? onMosaicPointerUp : onPointerUp}
-            onPointerCancel={eyedropperMode ? undefined : rotationMode ? onRotationPointerUp : drawMode ? (e) => finishDrawCreation(e, true) : mosaicMode ? onMosaicPointerCancel : onPointerUp}
+            className={`relative w-full h-[42vh] min-h-[270px] lg:h-[calc(100dvh-120px)] lg:max-h-[950px] rounded border bg-gray-200 overflow-hidden touch-none ${textMode ? "cursor-text" : !eyedropperMode && !rotationMode && (drawMode || mosaicMode || vignetteMode) ? "cursor-crosshair" : ""}`}
+            onPointerDown={eyedropperMode || rotationMode ? undefined : textMode ? onTextPointerDown : drawMode ? onDrawPointerDown : mosaicMode ? onMosaicPointerDown : vignetteMode ? onVignettePointerDown : undefined}
+            onPointerMove={eyedropperMode ? undefined : rotationMode ? onRotationPointerMove : drawMode ? onDrawPointerMove : mosaicMode ? onMosaicPointerMove : vignetteMode ? onVignettePointerMove : onPointerMove}
+            onPointerUp={eyedropperMode ? undefined : rotationMode ? onRotationPointerUp : drawMode ? (e) => finishDrawCreation(e) : mosaicMode ? onMosaicPointerUp : vignetteMode ? (e) => finishVignetteCreation(e) : onPointerUp}
+            onPointerCancel={eyedropperMode ? undefined : rotationMode ? onRotationPointerUp : drawMode ? (e) => finishDrawCreation(e, true) : mosaicMode ? onMosaicPointerCancel : vignetteMode ? (e) => finishVignetteCreation(e, true) : onPointerUp}
           >
               {embeddedRawPreview && (
                 <NextImage
@@ -7053,6 +7590,102 @@ export function ImageEditDialog({
               )}
               {imageReady && natural ? (
                 <>
+                  {!eyedropperMode && !rotationMode && vignetteMode && displayed.w > 0 && displayed.h > 0 && (vignetteOverlay || vignetteDraft) && (() => {
+                    const overlay = vignetteDraft ?? vignetteOverlay;
+                    if (!overlay) return null;
+                    const left = displayed.x + overlay.x1 * displayed.w;
+                    const top = displayed.y + overlay.y1 * displayed.h;
+                    const width = (overlay.x2 - overlay.x1) * displayed.w;
+                    const height = (overlay.y2 - overlay.y1) * displayed.h;
+                    if (width <= 0 || height <= 0) return null;
+                    const isCommitted = overlay === vignetteOverlay;
+                    const controlsLeft = Math.max(displayed.x + 2, Math.min(displayed.x + displayed.w - 140, left));
+                    const controlsTop = Math.max(displayed.y + 2, top - 28);
+                    const deleteLeft = Math.min(displayed.x + displayed.w - 20, Math.max(displayed.x + 2, left + width + 5));
+                    const deleteTop = Math.max(displayed.y + 2, top - 10);
+                    const handles: Array<[EditCorner, number, number]> = [
+                      ["nw", left, top],
+                      ["ne", left + width, top],
+                      ["sw", left, top + height],
+                      ["se", left + width, top + height],
+                    ];
+                    return (
+                      <div key={`${overlay.id}-vignette`} className="contents">
+                        <svg
+                          className="absolute z-[23]"
+                          style={{ left, top, width, height, pointerEvents: isCommitted ? "auto" : "none", overflow: "visible" }}
+                          onPointerDown={isCommitted ? onVignetteMovePointerDown(overlay) : undefined}
+                          onPointerMove={isCommitted ? onVignetteEditPointerMove : undefined}
+                          onPointerUp={isCommitted ? onVignetteEditPointerUp : undefined}
+                          onPointerCancel={isCommitted ? onVignetteEditPointerUp : undefined}
+                        >
+                          <ellipse
+                            cx={width / 2}
+                            cy={height / 2}
+                            rx={width / 2}
+                            ry={height / 2}
+                            fill="none"
+                            stroke={VIGNETTE_OUTLINE_COLOR}
+                            strokeWidth={1.25}
+                            vectorEffect="non-scaling-stroke"
+                            style={{ cursor: isCommitted ? "move" : "default" }}
+                          />
+                        </svg>
+                        {isCommitted && (
+                          <>
+                            <div
+                              className="absolute z-[33] flex items-center gap-2 rounded border border-white bg-black/80 px-2 py-1 text-white"
+                              style={{ left: controlsLeft, top: controlsTop }}
+                              onPointerDown={(e) => e.stopPropagation()}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <input
+                                type="range"
+                                min={0}
+                                max={4}
+                                step={0.1}
+                                value={overlay.strengthEv}
+                                className="w-24"
+                                onChange={(e) => setVignetteOverlay((current) => current ? { ...current, strengthEv: clampVignetteStrengthEv(Number(e.target.value)) } : current)}
+                                aria-label="Vignette strength"
+                                title="Vignette strength"
+                              />
+                              <span className="min-w-[3.8em] text-[11px] font-mono">{overlay.strengthEv.toFixed(1)}EV</span>
+                            </div>
+                            {handles.map(([handle, x, y]) => (
+                              <button
+                                key={handle}
+                                type="button"
+                                className="absolute z-[31] h-3 w-3 rounded-full border border-black bg-white shadow"
+                                style={{ left: x - 6, top: y - 6 }}
+                                onPointerDown={onVignetteHandlePointerDown(overlay, handle)}
+                                onPointerMove={onVignetteEditPointerMove}
+                                onPointerUp={onVignetteEditPointerUp}
+                                onPointerCancel={onVignetteEditPointerUp}
+                                aria-label="Resize vignette"
+                              />
+                            ))}
+                            <button
+                              type="button"
+                              className="absolute z-[32] flex h-5 w-5 items-center justify-center rounded-full border border-white bg-black/80 text-[12px] leading-none text-white"
+                              style={{ left: deleteLeft, top: deleteTop }}
+                              onPointerDown={(e) => e.stopPropagation()}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setVignetteOverlay(null);
+                                vignetteEditState.current = null;
+                                vignetteCreateState.current = null;
+                                setVignetteDraft(null);
+                              }}
+                              aria-label="Remove vignette"
+                            >
+                              ✕
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })()}
                   {!eyedropperMode && showHistogram && histogramPaths && (
                     <div
                       className="absolute left-2 bottom-2 z-[33] w-[294px] h-[138px] rounded bg-black pointer-events-none"
@@ -7832,9 +8465,9 @@ export function ImageEditDialog({
                   )}
                   {!eyedropperMode && !rotationMode && (
                     <div
-                      className={`absolute border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.45)] bg-transparent ${mosaicMode || textMode || drawMode ? "pointer-events-none" : "cursor-move"}`}
+                      className={`absolute border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.45)] bg-transparent ${mosaicMode || textMode || drawMode || vignetteMode ? "pointer-events-none" : "cursor-move"}`}
                       style={{ left: cropRect.x, top: cropRect.y, width: cropRect.w, height: cropRect.h }}
-                      onPointerDown={mosaicMode || textMode || drawMode ? undefined : onCropPointerDown}
+                      onPointerDown={mosaicMode || textMode || drawMode || vignetteMode ? undefined : onCropPointerDown}
                     >
                       {cropDragging && (
                         <svg
@@ -7950,6 +8583,10 @@ export function ImageEditDialog({
                     setEyedropperMode((current) => !current);
                     setRotationMode(false);
                     rotationDragState.current = null;
+                    setVignetteMode(false);
+                    setVignetteDraft(null);
+                    vignetteCreateState.current = null;
+                    vignetteEditState.current = null;
                     mosaicDragStart.current = null;
                     mosaicMoveState.current = null;
                     setMosaicDraft(null);
