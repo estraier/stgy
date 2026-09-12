@@ -62,17 +62,25 @@ function createCanvasImageDataFromReusableBuffer(
   reusableRgba8: Uint8ClampedArray | null | undefined,
 ): ImageData {
   if (reusableRgba8 && reusableRgba8.length === width * height * 4) {
-    try {
-      return new ImageData(
-        reusableRgba8,
-        width,
-        height,
-        { colorSpace: outputColorProfile } as unknown as ImageDataSettings,
+    const reusableBuffer = reusableRgba8.buffer;
+    if (reusableBuffer instanceof ArrayBuffer) {
+      const imageDataArray = new Uint8ClampedArray(
+        reusableBuffer,
+        reusableRgba8.byteOffset,
+        reusableRgba8.byteLength,
       );
-    } catch {
       try {
-        return new ImageData(reusableRgba8, width, height);
-      } catch {}
+        return new ImageData(
+          imageDataArray,
+          width,
+          height,
+          { colorSpace: outputColorProfile } as unknown as ImageDataSettings,
+        );
+      } catch {
+        try {
+          return new ImageData(imageDataArray, width, height);
+        } catch {}
+      }
     }
   }
   return createCanvasImageData(ctx, width, height, outputColorProfile);
