@@ -228,7 +228,7 @@ export type ImageVignetteOverlay = {
 };
 
 export type ImageMonochromePreset = "rec709" | "rec601" | "average" | "red" | "yellow" | "blue";
-export type ImageOtherFilterPreset = "sepia" | "cross-process" | "bleach-bypass";
+export type ImageOtherFilterPreset = "sepia" | "cross-process" | "bleach-bypass" | "cyanotype";
 
 export type ImageFilter =
   | {
@@ -704,6 +704,7 @@ const MONOCHROME_PRESET_WEIGHTS: Record<ImageMonochromePreset, readonly [number,
 
 const OTHER_FILTER_LABELS: Record<ImageOtherFilterPreset, string> = {
   sepia: "Sepia",
+  cyanotype: "Cyanotype",
   "cross-process": "Cross Process",
   "bleach-bypass": "Bleach Bypass",
 };
@@ -758,7 +759,7 @@ function normalizeMonochromePreset(value: unknown): ImageMonochromePreset {
 }
 
 function normalizeOtherFilterPreset(value: unknown): ImageOtherFilterPreset {
-  return value === "cross-process" || value === "bleach-bypass" ? value : "sepia";
+  return value === "cross-process" || value === "bleach-bypass" || value === "cyanotype" ? value : "sepia";
 }
 
 function normalizeImageFilter(filter?: Partial<ImageFilter> | null): ImageFilter | null {
@@ -1366,6 +1367,34 @@ function applyBleachBypassLinearRgb(r: number, g: number, b: number): [number, n
   ];
 }
 
+
+function applyCyanotypeLinearRgb(r: number, g: number, b: number): [number, number, number] {
+  const lr = Math.pow(clamp01(r), 1 / 2.2);
+  const lg = Math.pow(clamp01(g), 1 / 2.2);
+  const lb = Math.pow(clamp01(b), 1 / 2.2);
+
+  const exposure = 0.05 * lr + 0.20 * lg + 0.75 * lb;
+  const density = exposure * exposure * (3 - 2 * exposure);
+
+  const prussianR = 0.05;
+  const prussianG = 0.20;
+  const prussianB = 0.40;
+
+  const paperR = 0.96;
+  const paperG = 0.96;
+  const paperB = 0.94;
+
+  const cr = prussianR * (1 - density) + paperR * density;
+  const cg = prussianG * (1 - density) + paperG * density;
+  const cb = prussianB * (1 - density) + paperB * density;
+
+  return [
+    clamp01(Math.pow(Math.max(0, cr), 2.2)),
+    clamp01(Math.pow(Math.max(0, cg), 2.2)),
+    clamp01(Math.pow(Math.max(0, cb), 2.2)),
+  ];
+}
+
 function applyGainToLinearRgb16(data: Uint16Array, width: number, height: number, gain: number): void {
   if (!(gain > 1) || width <= 0 || height <= 0) return;
   const pixelCount = width * height;
@@ -1388,6 +1417,8 @@ function applyOtherFilterLinearRgb(
       return applyChemicalCrossProcessLinearRgb(r, g, b);
     case "bleach-bypass":
       return applyBleachBypassLinearRgb(r, g, b);
+    case "cyanotype":
+      return applyCyanotypeLinearRgb(r, g, b);
     case "sepia":
     default:
       return applySepiaLinearRgb(r, g, b);
@@ -5963,7 +5994,7 @@ export function ImageEditDialog({
       colorIndex: normalizeTextColorIndex(colorIndex),
       fillColorIndex: null,
     };
-  }, [displayPointToNormalized]);
+  }, [cropPointToNormalized]);
 
   const onDrawPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (!drawMode || e.button !== 0 || !natural || cropRect.w <= 0 || cropRect.h <= 0) return;
@@ -7640,6 +7671,7 @@ export function ImageEditDialog({
     mosaicRegions,
     textOverlays,
     drawOverlays,
+    vignetteOverlay,
     resolvePreviewClarityMap,
     onApply,
   ]);
@@ -8227,7 +8259,7 @@ export function ImageEditDialog({
                         </div>
                       </div>
                       <div className="flex flex-col gap-1">
-                        <span className="text-xs font-medium text-gray-700">Others</span>
+                        <span className="text-xs font-medium text-gray-700">Photochemical</span>
                         <div className="grid grid-cols-2 gap-1">
                           {(Object.entries(OTHER_FILTER_LABELS) as Array<[ImageOtherFilterPreset, string]>).map(([preset, label]) => {
                             const selected = imageFilter?.kind === "other" && imageFilter.preset === preset;
