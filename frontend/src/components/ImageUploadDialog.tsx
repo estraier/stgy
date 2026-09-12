@@ -227,6 +227,19 @@ export type ImageVignetteOverlay = {
   strengthEv: number;
 };
 
+export type ImageMonochromePreset = "rec709" | "rec601" | "average" | "red" | "yellow" | "blue";
+export type ImageOtherFilterPreset = "sepia" | "cross-process" | "bleach-bypass";
+
+export type ImageFilter =
+  | {
+      kind: "monochrome";
+      preset: ImageMonochromePreset;
+    }
+  | {
+      kind: "other";
+      preset: ImageOtherFilterPreset;
+    };
+
 export type ImageEditParams = {
   crop: ImageCropInsets;
   rotationDegrees: number;
@@ -246,6 +259,7 @@ export type ImageEditParams = {
   textOverlays: ImageTextOverlay[];
   drawOverlays: ImageDrawOverlay[];
   vignetteOverlay: ImageVignetteOverlay | null;
+  filter: ImageFilter | null;
 };
 
 export type ImageEditOutputFormat = "image/webp" | "image/jpeg" | "image/png";
@@ -670,6 +684,105 @@ function normalizeDrawOverlays(overlays?: ImageDrawOverlay[]): ImageDrawOverlay[
     .filter((overlay): overlay is ImageDrawOverlay => overlay !== null);
 }
 
+const MONOCHROME_PRESET_LABELS: Record<ImageMonochromePreset, string> = {
+  rec709: "Rec 709",
+  rec601: "Rec 601",
+  average: "Average",
+  red: "Red",
+  yellow: "Yellow",
+  blue: "Blue",
+};
+
+const MONOCHROME_PRESET_WEIGHTS: Record<ImageMonochromePreset, readonly [number, number, number]> = {
+  rec709: [0.2126, 0.7152, 0.0722],
+  rec601: [0.299, 0.587, 0.114],
+  average: [1 / 3, 1 / 3, 1 / 3],
+  red: [0.545, 0.44, 0.015],
+  yellow: [0.295, 0.683, 0.022],
+  blue: [0.098, 0.236, 0.666],
+};
+
+const OTHER_FILTER_LABELS: Record<ImageOtherFilterPreset, string> = {
+  sepia: "Sepia",
+  "cross-process": "Cross Process",
+  "bleach-bypass": "Bleach Bypass",
+};
+
+const BLEACH_BYPASS_TARGET_P50_EV_DROP = 0.15;
+const BLEACH_BYPASS_MAX_COMPENSATION_GAIN = 4;
+const FILTER_MEDIAN_HISTOGRAM_BINS = 1024;
+
+function clampHistogramUnitValue(value: number): number {
+  return clamp01(Number.isFinite(value) ? value : 0);
+}
+
+function accumulateUnitHistogram(histogram: Uint32Array, value: number): void {
+  const bins = histogram.length;
+  if (bins <= 0) return;
+  const clamped = clampHistogramUnitValue(value);
+  const index = Math.max(0, Math.min(bins - 1, Math.round(clamped * (bins - 1))));
+  histogram[index] = (histogram[index] ?? 0) + 1;
+}
+
+function estimateUnitMedianFromHistogram(histogram: Uint32Array): number {
+  let total = 0;
+  for (let i = 0; i < histogram.length; i += 1) total += histogram[i] ?? 0;
+  if (total <= 0) return 0;
+  const target = Math.floor((total - 1) / 2);
+  let cumulative = 0;
+  for (let i = 0; i < histogram.length; i += 1) {
+    cumulative += histogram[i] ?? 0;
+    if (cumulative > target) {
+      return histogram.length > 1 ? i / (histogram.length - 1) : 0;
+    }
+  }
+  return 1;
+}
+
+function prophotoLumaForFilter(r: number, g: number, b: number): number {
+  return clampHistogramUnitValue(r * PROPHOTO_LUMA_R + g * PROPHOTO_LUMA_G + b * PROPHOTO_LUMA_B);
+}
+
+function computeBleachBypassMedianCompensationGain(beforeMedian: number, afterMedian: number): number {
+  const epsilon = 1e-6;
+  if (!(beforeMedian > epsilon) || !(afterMedian > epsilon)) return 1;
+  const targetAfterMedian = beforeMedian * Math.pow(2, -BLEACH_BYPASS_TARGET_P50_EV_DROP);
+  if (afterMedian >= targetAfterMedian) return 1;
+  return Math.min(BLEACH_BYPASS_MAX_COMPENSATION_GAIN, targetAfterMedian / afterMedian);
+}
+
+function normalizeMonochromePreset(value: unknown): ImageMonochromePreset {
+  return value === "rec601" || value === "average" || value === "red" || value === "yellow" || value === "blue"
+    ? value
+    : "rec709";
+}
+
+function normalizeOtherFilterPreset(value: unknown): ImageOtherFilterPreset {
+  return value === "cross-process" || value === "bleach-bypass" ? value : "sepia";
+}
+
+function normalizeImageFilter(filter?: Partial<ImageFilter> | null): ImageFilter | null {
+  if (!filter) return null;
+  if (filter.kind === "monochrome") {
+    return {
+      kind: "monochrome",
+      preset: normalizeMonochromePreset(filter.preset),
+    };
+  }
+  if (filter.kind === "other") {
+    return {
+      kind: "other",
+      preset: normalizeOtherFilterPreset(filter.preset),
+    };
+  }
+  return null;
+}
+
+function resolveMonochromeWeights(filter: ImageFilter | null | undefined): readonly [number, number, number] | null {
+  if (!filter || filter.kind !== "monochrome") return null;
+  return MONOCHROME_PRESET_WEIGHTS[filter.preset];
+}
+
 function clampVignetteStrengthEv(value: number): number {
   if (!Number.isFinite(value)) return 1;
   return Math.min(4, Math.max(0, value));
@@ -717,6 +830,7 @@ export function buildDefaultEditParams(w?: number, h?: number): ImageEditParams 
     textOverlays: [],
     drawOverlays: [],
     vignetteOverlay: null,
+    filter: null,
   };
 }
 
@@ -754,6 +868,7 @@ function normalizeEditParams(params: ImageEditParams | undefined, w?: number, h?
     textOverlays: normalizeTextOverlays(params?.textOverlays ?? defaults.textOverlays),
     drawOverlays: normalizeDrawOverlays(params?.drawOverlays ?? defaults.drawOverlays),
     vignetteOverlay: normalizeVignetteOverlay(params?.vignetteOverlay ?? defaults.vignetteOverlay),
+    filter: normalizeImageFilter(params?.filter ?? defaults.filter),
   };
 }
 
@@ -787,7 +902,8 @@ function isMeaningfullyEdited(
     normalized.mosaicRegions.length > 0 ||
     normalized.textOverlays.length > 0 ||
     normalized.drawOverlays.length > 0 ||
-    normalized.vignetteOverlay !== null
+    normalized.vignetteOverlay !== null ||
+    normalized.filter !== null
   );
 }
 
@@ -1186,6 +1302,222 @@ function applyVignetteToRgb16(
       data[index + 1] = encodeStoredRgb16Channel(decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1) * gain, "gamma20", 1);
       data[index + 2] = encodeStoredRgb16Channel(decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1) * gain, "gamma20", 1);
     }
+  }
+}
+
+
+function applySepiaLinearRgb(r: number, g: number, b: number): [number, number, number] {
+  const y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return [
+    clamp01(1.04 * y),
+    clamp01(0.95 * y),
+    clamp01(0.78 * y),
+  ];
+}
+
+function applyChemicalCrossProcessLinearRgb(r: number, g: number, b: number): [number, number, number] {
+  const clampInput = (value: number) => Math.max(0.0001, Math.min(1, value));
+  const applyHDCurve = (x: number, k: number, x0: number) => {
+    const val = 1 / (1 + Math.exp(-k * (x - x0)));
+    const min = 1 / (1 + Math.exp(-k * (0 - x0)));
+    const max = 1 / (1 + Math.exp(-k * (1 - x0)));
+    return max - min > 1e-9 ? (val - min) / (max - min) : 0;
+  };
+
+  const workR = Math.sqrt(clampInput(r));
+  const workG = Math.sqrt(clampInput(g));
+  const workB = Math.sqrt(clampInput(b));
+
+  const devR = applyHDCurve(workR, 7.0, 0.54);
+  const devG = applyHDCurve(workG, 5.8, 0.50);
+  const devB = applyHDCurve(workB, 4.8, 0.46);
+
+  const dyeR = 1.10 * devR - 0.07 * devG - 0.03 * devB;
+  const dyeG = -0.04 * devR + 1.08 * devG - 0.04 * devB;
+  const dyeB = -0.06 * devR - 0.10 * devG + 1.16 * devB;
+
+  return [
+    clamp01(Math.pow(Math.max(0, dyeR), 2.0)),
+    clamp01(Math.pow(Math.max(0, dyeG), 2.0)),
+    clamp01(Math.pow(Math.max(0, dyeB), 2.0)),
+  ];
+}
+
+function applyBleachBypassLinearRgb(r: number, g: number, b: number): [number, number, number] {
+  const lr = Math.pow(clamp01(r), 1 / 2.2);
+  const lg = Math.pow(clamp01(g), 1 / 2.2);
+  const lb = Math.pow(clamp01(b), 1 / 2.2);
+
+  const luma = 0.2126 * lr + 0.7152 * lg + 0.0722 * lb;
+  const silver = luma * luma * (3 - 2 * luma);
+
+  const desatAmount = 0.6;
+  const dr = lr * (1 - desatAmount) + silver * desatAmount;
+  const dg = lg * (1 - desatAmount) + silver * desatAmount;
+  const db = lb * (1 - desatAmount) + silver * desatAmount;
+
+  const silverStrength = 0.7;
+  const silverTrans = 1 - silverStrength * (1 - silver);
+
+  return [
+    clamp01(Math.pow(dr * silverTrans, 2.2)),
+    clamp01(Math.pow(dg * silverTrans, 2.2)),
+    clamp01(Math.pow(db * silverTrans, 2.2)),
+  ];
+}
+
+function applyGainToLinearRgb16(data: Uint16Array, width: number, height: number, gain: number): void {
+  if (!(gain > 1) || width <= 0 || height <= 0) return;
+  const pixelCount = width * height;
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const index = pixel * 3;
+    data[index] = encodeStoredRgb16Channel(decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1) * gain, "gamma20", 1);
+    data[index + 1] = encodeStoredRgb16Channel(decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1) * gain, "gamma20", 1);
+    data[index + 2] = encodeStoredRgb16Channel(decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1) * gain, "gamma20", 1);
+  }
+}
+
+function applyOtherFilterLinearRgb(
+  filter: Extract<ImageFilter, { kind: "other" }>,
+  r: number,
+  g: number,
+  b: number,
+): [number, number, number] {
+  switch (filter.preset) {
+    case "cross-process":
+      return applyChemicalCrossProcessLinearRgb(r, g, b);
+    case "bleach-bypass":
+      return applyBleachBypassLinearRgb(r, g, b);
+    case "sepia":
+    default:
+      return applySepiaLinearRgb(r, g, b);
+  }
+}
+
+function applyImageFilterToCanvas(
+  canvas: HTMLCanvasElement | OffscreenCanvas,
+  filter: ImageFilter | null | undefined,
+  outputColorProfile: ImageEditOutputColorProfile = "srgb",
+): void {
+  if (!filter) return;
+  const ctx = getCanvas2dContext(canvas, outputColorProfile, true);
+  if (!ctx) return;
+  const width = canvas.width;
+  const height = canvas.height;
+  if (width <= 0 || height <= 0) return;
+  const imageData = getCanvasImageData(ctx, 0, 0, width, height, outputColorProfile);
+  const rgba8 = imageData.data;
+
+  if (filter.kind === "monochrome") {
+    const weights = resolveMonochromeWeights(filter);
+    if (!weights) return;
+    const [wr, wg, wb] = weights;
+    for (let i = 0; i < rgba8.length; i += 4) {
+      const y = Math.max(0, Math.min(255, Math.round((rgba8[i] ?? 0) * wr + (rgba8[i + 1] ?? 0) * wg + (rgba8[i + 2] ?? 0) * wb)));
+      rgba8[i] = y;
+      rgba8[i + 1] = y;
+      rgba8[i + 2] = y;
+    }
+  } else {
+    const profile: ImageInputColorProfile = outputColorProfile === "display-p3" ? "display-p3" : "srgb";
+    const needsBleachMedianCompensation = filter.preset === "bleach-bypass";
+    const beforeHistogram = needsBleachMedianCompensation ? new Uint32Array(FILTER_MEDIAN_HISTOGRAM_BINS) : null;
+    const afterHistogram = needsBleachMedianCompensation ? new Uint32Array(FILTER_MEDIAN_HISTOGRAM_BINS) : null;
+    const filteredLinear = needsBleachMedianCompensation ? new Float32Array(width * height * 3) : null;
+
+    for (let i = 0; i < rgba8.length; i += 4) {
+      const [r, g, b] = encodedRgbToLinearProphoto((rgba8[i] ?? 0) / 255, (rgba8[i + 1] ?? 0) / 255, (rgba8[i + 2] ?? 0) / 255, profile);
+      const [fr, fg, fb] = applyOtherFilterLinearRgb(filter, r, g, b);
+      if (needsBleachMedianCompensation && beforeHistogram && afterHistogram && filteredLinear) {
+        const linearIndex = Math.floor(i / 4) * 3;
+        accumulateUnitHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
+        accumulateUnitHistogram(afterHistogram, prophotoLumaForFilter(fr, fg, fb));
+        filteredLinear[linearIndex] = fr;
+        filteredLinear[linearIndex + 1] = fg;
+        filteredLinear[linearIndex + 2] = fb;
+      } else {
+        const [er, eg, eb] = convertLinearProPhotoToOutputRgb(fr, fg, fb, profile);
+        rgba8[i] = Math.max(0, Math.min(255, Math.round(clamp01(er) * 255)));
+        rgba8[i + 1] = Math.max(0, Math.min(255, Math.round(clamp01(eg) * 255)));
+        rgba8[i + 2] = Math.max(0, Math.min(255, Math.round(clamp01(eb) * 255)));
+      }
+    }
+
+    if (needsBleachMedianCompensation && beforeHistogram && afterHistogram && filteredLinear) {
+      const beforeMedian = estimateUnitMedianFromHistogram(beforeHistogram);
+      const afterMedian = estimateUnitMedianFromHistogram(afterHistogram);
+      const gain = computeBleachBypassMedianCompensationGain(beforeMedian, afterMedian);
+      for (let i = 0; i < rgba8.length; i += 4) {
+        const linearIndex = Math.floor(i / 4) * 3;
+        const [er, eg, eb] = convertLinearProPhotoToOutputRgb(
+          clamp01((filteredLinear[linearIndex] ?? 0) * gain),
+          clamp01((filteredLinear[linearIndex + 1] ?? 0) * gain),
+          clamp01((filteredLinear[linearIndex + 2] ?? 0) * gain),
+          profile,
+        );
+        rgba8[i] = Math.max(0, Math.min(255, Math.round(clamp01(er) * 255)));
+        rgba8[i + 1] = Math.max(0, Math.min(255, Math.round(clamp01(eg) * 255)));
+        rgba8[i + 2] = Math.max(0, Math.min(255, Math.round(clamp01(eb) * 255)));
+      }
+    }
+  }
+  ctx.putImageData(imageData, 0, 0);
+}
+
+function applyImageFilterToRgb16(
+  data: Uint16Array,
+  width: number,
+  height: number,
+  filter: ImageFilter | null | undefined,
+): void {
+  if (!filter || width <= 0 || height <= 0) return;
+
+  if (filter.kind === "monochrome") {
+    const weights = resolveMonochromeWeights(filter);
+    if (!weights) return;
+    const [wr, wg, wb] = weights;
+    const maxValue = 65535;
+    const pixelCount = width * height;
+    for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+      const index = pixel * 3;
+      const y = Math.max(
+        0,
+        Math.min(
+          maxValue,
+          Math.round((data[index] ?? 0) * wr + (data[index + 1] ?? 0) * wg + (data[index + 2] ?? 0) * wb),
+        ),
+      );
+      data[index] = y;
+      data[index + 1] = y;
+      data[index + 2] = y;
+    }
+    return;
+  }
+
+  const needsBleachMedianCompensation = filter.preset === "bleach-bypass";
+  const beforeHistogram = needsBleachMedianCompensation ? new Uint32Array(FILTER_MEDIAN_HISTOGRAM_BINS) : null;
+  const afterHistogram = needsBleachMedianCompensation ? new Uint32Array(FILTER_MEDIAN_HISTOGRAM_BINS) : null;
+  const pixelCount = width * height;
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const index = pixel * 3;
+    const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
+    const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
+    const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
+    const [fr, fg, fb] = applyOtherFilterLinearRgb(filter, r, g, b);
+    if (needsBleachMedianCompensation && beforeHistogram && afterHistogram) {
+      accumulateUnitHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
+      accumulateUnitHistogram(afterHistogram, prophotoLumaForFilter(fr, fg, fb));
+    }
+    data[index] = encodeStoredRgb16Channel(fr, "gamma20", 1);
+    data[index + 1] = encodeStoredRgb16Channel(fg, "gamma20", 1);
+    data[index + 2] = encodeStoredRgb16Channel(fb, "gamma20", 1);
+  }
+
+  if (needsBleachMedianCompensation && beforeHistogram && afterHistogram) {
+    const beforeMedian = estimateUnitMedianFromHistogram(beforeHistogram);
+    const afterMedian = estimateUnitMedianFromHistogram(afterHistogram);
+    const gain = computeBleachBypassMedianCompensationGain(beforeMedian, afterMedian);
+    applyGainToLinearRgb16(data, width, height, gain);
   }
 }
 
@@ -4176,12 +4508,6 @@ async function buildEditedVariantFromDecoded(
   const outputCtx = getCanvas2dContext(output, outputColorProfile);
   if (!outputCtx) throw new Error("2D context unavailable");
   applySharpenToCanvas(output, params.sharpen, outputColorProfile);
-  applyMosaicRectsToCanvas(
-    output,
-    mosaicRegionsToOutputRects(params.mosaicRegions, w, h, sx, sy, sw, sh, dw, dh),
-    16,
-    outputColorProfile,
-  );
   applyVignetteToCanvas(
     output,
     params.vignetteOverlay,
@@ -4195,6 +4521,13 @@ async function buildEditedVariantFromDecoded(
     0,
     dw,
     dh,
+    outputColorProfile,
+  );
+  applyImageFilterToCanvas(output, params.filter, outputColorProfile);
+  applyMosaicRectsToCanvas(
+    output,
+    mosaicRegionsToOutputRects(params.mosaicRegions, w, h, sx, sy, sw, sh, dw, dh),
+    16,
     outputColorProfile,
   );
   drawOverlaysToContext(
@@ -4412,6 +4745,19 @@ export async function buildEditedDecodedRgb16(
   }
 
   applySharpenToRgb16(result, outputW, outputH, params.sharpen);
+  applyVignetteToRgb16(
+    result,
+    outputW,
+    outputH,
+    params.vignetteOverlay,
+    sourceW,
+    sourceH,
+    sx,
+    sy,
+    cropW,
+    cropH,
+  );
+  applyImageFilterToRgb16(result, outputW, outputH, params.filter);
   applyMosaicRectsToRgb16(
     result,
     outputW,
@@ -4427,18 +4773,6 @@ export async function buildEditedDecodedRgb16(
       outputW,
       outputH,
     ),
-  );
-  applyVignetteToRgb16(
-    result,
-    outputW,
-    outputH,
-    params.vignetteOverlay,
-    sourceW,
-    sourceH,
-    sx,
-    sy,
-    cropW,
-    cropH,
   );
   applyOverlaysToRgb16(
     result,
@@ -4972,6 +5306,10 @@ export function ImageEditDialog({
     Math.min(100, Math.max(1, Math.round(initialParams.resizePercent))),
   );
   const [sharpen, setSharpen] = useState<number>(clampSharpen(initialParams.sharpen ?? 0));
+  const [filterMode, setFilterMode] = useState(false);
+  const [imageFilter, setImageFilter] = useState<ImageFilter | null>(
+    normalizeImageFilter(initialParams.filter),
+  );
   const [textMode, setTextMode] = useState(false);
   const [textOverlays, setTextOverlays] = useState<ImageTextOverlay[]>(
     normalizeTextOverlays(initialParams.textOverlays),
@@ -6646,6 +6984,7 @@ export function ImageEditDialog({
     const previewColorProfile: ImageEditOutputColorProfile = "srgb";
     const includeMosaic = !eyedropperMode && !rotationMode && mosaicRegions.length > 0 && !!natural?.w;
     const previewVignetteOverlay = !eyedropperMode && !rotationMode ? (vignetteDraft ?? vignetteOverlay) : null;
+    const previewFilter = !eyedropperMode && !rotationMode ? imageFilter : null;
     const renderedPreviewKey = JSON.stringify([
       width,
       height,
@@ -6661,8 +7000,9 @@ export function ImageEditDialog({
       clarity,
       vibrance,
       saturation,
-      includeMosaic ? mosaicRegions : null,
       previewVignetteOverlay,
+      previewFilter,
+      includeMosaic ? mosaicRegions : null,
     ]);
 
     const rendered = previewRenderedRef.current;
@@ -6762,20 +7102,6 @@ export function ImageEditDialog({
         continuousPrefix?.sample,
         previewRgba8Ref.current,
       );
-      if (includeMosaic) {
-        const previewScale = width / Math.max(1, displayed.w);
-        applyMosaicRectsToCanvas(
-          canvas,
-          mosaicRegions.map((region) => ({
-            x: region.left * canvas.width,
-            y: region.top * canvas.height,
-            w: (region.right - region.left) * canvas.width,
-            h: (region.bottom - region.top) * canvas.height,
-          })),
-          Math.max(1, Math.round(16 * previewScale)),
-          previewColorProfile,
-        );
-      }
       if (previewVignetteOverlay && cropRect.w > 0 && cropRect.h > 0 && displayed.w > 0 && displayed.h > 0) {
         applyVignetteToCanvas(
           canvas,
@@ -6790,6 +7116,21 @@ export function ImageEditDialog({
           ((cropRect.y - displayed.y) / displayed.h) * canvas.height,
           (cropRect.w / displayed.w) * canvas.width,
           (cropRect.h / displayed.h) * canvas.height,
+          previewColorProfile,
+        );
+      }
+      applyImageFilterToCanvas(canvas, previewFilter, previewColorProfile);
+      if (includeMosaic) {
+        const previewScale = width / Math.max(1, displayed.w);
+        applyMosaicRectsToCanvas(
+          canvas,
+          mosaicRegions.map((region) => ({
+            x: region.left * canvas.width,
+            y: region.top * canvas.height,
+            w: (region.right - region.left) * canvas.width,
+            h: (region.bottom - region.top) * canvas.height,
+          })),
+          Math.max(1, Math.round(16 * previewScale)),
           previewColorProfile,
         );
       }
@@ -6844,6 +7185,7 @@ export function ImageEditDialog({
     mosaicRegions,
     vignetteOverlay,
     vignetteDraft,
+    imageFilter,
     eyedropperMode,
     clearEmbeddedRawPreview,
     resolvePreviewSourceSample,
@@ -7249,6 +7591,7 @@ export function ImageEditDialog({
       textOverlays: normalizeTextOverlays(textOverlays),
       drawOverlays: normalizeDrawOverlays(drawOverlays),
       vignetteOverlay: normalizeVignetteOverlay(vignetteOverlay),
+      filter: normalizeImageFilter(imageFilter),
     };
     applyPendingRef.current = true;
     setApplyBusy(true);
@@ -7293,6 +7636,7 @@ export function ImageEditDialog({
     saturation,
     resizePercent,
     sharpen,
+    imageFilter,
     mosaicRegions,
     textOverlays,
     drawOverlays,
@@ -7321,6 +7665,8 @@ export function ImageEditDialog({
     setSaturation(params.saturation);
     setResizePercent(params.resizePercent);
     setSharpen(params.sharpen);
+    setFilterMode(false);
+    setImageFilter(params.filter);
     setTextMode(false);
     setActiveTextId(null);
     textMoveState.current = null;
@@ -7396,10 +7742,43 @@ export function ImageEditDialog({
             <label className="inline-flex items-center gap-2 text-sm text-gray-700 select-none">
               <input
                 type="checkbox"
+                checked={filterMode}
+                onChange={(e) => {
+                  const next = e.target.checked;
+                  setFilterMode(next);
+                  if (next) {
+                    setTextMode(false);
+                    setActiveTextId(null);
+                    textMoveState.current = null;
+                    setDrawMode(false);
+                    setDrawDraft(null);
+                    drawCreateState.current = null;
+                    drawEditState.current = null;
+                    setMosaicMode(false);
+                    mosaicDragStart.current = null;
+                    mosaicMoveState.current = null;
+                    setMosaicDraft(null);
+                    setVignetteMode(false);
+                    setVignetteDraft(null);
+                    vignetteCreateState.current = null;
+                    vignetteEditState.current = null;
+                    setEyedropperMode(false);
+                    setRotationMode(false);
+                    rotationDragState.current = null;
+                    dragState.current = null;
+                  }
+                }}
+              />
+              <span>Filter</span>
+            </label>
+            <label className="inline-flex items-center gap-2 text-sm text-gray-700 select-none">
+              <input
+                type="checkbox"
                 checked={textMode}
                 onChange={(e) => {
                   const next = e.target.checked;
                   if (next) {
+                    setFilterMode(false);
                     setTextMode(true);
                     setActiveTextId(null);
                     textMoveState.current = null;
@@ -7439,6 +7818,7 @@ export function ImageEditDialog({
                   drawEditState.current = null;
                   setDrawDraft(null);
                   if (next) {
+                    setFilterMode(false);
                     setTextMode(false);
                     setActiveTextId(null);
                     textMoveState.current = null;
@@ -7467,6 +7847,7 @@ export function ImageEditDialog({
                   const next = e.target.checked;
                   setMosaicMode(next);
                   if (next) {
+                    setFilterMode(false);
                     setTextMode(false);
                     setActiveTextId(null);
                     textMoveState.current = null;
@@ -7500,6 +7881,7 @@ export function ImageEditDialog({
                   vignetteEditState.current = null;
                   setVignetteDraft(null);
                   if (next) {
+                    setFilterMode(false);
                     setTextMode(false);
                     setActiveTextId(null);
                     textMoveState.current = null;
@@ -7796,6 +8178,78 @@ export function ImageEditDialog({
                           <path d={gridPaths.horizontal} stroke="rgba(255,255,255,0.45)" strokeWidth="1" fill="none" />
                         ) : null}
                       </svg>
+                    </div>
+                  )}
+                  {!eyedropperMode && filterMode && (
+                    <div
+                      className="absolute right-2 top-2 z-[35] flex max-w-[min(340px,calc(100%-1rem))] flex-col gap-1 rounded border border-black/30 bg-white/90 p-2 shadow"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-medium text-gray-700">Filter</span>
+                        <button
+                          type="button"
+                          className={`rounded border px-2 py-0.5 text-[11px] ${
+                            imageFilter === null
+                              ? "border-blue-500 bg-blue-50 text-blue-700"
+                              : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                          }`}
+                          onClick={() => setImageFilter(null)}
+                          aria-label="Disable filter"
+                          title="Disable filter"
+                        >
+                          Off
+                        </button>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <span className="text-xs font-medium text-gray-700">Monochrome</span>
+                        <div className="grid grid-cols-3 gap-1">
+                          {(Object.entries(MONOCHROME_PRESET_LABELS) as Array<[ImageMonochromePreset, string]>).map(([preset, label]) => {
+                            const selected = imageFilter?.kind === "monochrome" && imageFilter.preset === preset;
+                            return (
+                              <button
+                                key={preset}
+                                type="button"
+                                className={`rounded border px-2 py-1 text-[11px] ${
+                                  selected
+                                    ? "border-blue-500 bg-blue-50 text-blue-700"
+                                    : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                                }`}
+                                onClick={() => setImageFilter({ kind: "monochrome", preset })}
+                                aria-label={label}
+                                title={label}
+                              >
+                                {label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <span className="text-xs font-medium text-gray-700">Others</span>
+                        <div className="grid grid-cols-2 gap-1">
+                          {(Object.entries(OTHER_FILTER_LABELS) as Array<[ImageOtherFilterPreset, string]>).map(([preset, label]) => {
+                            const selected = imageFilter?.kind === "other" && imageFilter.preset === preset;
+                            return (
+                              <button
+                                key={preset}
+                                type="button"
+                                className={`rounded border px-2 py-1 text-[11px] ${
+                                  selected
+                                    ? "border-blue-500 bg-blue-50 text-blue-700"
+                                    : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                                }`}
+                                onClick={() => setImageFilter({ kind: "other", preset })}
+                                aria-label={label}
+                                title={label}
+                              >
+                                {label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
                     </div>
                   )}
                   {!eyedropperMode && drawMode && (
@@ -8532,6 +8986,7 @@ export function ImageEditDialog({
                   }`}
                   onClick={(e) => {
                     e.stopPropagation();
+                    setFilterMode(false);
                     setTextMode(false);
                     setActiveTextId(null);
                     textMoveState.current = null;
@@ -8573,6 +9028,7 @@ export function ImageEditDialog({
                       : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
                   }`}
                   onClick={() => {
+                    setFilterMode(false);
                     setTextMode(false);
                     setActiveTextId(null);
                     textMoveState.current = null;
