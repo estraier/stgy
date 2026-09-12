@@ -93,13 +93,14 @@ const OUTPUT_SIZE_PRESETS = [
 
 const TONE_ANALYSIS_TARGET_PIXELS = 256 * 256;
 const SINGLE_SHOT_HDR1_EXPOSURE_EVS = new Float32Array([-2, 0, 2]);
+const SINGLE_SHOT_HDR1_SIGMOID_GAINS = new Float32Array([4, 2, 4]);
 const SINGLE_SHOT_HDR1_EXPOSURE_TIMES = new Float32Array([1, 4, 16]);
 // Single-shot HDR2 follows the scaled-log pair used by jkzr_proc DRO:
 //   light: log(1 + c*x) / log(1 + c)
 //   dark:  ((1 + c)^x - 1) / c
 // c=4 matches the previous ±2 EV material strength while avoiding linear exposure scaling.
 const SINGLE_SHOT_HDR2_SCALED_LOGS = new Float32Array([-4, 0, 4]);
-const SINGLE_SHOT_HDR_OUTER_SIGMOID_GAIN = 2;
+const SINGLE_SHOT_HDR2_SIGMOID_GAINS = new Float32Array([4, 2, 4]);
 const MULTI_SHOT_HDR2_SIGMOID_GAIN = 4;
 const SINGLE_SHOT_HDR_SATURATION_WEIGHT = 0.1;
 const SINGLE_SHOT_HDR_EXPOSURE_WEIGHT = 1.0;
@@ -1532,19 +1533,19 @@ function buildSingleShotHdrSyntheticMaterials(mode) {
       {
         label: "dark",
         exposureEv: SINGLE_SHOT_HDR1_EXPOSURE_EVS[0],
-        sigmoidGain: SINGLE_SHOT_HDR_OUTER_SIGMOID_GAIN,
+        sigmoidGain: SINGLE_SHOT_HDR1_SIGMOID_GAINS[0],
         sigmoidMidpoint: 1,
       },
       {
         label: "medium",
         exposureEv: SINGLE_SHOT_HDR1_EXPOSURE_EVS[1],
-        sigmoidGain: 4,
+        sigmoidGain: SINGLE_SHOT_HDR1_SIGMOID_GAINS[1],
         sigmoidMidpoint: 0.5,
       },
       {
         label: "light",
         exposureEv: SINGLE_SHOT_HDR1_EXPOSURE_EVS[2],
-        sigmoidGain: SINGLE_SHOT_HDR_OUTER_SIGMOID_GAIN,
+        sigmoidGain: SINGLE_SHOT_HDR1_SIGMOID_GAINS[2],
         sigmoidMidpoint: 0,
       },
     ];
@@ -1553,19 +1554,19 @@ function buildSingleShotHdrSyntheticMaterials(mode) {
     {
       label: "dark",
       scaledLog: SINGLE_SHOT_HDR2_SCALED_LOGS[0],
-      sigmoidGain: SINGLE_SHOT_HDR_OUTER_SIGMOID_GAIN,
+      sigmoidGain: SINGLE_SHOT_HDR2_SIGMOID_GAINS[0],
       sigmoidMidpoint: 1,
     },
     {
       label: "medium",
       scaledLog: SINGLE_SHOT_HDR2_SCALED_LOGS[1],
-      sigmoidGain: 0,
+      sigmoidGain: SINGLE_SHOT_HDR2_SIGMOID_GAINS[1],
       sigmoidMidpoint: 0.5,
     },
     {
       label: "light",
       scaledLog: SINGLE_SHOT_HDR2_SCALED_LOGS[2],
-      sigmoidGain: SINGLE_SHOT_HDR_OUTER_SIGMOID_GAIN,
+      sigmoidGain: SINGLE_SHOT_HDR2_SIGMOID_GAINS[2],
       sigmoidMidpoint: 0,
     },
   ];
