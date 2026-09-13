@@ -730,14 +730,21 @@ const EDGE_PYRAMID_MIN_AREA = 200_000;
 const EDGE_SOBEL_WEIGHT = 0.55;
 const EDGE_LAPLACIAN_WEIGHT = 0.45;
 const EDGE_LEVEL_WEIGHT_DECAY = 0.78;
-const EDGE_BLEND_USE_RMS = true;
 const EDGE_LEVEL_RESPONSE_GAIN = 4.0;
 const EDGE_OUTPUT_GAMMA = 0.7;
 
 const SEPIA_GRAIN_AMOUNT = 0.02;
 const SEPIA_GRAIN_SHADOW_EXPONENT = 1.1;
+const SEPIA_IMAGE_OPACITY_EXPONENT = 0.9;
 const CYANOTYPE_GRAIN_AMOUNT = 0.02;
 const CYANOTYPE_GRAIN_SHADOW_EXPONENT = 1.3;
+const PHOTOCHEMICAL_GRAIN_FINE_CYCLES_PER_DIAGONAL = 900;
+const PHOTOCHEMICAL_GRAIN_COARSE_CYCLES_PER_DIAGONAL = 260;
+const PHOTOCHEMICAL_PAPER_BROAD_CYCLES_PER_DIAGONAL = 3;
+const PHOTOCHEMICAL_PAPER_MEDIUM_CYCLES_PER_DIAGONAL = 7;
+const PHOTOCHEMICAL_STAIN_BROAD_CYCLES_PER_DIAGONAL = 12;
+const PHOTOCHEMICAL_STAIN_MEDIUM_CYCLES_PER_DIAGONAL = 24;
+const PHOTOCHEMICAL_STAIN_MAX_OPACITY = 0.02;
 const CROSS_PROCESS_TONE_MIX = 0.95;
 const CROSS_PROCESS_TARGET_PERCENTILE = 0.50;
 const BLEACH_BYPASS_SATURATION_SHADOW = 0.5;
@@ -870,6 +877,11 @@ function smoothstep01(x: number): number {
   return t * t * (3 - 2 * t);
 }
 
+function mixUnit(a: number, b: number, t: number): number {
+  const u = clamp01(t);
+  return a * (1 - u) + b * u;
+}
+
 function valueNoise2d(x: number, y: number, scale: number, seed: number): number {
   const sx = x * scale;
   const sy = y * scale;
@@ -886,10 +898,56 @@ function valueNoise2d(x: number, y: number, scale: number, seed: number): number
   return nx0 * (1 - ty) + nx1 * ty;
 }
 
-function samplePhotochemicalGrain(x: number, y: number): number {
-  const fine = valueNoise2d(x, y, 192, 11);
-  const coarse = valueNoise2d(x, y, 28, 37);
+function photochemicalDiagonalScale(width: number, height: number): number {
+  return Math.max(1, Math.hypot(width, height));
+}
+
+function samplePhotochemicalGrain(x: number, y: number, width: number, height: number): number {
+  const diagonal = photochemicalDiagonalScale(width, height);
+  const nx = x / diagonal;
+  const ny = y / diagonal;
+  const fine = valueNoise2d(nx, ny, PHOTOCHEMICAL_GRAIN_FINE_CYCLES_PER_DIAGONAL, 11);
+  const coarse = valueNoise2d(nx, ny, PHOTOCHEMICAL_GRAIN_COARSE_CYCLES_PER_DIAGONAL, 37);
   return ((fine * 0.75 + coarse * 0.25) - 0.5) * 2;
+}
+
+function samplePhotochemicalPaperAging(x: number, y: number, width: number, height: number): number {
+  const diagonal = photochemicalDiagonalScale(width, height);
+  const nx = x / diagonal;
+  const ny = y / diagonal;
+  const broad = valueNoise2d(nx, ny, PHOTOCHEMICAL_PAPER_BROAD_CYCLES_PER_DIAGONAL, 53);
+  const medium = valueNoise2d(nx, ny, PHOTOCHEMICAL_PAPER_MEDIUM_CYCLES_PER_DIAGONAL, 79);
+  return clamp01(0.18 + broad * 0.22 + medium * 0.10);
+}
+
+function samplePhotochemicalResidualStainOpacity(x: number, y: number, width: number, height: number): number {
+  const diagonal = photochemicalDiagonalScale(width, height);
+  const nx = x / diagonal;
+  const ny = y / diagonal;
+  const broad = valueNoise2d(nx, ny, PHOTOCHEMICAL_STAIN_BROAD_CYCLES_PER_DIAGONAL, 101);
+  const medium = valueNoise2d(nx, ny, PHOTOCHEMICAL_STAIN_MEDIUM_CYCLES_PER_DIAGONAL, 131);
+  const stain = broad * 0.65 + medium * 0.35;
+  return clamp01(stain) * PHOTOCHEMICAL_STAIN_MAX_OPACITY;
+}
+
+function samplePhotochemicalPaperColor(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  baseR: number,
+  baseG: number,
+  baseB: number,
+  agedR: number,
+  agedG: number,
+  agedB: number,
+): [number, number, number] {
+  const aging = samplePhotochemicalPaperAging(x, y, width, height);
+  return [
+    mixUnit(baseR, agedR, aging),
+    mixUnit(baseG, agedG, aging),
+    mixUnit(baseB, agedB, aging),
+  ];
 }
 
 function normalizeMonochromePreset(value: unknown): ImageMonochromePreset {
@@ -1462,18 +1520,37 @@ function applyVignetteToRgb16(
 }
 
 
-function applySepiaLinearRgb(r: number, g: number, b: number, x: number, yPos: number): [number, number, number] {
-  const [wr, wg, wb] = MONOCHROME_PRESET_WEIGHTS.blue;
-  const y = wr * r + wg * g + wb * b;
+function applySepiaLinearRgb(r: number, g: number, b: number, x: number, yPos: number, width: number, height: number): [number, number, number] {
+  const y = 0.098 * r + 0.236 * g + 0.666 * b;
   const p = Math.pow(clamp01(y), 1 / 2.2);
-  const grain = samplePhotochemicalGrain(x, yPos);
+  const grain = samplePhotochemicalGrain(x, yPos, width, height);
   const shadowWeight = Math.pow(1 - p, SEPIA_GRAIN_SHADOW_EXPONENT);
   let faded = Math.pow(p, 0.88);
   faded = clamp01(faded + grain * SEPIA_GRAIN_AMOUNT * shadowWeight);
   faded = clamp01(faded * 0.96);
-  const sr = 1.02 * faded;
-  const sg = 0.95 * faded;
-  const sb = 0.79 * faded;
+
+  const [paperR, paperG, paperB] = samplePhotochemicalPaperColor(
+    x,
+    yPos,
+    width,
+    height,
+    1,
+    1,
+    1,
+    0.92,
+    0.87,
+    0.74,
+  );
+  const imageR = clamp01(1.02 * faded);
+  const imageG = clamp01(0.95 * faded);
+  const imageB = clamp01(0.79 * faded);
+  const normalizedHighlight = clamp01(faded / 0.96);
+  const density = Math.pow(1 - normalizedHighlight, SEPIA_IMAGE_OPACITY_EXPONENT);
+  const residualStainOpacity = samplePhotochemicalResidualStainOpacity(x, yPos, width, height);
+  const imageOpacity = residualStainOpacity + (1 - residualStainOpacity) * density;
+  const sr = mixUnit(paperR, imageR, imageOpacity);
+  const sg = mixUnit(paperG, imageG, imageOpacity);
+  const sb = mixUnit(paperB, imageB, imageOpacity);
   return [
     clamp01(Math.pow(clamp01(sr), 2.2)),
     clamp01(Math.pow(clamp01(sg), 2.2)),
@@ -1585,29 +1662,41 @@ function applyBleachBypassLinearRgb(r: number, g: number, b: number): [number, n
 }
 
 
-function applyCyanotypeLinearRgb(r: number, g: number, b: number, x: number, yPos: number): [number, number, number] {
+function applyCyanotypeLinearRgb(r: number, g: number, b: number, x: number, yPos: number, width: number, height: number): [number, number, number] {
   const lr = Math.pow(clamp01(r), 1 / 2.2);
   const lg = Math.pow(clamp01(g), 1 / 2.2);
   const lb = Math.pow(clamp01(b), 1 / 2.2);
 
-  const exposure = 0.10 * lg + 0.90 * lb;
+  const exposure = 0.0 * lr + 0.10 * lg + 0.90 * lb;
   const density = exposure * exposure * (3 - 2 * exposure);
   const lifted = Math.pow(density, 0.82);
-  const grain = samplePhotochemicalGrain(x, yPos);
+  const grain = samplePhotochemicalGrain(x, yPos, width, height);
   const shadowWeight = Math.pow(1 - lifted, CYANOTYPE_GRAIN_SHADOW_EXPONENT);
   const mappedDensity = clamp01(lifted + grain * CYANOTYPE_GRAIN_AMOUNT * shadowWeight);
 
   const prussianR = 0.05;
-  const prussianG = 0.20;
+  const prussianG = 0.14;
   const prussianB = 0.40;
 
-  const paperR = 0.96;
-  const paperG = 0.96;
-  const paperB = 0.94;
+  const [paperR, paperG, paperB] = samplePhotochemicalPaperColor(
+    x,
+    yPos,
+    width,
+    height,
+    1,
+    1,
+    1,
+    0.90,
+    0.86,
+    0.76,
+  );
 
-  const cr = prussianR * (1 - mappedDensity) + paperR * mappedDensity;
-  const cg = prussianG * (1 - mappedDensity) + paperG * mappedDensity;
-  const cb = prussianB * (1 - mappedDensity) + paperB * mappedDensity;
+  const residualStainOpacity = samplePhotochemicalResidualStainOpacity(x, yPos, width, height);
+  const imageDensity = 1 - mappedDensity;
+  const imageOpacity = residualStainOpacity + (1 - residualStainOpacity) * imageDensity;
+  const cr = mixUnit(paperR, prussianR, imageOpacity);
+  const cg = mixUnit(paperG, prussianG, imageOpacity);
+  const cb = mixUnit(paperB, prussianB, imageOpacity);
 
   return [
     clamp01(Math.pow(Math.max(0, cr), 2.2)),
@@ -1626,15 +1715,15 @@ function applySepiaFilterToCanvasData(
     const pixelIndex = Math.floor(i / 4);
     const px = pixelIndex % width;
     const py = Math.floor(pixelIndex / width);
-    const x = (px + 0.5) / Math.max(1, width);
-    const yPos = (py + 0.5) / Math.max(1, height);
+    const x = px + 0.5;
+    const yPos = py + 0.5;
     const [r, g, b] = encodedRgbToLinearProphoto(
       (rgba8[i] ?? 0) / 255,
       (rgba8[i + 1] ?? 0) / 255,
       (rgba8[i + 2] ?? 0) / 255,
       profile,
     );
-    const [fr, fg, fb] = applySepiaLinearRgb(r, g, b, x, yPos);
+    const [fr, fg, fb] = applySepiaLinearRgb(r, g, b, x, yPos, width, height);
     const [er, eg, eb] = convertLinearProPhotoToOutputRgb(fr, fg, fb, profile);
     rgba8[i] = linearChannelToSrgb(er);
     rgba8[i + 1] = linearChannelToSrgb(eg);
@@ -1701,15 +1790,15 @@ function applyCyanotypeFilterToCanvasData(
     const pixelIndex = Math.floor(i / 4);
     const px = pixelIndex % width;
     const py = Math.floor(pixelIndex / width);
-    const x = (px + 0.5) / Math.max(1, width);
-    const yPos = (py + 0.5) / Math.max(1, height);
+    const x = px + 0.5;
+    const yPos = py + 0.5;
     const [r, g, b] = encodedRgbToLinearProphoto(
       (rgba8[i] ?? 0) / 255,
       (rgba8[i + 1] ?? 0) / 255,
       (rgba8[i + 2] ?? 0) / 255,
       profile,
     );
-    const [fr, fg, fb] = applyCyanotypeLinearRgb(r, g, b, x, yPos);
+    const [fr, fg, fb] = applyCyanotypeLinearRgb(r, g, b, x, yPos, width, height);
     const [er, eg, eb] = convertLinearProPhotoToOutputRgb(fr, fg, fb, profile);
     rgba8[i] = linearChannelToSrgb(er);
     rgba8[i + 1] = linearChannelToSrgb(eg);
@@ -1995,20 +2084,11 @@ function blendEdgeResponses(
 ): Float32Array {
   const output = new Float32Array(fine.length);
   const clampedWeight = Math.max(0, coarseWeight);
-  if (EDGE_BLEND_USE_RMS) {
-    const norm = 1 / Math.sqrt(1 + clampedWeight * clampedWeight);
-    for (let i = 0; i < fine.length; i += 1) {
-      const fineValue = fine[i] ?? 0;
-      const coarseValue = (coarse[i] ?? 0) * clampedWeight;
-      output[i] = Math.sqrt(fineValue * fineValue + coarseValue * coarseValue) * norm;
-    }
-  } else {
-    const norm = 1 / (1 + clampedWeight);
-    for (let i = 0; i < fine.length; i += 1) {
-      const fineValue = fine[i] ?? 0;
-      const coarseValue = (coarse[i] ?? 0) * clampedWeight;
-      output[i] = (fineValue + coarseValue) * norm;
-    }
+  const norm = 1 / (1 + clampedWeight);
+  for (let i = 0; i < fine.length; i += 1) {
+    const fineValue = fine[i] ?? 0;
+    const coarseValue = (coarse[i] ?? 0) * clampedWeight;
+    output[i] = (fineValue + coarseValue) * norm;
   }
   return output;
 }
@@ -2263,12 +2343,12 @@ function applySepiaFilterToRgb16(data: Uint16Array, width: number, height: numbe
     const index = pixel * 3;
     const px = pixel % width;
     const py = Math.floor(pixel / width);
-    const x = (px + 0.5) / Math.max(1, width);
-    const yPos = (py + 0.5) / Math.max(1, height);
+    const x = px + 0.5;
+    const yPos = py + 0.5;
     const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
     const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
     const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
-    const [fr, fg, fb] = applySepiaLinearRgb(r, g, b, x, yPos);
+    const [fr, fg, fb] = applySepiaLinearRgb(r, g, b, x, yPos, width, height);
     data[index] = encodeStoredRgb16Channel(fr, "gamma20", 1);
     data[index + 1] = encodeStoredRgb16Channel(fg, "gamma20", 1);
     data[index + 2] = encodeStoredRgb16Channel(fb, "gamma20", 1);
@@ -2306,12 +2386,12 @@ function applyCyanotypeFilterToRgb16(data: Uint16Array, width: number, height: n
     const index = pixel * 3;
     const px = pixel % width;
     const py = Math.floor(pixel / width);
-    const x = (px + 0.5) / Math.max(1, width);
-    const yPos = (py + 0.5) / Math.max(1, height);
+    const x = px + 0.5;
+    const yPos = py + 0.5;
     const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
     const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
     const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
-    const [fr, fg, fb] = applyCyanotypeLinearRgb(r, g, b, x, yPos);
+    const [fr, fg, fb] = applyCyanotypeLinearRgb(r, g, b, x, yPos, width, height);
     data[index] = encodeStoredRgb16Channel(fr, "gamma20", 1);
     data[index + 1] = encodeStoredRgb16Channel(fg, "gamma20", 1);
     data[index + 2] = encodeStoredRgb16Channel(fb, "gamma20", 1);
