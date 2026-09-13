@@ -732,6 +732,8 @@ const OTHER_FILTER_LABELS: Record<ImageOtherFilterPreset, string> = {
 };
 
 const DUOTONE_TARGET_PERCENTILE = 0.50;
+const SOLARIZATION_PEAK = 0.97;
+const SOLARIZATION_TARGET_PERCENTILE = 0.50;
 
 const EDGE_PYRAMID_MIN_AREA = 200_000;
 const EDGE_SOBEL_WEIGHT = 0.55;
@@ -744,15 +746,12 @@ const SEPIA_GRAIN_AMOUNT = 0.002;
 const SEPIA_GRAIN_SHADOW_EXPONENT = 1.1;
 const CYANOTYPE_GRAIN_AMOUNT = 0.003;
 const CYANOTYPE_GRAIN_SHADOW_EXPONENT = 1.1;
-// Fixed image-material colors in linear RGB. Display-domain targets are
-// Sepia=(0.18, 0.12, 0.06), Cyanotype=(0.05, 0.14, 0.40).
-const SEPIA_MATERIAL_R = 0.022993;
-const SEPIA_MATERIAL_G = 0.009423;
-const SEPIA_MATERIAL_B = 0.002051;
-const CYANOTYPE_MATERIAL_R = 0.001373;
-const CYANOTYPE_MATERIAL_G = 0.013228;
-const CYANOTYPE_MATERIAL_B = 0.133209;
-// Aged-paper colors are likewise stored as linear RGB.
+const SEPIA_MATERIAL_R = 0.020;
+const SEPIA_MATERIAL_G = 0.010;
+const SEPIA_MATERIAL_B = 0.002;
+const CYANOTYPE_MATERIAL_R = 0.001;
+const CYANOTYPE_MATERIAL_G = 0.015;
+const CYANOTYPE_MATERIAL_B = 0.130;
 const SEPIA_AGED_PAPER_R = 0.832402;
 const SEPIA_AGED_PAPER_G = 0.736109;
 const SEPIA_AGED_PAPER_B = 0.515596;
@@ -2422,6 +2421,11 @@ function applyGammaSpaceInversion(channel: number): number {
   return Math.pow(1 - gammaEncoded, 2.4);
 }
 
+function applySolarizationTone(channel: number): number {
+  const x = clamp01(channel);
+  return clamp01(4 * SOLARIZATION_PEAK * x * (1 - x));
+}
+
 function applyNegativeFilterToCanvasData(
   rgba8: Uint8ClampedArray,
   profile: ImageEditOutputColorProfile,
@@ -2459,14 +2463,20 @@ function applyNegativeFilterToRgb16(data: Uint16Array, width: number, height: nu
 }
 
 function applySolarizationLinearRgb(r: number, g: number, b: number): [number, number, number] {
-  const [h, s, v] = rgbToHsv(clamp01(r), clamp01(g), clamp01(b));
-  return hsvToRgb(h, s, applyGammaSpaceInversion(v));
+  return [
+    applySolarizationTone(r),
+    applySolarizationTone(g),
+    applySolarizationTone(b),
+  ];
 }
 
 function applySolarizationFilterToCanvasData(
   rgba8: Uint8ClampedArray,
   profile: ImageEditOutputColorProfile,
 ): void {
+  const beforeHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
+  const filteredHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
+
   for (let i = 0; i < rgba8.length; i += 4) {
     const [r, g, b] = encodedRgbToLinearProphoto(
       (rgba8[i] ?? 0) / 255,
@@ -2475,7 +2485,31 @@ function applySolarizationFilterToCanvasData(
       profile,
     );
     const [fr, fg, fb] = applySolarizationLinearRgb(r, g, b);
-    const [er, eg, eb] = convertLinearProPhotoToOutputRgb(fr, fg, fb, profile);
+    accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
+    accumulateLogLumaHistogram(filteredHistogram, prophotoLumaForFilter(fr, fg, fb));
+  }
+
+  const beforeP50Ev = estimateLogPercentileFromHistogram(beforeHistogram, SOLARIZATION_TARGET_PERCENTILE);
+  const filteredP50Ev = estimateLogPercentileFromHistogram(filteredHistogram, SOLARIZATION_TARGET_PERCENTILE);
+  const beforeP50Luma = Math.pow(2, beforeP50Ev);
+  const filteredP50Luma = Math.pow(2, filteredP50Ev);
+  const recoveryScaledLog = solveFilterScaledLogForTargetLuma(filteredP50Luma, beforeP50Luma);
+
+  for (let i = 0; i < rgba8.length; i += 4) {
+    const [r, g, b] = encodedRgbToLinearProphoto(
+      (rgba8[i] ?? 0) / 255,
+      (rgba8[i + 1] ?? 0) / 255,
+      (rgba8[i + 2] ?? 0) / 255,
+      profile,
+    );
+    const [fr, fg, fb] = applySolarizationLinearRgb(r, g, b);
+    const [recoveredR, recoveredG, recoveredB] = applyFilterScaledLogToLinearRgb(
+      fr,
+      fg,
+      fb,
+      recoveryScaledLog,
+    );
+    const [er, eg, eb] = convertLinearProPhotoToOutputRgb(recoveredR, recoveredG, recoveredB, profile);
     rgba8[i] = linearChannelToSrgb(er);
     rgba8[i + 1] = linearChannelToSrgb(eg);
     rgba8[i + 2] = linearChannelToSrgb(eb);
@@ -2483,16 +2517,41 @@ function applySolarizationFilterToCanvasData(
 }
 
 function applySolarizationFilterToRgb16(data: Uint16Array, width: number, height: number): void {
+  const beforeHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
+  const filteredHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
   const pixelCount = width * height;
+
   for (let pixel = 0; pixel < pixelCount; pixel += 1) {
     const index = pixel * 3;
     const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
     const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
     const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
     const [fr, fg, fb] = applySolarizationLinearRgb(r, g, b);
-    data[index] = encodeStoredRgb16Channel(fr, "gamma20", 1);
-    data[index + 1] = encodeStoredRgb16Channel(fg, "gamma20", 1);
-    data[index + 2] = encodeStoredRgb16Channel(fb, "gamma20", 1);
+    accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
+    accumulateLogLumaHistogram(filteredHistogram, prophotoLumaForFilter(fr, fg, fb));
+  }
+
+  const beforeP50Ev = estimateLogPercentileFromHistogram(beforeHistogram, SOLARIZATION_TARGET_PERCENTILE);
+  const filteredP50Ev = estimateLogPercentileFromHistogram(filteredHistogram, SOLARIZATION_TARGET_PERCENTILE);
+  const beforeP50Luma = Math.pow(2, beforeP50Ev);
+  const filteredP50Luma = Math.pow(2, filteredP50Ev);
+  const recoveryScaledLog = solveFilterScaledLogForTargetLuma(filteredP50Luma, beforeP50Luma);
+
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const index = pixel * 3;
+    const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
+    const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
+    const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
+    const [fr, fg, fb] = applySolarizationLinearRgb(r, g, b);
+    const [recoveredR, recoveredG, recoveredB] = applyFilterScaledLogToLinearRgb(
+      fr,
+      fg,
+      fb,
+      recoveryScaledLog,
+    );
+    data[index] = encodeStoredRgb16Channel(recoveredR, "gamma20", 1);
+    data[index + 1] = encodeStoredRgb16Channel(recoveredG, "gamma20", 1);
+    data[index + 2] = encodeStoredRgb16Channel(recoveredB, "gamma20", 1);
   }
 }
 
