@@ -5,9 +5,9 @@
   "author": "Mikio Hirabayashi",
   "license": "MIT",
   "scripts": {
-    "build": "NODE_OPTIONS=\"${NODE_OPTIONS:+$NODE_OPTIONS }--disable-warning=DEP0205\" next build",
-    "start": "NODE_OPTIONS=\"${NODE_OPTIONS:+$NODE_OPTIONS }--disable-warning=DEP0205\" next start",
-    "dev": "NODE_OPTIONS=\"${NODE_OPTIONS:+$NODE_OPTIONS }--disable-warning=DEP0205\" next dev --turbopack",
+    "build": "next build",
+    "start": "next start",
+    "dev": "next dev --turbopack",
     "test": "jest",
     "fmt": "prettier --write .",
     "lint": "eslint src --ext .js,.jsx,.ts,.tsx",
