@@ -713,7 +713,24 @@ const OTHER_FILTER_LABELS: Record<ImageOtherFilterPreset, string> = {
   "bleach-bypass": "Bleach Bypass",
 };
 
-const CROSS_PROCESS_TONE_AMOUNT = 0.66;
+const SEPIA_GRAIN_AMOUNT = 0.02;
+const SEPIA_GRAIN_SHADOW_EXPONENT = 1.1;
+const CYANOTYPE_GRAIN_AMOUNT = 0.02;
+const CYANOTYPE_GRAIN_SHADOW_EXPONENT = 1.3;
+const CROSS_PROCESS_TONE_MIX = 0.95;
+const CROSS_PROCESS_TARGET_PERCENTILE = 0.50;
+const BLEACH_BYPASS_SATURATION_SHADOW = 0.5;
+const BLEACH_BYPASS_SATURATION_HIGHLIGHT = 0.98;
+const BLEACH_BYPASS_VIBRANCE_SHADOW = -0.34;
+const BLEACH_BYPASS_VIBRANCE_HIGHLIGHT = -0.08;
+const BLEACH_BYPASS_SATURATION_SAME_HUE = 1.0;
+const BLEACH_BYPASS_SATURATION_OPPOSITE_HUE = 0.98;
+const BLEACH_BYPASS_VIBRANCE_SAME_HUE = -0.36;
+const BLEACH_BYPASS_VIBRANCE_OPPOSITE_HUE = -0.08;
+const BLEACH_BYPASS_VALUE_AMOUNT = 0.3;
+const BLEACH_BYPASS_TARGET_HUE_DEGREES = 200;
+const BLEACH_BYPASS_SATURATION_DISTANCE_MAX_DEGREES = 180;
+const BLEACH_BYPASS_HUE_EXPONENT = 1.2;
 const BLEACH_BYPASS_TARGET_PERCENTILE = 0.50;
 const FILTER_LOG_HISTOGRAM_BINS = 1024;
 const FILTER_LOG_LUMA_MIN_EV = -16;
@@ -754,7 +771,7 @@ function estimateLogPercentileFromHistogram(histogram: Uint32Array, percentile: 
   return FILTER_LOG_LUMA_MAX_EV;
 }
 
-function solveBleachBypassScaledLogForTargetLuma(sourceLuma: number, targetLuma: number): number {
+function solveFilterScaledLogForTargetLuma(sourceLuma: number, targetLuma: number): number {
   if (!(sourceLuma > 0) || !(targetLuma > 0) || !Number.isFinite(sourceLuma) || !Number.isFinite(targetLuma)) {
     return 0;
   }
@@ -794,7 +811,7 @@ function solveBleachBypassScaledLogForTargetLuma(sourceLuma: number, targetLuma:
   return Math.abs(targetLuma - lowValue) <= Math.abs(highValue - targetLuma) ? low : high;
 }
 
-function applyBleachBypassScaledLogToLinearRgb(r: number, g: number, b: number, scaledLog: number): [number, number, number] {
+function applyFilterScaledLogToLinearRgb(r: number, g: number, b: number, scaledLog: number): [number, number, number] {
   if (!Number.isFinite(scaledLog) || Math.abs(scaledLog) < 1e-6) return [r, g, b];
   const sourceLuma = prophotoLumaForFilter(r, g, b);
   if (!(sourceLuma > 1e-12)) return [r, g, b];
@@ -804,7 +821,7 @@ function applyBleachBypassScaledLogToLinearRgb(r: number, g: number, b: number, 
   return [Math.max(0, r * scale), Math.max(0, g * scale), Math.max(0, b * scale)];
 }
 
-function applyBleachBypassScaledLogToRgb16(data: Uint16Array, width: number, height: number, scaledLog: number): void {
+function applyFilterScaledLogToRgb16(data: Uint16Array, width: number, height: number, scaledLog: number): void {
   if (!Number.isFinite(scaledLog) || Math.abs(scaledLog) < 1e-6 || width <= 0 || height <= 0) return;
   const pixelCount = width * height;
   for (let pixel = 0; pixel < pixelCount; pixel += 1) {
@@ -812,39 +829,11 @@ function applyBleachBypassScaledLogToRgb16(data: Uint16Array, width: number, hei
     const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
     const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
     const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
-    const [nr, ng, nb] = applyBleachBypassScaledLogToLinearRgb(r, g, b, scaledLog);
+    const [nr, ng, nb] = applyFilterScaledLogToLinearRgb(r, g, b, scaledLog);
     data[index] = encodeStoredRgb16Channel(nr, "gamma20", 1);
     data[index + 1] = encodeStoredRgb16Channel(ng, "gamma20", 1);
     data[index + 2] = encodeStoredRgb16Channel(nb, "gamma20", 1);
   }
-}
-
-function blendCrossProcessLumaTowardInput(
-  inputR: number,
-  inputG: number,
-  inputB: number,
-  filteredR: number,
-  filteredG: number,
-  filteredB: number,
-  toneAmount: number,
-): [number, number, number] {
-  const epsilon = 1e-8;
-  const inputY = prophotoLumaForFilter(inputR, inputG, inputB);
-  const filteredY = prophotoLumaForFilter(filteredR, filteredG, filteredB);
-  if (!(filteredY > epsilon)) return [0, 0, 0];
-  if (!(inputY > epsilon)) return [clamp01(filteredR), clamp01(filteredG), clamp01(filteredB)];
-
-  const amount = clamp01(toneAmount);
-  const logInputY = Math.log2(inputY);
-  const logFilteredY = Math.log2(filteredY);
-  const targetY = Math.pow(2, logInputY * (1 - amount) + logFilteredY * amount);
-  const gain = targetY / filteredY;
-
-  return [
-    clamp01(filteredR * gain),
-    clamp01(filteredG * gain),
-    clamp01(filteredB * gain),
-  ];
 }
 
 function hashNoise01(ix: number, iy: number, seed: number): number {
@@ -1441,9 +1430,9 @@ function applySepiaLinearRgb(r: number, g: number, b: number, x: number, yPos: n
   const y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
   const p = Math.pow(clamp01(y), 1 / 2.2);
   const grain = samplePhotochemicalGrain(x, yPos);
-  const shadowWeight = Math.pow(1 - p, 1.1);
+  const shadowWeight = Math.pow(1 - p, SEPIA_GRAIN_SHADOW_EXPONENT);
   let faded = Math.pow(p, 0.88);
-  faded = clamp01(faded + grain * 0.02 * shadowWeight);
+  faded = clamp01(faded + grain * SEPIA_GRAIN_AMOUNT * shadowWeight);
   faded = clamp01(faded * 0.96);
   const sr = 1.02 * faded;
   const sg = 0.95 * faded;
@@ -1472,10 +1461,9 @@ function applyChemicalCrossProcessLinearRgb(r: number, g: number, b: number): [n
   const devG = applyHDCurve(workG, 4.00, 0.500);
   const devB = applyHDCurve(workB, 3.75, 0.484);
 
-  const toneMix = 0.86;
-  const crossR = workR * (1 - toneMix) + devR * toneMix;
-  const crossG = workG * (1 - toneMix) + devG * toneMix;
-  const crossB = workB * (1 - toneMix) + devB * toneMix;
+  const crossR = workR * (1 - CROSS_PROCESS_TONE_MIX) + devR * CROSS_PROCESS_TONE_MIX;
+  const crossG = workG * (1 - CROSS_PROCESS_TONE_MIX) + devG * CROSS_PROCESS_TONE_MIX;
+  const crossB = workB * (1 - CROSS_PROCESS_TONE_MIX) + devB * CROSS_PROCESS_TONE_MIX;
 
   const dyeR = 1.014 * crossR - 0.009 * crossG - 0.002 * crossB;
   const dyeG = -0.007 * crossR + 1.014 * crossG - 0.007 * crossB;
@@ -1484,7 +1472,7 @@ function applyChemicalCrossProcessLinearRgb(r: number, g: number, b: number): [n
   const filteredR = Math.pow(Math.max(0, dyeR), 2.0);
   const filteredG = Math.pow(Math.max(0, dyeG), 2.0);
   const filteredB = Math.pow(Math.max(0, dyeB), 2.0);
-  return blendCrossProcessLumaTowardInput(r, g, b, filteredR, filteredG, filteredB, CROSS_PROCESS_TONE_AMOUNT);
+  return [clamp01(filteredR), clamp01(filteredG), clamp01(filteredB)];
 }
 
 function applyBleachBypassLinearRgb(r: number, g: number, b: number): [number, number, number] {
@@ -1493,20 +1481,51 @@ function applyBleachBypassLinearRgb(r: number, g: number, b: number): [number, n
   const workB = Math.pow(clamp01(b), 1 / 2.2);
 
   const [h, s, v] = rgbToHsv(workR, workG, workB);
-  const saturationShadowWeight = Math.pow(1 - v, 1.15);
   const valueShadowWeight = Math.pow(1 - v, 1.5);
-  const linearlyReducedS = clamp01(s * (1 - 0.7 * saturationShadowWeight));
-  const [preVibranceR, preVibranceG, preVibranceB] = hsvToRgb(h, linearlyReducedS, v);
+  const bleachBypassBlueTargetHue = BLEACH_BYPASS_TARGET_HUE_DEGREES / 360;
+  let signedHueDistance = h - bleachBypassBlueTargetHue;
+  if (signedHueDistance > 0.5) signedHueDistance -= 1;
+  if (signedHueDistance < -0.5) signedHueDistance += 1;
+  const hueDistanceDegrees = Math.abs(signedHueDistance) * 360;
+  const hueDistanceFactor = Math.min(
+    1,
+    hueDistanceDegrees / BLEACH_BYPASS_SATURATION_DISTANCE_MAX_DEGREES,
+  );
+  const shiftedHueDistanceDegrees =
+    Math.pow(
+      hueDistanceDegrees / BLEACH_BYPASS_SATURATION_DISTANCE_MAX_DEGREES,
+      BLEACH_BYPASS_HUE_EXPONENT,
+    ) * BLEACH_BYPASS_SATURATION_DISTANCE_MAX_DEGREES;
+  const shiftedHue =
+    bleachBypassBlueTargetHue + Math.sign(signedHueDistance) * (shiftedHueDistanceDegrees / 360);
+  const normalizedShiftedHue = ((shiftedHue % 1) + 1) % 1;
+  const saturationByValue =
+    BLEACH_BYPASS_SATURATION_SHADOW
+    + (BLEACH_BYPASS_SATURATION_HIGHLIGHT - BLEACH_BYPASS_SATURATION_SHADOW) * v;
+  const saturationByHue =
+    BLEACH_BYPASS_SATURATION_SAME_HUE
+    + (BLEACH_BYPASS_SATURATION_OPPOSITE_HUE - BLEACH_BYPASS_SATURATION_SAME_HUE) * hueDistanceFactor;
+  const linearlyReducedS = clamp01(s * saturationByValue * saturationByHue);
+  const [preVibranceR, preVibranceG, preVibranceB] = hsvToRgb(
+    normalizedShiftedHue,
+    linearlyReducedS,
+    v,
+  );
 
   let linearR = Math.pow(preVibranceR, 2.2);
   let linearG = Math.pow(preVibranceG, 2.2);
   let linearB = Math.pow(preVibranceB, 2.2);
 
-  const vibranceAmount = -8 + 6 * v;
+  const vibranceByValue =
+    BLEACH_BYPASS_VIBRANCE_SHADOW
+    + (BLEACH_BYPASS_VIBRANCE_HIGHLIGHT - BLEACH_BYPASS_VIBRANCE_SHADOW) * v;
+  const vibranceByHue =
+    BLEACH_BYPASS_VIBRANCE_SAME_HUE
+    + (BLEACH_BYPASS_VIBRANCE_OPPOSITE_HUE - BLEACH_BYPASS_VIBRANCE_SAME_HUE) * hueDistanceFactor;
   const [, currentSaturation] = rgbToHsvExtended(linearR, linearG, linearB);
   const targetSaturation = applyScaledLogLinearExtended(
     currentSaturation,
-    colorVibranceFactor(vibranceAmount),
+    vibranceByValue * vibranceByHue,
   );
   [linearR, linearG, linearB] = applyHsvSaturationPreservingProPhotoLuminance(
     linearR,
@@ -1515,7 +1534,7 @@ function applyBleachBypassLinearRgb(r: number, g: number, b: number): [number, n
     targetSaturation,
   );
 
-  const filteredV = clamp01(v * (1 - 0.36 * valueShadowWeight));
+  const filteredV = clamp01(v * (1 - BLEACH_BYPASS_VALUE_AMOUNT * valueShadowWeight));
   const valueScale = v > 1e-6 ? filteredV / v : 0;
   const finalWorkR = Math.pow(clamp01(linearR), 1 / 2.2) * valueScale;
   const finalWorkG = Math.pow(clamp01(linearG), 1 / 2.2) * valueScale;
@@ -1538,8 +1557,8 @@ function applyCyanotypeLinearRgb(r: number, g: number, b: number, x: number, yPo
   const density = exposure * exposure * (3 - 2 * exposure);
   const lifted = Math.pow(density, 0.82);
   const grain = samplePhotochemicalGrain(x, yPos);
-  const shadowWeight = Math.pow(1 - lifted, 1.3);
-  const mappedDensity = clamp01(lifted + grain * 0.02 * shadowWeight);
+  const shadowWeight = Math.pow(1 - lifted, CYANOTYPE_GRAIN_SHADOW_EXPONENT);
+  const mappedDensity = clamp01(lifted + grain * CYANOTYPE_GRAIN_AMOUNT * shadowWeight);
 
   const prussianR = 0.05;
   const prussianG = 0.20;
@@ -1588,9 +1607,17 @@ function applySepiaFilterToCanvasData(
 
 function applyCrossProcessFilterToCanvasData(
   rgba8: Uint8ClampedArray,
+  width: number,
+  height: number,
   profile: ImageEditOutputColorProfile,
 ): void {
+  const beforeHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
+  const filteredHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
+  const filteredLinear = new Float32Array(width * height * 3);
+
   for (let i = 0; i < rgba8.length; i += 4) {
+    const pixelIndex = Math.floor(i / 4);
+    const linearIndex = pixelIndex * 3;
     const [r, g, b] = encodedRgbToLinearProphoto(
       (rgba8[i] ?? 0) / 255,
       (rgba8[i + 1] ?? 0) / 255,
@@ -1598,7 +1625,29 @@ function applyCrossProcessFilterToCanvasData(
       profile,
     );
     const [fr, fg, fb] = applyChemicalCrossProcessLinearRgb(r, g, b);
-    const [er, eg, eb] = convertLinearProPhotoToOutputRgb(fr, fg, fb, profile);
+    accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
+    accumulateLogLumaHistogram(filteredHistogram, prophotoLumaForFilter(fr, fg, fb));
+    filteredLinear[linearIndex] = fr;
+    filteredLinear[linearIndex + 1] = fg;
+    filteredLinear[linearIndex + 2] = fb;
+  }
+
+  const beforeP50Ev = estimateLogPercentileFromHistogram(beforeHistogram, CROSS_PROCESS_TARGET_PERCENTILE);
+  const filteredP50Ev = estimateLogPercentileFromHistogram(filteredHistogram, CROSS_PROCESS_TARGET_PERCENTILE);
+  const beforeP50Luma = Math.pow(2, beforeP50Ev);
+  const filteredP50Luma = Math.pow(2, filteredP50Ev);
+  const recoveryScaledLog = solveFilterScaledLogForTargetLuma(filteredP50Luma, beforeP50Luma);
+
+  for (let i = 0; i < rgba8.length; i += 4) {
+    const pixelIndex = Math.floor(i / 4);
+    const linearIndex = pixelIndex * 3;
+    const [recoveredR, recoveredG, recoveredB] = applyFilterScaledLogToLinearRgb(
+      filteredLinear[linearIndex] ?? 0,
+      filteredLinear[linearIndex + 1] ?? 0,
+      filteredLinear[linearIndex + 2] ?? 0,
+      recoveryScaledLog,
+    );
+    const [er, eg, eb] = convertLinearProPhotoToOutputRgb(recoveredR, recoveredG, recoveredB, profile);
     rgba8[i] = linearChannelToSrgb(er);
     rgba8[i + 1] = linearChannelToSrgb(eg);
     rgba8[i + 2] = linearChannelToSrgb(eb);
@@ -1662,12 +1711,12 @@ function applyBleachBypassFilterToCanvasData(
   const filteredP50Ev = estimateLogPercentileFromHistogram(filteredHistogram, BLEACH_BYPASS_TARGET_PERCENTILE);
   const beforeP50Luma = Math.pow(2, beforeP50Ev);
   const filteredP50Luma = Math.pow(2, filteredP50Ev);
-  const recoveryScaledLog = solveBleachBypassScaledLogForTargetLuma(filteredP50Luma, beforeP50Luma);
+  const recoveryScaledLog = solveFilterScaledLogForTargetLuma(filteredP50Luma, beforeP50Luma);
 
   for (let i = 0; i < rgba8.length; i += 4) {
     const pixelIndex = Math.floor(i / 4);
     const linearIndex = pixelIndex * 3;
-    const [recoveredR, recoveredG, recoveredB] = applyBleachBypassScaledLogToLinearRgb(
+    const [recoveredR, recoveredG, recoveredB] = applyFilterScaledLogToLinearRgb(
       filteredLinear[linearIndex] ?? 0,
       filteredLinear[linearIndex + 1] ?? 0,
       filteredLinear[linearIndex + 2] ?? 0,
@@ -1714,7 +1763,7 @@ function applyImageFilterToCanvas(
         applySepiaFilterToCanvasData(rgba8, width, height, profile);
         break;
       case "cross-process":
-        applyCrossProcessFilterToCanvasData(rgba8, profile);
+        applyCrossProcessFilterToCanvasData(rgba8, width, height, profile);
         break;
       case "bleach-bypass":
         applyBleachBypassFilterToCanvasData(rgba8, width, height, profile);
@@ -1747,6 +1796,8 @@ function applySepiaFilterToRgb16(data: Uint16Array, width: number, height: numbe
 }
 
 function applyCrossProcessFilterToRgb16(data: Uint16Array, width: number, height: number): void {
+  const beforeHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
+  const filteredHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
   const pixelCount = width * height;
   for (let pixel = 0; pixel < pixelCount; pixel += 1) {
     const index = pixel * 3;
@@ -1754,10 +1805,19 @@ function applyCrossProcessFilterToRgb16(data: Uint16Array, width: number, height
     const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
     const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
     const [fr, fg, fb] = applyChemicalCrossProcessLinearRgb(r, g, b);
+    accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
+    accumulateLogLumaHistogram(filteredHistogram, prophotoLumaForFilter(fr, fg, fb));
     data[index] = encodeStoredRgb16Channel(fr, "gamma20", 1);
     data[index + 1] = encodeStoredRgb16Channel(fg, "gamma20", 1);
     data[index + 2] = encodeStoredRgb16Channel(fb, "gamma20", 1);
   }
+
+  const beforeP50Ev = estimateLogPercentileFromHistogram(beforeHistogram, CROSS_PROCESS_TARGET_PERCENTILE);
+  const filteredP50Ev = estimateLogPercentileFromHistogram(filteredHistogram, CROSS_PROCESS_TARGET_PERCENTILE);
+  const beforeP50Luma = Math.pow(2, beforeP50Ev);
+  const filteredP50Luma = Math.pow(2, filteredP50Ev);
+  const recoveryScaledLog = solveFilterScaledLogForTargetLuma(filteredP50Luma, beforeP50Luma);
+  applyFilterScaledLogToRgb16(data, width, height, recoveryScaledLog);
 }
 
 function applyCyanotypeFilterToRgb16(data: Uint16Array, width: number, height: number): void {
@@ -1800,8 +1860,8 @@ function applyBleachBypassFilterToRgb16(data: Uint16Array, width: number, height
   const filteredP50Ev = estimateLogPercentileFromHistogram(filteredHistogram, BLEACH_BYPASS_TARGET_PERCENTILE);
   const beforeP50Luma = Math.pow(2, beforeP50Ev);
   const filteredP50Luma = Math.pow(2, filteredP50Ev);
-  const recoveryScaledLog = solveBleachBypassScaledLogForTargetLuma(filteredP50Luma, beforeP50Luma);
-  applyBleachBypassScaledLogToRgb16(data, width, height, recoveryScaledLog);
+  const recoveryScaledLog = solveFilterScaledLogForTargetLuma(filteredP50Luma, beforeP50Luma);
+  applyFilterScaledLogToRgb16(data, width, height, recoveryScaledLog);
 }
 
 function applyImageFilterToRgb16(
