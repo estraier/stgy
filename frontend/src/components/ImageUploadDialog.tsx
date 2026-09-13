@@ -1463,7 +1463,8 @@ function applyVignetteToRgb16(
 
 
 function applySepiaLinearRgb(r: number, g: number, b: number, x: number, yPos: number): [number, number, number] {
-  const y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  const [wr, wg, wb] = MONOCHROME_PRESET_WEIGHTS.blue;
+  const y = wr * r + wg * g + wb * b;
   const p = Math.pow(clamp01(y), 1 / 2.2);
   const grain = samplePhotochemicalGrain(x, yPos);
   const shadowWeight = Math.pow(1 - p, SEPIA_GRAIN_SHADOW_EXPONENT);
@@ -1589,7 +1590,7 @@ function applyCyanotypeLinearRgb(r: number, g: number, b: number, x: number, yPo
   const lg = Math.pow(clamp01(g), 1 / 2.2);
   const lb = Math.pow(clamp01(b), 1 / 2.2);
 
-  const exposure = 0.05 * lr + 0.20 * lg + 0.75 * lb;
+  const exposure = 0.10 * lg + 0.90 * lb;
   const density = exposure * exposure * (3 - 2 * exposure);
   const lifted = Math.pow(density, 0.82);
   const grain = samplePhotochemicalGrain(x, yPos);
