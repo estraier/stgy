@@ -233,7 +233,7 @@ export type ImageVignetteOverlay = {
 
 export type ImageMonochromePreset = "rec709" | "rec601" | "average" | "red" | "yellow" | "blue";
 export type ImagePhotochemicalFilterPreset = "sepia" | "cross-process" | "bleach-bypass" | "cyanotype";
-export type ImageOtherFilterPreset = "negative" | "edge";
+export type ImageOtherFilterPreset = "negative" | "edge" | "swap-bgr" | "swap-gbr" | "duotone-yb" | "duotone-rc";
 export type ImageNonMonochromeFilterPreset = ImagePhotochemicalFilterPreset | ImageOtherFilterPreset;
 
 export type ImageFilter =
@@ -718,7 +718,13 @@ const PHOTOCHEMICAL_FILTER_LABELS: Record<ImagePhotochemicalFilterPreset, string
 const OTHER_FILTER_LABELS: Record<ImageOtherFilterPreset, string> = {
   negative: "Negative",
   edge: "Edge",
+  "swap-bgr": "Swap BGR",
+  "swap-gbr": "Swap GBR",
+  "duotone-yb": "Duotone YB",
+  "duotone-rc": "Duotone RC",
 };
+
+const DUOTONE_TARGET_PERCENTILE = 0.50;
 
 const EDGE_PYRAMID_MIN_AREA = 200_000;
 const EDGE_SOBEL_WEIGHT = 0.55;
@@ -893,12 +899,18 @@ function normalizeMonochromePreset(value: unknown): ImageMonochromePreset {
 }
 
 function normalizeNonMonochromeFilterPreset(value: unknown): ImageNonMonochromeFilterPreset {
+  if (value === "duotone-yv") return "duotone-yb";
+  if (value === "duotone-gr") return "duotone-rc";
   if (
     value === "cross-process" ||
     value === "bleach-bypass" ||
     value === "cyanotype" ||
     value === "negative" ||
-    value === "edge"
+    value === "edge" ||
+    value === "swap-bgr" ||
+    value === "swap-gbr" ||
+    value === "duotone-yb" ||
+    value === "duotone-rc"
   ) {
     return value;
   }
@@ -1753,6 +1765,103 @@ function applyBleachBypassFilterToCanvasData(
   }
 }
 
+type DuotoneFilterPreset = "duotone-yb" | "duotone-rc";
+
+function applyDuotoneChannelProjectionLinearRgb(
+  r: number,
+  g: number,
+  b: number,
+  preset: DuotoneFilterPreset,
+): [number, number, number] {
+  if (preset === "duotone-yb") {
+    const yellow = (r + g) * 0.5;
+    return [yellow, yellow, b];
+  }
+  const cyan = (g + b) * 0.5;
+  return [r, cyan, cyan];
+}
+
+function applyDuotoneFilterToCanvasData(
+  rgba8: Uint8ClampedArray,
+  width: number,
+  height: number,
+  profile: ImageEditOutputColorProfile,
+  preset: DuotoneFilterPreset,
+): void {
+  const beforeHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
+  const filteredHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
+  const filteredLinear = new Float32Array(width * height * 3);
+
+  for (let i = 0; i < rgba8.length; i += 4) {
+    const pixelIndex = Math.floor(i / 4);
+    const linearIndex = pixelIndex * 3;
+    const [r, g, b] = encodedRgbToLinearProphoto(
+      (rgba8[i] ?? 0) / 255,
+      (rgba8[i + 1] ?? 0) / 255,
+      (rgba8[i + 2] ?? 0) / 255,
+      profile,
+    );
+    const [fr, fg, fb] = applyDuotoneChannelProjectionLinearRgb(r, g, b, preset);
+    accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
+    accumulateLogLumaHistogram(filteredHistogram, prophotoLumaForFilter(fr, fg, fb));
+    filteredLinear[linearIndex] = fr;
+    filteredLinear[linearIndex + 1] = fg;
+    filteredLinear[linearIndex + 2] = fb;
+  }
+
+  const beforeP50Ev = estimateLogPercentileFromHistogram(beforeHistogram, DUOTONE_TARGET_PERCENTILE);
+  const filteredP50Ev = estimateLogPercentileFromHistogram(filteredHistogram, DUOTONE_TARGET_PERCENTILE);
+  const beforeP50Luma = Math.pow(2, beforeP50Ev);
+  const filteredP50Luma = Math.pow(2, filteredP50Ev);
+  const recoveryScaledLog = solveFilterScaledLogForTargetLuma(filteredP50Luma, beforeP50Luma);
+
+  for (let i = 0; i < rgba8.length; i += 4) {
+    const pixelIndex = Math.floor(i / 4);
+    const linearIndex = pixelIndex * 3;
+    const [recoveredR, recoveredG, recoveredB] = applyFilterScaledLogToLinearRgb(
+      filteredLinear[linearIndex] ?? 0,
+      filteredLinear[linearIndex + 1] ?? 0,
+      filteredLinear[linearIndex + 2] ?? 0,
+      recoveryScaledLog,
+    );
+    const [er, eg, eb] = convertLinearProPhotoToOutputRgb(recoveredR, recoveredG, recoveredB, profile);
+    rgba8[i] = linearChannelToSrgb(er);
+    rgba8[i + 1] = linearChannelToSrgb(eg);
+    rgba8[i + 2] = linearChannelToSrgb(eb);
+  }
+}
+
+function applyDuotoneFilterToRgb16(
+  data: Uint16Array,
+  width: number,
+  height: number,
+  preset: DuotoneFilterPreset,
+): void {
+  const beforeHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
+  const filteredHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
+  const pixelCount = width * height;
+
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const index = pixel * 3;
+    const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
+    const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
+    const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
+    const [fr, fg, fb] = applyDuotoneChannelProjectionLinearRgb(r, g, b, preset);
+    accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
+    accumulateLogLumaHistogram(filteredHistogram, prophotoLumaForFilter(fr, fg, fb));
+    data[index] = encodeStoredRgb16Channel(fr, "gamma20", 1);
+    data[index + 1] = encodeStoredRgb16Channel(fg, "gamma20", 1);
+    data[index + 2] = encodeStoredRgb16Channel(fb, "gamma20", 1);
+  }
+
+  const beforeP50Ev = estimateLogPercentileFromHistogram(beforeHistogram, DUOTONE_TARGET_PERCENTILE);
+  const filteredP50Ev = estimateLogPercentileFromHistogram(filteredHistogram, DUOTONE_TARGET_PERCENTILE);
+  const beforeP50Luma = Math.pow(2, beforeP50Ev);
+  const filteredP50Luma = Math.pow(2, filteredP50Ev);
+  const recoveryScaledLog = solveFilterScaledLogForTargetLuma(filteredP50Luma, beforeP50Luma);
+  applyFilterScaledLogToRgb16(data, width, height, recoveryScaledLog);
+}
+
 function buildFilterLumaFromCanvasData(
   rgba8: Uint8ClampedArray,
   width: number,
@@ -2026,6 +2135,18 @@ function applyImageFilterToCanvas(
       case "edge":
         applyEdgeFilterToCanvasData(rgba8, width, height, profile);
         break;
+      case "swap-bgr":
+        applyChannelSwapBgrFilterToCanvasData(rgba8, profile);
+        break;
+      case "swap-gbr":
+        applyChannelSwapGbrFilterToCanvasData(rgba8, profile);
+        break;
+      case "duotone-yb":
+        applyDuotoneFilterToCanvasData(rgba8, width, height, profile, "duotone-yb");
+        break;
+      case "duotone-rc":
+        applyDuotoneFilterToCanvasData(rgba8, width, height, profile, "duotone-rc");
+        break;
     }
   }
 
@@ -2070,6 +2191,68 @@ function applyNegativeFilterToRgb16(data: Uint16Array, width: number, height: nu
     data[index] = encodeStoredRgb16Channel(applyNegativeGammaInversion(r), "gamma20", 1);
     data[index + 1] = encodeStoredRgb16Channel(applyNegativeGammaInversion(g), "gamma20", 1);
     data[index + 2] = encodeStoredRgb16Channel(applyNegativeGammaInversion(b), "gamma20", 1);
+  }
+}
+
+function applyChannelSwapBgrFilterToCanvasData(
+  rgba8: Uint8ClampedArray,
+  profile: ImageEditOutputColorProfile,
+): void {
+  for (let i = 0; i < rgba8.length; i += 4) {
+    const [r, g, b] = encodedRgbToLinearProphoto(
+      (rgba8[i] ?? 0) / 255,
+      (rgba8[i + 1] ?? 0) / 255,
+      (rgba8[i + 2] ?? 0) / 255,
+      profile,
+    );
+    const [er, eg, eb] = convertLinearProPhotoToOutputRgb(b, g, r, profile);
+    rgba8[i] = linearChannelToSrgb(er);
+    rgba8[i + 1] = linearChannelToSrgb(eg);
+    rgba8[i + 2] = linearChannelToSrgb(eb);
+  }
+}
+
+function applyChannelSwapBgrFilterToRgb16(data: Uint16Array, width: number, height: number): void {
+  const pixelCount = width * height;
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const index = pixel * 3;
+    const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
+    const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
+    const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
+    data[index] = encodeStoredRgb16Channel(b, "gamma20", 1);
+    data[index + 1] = encodeStoredRgb16Channel(g, "gamma20", 1);
+    data[index + 2] = encodeStoredRgb16Channel(r, "gamma20", 1);
+  }
+}
+
+function applyChannelSwapGbrFilterToCanvasData(
+  rgba8: Uint8ClampedArray,
+  profile: ImageEditOutputColorProfile,
+): void {
+  for (let i = 0; i < rgba8.length; i += 4) {
+    const [r, g, b] = encodedRgbToLinearProphoto(
+      (rgba8[i] ?? 0) / 255,
+      (rgba8[i + 1] ?? 0) / 255,
+      (rgba8[i + 2] ?? 0) / 255,
+      profile,
+    );
+    const [er, eg, eb] = convertLinearProPhotoToOutputRgb(g, b, r, profile);
+    rgba8[i] = linearChannelToSrgb(er);
+    rgba8[i + 1] = linearChannelToSrgb(eg);
+    rgba8[i + 2] = linearChannelToSrgb(eb);
+  }
+}
+
+function applyChannelSwapGbrFilterToRgb16(data: Uint16Array, width: number, height: number): void {
+  const pixelCount = width * height;
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const index = pixel * 3;
+    const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
+    const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
+    const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
+    data[index] = encodeStoredRgb16Channel(g, "gamma20", 1);
+    data[index + 1] = encodeStoredRgb16Channel(b, "gamma20", 1);
+    data[index + 2] = encodeStoredRgb16Channel(r, "gamma20", 1);
   }
 }
 
@@ -2208,6 +2391,18 @@ function applyImageFilterToRgb16(
       return;
     case "edge":
       applyEdgeFilterToRgb16(data, width, height);
+      return;
+    case "swap-bgr":
+      applyChannelSwapBgrFilterToRgb16(data, width, height);
+      return;
+    case "swap-gbr":
+      applyChannelSwapGbrFilterToRgb16(data, width, height);
+      return;
+    case "duotone-yb":
+      applyDuotoneFilterToRgb16(data, width, height, "duotone-yb");
+      return;
+    case "duotone-rc":
+      applyDuotoneFilterToRgb16(data, width, height, "duotone-rc");
       return;
   }
 }
