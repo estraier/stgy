@@ -15,7 +15,6 @@ type SharpenPreset = {
   threshold: number;
 };
 
-const SHARPEN_GAMMA = 1.4;
 const SHARPEN_PRESETS: Record<1 | 2 | 3, SharpenPreset> = {
   1: { radius: 1, sigma: 0.8, amount: 1.5, threshold: 0.01 },
   2: { radius: 2, sigma: 1.0, amount: 1.2, threshold: 0.03 },
@@ -68,33 +67,20 @@ export function applySharpenToCanvas(
   const scratch = new Float32Array(pixelCount);
   const kernel = buildSharpenGaussianKernel(preset.radius, preset.sigma);
   const half = Math.floor(kernel.length / 2);
-  const inverseGamma = 1 / SHARPEN_GAMMA;
 
   const readLinear = (index: number): number => srgbChannelToLinear(values[index] ?? 0);
-  const readGamma = (index: number): number => clamp01((values[index] ?? 0) / 255);
-  const writeGamma = (index: number, value: number) => {
-    values[index] = Math.round(clamp01(value) * 255);
-  };
   const writeLinear = (index: number, value: number) => {
     values[index] = linearChannelToSrgb(clamp01(value));
   };
 
   for (let channel = 0; channel < 3; channel++) {
-    // The reference implementation sharpens in a gamma=1.4 working space.
-    // Temporarily store that channel in the ImageData itself so the only large
-    // scratch allocation is the single horizontal-blur plane below.
-    for (let pixel = 0; pixel < pixelCount; pixel++) {
-      const index = pixel * 4 + channel;
-      writeGamma(index, Math.pow(readLinear(index), inverseGamma));
-    }
-
     for (let y = 0; y < height; y++) {
       const row = y * width;
       for (let x = 0; x < width; x++) {
         let sum = 0;
         for (let k = -half; k <= half; k++) {
           const sx = sharpenReflect101Index(x + k, width);
-          sum += readGamma((row + sx) * 4 + channel) * kernel[k + half];
+          sum += readLinear((row + sx) * 4 + channel) * kernel[k + half];
         }
         scratch[row + x] = sum;
       }
@@ -109,12 +95,12 @@ export function applySharpenToCanvas(
           blurred += scratch[sy * width + x] * kernel[k + half];
         }
         const index = (row + x) * 4 + channel;
-        const originalGamma = readGamma(index);
-        const diff = originalGamma - blurred;
-        const sharpenedGamma = Math.abs(diff) > preset.threshold
-          ? originalGamma + preset.amount * diff
-          : originalGamma;
-        writeLinear(index, Math.pow(clamp01(sharpenedGamma), SHARPEN_GAMMA));
+        const originalLinear = readLinear(index);
+        const diff = originalLinear - blurred;
+        const sharpenedLinear = Math.abs(diff) > preset.threshold
+          ? originalLinear + preset.amount * diff
+          : originalLinear;
+        writeLinear(index, sharpenedLinear);
       }
     }
   }
@@ -135,24 +121,16 @@ export function applySharpenToRgb16(
   const scratch = new Float32Array(pixelCount);
   const kernel = buildSharpenGaussianKernel(preset.radius, preset.sigma);
   const half = Math.floor(kernel.length / 2);
-  const inverseGamma = 1 / SHARPEN_GAMMA;
 
   for (let channel = 0; channel < 3; channel += 1) {
-    // Store the gamma=1.4 working value temporarily in the Uint16 channel. This
-    // keeps the high-precision path to one Float32 blur plane instead of two.
-    for (let pixel = 0; pixel < pixelCount; pixel += 1) {
-      const index = pixel * 3 + channel;
-      const linear = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
-      data[index] = Math.round(clamp01(Math.pow(linear, inverseGamma)) * 65535);
-    }
-
     for (let y = 0; y < height; y += 1) {
       const row = y * width;
       for (let x = 0; x < width; x += 1) {
         let sum = 0;
         for (let k = -half; k <= half; k += 1) {
           const sx = sharpenReflect101Index(x + k, width);
-          sum += ((data[(row + sx) * 3 + channel] ?? 0) / 65535) * kernel[k + half];
+          const sampleIndex = (row + sx) * 3 + channel;
+          sum += decodeStoredRgb16Channel(data[sampleIndex] ?? 0, "gamma20", 1) * kernel[k + half];
         }
         scratch[row + x] = sum;
       }
@@ -167,13 +145,12 @@ export function applySharpenToRgb16(
           blurred += scratch[sy * width + x] * kernel[k + half];
         }
         const index = (row + x) * 3 + channel;
-        const originalGamma = (data[index] ?? 0) / 65535;
-        const diff = originalGamma - blurred;
-        const sharpenedGamma = Math.abs(diff) > preset.threshold
-          ? originalGamma + preset.amount * diff
-          : originalGamma;
-        const linear = Math.pow(clamp01(sharpenedGamma), SHARPEN_GAMMA);
-        data[index] = encodeStoredRgb16Channel(linear, "gamma20", 1);
+        const originalLinear = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
+        const diff = originalLinear - blurred;
+        const sharpenedLinear = Math.abs(diff) > preset.threshold
+          ? originalLinear + preset.amount * diff
+          : originalLinear;
+        data[index] = encodeStoredRgb16Channel(clamp01(sharpenedLinear), "gamma20", 1);
       }
     }
   }
