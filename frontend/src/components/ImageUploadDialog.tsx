@@ -233,7 +233,7 @@ export type ImageVignetteOverlay = {
 
 export type ImageMonochromePreset = "rec709" | "rec601" | "average" | "red" | "yellow" | "blue";
 export type ImagePhotochemicalFilterPreset = "sepia" | "cross-process" | "bleach-bypass" | "cyanotype";
-export type ImageOtherFilterPreset = "negative";
+export type ImageOtherFilterPreset = "negative" | "edge";
 export type ImageNonMonochromeFilterPreset = ImagePhotochemicalFilterPreset | ImageOtherFilterPreset;
 
 export type ImageFilter =
@@ -717,7 +717,16 @@ const PHOTOCHEMICAL_FILTER_LABELS: Record<ImagePhotochemicalFilterPreset, string
 
 const OTHER_FILTER_LABELS: Record<ImageOtherFilterPreset, string> = {
   negative: "Negative",
+  edge: "Edge",
 };
+
+const EDGE_PYRAMID_MIN_AREA = 200_000;
+const EDGE_SOBEL_WEIGHT = 0.55;
+const EDGE_LAPLACIAN_WEIGHT = 0.45;
+const EDGE_LEVEL_WEIGHT_DECAY = 0.78;
+const EDGE_BLEND_USE_RMS = true;
+const EDGE_LEVEL_RESPONSE_GAIN = 4.0;
+const EDGE_OUTPUT_GAMMA = 0.7;
 
 const SEPIA_GRAIN_AMOUNT = 0.02;
 const SEPIA_GRAIN_SHADOW_EXPONENT = 1.1;
@@ -884,7 +893,13 @@ function normalizeMonochromePreset(value: unknown): ImageMonochromePreset {
 }
 
 function normalizeNonMonochromeFilterPreset(value: unknown): ImageNonMonochromeFilterPreset {
-  if (value === "cross-process" || value === "bleach-bypass" || value === "cyanotype" || value === "negative") {
+  if (
+    value === "cross-process" ||
+    value === "bleach-bypass" ||
+    value === "cyanotype" ||
+    value === "negative" ||
+    value === "edge"
+  ) {
     return value;
   }
   return "sepia";
@@ -1738,6 +1753,231 @@ function applyBleachBypassFilterToCanvasData(
   }
 }
 
+function buildFilterLumaFromCanvasData(
+  rgba8: Uint8ClampedArray,
+  width: number,
+  height: number,
+  profile: ImageEditOutputColorProfile,
+): Float32Array {
+  const luma = new Float32Array(width * height);
+  for (let pixel = 0; pixel < width * height; pixel += 1) {
+    const index = pixel * 4;
+    const [r, g, b] = encodedRgbToLinearProphoto(
+      (rgba8[index] ?? 0) / 255,
+      (rgba8[index + 1] ?? 0) / 255,
+      (rgba8[index + 2] ?? 0) / 255,
+      profile,
+    );
+    luma[pixel] = prophotoLumaForFilter(r, g, b);
+  }
+  return luma;
+}
+
+function buildFilterLumaFromRgb16(data: Uint16Array, width: number, height: number): Float32Array {
+  const luma = new Float32Array(width * height);
+  for (let pixel = 0; pixel < width * height; pixel += 1) {
+    const index = pixel * 3;
+    const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
+    const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
+    const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
+    luma[pixel] = prophotoLumaForFilter(r, g, b);
+  }
+  return luma;
+}
+
+type GrayFloatImage = {
+  width: number;
+  height: number;
+  data: Float32Array;
+};
+
+function downsampleGrayFloatImage2x(level: GrayFloatImage): GrayFloatImage {
+  const dstWidth = Math.max(1, Math.floor(level.width / 2));
+  const dstHeight = Math.max(1, Math.floor(level.height / 2));
+  if (dstWidth === level.width && dstHeight === level.height) return level;
+  const dst = new Float32Array(dstWidth * dstHeight);
+  for (let y = 0; y < dstHeight; y += 1) {
+    const sy0 = Math.min(level.height - 1, y * 2);
+    const sy1 = Math.min(level.height - 1, sy0 + 1);
+    for (let x = 0; x < dstWidth; x += 1) {
+      const sx0 = Math.min(level.width - 1, x * 2);
+      const sx1 = Math.min(level.width - 1, sx0 + 1);
+      const a = level.data[sy0 * level.width + sx0] ?? 0;
+      const b = level.data[sy0 * level.width + sx1] ?? 0;
+      const c = level.data[sy1 * level.width + sx0] ?? 0;
+      const d = level.data[sy1 * level.width + sx1] ?? 0;
+      dst[y * dstWidth + x] = (a + b + c + d) * 0.25;
+    }
+  }
+  return { width: dstWidth, height: dstHeight, data: dst };
+}
+
+function resizeGrayFloatImageBilinear(src: GrayFloatImage, dstWidth: number, dstHeight: number): Float32Array {
+  if (src.width === dstWidth && src.height === dstHeight) return src.data.slice();
+  const dst = new Float32Array(dstWidth * dstHeight);
+  const scaleX = src.width / Math.max(1, dstWidth);
+  const scaleY = src.height / Math.max(1, dstHeight);
+  for (let y = 0; y < dstHeight; y += 1) {
+    const sy = (y + 0.5) * scaleY - 0.5;
+    const y0 = Math.max(0, Math.min(src.height - 1, Math.floor(sy)));
+    const y1 = Math.max(0, Math.min(src.height - 1, y0 + 1));
+    const ty = sy - y0;
+    for (let x = 0; x < dstWidth; x += 1) {
+      const sx = (x + 0.5) * scaleX - 0.5;
+      const x0 = Math.max(0, Math.min(src.width - 1, Math.floor(sx)));
+      const x1 = Math.max(0, Math.min(src.width - 1, x0 + 1));
+      const tx = sx - x0;
+      const p00 = src.data[y0 * src.width + x0] ?? 0;
+      const p10 = src.data[y0 * src.width + x1] ?? 0;
+      const p01 = src.data[y1 * src.width + x0] ?? 0;
+      const p11 = src.data[y1 * src.width + x1] ?? 0;
+      const top = p00 + (p10 - p00) * tx;
+      const bottom = p01 + (p11 - p01) * tx;
+      dst[y * dstWidth + x] = top + (bottom - top) * ty;
+    }
+  }
+  return dst;
+}
+
+function computeMultiScaleEdgeLevel(level: GrayFloatImage, scaleIndex: number): Float32Array {
+  const { width, height, data } = level;
+  const result = new Float32Array(width * height);
+  const sobelScale = Math.pow(2, scaleIndex);
+  const laplacianScale = sobelScale * sobelScale;
+  let sum = 0;
+
+  for (let y = 0; y < height; y += 1) {
+    const y0 = Math.max(0, y - 1);
+    const y1 = Math.min(height - 1, y + 1);
+    for (let x = 0; x < width; x += 1) {
+      const x0 = Math.max(0, x - 1);
+      const x1 = Math.min(width - 1, x + 1);
+      const tl = data[y0 * width + x0] ?? 0;
+      const tc = data[y0 * width + x] ?? 0;
+      const tr = data[y0 * width + x1] ?? 0;
+      const ml = data[y * width + x0] ?? 0;
+      const mc = data[y * width + x] ?? 0;
+      const mr = data[y * width + x1] ?? 0;
+      const bl = data[y1 * width + x0] ?? 0;
+      const bc = data[y1 * width + x] ?? 0;
+      const br = data[y1 * width + x1] ?? 0;
+
+      const gx = -tl - 2 * ml - bl + tr + 2 * mr + br;
+      const gy = -tl - 2 * tc - tr + bl + 2 * bc + br;
+      const sobel = Math.hypot(gx, gy) * 0.25 * sobelScale;
+      const laplacian = Math.abs(4 * mc - tc - ml - mr - bc) * laplacianScale;
+      const response = EDGE_SOBEL_WEIGHT * sobel + EDGE_LAPLACIAN_WEIGHT * laplacian;
+      const index = y * width + x;
+      result[index] = response;
+      sum += response;
+    }
+  }
+
+  const gain = 1 / Math.max(1e-6, (sum / Math.max(1, width * height)) * EDGE_LEVEL_RESPONSE_GAIN);
+  for (let i = 0; i < result.length; i += 1) result[i] = clamp01(result[i] * gain);
+  return result;
+}
+
+function blendEdgeResponses(
+  fine: Float32Array,
+  coarse: Float32Array,
+  coarseWeight: number,
+): Float32Array {
+  const output = new Float32Array(fine.length);
+  const clampedWeight = Math.max(0, coarseWeight);
+  if (EDGE_BLEND_USE_RMS) {
+    const norm = 1 / Math.sqrt(1 + clampedWeight * clampedWeight);
+    for (let i = 0; i < fine.length; i += 1) {
+      const fineValue = fine[i] ?? 0;
+      const coarseValue = (coarse[i] ?? 0) * clampedWeight;
+      output[i] = Math.sqrt(fineValue * fineValue + coarseValue * coarseValue) * norm;
+    }
+  } else {
+    const norm = 1 / (1 + clampedWeight);
+    for (let i = 0; i < fine.length; i += 1) {
+      const fineValue = fine[i] ?? 0;
+      const coarseValue = (coarse[i] ?? 0) * clampedWeight;
+      output[i] = (fineValue + coarseValue) * norm;
+    }
+  }
+  return output;
+}
+
+function computeMultiScaleEdgeMapFromLuma(baseLuma: Float32Array, width: number, height: number): Float32Array {
+  const levels: GrayFloatImage[] = [{ width, height, data: baseLuma }];
+  while (true) {
+    const current = levels[levels.length - 1];
+    if (!current) break;
+    if (current.width * current.height <= EDGE_PYRAMID_MIN_AREA) break;
+    if (current.width <= 1 && current.height <= 1) break;
+    const next = downsampleGrayFloatImage2x(current);
+    if (next.width === current.width && next.height === current.height) break;
+    levels.push(next);
+  }
+
+  const responses = levels.map((level, levelIndex) => ({
+    width: level.width,
+    height: level.height,
+    data: computeMultiScaleEdgeLevel(level, levelIndex),
+  }));
+  let blended = responses[responses.length - 1];
+  if (!blended) return new Float32Array(width * height);
+
+  for (let levelIndex = responses.length - 2; levelIndex >= 0; levelIndex -= 1) {
+    const fine = responses[levelIndex];
+    const upsampledCoarse = resizeGrayFloatImageBilinear(blended, fine.width, fine.height);
+    const relativeIndex = responses.length - 1 - levelIndex;
+    const coarseWeight = Math.pow(EDGE_LEVEL_WEIGHT_DECAY, relativeIndex);
+    blended = {
+      width: fine.width,
+      height: fine.height,
+      data: blendEdgeResponses(fine.data, upsampledCoarse, coarseWeight),
+    };
+  }
+
+  const output = blended.width === width && blended.height === height
+    ? blended.data.slice()
+    : resizeGrayFloatImageBilinear(blended, width, height);
+  let maxValue = 0;
+  for (let i = 0; i < output.length; i += 1) {
+    if (output[i] > maxValue) maxValue = output[i];
+  }
+  const scale = maxValue > 1e-6 ? 1 / maxValue : 1;
+  for (let i = 0; i < output.length; i += 1) output[i] = Math.pow(clamp01(output[i] * scale), EDGE_OUTPUT_GAMMA);
+  return output;
+}
+
+function applyEdgeFilterToCanvasData(
+  rgba8: Uint8ClampedArray,
+  width: number,
+  height: number,
+  profile: ImageEditOutputColorProfile,
+): void {
+  const luma = buildFilterLumaFromCanvasData(rgba8, width, height, profile);
+  const edge = computeMultiScaleEdgeMapFromLuma(luma, width, height);
+  for (let pixel = 0; pixel < width * height; pixel += 1) {
+    const gray = edge[pixel] ?? 0;
+    const [er, eg, eb] = convertLinearProPhotoToOutputRgb(gray, gray, gray, profile);
+    const index = pixel * 4;
+    rgba8[index] = linearChannelToSrgb(er);
+    rgba8[index + 1] = linearChannelToSrgb(eg);
+    rgba8[index + 2] = linearChannelToSrgb(eb);
+  }
+}
+
+function applyEdgeFilterToRgb16(data: Uint16Array, width: number, height: number): void {
+  const luma = buildFilterLumaFromRgb16(data, width, height);
+  const edge = computeMultiScaleEdgeMapFromLuma(luma, width, height);
+  for (let pixel = 0; pixel < width * height; pixel += 1) {
+    const gray = edge[pixel] ?? 0;
+    const encoded = encodeStoredRgb16Channel(gray, "gamma20", 1);
+    const index = pixel * 3;
+    data[index] = encoded;
+    data[index + 1] = encoded;
+    data[index + 2] = encoded;
+  }
+}
+
 function applyImageFilterToCanvas(
   canvas: HTMLCanvasElement | OffscreenCanvas,
   filter: ImageFilter | null | undefined,
@@ -1783,10 +2023,18 @@ function applyImageFilterToCanvas(
       case "negative":
         applyNegativeFilterToCanvasData(rgba8, profile);
         break;
+      case "edge":
+        applyEdgeFilterToCanvasData(rgba8, width, height, profile);
+        break;
     }
   }
 
   ctx.putImageData(imageData, 0, 0);
+}
+
+function applyNegativeGammaInversion(channel: number): number {
+  const gammaEncoded = Math.pow(clamp01(channel), 1 / 2.4);
+  return Math.pow(1 - gammaEncoded, 2.4);
 }
 
 function applyNegativeFilterToCanvasData(
@@ -1800,7 +2048,12 @@ function applyNegativeFilterToCanvasData(
       (rgba8[i + 2] ?? 0) / 255,
       profile,
     );
-    const [er, eg, eb] = convertLinearProPhotoToOutputRgb(1 - r, 1 - g, 1 - b, profile);
+    const [er, eg, eb] = convertLinearProPhotoToOutputRgb(
+      applyNegativeGammaInversion(r),
+      applyNegativeGammaInversion(g),
+      applyNegativeGammaInversion(b),
+      profile,
+    );
     rgba8[i] = linearChannelToSrgb(er);
     rgba8[i + 1] = linearChannelToSrgb(eg);
     rgba8[i + 2] = linearChannelToSrgb(eb);
@@ -1814,9 +2067,9 @@ function applyNegativeFilterToRgb16(data: Uint16Array, width: number, height: nu
     const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
     const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
     const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
-    data[index] = encodeStoredRgb16Channel(1 - r, "gamma20", 1);
-    data[index + 1] = encodeStoredRgb16Channel(1 - g, "gamma20", 1);
-    data[index + 2] = encodeStoredRgb16Channel(1 - b, "gamma20", 1);
+    data[index] = encodeStoredRgb16Channel(applyNegativeGammaInversion(r), "gamma20", 1);
+    data[index + 1] = encodeStoredRgb16Channel(applyNegativeGammaInversion(g), "gamma20", 1);
+    data[index + 2] = encodeStoredRgb16Channel(applyNegativeGammaInversion(b), "gamma20", 1);
   }
 }
 
@@ -1952,6 +2205,9 @@ function applyImageFilterToRgb16(
       return;
     case "negative":
       applyNegativeFilterToRgb16(data, width, height);
+      return;
+    case "edge":
+      applyEdgeFilterToRgb16(data, width, height);
       return;
   }
 }
