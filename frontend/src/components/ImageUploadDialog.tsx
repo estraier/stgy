@@ -232,8 +232,14 @@ export type ImageVignetteOverlay = {
 };
 
 export type ImageMonochromePreset = "rec709" | "rec601" | "average" | "red" | "yellow" | "blue";
-export type ImagePhotochemicalFilterPreset = "sepia" | "cross-process" | "bleach-bypass" | "cyanotype";
-export type ImageOtherFilterPreset = "negative" | "edge" | "swap-bgr" | "swap-gbr" | "duotone-yb" | "duotone-rc";
+export type ImagePhotochemicalFilterPreset =
+  | "sepia"
+  | "cyanotype"
+  | "cross-process"
+  | "bleach-bypass"
+  | "negative"
+  | "solarization";
+export type ImageOtherFilterPreset = "swap-bgr" | "swap-gbr" | "duotone-yb" | "duotone-rc" | "edge";
 export type ImageNonMonochromeFilterPreset = ImagePhotochemicalFilterPreset | ImageOtherFilterPreset;
 
 export type ImageFilter =
@@ -713,15 +719,16 @@ const PHOTOCHEMICAL_FILTER_LABELS: Record<ImagePhotochemicalFilterPreset, string
   cyanotype: "Cyanotype",
   "cross-process": "Cross Process",
   "bleach-bypass": "Bleach Bypass",
+  negative: "Negative",
+  solarization: "Solarization",
 };
 
 const OTHER_FILTER_LABELS: Record<ImageOtherFilterPreset, string> = {
-  negative: "Negative",
-  edge: "Edge",
   "swap-bgr": "Swap BGR",
   "swap-gbr": "Swap GBR",
   "duotone-yb": "Duotone YB",
   "duotone-rc": "Duotone RC",
+  edge: "Edge",
 };
 
 const DUOTONE_TARGET_PERCENTILE = 0.50;
@@ -733,18 +740,18 @@ const EDGE_LEVEL_WEIGHT_DECAY = 0.78;
 const EDGE_LEVEL_RESPONSE_GAIN = 4.0;
 const EDGE_OUTPUT_GAMMA = 0.7;
 
-const SEPIA_GRAIN_AMOUNT = 0.003;
+const SEPIA_GRAIN_AMOUNT = 0.002;
 const SEPIA_GRAIN_SHADOW_EXPONENT = 1.1;
-const CYANOTYPE_GRAIN_AMOUNT = 0.004;
+const CYANOTYPE_GRAIN_AMOUNT = 0.003;
 const CYANOTYPE_GRAIN_SHADOW_EXPONENT = 1.1;
 // Fixed image-material colors in linear RGB. Display-domain targets are
 // Sepia=(0.18, 0.12, 0.06), Cyanotype=(0.05, 0.14, 0.40).
-const SEPIA_MATERIAL_R = 0.020;
-const SEPIA_MATERIAL_G = 0.010;
-const SEPIA_MATERIAL_B = 0.001;
-const CYANOTYPE_MATERIAL_R = 0.001;
-const CYANOTYPE_MATERIAL_G = 0.015;
-const CYANOTYPE_MATERIAL_B = 0.100;
+const SEPIA_MATERIAL_R = 0.022993;
+const SEPIA_MATERIAL_G = 0.009423;
+const SEPIA_MATERIAL_B = 0.002051;
+const CYANOTYPE_MATERIAL_R = 0.001373;
+const CYANOTYPE_MATERIAL_G = 0.013228;
+const CYANOTYPE_MATERIAL_B = 0.133209;
 // Aged-paper colors are likewise stored as linear RGB.
 const SEPIA_AGED_PAPER_R = 0.832402;
 const SEPIA_AGED_PAPER_G = 0.736109;
@@ -763,14 +770,14 @@ const PHOTOCHEMICAL_TARGET_PERCENTILE = 0.50;
 const CROSS_PROCESS_TONE_MIX = 0.95;
 const CROSS_PROCESS_TARGET_PERCENTILE = 0.50;
 const BLEACH_BYPASS_SATURATION_SHADOW = 0.45;
-const BLEACH_BYPASS_SATURATION_HIGHLIGHT = 0.98;
+const BLEACH_BYPASS_SATURATION_HIGHLIGHT = 0.95;
 const BLEACH_BYPASS_VIBRANCE_SHADOW = -0.35;
 const BLEACH_BYPASS_VIBRANCE_HIGHLIGHT = -0.08;
 const BLEACH_BYPASS_SATURATION_SAME_HUE = 1.0;
-const BLEACH_BYPASS_SATURATION_OPPOSITE_HUE = 0.98;
+const BLEACH_BYPASS_SATURATION_OPPOSITE_HUE = 0.95;
 const BLEACH_BYPASS_VIBRANCE_SAME_HUE = -0.35;
 const BLEACH_BYPASS_VIBRANCE_OPPOSITE_HUE = -0.08;
-const BLEACH_BYPASS_VALUE_AMOUNT = 0.6;
+const BLEACH_BYPASS_VALUE_AMOUNT = 0.5;
 const BLEACH_BYPASS_TARGET_HUE_DEGREES = 200;
 const BLEACH_BYPASS_SATURATION_DISTANCE_MAX_DEGREES = 180;
 const BLEACH_BYPASS_HUE_EXPONENT = 1.2;
@@ -1080,15 +1087,16 @@ function normalizeNonMonochromeFilterPreset(value: unknown): ImageNonMonochromeF
   if (value === "duotone-yv") return "duotone-yb";
   if (value === "duotone-gr") return "duotone-rc";
   if (
+    value === "cyanotype" ||
     value === "cross-process" ||
     value === "bleach-bypass" ||
-    value === "cyanotype" ||
     value === "negative" ||
-    value === "edge" ||
+    value === "solarization" ||
     value === "swap-bgr" ||
     value === "swap-gbr" ||
     value === "duotone-yb" ||
-    value === "duotone-rc"
+    value === "duotone-rc" ||
+    value === "edge"
   ) {
     return value;
   }
@@ -2385,8 +2393,8 @@ function applyImageFilterToCanvas(
       case "negative":
         applyNegativeFilterToCanvasData(rgba8, profile);
         break;
-      case "edge":
-        applyEdgeFilterToCanvasData(rgba8, width, height, profile);
+      case "solarization":
+        applySolarizationFilterToCanvasData(rgba8, profile);
         break;
       case "swap-bgr":
         applyChannelSwapBgrFilterToCanvasData(rgba8, profile);
@@ -2400,13 +2408,16 @@ function applyImageFilterToCanvas(
       case "duotone-rc":
         applyDuotoneFilterToCanvasData(rgba8, width, height, profile, "duotone-rc");
         break;
+      case "edge":
+        applyEdgeFilterToCanvasData(rgba8, width, height, profile);
+        break;
     }
   }
 
   ctx.putImageData(imageData, 0, 0);
 }
 
-function applyNegativeGammaInversion(channel: number): number {
+function applyGammaSpaceInversion(channel: number): number {
   const gammaEncoded = Math.pow(clamp01(channel), 1 / 2.4);
   return Math.pow(1 - gammaEncoded, 2.4);
 }
@@ -2423,9 +2434,9 @@ function applyNegativeFilterToCanvasData(
       profile,
     );
     const [er, eg, eb] = convertLinearProPhotoToOutputRgb(
-      applyNegativeGammaInversion(r),
-      applyNegativeGammaInversion(g),
-      applyNegativeGammaInversion(b),
+      applyGammaSpaceInversion(r),
+      applyGammaSpaceInversion(g),
+      applyGammaSpaceInversion(b),
       profile,
     );
     rgba8[i] = linearChannelToSrgb(er);
@@ -2441,9 +2452,47 @@ function applyNegativeFilterToRgb16(data: Uint16Array, width: number, height: nu
     const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
     const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
     const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
-    data[index] = encodeStoredRgb16Channel(applyNegativeGammaInversion(r), "gamma20", 1);
-    data[index + 1] = encodeStoredRgb16Channel(applyNegativeGammaInversion(g), "gamma20", 1);
-    data[index + 2] = encodeStoredRgb16Channel(applyNegativeGammaInversion(b), "gamma20", 1);
+    data[index] = encodeStoredRgb16Channel(applyGammaSpaceInversion(r), "gamma20", 1);
+    data[index + 1] = encodeStoredRgb16Channel(applyGammaSpaceInversion(g), "gamma20", 1);
+    data[index + 2] = encodeStoredRgb16Channel(applyGammaSpaceInversion(b), "gamma20", 1);
+  }
+}
+
+function applySolarizationLinearRgb(r: number, g: number, b: number): [number, number, number] {
+  const [h, s, v] = rgbToHsv(clamp01(r), clamp01(g), clamp01(b));
+  return hsvToRgb(h, s, applyGammaSpaceInversion(v));
+}
+
+function applySolarizationFilterToCanvasData(
+  rgba8: Uint8ClampedArray,
+  profile: ImageEditOutputColorProfile,
+): void {
+  for (let i = 0; i < rgba8.length; i += 4) {
+    const [r, g, b] = encodedRgbToLinearProphoto(
+      (rgba8[i] ?? 0) / 255,
+      (rgba8[i + 1] ?? 0) / 255,
+      (rgba8[i + 2] ?? 0) / 255,
+      profile,
+    );
+    const [fr, fg, fb] = applySolarizationLinearRgb(r, g, b);
+    const [er, eg, eb] = convertLinearProPhotoToOutputRgb(fr, fg, fb, profile);
+    rgba8[i] = linearChannelToSrgb(er);
+    rgba8[i + 1] = linearChannelToSrgb(eg);
+    rgba8[i + 2] = linearChannelToSrgb(eb);
+  }
+}
+
+function applySolarizationFilterToRgb16(data: Uint16Array, width: number, height: number): void {
+  const pixelCount = width * height;
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const index = pixel * 3;
+    const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
+    const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
+    const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
+    const [fr, fg, fb] = applySolarizationLinearRgb(r, g, b);
+    data[index] = encodeStoredRgb16Channel(fr, "gamma20", 1);
+    data[index + 1] = encodeStoredRgb16Channel(fg, "gamma20", 1);
+    data[index + 2] = encodeStoredRgb16Channel(fb, "gamma20", 1);
   }
 }
 
@@ -2688,8 +2737,8 @@ function applyImageFilterToRgb16(
     case "negative":
       applyNegativeFilterToRgb16(data, width, height);
       return;
-    case "edge":
-      applyEdgeFilterToRgb16(data, width, height);
+    case "solarization":
+      applySolarizationFilterToRgb16(data, width, height);
       return;
     case "swap-bgr":
       applyChannelSwapBgrFilterToRgb16(data, width, height);
@@ -2702,6 +2751,9 @@ function applyImageFilterToRgb16(
       return;
     case "duotone-rc":
       applyDuotoneFilterToRgb16(data, width, height, "duotone-rc");
+      return;
+    case "edge":
+      applyEdgeFilterToRgb16(data, width, height);
       return;
   }
 }
