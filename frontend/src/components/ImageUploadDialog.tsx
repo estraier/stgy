@@ -232,7 +232,9 @@ export type ImageVignetteOverlay = {
 };
 
 export type ImageMonochromePreset = "rec709" | "rec601" | "average" | "red" | "yellow" | "blue";
-export type ImageOtherFilterPreset = "sepia" | "cross-process" | "bleach-bypass" | "cyanotype";
+export type ImagePhotochemicalFilterPreset = "sepia" | "cross-process" | "bleach-bypass" | "cyanotype";
+export type ImageOtherFilterPreset = "negative";
+export type ImageNonMonochromeFilterPreset = ImagePhotochemicalFilterPreset | ImageOtherFilterPreset;
 
 export type ImageFilter =
   | {
@@ -241,7 +243,7 @@ export type ImageFilter =
     }
   | {
       kind: "other";
-      preset: ImageOtherFilterPreset;
+      preset: ImageNonMonochromeFilterPreset;
     };
 
 export type ImageEditParams = {
@@ -706,11 +708,15 @@ const MONOCHROME_PRESET_WEIGHTS: Record<ImageMonochromePreset, readonly [number,
   blue: [0.098, 0.236, 0.666],
 };
 
-const OTHER_FILTER_LABELS: Record<ImageOtherFilterPreset, string> = {
+const PHOTOCHEMICAL_FILTER_LABELS: Record<ImagePhotochemicalFilterPreset, string> = {
   sepia: "Sepia",
   cyanotype: "Cyanotype",
   "cross-process": "Cross Process",
   "bleach-bypass": "Bleach Bypass",
+};
+
+const OTHER_FILTER_LABELS: Record<ImageOtherFilterPreset, string> = {
+  negative: "Negative",
 };
 
 const SEPIA_GRAIN_AMOUNT = 0.02;
@@ -877,8 +883,11 @@ function normalizeMonochromePreset(value: unknown): ImageMonochromePreset {
     : "rec709";
 }
 
-function normalizeOtherFilterPreset(value: unknown): ImageOtherFilterPreset {
-  return value === "cross-process" || value === "bleach-bypass" || value === "cyanotype" ? value : "sepia";
+function normalizeNonMonochromeFilterPreset(value: unknown): ImageNonMonochromeFilterPreset {
+  if (value === "cross-process" || value === "bleach-bypass" || value === "cyanotype" || value === "negative") {
+    return value;
+  }
+  return "sepia";
 }
 
 function normalizeImageFilter(filter?: Partial<ImageFilter> | null): ImageFilter | null {
@@ -892,7 +901,7 @@ function normalizeImageFilter(filter?: Partial<ImageFilter> | null): ImageFilter
   if (filter.kind === "other") {
     return {
       kind: "other",
-      preset: normalizeOtherFilterPreset(filter.preset),
+      preset: normalizeNonMonochromeFilterPreset(filter.preset),
     };
   }
   return null;
@@ -1771,10 +1780,44 @@ function applyImageFilterToCanvas(
       case "cyanotype":
         applyCyanotypeFilterToCanvasData(rgba8, width, height, profile);
         break;
+      case "negative":
+        applyNegativeFilterToCanvasData(rgba8, profile);
+        break;
     }
   }
 
   ctx.putImageData(imageData, 0, 0);
+}
+
+function applyNegativeFilterToCanvasData(
+  rgba8: Uint8ClampedArray,
+  profile: ImageEditOutputColorProfile,
+): void {
+  for (let i = 0; i < rgba8.length; i += 4) {
+    const [r, g, b] = encodedRgbToLinearProphoto(
+      (rgba8[i] ?? 0) / 255,
+      (rgba8[i + 1] ?? 0) / 255,
+      (rgba8[i + 2] ?? 0) / 255,
+      profile,
+    );
+    const [er, eg, eb] = convertLinearProPhotoToOutputRgb(1 - r, 1 - g, 1 - b, profile);
+    rgba8[i] = linearChannelToSrgb(er);
+    rgba8[i + 1] = linearChannelToSrgb(eg);
+    rgba8[i + 2] = linearChannelToSrgb(eb);
+  }
+}
+
+function applyNegativeFilterToRgb16(data: Uint16Array, width: number, height: number): void {
+  const pixelCount = width * height;
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const index = pixel * 3;
+    const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
+    const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
+    const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
+    data[index] = encodeStoredRgb16Channel(1 - r, "gamma20", 1);
+    data[index + 1] = encodeStoredRgb16Channel(1 - g, "gamma20", 1);
+    data[index + 2] = encodeStoredRgb16Channel(1 - b, "gamma20", 1);
+  }
 }
 
 function applySepiaFilterToRgb16(data: Uint16Array, width: number, height: number): void {
@@ -1906,6 +1949,9 @@ function applyImageFilterToRgb16(
       return;
     case "cyanotype":
       applyCyanotypeFilterToRgb16(data, width, height);
+      return;
+    case "negative":
+      applyNegativeFilterToRgb16(data, width, height);
       return;
   }
 }
@@ -8606,7 +8652,8 @@ export function ImageEditDialog({
                                     ? "border-blue-500 bg-blue-50 text-blue-700"
                                     : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
                                 }`}
-                                onClick={() => setImageFilter({ kind: "monochrome", preset })}
+                                onClick={() =>
+                                  setImageFilter(selected ? null : { kind: "monochrome", preset })}
                                 aria-label={label}
                                 title={label}
                               >
@@ -8619,6 +8666,33 @@ export function ImageEditDialog({
                       <div className="flex flex-col gap-1">
                         <span className="text-xs font-medium text-gray-700">Photochemical</span>
                         <div className="grid grid-cols-2 gap-1">
+                          {(Object.entries(PHOTOCHEMICAL_FILTER_LABELS) as Array<[
+                            ImagePhotochemicalFilterPreset,
+                            string,
+                          ]>).map(([preset, label]) => {
+                            const selected = imageFilter?.kind === "other" && imageFilter.preset === preset;
+                            return (
+                              <button
+                                key={preset}
+                                type="button"
+                                className={`rounded border px-2 py-1 text-[11px] ${
+                                  selected
+                                    ? "border-blue-500 bg-blue-50 text-blue-700"
+                                    : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                                }`}
+                                onClick={() => setImageFilter(selected ? null : { kind: "other", preset })}
+                                aria-label={label}
+                                title={label}
+                              >
+                                {label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <span className="text-xs font-medium text-gray-700">Others</span>
+                        <div className="grid grid-cols-2 gap-1">
                           {(Object.entries(OTHER_FILTER_LABELS) as Array<[ImageOtherFilterPreset, string]>).map(([preset, label]) => {
                             const selected = imageFilter?.kind === "other" && imageFilter.preset === preset;
                             return (
@@ -8630,7 +8704,7 @@ export function ImageEditDialog({
                                     ? "border-blue-500 bg-blue-50 text-blue-700"
                                     : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
                                 }`}
-                                onClick={() => setImageFilter({ kind: "other", preset })}
+                                onClick={() => setImageFilter(selected ? null : { kind: "other", preset })}
                                 aria-label={label}
                                 title={label}
                               >
