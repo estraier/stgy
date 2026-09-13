@@ -186,7 +186,7 @@ export function applySigmoidLinear(value: number, gain: number): number {
   const x = clamp01(value);
   const g = clampSigmoid(gain);
   const mid = 0.5;
-  const gamma = HISTOGRAM_DISPLAY_GAMMA;
+  const gamma = SIGMOID_WORKING_GAMMA;
   const encoded = Math.pow(x, 1 / gamma);
   if (g > 1e-6) {
     const minVal = naiveSigmoid(0, g, mid);
@@ -373,7 +373,7 @@ export function applySigmoidLinearAtMidpoint(
   const x = clamp01(value);
   const g = clampSigmoid(gain);
   const mid = clamp01(midpoint);
-  const gamma = HISTOGRAM_DISPLAY_GAMMA;
+  const gamma = SIGMOID_WORKING_GAMMA;
   const encoded = Math.pow(x, 1 / gamma);
   if (g > 1e-6) {
     const minVal = naiveSigmoid(0, g, mid);
@@ -405,7 +405,7 @@ export function applySigmoidLinearAtMidpointWithWorkingGamma(
   const mid = clamp01(midpoint);
   const gamma = Number.isFinite(workingGamma) && workingGamma > 0
     ? workingGamma
-    : HISTOGRAM_DISPLAY_GAMMA;
+    : SIGMOID_WORKING_GAMMA;
   const encoded = Math.pow(clamp01(value), 1 / gamma);
   if (g > 1e-6) {
     const minVal = naiveSigmoid(0, g, mid);
@@ -733,4 +733,7 @@ export function applyColorAdjustmentsLinearRgb(
   );
 }
 
-export const HISTOGRAM_DISPLAY_GAMMA = 2.4;
+// Shared working gamma for the standard Sigmoid and RAW thumbnail tone matching.
+export const SIGMOID_WORKING_GAMMA = 2.4;
+// Histogram display currently uses the same transfer, but remains a separate semantic alias.
+export const HISTOGRAM_DISPLAY_GAMMA = SIGMOID_WORKING_GAMMA;

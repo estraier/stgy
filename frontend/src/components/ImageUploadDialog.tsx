@@ -47,7 +47,7 @@ import type {
 } from "./image-editor/types";
 export type { DecodedImage, ImageEditOutputColorProfile } from "./image-editor/types";
 import {
-  HISTOGRAM_DISPLAY_GAMMA,
+  SIGMOID_WORKING_GAMMA,
   applyColorAdjustmentsAfterToneLinearRgb,
   applyColorAdjustmentsLinearRgb,
   applyHsvSaturationPreservingProPhotoLuminance,
@@ -733,11 +733,25 @@ const EDGE_LEVEL_WEIGHT_DECAY = 0.78;
 const EDGE_LEVEL_RESPONSE_GAIN = 4.0;
 const EDGE_OUTPUT_GAMMA = 0.7;
 
-const SEPIA_GRAIN_AMOUNT = 0.02;
+const SEPIA_GRAIN_AMOUNT = 0.002;
 const SEPIA_GRAIN_SHADOW_EXPONENT = 1.1;
-const SEPIA_IMAGE_OPACITY_EXPONENT = 0.9;
-const CYANOTYPE_GRAIN_AMOUNT = 0.02;
-const CYANOTYPE_GRAIN_SHADOW_EXPONENT = 1.3;
+const CYANOTYPE_GRAIN_AMOUNT = 0.003;
+const CYANOTYPE_GRAIN_SHADOW_EXPONENT = 1.1;
+// Fixed image-material colors in linear RGB. Display-domain targets are
+// Sepia=(0.18, 0.12, 0.06), Cyanotype=(0.05, 0.14, 0.40).
+const SEPIA_MATERIAL_R = 0.022993;
+const SEPIA_MATERIAL_G = 0.009423;
+const SEPIA_MATERIAL_B = 0.002051;
+const CYANOTYPE_MATERIAL_R = 0.001373;
+const CYANOTYPE_MATERIAL_G = 0.013228;
+const CYANOTYPE_MATERIAL_B = 0.133209;
+// Aged-paper colors are likewise stored as linear RGB.
+const SEPIA_AGED_PAPER_R = 0.832402;
+const SEPIA_AGED_PAPER_G = 0.736109;
+const SEPIA_AGED_PAPER_B = 0.515596;
+const CYANOTYPE_AGED_PAPER_R = 0.793110;
+const CYANOTYPE_AGED_PAPER_G = 0.717623;
+const CYANOTYPE_AGED_PAPER_B = 0.546751;
 const PHOTOCHEMICAL_GRAIN_FINE_CYCLES_PER_DIAGONAL = 900;
 const PHOTOCHEMICAL_GRAIN_COARSE_CYCLES_PER_DIAGONAL = 260;
 const PHOTOCHEMICAL_PAPER_BROAD_CYCLES_PER_DIAGONAL = 3;
@@ -745,17 +759,18 @@ const PHOTOCHEMICAL_PAPER_MEDIUM_CYCLES_PER_DIAGONAL = 7;
 const PHOTOCHEMICAL_STAIN_BROAD_CYCLES_PER_DIAGONAL = 12;
 const PHOTOCHEMICAL_STAIN_MEDIUM_CYCLES_PER_DIAGONAL = 24;
 const PHOTOCHEMICAL_STAIN_MAX_OPACITY = 0.02;
+const PHOTOCHEMICAL_TARGET_PERCENTILE = 0.50;
 const CROSS_PROCESS_TONE_MIX = 0.95;
 const CROSS_PROCESS_TARGET_PERCENTILE = 0.50;
-const BLEACH_BYPASS_SATURATION_SHADOW = 0.5;
-const BLEACH_BYPASS_SATURATION_HIGHLIGHT = 0.98;
-const BLEACH_BYPASS_VIBRANCE_SHADOW = -0.34;
+const BLEACH_BYPASS_SATURATION_SHADOW = 0.45;
+const BLEACH_BYPASS_SATURATION_HIGHLIGHT = 0.95;
+const BLEACH_BYPASS_VIBRANCE_SHADOW = -0.35;
 const BLEACH_BYPASS_VIBRANCE_HIGHLIGHT = -0.08;
 const BLEACH_BYPASS_SATURATION_SAME_HUE = 1.0;
-const BLEACH_BYPASS_SATURATION_OPPOSITE_HUE = 0.98;
-const BLEACH_BYPASS_VIBRANCE_SAME_HUE = -0.36;
+const BLEACH_BYPASS_SATURATION_OPPOSITE_HUE = 0.95;
+const BLEACH_BYPASS_VIBRANCE_SAME_HUE = -0.35;
 const BLEACH_BYPASS_VIBRANCE_OPPOSITE_HUE = -0.08;
-const BLEACH_BYPASS_VALUE_AMOUNT = 0.3;
+const BLEACH_BYPASS_VALUE_AMOUNT = 0.5;
 const BLEACH_BYPASS_TARGET_HUE_DEGREES = 200;
 const BLEACH_BYPASS_SATURATION_DISTANCE_MAX_DEGREES = 180;
 const BLEACH_BYPASS_HUE_EXPONENT = 1.2;
@@ -948,6 +963,111 @@ function samplePhotochemicalPaperColor(
     mixUnit(baseG, agedG, aging),
     mixUnit(baseB, agedB, aging),
   ];
+}
+
+type SepiaFilterBaseState = {
+  imageR: number;
+  imageG: number;
+  imageB: number;
+  imageOpacity: number;
+};
+
+type CyanotypeFilterBaseState = {
+  imageR: number;
+  imageG: number;
+  imageB: number;
+  imageOpacity: number;
+};
+
+function composePhotochemicalImage(
+  paperR: number,
+  paperG: number,
+  paperB: number,
+  imageR: number,
+  imageG: number,
+  imageB: number,
+  baseImageOpacity: number,
+  residualStainOpacity: number,
+): [number, number, number] {
+  const imageOpacity = residualStainOpacity + (1 - residualStainOpacity) * clamp01(baseImageOpacity);
+  return [
+    mixUnit(paperR, imageR, imageOpacity),
+    mixUnit(paperG, imageG, imageOpacity),
+    mixUnit(paperB, imageB, imageOpacity),
+  ];
+}
+
+function computeSepiaExposure(r: number, g: number, b: number): number {
+  return clamp01(0.098 * r + 0.236 * g + 0.666 * b);
+}
+
+function computeCyanotypeExposure(r: number, g: number, b: number): number {
+  return clamp01(0.0 * r + 0.10 * g + 0.90 * b);
+}
+
+function solvePhotochemicalExposureScaledLog(
+  sourceExposureP50: number,
+  targetOutputLumaP50: number,
+  materialR: number,
+  materialG: number,
+  materialB: number,
+): number {
+  const materialLuma = prophotoLumaForFilter(materialR, materialG, materialB);
+  const range = 1 - materialLuma;
+  if (!(range > 1e-8)) return 0;
+  const targetExposure = clamp01((targetOutputLumaP50 - materialLuma) / range);
+  return solveFilterScaledLogForTargetLuma(sourceExposureP50, targetExposure);
+}
+
+function applyPhotochemicalExposureScaledLog(exposure: number, scaledLog: number): number {
+  return applyScaledLogLinear(clamp01(exposure), scaledLog, FILTER_TONE_RECOVERY_LOG_LIMIT);
+}
+
+function computeSepiaFilterTexturedState(
+  r: number,
+  g: number,
+  b: number,
+  x: number,
+  yPos: number,
+  width: number,
+  height: number,
+  exposureScaledLog: number,
+): SepiaFilterBaseState {
+  const baseExposure = computeSepiaExposure(r, g, b);
+  const correctedExposure = applyPhotochemicalExposureScaledLog(baseExposure, exposureScaledLog);
+  const grain = samplePhotochemicalGrain(x, yPos, width, height);
+  const shadowWeight = Math.pow(1 - correctedExposure, SEPIA_GRAIN_SHADOW_EXPONENT);
+  const texturedExposure = clamp01(correctedExposure + grain * SEPIA_GRAIN_AMOUNT * shadowWeight);
+  return {
+    imageR: SEPIA_MATERIAL_R,
+    imageG: SEPIA_MATERIAL_G,
+    imageB: SEPIA_MATERIAL_B,
+    imageOpacity: 1 - texturedExposure,
+  };
+}
+
+function computeCyanotypeFilterTexturedState(
+  r: number,
+  g: number,
+  b: number,
+  x: number,
+  yPos: number,
+  width: number,
+  height: number,
+  exposureScaledLog: number,
+): CyanotypeFilterBaseState {
+  const baseExposure = computeCyanotypeExposure(r, g, b);
+  const correctedExposure = applyPhotochemicalExposureScaledLog(baseExposure, exposureScaledLog);
+  const grain = samplePhotochemicalGrain(x, yPos, width, height);
+  const shadowWeight = Math.pow(1 - correctedExposure, CYANOTYPE_GRAIN_SHADOW_EXPONENT);
+  const texturedExposure = clamp01(correctedExposure + grain * CYANOTYPE_GRAIN_AMOUNT * shadowWeight);
+
+  return {
+    imageR: CYANOTYPE_MATERIAL_R,
+    imageG: CYANOTYPE_MATERIAL_G,
+    imageB: CYANOTYPE_MATERIAL_B,
+    imageOpacity: 1 - texturedExposure,
+  };
 }
 
 function normalizeMonochromePreset(value: unknown): ImageMonochromePreset {
@@ -1520,15 +1640,26 @@ function applyVignetteToRgb16(
 }
 
 
-function applySepiaLinearRgb(r: number, g: number, b: number, x: number, yPos: number, width: number, height: number): [number, number, number] {
-  const y = 0.098 * r + 0.236 * g + 0.666 * b;
-  const p = Math.pow(clamp01(y), 1 / 2.2);
-  const grain = samplePhotochemicalGrain(x, yPos, width, height);
-  const shadowWeight = Math.pow(1 - p, SEPIA_GRAIN_SHADOW_EXPONENT);
-  let faded = Math.pow(p, 0.88);
-  faded = clamp01(faded + grain * SEPIA_GRAIN_AMOUNT * shadowWeight);
-  faded = clamp01(faded * 0.96);
-
+function applySepiaLinearRgb(
+  r: number,
+  g: number,
+  b: number,
+  x: number,
+  yPos: number,
+  width: number,
+  height: number,
+  exposureScaledLog: number,
+): [number, number, number] {
+  const texturedState = computeSepiaFilterTexturedState(
+    r,
+    g,
+    b,
+    x,
+    yPos,
+    width,
+    height,
+    exposureScaledLog,
+  );
   const [paperR, paperG, paperB] = samplePhotochemicalPaperColor(
     x,
     yPos,
@@ -1537,25 +1668,22 @@ function applySepiaLinearRgb(r: number, g: number, b: number, x: number, yPos: n
     1,
     1,
     1,
-    0.92,
-    0.87,
-    0.74,
+    SEPIA_AGED_PAPER_R,
+    SEPIA_AGED_PAPER_G,
+    SEPIA_AGED_PAPER_B,
   );
-  const imageR = clamp01(1.02 * faded);
-  const imageG = clamp01(0.95 * faded);
-  const imageB = clamp01(0.79 * faded);
-  const normalizedHighlight = clamp01(faded / 0.96);
-  const density = Math.pow(1 - normalizedHighlight, SEPIA_IMAGE_OPACITY_EXPONENT);
   const residualStainOpacity = samplePhotochemicalResidualStainOpacity(x, yPos, width, height);
-  const imageOpacity = residualStainOpacity + (1 - residualStainOpacity) * density;
-  const sr = mixUnit(paperR, imageR, imageOpacity);
-  const sg = mixUnit(paperG, imageG, imageOpacity);
-  const sb = mixUnit(paperB, imageB, imageOpacity);
-  return [
-    clamp01(Math.pow(clamp01(sr), 2.2)),
-    clamp01(Math.pow(clamp01(sg), 2.2)),
-    clamp01(Math.pow(clamp01(sb), 2.2)),
-  ];
+  const [fr, fg, fb] = composePhotochemicalImage(
+    paperR,
+    paperG,
+    paperB,
+    texturedState.imageR,
+    texturedState.imageG,
+    texturedState.imageB,
+    texturedState.imageOpacity,
+    residualStainOpacity,
+  );
+  return [clamp01(fr), clamp01(fg), clamp01(fb)];
 }
 
 function applyChemicalCrossProcessLinearRgb(r: number, g: number, b: number): [number, number, number] {
@@ -1567,9 +1695,9 @@ function applyChemicalCrossProcessLinearRgb(r: number, g: number, b: number): [n
     return max - min > 1e-9 ? (val - min) / (max - min) : 0;
   };
 
-  const workR = Math.sqrt(clampInput(r));
-  const workG = Math.sqrt(clampInput(g));
-  const workB = Math.sqrt(clampInput(b));
+  const workR = clampInput(r);
+  const workG = clampInput(g);
+  const workB = clampInput(b);
 
   const devR = applyHDCurve(workR, 4.25, 0.516);
   const devG = applyHDCurve(workG, 4.00, 0.500);
@@ -1583,16 +1711,13 @@ function applyChemicalCrossProcessLinearRgb(r: number, g: number, b: number): [n
   const dyeG = -0.007 * crossR + 1.014 * crossG - 0.007 * crossB;
   const dyeB = -0.009 * crossR - 0.015 * crossG + 1.022 * crossB;
 
-  const filteredR = Math.pow(Math.max(0, dyeR), 2.0);
-  const filteredG = Math.pow(Math.max(0, dyeG), 2.0);
-  const filteredB = Math.pow(Math.max(0, dyeB), 2.0);
-  return [clamp01(filteredR), clamp01(filteredG), clamp01(filteredB)];
+  return [clamp01(dyeR), clamp01(dyeG), clamp01(dyeB)];
 }
 
 function applyBleachBypassLinearRgb(r: number, g: number, b: number): [number, number, number] {
-  const workR = Math.pow(clamp01(r), 1 / 2.2);
-  const workG = Math.pow(clamp01(g), 1 / 2.2);
-  const workB = Math.pow(clamp01(b), 1 / 2.2);
+  const workR = clamp01(r);
+  const workG = clamp01(g);
+  const workB = clamp01(b);
 
   const [h, s, v] = rgbToHsv(workR, workG, workB);
   const valueShadowWeight = Math.pow(1 - v, 1.5);
@@ -1620,15 +1745,11 @@ function applyBleachBypassLinearRgb(r: number, g: number, b: number): [number, n
     BLEACH_BYPASS_SATURATION_SAME_HUE
     + (BLEACH_BYPASS_SATURATION_OPPOSITE_HUE - BLEACH_BYPASS_SATURATION_SAME_HUE) * hueDistanceFactor;
   const linearlyReducedS = clamp01(s * saturationByValue * saturationByHue);
-  const [preVibranceR, preVibranceG, preVibranceB] = hsvToRgb(
+  let [linearR, linearG, linearB] = hsvToRgb(
     normalizedShiftedHue,
     linearlyReducedS,
     v,
   );
-
-  let linearR = Math.pow(preVibranceR, 2.2);
-  let linearG = Math.pow(preVibranceG, 2.2);
-  let linearB = Math.pow(preVibranceB, 2.2);
 
   const vibranceByValue =
     BLEACH_BYPASS_VIBRANCE_SHADOW
@@ -1650,34 +1771,34 @@ function applyBleachBypassLinearRgb(r: number, g: number, b: number): [number, n
 
   const filteredV = clamp01(v * (1 - BLEACH_BYPASS_VALUE_AMOUNT * valueShadowWeight));
   const valueScale = v > 1e-6 ? filteredV / v : 0;
-  const finalWorkR = Math.pow(clamp01(linearR), 1 / 2.2) * valueScale;
-  const finalWorkG = Math.pow(clamp01(linearG), 1 / 2.2) * valueScale;
-  const finalWorkB = Math.pow(clamp01(linearB), 1 / 2.2) * valueScale;
-
   return [
-    clamp01(Math.pow(clamp01(finalWorkR), 2.2)),
-    clamp01(Math.pow(clamp01(finalWorkG), 2.2)),
-    clamp01(Math.pow(clamp01(finalWorkB), 2.2)),
+    clamp01(linearR * valueScale),
+    clamp01(linearG * valueScale),
+    clamp01(linearB * valueScale),
   ];
 }
 
 
-function applyCyanotypeLinearRgb(r: number, g: number, b: number, x: number, yPos: number, width: number, height: number): [number, number, number] {
-  const lr = Math.pow(clamp01(r), 1 / 2.2);
-  const lg = Math.pow(clamp01(g), 1 / 2.2);
-  const lb = Math.pow(clamp01(b), 1 / 2.2);
-
-  const exposure = 0.0 * lr + 0.10 * lg + 0.90 * lb;
-  const density = exposure * exposure * (3 - 2 * exposure);
-  const lifted = Math.pow(density, 0.82);
-  const grain = samplePhotochemicalGrain(x, yPos, width, height);
-  const shadowWeight = Math.pow(1 - lifted, CYANOTYPE_GRAIN_SHADOW_EXPONENT);
-  const mappedDensity = clamp01(lifted + grain * CYANOTYPE_GRAIN_AMOUNT * shadowWeight);
-
-  const prussianR = 0.05;
-  const prussianG = 0.14;
-  const prussianB = 0.40;
-
+function applyCyanotypeLinearRgb(
+  r: number,
+  g: number,
+  b: number,
+  x: number,
+  yPos: number,
+  width: number,
+  height: number,
+  exposureScaledLog: number,
+): [number, number, number] {
+  const texturedState = computeCyanotypeFilterTexturedState(
+    r,
+    g,
+    b,
+    x,
+    yPos,
+    width,
+    height,
+    exposureScaledLog,
+  );
   const [paperR, paperG, paperB] = samplePhotochemicalPaperColor(
     x,
     yPos,
@@ -1686,23 +1807,22 @@ function applyCyanotypeLinearRgb(r: number, g: number, b: number, x: number, yPo
     1,
     1,
     1,
-    0.90,
-    0.86,
-    0.76,
+    CYANOTYPE_AGED_PAPER_R,
+    CYANOTYPE_AGED_PAPER_G,
+    CYANOTYPE_AGED_PAPER_B,
   );
-
   const residualStainOpacity = samplePhotochemicalResidualStainOpacity(x, yPos, width, height);
-  const imageDensity = 1 - mappedDensity;
-  const imageOpacity = residualStainOpacity + (1 - residualStainOpacity) * imageDensity;
-  const cr = mixUnit(paperR, prussianR, imageOpacity);
-  const cg = mixUnit(paperG, prussianG, imageOpacity);
-  const cb = mixUnit(paperB, prussianB, imageOpacity);
-
-  return [
-    clamp01(Math.pow(Math.max(0, cr), 2.2)),
-    clamp01(Math.pow(Math.max(0, cg), 2.2)),
-    clamp01(Math.pow(Math.max(0, cb), 2.2)),
-  ];
+  const [fr, fg, fb] = composePhotochemicalImage(
+    paperR,
+    paperG,
+    paperB,
+    texturedState.imageR,
+    texturedState.imageG,
+    texturedState.imageB,
+    texturedState.imageOpacity,
+    residualStainOpacity,
+  );
+  return [clamp01(fr), clamp01(fg), clamp01(fb)];
 }
 
 function applySepiaFilterToCanvasData(
@@ -1711,6 +1831,32 @@ function applySepiaFilterToCanvasData(
   height: number,
   profile: ImageEditOutputColorProfile,
 ): void {
+  const beforeHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
+  const exposureHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
+
+  for (let i = 0; i < rgba8.length; i += 4) {
+    const [r, g, b] = encodedRgbToLinearProphoto(
+      (rgba8[i] ?? 0) / 255,
+      (rgba8[i + 1] ?? 0) / 255,
+      (rgba8[i + 2] ?? 0) / 255,
+      profile,
+    );
+    accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
+    accumulateLogLumaHistogram(exposureHistogram, computeSepiaExposure(r, g, b));
+  }
+
+  const beforeP50Ev = estimateLogPercentileFromHistogram(beforeHistogram, PHOTOCHEMICAL_TARGET_PERCENTILE);
+  const exposureP50Ev = estimateLogPercentileFromHistogram(exposureHistogram, PHOTOCHEMICAL_TARGET_PERCENTILE);
+  const beforeP50Luma = Math.pow(2, beforeP50Ev);
+  const exposureP50 = Math.pow(2, exposureP50Ev);
+  const exposureScaledLog = solvePhotochemicalExposureScaledLog(
+    exposureP50,
+    beforeP50Luma,
+    SEPIA_MATERIAL_R,
+    SEPIA_MATERIAL_G,
+    SEPIA_MATERIAL_B,
+  );
+
   for (let i = 0; i < rgba8.length; i += 4) {
     const pixelIndex = Math.floor(i / 4);
     const px = pixelIndex % width;
@@ -1723,7 +1869,7 @@ function applySepiaFilterToCanvasData(
       (rgba8[i + 2] ?? 0) / 255,
       profile,
     );
-    const [fr, fg, fb] = applySepiaLinearRgb(r, g, b, x, yPos, width, height);
+    const [fr, fg, fb] = applySepiaLinearRgb(r, g, b, x, yPos, width, height, exposureScaledLog);
     const [er, eg, eb] = convertLinearProPhotoToOutputRgb(fr, fg, fb, profile);
     rgba8[i] = linearChannelToSrgb(er);
     rgba8[i + 1] = linearChannelToSrgb(eg);
@@ -1786,6 +1932,32 @@ function applyCyanotypeFilterToCanvasData(
   height: number,
   profile: ImageEditOutputColorProfile,
 ): void {
+  const beforeHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
+  const exposureHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
+
+  for (let i = 0; i < rgba8.length; i += 4) {
+    const [r, g, b] = encodedRgbToLinearProphoto(
+      (rgba8[i] ?? 0) / 255,
+      (rgba8[i + 1] ?? 0) / 255,
+      (rgba8[i + 2] ?? 0) / 255,
+      profile,
+    );
+    accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
+    accumulateLogLumaHistogram(exposureHistogram, computeCyanotypeExposure(r, g, b));
+  }
+
+  const beforeP50Ev = estimateLogPercentileFromHistogram(beforeHistogram, PHOTOCHEMICAL_TARGET_PERCENTILE);
+  const exposureP50Ev = estimateLogPercentileFromHistogram(exposureHistogram, PHOTOCHEMICAL_TARGET_PERCENTILE);
+  const beforeP50Luma = Math.pow(2, beforeP50Ev);
+  const exposureP50 = Math.pow(2, exposureP50Ev);
+  const exposureScaledLog = solvePhotochemicalExposureScaledLog(
+    exposureP50,
+    beforeP50Luma,
+    CYANOTYPE_MATERIAL_R,
+    CYANOTYPE_MATERIAL_G,
+    CYANOTYPE_MATERIAL_B,
+  );
+
   for (let i = 0; i < rgba8.length; i += 4) {
     const pixelIndex = Math.floor(i / 4);
     const px = pixelIndex % width;
@@ -1798,7 +1970,7 @@ function applyCyanotypeFilterToCanvasData(
       (rgba8[i + 2] ?? 0) / 255,
       profile,
     );
-    const [fr, fg, fb] = applyCyanotypeLinearRgb(r, g, b, x, yPos, width, height);
+    const [fr, fg, fb] = applyCyanotypeLinearRgb(r, g, b, x, yPos, width, height, exposureScaledLog);
     const [er, eg, eb] = convertLinearProPhotoToOutputRgb(fr, fg, fb, profile);
     rgba8[i] = linearChannelToSrgb(er);
     rgba8[i + 1] = linearChannelToSrgb(eg);
@@ -2338,7 +2510,30 @@ function applyChannelSwapGbrFilterToRgb16(data: Uint16Array, width: number, heig
 }
 
 function applySepiaFilterToRgb16(data: Uint16Array, width: number, height: number): void {
+  const beforeHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
+  const exposureHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
   const pixelCount = width * height;
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const index = pixel * 3;
+    const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
+    const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
+    const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
+    accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
+    accumulateLogLumaHistogram(exposureHistogram, computeSepiaExposure(r, g, b));
+  }
+
+  const beforeP50Ev = estimateLogPercentileFromHistogram(beforeHistogram, PHOTOCHEMICAL_TARGET_PERCENTILE);
+  const exposureP50Ev = estimateLogPercentileFromHistogram(exposureHistogram, PHOTOCHEMICAL_TARGET_PERCENTILE);
+  const beforeP50Luma = Math.pow(2, beforeP50Ev);
+  const exposureP50 = Math.pow(2, exposureP50Ev);
+  const exposureScaledLog = solvePhotochemicalExposureScaledLog(
+    exposureP50,
+    beforeP50Luma,
+    SEPIA_MATERIAL_R,
+    SEPIA_MATERIAL_G,
+    SEPIA_MATERIAL_B,
+  );
+
   for (let pixel = 0; pixel < pixelCount; pixel += 1) {
     const index = pixel * 3;
     const px = pixel % width;
@@ -2348,7 +2543,7 @@ function applySepiaFilterToRgb16(data: Uint16Array, width: number, height: numbe
     const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
     const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
     const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
-    const [fr, fg, fb] = applySepiaLinearRgb(r, g, b, x, yPos, width, height);
+    const [fr, fg, fb] = applySepiaLinearRgb(r, g, b, x, yPos, width, height, exposureScaledLog);
     data[index] = encodeStoredRgb16Channel(fr, "gamma20", 1);
     data[index + 1] = encodeStoredRgb16Channel(fg, "gamma20", 1);
     data[index + 2] = encodeStoredRgb16Channel(fb, "gamma20", 1);
@@ -2381,7 +2576,30 @@ function applyCrossProcessFilterToRgb16(data: Uint16Array, width: number, height
 }
 
 function applyCyanotypeFilterToRgb16(data: Uint16Array, width: number, height: number): void {
+  const beforeHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
+  const exposureHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
   const pixelCount = width * height;
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const index = pixel * 3;
+    const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
+    const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
+    const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
+    accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
+    accumulateLogLumaHistogram(exposureHistogram, computeCyanotypeExposure(r, g, b));
+  }
+
+  const beforeP50Ev = estimateLogPercentileFromHistogram(beforeHistogram, PHOTOCHEMICAL_TARGET_PERCENTILE);
+  const exposureP50Ev = estimateLogPercentileFromHistogram(exposureHistogram, PHOTOCHEMICAL_TARGET_PERCENTILE);
+  const beforeP50Luma = Math.pow(2, beforeP50Ev);
+  const exposureP50 = Math.pow(2, exposureP50Ev);
+  const exposureScaledLog = solvePhotochemicalExposureScaledLog(
+    exposureP50,
+    beforeP50Luma,
+    CYANOTYPE_MATERIAL_R,
+    CYANOTYPE_MATERIAL_G,
+    CYANOTYPE_MATERIAL_B,
+  );
+
   for (let pixel = 0; pixel < pixelCount; pixel += 1) {
     const index = pixel * 3;
     const px = pixel % width;
@@ -2391,7 +2609,7 @@ function applyCyanotypeFilterToRgb16(data: Uint16Array, width: number, height: n
     const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
     const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
     const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
-    const [fr, fg, fb] = applyCyanotypeLinearRgb(r, g, b, x, yPos, width, height);
+    const [fr, fg, fb] = applyCyanotypeLinearRgb(r, g, b, x, yPos, width, height, exposureScaledLog);
     data[index] = encodeStoredRgb16Channel(fr, "gamma20", 1);
     data[index + 1] = encodeStoredRgb16Channel(fg, "gamma20", 1);
     data[index + 2] = encodeStoredRgb16Channel(fb, "gamma20", 1);
@@ -3422,7 +3640,7 @@ function applyRawBaselineSigmoidLinear(value: number, gain: number): number {
     Math.max(RAW_THUMBNAIL_MATCH_SIGMOID_MIN, gain),
   );
   const mid = 0.5;
-  const gamma = HISTOGRAM_DISPLAY_GAMMA;
+  const gamma = SIGMOID_WORKING_GAMMA;
   const encoded = Math.pow(x, 1 / gamma);
   if (g > 1e-8) {
     const minVal = naiveSigmoid(0, g, mid);
@@ -3523,7 +3741,7 @@ function solveRawThumbnailMatchLog(
 }
 
 function rawThumbnailContrast(p25: number, p75: number): number {
-  const gamma = HISTOGRAM_DISPLAY_GAMMA;
+  const gamma = SIGMOID_WORKING_GAMMA;
   return Math.pow(clamp01(p75), 1 / gamma) - Math.pow(clamp01(p25), 1 / gamma);
 }
 

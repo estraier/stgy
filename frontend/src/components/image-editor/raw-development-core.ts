@@ -1,3 +1,5 @@
+import { SIGMOID_WORKING_GAMMA } from "@/image/tone";
+
 export type RawHeadroomStatistics = {
   step: number;
   histogramMax: number;
@@ -55,7 +57,6 @@ export type RawFallbackResult = {
   plan: RawFallbackPlan;
 };
 
-const HISTOGRAM_DISPLAY_GAMMA = 2.4;
 const RAW_DEVELOPED_LINEAR_RANGE_MAX = 2;
 const RAW_HEADROOM_HISTOGRAM_STEP = 0.1;
 const RAW_HEADROOM_HISTOGRAM_MAX = 2;
@@ -152,7 +153,7 @@ function applyRawBaselineSigmoidLinear(value: number, gain: number): number {
     Math.max(RAW_THUMBNAIL_MATCH_SIGMOID_MIN, gain),
   );
   const mid = 0.5;
-  const gamma = HISTOGRAM_DISPLAY_GAMMA;
+  const gamma = SIGMOID_WORKING_GAMMA;
   const encoded = Math.pow(x, 1 / gamma);
   if (g > 1e-8) {
     const minVal = naiveSigmoid(0, g, mid);
