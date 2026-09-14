@@ -403,6 +403,8 @@ type ImageLoadEmbeddedPreview = {
   blob: Blob;
   width: number;
   height: number;
+  sourceWidth?: number;
+  sourceHeight?: number;
 };
 
 type ImageLoadProgress = {
@@ -496,6 +498,37 @@ async function rawEmbeddedPreviewFromThumbnail(
   canvas.width = 0;
   canvas.height = 0;
   return blob ? { blob, width: thumbnail.width, height: thumbnail.height } : undefined;
+}
+
+async function rawEditableThumbnailToDecoded(
+  preview: ImageLoadEmbeddedPreview,
+): Promise<DecodedRgbImage16> {
+  let source: CanvasImageSource | null = null;
+  let cleanup = () => {};
+  try {
+    try {
+      const bitmap = await createImageBitmap(preview.blob, { colorSpaceConversion: "default" });
+      source = bitmap;
+      cleanup = () => bitmap.close?.();
+    } catch {
+      const file = new File([preview.blob], "raw-thumbnail.jpg", { type: preview.blob.type || "image/jpeg" });
+      source = await decodeViaImg(file);
+    }
+    if (!source) throw new Error("Embedded RAW thumbnail decode failed");
+    const width = Math.max(1, Math.round(Number(
+      (source as ImageBitmap).width
+      || (source as HTMLImageElement).naturalWidth
+      || preview.width,
+    )));
+    const height = Math.max(1, Math.round(Number(
+      (source as ImageBitmap).height
+      || (source as HTMLImageElement).naturalHeight
+      || preview.height,
+    )));
+    return canvasSourceToDecodedRgb16(source, width, height, "srgb");
+  } finally {
+    cleanup();
+  }
 }
 
 async function readRawMeta(file: File): Promise<EditableImageMeta> {
@@ -5786,10 +5819,20 @@ async function decodeRawPreviewImage(
           raw!.thumbnailData!(),
           workerFailure!.promise,
         ]));
-        const embeddedPreview = await runStage(
+        const embeddedPreviewBase = await runStage(
           "Preparing embedded preview…",
           () => rawEmbeddedPreviewFromThumbnail(thumbnail),
         );
+        const metadataWidth = Math.max(0, Math.round(Number(metadata?.width ?? 0)));
+        const metadataHeight = Math.max(0, Math.round(Number(metadata?.height ?? 0)));
+        const embeddedPreview = embeddedPreviewBase
+          ? {
+              ...embeddedPreviewBase,
+              ...(metadataWidth > 0 && metadataHeight > 0
+                ? { sourceWidth: metadataWidth, sourceHeight: metadataHeight }
+                : {}),
+            }
+          : undefined;
         rawDebug.thumbnail = embeddedPreview;
         onProgress?.({ stage: "Analyzing embedded preview…", embeddedPreview });
         thumbnailReference = await rawThumbnailMatchReferenceFromThumbnail(thumbnail);
@@ -6057,6 +6100,7 @@ type RawDevelopmentInFlightEntry = {
   promise: Promise<DecodedRgbImage16>;
   listeners: Set<ImageLoadProgressListener>;
   lastProgress?: ImageLoadProgress;
+  embeddedPreview?: ImageLoadEmbeddedPreview;
 };
 
 const RAW_DEVELOPMENT_IN_FLIGHT = new WeakMap<
@@ -6080,7 +6124,12 @@ function decodeRawImageShared(
   if (existing) {
     if (onProgress) {
       existing.listeners.add(onProgress);
-      if (existing.lastProgress) onProgress(existing.lastProgress);
+      if (existing.lastProgress) {
+        onProgress({
+          ...existing.lastProgress,
+          ...(existing.embeddedPreview ? { embeddedPreview: existing.embeddedPreview } : {}),
+        });
+      }
     }
     return existing.promise;
   }
@@ -6091,6 +6140,7 @@ function decodeRawImageShared(
   };
   const emitProgress: ImageLoadProgressListener = (progress) => {
     entry.lastProgress = progress;
+    if (progress.embeddedPreview) entry.embeddedPreview = progress.embeddedPreview;
     for (const listener of entry.listeners) listener(progress);
   };
   const promise = decodeRawImage(
@@ -7314,6 +7364,7 @@ export function ImageEditDialog({
     height: number;
   } | null>(null);
   const embeddedRawPreviewUrlRef = useRef<string | null>(null);
+  const [rawThumbnailRasterSize, setRawThumbnailRasterSize] = useState<{ width: number; height: number } | null>(null);
   const [previewRasterSize, setPreviewRasterSize] = useState<{ width: number; height: number } | null>(null);
   const previewRasterSizeRef = useRef<{ width: number; height: number } | null>(null);
   const [fullResolutionReady, setFullResolutionReady] = useState(false);
@@ -7356,6 +7407,10 @@ export function ImageEditDialog({
   const transferredDecodedImageRef = useRef<DecodedImage | null>(null);
   const rawMasterPromiseRef = useRef<Promise<DecodedRgbImage16> | null>(null);
   const rawDenoisePromiseRef = useRef<Promise<DecodedRgbImage16> | null>(null);
+  const rawForegroundPromiseRef = useRef<Promise<DecodedRgbImage16> | null>(null);
+  const editableThumbnailRequestRef = useRef(0);
+  const editableThumbnailReadyRef = useRef(false);
+  const rawLogicalSizeRef = useRef<{ width: number; height: number } | null>(null);
   const [decodedRevision, setDecodedRevision] = useState(0);
   const onErrorRef = useRef(onError);
   const onRawDevelopmentReadyRef = useRef(onRawDevelopmentReady);
@@ -7484,6 +7539,7 @@ export function ImageEditDialog({
       width: preview.width,
       height: preview.height,
     });
+    setRawThumbnailRasterSize({ width: preview.width, height: preview.height });
     setRawDevelopmentStage("thumbnail");
     if (previousUrl) URL.revokeObjectURL(previousUrl);
   }, []);
@@ -7587,11 +7643,16 @@ export function ImageEditDialog({
     transferredDecodedImageRef.current = null;
     rawMasterPromiseRef.current = null;
     rawDenoisePromiseRef.current = null;
+    rawForegroundPromiseRef.current = null;
+    editableThumbnailRequestRef.current += 1;
+    editableThumbnailReadyRef.current = false;
     previewRenderedRef.current = null;
     previewRasterSizeRef.current = null;
     setPreviewRasterSize(null);
+    setRawThumbnailRasterSize(null);
     setFullResolutionReady(false);
     setRawDevelopmentStage(null);
+    rawLogicalSizeRef.current = null;
     previewSourceSampleRef.current = null;
     previewToneSampleCacheRef.current = null;
     previewClarityMapCacheRef.current = null;
@@ -7600,26 +7661,61 @@ export function ImageEditDialog({
 
     const onLoadProgress: ImageLoadProgressListener = (progress) => {
       if (cancelled) return;
-      setLoadingStage(progress.stage);
+      if (!editableThumbnailReadyRef.current) setLoadingStage(progress.stage);
       if (progress.embeddedPreview) {
         showEmbeddedRawPreview(progress.embeddedPreview);
+        const preview = progress.embeddedPreview;
+        const requestId = ++editableThumbnailRequestRef.current;
+        void rawEditableThumbnailToDecoded(preview).then((thumbnailDecoded) => {
+          if (cancelled || editableThumbnailRequestRef.current !== requestId) {
+            thumbnailDecoded.cleanup();
+            return;
+          }
+          const previousDecoded = decodedImageRef.current;
+          thumbnailDecoded.rawDebug = { thumbnail: preview };
+          decodedImageRef.current = thumbnailDecoded;
+          cleanup = thumbnailDecoded.cleanup;
+          editableThumbnailReadyRef.current = true;
+          previewRenderedRef.current = null;
+          previewSourceSampleRef.current = null;
+          previewToneSampleCacheRef.current = null;
+          previewClarityMapCacheRef.current = null;
+          previewContinuousPrefixCacheRef.current = null;
+          previewRgba8Ref.current = null;
+          const logicalWidth = preview.sourceWidth && preview.sourceWidth > 0 ? preview.sourceWidth : preview.width;
+          const logicalHeight = preview.sourceHeight && preview.sourceHeight > 0 ? preview.sourceHeight : preview.height;
+          rawLogicalSizeRef.current = { width: logicalWidth, height: logicalHeight };
+          setNatural({ w: logicalWidth, h: logicalHeight });
+          setImageReady(true);
+          setFullResolutionReady(false);
+          setRawDevelopmentStage("thumbnail");
+          setLoadingStage(null);
+          setDecodedRevision((revision) => revision + 1);
+          if (previousDecoded && previousDecoded !== thumbnailDecoded) previousDecoded.cleanup();
+        }).catch(() => {
+          // Embedded preview remains visible while the normal RAW Preview loads.
+        });
       }
     };
 
     void (async () => {
       try {
-        const decoded = initialDecodedImage ?? await decodeImage(
-          file,
-          0,
-          0,
-          file.name,
-          file.type,
-          rawDemosaicQuality,
-          rawHighlightMode,
-          onLoadProgress,
-        );
-        decodedForEffect = decoded;
         const isRaw = isRawImageFile(file.name, file.type);
+        const foregroundPromise = initialDecodedImage
+          ? Promise.resolve(initialDecodedImage)
+          : decodeImage(
+              file,
+              0,
+              0,
+              file.name,
+              file.type,
+              rawDemosaicQuality,
+              rawHighlightMode,
+              onLoadProgress,
+            );
+        if (isRaw) rawForegroundPromiseRef.current = foregroundPromise;
+        const decoded = await foregroundPromise;
+        decodedForEffect = decoded;
         if (isRaw) {
           onRawDevelopmentReadyRef.current?.(decoded);
         }
@@ -7629,10 +7725,17 @@ export function ImageEditDialog({
           }
           return;
         }
+        const previousDecoded = decodedImageRef.current;
+        editableThumbnailRequestRef.current += 1;
+        editableThumbnailReadyRef.current = false;
         cleanup = decoded.cleanup;
         decodedImageRef.current = decoded;
-        setLoadingStage("Preparing preview…");
-        setNatural({ w: decoded.width, h: decoded.height });
+        if (previousDecoded && previousDecoded !== decoded) previousDecoded.cleanup();
+        setLoadingStage(null);
+        const logicalSize = isRaw ? rawLogicalSizeRef.current : null;
+        setNatural(logicalSize
+          ? { w: logicalSize.width, h: logicalSize.height }
+          : { w: decoded.width, h: decoded.height });
         setImageReady(true);
         setFullResolutionReady(!(isRaw && decoded.rawMasterPromise));
         if (isRaw) {
@@ -7678,7 +7781,10 @@ export function ImageEditDialog({
               cleanup = denoiseDecoded.cleanup;
               rawDenoisePromiseRef.current = null;
               previewRenderedRef.current = null;
-              setNatural({ w: denoiseDecoded.width, h: denoiseDecoded.height });
+              const logicalSize = rawLogicalSizeRef.current;
+              setNatural(logicalSize
+                ? { w: logicalSize.width, h: logicalSize.height }
+                : { w: denoiseDecoded.width, h: denoiseDecoded.height });
               setRawDevelopmentStage("denoised");
               setDecodedRevision((revision) => revision + 1);
               onRawDevelopmentReadyRef.current?.(denoiseDecoded);
@@ -7701,7 +7807,10 @@ export function ImageEditDialog({
             decodedImageRef.current = masterDecoded;
             cleanup = masterDecoded.cleanup;
             previewRenderedRef.current = null;
-            setNatural({ w: masterDecoded.width, h: masterDecoded.height });
+            const logicalSize = rawLogicalSizeRef.current;
+            setNatural(logicalSize
+              ? { w: logicalSize.width, h: logicalSize.height }
+              : { w: masterDecoded.width, h: masterDecoded.height });
             setFullResolutionReady(true);
             setRawDevelopmentStage("master");
             setDecodedRevision((revision) => revision + 1);
@@ -7725,6 +7834,9 @@ export function ImageEditDialog({
 
     return () => {
       cancelled = true;
+      editableThumbnailRequestRef.current += 1;
+      rawForegroundPromiseRef.current = null;
+      rawLogicalSizeRef.current = null;
       decodedImageRef.current = null;
       previewSourceSampleRef.current = null;
       previewToneSampleCacheRef.current = null;
@@ -9815,12 +9927,23 @@ export function ImageEditDialog({
       requestAnimationFrame(() => {
         void (async () => {
           try {
-            const masterPromise = rawMasterPromiseRef.current;
+            let masterPromise = rawMasterPromiseRef.current;
+            if (isRawImageFile(file.name, file.type) && !fullResolutionReady && !masterPromise) {
+              const foregroundPromise = rawForegroundPromiseRef.current;
+              if (foregroundPromise) {
+                const previewDecoded = await foregroundPromise;
+                masterPromise = previewDecoded.rawMasterPromise ?? null;
+                if (!masterPromise) decodedImageRef.current = previewDecoded;
+              }
+            }
             if (masterPromise && !fullResolutionReady) {
               const masterDecoded = await masterPromise;
               decodedImageRef.current = masterDecoded;
               rawMasterPromiseRef.current = null;
             }
+            // Finish never adopts an optional Denoise result, even when it was
+            // started while the foreground Preview/Master chain was resolving.
+            rawDenoisePromiseRef.current = null;
             const decodedImage = decodedImageRef.current;
             const clarityMap = decodedImage ? resolvePreviewClarityMap(decodedImage) : null;
             if (decodedImage) transferredDecodedImageRef.current = decodedImage;
@@ -9858,6 +9981,7 @@ export function ImageEditDialog({
     drawOverlays,
     vignetteOverlay,
     fullResolutionReady,
+    file,
     resolvePreviewClarityMap,
     onApply,
   ]);
@@ -11618,8 +11742,8 @@ export function ImageEditDialog({
             <span>
               {isRawImageFile(file.name, file.type)
                 ? rawDevelopmentStage === "thumbnail"
-                  ? embeddedRawPreview
-                    ? `Thumbnail: ${embeddedRawPreview.width}x${embeddedRawPreview.height}, ${(embeddedRawPreview.width * embeddedRawPreview.height / 1_000_000).toFixed(1)}MP`
+                  ? rawThumbnailRasterSize
+                    ? `Thumbnail: ${rawThumbnailRasterSize.width}x${rawThumbnailRasterSize.height}, ${(rawThumbnailRasterSize.width * rawThumbnailRasterSize.height / 1_000_000).toFixed(1)}MP`
                     : "Thumbnail: —"
                   : rawDevelopmentStage === "preview"
                     ? previewRasterSize
