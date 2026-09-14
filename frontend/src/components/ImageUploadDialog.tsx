@@ -139,6 +139,7 @@ import {
   applyRawMatchedTonePass,
   developRawMasterOnePassToGamma20,
   mergeRawDenoiseGamma20InPlaceRows,
+  rawLensfunOutputDimensions,
   resampleRawWithLensfunToGamma20,
   type RawColorPassPlan,
   type RawFallbackPlan,
@@ -5175,6 +5176,7 @@ function rawLensfunCorrectionMaps(
     step: correction.step,
     geometry: correction.geometry,
     distortion: correction.distortion,
+    ...(correction.autoCrop ? { crop: correction.autoCrop } : {}),
     ...(correction.combined ? { combined: correction.combined } : {}),
     ...(correction.tca ? { tca: correction.tca } : {}),
     ...(correction.vignetting ? { vignetting: correction.vignetting } : {}),
@@ -5498,8 +5500,8 @@ async function developRawMasterOnePassInWorker(
         colorSpace: "prophoto",
         transfer: "gamma20",
         linearRangeMax: RAW_DEVELOPED_LINEAR_RANGE_MAX,
-        width: sourceDecoded.width,
-        height: sourceDecoded.height,
+        width: result.width,
+        height: result.height,
         data: result.data,
         cleanup: () => {},
       },
@@ -5861,7 +5863,12 @@ async function decodeRawPreviewImage(
       sourceDecoded.width,
       sourceDecoded.height,
     );
-    const dimensions = rawPreviewDimensions(sourceDecoded.width, sourceDecoded.height);
+    const correctedDimensions = rawLensfunOutputDimensions(
+      sourceDecoded.width,
+      sourceDecoded.height,
+      rawLensfunCorrectionMaps(sourceDecoded.lensCorrection),
+    );
+    const dimensions = rawPreviewDimensions(correctedDimensions.width, correctedDimensions.height);
     onProgress?.({ stage: "Building preview image…" });
     const decoded = await resampleRawDecodedInWorker(
       sourceDecoded,
@@ -7942,6 +7949,7 @@ export function ImageEditDialog({
     setDisplayed(d);
     setCropRect(nextCropRect);
   }, [natural, containerSize.w, containerSize.h, fitImage, initialParams.crop]);
+
 
   const clampCropRect = useCallback(
     (candidate: EditRect): EditRect => {

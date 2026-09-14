@@ -10,12 +10,20 @@ export type RawLensMetadata = {
   cropFactor?: number;
 };
 
+export type LensfunAutoCropInsets = {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+};
+
 export type LensfunCorrection = {
   gridWidth: number;
   gridHeight: number;
   step: number;
   geometry: Float32Array;
   distortion: boolean;
+  autoCrop?: LensfunAutoCropInsets;
   combined?: Float32Array;
   tca?: Float32Array;
   vignetting?: Float32Array;
@@ -345,6 +353,101 @@ function buildCombinedSourceCoordinateMap(
   return combined;
 }
 
+function lensfunOutputPointIsValid(
+  correction: LensfunCorrection,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+  coordinates: LensfunSourceCoordinatesBuffer,
+): boolean {
+  lensfunSourceCoordinatesInto(correction, x, y, coordinates);
+  const maxX = width - 1;
+  const maxY = height - 1;
+  for (let channel = 0; channel < 3; channel++) {
+    const sourceX = coordinates[channel * 2] ?? Number.NaN;
+    const sourceY = coordinates[channel * 2 + 1] ?? Number.NaN;
+    if (
+      !Number.isFinite(sourceX)
+      || !Number.isFinite(sourceY)
+      || sourceX < 0
+      || sourceX > maxX
+      || sourceY < 0
+      || sourceY > maxY
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function lensfunCenteredRectIsValid(
+  correction: LensfunCorrection,
+  width: number,
+  height: number,
+  scale: number,
+): boolean {
+  const normalizedScale = Math.min(1, Math.max(0, scale));
+  const maxX = width - 1;
+  const maxY = height - 1;
+  const left = maxX * (1 - normalizedScale) / 2;
+  const right = maxX - left;
+  const top = maxY * (1 - normalizedScale) / 2;
+  const bottom = maxY - top;
+  const coordinates: LensfunSourceCoordinatesBuffer = [0, 0, 0, 0, 0, 0];
+  const samples = Math.max(
+    33,
+    Math.min(1025, Math.ceil(Math.max(width, height) / Math.max(1, correction.step)) * 2 + 1),
+  );
+
+  for (let i = 0; i < samples; i++) {
+    const t = samples <= 1 ? 0 : i / (samples - 1);
+    const x = left + (right - left) * t;
+    const y = top + (bottom - top) * t;
+    if (!lensfunOutputPointIsValid(correction, width, height, x, top, coordinates)) return false;
+    if (!lensfunOutputPointIsValid(correction, width, height, x, bottom, coordinates)) return false;
+    if (!lensfunOutputPointIsValid(correction, width, height, left, y, coordinates)) return false;
+    if (!lensfunOutputPointIsValid(correction, width, height, right, y, coordinates)) return false;
+  }
+  return true;
+}
+
+export function lensfunAutoCropInsets(
+  correction: LensfunCorrection | null | undefined,
+  width: number,
+  height: number,
+): LensfunAutoCropInsets | undefined {
+  if (
+    !correction
+    || width <= 1
+    || height <= 1
+    || (!correction.distortion && !correction.tca && !correction.combined)
+  ) {
+    return undefined;
+  }
+  if (lensfunCenteredRectIsValid(correction, width, height, 1)) {
+    return { top: 0, bottom: 0, left: 0, right: 0 };
+  }
+
+  let low = 0;
+  let high = 1;
+  // Geometry/TCA corrections are smooth and center-preserving. Search for the
+  // largest centered rectangle, retaining the source aspect ratio, whose full
+  // perimeter maps inside the source for every RGB channel.
+  for (let i = 0; i < 24; i++) {
+    const mid = (low + high) / 2;
+    if (lensfunCenteredRectIsValid(correction, width, height, mid)) low = mid;
+    else high = mid;
+  }
+
+  // Keep one source-pixel of safety on each side so interpolation and floating
+  // point noise cannot expose a thin invalid border at full resolution.
+  const safetyScale = 2 / Math.max(2, Math.min(width, height));
+  const scale = Math.max(0, low - safetyScale);
+  const margin = Math.min(0.495, Math.max(0, (1 - scale) / 2));
+  return { top: margin, bottom: margin, left: margin, right: margin };
+}
+
 export async function buildRawLensfunCorrection(
   metadata: RawLensMetadata | null,
   width: number,
@@ -424,6 +527,8 @@ export async function buildRawLensfunCorrection(
       ...(metadata.aperture ? { aperture: metadata.aperture } : {}),
       cropFactor,
     };
+    const autoCrop = lensfunAutoCropInsets(correction, width, height);
+    if (autoCrop) correction.autoCrop = autoCrop;
 
     return correction;
   } catch {

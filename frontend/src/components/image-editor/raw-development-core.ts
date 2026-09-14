@@ -43,6 +43,7 @@ export type RawLensfunCorrectionMaps = {
   step: number;
   geometry: Float32Array;
   distortion: boolean;
+  crop?: { top: number; bottom: number; left: number; right: number };
   combined?: Float32Array;
   tca?: Float32Array;
   vignetting?: Float32Array;
@@ -690,6 +691,47 @@ function rawLensfunVignettingGainInto(
   output[2] = Number.isFinite(output[2]) ? Math.max(0, output[2]) : 1;
 }
 
+function normalizedRawLensfunCrop(
+  correction: RawLensfunCorrectionMaps | undefined,
+): { top: number; bottom: number; left: number; right: number } {
+  const crop = correction?.crop;
+  if (!crop) return { top: 0, bottom: 0, left: 0, right: 0 };
+  const left = Math.min(0.495, Math.max(0, crop.left));
+  const right = Math.min(0.495, Math.max(0, crop.right));
+  const top = Math.min(0.495, Math.max(0, crop.top));
+  const bottom = Math.min(0.495, Math.max(0, crop.bottom));
+  return {
+    left,
+    right: Math.min(right, Math.max(0, 0.99 - left)),
+    top,
+    bottom: Math.min(bottom, Math.max(0, 0.99 - top)),
+  };
+}
+
+export function rawLensfunOutputDimensions(
+  sourceWidth: number,
+  sourceHeight: number,
+  correction: RawLensfunCorrectionMaps | undefined,
+): { width: number; height: number } {
+  const crop = normalizedRawLensfunCrop(correction);
+  return {
+    width: Math.max(1, Math.round(sourceWidth * Math.max(0.01, 1 - crop.left - crop.right))),
+    height: Math.max(1, Math.round(sourceHeight * Math.max(0.01, 1 - crop.top - crop.bottom))),
+  };
+}
+
+function rawLensfunOutputCoordinate(
+  index: number,
+  outputSize: number,
+  sourceSize: number,
+  leadingCrop: number,
+  trailingCrop: number,
+): number {
+  const startEdge = sourceSize * leadingCrop;
+  const croppedSize = sourceSize * Math.max(0.01, 1 - leadingCrop - trailingCrop);
+  return startEdge + (index + 0.5) * croppedSize / Math.max(1, outputSize) - 0.5;
+}
+
 function sampleRawStoredChannelBilinear(
   data: Uint16Array,
   width: number,
@@ -733,9 +775,11 @@ export function developRawMasterOnePassToGamma20(
   tonePlan: RawMatchedTonePlan | undefined,
   fallbackPlan: RawFallbackPlan | undefined,
   colorPlan: RawColorPassPlan | undefined,
-): { data: Uint16Array; headroom?: RawHeadroomStatistics } {
-  const outputWidth = Math.max(1, Math.round(sourceWidth));
-  const outputHeight = Math.max(1, Math.round(sourceHeight));
+): { data: Uint16Array; width: number; height: number; headroom?: RawHeadroomStatistics } {
+  const outputDimensions = rawLensfunOutputDimensions(sourceWidth, sourceHeight, correction);
+  const outputWidth = outputDimensions.width;
+  const outputHeight = outputDimensions.height;
+  const crop = normalizedRawLensfunCrop(correction);
   const output = new Uint16Array(outputWidth * outputHeight * 3);
   const coordinates: [number, number, number, number, number, number] = [0, 0, 0, 0, 0, 0];
   const gains: [number, number, number] = [1, 1, 1];
@@ -747,8 +791,22 @@ export function developRawMasterOnePassToGamma20(
 
   let targetIndex = 0;
   for (let y = 0; y < outputHeight; y++) {
+    const outputY = rawLensfunOutputCoordinate(
+      y,
+      outputHeight,
+      sourceHeight,
+      crop.top,
+      crop.bottom,
+    );
     for (let x = 0; x < outputWidth; x++, targetIndex += 3) {
-      rawLensfunSourceCoordinatesInto(correction, x, y, coordinates);
+      const outputX = rawLensfunOutputCoordinate(
+        x,
+        outputWidth,
+        sourceWidth,
+        crop.left,
+        crop.right,
+      );
+      rawLensfunSourceCoordinatesInto(correction, outputX, outputY, coordinates);
       const sampledR = sampleRawStoredChannelBilinear(
         data, sourceWidth, sourceHeight, coordinates[0], coordinates[1], 0,
         sourceLinearRangeMax, sourceTransfer,
@@ -842,6 +900,8 @@ export function developRawMasterOnePassToGamma20(
 
   return {
     data: output,
+    width: outputWidth,
+    height: outputHeight,
     ...(headroomAccumulator ? { headroom: finishHeadroom(headroomAccumulator) } : {}),
   };
 }
@@ -858,14 +918,27 @@ export function resampleRawWithLensfunToGamma20(
 ): Uint16Array {
   const outputWidth = Math.max(1, Math.round(targetWidth));
   const outputHeight = Math.max(1, Math.round(targetHeight));
+  const crop = normalizedRawLensfunCrop(correction);
   const output = new Uint16Array(outputWidth * outputHeight * 3);
   const coordinates: [number, number, number, number, number, number] = [0, 0, 0, 0, 0, 0];
   const gains: [number, number, number] = [1, 1, 1];
   let targetIndex = 0;
   for (let y = 0; y < outputHeight; y++) {
-    const outputY = (y + 0.5) * sourceHeight / outputHeight - 0.5;
+    const outputY = rawLensfunOutputCoordinate(
+      y,
+      outputHeight,
+      sourceHeight,
+      crop.top,
+      crop.bottom,
+    );
     for (let x = 0; x < outputWidth; x++, targetIndex += 3) {
-      const outputX = (x + 0.5) * sourceWidth / outputWidth - 0.5;
+      const outputX = rawLensfunOutputCoordinate(
+        x,
+        outputWidth,
+        sourceWidth,
+        crop.left,
+        crop.right,
+      );
       rawLensfunSourceCoordinatesInto(correction, outputX, outputY, coordinates);
       const r = sampleRawStoredChannelBilinear(
         data, sourceWidth, sourceHeight, coordinates[0], coordinates[1], 0,

@@ -169,8 +169,8 @@ workerScope.onmessage = (event: MessageEvent<RawDevelopmentWorkerRequest>) => {
         {
           type: "master-one-pass-complete",
           dataBuffer: outputBuffer,
-          width: message.width,
-          height: message.height,
+          width: result.width,
+          height: result.height,
           linearRangeMax: 2,
           transfer: "gamma20",
           headroom: result.headroom,

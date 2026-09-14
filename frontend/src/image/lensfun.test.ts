@@ -1,5 +1,6 @@
 import {
   __lensfunCorrectionCharacterization,
+  lensfunAutoCropInsets,
   lensfunSourceCoordinatesInto,
   type LensfunCorrection,
 } from "./lensfun";
@@ -74,5 +75,43 @@ describe("Lensfun combined source-coordinate map", () => {
     const output: [number, number, number, number, number, number] = [0, 0, 0, 0, 0, 0];
     lensfunSourceCoordinatesInto(correction, 5, 5, output);
     expect(output).toEqual([5, 5, 6, 5, 7, 5]);
+  });
+});
+
+
+describe("Lensfun auto crop", () => {
+  test("finds a centered safe rectangle when distortion exposes borders", () => {
+    const width = 101;
+    const height = 101;
+    const center = 50;
+    const expansion = 1.1;
+    const map = new Float32Array(3 * 3 * 2);
+    let index = 0;
+    for (let gy = 0; gy < 3; gy++) {
+      const y = gy * 50;
+      for (let gx = 0; gx < 3; gx++) {
+        const x = gx * 50;
+        map[index++] = center + (x - center) * expansion;
+        map[index++] = center + (y - center) * expansion;
+      }
+    }
+    const correction = correctionBase({
+      gridWidth: 3,
+      gridHeight: 3,
+      step: 50,
+      geometry: map,
+    });
+    const crop = lensfunAutoCropInsets(correction, width, height);
+    expect(crop).toBeDefined();
+    expect(crop!.left).toBeGreaterThan(0.04);
+    expect(crop!.left).toBeLessThan(0.06);
+    expect(crop!.right).toBeCloseTo(crop!.left, 8);
+    expect(crop!.top).toBeCloseTo(crop!.left, 8);
+    expect(crop!.bottom).toBeCloseTo(crop!.left, 8);
+  });
+
+  test("does not crop when the full corrected frame is valid", () => {
+    const crop = lensfunAutoCropInsets(correctionBase(), 11, 11);
+    expect(crop).toEqual({ top: 0, bottom: 0, left: 0, right: 0 });
   });
 });
