@@ -418,7 +418,7 @@ describe("image editor RGB16 characterization", () => {
     });
   });
 
-  test("skips obsolete RAW-matching rolloff stats while computing final display rolloff for interactive contexts", () => {
+  test("uses the same shared context and final display rolloff for normal analysis paths", () => {
     const sample = {
       data: new Float32Array([
         2, 0.1, 0.05,
@@ -428,27 +428,23 @@ describe("image editor RGB16 characterization", () => {
       width: 3,
       height: 1,
     };
-    const legacy = imageEditor.buildColorAdjustmentContextFromLinearRgbSample(
+    const shared = imageEditor.buildColorAdjustmentContextFromLinearRgbSample(
       sample, 0, 0, 0, 0, 0, 0, 0, 0, 100,
     );
     const interactive = imageEditor.buildInteractiveColorAdjustmentContextFromLinearRgbSample(
       sample, 0, 0, 0, 0, 0, 0, 0, 0, 100,
     );
 
-    expect(legacy.rolloff).not.toBeNull();
-    expect(legacy.finalRolloff).not.toBeNull();
-    expect(legacy.saturationRolloff).not.toBeNull();
-    expect(interactive.rolloff).toBeNull();
-    expect(interactive.finalRolloff).not.toBeNull();
-    expect(interactive.saturationRolloff).toBeNull();
+    expect(shared.finalRolloff).toEqual({ inflection: 0.9, ceiling: 1 });
+    expect(interactive.finalRolloff).toEqual(shared.finalRolloff);
     expect({
       hasSaturation: interactive.hasSaturation,
       saturationFactor: interactive.saturationFactor,
       normalizedSaturation: interactive.normalizedSaturation,
     }).toEqual({
-      hasSaturation: legacy.hasSaturation,
-      saturationFactor: legacy.saturationFactor,
-      normalizedSaturation: legacy.normalizedSaturation,
+      hasSaturation: shared.hasSaturation,
+      saturationFactor: shared.saturationFactor,
+      normalizedSaturation: shared.normalizedSaturation,
     });
   });
 
@@ -576,7 +572,7 @@ describe("image editor render characterization", () => {
           -5,
         ),
       ),
-    ).toBe("6ddf9fcf");
+    ).toBe("b8a66e9e");
   });
 
   test("freezes crop + arbitrary rotation render output", () => {
@@ -595,7 +591,7 @@ describe("image editor render characterization", () => {
       0,
       0,
     );
-    expect(fnv1a32(bytes)).toBe("ed3cd2e3");
+    expect(fnv1a32(bytes)).toBe("1a815ffb");
   });
 
   test("matches direct preview rendering when using the preview-resolution linear RGB cache", () => {

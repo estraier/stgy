@@ -51,6 +51,7 @@ import type {
 } from "./image-editor/types";
 export type { DecodedImage, ImageEditOutputColorProfile } from "./image-editor/types";
 import {
+  HIGHLIGHT_ROLLOFF_INFLECTION,
   SIGMOID_WORKING_GAMMA,
   applyColorAdjustmentsAfterToneLinearRgb,
   applyColorAdjustmentsLinearRgb,
@@ -71,13 +72,14 @@ import {
   clampWhiteBalanceValue,
   colorSaturationFactor,
   colorVibranceFactor,
+  createHighlightRolloff,
   hsvToRgb,
   linearChannelToSrgb,
   naiveInverseSigmoid,
   naiveSigmoid,
   rgbToHsv,
   rgbToHsvExtended,
-  rolloffParams,
+  rolloffParams as toneRolloffParams,
   srgbChannelToLinear,
   whiteBalanceGains,
   type ColorAdjustmentContext,
@@ -115,7 +117,6 @@ import {
 } from "./image-editor/sampling";
 import {
   buildInteractiveColorAdjustmentContextFromLinearRgbSample,
-  colorAdjustmentContextFromLinearRgbSample,
   computeHistogramDataFromRgb16,
   createToneAutoSampleFromRgb16,
   findAutoExposure,
@@ -434,9 +435,12 @@ const RAW_THUMBNAIL_MATCH_VIBRANCE_RELAXATION = 0.5;
 const RAW_THUMBNAIL_MATCH_COLOR_SEARCH_STEPS = 24;
 const RAW_THUMBNAIL_MATCH_SATURATION_PERCENTILE = 95;
 const RAW_THUMBNAIL_MATCH_VIBRANCE_PERCENTILE = 50;
-const RAW_THUMBNAIL_MATCH_COLOR_VALUE_TRIM_FRACTION = 0.1;
-const DEBUG_PERCENTILES = [0, 1, 2, 5, 25, 50, 75, 95, 98, 99, 100] as const;
-const RAW_THUMBNAIL_MATCH_SAMPLE_MAX_SIDE = 256;
+const RAW_THUMBNAIL_MATCH_COLOR_AUTO_MIN = -5;
+const RAW_THUMBNAIL_MATCH_COLOR_VALUE_LOWER_PERCENTILES = [20, 25, 30, 35, 40, 45, 50, 55, 60] as const;
+const RAW_THUMBNAIL_MATCH_COLOR_VALUE_UPPER_PERCENTILE = 90;
+const RAW_THUMBNAIL_MATCH_COLOR_VALUE_MIN = 0.2;
+const DEBUG_PERCENTILES = [0, 1, 2, 5, 25, 50, 75, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100] as const;
+const RAW_THUMBNAIL_MATCH_SAMPLE_TARGET_PIXELS = 65_536;
 const RAW_EDITOR_PREVIEW_TARGET_PIXELS = 1_000_000;
 const RAW_DEBUG_TARGET_PIXELS = 1_000_000;
 const RAW_DENOISE_FULL_ISO = 800;
@@ -3809,6 +3813,69 @@ function transformedRawLumaValue(
   return rawBaselineToneCurveValue(rawLuma * gain, scaledLog, sigmoid);
 }
 
+function transformedRawLumaValueExtended(
+  rawLuma: number,
+  gain: number,
+  scaledLog: number,
+  sigmoid: number,
+  toneSlopeAtWhite: number,
+): number {
+  const exposed = rawLuma * gain;
+  if (exposed <= 1) return rawBaselineToneCurveValue(exposed, scaledLog, sigmoid);
+  return 1 + Math.max(0, toneSlopeAtWhite) * (exposed - 1);
+}
+
+const RAW_THUMBNAIL_MATCH_EXPOSURE_PERCENTILE_MAX = 98;
+const RAW_THUMBNAIL_MATCH_EXPOSURE_PERCENTILE_MIN = 90;
+const RAW_THUMBNAIL_MATCH_EXPOSURE_SATURATION_LIMIT = 0.97;
+
+function selectRawThumbnailMatchExposurePercentile(
+  thumbnailPercentiles: DebugPercentileValues,
+  rawPercentiles: DebugPercentileValues,
+): { percentile: number; targetValue: number; rawValue: number } | null {
+  for (
+    let percentile = RAW_THUMBNAIL_MATCH_EXPOSURE_PERCENTILE_MAX;
+    percentile >= RAW_THUMBNAIL_MATCH_EXPOSURE_PERCENTILE_MIN;
+    percentile -= 1
+  ) {
+    const index = DEBUG_PERCENTILES.indexOf(percentile as (typeof DEBUG_PERCENTILES)[number]);
+    if (index < 0) continue;
+    const targetValue = thumbnailPercentiles[index];
+    const rawValue = rawPercentiles[index];
+    if (
+      !Number.isFinite(targetValue)
+      || !Number.isFinite(rawValue)
+      || !(targetValue > 1e-6)
+      || !(rawValue > 1e-6)
+    ) {
+      continue;
+    }
+    if (
+      targetValue <= RAW_THUMBNAIL_MATCH_EXPOSURE_SATURATION_LIMIT
+      && rawValue <= RAW_THUMBNAIL_MATCH_EXPOSURE_SATURATION_LIMIT
+    ) {
+      return { percentile, targetValue, rawValue };
+    }
+  }
+  const fallbackIndex = DEBUG_PERCENTILES.indexOf(RAW_THUMBNAIL_MATCH_EXPOSURE_PERCENTILE_MIN as (typeof DEBUG_PERCENTILES)[number]);
+  if (fallbackIndex < 0) return null;
+  const targetValue = thumbnailPercentiles[fallbackIndex];
+  const rawValue = rawPercentiles[fallbackIndex];
+  if (
+    !Number.isFinite(targetValue)
+    || !Number.isFinite(rawValue)
+    || !(targetValue > 1e-6)
+    || !(rawValue > 1e-6)
+  ) {
+    return null;
+  }
+  return {
+    percentile: RAW_THUMBNAIL_MATCH_EXPOSURE_PERCENTILE_MIN,
+    targetValue,
+    rawValue,
+  };
+}
+
 function solveRawThumbnailMatchGain(
   rawP98: number,
   scaledLog: number,
@@ -3902,36 +3969,49 @@ function planRawThumbnailMatchedBaseline(
   const p25Index = DEBUG_PERCENTILES.indexOf(25);
   const p50Index = DEBUG_PERCENTILES.indexOf(50);
   const p75Index = DEBUG_PERCENTILES.indexOf(75);
-  const p98Index = DEBUG_PERCENTILES.indexOf(98);
   const targetP25 = thumbnailPercentiles[p25Index];
   const targetP50 = thumbnailPercentiles[p50Index];
   const targetP75 = thumbnailPercentiles[p75Index];
-  const targetP98 = thumbnailPercentiles[p98Index];
   if (
     !Number.isFinite(targetP25) ||
     !Number.isFinite(targetP50) ||
-    !Number.isFinite(targetP75) ||
-    !Number.isFinite(targetP98) ||
-    !(targetP98 > 1e-6)
+    !Number.isFinite(targetP75)
   ) {
     return null;
   }
 
   const sample = sampleRawThumbnailMatchLinearRgbFromRgb16(decoded);
   if (!sample.length) return null;
-  const rawPercentiles = debugPercentilesFromLinearRgbSample(sample, "prophoto");
+  const sampleDimensions = analysisSampleDimensions(
+    decoded.width,
+    decoded.height,
+    RAW_THUMBNAIL_MATCH_SAMPLE_TARGET_PIXELS,
+  );
+  const statisticsSample = denoiseRawThumbnailMatchChroma(
+    sample,
+    sampleDimensions.width,
+    sampleDimensions.height,
+    "prophoto",
+  );
+  const rawPercentiles = debugPercentilesFromLinearRgbSample(statisticsSample, "prophoto");
   const rawP25 = rawPercentiles[p25Index];
   const rawP50 = rawPercentiles[p50Index];
   const rawP75 = rawPercentiles[p75Index];
-  const rawP98 = rawPercentiles[p98Index];
   if (
     !(rawP25 >= 0) ||
     !(rawP50 >= 0) ||
-    !(rawP75 >= rawP25) ||
-    !(rawP98 > 1e-6)
+    !(rawP75 >= rawP25)
   ) {
     return null;
   }
+
+  const exposureMatch = selectRawThumbnailMatchExposurePercentile(
+    thumbnailPercentiles,
+    rawPercentiles,
+  );
+  if (!exposureMatch) return null;
+  const targetExposureValue = exposureMatch.targetValue;
+  const rawExposureValue = exposureMatch.rawValue;
 
   const targetContrast = rawThumbnailContrast(targetP25, targetP75);
   let gain = 1;
@@ -3941,7 +4021,7 @@ function planRawThumbnailMatchedBaseline(
     const progress = i / Math.max(1, RAW_THUMBNAIL_MATCH_ITERATIONS - 1);
     const relaxationScale = Math.pow(RAW_THUMBNAIL_MATCH_RELAXATION_FINAL_SCALE, progress);
 
-    const targetGain = solveRawThumbnailMatchGain(rawP98, scaledLog, sigmoid, targetP98);
+    const targetGain = solveRawThumbnailMatchGain(rawExposureValue, scaledLog, sigmoid, targetExposureValue);
     if (targetGain > 0 && gain > 0) {
       gain *= Math.pow(
         targetGain / gain,
@@ -3963,8 +4043,12 @@ function planRawThumbnailMatchedBaseline(
   }
 
   const toneSlopeAtWhite = rawBaselineToneSlopeAtWhite(scaledLog, sigmoid);
+  const rolloff = createHighlightRolloff(
+    RAW_DEVELOPED_LINEAR_RANGE_MAX,
+    HIGHLIGHT_ROLLOFF_INFLECTION,
+  );
   return {
-    plan: { gain, scaledLog, sigmoid, toneSlopeAtWhite },
+    plan: { gain, scaledLog, sigmoid, toneSlopeAtWhite, rolloff },
     luminance: {
       exposureEv: Math.log2(Math.max(gain, Number.MIN_VALUE)),
       logarithm: scaledLog,
@@ -3974,8 +4058,10 @@ function planRawThumbnailMatchedBaseline(
   };
 }
 
-function buildCentralValueMask(
+function buildValuePercentileMask(
   values: Float32Array,
+  lowerPercentile: number,
+  upperPercentile: number,
 ): { mask: Uint8Array; count: number } {
   const count = values.length;
   const mask = new Uint8Array(count);
@@ -3986,12 +4072,10 @@ function buildCentralValueMask(
     const diff = (values[a] ?? 0) - (values[b] ?? 0);
     return diff !== 0 ? diff : a - b;
   });
-  const trimCount = Math.min(
-    Math.floor(count * RAW_THUMBNAIL_MATCH_COLOR_VALUE_TRIM_FRACTION),
-    Math.floor((count - 1) / 2),
-  );
-  const start = trimCount;
-  const end = count - trimCount;
+  const lower = Math.min(100, Math.max(0, lowerPercentile));
+  const upper = Math.min(100, Math.max(lower, upperPercentile));
+  const start = Math.min(count - 1, Math.max(0, Math.floor(count * lower / 100)));
+  const end = Math.max(start + 1, Math.min(count, Math.ceil(count * upper / 100)));
   for (let i = start; i < end; i++) {
     const index = indices[i];
     if (index !== undefined) mask[index] = 1;
@@ -3999,9 +4083,41 @@ function buildCentralValueMask(
   return { mask, count: end - start };
 }
 
+function rawThumbnailMatchColorLowerValuePercentile(
+  rawLinearProPhotoSample: Float32Array,
+): number {
+  const count = Math.floor(rawLinearProPhotoSample.length / 3);
+  if (count <= 0) return RAW_THUMBNAIL_MATCH_COLOR_VALUE_LOWER_PERCENTILES[0];
+  const comparisonValues = new Array<number>(count);
+  for (let i = 0; i < count; i++) {
+    const si = i * 3;
+    const [sr, sg, sb] = convertLinearProPhotoToOutputRgb(
+      rawLinearProPhotoSample[si] ?? 0,
+      rawLinearProPhotoSample[si + 1] ?? 0,
+      rawLinearProPhotoSample[si + 2] ?? 0,
+      "srgb",
+    );
+    const [, , value] = rgbToHsv(clamp01(sr), clamp01(sg), clamp01(sb));
+    comparisonValues[i] = value;
+  }
+  const valuePercentiles = percentilesFromValues(
+    comparisonValues,
+    RAW_THUMBNAIL_MATCH_COLOR_VALUE_LOWER_PERCENTILES,
+  );
+  for (let i = 0; i < RAW_THUMBNAIL_MATCH_COLOR_VALUE_LOWER_PERCENTILES.length; i++) {
+    if ((valuePercentiles[i] ?? 0) > RAW_THUMBNAIL_MATCH_COLOR_VALUE_MIN) {
+      return RAW_THUMBNAIL_MATCH_COLOR_VALUE_LOWER_PERCENTILES[i] ?? 60;
+    }
+  }
+  return RAW_THUMBNAIL_MATCH_COLOR_VALUE_LOWER_PERCENTILES[
+    RAW_THUMBNAIL_MATCH_COLOR_VALUE_LOWER_PERCENTILES.length - 1
+  ] ?? 60;
+}
+
 function hsvSaturationPercentileFromLinearSrgbSample(
   sample: Float32Array,
   percentile: number,
+  lowerValuePercentile: number,
 ): number {
   const count = Math.floor(sample.length / 3);
   if (count <= 0) return 0;
@@ -4017,7 +4133,11 @@ function hsvSaturationPercentileFromLinearSrgbSample(
     saturationValues[i] = saturation;
     valueValues[i] = value;
   }
-  const central = buildCentralValueMask(valueValues);
+  const central = buildValuePercentileMask(
+    valueValues,
+    lowerValuePercentile,
+    RAW_THUMBNAIL_MATCH_COLOR_VALUE_UPPER_PERCENTILE,
+  );
   if (central.count <= 0) return 0;
 
   const bins = 4096;
@@ -4039,7 +4159,10 @@ type RawAutoColorSample = {
   statisticsCount: number;
 };
 
-function buildRawAutoColorSample(sample: Float32Array): RawAutoColorSample {
+function buildRawAutoColorSample(
+  sample: Float32Array,
+  lowerValuePercentile: number,
+): RawAutoColorSample {
   const count = Math.floor(sample.length / 3);
   const hue = new Float32Array(count);
   const saturation = new Float32Array(count);
@@ -4057,9 +4180,10 @@ function buildRawAutoColorSample(sample: Float32Array): RawAutoColorSample {
     value[i] = v;
     saturationValues[i] = s;
 
-    // Choose the central 80% by Value in the same linear-sRGB comparison
-    // space used for the thumbnail. The mask stays fixed while the solver
-    // varies Saturation/Vibrance, which keeps the optimization stable.
+    // Use the same Value percentile interval as the thumbnail. The lower
+    // bound is selected adaptively from the tone-adjusted RAW so very dark,
+    // low-S/N pixels do not dominate the color match. The mask stays fixed
+    // while the solver varies Saturation/Vibrance.
     const [sr, sg, sb] = convertLinearProPhotoToOutputRgb(r, g, b, "srgb");
     const [, , comparisonValue] = rgbToHsv(
       clamp01(sr),
@@ -4068,7 +4192,11 @@ function buildRawAutoColorSample(sample: Float32Array): RawAutoColorSample {
     );
     statisticsValue[i] = comparisonValue;
   }
-  const central = buildCentralValueMask(statisticsValue);
+  const central = buildValuePercentileMask(
+    statisticsValue,
+    lowerValuePercentile,
+    RAW_THUMBNAIL_MATCH_COLOR_VALUE_UPPER_PERCENTILE,
+  );
   return {
     hue,
     saturation,
@@ -4092,7 +4220,7 @@ function rawAutoColorSaturationPercentile(
   // Match the manual Saturation path exactly: its rolloff is determined from
   // the P99 saturation after the linear multiplier, before Vibrance.
   const saturationRolloff = saturationFactor > 1
-    ? rolloffParams(sample.saturationP99 * saturationFactor, 0.7, 4)
+    ? toneRolloffParams(sample.saturationP99 * saturationFactor, 0.7, 4)
     : null;
   const bins = 4096;
   const histogram = new Uint32Array(bins);
@@ -4166,23 +4294,131 @@ function solveRawThumbnailMatchColorParameter(
     : upper;
 }
 
+function medianFilterRawThumbnailMatchChannel5x5(
+  source: Float32Array,
+  width: number,
+  height: number,
+): Float32Array {
+  const output = new Float32Array(source.length);
+  const scratch = new Float32Array(25);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      let count = 0;
+      for (let dy = -2; dy <= 2; dy++) {
+        const sy = Math.max(0, Math.min(height - 1, y + dy));
+        for (let dx = -2; dx <= 2; dx++) {
+          const sx = Math.max(0, Math.min(width - 1, x + dx));
+          scratch[count++] = source[sy * width + sx] ?? 0;
+        }
+      }
+      for (let i = 1; i < count; i++) {
+        const value = scratch[i] ?? 0;
+        let j = i - 1;
+        while (j >= 0 && (scratch[j] ?? 0) > value) {
+          scratch[j + 1] = scratch[j] ?? 0;
+          j--;
+        }
+        scratch[j + 1] = value;
+      }
+      output[y * width + x] = scratch[Math.floor(count / 2)] ?? 0;
+    }
+  }
+  return output;
+}
+
+function denoiseRawThumbnailMatchChroma(
+  linearRgbSample: Float32Array,
+  width: number,
+  height: number,
+  colorSpace: "srgb" | "prophoto",
+): Float32Array {
+  const pixels = Math.floor(linearRgbSample.length / 3);
+  if (pixels <= 0 || width <= 0 || height <= 0 || width * height !== pixels) {
+    return linearRgbSample.slice();
+  }
+
+  const lumaR = colorSpace === "prophoto" ? PROPHOTO_LUMA_R : 0.2126;
+  const lumaG = colorSpace === "prophoto" ? PROPHOTO_LUMA_G : 0.7152;
+  const lumaB = colorSpace === "prophoto" ? PROPHOTO_LUMA_B : 0.0722;
+  const rangeMax = colorSpace === "prophoto" ? RAW_DEVELOPED_LINEAR_RANGE_MAX : 1;
+  const luma = new Float32Array(pixels);
+  const chromaR = new Float32Array(pixels);
+  const chromaB = new Float32Array(pixels);
+  for (let i = 0; i < pixels; i++) {
+    const si = i * 3;
+    const r = linearRgbSample[si] ?? 0;
+    const g = linearRgbSample[si + 1] ?? 0;
+    const b = linearRgbSample[si + 2] ?? 0;
+    const y = lumaR * r + lumaG * g + lumaB * b;
+    luma[i] = y;
+    chromaR[i] = r - y;
+    chromaB[i] = b - y;
+  }
+
+  // Automatic thumbnail matching compares like with like: both RAW and the
+  // embedded thumbnail are resized to the same target-area rule first, then
+  // receive the same two strong 5x5 chroma-median passes. Luminance is kept
+  // separate so this cleanup suppresses color noise rather than tone detail.
+  const filteredR = medianFilterRawThumbnailMatchChannel5x5(
+    medianFilterRawThumbnailMatchChannel5x5(chromaR, width, height),
+    width,
+    height,
+  );
+  const filteredB = medianFilterRawThumbnailMatchChannel5x5(
+    medianFilterRawThumbnailMatchChannel5x5(chromaB, width, height),
+    width,
+    height,
+  );
+
+  const output = new Float32Array(linearRgbSample.length);
+  for (let i = 0; i < pixels; i++) {
+    const y = luma[i] ?? 0;
+    const r = y + (filteredR[i] ?? 0);
+    const b = y + (filteredB[i] ?? 0);
+    const g = lumaG > 1e-12
+      ? (y - lumaR * r - lumaB * b) / lumaG
+      : y;
+    const oi = i * 3;
+    output[oi] = Math.max(0, Math.min(rangeMax, r));
+    output[oi + 1] = Math.max(0, Math.min(rangeMax, g));
+    output[oi + 2] = Math.max(0, Math.min(rangeMax, b));
+  }
+  return output;
+}
+
 function planRawThumbnailMatchedColor(
   rawLinearProPhotoSample: Float32Array,
+  rawSampleWidth: number,
+  rawSampleHeight: number,
   thumbnailLinearSrgbSample: Float32Array,
 ): RawMatchedColorPlanningResult | null {
   if (!thumbnailLinearSrgbSample.length || !rawLinearProPhotoSample.length) return null;
 
+  const statisticsSample = denoiseRawThumbnailMatchChroma(
+    rawLinearProPhotoSample,
+    rawSampleWidth,
+    rawSampleHeight,
+    "prophoto",
+  );
+  // Every color statistic now comes from the same denoised population that the
+  // solver models. The thumbnail reference has already received the identical
+  // resize + chroma-NR preprocessing in sRGB.
+  const lowerValuePercentile = rawThumbnailMatchColorLowerValuePercentile(
+    statisticsSample,
+  );
   const targetP95 = hsvSaturationPercentileFromLinearSrgbSample(
     thumbnailLinearSrgbSample,
     RAW_THUMBNAIL_MATCH_SATURATION_PERCENTILE,
+    lowerValuePercentile,
   );
   const targetP50 = hsvSaturationPercentileFromLinearSrgbSample(
     thumbnailLinearSrgbSample,
     RAW_THUMBNAIL_MATCH_VIBRANCE_PERCENTILE,
+    lowerValuePercentile,
   );
   if (!Number.isFinite(targetP95) || !Number.isFinite(targetP50)) return null;
 
-  const sample = buildRawAutoColorSample(rawLinearProPhotoSample);
+  const sample = buildRawAutoColorSample(statisticsSample, lowerValuePercentile);
   const targetSaturation = solveRawThumbnailMatchColorParameter(
     sample,
     targetP95,
@@ -4194,7 +4430,10 @@ function planRawThumbnailMatchedColor(
   for (let i = 0; i < RAW_THUMBNAIL_MATCH_COLOR_ITERATIONS; i++) {
     saturation += RAW_THUMBNAIL_MATCH_SATURATION_RELAXATION * (targetSaturation - saturation);
   }
-  saturation = clampColorAdjustment(saturation);
+  saturation = Math.max(
+    RAW_THUMBNAIL_MATCH_COLOR_AUTO_MIN,
+    clampColorAdjustment(saturation),
+  );
 
   const targetVibrance = solveRawThumbnailMatchColorParameter(
     sample,
@@ -4207,33 +4446,30 @@ function planRawThumbnailMatchedColor(
   for (let i = 0; i < RAW_THUMBNAIL_MATCH_COLOR_ITERATIONS; i++) {
     vibrance += RAW_THUMBNAIL_MATCH_VIBRANCE_RELAXATION * (targetVibrance - vibrance);
   }
-  vibrance = clampColorAdjustment(vibrance);
+  vibrance = Math.max(
+    RAW_THUMBNAIL_MATCH_COLOR_AUTO_MIN,
+    clampColorAdjustment(vibrance),
+  );
 
   const settings = { saturation, vibrance };
   if (Math.abs(saturation) < 1e-6 && Math.abs(vibrance) < 1e-6) {
     return { settings, pass: null };
   }
-  const context = colorAdjustmentContextFromLinearRgbSample(
-    rawLinearProPhotoSample,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    vibrance,
-    saturation,
-  );
+  const normalizedSaturation = clampColorAdjustment(saturation);
+  const normalizedVibrance = clampColorAdjustment(vibrance);
+  const saturationFactor = colorSaturationFactor(normalizedSaturation);
+  const vibranceFactor = colorVibranceFactor(normalizedVibrance);
+  const saturationRolloff = saturationFactor > 1
+    ? toneRolloffParams(sample.saturationP99 * saturationFactor, 0.7, 4)
+    : null;
   return {
     settings,
     pass: {
-      rolloff: context.rolloff,
-      hasSaturation: context.hasSaturation,
-      hasVibrance: context.hasVibrance,
-      saturationFactor: context.saturationFactor,
-      vibranceFactor: context.vibranceFactor,
-      saturationRolloff: context.saturationRolloff,
+      hasSaturation: normalizedSaturation !== 0,
+      hasVibrance: normalizedVibrance !== 0,
+      saturationFactor,
+      vibranceFactor,
+      saturationRolloff,
     },
   };
 }
@@ -4297,34 +4533,66 @@ function debugStatisticsFromLinearRgbSample(
   };
 }
 
-// RAW thumbnail matching is part of the existing development baseline, not the
-// editor analysis policy. Keep its historical max-side sampling unchanged in
-// this commit so the RAW baseline does not move together with editor statistics.
+// Thumbnail matching uses a fixed sample area so statistics are comparable
+// across aspect ratios. Area averaging also suppresses single-pixel RAW noise
+// before the color solver sees the sample.
 function sampleRawThumbnailMatchLinearRgbFromRgb16(decoded: DecodedRgbImage16): Float32Array {
-  const scale = Math.min(
-    1,
-    RAW_THUMBNAIL_MATCH_SAMPLE_MAX_SIDE / Math.max(decoded.width, decoded.height),
+  const dimensions = analysisSampleDimensions(
+    decoded.width,
+    decoded.height,
+    RAW_THUMBNAIL_MATCH_SAMPLE_TARGET_PIXELS,
   );
-  const sampleW = Math.max(1, Math.round(decoded.width * scale));
-  const sampleH = Math.max(1, Math.round(decoded.height * scale));
+  const sampleW = dimensions.width;
+  const sampleH = dimensions.height;
   const output = new Float32Array(sampleW * sampleH * 3);
   const vignettingGain: [number, number, number] = [1, 1, 1];
+
   for (let y = 0; y < sampleH; y++) {
-    const sy = Math.min(decoded.height - 1, Math.floor((y + 0.5) * decoded.height / sampleH));
+    const sy0 = y * decoded.height / sampleH;
+    const sy1 = (y + 1) * decoded.height / sampleH;
+    const iy0 = Math.max(0, Math.floor(sy0));
+    const iy1 = Math.min(decoded.height, Math.ceil(sy1));
     for (let x = 0; x < sampleW; x++) {
-      const sx = Math.min(decoded.width - 1, Math.floor((x + 0.5) * decoded.width / sampleW));
-      const sourceIndex = (sy * decoded.width + sx) * 3;
+      const sx0 = x * decoded.width / sampleW;
+      const sx1 = (x + 1) * decoded.width / sampleW;
+      const ix0 = Math.max(0, Math.floor(sx0));
+      const ix1 = Math.min(decoded.width, Math.ceil(sx1));
+      let sumR = 0;
+      let sumG = 0;
+      let sumB = 0;
+      let totalWeight = 0;
+      for (let sy = iy0; sy < iy1; sy++) {
+        const wy = Math.max(0, Math.min(sy + 1, sy1) - Math.max(sy, sy0));
+        if (!(wy > 0)) continue;
+        for (let sx = ix0; sx < ix1; sx++) {
+          const wx = Math.max(0, Math.min(sx + 1, sx1) - Math.max(sx, sx0));
+          const area = wx * wy;
+          if (!(area > 0)) continue;
+          const sourceIndex = (sy * decoded.width + sx) * 3;
+          pendingLensfunVignettingGainInto(decoded, sx, sy, vignettingGain);
+          sumR += decodeStoredRgb16Channel(
+            decoded.data[sourceIndex] ?? 0,
+            decoded.transfer,
+            decoded.linearRangeMax,
+          ) * vignettingGain[0] * area;
+          sumG += decodeStoredRgb16Channel(
+            decoded.data[sourceIndex + 1] ?? 0,
+            decoded.transfer,
+            decoded.linearRangeMax,
+          ) * vignettingGain[1] * area;
+          sumB += decodeStoredRgb16Channel(
+            decoded.data[sourceIndex + 2] ?? 0,
+            decoded.transfer,
+            decoded.linearRangeMax,
+          ) * vignettingGain[2] * area;
+          totalWeight += area;
+        }
+      }
+      const invWeight = totalWeight > 0 ? 1 / totalWeight : 0;
       const targetIndex = (y * sampleW + x) * 3;
-      pendingLensfunVignettingGainInto(decoded, sx, sy, vignettingGain);
-      output[targetIndex] =
-        decodeStoredRgb16Channel(decoded.data[sourceIndex] ?? 0, decoded.transfer, decoded.linearRangeMax)
-        * vignettingGain[0];
-      output[targetIndex + 1] =
-        decodeStoredRgb16Channel(decoded.data[sourceIndex + 1] ?? 0, decoded.transfer, decoded.linearRangeMax)
-        * vignettingGain[1];
-      output[targetIndex + 2] =
-        decodeStoredRgb16Channel(decoded.data[sourceIndex + 2] ?? 0, decoded.transfer, decoded.linearRangeMax)
-        * vignettingGain[2];
+      output[targetIndex] = sumR * invWeight;
+      output[targetIndex + 1] = sumG * invWeight;
+      output[targetIndex + 2] = sumB * invWeight;
     }
   }
   return output;
@@ -4377,36 +4645,75 @@ function adjustedDebugStatisticsFromLinearRgbSample(
   );
 }
 
+function areaAverageRawThumbnailLinearSrgbSample(
+  source: Uint8Array | Uint8ClampedArray,
+  sourceWidth: number,
+  sourceHeight: number,
+  channels: number,
+): { data: Float32Array; width: number; height: number } | null {
+  if (sourceWidth <= 0 || sourceHeight <= 0 || channels < 3) return null;
+  if (source.length < sourceWidth * sourceHeight * channels) return null;
+  const dimensions = analysisSampleDimensions(
+    sourceWidth,
+    sourceHeight,
+    RAW_THUMBNAIL_MATCH_SAMPLE_TARGET_PIXELS,
+  );
+  const sampleW = dimensions.width;
+  const sampleH = dimensions.height;
+  const sample = new Float32Array(sampleW * sampleH * 3);
+  for (let y = 0; y < sampleH; y++) {
+    const sy0 = y * sourceHeight / sampleH;
+    const sy1 = (y + 1) * sourceHeight / sampleH;
+    const iy0 = Math.max(0, Math.floor(sy0));
+    const iy1 = Math.min(sourceHeight, Math.ceil(sy1));
+    for (let x = 0; x < sampleW; x++) {
+      const sx0 = x * sourceWidth / sampleW;
+      const sx1 = (x + 1) * sourceWidth / sampleW;
+      const ix0 = Math.max(0, Math.floor(sx0));
+      const ix1 = Math.min(sourceWidth, Math.ceil(sx1));
+      let sumR = 0;
+      let sumG = 0;
+      let sumB = 0;
+      let totalWeight = 0;
+      for (let sy = iy0; sy < iy1; sy++) {
+        const wy = Math.max(0, Math.min(sy + 1, sy1) - Math.max(sy, sy0));
+        if (!(wy > 0)) continue;
+        for (let sx = ix0; sx < ix1; sx++) {
+          const wx = Math.max(0, Math.min(sx + 1, sx1) - Math.max(sx, sx0));
+          const area = wx * wy;
+          if (!(area > 0)) continue;
+          const sourceIndex = (sy * sourceWidth + sx) * channels;
+          sumR += srgbChannelToLinear(source[sourceIndex] ?? 0) * area;
+          sumG += srgbChannelToLinear(source[sourceIndex + 1] ?? 0) * area;
+          sumB += srgbChannelToLinear(source[sourceIndex + 2] ?? 0) * area;
+          totalWeight += area;
+        }
+      }
+      const invWeight = totalWeight > 0 ? 1 / totalWeight : 0;
+      const targetIndex = (y * sampleW + x) * 3;
+      sample[targetIndex] = sumR * invWeight;
+      sample[targetIndex + 1] = sumG * invWeight;
+      sample[targetIndex + 2] = sumB * invWeight;
+    }
+  }
+  return { data: sample, width: sampleW, height: sampleH };
+}
+
 async function rawThumbnailMatchReferenceFromThumbnail(
   thumbnail: LibRawThumbnailDataLike | undefined,
 ): Promise<RawThumbnailMatchReference | undefined> {
   if (!thumbnail?.data?.length || thumbnail.width <= 0 || thumbnail.height <= 0) return undefined;
 
-  let sample: Float32Array | null = null;
+  let resized: { data: Float32Array; width: number; height: number } | null = null;
   if (thumbnail.format === "bitmap") {
     const pixelCount = thumbnail.width * thumbnail.height;
     const channels = thumbnail.data.length >= pixelCount * 4 ? 4 : 3;
-    if (thumbnail.data.length < pixelCount * channels) return undefined;
-    const scale = Math.min(
-      1,
-      RAW_THUMBNAIL_MATCH_SAMPLE_MAX_SIDE / Math.max(thumbnail.width, thumbnail.height),
+    resized = areaAverageRawThumbnailLinearSrgbSample(
+      thumbnail.data,
+      thumbnail.width,
+      thumbnail.height,
+      channels,
     );
-    const sampleW = Math.max(1, Math.round(thumbnail.width * scale));
-    const sampleH = Math.max(1, Math.round(thumbnail.height * scale));
-    sample = new Float32Array(sampleW * sampleH * 3);
-    // LibRaw bitmap thumbnails do not carry an ICC payload here. Preserve the
-    // existing sRGB assumption, while JPEG thumbnails below are color-managed.
-    for (let y = 0; y < sampleH; y++) {
-      const sy = Math.min(thumbnail.height - 1, Math.floor((y + 0.5) * thumbnail.height / sampleH));
-      for (let x = 0; x < sampleW; x++) {
-        const sx = Math.min(thumbnail.width - 1, Math.floor((x + 0.5) * thumbnail.width / sampleW));
-        const sourceIndex = (sy * thumbnail.width + sx) * channels;
-        const targetIndex = (y * sampleW + x) * 3;
-        sample[targetIndex] = srgbChannelToLinear(thumbnail.data[sourceIndex] ?? 0);
-        sample[targetIndex + 1] = srgbChannelToLinear(thumbnail.data[sourceIndex + 1] ?? 0);
-        sample[targetIndex + 2] = srgbChannelToLinear(thumbnail.data[sourceIndex + 2] ?? 0);
-      }
-    }
   } else if (thumbnail.format === "jpeg") {
     const jpegBytes = new Uint8Array(thumbnail.data.byteLength);
     jpegBytes.set(thumbnail.data);
@@ -4415,9 +4722,8 @@ async function rawThumbnailMatchReferenceFromThumbnail(
     let cleanup = () => {};
     try {
       try {
-        // The default conversion honors the JPEG's embedded ICC profile. Drawing
-        // into an explicit sRGB canvas then normalizes all tagged thumbnails to
-        // the same comparison primaries before HSV statistics are computed.
+        // Normalize embedded ICC profiles into sRGB before the shared linear
+        // area-average + chroma-NR statistics pipeline.
         const bitmap = await createImageBitmap(blob, { colorSpaceConversion: "default" });
         source = bitmap;
         cleanup = () => bitmap.close?.();
@@ -4425,36 +4731,40 @@ async function rawThumbnailMatchReferenceFromThumbnail(
         const file = new File([blob], "raw-thumbnail.jpg", { type: "image/jpeg" });
         source = await decodeViaImg(file);
       }
-      const width = Number((source as ImageBitmap).width || (source as HTMLImageElement).naturalWidth || thumbnail.width);
-      const height = Number((source as ImageBitmap).height || (source as HTMLImageElement).naturalHeight || thumbnail.height);
-      const scale = Math.min(1, RAW_THUMBNAIL_MATCH_SAMPLE_MAX_SIDE / Math.max(width, height));
-      const sampleW = Math.max(1, Math.round(width * scale));
-      const sampleH = Math.max(1, Math.round(height * scale));
+      const width = Number(
+        (source as ImageBitmap).width
+        || (source as HTMLImageElement).naturalWidth
+        || thumbnail.width,
+      );
+      const height = Number(
+        (source as ImageBitmap).height
+        || (source as HTMLImageElement).naturalHeight
+        || thumbnail.height,
+      );
       const canvas = document.createElement("canvas");
-      canvas.width = sampleW;
-      canvas.height = sampleH;
+      canvas.width = width;
+      canvas.height = height;
       const ctx = getCanvas2dContext(canvas, "srgb", true);
       if (!ctx) return undefined;
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = "high";
-      ctx.drawImage(source, 0, 0, width, height, 0, 0, sampleW, sampleH);
-      const rgba = ctx.getImageData(0, 0, sampleW, sampleH).data;
-      sample = new Float32Array(sampleW * sampleH * 3);
-      for (let i = 0, oi = 0; i < rgba.length; i += 4, oi += 3) {
-        sample[oi] = srgbChannelToLinear(rgba[i] ?? 0);
-        sample[oi + 1] = srgbChannelToLinear(rgba[i + 1] ?? 0);
-        sample[oi + 2] = srgbChannelToLinear(rgba[i + 2] ?? 0);
-      }
+      ctx.drawImage(source, 0, 0, width, height);
+      const rgba = ctx.getImageData(0, 0, width, height).data;
+      resized = areaAverageRawThumbnailLinearSrgbSample(rgba, width, height, 4);
     } finally {
       cleanup();
     }
   }
 
-  if (!sample?.length) return undefined;
+  if (!resized?.data.length) return undefined;
+  const statisticsSample = denoiseRawThumbnailMatchChroma(
+    resized.data,
+    resized.width,
+    resized.height,
+    "srgb",
+  );
   return {
-    lumaPercentiles: debugPercentilesFromLinearRgbSample(sample),
-    saturationPercentiles: debugSaturationPercentilesFromLinearRgbSample(sample),
-    linearSrgbSample: sample,
+    lumaPercentiles: debugPercentilesFromLinearRgbSample(statisticsSample),
+    saturationPercentiles: debugSaturationPercentilesFromLinearRgbSample(statisticsSample),
+    linearSrgbSample: statisticsSample,
   };
 }
 
@@ -5232,8 +5542,15 @@ function developRawPreviewPixelsSync(
     luminance = matched.luminance;
 
     const rawColorSample = sampleRawThumbnailMatchLinearRgbFromRgb16(decoded);
+    const rawColorSampleDimensions = analysisSampleDimensions(
+      decoded.width,
+      decoded.height,
+      RAW_THUMBNAIL_MATCH_SAMPLE_TARGET_PIXELS,
+    );
     const plannedColor = planRawThumbnailMatchedColor(
       rawColorSample,
+      rawColorSampleDimensions.width,
+      rawColorSampleDimensions.height,
       thumbnailReference!.linearSrgbSample,
     );
     if (plannedColor) {
@@ -5312,7 +5629,7 @@ async function developRawPreviewPixels(
             sourceLinearRangeMax: decoded.linearRangeMax,
             sourceTransfer: decoded.transfer,
             plan: matched.plan,
-            sampleMaxSide: RAW_THUMBNAIL_MATCH_SAMPLE_MAX_SIDE,
+            sampleTargetPixels: RAW_THUMBNAIL_MATCH_SAMPLE_TARGET_PIXELS,
           },
           [sourceBuffer],
         );
@@ -5321,10 +5638,17 @@ async function developRawPreviewPixels(
       decoded.transfer = "gamma20";
 
       const rawColorSample = new Float32Array(toneResponse.colorSample);
+      const rawColorSampleDimensions = analysisSampleDimensions(
+        decoded.width,
+        decoded.height,
+        RAW_THUMBNAIL_MATCH_SAMPLE_TARGET_PIXELS,
+      );
       onProgress?.({ stage: "Planning preview color…" });
       if (onProgress) await new Promise<void>((resolve) => setTimeout(resolve, 0));
       const plannedColor = planRawThumbnailMatchedColor(
         rawColorSample,
+        rawColorSampleDimensions.width,
+        rawColorSampleDimensions.height,
         thumbnailReference!.linearSrgbSample,
       );
       if (plannedColor?.pass) {
@@ -5696,28 +6020,26 @@ async function decodeRawImage(
 ): Promise<DecodedRgbImage16> {
   const preview = await decodeRawPreviewImage(file, rawHighlightMode, onProgress);
   const rawDebug = preview.decoded.rawDebug ?? {};
-  let denoisePromise: Promise<DecodedRgbImage16>;
   const masterPromise = decodeRawMasterImage(
     file,
     preview.plan,
     rawDebug,
     rawDemosaicQuality,
     rawHighlightMode,
-  ).then((master) => {
+  );
+  const denoisePromise = masterPromise.then((master) => {
     // Keep the background continuation reachable from a cached Master result.
+    // The callback runs only after denoisePromise has been initialized.
     master.rawDenoisePromise = denoisePromise;
-    return master;
-  });
-  denoisePromise = masterPromise.then((master) =>
-    decodeRawDenoiseImage(
+    return decodeRawDenoiseImage(
       file,
       master,
       preview.plan,
       rawDebug,
       rawDemosaicQuality,
       rawHighlightMode,
-    ),
-  );
+    );
+  });
   // Preview is the foreground result. Master starts only after Preview has
   // completed, and Denoise starts only after Master has completed. Background
   // failures do not invalidate Preview/Master editing.
@@ -10570,7 +10892,7 @@ export function ImageEditDialog({
                                   : "n/a"}
                               </div>
                               <div>
-                                saturation: saturation={formatRawDevelopmentSetting(rawDevelopmentSettings.saturation.saturation)}, vibrance={formatRawDevelopmentSetting(rawDevelopmentSettings.saturation.vibrance)}
+                                saturation: saturation={formatRawDevelopmentSetting(colorSaturationFactor(rawDevelopmentSettings.saturation.saturation))}, vibrance={formatRawDevelopmentSetting(colorVibranceFactor(rawDevelopmentSettings.saturation.vibrance))}
                               </div>
                               <div>
                                 source: ISO={rawDevelopmentSettings.iso === null ? "n/a" : formatRawDevelopmentSetting(rawDevelopmentSettings.iso)}, medPasses={rawDevelopmentSettings.medPasses}, mode={rawDevelopmentSettings.mode === "thumbnail-match" ? "thumbnail match" : "fallback"}

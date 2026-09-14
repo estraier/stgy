@@ -35,7 +35,7 @@ type StartMessageBase = {
 };
 
 type RawDevelopmentWorkerRequest =
-  | ({ type: "matched-tone"; plan: RawMatchedTonePlan; sampleMaxSide: number } & StartMessageBase)
+  | ({ type: "matched-tone"; plan: RawMatchedTonePlan; sampleTargetPixels: number } & StartMessageBase)
   | ({ type: "fallback-tone" } & StartMessageBase)
   | ({ type: "denoise-analyze" } & StartMessageBase)
   | { type: "color"; plan: RawColorPassPlan }
@@ -205,7 +205,7 @@ workerScope.onmessage = (event: MessageEvent<RawDevelopmentWorkerRequest>) => {
         message.width,
         message.height,
         state.linearRangeMax,
-        message.sampleMaxSide,
+        message.sampleTargetPixels,
       );
       workerScope.postMessage(
         { type: "tone-complete", headroom, colorSample: colorSample.buffer },

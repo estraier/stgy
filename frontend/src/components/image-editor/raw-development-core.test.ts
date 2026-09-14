@@ -43,14 +43,15 @@ describe("RAW development hot-loop characterization", () => {
       fixture.height,
       1,
       fixture.vignetting,
-      { gain: 1.23, scaledLog: 0.7, sigmoid: -0.6, toneSlopeAtWhite: 0.82 },
+      { gain: 1.23, scaledLog: 0.7, sigmoid: -0.6, toneSlopeAtWhite: 0.82, rolloff: { inflection: 0.9, ceiling: 2 } },
     );
-    expect(fnv1a16(data)).toBe("4d707378");
+    expect(fnv1a16(data)).toBe("eb2b4403");
     expect(headroom.bins).toEqual([
-      0, 0, 0, 0, 0, 5, 41, 28, 41, 61,
-      72, 71, 48, 19, 5, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 5, 41, 28, 41, 64,
+      92, 83, 32, 5, 0, 0, 0, 0, 0, 0,
     ]);
-    expect(headroom.maxRgb).toBeCloseTo(1.4372515896129021, 14);
+    expect(headroom.maxRgb).toBeCloseTo(1.3250389923397456, 14);
+    expect(headroom.overflowCount).toBe(0);
   });
 
   test("keeps the color pass in gamma20 Uint16", () => {
@@ -62,17 +63,16 @@ describe("RAW development hot-loop characterization", () => {
       fixture.height,
       1,
       fixture.vignetting,
-      { gain: 1.23, scaledLog: 0.7, sigmoid: -0.6, toneSlopeAtWhite: 0.82 },
+      { gain: 1.23, scaledLog: 0.7, sigmoid: -0.6, toneSlopeAtWhite: 0.82, rolloff: { inflection: 0.9, ceiling: 2 } },
     );
     applyRawColorPass(data, 2, {
-      rolloff: { inflection: 0.75, scale: 0.2 },
       hasSaturation: true,
       hasVibrance: true,
       saturationFactor: 1.15,
       vibranceFactor: 0.3,
       saturationRolloff: { inflection: 0.8, scale: 0.25 },
     });
-    expect(fnv1a16(data)).toBe("91e9f6c0");
+    expect(fnv1a16(data)).toBe("6abc189e");
   });
 
   test("still converts untouched linear fallback data to gamma20", () => {
@@ -92,10 +92,11 @@ describe("RAW development hot-loop characterization", () => {
       fixture.vignetting,
     );
     expect(result).not.toBeNull();
-    expect(fnv1a16(data)).toBe("1fec0a4a");
+    expect(fnv1a16(data)).toBe("539b2cc7");
     expect(result?.exposureEv).toBeCloseTo(0.17376055157331727, 14);
-    expect(result?.headroom.maxRgb).toBeCloseTo(1.1909830314689662, 14);
-    expect(result?.plan.rolloff).toBeNull();
+    expect(result?.headroom.maxRgb).toBeCloseTo(1.1556767404786572, 14);
+    expect(result?.headroom.overflowCount).toBe(0);
+    expect(result?.plan.rolloff).toEqual({ inflection: 0.9, ceiling: 2 });
   });
 
   test("uses the full 0..2 RAW headroom for fallback rolloff", () => {
@@ -113,8 +114,8 @@ describe("RAW development hot-loop characterization", () => {
     const result = applyRawFallbackBaselinePass(data, width, 1, 1, undefined);
     expect(result).not.toBeNull();
     expect(result?.plan.factor).toBeCloseTo(8.999313396399145, 12);
-    expect(result?.plan.rolloff?.inflection).toBeCloseTo(1.2844670182046447, 12);
-    expect(result?.plan.rolloff?.scale).toBeCloseTo(0.09274752262990468, 12);
-    expect(result?.headroom.maxRgb).toBeCloseTo(1.9999999072524774, 12);
+    expect(result?.plan.rolloff).toEqual({ inflection: 0.9, ceiling: 2 });
+    expect(result?.headroom.maxRgb).toBeCloseTo(1.9993022865005754, 12);
+    expect(result?.headroom.overflowCount).toBe(0);
   });
 });

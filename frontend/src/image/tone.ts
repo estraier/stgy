@@ -51,6 +51,21 @@ export const PROPHOTO_TONE_LUMA_R = 0.2880402;
 export const PROPHOTO_TONE_LUMA_G = 0.7118741;
 export const PROPHOTO_TONE_LUMA_B = 0.0000857;
 export const FINAL_MAX_CHANNEL_ROLLOFF_START = 0.9;
+
+export type HighlightRolloff = {
+  inflection: number;
+  ceiling: number;
+};
+
+export const HIGHLIGHT_ROLLOFF_INFLECTION = FINAL_MAX_CHANNEL_ROLLOFF_START;
+
+export function createHighlightRolloff(
+  ceiling: number,
+  inflection = HIGHLIGHT_ROLLOFF_INFLECTION,
+): HighlightRolloff | null {
+  if (!Number.isFinite(ceiling) || !Number.isFinite(inflection) || ceiling <= inflection) return null;
+  return { inflection, ceiling };
+}
 const TONE_ENDPOINT_SLOPE_EPSILON = 1e-5;
 const TONE_LUMINANCE_EPSILON = 1e-12;
 
@@ -311,21 +326,44 @@ export function applyHsvSaturationPreservingProPhotoLuminance(
   return [shapeR * scale, shapeG * scale, shapeB * scale];
 }
 
+export function applyHighlightRolloffScalar(
+  value: number,
+  rolloff: HighlightRolloff | null,
+): number {
+  if (!rolloff || !Number.isFinite(value) || value <= rolloff.inflection) return value;
+  const shoulder = rolloff.ceiling - rolloff.inflection;
+  if (!(shoulder > 0)) return value;
+  return rolloff.inflection
+    + shoulder * (1 - Math.exp(-(value - rolloff.inflection) / shoulder));
+}
+
+export function applyHighlightRolloffMaxChannelLinearRgb(
+  r: number,
+  g: number,
+  b: number,
+  rolloff: HighlightRolloff | null,
+): [number, number, number] {
+  const maxChannel = Math.max(r, g, b);
+  if (!rolloff || !Number.isFinite(maxChannel) || maxChannel <= rolloff.inflection || maxChannel <= 0) {
+    return [r, g, b];
+  }
+  const rolledMax = applyHighlightRolloffScalar(maxChannel, rolloff);
+  const scale = rolledMax / maxChannel;
+  return [r * scale, g * scale, b * scale];
+}
+
 export function applyFinalMaxChannelRolloffLinearRgb(
   r: number,
   g: number,
   b: number,
   start = FINAL_MAX_CHANNEL_ROLLOFF_START,
 ): [number, number, number] {
-  const maxChannel = Math.max(r, g, b);
-  const k = Number.isFinite(start)
-    ? Math.min(0.999999, Math.max(0, start))
-    : FINAL_MAX_CHANNEL_ROLLOFF_START;
-  if (!Number.isFinite(maxChannel) || maxChannel <= k || maxChannel <= 0) return [r, g, b];
-  const shoulder = 1 - k;
-  const rolledMax = k + shoulder * (1 - Math.exp(-(maxChannel - k) / shoulder));
-  const scale = rolledMax / maxChannel;
-  return [r * scale, g * scale, b * scale];
+  return applyHighlightRolloffMaxChannelLinearRgb(
+    r,
+    g,
+    b,
+    createHighlightRolloff(1, start),
+  );
 }
 
 export function rolloffParams(
@@ -491,6 +529,16 @@ export function applyDisplayRolloffAndClipLinearToRgb(
   ];
 }
 
+export function applyHighlightRolloffAndClipLinearToRgb(
+  r: number,
+  g: number,
+  b: number,
+  rolloff: HighlightRolloff | null,
+): [number, number, number] {
+  [r, g, b] = applyHighlightRolloffMaxChannelLinearRgb(r, g, b, rolloff);
+  return [clamp01(r), clamp01(g), clamp01(b)];
+}
+
 export type ToneAdjustmentFlags = {
   hasExposure: boolean;
   hasShadow: boolean;
@@ -550,20 +598,14 @@ export type ColorAdjustmentContext = {
   shadow: number;
   highlight: number;
   highlightRange: HighlightRange | null;
-  // Retained for the separate RAW thumbnail-matching preprocessing plan.
-  // This is the historical post-exposure rolloff statistic used by the RAW
-  // thumbnail-matching preprocessing path.
-  rolloff: { inflection: number; scale: number } | null;
-  // Final display rolloff applied per channel after Tone + Saturation/Vibrance.
-  finalRolloff: { inflection: number; scale: number } | null;
+  // Final display highlight shoulder applied after Tone + Saturation/Vibrance.
+  finalRolloff: HighlightRolloff | null;
   scaledLog: number;
   sigmoid: number;
   normalizedVibrance: number;
   normalizedSaturation: number;
   saturationFactor: number;
   vibranceFactor: number;
-  // Retained only for RAW thumbnail-matching preprocessing compatibility.
-  saturationRolloff: { inflection: number; scale: number } | null;
 };
 
 export type ToneAdjustmentStage =
@@ -695,15 +737,16 @@ export function applyColorAdjustmentsAfterToneLinearRgb(
   context: ColorAdjustmentContext,
   applyFinalRolloff = true,
 ): [number, number, number] {
-  return applySaturationVibranceAndFinalRolloffLinearRgb(
+  [r, g, b] = applySaturationVibranceAndFinalRolloffLinearRgb(
     r,
     g,
     b,
     context.normalizedSaturation,
     context.normalizedVibrance,
-    applyFinalRolloff,
-    context.finalRolloff,
+    false,
   );
+  if (!applyFinalRolloff) return [r, g, b];
+  return applyHighlightRolloffAndClipLinearToRgb(r, g, b, context.finalRolloff);
 }
 
 export function hasColorAdjustmentContextChanges(context: ColorAdjustmentContext): boolean {
