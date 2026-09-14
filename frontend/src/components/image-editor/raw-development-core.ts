@@ -57,6 +57,21 @@ export type RawFallbackResult = {
   plan: RawFallbackPlan;
 };
 
+export type RawDenoiseMaskAnalysis = {
+  weight: Float32Array;
+  width: number;
+  height: number;
+  smoothMean: number;
+  smoothStddev: number;
+  shadowMean: number;
+  shadowStddev: number;
+  weightMean: number;
+  weightStddev: number;
+  weightP50: number;
+  weightP90: number;
+  weightP99: number;
+};
+
 const RAW_DEVELOPED_LINEAR_RANGE_MAX = 2;
 const RAW_HEADROOM_HISTOGRAM_STEP = 0.1;
 const RAW_HEADROOM_HISTOGRAM_MAX = 2;
@@ -76,6 +91,11 @@ const PROPHOTO_LUMA_B = 0.0000857;
 
 function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value));
+}
+
+function smoothstep(low: number, high: number, value: number): number {
+  const t = clamp01((value - low) / Math.max(high - low, 1e-12));
+  return t * t * (3 - 2 * t);
 }
 
 function decodeLinearUint16(value: number, linearRangeMax: number): number {
@@ -859,3 +879,319 @@ export function convertRawLinearToGamma20InPlace(
     data[i] = encodeGamma20Uint16(linear, linearRangeMax);
   }
 }
+
+function scalarMeanStddev(data: Float32Array): { mean: number; stddev: number } {
+  if (!data.length) return { mean: 0, stddev: 0 };
+  let sum = 0;
+  let sumSq = 0;
+  for (let i = 0; i < data.length; i++) {
+    const value = data[i] ?? 0;
+    sum += value;
+    sumSq += value * value;
+  }
+  const mean = sum / data.length;
+  const variance = Math.max(0, sumSq / data.length - mean * mean);
+  return { mean, stddev: Math.sqrt(variance) };
+}
+
+function scalarPercentile(sorted: Float32Array, percentile: number): number {
+  if (!sorted.length) return 0;
+  const position = clamp01(percentile / 100) * (sorted.length - 1);
+  const lower = Math.floor(position);
+  const upper = Math.min(sorted.length - 1, lower + 1);
+  const fraction = position - lower;
+  return (sorted[lower] ?? 0) * (1 - fraction) + (sorted[upper] ?? 0) * fraction;
+}
+
+function gaussianBlurScalar(
+  source: Float32Array,
+  width: number,
+  height: number,
+  sigma: number,
+): Float32Array {
+  if (sigma <= 0 || width <= 1 || height <= 1) return source.slice();
+  const radius = Math.max(1, Math.ceil(sigma * 3));
+  const kernel = new Float32Array(radius * 2 + 1);
+  let kernelSum = 0;
+  for (let offset = -radius; offset <= radius; offset++) {
+    const value = Math.exp(-(offset * offset) / (2 * sigma * sigma));
+    kernel[offset + radius] = value;
+    kernelSum += value;
+  }
+  for (let i = 0; i < kernel.length; i++) kernel[i] /= kernelSum;
+
+  const horizontal = new Float32Array(source.length);
+  for (let y = 0; y < height; y++) {
+    const row = y * width;
+    for (let x = 0; x < width; x++) {
+      let value = 0;
+      for (let offset = -radius; offset <= radius; offset++) {
+        const sx = Math.min(width - 1, Math.max(0, x + offset));
+        value += (source[row + sx] ?? 0) * (kernel[offset + radius] ?? 0);
+      }
+      horizontal[row + x] = value;
+    }
+  }
+
+  const output = new Float32Array(source.length);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      let value = 0;
+      for (let offset = -radius; offset <= radius; offset++) {
+        const sy = Math.min(height - 1, Math.max(0, y + offset));
+        value += (horizontal[sy * width + x] ?? 0) * (kernel[offset + radius] ?? 0);
+      }
+      output[y * width + x] = value;
+    }
+  }
+  return output;
+}
+
+function estimateLaplacianNoiseFloor(
+  laplacian: Float32Array,
+  width: number,
+  height: number,
+  numTiles = 400,
+  percentile = 10,
+): number {
+  if (!laplacian.length) return 0;
+  const tileSide = Math.max(1, Math.round(Math.sqrt(width * height / numTiles)));
+  const tileMeans: number[] = [];
+  for (let y0 = 0; y0 < height; y0 += tileSide) {
+    const y1 = Math.min(height, y0 + tileSide);
+    for (let x0 = 0; x0 < width; x0 += tileSide) {
+      const x1 = Math.min(width, x0 + tileSide);
+      let sum = 0;
+      let count = 0;
+      for (let y = y0; y < y1; y++) {
+        const row = y * width;
+        for (let x = x0; x < x1; x++) {
+          sum += laplacian[row + x] ?? 0;
+          count++;
+        }
+      }
+      if (count > 0) tileMeans.push(sum / count);
+    }
+  }
+  if (!tileMeans.length) return 0;
+  tileMeans.sort((a, b) => a - b);
+  const count = Math.max(1, Math.floor(tileMeans.length * percentile / 100));
+  let sum = 0;
+  for (let i = 0; i < count; i++) sum += tileMeans[i] ?? 0;
+  return sum / count;
+}
+
+export function analyzeRawDenoiseMask(
+  data: Uint16Array,
+  width: number,
+  height: number,
+  linearRangeMax: number,
+  transfer: RawStorageTransfer,
+): RawDenoiseMaskAnalysis {
+  const pixels = Math.max(0, width * height);
+  if (!pixels || data.length < pixels * 3) {
+    return {
+      weight: new Float32Array(),
+      width,
+      height,
+      smoothMean: 0,
+      smoothStddev: 0,
+      shadowMean: 0,
+      shadowStddev: 0,
+      weightMean: 0,
+      weightStddev: 0,
+      weightP50: 0,
+      weightP90: 0,
+      weightP99: 0,
+    };
+  }
+
+  const luma = new Float32Array(pixels);
+  for (let pixel = 0, source = 0; pixel < pixels; pixel++, source += 3) {
+    const r = decodeStoredUint16(data[source] ?? 0, linearRangeMax, transfer);
+    const g = decodeStoredUint16(data[source + 1] ?? 0, linearRangeMax, transfer);
+    const b = decodeStoredUint16(data[source + 2] ?? 0, linearRangeMax, transfer);
+    luma[pixel] = PROPHOTO_LUMA_R * r + PROPHOTO_LUMA_G * g + PROPHOTO_LUMA_B * b;
+  }
+
+  // Suppress single-pixel noise before measuring structure. This follows the
+  // existing itb_stack sharpness idea: combine high-frequency Laplacian with
+  // lower-frequency Sobel after a small blur, and subtract an estimated noise floor.
+  const blurred = gaussianBlurScalar(luma, width, height, 1.0);
+  const laplacian = new Float32Array(pixels);
+  const sobel = new Float32Array(pixels);
+  for (let y = 0; y < height; y++) {
+    const ym = Math.max(0, y - 1);
+    const yp = Math.min(height - 1, y + 1);
+    for (let x = 0; x < width; x++) {
+      const xm = Math.max(0, x - 1);
+      const xp = Math.min(width - 1, x + 1);
+      const center = blurred[y * width + x] ?? 0;
+      const left = blurred[y * width + xm] ?? 0;
+      const right = blurred[y * width + xp] ?? 0;
+      const top = blurred[ym * width + x] ?? 0;
+      const bottom = blurred[yp * width + x] ?? 0;
+      laplacian[y * width + x] = Math.abs(left + right + top + bottom - 4 * center);
+
+      const tl = blurred[ym * width + xm] ?? 0;
+      const tc = blurred[ym * width + x] ?? 0;
+      const tr = blurred[ym * width + xp] ?? 0;
+      const ml = blurred[y * width + xm] ?? 0;
+      const mr = blurred[y * width + xp] ?? 0;
+      const bl = blurred[yp * width + xm] ?? 0;
+      const bc = blurred[yp * width + x] ?? 0;
+      const br = blurred[yp * width + xp] ?? 0;
+      const gx = -tl + tr - 2 * ml + 2 * mr - bl + br;
+      const gy = -tl - 2 * tc - tr + bl + 2 * bc + br;
+      sobel[y * width + x] = Math.hypot(gx, gy);
+    }
+  }
+
+  const noiseFloor = estimateLaplacianNoiseFloor(laplacian, width, height);
+  for (let i = 0; i < laplacian.length; i++) {
+    laplacian[i] = Math.max(0, (laplacian[i] ?? 0) - 0.5 * noiseFloor);
+  }
+  const lapStats = scalarMeanStddev(laplacian);
+  const sobelStats = scalarMeanStddev(sobel);
+  const sharp = new Float32Array(pixels);
+  for (let i = 0; i < pixels; i++) {
+    const lapZ = ((laplacian[i] ?? 0) - lapStats.mean) / Math.max(lapStats.stddev, 1e-12);
+    const sobelZ = ((sobel[i] ?? 0) - sobelStats.mean) / Math.max(sobelStats.stddev, 1e-12);
+    sharp[i] = 0.5 * lapZ + 0.5 * sobelZ;
+  }
+
+  // Normalize the combined sharpness field once more after mixing Laplacian
+  // and Sobel. Their individual z-scores do not guarantee unit variance after
+  // combination. A +/-1.5 sigma transition keeps the mask soft instead of
+  // snapping a large fraction of pixels to fully smooth or fully sharp.
+  const sharpStats = scalarMeanStddev(sharp);
+  const sharpStddev = Math.max(sharpStats.stddev, 1e-12);
+
+  // Judge shadow depth relative to the image instead of against fixed display
+  // luminance thresholds. Global exposure/ISO gain shifts log luminance by an
+  // approximately constant amount, which disappears after z-score normalization.
+  // A small floor prevents clipped black pixels from producing -Infinity.
+  const logLuma = new Float32Array(pixels);
+  for (let i = 0; i < pixels; i++) {
+    logLuma[i] = Math.log2(Math.max(luma[i] ?? 0, 1e-6));
+  }
+  const logLumaStats = scalarMeanStddev(logLuma);
+  const logLumaStddev = Math.max(logLumaStats.stddev, 1e-12);
+
+  const rawWeight = new Float32Array(pixels);
+  let smoothSum = 0;
+  let smoothSumSq = 0;
+  let shadowSum = 0;
+  let shadowSumSq = 0;
+  for (let i = 0; i < pixels; i++) {
+    const sharpZ = ((sharp[i] ?? 0) - sharpStats.mean) / sharpStddev;
+    const smooth = 1 - smoothstep(-1.5, 1.5, sharpZ);
+    const lumaZ = ((logLuma[i] ?? 0) - logLumaStats.mean) / logLumaStddev;
+    const shadow = 1 - smoothstep(-1.5, 1.5, lumaZ);
+    rawWeight[i] = smooth * (0.25 + 0.75 * shadow);
+    smoothSum += smooth;
+    smoothSumSq += smooth * smooth;
+    shadowSum += shadow;
+    shadowSumSq += shadow * shadow;
+  }
+
+  // The displayed/debugged map is the actual final blend weight, including the
+  // soft spatial transition that will later be sampled at Master resolution.
+  const weight = gaussianBlurScalar(rawWeight, width, height, 1.2);
+  for (let i = 0; i < weight.length; i++) weight[i] = clamp01(weight[i] ?? 0);
+  const weightStats = scalarMeanStddev(weight);
+  const sortedWeight = weight.slice();
+  sortedWeight.sort();
+  const smoothMean = smoothSum / pixels;
+  const shadowMean = shadowSum / pixels;
+
+  return {
+    weight,
+    width,
+    height,
+    smoothMean,
+    smoothStddev: Math.sqrt(Math.max(0, smoothSumSq / pixels - smoothMean * smoothMean)),
+    shadowMean,
+    shadowStddev: Math.sqrt(Math.max(0, shadowSumSq / pixels - shadowMean * shadowMean)),
+    weightMean: weightStats.mean,
+    weightStddev: weightStats.stddev,
+    weightP50: scalarPercentile(sortedWeight, 50),
+    weightP90: scalarPercentile(sortedWeight, 90),
+    weightP99: scalarPercentile(sortedWeight, 99),
+  };
+}
+
+export function mergeRawDenoiseGamma20InPlaceRows(
+  master: Uint16Array,
+  denoise: Uint16Array,
+  width: number,
+  height: number,
+  weight: Float32Array,
+  weightWidth: number,
+  weightHeight: number,
+  startRow: number,
+  endRow: number,
+): void {
+  const imageWidth = Math.max(1, Math.round(width));
+  const imageHeight = Math.max(1, Math.round(height));
+  const maskWidth = Math.max(1, Math.round(weightWidth));
+  const maskHeight = Math.max(1, Math.round(weightHeight));
+  if (master.length < imageWidth * imageHeight * 3 || denoise.length < imageWidth * imageHeight * 3) {
+    throw new Error("RAW denoise merge buffer is smaller than the image");
+  }
+  if (weight.length < maskWidth * maskHeight) {
+    throw new Error("RAW denoise weight map buffer is smaller than the mask");
+  }
+
+  const yBegin = Math.max(0, Math.min(imageHeight, Math.floor(startRow)));
+  const yEnd = Math.max(yBegin, Math.min(imageHeight, Math.ceil(endRow)));
+  const invMax = 1 / 65535;
+
+  for (let y = yBegin; y < yEnd; y++) {
+    const maskY = Math.max(0, Math.min(
+      maskHeight - 1,
+      (y + 0.5) * maskHeight / imageHeight - 0.5,
+    ));
+    const y0 = Math.floor(maskY);
+    const y1 = Math.min(maskHeight - 1, y0 + 1);
+    const ty = maskY - y0;
+    const row0 = y0 * maskWidth;
+    const row1 = y1 * maskWidth;
+    for (let x = 0; x < imageWidth; x++) {
+      const maskX = Math.max(0, Math.min(
+        maskWidth - 1,
+        (x + 0.5) * maskWidth / imageWidth - 0.5,
+      ));
+      const x0 = Math.floor(maskX);
+      const x1 = Math.min(maskWidth - 1, x0 + 1);
+      const tx = maskX - x0;
+      const w00 = weight[row0 + x0] ?? 0;
+      const w10 = weight[row0 + x1] ?? 0;
+      const w01 = weight[row1 + x0] ?? 0;
+      const w11 = weight[row1 + x1] ?? 0;
+      const top = w00 + (w10 - w00) * tx;
+      const bottom = w01 + (w11 - w01) * tx;
+      const blend = clamp01(top + (bottom - top) * ty);
+      const base = (y * imageWidth + x) * 3;
+      for (let channel = 0; channel < 3; channel++) {
+        const index = base + channel;
+        const masterEncoded = (master[index] ?? 0) * invMax;
+        const denoiseEncoded = (denoise[index] ?? 0) * invMax;
+        // Both developed images use gamma 2.0 storage with the same linear range.
+        // Decode to linear light, blend there, then encode back into D in place.
+        // Use weighted geometric mean instead of arithmetic mean so that, in
+        // shadow regions, the blend tends to favor the lower signal estimate and
+        // suppress positive-going bright noise more aggressively.
+        const masterLinear = masterEncoded * masterEncoded;
+        const denoiseLinear = denoiseEncoded * denoiseEncoded;
+        const epsilon = invMax * invMax;
+        const mixedLinear = Math.exp(
+          (1 - blend) * Math.log(masterLinear + epsilon)
+          + blend * Math.log(denoiseLinear + epsilon),
+        ) - epsilon;
+        denoise[index] = Math.round(Math.sqrt(Math.max(0, mixedLinear)) * 65535);
+      }
+    }
+  }
+}
+

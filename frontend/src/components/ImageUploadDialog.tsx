@@ -40,6 +40,10 @@ import type {
   LinearRgbSample,
   RawDevelopmentHeadroomStatistics,
   RawDevelopmentLensfunSettings,
+  RawDenoiseSettings,
+  RawDebugArtifacts,
+  RawDebugImageSnapshot,
+  RawDebugWeightMap,
   RawDevelopmentLuminanceSettings,
   RawDevelopmentSaturationSettings,
   RawDevelopmentSettings,
@@ -128,10 +132,12 @@ import {
   type ImageEditPreviewSliderStage,
 } from "./image-editor/render";
 import {
+  analyzeRawDenoiseMask,
   applyRawColorPass,
   applyRawFallbackBaselinePass,
   applyRawMatchedTonePass,
   developRawMasterOnePassToGamma20,
+  mergeRawDenoiseGamma20InPlaceRows,
   resampleRawWithLensfunToGamma20,
   type RawColorPassPlan,
   type RawFallbackPlan,
@@ -432,6 +438,8 @@ const RAW_THUMBNAIL_MATCH_COLOR_VALUE_TRIM_FRACTION = 0.1;
 const DEBUG_PERCENTILES = [0, 1, 2, 5, 25, 50, 75, 95, 98, 99, 100] as const;
 const RAW_THUMBNAIL_MATCH_SAMPLE_MAX_SIDE = 256;
 const RAW_EDITOR_PREVIEW_TARGET_PIXELS = 1_000_000;
+const RAW_DEBUG_TARGET_PIXELS = 1_000_000;
+const RAW_DENOISE_FULL_ISO = 800;
 const IMAGE_EDIT_CLAHE_MIN_PIXELS = 80 * 256 * 20; // 409,600 pixels.
 const RAW_PREVIEW_DEMOSAIC_QUALITY: RawDemosaicQuality = 0;
 
@@ -4581,6 +4589,20 @@ function rawMedianDenoisePassesForIso(iso: number): number {
   return 0;
 }
 
+type RawDenoiseDecodeSettings = {
+  fbddNoiserd: 1 | 2;
+  fbdd: RawDenoiseSettings["fbdd"];
+  medPasses: 1 | 2;
+  threshold: 100 | 200;
+};
+
+function rawDenoiseDecodeSettingsForIso(iso: number): RawDenoiseDecodeSettings {
+  if (Number.isFinite(iso) && iso >= RAW_DENOISE_FULL_ISO) {
+    return { fbddNoiserd: 2, fbdd: "full", medPasses: 2, threshold: 200 };
+  }
+  return { fbddNoiserd: 1, fbdd: "light", medPasses: 1, threshold: 100 };
+}
+
 function formatRawDevelopmentSetting(value: number): string {
   if (!Number.isFinite(value)) return "n/a";
   const normalized = Math.abs(value) < 0.0005 ? 0 : value;
@@ -4709,11 +4731,28 @@ type RawWorkerMasterOnePassResponse = {
   headroom?: RawDevelopmentHeadroomStatistics;
 };
 
+type RawWorkerDenoiseAnalyzeResponse = {
+  type: "denoise-analyze-complete";
+  weightBuffer: ArrayBuffer;
+  width: number;
+  height: number;
+  smoothMean: number;
+  smoothStddev: number;
+  shadowMean: number;
+  shadowStddev: number;
+  weightMean: number;
+  weightStddev: number;
+  weightP50: number;
+  weightP90: number;
+  weightP99: number;
+};
+
 type RawProgressiveDevelopmentPlan = {
   mode: RawDevelopmentSettings["mode"];
   luminance: RawDevelopmentLuminanceSettings | null;
   headroom?: RawDevelopmentHeadroomStatistics;
   saturation: RawDevelopmentSaturationSettings;
+  previewElapsedSeconds?: number;
   tonePlan?: RawMatchedTonePlan;
   fallbackPlan?: RawFallbackPlan;
   colorPlan?: RawColorPassPlan;
@@ -4817,6 +4856,165 @@ function rawLensfunMapTransferables(correction: LensfunCorrection | undefined): 
 
 function rawPreviewDimensions(width: number, height: number): { width: number; height: number } {
   return analysisSampleDimensions(width, height, RAW_EDITOR_PREVIEW_TARGET_PIXELS);
+}
+
+function buildRawDebugImageSnapshot(decoded: DecodedRgbImage16): RawDebugImageSnapshot {
+  const dimensions = analysisSampleDimensions(
+    decoded.width,
+    decoded.height,
+    RAW_DEBUG_TARGET_PIXELS,
+  );
+  const output = new Uint16Array(dimensions.width * dimensions.height * 3);
+  let targetIndex = 0;
+  for (let y = 0; y < dimensions.height; y++) {
+    const sy = Math.min(
+      decoded.height - 1,
+      Math.max(0, Math.floor((y + 0.5) * decoded.height / dimensions.height)),
+    );
+    for (let x = 0; x < dimensions.width; x++, targetIndex += 3) {
+      const sx = Math.min(
+        decoded.width - 1,
+        Math.max(0, Math.floor((x + 0.5) * decoded.width / dimensions.width)),
+      );
+      const sourceIndex = (sy * decoded.width + sx) * 3;
+      output[targetIndex] = decoded.data[sourceIndex] ?? 0;
+      output[targetIndex + 1] = decoded.data[sourceIndex + 1] ?? 0;
+      output[targetIndex + 2] = decoded.data[sourceIndex + 2] ?? 0;
+    }
+  }
+  return {
+    width: dimensions.width,
+    height: dimensions.height,
+    sourceWidth: decoded.width,
+    sourceHeight: decoded.height,
+    linearRangeMax: decoded.linearRangeMax,
+    transfer: decoded.transfer,
+    data: output,
+  };
+}
+
+function buildRawDebugImageFullCopy(decoded: DecodedRgbImage16): RawDebugImageSnapshot {
+  return {
+    width: decoded.width,
+    height: decoded.height,
+    sourceWidth: decoded.width,
+    sourceHeight: decoded.height,
+    linearRangeMax: decoded.linearRangeMax,
+    transfer: decoded.transfer,
+    data: decoded.data.slice(),
+  };
+}
+
+type RawDenoiseAnalysisResult = Omit<RawWorkerDenoiseAnalyzeResponse, "type" | "weightBuffer"> & {
+  weightMap: RawDebugWeightMap;
+};
+
+async function analyzeRawDenoiseInWorker(
+  snapshot: RawDebugImageSnapshot,
+): Promise<RawDenoiseAnalysisResult> {
+  const data = snapshot.data.slice();
+  const worker = createRawDevelopmentWorker();
+  if (!worker) {
+    const analysis = analyzeRawDenoiseMask(
+      data,
+      snapshot.width,
+      snapshot.height,
+      snapshot.linearRangeMax,
+      snapshot.transfer,
+    );
+    return {
+      width: analysis.width,
+      height: analysis.height,
+      smoothMean: analysis.smoothMean,
+      smoothStddev: analysis.smoothStddev,
+      shadowMean: analysis.shadowMean,
+      shadowStddev: analysis.shadowStddev,
+      weightMean: analysis.weightMean,
+      weightStddev: analysis.weightStddev,
+      weightP50: analysis.weightP50,
+      weightP90: analysis.weightP90,
+      weightP99: analysis.weightP99,
+      weightMap: {
+        width: analysis.width,
+        height: analysis.height,
+        data: analysis.weight,
+      },
+    };
+  }
+  const dataBuffer = data.buffer as ArrayBuffer;
+  try {
+    const response = await requestRawDevelopmentWorker<RawWorkerDenoiseAnalyzeResponse>(
+      worker,
+      "denoise-analyze-complete",
+      {
+        type: "denoise-analyze",
+        dataBuffer,
+        width: snapshot.width,
+        height: snapshot.height,
+        sourceLinearRangeMax: snapshot.linearRangeMax,
+        sourceTransfer: snapshot.transfer,
+      },
+      [dataBuffer],
+    );
+    return {
+      width: response.width,
+      height: response.height,
+      smoothMean: response.smoothMean,
+      smoothStddev: response.smoothStddev,
+      shadowMean: response.shadowMean,
+      shadowStddev: response.shadowStddev,
+      weightMean: response.weightMean,
+      weightStddev: response.weightStddev,
+      weightP50: response.weightP50,
+      weightP90: response.weightP90,
+      weightP99: response.weightP99,
+      weightMap: {
+        width: response.width,
+        height: response.height,
+        data: new Float32Array(response.weightBuffer),
+      },
+    };
+  } finally {
+    worker.terminate();
+  }
+}
+
+
+async function mergeRawDenoiseDevelopedImageInPlace(
+  master: DecodedRgbImage16,
+  denoise: DecodedRgbImage16,
+  weightMap: RawDebugWeightMap,
+  shouldCancel: () => boolean,
+): Promise<boolean> {
+  if (
+    master.width !== denoise.width ||
+    master.height !== denoise.height ||
+    master.transfer !== "gamma20" ||
+    denoise.transfer !== "gamma20" ||
+    master.linearRangeMax !== denoise.linearRangeMax
+  ) {
+    throw new Error("RAW denoise merge inputs do not match Master");
+  }
+
+  const rowsPerChunk = 32;
+  for (let startRow = 0; startRow < master.height; startRow += rowsPerChunk) {
+    if (shouldCancel()) return false;
+    mergeRawDenoiseGamma20InPlaceRows(
+      master.data,
+      denoise.data,
+      master.width,
+      master.height,
+      weightMap.data,
+      weightMap.width,
+      weightMap.height,
+      startRow,
+      Math.min(master.height, startRow + rowsPerChunk),
+    );
+    if (startRow + rowsPerChunk < master.height) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+  }
+  return !shouldCancel();
 }
 
 function imageEditPreviewDimensions(
@@ -5235,6 +5433,7 @@ async function decodeRawPreviewImage(
 
   let raw: LibRawInstanceLike | null = null;
   let workerFailure: ReturnType<typeof createLibRawWorkerFailure> | null = null;
+  const rawDebug: RawDebugArtifacts = {};
   try {
     raw = await runStage("Loading RAW preview decoder…", () => createLibRawInstance());
     workerFailure = createLibRawWorkerFailure(raw);
@@ -5263,9 +5462,11 @@ async function decodeRawPreviewImage(
           raw!.thumbnailData!(),
           workerFailure!.promise,
         ]));
-        const embeddedPreview = onProgress
-          ? await runStage("Preparing embedded preview…", () => rawEmbeddedPreviewFromThumbnail(thumbnail))
-          : undefined;
+        const embeddedPreview = await runStage(
+          "Preparing embedded preview…",
+          () => rawEmbeddedPreviewFromThumbnail(thumbnail),
+        );
+        rawDebug.thumbnail = embeddedPreview;
         onProgress?.({ stage: "Analyzing embedded preview…", embeddedPreview });
         thumbnailReference = await rawThumbnailMatchReferenceFromThumbnail(thumbnail);
       } catch {
@@ -5304,6 +5505,10 @@ async function decodeRawPreviewImage(
     onProgress?.({ stage: "Planning preview tone…" });
     if (onProgress) await new Promise<void>((resolve) => setTimeout(resolve, 0));
     const plan = await developRawPreviewPixels(decoded, thumbnailReference, onProgress);
+    rawDebug.preview = buildRawDebugImageSnapshot(decoded);
+    const previewElapsedSeconds = (performance.now() - startedAt) / 1000;
+    plan.previewElapsedSeconds = previewElapsedSeconds;
+    decoded.rawDebug = rawDebug;
     decoded.rawDevelopment = {
       mode: plan.mode,
       iso: Number.isFinite(isoValue) && isoValue > 0 ? isoValue : null,
@@ -5312,7 +5517,8 @@ async function decodeRawPreviewImage(
       saturation: plan.saturation,
       headroom: plan.headroom,
       lensfun: lensfunSettings,
-      elapsedSeconds: (performance.now() - startedAt) / 1000,
+      previewElapsedSeconds,
+      elapsedSeconds: previewElapsedSeconds,
     };
     onProgress?.({ stage: "Preparing preview…" });
     return { decoded, plan };
@@ -5325,7 +5531,8 @@ async function decodeRawPreviewImage(
 
 async function decodeRawMasterImage(
   file: File,
-  planPromise: Promise<RawProgressiveDevelopmentPlan>,
+  plan: RawProgressiveDevelopmentPlan,
+  rawDebug: RawDebugArtifacts,
   rawDemosaicQuality?: RawDemosaicQuality,
   rawHighlightMode?: RawHighlightMode,
 ): Promise<DecodedRgbImage16> {
@@ -5370,9 +5577,10 @@ async function decodeRawMasterImage(
       sourceDecoded.width,
       sourceDecoded.height,
     );
-    const plan = await planPromise;
     const masterResult = await developRawMasterOnePassInWorker(sourceDecoded, plan);
     const decoded = masterResult.decoded;
+    rawDebug.master = buildRawDebugImageFullCopy(decoded);
+    decoded.rawDebug = rawDebug;
     decoded.rawDevelopment = {
       mode: plan.mode,
       iso: Number.isFinite(isoValue) && isoValue > 0 ? isoValue : null,
@@ -5381,7 +5589,96 @@ async function decodeRawMasterImage(
       saturation: plan.saturation,
       headroom: masterResult.headroom ?? plan.headroom,
       lensfun: lensfunSettings,
+      previewElapsedSeconds: plan.previewElapsedSeconds,
       elapsedSeconds: (performance.now() - startedAt) / 1000,
+    };
+    return decoded;
+  } finally {
+    workerFailure?.cleanup();
+    if (raw?.dispose) raw.dispose();
+    else raw?.worker?.terminate();
+  }
+}
+
+async function decodeRawDenoiseImage(
+  file: File,
+  master: DecodedRgbImage16,
+  plan: RawProgressiveDevelopmentPlan,
+  rawDebug: RawDebugArtifacts,
+  rawDemosaicQuality?: RawDemosaicQuality,
+  rawHighlightMode?: RawHighlightMode,
+): Promise<DecodedRgbImage16> {
+  const startedAt = performance.now();
+  let raw: LibRawInstanceLike | null = null;
+  let workerFailure: ReturnType<typeof createLibRawWorkerFailure> | null = null;
+  try {
+    const analysis = rawDebug.preview
+      ? await analyzeRawDenoiseInWorker(rawDebug.preview)
+      : undefined;
+    if (analysis) rawDebug.weightMap = analysis.weightMap;
+
+    const isoValue = master.rawDevelopment?.iso ?? Number.NaN;
+    const denoiseSettings = rawDenoiseDecodeSettingsForIso(isoValue);
+    raw = await createLibRawInstance();
+    workerFailure = createLibRawWorkerFailure(raw);
+    const rawBytes = new Uint8Array(await file.arrayBuffer());
+    const settings: LibRawSettingsLike = {
+      ...RAW_DECODE_SETTINGS,
+      // LibRaw wavelet threshold uses a special internal bitmap path. Keep the
+      // normal Preview/Master demosaic unchanged, but use AHD for Denoise so
+      // threshold does not run through the DHT path that can corrupt tiles.
+      userQual: 3,
+      fbddNoiserd: denoiseSettings.fbddNoiserd,
+      medPasses: denoiseSettings.medPasses,
+      threshold: denoiseSettings.threshold,
+      ...(rawHighlightMode === undefined ? {} : { highlight: rawHighlightMode }),
+    };
+    await Promise.race([raw.open(rawBytes, settings), workerFailure.promise]);
+    const metadata = await Promise.race([raw.metadata(true), workerFailure.promise]);
+    const image = await Promise.race([raw.imageData(), workerFailure.promise]);
+    if (!image || !image.width || !image.height || !image.data) {
+      throw new Error("RAW denoise decode failed");
+    }
+    const sourceDecoded = libRawImageDataToDecoded(image);
+    const lensMetadata = rawLensMetadata(metadata);
+    sourceDecoded.lensCorrection = await buildRawLensfunCorrection(
+      lensMetadata,
+      sourceDecoded.width,
+      sourceDecoded.height,
+    );
+    // Run the denoise source through exactly the same LensFun/tone/color path
+    // as Master. Keep D alive: the mounted editor will blend Master into this
+    // buffer in place using the low-resolution weight map, then adopt D as the
+    // final Denoised master.
+    const denoiseResult = await developRawMasterOnePassInWorker(sourceDecoded, plan);
+    const decoded = denoiseResult.decoded;
+    rawDebug.denoise = buildRawDebugImageFullCopy(decoded);
+    decoded.rawDebug = rawDebug;
+    const denoiseDevelopment: RawDenoiseSettings = {
+      fbdd: denoiseSettings.fbdd,
+      medPasses: denoiseSettings.medPasses,
+      smoothMean: analysis?.smoothMean ?? 0,
+      smoothStddev: analysis?.smoothStddev ?? 0,
+      shadowMean: analysis?.shadowMean ?? 0,
+      shadowStddev: analysis?.shadowStddev ?? 0,
+      weightMean: analysis?.weightMean ?? 0,
+      weightStddev: analysis?.weightStddev ?? 0,
+      weightP50: analysis?.weightP50 ?? 0,
+      weightP90: analysis?.weightP90 ?? 0,
+      weightP99: analysis?.weightP99 ?? 0,
+      elapsedSeconds: (performance.now() - startedAt) / 1000,
+    };
+    decoded.rawDevelopment = {
+      ...(master.rawDevelopment ?? {
+        mode: plan.mode,
+        iso: Number.isFinite(isoValue) && isoValue > 0 ? isoValue : null,
+        medPasses: 0,
+        luminance: plan.luminance,
+        saturation: plan.saturation,
+        previewElapsedSeconds: plan.previewElapsedSeconds,
+        elapsedSeconds: 0,
+      }),
+      denoise: denoiseDevelopment,
     };
     return decoded;
   } finally {
@@ -5397,32 +5694,38 @@ async function decodeRawImage(
   rawHighlightMode?: RawHighlightMode,
   onProgress?: ImageLoadProgressListener,
 ): Promise<DecodedRgbImage16> {
-  let resolvePlan!: (plan: RawProgressiveDevelopmentPlan) => void;
-  let rejectPlan!: (error: unknown) => void;
-  const planPromise = new Promise<RawProgressiveDevelopmentPlan>((resolve, reject) => {
-    resolvePlan = resolve;
-    rejectPlan = reject;
-  });
-
+  const preview = await decodeRawPreviewImage(file, rawHighlightMode, onProgress);
+  const rawDebug = preview.decoded.rawDebug ?? {};
+  let denoisePromise: Promise<DecodedRgbImage16>;
   const masterPromise = decodeRawMasterImage(
     file,
-    planPromise,
+    preview.plan,
+    rawDebug,
     rawDemosaicQuality,
     rawHighlightMode,
+  ).then((master) => {
+    // Keep the background continuation reachable from a cached Master result.
+    master.rawDenoisePromise = denoisePromise;
+    return master;
+  });
+  denoisePromise = masterPromise.then((master) =>
+    decodeRawDenoiseImage(
+      file,
+      master,
+      preview.plan,
+      rawDebug,
+      rawDemosaicQuality,
+      rawHighlightMode,
+    ),
   );
-  // The preview is intentionally the foreground result. Master failures are
-  // surfaced when the full-resolution image is actually required.
+  // Preview is the foreground result. Master starts only after Preview has
+  // completed, and Denoise starts only after Master has completed. Background
+  // failures do not invalidate Preview/Master editing.
   void masterPromise.catch(() => {});
-
-  try {
-    const preview = await decodeRawPreviewImage(file, rawHighlightMode, onProgress);
-    resolvePlan(preview.plan);
-    preview.decoded.rawMasterPromise = masterPromise;
-    return preview.decoded;
-  } catch (error) {
-    rejectPlan(error);
-    throw error;
-  }
+  void denoisePromise.catch(() => {});
+  preview.decoded.rawMasterPromise = masterPromise;
+  preview.decoded.rawDenoisePromise = denoisePromise;
+  return preview.decoded;
 }
 
 // RAW development is expensive and React Strict Mode may start the same editor effect
@@ -6508,6 +6811,166 @@ function histogramPath(values: number[], maxCount: number, width: number, height
     .join(" ");
 }
 
+
+type RawDebugPanel = {
+  meta: HTMLElement;
+  content: HTMLElement;
+};
+
+function createRawDebugPage(title: string): Window | null {
+  const popup = window.open("", "_blank");
+  if (!popup) return null;
+  popup.document.open();
+  popup.document.write(
+    `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>` +
+      `<style>` +
+      `html,body{margin:0;min-height:100%;background:#202020;color:#eee;font-family:system-ui,sans-serif}` +
+      `body{padding:16px}` +
+      `h1{font-size:16px;font-weight:600;margin:0 0 12px}` +
+      `.tabs{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}` +
+      `.tab{appearance:none;border:1px solid #666;border-radius:5px;background:#303030;color:#ddd;padding:5px 10px;font:13px system-ui,sans-serif;cursor:pointer}` +
+      `.tab:hover{background:#3b3b3b}.tab.active{background:#eee;color:#111;border-color:#eee}` +
+      `.panel{display:none}.panel.active{display:block}` +
+      `.meta{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;margin:0 0 10px;color:#bbb}` +
+      `.content{overflow:auto;max-width:100%}` +
+      `.debug-media{display:block;width:auto;height:auto;max-width:min(900px,calc(100vw - 48px));max-height:calc(100vh - 150px);background:#111;object-fit:contain;cursor:zoom-in}` +
+      `.debug-media.expanded{max-width:none;max-height:none;cursor:zoom-out}` +
+      `.hint{font-size:11px;color:#888;margin-top:8px}` +
+      `</style></head>` +
+      `<body><h1>${title}</h1><div id="tabs" class="tabs"></div><div id="panels"></div>` +
+      `<div class="hint">Click an image to toggle between fitted and actual-size display.</div></body></html>`,
+  );
+  popup.document.close();
+  return popup;
+}
+
+function createRawDebugPanel(
+  popup: Window,
+  label: string,
+  active: boolean,
+): RawDebugPanel | null {
+  const doc = popup.document;
+  const tabs = doc.getElementById("tabs");
+  const panels = doc.getElementById("panels");
+  if (!tabs || !panels) return null;
+
+  const panel = doc.createElement("section");
+  panel.className = `panel${active ? " active" : ""}`;
+  const meta = doc.createElement("div");
+  meta.className = "meta";
+  meta.textContent = "rendering...";
+  const content = doc.createElement("div");
+  content.className = "content";
+  panel.append(meta, content);
+  panels.appendChild(panel);
+
+  const button = doc.createElement("button");
+  button.type = "button";
+  button.className = `tab${active ? " active" : ""}`;
+  button.textContent = label;
+  button.addEventListener("click", () => {
+    for (const item of Array.from(tabs.querySelectorAll(".tab"))) item.classList.remove("active");
+    for (const item of Array.from(panels.querySelectorAll(".panel"))) item.classList.remove("active");
+    button.classList.add("active");
+    panel.classList.add("active");
+  });
+  tabs.appendChild(button);
+  return { meta, content };
+}
+
+function makeRawDebugMediaZoomable(element: HTMLElement): void {
+  element.classList.add("debug-media");
+  element.addEventListener("click", () => {
+    element.classList.toggle("expanded");
+  });
+}
+
+function renderRawDebugSnapshot(
+  popup: Window,
+  panel: RawDebugPanel,
+  snapshot: RawDebugImageSnapshot,
+): void {
+  const doc = popup.document;
+  panel.meta.textContent = snapshot.width === snapshot.sourceWidth && snapshot.height === snapshot.sourceHeight
+    ? `${snapshot.width}x${snapshot.height}`
+    : `debug snapshot ${snapshot.width}x${snapshot.height}, source ${snapshot.sourceWidth}x${snapshot.sourceHeight}`;
+  const canvas = doc.createElement("canvas");
+  canvas.width = snapshot.width;
+  canvas.height = snapshot.height;
+  makeRawDebugMediaZoomable(canvas);
+  const ctx = canvas.getContext("2d", { alpha: false });
+  if (!ctx) return;
+  const imageData = ctx.createImageData(snapshot.width, snapshot.height);
+  const rgba = imageData.data;
+  for (let i = 0, j = 0; i < snapshot.data.length; i += 3, j += 4) {
+    const r = decodeStoredRgb16Channel(
+      snapshot.data[i] ?? 0,
+      snapshot.transfer,
+      snapshot.linearRangeMax,
+    );
+    const g = decodeStoredRgb16Channel(
+      snapshot.data[i + 1] ?? 0,
+      snapshot.transfer,
+      snapshot.linearRangeMax,
+    );
+    const b = decodeStoredRgb16Channel(
+      snapshot.data[i + 2] ?? 0,
+      snapshot.transfer,
+      snapshot.linearRangeMax,
+    );
+    const [sr, sg, sb] = convertLinearProPhotoToOutputRgb(r, g, b, "srgb");
+    rgba[j] = linearChannelToSrgb(sr);
+    rgba[j + 1] = linearChannelToSrgb(sg);
+    rgba[j + 2] = linearChannelToSrgb(sb);
+    rgba[j + 3] = 255;
+  }
+  ctx.putImageData(imageData, 0, 0);
+  panel.content.appendChild(canvas);
+}
+
+function renderRawDebugThumbnail(
+  popup: Window,
+  panel: RawDebugPanel,
+  thumbnail: NonNullable<RawDebugArtifacts["thumbnail"]>,
+): void {
+  const doc = popup.document;
+  panel.meta.textContent = `${thumbnail.width}x${thumbnail.height}`;
+  const url = URL.createObjectURL(thumbnail.blob);
+  const image = doc.createElement("img");
+  image.alt = "RAW thumbnail";
+  image.src = url;
+  makeRawDebugMediaZoomable(image);
+  image.addEventListener("load", () => URL.revokeObjectURL(url), { once: true });
+  image.addEventListener("error", () => URL.revokeObjectURL(url), { once: true });
+  panel.content.appendChild(image);
+}
+
+function renderRawDebugWeightMap(
+  popup: Window,
+  panel: RawDebugPanel,
+  weightMap: RawDebugWeightMap,
+): void {
+  const doc = popup.document;
+  panel.meta.textContent = `${weightMap.width}x${weightMap.height}`;
+  const canvas = doc.createElement("canvas");
+  canvas.width = weightMap.width;
+  canvas.height = weightMap.height;
+  makeRawDebugMediaZoomable(canvas);
+  const ctx = canvas.getContext("2d", { alpha: false });
+  if (!ctx) return;
+  const imageData = ctx.createImageData(weightMap.width, weightMap.height);
+  const rgba = imageData.data;
+  for (let i = 0, j = 0; i < weightMap.data.length; i++, j += 4) {
+    const value = Math.round(clamp01(weightMap.data[i] ?? 0) * 255);
+    rgba[j] = value;
+    rgba[j + 1] = value;
+    rgba[j + 2] = value;
+    rgba[j + 3] = 255;
+  }
+  ctx.putImageData(imageData, 0, 0);
+  panel.content.appendChild(canvas);
+}
+
 export function ImageEditDialog({
   file,
   initialParams,
@@ -6532,6 +6995,7 @@ export function ImageEditDialog({
   const [previewRasterSize, setPreviewRasterSize] = useState<{ width: number; height: number } | null>(null);
   const previewRasterSizeRef = useRef<{ width: number; height: number } | null>(null);
   const [fullResolutionReady, setFullResolutionReady] = useState(false);
+  const [rawDevelopmentStage, setRawDevelopmentStage] = useState<"thumbnail" | "preview" | "master" | "denoised" | null>(null);
   const initialPreviewReadyRef = useRef(false);
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -6569,6 +7033,7 @@ export function ImageEditDialog({
   const decodedImageRef = useRef<DecodedImage | null>(null);
   const transferredDecodedImageRef = useRef<DecodedImage | null>(null);
   const rawMasterPromiseRef = useRef<Promise<DecodedRgbImage16> | null>(null);
+  const rawDenoisePromiseRef = useRef<Promise<DecodedRgbImage16> | null>(null);
   const [decodedRevision, setDecodedRevision] = useState(0);
   const onErrorRef = useRef(onError);
   const onRawDevelopmentReadyRef = useRef(onRawDevelopmentReady);
@@ -6697,7 +7162,76 @@ export function ImageEditDialog({
       width: preview.width,
       height: preview.height,
     });
+    setRawDevelopmentStage("thumbnail");
     if (previousUrl) URL.revokeObjectURL(previousUrl);
+  }, []);
+
+  const openRawDebugTabs = useCallback(() => {
+    const artifacts = decodedImageRef.current?.rawDebug;
+    if (!artifacts) return;
+
+    const entries: Array<{
+      label: string;
+      render: (popup: Window, panel: RawDebugPanel) => void;
+    }> = [];
+    if (artifacts.thumbnail) {
+      const thumbnail = artifacts.thumbnail;
+      entries.push({
+        label: "Thumbnail",
+        render: (popup, panel) => renderRawDebugThumbnail(popup, panel, thumbnail),
+      });
+    }
+    if (artifacts.preview) {
+      const preview = artifacts.preview;
+      entries.push({
+        label: "Preview",
+        render: (popup, panel) => renderRawDebugSnapshot(popup, panel, preview),
+      });
+    }
+    if (artifacts.master) {
+      const master = artifacts.master;
+      entries.push({
+        label: "Master",
+        render: (popup, panel) => renderRawDebugSnapshot(popup, panel, master),
+      });
+    }
+    if (artifacts.denoise) {
+      const denoise = artifacts.denoise;
+      entries.push({
+        label: "Denoise",
+        render: (popup, panel) => renderRawDebugSnapshot(popup, panel, denoise),
+      });
+    }
+    if (artifacts.blended) {
+      const blended = artifacts.blended;
+      entries.push({
+        label: "Blended",
+        render: (popup, panel) => renderRawDebugSnapshot(popup, panel, blended),
+      });
+    }
+    if (artifacts.weightMap) {
+      const weightMap = artifacts.weightMap;
+      entries.push({
+        label: "Weight map",
+        render: (popup, panel) => renderRawDebugWeightMap(popup, panel, weightMap),
+      });
+    }
+    if (!entries.length) return;
+
+    // Use one browser popup with internal tabs. Browsers commonly allow only the
+    // first of several window.open() calls from a single click, which made the
+    // old implementation appear to contain only the thumbnail.
+    const popup = createRawDebugPage("RAW debug");
+    if (!popup) return;
+    const renderJobs: Array<() => void> = [];
+    entries.forEach((entry, index) => {
+      const panel = createRawDebugPanel(popup, entry.label, index === 0);
+      if (!panel) return;
+      renderJobs.push(() => entry.render(popup, panel));
+    });
+    renderJobs.forEach((render, index) => {
+      window.setTimeout(render, index);
+    });
   }, []);
 
   useEffect(() => {
@@ -6730,10 +7264,12 @@ export function ImageEditDialog({
     decodedImageRef.current = null;
     transferredDecodedImageRef.current = null;
     rawMasterPromiseRef.current = null;
+    rawDenoisePromiseRef.current = null;
     previewRenderedRef.current = null;
     previewRasterSizeRef.current = null;
     setPreviewRasterSize(null);
     setFullResolutionReady(false);
+    setRawDevelopmentStage(null);
     previewSourceSampleRef.current = null;
     previewToneSampleCacheRef.current = null;
     previewClarityMapCacheRef.current = null;
@@ -6777,6 +7313,63 @@ export function ImageEditDialog({
         setNatural({ w: decoded.width, h: decoded.height });
         setImageReady(true);
         setFullResolutionReady(!(isRaw && decoded.rawMasterPromise));
+        if (isRaw) {
+          setRawDevelopmentStage(
+            decoded.rawDevelopment?.denoise
+              ? "denoised"
+              : decoded.rawMasterPromise
+                ? "preview"
+                : "master",
+          );
+        }
+
+        if (isRaw && decoded.rawDenoisePromise) {
+          const denoisePromise = decoded.rawDenoisePromise;
+          rawDenoisePromiseRef.current = denoisePromise;
+          void denoisePromise.then(async (denoiseDecoded) => {
+            let adopted = false;
+            try {
+              if (cancelled || rawDenoisePromiseRef.current !== denoisePromise) return;
+              const masterDecoded = decodedImageRef.current;
+              const weightMap = denoiseDecoded.rawDebug?.weightMap;
+              if (!masterDecoded || !weightMap) {
+                throw new Error("RAW denoise merge inputs are unavailable");
+              }
+              const mergeStartedAt = performance.now();
+              const merged = await mergeRawDenoiseDevelopedImageInPlace(
+                masterDecoded,
+                denoiseDecoded,
+                weightMap,
+                () => cancelled || rawDenoisePromiseRef.current !== denoisePromise,
+              );
+              if (!merged || cancelled || rawDenoisePromiseRef.current !== denoisePromise) return;
+
+              const denoiseDevelopment = denoiseDecoded.rawDevelopment?.denoise;
+              if (denoiseDevelopment) {
+                denoiseDevelopment.elapsedSeconds += (performance.now() - mergeStartedAt) / 1000;
+              }
+              const rawDebug = denoiseDecoded.rawDebug ?? {};
+              rawDebug.blended = buildRawDebugImageFullCopy(denoiseDecoded);
+              denoiseDecoded.rawDebug = rawDebug;
+              const previousCleanup = cleanup;
+              decodedImageRef.current = denoiseDecoded;
+              cleanup = denoiseDecoded.cleanup;
+              rawDenoisePromiseRef.current = null;
+              previewRenderedRef.current = null;
+              setNatural({ w: denoiseDecoded.width, h: denoiseDecoded.height });
+              setRawDevelopmentStage("denoised");
+              setDecodedRevision((revision) => revision + 1);
+              onRawDevelopmentReadyRef.current?.(denoiseDecoded);
+              adopted = true;
+              if (masterDecoded !== denoiseDecoded) previousCleanup?.();
+            } finally {
+              if (!adopted) denoiseDecoded.cleanup();
+            }
+          }).catch(() => {
+            // Denoise is an optional background quality stage. Preview/Master
+            // remain valid if it fails.
+          });
+        }
 
         if (isRaw && decoded.rawMasterPromise) {
           const masterPromise = decoded.rawMasterPromise;
@@ -6788,6 +7381,7 @@ export function ImageEditDialog({
             previewRenderedRef.current = null;
             setNatural({ w: masterDecoded.width, h: masterDecoded.height });
             setFullResolutionReady(true);
+            setRawDevelopmentStage("master");
             setDecodedRevision((revision) => revision + 1);
             onRawDevelopmentReadyRef.current?.(masterDecoded);
           }).catch(() => {
@@ -8889,6 +9483,10 @@ export function ImageEditDialog({
       vignetteOverlay: normalizeVignetteOverlay(vignetteOverlay),
       filter: normalizeImageFilter(imageFilter),
     };
+    // Finish never waits for the optional Denoise stage. Invalidate any
+    // in-progress merge immediately so the Master buffer can be handed to the
+    // downstream pipeline without a concurrent background reader.
+    rawDenoisePromiseRef.current = null;
     applyPendingRef.current = true;
     setApplyBusy(true);
     requestAnimationFrame(() => {
@@ -8896,7 +9494,7 @@ export function ImageEditDialog({
         void (async () => {
           try {
             const masterPromise = rawMasterPromiseRef.current;
-            if (masterPromise) {
+            if (masterPromise && !fullResolutionReady) {
               const masterDecoded = await masterPromise;
               decodedImageRef.current = masterDecoded;
               rawMasterPromiseRef.current = null;
@@ -8937,6 +9535,7 @@ export function ImageEditDialog({
     textOverlays,
     drawOverlays,
     vignetteOverlay,
+    fullResolutionReady,
     resolvePreviewClarityMap,
     onApply,
   ]);
@@ -9001,6 +9600,27 @@ export function ImageEditDialog({
     if (!isRawImageFile(file.name, file.type)) return undefined;
     const decoded = decodedImageRef.current;
     return decoded?.rawDevelopment;
+  })();
+  const rawDevelopmentPreviewSize = (() => {
+    if (!rawDevelopmentSettings) return undefined;
+    const previewSample = previewSourceSampleRef.current?.sample;
+    const width = previewSample?.width ?? previewRenderedRef.current?.width ?? 0;
+    const height = previewSample?.height ?? previewRenderedRef.current?.height ?? 0;
+    const pixels = width * height;
+    const bytes = previewSample?.data.byteLength
+      ?? pixels * 3 * Float32Array.BYTES_PER_ELEMENT;
+    return { width, height, pixels, bytes };
+  })();
+  const rawDevelopmentMasterSize = (() => {
+    if (!rawDevelopmentSettings || !fullResolutionReady) return undefined;
+    const decoded = decodedImageRef.current;
+    if (!decoded) return undefined;
+    return {
+      width: decoded.width,
+      height: decoded.height,
+      pixels: decoded.width * decoded.height,
+      bytes: decoded.data.byteLength,
+    };
   })();
 
   if (!mounted) return null;
@@ -9843,6 +10463,21 @@ export function ImageEditDialog({
                       </svg>
                     </div>
                   )}
+                  {!eyedropperMode && showHistogram && isRawImageFile(file.name, file.type) && (
+                    <button
+                      type="button"
+                      className="absolute right-10 bottom-2 z-30 flex h-6 w-6 items-center justify-center rounded border border-black/40 bg-white/80 text-xs font-semibold text-black opacity-10 transition-opacity hover:opacity-100 focus:opacity-100"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openRawDebugTabs();
+                      }}
+                      aria-label="Show RAW debug images"
+                      title="RAW debug"
+                    >
+                      D
+                    </button>
+                  )}
                   {!eyedropperMode && showHistogram && (
                     <button
                       type="button"
@@ -9913,25 +10548,22 @@ export function ImageEditDialog({
                             </div>
                           ))}
                         </div>
-                        {(() => {
-                          const previewSample = previewSourceSampleRef.current?.sample;
-                          const previewWidth = previewSample?.width ?? previewRenderedRef.current?.width ?? 0;
-                          const previewHeight = previewSample?.height ?? previewRenderedRef.current?.height ?? 0;
-                          const previewPixels = previewWidth * previewHeight;
-                          const previewBytes = previewSample?.data.byteLength ?? previewPixels * 3 * Float32Array.BYTES_PER_ELEMENT;
-                          return (
-                            <div className="mt-2 border-t border-gray-600 pt-2">
-                              <div className="font-medium">Preview settings</div>
-                              <div className="mt-1 font-mono tabular-nums">
-                                Size: width={previewWidth}, height={previewHeight}, pixels={previewPixels}, bytes={formatMemoryMiB(previewBytes)}
-                              </div>
-                            </div>
-                          );
-                        })()}
                         {rawDevelopmentSettings && (
                           <div className="mt-2 border-t border-gray-600 pt-2">
                             <div className="font-medium">RAW development settings</div>
                             <div className="mt-1 space-y-0.5 font-mono tabular-nums">
+                              {rawDevelopmentPreviewSize && (
+                                <div>
+                                  preview size: width={rawDevelopmentPreviewSize.width}, height={rawDevelopmentPreviewSize.height}, pixels={rawDevelopmentPreviewSize.pixels}, bytes={formatMemoryMiB(rawDevelopmentPreviewSize.bytes)}
+                                </div>
+                              )}
+                              {rawDevelopmentMasterSize ? (
+                                <div>
+                                  master size: width={rawDevelopmentMasterSize.width}, height={rawDevelopmentMasterSize.height}, pixels={rawDevelopmentMasterSize.pixels}, bytes={formatMemoryMiB(rawDevelopmentMasterSize.bytes)}
+                                </div>
+                              ) : (
+                                <div>master size: processing...</div>
+                              )}
                               <div>
                                 luminance: {rawDevelopmentSettings.luminance
                                   ? `exposure=${formatRawDevelopmentSetting(rawDevelopmentSettings.luminance.exposureEv)}, logarithm=${formatRawDevelopmentSetting(rawDevelopmentSettings.luminance.logarithm)}, sigmoid=${formatRawDevelopmentSetting(rawDevelopmentSettings.luminance.sigmoid)}, tone slope@1=${rawDevelopmentSettings.luminance.toneSlopeAtWhite.toFixed(6)}`
@@ -9943,6 +10575,17 @@ export function ImageEditDialog({
                               <div>
                                 source: ISO={rawDevelopmentSettings.iso === null ? "n/a" : formatRawDevelopmentSetting(rawDevelopmentSettings.iso)}, medPasses={rawDevelopmentSettings.medPasses}, mode={rawDevelopmentSettings.mode === "thumbnail-match" ? "thumbnail match" : "fallback"}
                               </div>
+                              {(rawDevelopmentSettings.denoise || rawDenoisePromiseRef.current) && (() => {
+                                const denoise = rawDevelopmentSettings.denoise;
+                                const pending = rawDenoiseDecodeSettingsForIso(rawDevelopmentSettings.iso ?? Number.NaN);
+                                return (
+                                  <div>
+                                    denoise: fbs={denoise?.fbdd ?? pending.fbdd}, medPasses={denoise?.medPasses ?? pending.medPasses}{denoise
+                                      ? `, smooth mean=${denoise.smoothMean.toFixed(3)}, smooth stddev=${denoise.smoothStddev.toFixed(3)}, shadow mean=${denoise.shadowMean.toFixed(3)}, shadow stddev=${denoise.shadowStddev.toFixed(3)}, weight mean=${denoise.weightMean.toFixed(3)}, weight stddev=${denoise.weightStddev.toFixed(3)}, weight p50=${denoise.weightP50.toFixed(3)}, weight p90=${denoise.weightP90.toFixed(3)}, weight p99=${denoise.weightP99.toFixed(3)}`
+                                      : ", processing..."}
+                                  </div>
+                                );
+                              })()}
                               {rawDevelopmentSettings.lensfun && (
                                 <>
                                   <div>
@@ -9978,7 +10621,17 @@ export function ImageEditDialog({
                                 </div>
                               )}
                               <div>buffer linearRangeMax={formatRawDevelopmentSetting(decodedImageRef.current?.linearRangeMax ?? 1)}</div>
-                              <div>elapsed time: real={formatRawDevelopmentSetting(rawDevelopmentSettings.elapsedSeconds)}s</div>
+                              <div>
+                                time: preview={rawDevelopmentSettings.previewElapsedSeconds === undefined
+                                  ? "n/a"
+                                  : `${rawDevelopmentSettings.previewElapsedSeconds.toFixed(2)}s`}, master={fullResolutionReady
+                                    ? `${rawDevelopmentSettings.elapsedSeconds.toFixed(2)}s`
+                                    : "processing..."}, denoise={rawDevelopmentSettings.denoise
+                                      ? `${rawDevelopmentSettings.denoise.elapsedSeconds.toFixed(2)}s`
+                                      : rawDenoisePromiseRef.current
+                                        ? "processing..."
+                                        : "n/a"}
+                              </div>
                               {rawDevelopmentSettings.headroom && (
                                 <div className="mt-2 border-t border-gray-600 pt-2">
                                   <div className="font-medium">RAW developed max RGB histogram (linear ProPhoto)</div>
@@ -10641,13 +11294,23 @@ export function ImageEditDialog({
               Input: {natural ? `${natural.w}x${natural.h}, ${(natural.w * natural.h / 1_000_000).toFixed(1)}MP` : "—"}
             </span>
             <span>
-              {embeddedRawPreview
-                ? `Thumbnail: ${embeddedRawPreview.width}x${embeddedRawPreview.height}, ${(embeddedRawPreview.width * embeddedRawPreview.height / 1_000_000).toFixed(1)}MP`
-                : fullResolutionReady
-                  ? `Output: ${outputDimensions ? `${outputDimensions.w}x${outputDimensions.h}, ${(outputDimensions.w * outputDimensions.h / 1_000_000).toFixed(1)}MP` : "—"}`
-                  : previewRasterSize
-                    ? `Preview: ${previewRasterSize.width}x${previewRasterSize.height}, ${(previewRasterSize.width * previewRasterSize.height / 1_000_000).toFixed(1)}MP`
-                    : "Preview: —"}
+              {isRawImageFile(file.name, file.type)
+                ? rawDevelopmentStage === "thumbnail"
+                  ? embeddedRawPreview
+                    ? `Thumbnail: ${embeddedRawPreview.width}x${embeddedRawPreview.height}, ${(embeddedRawPreview.width * embeddedRawPreview.height / 1_000_000).toFixed(1)}MP`
+                    : "Thumbnail: —"
+                  : rawDevelopmentStage === "preview"
+                    ? previewRasterSize
+                      ? `Preview: ${previewRasterSize.width}x${previewRasterSize.height}, ${(previewRasterSize.width * previewRasterSize.height / 1_000_000).toFixed(1)}MP`
+                      : natural
+                        ? `Preview: ${natural.w}x${natural.h}, ${(natural.w * natural.h / 1_000_000).toFixed(1)}MP`
+                        : "Preview: —"
+                    : rawDevelopmentStage === "denoised"
+                      ? `Denoised: ${outputDimensions ? `${outputDimensions.w}x${outputDimensions.h}, ${(outputDimensions.w * outputDimensions.h / 1_000_000).toFixed(1)}MP` : "—"}`
+                      : rawDevelopmentStage === "master"
+                        ? `Master: ${outputDimensions ? `${outputDimensions.w}x${outputDimensions.h}, ${(outputDimensions.w * outputDimensions.h / 1_000_000).toFixed(1)}MP` : "—"}`
+                        : "Preview: —"
+                : `Output: ${outputDimensions ? `${outputDimensions.w}x${outputDimensions.h}, ${(outputDimensions.w * outputDimensions.h / 1_000_000).toFixed(1)}MP` : "—"}`}
             </span>
           </div>
           <div className="flex justify-end gap-2">
@@ -10663,7 +11326,7 @@ export function ImageEditDialog({
               onClick={onSubmit}
               disabled={applyBusy}
             >
-              Edit
+              Finish
             </button>
           </div>
         </div>

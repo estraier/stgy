@@ -37,6 +37,50 @@ export type RawDevelopmentLensfunSettings = {
   vignettingEv: number | null;
 };
 
+export type RawDenoiseSettings = {
+  fbdd: "light" | "full";
+  medPasses: number;
+  smoothMean: number;
+  smoothStddev: number;
+  shadowMean: number;
+  shadowStddev: number;
+  weightMean: number;
+  weightStddev: number;
+  weightP50: number;
+  weightP90: number;
+  weightP99: number;
+  elapsedSeconds: number;
+};
+
+export type RawDebugImageSnapshot = {
+  width: number;
+  height: number;
+  sourceWidth: number;
+  sourceHeight: number;
+  linearRangeMax: number;
+  transfer: "linear" | "gamma20";
+  data: Uint16Array;
+};
+
+export type RawDebugWeightMap = {
+  width: number;
+  height: number;
+  data: Float32Array;
+};
+
+export type RawDebugArtifacts = {
+  thumbnail?: {
+    blob: Blob;
+    width: number;
+    height: number;
+  };
+  preview?: RawDebugImageSnapshot;
+  master?: RawDebugImageSnapshot;
+  denoise?: RawDebugImageSnapshot;
+  blended?: RawDebugImageSnapshot;
+  weightMap?: RawDebugWeightMap;
+};
+
 export type RawDevelopmentSettings = {
   mode: "thumbnail-match" | "fallback";
   iso: number | null;
@@ -45,7 +89,9 @@ export type RawDevelopmentSettings = {
   saturation: RawDevelopmentSaturationSettings;
   headroom?: RawDevelopmentHeadroomStatistics;
   lensfun?: RawDevelopmentLensfunSettings;
+  previewElapsedSeconds?: number;
   elapsedSeconds: number;
+  denoise?: RawDenoiseSettings;
 };
 
 export type DecodedRgbImage16 = {
@@ -57,7 +103,9 @@ export type DecodedRgbImage16 = {
   data: Uint16Array;
   lensCorrection?: LensfunCorrection;
   rawDevelopment?: RawDevelopmentSettings;
+  rawDebug?: RawDebugArtifacts;
   rawMasterPromise?: Promise<DecodedRgbImage16>;
+  rawDenoisePromise?: Promise<DecodedRgbImage16>;
   cleanup: () => void;
 };
 

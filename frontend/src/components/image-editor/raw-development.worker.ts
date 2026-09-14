@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
 
 import {
+  analyzeRawDenoiseMask,
   applyRawColorPass,
   applyRawFallbackBaselinePass,
   applyRawMatchedTonePass,
@@ -36,6 +37,7 @@ type StartMessageBase = {
 type RawDevelopmentWorkerRequest =
   | ({ type: "matched-tone"; plan: RawMatchedTonePlan; sampleMaxSide: number } & StartMessageBase)
   | ({ type: "fallback-tone" } & StartMessageBase)
+  | ({ type: "denoise-analyze" } & StartMessageBase)
   | { type: "color"; plan: RawColorPassPlan }
   | { type: "encode" }
   | ({
@@ -74,6 +76,37 @@ function postError(error: unknown): void {
 workerScope.onmessage = (event: MessageEvent<RawDevelopmentWorkerRequest>) => {
   try {
     const message = event.data;
+
+    if (message.type === "denoise-analyze") {
+      const data = new Uint16Array(message.dataBuffer);
+      const analysis = analyzeRawDenoiseMask(
+        data,
+        message.width,
+        message.height,
+        message.sourceLinearRangeMax,
+        message.sourceTransfer ?? "linear",
+      );
+      const weightBuffer = analysis.weight.buffer as ArrayBuffer;
+      workerScope.postMessage(
+        {
+          type: "denoise-analyze-complete",
+          weightBuffer,
+          width: analysis.width,
+          height: analysis.height,
+          smoothMean: analysis.smoothMean,
+          smoothStddev: analysis.smoothStddev,
+          shadowMean: analysis.shadowMean,
+          shadowStddev: analysis.shadowStddev,
+          weightMean: analysis.weightMean,
+          weightStddev: analysis.weightStddev,
+          weightP50: analysis.weightP50,
+          weightP90: analysis.weightP90,
+          weightP99: analysis.weightP99,
+        },
+        [weightBuffer],
+      );
+      return;
+    }
 
     if (message.type === "lensfun-resample") {
       const data = new Uint16Array(message.dataBuffer);
