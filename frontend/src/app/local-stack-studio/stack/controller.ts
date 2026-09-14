@@ -1593,6 +1593,7 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
   let height = 0;
   const hdrImages = new Array(files.length);
   const hdrBrightnesses = new Array(files.length);
+  let hdr1StreamWorker = null;
   const alignmentMatrices = new Array(files.length).fill(null);
   const alignedIndices = new Set();
   const deferredAlignments = [];
@@ -1641,6 +1642,14 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
       if (index === 0) {
         width = decodedWidth;
         height = decodedHeight;
+        if (mergePlan.mode === "hdr1") {
+          hdr1StreamWorker = createHdrDebevecReinhardStreamWorker(
+            width,
+            height,
+            files.length,
+            mergePlan.hdrExposureTimes,
+          );
+        }
         if (mergePlan.mode !== "hdr1" && mergePlan.mode !== "hdr2" && mergePlan.mode !== "median" && mergePlan.mode !== "focus") {
           accumulator = new Float32Array(width * height * 3);
         }
@@ -1786,6 +1795,7 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
               accumulator,
               hdrImages,
               hdrBrightnesses,
+              hdr1StreamWorker,
             );
           }
         }
@@ -1844,6 +1854,7 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
           accumulator,
           hdrImages,
           hdrBrightnesses,
+          hdr1StreamWorker,
           medianScratchDb,
           medianScratchSessionId,
           focusWorker,
@@ -1878,23 +1889,18 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
     }
 
     if (mergePlan.mode === "hdr1" || mergePlan.mode === "hdr2") {
-      for (let index = 0; index < files.length; index += 1) {
-        const validImage = mergePlan.mode === "hdr1"
-          ? hdrImages[index] instanceof Float32Array
-          : hdrImages[index] instanceof Float32Array;
-        if (!validImage || !Number.isFinite(hdrBrightnesses[index])) {
-          throw new Error(`${mergePlan.mode.toUpperCase()} input preparation failed for ${files[index].name}.`);
-        }
-      }
       if (mergePlan.mode === "hdr1") {
-        accumulator = await mergeHdrDebevecReinhardInWorker(
-          hdrImages,
-          mergePlan.hdrExposureTimes,
-          hdrBrightnesses,
-          width,
-          height,
-        );
+        if (!hdr1StreamWorker) {
+          throw new Error("HDR1 stream worker was not initialized.");
+        }
+        accumulator = await hdr1StreamWorker.finalize();
       } else {
+        for (let index = 0; index < files.length; index += 1) {
+          const validImage = hdrImages[index] instanceof Float32Array;
+          if (!validImage || !Number.isFinite(hdrBrightnesses[index])) {
+            throw new Error(`${mergePlan.mode.toUpperCase()} input preparation failed for ${files[index].name}.`);
+          }
+        }
         setProgress("Merging HDR2 with Mertens exposure fusion...");
         accumulator = await mergeHdrMertensInWorker(hdrImages, hdrBrightnesses, width, height);
       }
@@ -1910,6 +1916,7 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
   } finally {
     if (alignmentWorker) alignmentWorker.terminate();
     if (focusWorker) focusWorker.terminate();
+    if (hdr1StreamWorker) hdr1StreamWorker.terminate();
     if (medianScratchDb) {
       if (medianScratchSessionId) {
         try {
@@ -2067,6 +2074,7 @@ async function mergeDeferredAlignedImage(
   accumulator,
   hdrImages,
   hdrBrightnesses,
+  hdr1StreamWorker,
   medianScratchDb,
   medianScratchSessionId,
   focusWorker,
@@ -2176,6 +2184,7 @@ async function mergeDeferredAlignedImage(
         accumulator,
         hdrImages,
         hdrBrightnesses,
+        hdr1StreamWorker,
       );
     }
   } finally {
@@ -2197,6 +2206,7 @@ function mergeStackSource(
   accumulator,
   hdrImages,
   hdrBrightnesses,
+  hdr1StreamWorker,
 ) {
   if (mergePlan.mode === "hdr1" || mergePlan.mode === "hdr2") {
     const useHdr2Preparation = mergePlan.mode === "hdr2";
@@ -2207,8 +2217,15 @@ function mergeStackSource(
       : (useHdr2Preparation
         ? rgbMatToHdr2FloatsAndBrightness(mergeSource, inputInfo.sourceColorSpace)
         : rgbMatToLinearProPhotoFloatsAndBrightness(mergeSource, inputInfo.sourceColorSpace));
-    hdrImages[index] = prepared.floats;
-    hdrBrightnesses[index] = prepared.brightness;
+    if (mergePlan.mode === "hdr1") {
+      if (!hdr1StreamWorker) {
+        throw new Error("HDR1 stream worker was not initialized.");
+      }
+      hdr1StreamWorker.addImage(index, prepared.floats, prepared.brightness);
+    } else {
+      hdrImages[index] = prepared.floats;
+      hdrBrightnesses[index] = prepared.brightness;
+    }
   } else if (hasLinearProPhoto) {
     mergeLinearProPhotoMatIntoAccumulator(
       mergeSource,
@@ -2851,51 +2868,84 @@ function rgbMatToHdr2FloatsAndBrightness(rgb, sourceColorSpace) {
   return linearProPhotoArrayToHdr2FloatsAndBrightness(linear);
 }
 
-function mergeHdrDebevecReinhardInWorker(images, exposureTimes, brightnesses, width, height) {
-  return new Promise((resolve, reject) => {
-    const worker = new Worker(new URL("/generated/local-stack-studio/hdr.worker.js", window.location.origin));
-    let settled = false;
-    const cleanup = () => worker.terminate();
-    worker.onmessage = (event) => {
-      const message = event.data || {};
-      if (message.type === "progress") {
-        if (message.message) setProgress(message.message);
-        return;
-      }
-      if (message.type === "result") {
-        settled = true;
-        cleanup();
-        resolve(new Float32Array(message.linearProPhotoBuffer));
-        return;
-      }
-      if (message.type === "error") {
-        settled = true;
-        cleanup();
-        reject(new Error(message.message || "HDR worker failed."));
-      }
-    };
-    worker.onerror = (event) => {
+function createHdrDebevecReinhardStreamWorker(width, height, imageCount, exposureTimes, preBrightnessSigmoidGain = 0) {
+  const worker = new Worker(new URL("/generated/local-stack-studio/hdr.worker.js", window.location.origin));
+  let settled = false;
+  let resolveResult = null;
+  let rejectResult = null;
+  const resultPromise = new Promise((resolve, reject) => {
+    resolveResult = resolve;
+    rejectResult = reject;
+  });
+  const cleanup = () => worker.terminate();
+  worker.onmessage = (event) => {
+    const message = event.data || {};
+    if (message.type === "progress") {
+      if (message.message) setProgress(message.message);
+      return;
+    }
+    if (message.type === "result") {
       if (settled) return;
       settled = true;
       cleanup();
-      reject(new Error(event.message || "HDR worker failed."));
-    };
+      resolveResult(new Float32Array(message.linearProPhotoBuffer));
+      return;
+    }
+    if (message.type === "error") {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      rejectResult(new Error(message.message || "HDR1 stream worker failed."));
+    }
+  };
+  worker.onerror = (event) => {
+    if (settled) return;
+    settled = true;
+    cleanup();
+    rejectResult(new Error(event.message || "HDR1 stream worker failed."));
+  };
 
-    const imageBuffers = images.map((image) => image.buffer);
-    const times = exposureTimes ? new Float32Array(exposureTimes) : new Float32Array(0);
-    const inputBrightnesses = new Float32Array(brightnesses);
-    worker.postMessage(
-      {
-        type: "merge",
-        width,
-        height,
-        imageBuffers,
-        exposureTimesBuffer: times.buffer,
-        brightnessesBuffer: inputBrightnesses.buffer,
-      },
-      [...imageBuffers, times.buffer, inputBrightnesses.buffer],
-    );
-  });
+  const times = exposureTimes ? new Float32Array(exposureTimes) : new Float32Array(0);
+  worker.postMessage(
+    {
+      type: "merge-stream-init",
+      width,
+      height,
+      imageCount,
+      exposureTimesBuffer: times.buffer,
+      preBrightnessSigmoidGain,
+    },
+    [times.buffer],
+  );
+
+  return {
+    addImage(index, image, brightness) {
+      if (settled) {
+        throw new Error("HDR1 stream worker is no longer available.");
+      }
+      worker.postMessage(
+        {
+          type: "merge-stream-image",
+          imageIndex: index,
+          brightness,
+          imageBuffer: image.buffer,
+        },
+        [image.buffer],
+      );
+    },
+    async finalize() {
+      if (!settled) {
+        worker.postMessage({ type: "merge-stream-finalize" });
+      }
+      return await resultPromise;
+    },
+    terminate() {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      rejectResult(new Error("HDR1 stream worker terminated."));
+    },
+  };
 }
 
 function mergeHdrMertensInWorker(images, brightnesses, width, height, preBrightnessSigmoidGain = 0) {
@@ -2980,23 +3030,25 @@ async function processSingleInputHdrWithOpenCv(cv, file, inputInfo, mergePlan, o
     if (mergePlan.mode === "hdr1") {
       const hdrBase = buildSingleShotHdrBaseLinear(baseLinear, width, height, contrastStretch, false);
       const hdrBaseLinear = hdrBase.linear;
-      const images = [];
-      const brightnesses = new Float32Array(materials.length);
-      brightnesses.fill(computeAverageBrightnessFromLinear(hdrBaseLinear));
-      for (let i = 0; i < materials.length; i += 1) {
-        const material = materials[i];
-        setProgress(`Preparing HDR1 synthetic material ${i + 1}/${materials.length} (${material.label})...`);
-        images.push(buildSingleShotHdr1Material(hdrBaseLinear, material));
-        await yieldToBrowser();
-      }
-      const linearResult = await mergeHdrDebevecReinhardInWorker(
-        images,
-        mergePlan.hdrExposureTimes,
-        brightnesses,
+      const hdr1StreamWorker = createHdrDebevecReinhardStreamWorker(
         width,
         height,
+        materials.length,
+        mergePlan.hdrExposureTimes,
       );
-      return finalizeStoredResult(linearResult, width, height, outputColorSpace);
+      const brightness = computeAverageBrightnessFromLinear(hdrBaseLinear);
+      try {
+        for (let i = 0; i < materials.length; i += 1) {
+          const material = materials[i];
+          setProgress(`Preparing HDR1 synthetic material ${i + 1}/${materials.length} (${material.label})...`);
+          hdr1StreamWorker.addImage(i, buildSingleShotHdr1Material(hdrBaseLinear, material), brightness);
+          await yieldToBrowser();
+        }
+        const linearResult = await hdr1StreamWorker.finalize();
+        return finalizeStoredResult(linearResult, width, height, outputColorSpace);
+      } finally {
+        hdr1StreamWorker.terminate();
+      }
     }
 
     if (mergePlan.mode !== "hdr2") {

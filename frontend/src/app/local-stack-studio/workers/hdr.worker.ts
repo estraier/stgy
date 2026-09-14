@@ -11,12 +11,26 @@ const REINHARD_COLOR_ADAPT = 0.5;
 const BRIGHTNESS_MAX_TRIES = 10;
 const BRIGHTNESS_MAX_DIST = 0.01;
 
+let debevecStreamState = null;
+
 self.onmessage = async (event) => {
   const message = event.data || {};
 
   try {
     if (message.type === "merge") {
       processDebevecMessage(message);
+      return;
+    }
+    if (message.type === "merge-stream-init") {
+      initializeDebevecStream(message);
+      return;
+    }
+    if (message.type === "merge-stream-image") {
+      appendDebevecStreamImage(message);
+      return;
+    }
+    if (message.type === "merge-stream-finalize") {
+      finalizeDebevecStream();
       return;
     }
     if (message.type === "mertens") {
@@ -71,6 +85,175 @@ function processDebevecMessage(message) {
     { type: "result", linearProPhotoBuffer: hdr.buffer },
     [hdr.buffer],
   );
+}
+
+
+function initializeDebevecStream(message) {
+  const width = Number(message.width);
+  const height = Number(message.height);
+  const imageCount = Number(message.imageCount);
+  const suppliedExposureTimes = new Float32Array(message.exposureTimesBuffer || new ArrayBuffer(0));
+  if (!(Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0)) {
+    throw new Error("HDR worker received invalid image dimensions.");
+  }
+  if (!(Number.isInteger(imageCount) && imageCount >= 2)) {
+    throw new Error("HDR1 streaming requires at least two input images.");
+  }
+  if (suppliedExposureTimes.length !== 0 && suppliedExposureTimes.length !== imageCount) {
+    throw new Error("HDR exposure-time count does not match the image count.");
+  }
+  for (let i = 0; i < suppliedExposureTimes.length; i += 1) {
+    if (!(Number.isFinite(suppliedExposureTimes[i]) && suppliedExposureTimes[i] > 0)) {
+      throw new Error(`HDR input ${i + 1} has an invalid exposure value.`);
+    }
+  }
+  const pixelCount = width * height;
+  debevecStreamState = {
+    width,
+    height,
+    imageCount,
+    receivedCount: 0,
+    responseSums: new Float32Array(pixelCount * 3),
+    weightSums: new Float32Array(pixelCount),
+    weightedLogBrightnessSums: suppliedExposureTimes.length === 0 ? new Float32Array(pixelCount) : null,
+    brightnesses: new Float32Array(imageCount),
+    receivedFlags: new Uint8Array(imageCount),
+    suppliedExposureTimes,
+    preBrightnessSigmoidGain: Number.isFinite(message.preBrightnessSigmoidGain)
+      ? Number(message.preBrightnessSigmoidGain)
+      : 0,
+  };
+  debevecStreamState.brightnesses.fill(Number.NaN);
+}
+
+function appendDebevecStreamImage(message) {
+  if (!debevecStreamState) {
+    throw new Error("HDR1 stream worker was not initialized.");
+  }
+  const imageIndex = Number(message.imageIndex);
+  const brightness = Number(message.brightness);
+  if (!(Number.isInteger(imageIndex) && imageIndex >= 0 && imageIndex < debevecStreamState.imageCount)) {
+    throw new Error("HDR1 stream worker received an invalid image index.");
+  }
+  if (debevecStreamState.receivedFlags[imageIndex]) {
+    throw new Error(`HDR input ${imageIndex + 1} was sent more than once.`);
+  }
+  if (!(Number.isFinite(brightness) && brightness >= 0)) {
+    throw new Error(`HDR input ${imageIndex + 1} has an invalid brightness value.`);
+  }
+  const imageBuffer = message.imageBuffer;
+  const expectedLength = debevecStreamState.width * debevecStreamState.height * 3;
+  const expectedByteLength = expectedLength * Float32Array.BYTES_PER_ELEMENT;
+  if (!(imageBuffer instanceof ArrayBuffer) || imageBuffer.byteLength !== expectedByteLength) {
+    throw new Error(`HDR input ${imageIndex + 1} has an invalid Float32 RGB buffer.`);
+  }
+  const image = new Float32Array(imageBuffer);
+  const responseSums = debevecStreamState.responseSums;
+  const weightSums = debevecStreamState.weightSums;
+  const weightedLogBrightnessSums = debevecStreamState.weightedLogBrightnessSums;
+  const suppliedExposureTimes = debevecStreamState.suppliedExposureTimes;
+  const hasExposureTimes = suppliedExposureTimes.length > 0;
+  const logExposureTime = hasExposureTimes ? Math.log(suppliedExposureTimes[imageIndex]) : 0;
+  const logBrightness = hasExposureTimes ? 0 : Math.log(Math.max(brightness, 0.0001));
+  const pixelCount = debevecStreamState.width * debevecStreamState.height;
+
+  for (let pixel = 0, offset = 0; pixel < pixelCount; pixel += 1, offset += 3) {
+    const r = clamp01(image[offset]);
+    const g = clamp01(image[offset + 1]);
+    const b = clamp01(image[offset + 2]);
+    const weight = (debevecWeightFloat(r) + debevecWeightFloat(g) + debevecWeightFloat(b)) / 3;
+    responseSums[offset] += hasExposureTimes
+      ? weight * (debevecLogResponseFloat(r) - logExposureTime)
+      : weight * debevecLogResponseFloat(r);
+    responseSums[offset + 1] += hasExposureTimes
+      ? weight * (debevecLogResponseFloat(g) - logExposureTime)
+      : weight * debevecLogResponseFloat(g);
+    responseSums[offset + 2] += hasExposureTimes
+      ? weight * (debevecLogResponseFloat(b) - logExposureTime)
+      : weight * debevecLogResponseFloat(b);
+    weightSums[pixel] += weight;
+    if (weightedLogBrightnessSums) {
+      weightedLogBrightnessSums[pixel] += weight * logBrightness;
+    }
+  }
+
+  debevecStreamState.receivedFlags[imageIndex] = 1;
+  debevecStreamState.brightnesses[imageIndex] = brightness;
+  debevecStreamState.receivedCount += 1;
+}
+
+function finalizeDebevecStream() {
+  if (!debevecStreamState) {
+    throw new Error("HDR1 stream worker was not initialized.");
+  }
+  if (debevecStreamState.receivedCount !== debevecStreamState.imageCount) {
+    throw new Error(
+      `HDR1 stream worker received ${debevecStreamState.receivedCount}/${debevecStreamState.imageCount} input images.`
+    );
+  }
+  const brightnesses = debevecStreamState.brightnesses;
+  for (let i = 0; i < brightnesses.length; i += 1) {
+    if (!(Number.isFinite(brightnesses[i]) && brightnesses[i] >= 0)) {
+      throw new Error(`HDR input ${i + 1} has an invalid brightness value.`);
+    }
+  }
+
+  postProgress("Finalizing streamed HDR with Debevec...");
+  const hdr = finalizeDebevecStreamToHdr(debevecStreamState);
+  const targetBrightness = meanArray(brightnesses);
+  const preBrightnessSigmoidGain = debevecStreamState.preBrightnessSigmoidGain;
+  debevecStreamState = null;
+
+  postProgress("Tone mapping HDR with Reinhard...");
+  tonemapReinhardInPlace(
+    hdr,
+    REINHARD_GAMMA,
+    REINHARD_INTENSITY,
+    REINHARD_LIGHT_ADAPT,
+    REINHARD_COLOR_ADAPT,
+  );
+
+  if (Math.abs(preBrightnessSigmoidGain) > 1e-6) {
+    postProgress("Applying single-shot HDR1 sigmoid...");
+    applySigmoidInPlace(hdr, preBrightnessSigmoidGain, 0.5);
+  }
+
+  postProgress("Restoring HDR brightness...");
+  adjustExposureToBrightnessInPlace(hdr, targetBrightness);
+
+  self.postMessage(
+    { type: "result", linearProPhotoBuffer: hdr.buffer },
+    [hdr.buffer],
+  );
+}
+
+function finalizeDebevecStreamToHdr(state) {
+  const pixelCount = state.width * state.height;
+  const result = new Float32Array(pixelCount * 3);
+  const responseSums = state.responseSums;
+  const weightSums = state.weightSums;
+  const weightedLogBrightnessSums = state.weightedLogBrightnessSums;
+  let minBrightness = Infinity;
+  if (weightedLogBrightnessSums) {
+    for (let i = 0; i < state.brightnesses.length; i += 1) {
+      if (state.brightnesses[i] < minBrightness) minBrightness = state.brightnesses[i];
+    }
+    minBrightness = Math.max(minBrightness, 0.0001);
+  }
+  const minLogBrightness = weightedLogBrightnessSums ? Math.log(minBrightness) : 0;
+
+  for (let pixel = 0, offset = 0; pixel < pixelCount; pixel += 1, offset += 3) {
+    const weightSum = weightSums[pixel];
+    const inverseWeight = weightSum > 0 ? 1 / weightSum : 0;
+    const weightedLogTime = weightedLogBrightnessSums
+      ? (weightedLogBrightnessSums[pixel] - minLogBrightness * weightSum)
+      : 0;
+    result[offset] = sanitizeHdrValue(Math.exp((responseSums[offset] - weightedLogTime) * inverseWeight));
+    result[offset + 1] = sanitizeHdrValue(Math.exp((responseSums[offset + 1] - weightedLogTime) * inverseWeight));
+    result[offset + 2] = sanitizeHdrValue(Math.exp((responseSums[offset + 2] - weightedLogTime) * inverseWeight));
+  }
+
+  return result;
 }
 
 async function processMertensMessage(message) {
