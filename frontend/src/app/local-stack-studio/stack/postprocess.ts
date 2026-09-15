@@ -1,11 +1,13 @@
 import type { ImageEditOutputColorProfile } from "@/image/types";
 import {
+  EXPOSURE_ROLLOFF_A,
   FINAL_DISPLAY_ROLLOFF_A,
   ROLLOFF_SAVING_LIMIT_FACTOR,
   SATURATION_ROLLOFF_A,
   applyHighlightLinear,
   applyLuminanceGainPreservingAboveOneLinearRgb,
   applyLuminanceMappingToRgb,
+  applyRolloffMaxChannelLinearRgb,
   applySaturationVibranceAndFinalRolloffLinearRgb,
   applyScaledLogLinearExtended,
   applyShadowLinear,
@@ -47,6 +49,7 @@ export type StackFinalRolloff = {
 
 type StackToneContext = {
   gain: number;
+  exposureRolloff: RolloffParams | null;
   normalizedShadow: number;
   normalizedHighlight: number;
   normalizedLog: number;
@@ -68,24 +71,58 @@ export function clampStackClahe(value: number): number {
   return Math.max(-100, Math.min(100, Math.round(value)));
 }
 
+function resolveStackExposureRolloffBaseP998(
+  sourceLinear: Float32Array,
+  supplied: number | null | undefined,
+): number | null {
+  if (Number.isFinite(supplied)) return Number(supplied);
+  const pixelCount = Math.floor(sourceLinear.length / 3);
+  if (pixelCount <= 0) return null;
+  const maxima = new Float32Array(pixelCount);
+  let count = 0;
+  for (let i = 0; i + 2 < sourceLinear.length; i += 3) {
+    const maxChannel = Math.max(sourceLinear[i] ?? 0, sourceLinear[i + 1] ?? 0, sourceLinear[i + 2] ?? 0);
+    if (Number.isFinite(maxChannel)) maxima[count++] = maxChannel;
+  }
+  if (count <= 0) return null;
+  const sorted = count === maxima.length ? maxima : maxima.slice(0, count);
+  sorted.sort();
+  return percentileFromSortedFloat32(sorted, STACK_FINAL_ROLLOFF_PERCENTILE);
+}
+
 export function computeStackHighlightP100(
   sourceLinear: Float32Array | null | undefined,
   gain: number,
   shadow: number,
   scaledLog = 0,
   sigmoid = 0,
+  exposureRolloffBaseP998: number | null = null,
 ): number | null {
   if (!sourceLinear || sourceLinear.length < 3) return null;
   const normalizedShadow = clampToneRangeAdjustment(shadow);
   const normalizedLog = clampStackScaledLog(scaledLog);
   const normalizedSigmoid = clampSigmoid(sigmoid);
+  const resolvedExposureBaseP998 = resolveStackExposureRolloffBaseP998(
+    sourceLinear,
+    exposureRolloffBaseP998,
+  );
+  const exposureRolloff = gain > 1 && Number.isFinite(resolvedExposureBaseP998)
+    ? rolloffParams(
+        Number(resolvedExposureBaseP998) * gain,
+        EXPOSURE_ROLLOFF_A,
+        ROLLOFF_SAVING_LIMIT_FACTOR,
+        1,
+      )
+    : null;
   let p100 = -Infinity;
   for (let i = 0; i + 2 < sourceLinear.length; i += 3) {
-    let luminance = proPhotoLinearLuminance(
-      sourceLinear[i] ?? 0,
-      sourceLinear[i + 1] ?? 0,
-      sourceLinear[i + 2] ?? 0,
-    ) * gain;
+    const [r, g, b] = applyRolloffMaxChannelLinearRgb(
+      (sourceLinear[i] ?? 0) * gain,
+      (sourceLinear[i + 1] ?? 0) * gain,
+      (sourceLinear[i + 2] ?? 0) * gain,
+      exposureRolloff,
+    );
+    let luminance = proPhotoLinearLuminance(r, g, b);
     if (normalizedLog !== 0) {
       luminance = applyScaledLogLinearExtended(luminance, normalizedLog, STACK_LOGARITHM_LIMIT);
     }
@@ -110,16 +147,22 @@ export function computeStackFinalRolloff(
   vibrance: number,
   saturation: number,
   highlightP100: number | null = null,
+  exposureRolloffBaseP998: number | null = null,
 ): StackFinalRolloff {
   if (!sourceLinear || sourceLinear.length < 3) {
     return { saturationRolloff: null, finalRolloff: null };
   }
+  const resolvedExposureBaseP998 = resolveStackExposureRolloffBaseP998(
+    sourceLinear,
+    exposureRolloffBaseP998,
+  );
   const toneContext = buildStackToneContext(
     exposureEv,
     shadow,
     highlight,
     scaledLog,
     sigmoid,
+    resolvedExposureBaseP998,
     highlightP100,
   );
   const pixelCount = Math.floor(sourceLinear.length / 3);
@@ -470,17 +513,22 @@ export function buildStackToneAdjustedLinearData(
   highlight: number,
   scaledLog: number,
   sigmoid: number,
-  _exposureRolloffBaseP998: number | null = null,
+  exposureRolloffBaseP998: number | null = null,
   highlightP100: number | null = null,
   startStage: StackToneStage = "source",
   endStage: StackToneStage = "highlight",
 ): Float32Array {
+  const resolvedExposureBaseP998 = resolveStackExposureRolloffBaseP998(
+    sourceLinear,
+    exposureRolloffBaseP998,
+  );
   const toneContext = buildStackToneContext(
     exposureEv,
     shadow,
     highlight,
     scaledLog,
     sigmoid,
+    resolvedExposureBaseP998,
     highlightP100,
   );
   if (startStage === endStage) return sourceLinear;
@@ -556,6 +604,7 @@ function buildStackToneContext(
   highlight: number,
   scaledLog: number,
   sigmoid: number,
+  exposureRolloffBaseP998: number | null,
   highlightP100: number | null,
 ): StackToneContext {
   const gain = Math.pow(2, exposureEv);
@@ -564,12 +613,21 @@ function buildStackToneContext(
   const normalizedLog = clampStackScaledLog(scaledLog);
   const normalizedSigmoid = clampSigmoid(sigmoid);
   const hasExposure = Number.isFinite(gain) && Math.abs(gain - 1) >= 1e-6;
+  const exposureRolloff = gain > 1 && Number.isFinite(exposureRolloffBaseP998)
+    ? rolloffParams(
+        Number(exposureRolloffBaseP998) * gain,
+        EXPOSURE_ROLLOFF_A,
+        ROLLOFF_SAVING_LIMIT_FACTOR,
+        1,
+      )
+    : null;
   const hasShadow = normalizedShadow !== 0;
   const highlightRange = normalizedHighlight !== 0 && Number.isFinite(highlightP100) && Number(highlightP100) > 0
     ? { p100: Number(highlightP100) }
     : null;
   return {
     gain,
+    exposureRolloff,
     normalizedShadow,
     normalizedHighlight,
     normalizedLog,
@@ -601,32 +659,30 @@ function applyStackToneAdjustmentsLinearRgbRange(
   ];
   const startIndex = Math.max(0, stageOrder.indexOf(startStage));
   const endIndex = Math.max(0, stageOrder.indexOf(endStage));
-  return applyLuminanceMappingToRgb(r, g, b, (sourceLuminance) => {
-    let luminance = sourceLuminance;
-    for (let index = startIndex + 1; index <= endIndex; index += 1) {
-      const stage = stageOrder[index];
-      if (stage === "exposure" && context.hasExposure) {
-        luminance *= context.gain;
-      } else if (stage === "logarithm" && context.hasLogarithm) {
-        luminance = applyScaledLogLinearExtended(
-          luminance,
-          context.normalizedLog,
-          STACK_LOGARITHM_LIMIT,
-        );
-      } else if (stage === "sigmoid" && context.hasSigmoid) {
-        luminance = applySigmoidLinearExtended(luminance, context.normalizedSigmoid);
-      } else if (stage === "shadow" && context.hasShadow) {
-        luminance = applyShadowLinear(luminance, context.normalizedShadow);
-      } else if (stage === "highlight" && context.hasHighlight && context.highlightRange) {
-        luminance = applyHighlightLinear(
-          luminance,
-          context.normalizedHighlight,
-          context.highlightRange,
-        );
-      }
+  for (let index = startIndex + 1; index <= endIndex; index += 1) {
+    const stage = stageOrder[index];
+    if (stage === "exposure" && context.hasExposure) {
+      [r, g, b] = applyRolloffMaxChannelLinearRgb(
+        r * context.gain,
+        g * context.gain,
+        b * context.gain,
+        context.exposureRolloff,
+      );
+    } else if (stage === "logarithm" && context.hasLogarithm) {
+      [r, g, b] = applyLuminanceMappingToRgb(r, g, b, (luminance) =>
+        applyScaledLogLinearExtended(luminance, context.normalizedLog, STACK_LOGARITHM_LIMIT));
+    } else if (stage === "sigmoid" && context.hasSigmoid) {
+      [r, g, b] = applyLuminanceMappingToRgb(r, g, b, (luminance) =>
+        applySigmoidLinearExtended(luminance, context.normalizedSigmoid));
+    } else if (stage === "shadow" && context.hasShadow) {
+      [r, g, b] = applyLuminanceMappingToRgb(r, g, b, (luminance) =>
+        applyShadowLinear(luminance, context.normalizedShadow));
+    } else if (stage === "highlight" && context.hasHighlight && context.highlightRange) {
+      [r, g, b] = applyLuminanceMappingToRgb(r, g, b, (luminance) =>
+        applyHighlightLinear(luminance, context.normalizedHighlight, context.highlightRange));
     }
-    return luminance;
-  });
+  }
+  return [r, g, b];
 }
 
 function claheClipLimitFromStrength(strength: number): number {

@@ -479,40 +479,16 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
       a = Math.pow(a / outputMax, savingLimitValue / maxVal) * outputMax;
     }
     const inflection = a + (outputMax - a) * outputMax / maxVal;
-    const inputSpan = maxVal - inflection;
-    const outputSpan = outputMax - inflection;
-    if (!(inputSpan > 0) || !(outputSpan > 0)) return null;
-    const curvature = solveAlignmentRolloffCurvature(outputSpan / inputSpan);
-    return { inflection, inputMax: maxVal, outputMax, curvature };
-  }
-
-  function solveAlignmentRolloffCurvature(spanRatio) {
-    const ratio = Math.min(1, Math.max(0, spanRatio));
-    if (ratio >= 1 - 1e-12) return 0;
-    if (!(ratio > 0)) return 64;
-    const equation = (k) => -Math.expm1(-k) - ratio * k;
-    let low = 1e-12;
-    let high = Math.max(2, 2 / ratio);
-    while (equation(high) > 0 && high < 1024) high *= 2;
-    for (let i = 0; i < 64; i += 1) {
-      const mid = (low + high) * 0.5;
-      if (equation(mid) > 0) low = mid;
-      else high = mid;
-    }
-    return (low + high) * 0.5;
+    if (!(outputMax > inflection)) return null;
+    return { inflection, inputMax: maxVal, outputMax };
   }
 
   function applyAlignmentExposureRolloffScalar(value, rolloff) {
     if (!rolloff || !Number.isFinite(value) || value <= rolloff.inflection) return value;
-    if (value >= rolloff.inputMax) return rolloff.outputMax;
-    const inputSpan = rolloff.inputMax - rolloff.inflection;
-    const outputSpan = rolloff.outputMax - rolloff.inflection;
-    const t = Math.min(1, Math.max(0, (value - rolloff.inflection) / inputSpan));
-    const k = rolloff.curvature;
-    const shaped = k > 1e-8
-      ? -Math.expm1(-k * t) / -Math.expm1(-k)
-      : t;
-    return rolloff.inflection + outputSpan * shaped;
+    const shoulder = rolloff.outputMax - rolloff.inflection;
+    if (!(shoulder > 0)) return value;
+    return rolloff.inflection
+      + shoulder * (1 - Math.exp(-(value - rolloff.inflection) / shoulder));
   }
 
   function buildSrgbToLinearLut() {

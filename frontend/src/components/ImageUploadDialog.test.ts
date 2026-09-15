@@ -297,9 +297,12 @@ describe("image editor tone characterization", () => {
 
     const finalRolloff = imageEditor.rolloffParams(1.2, 0.9, 4, 1);
     const rolled = imageEditor.applyDisplayRolloffAndClipLinearToRgb(1.2, 0.6, 0.3, finalRolloff);
-    expect(rolled[0]).toBeCloseTo(1, 12);
-    expect(rolled[1]).toBeCloseTo(0.6, 12);
-    expect(rolled[2]).toBeCloseTo(0.3, 12);
+    expect(rolled[0]).toBeLessThan(1);
+    expect(rolled[0]).toBeGreaterThan(0.9999999);
+    // Max-channel rolloff must preserve RGB ratios instead of independently
+    // pulling every channel toward display white.
+    expect(rolled[1] / rolled[0]).toBeCloseTo(0.5, 12);
+    expect(rolled[2] / rolled[0]).toBeCloseTo(0.25, 12);
   });
 
   test("freezes Logarithm, Sigmoid, rolloff and the combined tone pipeline", () => {
@@ -326,8 +329,15 @@ describe("image editor tone characterization", () => {
         - rolloff.inflection
       ) / epsilon;
       expect(slopeAtInflection).toBeCloseTo(1, 4);
-      expect(imageEditor.applyRolloffScalar(1.375, rolloff)).toBeGreaterThan(0.875);
-      expect(imageEditor.applyRolloffScalar(rolloff.inputMax, rolloff)).toBeCloseTo(1, 12);
+      // The shoulder joins the identity curve smoothly, then approaches the
+      // output maximum asymptotically. M/P99.8 determines the inflection but
+      // is not a hard clipping point.
+      expect(imageEditor.applyRolloffScalar(1.375, rolloff)).toBeCloseTo(0.979478750343, 10);
+      const atM = imageEditor.applyRolloffScalar(rolloff.inputMax, rolloff);
+      expect(atM).toBeLessThan(1);
+      expect(atM).toBeCloseTo(0.99831551325, 10);
+      expect(imageEditor.applyRolloffScalar(3, rolloff)).toBeGreaterThan(atM);
+      expect(imageEditor.applyRolloffScalar(3, rolloff)).toBeLessThan(1);
     }
 
     const range2 = imageEditor.rolloffParams(10, 1, 4, 2);
@@ -337,6 +347,21 @@ describe("image editor tone characterization", () => {
       const expectedInflection = adjustedA + (2 - adjustedA) * 2 / 10;
       expect(range2.inflection).toBeCloseTo(expectedInflection, 12);
       expect(range2.outputMax).toBe(2);
+    }
+
+    const range4 = imageEditor.rolloffParams(20, 2, 4, 4);
+    expect(range4).not.toBeNull();
+    if (range4) {
+      const adjustedA = 4 * Math.pow(0.5, 16 / 20);
+      const expectedInflection = adjustedA + (4 - adjustedA) * 4 / 20;
+      expect(range4.inflection).toBeCloseTo(expectedInflection, 12);
+      expect(range4.outputMax).toBe(4);
+      const shoulder = range4.outputMax - range4.inflection;
+      const expectedAtM = range4.inflection
+        + shoulder * (1 - Math.exp(-(20 - range4.inflection) / shoulder));
+      const atM = imageEditor.applyRolloffScalar(20, range4);
+      expect(atM).toBeLessThan(4);
+      expect(atM).toBeCloseTo(expectedAtM, 12);
     }
 
     const tone = imageEditor.applyToneLinearToRgb(
@@ -438,6 +463,27 @@ describe("image editor RGB16 characterization", () => {
     });
   });
 
+  test("uses P99.8 and A=0.5 for the Exposure rolloff", () => {
+    const pixelCount = 1000;
+    const data = new Float32Array(pixelCount * 3);
+    for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+      const i = pixel * 3;
+      data[i] = 0.8;
+      data[i + 1] = 0.4;
+      data[i + 2] = 0.2;
+    }
+    const context = imageEditor.buildColorAdjustmentContextFromLinearRgbSample(
+      { data, width: pixelCount, height: 1 },
+      0, 0, 1, 0, 0, 0, 0, 0, 0,
+    );
+    expect(context.exposureRolloff).not.toBeNull();
+    // P99.8 max channel is 0.8; +1EV makes M=1.6. With A=0.5:
+    // I = A + (1-A)/M = 0.8125.
+    expect(context.exposureRolloff?.inputMax).toBeCloseTo(1.6, 6);
+    expect(context.exposureRolloff?.inflection).toBeCloseTo(0.8125, 6);
+    expect(context.exposureRolloff?.outputMax).toBe(1);
+  });
+
   test("uses P99.8 for the Saturation rolloff", () => {
     const pixelCount = 1000;
     const data = new Float32Array(pixelCount * 3);
@@ -456,6 +502,10 @@ describe("image editor RGB16 characterization", () => {
     // P99.8 reaches the 0.6 tail and therefore produces a shoulder.
     expect(context.saturationRolloff).not.toBeNull();
     expect(context.saturationRolloff?.inputMax).toBeGreaterThan(1);
+    if (context.saturationRolloff) {
+      const expectedInflection = 0.7 + 0.3 / context.saturationRolloff.inputMax;
+      expect(context.saturationRolloff.inflection).toBeCloseTo(expectedInflection, 12);
+    }
   });
 
   test("uses the same shared context and final display rolloff for normal analysis paths", () => {

@@ -57,9 +57,9 @@ export const ROLLOFF_SAVING_LIMIT_FACTOR = 4;
 
 export type RolloffParams = {
   inflection: number;
+  // P99.8 reference value M used to place the inflection. This is not a clip point.
   inputMax: number;
   outputMax: number;
-  curvature: number;
 };
 
 const TONE_ENDPOINT_SLOPE_EPSILON = 1e-5;
@@ -322,28 +322,6 @@ export function applyHsvSaturationPreservingProPhotoLuminance(
   return [shapeR * scale, shapeG * scale, shapeB * scale];
 }
 
-function solveRolloffCurvature(spanRatio: number): number {
-  // The normalized exponential shoulder is
-  //   y(t) = (1 - exp(-k t)) / (1 - exp(-k)), 0 <= t <= 1.
-  // Choose k so the derivative is exactly 1 at the inflection after scaling
-  // from input span to output span. This makes the identity section and the
-  // shoulder C1-continuous while still forcing M -> outputMax.
-  const ratio = Math.min(1, Math.max(0, spanRatio));
-  if (ratio >= 1 - 1e-12) return 0;
-  if (!(ratio > 0)) return 64;
-
-  const equation = (k: number) => -Math.expm1(-k) - ratio * k;
-  let low = 1e-12;
-  let high = Math.max(2, 2 / ratio);
-  while (equation(high) > 0 && high < 1024) high *= 2;
-  for (let i = 0; i < 64; i += 1) {
-    const mid = (low + high) * 0.5;
-    if (equation(mid) > 0) low = mid;
-    else high = mid;
-  }
-  return (low + high) * 0.5;
-}
-
 export function rolloffParams(
   maxVal: number,
   a = EXPOSURE_ROLLOFF_A,
@@ -371,26 +349,36 @@ export function rolloffParams(
 
   const inflection = adjustedA
     + (outputMax - adjustedA) * outputMax / maxVal;
-  const inputSpan = maxVal - inflection;
-  const outputSpan = outputMax - inflection;
-  if (!(inputSpan > 0) || !(outputSpan > 0)) return null;
-  const curvature = solveRolloffCurvature(outputSpan / inputSpan);
-  return { inflection, inputMax: maxVal, outputMax, curvature };
+  if (!(outputMax > inflection)) return null;
+  return { inflection, inputMax: maxVal, outputMax };
 }
 
 export function applyRolloffScalar(value: number, rolloff: RolloffParams | null): number {
   if (!rolloff || !Number.isFinite(value) || value <= rolloff.inflection) return value;
-  if (value >= rolloff.inputMax) return rolloff.outputMax;
+  const shoulder = rolloff.outputMax - rolloff.inflection;
+  if (!(shoulder > 0)) return value;
+  // Smooth nonlinear shoulder. P99.8/M and A determine the inflection via
+  // rolloffParams(); above that point the curve joins with slope 1 and
+  // approaches outputMax asymptotically without introducing a hard clipping
+  // point at M.
+  return rolloff.inflection
+    + shoulder * (1 - Math.exp(-(value - rolloff.inflection) / shoulder));
+}
 
-  const inputSpan = rolloff.inputMax - rolloff.inflection;
-  const outputSpan = rolloff.outputMax - rolloff.inflection;
-  if (!(inputSpan > 0) || !(outputSpan > 0)) return value;
-  const t = Math.min(1, Math.max(0, (value - rolloff.inflection) / inputSpan));
-  const k = rolloff.curvature;
-  const shaped = k > 1e-8
-    ? -Math.expm1(-k * t) / -Math.expm1(-k)
-    : t;
-  return rolloff.inflection + outputSpan * shaped;
+export function applyRolloffMaxChannelLinearRgb(
+  r: number,
+  g: number,
+  b: number,
+  rolloff: RolloffParams | null,
+): [number, number, number] {
+  const maxChannel = Math.max(r, g, b);
+  if (!rolloff || !Number.isFinite(maxChannel) || maxChannel <= rolloff.inflection || maxChannel <= 0) {
+    return [r, g, b];
+  }
+  const rolledMax = applyRolloffScalar(maxChannel, rolloff);
+  if (!Number.isFinite(rolledMax)) return [r, g, b];
+  const scale = rolledMax / maxChannel;
+  return [r * scale, g * scale, b * scale];
 }
 
 export function applyExposureLinearToRgb(
@@ -530,11 +518,8 @@ export function applyDisplayRolloffAndClipLinearToRgb(
   b: number,
   rolloff: RolloffParams | null,
 ): [number, number, number] {
-  return [
-    clamp01(applyRolloffScalar(r, rolloff)),
-    clamp01(applyRolloffScalar(g, rolloff)),
-    clamp01(applyRolloffScalar(b, rolloff)),
-  ];
+  [r, g, b] = applyRolloffMaxChannelLinearRgb(r, g, b, rolloff);
+  return [clamp01(r), clamp01(g), clamp01(b)];
 }
 
 export type ToneAdjustmentFlags = {
@@ -543,6 +528,7 @@ export type ToneAdjustmentFlags = {
   hasHighlight: boolean;
   hasScaledLog: boolean;
   hasSigmoid: boolean;
+  exposureRolloff?: RolloffParams | null;
 };
 
 export function applyToneLinearToRgb(
@@ -566,11 +552,18 @@ export function applyToneLinearToRgb(
   const hasSigmoid = flags?.hasSigmoid ?? sigmoid !== 0;
 
   if (hasWhiteBalance) [r, g, b] = applyWhiteBalanceLinear(r, g, b, gains);
+  if (hasExposure) {
+    [r, g, b] = applyRolloffMaxChannelLinearRgb(
+      r * factor,
+      g * factor,
+      b * factor,
+      flags?.exposureRolloff ?? null,
+    );
+  }
   const sourceLuminance = proPhotoLinearLuminance(r, g, b);
   if (!(sourceLuminance > TONE_LUMINANCE_EPSILON)) return [r, g, b];
 
   let luminance = sourceLuminance;
-  if (hasExposure) luminance *= factor;
   if (hasScaledLog) luminance = applyScaledLogLinearExtended(luminance, scaledLog);
   if (hasSigmoid) luminance = applySigmoidLinearExtended(luminance, sigmoid);
   if (hasShadow) luminance = applyShadowLinear(luminance, shadow);
@@ -596,7 +589,8 @@ export type ColorAdjustmentContext = {
   shadow: number;
   highlight: number;
   highlightRange: HighlightRange | null;
-  // Saturation and final display shoulders are both percentile-derived rolloffs.
+  // Exposure, Saturation and final display shoulders are percentile-derived rolloffs.
+  exposureRolloff: RolloffParams | null;
   saturationRolloff: RolloffParams | null;
   finalRolloff: RolloffParams | null;
   scaledLog: number;
@@ -642,12 +636,19 @@ export function applyToneAdjustmentsLinearRgbRange(
   if (start <= 0 && end > 0 && context.hasWhiteBalance) {
     [r, g, b] = applyWhiteBalanceLinear(r, g, b, context.gains);
   }
+  if (start <= 1 && end > 1 && context.hasExposure) {
+    [r, g, b] = applyRolloffMaxChannelLinearRgb(
+      r * context.factor,
+      g * context.factor,
+      b * context.factor,
+      context.exposureRolloff,
+    );
+  }
 
   const sourceLuminance = proPhotoLinearLuminance(r, g, b);
   if (!(sourceLuminance > TONE_LUMINANCE_EPSILON)) return [r, g, b];
   let luminance = sourceLuminance;
 
-  if (start <= 1 && end > 1 && context.hasExposure) luminance *= context.factor;
   if (start <= 2 && end > 2 && context.hasScaledLog) {
     luminance = applyScaledLogLinearExtended(luminance, context.scaledLog);
   }

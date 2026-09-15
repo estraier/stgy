@@ -42,7 +42,7 @@ import { FocusWorkerClient, OrbWorkerClient } from "./worker-clients";
 import {
   EXPOSURE_ROLLOFF_A,
   ROLLOFF_SAVING_LIMIT_FACTOR,
-  applyRolloffScalar,
+  applyRolloffMaxChannelLinearRgb,
   applyScaledLogLinear,
   applySigmoidLinear,
   applySigmoidLinearAtMidpoint,
@@ -727,6 +727,7 @@ function getCurrentHighlightP100() {
     currentPreviewShadow,
     currentPreviewLogarithm,
     currentPreviewSigmoid,
+    currentStackResult.exposureRolloffBaseP998,
   );
 }
 
@@ -741,6 +742,7 @@ function getCurrentFinalRolloff(highlightP100) {
     currentPreviewSigmoid,
     currentPreviewVibrance,
     currentPreviewSaturation,
+    currentStackResult.exposureRolloffBaseP998,
     highlightP100,
   ]);
   if (previewFinalRolloffCache && previewFinalRolloffCache.key === key) {
@@ -756,6 +758,7 @@ function getCurrentFinalRolloff(highlightP100) {
     currentPreviewVibrance,
     currentPreviewSaturation,
     highlightP100,
+    currentStackResult.exposureRolloffBaseP998,
   );
   previewFinalRolloffCache = { key, rolloff };
   return rolloff;
@@ -3296,8 +3299,16 @@ function applyExposureAndRolloffInPlace(linear, gain, exposureRolloffBaseP998 = 
 
   const rolloff = rolloffParams(maxVal, EXPOSURE_ROLLOFF_A, ROLLOFF_SAVING_LIMIT_FACTOR, 1);
   if (!rolloff) return;
-  for (let i = 0; i < linear.length; i += 1) {
-    linear[i] = applyRolloffScalar(linear[i], rolloff);
+  for (let i = 0; i + 2 < linear.length; i += 3) {
+    const [r, g, b] = applyRolloffMaxChannelLinearRgb(
+      linear[i] ?? 0,
+      linear[i + 1] ?? 0,
+      linear[i + 2] ?? 0,
+      rolloff,
+    );
+    linear[i] = r;
+    linear[i + 1] = g;
+    linear[i + 2] = b;
   }
 }
 

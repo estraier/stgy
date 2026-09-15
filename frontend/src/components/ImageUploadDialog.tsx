@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import NextImage from "next/image";
 import { createPortal } from "react-dom";
-import { Move, Palette, Pipette, RotateCw } from "lucide-react";
+import { ChevronDown, ChevronUp, Move, Palette, Pipette, RotateCw } from "lucide-react";
 import { formatBytes } from "@/utils/format";
 import {
   buildRawLensfunCorrection,
@@ -143,6 +143,8 @@ import {
   type ImageEditPreviewSliderStage,
 } from "./image-editor/render";
 import {
+  RAW_DEVELOPED_LINEAR_RANGE_MAX,
+  RAW_DEVELOPED_ROLLOFF_A,
   analyzeRawDenoiseMask,
   applyRawColorPass,
   applyRawFallbackBaselinePass,
@@ -427,8 +429,6 @@ type ImageLoadProgress = {
 
 type ImageLoadProgressListener = (progress: ImageLoadProgress) => void;
 
-const RAW_DEVELOPED_LINEAR_RANGE_MAX = 2;
-const RAW_DEVELOPED_ROLLOFF_A = RAW_DEVELOPED_LINEAR_RANGE_MAX / 2;
 const RAW_USE_THUMBNAIL = true;
 const RAW_TONE_SLOPE_EPSILON = 1e-5;
 const RAW_MEDIAN_DENOISE_WEAK_ISO = 800;
@@ -7741,6 +7741,16 @@ function renderRawDebugWeightMap(
   panel.content.appendChild(canvas);
 }
 
+type ImageEditPanelKey = "crop" | "whiteBalance" | "tone" | "color" | "finishing";
+
+function expandedImageEditPanels(): Record<ImageEditPanelKey, boolean> {
+  return { crop: false, whiteBalance: false, tone: false, color: false, finishing: false };
+}
+
+function collapsedImageEditPanels(): Record<ImageEditPanelKey, boolean> {
+  return { crop: true, whiteBalance: true, tone: true, color: true, finishing: true };
+}
+
 export function ImageEditDialog({
   file,
   initialParams,
@@ -7892,6 +7902,12 @@ export function ImageEditDialog({
   const [autoToneBusy, setAutoToneBusy] = useState(false);
   const [autoToneStage, setAutoToneStage] = useState<string | null>(null);
   const [applyBusy, setApplyBusy] = useState(false);
+  const [collapsedPanels, setCollapsedPanels] = useState<Record<ImageEditPanelKey, boolean>>(
+    expandedImageEditPanels,
+  );
+  const [mobileToolsCollapsed, setMobileToolsCollapsed] = useState(false);
+  const finishButtonRef = useRef<HTMLButtonElement>(null);
+  const initialPanelFitCheckedRef = useRef(false);
   const [peepMode, setPeepMode] = useState(false);
   const [peepExpanded, setPeepExpanded] = useState(false);
   const [peepBusy, setPeepBusy] = useState(false);
@@ -7943,6 +7959,36 @@ export function ImageEditDialog({
   );
 
   useEffect(() => setMounted(true), []);
+
+  const togglePanelCollapsed = useCallback((panel: ImageEditPanelKey) => {
+    setCollapsedPanels((current) => ({ ...current, [panel]: !current[panel] }));
+  }, []);
+
+  useEffect(() => {
+    if (!mounted || initialPanelFitCheckedRef.current) return;
+    if (typeof window === "undefined" || !window.matchMedia("(max-width: 1023px)").matches) {
+      initialPanelFitCheckedRef.current = true;
+      return;
+    }
+    let secondFrame = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
+        const finishButton = finishButtonRef.current;
+        if (!finishButton) return;
+        initialPanelFitCheckedRef.current = true;
+        const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+        const rect = finishButton.getBoundingClientRect();
+        if (rect.top < 0 || rect.bottom > viewportHeight) {
+          setCollapsedPanels(collapsedImageEditPanels());
+          setMobileToolsCollapsed(true);
+        }
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      if (secondFrame) window.cancelAnimationFrame(secondFrame);
+    };
+  }, [mounted]);
 
   useEffect(() => {
     onErrorRef.current = onError;
@@ -11019,6 +11065,24 @@ export function ImageEditDialog({
     }
   }, [defaultParams, displayed, natural]);
 
+  const panelCollapseButton = (panel: ImageEditPanelKey, label: string) => {
+    const collapsed = collapsedPanels[panel];
+    return (
+      <button
+        type="button"
+        className={`inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-100 ${
+          panel === "crop" ? "-mr-1" : "-mr-1.5"
+        }`}
+        onClick={() => togglePanelCollapsed(panel)}
+        aria-label={`${collapsed ? "Expand" : "Collapse"} ${label} panel`}
+        aria-expanded={!collapsed}
+        title={`${collapsed ? "Expand" : "Collapse"} ${label}`}
+      >
+        {collapsed ? <ChevronDown size={13} strokeWidth={1.8} /> : <ChevronUp size={13} strokeWidth={1.8} />}
+      </button>
+    );
+  };
+
   const rawDevelopmentSettings = (() => {
     if (!isRawImageFile(file.name, file.type)) return undefined;
     const decoded = decodedImageRef.current;
@@ -11079,6 +11143,7 @@ export function ImageEditDialog({
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between lg:gap-3">
           <h2 className="text-base font-semibold break-all">Edit image</h2>
           <div className="grid grid-cols-3 items-center gap-x-3 gap-y-2 lg:flex lg:gap-3">
+            <div className={mobileToolsCollapsed ? "hidden lg:contents" : "contents"}>
             <label className="inline-flex items-center gap-2 text-sm text-gray-700 select-none">
               <input
                 type="checkbox"
@@ -11269,19 +11334,36 @@ export function ImageEditDialog({
               />
               <span>Grid</span>
             </label>
-            <button
-              className="col-span-3 justify-self-start px-2 py-0.5 text-sm rounded border border-gray-300 hover:bg-gray-100 lg:col-auto lg:justify-self-auto"
-              onClick={onReset}
-            >
-              Reset
-            </button>
+            </div>
+            <div className="col-span-3 flex items-center justify-between lg:contents">
+              <button
+                className="justify-self-start px-2 py-0.5 text-sm rounded border border-gray-300 hover:bg-gray-100 lg:col-auto lg:justify-self-auto"
+                onClick={onReset}
+              >
+                Reset
+              </button>
+              <button
+                type="button"
+                className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-100 lg:hidden"
+                onClick={() => setMobileToolsCollapsed((current) => !current)}
+                aria-label={`${mobileToolsCollapsed ? "Expand" : "Collapse"} editor tools`}
+                aria-expanded={!mobileToolsCollapsed}
+                title={`${mobileToolsCollapsed ? "Expand" : "Collapse"} editor tools`}
+              >
+                {mobileToolsCollapsed ? (
+                  <ChevronDown size={13} strokeWidth={1.8} />
+                ) : (
+                  <ChevronUp size={13} strokeWidth={1.8} />
+                )}
+              </button>
+            </div>
           </div>
         </div>
 
         <div className="mt-3 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_250px] gap-4 lg:items-stretch">
           <div
             ref={containerRef}
-            className={`relative w-full h-[42vh] min-h-[270px] lg:h-[calc(100dvh-120px)] lg:max-h-[950px] rounded border bg-gray-200 overflow-hidden touch-none ${textMode ? "cursor-text" : !eyedropperMode && !rotationMode && (drawMode || mosaicMode || vignetteMode) ? "cursor-crosshair" : ""}`}
+            className={`relative w-full h-[42vh] min-h-[270px] lg:h-[calc(100dvh-120px)] lg:max-h-[1100px] rounded border bg-gray-200 overflow-hidden touch-none ${textMode ? "cursor-text" : !eyedropperMode && !rotationMode && (drawMode || mosaicMode || vignetteMode) ? "cursor-crosshair" : ""}`}
             onPointerDown={eyedropperMode || rotationMode ? undefined : textMode ? onTextPointerDown : drawMode ? onDrawPointerDown : mosaicMode ? onMosaicPointerDown : vignetteMode ? onVignettePointerDown : undefined}
             onPointerMove={eyedropperMode ? undefined : rotationMode ? onRotationPointerMove : drawMode ? onDrawPointerMove : mosaicMode ? onMosaicPointerMove : vignetteMode ? onVignettePointerMove : onPointerMove}
             onPointerUp={eyedropperMode ? undefined : rotationMode ? onRotationPointerUp : drawMode ? (e) => finishDrawCreation(e) : mosaicMode ? onMosaicPointerUp : vignetteMode ? (e) => finishVignetteCreation(e) : onPointerUp}
@@ -11411,7 +11493,7 @@ export function ImageEditDialog({
                   })()}
                   {!eyedropperMode && showHistogram && histogramPaths && (
                     <div
-                      className="absolute left-2 bottom-2 z-[33] w-[294px] h-[138px] rounded bg-black pointer-events-none"
+                      className="absolute left-2 bottom-2 z-[33] w-[294px] h-[138px] rounded bg-black pointer-events-none lg:w-[382.2px] lg:h-[179.4px]"
                       aria-hidden="true"
                     />
                   )}
@@ -11926,7 +12008,7 @@ export function ImageEditDialog({
                     );
                   })}
                   {!eyedropperMode && showHistogram && histogramPaths && (
-                    <div className="absolute left-2 bottom-2 z-[33] w-[294px] h-[138px] rounded border border-white/40 bg-black/80 shadow-sm pointer-events-none">
+                    <div className="absolute left-2 bottom-2 z-[33] w-[294px] h-[138px] rounded border border-white/40 bg-black/80 shadow-sm pointer-events-none lg:w-[382.2px] lg:h-[179.4px]">
                       <svg
                         className="absolute inset-[6px] w-[calc(100%-12px)] h-[calc(100%-12px)]"
                         viewBox={`0 0 ${histogramPaths.width} ${histogramPaths.height}`}
@@ -11982,7 +12064,7 @@ export function ImageEditDialog({
                     >
                       <div
                         ref={percentilePanelRef}
-                        className="absolute left-2 top-2 max-w-[480px] overflow-x-auto rounded border border-white/40 bg-black/85 p-2 text-[11px] leading-tight text-white shadow-lg"
+                        className="absolute left-2 top-2 max-h-[max(180px,28vh)] max-w-[480px] overflow-x-auto overflow-y-auto rounded border border-white/40 bg-black/85 p-2 text-[11px] leading-tight text-white shadow-lg lg:max-h-[800px]"
                         onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => e.stopPropagation()}
                       >
@@ -12429,54 +12511,65 @@ export function ImageEditDialog({
           </div>
 
           <div className="space-y-4 text-sm text-gray-800">
-            <div className="rounded border px-2 py-3 lg:space-y-2">
-              <div className="flex flex-wrap items-center gap-x-1 gap-y-2 lg:gap-x-2">
-                <div className="shrink-0 font-medium">Crop</div>
-                {cropAspectButtons}
-                <button
-                  type="button"
-                  className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border ${
-                    rotationMode
-                      ? "border-blue-500 bg-blue-50 text-blue-700"
-                      : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
-                  }`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setFilterMode(false);
-                    setTextMode(false);
-                    setActiveTextId(null);
-                    textMoveState.current = null;
-                    setDrawMode(false);
-                    setDrawDraft(null);
-                    drawCreateState.current = null;
-                    drawEditState.current = null;
-                    setRotationMode((current) => !current);
-                    setEyedropperMode(false);
-                    rotationDragState.current = null;
-                    mosaicDragStart.current = null;
-                    mosaicMoveState.current = null;
-                    setMosaicDraft(null);
-                    dragState.current = null;
-                  }}
-                  aria-label="Rotate image"
-                  aria-pressed={rotationMode}
-                  title="Rotate image"
-                >
-                  <RotateCw size={13} strokeWidth={1.8} />
-                </button>
-                <div className="lg:hidden min-w-0 text-[10px] text-gray-700 leading-5 font-mono whitespace-nowrap">
+            <div className={`rounded border px-2 ${collapsedPanels.crop ? "py-1.5" : "py-3 lg:space-y-2"}`}>
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1 gap-y-2 lg:gap-x-2">
+                  <div className="shrink-0 font-medium">Crop</div>
+                  {!collapsedPanels.crop && (
+                    <>
+                      {cropAspectButtons}
+                      <button
+                        type="button"
+                        className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border ${
+                          rotationMode
+                            ? "border-blue-500 bg-blue-50 text-blue-700"
+                            : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                        }`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setFilterMode(false);
+                          setTextMode(false);
+                          setActiveTextId(null);
+                          textMoveState.current = null;
+                          setDrawMode(false);
+                          setDrawDraft(null);
+                          drawCreateState.current = null;
+                          drawEditState.current = null;
+                          setRotationMode((current) => !current);
+                          setEyedropperMode(false);
+                          rotationDragState.current = null;
+                          mosaicDragStart.current = null;
+                          mosaicMoveState.current = null;
+                          setMosaicDraft(null);
+                          dragState.current = null;
+                        }}
+                        aria-label="Rotate image"
+                        aria-pressed={rotationMode}
+                        title="Rotate image"
+                      >
+                        <RotateCw size={13} strokeWidth={1.8} />
+                      </button>
+                      <div className="lg:hidden min-w-0 text-[10px] text-gray-700 leading-5 font-mono whitespace-nowrap">
+                        {cropMarginsText}
+                      </div>
+                    </>
+                  )}
+                </div>
+                {panelCollapseButton("crop", "Crop")}
+              </div>
+              {!collapsedPanels.crop && (
+                <div className="hidden lg:block min-w-0 text-[10px] text-gray-700 leading-5 font-mono whitespace-nowrap">
                   {cropMarginsText}
                 </div>
-              </div>
-              <div className="hidden lg:block min-w-0 text-[10px] text-gray-700 leading-5 font-mono whitespace-nowrap">
-                {cropMarginsText}
-              </div>
+              )}
             </div>
 
-            <div className="rounded border p-3 space-y-2 lg:space-y-3">
-              <div className="flex items-center gap-1 font-medium">
-                <span>White balance</span>
-                <button
+            <div className={`rounded border px-3 ${collapsedPanels.whiteBalance ? "py-1.5" : "py-3 space-y-2 lg:space-y-3"}`}>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1 font-medium">
+                  <span>White balance</span>
+                  {!collapsedPanels.whiteBalance && (
+                  <button
                   type="button"
                   className={`inline-flex h-5 w-5 items-center justify-center rounded border ${
                     eyedropperMode
@@ -12508,9 +12601,13 @@ export function ImageEditDialog({
                   aria-pressed={eyedropperMode}
                   title="White balance eyedropper"
                 >
-                  <Pipette size={13} strokeWidth={1.8} />
-                </button>
+                    <Pipette size={13} strokeWidth={1.8} />
+                  </button>
+                  )}
+                </div>
+                {panelCollapseButton("whiteBalance", "White balance")}
               </div>
+              <div className={collapsedPanels.whiteBalance ? "hidden" : "space-y-2 lg:space-y-3"}>
               <label className="grid grid-cols-[96px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
                 <span className="col-start-1 row-start-1">Temperature</span>
                 <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">
@@ -12541,11 +12638,14 @@ export function ImageEditDialog({
                   className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
               </label>
+              </div>
             </div>
 
-            <div className="rounded border p-3 space-y-2 lg:space-y-3">
-              <div className="flex items-center gap-2 font-medium">
-                <span>Tone</span>
+            <div className={`rounded border px-3 ${collapsedPanels.tone ? "py-1.5" : "py-3 space-y-2 lg:space-y-3"}`}>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 font-medium">
+                  <span>Tone</span>
+                  {!collapsedPanels.tone && (
                 <button
                   type="button"
                   className="h-5 rounded border border-gray-300 bg-white px-1.5 text-[10px] font-normal text-gray-700 hover:bg-gray-100 disabled:cursor-default disabled:opacity-60"
@@ -12553,9 +12653,13 @@ export function ImageEditDialog({
                   disabled={autoToneBusy}
                   title="Auto tone: reset Shadow/Highlight/Clarity, then optimize Exposure, Midtone, and Contrast"
                 >
-                  Auto
-                </button>
+                    Auto
+                  </button>
+                  )}
+                </div>
+                {panelCollapseButton("tone", "Tone")}
               </div>
+              <div className={collapsedPanels.tone ? "hidden" : "space-y-2 lg:space-y-3"}>
               <div className="grid grid-cols-[112px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
                 <div className="col-start-1 row-start-1 flex min-w-0 items-center gap-1">
                   <span>Exposure</span>
@@ -12681,10 +12785,15 @@ export function ImageEditDialog({
                   className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
               </label>
+              </div>
             </div>
 
-            <div className="rounded border p-3 space-y-2 lg:space-y-3">
-              <div className="hidden lg:block font-medium">Color</div>
+            <div className={`rounded border px-3 ${collapsedPanels.color ? "py-1.5" : "py-3 space-y-2 lg:space-y-3"}`}>
+              <div className="flex items-center justify-between gap-2">
+                <div className="font-medium">Color</div>
+                {panelCollapseButton("color", "Color")}
+              </div>
+              <div className={collapsedPanels.color ? "hidden" : "space-y-2 lg:space-y-3"}>
               <label className="grid grid-cols-[96px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
                 <span className="col-start-1 row-start-1">Saturation</span>
                 <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{saturation >= 0 ? "+" : ""}{saturation}</span>
@@ -12713,12 +12822,15 @@ export function ImageEditDialog({
                   className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
               </label>
+              </div>
             </div>
 
-            <div className="rounded border p-3 space-y-2 lg:space-y-3">
-              <div className="flex items-center gap-2 font-medium">
-                <span>Finishing</span>
+            <div className={`rounded border px-3 ${collapsedPanels.finishing ? "py-1.5" : "py-3 space-y-2 lg:space-y-3"}`}>
+              <div className="flex items-center justify-between gap-2">
+                <div className="font-medium">Finishing</div>
+                {panelCollapseButton("finishing", "Finishing")}
               </div>
+              <div className={collapsedPanels.finishing ? "hidden" : "space-y-2 lg:space-y-3"}>
               <label className="grid grid-cols-[112px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
                 <span className="col-start-1 row-start-1">Denoise</span>
                 <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{denoise}</span>
@@ -12794,6 +12906,7 @@ export function ImageEditDialog({
                   className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
                 />
               </label>
+              </div>
             </div>
           </div>
         </div>
@@ -12832,6 +12945,7 @@ export function ImageEditDialog({
               Cancel
             </button>
             <button
+              ref={finishButtonRef}
               className="px-3 py-1 rounded border border-blue-700 bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
               onClick={onSubmit}
               disabled={applyBusy}

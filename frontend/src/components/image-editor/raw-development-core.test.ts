@@ -1,4 +1,8 @@
-import { analyzeRawDenoiseMask } from "./raw-development-core";
+import {
+  RAW_DEVELOPED_LINEAR_RANGE_MAX,
+  RAW_DEVELOPED_ROLLOFF_A,
+  analyzeRawDenoiseMask,
+} from "./raw-development-core";
 
 function makeUniformLinearRgb16(width: number, height: number, value: number): Uint16Array {
   const data = new Uint16Array(width * height * 3);
@@ -6,16 +10,23 @@ function makeUniformLinearRgb16(width: number, height: number, value: number): U
   return data;
 }
 
+describe("RAW developed buffer range", () => {
+  test("uses [0,4] with A=2 for RAW development", () => {
+    expect(RAW_DEVELOPED_LINEAR_RANGE_MAX).toBe(4);
+    expect(RAW_DEVELOPED_ROLLOFF_A).toBe(2);
+  });
+});
+
 describe("RAW denoise ISO weight scaling", () => {
   test("keeps ISO 400 neutral and bends the final blend weight by ISO stops", () => {
     const width = 8;
     const height = 8;
-    const data = makeUniformLinearRgb16(width, height, 16384);
+    const data = makeUniformLinearRgb16(width, height, 8192);
     const analyze = (iso?: number | null) => analyzeRawDenoiseMask(
       data,
       width,
       height,
-      2,
+      RAW_DEVELOPED_LINEAR_RANGE_MAX,
       "linear",
       iso,
     );

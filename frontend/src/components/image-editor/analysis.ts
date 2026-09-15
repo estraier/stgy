@@ -12,12 +12,13 @@ import {
   type ImageEditClarityMap,
 } from "./clarity";
 import {
+  EXPOSURE_ROLLOFF_A,
   FINAL_DISPLAY_ROLLOFF_A,
   HISTOGRAM_DISPLAY_GAMMA,
   ROLLOFF_SAVING_LIMIT_FACTOR,
   SATURATION_ROLLOFF_A,
   applyColorAdjustmentsAfterToneLinearRgb, applyColorAdjustmentsLinearRgb,
-  applyLuminanceGainPreservingAboveOneLinearRgb, applySaturationVibranceAndFinalRolloffLinearRgb,
+  applyLuminanceGainPreservingAboveOneLinearRgb, applyRolloffMaxChannelLinearRgb, applySaturationVibranceAndFinalRolloffLinearRgb,
   applyScaledLogLinearExtended, applyShadowLinear, applySigmoidLinearExtended,
   applyToneAdjustmentsLinearRgb, applyToneLinearToRgb,
   applyWhiteBalanceLinear, clamp01, clampColorAdjustment, clampExposureEv,
@@ -105,10 +106,35 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
     || hasSaturation
     || hasVibrance;
 
-  let highlightMax = -Infinity;
   const data = sample.data;
   const valid = sample.valid;
   const count = Math.floor(data.length / 3);
+
+  let exposureRolloff: RolloffParams | null = null;
+  if (hasExposure && factor > 1) {
+    const exposureMaxima: number[] = [];
+    for (let pixel = 0; pixel < count; pixel++) {
+      if (ignoreInvalid && valid && !valid[pixel]) continue;
+      const i = pixel * 3;
+      let r = data[i] ?? 0;
+      let g = data[i + 1] ?? 0;
+      let b = data[i + 2] ?? 0;
+      if (hasWhiteBalance) [r, g, b] = applyWhiteBalanceLinear(r, g, b, gains);
+      const maxChannel = Math.max(r * factor, g * factor, b * factor);
+      if (Number.isFinite(maxChannel)) exposureMaxima.push(maxChannel);
+    }
+    const exposureP998 = exposureMaxima.length
+      ? percentileFromValues(exposureMaxima, 99.8)
+      : 0;
+    exposureRolloff = rolloffParams(
+      exposureP998,
+      EXPOSURE_ROLLOFF_A,
+      ROLLOFF_SAVING_LIMIT_FACTOR,
+      1,
+    );
+  }
+
+  let highlightMax = -Infinity;
   if (needsHighlightRange) {
     for (let pixel = 0; pixel < count; pixel++) {
       if (ignoreInvalid && valid && !valid[pixel]) continue;
@@ -116,24 +142,20 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
       let r = data[i] ?? 0;
       let g = data[i + 1] ?? 0;
       let b = data[i + 2] ?? 0;
-      if (hasWhiteBalance) {
-        [r, g, b] = applyWhiteBalanceLinear(r, g, b, gains);
-      }
-      let exposedR = r;
-      let exposedG = g;
-      let exposedB = b;
+      if (hasWhiteBalance) [r, g, b] = applyWhiteBalanceLinear(r, g, b, gains);
       if (hasExposure) {
-        exposedR *= factor;
-        exposedG *= factor;
-        exposedB *= factor;
+        [r, g, b] = applyRolloffMaxChannelLinearRgb(
+          r * factor,
+          g * factor,
+          b * factor,
+          exposureRolloff,
+        );
       }
-      if (needsHighlightRange) {
-        let highlightValue = proPhotoLinearLuminance(exposedR, exposedG, exposedB);
-        if (hasScaledLog) highlightValue = applyScaledLogLinearExtended(highlightValue, normalizedScaledLog);
-        if (hasSigmoid) highlightValue = applySigmoidLinearExtended(highlightValue, normalizedSigmoid);
-        if (hasShadow) highlightValue = applyShadowLinear(highlightValue, normalizedShadow);
-        highlightMax = Math.max(highlightMax, highlightValue);
-      }
+      let highlightValue = proPhotoLinearLuminance(r, g, b);
+      if (hasScaledLog) highlightValue = applyScaledLogLinearExtended(highlightValue, normalizedScaledLog);
+      if (hasSigmoid) highlightValue = applySigmoidLinearExtended(highlightValue, normalizedSigmoid);
+      if (hasShadow) highlightValue = applyShadowLinear(highlightValue, normalizedShadow);
+      highlightMax = Math.max(highlightMax, highlightValue);
     }
   }
   const highlightRange: HighlightRange | null = normalizedHighlight !== 0 && Number.isFinite(highlightMax)
@@ -173,6 +195,7 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
           hasHighlight,
           hasScaledLog,
           hasSigmoid,
+          exposureRolloff,
         },
       );
       toneAdjusted[i] = r;
@@ -239,6 +262,7 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
     shadow: normalizedShadow,
     highlight: normalizedHighlight,
     highlightRange,
+    exposureRolloff,
     saturationRolloff,
     finalRolloff,
     scaledLog: normalizedScaledLog,

@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
 
 import {
+  RAW_DEVELOPED_LINEAR_RANGE_MAX,
   analyzeRawDenoiseMask,
   applyRawColorPass,
   applyRawFallbackBaselinePass,
@@ -141,7 +142,7 @@ workerScope.onmessage = (event: MessageEvent<RawDevelopmentWorkerRequest>) => {
           dataBuffer: outputBuffer,
           width: Math.max(1, Math.round(message.targetWidth)),
           height: Math.max(1, Math.round(message.targetHeight)),
-          linearRangeMax: 2,
+          linearRangeMax: RAW_DEVELOPED_LINEAR_RANGE_MAX,
           transfer: "gamma20",
         },
         [outputBuffer],
@@ -177,7 +178,7 @@ workerScope.onmessage = (event: MessageEvent<RawDevelopmentWorkerRequest>) => {
           dataBuffer: outputBuffer,
           width: result.width,
           height: result.height,
-          linearRangeMax: 2,
+          linearRangeMax: RAW_DEVELOPED_LINEAR_RANGE_MAX,
           transfer: "gamma20",
           headroom: result.headroom,
         },
@@ -204,7 +205,7 @@ workerScope.onmessage = (event: MessageEvent<RawDevelopmentWorkerRequest>) => {
         message.plan,
         state.transfer,
       );
-      state.linearRangeMax = 2;
+      state.linearRangeMax = RAW_DEVELOPED_LINEAR_RANGE_MAX;
       state.transfer = "gamma20";
       const colorSample = sampleRawLinearRgb(
         data,
@@ -238,7 +239,7 @@ workerScope.onmessage = (event: MessageEvent<RawDevelopmentWorkerRequest>) => {
         state.transfer,
       );
       if (result) {
-        state.linearRangeMax = 2;
+        state.linearRangeMax = RAW_DEVELOPED_LINEAR_RANGE_MAX;
         state.transfer = "gamma20";
       }
       workerScope.postMessage({ type: "fallback-tone-complete", result });
