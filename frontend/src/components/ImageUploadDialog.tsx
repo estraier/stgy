@@ -259,7 +259,15 @@ export type ImagePhotochemicalFilterPreset =
   | "bleach-bypass"
   | "negative"
   | "solarization";
-export type ImageOtherFilterPreset = "swap-bgr" | "swap-gbr" | "duotone-yb" | "duotone-rc" | "edge";
+export type ImageChannelSwapPreset =
+  | "swap-rgb-rgb"
+  | "swap-rgb-rbg"
+  | "swap-rgb-grb"
+  | "swap-rgb-gbr"
+  | "swap-rgb-brg"
+  | "swap-rgb-bgr";
+export type ImageDuotonePreset = "duotone-yb" | "duotone-rc";
+export type ImageOtherFilterPreset = ImageChannelSwapPreset | ImageDuotonePreset | "edge";
 export type ImageNonMonochromeFilterPreset = ImagePhotochemicalFilterPreset | ImageOtherFilterPreset;
 
 export type ImageFilter =
@@ -782,11 +790,21 @@ const PHOTOCHEMICAL_FILTER_LABELS: Record<ImagePhotochemicalFilterPreset, string
   solarization: "Solarization",
 };
 
-const OTHER_FILTER_LABELS: Record<ImageOtherFilterPreset, string> = {
-  "swap-bgr": "Swap BGR",
-  "swap-gbr": "Swap GBR",
-  "duotone-yb": "Duotone YB",
-  "duotone-rc": "Duotone RC",
+const SWAP_RGB_PRESET_SEQUENCE: readonly ImageChannelSwapPreset[] = [
+  "swap-rgb-bgr",
+  "swap-rgb-gbr",
+  "swap-rgb-brg",
+  "swap-rgb-rbg",
+  "swap-rgb-grb",
+  "swap-rgb-rgb",
+];
+
+const DUOTONE_PRESET_SEQUENCE: readonly ImageDuotonePreset[] = [
+  "duotone-yb",
+  "duotone-rc",
+];
+
+const OTHER_FILTER_LABELS: Record<Extract<ImageOtherFilterPreset, "edge">, string> = {
   edge: "Edge",
 };
 
@@ -1202,19 +1220,41 @@ function normalizeMonochromePreset(value: unknown): ImageMonochromePreset {
     : "rec709";
 }
 
+function isChannelSwapPreset(value: unknown): value is ImageChannelSwapPreset {
+  return typeof value === "string" && (SWAP_RGB_PRESET_SEQUENCE as readonly string[]).includes(value);
+}
+
+function isDuotonePreset(value: unknown): value is ImageDuotonePreset {
+  return typeof value === "string" && (DUOTONE_PRESET_SEQUENCE as readonly string[]).includes(value);
+}
+
+function cycleOtherFilterPreset<T extends ImageOtherFilterPreset>(
+  current: ImageFilter | null | undefined,
+  sequence: readonly T[],
+): ImageFilter | null {
+  const first = sequence[0];
+  if (!first) return null;
+  if (!current || current.kind !== "other") return { kind: "other", preset: first };
+  const index = sequence.indexOf(current.preset as T);
+  if (index < 0) return { kind: "other", preset: first };
+  const next = sequence[index + 1];
+  return next ? { kind: "other", preset: next } : null;
+}
+
 function normalizeNonMonochromeFilterPreset(value: unknown): ImageNonMonochromeFilterPreset {
-  if (value === "duotone-yv") return "duotone-yb";
-  if (value === "duotone-gr") return "duotone-rc";
+  // Legacy filter names are normalized into the current cycling presets.
+  if (value === "swap-bgr") return "swap-rgb-bgr";
+  if (value === "swap-gbr") return "swap-rgb-gbr";
+  if (value === "duotone-yv" || value === "duotone-y" || value === "duotone-b") return "duotone-yb";
+  if (value === "duotone-r" || value === "duotone-c") return "duotone-rc";
+  if (value === "duotone-gr" || value === "duotone-g" || value === "duotone-m") return "duotone-yb";
+  if (isChannelSwapPreset(value) || isDuotonePreset(value)) return value;
   if (
     value === "cyanotype" ||
     value === "cross-process" ||
     value === "bleach-bypass" ||
     value === "negative" ||
     value === "solarization" ||
-    value === "swap-bgr" ||
-    value === "swap-gbr" ||
-    value === "duotone-yb" ||
-    value === "duotone-rc" ||
     value === "edge"
   ) {
     return value;
@@ -2161,13 +2201,11 @@ function applyBleachBypassFilterToCanvasData(
   }
 }
 
-type DuotoneFilterPreset = "duotone-yb" | "duotone-rc";
-
 function applyDuotoneChannelProjectionLinearRgb(
   r: number,
   g: number,
   b: number,
-  preset: DuotoneFilterPreset,
+  preset: ImageDuotonePreset,
 ): [number, number, number] {
   if (preset === "duotone-yb") {
     const yellow = (r + g) * 0.5;
@@ -2182,7 +2220,7 @@ function applyDuotoneFilterToCanvasData(
   width: number,
   height: number,
   profile: ImageEditOutputColorProfile,
-  preset: DuotoneFilterPreset,
+  preset: ImageDuotonePreset,
 ): void {
   const beforeHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
   const filteredHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
@@ -2231,7 +2269,7 @@ function applyDuotoneFilterToRgb16(
   data: Uint16Array,
   width: number,
   height: number,
-  preset: DuotoneFilterPreset,
+  preset: ImageDuotonePreset,
 ): void {
   const beforeHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
   const filteredHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
@@ -2503,40 +2541,34 @@ function applyImageFilterToCanvas(
     }
   } else {
     const profile: ImageEditOutputColorProfile = outputColorProfile === "display-p3" ? "display-p3" : "srgb";
-    switch (filter.preset) {
-      case "sepia":
-        applySepiaFilterToCanvasData(rgba8, width, height, profile);
-        break;
-      case "cross-process":
-        applyCrossProcessFilterToCanvasData(rgba8, width, height, profile);
-        break;
-      case "bleach-bypass":
-        applyBleachBypassFilterToCanvasData(rgba8, width, height, profile);
-        break;
-      case "cyanotype":
-        applyCyanotypeFilterToCanvasData(rgba8, width, height, profile);
-        break;
-      case "negative":
-        applyNegativeFilterToCanvasData(rgba8, profile);
-        break;
-      case "solarization":
-        applySolarizationFilterToCanvasData(rgba8, profile);
-        break;
-      case "swap-bgr":
-        applyChannelSwapBgrFilterToCanvasData(rgba8, profile);
-        break;
-      case "swap-gbr":
-        applyChannelSwapGbrFilterToCanvasData(rgba8, profile);
-        break;
-      case "duotone-yb":
-        applyDuotoneFilterToCanvasData(rgba8, width, height, profile, "duotone-yb");
-        break;
-      case "duotone-rc":
-        applyDuotoneFilterToCanvasData(rgba8, width, height, profile, "duotone-rc");
-        break;
-      case "edge":
-        applyEdgeFilterToCanvasData(rgba8, width, height, profile);
-        break;
+    if (isChannelSwapPreset(filter.preset)) {
+      applyChannelSwapFilterToCanvasData(rgba8, profile, filter.preset);
+    } else if (isDuotonePreset(filter.preset)) {
+      applyDuotoneFilterToCanvasData(rgba8, width, height, profile, filter.preset);
+    } else {
+      switch (filter.preset) {
+        case "sepia":
+          applySepiaFilterToCanvasData(rgba8, width, height, profile);
+          break;
+        case "cross-process":
+          applyCrossProcessFilterToCanvasData(rgba8, width, height, profile);
+          break;
+        case "bleach-bypass":
+          applyBleachBypassFilterToCanvasData(rgba8, width, height, profile);
+          break;
+        case "cyanotype":
+          applyCyanotypeFilterToCanvasData(rgba8, width, height, profile);
+          break;
+        case "negative":
+          applyNegativeFilterToCanvasData(rgba8, profile);
+          break;
+        case "solarization":
+          applySolarizationFilterToCanvasData(rgba8, profile);
+          break;
+        case "edge":
+          applyEdgeFilterToCanvasData(rgba8, width, height, profile);
+          break;
+      }
     }
   }
 
@@ -2686,9 +2718,32 @@ function applySolarizationFilterToRgb16(data: Uint16Array, width: number, height
   }
 }
 
-function applyChannelSwapBgrFilterToCanvasData(
+function applyChannelSwapLinearRgb(
+  r: number,
+  g: number,
+  b: number,
+  preset: ImageChannelSwapPreset,
+): [number, number, number] {
+  switch (preset) {
+    case "swap-rgb-rgb":
+      return [r, g, b];
+    case "swap-rgb-rbg":
+      return [r, b, g];
+    case "swap-rgb-grb":
+      return [g, r, b];
+    case "swap-rgb-gbr":
+      return [g, b, r];
+    case "swap-rgb-brg":
+      return [b, r, g];
+    case "swap-rgb-bgr":
+      return [b, g, r];
+  }
+}
+
+function applyChannelSwapFilterToCanvasData(
   rgba8: Uint8ClampedArray,
   profile: ImageEditOutputColorProfile,
+  preset: ImageChannelSwapPreset,
 ): void {
   for (let i = 0; i < rgba8.length; i += 4) {
     const [r, g, b] = encodedRgbToLinearProphoto(
@@ -2697,54 +2752,30 @@ function applyChannelSwapBgrFilterToCanvasData(
       (rgba8[i + 2] ?? 0) / 255,
       profile,
     );
-    const [er, eg, eb] = convertLinearProPhotoToOutputRgb(b, g, r, profile);
+    const [sr, sg, sb] = applyChannelSwapLinearRgb(r, g, b, preset);
+    const [er, eg, eb] = convertLinearProPhotoToOutputRgb(sr, sg, sb, profile);
     rgba8[i] = linearChannelToSrgb(er);
     rgba8[i + 1] = linearChannelToSrgb(eg);
     rgba8[i + 2] = linearChannelToSrgb(eb);
   }
 }
 
-function applyChannelSwapBgrFilterToRgb16(data: Uint16Array, width: number, height: number): void {
-  const pixelCount = width * height;
-  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
-    const index = pixel * 3;
-    const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
-    const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
-    const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
-    data[index] = encodeStoredRgb16Channel(b, "gamma20", 1);
-    data[index + 1] = encodeStoredRgb16Channel(g, "gamma20", 1);
-    data[index + 2] = encodeStoredRgb16Channel(r, "gamma20", 1);
-  }
-}
-
-function applyChannelSwapGbrFilterToCanvasData(
-  rgba8: Uint8ClampedArray,
-  profile: ImageEditOutputColorProfile,
+function applyChannelSwapFilterToRgb16(
+  data: Uint16Array,
+  width: number,
+  height: number,
+  preset: ImageChannelSwapPreset,
 ): void {
-  for (let i = 0; i < rgba8.length; i += 4) {
-    const [r, g, b] = encodedRgbToLinearProphoto(
-      (rgba8[i] ?? 0) / 255,
-      (rgba8[i + 1] ?? 0) / 255,
-      (rgba8[i + 2] ?? 0) / 255,
-      profile,
-    );
-    const [er, eg, eb] = convertLinearProPhotoToOutputRgb(g, b, r, profile);
-    rgba8[i] = linearChannelToSrgb(er);
-    rgba8[i + 1] = linearChannelToSrgb(eg);
-    rgba8[i + 2] = linearChannelToSrgb(eb);
-  }
-}
-
-function applyChannelSwapGbrFilterToRgb16(data: Uint16Array, width: number, height: number): void {
   const pixelCount = width * height;
   for (let pixel = 0; pixel < pixelCount; pixel += 1) {
     const index = pixel * 3;
     const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
     const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
     const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
-    data[index] = encodeStoredRgb16Channel(g, "gamma20", 1);
-    data[index + 1] = encodeStoredRgb16Channel(b, "gamma20", 1);
-    data[index + 2] = encodeStoredRgb16Channel(r, "gamma20", 1);
+    const [sr, sg, sb] = applyChannelSwapLinearRgb(r, g, b, preset);
+    data[index] = encodeStoredRgb16Channel(sr, "gamma20", 1);
+    data[index + 1] = encodeStoredRgb16Channel(sg, "gamma20", 1);
+    data[index + 2] = encodeStoredRgb16Channel(sb, "gamma20", 1);
   }
 }
 
@@ -2921,6 +2952,15 @@ function applyImageFilterToRgb16(
     return;
   }
 
+  if (isChannelSwapPreset(filter.preset)) {
+    applyChannelSwapFilterToRgb16(data, width, height, filter.preset);
+    return;
+  }
+  if (isDuotonePreset(filter.preset)) {
+    applyDuotoneFilterToRgb16(data, width, height, filter.preset);
+    return;
+  }
+
   switch (filter.preset) {
     case "sepia":
       applySepiaFilterToRgb16(data, width, height);
@@ -2939,18 +2979,6 @@ function applyImageFilterToRgb16(
       return;
     case "solarization":
       applySolarizationFilterToRgb16(data, width, height);
-      return;
-    case "swap-bgr":
-      applyChannelSwapBgrFilterToRgb16(data, width, height);
-      return;
-    case "swap-gbr":
-      applyChannelSwapGbrFilterToRgb16(data, width, height);
-      return;
-    case "duotone-yb":
-      applyDuotoneFilterToRgb16(data, width, height, "duotone-yb");
-      return;
-    case "duotone-rc":
-      applyDuotoneFilterToRgb16(data, width, height, "duotone-rc");
       return;
     case "edge":
       applyEdgeFilterToRgb16(data, width, height);
@@ -11801,7 +11829,49 @@ export function ImageEditDialog({
                       <div className="flex flex-col gap-1">
                         <span className="text-xs font-medium text-gray-700">Others</span>
                         <div className="grid grid-cols-2 gap-1">
-                          {(Object.entries(OTHER_FILTER_LABELS) as Array<[ImageOtherFilterPreset, string]>).map(([preset, label]) => {
+                          {(() => {
+                            const preset = imageFilter?.kind === "other" && isChannelSwapPreset(imageFilter.preset)
+                              ? imageFilter.preset
+                              : null;
+                            const label = "Swap RGB";
+                            return (
+                              <button
+                                type="button"
+                                className={`rounded border px-2 py-1 text-[11px] ${
+                                  preset
+                                    ? "border-blue-500 bg-blue-50 text-blue-700"
+                                    : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                                }`}
+                                onClick={() => setImageFilter((current) => cycleOtherFilterPreset(current, SWAP_RGB_PRESET_SEQUENCE))}
+                                aria-label={label}
+                                title="Swap RGB; click to cycle RGB permutations and Off"
+                              >
+                                {label}
+                              </button>
+                            );
+                          })()}
+                          {(() => {
+                            const preset = imageFilter?.kind === "other" && isDuotonePreset(imageFilter.preset)
+                              ? imageFilter.preset
+                              : null;
+                            const label = "Duotone";
+                            return (
+                              <button
+                                type="button"
+                                className={`rounded border px-2 py-1 text-[11px] ${
+                                  preset
+                                    ? "border-blue-500 bg-blue-50 text-blue-700"
+                                    : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                                }`}
+                                onClick={() => setImageFilter((current) => cycleOtherFilterPreset(current, DUOTONE_PRESET_SEQUENCE))}
+                                aria-label={label}
+                                title="Duotone; click to cycle YB, RC, and Off"
+                              >
+                                {label}
+                              </button>
+                            );
+                          })()}
+                          {(Object.entries(OTHER_FILTER_LABELS) as Array<["edge", string]>).map(([preset, label]) => {
                             const selected = imageFilter?.kind === "other" && imageFilter.preset === preset;
                             return (
                               <button
