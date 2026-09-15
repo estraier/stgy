@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Suspense } from "react";
 import { Config } from "@/config";
 import PageBody from "./PageBody";
@@ -10,6 +10,11 @@ const imageUrl = new URL(
   "/data/local-image-studio-ogp.jpg",
   Config.FRONTEND_CANONICAL_URL,
 ).toString();
+
+export const viewport: Viewport = {
+  width: 480,
+  themeColor: "#f8f8ff",
+};
 
 export const metadata: Metadata = {
   title,
