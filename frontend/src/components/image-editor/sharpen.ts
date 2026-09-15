@@ -18,7 +18,9 @@ type SharpenPreset = {
   threshold: number;
 };
 
-const SHARPEN_PRESETS: Record<1 | 2 | 3, SharpenPreset> = {
+type LegacySharpenLevel = 1 | 2 | 3;
+
+const SHARPEN_PRESETS: Record<LegacySharpenLevel, SharpenPreset> = {
   1: { radius: 1, sigma: 0.8, amount: 1.5, threshold: 0.01 },
   2: { radius: 2, sigma: 1.0, amount: 1.2, threshold: 0.03 },
   3: { radius: 3, sigma: 1.5, amount: 1.5, threshold: 0.03 },
@@ -78,6 +80,78 @@ function applySharpenToLumaField(
   return sharpened;
 }
 
+function applyLegacySharpenPresetToLuma(
+  luma: Float32Array,
+  width: number,
+  height: number,
+  level: LegacySharpenLevel,
+): Float32Array {
+  const preset = SHARPEN_PRESETS[level];
+  return applySharpenToLumaField(
+    luma,
+    width,
+    height,
+    buildSharpenGaussianKernel(preset.radius, preset.sigma),
+    preset.amount,
+    preset.threshold,
+  );
+}
+
+function blendSharpenedLuma(
+  original: Float32Array,
+  a: Float32Array,
+  b: Float32Array,
+  mix: number,
+): Float32Array {
+  const t = Math.min(1, Math.max(0, mix));
+  const output = new Float32Array(original.length);
+  for (let i = 0; i < output.length; i += 1) {
+    output[i] = (a[i] ?? original[i] ?? 0) * (1 - t) + (b[i] ?? original[i] ?? 0) * t;
+  }
+  return output;
+}
+
+function applySharpenLevelToLuma(
+  luma: Float32Array,
+  width: number,
+  height: number,
+  level: number,
+): Float32Array {
+  switch (level) {
+    case 1: {
+      const legacy1 = applyLegacySharpenPresetToLuma(luma, width, height, 1);
+      return blendSharpenedLuma(luma, luma, legacy1, 0.5);
+    }
+    case 2:
+      return applyLegacySharpenPresetToLuma(luma, width, height, 1);
+    case 3: {
+      const legacy1 = applyLegacySharpenPresetToLuma(luma, width, height, 1);
+      const legacy2 = applyLegacySharpenPresetToLuma(luma, width, height, 2);
+      return blendSharpenedLuma(luma, legacy1, legacy2, 0.5);
+    }
+    case 4:
+      return applyLegacySharpenPresetToLuma(luma, width, height, 2);
+    case 5: {
+      const legacy2 = applyLegacySharpenPresetToLuma(luma, width, height, 2);
+      const legacy3 = applyLegacySharpenPresetToLuma(luma, width, height, 3);
+      return blendSharpenedLuma(luma, legacy2, legacy3, 0.5);
+    }
+    case 6:
+      return applyLegacySharpenPresetToLuma(luma, width, height, 3);
+    case 7: {
+      const legacy3 = applyLegacySharpenPresetToLuma(luma, width, height, 3);
+      const output = new Float32Array(luma.length);
+      for (let i = 0; i < output.length; i += 1) {
+        const original = luma[i] ?? 0;
+        output[i] = original + ((legacy3[i] ?? original) - original) * 1.15;
+      }
+      return output;
+    }
+    default:
+      return new Float32Array(luma);
+  }
+}
+
 function sharpenReflect101Index(index: number, length: number): number {
   if (length <= 1) return 0;
   let i = index;
@@ -112,7 +186,6 @@ export function applySharpenToCanvas(
 ): void {
   const sharpen = clampSharpen(level);
   if (sharpen === 0) return;
-  const preset = SHARPEN_PRESETS[sharpen as 1 | 2 | 3];
   const ctx = getCanvas2dContext(canvas, outputColorProfile, true);
   if (!ctx) return;
   const width = canvas.width;
@@ -121,8 +194,6 @@ export function applySharpenToCanvas(
   const imageData = getCanvasImageData(ctx, 0, 0, width, height, outputColorProfile);
   const values = imageData.data;
   const pixelCount = width * height;
-  const kernel = buildSharpenGaussianKernel(preset.radius, preset.sigma);
-
   const readLinear = (index: number): number => srgbChannelToLinear(values[index] ?? 0);
   const writeLinear = (index: number, value: number) => {
     values[index] = linearChannelToSrgb(clamp01(value));
@@ -137,14 +208,7 @@ export function applySharpenToCanvas(
     luma[i] = SRGB_LUMA_R * r + SRGB_LUMA_G * g + SRGB_LUMA_B * b;
   }
 
-  const sharpenedLuma = applySharpenToLumaField(
-    luma,
-    width,
-    height,
-    kernel,
-    preset.amount,
-    preset.threshold,
-  );
+  const sharpenedLuma = applySharpenLevelToLuma(luma, width, height, sharpen);
 
   for (let i = 0; i < pixelCount; i += 1) {
     const index = i * 4;
@@ -170,9 +234,7 @@ export function applySharpenToRgb16(
 ): void {
   const sharpen = clampSharpen(level);
   if (sharpen === 0 || width <= 0 || height <= 0) return;
-  const preset = SHARPEN_PRESETS[sharpen as 1 | 2 | 3];
   const pixelCount = width * height;
-  const kernel = buildSharpenGaussianKernel(preset.radius, preset.sigma);
   const luma = new Float32Array(pixelCount);
 
   for (let i = 0; i < pixelCount; i += 1) {
@@ -183,14 +245,7 @@ export function applySharpenToRgb16(
     luma[i] = PROPHOTO_TONE_LUMA_R * r + PROPHOTO_TONE_LUMA_G * g + PROPHOTO_TONE_LUMA_B * b;
   }
 
-  const sharpenedLuma = applySharpenToLumaField(
-    luma,
-    width,
-    height,
-    kernel,
-    preset.amount,
-    preset.threshold,
-  );
+  const sharpenedLuma = applySharpenLevelToLuma(luma, width, height, sharpen);
 
   for (let i = 0; i < pixelCount; i += 1) {
     const index = i * 3;

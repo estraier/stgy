@@ -93,6 +93,7 @@ import {
 } from "@/image/color";
 import { getCanvas2dContext, getCanvasImageData } from "./image-editor/canvas";
 import { applySharpenToCanvas, applySharpenToRgb16 } from "./image-editor/sharpen";
+import { applyDenoiseToCanvas, applyDenoiseToRgb16, clampDenoise } from "./image-editor/denoise";
 import {
   DEFRINGE_ANALYSIS_TARGET_PIXELS,
   analyzeDefringeSample,
@@ -138,6 +139,7 @@ import {
   isTonePreviewSliderStage,
   renderAdjustedLinearRgbSampleToCanvas,
   renderAdjustedRgb16ToCanvas,
+  renderAdjustedRgb16RegionToCanvas,
   type ImageEditPreviewSliderStage,
 } from "./image-editor/render";
 import {
@@ -273,6 +275,7 @@ export type ImageEditParams = {
   rotationDegrees: number;
   temperature: number;
   tint: number;
+  denoise: number;
   defringe: number;
   exposureEv: number;
   shadow: number;
@@ -1217,6 +1220,7 @@ export function buildDefaultEditParams(w?: number, h?: number): ImageEditParams 
     rotationDegrees: 0,
     temperature: 0,
     tint: 0,
+    denoise: 0,
     defringe: 0,
     exposureEv: 0,
     shadow: 0,
@@ -1245,7 +1249,7 @@ function buildUploadDefaultEditParams(
   const defaults = buildDefaultEditParams(w, h);
   return {
     ...defaults,
-    sharpen: isRawImageFile(name, type) ? 1 : defaults.resizePercent !== 100 ? 1 : 0,
+    sharpen: isRawImageFile(name, type) ? 2 : defaults.resizePercent !== 100 ? 2 : 0,
   };
 }
 
@@ -1256,6 +1260,7 @@ function normalizeEditParams(params: ImageEditParams | undefined, w?: number, h?
     rotationDegrees: normalizeRotationDegrees(params?.rotationDegrees ?? defaults.rotationDegrees),
     temperature: clampWhiteBalanceValue(params?.temperature ?? defaults.temperature),
     tint: clampWhiteBalanceValue(params?.tint ?? defaults.tint),
+    denoise: clampDenoise(params?.denoise ?? defaults.denoise),
     defringe: clampDefringe(params?.defringe ?? defaults.defringe),
     exposureEv: clampExposureEv(params?.exposureEv ?? defaults.exposureEv),
     shadow: clampToneRangeAdjustment(params?.shadow ?? defaults.shadow),
@@ -1292,6 +1297,7 @@ function isMeaningfullyEdited(
     Math.abs(normalized.rotationDegrees) > 0.0001 ||
     normalized.temperature !== 0 ||
     normalized.tint !== 0 ||
+    normalized.denoise !== 0 ||
     normalized.defringe !== 0 ||
     Math.abs(normalized.exposureEv) > 0.0001 ||
     normalized.shadow !== 0 ||
@@ -6486,6 +6492,181 @@ function releaseCanvasIfNeeded(canvas: HTMLCanvasElement | OffscreenCanvas): voi
   canvas.height = 0;
 }
 
+const PEEP_DENOISE_HALO_PX = 16;
+const PEEP_OUTPUT_HALO_PX = 4;
+
+type PeepOutputRect = { x: number; y: number; w: number; h: number };
+
+async function buildPeepPreviewCanvasFromDecoded(
+  decoded: DecodedRgbImage16,
+  params: ImageEditParams,
+  peepRect: PeepOutputRect,
+  outputColorProfile: ImageEditOutputColorProfile = "srgb",
+  previewClarityMap?: ImageEditClarityMap | null,
+  defringeMap?: DefringeAnalysisMap | null,
+): Promise<HTMLCanvasElement | OffscreenCanvas> {
+  const sourceW = decoded.width;
+  const sourceH = decoded.height;
+  const crop = normalizeCrop(params.crop);
+  const sx = Math.max(0, Math.min(sourceW - 1, Math.round(sourceW * crop.left)));
+  const sy = Math.max(0, Math.min(sourceH - 1, Math.round(sourceH * crop.top)));
+  const ex = Math.max(sx + 1, Math.min(sourceW, Math.round(sourceW * (1 - crop.right))));
+  const ey = Math.max(sy + 1, Math.min(sourceH, Math.round(sourceH * (1 - crop.bottom))));
+  const cropW = Math.max(1, ex - sx);
+  const cropH = Math.max(1, ey - sy);
+  const outputW = Math.max(1, Math.round(cropW * params.resizePercent / 100));
+  const outputH = Math.max(1, Math.round(cropH * params.resizePercent / 100));
+  const targetW = Math.max(1, Math.min(outputW, Math.round(peepRect.w)));
+  const targetH = Math.max(1, Math.min(outputH, Math.round(peepRect.h)));
+  const targetX = Math.max(0, Math.min(outputW - targetW, Math.round(peepRect.x)));
+  const targetY = Math.max(0, Math.min(outputH - targetH, Math.round(peepRect.y)));
+  const extX0 = Math.max(0, targetX - PEEP_OUTPUT_HALO_PX);
+  const extY0 = Math.max(0, targetY - PEEP_OUTPUT_HALO_PX);
+  const extX1 = Math.min(outputW, targetX + targetW + PEEP_OUTPUT_HALO_PX);
+  const extY1 = Math.min(outputH, targetY + targetH + PEEP_OUTPUT_HALO_PX);
+  const extW = Math.max(1, extX1 - extX0);
+  const extH = Math.max(1, extY1 - extY0);
+  const scaleX = outputW / cropW;
+  const scaleY = outputH / cropH;
+  const preX0 = Math.max(0, Math.floor(extX0 / Math.max(1e-9, scaleX)) - PEEP_DENOISE_HALO_PX);
+  const preY0 = Math.max(0, Math.floor(extY0 / Math.max(1e-9, scaleY)) - PEEP_DENOISE_HALO_PX);
+  const preX1 = Math.min(cropW, Math.ceil(extX1 / Math.max(1e-9, scaleX)) + PEEP_DENOISE_HALO_PX);
+  const preY1 = Math.min(cropH, Math.ceil(extY1 / Math.max(1e-9, scaleY)) + PEEP_DENOISE_HALO_PX);
+  const preW = Math.max(1, preX1 - preX0);
+  const preH = Math.max(1, preY1 - preY0);
+
+  if (params.textOverlays.length > 0) await ensureTextOverlayFontsReady(params.textOverlays);
+  const activeDefringeMap = clampDefringe(params.defringe) > 0 ? defringeMap ?? null : null;
+  const clarityMap = resolveImageEditClarityMap(decoded, params, previewClarityMap, activeDefringeMap);
+  const sourceRect = { x: sx, y: sy, w: cropW, h: cropH };
+  const preCanvas = createImageEditCanvas(preW, preH);
+  const extCanvas = createImageEditCanvas(extW, extH);
+  try {
+    renderAdjustedRgb16RegionToCanvas(
+      preCanvas,
+      decoded,
+      sourceRect,
+      cropW,
+      cropH,
+      preX0,
+      preY0,
+      params.rotationDegrees,
+      params.temperature,
+      params.tint,
+      params.exposureEv,
+      params.shadow,
+      params.highlight,
+      params.scaledLog,
+      params.sigmoid,
+      params.vibrance,
+      params.saturation,
+      outputColorProfile,
+      clarityMap,
+      activeDefringeMap,
+      clampDefringe(params.defringe) / 100,
+    );
+    applyDenoiseToCanvas(preCanvas, params.denoise, outputColorProfile);
+
+    const extCtx = getCanvas2dContext(extCanvas, outputColorProfile);
+    if (!extCtx) throw new Error("2D context unavailable");
+    extCtx.imageSmoothingEnabled = true;
+    extCtx.imageSmoothingQuality = "high";
+    extCtx.drawImage(
+      preCanvas,
+      extX0 / Math.max(1e-9, scaleX) - preX0,
+      extY0 / Math.max(1e-9, scaleY) - preY0,
+      extW / Math.max(1e-9, scaleX),
+      extH / Math.max(1e-9, scaleY),
+      0,
+      0,
+      extW,
+      extH,
+    );
+
+    applySharpenToCanvas(extCanvas, params.sharpen, outputColorProfile);
+    applyVignetteToCanvas(
+      extCanvas,
+      params.vignetteOverlay,
+      sourceW,
+      sourceH,
+      sx,
+      sy,
+      cropW,
+      cropH,
+      -extX0,
+      -extY0,
+      outputW,
+      outputH,
+      outputColorProfile,
+    );
+    applyImageFilterToCanvas(extCanvas, params.filter, outputColorProfile);
+    applyMosaicRectsToCanvas(
+      extCanvas,
+      mosaicRegionsToOutputRects(
+        params.mosaicRegions,
+        sourceW,
+        sourceH,
+        sx,
+        sy,
+        cropW,
+        cropH,
+        outputW,
+        outputH,
+      ).map((rect) => ({ ...rect, x: rect.x - extX0, y: rect.y - extY0 })),
+      16,
+      outputColorProfile,
+    );
+    if (params.drawOverlays.length > 0 || params.textOverlays.length > 0) {
+      extCtx.save();
+      extCtx.translate(-extX0, -extY0);
+      drawOverlaysToContext(
+        extCtx,
+        params.drawOverlays,
+        sourceW,
+        sourceH,
+        cropW,
+        cropH,
+        outputW,
+        outputH,
+      );
+      drawTextOverlaysToContext(
+        extCtx,
+        params.textOverlays,
+        sourceW,
+        sourceH,
+        cropW,
+        cropH,
+        outputW,
+        outputH,
+        outputColorProfile,
+      );
+      extCtx.restore();
+    }
+
+    const result = createImageEditCanvas(targetW, targetH);
+    const resultCtx = getCanvas2dContext(result, outputColorProfile);
+    if (!resultCtx) {
+      releaseCanvasIfNeeded(result);
+      throw new Error("2D context unavailable");
+    }
+    resultCtx.drawImage(
+      extCanvas,
+      targetX - extX0,
+      targetY - extY0,
+      targetW,
+      targetH,
+      0,
+      0,
+      targetW,
+      targetH,
+    );
+    return result;
+  } finally {
+    releaseCanvasIfNeeded(preCanvas);
+    releaseCanvasIfNeeded(extCanvas);
+  }
+}
+
 function buildFallbackImageEditClarityMap(
   decoded: DecodedRgbImage16,
   params: ImageEditParams,
@@ -6590,6 +6771,7 @@ async function buildEditedVariantFromDecoded(
       defringeMap ?? null,
       clampDefringe(params.defringe) / 100,
     );
+    applyDenoiseToCanvas(output, params.denoise, outputColorProfile);
   } else {
     const cropped = createImageEditCanvas(sw, sh);
     try {
@@ -6612,6 +6794,7 @@ async function buildEditedVariantFromDecoded(
         defringeMap ?? null,
         clampDefringe(params.defringe) / 100,
       );
+      applyDenoiseToCanvas(cropped, params.denoise, outputColorProfile);
       const outputCtx = getCanvas2dContext(output, outputColorProfile);
       if (!outputCtx) throw new Error("2D context unavailable");
       outputCtx.imageSmoothingEnabled = true;
@@ -6895,6 +7078,7 @@ export async function buildEditedDecodedRgb16(
     }
   }
 
+  applyDenoiseToRgb16(result, outputW, outputH, params.denoise);
   applySharpenToRgb16(result, outputW, outputH, params.sharpen);
   applyVignetteToRgb16(
     result,
@@ -7564,7 +7748,6 @@ export function ImageEditDialog({
   } | null>(null);
   const previewSourceSampleRef = useRef<{
     decoded: DecodedRgbImage16;
-    defringeKey: string;
     sample: LinearRgbSample;
     contextSample: LinearRgbSample;
   } | null>(null);
@@ -7619,9 +7802,8 @@ export function ImageEditDialog({
     clampWhiteBalanceValue(initialParams.temperature),
   );
   const [tint, setTint] = useState<number>(clampWhiteBalanceValue(initialParams.tint));
+  const [denoise, setDenoise] = useState<number>(clampDenoise(initialParams.denoise ?? 0));
   const [defringe, setDefringe] = useState<number>(clampDefringe(initialParams.defringe ?? 0));
-  const [defringeAnalyzing, setDefringeAnalyzing] = useState(false);
-  const [defringeMapRevision, setDefringeMapRevision] = useState(0);
   const [exposureEv, setExposureEv] = useState<number>(clampExposureEv(initialParams.exposureEv));
   const [shadow, setShadow] = useState<number>(clampToneRangeAdjustment(initialParams.shadow ?? 0));
   const [highlight, setHighlight] = useState<number>(clampToneRangeAdjustment(initialParams.highlight ?? 0));
@@ -7679,6 +7861,36 @@ export function ImageEditDialog({
   const [autoToneBusy, setAutoToneBusy] = useState(false);
   const [autoToneStage, setAutoToneStage] = useState<string | null>(null);
   const [applyBusy, setApplyBusy] = useState(false);
+  const [peepMode, setPeepMode] = useState(false);
+  const [peepExpanded, setPeepExpanded] = useState(false);
+  const [peepBusy, setPeepBusy] = useState(false);
+  const [peepRect, setPeepRect] = useState<EditRect>({ x: 0, y: 0, w: 0, h: 0 });
+  const peepRectRef = useRef<EditRect>({ x: 0, y: 0, w: 0, h: 0 });
+  const [peepReferenceRasterSize, setPeepReferenceRasterSize] = useState<{ width: number; height: number } | null>(null);
+  const [peepRenderRevision, setPeepRenderRevision] = useState(0);
+  const peepDisplayCanvasRef = useRef<HTMLCanvasElement>(null);
+  const peepRenderedCanvasRef = useRef<HTMLCanvasElement | OffscreenCanvas | null>(null);
+  const peepRequestIdRef = useRef(0);
+  const peepRerenderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const peepRenderedSettingsKeyRef = useRef<string | null>(null);
+  const peepRequestedCenterRef = useRef<EditPoint | null>(null);
+  const peepAutoOpenRef = useRef(false);
+  const peepDragStateRef = useRef<
+    | null
+    | { pointerId: number; startPoint: EditPoint; startRect: EditRect }
+  >(null);
+  const peepExpandedDragStateRef = useRef<
+    | null
+    | {
+      pointerId: number;
+      startClientX: number;
+      startClientY: number;
+      startRect: EditRect;
+      viewWidth: number;
+      viewHeight: number;
+      moved: boolean;
+    }
+  >(null);
   const applyPendingRef = useRef(false);
   const percentilePanelRef = useRef<HTMLDivElement | null>(null);
   const activeTextBoxRef = useRef<HTMLDivElement | null>(null);
@@ -7713,6 +7925,21 @@ export function ImageEditDialog({
     onRawDevelopmentReadyRef.current = onRawDevelopmentReady;
   }, [onRawDevelopmentReady]);
 
+  useEffect(() => {
+    return () => {
+      if (peepRerenderTimerRef.current) clearTimeout(peepRerenderTimerRef.current);
+      peepRequestIdRef.current += 1;
+      const rendered = peepRenderedCanvasRef.current;
+      peepRenderedCanvasRef.current = null;
+      if (rendered) releaseCanvasIfNeeded(rendered);
+    };
+  }, []);
+
+
+  useEffect(() => {
+    peepRectRef.current = peepRect;
+  }, [peepRect]);
+
   const invalidateRenderDerivedCaches = useCallback(() => {
     previewRenderedRef.current = null;
     previewSourceSampleRef.current = null;
@@ -7734,8 +7961,6 @@ export function ImageEditDialog({
     defringeRequestIdRef.current += 1;
     defringeMapRef.current = null;
     defringeMapPromiseRef.current = null;
-    setDefringeAnalyzing(false);
-    setDefringeMapRevision((revision) => revision + 1);
   }, [invalidateRenderDerivedCaches]);
 
   const ensureDefringeMap = useCallback((decoded: DecodedRgbImage16): Promise<DefringeAnalysisMap> => {
@@ -7745,28 +7970,23 @@ export function ImageEditDialog({
     if (active?.decoded === decoded) return active.promise;
 
     const requestId = ++defringeRequestIdRef.current;
-    setDefringeAnalyzing(true);
     const promise = buildDefringeAnalysisSample(decoded)
       .then((sample) => analyzeDefringeSampleAsync(sample))
       .then((map) => {
       if (defringeRequestIdRef.current === requestId && decodedImageRef.current === decoded) {
         defringeMapRef.current = { decoded, map };
         defringeMapPromiseRef.current = null;
-        setDefringeAnalyzing(false);
-        invalidateRenderDerivedCaches();
-        setDefringeMapRevision((revision) => revision + 1);
       }
       return map;
     }).catch((error) => {
       if (defringeRequestIdRef.current === requestId) {
         defringeMapPromiseRef.current = null;
-        setDefringeAnalyzing(false);
       }
       throw error;
     });
     defringeMapPromiseRef.current = { decoded, requestId, promise };
     return promise;
-  }, [invalidateRenderDerivedCaches]);
+  }, []);
 
   const clearEmbeddedRawPreview = useCallback(() => {
     const currentUrl = embeddedRawPreviewUrlRef.current;
@@ -8210,7 +8430,7 @@ export function ImageEditDialog({
     [displayed.x, displayed.y, displayed.w, displayed.h],
   );
 
-  const toLocal = useCallback((e: React.PointerEvent): EditPoint => {
+  const toLocal = useCallback((e: React.PointerEvent | React.MouseEvent): EditPoint => {
     const rect = containerRef.current!.getBoundingClientRect();
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }, []);
@@ -9354,15 +9574,9 @@ export function ImageEditDialog({
       displayed.w,
       displayed.h,
     );
-    const activeMap = defringeMapRef.current?.decoded === previewSource
-      ? defringeMapRef.current.map
-      : null;
-    const defringeAmount = clampDefringe(defringe) / 100;
-    const defringeKey = `${defringeAmount}:${activeMap ? defringeMapRevision : 0}`;
     const cached = previewSourceSampleRef.current;
     if (
       cached?.decoded === previewSource
-      && cached.defringeKey === defringeKey
       && cached.sample.width === previewSize.width
       && cached.sample.height === previewSize.height
     ) {
@@ -9370,36 +9584,23 @@ export function ImageEditDialog({
     }
 
     const sourceRect = { x: 0, y: 0, w: previewSource.width, h: previewSource.height };
-    const renderedSample = getRenderedLinearRgbSample(
-      previewSource,
-      sourceRect,
-      0,
-      previewSize.width,
-      previewSize.height,
-    );
-    const analysisSample = getAnalysisLinearRgbSample(previewSource, sourceRect, 0);
     const next = {
       decoded: previewSource,
-      defringeKey,
-      sample: activeMap && defringeAmount > 0
-        ? applyDefringeToRenderedSample(
-            renderedSample, activeMap, defringeAmount,
-            previewSource.width, previewSource.height, sourceRect, 0,
-          )
-        : renderedSample,
-      contextSample: activeMap && defringeAmount > 0
-        ? applyDefringeToRenderedSample(
-            analysisSample, activeMap, defringeAmount,
-            previewSource.width, previewSource.height, sourceRect, 0,
-          )
-        : analysisSample,
+      sample: getRenderedLinearRgbSample(
+        previewSource,
+        sourceRect,
+        0,
+        previewSize.width,
+        previewSize.height,
+      ),
+      contextSample: getAnalysisLinearRgbSample(previewSource, sourceRect, 0),
     };
     previewSourceSampleRef.current = next;
     previewToneSampleCacheRef.current = null;
     previewClarityMapCacheRef.current = null;
     previewContinuousPrefixCacheRef.current = null;
     return next;
-  }, [displayed.h, displayed.w, defringe, defringeMapRevision]);
+  }, [displayed.h, displayed.w]);
 
   const previewContinuousPrefixKey = useCallback((stage: ImageEditPreviewSliderStage): string => {
     const values: Array<number | null> = [
@@ -9561,7 +9762,7 @@ export function ImageEditDialog({
   useEffect(() => {
     const canvas = previewCanvasRef.current;
     const decoded = decodedImageRef.current;
-    if (!canvas || !decoded || !displayed.w || !displayed.h) return;
+    if (!canvas || !decoded || !displayed.w || !displayed.h || peepExpanded) return;
 
     // Match the backing sample to the physical on-screen image when that already
     // provides enough CLAHE data. Otherwise use the smallest integer backing
@@ -9580,8 +9781,6 @@ export function ImageEditDialog({
       height,
       previewColorProfile,
       rotationDegrees,
-      defringe,
-      defringeMapRevision,
       temperature,
       tint,
       exposureEv,
@@ -9620,12 +9819,8 @@ export function ImageEditDialog({
 
       const previewSourceRect = { x: 0, y: 0, w: previewSource.width, h: previewSource.height };
       const normalizedRotation = normalizeRotationDegrees(rotationDegrees);
-      const activeDefringeMap = defringeMapRef.current?.decoded === previewSource
-        ? defringeMapRef.current.map
-        : null;
-      const defringeAmount = clampDefringe(defringe) / 100;
-      const rotatedRenderedSample = normalizedRotation === 0
-        ? null
+      const previewSourceSample = normalizedRotation === 0
+        ? internalPreview.sample
         : getRenderedLinearRgbSample(
             previewSource,
             previewSourceRect,
@@ -9633,29 +9828,13 @@ export function ImageEditDialog({
             width,
             height,
           );
-      const rotatedContextSample = normalizedRotation === 0
-        ? null
+      const previewContextSample = normalizedRotation === 0
+        ? internalPreview.contextSample
         : getAnalysisLinearRgbSample(
             previewSource,
             previewSourceRect,
             normalizedRotation,
           );
-      const previewSourceSample = normalizedRotation === 0
-        ? internalPreview.sample
-        : activeDefringeMap && defringeAmount > 0 && rotatedRenderedSample
-          ? applyDefringeToRenderedSample(
-              rotatedRenderedSample, activeDefringeMap, defringeAmount,
-              previewSource.width, previewSource.height, previewSourceRect, normalizedRotation,
-            )
-          : rotatedRenderedSample!;
-      const previewContextSample = normalizedRotation === 0
-        ? internalPreview.contextSample
-        : activeDefringeMap && defringeAmount > 0 && rotatedContextSample
-          ? applyDefringeToRenderedSample(
-              rotatedContextSample, activeDefringeMap, defringeAmount,
-              previewSource.width, previewSource.height, previewSourceRect, normalizedRotation,
-            )
-          : rotatedContextSample!;
       const adjustmentContext = buildInteractiveColorAdjustmentContextFromLinearRgbSample(
         previewContextSample,
         temperature,
@@ -9776,6 +9955,7 @@ export function ImageEditDialog({
     displayed.y,
     displayed.w,
     displayed.h,
+    peepExpanded,
     cropRect.x,
     cropRect.y,
     cropRect.w,
@@ -9783,8 +9963,6 @@ export function ImageEditDialog({
     decodedRevision,
     temperature,
     tint,
-    defringe,
-    defringeMapRevision,
     exposureEv,
     shadow,
     highlight,
@@ -9809,7 +9987,7 @@ export function ImageEditDialog({
   ]);
 
   useEffect(() => {
-    if (!showHistogram || eyedropperMode) {
+    if (!showHistogram || eyedropperMode || peepExpanded) {
       setHistogram(null);
       return;
     }
@@ -9820,17 +9998,7 @@ export function ImageEditDialog({
       return;
     }
     const clarityMap = resolvePreviewClarityMap(decoded);
-    const rawHistogramSample = getAnalysisLinearRgbSample(decoded, analysisSourceRect, rotationDegrees);
-    const activeDefringeMap = defringeMapRef.current?.decoded === decoded
-      ? defringeMapRef.current.map
-      : null;
-    const defringeAmount = clampDefringe(defringe) / 100;
-    const histogramSample = activeDefringeMap && defringeAmount > 0
-      ? applyDefringeToRenderedSample(
-          rawHistogramSample, activeDefringeMap, defringeAmount,
-          decoded.width, decoded.height, analysisSourceRect, rotationDegrees,
-        )
-      : rawHistogramSample;
+    const histogramSample = getAnalysisLinearRgbSample(decoded, analysisSourceRect, rotationDegrees);
     setHistogram(
       computeHistogramDataFromRgb16(
         decoded,
@@ -9851,13 +10019,12 @@ export function ImageEditDialog({
     );
   }, [
     showHistogram,
+    peepExpanded,
     histogramGeometryDragging,
     decodedRevision,
     analysisSourceRect,
     temperature,
     tint,
-    defringe,
-    defringeMapRevision,
     exposureEv,
     shadow,
     highlight,
@@ -9967,17 +10134,7 @@ export function ImageEditDialog({
       return;
     }
 
-    const rawSample = getAnalysisLinearRgbSample(decoded, analysisSourceRect, rotationDegrees);
-    const activeDefringeMap = defringeMapRef.current?.decoded === decoded
-      ? defringeMapRef.current.map
-      : null;
-    const defringeAmount = clampDefringe(defringe) / 100;
-    const sample = activeDefringeMap && defringeAmount > 0
-      ? applyDefringeToRenderedSample(
-          rawSample, activeDefringeMap, defringeAmount,
-          decoded.width, decoded.height, analysisSourceRect, rotationDegrees,
-        )
-      : rawSample;
+    const sample = getAnalysisLinearRgbSample(decoded, analysisSourceRect, rotationDegrees);
     if (!sample.data.length) {
       setPercentileDebug(null);
       return;
@@ -9992,8 +10149,6 @@ export function ImageEditDialog({
     }
 
     const outputKey = [
-      defringe,
-      defringeMapRevision,
       temperature,
       tint,
       exposureEv,
@@ -10039,8 +10194,6 @@ export function ImageEditDialog({
     rawThumbnailDebugStatistics,
     temperature,
     tint,
-    defringe,
-    defringeMapRevision,
     exposureEv,
     shadow,
     highlight,
@@ -10053,19 +10206,8 @@ export function ImageEditDialog({
   const currentToneAutoSample = useCallback((): ToneAutoSample | null => {
     const decoded = decodedImageRef.current;
     if (!decoded || !analysisSourceRect) return null;
-    const rawSample = createToneAutoSampleFromRgb16(decoded, analysisSourceRect, rotationDegrees);
-    if (!rawSample) return null;
-    const activeDefringeMap = defringeMapRef.current?.decoded === decoded
-      ? defringeMapRef.current.map
-      : null;
-    const defringeAmount = clampDefringe(defringe) / 100;
-    return activeDefringeMap && defringeAmount > 0
-      ? applyDefringeToRenderedSample(
-          rawSample, activeDefringeMap, defringeAmount,
-          decoded.width, decoded.height, analysisSourceRect, rotationDegrees,
-        )
-      : rawSample;
-  }, [analysisSourceRect, rotationDegrees, defringe, defringeMapRevision]);
+    return createToneAutoSampleFromRgb16(decoded, analysisSourceRect, rotationDegrees);
+  }, [analysisSourceRect, rotationDegrees]);
 
   const waitForAutoToneStagePaint = useCallback(async () => {
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
@@ -10219,6 +10361,493 @@ export function ImageEditDialog({
     };
   }, [natural, displayed, cropRect, resizePercent]);
 
+  const peepTargetRasterSize = useMemo(() => {
+    if (!outputDimensions) return null;
+    const previewWidth = Math.max(1, Math.round(peepReferenceRasterSize?.width ?? previewRasterSize?.width ?? displayed.w));
+    const previewHeight = Math.max(1, Math.round(peepReferenceRasterSize?.height ?? previewRasterSize?.height ?? displayed.h));
+    return {
+      width: Math.min(outputDimensions.w, previewWidth),
+      height: Math.min(outputDimensions.h, previewHeight),
+    };
+  }, [outputDimensions, peepReferenceRasterSize, previewRasterSize, displayed.w, displayed.h]);
+
+  useEffect(() => {
+    if (!peepMode || !outputDimensions || !peepTargetRasterSize || cropRect.w <= 0 || cropRect.h <= 0) return;
+    const width = Math.max(1, cropRect.w * peepTargetRasterSize.width / Math.max(1, outputDimensions.w));
+    const height = Math.max(1, cropRect.h * peepTargetRasterSize.height / Math.max(1, outputDimensions.h));
+    setPeepRect((current) => {
+      const requestedCenter = peepRequestedCenterRef.current;
+      const centerX = requestedCenter?.x
+        ?? (current.w > 0 ? current.x + current.w / 2 : cropRect.x + cropRect.w / 2);
+      const centerY = requestedCenter?.y
+        ?? (current.h > 0 ? current.y + current.h / 2 : cropRect.y + cropRect.h / 2);
+      const w = Math.min(cropRect.w, width);
+      const h = Math.min(cropRect.h, height);
+      const x = Math.max(cropRect.x, Math.min(cropRect.x + cropRect.w - w, centerX - w / 2));
+      const y = Math.max(cropRect.y, Math.min(cropRect.y + cropRect.h - h, centerY - h / 2));
+      peepRequestedCenterRef.current = null;
+      const next = { x, y, w, h };
+      peepRectRef.current = next;
+      return next;
+    });
+  }, [peepMode, outputDimensions, peepTargetRasterSize, cropRect]);
+
+  const buildCurrentEditParams = useCallback((): ImageEditParams => {
+    const left = displayed.w > 0 ? (cropRect.x - displayed.x) / displayed.w : 0;
+    const top = displayed.h > 0 ? (cropRect.y - displayed.y) / displayed.h : 0;
+    const right = displayed.w > 0 ? 1 - (cropRect.x + cropRect.w - displayed.x) / displayed.w : 0;
+    const bottom = displayed.h > 0 ? 1 - (cropRect.y + cropRect.h - displayed.y) / displayed.h : 0;
+    return {
+      crop: normalizeCrop({ left, top, right, bottom }),
+      rotationDegrees: normalizeRotationDegrees(rotationDegrees),
+      temperature: clampWhiteBalanceValue(temperature),
+      tint: clampWhiteBalanceValue(tint),
+      denoise: clampDenoise(denoise),
+      defringe: clampDefringe(defringe),
+      exposureEv: clampExposureEv(exposureEv),
+      shadow: clampToneRangeAdjustment(shadow),
+      highlight: clampToneRangeAdjustment(highlight),
+      scaledLog: clampScaledLog(scaledLog),
+      sigmoid: clampSigmoid(sigmoid),
+      clarity: clampClarity(clarity),
+      vibrance: clampColorAdjustment(vibrance),
+      saturation: clampColorAdjustment(saturation),
+      resizePercent: Math.min(100, Math.max(1, Math.round(resizePercent))),
+      sharpen: clampSharpen(sharpen),
+      mosaicRegions: normalizeMosaicRegions(mosaicRegions),
+      textOverlays: normalizeTextOverlays(textOverlays),
+      drawOverlays: normalizeDrawOverlays(drawOverlays),
+      vignetteOverlay: normalizeVignetteOverlay(vignetteOverlay),
+      filter: normalizeImageFilter(imageFilter),
+    };
+  }, [
+    displayed,
+    cropRect,
+    rotationDegrees,
+    temperature,
+    tint,
+    denoise,
+    defringe,
+    exposureEv,
+    shadow,
+    highlight,
+    scaledLog,
+    sigmoid,
+    clarity,
+    vibrance,
+    saturation,
+    resizePercent,
+    sharpen,
+    mosaicRegions,
+    textOverlays,
+    drawOverlays,
+    vignetteOverlay,
+    imageFilter,
+  ]);
+
+  const resolvePeepOutputRect = useCallback((rectOverride?: EditRect | null): PeepOutputRect | null => {
+    const rect = rectOverride ?? peepRectRef.current;
+    if (!outputDimensions || !peepTargetRasterSize || cropRect.w <= 0 || cropRect.h <= 0 || rect.w <= 0 || rect.h <= 0) {
+      return null;
+    }
+    const w = peepTargetRasterSize.width;
+    const h = peepTargetRasterSize.height;
+    const x = Math.max(
+      0,
+      Math.min(
+        outputDimensions.w - w,
+        Math.round((rect.x - cropRect.x) / cropRect.w * outputDimensions.w),
+      ),
+    );
+    const y = Math.max(
+      0,
+      Math.min(
+        outputDimensions.h - h,
+        Math.round((rect.y - cropRect.y) / cropRect.h * outputDimensions.h),
+      ),
+    );
+    return { x, y, w, h };
+  }, [outputDimensions, peepTargetRasterSize, cropRect]);
+
+
+  const deactivatePeepMode = useCallback(() => {
+    peepRequestIdRef.current += 1;
+    setPeepMode(false);
+    setPeepExpanded(false);
+    setPeepBusy(false);
+    setPeepReferenceRasterSize(null);
+    peepRectRef.current = { x: 0, y: 0, w: 0, h: 0 };
+    peepRequestedCenterRef.current = null;
+    peepAutoOpenRef.current = false;
+    peepDragStateRef.current = null;
+    peepExpandedDragStateRef.current = null;
+    peepRenderedSettingsKeyRef.current = null;
+    const rendered = peepRenderedCanvasRef.current;
+    peepRenderedCanvasRef.current = null;
+    if (rendered) releaseCanvasIfNeeded(rendered);
+  }, []);
+
+  const onPeepRectPointerDown = useCallback((e: React.PointerEvent) => {
+    if (e.button !== 0 || peepExpanded || peepBusy) return;
+    (e.currentTarget as Element).setPointerCapture(e.pointerId);
+    peepDragStateRef.current = {
+      pointerId: e.pointerId,
+      startPoint: toLocal(e),
+      startRect: peepRect,
+    };
+    e.preventDefault();
+    e.stopPropagation();
+  }, [peepExpanded, peepBusy, peepRect, toLocal]);
+
+  const onPeepRectPointerMove = useCallback((e: React.PointerEvent) => {
+    const state = peepDragStateRef.current;
+    if (!state || state.pointerId !== e.pointerId) return;
+    const point = toLocal(e);
+    const dx = point.x - state.startPoint.x;
+    const dy = point.y - state.startPoint.y;
+    const x = Math.max(cropRect.x, Math.min(cropRect.x + cropRect.w - state.startRect.w, state.startRect.x + dx));
+    const y = Math.max(cropRect.y, Math.min(cropRect.y + cropRect.h - state.startRect.h, state.startRect.y + dy));
+    const next = { ...state.startRect, x, y };
+    peepRectRef.current = next;
+    setPeepRect(next);
+    e.preventDefault();
+  }, [cropRect, toLocal]);
+
+  const onPeepRectPointerUp = useCallback((e: React.PointerEvent) => {
+    const state = peepDragStateRef.current;
+    if (!state || state.pointerId !== e.pointerId) return;
+    try {
+      (e.currentTarget as Element).releasePointerCapture(e.pointerId);
+    } catch {}
+    peepDragStateRef.current = null;
+    e.preventDefault();
+  }, []);
+
+
+  const closePeepExpanded = useCallback(() => {
+    deactivatePeepMode();
+  }, [deactivatePeepMode]);
+
+  const beginPeepMode = useCallback((center: EditPoint | null = null, autoOpen = false) => {
+    peepRequestIdRef.current += 1;
+    peepAutoOpenRef.current = autoOpen;
+    peepExpandedDragStateRef.current = null;
+
+    const referenceRasterSize = {
+      width: Math.max(1, Math.round(previewRasterSizeRef.current?.width ?? displayed.w)),
+      height: Math.max(1, Math.round(previewRasterSizeRef.current?.height ?? displayed.h)),
+    };
+    setPeepReferenceRasterSize(referenceRasterSize);
+
+    // When Peep is opened by double-click, resolve the window immediately from
+    // that click instead of waiting for the peep-mode initialization effect.
+    // Keeping the requested center only in a ref allowed the first auto-open
+    // render to observe the default/previous rectangle and effectively start
+    // from the image center.
+    if (center && outputDimensions && cropRect.w > 0 && cropRect.h > 0) {
+      const targetWidth = Math.min(outputDimensions.w, referenceRasterSize.width);
+      const targetHeight = Math.min(outputDimensions.h, referenceRasterSize.height);
+      const w = Math.min(
+        cropRect.w,
+        Math.max(1, cropRect.w * targetWidth / Math.max(1, outputDimensions.w)),
+      );
+      const h = Math.min(
+        cropRect.h,
+        Math.max(1, cropRect.h * targetHeight / Math.max(1, outputDimensions.h)),
+      );
+      const centerX = Math.max(cropRect.x, Math.min(cropRect.x + cropRect.w, center.x));
+      const centerY = Math.max(cropRect.y, Math.min(cropRect.y + cropRect.h, center.y));
+      const next = {
+        x: Math.max(cropRect.x, Math.min(cropRect.x + cropRect.w - w, centerX - w / 2)),
+        y: Math.max(cropRect.y, Math.min(cropRect.y + cropRect.h - h, centerY - h / 2)),
+        w,
+        h,
+      };
+      peepRequestedCenterRef.current = null;
+      peepRectRef.current = next;
+      setPeepRect(next);
+    } else {
+      // Preserve the old deferred initialization path for callers without enough
+      // geometry yet (and for the legacy no-center path).
+      peepRequestedCenterRef.current = center;
+      if (center) {
+        const next = { x: center.x, y: center.y, w: 0, h: 0 };
+        peepRectRef.current = next;
+        setPeepRect(next);
+      }
+    }
+
+    setPeepExpanded(false);
+    setPeepBusy(false);
+    setPeepMode(true);
+  }, [cropRect, displayed.w, displayed.h, outputDimensions]);
+
+
+  const peepSettingsKey = useMemo(() => JSON.stringify([
+    decodedRevision,
+    cropRect.x,
+    cropRect.y,
+    cropRect.w,
+    cropRect.h,
+    peepRect.x,
+    peepRect.y,
+    peepRect.w,
+    peepRect.h,
+    rotationDegrees,
+    temperature,
+    tint,
+    denoise,
+    defringe,
+    exposureEv,
+    shadow,
+    highlight,
+    scaledLog,
+    sigmoid,
+    clarity,
+    vibrance,
+    saturation,
+    resizePercent,
+    sharpen,
+    imageFilter,
+    vignetteOverlay,
+    mosaicRegions,
+    textOverlays,
+    drawOverlays,
+  ]), [
+    decodedRevision,
+    cropRect,
+    peepRect,
+    rotationDegrees,
+    temperature,
+    tint,
+    denoise,
+    defringe,
+    exposureEv,
+    shadow,
+    highlight,
+    scaledLog,
+    sigmoid,
+    clarity,
+    vibrance,
+    saturation,
+    resizePercent,
+    sharpen,
+    imageFilter,
+    vignetteOverlay,
+    mosaicRegions,
+    textOverlays,
+    drawOverlays,
+  ]);
+
+  const renderPeep = useCallback(async (rectOverride?: EditRect | null) => {
+    const outputRect = resolvePeepOutputRect(rectOverride);
+    if (!outputRect) return;
+    const requestId = ++peepRequestIdRef.current;
+    setPeepBusy(true);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    try {
+      let decoded = decodedImageRef.current;
+      const masterPromise = rawMasterPromiseRef.current;
+      if (masterPromise && rawDevelopmentStage !== "master" && rawDevelopmentStage !== "denoised") {
+        decoded = await masterPromise;
+      }
+      if (!decoded || requestId !== peepRequestIdRef.current) return;
+      const params = buildCurrentEditParams();
+      const defringeMap = clampDefringe(params.defringe) > 0
+        ? await ensureDefringeMap(decoded)
+        : null;
+      if (requestId !== peepRequestIdRef.current) return;
+      const clarityMap = resolvePreviewClarityMap(decoded);
+      const rendered = await buildPeepPreviewCanvasFromDecoded(
+        decoded,
+        params,
+        outputRect,
+        "srgb",
+        clarityMap,
+        defringeMap,
+      );
+      if (requestId !== peepRequestIdRef.current) {
+        releaseCanvasIfNeeded(rendered);
+        return;
+      }
+      const previous = peepRenderedCanvasRef.current;
+      peepRenderedCanvasRef.current = rendered;
+      if (previous && previous !== rendered) releaseCanvasIfNeeded(previous);
+      peepRenderedSettingsKeyRef.current = peepSettingsKey;
+      setPeepExpanded(true);
+      setPeepRenderRevision((revision) => revision + 1);
+    } catch (error) {
+      if (requestId === peepRequestIdRef.current) {
+        onErrorRef.current?.(error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      if (requestId === peepRequestIdRef.current) setPeepBusy(false);
+    }
+  }, [
+    resolvePeepOutputRect,
+    rawDevelopmentStage,
+    buildCurrentEditParams,
+    ensureDefringeMap,
+    resolvePreviewClarityMap,
+    peepSettingsKey,
+  ]);
+
+  const onPreviewDoubleClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (
+      filterMode
+      || textMode
+      || drawMode
+      || mosaicMode
+      || vignetteMode
+      || eyedropperMode
+      || rotationMode
+      || peepExpanded
+      || peepBusy
+      || displayed.w <= 0
+      || displayed.h <= 0
+      || cropRect.w <= 0
+      || cropRect.h <= 0
+    ) {
+      return;
+    }
+    const point = toLocal(e);
+    if (
+      point.x < displayed.x
+      || point.x > displayed.x + displayed.w
+      || point.y < displayed.y
+      || point.y > displayed.y + displayed.h
+    ) {
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    beginPeepMode(
+      {
+        x: Math.max(cropRect.x, Math.min(cropRect.x + cropRect.w, point.x)),
+        y: Math.max(cropRect.y, Math.min(cropRect.y + cropRect.h, point.y)),
+      },
+      true,
+    );
+  }, [
+    filterMode,
+    textMode,
+    drawMode,
+    mosaicMode,
+    vignetteMode,
+    eyedropperMode,
+    rotationMode,
+    peepExpanded,
+    peepBusy,
+    displayed,
+    cropRect,
+    toLocal,
+    beginPeepMode,
+  ]);
+
+  useEffect(() => {
+    if (
+      !peepAutoOpenRef.current
+      || !peepMode
+      || peepExpanded
+      || peepBusy
+      || peepRect.w <= 0
+      || peepRect.h <= 0
+    ) {
+      return;
+    }
+    peepAutoOpenRef.current = false;
+    void renderPeep();
+  }, [peepMode, peepExpanded, peepBusy, peepRect, renderPeep]);
+
+
+  const onPeepExpandedPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!peepExpanded || peepBusy || e.button !== 0) return;
+    const canvas = peepDisplayCanvasRef.current;
+    const rect = canvas?.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return;
+    (e.currentTarget as Element).setPointerCapture(e.pointerId);
+    peepExpandedDragStateRef.current = {
+      pointerId: e.pointerId,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      startRect: peepRect,
+      viewWidth: rect.width,
+      viewHeight: rect.height,
+      moved: false,
+    };
+    e.preventDefault();
+    e.stopPropagation();
+  }, [peepExpanded, peepBusy, peepRect]);
+
+  const onPeepExpandedPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const state = peepExpandedDragStateRef.current;
+    if (!state || state.pointerId !== e.pointerId) return;
+    const dx = e.clientX - state.startClientX;
+    const dy = e.clientY - state.startClientY;
+    if (Math.abs(dx) >= 2 || Math.abs(dy) >= 2) state.moved = true;
+    e.preventDefault();
+  }, []);
+
+  const onPeepExpandedPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const state = peepExpandedDragStateRef.current;
+    if (!state || state.pointerId !== e.pointerId) return;
+    try {
+      (e.currentTarget as Element).releasePointerCapture(e.pointerId);
+    } catch {}
+    peepExpandedDragStateRef.current = null;
+    if (!state.moved || !outputDimensions || state.viewWidth <= 0 || state.viewHeight <= 0) {
+      e.preventDefault();
+      return;
+    }
+    const dxCss = e.clientX - state.startClientX;
+    const dyCss = e.clientY - state.startClientY;
+    const rendered = peepRenderedCanvasRef.current;
+    const renderedW = Math.max(1, rendered?.width ?? peepTargetRasterSize?.width ?? 1);
+    const renderedH = Math.max(1, rendered?.height ?? peepTargetRasterSize?.height ?? 1);
+    const dxOutput = dxCss * renderedW / state.viewWidth;
+    const dyOutput = dyCss * renderedH / state.viewHeight;
+    const dxDisplay = dxOutput * cropRect.w / Math.max(1, outputDimensions.w);
+    const dyDisplay = dyOutput * cropRect.h / Math.max(1, outputDimensions.h);
+    const nextX = Math.max(cropRect.x, Math.min(cropRect.x + cropRect.w - state.startRect.w, state.startRect.x - dxDisplay));
+    const nextY = Math.max(cropRect.y, Math.min(cropRect.y + cropRect.h - state.startRect.h, state.startRect.y - dyDisplay));
+    const next = { ...state.startRect, x: nextX, y: nextY };
+    peepRectRef.current = next;
+    setPeepRect(next);
+    peepRenderedSettingsKeyRef.current = null;
+    void renderPeep(next);
+    e.preventDefault();
+    e.stopPropagation();
+  }, [outputDimensions, peepTargetRasterSize, cropRect, renderPeep]);
+
+  useEffect(() => {
+    if (!peepExpanded) return;
+    const displayCanvas = peepDisplayCanvasRef.current;
+    const rendered = peepRenderedCanvasRef.current;
+    if (!displayCanvas || !rendered) return;
+    displayCanvas.width = Math.max(1, rendered.width);
+    displayCanvas.height = Math.max(1, rendered.height);
+    const ctx = displayCanvas.getContext("2d", { alpha: false });
+    if (!ctx) return;
+    ctx.clearRect(0, 0, displayCanvas.width, displayCanvas.height);
+    ctx.drawImage(rendered, 0, 0);
+  }, [peepExpanded, peepRenderRevision]);
+
+  useEffect(() => {
+    if (!peepExpanded) return;
+    if (peepRenderedSettingsKeyRef.current === peepSettingsKey) return;
+    if (peepRerenderTimerRef.current) clearTimeout(peepRerenderTimerRef.current);
+    peepRerenderTimerRef.current = setTimeout(() => {
+      peepRerenderTimerRef.current = null;
+      void renderPeep();
+    }, 120);
+    return () => {
+      if (peepRerenderTimerRef.current) {
+        clearTimeout(peepRerenderTimerRef.current);
+        peepRerenderTimerRef.current = null;
+      }
+    };
+  }, [peepExpanded, peepSettingsKey, renderPeep]);
+
   const onSubmit = useCallback(() => {
     if (!displayed.w || !displayed.h || applyPendingRef.current) return;
     const left = (cropRect.x - displayed.x) / displayed.w;
@@ -10230,6 +10859,7 @@ export function ImageEditDialog({
       rotationDegrees: normalizeRotationDegrees(rotationDegrees),
       temperature: clampWhiteBalanceValue(temperature),
       tint: clampWhiteBalanceValue(tint),
+      denoise: clampDenoise(denoise),
       defringe: clampDefringe(defringe),
       exposureEv: clampExposureEv(exposureEv),
       shadow: clampToneRangeAdjustment(shadow),
@@ -10300,6 +10930,7 @@ export function ImageEditDialog({
     rotationDegrees,
     temperature,
     tint,
+    denoise,
     defringe,
     exposureEv,
     shadow,
@@ -10333,8 +10964,27 @@ export function ImageEditDialog({
     setRotationDegrees(params.rotationDegrees);
     setRotationMode(false);
     rotationDragState.current = null;
+    setPeepMode(false);
+    setPeepExpanded(false);
+    setPeepBusy(false);
+    peepExpandedDragStateRef.current = null;
+    setPeepReferenceRasterSize(null);
+    peepRequestedCenterRef.current = null;
+    peepAutoOpenRef.current = false;
+    peepRequestIdRef.current += 1;
+    if (peepRerenderTimerRef.current) {
+      clearTimeout(peepRerenderTimerRef.current);
+      peepRerenderTimerRef.current = null;
+    }
+    peepDragStateRef.current = null;
+    peepExpandedDragStateRef.current = null;
+    peepRenderedSettingsKeyRef.current = null;
+    const renderedPeep = peepRenderedCanvasRef.current;
+    peepRenderedCanvasRef.current = null;
+    if (renderedPeep) releaseCanvasIfNeeded(renderedPeep);
     setTemperature(params.temperature);
     setTint(params.tint);
+    setDenoise(params.denoise);
     setDefringe(params.defringe);
     setExposureEv(params.exposureEv);
     setShadow(params.shadow);
@@ -10648,6 +11298,7 @@ export function ImageEditDialog({
             onPointerMove={eyedropperMode ? undefined : rotationMode ? onRotationPointerMove : drawMode ? onDrawPointerMove : mosaicMode ? onMosaicPointerMove : vignetteMode ? onVignettePointerMove : onPointerMove}
             onPointerUp={eyedropperMode ? undefined : rotationMode ? onRotationPointerUp : drawMode ? (e) => finishDrawCreation(e) : mosaicMode ? onMosaicPointerUp : vignetteMode ? (e) => finishVignetteCreation(e) : onPointerUp}
             onPointerCancel={eyedropperMode ? undefined : rotationMode ? onRotationPointerUp : drawMode ? (e) => finishDrawCreation(e, true) : mosaicMode ? onMosaicPointerCancel : vignetteMode ? (e) => finishVignetteCreation(e, true) : onPointerUp}
+            onDoubleClick={onPreviewDoubleClick}
           >
               {embeddedRawPreview && (
                 <NextImage
@@ -10800,6 +11451,60 @@ export function ImageEditDialog({
                   )}
                   {!autoToneBusy && applyBusy && (
                     <div className="absolute inset-0 z-40 flex items-center justify-center pointer-events-none">
+                      <div className="h-10 w-10 rounded-full border-4 border-white/40 border-t-white animate-spin shadow-[0_0_0_1px_rgba(0,0,0,0.25)]" />
+                    </div>
+                  )}
+                  {peepExpanded && (
+                    <div
+                      className="absolute z-[38] flex items-center justify-center overflow-hidden bg-black"
+                      style={{ left: displayed.x, top: displayed.y, width: displayed.w, height: displayed.h }}
+                      onPointerDown={onPeepExpandedPointerDown}
+                      onPointerMove={onPeepExpandedPointerMove}
+                      onPointerUp={onPeepExpandedPointerUp}
+                      onPointerCancel={onPeepExpandedPointerUp}
+                      onDoubleClick={(e) => {
+                        const canvas = peepDisplayCanvasRef.current;
+                        const rect = canvas?.getBoundingClientRect();
+                        if (!rect || rect.width <= 0 || rect.height <= 0 || peepRect.w <= 0 || peepRect.h <= 0) return;
+                        const fx = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                        const fy = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+                        const centerX = peepRect.x + fx * peepRect.w;
+                        const centerY = peepRect.y + fy * peepRect.h;
+                        const nextX = Math.max(cropRect.x, Math.min(cropRect.x + cropRect.w - peepRect.w, centerX - peepRect.w / 2));
+                        const nextY = Math.max(cropRect.y, Math.min(cropRect.y + cropRect.h - peepRect.h, centerY - peepRect.h / 2));
+                        const next = { ...peepRectRef.current, x: nextX, y: nextY };
+                        peepRectRef.current = next;
+                        setPeepRect(next);
+                        peepRenderedSettingsKeyRef.current = null;
+                        void renderPeep(next);
+                        e.preventDefault();
+                        e.stopPropagation();
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <canvas
+                        ref={peepDisplayCanvasRef}
+                        className="block max-h-full max-w-full"
+                      />
+                      <button
+                        type="button"
+                        className="absolute right-2 top-2 z-[40] flex h-7 w-7 items-center justify-center rounded-full border border-white bg-black/75 text-sm leading-none text-white hover:bg-black"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => { e.stopPropagation(); closePeepExpanded(); }}
+                        aria-label="Close Peep preview"
+                        title="Close Peep preview"
+                      >
+                        ✕
+                      </button>
+                      {peepBusy && (
+                        <div className="absolute inset-0 z-[39] flex items-center justify-center bg-black/20 pointer-events-none">
+                          <div className="h-10 w-10 rounded-full border-4 border-white/40 border-t-white animate-spin shadow-[0_0_0_1px_rgba(0,0,0,0.25)]" />
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {!peepExpanded && peepBusy && (
+                    <div className="absolute inset-0 z-[39] flex items-center justify-center bg-black/10 pointer-events-none">
                       <div className="h-10 w-10 rounded-full border-4 border-white/40 border-t-white animate-spin shadow-[0_0_0_1px_rgba(0,0,0,0.25)]" />
                     </div>
                   )}
@@ -11680,6 +12385,51 @@ export function ImageEditDialog({
                       style={{ left: mosaicDraft.x, top: mosaicDraft.y, width: mosaicDraft.w, height: mosaicDraft.h }}
                     />
                   )}
+                  {false && peepMode && !peepExpanded && peepRect.w > 0 && peepRect.h > 0 && (
+                    <>
+                      <svg className="absolute inset-0 z-[34] h-full w-full pointer-events-none" aria-hidden="true">
+                        <path
+                          d={`M${cropRect.x},${cropRect.y} H${cropRect.x + cropRect.w} V${cropRect.y + cropRect.h} H${cropRect.x} Z M${peepRect.x},${peepRect.y} H${peepRect.x + peepRect.w} V${peepRect.y + peepRect.h} H${peepRect.x} Z`}
+                          fill="rgba(0,0,0,0.32)"
+                          fillRule="evenodd"
+                        />
+                      </svg>
+                      <div
+                        className="absolute z-[35] cursor-move border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.65)]"
+                        style={{ left: peepRect.x, top: peepRect.y, width: peepRect.w, height: peepRect.h }}
+                        onPointerDown={onPeepRectPointerDown}
+                        onPointerMove={onPeepRectPointerMove}
+                        onPointerUp={onPeepRectPointerUp}
+                        onPointerCancel={onPeepRectPointerUp}
+                        onDoubleClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const point = toLocal(e);
+                          beginPeepMode(
+                            {
+                              x: Math.max(cropRect.x, Math.min(cropRect.x + cropRect.w, point.x)),
+                              y: Math.max(cropRect.y, Math.min(cropRect.y + cropRect.h, point.y)),
+                            },
+                            true,
+                          );
+                        }}
+                        aria-label="Move Peep region"
+                      >
+                        <button
+                          type="button"
+                          className="absolute left-0 top-0 rounded-br border-b border-r border-white bg-black/80 px-2 py-1 text-[11px] font-medium text-white hover:bg-black"
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void renderPeep();
+                          }}
+                          disabled={peepBusy}
+                        >
+                          Peep
+                        </button>
+                      </div>
+                    </>
+                  )}
                   {!eyedropperMode && !rotationMode && (
                     <div
                       className={`absolute border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.45)] bg-transparent ${mosaicMode || textMode || drawMode || vignetteMode ? "pointer-events-none" : "cursor-move"}`}
@@ -11778,28 +12528,6 @@ export function ImageEditDialog({
               <div className="hidden lg:block min-w-0 text-[10px] text-gray-700 leading-5 font-mono whitespace-nowrap">
                 {cropMarginsText}
               </div>
-            </div>
-
-            <div className="rounded border p-3 space-y-2 lg:space-y-3">
-              <div className="flex items-center justify-between gap-2 font-medium">
-                <span>Correction</span>
-                {defringeAnalyzing && <span className="text-[10px] font-normal text-gray-500">Analyzing…</span>}
-              </div>
-              <label className="grid grid-cols-[96px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
-                <span className="col-start-1 row-start-1">Defringe</span>
-                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{defringe}</span>
-                <input
-                  aria-label="Defringe"
-                  type="range"
-                  min={0}
-                  max={100}
-                  step={1}
-                  value={defringe}
-                  onChange={(e) => { previewContinuousSliderRef.current = null; setDefringe(clampDefringe(Number(e.target.value))); }}
-                  onDoubleClick={() => { previewContinuousSliderRef.current = null; setDefringe(sliderDefaults.defringe); }}
-                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
-                />
-              </label>
             </div>
 
             <div className="rounded border p-3 space-y-2 lg:space-y-3">
@@ -12045,7 +12773,39 @@ export function ImageEditDialog({
             </div>
 
             <div className="rounded border p-3 space-y-2 lg:space-y-3">
-              <div className="font-medium">Finishing</div>
+              <div className="flex items-center gap-2 font-medium">
+                <span>Finishing</span>
+              </div>
+              <label className="grid grid-cols-[112px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+                <span className="col-start-1 row-start-1">Denoise</span>
+                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{denoise}</span>
+                <input
+                  aria-label="Denoise"
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={denoise}
+                  onChange={(e) => setDenoise(clampDenoise(Number(e.target.value)))}
+                  onDoubleClick={() => setDenoise(sliderDefaults.denoise)}
+                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
+                />
+              </label>
+              <label className="grid grid-cols-[112px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+                <span className="col-start-1 row-start-1">Defringe</span>
+                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{defringe}</span>
+                <input
+                  aria-label="Defringe"
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={defringe}
+                  onChange={(e) => setDefringe(clampDefringe(Number(e.target.value)))}
+                  onDoubleClick={() => setDefringe(sliderDefaults.defringe)}
+                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
+                />
+              </label>
               <div className="grid grid-cols-[112px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
                 <div className="col-start-1 row-start-1 flex min-w-0 items-center gap-1">
                   <span>Resize</span>
@@ -12083,7 +12843,7 @@ export function ImageEditDialog({
                   type="range"
                   aria-label="Sharpen"
                   min={0}
-                  max={3}
+                  max={7}
                   step={1}
                   value={sharpen}
                   onChange={(e) => setSharpen(clampSharpen(Number(e.target.value)))}

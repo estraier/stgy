@@ -532,7 +532,7 @@ listen(downloadButton, "click", async () => {
           outputDimensions.height,
         );
         const sharpenedStored = encodeLinearToStoredGamma2(resizedLinear);
-        applySharpenToRgb16(sharpenedStored, outputDimensions.width, outputDimensions.height, 1);
+        applySharpenToRgb16(sharpenedStored, outputDimensions.width, outputDimensions.height, 2);
         linearForTiff = decodeStoredGamma2ToLinear(sharpenedStored);
         downloadButtonLabel.textContent = "Encoding TIFF-16...";
         await waitForBusyPaint();
@@ -561,7 +561,7 @@ listen(downloadButton, "click", async () => {
         resized,
       );
       if (resized) {
-        applySharpenToCanvas(canvas, 1, currentPreviewColorSpace);
+        applySharpenToCanvas(canvas, 2, currentPreviewColorSpace);
       }
 
       if (format === "jpeg" || format === "webp") {

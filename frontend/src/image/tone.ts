@@ -34,7 +34,7 @@ export function clampColorAdjustment(v: number): number {
 }
 
 export function clampSharpen(v: number): number {
-  return Math.min(3, Math.max(0, Math.round(Number.isFinite(v) ? v : 0)));
+  return Math.min(7, Math.max(0, Math.round(Number.isFinite(v) ? v : 0)));
 }
 
 export function colorSaturationFactor(saturation: number): number {

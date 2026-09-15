@@ -360,6 +360,142 @@ export function renderAdjustedLinearRgbSampleToCanvas(
   ctx.putImageData(imageData, 0, 0);
 }
 
+export function renderAdjustedRgb16RegionToCanvas(
+  canvas: HTMLCanvasElement | OffscreenCanvas,
+  decoded: DecodedRgbImage16,
+  sourceRect: { x: number; y: number; w: number; h: number },
+  fullOutputWidth: number,
+  fullOutputHeight: number,
+  regionX: number,
+  regionY: number,
+  rotationDegrees: number,
+  temperature: number,
+  tint: number,
+  exposureEv: number,
+  shadow: number,
+  highlight: number,
+  scaledLog: number,
+  sigmoid: number,
+  vibrance: number,
+  saturation: number,
+  outputColorProfile: ImageEditOutputColorProfile = "srgb",
+  clarityMap: ImageEditClarityMap | null = null,
+  defringeMap: DefringeAnalysisMap | null = null,
+  defringeAmount = 0,
+) {
+  const ctx = getCanvas2dContext(canvas, outputColorProfile);
+  if (!ctx) throw new Error("2D context unavailable");
+  const width = Math.max(1, canvas.width);
+  const height = Math.max(1, canvas.height);
+  const fullWidth = Math.max(1, Math.round(fullOutputWidth));
+  const fullHeight = Math.max(1, Math.round(fullOutputHeight));
+  const imageData = createCanvasImageData(ctx, width, height, outputColorProfile);
+  const output = imageData.data;
+  const rawContextSample = getAnalysisLinearRgbSample(decoded, sourceRect, rotationDegrees);
+  const contextSample = defringeMap && defringeAmount > 0
+    ? applyDefringeToRenderedSample(
+        rawContextSample,
+        defringeMap,
+        defringeAmount,
+        decoded.width,
+        decoded.height,
+        sourceRect,
+        rotationDegrees,
+      )
+    : rawContextSample;
+  const context = buildInteractiveColorAdjustmentContextFromLinearRgbSample(
+    contextSample,
+    temperature,
+    tint,
+    exposureEv,
+    shadow,
+    highlight,
+    scaledLog,
+    sigmoid,
+    vibrance,
+    saturation,
+    true,
+  );
+  const activeClarityMap = isUsableImageEditClarityMap(clarityMap) ? clarityMap : null;
+  const hasClarity = activeClarityMap !== null;
+  const transform = buildRenderedPixelToSourceTransform(
+    decoded.width,
+    decoded.height,
+    sourceRect.x,
+    sourceRect.y,
+    fullWidth / Math.max(1, sourceRect.w),
+    fullHeight / Math.max(1, sourceRect.h),
+    rotationDegrees,
+  );
+  const sample: LinearRgbBuffer = [0, 0, 0];
+  const converted: [number, number, number] = [0, 0, 0];
+  const samplingScratch = createRgb16SamplingScratch();
+  let rowSourceX = transform.originX
+    + regionX * transform.columnStepX
+    + regionY * transform.rowStepX;
+  let rowSourceY = transform.originY
+    + regionX * transform.columnStepY
+    + regionY * transform.rowStepY;
+  let di = 0;
+  for (let y = 0; y < height; y++) {
+    let sourceX = rowSourceX;
+    let sourceY = rowSourceY;
+    for (let x = 0; x < width; x++, di += 4) {
+      if (
+        sourceX < 0 ||
+        sourceX >= decoded.width ||
+        sourceY < 0 ||
+        sourceY >= decoded.height ||
+        !sampleLinearRgb16BilinearInto(decoded, sourceX, sourceY, sample, samplingScratch)
+      ) {
+        output[di] = 128;
+        output[di + 1] = 128;
+        output[di + 2] = 128;
+        output[di + 3] = 255;
+      } else {
+        let r = sample[0];
+        let g = sample[1];
+        let b = sample[2];
+        if (defringeMap && defringeAmount > 0) {
+          [r, g, b] = applyDefringeLinearRgb(
+            r,
+            g,
+            b,
+            defringeMap,
+            defringeAmount,
+            decoded.width > 1 ? sourceX / (decoded.width - 1) : 0.5,
+            decoded.height > 1 ? sourceY / (decoded.height - 1) : 0.5,
+          );
+        }
+        if (hasClarity) {
+          [r, g, b] = applyToneAdjustmentsLinearRgb(r, g, b, context);
+          const clarityGain = sampleImageEditClarityGain(
+            activeClarityMap,
+            sourceX,
+            sourceY,
+            decoded.width,
+            decoded.height,
+          );
+          [r, g, b] = applyLuminanceGainPreservingAboveOneLinearRgb(r, g, b, clarityGain);
+          [r, g, b] = applyColorAdjustmentsAfterToneLinearRgb(r, g, b, context);
+        } else {
+          [r, g, b] = applyColorAdjustmentsLinearRgb(r, g, b, context);
+        }
+        convertLinearProPhotoToOutputRgbInto(r, g, b, outputColorProfile, converted);
+        output[di] = linearChannelToSrgbByteFromLut(converted[0]);
+        output[di + 1] = linearChannelToSrgbByteFromLut(converted[1]);
+        output[di + 2] = linearChannelToSrgbByteFromLut(converted[2]);
+        output[di + 3] = 255;
+      }
+      sourceX += transform.columnStepX;
+      sourceY += transform.columnStepY;
+    }
+    rowSourceX += transform.rowStepX;
+    rowSourceY += transform.rowStepY;
+  }
+  ctx.putImageData(imageData, 0, 0);
+}
+
 export function renderAdjustedRgb16ToCanvas(
   canvas: HTMLCanvasElement | OffscreenCanvas,
   decoded: DecodedRgbImage16,
