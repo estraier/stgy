@@ -826,7 +826,9 @@ const PHOTOCHEMICAL_STAIN_MEDIUM_CYCLES_PER_DIAGONAL = 24;
 const PHOTOCHEMICAL_STAIN_MAX_OPACITY = 0.02;
 const PHOTOCHEMICAL_TARGET_PERCENTILE = 0.50;
 const CROSS_PROCESS_TONE_MIX = 0.95;
+const CROSS_PROCESS_CONTRAST_LOW_PERCENTILE = 0.10;
 const CROSS_PROCESS_TARGET_PERCENTILE = 0.50;
+const CROSS_PROCESS_CONTRAST_HIGH_PERCENTILE = 0.90;
 const BLEACH_BYPASS_SATURATION_SHADOW = 0.45;
 const BLEACH_BYPASS_SATURATION_HIGHLIGHT = 0.95;
 const BLEACH_BYPASS_VIBRANCE_SHADOW = -0.35;
@@ -925,6 +927,65 @@ function applyFilterScaledLogToLinearRgb(r: number, g: number, b: number, scaled
   if (!(sourceLuma > 1e-12)) return [r, g, b];
   const targetLuma = applyScaledLogLinearExtended(sourceLuma, scaledLog, FILTER_TONE_RECOVERY_LOG_LIMIT);
   if (!Number.isFinite(targetLuma)) return [r, g, b];
+  const scale = targetLuma / sourceLuma;
+  return [Math.max(0, r * scale), Math.max(0, g * scale), Math.max(0, b * scale)];
+}
+
+type CrossProcessToneRecovery = {
+  beforeP50Ev: number;
+  filteredP50Ev: number;
+  contrastScale: number;
+};
+
+function computeCrossProcessToneRecovery(
+  beforeHistogram: Uint32Array,
+  filteredHistogram: Uint32Array,
+): CrossProcessToneRecovery {
+  const beforeP10Ev = estimateLogPercentileFromHistogram(
+    beforeHistogram,
+    CROSS_PROCESS_CONTRAST_LOW_PERCENTILE,
+  );
+  const beforeP50Ev = estimateLogPercentileFromHistogram(
+    beforeHistogram,
+    CROSS_PROCESS_TARGET_PERCENTILE,
+  );
+  const beforeP90Ev = estimateLogPercentileFromHistogram(
+    beforeHistogram,
+    CROSS_PROCESS_CONTRAST_HIGH_PERCENTILE,
+  );
+  const filteredP10Ev = estimateLogPercentileFromHistogram(
+    filteredHistogram,
+    CROSS_PROCESS_CONTRAST_LOW_PERCENTILE,
+  );
+  const filteredP50Ev = estimateLogPercentileFromHistogram(
+    filteredHistogram,
+    CROSS_PROCESS_TARGET_PERCENTILE,
+  );
+  const filteredP90Ev = estimateLogPercentileFromHistogram(
+    filteredHistogram,
+    CROSS_PROCESS_CONTRAST_HIGH_PERCENTILE,
+  );
+  const beforeContrastEv = Math.max(0, beforeP90Ev - beforeP10Ev);
+  const filteredContrastEv = Math.max(0, filteredP90Ev - filteredP10Ev);
+  const contrastScale = filteredContrastEv > beforeContrastEv && filteredContrastEv > 1e-6
+    ? clamp01(beforeContrastEv / filteredContrastEv)
+    : 1;
+  return { beforeP50Ev, filteredP50Ev, contrastScale };
+}
+
+function applyCrossProcessToneRecoveryLinearRgb(
+  r: number,
+  g: number,
+  b: number,
+  recovery: CrossProcessToneRecovery,
+): [number, number, number] {
+  const sourceLuma = prophotoLumaForFilter(r, g, b);
+  if (!(sourceLuma > 1e-12)) return [r, g, b];
+  const sourceEv = Math.log2(Math.max(1e-8, sourceLuma));
+  const targetEv = recovery.beforeP50Ev
+    + (sourceEv - recovery.filteredP50Ev) * recovery.contrastScale;
+  const targetLuma = Math.pow(2, targetEv);
+  if (!(targetLuma >= 0) || !Number.isFinite(targetLuma)) return [r, g, b];
   const scale = targetLuma / sourceLuma;
   return [Math.max(0, r * scale), Math.max(0, g * scale), Math.max(0, b * scale)];
 }
@@ -1981,20 +2042,16 @@ function applyCrossProcessFilterToCanvasData(
     filteredLinear[linearIndex + 2] = fb;
   }
 
-  const beforeP50Ev = estimateLogPercentileFromHistogram(beforeHistogram, CROSS_PROCESS_TARGET_PERCENTILE);
-  const filteredP50Ev = estimateLogPercentileFromHistogram(filteredHistogram, CROSS_PROCESS_TARGET_PERCENTILE);
-  const beforeP50Luma = Math.pow(2, beforeP50Ev);
-  const filteredP50Luma = Math.pow(2, filteredP50Ev);
-  const recoveryScaledLog = solveFilterScaledLogForTargetLuma(filteredP50Luma, beforeP50Luma);
+  const toneRecovery = computeCrossProcessToneRecovery(beforeHistogram, filteredHistogram);
 
   for (let i = 0; i < rgba8.length; i += 4) {
     const pixelIndex = Math.floor(i / 4);
     const linearIndex = pixelIndex * 3;
-    const [recoveredR, recoveredG, recoveredB] = applyFilterScaledLogToLinearRgb(
+    const [recoveredR, recoveredG, recoveredB] = applyCrossProcessToneRecoveryLinearRgb(
       filteredLinear[linearIndex] ?? 0,
       filteredLinear[linearIndex + 1] ?? 0,
       filteredLinear[linearIndex + 2] ?? 0,
-      recoveryScaledLog,
+      toneRecovery,
     );
     const [er, eg, eb] = convertLinearProPhotoToOutputRgb(recoveredR, recoveredG, recoveredB, profile);
     rgba8[i] = linearChannelToSrgb(er);
@@ -2749,12 +2806,22 @@ function applyCrossProcessFilterToRgb16(data: Uint16Array, width: number, height
     data[index + 2] = encodeStoredRgb16Channel(fb, "gamma20", 1);
   }
 
-  const beforeP50Ev = estimateLogPercentileFromHistogram(beforeHistogram, CROSS_PROCESS_TARGET_PERCENTILE);
-  const filteredP50Ev = estimateLogPercentileFromHistogram(filteredHistogram, CROSS_PROCESS_TARGET_PERCENTILE);
-  const beforeP50Luma = Math.pow(2, beforeP50Ev);
-  const filteredP50Luma = Math.pow(2, filteredP50Ev);
-  const recoveryScaledLog = solveFilterScaledLogForTargetLuma(filteredP50Luma, beforeP50Luma);
-  applyFilterScaledLogToRgb16(data, width, height, recoveryScaledLog);
+  const toneRecovery = computeCrossProcessToneRecovery(beforeHistogram, filteredHistogram);
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const index = pixel * 3;
+    const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
+    const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
+    const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
+    const [recoveredR, recoveredG, recoveredB] = applyCrossProcessToneRecoveryLinearRgb(
+      r,
+      g,
+      b,
+      toneRecovery,
+    );
+    data[index] = encodeStoredRgb16Channel(recoveredR, "gamma20", 1);
+    data[index + 1] = encodeStoredRgb16Channel(recoveredG, "gamma20", 1);
+    data[index + 2] = encodeStoredRgb16Channel(recoveredB, "gamma20", 1);
+  }
 }
 
 function applyCyanotypeFilterToRgb16(data: Uint16Array, width: number, height: number): void {
