@@ -51,7 +51,8 @@ import type {
 } from "./image-editor/types";
 export type { DecodedImage, ImageEditOutputColorProfile } from "./image-editor/types";
 import {
-  HIGHLIGHT_ROLLOFF_INFLECTION,
+  ROLLOFF_SAVING_LIMIT_FACTOR,
+  SATURATION_ROLLOFF_A,
   SIGMOID_WORKING_GAMMA,
   applyColorAdjustmentsAfterToneLinearRgb,
   applyColorAdjustmentsLinearRgb,
@@ -72,7 +73,6 @@ import {
   clampWhiteBalanceValue,
   colorSaturationFactor,
   colorVibranceFactor,
-  createHighlightRolloff,
   hsvToRgb,
   linearChannelToSrgb,
   naiveInverseSigmoid,
@@ -428,6 +428,7 @@ type ImageLoadProgress = {
 type ImageLoadProgressListener = (progress: ImageLoadProgress) => void;
 
 const RAW_DEVELOPED_LINEAR_RANGE_MAX = 2;
+const RAW_DEVELOPED_ROLLOFF_A = RAW_DEVELOPED_LINEAR_RANGE_MAX / 2;
 const RAW_USE_THUMBNAIL = true;
 const RAW_TONE_SLOPE_EPSILON = 1e-5;
 const RAW_MEDIAN_DENOISE_WEAK_ISO = 800;
@@ -4092,9 +4093,29 @@ function planRawThumbnailMatchedBaseline(
   }
 
   const toneSlopeAtWhite = rawBaselineToneSlopeAtWhite(scaledLog, sigmoid);
-  const rolloff = createHighlightRolloff(
+  const maxChannels = new Array<number>(Math.floor(sample.length / 3));
+  for (let pixel = 0; pixel < maxChannels.length; pixel += 1) {
+    const i = pixel * 3;
+    const r = sample[i] ?? 0;
+    const g = sample[i + 1] ?? 0;
+    const b = sample[i + 2] ?? 0;
+    const luma = PROPHOTO_LUMA_R * r + PROPHOTO_LUMA_G * g + PROPHOTO_LUMA_B * b;
+    let adjustedLuma = 0;
+    if (luma > 1e-12) {
+      const exposed = luma * gain;
+      adjustedLuma = exposed <= 1
+        ? rawBaselineToneCurveValue(exposed, scaledLog, sigmoid)
+        : 1 + toneSlopeAtWhite * (exposed - 1);
+    }
+    const scale = luma > 1e-12 ? adjustedLuma / luma : 0;
+    maxChannels[pixel] = Math.max(r * scale, g * scale, b * scale);
+  }
+  const maxP998 = percentileFromValues(maxChannels, 99.8);
+  const rolloff = toneRolloffParams(
+    maxP998,
+    RAW_DEVELOPED_ROLLOFF_A,
+    ROLLOFF_SAVING_LIMIT_FACTOR,
     RAW_DEVELOPED_LINEAR_RANGE_MAX,
-    HIGHLIGHT_ROLLOFF_INFLECTION,
   );
   return {
     plan: { gain, scaledLog, sigmoid, toneSlopeAtWhite, rolloff },
@@ -4203,7 +4224,7 @@ type RawAutoColorSample = {
   hue: Float32Array;
   saturation: Float32Array;
   value: Float32Array;
-  saturationP99: number;
+  saturationP998: number;
   statisticsMask: Uint8Array;
   statisticsCount: number;
 };
@@ -4250,7 +4271,7 @@ function buildRawAutoColorSample(
     hue,
     saturation,
     value,
-    saturationP99: percentileFromValues(saturationValues, 99),
+    saturationP998: percentileFromValues(saturationValues, 99.8),
     statisticsMask: central.mask,
     statisticsCount: central.count,
   };
@@ -4267,9 +4288,9 @@ function rawAutoColorSaturationPercentile(
   const saturationFactor = colorSaturationFactor(normalizedSaturation);
   const vibranceFactor = colorVibranceFactor(normalizedVibrance);
   // Match the manual Saturation path exactly: its rolloff is determined from
-  // the P99 saturation after the linear multiplier, before Vibrance.
+  // P99.8 saturation after the linear multiplier, before Vibrance.
   const saturationRolloff = saturationFactor > 1
-    ? toneRolloffParams(sample.saturationP99 * saturationFactor, 0.7, 4)
+    ? toneRolloffParams(sample.saturationP998 * saturationFactor, SATURATION_ROLLOFF_A, ROLLOFF_SAVING_LIMIT_FACTOR, 1)
     : null;
   const bins = 4096;
   const histogram = new Uint32Array(bins);
@@ -4509,7 +4530,7 @@ function planRawThumbnailMatchedColor(
   const saturationFactor = colorSaturationFactor(normalizedSaturation);
   const vibranceFactor = colorVibranceFactor(normalizedVibrance);
   const saturationRolloff = saturationFactor > 1
-    ? toneRolloffParams(sample.saturationP99 * saturationFactor, 0.7, 4)
+    ? toneRolloffParams(sample.saturationP998 * saturationFactor, SATURATION_ROLLOFF_A, ROLLOFF_SAVING_LIMIT_FACTOR, 1)
     : null;
   return {
     settings,

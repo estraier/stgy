@@ -12,14 +12,18 @@ import {
   type ImageEditClarityMap,
 } from "./clarity";
 import {
+  FINAL_DISPLAY_ROLLOFF_A,
   HISTOGRAM_DISPLAY_GAMMA,
+  ROLLOFF_SAVING_LIMIT_FACTOR,
+  SATURATION_ROLLOFF_A,
   applyColorAdjustmentsAfterToneLinearRgb, applyColorAdjustmentsLinearRgb,
-  applyLuminanceGainPreservingAboveOneLinearRgb, applyScaledLogLinearExtended, applyShadowLinear, applySigmoidLinearExtended,
+  applyLuminanceGainPreservingAboveOneLinearRgb, applySaturationVibranceAndFinalRolloffLinearRgb,
+  applyScaledLogLinearExtended, applyShadowLinear, applySigmoidLinearExtended,
   applyToneAdjustmentsLinearRgb, applyToneLinearToRgb,
   applyWhiteBalanceLinear, clamp01, clampColorAdjustment, clampExposureEv,
   clampScaledLog, clampSigmoid, clampToneRangeAdjustment, clampWhiteBalanceValue,
-  colorSaturationFactor, colorVibranceFactor, createHighlightRolloff, proPhotoLinearLuminance,
-  srgbChannelToLinear, whiteBalanceGains, type ColorAdjustmentContext, type HighlightRange,
+  colorSaturationFactor, colorVibranceFactor, proPhotoLinearLuminance, rgbToHsvExtended, rolloffParams,
+  srgbChannelToLinear, whiteBalanceGains, type ColorAdjustmentContext, type HighlightRange, type RolloffParams,
 } from "@/image/tone";
 
 // Statistical analysis and Auto Tone share the fixed-area analysis sample.
@@ -138,9 +142,87 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
   const hasHighlight = normalizedHighlight !== 0 && highlightRange !== null;
   const saturationFactor = colorSaturationFactor(normalizedSaturation);
   const vibranceFactor = colorVibranceFactor(normalizedVibrance);
-  const finalRolloff = needsFinalRolloff
-    ? createHighlightRolloff(1)
-    : null;
+
+  let saturationRolloff: RolloffParams | null = null;
+  let finalRolloff: RolloffParams | null = null;
+  if (needsFinalRolloff) {
+    // Analyze the same fixed-area sample that drives the interactive render.
+    // Saturation uses P99.8 before its multiplier; the final display rolloff uses
+    // P99.8 after Tone + Saturation/Vibrance. Both use the shared nonlinear
+    // rolloff with savingLimit = output range * 4.
+    const toneAdjusted = new Float32Array(count * 3);
+    const saturationValues: number[] = [];
+    for (let pixel = 0; pixel < count; pixel += 1) {
+      if (ignoreInvalid && valid && !valid[pixel]) continue;
+      const i = pixel * 3;
+      const [r, g, b] = applyToneLinearToRgb(
+        data[i] ?? 0,
+        data[i + 1] ?? 0,
+        data[i + 2] ?? 0,
+        gains,
+        hasWhiteBalance,
+        factor,
+        normalizedShadow,
+        normalizedHighlight,
+        highlightRange,
+        normalizedScaledLog,
+        normalizedSigmoid,
+        {
+          hasExposure,
+          hasShadow,
+          hasHighlight,
+          hasScaledLog,
+          hasSigmoid,
+        },
+      );
+      toneAdjusted[i] = r;
+      toneAdjusted[i + 1] = g;
+      toneAdjusted[i + 2] = b;
+      if (hasSaturation && saturationFactor > 1) {
+        saturationValues.push(rgbToHsvExtended(r, g, b)[1]);
+      }
+    }
+
+    const saturationP998 = saturationValues.length
+      ? percentileFromValues(saturationValues, 99.8)
+      : 0;
+    saturationRolloff = hasSaturation && saturationFactor > 1
+      ? rolloffParams(
+          saturationP998 * saturationFactor,
+          SATURATION_ROLLOFF_A,
+          ROLLOFF_SAVING_LIMIT_FACTOR,
+          1,
+        )
+      : null;
+
+    const maxima: number[] = [];
+    for (let pixel = 0; pixel < count; pixel += 1) {
+      if (ignoreInvalid && valid && !valid[pixel]) continue;
+      const i = pixel * 3;
+      let r = toneAdjusted[i] ?? 0;
+      let g = toneAdjusted[i + 1] ?? 0;
+      let b = toneAdjusted[i + 2] ?? 0;
+      [r, g, b] = applySaturationVibranceAndFinalRolloffLinearRgb(
+        r,
+        g,
+        b,
+        normalizedSaturation,
+        normalizedVibrance,
+        false,
+        undefined,
+        saturationRolloff,
+      );
+      const maxChannel = Math.max(r, g, b);
+      if (Number.isFinite(maxChannel)) maxima.push(maxChannel);
+    }
+    const p998 = maxima.length ? percentileFromValues(maxima, 99.8) : 0;
+    finalRolloff = rolloffParams(
+      p998,
+      FINAL_DISPLAY_ROLLOFF_A,
+      ROLLOFF_SAVING_LIMIT_FACTOR,
+      1,
+    );
+  }
 
   return {
     gains,
@@ -157,6 +239,7 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
     shadow: normalizedShadow,
     highlight: normalizedHighlight,
     highlightRange,
+    saturationRolloff,
     finalRolloff,
     scaledLog: normalizedScaledLog,
     sigmoid: normalizedSigmoid,

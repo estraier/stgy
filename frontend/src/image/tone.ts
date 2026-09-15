@@ -50,22 +50,18 @@ export function colorVibranceFactor(vibrance: number): number {
 export const PROPHOTO_TONE_LUMA_R = 0.2880402;
 export const PROPHOTO_TONE_LUMA_G = 0.7118741;
 export const PROPHOTO_TONE_LUMA_B = 0.0000857;
-export const FINAL_MAX_CHANNEL_ROLLOFF_START = 0.9;
+export const EXPOSURE_ROLLOFF_A = 0.5;
+export const SATURATION_ROLLOFF_A = 0.7;
+export const FINAL_DISPLAY_ROLLOFF_A = 0.9;
+export const ROLLOFF_SAVING_LIMIT_FACTOR = 4;
 
-export type HighlightRolloff = {
+export type RolloffParams = {
   inflection: number;
-  ceiling: number;
+  inputMax: number;
+  outputMax: number;
+  curvature: number;
 };
 
-export const HIGHLIGHT_ROLLOFF_INFLECTION = FINAL_MAX_CHANNEL_ROLLOFF_START;
-
-export function createHighlightRolloff(
-  ceiling: number,
-  inflection = HIGHLIGHT_ROLLOFF_INFLECTION,
-): HighlightRolloff | null {
-  if (!Number.isFinite(ceiling) || !Number.isFinite(inflection) || ceiling <= inflection) return null;
-  return { inflection, ceiling };
-}
 const TONE_ENDPOINT_SLOPE_EPSILON = 1e-5;
 const TONE_LUMINANCE_EPSILON = 1e-12;
 
@@ -326,63 +322,75 @@ export function applyHsvSaturationPreservingProPhotoLuminance(
   return [shapeR * scale, shapeG * scale, shapeB * scale];
 }
 
-export function applyHighlightRolloffScalar(
-  value: number,
-  rolloff: HighlightRolloff | null,
-): number {
-  if (!rolloff || !Number.isFinite(value) || value <= rolloff.inflection) return value;
-  const shoulder = rolloff.ceiling - rolloff.inflection;
-  if (!(shoulder > 0)) return value;
-  return rolloff.inflection
-    + shoulder * (1 - Math.exp(-(value - rolloff.inflection) / shoulder));
-}
+function solveRolloffCurvature(spanRatio: number): number {
+  // The normalized exponential shoulder is
+  //   y(t) = (1 - exp(-k t)) / (1 - exp(-k)), 0 <= t <= 1.
+  // Choose k so the derivative is exactly 1 at the inflection after scaling
+  // from input span to output span. This makes the identity section and the
+  // shoulder C1-continuous while still forcing M -> outputMax.
+  const ratio = Math.min(1, Math.max(0, spanRatio));
+  if (ratio >= 1 - 1e-12) return 0;
+  if (!(ratio > 0)) return 64;
 
-export function applyHighlightRolloffMaxChannelLinearRgb(
-  r: number,
-  g: number,
-  b: number,
-  rolloff: HighlightRolloff | null,
-): [number, number, number] {
-  const maxChannel = Math.max(r, g, b);
-  if (!rolloff || !Number.isFinite(maxChannel) || maxChannel <= rolloff.inflection || maxChannel <= 0) {
-    return [r, g, b];
+  const equation = (k: number) => -Math.expm1(-k) - ratio * k;
+  let low = 1e-12;
+  let high = Math.max(2, 2 / ratio);
+  while (equation(high) > 0 && high < 1024) high *= 2;
+  for (let i = 0; i < 64; i += 1) {
+    const mid = (low + high) * 0.5;
+    if (equation(mid) > 0) low = mid;
+    else high = mid;
   }
-  const rolledMax = applyHighlightRolloffScalar(maxChannel, rolloff);
-  const scale = rolledMax / maxChannel;
-  return [r * scale, g * scale, b * scale];
-}
-
-export function applyFinalMaxChannelRolloffLinearRgb(
-  r: number,
-  g: number,
-  b: number,
-  start = FINAL_MAX_CHANNEL_ROLLOFF_START,
-): [number, number, number] {
-  return applyHighlightRolloffMaxChannelLinearRgb(
-    r,
-    g,
-    b,
-    createHighlightRolloff(1, start),
-  );
+  return (low + high) * 0.5;
 }
 
 export function rolloffParams(
   maxVal: number,
-  asymptotic = 0.5,
-  savingLimit = 4,
-): { inflection: number; scale: number } | null {
-  if (!(Number.isFinite(maxVal) && maxVal > 1)) return null;
-  if (maxVal > savingLimit) {
-    asymptotic = Math.pow(asymptotic, savingLimit / maxVal);
+  a = EXPOSURE_ROLLOFF_A,
+  savingLimit = ROLLOFF_SAVING_LIMIT_FACTOR,
+  outputMax = 1,
+): RolloffParams | null {
+  if (!(Number.isFinite(outputMax) && outputMax > 0)) return null;
+  if (!(Number.isFinite(maxVal) && maxVal > outputMax)) return null;
+  if (!(Number.isFinite(a) && a >= 0 && a < outputMax)) return null;
+  const savingLimitFactor = Number.isFinite(savingLimit) && savingLimit > 0
+    ? savingLimit
+    : ROLLOFF_SAVING_LIMIT_FACTOR;
+  const savingLimitValue = outputMax * savingLimitFactor;
+
+  // Preserve the original saving-limit behavior in normalized output-range
+  // coordinates. The limit is outputMax * savingLimitFactor, not A * factor.
+  let adjustedA = a;
+  if (maxVal > savingLimitValue) {
+    const normalizedA = a / outputMax;
+    adjustedA = outputMax * Math.pow(
+      normalizedA,
+      savingLimitValue / maxVal,
+    );
   }
-  const inflection = asymptotic + (1 - asymptotic) / maxVal;
-  const scale = (1 - inflection) / (maxVal - inflection + 1e-6);
-  return { inflection, scale };
+
+  const inflection = adjustedA
+    + (outputMax - adjustedA) * outputMax / maxVal;
+  const inputSpan = maxVal - inflection;
+  const outputSpan = outputMax - inflection;
+  if (!(inputSpan > 0) || !(outputSpan > 0)) return null;
+  const curvature = solveRolloffCurvature(outputSpan / inputSpan);
+  return { inflection, inputMax: maxVal, outputMax, curvature };
 }
 
-export function applyRolloffScalar(value: number, rolloff: { inflection: number; scale: number } | null): number {
-  if (!rolloff || value <= rolloff.inflection) return value;
-  return rolloff.inflection + (value - rolloff.inflection) * rolloff.scale;
+export function applyRolloffScalar(value: number, rolloff: RolloffParams | null): number {
+  if (!rolloff || !Number.isFinite(value) || value <= rolloff.inflection) return value;
+  if (value >= rolloff.inputMax) return rolloff.outputMax;
+
+  const inputSpan = rolloff.inputMax - rolloff.inflection;
+  const outputSpan = rolloff.outputMax - rolloff.inflection;
+  if (!(inputSpan > 0) || !(outputSpan > 0)) return value;
+  const t = Math.min(1, Math.max(0, (value - rolloff.inflection) / inputSpan));
+  const k = rolloff.curvature;
+  const shaped = k > 1e-8
+    ? -Math.expm1(-k * t) / -Math.expm1(-k)
+    : t;
+  return rolloff.inflection + outputSpan * shaped;
 }
 
 export function applyExposureLinearToRgb(
@@ -520,23 +528,13 @@ export function applyDisplayRolloffAndClipLinearToRgb(
   r: number,
   g: number,
   b: number,
-  rolloff: { inflection: number; scale: number } | null,
+  rolloff: RolloffParams | null,
 ): [number, number, number] {
   return [
     clamp01(applyRolloffScalar(r, rolloff)),
     clamp01(applyRolloffScalar(g, rolloff)),
     clamp01(applyRolloffScalar(b, rolloff)),
   ];
-}
-
-export function applyHighlightRolloffAndClipLinearToRgb(
-  r: number,
-  g: number,
-  b: number,
-  rolloff: HighlightRolloff | null,
-): [number, number, number] {
-  [r, g, b] = applyHighlightRolloffMaxChannelLinearRgb(r, g, b, rolloff);
-  return [clamp01(r), clamp01(g), clamp01(b)];
 }
 
 export type ToneAdjustmentFlags = {
@@ -598,8 +596,9 @@ export type ColorAdjustmentContext = {
   shadow: number;
   highlight: number;
   highlightRange: HighlightRange | null;
-  // Final display highlight shoulder applied after Tone + Saturation/Vibrance.
-  finalRolloff: HighlightRolloff | null;
+  // Saturation and final display shoulders are both percentile-derived rolloffs.
+  saturationRolloff: RolloffParams | null;
+  finalRolloff: RolloffParams | null;
   scaledLog: number;
   sigmoid: number;
   normalizedVibrance: number;
@@ -696,15 +695,18 @@ export function applySaturationVibranceAndFinalRolloffLinearRgb(
   saturation: number,
   vibrance: number,
   applyFinalRolloff = true,
-  finalRolloff: { inflection: number; scale: number } | null | undefined = undefined,
+  finalRolloff: RolloffParams | null | undefined = undefined,
+  saturationRolloff: RolloffParams | null = null,
 ): [number, number, number] {
   const normalizedSaturation = clampColorAdjustment(saturation);
   const normalizedVibrance = clampColorAdjustment(vibrance);
   if (normalizedSaturation !== 0) {
     const [, currentSaturation] = rgbToHsvExtended(r, g, b);
+    const scaledSaturation = currentSaturation * colorSaturationFactor(normalizedSaturation);
+    const targetSaturation = applyRolloffScalar(scaledSaturation, saturationRolloff);
     [r, g, b] = applyHsvSaturationPreservingProPhotoLuminance(
       r, g, b,
-      currentSaturation * colorSaturationFactor(normalizedSaturation),
+      targetSaturation,
     );
   }
   if (normalizedVibrance !== 0) {
@@ -719,15 +721,9 @@ export function applySaturationVibranceAndFinalRolloffLinearRgb(
     );
   }
   if (!applyFinalRolloff) return [r, g, b];
-  // Passing finalRolloff explicitly selects the percentile-based final display
-  // path. A null value means that P99.8 did not exceed display white, so only
-  // clip the exceptional channels above 1 instead of falling back to the old
-  // per-pixel max-channel normalization. Omitting the argument preserves the
-  // legacy behavior for callers that have not migrated yet.
-  if (finalRolloff !== undefined) {
-    return applyDisplayRolloffAndClipLinearToRgb(r, g, b, finalRolloff);
-  }
-  return applyFinalMaxChannelRolloffLinearRgb(r, g, b);
+  // A null percentile-derived rolloff means P99.8 is already within the
+  // display range; clip only the exceptional outliers.
+  return applyDisplayRolloffAndClipLinearToRgb(r, g, b, finalRolloff ?? null);
 }
 
 export function applyColorAdjustmentsAfterToneLinearRgb(
@@ -744,9 +740,11 @@ export function applyColorAdjustmentsAfterToneLinearRgb(
     context.normalizedSaturation,
     context.normalizedVibrance,
     false,
+    undefined,
+    context.saturationRolloff,
   );
   if (!applyFinalRolloff) return [r, g, b];
-  return applyHighlightRolloffAndClipLinearToRgb(r, g, b, context.finalRolloff);
+  return applyDisplayRolloffAndClipLinearToRgb(r, g, b, context.finalRolloff);
 }
 
 export function hasColorAdjustmentContextChanges(context: ColorAdjustmentContext): boolean {

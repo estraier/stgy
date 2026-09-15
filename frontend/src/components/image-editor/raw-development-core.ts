@@ -1,10 +1,10 @@
 import {
-  HIGHLIGHT_ROLLOFF_INFLECTION,
+  ROLLOFF_SAVING_LIMIT_FACTOR,
   SIGMOID_WORKING_GAMMA,
-  applyHighlightRolloffScalar,
+  applyRolloffScalar,
   applyScaledLogLinear,
-  createHighlightRolloff,
-  type HighlightRolloff,
+  rolloffParams,
+  type RolloffParams,
 } from "@/image/tone";
 
 export type RawHeadroomStatistics = {
@@ -28,14 +28,14 @@ export type RawMatchedTonePlan = {
   scaledLog: number;
   sigmoid: number;
   toneSlopeAtWhite: number;
-  rolloff: HighlightRolloff | null;
+  rolloff: RolloffParams | null;
 };
 
 export type RawStorageTransfer = "linear" | "gamma20";
 
 export type RawFallbackPlan = {
   factor: number;
-  rolloff: HighlightRolloff | null;
+  rolloff: RolloffParams | null;
 };
 
 export type RawLensfunCorrectionMaps = {
@@ -56,7 +56,7 @@ export type RawColorPassPlan = {
   hasVibrance: boolean;
   saturationFactor: number;
   vibranceFactor: number;
-  saturationRolloff: { inflection: number; scale: number } | null;
+  saturationRolloff: RolloffParams | null;
 };
 
 export type RawFallbackResult = {
@@ -81,6 +81,10 @@ export type RawDenoiseMaskAnalysis = {
 };
 
 const RAW_DEVELOPED_LINEAR_RANGE_MAX = 2;
+const RAW_DEVELOPED_ROLLOFF_A = RAW_DEVELOPED_LINEAR_RANGE_MAX / 2;
+const RAW_DEVELOPED_ROLLOFF_SAVING_LIMIT = ROLLOFF_SAVING_LIMIT_FACTOR;
+const RAW_DEVELOPED_ROLLOFF_PERCENTILE = 99.8;
+const RAW_ROLLOFF_SAMPLE_LIMIT = 65_536;
 const RAW_HEADROOM_HISTOGRAM_STEP = 0.1;
 const RAW_HEADROOM_HISTOGRAM_MAX = 2;
 const RAW_BASELINE_PERCENTILE = 98;
@@ -125,14 +129,6 @@ function decodeStoredUint16(
 
 function encodeGamma20Uint16(value: number, linearRangeMax: number): number {
   return Math.round(Math.sqrt(clamp01(value / linearRangeMax)) * 65535);
-}
-
-function applyRolloffScalar(
-  value: number,
-  rolloff: { inflection: number; scale: number } | null,
-): number {
-  if (!rolloff || value <= rolloff.inflection) return value;
-  return rolloff.inflection + (value - rolloff.inflection) * rolloff.scale;
 }
 
 function naiveSigmoid(value: number, gain: number, mid: number): number {
@@ -351,7 +347,7 @@ export function applyRawMatchedTonePass(
       let adjustedB = b * scale;
       const adjustedMax = Math.max(adjustedR, adjustedG, adjustedB);
       if (plan.rolloff && adjustedMax > plan.rolloff.inflection) {
-        const rolledMax = applyHighlightRolloffScalar(adjustedMax, plan.rolloff);
+        const rolledMax = applyRolloffScalar(adjustedMax, plan.rolloff);
         const rolloffScale = rolledMax / adjustedMax;
         adjustedR *= rolloffScale;
         adjustedG *= rolloffScale;
@@ -547,7 +543,7 @@ export function applyRawFallbackPlanPass(
       let b = decodeStoredUint16(data[i + 2] ?? 0, sourceLinearRangeMax, sourceTransfer) * gains[2] * plan.factor;
       const maxChannel = Math.max(r, g, b);
       if (plan.rolloff && maxChannel > plan.rolloff.inflection) {
-        const rolledMax = applyHighlightRolloffScalar(maxChannel, plan.rolloff);
+        const rolledMax = applyRolloffScalar(maxChannel, plan.rolloff);
         const rolloffScale = rolledMax / maxChannel;
         r *= rolloffScale;
         g *= rolloffScale;
@@ -574,6 +570,10 @@ export function applyRawFallbackBaselinePass(
   const pixelCount = width * height;
   if (pixelCount <= 0) return null;
   const gains: [number, number, number] = [1, 1, 1];
+  const sampleStride = Math.max(1, Math.ceil(pixelCount / RAW_ROLLOFF_SAMPLE_LIMIT));
+  const maxSamples = new Float32Array(Math.ceil(pixelCount / sampleStride));
+  let maxSampleCount = 0;
+  let pixelIndex = 0;
   let i = 0;
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++, i += 3) {
@@ -583,19 +583,29 @@ export function applyRawFallbackBaselinePass(
       const b = decodeStoredUint16(data[i + 2] ?? 0, sourceLinearRangeMax, sourceTransfer) * gains[2];
       const rms = Math.sqrt((r * r + g * g + b * b) / 3);
       rmsHistogram[Math.min(65535, Math.max(0, Math.round(rms * 65535)))]++;
+      if (pixelIndex % sampleStride === 0 && maxSampleCount < maxSamples.length) {
+        maxSamples[maxSampleCount++] = Math.max(r, g, b);
+      }
+      pixelIndex++;
     }
   }
   const p98 = histogramPercentile16(rmsHistogram, pixelCount, RAW_BASELINE_PERCENTILE) / 65535;
   if (!(p98 > 0)) return null;
   const factor = RAW_BASELINE_TARGET / p98;
+  const sortedMaxSamples = maxSampleCount === maxSamples.length
+    ? maxSamples
+    : maxSamples.slice(0, maxSampleCount);
+  sortedMaxSamples.sort();
+  const maxP998 = scalarPercentile(sortedMaxSamples, RAW_DEVELOPED_ROLLOFF_PERCENTILE) * factor;
   const plan: RawFallbackPlan = {
     factor,
-    rolloff: createHighlightRolloff(
+    rolloff: rolloffParams(
+      maxP998,
+      RAW_DEVELOPED_ROLLOFF_A,
+      RAW_DEVELOPED_ROLLOFF_SAVING_LIMIT,
       RAW_DEVELOPED_LINEAR_RANGE_MAX,
-      HIGHLIGHT_ROLLOFF_INFLECTION,
     ),
   };
-  if (!plan.rolloff) return null;
   const headroom = applyRawFallbackPlanPass(
     data,
     width,
@@ -861,7 +871,7 @@ export function developRawMasterOnePassToGamma20(
           b *= scale;
           const maxChannel = Math.max(r, g, b);
           if (tonePlan.rolloff && maxChannel > tonePlan.rolloff.inflection) {
-            const rolledMax = applyHighlightRolloffScalar(maxChannel, tonePlan.rolloff);
+            const rolledMax = applyRolloffScalar(maxChannel, tonePlan.rolloff);
             const rolloffScale = rolledMax / maxChannel;
             r *= rolloffScale;
             g *= rolloffScale;
@@ -878,7 +888,7 @@ export function developRawMasterOnePassToGamma20(
         b *= fallbackPlan.factor;
         const maxChannel = Math.max(r, g, b);
         if (fallbackPlan.rolloff && maxChannel > fallbackPlan.rolloff.inflection) {
-          const rolledMax = applyHighlightRolloffScalar(maxChannel, fallbackPlan.rolloff);
+          const rolledMax = applyRolloffScalar(maxChannel, fallbackPlan.rolloff);
           const rolloffScale = rolledMax / maxChannel;
           r *= rolloffScale;
           g *= rolloffScale;

@@ -40,6 +40,9 @@ import {
 } from "./scratch";
 import { FocusWorkerClient, OrbWorkerClient } from "./worker-clients";
 import {
+  EXPOSURE_ROLLOFF_A,
+  ROLLOFF_SAVING_LIMIT_FACTOR,
+  applyRolloffScalar,
   applyScaledLogLinear,
   applySigmoidLinear,
   applySigmoidLinearAtMidpoint,
@@ -3291,13 +3294,10 @@ function applyExposureAndRolloffInPlace(linear, gain, exposureRolloffBaseP998 = 
     }
   }
 
-  const rolloff = rolloffParams(maxVal);
+  const rolloff = rolloffParams(maxVal, EXPOSURE_ROLLOFF_A, ROLLOFF_SAVING_LIMIT_FACTOR, 1);
   if (!rolloff) return;
   for (let i = 0; i < linear.length; i += 1) {
-    const value = linear[i];
-    if (value > rolloff.inflection) {
-      linear[i] = rolloff.inflection + (value - rolloff.inflection) * rolloff.scale;
-    }
+    linear[i] = applyRolloffScalar(linear[i], rolloff);
   }
 }
 

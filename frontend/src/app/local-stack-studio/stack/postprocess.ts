@@ -1,5 +1,8 @@
 import type { ImageEditOutputColorProfile } from "@/image/types";
 import {
+  FINAL_DISPLAY_ROLLOFF_A,
+  ROLLOFF_SAVING_LIMIT_FACTOR,
+  SATURATION_ROLLOFF_A,
   applyHighlightLinear,
   applyLuminanceGainPreservingAboveOneLinearRgb,
   applyLuminanceMappingToRgb,
@@ -11,14 +14,17 @@ import {
   clampScaledLog,
   clampSigmoid,
   clampToneRangeAdjustment,
+  colorSaturationFactor,
   proPhotoLinearLuminance,
+  rgbToHsvExtended,
   rolloffParams,
+  type RolloffParams,
 } from "@/image/tone";
 
 export const STACK_LOGARITHM_LIMIT = 30;
 const STACK_FINAL_ROLLOFF_PERCENTILE = 0.998;
-const STACK_FINAL_ROLLOFF_ASYMPTOTIC = 0.9;
-const STACK_FINAL_ROLLOFF_SAVING_LIMIT = 4;
+const STACK_FINAL_ROLLOFF_A = FINAL_DISPLAY_ROLLOFF_A;
+const STACK_FINAL_ROLLOFF_SAVING_LIMIT = ROLLOFF_SAVING_LIMIT_FACTOR;
 
 export type StackClaheMap = {
   width: number;
@@ -34,7 +40,10 @@ export type StackToneStage =
   | "shadow"
   | "highlight";
 
-export type StackFinalRolloff = { inflection: number; scale: number } | null;
+export type StackFinalRolloff = {
+  saturationRolloff: RolloffParams | null;
+  finalRolloff: RolloffParams | null;
+} | null;
 
 type StackToneContext = {
   gain: number;
@@ -102,7 +111,9 @@ export function computeStackFinalRolloff(
   saturation: number,
   highlightP100: number | null = null,
 ): StackFinalRolloff {
-  if (!sourceLinear || sourceLinear.length < 3) return null;
+  if (!sourceLinear || sourceLinear.length < 3) {
+    return { saturationRolloff: null, finalRolloff: null };
+  }
   const toneContext = buildStackToneContext(
     exposureEv,
     shadow,
@@ -112,11 +123,14 @@ export function computeStackFinalRolloff(
     highlightP100,
   );
   const pixelCount = Math.floor(sourceLinear.length / 3);
-  if (pixelCount <= 0) return null;
-  const maxima = new Float32Array(pixelCount);
-  let count = 0;
-  for (let sourceIndex = 0; sourceIndex + 2 < sourceLinear.length; sourceIndex += 3) {
-    let [r, g, b] = applyStackToneAdjustmentsLinearRgbRange(
+  if (pixelCount <= 0) return { saturationRolloff: null, finalRolloff: null };
+
+  const toneAdjusted = new Float32Array(pixelCount * 3);
+  const saturationFactor = colorSaturationFactor(saturation);
+  const saturationValues = saturationFactor > 1 ? new Float32Array(pixelCount) : null;
+  let saturationCount = 0;
+  for (let pixel = 0, sourceIndex = 0; pixel < pixelCount; pixel += 1, sourceIndex += 3) {
+    const [r, g, b] = applyStackToneAdjustmentsLinearRgbRange(
       sourceLinear[sourceIndex] ?? 0,
       sourceLinear[sourceIndex + 1] ?? 0,
       sourceLinear[sourceIndex + 2] ?? 0,
@@ -124,6 +138,30 @@ export function computeStackFinalRolloff(
       "source",
       "highlight",
     );
+    toneAdjusted[sourceIndex] = r;
+    toneAdjusted[sourceIndex + 1] = g;
+    toneAdjusted[sourceIndex + 2] = b;
+    if (saturationValues) {
+      saturationValues[saturationCount++] = rgbToHsvExtended(r, g, b)[1];
+    }
+  }
+
+  let saturationRolloff: RolloffParams | null = null;
+  if (saturationValues && saturationCount > 0) {
+    const sorted = saturationCount === saturationValues.length
+      ? saturationValues
+      : saturationValues.slice(0, saturationCount);
+    sorted.sort();
+    const p998 = percentileFromSortedFloat32(sorted, STACK_FINAL_ROLLOFF_PERCENTILE);
+    saturationRolloff = rolloffParams(p998 * saturationFactor, SATURATION_ROLLOFF_A, ROLLOFF_SAVING_LIMIT_FACTOR, 1);
+  }
+
+  const maxima = new Float32Array(pixelCount);
+  let count = 0;
+  for (let sourceIndex = 0; sourceIndex + 2 < toneAdjusted.length; sourceIndex += 3) {
+    let r = toneAdjusted[sourceIndex] ?? 0;
+    let g = toneAdjusted[sourceIndex + 1] ?? 0;
+    let b = toneAdjusted[sourceIndex + 2] ?? 0;
     [r, g, b] = applySaturationVibranceAndFinalRolloffLinearRgb(
       r,
       g,
@@ -131,25 +169,36 @@ export function computeStackFinalRolloff(
       saturation,
       vibrance,
       false,
+      undefined,
+      saturationRolloff,
     );
     const maxChannel = Math.max(r, g, b);
     if (Number.isFinite(maxChannel)) maxima[count++] = maxChannel;
   }
-  if (count <= 0) return null;
+  if (count <= 0) return { saturationRolloff, finalRolloff: null };
   const sorted = count === maxima.length ? maxima : maxima.slice(0, count);
   sorted.sort();
-  const rank = (sorted.length - 1) * STACK_FINAL_ROLLOFF_PERCENTILE;
+  const p998 = percentileFromSortedFloat32(sorted, STACK_FINAL_ROLLOFF_PERCENTILE);
+  return {
+    saturationRolloff,
+    finalRolloff: rolloffParams(
+      p998,
+      STACK_FINAL_ROLLOFF_A,
+      STACK_FINAL_ROLLOFF_SAVING_LIMIT,
+      1,
+    ),
+  };
+}
+
+function percentileFromSortedFloat32(sorted: Float32Array, quantile: number): number {
+  if (!sorted.length) return 0;
+  const rank = (sorted.length - 1) * Math.min(1, Math.max(0, quantile));
   const lower = Math.floor(rank);
   const upper = Math.ceil(rank);
   const fraction = rank - lower;
   const lo = sorted[lower] ?? 0;
   const hi = sorted[upper] ?? lo;
-  const p998 = lo + (hi - lo) * fraction;
-  return rolloffParams(
-    p998,
-    STACK_FINAL_ROLLOFF_ASYMPTOTIC,
-    STACK_FINAL_ROLLOFF_SAVING_LIMIT,
-  );
+  return lo + (hi - lo) * fraction;
 }
 
 export function isUsableStackClaheMap(
@@ -490,7 +539,8 @@ export function adjustStackLinearDataPostTone(
         saturation,
         vibrance,
         applyFinalRolloff,
-        finalRolloff,
+        finalRolloff?.finalRolloff,
+        finalRolloff?.saturationRolloff ?? null,
       );
       result[sourceIndex] = r;
       result[sourceIndex + 1] = g;

@@ -295,11 +295,11 @@ describe("image editor tone characterization", () => {
     );
     expect(imageEditor.proPhotoLinearLuminance(...saturated)).toBeCloseTo(sourceY, 12);
 
-    const rolled = imageEditor.applyFinalMaxChannelRolloffLinearRgb(1.2, 0.6, 0.3);
-    expect(rolled[0]).toBeGreaterThan(0.9);
-    expect(rolled[0]).toBeLessThan(1);
-    expect(rolled[0] / rolled[1]).toBeCloseTo(2, 12);
-    expect(rolled[1] / rolled[2]).toBeCloseTo(2, 12);
+    const finalRolloff = imageEditor.rolloffParams(1.2, 0.9, 4, 1);
+    const rolled = imageEditor.applyDisplayRolloffAndClipLinearToRgb(1.2, 0.6, 0.3, finalRolloff);
+    expect(rolled[0]).toBeCloseTo(1, 12);
+    expect(rolled[1]).toBeCloseTo(0.6, 12);
+    expect(rolled[2]).toBeCloseTo(0.3, 12);
   });
 
   test("freezes Logarithm, Sigmoid, rolloff and the combined tone pipeline", () => {
@@ -314,10 +314,30 @@ describe("image editor tone characterization", () => {
       0.926053948381,
     ]);
 
-    const rolloff = imageEditor.rolloffParams(2, 0.5, 4);
+    const rolloff = imageEditor.rolloffParams(2, 0.5, 4, 1);
     expect(rolloff).not.toBeNull();
     expect(rolloff?.inflection).toBeCloseTo(0.75, 12);
-    expect(rolloff?.scale).toBeCloseTo(0.19999984000012802, 12);
+    expect(rolloff?.inputMax).toBeCloseTo(2, 12);
+    expect(rolloff?.outputMax).toBeCloseTo(1, 12);
+    if (rolloff) {
+      const epsilon = 1e-6;
+      const slopeAtInflection = (
+        imageEditor.applyRolloffScalar(rolloff.inflection + epsilon, rolloff)
+        - rolloff.inflection
+      ) / epsilon;
+      expect(slopeAtInflection).toBeCloseTo(1, 4);
+      expect(imageEditor.applyRolloffScalar(1.375, rolloff)).toBeGreaterThan(0.875);
+      expect(imageEditor.applyRolloffScalar(rolloff.inputMax, rolloff)).toBeCloseTo(1, 12);
+    }
+
+    const range2 = imageEditor.rolloffParams(10, 1, 4, 2);
+    expect(range2).not.toBeNull();
+    if (range2) {
+      const adjustedA = 2 * Math.pow(0.5, 8 / 10);
+      const expectedInflection = adjustedA + (2 - adjustedA) * 2 / 10;
+      expect(range2.inflection).toBeCloseTo(expectedInflection, 12);
+      expect(range2.outputMax).toBe(2);
+    }
 
     const tone = imageEditor.applyToneLinearToRgb(
       0.12,
@@ -418,6 +438,26 @@ describe("image editor RGB16 characterization", () => {
     });
   });
 
+  test("uses P99.8 for the Saturation rolloff", () => {
+    const pixelCount = 1000;
+    const data = new Float32Array(pixelCount * 3);
+    for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+      const saturation = pixel < 990 ? 0.4 : pixel < 998 ? 0.6 : 0.9;
+      const i = pixel * 3;
+      data[i] = 1;
+      data[i + 1] = 1 - saturation;
+      data[i + 2] = 1 - saturation;
+    }
+    const context = imageEditor.buildColorAdjustmentContextFromLinearRgbSample(
+      { data, width: pixelCount, height: 1 },
+      0, 0, 0, 0, 0, 0, 0, 0, 100,
+    );
+    // P99 would stay at 0.4 and would not roll off after x2 saturation;
+    // P99.8 reaches the 0.6 tail and therefore produces a shoulder.
+    expect(context.saturationRolloff).not.toBeNull();
+    expect(context.saturationRolloff?.inputMax).toBeGreaterThan(1);
+  });
+
   test("uses the same shared context and final display rolloff for normal analysis paths", () => {
     const sample = {
       data: new Float32Array([
@@ -435,7 +475,9 @@ describe("image editor RGB16 characterization", () => {
       sample, 0, 0, 0, 0, 0, 0, 0, 0, 100,
     );
 
-    expect(shared.finalRolloff).toEqual({ inflection: 0.9, ceiling: 1 });
+    expect(shared.saturationRolloff).not.toBeNull();
+    expect(shared.finalRolloff).not.toBeNull();
+    expect(interactive.saturationRolloff).toEqual(shared.saturationRolloff);
     expect(interactive.finalRolloff).toEqual(shared.finalRolloff);
     expect({
       hasSaturation: interactive.hasSaturation,
