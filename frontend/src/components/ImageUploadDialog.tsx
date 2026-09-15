@@ -3874,18 +3874,6 @@ function transformedRawLumaValue(
   return rawBaselineToneCurveValue(rawLuma * gain, scaledLog, sigmoid);
 }
 
-function transformedRawLumaValueExtended(
-  rawLuma: number,
-  gain: number,
-  scaledLog: number,
-  sigmoid: number,
-  toneSlopeAtWhite: number,
-): number {
-  const exposed = rawLuma * gain;
-  if (exposed <= 1) return rawBaselineToneCurveValue(exposed, scaledLog, sigmoid);
-  return 1 + Math.max(0, toneSlopeAtWhite) * (exposed - 1);
-}
-
 const RAW_THUMBNAIL_MATCH_EXPOSURE_PERCENTILE_MAX = 98;
 const RAW_THUMBNAIL_MATCH_EXPOSURE_PERCENTILE_MIN = 90;
 const RAW_THUMBNAIL_MATCH_EXPOSURE_SATURATION_LIMIT = 0.97;
@@ -7891,10 +7879,6 @@ export function ImageEditDialog({
   const peepRenderedSettingsKeyRef = useRef<string | null>(null);
   const peepRequestedCenterRef = useRef<EditPoint | null>(null);
   const peepAutoOpenRef = useRef(false);
-  const peepDragStateRef = useRef<
-    | null
-    | { pointerId: number; startPoint: EditPoint; startRect: EditRect }
-  >(null);
   const peepExpandedDragStateRef = useRef<
     | null
     | {
@@ -10495,50 +10479,12 @@ export function ImageEditDialog({
     peepRectRef.current = { x: 0, y: 0, w: 0, h: 0 };
     peepRequestedCenterRef.current = null;
     peepAutoOpenRef.current = false;
-    peepDragStateRef.current = null;
     peepExpandedDragStateRef.current = null;
     peepRenderedSettingsKeyRef.current = null;
     const rendered = peepRenderedCanvasRef.current;
     peepRenderedCanvasRef.current = null;
     if (rendered) releaseCanvasIfNeeded(rendered);
   }, []);
-
-  const onPeepRectPointerDown = useCallback((e: React.PointerEvent) => {
-    if (e.button !== 0 || peepExpanded || peepBusy) return;
-    (e.currentTarget as Element).setPointerCapture(e.pointerId);
-    peepDragStateRef.current = {
-      pointerId: e.pointerId,
-      startPoint: toLocal(e),
-      startRect: peepRect,
-    };
-    e.preventDefault();
-    e.stopPropagation();
-  }, [peepExpanded, peepBusy, peepRect, toLocal]);
-
-  const onPeepRectPointerMove = useCallback((e: React.PointerEvent) => {
-    const state = peepDragStateRef.current;
-    if (!state || state.pointerId !== e.pointerId) return;
-    const point = toLocal(e);
-    const dx = point.x - state.startPoint.x;
-    const dy = point.y - state.startPoint.y;
-    const x = Math.max(cropRect.x, Math.min(cropRect.x + cropRect.w - state.startRect.w, state.startRect.x + dx));
-    const y = Math.max(cropRect.y, Math.min(cropRect.y + cropRect.h - state.startRect.h, state.startRect.y + dy));
-    const next = { ...state.startRect, x, y };
-    peepRectRef.current = next;
-    setPeepRect(next);
-    e.preventDefault();
-  }, [cropRect, toLocal]);
-
-  const onPeepRectPointerUp = useCallback((e: React.PointerEvent) => {
-    const state = peepDragStateRef.current;
-    if (!state || state.pointerId !== e.pointerId) return;
-    try {
-      (e.currentTarget as Element).releasePointerCapture(e.pointerId);
-    } catch {}
-    peepDragStateRef.current = null;
-    e.preventDefault();
-  }, []);
-
 
   const closePeepExpanded = useCallback(() => {
     deactivatePeepMode();
@@ -10992,7 +10938,6 @@ export function ImageEditDialog({
       clearTimeout(peepRerenderTimerRef.current);
       peepRerenderTimerRef.current = null;
     }
-    peepDragStateRef.current = null;
     peepExpandedDragStateRef.current = null;
     peepRenderedSettingsKeyRef.current = null;
     const renderedPeep = peepRenderedCanvasRef.current;
@@ -12400,51 +12345,6 @@ export function ImageEditDialog({
                       className="absolute border-2 border-dashed border-white bg-black/10 shadow-[0_0_0_1px_rgba(0,0,0,0.65)] pointer-events-none"
                       style={{ left: mosaicDraft.x, top: mosaicDraft.y, width: mosaicDraft.w, height: mosaicDraft.h }}
                     />
-                  )}
-                  {false && peepMode && !peepExpanded && peepRect.w > 0 && peepRect.h > 0 && (
-                    <>
-                      <svg className="absolute inset-0 z-[34] h-full w-full pointer-events-none" aria-hidden="true">
-                        <path
-                          d={`M${cropRect.x},${cropRect.y} H${cropRect.x + cropRect.w} V${cropRect.y + cropRect.h} H${cropRect.x} Z M${peepRect.x},${peepRect.y} H${peepRect.x + peepRect.w} V${peepRect.y + peepRect.h} H${peepRect.x} Z`}
-                          fill="rgba(0,0,0,0.32)"
-                          fillRule="evenodd"
-                        />
-                      </svg>
-                      <div
-                        className="absolute z-[35] cursor-move border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.65)]"
-                        style={{ left: peepRect.x, top: peepRect.y, width: peepRect.w, height: peepRect.h }}
-                        onPointerDown={onPeepRectPointerDown}
-                        onPointerMove={onPeepRectPointerMove}
-                        onPointerUp={onPeepRectPointerUp}
-                        onPointerCancel={onPeepRectPointerUp}
-                        onDoubleClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          const point = toLocal(e);
-                          beginPeepMode(
-                            {
-                              x: Math.max(cropRect.x, Math.min(cropRect.x + cropRect.w, point.x)),
-                              y: Math.max(cropRect.y, Math.min(cropRect.y + cropRect.h, point.y)),
-                            },
-                            true,
-                          );
-                        }}
-                        aria-label="Move Peep region"
-                      >
-                        <button
-                          type="button"
-                          className="absolute left-0 top-0 rounded-br border-b border-r border-white bg-black/80 px-2 py-1 text-[11px] font-medium text-white hover:bg-black"
-                          onPointerDown={(e) => e.stopPropagation()}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void renderPeep();
-                          }}
-                          disabled={peepBusy}
-                        >
-                          Peep
-                        </button>
-                      </div>
-                    </>
                   )}
                   {!eyedropperMode && !rotationMode && (
                     <div

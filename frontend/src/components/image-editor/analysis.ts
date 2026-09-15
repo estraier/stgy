@@ -136,13 +136,6 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
     ? { p100: highlightMax }
     : null;
   const hasHighlight = normalizedHighlight !== 0 && highlightRange !== null;
-  const toneFlags = {
-    hasExposure,
-    hasShadow,
-    hasHighlight,
-    hasScaledLog,
-    hasSigmoid,
-  };
   const saturationFactor = colorSaturationFactor(normalizedSaturation);
   const vibranceFactor = colorVibranceFactor(normalizedVibrance);
   const finalRolloff = needsFinalRolloff
