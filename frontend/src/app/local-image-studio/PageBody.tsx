@@ -17,6 +17,7 @@ import {
   type RawHighlightMode,
 } from "@/components/ImageUploadDialog";
 import type { ImageEditClarityMap } from "@/components/image-editor/clarity";
+import type { DefringeAnalysisMap } from "@/components/image-editor/defringe";
 import { Config } from "@/config";
 import { isRawImageFile } from "@/image/libraw";
 import { formatBytes } from "@/utils/format";
@@ -464,6 +465,7 @@ export default function LocalImageStudio() {
     decodedImage?: DecodedImage,
     rebuildEditedVariant = false,
     previewClarityMap?: ImageEditClarityMap | null,
+    defringeMap?: DefringeAnalysisMap | null,
   ) => {
     setProcessing(true);
     setError(null);
@@ -482,6 +484,7 @@ export default function LocalImageStudio() {
           cacheColorProfile,
           undefined,
           previewClarityMap,
+          defringeMap,
         );
         releasePreparedVariant(editedVariantRef.current);
         editedVariantRef.current = nextPrepared;
@@ -523,6 +526,7 @@ export default function LocalImageStudio() {
     params: ImageEditParams,
     decodedImage?: DecodedImage,
     previewClarityMap?: ImageEditClarityMap | null,
+    defringeMap?: DefringeAnalysisMap | null,
   ) => {
     if (!source) {
       if (decodedImage && rawDevelopmentRef.current !== decodedImage) decodedImage.cleanup();
@@ -540,6 +544,7 @@ export default function LocalImageStudio() {
         decodedImage,
         true,
         previewClarityMap,
+        defringeMap,
       );
     } finally {
       if (decodedImage && rawDevelopmentRef.current !== decodedImage) decodedImage.cleanup();
@@ -822,8 +827,8 @@ export default function LocalImageStudio() {
           }}
           onCancel={() => setEditing(false)}
           onError={onEditError}
-          onApply={(params, decodedImage, previewClarityMap) =>
-            void onApply(params, decodedImage, previewClarityMap)
+          onApply={(params, decodedImage, previewClarityMap, defringeMap) =>
+            void onApply(params, decodedImage, previewClarityMap, defringeMap)
           }
         />
       )}

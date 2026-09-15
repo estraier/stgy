@@ -94,6 +94,13 @@ import {
 import { getCanvas2dContext, getCanvasImageData } from "./image-editor/canvas";
 import { applySharpenToCanvas, applySharpenToRgb16 } from "./image-editor/sharpen";
 import {
+  DEFRINGE_ANALYSIS_TARGET_PIXELS,
+  analyzeDefringeSample,
+  applyDefringeLinearRgb,
+  applyDefringeToRenderedSample,
+  type DefringeAnalysisMap,
+} from "./image-editor/defringe";
+import {
   buildImageEditClarityMap,
   buildImageEditClarityMapFromToneSample,
   buildImageEditToneSample,
@@ -108,6 +115,7 @@ import {
   decodeStoredRgb16Channel,
   encodeStoredRgb16Channel,
   analysisSampleDimensions,
+  clearRgb16SampleCaches,
   getAnalysisLinearRgbSample,
   getRenderedLinearRgbSample,
   inverseRotatePoint,
@@ -265,6 +273,7 @@ export type ImageEditParams = {
   rotationDegrees: number;
   temperature: number;
   tint: number;
+  defringe: number;
   exposureEv: number;
   shadow: number;
   highlight: number;
@@ -1197,12 +1206,18 @@ function normalizeVignetteOverlay(overlay?: Partial<ImageVignetteOverlay> | null
   };
 }
 
+function clampDefringe(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(100, Math.max(0, Math.round(value)));
+}
+
 export function buildDefaultEditParams(w?: number, h?: number): ImageEditParams {
   return {
     crop: { top: 0, bottom: 0, left: 0, right: 0 },
     rotationDegrees: 0,
     temperature: 0,
     tint: 0,
+    defringe: 0,
     exposureEv: 0,
     shadow: 0,
     highlight: 0,
@@ -1241,6 +1256,7 @@ function normalizeEditParams(params: ImageEditParams | undefined, w?: number, h?
     rotationDegrees: normalizeRotationDegrees(params?.rotationDegrees ?? defaults.rotationDegrees),
     temperature: clampWhiteBalanceValue(params?.temperature ?? defaults.temperature),
     tint: clampWhiteBalanceValue(params?.tint ?? defaults.tint),
+    defringe: clampDefringe(params?.defringe ?? defaults.defringe),
     exposureEv: clampExposureEv(params?.exposureEv ?? defaults.exposureEv),
     shadow: clampToneRangeAdjustment(params?.shadow ?? defaults.shadow),
     highlight: clampToneRangeAdjustment(params?.highlight ?? defaults.highlight),
@@ -1276,6 +1292,7 @@ function isMeaningfullyEdited(
     Math.abs(normalized.rotationDegrees) > 0.0001 ||
     normalized.temperature !== 0 ||
     normalized.tint !== 0 ||
+    normalized.defringe !== 0 ||
     Math.abs(normalized.exposureEv) > 0.0001 ||
     normalized.shadow !== 0 ||
     normalized.highlight !== 0 ||
@@ -5111,6 +5128,104 @@ type RawPreviewDevelopmentResult = {
   plan: RawProgressiveDevelopmentPlan;
 };
 
+async function buildDefringeAnalysisSample(decoded: DecodedRgbImage16): Promise<LinearRgbSample> {
+  const sourceW = Math.max(1, decoded.width);
+  const sourceH = Math.max(1, decoded.height);
+  const dimensions = analysisSampleDimensions(sourceW, sourceH, DEFRINGE_ANALYSIS_TARGET_PIXELS);
+  const sampleW = dimensions.width;
+  const sampleH = dimensions.height;
+  const output = new Float32Array(sampleW * sampleH * 3);
+
+  for (let y = 0; y < sampleH; y += 1) {
+    const sy0 = y * sourceH / sampleH;
+    const sy1 = (y + 1) * sourceH / sampleH;
+    const iy0 = Math.max(0, Math.floor(sy0));
+    const iy1 = Math.min(sourceH, Math.ceil(sy1));
+    for (let x = 0; x < sampleW; x += 1) {
+      const sx0 = x * sourceW / sampleW;
+      const sx1 = (x + 1) * sourceW / sampleW;
+      const ix0 = Math.max(0, Math.floor(sx0));
+      const ix1 = Math.min(sourceW, Math.ceil(sx1));
+      let sumR = 0;
+      let sumG = 0;
+      let sumB = 0;
+      let totalWeight = 0;
+      for (let sy = iy0; sy < iy1; sy += 1) {
+        const wy = Math.max(0, Math.min(sy + 1, sy1) - Math.max(sy, sy0));
+        if (!(wy > 0)) continue;
+        for (let sx = ix0; sx < ix1; sx += 1) {
+          const wx = Math.max(0, Math.min(sx + 1, sx1) - Math.max(sx, sx0));
+          const area = wx * wy;
+          if (!(area > 0)) continue;
+          const sourceIndex = (sy * sourceW + sx) * 3;
+          sumR += decodeStoredRgb16Channel(decoded.data[sourceIndex] ?? 0, decoded.transfer, decoded.linearRangeMax) * area;
+          sumG += decodeStoredRgb16Channel(decoded.data[sourceIndex + 1] ?? 0, decoded.transfer, decoded.linearRangeMax) * area;
+          sumB += decodeStoredRgb16Channel(decoded.data[sourceIndex + 2] ?? 0, decoded.transfer, decoded.linearRangeMax) * area;
+          totalWeight += area;
+        }
+      }
+      const invWeight = totalWeight > 0 ? 1 / totalWeight : 0;
+      const targetIndex = (y * sampleW + x) * 3;
+      output[targetIndex] = sumR * invWeight;
+      output[targetIndex + 1] = sumG * invWeight;
+      output[targetIndex + 2] = sumB * invWeight;
+    }
+    if ((y & 15) === 15 && y + 1 < sampleH) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+  }
+  return { data: output, width: sampleW, height: sampleH };
+}
+
+function createDefringeWorker(): Worker | null {
+  if (typeof Worker !== "function") return null;
+  try {
+    return new Worker(new URL("./image-editor/defringe.worker.ts", import.meta.url), { type: "module" });
+  } catch {
+    return null;
+  }
+}
+
+function analyzeDefringeSampleAsync(sample: LinearRgbSample): Promise<DefringeAnalysisMap> {
+  const worker = createDefringeWorker();
+  if (!worker) return Promise.resolve(analyzeDefringeSample(sample));
+  const data = sample.data;
+  return new Promise<DefringeAnalysisMap>((resolve, reject) => {
+    const cleanup = () => worker.terminate();
+    worker.onmessage = (event: MessageEvent) => {
+      const response = event.data as {
+        type?: string;
+        message?: string;
+        width?: number;
+        height?: number;
+        magentaBuffer?: ArrayBuffer;
+        greenBuffer?: ArrayBuffer;
+      };
+      if (response.type === "error") {
+        cleanup();
+        reject(new Error(response.message || "Defringe analysis failed"));
+        return;
+      }
+      if (response.type !== "complete" || !response.magentaBuffer || !response.greenBuffer) return;
+      cleanup();
+      resolve({
+        width: Math.max(1, Math.round(response.width ?? sample.width)),
+        height: Math.max(1, Math.round(response.height ?? sample.height)),
+        magenta: new Uint8Array(response.magentaBuffer),
+        green: new Uint8Array(response.greenBuffer),
+      });
+    };
+    worker.onerror = (event) => {
+      cleanup();
+      reject(new Error(event.message || "Defringe analysis worker failed"));
+    };
+    worker.postMessage(
+      { dataBuffer: data.buffer, width: sample.width, height: sample.height },
+      [data.buffer],
+    );
+  });
+}
+
 function createRawDevelopmentWorker(): Worker | null {
   if (typeof Worker !== "function") return null;
   try {
@@ -6374,17 +6489,31 @@ function releaseCanvasIfNeeded(canvas: HTMLCanvasElement | OffscreenCanvas): voi
 function buildFallbackImageEditClarityMap(
   decoded: DecodedRgbImage16,
   params: ImageEditParams,
+  defringeMap?: DefringeAnalysisMap | null,
 ): ImageEditClarityMap | null {
   const normalizedClarity = clampClarity(params.clarity);
   if (normalizedClarity === 0) return null;
   const sourceRect = { x: 0, y: 0, w: decoded.width, h: decoded.height };
-  const internalPreview = getAnalysisLinearRgbSample(
+  const rawInternalPreview = getAnalysisLinearRgbSample(
     decoded,
     sourceRect,
     0,
     IMAGE_EDIT_CLAHE_MIN_PIXELS,
   );
-  const contextSample = getAnalysisLinearRgbSample(decoded, sourceRect, 0);
+  const rawContextSample = getAnalysisLinearRgbSample(decoded, sourceRect, 0);
+  const defringeAmount = clampDefringe(params.defringe) / 100;
+  const internalPreview = defringeMap && defringeAmount > 0
+    ? applyDefringeToRenderedSample(
+        rawInternalPreview, defringeMap, defringeAmount,
+        decoded.width, decoded.height, sourceRect, 0,
+      )
+    : rawInternalPreview;
+  const contextSample = defringeMap && defringeAmount > 0
+    ? applyDefringeToRenderedSample(
+        rawContextSample, defringeMap, defringeAmount,
+        decoded.width, decoded.height, sourceRect, 0,
+      )
+    : rawContextSample;
   const context = buildInteractiveColorAdjustmentContextFromLinearRgbSample(
     contextSample,
     params.temperature,
@@ -6405,10 +6534,11 @@ function resolveImageEditClarityMap(
   decoded: DecodedRgbImage16,
   params: ImageEditParams,
   previewClarityMap?: ImageEditClarityMap | null,
+  defringeMap?: DefringeAnalysisMap | null,
 ): ImageEditClarityMap | null {
   if (clampClarity(params.clarity) === 0) return null;
   if (isUsableImageEditClarityMap(previewClarityMap)) return previewClarityMap;
-  return buildFallbackImageEditClarityMap(decoded, params);
+  return buildFallbackImageEditClarityMap(decoded, params, defringeMap);
 }
 
 async function buildEditedVariantFromDecoded(
@@ -6416,6 +6546,7 @@ async function buildEditedVariantFromDecoded(
   params: ImageEditParams,
   outputColorProfile: ImageEditOutputColorProfile,
   previewClarityMap?: ImageEditClarityMap | null,
+  defringeMap?: DefringeAnalysisMap | null,
 ): Promise<ImageEditPreparedVariant> {
   const w = decoded.width;
   const h = decoded.height;
@@ -6431,7 +6562,7 @@ async function buildEditedVariantFromDecoded(
   if (params.textOverlays.length > 0) {
     await ensureTextOverlayFontsReady(params.textOverlays);
   }
-  const clarityMap = resolveImageEditClarityMap(decoded, params, previewClarityMap);
+  const clarityMap = resolveImageEditClarityMap(decoded, params, previewClarityMap, defringeMap);
 
   // Keep the common ProPhoto/gamma2.0 Uint16 RGB source representation through crop/rotation
   // sampling, all tone/color math, and output-primary conversion. Quantize only when
@@ -6456,6 +6587,8 @@ async function buildEditedVariantFromDecoded(
       params.saturation,
       outputColorProfile,
       clarityMap,
+      defringeMap ?? null,
+      clampDefringe(params.defringe) / 100,
     );
   } else {
     const cropped = createImageEditCanvas(sw, sh);
@@ -6476,6 +6609,8 @@ async function buildEditedVariantFromDecoded(
         params.saturation,
         outputColorProfile,
         clarityMap,
+        defringeMap ?? null,
+        clampDefringe(params.defringe) / 100,
       );
       const outputCtx = getCanvas2dContext(output, outputColorProfile);
       if (!outputCtx) throw new Error("2D context unavailable");
@@ -6547,6 +6682,7 @@ export async function buildEditedVariant(
   outputColorProfile: ImageEditOutputColorProfile = "srgb",
   rawDemosaicQuality?: RawDemosaicQuality,
   previewClarityMap?: ImageEditClarityMap | null,
+  defringeMap?: DefringeAnalysisMap | null,
 ): Promise<ImageEditPreparedVariant> {
   const params = normalizeEditParams(edit, srcW, srcH);
   const ownsDecodedImage = !decodedImage;
@@ -6559,7 +6695,12 @@ export async function buildEditedVariant(
     rawDemosaicQuality,
   );
   try {
-    return await buildEditedVariantFromDecoded(decoded, params, outputColorProfile, previewClarityMap);
+    const resolvedDefringeMap = clampDefringe(params.defringe) > 0
+      ? defringeMap ?? await analyzeDefringeSampleAsync(await buildDefringeAnalysisSample(decoded))
+      : null;
+    return await buildEditedVariantFromDecoded(
+      decoded, params, outputColorProfile, previewClarityMap, resolvedDefringeMap,
+    );
   } finally {
     if (ownsDecodedImage) decoded.cleanup();
   }
@@ -6570,8 +6711,12 @@ export async function buildEditedDecodedRgb16(
   edit: ImageEditParams,
   outputColorProfile: ImageEditOutputColorProfile = "display-p3",
   previewClarityMap?: ImageEditClarityMap | null,
+  defringeMap?: DefringeAnalysisMap | null,
 ): Promise<DecodedRgbImage16> {
   const params = normalizeEditParams(edit, decoded.width, decoded.height);
+  const activeDefringeMap = clampDefringe(params.defringe) > 0
+    ? defringeMap ?? await analyzeDefringeSampleAsync(await buildDefringeAnalysisSample(decoded))
+    : null;
   const sourceW = decoded.width;
   const sourceH = decoded.height;
   const crop = normalizeCrop(params.crop);
@@ -6587,11 +6732,18 @@ export async function buildEditedDecodedRgb16(
   if (params.textOverlays.length > 0) {
     await ensureTextOverlayFontsReady(params.textOverlays);
   }
-  const clarityMap = resolveImageEditClarityMap(decoded, params, previewClarityMap);
+  const clarityMap = resolveImageEditClarityMap(decoded, params, previewClarityMap, defringeMap);
   const hasClarity = clarityMap !== null;
 
   const sourceRect = { x: sx, y: sy, w: cropW, h: cropH };
-  const contextSample = getAnalysisLinearRgbSample(decoded, sourceRect, params.rotationDegrees);
+  const rawContextSample = getAnalysisLinearRgbSample(decoded, sourceRect, params.rotationDegrees);
+  const defringeAmount = clampDefringe(params.defringe) / 100;
+  const contextSample = activeDefringeMap && defringeAmount > 0
+    ? applyDefringeToRenderedSample(
+        rawContextSample, activeDefringeMap, defringeAmount,
+        sourceW, sourceH, sourceRect, params.rotationDegrees,
+      )
+    : rawContextSample;
   const adjustmentContext = buildInteractiveColorAdjustmentContextFromLinearRgbSample(
     contextSample,
     params.temperature,
@@ -6628,6 +6780,7 @@ export async function buildEditedDecodedRgb16(
     canUseExactGeometry &&
     params.temperature === 0 &&
     params.tint === 0 &&
+    params.defringe === 0 &&
     params.exposureEv === 0 &&
     params.shadow === 0 &&
     params.highlight === 0 &&
@@ -6652,6 +6805,15 @@ export async function buildEditedDecodedRgb16(
       let r = decodeStoredRgb16Channel(decoded.data[index] ?? 0, decoded.transfer, decoded.linearRangeMax);
       let g = decodeStoredRgb16Channel(decoded.data[index + 1] ?? 0, decoded.transfer, decoded.linearRangeMax);
       let b = decodeStoredRgb16Channel(decoded.data[index + 2] ?? 0, decoded.transfer, decoded.linearRangeMax);
+      if (activeDefringeMap && defringeAmount > 0) {
+        const x = pixel % outputW;
+        const y = Math.floor(pixel / outputW);
+        [r, g, b] = applyDefringeLinearRgb(
+          r, g, b, activeDefringeMap, defringeAmount,
+          sourceW > 1 ? x / (sourceW - 1) : 0.5,
+          sourceH > 1 ? y / (sourceH - 1) : 0.5,
+        );
+      }
       if (hasClarity) {
         [r, g, b] = applyToneAdjustmentsLinearRgb(r, g, b, adjustmentContext);
         const x = pixel % outputW;
@@ -6690,11 +6852,21 @@ export async function buildEditedDecodedRgb16(
           sourceY < sourceH &&
           sampleLinearRgb16BilinearInto(decoded, sourceX, sourceY, sample, samplingScratch)
         ) {
+          let sourceR = sample[0];
+          let sourceG = sample[1];
+          let sourceB = sample[2];
+          if (activeDefringeMap && defringeAmount > 0) {
+            [sourceR, sourceG, sourceB] = applyDefringeLinearRgb(
+              sourceR, sourceG, sourceB, activeDefringeMap, defringeAmount,
+              sourceW > 1 ? sourceX / (sourceW - 1) : 0.5,
+              sourceH > 1 ? sourceY / (sourceH - 1) : 0.5,
+            );
+          }
           if (hasClarity) {
             [r, g, b] = applyToneAdjustmentsLinearRgb(
-              sample[0],
-              sample[1],
-              sample[2],
+              sourceR,
+              sourceG,
+              sourceB,
               adjustmentContext,
             );
             const clarityGain = sampleImageEditClarityGain(
@@ -6708,10 +6880,7 @@ export async function buildEditedDecodedRgb16(
             [r, g, b] = applyColorAdjustmentsAfterToneLinearRgb(r, g, b, adjustmentContext);
           } else {
             [r, g, b] = applyColorAdjustmentsLinearRgb(
-              sample[0],
-              sample[1],
-              sample[2],
-              adjustmentContext,
+              sourceR, sourceG, sourceB, adjustmentContext,
             );
           }
         }
@@ -6951,6 +7120,7 @@ export async function buildOptimizedVariant(
   decodedImage?: DecodedImage,
   outputColorProfile?: ImageEditOutputColorProfile,
   previewClarityMap?: ImageEditClarityMap | null,
+  defringeMap?: DefringeAnalysisMap | null,
 ): Promise<{ blob: Blob; width: number; height: number }> {
   const resolvedOutputColorProfile =
     outputColorProfile ?? (await detectBestEditableImageOutputColorProfile(file));
@@ -6965,6 +7135,7 @@ export async function buildOptimizedVariant(
     resolvedOutputColorProfile,
     undefined,
     previewClarityMap,
+    defringeMap,
   );
   try {
     return await encodeEditedVariant(prepared, quality, outputFormat, resolvedOutputColorProfile);
@@ -7060,6 +7231,7 @@ type EditDialogProps = {
     params: ImageEditParams,
     decodedImage?: DecodedImage,
     clarityMap?: ImageEditClarityMap | null,
+    defringeMap?: DefringeAnalysisMap | null,
   ) => void;
   onError?: (message: string) => void;
 };
@@ -7392,6 +7564,7 @@ export function ImageEditDialog({
   } | null>(null);
   const previewSourceSampleRef = useRef<{
     decoded: DecodedRgbImage16;
+    defringeKey: string;
     sample: LinearRgbSample;
     contextSample: LinearRgbSample;
   } | null>(null);
@@ -7414,6 +7587,9 @@ export function ImageEditDialog({
     sample: LinearRgbSample;
   } | null>(null);
   const previewRgba8Ref = useRef<Uint8ClampedArray | null>(null);
+  const defringeMapRef = useRef<{ decoded: DecodedRgbImage16; map: DefringeAnalysisMap } | null>(null);
+  const defringeMapPromiseRef = useRef<{ decoded: DecodedRgbImage16; requestId: number; promise: Promise<DefringeAnalysisMap> } | null>(null);
+  const defringeRequestIdRef = useRef(0);
   const decodedImageRef = useRef<DecodedImage | null>(null);
   const transferredDecodedImageRef = useRef<DecodedImage | null>(null);
   const rawMasterPromiseRef = useRef<Promise<DecodedRgbImage16> | null>(null);
@@ -7443,6 +7619,9 @@ export function ImageEditDialog({
     clampWhiteBalanceValue(initialParams.temperature),
   );
   const [tint, setTint] = useState<number>(clampWhiteBalanceValue(initialParams.tint));
+  const [defringe, setDefringe] = useState<number>(clampDefringe(initialParams.defringe ?? 0));
+  const [defringeAnalyzing, setDefringeAnalyzing] = useState(false);
+  const [defringeMapRevision, setDefringeMapRevision] = useState(0);
   const [exposureEv, setExposureEv] = useState<number>(clampExposureEv(initialParams.exposureEv));
   const [shadow, setShadow] = useState<number>(clampToneRangeAdjustment(initialParams.shadow ?? 0));
   const [highlight, setHighlight] = useState<number>(clampToneRangeAdjustment(initialParams.highlight ?? 0));
@@ -7533,6 +7712,61 @@ export function ImageEditDialog({
   useEffect(() => {
     onRawDevelopmentReadyRef.current = onRawDevelopmentReady;
   }, [onRawDevelopmentReady]);
+
+  const invalidateRenderDerivedCaches = useCallback(() => {
+    previewRenderedRef.current = null;
+    previewSourceSampleRef.current = null;
+    previewToneSampleCacheRef.current = null;
+    previewClarityMapCacheRef.current = null;
+    previewContinuousPrefixCacheRef.current = null;
+    previewRgba8Ref.current = null;
+    previewRasterSizeRef.current = null;
+    setPreviewRasterSize(null);
+    setHistogram(null);
+    setPercentileDebug(null);
+  }, []);
+
+  const invalidateBaseDerivedCaches = useCallback((previous?: DecodedRgbImage16 | null) => {
+    if (previous) clearRgb16SampleCaches(previous);
+    const current = decodedImageRef.current;
+    if (current && current !== previous) clearRgb16SampleCaches(current);
+    invalidateRenderDerivedCaches();
+    defringeRequestIdRef.current += 1;
+    defringeMapRef.current = null;
+    defringeMapPromiseRef.current = null;
+    setDefringeAnalyzing(false);
+    setDefringeMapRevision((revision) => revision + 1);
+  }, [invalidateRenderDerivedCaches]);
+
+  const ensureDefringeMap = useCallback((decoded: DecodedRgbImage16): Promise<DefringeAnalysisMap> => {
+    const cached = defringeMapRef.current;
+    if (cached?.decoded === decoded) return Promise.resolve(cached.map);
+    const active = defringeMapPromiseRef.current;
+    if (active?.decoded === decoded) return active.promise;
+
+    const requestId = ++defringeRequestIdRef.current;
+    setDefringeAnalyzing(true);
+    const promise = buildDefringeAnalysisSample(decoded)
+      .then((sample) => analyzeDefringeSampleAsync(sample))
+      .then((map) => {
+      if (defringeRequestIdRef.current === requestId && decodedImageRef.current === decoded) {
+        defringeMapRef.current = { decoded, map };
+        defringeMapPromiseRef.current = null;
+        setDefringeAnalyzing(false);
+        invalidateRenderDerivedCaches();
+        setDefringeMapRevision((revision) => revision + 1);
+      }
+      return map;
+    }).catch((error) => {
+      if (defringeRequestIdRef.current === requestId) {
+        defringeMapPromiseRef.current = null;
+        setDefringeAnalyzing(false);
+      }
+      throw error;
+    });
+    defringeMapPromiseRef.current = { decoded, requestId, promise };
+    return promise;
+  }, [invalidateRenderDerivedCaches]);
 
   const clearEmbeddedRawPreview = useCallback(() => {
     const currentUrl = embeddedRawPreviewUrlRef.current;
@@ -7650,6 +7884,8 @@ export function ImageEditDialog({
     setPercentileDebug(null);
     setRawThumbnailDebugStatistics(undefined);
     setRawDevelopmentMemoryUsage(undefined);
+    const previousBaseDecoded = decodedImageRef.current;
+    invalidateBaseDerivedCaches(previousBaseDecoded);
     decodedImageRef.current = null;
     transferredDecodedImageRef.current = null;
     rawMasterPromiseRef.current = null;
@@ -7664,11 +7900,6 @@ export function ImageEditDialog({
     setFullResolutionReady(false);
     setRawDevelopmentStage(null);
     rawLogicalSizeRef.current = null;
-    previewSourceSampleRef.current = null;
-    previewToneSampleCacheRef.current = null;
-    previewClarityMapCacheRef.current = null;
-    previewContinuousPrefixCacheRef.current = null;
-    previewRgba8Ref.current = null;
 
     const onLoadProgress: ImageLoadProgressListener = (progress) => {
       if (cancelled) return;
@@ -7687,12 +7918,7 @@ export function ImageEditDialog({
           decodedImageRef.current = thumbnailDecoded;
           cleanup = thumbnailDecoded.cleanup;
           editableThumbnailReadyRef.current = true;
-          previewRenderedRef.current = null;
-          previewSourceSampleRef.current = null;
-          previewToneSampleCacheRef.current = null;
-          previewClarityMapCacheRef.current = null;
-          previewContinuousPrefixCacheRef.current = null;
-          previewRgba8Ref.current = null;
+          invalidateBaseDerivedCaches(previousDecoded);
           const logicalWidth = preview.sourceWidth && preview.sourceWidth > 0 ? preview.sourceWidth : preview.width;
           const logicalHeight = preview.sourceHeight && preview.sourceHeight > 0 ? preview.sourceHeight : preview.height;
           rawLogicalSizeRef.current = { width: logicalWidth, height: logicalHeight };
@@ -7741,6 +7967,7 @@ export function ImageEditDialog({
         editableThumbnailReadyRef.current = false;
         cleanup = decoded.cleanup;
         decodedImageRef.current = decoded;
+        invalidateBaseDerivedCaches(previousDecoded);
         if (previousDecoded && previousDecoded !== decoded) previousDecoded.cleanup();
         setLoadingStage(null);
         const logicalSize = isRaw ? rawLogicalSizeRef.current : null;
@@ -7791,7 +8018,7 @@ export function ImageEditDialog({
               decodedImageRef.current = denoiseDecoded;
               cleanup = denoiseDecoded.cleanup;
               rawDenoisePromiseRef.current = null;
-              previewRenderedRef.current = null;
+              invalidateBaseDerivedCaches(masterDecoded);
               const logicalSize = rawLogicalSizeRef.current;
               setNatural(logicalSize
                 ? { w: logicalSize.width, h: logicalSize.height }
@@ -7815,9 +8042,10 @@ export function ImageEditDialog({
           rawMasterPromiseRef.current = masterPromise;
           void masterPromise.then((masterDecoded) => {
             if (cancelled || rawMasterPromiseRef.current !== masterPromise) return;
+            const previousDecoded = decodedImageRef.current;
             decodedImageRef.current = masterDecoded;
             cleanup = masterDecoded.cleanup;
-            previewRenderedRef.current = null;
+            invalidateBaseDerivedCaches(previousDecoded);
             const logicalSize = rawLogicalSizeRef.current;
             setNatural(logicalSize
               ? { w: logicalSize.width, h: logicalSize.height }
@@ -7833,6 +8061,7 @@ export function ImageEditDialog({
         }
       } catch (error) {
         if (!cancelled) {
+          invalidateBaseDerivedCaches(decodedImageRef.current);
           decodedImageRef.current = null;
           setNatural(null);
           setImageReady(false);
@@ -7848,11 +8077,8 @@ export function ImageEditDialog({
       editableThumbnailRequestRef.current += 1;
       rawForegroundPromiseRef.current = null;
       rawLogicalSizeRef.current = null;
+      invalidateBaseDerivedCaches(decodedImageRef.current);
       decodedImageRef.current = null;
-      previewSourceSampleRef.current = null;
-      previewToneSampleCacheRef.current = null;
-      previewClarityMapCacheRef.current = null;
-      previewRgba8Ref.current = null;
       const embeddedPreviewUrl = embeddedRawPreviewUrlRef.current;
       embeddedRawPreviewUrlRef.current = null;
       if (embeddedPreviewUrl) URL.revokeObjectURL(embeddedPreviewUrl);
@@ -7876,7 +8102,16 @@ export function ImageEditDialog({
     rawHighlightMode,
     clearEmbeddedRawPreview,
     showEmbeddedRawPreview,
+    invalidateBaseDerivedCaches,
   ]);
+
+  useEffect(() => {
+    const decoded = decodedImageRef.current;
+    if (!decoded || clampDefringe(defringe) === 0) return;
+    void ensureDefringeMap(decoded).catch((error) => {
+      onErrorRef.current?.(error instanceof Error ? error.message : String(error));
+    });
+  }, [defringe, decodedRevision, ensureDefringeMap]);
 
   useEffect(() => {
     if (!mounted) return;
@@ -9119,9 +9354,15 @@ export function ImageEditDialog({
       displayed.w,
       displayed.h,
     );
+    const activeMap = defringeMapRef.current?.decoded === previewSource
+      ? defringeMapRef.current.map
+      : null;
+    const defringeAmount = clampDefringe(defringe) / 100;
+    const defringeKey = `${defringeAmount}:${activeMap ? defringeMapRevision : 0}`;
     const cached = previewSourceSampleRef.current;
     if (
       cached?.decoded === previewSource
+      && cached.defringeKey === defringeKey
       && cached.sample.width === previewSize.width
       && cached.sample.height === previewSize.height
     ) {
@@ -9129,23 +9370,36 @@ export function ImageEditDialog({
     }
 
     const sourceRect = { x: 0, y: 0, w: previewSource.width, h: previewSource.height };
+    const renderedSample = getRenderedLinearRgbSample(
+      previewSource,
+      sourceRect,
+      0,
+      previewSize.width,
+      previewSize.height,
+    );
+    const analysisSample = getAnalysisLinearRgbSample(previewSource, sourceRect, 0);
     const next = {
       decoded: previewSource,
-      sample: getRenderedLinearRgbSample(
-        previewSource,
-        sourceRect,
-        0,
-        previewSize.width,
-        previewSize.height,
-      ),
-      contextSample: getAnalysisLinearRgbSample(previewSource, sourceRect, 0),
+      defringeKey,
+      sample: activeMap && defringeAmount > 0
+        ? applyDefringeToRenderedSample(
+            renderedSample, activeMap, defringeAmount,
+            previewSource.width, previewSource.height, sourceRect, 0,
+          )
+        : renderedSample,
+      contextSample: activeMap && defringeAmount > 0
+        ? applyDefringeToRenderedSample(
+            analysisSample, activeMap, defringeAmount,
+            previewSource.width, previewSource.height, sourceRect, 0,
+          )
+        : analysisSample,
     };
     previewSourceSampleRef.current = next;
     previewToneSampleCacheRef.current = null;
     previewClarityMapCacheRef.current = null;
     previewContinuousPrefixCacheRef.current = null;
     return next;
-  }, [displayed.h, displayed.w]);
+  }, [displayed.h, displayed.w, defringe, defringeMapRevision]);
 
   const previewContinuousPrefixKey = useCallback((stage: ImageEditPreviewSliderStage): string => {
     const values: Array<number | null> = [
@@ -9326,6 +9580,8 @@ export function ImageEditDialog({
       height,
       previewColorProfile,
       rotationDegrees,
+      defringe,
+      defringeMapRevision,
       temperature,
       tint,
       exposureEv,
@@ -9364,8 +9620,12 @@ export function ImageEditDialog({
 
       const previewSourceRect = { x: 0, y: 0, w: previewSource.width, h: previewSource.height };
       const normalizedRotation = normalizeRotationDegrees(rotationDegrees);
-      const previewSourceSample = normalizedRotation === 0
-        ? internalPreview.sample
+      const activeDefringeMap = defringeMapRef.current?.decoded === previewSource
+        ? defringeMapRef.current.map
+        : null;
+      const defringeAmount = clampDefringe(defringe) / 100;
+      const rotatedRenderedSample = normalizedRotation === 0
+        ? null
         : getRenderedLinearRgbSample(
             previewSource,
             previewSourceRect,
@@ -9373,13 +9633,29 @@ export function ImageEditDialog({
             width,
             height,
           );
-      const previewContextSample = normalizedRotation === 0
-        ? internalPreview.contextSample
+      const rotatedContextSample = normalizedRotation === 0
+        ? null
         : getAnalysisLinearRgbSample(
             previewSource,
             previewSourceRect,
             normalizedRotation,
           );
+      const previewSourceSample = normalizedRotation === 0
+        ? internalPreview.sample
+        : activeDefringeMap && defringeAmount > 0 && rotatedRenderedSample
+          ? applyDefringeToRenderedSample(
+              rotatedRenderedSample, activeDefringeMap, defringeAmount,
+              previewSource.width, previewSource.height, previewSourceRect, normalizedRotation,
+            )
+          : rotatedRenderedSample!;
+      const previewContextSample = normalizedRotation === 0
+        ? internalPreview.contextSample
+        : activeDefringeMap && defringeAmount > 0 && rotatedContextSample
+          ? applyDefringeToRenderedSample(
+              rotatedContextSample, activeDefringeMap, defringeAmount,
+              previewSource.width, previewSource.height, previewSourceRect, normalizedRotation,
+            )
+          : rotatedContextSample!;
       const adjustmentContext = buildInteractiveColorAdjustmentContextFromLinearRgbSample(
         previewContextSample,
         temperature,
@@ -9507,6 +9783,8 @@ export function ImageEditDialog({
     decodedRevision,
     temperature,
     tint,
+    defringe,
+    defringeMapRevision,
     exposureEv,
     shadow,
     highlight,
@@ -9542,6 +9820,17 @@ export function ImageEditDialog({
       return;
     }
     const clarityMap = resolvePreviewClarityMap(decoded);
+    const rawHistogramSample = getAnalysisLinearRgbSample(decoded, analysisSourceRect, rotationDegrees);
+    const activeDefringeMap = defringeMapRef.current?.decoded === decoded
+      ? defringeMapRef.current.map
+      : null;
+    const defringeAmount = clampDefringe(defringe) / 100;
+    const histogramSample = activeDefringeMap && defringeAmount > 0
+      ? applyDefringeToRenderedSample(
+          rawHistogramSample, activeDefringeMap, defringeAmount,
+          decoded.width, decoded.height, analysisSourceRect, rotationDegrees,
+        )
+      : rawHistogramSample;
     setHistogram(
       computeHistogramDataFromRgb16(
         decoded,
@@ -9557,6 +9846,7 @@ export function ImageEditDialog({
         vibrance,
         saturation,
         clarityMap,
+        histogramSample,
       ),
     );
   }, [
@@ -9566,6 +9856,8 @@ export function ImageEditDialog({
     analysisSourceRect,
     temperature,
     tint,
+    defringe,
+    defringeMapRevision,
     exposureEv,
     shadow,
     highlight,
@@ -9675,7 +9967,17 @@ export function ImageEditDialog({
       return;
     }
 
-    const sample = getAnalysisLinearRgbSample(decoded, analysisSourceRect, rotationDegrees);
+    const rawSample = getAnalysisLinearRgbSample(decoded, analysisSourceRect, rotationDegrees);
+    const activeDefringeMap = defringeMapRef.current?.decoded === decoded
+      ? defringeMapRef.current.map
+      : null;
+    const defringeAmount = clampDefringe(defringe) / 100;
+    const sample = activeDefringeMap && defringeAmount > 0
+      ? applyDefringeToRenderedSample(
+          rawSample, activeDefringeMap, defringeAmount,
+          decoded.width, decoded.height, analysisSourceRect, rotationDegrees,
+        )
+      : rawSample;
     if (!sample.data.length) {
       setPercentileDebug(null);
       return;
@@ -9690,6 +9992,8 @@ export function ImageEditDialog({
     }
 
     const outputKey = [
+      defringe,
+      defringeMapRevision,
       temperature,
       tint,
       exposureEv,
@@ -9735,6 +10039,8 @@ export function ImageEditDialog({
     rawThumbnailDebugStatistics,
     temperature,
     tint,
+    defringe,
+    defringeMapRevision,
     exposureEv,
     shadow,
     highlight,
@@ -9747,8 +10053,19 @@ export function ImageEditDialog({
   const currentToneAutoSample = useCallback((): ToneAutoSample | null => {
     const decoded = decodedImageRef.current;
     if (!decoded || !analysisSourceRect) return null;
-    return createToneAutoSampleFromRgb16(decoded, analysisSourceRect, rotationDegrees);
-  }, [analysisSourceRect, rotationDegrees]);
+    const rawSample = createToneAutoSampleFromRgb16(decoded, analysisSourceRect, rotationDegrees);
+    if (!rawSample) return null;
+    const activeDefringeMap = defringeMapRef.current?.decoded === decoded
+      ? defringeMapRef.current.map
+      : null;
+    const defringeAmount = clampDefringe(defringe) / 100;
+    return activeDefringeMap && defringeAmount > 0
+      ? applyDefringeToRenderedSample(
+          rawSample, activeDefringeMap, defringeAmount,
+          decoded.width, decoded.height, analysisSourceRect, rotationDegrees,
+        )
+      : rawSample;
+  }, [analysisSourceRect, rotationDegrees, defringe, defringeMapRevision]);
 
   const waitForAutoToneStagePaint = useCallback(async () => {
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
@@ -9913,6 +10230,7 @@ export function ImageEditDialog({
       rotationDegrees: normalizeRotationDegrees(rotationDegrees),
       temperature: clampWhiteBalanceValue(temperature),
       tint: clampWhiteBalanceValue(tint),
+      defringe: clampDefringe(defringe),
       exposureEv: clampExposureEv(exposureEv),
       shadow: clampToneRangeAdjustment(shadow),
       highlight: clampToneRangeAdjustment(highlight),
@@ -9950,16 +10268,21 @@ export function ImageEditDialog({
             }
             if (masterPromise && !fullResolutionReady) {
               const masterDecoded = await masterPromise;
+              const previousDecoded = decodedImageRef.current;
               decodedImageRef.current = masterDecoded;
+              invalidateBaseDerivedCaches(previousDecoded);
               rawMasterPromiseRef.current = null;
             }
             // Finish never adopts an optional Denoise result, even when it was
             // started while the foreground Preview/Master chain was resolving.
             rawDenoisePromiseRef.current = null;
             const decodedImage = decodedImageRef.current;
+            const finalDefringeMap = decodedImage && clampDefringe(params.defringe) > 0
+              ? await ensureDefringeMap(decodedImage)
+              : null;
             const clarityMap = decodedImage ? resolvePreviewClarityMap(decodedImage) : null;
             if (decodedImage) transferredDecodedImageRef.current = decodedImage;
-            onApply(params, decodedImage ?? undefined, clarityMap);
+            onApply(params, decodedImage ?? undefined, clarityMap, finalDefringeMap);
           } catch (error) {
             applyPendingRef.current = false;
             setApplyBusy(false);
@@ -9977,6 +10300,7 @@ export function ImageEditDialog({
     rotationDegrees,
     temperature,
     tint,
+    defringe,
     exposureEv,
     shadow,
     highlight,
@@ -9995,6 +10319,8 @@ export function ImageEditDialog({
     fullResolutionReady,
     file,
     resolvePreviewClarityMap,
+    ensureDefringeMap,
+    invalidateBaseDerivedCaches,
     onApply,
   ]);
 
@@ -10009,6 +10335,7 @@ export function ImageEditDialog({
     rotationDragState.current = null;
     setTemperature(params.temperature);
     setTint(params.tint);
+    setDefringe(params.defringe);
     setExposureEv(params.exposureEv);
     setShadow(params.shadow);
     setHighlight(params.highlight);
@@ -11454,6 +11781,28 @@ export function ImageEditDialog({
             </div>
 
             <div className="rounded border p-3 space-y-2 lg:space-y-3">
+              <div className="flex items-center justify-between gap-2 font-medium">
+                <span>Correction</span>
+                {defringeAnalyzing && <span className="text-[10px] font-normal text-gray-500">Analyzing…</span>}
+              </div>
+              <label className="grid grid-cols-[96px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+                <span className="col-start-1 row-start-1">Defringe</span>
+                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{defringe}</span>
+                <input
+                  aria-label="Defringe"
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={defringe}
+                  onChange={(e) => { previewContinuousSliderRef.current = null; setDefringe(clampDefringe(Number(e.target.value))); }}
+                  onDoubleClick={() => { previewContinuousSliderRef.current = null; setDefringe(sliderDefaults.defringe); }}
+                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
+                />
+              </label>
+            </div>
+
+            <div className="rounded border p-3 space-y-2 lg:space-y-3">
               <div className="flex items-center gap-1 font-medium">
                 <span>White balance</span>
                 <button
@@ -12046,6 +12395,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
     nextEdit: ImageEditParams,
     decodedImage?: DecodedImage,
     previewClarityMap?: ImageEditClarityMap | null,
+    defringeMap?: DefringeAnalysisMap | null,
   ) => {
     let processingDecoded = decodedImage;
     let cleanupProcessingDecoded = !!decodedImage;
@@ -12104,6 +12454,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
         processingDecoded,
         undefined,
         previewClarityMap,
+        defringeMap,
       );
       if (optimizeJobs.current.get(snapshot.id) !== token) return;
       const processedPreviewUrl = URL.createObjectURL(out.blob);
@@ -12333,9 +12684,9 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
               ),
             );
           }}
-          onApply={(params, decodedImage, previewClarityMap) => {
+          onApply={(params, decodedImage, previewClarityMap, defringeMap) => {
             setEditingItemId(null);
-            void reprocessItem(editingItem, params, decodedImage, previewClarityMap);
+            void reprocessItem(editingItem, params, decodedImage, previewClarityMap, defringeMap);
           }}
         />
       )}

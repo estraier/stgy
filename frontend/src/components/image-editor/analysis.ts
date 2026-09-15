@@ -272,9 +272,10 @@ export function computeHistogramDataFromRgb16(
   vibrance: number,
   saturation: number,
   clarityMap: ImageEditClarityMap | null = null,
+  sourceSample?: LinearRgbSample,
 ): HistogramData | null {
   if (decoded.width <= 0 || decoded.height <= 0) return null;
-  const sample = getAnalysisLinearRgbSample(decoded, sourceRect, rotationDegrees);
+  const sample = sourceSample ?? getAnalysisLinearRgbSample(decoded, sourceRect, rotationDegrees);
   if (!sample.data.length) return null;
   const adjustment = buildInteractiveColorAdjustmentContextFromLinearRgbSample(
     sample,

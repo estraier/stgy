@@ -9,6 +9,7 @@ import {
 } from "@/components/ImageUploadDialog";
 import type { DecodedRgbImage16, ImageEditOutputColorProfile } from "@/components/image-editor/types";
 import type { ImageEditClarityMap } from "@/components/image-editor/clarity";
+import type { DefringeAnalysisMap } from "@/components/image-editor/defringe";
 import {
   mountLocalStackStudio,
   type LocalStackStudioEditRequest,
@@ -82,6 +83,7 @@ export default function PageBody() {
     params: ImageEditParams,
     decodedImage?: DecodedRgbImage16,
     previewClarityMap?: ImageEditClarityMap | null,
+    defringeMap?: DefringeAnalysisMap | null,
   ) => {
     const request = editRequest;
     if (!request) return;
@@ -92,6 +94,7 @@ export default function PageBody() {
         params,
         request.outputColorProfile as ImageEditOutputColorProfile,
         previewClarityMap,
+        defringeMap,
       );
       request.onApply(edited);
       setEditRequest(null);
@@ -290,8 +293,8 @@ export default function PageBody() {
           defaultParams={editorDefaults}
           initialDecodedImage={editRequest.decodedImage}
           onCancel={closeEditor}
-          onApply={(params, decodedImage, previewClarityMap) => {
-            void applyEditorResult(params, decodedImage, previewClarityMap);
+          onApply={(params, decodedImage, previewClarityMap, defringeMap) => {
+            void applyEditorResult(params, decodedImage, previewClarityMap, defringeMap);
           }}
           onError={(message) => {
             editRequest.onError(message);

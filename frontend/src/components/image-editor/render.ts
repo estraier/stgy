@@ -1,4 +1,5 @@
 import type { DecodedRgbImage16, ImageEditOutputColorProfile, LinearRgbSample } from "./types";
+import { applyDefringeLinearRgb, applyDefringeToRenderedSample, type DefringeAnalysisMap } from "./defringe";
 import { createCanvasImageData, getCanvas2dContext } from "./canvas";
 import { convertLinearProPhotoToOutputRgbInto } from "@/image/color";
 import { buildInteractiveColorAdjustmentContextFromLinearRgbSample } from "./analysis";
@@ -375,6 +376,8 @@ export function renderAdjustedRgb16ToCanvas(
   saturation: number,
   outputColorProfile: ImageEditOutputColorProfile = "srgb",
   clarityMap: ImageEditClarityMap | null = null,
+  defringeMap: DefringeAnalysisMap | null = null,
+  defringeAmount = 0,
 ) {
   const ctx = getCanvas2dContext(canvas, outputColorProfile);
   if (!ctx) throw new Error("2D context unavailable");
@@ -382,7 +385,18 @@ export function renderAdjustedRgb16ToCanvas(
   const height = Math.max(1, canvas.height);
   const imageData = createCanvasImageData(ctx, width, height, outputColorProfile);
   const output = imageData.data;
-  const contextSample = getAnalysisLinearRgbSample(decoded, sourceRect, rotationDegrees);
+  const rawContextSample = getAnalysisLinearRgbSample(decoded, sourceRect, rotationDegrees);
+  const contextSample = defringeMap && defringeAmount > 0
+    ? applyDefringeToRenderedSample(
+        rawContextSample,
+        defringeMap,
+        defringeAmount,
+        decoded.width,
+        decoded.height,
+        sourceRect,
+        rotationDegrees,
+      )
+    : rawContextSample;
   const context = buildInteractiveColorAdjustmentContextFromLinearRgbSample(
     contextSample,
     temperature,
@@ -434,6 +448,13 @@ export function renderAdjustedRgb16ToCanvas(
         let r = sample[0];
         let g = sample[1];
         let b = sample[2];
+        if (defringeMap && defringeAmount > 0) {
+          [r, g, b] = applyDefringeLinearRgb(
+            r, g, b, defringeMap, defringeAmount,
+            decoded.width > 1 ? sourceX / (decoded.width - 1) : 0.5,
+            decoded.height > 1 ? sourceY / (decoded.height - 1) : 0.5,
+          );
+        }
         if (hasClarity) {
           [r, g, b] = applyToneAdjustmentsLinearRgb(r, g, b, context);
           const clarityGain = sampleImageEditClarityGain(

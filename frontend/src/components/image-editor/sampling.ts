@@ -69,6 +69,11 @@ const RGB16_RENDERED_SAMPLE_CACHE = new WeakMap<
   RenderedSampleCacheEntry[]
 >();
 
+export function clearRgb16SampleCaches(decoded: DecodedRgbImage16): void {
+  RGB16_ANALYSIS_SAMPLE_CACHE.delete(decoded);
+  RGB16_RENDERED_SAMPLE_CACHE.delete(decoded);
+}
+
 export function analysisSampleDimensions(
   width: number,
   height: number,
