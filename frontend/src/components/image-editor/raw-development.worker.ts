@@ -34,10 +34,15 @@ type StartMessageBase = {
   vignetting?: RawVignettingMap;
 };
 
+type DenoiseAnalyzeMessage = StartMessageBase & {
+  type: "denoise-analyze";
+  iso?: number | null;
+};
+
 type RawDevelopmentWorkerRequest =
   | ({ type: "matched-tone"; plan: RawMatchedTonePlan; sampleTargetPixels: number } & StartMessageBase)
   | ({ type: "fallback-tone" } & StartMessageBase)
-  | ({ type: "denoise-analyze" } & StartMessageBase)
+  | DenoiseAnalyzeMessage
   | { type: "color"; plan: RawColorPassPlan }
   | { type: "encode" }
   | ({
@@ -85,6 +90,7 @@ workerScope.onmessage = (event: MessageEvent<RawDevelopmentWorkerRequest>) => {
         message.height,
         message.sourceLinearRangeMax,
         message.sourceTransfer ?? "linear",
+        message.iso,
       );
       const weightBuffer = analysis.weight.buffer as ArrayBuffer;
       workerScope.postMessage(

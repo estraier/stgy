@@ -2,6 +2,7 @@ import {
   HIGHLIGHT_ROLLOFF_INFLECTION,
   SIGMOID_WORKING_GAMMA,
   applyHighlightRolloffScalar,
+  applyScaledLogLinear,
   createHighlightRolloff,
   type HighlightRolloff,
 } from "@/image/tone";
@@ -88,6 +89,8 @@ const RAW_THUMBNAIL_MATCH_LOG_MIN = -16;
 const RAW_THUMBNAIL_MATCH_LOG_MAX = 16;
 const RAW_THUMBNAIL_MATCH_SIGMOID_MIN = -10;
 const RAW_THUMBNAIL_MATCH_SIGMOID_MAX = 10;
+const RAW_DENOISE_ISO_NEUTRAL = 400;
+const RAW_DENOISE_ISO_LOG_PER_STOP = 2;
 const PROPHOTO_LUMA_R = 0.2880402;
 const PROPHOTO_LUMA_G = 0.7118741;
 const PROPHOTO_LUMA_B = 0.0000857;
@@ -1089,6 +1092,7 @@ export function analyzeRawDenoiseMask(
   height: number,
   linearRangeMax: number,
   transfer: RawStorageTransfer,
+  iso?: number | null,
 ): RawDenoiseMaskAnalysis {
   const pixels = Math.max(0, width * height);
   if (!pixels || data.length < pixels * 3) {
@@ -1199,8 +1203,18 @@ export function analyzeRawDenoiseMask(
 
   // The displayed/debugged map is the actual final blend weight, including the
   // soft spatial transition that will later be sampled at Master resolution.
+  // ISO then bends only the blend strength, not the spatial classification:
+  // ISO 400 is neutral, and every stop changes logarithm by +/-2 using the same
+  // scaled-log mapping as the Tone logarithm control.
   const weight = gaussianBlurScalar(rawWeight, width, height, 1.2);
-  for (let i = 0; i < weight.length; i++) weight[i] = clamp01(weight[i] ?? 0);
+  const validIso = typeof iso === "number" && Number.isFinite(iso) && iso > 0;
+  const isoLogarithm = validIso
+    ? RAW_DENOISE_ISO_LOG_PER_STOP * Math.log2(iso / RAW_DENOISE_ISO_NEUTRAL)
+    : 0;
+  for (let i = 0; i < weight.length; i++) {
+    const baseWeight = clamp01(weight[i] ?? 0);
+    weight[i] = applyScaledLogLinear(baseWeight, isoLogarithm);
+  }
   const weightStats = scalarMeanStddev(weight);
   const sortedWeight = weight.slice();
   sortedWeight.sort();

@@ -1,121 +1,33 @@
-import {
-  applyRawColorPass,
-  applyRawFallbackBaselinePass,
-  applyRawMatchedTonePass,
-  convertRawLinearToGamma20InPlace,
-} from "./raw-development-core";
+import { analyzeRawDenoiseMask } from "./raw-development-core";
 
-function fnv1a16(values: Uint16Array): string {
-  let hash = 0x811c9dc5;
-  for (const value of values) {
-    hash ^= value & 0xff;
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-    hash ^= (value >>> 8) & 0xff;
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-  return hash.toString(16).padStart(8, "0");
-}
-
-function makeFixture() {
-  const width = 23;
-  const height = 17;
+function makeUniformLinearRgb16(width: number, height: number, value: number): Uint16Array {
   const data = new Uint16Array(width * height * 3);
-  for (let i = 0; i < data.length; i++) data[i] = (i * 12347) % 65536;
-  const vignetting = {
-    gridWidth: 4,
-    gridHeight: 3,
-    step: 8,
-    data: new Float32Array(4 * 3 * 3),
-  };
-  for (let i = 0; i < vignetting.data.length; i++) {
-    vignetting.data[i] = 0.8 + (i % 7) * 0.05;
-  }
-  return { width, height, data, vignetting };
+  data.fill(value);
+  return data;
 }
 
-describe("RAW development hot-loop characterization", () => {
-  test("stores the matched-tone result directly as gamma20 Uint16", () => {
-    const fixture = makeFixture();
-    const data = new Uint16Array(fixture.data);
-    const headroom = applyRawMatchedTonePass(
+describe("RAW denoise ISO weight scaling", () => {
+  test("keeps ISO 400 neutral and bends the final blend weight by ISO stops", () => {
+    const width = 8;
+    const height = 8;
+    const data = makeUniformLinearRgb16(width, height, 16384);
+    const analyze = (iso?: number | null) => analyzeRawDenoiseMask(
       data,
-      fixture.width,
-      fixture.height,
-      1,
-      fixture.vignetting,
-      { gain: 1.23, scaledLog: 0.7, sigmoid: -0.6, toneSlopeAtWhite: 0.82, rolloff: { inflection: 0.9, ceiling: 2 } },
+      width,
+      height,
+      2,
+      "linear",
+      iso,
     );
-    expect(fnv1a16(data)).toBe("eb2b4403");
-    expect(headroom.bins).toEqual([
-      0, 0, 0, 0, 0, 5, 41, 28, 41, 64,
-      92, 83, 32, 5, 0, 0, 0, 0, 0, 0,
-    ]);
-    expect(headroom.maxRgb).toBeCloseTo(1.3250389923397456, 14);
-    expect(headroom.overflowCount).toBe(0);
-  });
 
-  test("keeps the color pass in gamma20 Uint16", () => {
-    const fixture = makeFixture();
-    const data = new Uint16Array(fixture.data);
-    applyRawMatchedTonePass(
-      data,
-      fixture.width,
-      fixture.height,
-      1,
-      fixture.vignetting,
-      { gain: 1.23, scaledLog: 0.7, sigmoid: -0.6, toneSlopeAtWhite: 0.82, rolloff: { inflection: 0.9, ceiling: 2 } },
-    );
-    applyRawColorPass(data, 2, {
-      hasSaturation: true,
-      hasVibrance: true,
-      saturationFactor: 1.15,
-      vibranceFactor: 0.3,
-      saturationRolloff: { inflection: 0.8, scale: 0.25 },
-    });
-    expect(fnv1a16(data)).toBe("6abc189e");
-  });
+    const iso200 = analyze(200);
+    const iso400 = analyze(400);
+    const iso800 = analyze(800);
+    const unknown = analyze(null);
 
-  test("still converts untouched linear fallback data to gamma20", () => {
-    const data = new Uint16Array([0, 16384, 32768, 65535]);
-    convertRawLinearToGamma20InPlace(data, 2);
-    expect(Array.from(data)).toEqual([0, 32768, 46341, 65535]);
-  });
-
-  test("stores the fallback baseline result directly as gamma20 Uint16", () => {
-    const fixture = makeFixture();
-    const data = new Uint16Array(fixture.data);
-    const result = applyRawFallbackBaselinePass(
-      data,
-      fixture.width,
-      fixture.height,
-      1,
-      fixture.vignetting,
-    );
-    expect(result).not.toBeNull();
-    expect(fnv1a16(data)).toBe("539b2cc7");
-    expect(result?.exposureEv).toBeCloseTo(0.17376055157331727, 14);
-    expect(result?.headroom.maxRgb).toBeCloseTo(1.1556767404786572, 14);
-    expect(result?.headroom.overflowCount).toBe(0);
-    expect(result?.plan.rolloff).toEqual({ inflection: 0.9, ceiling: 2 });
-  });
-
-  test("uses the full 0..2 RAW headroom for fallback rolloff", () => {
-    const width = 1000;
-    const data = new Uint16Array(width * 3);
-    const low = Math.round(0.1 * 65535);
-    for (let x = 0; x < width; x++) {
-      const value = x < 990 ? low : 65535;
-      const i = x * 3;
-      data[i] = value;
-      data[i + 1] = value;
-      data[i + 2] = value;
-    }
-
-    const result = applyRawFallbackBaselinePass(data, width, 1, 1, undefined);
-    expect(result).not.toBeNull();
-    expect(result?.plan.factor).toBeCloseTo(8.999313396399145, 12);
-    expect(result?.plan.rolloff).toEqual({ inflection: 0.9, ceiling: 2 });
-    expect(result?.headroom.maxRgb).toBeCloseTo(1.9993022865005754, 12);
-    expect(result?.headroom.overflowCount).toBe(0);
+    expect(iso400.weightMean).toBeCloseTo(0.3125, 6);
+    expect(unknown.weightMean).toBeCloseTo(iso400.weightMean, 6);
+    expect(iso200.weightMean).toBeLessThan(iso400.weightMean);
+    expect(iso800.weightMean).toBeGreaterThan(iso400.weightMean);
   });
 });

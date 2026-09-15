@@ -5385,6 +5385,7 @@ type RawDenoiseAnalysisResult = Omit<RawWorkerDenoiseAnalyzeResponse, "type" | "
 
 async function analyzeRawDenoiseInWorker(
   snapshot: RawDebugImageSnapshot,
+  iso?: number | null,
 ): Promise<RawDenoiseAnalysisResult> {
   const data = snapshot.data.slice();
   const worker = createRawDevelopmentWorker();
@@ -5395,6 +5396,7 @@ async function analyzeRawDenoiseInWorker(
       snapshot.height,
       snapshot.linearRangeMax,
       snapshot.transfer,
+      iso,
     );
     return {
       width: analysis.width,
@@ -5427,6 +5429,7 @@ async function analyzeRawDenoiseInWorker(
         height: snapshot.height,
         sourceLinearRangeMax: snapshot.linearRangeMax,
         sourceTransfer: snapshot.transfer,
+        iso,
       },
       [dataBuffer],
     );
@@ -6115,12 +6118,15 @@ async function decodeRawDenoiseImage(
   let raw: LibRawInstanceLike | null = null;
   let workerFailure: ReturnType<typeof createLibRawWorkerFailure> | null = null;
   try {
+    const isoValue = master.rawDevelopment?.iso ?? Number.NaN;
     const analysis = rawDebug.preview
-      ? await analyzeRawDenoiseInWorker(rawDebug.preview)
+      ? await analyzeRawDenoiseInWorker(
+        rawDebug.preview,
+        Number.isFinite(isoValue) && isoValue > 0 ? isoValue : null,
+      )
       : undefined;
     if (analysis) rawDebug.weightMap = analysis.weightMap;
 
-    const isoValue = master.rawDevelopment?.iso ?? Number.NaN;
     const denoiseSettings = rawDenoiseDecodeSettingsForIso(isoValue);
     raw = await createLibRawInstance();
     workerFailure = createLibRawWorkerFailure(raw);
