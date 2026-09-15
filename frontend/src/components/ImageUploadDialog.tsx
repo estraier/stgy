@@ -2469,7 +2469,11 @@ function applyGammaSpaceInversion(channel: number): number {
 
 function applySolarizationTone(channel: number): number {
   const x = clamp01(channel);
-  return clamp01(4 * SOLARIZATION_PEAK * x * (1 - x));
+  const base = 4 * x * (1 - x);
+  const solarized = x > 0.5
+    ? 1 - (1 - base) * 0.85
+    : base;
+  return clamp01(SOLARIZATION_PEAK * solarized);
 }
 
 function applyNegativeFilterToCanvasData(
