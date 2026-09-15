@@ -11,8 +11,10 @@ export type DefringeAnalysisMap = {
   height: number;
   magenta: Uint8Array;
   green: Uint8Array;
-  magentaExpanded?: Uint8Array;
-  greenExpanded?: Uint8Array;
+  magentaExpanded1?: Uint8Array;
+  greenExpanded1?: Uint8Array;
+  magentaExpanded2?: Uint8Array;
+  greenExpanded2?: Uint8Array;
 };
 
 export const DEFRINGE_ANALYSIS_TARGET_PIXELS = 4_000_000;
@@ -107,8 +109,16 @@ function maxFilter3x3(input: Uint8Array, width: number, height: number): Uint8Ar
   return output;
 }
 
-function expandConfidencePlane(input: Uint8Array, width: number, height: number): Uint8Array {
-  const dilated = maxFilter3x3(input, width, height);
+function expandConfidencePlane(
+  input: Uint8Array,
+  width: number,
+  height: number,
+  dilationPasses: number,
+): Uint8Array {
+  let dilated = input;
+  for (let pass = 0; pass < dilationPasses; pass += 1) {
+    dilated = maxFilter3x3(dilated, width, height);
+  }
   const dilatedFloat = new Float32Array(dilated.length);
   const baseFloat = new Float32Array(input.length);
   for (let i = 0; i < dilated.length; i += 1) {
@@ -236,9 +246,20 @@ export function analyzeDefringeSample(sample: LinearRgbSample): DefringeAnalysis
       );
     }
   }
-  const magentaExpanded = expandConfidencePlane(magenta, width, height);
-  const greenExpanded = expandConfidencePlane(green, width, height);
-  return { width, height, magenta, green, magentaExpanded, greenExpanded };
+  const magentaExpanded1 = expandConfidencePlane(magenta, width, height, 1);
+  const greenExpanded1 = expandConfidencePlane(green, width, height, 1);
+  const magentaExpanded2 = expandConfidencePlane(magenta, width, height, 2);
+  const greenExpanded2 = expandConfidencePlane(green, width, height, 2);
+  return {
+    width,
+    height,
+    magenta,
+    green,
+    magentaExpanded1,
+    greenExpanded1,
+    magentaExpanded2,
+    greenExpanded2,
+  };
 }
 
 function sampleMapPlane(
@@ -265,6 +286,20 @@ function sampleMapPlane(
   ) / DEFRINGE_MAP_SCALE;
 }
 
+function blendDefringeExpansion(
+  base: number,
+  expanded1: number,
+  expanded2: number,
+  amount: number,
+  stageScale = 1,
+): number {
+  const firstBlend = clamp01(Math.min(amount, 0.5) * 2 * stageScale);
+  const first = base * (1 - firstBlend) + expanded1 * firstBlend;
+  if (!(amount > 0.5)) return first;
+  const secondBlend = clamp01((amount - 0.5) * 2 * stageScale);
+  return first * (1 - secondBlend) + expanded2 * secondBlend;
+}
+
 export function sampleDefringeConfidence(
   map: DefringeAnalysisMap,
   normalizedX: number,
@@ -273,17 +308,33 @@ export function sampleDefringeConfidence(
 ): { magenta: number; green: number } {
   const magentaBase = sampleMapPlane(map.magenta, map.width, map.height, normalizedX, normalizedY);
   const greenBase = sampleMapPlane(map.green, map.width, map.height, normalizedX, normalizedY);
-  const magentaExpanded = map.magentaExpanded
-    ? sampleMapPlane(map.magentaExpanded, map.width, map.height, normalizedX, normalizedY)
+  const magentaExpanded1 = map.magentaExpanded1
+    ? sampleMapPlane(map.magentaExpanded1, map.width, map.height, normalizedX, normalizedY)
     : magentaBase;
-  const greenExpanded = map.greenExpanded
-    ? sampleMapPlane(map.greenExpanded, map.width, map.height, normalizedX, normalizedY)
+  const greenExpanded1 = map.greenExpanded1
+    ? sampleMapPlane(map.greenExpanded1, map.width, map.height, normalizedX, normalizedY)
     : greenBase;
-  const magentaBlend = clamp01(expandedBlend);
-  const greenBlend = clamp01(expandedBlend * GREEN_EXPANSION_BLEND_SCALE);
+  const magentaExpanded2 = map.magentaExpanded2
+    ? sampleMapPlane(map.magentaExpanded2, map.width, map.height, normalizedX, normalizedY)
+    : magentaExpanded1;
+  const greenExpanded2 = map.greenExpanded2
+    ? sampleMapPlane(map.greenExpanded2, map.width, map.height, normalizedX, normalizedY)
+    : greenExpanded1;
+  const expansionAmount = clamp01(expandedBlend);
   return {
-    magenta: magentaBase * (1 - magentaBlend) + magentaExpanded * magentaBlend,
-    green: greenBase * (1 - greenBlend) + greenExpanded * greenBlend,
+    magenta: blendDefringeExpansion(
+      magentaBase,
+      magentaExpanded1,
+      magentaExpanded2,
+      expansionAmount,
+    ),
+    green: blendDefringeExpansion(
+      greenBase,
+      greenExpanded1,
+      greenExpanded2,
+      expansionAmount,
+      GREEN_EXPANSION_BLEND_SCALE,
+    ),
   };
 }
 

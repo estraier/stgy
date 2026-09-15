@@ -5206,6 +5206,10 @@ function analyzeDefringeSampleAsync(sample: LinearRgbSample): Promise<DefringeAn
         height?: number;
         magentaBuffer?: ArrayBuffer;
         greenBuffer?: ArrayBuffer;
+        magentaExpanded1Buffer?: ArrayBuffer;
+        greenExpanded1Buffer?: ArrayBuffer;
+        magentaExpanded2Buffer?: ArrayBuffer;
+        greenExpanded2Buffer?: ArrayBuffer;
       };
       if (response.type === "error") {
         cleanup();
@@ -5219,6 +5223,18 @@ function analyzeDefringeSampleAsync(sample: LinearRgbSample): Promise<DefringeAn
         height: Math.max(1, Math.round(response.height ?? sample.height)),
         magenta: new Uint8Array(response.magentaBuffer),
         green: new Uint8Array(response.greenBuffer),
+        ...(response.magentaExpanded1Buffer
+          ? { magentaExpanded1: new Uint8Array(response.magentaExpanded1Buffer) }
+          : {}),
+        ...(response.greenExpanded1Buffer
+          ? { greenExpanded1: new Uint8Array(response.greenExpanded1Buffer) }
+          : {}),
+        ...(response.magentaExpanded2Buffer
+          ? { magentaExpanded2: new Uint8Array(response.magentaExpanded2Buffer) }
+          : {}),
+        ...(response.greenExpanded2Buffer
+          ? { greenExpanded2: new Uint8Array(response.greenExpanded2Buffer) }
+          : {}),
       });
     };
     worker.onerror = (event) => {

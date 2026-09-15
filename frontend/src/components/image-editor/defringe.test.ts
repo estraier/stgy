@@ -1,6 +1,7 @@
 import {
   analyzeDefringeSample,
   applyDefringeLinearRgb,
+  sampleDefringeConfidence,
 } from "./defringe";
 import {
   PROPHOTO_TONE_LUMA_B,
@@ -85,6 +86,27 @@ describe("Defringe", () => {
     const center = Math.floor(height / 2) * width + Math.floor(width / 2);
     expect(map.green[center] ?? 0).toBeGreaterThan(map.magenta[center] ?? 0);
     expect(map.green[center] ?? 0).toBeGreaterThan(0);
+  });
+
+  test("uses expand1 up to mid strength and expand2 at high strength", () => {
+    const map = {
+      width: 1,
+      height: 1,
+      magenta: new Uint8Array([0]),
+      green: new Uint8Array([0]),
+      magentaExpanded1: new Uint8Array([128]),
+      greenExpanded1: new Uint8Array([128]),
+      magentaExpanded2: new Uint8Array([255]),
+      greenExpanded2: new Uint8Array([255]),
+    };
+    const low = sampleDefringeConfidence(map, 0.5, 0.5, 0.25);
+    const mid = sampleDefringeConfidence(map, 0.5, 0.5, 0.5);
+    const high = sampleDefringeConfidence(map, 0.5, 0.5, 1.0);
+    expect(low.magenta).toBeCloseTo(0.251, 2);
+    expect(mid.magenta).toBeCloseTo(128 / 255, 3);
+    expect(high.magenta).toBeCloseTo(1, 6);
+    expect(high.green).toBeGreaterThan(mid.green);
+    expect(high.green).toBeLessThan(high.magenta);
   });
 
   test("preserves ProPhoto luminance and hue by desaturating toward neutral", () => {
