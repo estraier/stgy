@@ -8492,12 +8492,48 @@ function renderRawDebugWeightMap(
 
 type ImageEditPanelKey = "crop" | "whiteBalance" | "tone" | "color" | "finishing";
 
+type ImageEditUiCollapsePreferences = {
+  panels: Record<ImageEditPanelKey, boolean>;
+  mobileToolsCollapsed: boolean;
+};
+
+const IMAGE_EDIT_UI_COLLAPSE_STORAGE_KEY = "stgy:image-edit-ui-collapse:v1";
+
 function expandedImageEditPanels(): Record<ImageEditPanelKey, boolean> {
   return { crop: false, whiteBalance: false, tone: false, color: false, finishing: false };
 }
 
 function collapsedImageEditPanels(): Record<ImageEditPanelKey, boolean> {
   return { crop: true, whiteBalance: true, tone: true, color: true, finishing: true };
+}
+
+function loadImageEditUiCollapsePreferences(): ImageEditUiCollapsePreferences | null {
+  try {
+    const raw = localStorage.getItem(IMAGE_EDIT_UI_COLLAPSE_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<ImageEditUiCollapsePreferences> | null;
+    if (!parsed || typeof parsed !== "object" || !parsed.panels || typeof parsed.panels !== "object") {
+      return null;
+    }
+    const defaults = expandedImageEditPanels();
+    const panels = { ...defaults };
+    for (const panel of Object.keys(defaults) as ImageEditPanelKey[]) {
+      const value = parsed.panels[panel];
+      if (typeof value === "boolean") panels[panel] = value;
+    }
+    return {
+      panels,
+      mobileToolsCollapsed: parsed.mobileToolsCollapsed === true,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveImageEditUiCollapsePreferences(preferences: ImageEditUiCollapsePreferences): void {
+  try {
+    localStorage.setItem(IMAGE_EDIT_UI_COLLAPSE_STORAGE_KEY, JSON.stringify(preferences));
+  } catch {}
 }
 
 export function ImageEditDialog({
@@ -8657,6 +8693,8 @@ export function ImageEditDialog({
   const [mobileToolsCollapsed, setMobileToolsCollapsed] = useState(false);
   const finishButtonRef = useRef<HTMLButtonElement>(null);
   const initialPanelFitCheckedRef = useRef(false);
+  const collapsePreferencesLoadedRef = useRef(false);
+  const hasStoredCollapsePreferencesRef = useRef(false);
   const [peepMode, setPeepMode] = useState(false);
   const [peepExpanded, setPeepExpanded] = useState(false);
   const [peepBusy, setPeepBusy] = useState(false);
@@ -8707,7 +8745,16 @@ export function ImageEditDialog({
     [defaultParams, natural],
   );
 
-  useEffect(() => setMounted(true), []);
+  useEffect(() => {
+    const preferences = loadImageEditUiCollapsePreferences();
+    if (preferences) {
+      setCollapsedPanels(preferences.panels);
+      setMobileToolsCollapsed(preferences.mobileToolsCollapsed);
+      hasStoredCollapsePreferencesRef.current = true;
+    }
+    collapsePreferencesLoadedRef.current = true;
+    setMounted(true);
+  }, []);
 
   const togglePanelCollapsed = useCallback((panel: ImageEditPanelKey) => {
     setCollapsedPanels((current) => ({ ...current, [panel]: !current[panel] }));
@@ -8715,6 +8762,10 @@ export function ImageEditDialog({
 
   useEffect(() => {
     if (!mounted || initialPanelFitCheckedRef.current) return;
+    if (hasStoredCollapsePreferencesRef.current) {
+      initialPanelFitCheckedRef.current = true;
+      return;
+    }
     if (typeof window === "undefined" || !window.matchMedia("(max-width: 1023px)").matches) {
       initialPanelFitCheckedRef.current = true;
       return;
@@ -8738,6 +8789,15 @@ export function ImageEditDialog({
       if (secondFrame) window.cancelAnimationFrame(secondFrame);
     };
   }, [mounted]);
+
+  useEffect(() => {
+    if (
+      !mounted
+      || !collapsePreferencesLoadedRef.current
+      || !initialPanelFitCheckedRef.current
+    ) return;
+    saveImageEditUiCollapsePreferences({ panels: collapsedPanels, mobileToolsCollapsed });
+  }, [collapsedPanels, mobileToolsCollapsed, mounted]);
 
   useEffect(() => {
     onErrorRef.current = onError;
@@ -11863,7 +11923,7 @@ export function ImageEditDialog({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[70] bg-black/70 flex items-center justify-center p-4"
+      className="fixed inset-0 z-[70] bg-black/70 flex items-center justify-center p-4 [@media(max-height:1399px)]:py-[2px] [@media(max-width:999px)]:px-[2px]"
       onClick={
         eyedropperMode
           ? () => setEyedropperMode(false)
@@ -11879,7 +11939,7 @@ export function ImageEditDialog({
       }}
     >
       <div
-        className="bg-white rounded shadow max-w-[95vw] max-h-[95dvh] overflow-y-auto w-[min(1400px,95vw)] p-4"
+        className="bg-white rounded shadow max-w-[95vw] max-h-[95dvh] overflow-y-auto w-[min(1400px,95vw)] p-4 [@media(max-height:1399px)]:max-h-[calc(100dvh-4px)] [@media(max-width:999px)]:max-w-[calc(100vw-4px)] [@media(max-width:999px)]:w-[min(1400px,calc(100vw-4px))]"
         onClick={(e) => {
           e.stopPropagation();
           if (eyedropperMode) setEyedropperMode(false);
