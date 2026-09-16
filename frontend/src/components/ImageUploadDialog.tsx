@@ -939,6 +939,8 @@ const VELVIA_LUMINANCE_ADJUSTMENTS: readonly (readonly [number, number])[] = [
   [300, 30],
   [360, 40],
 ];
+const FILTER_HUE_GATE_SATURATION_LOW = 0.02;
+const FILTER_HUE_GATE_SATURATION_HIGH = 0.12;
 const FILTER_LOG_HISTOGRAM_BINS = 1024;
 const FILTER_LOG_LUMA_MIN_EV = -16;
 const FILTER_LOG_LUMA_MAX_EV = 2;
@@ -1112,6 +1114,12 @@ function interpolateFilterHueTable(
   return table[table.length - 1]?.[1] ?? 0;
 }
 
+function filterHueDependenceWeight(saturation: number): number {
+  const span = FILTER_HUE_GATE_SATURATION_HIGH - FILTER_HUE_GATE_SATURATION_LOW;
+  if (!(span > 0)) return saturation > FILTER_HUE_GATE_SATURATION_LOW ? 1 : 0;
+  return smoothstep01((saturation - FILTER_HUE_GATE_SATURATION_LOW) / span);
+}
+
 function limitFilterLinearRgbToUnitMax(r: number, g: number, b: number): [number, number, number] {
   const maxChannel = Math.max(r, g, b);
   if (!(maxChannel > 1)) return [Math.max(0, r), Math.max(0, g), Math.max(0, b)];
@@ -1163,23 +1171,24 @@ function applyClassicChromeLinearRgb(r: number, g: number, b: number): [number, 
   const chroma = Math.max(1e-8, maxChannel - minChannel);
   const redDominance = clamp01((workR - Math.max(workG, workB)) / chroma);
   const blueDominance = clamp01((workB - Math.max(workR, workG)) / chroma);
+  const hueDependenceWeight = filterHueDependenceWeight(baseSaturation);
 
-  // Approximate Lightroom primary calibration weakly. Primary Hue is not the
-  // same operation as HSL Hue, so it is intentionally applied at reduced strength.
-  const calibrationHueShift = CLASSIC_CHROME_CALIBRATION_STRENGTH
+  // Hue becomes numerically unstable close to neutral gray. Fade all hue-dependent
+  // calibration/HSL operations out there so tiny RGB differences cannot become bands.
+  const calibrationHueShift = hueDependenceWeight * CLASSIC_CHROME_CALIBRATION_STRENGTH
     * (5 * redDominance - 15 * blueDominance);
   const calibratedHueDegrees = ((baseHue * 360 + calibrationHueShift) % 360 + 360) % 360;
-  const hueAdjustment = interpolateFilterHueTable(
+  const hueAdjustment = hueDependenceWeight * interpolateFilterHueTable(
     calibratedHueDegrees,
     CLASSIC_CHROME_HUE_ADJUSTMENTS,
   );
-  const luminanceAdjustment = interpolateFilterHueTable(
+  const luminanceAdjustment = hueDependenceWeight * interpolateFilterHueTable(
     calibratedHueDegrees,
     CLASSIC_CHROME_LUMINANCE_ADJUSTMENTS,
   );
   const adjustedHue = ((calibratedHueDegrees + hueAdjustment) % 360 + 360) % 360 / 360;
   const calibratedSaturation = clamp01(
-    baseSaturation * (1 - CLASSIC_CHROME_CALIBRATION_STRENGTH * 0.05 * redDominance),
+    baseSaturation * (1 - hueDependenceWeight * CLASSIC_CHROME_CALIBRATION_STRENGTH * 0.05 * redDominance),
   );
   let [linearR, linearG, linearB] = hsvToRgb(adjustedHue, calibratedSaturation, baseValue);
 
@@ -1324,27 +1333,28 @@ function applyVelviaLinearRgb(r: number, g: number, b: number): [number, number,
   const redDominance = clamp01((workR - Math.max(workG, workB)) / chroma);
   const greenDominance = clamp01((workG - Math.max(workR, workB)) / chroma);
   const blueDominance = clamp01((workB - Math.max(workR, workG)) / chroma);
+  const hueDependenceWeight = filterHueDependenceWeight(baseSaturation);
 
   // Weak approximation of Lightroom primary calibration: RedSat +10,
-  // GreenHue -2, BlueHue +4. Keep it weaker than the HSL adjustments.
-  const calibrationHueShift = VELVIA_CALIBRATION_STRENGTH
+  // GreenHue -2, BlueHue +4. Fade it out near neutral gray where hue is unstable.
+  const calibrationHueShift = hueDependenceWeight * VELVIA_CALIBRATION_STRENGTH
     * (-2 * greenDominance + 4 * blueDominance);
   const calibratedHueDegrees = ((baseHue * 360 + calibrationHueShift) % 360 + 360) % 360;
-  const hueAdjustment = interpolateFilterHueTable(
+  const hueAdjustment = hueDependenceWeight * interpolateFilterHueTable(
     calibratedHueDegrees,
     VELVIA_HUE_ADJUSTMENTS,
   );
-  const saturationAdjustment = interpolateFilterHueTable(
+  const saturationAdjustment = hueDependenceWeight * interpolateFilterHueTable(
     calibratedHueDegrees,
     VELVIA_SATURATION_ADJUSTMENTS,
   );
-  const luminanceAdjustment = interpolateFilterHueTable(
+  const luminanceAdjustment = hueDependenceWeight * interpolateFilterHueTable(
     calibratedHueDegrees,
     VELVIA_LUMINANCE_ADJUSTMENTS,
   );
   const adjustedHue = ((calibratedHueDegrees + hueAdjustment) % 360 + 360) % 360 / 360;
   const calibratedSaturation = clamp01(
-    baseSaturation * (1 + VELVIA_CALIBRATION_STRENGTH * 0.10 * redDominance),
+    baseSaturation * (1 + hueDependenceWeight * VELVIA_CALIBRATION_STRENGTH * 0.10 * redDominance),
   );
   const hslAdjustedSaturation = clamp01(
     calibratedSaturation * (1 + saturationAdjustment * 0.01),
@@ -2350,6 +2360,7 @@ function applyBleachBypassLinearRgb(r: number, g: number, b: number): [number, n
   const workB = clamp01(b);
 
   const [h, s, v] = rgbToHsv(workR, workG, workB);
+  const hueDependenceWeight = filterHueDependenceWeight(s);
   const valueShadowWeight = Math.pow(1 - v, 1.5);
   const bleachBypassBlueTargetHue = BLEACH_BYPASS_TARGET_HUE_DEGREES / 360;
   let signedHueDistance = h - bleachBypassBlueTargetHue;
@@ -2365,15 +2376,18 @@ function applyBleachBypassLinearRgb(r: number, g: number, b: number): [number, n
       hueDistanceDegrees / BLEACH_BYPASS_SATURATION_DISTANCE_MAX_DEGREES,
       BLEACH_BYPASS_HUE_EXPONENT,
     ) * BLEACH_BYPASS_SATURATION_DISTANCE_MAX_DEGREES;
+  const effectiveHueDistanceDegrees = hueDistanceDegrees
+    + (shiftedHueDistanceDegrees - hueDistanceDegrees) * hueDependenceWeight;
   const shiftedHue =
-    bleachBypassBlueTargetHue + Math.sign(signedHueDistance) * (shiftedHueDistanceDegrees / 360);
+    bleachBypassBlueTargetHue + Math.sign(signedHueDistance) * (effectiveHueDistanceDegrees / 360);
   const normalizedShiftedHue = ((shiftedHue % 1) + 1) % 1;
   const saturationByValue =
     BLEACH_BYPASS_SATURATION_SHADOW
     + (BLEACH_BYPASS_SATURATION_HIGHLIGHT - BLEACH_BYPASS_SATURATION_SHADOW) * v;
-  const saturationByHue =
+  const saturationByHueRaw =
     BLEACH_BYPASS_SATURATION_SAME_HUE
     + (BLEACH_BYPASS_SATURATION_OPPOSITE_HUE - BLEACH_BYPASS_SATURATION_SAME_HUE) * hueDistanceFactor;
+  const saturationByHue = 1 + (saturationByHueRaw - 1) * hueDependenceWeight;
   const linearlyReducedS = clamp01(s * saturationByValue * saturationByHue);
   let [linearR, linearG, linearB] = hsvToRgb(
     normalizedShiftedHue,
@@ -2384,9 +2398,10 @@ function applyBleachBypassLinearRgb(r: number, g: number, b: number): [number, n
   const vibranceByValue =
     BLEACH_BYPASS_VIBRANCE_SHADOW
     + (BLEACH_BYPASS_VIBRANCE_HIGHLIGHT - BLEACH_BYPASS_VIBRANCE_SHADOW) * v;
-  const vibranceByHue =
+  const vibranceByHue = hueDependenceWeight * (
     BLEACH_BYPASS_VIBRANCE_SAME_HUE
-    + (BLEACH_BYPASS_VIBRANCE_OPPOSITE_HUE - BLEACH_BYPASS_VIBRANCE_SAME_HUE) * hueDistanceFactor;
+    + (BLEACH_BYPASS_VIBRANCE_OPPOSITE_HUE - BLEACH_BYPASS_VIBRANCE_SAME_HUE) * hueDistanceFactor
+  );
   const [, currentSaturation] = rgbToHsvExtended(linearR, linearG, linearB);
   const targetSaturation = applyScaledLogLinearExtended(
     currentSaturation,
