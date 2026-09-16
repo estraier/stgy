@@ -265,6 +265,16 @@ export type ImageChannelSwapPreset =
   | "swap-rgb-gbr"
   | "swap-rgb-brg"
   | "swap-rgb-bgr";
+export type ImageDichromePreset =
+  | "dichrome-rk"
+  | "dichrome-yk"
+  | "dichrome-gk"
+  | "dichrome-ck"
+  | "dichrome-bk"
+  | "dichrome-mk"
+  | "dichrome-rg"
+  | "dichrome-bg"
+  | "dichrome-rb";
 export type ImageTrichromePreset = "trichrome-yb" | "trichrome-rc" | "trichrome-gm";
 export type ImagePartColorPreset =
   | "part-color-red"
@@ -275,6 +285,7 @@ export type ImagePartColorPreset =
   | "part-color-magenta";
 export type ImageOtherFilterPreset =
   | ImageChannelSwapPreset
+  | ImageDichromePreset
   | ImageTrichromePreset
   | ImagePartColorPreset
   | "classic-chrome"
@@ -810,6 +821,18 @@ const SWAP_RGB_PRESET_SEQUENCE: readonly ImageChannelSwapPreset[] = [
   "swap-rgb-grb",
 ];
 
+const DICHROME_PRESET_SEQUENCE: readonly ImageDichromePreset[] = [
+  "dichrome-rk",
+  "dichrome-yk",
+  "dichrome-gk",
+  "dichrome-ck",
+  "dichrome-bk",
+  "dichrome-mk",
+  "dichrome-rg",
+  "dichrome-bg",
+  "dichrome-rb",
+];
+
 const TRICHROME_PRESET_SEQUENCE: readonly ImageTrichromePreset[] = [
   "trichrome-yb",
   "trichrome-rc",
@@ -831,7 +854,7 @@ const OTHER_FILTER_LABELS: Record<Extract<ImageOtherFilterPreset, "classic-chrom
   "classic-chrome": "C. Chrome",
 };
 
-const DICHROME_TARGET_PERCENTILE = 0.50;
+const TRICHROME_TARGET_PERCENTILE = 0.50;
 const SOLARIZATION_PEAK = 0.97;
 const SOLARIZATION_TARGET_PERCENTILE = 0.50;
 
@@ -1710,6 +1733,10 @@ function isChannelSwapPreset(value: unknown): value is ImageChannelSwapPreset {
   return typeof value === "string" && (SWAP_RGB_PRESET_SEQUENCE as readonly string[]).includes(value);
 }
 
+function isDichromePreset(value: unknown): value is ImageDichromePreset {
+  return typeof value === "string" && (DICHROME_PRESET_SEQUENCE as readonly string[]).includes(value);
+}
+
 function isTrichromePreset(value: unknown): value is ImageTrichromePreset {
   return typeof value === "string" && (TRICHROME_PRESET_SEQUENCE as readonly string[]).includes(value);
 }
@@ -1732,7 +1759,7 @@ function cycleOtherFilterPreset<T extends ImageOtherFilterPreset>(
 }
 
 function normalizeNonMonochromeFilterPreset(value: unknown): ImageNonMonochromeFilterPreset | null {
-  if (isChannelSwapPreset(value) || isTrichromePreset(value) || isPartColorPreset(value)) return value;
+  if (isChannelSwapPreset(value) || isDichromePreset(value) || isTrichromePreset(value) || isPartColorPreset(value)) return value;
   if (
     value === "cyanotype" ||
     value === "cross-process" ||
@@ -2916,6 +2943,250 @@ function applyPartColorFilterToRgb16(
   }
 }
 
+const DICHROME_SPOT_HUE_CORE_HALF_WIDTH_DEGREES = 30;
+const DICHROME_SPOT_HUE_OUTER_HALF_WIDTH_DEGREES = 60;
+const DICHROME_SPOT_KEEP_CHANNEL_ABSORPTION = 0.15;
+const DICHROME_SPOT_BLOCK_CHANNEL_ABSORPTION = 1.0;
+const DICHROME_TWO_SPOT_EPSILON = 1e-6;
+const DICHROME_TWO_SPOT_MAX_PLATE_DENSITY = 1.6;
+const DICHROME_TWO_SPOT_PAPER: readonly [number, number, number] = [1.0, 0.992, 0.975];
+const DICHROME_TWO_SPOT_RED_ABSORPTION: readonly [number, number, number] = [0.25, 1.45, 1.8];
+const DICHROME_TWO_SPOT_GREEN_ABSORPTION: readonly [number, number, number] = [1.15, 0.28, 1.45];
+const DICHROME_TWO_SPOT_BLUE_ABSORPTION: readonly [number, number, number] = [1.55, 1.25, 0.25];
+
+function dichromeSpotTargetHueDegrees(preset: ImageDichromePreset): number | null {
+  switch (preset) {
+    case "dichrome-rk":
+      return 0;
+    case "dichrome-gk":
+      return 120;
+    case "dichrome-bk":
+      return 240;
+    default:
+      return null;
+  }
+}
+
+function dichromeSpotPlateDensity(
+  r: number,
+  g: number,
+  b: number,
+  targetHueDegrees: number,
+): number {
+  const [hue, saturation, value] = rgbToHsv(r, g, b);
+  if (!(saturation > 0 && value > 0)) return 0;
+  const hueDegrees = hue * 360;
+  const rawDistance = Math.abs(hueDegrees - targetHueDegrees);
+  const hueDistanceDegrees = Math.min(rawDistance, 360 - rawDistance);
+  const transitionSpan = Math.max(
+    1e-9,
+    DICHROME_SPOT_HUE_OUTER_HALF_WIDTH_DEGREES - DICHROME_SPOT_HUE_CORE_HALF_WIDTH_DEGREES,
+  );
+  const outsideWeight = smoothstep01(
+    (hueDistanceDegrees - DICHROME_SPOT_HUE_CORE_HALF_WIDTH_DEGREES) / transitionSpan,
+  );
+  const hueMask = 1 - outsideWeight;
+  const hueDependenceWeight = filterHueDependenceWeight(saturation);
+  return clamp01(hueMask * hueDependenceWeight * saturation * value);
+}
+type DichromeSpotAbsorption = readonly [number, number, number];
+
+function dichromeTwoSpotAbsorptions(
+  preset: ImageDichromePreset,
+): readonly [DichromeSpotAbsorption, DichromeSpotAbsorption] | null {
+  switch (preset) {
+    case "dichrome-rg":
+      return [DICHROME_TWO_SPOT_RED_ABSORPTION, DICHROME_TWO_SPOT_GREEN_ABSORPTION];
+    case "dichrome-bg":
+      return [DICHROME_TWO_SPOT_BLUE_ABSORPTION, DICHROME_TWO_SPOT_GREEN_ABSORPTION];
+    case "dichrome-rb":
+      return [DICHROME_TWO_SPOT_RED_ABSORPTION, DICHROME_TWO_SPOT_BLUE_ABSORPTION];
+    default:
+      return null;
+  }
+}
+
+function dichromeTwoSpotProjectDensityToRgb(
+  firstDensity: number,
+  secondDensity: number,
+  firstAbsorption: DichromeSpotAbsorption,
+  secondAbsorption: DichromeSpotAbsorption,
+): [number, number, number] {
+  const opticalR = firstDensity * firstAbsorption[0] + secondDensity * secondAbsorption[0];
+  const opticalG = firstDensity * firstAbsorption[1] + secondDensity * secondAbsorption[1];
+  const opticalB = firstDensity * firstAbsorption[2] + secondDensity * secondAbsorption[2];
+  return [
+    clamp01(DICHROME_TWO_SPOT_PAPER[0] * Math.exp(-opticalR)),
+    clamp01(DICHROME_TWO_SPOT_PAPER[1] * Math.exp(-opticalG)),
+    clamp01(DICHROME_TWO_SPOT_PAPER[2] * Math.exp(-opticalB)),
+  ];
+}
+
+function solveDichromeTwoSpotPlateDensities(
+  r: number,
+  g: number,
+  b: number,
+  firstAbsorption: DichromeSpotAbsorption,
+  secondAbsorption: DichromeSpotAbsorption,
+): [number, number] {
+  const targetR = clamp01(r) / DICHROME_TWO_SPOT_PAPER[0];
+  const targetG = clamp01(g) / DICHROME_TWO_SPOT_PAPER[1];
+  const targetB = clamp01(b) / DICHROME_TWO_SPOT_PAPER[2];
+  const y0 = -Math.log(Math.max(DICHROME_TWO_SPOT_EPSILON, targetR));
+  const y1 = -Math.log(Math.max(DICHROME_TWO_SPOT_EPSILON, targetG));
+  const y2 = -Math.log(Math.max(DICHROME_TWO_SPOT_EPSILON, targetB));
+  const a0 = firstAbsorption[0];
+  const a1 = firstAbsorption[1];
+  const a2 = firstAbsorption[2];
+  const b0 = secondAbsorption[0];
+  const b1 = secondAbsorption[1];
+  const b2 = secondAbsorption[2];
+  const aa = a0 * a0 + a1 * a1 + a2 * a2;
+  const bb = b0 * b0 + b1 * b1 + b2 * b2;
+  const ab = a0 * b0 + a1 * b1 + a2 * b2;
+  const ay = a0 * y0 + a1 * y1 + a2 * y2;
+  const by = b0 * y0 + b1 * y1 + b2 * y2;
+  const det = aa * bb - ab * ab;
+
+  const candidates: Array<readonly [number, number]> = [[0, 0]];
+  if (aa > 1e-9) {
+    candidates.push([Math.min(DICHROME_TWO_SPOT_MAX_PLATE_DENSITY, Math.max(0, ay / aa)), 0]);
+  }
+  if (bb > 1e-9) {
+    candidates.push([0, Math.min(DICHROME_TWO_SPOT_MAX_PLATE_DENSITY, Math.max(0, by / bb))]);
+  }
+  if (Math.abs(det) > 1e-9) {
+    const firstDensity = (ay * bb - by * ab) / det;
+    const secondDensity = (aa * by - ab * ay) / det;
+    if (firstDensity >= 0 && secondDensity >= 0) {
+      candidates.push([
+        Math.min(DICHROME_TWO_SPOT_MAX_PLATE_DENSITY, firstDensity),
+        Math.min(DICHROME_TWO_SPOT_MAX_PLATE_DENSITY, secondDensity),
+      ]);
+    }
+  }
+
+  let best: readonly [number, number] = candidates[0];
+  let bestErr = Number.POSITIVE_INFINITY;
+  for (const [firstDensity, secondDensity] of candidates) {
+    const projectedR = firstDensity * a0 + secondDensity * b0;
+    const projectedG = firstDensity * a1 + secondDensity * b1;
+    const projectedB = firstDensity * a2 + secondDensity * b2;
+    const err = (projectedR - y0) ** 2 + (projectedG - y1) ** 2 + (projectedB - y2) ** 2;
+    if (err < bestErr) {
+      bestErr = err;
+      best = [firstDensity, secondDensity];
+    }
+  }
+  return [best[0], best[1]];
+}
+
+function applyDichromeCmykLinearRgb(
+  r: number,
+  g: number,
+  b: number,
+  preset: ImageDichromePreset,
+): [number, number, number] {
+  const workR = clamp01(r);
+  const workG = clamp01(g);
+  const workB = clamp01(b);
+  const c0 = 1 - workR;
+  const m0 = 1 - workG;
+  const y0 = 1 - workB;
+  const k = Math.min(c0, m0, y0);
+  const c = c0 - k;
+  const m = m0 - k;
+  const y = y0 - k;
+
+  if (preset === "dichrome-ck" || preset === "dichrome-mk" || preset === "dichrome-yk") {
+    const keepC = preset === "dichrome-ck" ? c : 0;
+    const keepM = preset === "dichrome-mk" ? m : 0;
+    const keepY = preset === "dichrome-yk" ? y : 0;
+    return [
+      clamp01(1 - Math.min(1, keepC + k)),
+      clamp01(1 - Math.min(1, keepM + k)),
+      clamp01(1 - Math.min(1, keepY + k)),
+    ];
+  }
+
+  const twoSpotAbsorptions = dichromeTwoSpotAbsorptions(preset);
+  if (twoSpotAbsorptions) {
+    const [firstAbsorption, secondAbsorption] = twoSpotAbsorptions;
+    const [firstDensity, secondDensity] = solveDichromeTwoSpotPlateDensities(
+      workR,
+      workG,
+      workB,
+      firstAbsorption,
+      secondAbsorption,
+    );
+    return dichromeTwoSpotProjectDensityToRgb(
+      firstDensity,
+      secondDensity,
+      firstAbsorption,
+      secondAbsorption,
+    );
+  }
+
+  const targetHueDegrees = dichromeSpotTargetHueDegrees(preset);
+  const spotDensity = targetHueDegrees == null
+    ? 0
+    : dichromeSpotPlateDensity(workR, workG, workB, targetHueDegrees);
+  let absorptionR = DICHROME_SPOT_BLOCK_CHANNEL_ABSORPTION;
+  let absorptionG = DICHROME_SPOT_BLOCK_CHANNEL_ABSORPTION;
+  let absorptionB = DICHROME_SPOT_BLOCK_CHANNEL_ABSORPTION;
+  if (preset === "dichrome-rk") {
+    absorptionR = DICHROME_SPOT_KEEP_CHANNEL_ABSORPTION;
+  } else if (preset === "dichrome-gk") {
+    absorptionG = DICHROME_SPOT_KEEP_CHANNEL_ABSORPTION;
+  } else if (preset === "dichrome-bk") {
+    absorptionB = DICHROME_SPOT_KEEP_CHANNEL_ABSORPTION;
+  }
+  return [
+    clamp01(1 - Math.min(1, k + spotDensity * absorptionR)),
+    clamp01(1 - Math.min(1, k + spotDensity * absorptionG)),
+    clamp01(1 - Math.min(1, k + spotDensity * absorptionB)),
+  ];
+}
+
+function applyDichromeFilterToCanvasData(
+  rgba8: Uint8ClampedArray,
+  profile: ImageEditOutputColorProfile,
+  preset: ImageDichromePreset,
+): void {
+  for (let i = 0; i < rgba8.length; i += 4) {
+    const [r, g, b] = encodedRgbToLinearProphoto(
+      (rgba8[i] ?? 0) / 255,
+      (rgba8[i + 1] ?? 0) / 255,
+      (rgba8[i + 2] ?? 0) / 255,
+      profile,
+    );
+    const [fr, fg, fb] = applyDichromeCmykLinearRgb(r, g, b, preset);
+    const [er, eg, eb] = convertLinearProPhotoToOutputRgb(fr, fg, fb, profile);
+    rgba8[i] = linearChannelToSrgb(er);
+    rgba8[i + 1] = linearChannelToSrgb(eg);
+    rgba8[i + 2] = linearChannelToSrgb(eb);
+  }
+}
+
+function applyDichromeFilterToRgb16(
+  data: Uint16Array,
+  width: number,
+  height: number,
+  preset: ImageDichromePreset,
+): void {
+  const pixelCount = width * height;
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const index = pixel * 3;
+    const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
+    const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
+    const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
+    const [fr, fg, fb] = applyDichromeCmykLinearRgb(r, g, b, preset);
+    data[index] = encodeStoredRgb16Channel(fr, "gamma20", 1);
+    data[index + 1] = encodeStoredRgb16Channel(fg, "gamma20", 1);
+    data[index + 2] = encodeStoredRgb16Channel(fb, "gamma20", 1);
+  }
+}
+
 function applyTrichromeChannelProjectionLinearRgb(
   r: number,
   g: number,
@@ -2962,8 +3233,8 @@ function applyTrichromeFilterToCanvasData(
     filteredLinear[linearIndex + 2] = fb;
   }
 
-  const beforeP50Ev = estimateLogPercentileFromHistogram(beforeHistogram, DICHROME_TARGET_PERCENTILE);
-  const filteredP50Ev = estimateLogPercentileFromHistogram(filteredHistogram, DICHROME_TARGET_PERCENTILE);
+  const beforeP50Ev = estimateLogPercentileFromHistogram(beforeHistogram, TRICHROME_TARGET_PERCENTILE);
+  const filteredP50Ev = estimateLogPercentileFromHistogram(filteredHistogram, TRICHROME_TARGET_PERCENTILE);
   const beforeP50Luma = Math.pow(2, beforeP50Ev);
   const filteredP50Luma = Math.pow(2, filteredP50Ev);
   const recoveryScaledLog = solveFilterScaledLogForTargetLuma(filteredP50Luma, beforeP50Luma);
@@ -3007,8 +3278,8 @@ function applyTrichromeFilterToRgb16(
     data[index + 2] = encodeStoredRgb16Channel(fb, "gamma20", 1);
   }
 
-  const beforeP50Ev = estimateLogPercentileFromHistogram(beforeHistogram, DICHROME_TARGET_PERCENTILE);
-  const filteredP50Ev = estimateLogPercentileFromHistogram(filteredHistogram, DICHROME_TARGET_PERCENTILE);
+  const beforeP50Ev = estimateLogPercentileFromHistogram(beforeHistogram, TRICHROME_TARGET_PERCENTILE);
+  const filteredP50Ev = estimateLogPercentileFromHistogram(filteredHistogram, TRICHROME_TARGET_PERCENTILE);
   const beforeP50Luma = Math.pow(2, beforeP50Ev);
   const filteredP50Luma = Math.pow(2, filteredP50Ev);
   const recoveryScaledLog = solveFilterScaledLogForTargetLuma(filteredP50Luma, beforeP50Luma);
@@ -3262,6 +3533,8 @@ function applyImageFilterToCanvas(
     const profile: ImageEditOutputColorProfile = outputColorProfile === "display-p3" ? "display-p3" : "srgb";
     if (isChannelSwapPreset(filter.preset)) {
       applyChannelSwapFilterToCanvasData(rgba8, profile, filter.preset);
+    } else if (isDichromePreset(filter.preset)) {
+      applyDichromeFilterToCanvasData(rgba8, profile, filter.preset);
     } else if (isTrichromePreset(filter.preset)) {
       applyTrichromeFilterToCanvasData(rgba8, width, height, profile, filter.preset);
     } else if (isPartColorPreset(filter.preset)) {
@@ -3761,6 +4034,10 @@ function applyImageFilterToRgb16(
 
   if (isChannelSwapPreset(filter.preset)) {
     applyChannelSwapFilterToRgb16(data, width, height, filter.preset);
+    return;
+  }
+  if (isDichromePreset(filter.preset)) {
+    applyDichromeFilterToRgb16(data, width, height, filter.preset);
     return;
   }
   if (isTrichromePreset(filter.preset)) {
@@ -12728,27 +13005,6 @@ export function ImageEditDialog({
                             );
                           })()}
                           {(() => {
-                            const preset = imageFilter?.kind === "other" && isTrichromePreset(imageFilter.preset)
-                              ? imageFilter.preset
-                              : null;
-                            const label = "Trichrome";
-                            return (
-                              <button
-                                type="button"
-                                className={`rounded border px-2 py-1 text-[11px] ${
-                                  preset
-                                    ? "border-blue-500 bg-blue-50 text-blue-700"
-                                    : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
-                                }`}
-                                onClick={() => setImageFilter((current) => cycleOtherFilterPreset(current, TRICHROME_PRESET_SEQUENCE))}
-                                aria-label={label}
-                                title="Trichrome; click to cycle YB, RC, GM, and Off"
-                              >
-                                {label}
-                              </button>
-                            );
-                          })()}
-                          {(() => {
                             const preset = imageFilter?.kind === "other" && isPartColorPreset(imageFilter.preset)
                               ? imageFilter.preset
                               : null;
@@ -12769,7 +13025,49 @@ export function ImageEditDialog({
                               </button>
                             );
                           })()}
-                          {(["edge", "velvia", "classic-chrome"] as const).map((preset) => {
+                          {(() => {
+                            const preset = imageFilter?.kind === "other" && isDichromePreset(imageFilter.preset)
+                              ? imageFilter.preset
+                              : null;
+                            const label = "Dichrome";
+                            return (
+                              <button
+                                type="button"
+                                className={`rounded border px-2 py-1 text-[11px] ${
+                                  preset
+                                    ? "border-blue-500 bg-blue-50 text-blue-700"
+                                    : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                                }`}
+                                onClick={() => setImageFilter((current) => cycleOtherFilterPreset(current, DICHROME_PRESET_SEQUENCE))}
+                                aria-label={label}
+                                title="Dichrome; click to cycle R+K, Y+K, G+K, C+K, B+K, M+K, R+G, B+G, R+B, and Off"
+                              >
+                                {label}
+                              </button>
+                            );
+                          })()}
+                          {(() => {
+                            const preset = imageFilter?.kind === "other" && isTrichromePreset(imageFilter.preset)
+                              ? imageFilter.preset
+                              : null;
+                            const label = "Trichrome";
+                            return (
+                              <button
+                                type="button"
+                                className={`rounded border px-2 py-1 text-[11px] ${
+                                  preset
+                                    ? "border-blue-500 bg-blue-50 text-blue-700"
+                                    : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                                }`}
+                                onClick={() => setImageFilter((current) => cycleOtherFilterPreset(current, TRICHROME_PRESET_SEQUENCE))}
+                                aria-label={label}
+                                title="Trichrome; click to cycle YB, RC, GM, and Off"
+                              >
+                                {label}
+                              </button>
+                            );
+                          })()}
+                          {(["velvia", "classic-chrome", "edge"] as const).map((preset) => {
                             const label = OTHER_FILTER_LABELS[preset];
                             const selected = imageFilter?.kind === "other" && imageFilter.preset === preset;
                             return (
