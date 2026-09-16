@@ -2951,7 +2951,7 @@ const DICHROME_TWO_SPOT_EPSILON = 1e-6;
 const DICHROME_TWO_SPOT_MAX_PLATE_DENSITY = 1.6;
 const DICHROME_TWO_SPOT_PAPER: readonly [number, number, number] = [1.0, 0.992, 0.975];
 const DICHROME_TWO_SPOT_RED_ABSORPTION: readonly [number, number, number] = [0.25, 1.45, 1.8];
-const DICHROME_TWO_SPOT_GREEN_ABSORPTION: readonly [number, number, number] = [1.15, 0.28, 1.45];
+const DICHROME_TWO_SPOT_GREEN_ABSORPTION: readonly [number, number, number] = [1.25, 0.4, 1.6];
 const DICHROME_TWO_SPOT_BLUE_ABSORPTION: readonly [number, number, number] = [1.55, 1.25, 0.25];
 
 function dichromeSpotTargetHueDegrees(preset: ImageDichromePreset): number | null {
