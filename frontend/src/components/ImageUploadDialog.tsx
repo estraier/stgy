@@ -956,6 +956,8 @@ const FILTER_HUE_GATE_SATURATION_HIGH = 0.12;
 const PART_COLOR_CORE_HALF_WIDTH_DEGREES = 30;
 const PART_COLOR_OUTER_HALF_WIDTH_DEGREES = 60;
 const PART_COLOR_OUTSIDE_SATURATION_SCALE = 0.05;
+const PART_COLOR_HUE_PULL_INNER_RADIUS_DEGREES = 60;
+const PART_COLOR_HUE_PULL_INNER_SCALE = 0.5;
 const FILTER_LOG_HISTOGRAM_BINS = 1024;
 const FILTER_LOG_LUMA_MIN_EV = -16;
 const FILTER_LOG_LUMA_MAX_EV = 2;
@@ -2816,13 +2818,15 @@ function applyPartColorLinearRgb(
   const workR = clamp01(r);
   const workG = clamp01(g);
   const workB = clamp01(b);
-  const [hue, saturation] = rgbToHsv(workR, workG, workB);
+  const originalLuma = prophotoLumaForFilter(workR, workG, workB);
+  const [hue, saturation, value] = rgbToHsv(workR, workG, workB);
   if (!(saturation > 0)) return [workR, workG, workB];
 
-  const hueDegrees = hue * 360;
   const targetHueDegrees = partColorTargetHueDegrees(preset);
-  const rawDistance = Math.abs(hueDegrees - targetHueDegrees);
-  const hueDistanceDegrees = Math.min(rawDistance, 360 - rawDistance);
+  let signedHueDistance = hue - targetHueDegrees / 360;
+  if (signedHueDistance > 0.5) signedHueDistance -= 1;
+  if (signedHueDistance < -0.5) signedHueDistance += 1;
+  const hueDistanceDegrees = Math.abs(signedHueDistance) * 360;
   const transitionSpan = Math.max(
     1e-9,
     PART_COLOR_OUTER_HALF_WIDTH_DEGREES - PART_COLOR_CORE_HALF_WIDTH_DEGREES,
@@ -2839,13 +2843,31 @@ function applyPartColorLinearRgb(
   const saturationScale = 1 + (hueMaskSaturationScale - 1) * hueDependenceWeight;
   const targetSaturation = clamp01(saturation * saturationScale);
 
-  // This helper changes HSV saturation while restoring the original ProPhoto Y.
-  return applyHsvSaturationPreservingProPhotoLuminance(
-    workR,
-    workG,
-    workB,
+  // Pull hue toward the pure primary target. Inside 60 degrees, compress the
+  // angular distance linearly to half. Outside that region, continue pulling in
+  // a continuous linear way by connecting (60, 30) to (180, 180). Low-sat hues
+  // remain guarded so mist/gray gradients do not turn into banding.
+  const shiftedHueDistanceDegrees = hueDistanceDegrees <= PART_COLOR_HUE_PULL_INNER_RADIUS_DEGREES
+    ? hueDistanceDegrees * PART_COLOR_HUE_PULL_INNER_SCALE
+    : 1.25 * hueDistanceDegrees - 45;
+  const effectiveHueDistanceDegrees = hueDistanceDegrees
+    + (shiftedHueDistanceDegrees - hueDistanceDegrees) * hueDependenceWeight;
+  const shiftedHue = targetHueDegrees / 360
+    + Math.sign(signedHueDistance) * (effectiveHueDistanceDegrees / 360);
+  const normalizedShiftedHue = ((shiftedHue % 1) + 1) % 1;
+
+  let [linearR, linearG, linearB] = hsvToRgb(
+    normalizedShiftedHue,
     targetSaturation,
+    value,
   );
+  [linearR, linearG, linearB] = scaleLinearRgbToFilterLuma(
+    linearR,
+    linearG,
+    linearB,
+    originalLuma,
+  );
+  return limitFilterLinearRgbToUnitMax(linearR, linearG, linearB);
 }
 
 function applyPartColorFilterToCanvasData(

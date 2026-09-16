@@ -132,7 +132,9 @@ describe("Defringe", () => {
       : 1);
     expect(scales[0]).toBeCloseTo(scales[1], 6);
     expect(scales[1]).toBeCloseTo(scales[2], 6);
-    expect(scales[0]).toBeGreaterThanOrEqual(0);
+    // Mathematically this scale is non-negative. Allow sub-epsilon roundoff
+    // when recomputing luminance from an exactly neutral RGB result.
+    expect(scales[0]).toBeGreaterThanOrEqual(-1e-12);
   });
 
   test("green correction is deliberately weaker than magenta correction", () => {

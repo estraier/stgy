@@ -664,7 +664,7 @@ describe("image editor render characterization", () => {
           -5,
         ),
       ),
-    ).toBe("b8a66e9e");
+    ).toBe("b9af75ff");
   });
 
   test("freezes crop + arbitrary rotation render output", () => {
@@ -683,7 +683,7 @@ describe("image editor render characterization", () => {
       0,
       0,
     );
-    expect(fnv1a32(bytes)).toBe("1a815ffb");
+    expect(fnv1a32(bytes)).toBe("ed3cd2e3");
   });
 
   test("matches direct preview rendering when using the preview-resolution linear RGB cache", () => {
