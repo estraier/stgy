@@ -265,11 +265,11 @@ export type ImageChannelSwapPreset =
   | "swap-rgb-gbr"
   | "swap-rgb-brg"
   | "swap-rgb-bgr";
-export type ImageDuotonePreset = "duotone-yb" | "duotone-rc" | "duotone-gm";
+export type ImageDichromePreset = "dichrome-yb" | "dichrome-rc" | "dichrome-gm";
 export type ImagePartColorPreset = "part-color-red" | "part-color-green" | "part-color-blue";
 export type ImageOtherFilterPreset =
   | ImageChannelSwapPreset
-  | ImageDuotonePreset
+  | ImageDichromePreset
   | ImagePartColorPreset
   | "classic-chrome"
   | "velvia"
@@ -804,10 +804,10 @@ const SWAP_RGB_PRESET_SEQUENCE: readonly ImageChannelSwapPreset[] = [
   "swap-rgb-grb",
 ];
 
-const DUOTONE_PRESET_SEQUENCE: readonly ImageDuotonePreset[] = [
-  "duotone-yb",
-  "duotone-rc",
-  "duotone-gm",
+const DICHROME_PRESET_SEQUENCE: readonly ImageDichromePreset[] = [
+  "dichrome-yb",
+  "dichrome-rc",
+  "dichrome-gm",
 ];
 
 const PART_COLOR_PRESET_SEQUENCE: readonly ImagePartColorPreset[] = [
@@ -822,7 +822,7 @@ const OTHER_FILTER_LABELS: Record<Extract<ImageOtherFilterPreset, "classic-chrom
   "classic-chrome": "C. Chrome",
 };
 
-const DUOTONE_TARGET_PERCENTILE = 0.50;
+const DICHROME_TARGET_PERCENTILE = 0.50;
 const SOLARIZATION_PEAK = 0.97;
 const SOLARIZATION_TARGET_PERCENTILE = 0.50;
 
@@ -1701,8 +1701,8 @@ function isChannelSwapPreset(value: unknown): value is ImageChannelSwapPreset {
   return typeof value === "string" && (SWAP_RGB_PRESET_SEQUENCE as readonly string[]).includes(value);
 }
 
-function isDuotonePreset(value: unknown): value is ImageDuotonePreset {
-  return typeof value === "string" && (DUOTONE_PRESET_SEQUENCE as readonly string[]).includes(value);
+function isDichromePreset(value: unknown): value is ImageDichromePreset {
+  return typeof value === "string" && (DICHROME_PRESET_SEQUENCE as readonly string[]).includes(value);
 }
 
 function isPartColorPreset(value: unknown): value is ImagePartColorPreset {
@@ -1723,15 +1723,7 @@ function cycleOtherFilterPreset<T extends ImageOtherFilterPreset>(
 }
 
 function normalizeNonMonochromeFilterPreset(value: unknown): ImageNonMonochromeFilterPreset | null {
-  // Legacy filter names are normalized into the current cycling presets.
-  // swap-rgb-rgb was the identity permutation and is now treated as Off.
-  if (value === "swap-rgb-rgb") return null;
-  if (value === "swap-bgr") return "swap-rgb-bgr";
-  if (value === "swap-gbr") return "swap-rgb-gbr";
-  if (value === "duotone-yv" || value === "duotone-y" || value === "duotone-b") return "duotone-yb";
-  if (value === "duotone-r" || value === "duotone-c") return "duotone-rc";
-  if (value === "duotone-gr" || value === "duotone-g" || value === "duotone-m") return "duotone-gm";
-  if (isChannelSwapPreset(value) || isDuotonePreset(value) || isPartColorPreset(value)) return value;
+  if (isChannelSwapPreset(value) || isDichromePreset(value) || isPartColorPreset(value)) return value;
   if (
     value === "cyanotype" ||
     value === "cross-process" ||
@@ -2909,17 +2901,17 @@ function applyPartColorFilterToRgb16(
   }
 }
 
-function applyDuotoneChannelProjectionLinearRgb(
+function applyDichromeChannelProjectionLinearRgb(
   r: number,
   g: number,
   b: number,
-  preset: ImageDuotonePreset,
+  preset: ImageDichromePreset,
 ): [number, number, number] {
-  if (preset === "duotone-yb") {
+  if (preset === "dichrome-yb") {
     const yellow = (r + g) * 0.5;
     return [yellow, yellow, b];
   }
-  if (preset === "duotone-rc") {
+  if (preset === "dichrome-rc") {
     const cyan = (g + b) * 0.5;
     return [r, cyan, cyan];
   }
@@ -2927,12 +2919,12 @@ function applyDuotoneChannelProjectionLinearRgb(
   return [magenta, g, magenta];
 }
 
-function applyDuotoneFilterToCanvasData(
+function applyDichromeFilterToCanvasData(
   rgba8: Uint8ClampedArray,
   width: number,
   height: number,
   profile: ImageEditOutputColorProfile,
-  preset: ImageDuotonePreset,
+  preset: ImageDichromePreset,
 ): void {
   const beforeHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
   const filteredHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
@@ -2947,7 +2939,7 @@ function applyDuotoneFilterToCanvasData(
       (rgba8[i + 2] ?? 0) / 255,
       profile,
     );
-    const [fr, fg, fb] = applyDuotoneChannelProjectionLinearRgb(r, g, b, preset);
+    const [fr, fg, fb] = applyDichromeChannelProjectionLinearRgb(r, g, b, preset);
     accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
     accumulateLogLumaHistogram(filteredHistogram, prophotoLumaForFilter(fr, fg, fb));
     filteredLinear[linearIndex] = fr;
@@ -2955,8 +2947,8 @@ function applyDuotoneFilterToCanvasData(
     filteredLinear[linearIndex + 2] = fb;
   }
 
-  const beforeP50Ev = estimateLogPercentileFromHistogram(beforeHistogram, DUOTONE_TARGET_PERCENTILE);
-  const filteredP50Ev = estimateLogPercentileFromHistogram(filteredHistogram, DUOTONE_TARGET_PERCENTILE);
+  const beforeP50Ev = estimateLogPercentileFromHistogram(beforeHistogram, DICHROME_TARGET_PERCENTILE);
+  const filteredP50Ev = estimateLogPercentileFromHistogram(filteredHistogram, DICHROME_TARGET_PERCENTILE);
   const beforeP50Luma = Math.pow(2, beforeP50Ev);
   const filteredP50Luma = Math.pow(2, filteredP50Ev);
   const recoveryScaledLog = solveFilterScaledLogForTargetLuma(filteredP50Luma, beforeP50Luma);
@@ -2977,11 +2969,11 @@ function applyDuotoneFilterToCanvasData(
   }
 }
 
-function applyDuotoneFilterToRgb16(
+function applyDichromeFilterToRgb16(
   data: Uint16Array,
   width: number,
   height: number,
-  preset: ImageDuotonePreset,
+  preset: ImageDichromePreset,
 ): void {
   const beforeHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
   const filteredHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
@@ -2992,7 +2984,7 @@ function applyDuotoneFilterToRgb16(
     const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
     const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
     const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
-    const [fr, fg, fb] = applyDuotoneChannelProjectionLinearRgb(r, g, b, preset);
+    const [fr, fg, fb] = applyDichromeChannelProjectionLinearRgb(r, g, b, preset);
     accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
     accumulateLogLumaHistogram(filteredHistogram, prophotoLumaForFilter(fr, fg, fb));
     data[index] = encodeStoredRgb16Channel(fr, "gamma20", 1);
@@ -3000,8 +2992,8 @@ function applyDuotoneFilterToRgb16(
     data[index + 2] = encodeStoredRgb16Channel(fb, "gamma20", 1);
   }
 
-  const beforeP50Ev = estimateLogPercentileFromHistogram(beforeHistogram, DUOTONE_TARGET_PERCENTILE);
-  const filteredP50Ev = estimateLogPercentileFromHistogram(filteredHistogram, DUOTONE_TARGET_PERCENTILE);
+  const beforeP50Ev = estimateLogPercentileFromHistogram(beforeHistogram, DICHROME_TARGET_PERCENTILE);
+  const filteredP50Ev = estimateLogPercentileFromHistogram(filteredHistogram, DICHROME_TARGET_PERCENTILE);
   const beforeP50Luma = Math.pow(2, beforeP50Ev);
   const filteredP50Luma = Math.pow(2, filteredP50Ev);
   const recoveryScaledLog = solveFilterScaledLogForTargetLuma(filteredP50Luma, beforeP50Luma);
@@ -3255,8 +3247,8 @@ function applyImageFilterToCanvas(
     const profile: ImageEditOutputColorProfile = outputColorProfile === "display-p3" ? "display-p3" : "srgb";
     if (isChannelSwapPreset(filter.preset)) {
       applyChannelSwapFilterToCanvasData(rgba8, profile, filter.preset);
-    } else if (isDuotonePreset(filter.preset)) {
-      applyDuotoneFilterToCanvasData(rgba8, width, height, profile, filter.preset);
+    } else if (isDichromePreset(filter.preset)) {
+      applyDichromeFilterToCanvasData(rgba8, width, height, profile, filter.preset);
     } else if (isPartColorPreset(filter.preset)) {
       applyPartColorFilterToCanvasData(rgba8, profile, filter.preset);
     } else {
@@ -3756,8 +3748,8 @@ function applyImageFilterToRgb16(
     applyChannelSwapFilterToRgb16(data, width, height, filter.preset);
     return;
   }
-  if (isDuotonePreset(filter.preset)) {
-    applyDuotoneFilterToRgb16(data, width, height, filter.preset);
+  if (isDichromePreset(filter.preset)) {
+    applyDichromeFilterToRgb16(data, width, height, filter.preset);
     return;
   }
   if (isPartColorPreset(filter.preset)) {
@@ -12721,10 +12713,10 @@ export function ImageEditDialog({
                             );
                           })()}
                           {(() => {
-                            const preset = imageFilter?.kind === "other" && isDuotonePreset(imageFilter.preset)
+                            const preset = imageFilter?.kind === "other" && isDichromePreset(imageFilter.preset)
                               ? imageFilter.preset
                               : null;
-                            const label = "Duotone";
+                            const label = "Dichrome";
                             return (
                               <button
                                 type="button"
@@ -12733,9 +12725,9 @@ export function ImageEditDialog({
                                     ? "border-blue-500 bg-blue-50 text-blue-700"
                                     : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
                                 }`}
-                                onClick={() => setImageFilter((current) => cycleOtherFilterPreset(current, DUOTONE_PRESET_SEQUENCE))}
+                                onClick={() => setImageFilter((current) => cycleOtherFilterPreset(current, DICHROME_PRESET_SEQUENCE))}
                                 aria-label={label}
-                                title="Duotone; click to cycle YB, RC, GM, and Off"
+                                title="Dichrome; click to cycle YB, RC, GM, and Off"
                               >
                                 {label}
                               </button>
