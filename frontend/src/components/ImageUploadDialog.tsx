@@ -265,11 +265,17 @@ export type ImageChannelSwapPreset =
   | "swap-rgb-gbr"
   | "swap-rgb-brg"
   | "swap-rgb-bgr";
-export type ImageDichromePreset = "dichrome-yb" | "dichrome-rc" | "dichrome-gm";
-export type ImagePartColorPreset = "part-color-red" | "part-color-green" | "part-color-blue";
+export type ImageTrichromePreset = "trichrome-yb" | "trichrome-rc" | "trichrome-gm";
+export type ImagePartColorPreset =
+  | "part-color-red"
+  | "part-color-yellow"
+  | "part-color-green"
+  | "part-color-cyan"
+  | "part-color-blue"
+  | "part-color-magenta";
 export type ImageOtherFilterPreset =
   | ImageChannelSwapPreset
-  | ImageDichromePreset
+  | ImageTrichromePreset
   | ImagePartColorPreset
   | "classic-chrome"
   | "velvia"
@@ -804,16 +810,19 @@ const SWAP_RGB_PRESET_SEQUENCE: readonly ImageChannelSwapPreset[] = [
   "swap-rgb-grb",
 ];
 
-const DICHROME_PRESET_SEQUENCE: readonly ImageDichromePreset[] = [
-  "dichrome-yb",
-  "dichrome-rc",
-  "dichrome-gm",
+const TRICHROME_PRESET_SEQUENCE: readonly ImageTrichromePreset[] = [
+  "trichrome-yb",
+  "trichrome-rc",
+  "trichrome-gm",
 ];
 
 const PART_COLOR_PRESET_SEQUENCE: readonly ImagePartColorPreset[] = [
   "part-color-red",
+  "part-color-yellow",
   "part-color-green",
+  "part-color-cyan",
   "part-color-blue",
+  "part-color-magenta",
 ];
 
 const OTHER_FILTER_LABELS: Record<Extract<ImageOtherFilterPreset, "classic-chrome" | "velvia" | "edge">, string> = {
@@ -1701,8 +1710,8 @@ function isChannelSwapPreset(value: unknown): value is ImageChannelSwapPreset {
   return typeof value === "string" && (SWAP_RGB_PRESET_SEQUENCE as readonly string[]).includes(value);
 }
 
-function isDichromePreset(value: unknown): value is ImageDichromePreset {
-  return typeof value === "string" && (DICHROME_PRESET_SEQUENCE as readonly string[]).includes(value);
+function isTrichromePreset(value: unknown): value is ImageTrichromePreset {
+  return typeof value === "string" && (TRICHROME_PRESET_SEQUENCE as readonly string[]).includes(value);
 }
 
 function isPartColorPreset(value: unknown): value is ImagePartColorPreset {
@@ -1723,7 +1732,7 @@ function cycleOtherFilterPreset<T extends ImageOtherFilterPreset>(
 }
 
 function normalizeNonMonochromeFilterPreset(value: unknown): ImageNonMonochromeFilterPreset | null {
-  if (isChannelSwapPreset(value) || isDichromePreset(value) || isPartColorPreset(value)) return value;
+  if (isChannelSwapPreset(value) || isTrichromePreset(value) || isPartColorPreset(value)) return value;
   if (
     value === "cyanotype" ||
     value === "cross-process" ||
@@ -2791,10 +2800,16 @@ function applyBleachBypassFilterToCanvasData(
 
 function partColorTargetHueDegrees(preset: ImagePartColorPreset): number {
   switch (preset) {
+    case "part-color-yellow":
+      return 60;
     case "part-color-green":
       return 120;
+    case "part-color-cyan":
+      return 180;
     case "part-color-blue":
       return 240;
+    case "part-color-magenta":
+      return 300;
     case "part-color-red":
     default:
       return 0;
@@ -2901,17 +2916,17 @@ function applyPartColorFilterToRgb16(
   }
 }
 
-function applyDichromeChannelProjectionLinearRgb(
+function applyTrichromeChannelProjectionLinearRgb(
   r: number,
   g: number,
   b: number,
-  preset: ImageDichromePreset,
+  preset: ImageTrichromePreset,
 ): [number, number, number] {
-  if (preset === "dichrome-yb") {
+  if (preset === "trichrome-yb") {
     const yellow = (r + g) * 0.5;
     return [yellow, yellow, b];
   }
-  if (preset === "dichrome-rc") {
+  if (preset === "trichrome-rc") {
     const cyan = (g + b) * 0.5;
     return [r, cyan, cyan];
   }
@@ -2919,12 +2934,12 @@ function applyDichromeChannelProjectionLinearRgb(
   return [magenta, g, magenta];
 }
 
-function applyDichromeFilterToCanvasData(
+function applyTrichromeFilterToCanvasData(
   rgba8: Uint8ClampedArray,
   width: number,
   height: number,
   profile: ImageEditOutputColorProfile,
-  preset: ImageDichromePreset,
+  preset: ImageTrichromePreset,
 ): void {
   const beforeHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
   const filteredHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
@@ -2939,7 +2954,7 @@ function applyDichromeFilterToCanvasData(
       (rgba8[i + 2] ?? 0) / 255,
       profile,
     );
-    const [fr, fg, fb] = applyDichromeChannelProjectionLinearRgb(r, g, b, preset);
+    const [fr, fg, fb] = applyTrichromeChannelProjectionLinearRgb(r, g, b, preset);
     accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
     accumulateLogLumaHistogram(filteredHistogram, prophotoLumaForFilter(fr, fg, fb));
     filteredLinear[linearIndex] = fr;
@@ -2969,11 +2984,11 @@ function applyDichromeFilterToCanvasData(
   }
 }
 
-function applyDichromeFilterToRgb16(
+function applyTrichromeFilterToRgb16(
   data: Uint16Array,
   width: number,
   height: number,
-  preset: ImageDichromePreset,
+  preset: ImageTrichromePreset,
 ): void {
   const beforeHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
   const filteredHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
@@ -2984,7 +2999,7 @@ function applyDichromeFilterToRgb16(
     const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
     const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
     const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
-    const [fr, fg, fb] = applyDichromeChannelProjectionLinearRgb(r, g, b, preset);
+    const [fr, fg, fb] = applyTrichromeChannelProjectionLinearRgb(r, g, b, preset);
     accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
     accumulateLogLumaHistogram(filteredHistogram, prophotoLumaForFilter(fr, fg, fb));
     data[index] = encodeStoredRgb16Channel(fr, "gamma20", 1);
@@ -3247,8 +3262,8 @@ function applyImageFilterToCanvas(
     const profile: ImageEditOutputColorProfile = outputColorProfile === "display-p3" ? "display-p3" : "srgb";
     if (isChannelSwapPreset(filter.preset)) {
       applyChannelSwapFilterToCanvasData(rgba8, profile, filter.preset);
-    } else if (isDichromePreset(filter.preset)) {
-      applyDichromeFilterToCanvasData(rgba8, width, height, profile, filter.preset);
+    } else if (isTrichromePreset(filter.preset)) {
+      applyTrichromeFilterToCanvasData(rgba8, width, height, profile, filter.preset);
     } else if (isPartColorPreset(filter.preset)) {
       applyPartColorFilterToCanvasData(rgba8, profile, filter.preset);
     } else {
@@ -3748,8 +3763,8 @@ function applyImageFilterToRgb16(
     applyChannelSwapFilterToRgb16(data, width, height, filter.preset);
     return;
   }
-  if (isDichromePreset(filter.preset)) {
-    applyDichromeFilterToRgb16(data, width, height, filter.preset);
+  if (isTrichromePreset(filter.preset)) {
+    applyTrichromeFilterToRgb16(data, width, height, filter.preset);
     return;
   }
   if (isPartColorPreset(filter.preset)) {
@@ -12713,10 +12728,10 @@ export function ImageEditDialog({
                             );
                           })()}
                           {(() => {
-                            const preset = imageFilter?.kind === "other" && isDichromePreset(imageFilter.preset)
+                            const preset = imageFilter?.kind === "other" && isTrichromePreset(imageFilter.preset)
                               ? imageFilter.preset
                               : null;
-                            const label = "Dichrome";
+                            const label = "Trichrome";
                             return (
                               <button
                                 type="button"
@@ -12725,9 +12740,9 @@ export function ImageEditDialog({
                                     ? "border-blue-500 bg-blue-50 text-blue-700"
                                     : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
                                 }`}
-                                onClick={() => setImageFilter((current) => cycleOtherFilterPreset(current, DICHROME_PRESET_SEQUENCE))}
+                                onClick={() => setImageFilter((current) => cycleOtherFilterPreset(current, TRICHROME_PRESET_SEQUENCE))}
                                 aria-label={label}
-                                title="Dichrome; click to cycle YB, RC, GM, and Off"
+                                title="Trichrome; click to cycle YB, RC, GM, and Off"
                               >
                                 {label}
                               </button>
@@ -12748,7 +12763,7 @@ export function ImageEditDialog({
                                 }`}
                                 onClick={() => setImageFilter((current) => cycleOtherFilterPreset(current, PART_COLOR_PRESET_SEQUENCE))}
                                 aria-label={label}
-                                title="Part Color; click to cycle Red, Green, Blue, and Off"
+                                title="Part Color; click to cycle Red, Yellow, Green, Cyan, Blue, Magenta, and Off"
                               >
                                 {label}
                               </button>
