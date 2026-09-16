@@ -427,6 +427,9 @@ function applyRawColorToLinearRgb(
   plan: RawColorPassPlan,
   vibranceFactor: number,
   output: [number, number, number],
+  vibranceLog1pMagnitude?: number,
+  saturationRolloffInflection?: number,
+  saturationRolloffShoulder?: number,
 ): void {
   const extendedScale = Math.max(1, r, g, b);
   r /= extendedScale;
@@ -448,17 +451,33 @@ function applyRawColorToLinearRgb(
   const value = max;
   saturation = clamp01(saturation);
   if (plan.hasSaturation) {
-    saturation = clamp01(
-      applyRolloffScalar(saturation * plan.saturationFactor, plan.saturationRolloff),
-    );
+    const scaledSaturation = saturation * plan.saturationFactor;
+    if (
+      saturationRolloffShoulder !== undefined
+      && saturationRolloffInflection !== undefined
+    ) {
+      saturation = scaledSaturation > saturationRolloffInflection && saturationRolloffShoulder > 0
+        ? saturationRolloffInflection
+          + saturationRolloffShoulder * (
+            1 - Math.exp(-(scaledSaturation - saturationRolloffInflection) / saturationRolloffShoulder)
+          )
+        : scaledSaturation;
+      saturation = clamp01(saturation);
+    } else {
+      saturation = clamp01(
+        applyRolloffScalar(scaledSaturation, plan.saturationRolloff),
+      );
+    }
   }
   if (plan.hasVibrance) {
     const x = clamp01(saturation);
     if (vibranceFactor > 1e-6) {
-      saturation = clamp01(Math.log1p(x * vibranceFactor) / Math.log1p(vibranceFactor));
+      const denominator = vibranceLog1pMagnitude ?? Math.log1p(vibranceFactor);
+      saturation = clamp01(Math.log1p(x * vibranceFactor) / denominator);
     } else if (vibranceFactor < -1e-6) {
       const magnitude = -vibranceFactor;
-      saturation = clamp01(Math.expm1(x * Math.log1p(magnitude)) / magnitude);
+      const logarithm = vibranceLog1pMagnitude ?? Math.log1p(magnitude);
+      saturation = clamp01(Math.expm1(x * logarithm) / magnitude);
     } else saturation = x;
   }
 
@@ -802,6 +821,69 @@ export function developRawMasterOnePassToGamma20(
     ? Math.min(16, Math.max(-16, Math.round(colorPlan.vibranceFactor * 10) / 10))
     : 0;
 
+  // Precompute plan-only constants once. The old path rebuilt logarithm
+  // denominators, sigmoid endpoint normalization, rolloff shoulders, and
+  // vibrance logarithms for every full-resolution pixel.
+  const toneGain = tonePlan?.gain ?? 0;
+  const toneSlopeAtWhite = tonePlan?.toneSlopeAtWhite ?? 1;
+  const toneScaledLog = tonePlan
+    ? Math.min(
+      RAW_THUMBNAIL_MATCH_LOG_MAX,
+      Math.max(RAW_THUMBNAIL_MATCH_LOG_MIN, tonePlan.scaledLog),
+    )
+    : 0;
+  const toneScaledLogMode = toneScaledLog > 1e-8 ? 1 : toneScaledLog < -1e-8 ? -1 : 0;
+  const toneScaledLogMagnitude = Math.abs(toneScaledLog);
+  const toneScaledLogDenominator = toneScaledLogMode === 0
+    ? 0
+    : Math.log1p(toneScaledLogMagnitude);
+
+  const toneSigmoid = tonePlan
+    ? Math.min(
+      RAW_THUMBNAIL_MATCH_SIGMOID_MAX,
+      Math.max(RAW_THUMBNAIL_MATCH_SIGMOID_MIN, tonePlan.sigmoid),
+    )
+    : 0;
+  const toneSigmoidMode = toneSigmoid > 1e-8 ? 1 : toneSigmoid < -1e-8 ? -1 : 0;
+  const toneSigmoidMagnitude = Math.abs(toneSigmoid);
+  let toneSigmoidMin = 0;
+  let toneSigmoidRange = 1;
+  let toneSigmoidLogisticMin = 0;
+  let toneSigmoidLogisticRange = 0;
+  if (toneSigmoidMode > 0) {
+    toneSigmoidMin = naiveSigmoid(0, toneSigmoidMagnitude, 0.5);
+    const maxVal = naiveSigmoid(1, toneSigmoidMagnitude, 0.5);
+    toneSigmoidRange = maxVal - toneSigmoidMin;
+  } else if (toneSigmoidMode < 0) {
+    toneSigmoidLogisticMin = naiveSigmoid(0, toneSigmoidMagnitude, 0.5);
+    const logisticMax = naiveSigmoid(1, toneSigmoidMagnitude, 0.5);
+    toneSigmoidLogisticRange = logisticMax - toneSigmoidLogisticMin;
+    const inverseEndpoint = (value: number): number => {
+      const a = toneSigmoidLogisticRange * value + toneSigmoidLogisticMin;
+      return -Math.log(1 / a - 1) / toneSigmoidMagnitude;
+    };
+    toneSigmoidMin = inverseEndpoint(0);
+    toneSigmoidRange = inverseEndpoint(1) - toneSigmoidMin;
+  }
+
+  const toneRolloffInflection = tonePlan?.rolloff?.inflection ?? Number.POSITIVE_INFINITY;
+  const toneRolloffShoulder = tonePlan?.rolloff
+    ? tonePlan.rolloff.outputMax - tonePlan.rolloff.inflection
+    : 0;
+  const fallbackFactor = fallbackPlan?.factor ?? 1;
+  const fallbackRolloffInflection = fallbackPlan?.rolloff?.inflection ?? Number.POSITIVE_INFINITY;
+  const fallbackRolloffShoulder = fallbackPlan?.rolloff
+    ? fallbackPlan.rolloff.outputMax - fallbackPlan.rolloff.inflection
+    : 0;
+  const vibranceLog1pMagnitude = Math.abs(vibranceFactor) > 1e-6
+    ? Math.log1p(Math.abs(vibranceFactor))
+    : 0;
+  const saturationRolloffInflection = colorPlan?.saturationRolloff?.inflection
+    ?? Number.POSITIVE_INFINITY;
+  const saturationRolloffShoulder = colorPlan?.saturationRolloff
+    ? colorPlan.saturationRolloff.outputMax - colorPlan.saturationRolloff.inflection
+    : 0;
+
   let targetIndex = 0;
   for (let y = 0; y < outputHeight; y++) {
     const outputY = rawLensfunOutputCoordinate(
@@ -858,20 +940,55 @@ export function developRawMasterOnePassToGamma20(
       if (tonePlan) {
         const luma = PROPHOTO_LUMA_R * r + PROPHOTO_LUMA_G * g + PROPHOTO_LUMA_B * b;
         if (luma > 1e-12) {
-          const adjustedLuma = transformedRawLumaValueExtended(
-            luma,
-            tonePlan.gain,
-            tonePlan.scaledLog,
-            tonePlan.sigmoid,
-            tonePlan.toneSlopeAtWhite,
-          );
+          const exposed = luma * toneGain;
+          let adjustedLuma: number;
+          if (exposed <= 1) {
+            let logarithmic = clamp01(exposed);
+            if (toneScaledLogMode > 0) {
+              logarithmic = clamp01(
+                Math.log1p(logarithmic * toneScaledLogMagnitude) / toneScaledLogDenominator,
+              );
+            } else if (toneScaledLogMode < 0) {
+              logarithmic = clamp01(
+                Math.expm1(logarithmic * toneScaledLogDenominator) / toneScaledLogMagnitude,
+              );
+            }
+
+            if (toneSigmoidMode === 0) {
+              adjustedLuma = logarithmic;
+            } else {
+              const gamma = SIGMOID_WORKING_GAMMA;
+              const encoded = Math.pow(logarithmic, 1 / gamma);
+              let adjustedEncoded: number;
+              if (toneSigmoidMode > 0) {
+                const sigmoid = 1 / (
+                  1 + Math.exp((0.5 - encoded) * toneSigmoidMagnitude)
+                );
+                adjustedEncoded = clamp01(
+                  (sigmoid - toneSigmoidMin) / toneSigmoidRange,
+                );
+              } else {
+                const a = toneSigmoidLogisticRange * encoded + toneSigmoidLogisticMin;
+                const inverse = -Math.log(1 / a - 1) / toneSigmoidMagnitude;
+                adjustedEncoded = clamp01(
+                  (inverse - toneSigmoidMin) / toneSigmoidRange,
+                );
+              }
+              adjustedLuma = clamp01(Math.pow(adjustedEncoded, gamma));
+            }
+          } else {
+            adjustedLuma = 1 + toneSlopeAtWhite * (exposed - 1);
+          }
           const scale = adjustedLuma / luma;
           r *= scale;
           g *= scale;
           b *= scale;
           const maxChannel = Math.max(r, g, b);
-          if (tonePlan.rolloff && maxChannel > tonePlan.rolloff.inflection) {
-            const rolledMax = applyRolloffScalar(maxChannel, tonePlan.rolloff);
+          if (maxChannel > toneRolloffInflection && toneRolloffShoulder > 0) {
+            const rolledMax = toneRolloffInflection
+              + toneRolloffShoulder * (
+                1 - Math.exp(-(maxChannel - toneRolloffInflection) / toneRolloffShoulder)
+              );
             const rolloffScale = rolledMax / maxChannel;
             r *= rolloffScale;
             g *= rolloffScale;
@@ -883,12 +1000,15 @@ export function developRawMasterOnePassToGamma20(
           b = 0;
         }
       } else if (fallbackPlan) {
-        r *= fallbackPlan.factor;
-        g *= fallbackPlan.factor;
-        b *= fallbackPlan.factor;
+        r *= fallbackFactor;
+        g *= fallbackFactor;
+        b *= fallbackFactor;
         const maxChannel = Math.max(r, g, b);
-        if (fallbackPlan.rolloff && maxChannel > fallbackPlan.rolloff.inflection) {
-          const rolledMax = applyRolloffScalar(maxChannel, fallbackPlan.rolloff);
+        if (maxChannel > fallbackRolloffInflection && fallbackRolloffShoulder > 0) {
+          const rolledMax = fallbackRolloffInflection
+            + fallbackRolloffShoulder * (
+              1 - Math.exp(-(maxChannel - fallbackRolloffInflection) / fallbackRolloffShoulder)
+            );
           const rolloffScale = rolledMax / maxChannel;
           r *= rolloffScale;
           g *= rolloffScale;
@@ -899,7 +1019,17 @@ export function developRawMasterOnePassToGamma20(
       if (headroomAccumulator) recordHeadroom(headroomAccumulator, r, g, b);
 
       if (colorPlan && (colorPlan.hasSaturation || colorPlan.hasVibrance)) {
-        applyRawColorToLinearRgb(r, g, b, colorPlan, vibranceFactor, colorOutput);
+        applyRawColorToLinearRgb(
+          r,
+          g,
+          b,
+          colorPlan,
+          vibranceFactor,
+          colorOutput,
+          vibranceLog1pMagnitude,
+          saturationRolloffInflection,
+          saturationRolloffShoulder,
+        );
         r = colorOutput[0];
         g = colorOutput[1];
         b = colorOutput[2];
