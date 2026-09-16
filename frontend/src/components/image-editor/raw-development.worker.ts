@@ -8,6 +8,7 @@ import {
   applyRawMatchedTonePass,
   convertRawLinearToGamma20InPlace,
   developRawMasterOnePassToGamma20,
+  developRawMasterOnePassRowsToGamma20,
   resampleRawWithLensfunToGamma20,
   sampleRawLinearRgb,
   type RawColorPassPlan,
@@ -58,7 +59,23 @@ type RawDevelopmentWorkerRequest =
       tonePlan?: RawMatchedTonePlan;
       fallbackPlan?: RawFallbackPlan;
       colorPlan?: RawColorPassPlan;
-    } & StartMessageBase);
+    } & StartMessageBase)
+  | {
+      type: "master-one-pass-shared";
+      dataBuffer: SharedArrayBuffer;
+      outputBuffer: SharedArrayBuffer;
+      width: number;
+      height: number;
+      sourceLinearRangeMax: number;
+      sourceTransfer?: RawStorageTransfer;
+      correction?: RawLensfunCorrectionMaps;
+      tonePlan?: RawMatchedTonePlan;
+      fallbackPlan?: RawFallbackPlan;
+      colorPlan?: RawColorPassPlan;
+      rowStart: number;
+      rowEnd: number;
+      workerIndex: number;
+    };
 
 const workerScope = self as unknown as DedicatedWorkerGlobalScope;
 let state: WorkerState | null = null;
@@ -147,6 +164,37 @@ workerScope.onmessage = (event: MessageEvent<RawDevelopmentWorkerRequest>) => {
         },
         [outputBuffer],
       );
+      return;
+    }
+
+    if (message.type === "master-one-pass-shared") {
+      const sourceData = new Uint16Array(message.dataBuffer);
+      const outputData = new Uint16Array(message.outputBuffer);
+      const result = developRawMasterOnePassRowsToGamma20(
+        sourceData,
+        message.width,
+        message.height,
+        message.sourceLinearRangeMax,
+        message.sourceTransfer ?? "linear",
+        message.correction,
+        message.tonePlan,
+        message.fallbackPlan,
+        message.colorPlan,
+        outputData,
+        message.rowStart,
+        message.rowEnd,
+      );
+      workerScope.postMessage({
+        type: "master-one-pass-shared-complete",
+        workerIndex: message.workerIndex,
+        rowStart: message.rowStart,
+        rowEnd: message.rowEnd,
+        width: result.width,
+        height: result.height,
+        linearRangeMax: RAW_DEVELOPED_LINEAR_RANGE_MAX,
+        transfer: "gamma20",
+        headroom: result.headroom,
+      });
       return;
     }
 

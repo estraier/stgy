@@ -797,7 +797,7 @@ function sampleRawStoredChannelBilinear(
   );
 }
 
-export function developRawMasterOnePassToGamma20(
+export function developRawMasterOnePassRowsToGamma20(
   data: Uint16Array,
   sourceWidth: number,
   sourceHeight: number,
@@ -807,12 +807,20 @@ export function developRawMasterOnePassToGamma20(
   tonePlan: RawMatchedTonePlan | undefined,
   fallbackPlan: RawFallbackPlan | undefined,
   colorPlan: RawColorPassPlan | undefined,
-): { data: Uint16Array; width: number; height: number; headroom?: RawHeadroomStatistics } {
+  output: Uint16Array,
+  rowStart: number,
+  rowEnd: number,
+): { width: number; height: number; headroom?: RawHeadroomStatistics } {
   const outputDimensions = rawLensfunOutputDimensions(sourceWidth, sourceHeight, correction);
   const outputWidth = outputDimensions.width;
   const outputHeight = outputDimensions.height;
   const crop = normalizedRawLensfunCrop(correction);
-  const output = new Uint16Array(outputWidth * outputHeight * 3);
+  const expectedOutputLength = outputWidth * outputHeight * 3;
+  if (output.length < expectedOutputLength) {
+    throw new Error("RAW master one-pass output buffer is too small");
+  }
+  const startRow = Math.min(outputHeight, Math.max(0, Math.floor(rowStart)));
+  const endRow = Math.min(outputHeight, Math.max(startRow, Math.floor(rowEnd)));
   const coordinates: [number, number, number, number, number, number] = [0, 0, 0, 0, 0, 0];
   const gains: [number, number, number] = [1, 1, 1];
   const colorOutput: [number, number, number] = [0, 0, 0];
@@ -884,8 +892,8 @@ export function developRawMasterOnePassToGamma20(
     ? colorPlan.saturationRolloff.outputMax - colorPlan.saturationRolloff.inflection
     : 0;
 
-  let targetIndex = 0;
-  for (let y = 0; y < outputHeight; y++) {
+  let targetIndex = startRow * outputWidth * 3;
+  for (let y = startRow; y < endRow; y++) {
     const outputY = rawLensfunOutputCoordinate(
       y,
       outputHeight,
@@ -1042,11 +1050,40 @@ export function developRawMasterOnePassToGamma20(
   }
 
   return {
-    data: output,
     width: outputWidth,
     height: outputHeight,
     ...(headroomAccumulator ? { headroom: finishHeadroom(headroomAccumulator) } : {}),
   };
+}
+
+export function developRawMasterOnePassToGamma20(
+  data: Uint16Array,
+  sourceWidth: number,
+  sourceHeight: number,
+  sourceLinearRangeMax: number,
+  sourceTransfer: RawStorageTransfer,
+  correction: RawLensfunCorrectionMaps | undefined,
+  tonePlan: RawMatchedTonePlan | undefined,
+  fallbackPlan: RawFallbackPlan | undefined,
+  colorPlan: RawColorPassPlan | undefined,
+): { data: Uint16Array; width: number; height: number; headroom?: RawHeadroomStatistics } {
+  const outputDimensions = rawLensfunOutputDimensions(sourceWidth, sourceHeight, correction);
+  const output = new Uint16Array(outputDimensions.width * outputDimensions.height * 3);
+  const result = developRawMasterOnePassRowsToGamma20(
+    data,
+    sourceWidth,
+    sourceHeight,
+    sourceLinearRangeMax,
+    sourceTransfer,
+    correction,
+    tonePlan,
+    fallbackPlan,
+    colorPlan,
+    output,
+    0,
+    outputDimensions.height,
+  );
+  return { data: output, ...result };
 }
 
 export function resampleRawWithLensfunToGamma20(

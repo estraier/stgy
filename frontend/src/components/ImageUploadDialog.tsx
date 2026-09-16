@@ -6742,6 +6742,18 @@ type RawWorkerMasterOnePassResponse = {
   headroom?: RawDevelopmentHeadroomStatistics;
 };
 
+type RawWorkerMasterOnePassSharedResponse = {
+  type: "master-one-pass-shared-complete";
+  workerIndex: number;
+  rowStart: number;
+  rowEnd: number;
+  width: number;
+  height: number;
+  linearRangeMax: number;
+  transfer: DecodedRgbImage16["transfer"];
+  headroom?: RawDevelopmentHeadroomStatistics;
+};
+
 type RawWorkerDenoiseAnalyzeResponse = {
   type: "denoise-analyze-complete";
   weightBuffer: ArrayBuffer;
@@ -7159,6 +7171,65 @@ function rawLensfunMapTransferables(correction: LensfunCorrection | undefined): 
   return Array.from(unique);
 }
 
+const RAW_MASTER_ONE_PASS_MAX_WORKERS = 4;
+
+function sharedFloat32Copy(source: Float32Array | undefined): Float32Array | undefined {
+  if (!source) return undefined;
+  const buffer = new SharedArrayBuffer(source.byteLength);
+  const output = new Float32Array(buffer);
+  output.set(source);
+  return output;
+}
+
+function sharedRawLensfunCorrectionMaps(
+  correction: RawLensfunCorrectionMaps | undefined,
+): RawLensfunCorrectionMaps | undefined {
+  if (!correction) return undefined;
+  const geometry = sharedFloat32Copy(correction.geometry);
+  if (!geometry) return undefined;
+  const combined = sharedFloat32Copy(correction.combined);
+  const tca = sharedFloat32Copy(correction.tca);
+  const vignetting = sharedFloat32Copy(correction.vignetting);
+  return {
+    gridWidth: correction.gridWidth,
+    gridHeight: correction.gridHeight,
+    step: correction.step,
+    geometry,
+    distortion: correction.distortion,
+    ...(correction.crop ? { crop: correction.crop } : {}),
+    ...(combined ? { combined } : {}),
+    ...(tca ? { tca } : {}),
+    ...(vignetting ? { vignetting } : {}),
+    ...(correction.vignettingBaked ? { vignettingBaked: true } : {}),
+  };
+}
+
+function mergeRawHeadroomStatistics(
+  parts: Array<RawDevelopmentHeadroomStatistics | undefined>,
+): RawDevelopmentHeadroomStatistics | undefined {
+  const first = parts.find((part): part is RawDevelopmentHeadroomStatistics => Boolean(part));
+  if (!first) return undefined;
+  const bins = new Array<number>(first.bins.length).fill(0);
+  let overflowCount = 0;
+  let pixelCount = 0;
+  let maxRgb = 0;
+  for (const part of parts) {
+    if (!part) continue;
+    for (let i = 0; i < bins.length; i++) bins[i] += part.bins[i] ?? 0;
+    overflowCount += part.overflowCount;
+    pixelCount += part.pixelCount;
+    maxRgb = Math.max(maxRgb, part.maxRgb);
+  }
+  return {
+    step: first.step,
+    histogramMax: first.histogramMax,
+    bins,
+    overflowCount,
+    pixelCount,
+    maxRgb,
+  };
+}
+
 function rawPreviewDimensions(width: number, height: number): { width: number; height: number } {
   return analysisSampleDimensions(width, height, RAW_EDITOR_PREVIEW_TARGET_PIXELS);
 }
@@ -7445,6 +7516,88 @@ async function developRawMasterOnePassInWorker(
 ): Promise<{ decoded: DecodedRgbImage16; headroom?: RawDevelopmentHeadroomStatistics }> {
   const correction = sourceDecoded.lensCorrection;
   const correctionMaps = rawLensfunCorrectionMaps(correction);
+
+  if (
+    typeof Worker === "function"
+    && typeof SharedArrayBuffer === "function"
+    && globalThis.crossOriginIsolated === true
+  ) {
+    const outputDimensions = rawLensfunOutputDimensions(
+      sourceDecoded.width,
+      sourceDecoded.height,
+      correctionMaps,
+    );
+    const hardwareConcurrency = typeof navigator === "object"
+      ? Math.max(1, Math.floor(navigator.hardwareConcurrency || RAW_MASTER_ONE_PASS_MAX_WORKERS))
+      : RAW_MASTER_ONE_PASS_MAX_WORKERS;
+    const workerCount = Math.min(
+      RAW_MASTER_ONE_PASS_MAX_WORKERS,
+      hardwareConcurrency,
+      outputDimensions.height,
+    );
+
+    if (workerCount >= 2) {
+      const workers: Worker[] = [];
+      try {
+        for (let i = 0; i < workerCount; i++) {
+          const worker = createRawDevelopmentWorker();
+          if (!worker) throw new Error("Unable to create RAW master development worker");
+          workers.push(worker);
+        }
+
+        const sharedSourceBuffer = new SharedArrayBuffer(sourceDecoded.data.byteLength);
+        new Uint16Array(sharedSourceBuffer).set(sourceDecoded.data);
+        const sharedOutputBuffer = new SharedArrayBuffer(
+          outputDimensions.width * outputDimensions.height * 3 * Uint16Array.BYTES_PER_ELEMENT,
+        );
+        const sharedCorrection = sharedRawLensfunCorrectionMaps(correctionMaps);
+
+        const responses = await Promise.all(workers.map((worker, workerIndex) => {
+          const rowStart = Math.floor(outputDimensions.height * workerIndex / workerCount);
+          const rowEnd = Math.floor(outputDimensions.height * (workerIndex + 1) / workerCount);
+          return requestRawDevelopmentWorker<RawWorkerMasterOnePassSharedResponse>(
+            worker,
+            "master-one-pass-shared-complete",
+            {
+              type: "master-one-pass-shared",
+              dataBuffer: sharedSourceBuffer,
+              outputBuffer: sharedOutputBuffer,
+              width: sourceDecoded.width,
+              height: sourceDecoded.height,
+              sourceLinearRangeMax: sourceDecoded.linearRangeMax,
+              sourceTransfer: sourceDecoded.transfer,
+              correction: sharedCorrection,
+              tonePlan: plan.tonePlan,
+              fallbackPlan: plan.fallbackPlan,
+              colorPlan: plan.colorPlan,
+              rowStart,
+              rowEnd,
+              workerIndex,
+            },
+          );
+        }));
+
+        return {
+          decoded: {
+            colorSpace: "prophoto",
+            transfer: "gamma20",
+            linearRangeMax: RAW_DEVELOPED_LINEAR_RANGE_MAX,
+            width: outputDimensions.width,
+            height: outputDimensions.height,
+            data: new Uint16Array(sharedOutputBuffer),
+            cleanup: () => {},
+          },
+          headroom: mergeRawHeadroomStatistics(responses.map((response) => response.headroom)),
+        };
+      } catch {
+        // Keep the established single-worker path as a compatibility fallback.
+        // The original buffers have not been transferred, so it remains safe.
+      } finally {
+        for (const worker of workers) worker.terminate();
+      }
+    }
+  }
+
   const worker = createRawDevelopmentWorker();
   if (!worker) {
     const result = developRawMasterOnePassToGamma20(
