@@ -283,11 +283,19 @@ export type ImagePartColorPreset =
   | "part-color-cyan"
   | "part-color-blue"
   | "part-color-magenta";
+export type ImageDuotonePreset =
+  | "duotone-red"
+  | "duotone-yellow"
+  | "duotone-green"
+  | "duotone-cyan"
+  | "duotone-blue"
+  | "duotone-magenta";
 export type ImageOtherFilterPreset =
   | ImageChannelSwapPreset
   | ImageDichromePreset
   | ImageTrichromePreset
   | ImagePartColorPreset
+  | ImageDuotonePreset
   | "classic-chrome"
   | "velvia"
   | "edge";
@@ -807,11 +815,20 @@ const MONOCHROME_PRESET_WEIGHTS: Record<ImageMonochromePreset, readonly [number,
 const PHOTOCHEMICAL_FILTER_LABELS: Record<ImagePhotochemicalFilterPreset, string> = {
   sepia: "Sepia",
   cyanotype: "Cyanotype",
-  "cross-process": "Cross Process",
-  "bleach-bypass": "Bleach Bypass",
   negative: "Negative",
   solarization: "Solarization",
+  "cross-process": "Cross Process",
+  "bleach-bypass": "Bleach Bypass",
 };
+
+const PHOTOCHEMICAL_PRESET_SEQUENCE: readonly ImagePhotochemicalFilterPreset[] = [
+  "sepia",
+  "cyanotype",
+  "negative",
+  "solarization",
+  "cross-process",
+  "bleach-bypass",
+];
 
 const SWAP_RGB_PRESET_SEQUENCE: readonly ImageChannelSwapPreset[] = [
   "swap-rgb-bgr",
@@ -846,6 +863,15 @@ const PART_COLOR_PRESET_SEQUENCE: readonly ImagePartColorPreset[] = [
   "part-color-cyan",
   "part-color-blue",
   "part-color-magenta",
+];
+
+const DUOTONE_PRESET_SEQUENCE: readonly ImageDuotonePreset[] = [
+  "duotone-red",
+  "duotone-yellow",
+  "duotone-green",
+  "duotone-cyan",
+  "duotone-blue",
+  "duotone-magenta",
 ];
 
 const OTHER_FILTER_LABELS: Record<Extract<ImageOtherFilterPreset, "classic-chrome" | "velvia" | "edge">, string> = {
@@ -1745,6 +1771,10 @@ function isPartColorPreset(value: unknown): value is ImagePartColorPreset {
   return typeof value === "string" && (PART_COLOR_PRESET_SEQUENCE as readonly string[]).includes(value);
 }
 
+function isDuotonePreset(value: unknown): value is ImageDuotonePreset {
+  return typeof value === "string" && (DUOTONE_PRESET_SEQUENCE as readonly string[]).includes(value);
+}
+
 function cycleOtherFilterPreset<T extends ImageOtherFilterPreset>(
   current: ImageFilter | null | undefined,
   sequence: readonly T[],
@@ -1759,7 +1789,15 @@ function cycleOtherFilterPreset<T extends ImageOtherFilterPreset>(
 }
 
 function normalizeNonMonochromeFilterPreset(value: unknown): ImageNonMonochromeFilterPreset | null {
-  if (isChannelSwapPreset(value) || isDichromePreset(value) || isTrichromePreset(value) || isPartColorPreset(value)) return value;
+  if (
+    isChannelSwapPreset(value)
+    || isDichromePreset(value)
+    || isTrichromePreset(value)
+    || isPartColorPreset(value)
+    || isDuotonePreset(value)
+  ) {
+    return value;
+  }
   if (
     value === "cyanotype" ||
     value === "cross-process" ||
@@ -2943,6 +2981,151 @@ function applyPartColorFilterToRgb16(
   }
 }
 
+type DuotoneEndpointColor = readonly [number, number, number];
+
+const DUOTONE_ENDPOINT_LUMA_CENTER = 0.5;
+const DUOTONE_ENDPOINT_LUMA_DIFFERENCE = 0.75;
+const DUOTONE_HIGHLIGHT_MIN_LUMA = Math.min(1, DUOTONE_ENDPOINT_LUMA_CENTER + DUOTONE_ENDPOINT_LUMA_DIFFERENCE / 2);
+const DUOTONE_SHADOW_MAX_LUMA = Math.max(0, DUOTONE_ENDPOINT_LUMA_CENTER - DUOTONE_ENDPOINT_LUMA_DIFFERENCE / 2);
+const DUOTONE_SHADOW_DETAIL = 0.5;
+
+function duotonePureHighlightColor(preset: ImageDuotonePreset): DuotoneEndpointColor {
+  switch (preset) {
+    case "duotone-red":
+      return [1, 0, 0];
+    case "duotone-yellow":
+      return [1, 1, 0];
+    case "duotone-green":
+      return [0, 1, 0];
+    case "duotone-cyan":
+      return [0, 1, 1];
+    case "duotone-blue":
+      return [0, 0, 1];
+    case "duotone-magenta":
+      return [1, 0, 1];
+  }
+  const exhaustiveCheck: never = preset;
+  void exhaustiveCheck;
+  return [1, 0, 0];
+}
+
+function duotonePureShadowColor(preset: ImageDuotonePreset): DuotoneEndpointColor {
+  switch (preset) {
+    case "duotone-red":
+      return [0, 1, 1];
+    case "duotone-yellow":
+      return [0, 0, 1];
+    case "duotone-green":
+      return [1, 0, 1];
+    case "duotone-cyan":
+      return [1, 0, 0];
+    case "duotone-blue":
+      return [1, 1, 0];
+    case "duotone-magenta":
+      return [0, 1, 0];
+  }
+  const exhaustiveCheck: never = preset;
+  void exhaustiveCheck;
+  return [0, 0, 0];
+}
+
+function duotoneRec709Luma(color: DuotoneEndpointColor): number {
+  const [wr, wg, wb] = MONOCHROME_PRESET_WEIGHTS.rec709;
+  return color[0] * wr + color[1] * wg + color[2] * wb;
+}
+
+function duotoneTintTowardWhite(color: DuotoneEndpointColor, minLuma: number): DuotoneEndpointColor {
+  const sourceLuma = duotoneRec709Luma(color);
+  if (sourceLuma >= minLuma) return color;
+  const denominator = 1 - sourceLuma;
+  if (!(denominator > 1e-12)) return color;
+  const t = clamp01((minLuma - sourceLuma) / denominator);
+  return [
+    color[0] + (1 - color[0]) * t,
+    color[1] + (1 - color[1]) * t,
+    color[2] + (1 - color[2]) * t,
+  ];
+}
+
+function duotoneShadeTowardBlack(color: DuotoneEndpointColor, maxLuma: number): DuotoneEndpointColor {
+  const sourceLuma = duotoneRec709Luma(color);
+  if (sourceLuma <= maxLuma) return color;
+  if (!(sourceLuma > 1e-12)) return color;
+  const scale = clamp01(maxLuma / sourceLuma);
+  return [color[0] * scale, color[1] * scale, color[2] * scale];
+}
+
+function applyDuotoneToneMapping(grayscale: number): number {
+  const x = clamp01(grayscale);
+  const k = clamp01(DUOTONE_SHADOW_DETAIL);
+  return clamp01(x + k * x * (1 - x) * (1 - 2 * x));
+}
+
+function duotoneShadowColor(preset: ImageDuotonePreset): DuotoneEndpointColor {
+  return duotoneShadeTowardBlack(duotonePureShadowColor(preset), DUOTONE_SHADOW_MAX_LUMA);
+}
+
+function duotoneHighlightColor(preset: ImageDuotonePreset): DuotoneEndpointColor {
+  return duotoneTintTowardWhite(duotonePureHighlightColor(preset), DUOTONE_HIGHLIGHT_MIN_LUMA);
+}
+
+function applyDuotoneLinearRgb(
+  r: number,
+  g: number,
+  b: number,
+  preset: ImageDuotonePreset,
+): [number, number, number] {
+  const [wr, wg, wb] = MONOCHROME_PRESET_WEIGHTS.rec709;
+  const grayscale = clamp01(r * wr + g * wg + b * wb);
+  const tone = applyDuotoneToneMapping(grayscale);
+  const [shadowR, shadowG, shadowB] = duotoneShadowColor(preset);
+  const [highlightR, highlightG, highlightB] = duotoneHighlightColor(preset);
+  return [
+    shadowR + (highlightR - shadowR) * tone,
+    shadowG + (highlightG - shadowG) * tone,
+    shadowB + (highlightB - shadowB) * tone,
+  ];
+}
+
+function applyDuotoneFilterToCanvasData(
+  rgba8: Uint8ClampedArray,
+  profile: ImageEditOutputColorProfile,
+  preset: ImageDuotonePreset,
+): void {
+  for (let i = 0; i < rgba8.length; i += 4) {
+    const [r, g, b] = encodedRgbToLinearProphoto(
+      (rgba8[i] ?? 0) / 255,
+      (rgba8[i + 1] ?? 0) / 255,
+      (rgba8[i + 2] ?? 0) / 255,
+      profile,
+    );
+    const [fr, fg, fb] = applyDuotoneLinearRgb(r, g, b, preset);
+    const [er, eg, eb] = convertLinearProPhotoToOutputRgb(fr, fg, fb, profile);
+    rgba8[i] = linearChannelToSrgb(er);
+    rgba8[i + 1] = linearChannelToSrgb(eg);
+    rgba8[i + 2] = linearChannelToSrgb(eb);
+  }
+}
+
+function applyDuotoneFilterToRgb16(
+  data: Uint16Array,
+  width: number,
+  height: number,
+  preset: ImageDuotonePreset,
+): void {
+  const pixelCount = width * height;
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const index = pixel * 3;
+    const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
+    const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
+    const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
+    const [fr, fg, fb] = applyDuotoneLinearRgb(r, g, b, preset);
+    data[index] = encodeStoredRgb16Channel(fr, "gamma20", 1);
+    data[index + 1] = encodeStoredRgb16Channel(fg, "gamma20", 1);
+    data[index + 2] = encodeStoredRgb16Channel(fb, "gamma20", 1);
+  }
+}
+
 const DICHROME_SPOT_HUE_CORE_HALF_WIDTH_DEGREES = 30;
 const DICHROME_SPOT_HUE_OUTER_HALF_WIDTH_DEGREES = 60;
 const DICHROME_SPOT_KEEP_CHANNEL_ABSORPTION = 0.15;
@@ -3539,6 +3722,8 @@ function applyImageFilterToCanvas(
       applyTrichromeFilterToCanvasData(rgba8, width, height, profile, filter.preset);
     } else if (isPartColorPreset(filter.preset)) {
       applyPartColorFilterToCanvasData(rgba8, profile, filter.preset);
+    } else if (isDuotonePreset(filter.preset)) {
+      applyDuotoneFilterToCanvasData(rgba8, profile, filter.preset);
     } else {
       switch (filter.preset) {
         case "sepia":
@@ -4046,6 +4231,10 @@ function applyImageFilterToRgb16(
   }
   if (isPartColorPreset(filter.preset)) {
     applyPartColorFilterToRgb16(data, width, height, filter.preset);
+    return;
+  }
+  if (isDuotonePreset(filter.preset)) {
+    applyDuotoneFilterToRgb16(data, width, height, filter.preset);
     return;
   }
 
@@ -12956,10 +13145,8 @@ export function ImageEditDialog({
                       <div className="flex flex-col gap-1">
                         <span className="text-xs font-medium text-gray-700">Photochemical</span>
                         <div className="grid grid-cols-2 gap-1">
-                          {(Object.entries(PHOTOCHEMICAL_FILTER_LABELS) as Array<[
-                            ImagePhotochemicalFilterPreset,
-                            string,
-                          ]>).map(([preset, label]) => {
+                          {PHOTOCHEMICAL_PRESET_SEQUENCE.map((preset) => {
+                            const label = PHOTOCHEMICAL_FILTER_LABELS[preset];
                             const selected = imageFilter?.kind === "other" && imageFilter.preset === preset;
                             return (
                               <button
@@ -13067,7 +13254,28 @@ export function ImageEditDialog({
                               </button>
                             );
                           })()}
-                          {(["velvia", "classic-chrome", "edge"] as const).map((preset) => {
+                          {(() => {
+                            const preset = imageFilter?.kind === "other" && isDuotonePreset(imageFilter.preset)
+                              ? imageFilter.preset
+                              : null;
+                            const label = "Duotone";
+                            return (
+                              <button
+                                type="button"
+                                className={`rounded border px-2 py-1 text-[11px] ${
+                                  preset
+                                    ? "border-blue-500 bg-blue-50 text-blue-700"
+                                    : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                                }`}
+                                onClick={() => setImageFilter((current) => cycleOtherFilterPreset(current, DUOTONE_PRESET_SEQUENCE))}
+                                aria-label={label}
+                                title="Duotone; click to cycle Red, Yellow, Green, Cyan, Blue, Magenta, and Off"
+                              >
+                                {label}
+                              </button>
+                            );
+                          })()}
+                          {(["edge", "velvia", "classic-chrome"] as const).map((preset) => {
                             const label = OTHER_FILTER_LABELS[preset];
                             const selected = imageFilter?.kind === "other" && imageFilter.preset === preset;
                             return (
