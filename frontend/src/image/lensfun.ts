@@ -191,8 +191,12 @@ async function getLensfunClient(): Promise<{
   return lensfunClientPromise;
 }
 
-export async function checkLensfunRuntime(): Promise<string> {
+export async function warmupLensfunRuntime(): Promise<void> {
   await getLensfunClient();
+}
+
+export async function checkLensfunRuntime(): Promise<string> {
+  await warmupLensfunRuntime();
   return `lensfun-wasm ${LENSFUN_WASM_VERSION}`;
 }
 

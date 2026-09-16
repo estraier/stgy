@@ -17,6 +17,8 @@ import {
   createLibRawInstance,
   createLibRawWorkerFailure,
   isRawImageFile,
+  resolveLibRawOpenMpThreads,
+  resolveLibRawRuntimeMode,
   type LibRawImageDataLike,
   type LibRawInstanceLike,
   type LibRawMetadataLike,
@@ -47,6 +49,8 @@ import type {
   RawDevelopmentLuminanceSettings,
   RawDevelopmentSaturationSettings,
   RawDevelopmentSettings,
+  RawDevelopmentTiming,
+  RawDevelopmentTimingEntry,
   ToneAutoSample,
 } from "./image-editor/types";
 export type { DecodedImage, ImageEditOutputColorProfile } from "./image-editor/types";
@@ -464,6 +468,7 @@ type ImageLoadEmbeddedPreview = {
 type ImageLoadProgress = {
   stage: string;
   embeddedPreview?: ImageLoadEmbeddedPreview;
+  rawTiming?: RawDevelopmentTiming;
 };
 
 type ImageLoadProgressListener = (progress: ImageLoadProgress) => void;
@@ -479,7 +484,7 @@ const RAW_THUMBNAIL_MATCH_LOG_MIN = -16;
 const RAW_THUMBNAIL_MATCH_LOG_MAX = 16;
 const RAW_THUMBNAIL_MATCH_SIGMOID_MIN = -10;
 const RAW_THUMBNAIL_MATCH_SIGMOID_MAX = 10;
-const RAW_THUMBNAIL_MATCH_SIGMOID_STEP = 0.01;
+const RAW_THUMBNAIL_MATCH_SIGMOID_STEP = 0.1;
 const RAW_THUMBNAIL_MATCH_EXPOSURE_RELAXATION = 0.7;
 const RAW_THUMBNAIL_MATCH_LOG_RELAXATION = 0.4;
 const RAW_THUMBNAIL_MATCH_SIGMOID_RELAXATION = 0.2;
@@ -487,7 +492,7 @@ const RAW_THUMBNAIL_MATCH_RELAXATION_FINAL_SCALE = 0.5;
 const RAW_THUMBNAIL_MATCH_COLOR_ITERATIONS = 20;
 const RAW_THUMBNAIL_MATCH_SATURATION_RELAXATION = 0.7;
 const RAW_THUMBNAIL_MATCH_VIBRANCE_RELAXATION = 0.5;
-const RAW_THUMBNAIL_MATCH_COLOR_SEARCH_STEPS = 24;
+const RAW_THUMBNAIL_MATCH_VIBRANCE_SEARCH_STEPS = 8;
 const RAW_THUMBNAIL_MATCH_SATURATION_PERCENTILE = 95;
 const RAW_THUMBNAIL_MATCH_VIBRANCE_PERCENTILE = 50;
 const RAW_THUMBNAIL_MATCH_COLOR_AUTO_MIN = -5;
@@ -500,7 +505,7 @@ const RAW_EDITOR_PREVIEW_TARGET_PIXELS = 1_000_000;
 const RAW_DEBUG_TARGET_PIXELS = 1_000_000;
 const RAW_DENOISE_FULL_ISO = 800;
 const IMAGE_EDIT_CLAHE_MIN_PIXELS = 80 * 256 * 20; // 409,600 pixels.
-const RAW_PREVIEW_DEMOSAIC_QUALITY: RawDemosaicQuality = 0;
+const RAW_PREVIEW_DEMOSAIC_QUALITY: RawDemosaicQuality = 2;
 
 type DebugPercentileValues = number[];
 
@@ -509,10 +514,17 @@ type DebugPercentileStatistics = {
   saturation: DebugPercentileValues;
 };
 
+type RawThumbnailColorTarget = {
+  lowerValuePercentile: number;
+  saturationP95: number;
+  saturationP50: number;
+};
+
 type RawThumbnailMatchReference = {
   lumaPercentiles: DebugPercentileValues;
   saturationPercentiles: DebugPercentileValues;
   linearSrgbSample: Float32Array;
+  colorTargets?: RawThumbnailColorTarget[];
 };
 
 async function rawEmbeddedPreviewFromThumbnail(
@@ -586,19 +598,39 @@ async function rawEditableThumbnailToDecoded(
 
 async function readRawMeta(file: File): Promise<EditableImageMeta> {
   let raw: LibRawInstanceLike | null = null;
+  let workerFailure: ReturnType<typeof createLibRawWorkerFailure> | null = null;
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
   try {
     raw = await createLibRawInstance();
-    await raw.open(new Uint8Array(await file.arrayBuffer()));
-    const meta = await raw.metadata(false);
+    workerFailure = createLibRawWorkerFailure(raw);
+    const timeout = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(
+        () => reject(new Error("RAW decoder did not respond while reading metadata.")),
+        30_000,
+      );
+    });
+    await Promise.race([
+      raw.open(new Uint8Array(await file.arrayBuffer())),
+      workerFailure.promise,
+      timeout,
+    ]);
+    const meta = await Promise.race([
+      raw.metadata(false),
+      workerFailure.promise,
+      timeout,
+    ]);
     const width = Number(meta?.width || 0);
     const height = Number(meta?.height || 0);
     if (width > 0 && height > 0) {
       return { decodable: false, width, height };
     }
     return { decodable: false };
-  } catch {
-    return { decodable: false };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`RAW metadata probe failed: ${message}`);
   } finally {
+    if (timeoutId !== null) clearTimeout(timeoutId);
+    workerFailure?.cleanup();
     raw?.dispose?.();
   }
 }
@@ -5366,24 +5398,55 @@ function solveRawThumbnailMatchSigmoid(
   scaledLog: number,
   targetContrast: number,
 ): number {
+  const gamma = SIGMOID_WORKING_GAMMA;
+  const encodedP25 = Math.pow(
+    clamp01(applyRawBaselineScaledLogLinear(rawP25 * gain, scaledLog)),
+    1 / gamma,
+  );
+  const encodedP75 = Math.pow(
+    clamp01(applyRawBaselineScaledLogLinear(rawP75 * gain, scaledLog)),
+    1 / gamma,
+  );
+
+  const encodedSigmoidValue = (encoded: number, sigmoid: number): number => {
+    if (sigmoid > 1e-8) {
+      const minVal = naiveSigmoid(0, sigmoid, 0.5);
+      const maxVal = naiveSigmoid(1, sigmoid, 0.5);
+      return clamp01((naiveSigmoid(encoded, sigmoid, 0.5) - minVal) / (maxVal - minVal));
+    }
+    if (sigmoid < -1e-8) {
+      const magnitude = -sigmoid;
+      const minVal = naiveInverseSigmoid(0, magnitude, 0.5);
+      const maxVal = naiveInverseSigmoid(1, magnitude, 0.5);
+      return clamp01(
+        (naiveInverseSigmoid(encoded, magnitude, 0.5) - minVal) / (maxVal - minVal),
+      );
+    }
+    return clamp01(encoded);
+  };
+
   let bestSigmoid = 0;
   let bestError = Number.POSITIVE_INFINITY;
+  // Sigmoid is exposed at 0.1 precision, so scan the complete -10..10 grid
+  // at that precision. Keep the global search because P25-P75 contrast is not
+  // guaranteed to be monotonic in sigmoid strength.
   for (
     let sigmoid = RAW_THUMBNAIL_MATCH_SIGMOID_MIN;
     sigmoid <= RAW_THUMBNAIL_MATCH_SIGMOID_MAX + RAW_THUMBNAIL_MATCH_SIGMOID_STEP / 2;
     sigmoid += RAW_THUMBNAIL_MATCH_SIGMOID_STEP
   ) {
-    const p25 = transformedRawLumaValue(rawP25, gain, scaledLog, sigmoid);
-    const p75 = transformedRawLumaValue(rawP75, gain, scaledLog, sigmoid);
-    const error = Math.abs(rawThumbnailContrast(p25, p75) - targetContrast);
+    const p25 = encodedSigmoidValue(encodedP25, sigmoid);
+    const p75 = encodedSigmoidValue(encodedP75, sigmoid);
+    const error = Math.abs((p75 - p25) - targetContrast);
     if (
-      error < bestError - 1e-12 ||
-      (Math.abs(error - bestError) <= 1e-12 && Math.abs(sigmoid) < Math.abs(bestSigmoid))
+      error < bestError - 1e-12
+      || (Math.abs(error - bestError) <= 1e-12 && Math.abs(sigmoid) < Math.abs(bestSigmoid))
     ) {
       bestError = error;
       bestSigmoid = sigmoid;
     }
   }
+
   return Math.min(
     RAW_THUMBNAIL_MATCH_SIGMOID_MAX,
     Math.max(RAW_THUMBNAIL_MATCH_SIGMOID_MIN, bestSigmoid),
@@ -5410,18 +5473,10 @@ function planRawThumbnailMatchedBaseline(
 
   const sample = sampleRawThumbnailMatchLinearRgbFromRgb16(decoded);
   if (!sample.length) return null;
-  const sampleDimensions = analysisSampleDimensions(
-    decoded.width,
-    decoded.height,
-    RAW_THUMBNAIL_MATCH_SAMPLE_TARGET_PIXELS,
-  );
-  const statisticsSample = denoiseRawThumbnailMatchChroma(
-    sample,
-    sampleDimensions.width,
-    sampleDimensions.height,
-    "prophoto",
-  );
-  const rawPercentiles = debugPercentilesFromLinearRgbSample(statisticsSample, "prophoto");
+  // Tone matching uses luminance only. Chroma denoise is intentionally kept in
+  // color planning, where it prevents high-ISO color noise from inflating the
+  // measured saturation, but it is unnecessary here.
+  const rawPercentiles = debugPercentilesFromLinearRgbSample(sample, "prophoto");
   const rawP25 = rawPercentiles[p25Index];
   const rawP50 = rawPercentiles[p50Index];
   const rawP75 = rawPercentiles[p75Index];
@@ -5506,69 +5561,53 @@ function planRawThumbnailMatchedBaseline(
   };
 }
 
-function buildValuePercentileMask(
-  values: Float32Array,
-  lowerPercentile: number,
-  upperPercentile: number,
-): { mask: Uint8Array; count: number } {
-  const count = values.length;
-  const mask = new Uint8Array(count);
-  if (count <= 0) return { mask, count: 0 };
-
-  const indices = Array.from({ length: count }, (_, index) => index);
+function sortedValueIndices(values: Float32Array): number[] {
+  const indices = Array.from({ length: values.length }, (_, index) => index);
   indices.sort((a, b) => {
     const diff = (values[a] ?? 0) - (values[b] ?? 0);
     return diff !== 0 ? diff : a - b;
   });
+  return indices;
+}
+
+function percentileFromSortedValueIndices(
+  values: Float32Array,
+  indices: number[],
+  percentile: number,
+): number {
+  if (!indices.length) return 0;
+  const rank = (indices.length - 1) * Math.min(100, Math.max(0, percentile)) / 100;
+  const lower = Math.floor(rank);
+  const upper = Math.ceil(rank);
+  const fraction = rank - lower;
+  const lowerIndex = indices[lower] ?? 0;
+  const upperIndex = indices[upper] ?? lowerIndex;
+  const lo = values[lowerIndex] ?? 0;
+  const hi = values[upperIndex] ?? lo;
+  return lo + (hi - lo) * fraction;
+}
+
+function valuePercentileRangeIndices(
+  sortedIndices: number[],
+  lowerPercentile: number,
+  upperPercentile: number,
+): Uint32Array {
+  const count = sortedIndices.length;
+  if (count <= 0) return new Uint32Array(0);
   const lower = Math.min(100, Math.max(0, lowerPercentile));
   const upper = Math.min(100, Math.max(lower, upperPercentile));
   const start = Math.min(count - 1, Math.max(0, Math.floor(count * lower / 100)));
   const end = Math.max(start + 1, Math.min(count, Math.ceil(count * upper / 100)));
-  for (let i = start; i < end; i++) {
-    const index = indices[i];
-    if (index !== undefined) mask[index] = 1;
-  }
-  return { mask, count: end - start };
+  const selected = new Uint32Array(end - start);
+  for (let i = start; i < end; i++) selected[i - start] = sortedIndices[i] ?? 0;
+  return selected;
 }
 
-function rawThumbnailMatchColorLowerValuePercentile(
-  rawLinearProPhotoSample: Float32Array,
-): number {
-  const count = Math.floor(rawLinearProPhotoSample.length / 3);
-  if (count <= 0) return RAW_THUMBNAIL_MATCH_COLOR_VALUE_LOWER_PERCENTILES[0];
-  const comparisonValues = new Array<number>(count);
-  for (let i = 0; i < count; i++) {
-    const si = i * 3;
-    const [sr, sg, sb] = convertLinearProPhotoToOutputRgb(
-      rawLinearProPhotoSample[si] ?? 0,
-      rawLinearProPhotoSample[si + 1] ?? 0,
-      rawLinearProPhotoSample[si + 2] ?? 0,
-      "srgb",
-    );
-    const [, , value] = rgbToHsv(clamp01(sr), clamp01(sg), clamp01(sb));
-    comparisonValues[i] = value;
-  }
-  const valuePercentiles = percentilesFromValues(
-    comparisonValues,
-    RAW_THUMBNAIL_MATCH_COLOR_VALUE_LOWER_PERCENTILES,
-  );
-  for (let i = 0; i < RAW_THUMBNAIL_MATCH_COLOR_VALUE_LOWER_PERCENTILES.length; i++) {
-    if ((valuePercentiles[i] ?? 0) > RAW_THUMBNAIL_MATCH_COLOR_VALUE_MIN) {
-      return RAW_THUMBNAIL_MATCH_COLOR_VALUE_LOWER_PERCENTILES[i] ?? 60;
-    }
-  }
-  return RAW_THUMBNAIL_MATCH_COLOR_VALUE_LOWER_PERCENTILES[
-    RAW_THUMBNAIL_MATCH_COLOR_VALUE_LOWER_PERCENTILES.length - 1
-  ] ?? 60;
-}
-
-function hsvSaturationPercentileFromLinearSrgbSample(
+function buildThumbnailColorTargetsFromLinearSrgbSample(
   sample: Float32Array,
-  percentile: number,
-  lowerValuePercentile: number,
-): number {
+): RawThumbnailColorTarget[] {
   const count = Math.floor(sample.length / 3);
-  if (count <= 0) return 0;
+  if (count <= 0) return [];
   const saturationValues = new Float32Array(count);
   const valueValues = new Float32Array(count);
   for (let i = 0; i < count; i++) {
@@ -5581,21 +5620,37 @@ function hsvSaturationPercentileFromLinearSrgbSample(
     saturationValues[i] = saturation;
     valueValues[i] = value;
   }
-  const central = buildValuePercentileMask(
-    valueValues,
-    lowerValuePercentile,
-    RAW_THUMBNAIL_MATCH_COLOR_VALUE_UPPER_PERCENTILE,
-  );
-  if (central.count <= 0) return 0;
-
+  const sortedIndices = sortedValueIndices(valueValues);
   const bins = 4096;
-  const histogram = new Uint32Array(bins);
-  for (let i = 0; i < count; i++) {
-    if (!central.mask[i]) continue;
-    const saturation = saturationValues[i] ?? 0;
-    histogram[Math.min(bins - 1, Math.max(0, Math.round(saturation * (bins - 1))))]++;
-  }
-  return histogramPercentile16(histogram, central.count, percentile) / (bins - 1);
+  return RAW_THUMBNAIL_MATCH_COLOR_VALUE_LOWER_PERCENTILES.map((lowerValuePercentile) => {
+    const selected = valuePercentileRangeIndices(
+      sortedIndices,
+      lowerValuePercentile,
+      RAW_THUMBNAIL_MATCH_COLOR_VALUE_UPPER_PERCENTILE,
+    );
+    if (!selected.length) {
+      return { lowerValuePercentile, saturationP95: 0, saturationP50: 0 };
+    }
+    const histogram = new Uint32Array(bins);
+    for (let position = 0; position < selected.length; position++) {
+      const i = selected[position] ?? 0;
+      const saturation = saturationValues[i] ?? 0;
+      histogram[Math.min(bins - 1, Math.max(0, Math.round(saturation * (bins - 1))))]++;
+    }
+    return {
+      lowerValuePercentile,
+      saturationP95: histogramPercentile16(
+        histogram,
+        selected.length,
+        RAW_THUMBNAIL_MATCH_SATURATION_PERCENTILE,
+      ) / (bins - 1),
+      saturationP50: histogramPercentile16(
+        histogram,
+        selected.length,
+        RAW_THUMBNAIL_MATCH_VIBRANCE_PERCENTILE,
+      ) / (bins - 1),
+    };
+  });
 }
 
 type RawAutoColorSample = {
@@ -5603,14 +5658,11 @@ type RawAutoColorSample = {
   saturation: Float32Array;
   value: Float32Array;
   saturationP998: number;
-  statisticsMask: Uint8Array;
-  statisticsCount: number;
+  statisticsIndices: Uint32Array;
+  lowerValuePercentile: number;
 };
 
-function buildRawAutoColorSample(
-  sample: Float32Array,
-  lowerValuePercentile: number,
-): RawAutoColorSample {
+function buildRawAutoColorSample(sample: Float32Array): RawAutoColorSample {
   const count = Math.floor(sample.length / 3);
   const hue = new Float32Array(count);
   const saturation = new Float32Array(count);
@@ -5628,20 +5680,26 @@ function buildRawAutoColorSample(
     value[i] = v;
     saturationValues[i] = s;
 
-    // Use the same Value percentile interval as the thumbnail. The lower
-    // bound is selected adaptively from the tone-adjusted RAW so very dark,
-    // low-S/N pixels do not dominate the color match. The mask stays fixed
-    // while the solver varies Saturation/Vibrance.
+    // Compute the sRGB Value population once. The same sorted order chooses the
+    // adaptive lower percentile and builds the statistics interval.
     const [sr, sg, sb] = convertLinearProPhotoToOutputRgb(r, g, b, "srgb");
-    const [, , comparisonValue] = rgbToHsv(
-      clamp01(sr),
-      clamp01(sg),
-      clamp01(sb),
-    );
+    const [, , comparisonValue] = rgbToHsv(clamp01(sr), clamp01(sg), clamp01(sb));
     statisticsValue[i] = comparisonValue;
   }
-  const central = buildValuePercentileMask(
-    statisticsValue,
+
+  const sortedIndices = sortedValueIndices(statisticsValue);
+  let lowerValuePercentile = RAW_THUMBNAIL_MATCH_COLOR_VALUE_LOWER_PERCENTILES[
+    RAW_THUMBNAIL_MATCH_COLOR_VALUE_LOWER_PERCENTILES.length - 1
+  ] ?? 60;
+  for (const percentile of RAW_THUMBNAIL_MATCH_COLOR_VALUE_LOWER_PERCENTILES) {
+    if (percentileFromSortedValueIndices(statisticsValue, sortedIndices, percentile) > RAW_THUMBNAIL_MATCH_COLOR_VALUE_MIN) {
+      lowerValuePercentile = percentile;
+      break;
+    }
+  }
+
+  const statisticsIndices = valuePercentileRangeIndices(
+    sortedIndices,
     lowerValuePercentile,
     RAW_THUMBNAIL_MATCH_COLOR_VALUE_UPPER_PERCENTILE,
   );
@@ -5650,8 +5708,8 @@ function buildRawAutoColorSample(
     saturation,
     value,
     saturationP998: percentileFromValues(saturationValues, 99.8),
-    statisticsMask: central.mask,
-    statisticsCount: central.count,
+    statisticsIndices,
+    lowerValuePercentile,
   };
 }
 
@@ -5672,64 +5730,92 @@ function rawAutoColorSaturationPercentile(
     : null;
   const bins = 4096;
   const histogram = new Uint32Array(bins);
-  for (let i = 0; i < sample.saturation.length; i++) {
-    if (!sample.statisticsMask[i]) continue;
+  for (let position = 0; position < sample.statisticsIndices.length; position++) {
+    const i = sample.statisticsIndices[position] ?? 0;
     let s = sample.saturation[i] ?? 0;
     if (normalizedSaturation !== 0) {
       s = applyRolloffScalar(s * saturationFactor, saturationRolloff);
       s = clamp01(s);
     }
-    if (normalizedVibrance !== 0) {
-      s = applyScaledLogLinear(s, vibranceFactor);
-    }
-    const [pr, pg, pb] = hsvToRgb(
-      sample.hue[i] ?? 0,
-      s,
-      sample.value[i] ?? 0,
-    );
+    if (normalizedVibrance !== 0) s = applyScaledLogLinear(s, vibranceFactor);
+    const [pr, pg, pb] = hsvToRgb(sample.hue[i] ?? 0, s, sample.value[i] ?? 0);
     const [sr, sg, sb] = convertLinearProPhotoToOutputRgb(pr, pg, pb, "srgb");
-    const [, outputSaturation] = rgbToHsv(
-      clamp01(sr),
-      clamp01(sg),
-      clamp01(sb),
-    );
+    const [, outputSaturation] = rgbToHsv(clamp01(sr), clamp01(sg), clamp01(sb));
     histogram[Math.min(bins - 1, Math.max(0, Math.round(outputSaturation * (bins - 1))))]++;
   }
-  return histogramPercentile16(histogram, sample.statisticsCount, percentile) / (bins - 1);
+  return sample.statisticsIndices.length > 0
+    ? histogramPercentile16(histogram, sample.statisticsIndices.length, percentile) / (bins - 1)
+    : 0;
 }
 
-function solveRawThumbnailMatchColorParameter(
+function solveRawThumbnailMatchSaturation(
+  sample: RawAutoColorSample,
+  target: number,
+  percentile: number,
+): number {
+  const clampedTarget = clamp01(target);
+  const source = rawAutoColorSaturationPercentile(sample, 0, 0, percentile);
+  let estimated = 0;
+  if (source > 1e-8) {
+    estimated = clampColorAdjustment((clampedTarget / source - 1) * 100);
+  } else if (clampedTarget > source) {
+    estimated = 100;
+  }
+
+  let best = estimated;
+  let bestError = Number.POSITIVE_INFINITY;
+  // Saturation itself is a linear multiplier, so use target/source as the
+  // first estimate. sRGB conversion and saturation rolloff make that only an
+  // approximation; verify the nearby integer settings with the exact current
+  // rendering/statistics path and keep the best one.
+  for (let offset = -2; offset <= 2; offset++) {
+    const candidate = clampColorAdjustment(estimated + offset);
+    const value = rawAutoColorSaturationPercentile(sample, candidate, 0, percentile);
+    const error = Math.abs(value - clampedTarget);
+    if (
+      error < bestError - 1e-12
+      || (Math.abs(error - bestError) <= 1e-12 && Math.abs(candidate) < Math.abs(best))
+    ) {
+      best = candidate;
+      bestError = error;
+    }
+  }
+  return best;
+}
+
+function solveRawThumbnailMatchVibrance(
   sample: RawAutoColorSample,
   target: number,
   percentile: number,
   fixedSaturation: number,
-  parameter: "saturation" | "vibrance",
 ): number {
-  const evaluate = (value: number) => rawAutoColorSaturationPercentile(
+  const evaluate = (candidate: number) => rawAutoColorSaturationPercentile(
     sample,
-    parameter === "saturation" ? value : fixedSaturation,
-    parameter === "vibrance" ? value : 0,
+    fixedSaturation,
+    candidate,
     percentile,
   );
+  const clampedTarget = clamp01(target);
   let lower = -100;
   let upper = 100;
   let lowerValue = evaluate(lower);
   let upperValue = evaluate(upper);
-  const clampedTarget = clamp01(target);
+  const ascending = lowerValue <= upperValue;
 
-  // The manual HSV adjustment is normally monotonic in this statistic. If a
-  // gamut-clipping edge case reverses the endpoints, keep the search ordered.
-  if (lowerValue > upperValue) {
-    [lower, upper] = [upper, lower];
-    [lowerValue, upperValue] = [upperValue, lowerValue];
+  if (ascending) {
+    if (clampedTarget <= lowerValue) return lower;
+    if (clampedTarget >= upperValue) return upper;
+  } else {
+    if (clampedTarget >= lowerValue) return lower;
+    if (clampedTarget <= upperValue) return upper;
   }
-  if (clampedTarget <= lowerValue) return lower;
-  if (clampedTarget >= upperValue) return upper;
 
-  for (let i = 0; i < RAW_THUMBNAIL_MATCH_COLOR_SEARCH_STEPS; i++) {
-    const mid = (lower + upper) / 2;
+  // Vibrance is an integer control over a monotonic statistic. Eight binary
+  // steps are sufficient to resolve all 201 values in [-100, 100].
+  for (let i = 0; i < RAW_THUMBNAIL_MATCH_VIBRANCE_SEARCH_STEPS && upper - lower > 1; i++) {
+    const mid = Math.floor((lower + upper) / 2);
     const value = evaluate(mid);
-    if (value < clampedTarget) {
+    if ((ascending && value < clampedTarget) || (!ascending && value > clampedTarget)) {
       lower = mid;
       lowerValue = value;
     } else {
@@ -5737,9 +5823,12 @@ function solveRawThumbnailMatchColorParameter(
       upperValue = value;
     }
   }
-  return Math.abs(lowerValue - clampedTarget) <= Math.abs(upperValue - clampedTarget)
-    ? lower
-    : upper;
+
+  const lowerError = Math.abs(lowerValue - clampedTarget);
+  const upperError = Math.abs(upperValue - clampedTarget);
+  if (lowerError < upperError - 1e-12) return lower;
+  if (upperError < lowerError - 1e-12) return upper;
+  return Math.abs(lower) <= Math.abs(upper) ? lower : upper;
 }
 
 function medianFilterRawThumbnailMatchChannel5x5(
@@ -5779,6 +5868,7 @@ function denoiseRawThumbnailMatchChroma(
   width: number,
   height: number,
   colorSpace: "srgb" | "prophoto",
+  timing?: RawDevelopmentTiming,
 ): Float32Array {
   const pixels = Math.floor(linearRgbSample.length / 3);
   if (pixels <= 0 || width <= 0 || height <= 0 || width * height !== pixels) {
@@ -5789,49 +5879,78 @@ function denoiseRawThumbnailMatchChroma(
   const lumaG = colorSpace === "prophoto" ? PROPHOTO_LUMA_G : 0.7152;
   const lumaB = colorSpace === "prophoto" ? PROPHOTO_LUMA_B : 0.0722;
   const rangeMax = colorSpace === "prophoto" ? RAW_DEVELOPED_LINEAR_RANGE_MAX : 1;
-  const luma = new Float32Array(pixels);
-  const chromaR = new Float32Array(pixels);
-  const chromaB = new Float32Array(pixels);
-  for (let i = 0; i < pixels; i++) {
-    const si = i * 3;
-    const r = linearRgbSample[si] ?? 0;
-    const g = linearRgbSample[si + 1] ?? 0;
-    const b = linearRgbSample[si + 2] ?? 0;
-    const y = lumaR * r + lumaG * g + lumaB * b;
-    luma[i] = y;
-    chromaR[i] = r - y;
-    chromaB[i] = b - y;
-  }
+  const { luma, chromaR, chromaB } = measureRawTimingSync(
+    timing,
+    "preview",
+    "Preparing embedded thumbnail chroma channels",
+    () => {
+      const nextLuma = new Float32Array(pixels);
+      const nextChromaR = new Float32Array(pixels);
+      const nextChromaB = new Float32Array(pixels);
+      for (let i = 0; i < pixels; i++) {
+        const si = i * 3;
+        const r = linearRgbSample[si] ?? 0;
+        const g = linearRgbSample[si + 1] ?? 0;
+        const b = linearRgbSample[si + 2] ?? 0;
+        const y = lumaR * r + lumaG * g + lumaB * b;
+        nextLuma[i] = y;
+        nextChromaR[i] = r - y;
+        nextChromaB[i] = b - y;
+      }
+      return { luma: nextLuma, chromaR: nextChromaR, chromaB: nextChromaB };
+    },
+  );
 
   // Automatic thumbnail matching compares like with like: both RAW and the
   // embedded thumbnail are resized to the same target-area rule first, then
   // receive the same two strong 5x5 chroma-median passes. Luminance is kept
   // separate so this cleanup suppresses color noise rather than tone detail.
-  const filteredR = medianFilterRawThumbnailMatchChannel5x5(
-    medianFilterRawThumbnailMatchChannel5x5(chromaR, width, height),
-    width,
-    height,
+  const filteredRPass1 = measureRawTimingSync(
+    timing,
+    "preview",
+    "Embedded thumbnail chroma R median pass 1",
+    () => medianFilterRawThumbnailMatchChannel5x5(chromaR, width, height),
   );
-  const filteredB = medianFilterRawThumbnailMatchChannel5x5(
-    medianFilterRawThumbnailMatchChannel5x5(chromaB, width, height),
-    width,
-    height,
+  const filteredR = measureRawTimingSync(
+    timing,
+    "preview",
+    "Embedded thumbnail chroma R median pass 2",
+    () => medianFilterRawThumbnailMatchChannel5x5(filteredRPass1, width, height),
+  );
+  const filteredBPass1 = measureRawTimingSync(
+    timing,
+    "preview",
+    "Embedded thumbnail chroma B median pass 1",
+    () => medianFilterRawThumbnailMatchChannel5x5(chromaB, width, height),
+  );
+  const filteredB = measureRawTimingSync(
+    timing,
+    "preview",
+    "Embedded thumbnail chroma B median pass 2",
+    () => medianFilterRawThumbnailMatchChannel5x5(filteredBPass1, width, height),
   );
 
-  const output = new Float32Array(linearRgbSample.length);
-  for (let i = 0; i < pixels; i++) {
-    const y = luma[i] ?? 0;
-    const r = y + (filteredR[i] ?? 0);
-    const b = y + (filteredB[i] ?? 0);
-    const g = lumaG > 1e-12
-      ? (y - lumaR * r - lumaB * b) / lumaG
-      : y;
-    const oi = i * 3;
-    output[oi] = Math.max(0, Math.min(rangeMax, r));
-    output[oi + 1] = Math.max(0, Math.min(rangeMax, g));
-    output[oi + 2] = Math.max(0, Math.min(rangeMax, b));
-  }
-  return output;
+  return measureRawTimingSync(
+    timing,
+    "preview",
+    "Reconstructing embedded thumbnail chroma sample",
+    () => {
+      const output = new Float32Array(linearRgbSample.length);
+      for (let i = 0; i < pixels; i++) {
+        const y = luma[i] ?? 0;
+        const r = y + (filteredR[i] ?? 0);
+        const b = y + (filteredB[i] ?? 0);
+        const g = lumaG > 1e-12
+          ? (y - lumaR * r - lumaB * b) / lumaG
+          : y;
+        const oi = i * 3;
+        output[oi] = Math.max(0, Math.min(rangeMax, r));
+        output[oi + 1] = Math.max(0, Math.min(rangeMax, g));
+        output[oi + 2] = Math.max(0, Math.min(rangeMax, b));
+      }
+      return output;
+    },
+  );
 }
 
 function planRawThumbnailMatchedColor(
@@ -5839,40 +5958,32 @@ function planRawThumbnailMatchedColor(
   rawSampleWidth: number,
   rawSampleHeight: number,
   thumbnailLinearSrgbSample: Float32Array,
+  thumbnailColorTargets?: RawThumbnailColorTarget[],
 ): RawMatchedColorPlanningResult | null {
   if (!thumbnailLinearSrgbSample.length || !rawLinearProPhotoSample.length) return null;
 
+  // Chroma denoise is intentionally mandatory for color planning. It keeps
+  // high-ISO color noise from being interpreted as real saturation, and is
+  // applied consistently at all ISO values for stable behavior.
   const statisticsSample = denoiseRawThumbnailMatchChroma(
     rawLinearProPhotoSample,
     rawSampleWidth,
     rawSampleHeight,
     "prophoto",
   );
-  // Every color statistic now comes from the same denoised population that the
-  // solver models. The thumbnail reference has already received the identical
-  // resize + chroma-NR preprocessing in sRGB.
-  const lowerValuePercentile = rawThumbnailMatchColorLowerValuePercentile(
-    statisticsSample,
-  );
-  const targetP95 = hsvSaturationPercentileFromLinearSrgbSample(
-    thumbnailLinearSrgbSample,
-    RAW_THUMBNAIL_MATCH_SATURATION_PERCENTILE,
-    lowerValuePercentile,
-  );
-  const targetP50 = hsvSaturationPercentileFromLinearSrgbSample(
-    thumbnailLinearSrgbSample,
-    RAW_THUMBNAIL_MATCH_VIBRANCE_PERCENTILE,
-    lowerValuePercentile,
-  );
+  const sample = buildRawAutoColorSample(statisticsSample);
+  const targets = thumbnailColorTargets?.length
+    ? thumbnailColorTargets
+    : buildThumbnailColorTargetsFromLinearSrgbSample(thumbnailLinearSrgbSample);
+  const target = targets.find((entry) => entry.lowerValuePercentile === sample.lowerValuePercentile);
+  const targetP95 = target?.saturationP95;
+  const targetP50 = target?.saturationP50;
   if (!Number.isFinite(targetP95) || !Number.isFinite(targetP50)) return null;
 
-  const sample = buildRawAutoColorSample(statisticsSample, lowerValuePercentile);
-  const targetSaturation = solveRawThumbnailMatchColorParameter(
+  const targetSaturation = solveRawThumbnailMatchSaturation(
     sample,
-    targetP95,
+    targetP95!,
     RAW_THUMBNAIL_MATCH_SATURATION_PERCENTILE,
-    0,
-    "saturation",
   );
   let saturation = 0;
   for (let i = 0; i < RAW_THUMBNAIL_MATCH_COLOR_ITERATIONS; i++) {
@@ -5883,12 +5994,11 @@ function planRawThumbnailMatchedColor(
     clampColorAdjustment(saturation),
   );
 
-  const targetVibrance = solveRawThumbnailMatchColorParameter(
+  const targetVibrance = solveRawThumbnailMatchVibrance(
     sample,
-    targetP50,
+    targetP50!,
     RAW_THUMBNAIL_MATCH_VIBRANCE_PERCENTILE,
     saturation,
-    "vibrance",
   );
   let vibrance = 0;
   for (let i = 0; i < RAW_THUMBNAIL_MATCH_COLOR_ITERATIONS; i++) {
@@ -6149,6 +6259,7 @@ function areaAverageRawThumbnailLinearSrgbSample(
 
 async function rawThumbnailMatchReferenceFromThumbnail(
   thumbnail: LibRawThumbnailDataLike | undefined,
+  timing?: RawDevelopmentTiming,
 ): Promise<RawThumbnailMatchReference | undefined> {
   if (!thumbnail?.data?.length || thumbnail.width <= 0 || thumbnail.height <= 0) return undefined;
 
@@ -6156,11 +6267,16 @@ async function rawThumbnailMatchReferenceFromThumbnail(
   if (thumbnail.format === "bitmap") {
     const pixelCount = thumbnail.width * thumbnail.height;
     const channels = thumbnail.data.length >= pixelCount * 4 ? 4 : 3;
-    resized = areaAverageRawThumbnailLinearSrgbSample(
-      thumbnail.data,
-      thumbnail.width,
-      thumbnail.height,
-      channels,
+    resized = measureRawTimingSync(
+      timing,
+      "preview",
+      "Downsampling embedded thumbnail analysis sample",
+      () => areaAverageRawThumbnailLinearSrgbSample(
+        thumbnail.data,
+        thumbnail.width,
+        thumbnail.height,
+        channels,
+      ),
     );
   } else if (thumbnail.format === "jpeg") {
     const jpegBytes = new Uint8Array(thumbnail.data.byteLength);
@@ -6169,16 +6285,29 @@ async function rawThumbnailMatchReferenceFromThumbnail(
     let source: CanvasImageSource | null = null;
     let cleanup = () => {};
     try {
-      try {
-        // Normalize embedded ICC profiles into sRGB before the shared linear
-        // area-average + chroma-NR statistics pipeline.
-        const bitmap = await createImageBitmap(blob, { colorSpaceConversion: "default" });
-        source = bitmap;
-        cleanup = () => bitmap.close?.();
-      } catch {
-        const file = new File([blob], "raw-thumbnail.jpg", { type: "image/jpeg" });
-        source = await decodeViaImg(file);
-      }
+      source = await (timing
+        ? measureRawTiming(timing, "preview", "Decoding embedded thumbnail JPEG", async () => {
+            try {
+              // Normalize embedded ICC profiles into sRGB before the shared linear
+              // area-average + chroma-NR statistics pipeline.
+              const bitmap = await createImageBitmap(blob, { colorSpaceConversion: "default" });
+              cleanup = () => bitmap.close?.();
+              return bitmap;
+            } catch {
+              const file = new File([blob], "raw-thumbnail.jpg", { type: "image/jpeg" });
+              return decodeViaImg(file);
+            }
+          })
+        : (async () => {
+            try {
+              const bitmap = await createImageBitmap(blob, { colorSpaceConversion: "default" });
+              cleanup = () => bitmap.close?.();
+              return bitmap;
+            } catch {
+              const file = new File([blob], "raw-thumbnail.jpg", { type: "image/jpeg" });
+              return decodeViaImg(file);
+            }
+          })());
       const width = Number(
         (source as ImageBitmap).width
         || (source as HTMLImageElement).naturalWidth
@@ -6194,9 +6323,21 @@ async function rawThumbnailMatchReferenceFromThumbnail(
       canvas.height = height;
       const ctx = getCanvas2dContext(canvas, "srgb", true);
       if (!ctx) return undefined;
-      ctx.drawImage(source, 0, 0, width, height);
-      const rgba = ctx.getImageData(0, 0, width, height).data;
-      resized = areaAverageRawThumbnailLinearSrgbSample(rgba, width, height, 4);
+      measureRawTimingSync(timing, "preview", "Drawing embedded thumbnail to sRGB canvas", () => {
+        ctx.drawImage(source!, 0, 0, width, height);
+      });
+      const rgba = measureRawTimingSync(
+        timing,
+        "preview",
+        "Reading embedded thumbnail canvas pixels",
+        () => ctx.getImageData(0, 0, width, height).data,
+      );
+      resized = measureRawTimingSync(
+        timing,
+        "preview",
+        "Downsampling embedded thumbnail analysis sample",
+        () => areaAverageRawThumbnailLinearSrgbSample(rgba, width, height, 4),
+      );
     } finally {
       cleanup();
     }
@@ -6208,12 +6349,124 @@ async function rawThumbnailMatchReferenceFromThumbnail(
     resized.width,
     resized.height,
     "srgb",
+    timing,
+  );
+  const lumaPercentiles = measureRawTimingSync(
+    timing,
+    "preview",
+    "Computing embedded thumbnail luminance percentiles",
+    () => debugPercentilesFromLinearRgbSample(statisticsSample),
+  );
+  const saturationPercentiles = measureRawTimingSync(
+    timing,
+    "preview",
+    "Computing embedded thumbnail saturation percentiles",
+    () => debugSaturationPercentilesFromLinearRgbSample(statisticsSample),
   );
   return {
-    lumaPercentiles: debugPercentilesFromLinearRgbSample(statisticsSample),
-    saturationPercentiles: debugSaturationPercentilesFromLinearRgbSample(statisticsSample),
+    lumaPercentiles,
+    saturationPercentiles,
     linearSrgbSample: statisticsSample,
+    colorTargets: buildThumbnailColorTargetsFromLinearSrgbSample(statisticsSample),
   };
+}
+
+type RawThumbnailAnalysisWorkerResponse = {
+  type: "thumbnail-analysis-complete";
+  lumaPercentiles: number[];
+  saturationPercentiles: number[];
+  sampleBuffer: ArrayBuffer;
+  colorTargets: RawThumbnailColorTarget[];
+  timingEntries: RawDevelopmentTimingEntry[];
+};
+
+function createRawThumbnailAnalysisWorker(): Worker | null {
+  if (typeof Worker !== "function") return null;
+  try {
+    return new Worker(new URL("./image-editor/raw-thumbnail-analysis.worker.ts", import.meta.url), {
+      type: "module",
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function rawThumbnailMatchReferenceFromThumbnailParallel(
+  thumbnail: LibRawThumbnailDataLike | undefined,
+  timing?: RawDevelopmentTiming,
+): Promise<RawThumbnailMatchReference | undefined> {
+  if (!thumbnail?.data?.length || thumbnail.width <= 0 || thumbnail.height <= 0) return undefined;
+  if (thumbnail.format !== "jpeg" && thumbnail.format !== "bitmap") {
+    return rawThumbnailMatchReferenceFromThumbnail(thumbnail, timing);
+  }
+
+  const worker = createRawThumbnailAnalysisWorker();
+  if (!worker) return rawThumbnailMatchReferenceFromThumbnail(thumbnail, timing);
+
+  const data = new Uint8Array(thumbnail.data.byteLength);
+  data.set(thumbnail.data);
+  try {
+    const response = await new Promise<RawThumbnailAnalysisWorkerResponse>((resolve, reject) => {
+      const cleanup = () => {
+        worker.removeEventListener("message", onMessage);
+        worker.removeEventListener("error", onError);
+        worker.removeEventListener("messageerror", onMessageError);
+      };
+      const onMessage = (event: MessageEvent) => {
+        const payload = event.data as RawThumbnailAnalysisWorkerResponse | { type?: string; message?: string };
+        if (payload?.type === "error") {
+          cleanup();
+          reject(new Error(payload.message || "Embedded thumbnail analysis worker failed"));
+          return;
+        }
+        if (payload?.type !== "thumbnail-analysis-complete") return;
+        cleanup();
+        resolve(payload as RawThumbnailAnalysisWorkerResponse);
+      };
+      const onError = (event: ErrorEvent) => {
+        cleanup();
+        reject(new Error(event.message || "Embedded thumbnail analysis worker failed"));
+      };
+      const onMessageError = () => {
+        cleanup();
+        reject(new Error("Embedded thumbnail analysis worker message failed"));
+      };
+      worker.addEventListener("message", onMessage);
+      worker.addEventListener("error", onError);
+      worker.addEventListener("messageerror", onMessageError);
+      worker.postMessage(
+        {
+          type: "analyze",
+          format: thumbnail.format,
+          width: thumbnail.width,
+          height: thumbnail.height,
+          dataBuffer: data.buffer,
+          targetPixels: RAW_THUMBNAIL_MATCH_SAMPLE_TARGET_PIXELS,
+          percentiles: Array.from(DEBUG_PERCENTILES),
+          colorLowerValuePercentiles: Array.from(RAW_THUMBNAIL_MATCH_COLOR_VALUE_LOWER_PERCENTILES),
+          colorUpperValuePercentile: RAW_THUMBNAIL_MATCH_COLOR_VALUE_UPPER_PERCENTILE,
+          saturationPercentile: RAW_THUMBNAIL_MATCH_SATURATION_PERCENTILE,
+          vibrancePercentile: RAW_THUMBNAIL_MATCH_VIBRANCE_PERCENTILE,
+        },
+        [data.buffer],
+      );
+    });
+    if (timing) {
+      for (const entry of response.timingEntries) {
+        recordRawTiming(timing, "preview", entry.name, entry.elapsedMs);
+      }
+    }
+    return {
+      lumaPercentiles: response.lumaPercentiles,
+      saturationPercentiles: response.saturationPercentiles,
+      linearSrgbSample: new Float32Array(response.sampleBuffer),
+      colorTargets: response.colorTargets,
+    };
+  } catch {
+    return rawThumbnailMatchReferenceFromThumbnail(thumbnail, timing);
+  } finally {
+    worker.terminate();
+  }
 }
 
 async function debugStatisticsFromRawThumbnail(
@@ -6511,6 +6764,7 @@ type RawProgressiveDevelopmentPlan = {
   headroom?: RawDevelopmentHeadroomStatistics;
   saturation: RawDevelopmentSaturationSettings;
   previewElapsedSeconds?: number;
+  timing: RawDevelopmentTiming;
   tonePlan?: RawMatchedTonePlan;
   fallbackPlan?: RawFallbackPlan;
   colorPlan?: RawColorPassPlan;
@@ -6520,6 +6774,184 @@ type RawPreviewDevelopmentResult = {
   decoded: DecodedRgbImage16;
   plan: RawProgressiveDevelopmentPlan;
 };
+
+type RawTimingSection = "preview" | "master" | "denoise";
+
+function createRawDevelopmentTiming(): RawDevelopmentTiming {
+  return {
+    startedAtMs: performance.now(),
+    runtimeMode: resolveLibRawRuntimeMode(),
+    openMpThreads: resolveLibRawOpenMpThreads(),
+    preview: [],
+    master: [],
+    denoise: [],
+  };
+}
+
+function rawTimingEntries(
+  timing: RawDevelopmentTiming,
+  section: RawTimingSection,
+): RawDevelopmentTimingEntry[] {
+  return timing[section];
+}
+
+function recordRawTiming(
+  timing: RawDevelopmentTiming,
+  section: RawTimingSection,
+  name: string,
+  elapsedMs: number,
+): void {
+  rawTimingEntries(timing, section).push({ name, elapsedMs });
+}
+
+function recordRawTimingOnce(
+  timing: RawDevelopmentTiming,
+  section: RawTimingSection,
+  name: string,
+  elapsedMs: number,
+): void {
+  const entries = rawTimingEntries(timing, section);
+  if (entries.some((entry) => entry.name === name)) return;
+  entries.push({ name, elapsedMs });
+}
+
+async function measureRawTiming<T>(
+  timing: RawDevelopmentTiming,
+  section: RawTimingSection,
+  name: string,
+  task: () => T | Promise<T>,
+): Promise<T> {
+  const startedAt = performance.now();
+  try {
+    return await task();
+  } finally {
+    recordRawTiming(timing, section, name, performance.now() - startedAt);
+  }
+}
+
+function measureRawTimingSync<T>(
+  timing: RawDevelopmentTiming | undefined,
+  section: RawTimingSection,
+  name: string,
+  task: () => T,
+): T {
+  if (!timing) return task();
+  const startedAt = performance.now();
+  try {
+    return task();
+  } finally {
+    recordRawTiming(timing, section, name, performance.now() - startedAt);
+  }
+}
+
+function rawTimingSubtotal(
+  entries: readonly RawDevelopmentTimingEntry[],
+  names: readonly string[],
+): number {
+  const wanted = new Set(names);
+  return entries.reduce((sum, entry) => sum + (wanted.has(entry.name) ? entry.elapsedMs : 0), 0);
+}
+
+function logRawTimingSection(
+  title: "RAW Preview" | "Master" | "Denoise",
+  timing: RawDevelopmentTiming,
+  entries: readonly RawDevelopmentTimingEntry[],
+): void {
+  console.group(`[RAW timing] ${title}`);
+  console.info(
+    `LibRaw runtime=${timing.runtimeMode}, OpenMP threads=${timing.openMpThreads}${
+      timing.runtimeMode === "threaded" ? " (configured; C++ runtime prints max/actual parallel thread counts)" : ""
+    }`,
+  );
+  console.table(entries.map((entry) => ({
+    Processing: entry.name,
+    "Time (ms)": Number(entry.elapsedMs.toFixed(1)),
+  })));
+  console.groupEnd();
+}
+
+export type ImageEditTimingTrace = {
+  startedAtMs: number;
+  entries: RawDevelopmentTimingEntry[];
+  logged: boolean;
+};
+
+function createImageEditTimingTrace(): ImageEditTimingTrace {
+  return { startedAtMs: performance.now(), entries: [], logged: false };
+}
+
+export function recordImageEditTiming(
+  timing: ImageEditTimingTrace | undefined,
+  name: string,
+  elapsedMs: number,
+): void {
+  timing?.entries.push({ name, elapsedMs });
+}
+
+function measureImageEditTimingSync<T>(
+  timing: ImageEditTimingTrace | undefined,
+  name: string,
+  task: () => T,
+): T {
+  if (!timing) return task();
+  const startedAt = performance.now();
+  try {
+    return task();
+  } finally {
+    recordImageEditTiming(timing, name, performance.now() - startedAt);
+  }
+}
+
+export async function measureImageEditTiming<T>(
+  timing: ImageEditTimingTrace | undefined,
+  name: string,
+  task: () => T | Promise<T>,
+): Promise<T> {
+  if (!timing) return task();
+  const startedAt = performance.now();
+  try {
+    return await task();
+  } finally {
+    recordImageEditTiming(timing, name, performance.now() - startedAt);
+  }
+}
+
+function logImageEditTiming(timing: ImageEditTimingTrace): void {
+  console.group("[RAW timing] Edit");
+  console.table(timing.entries.map((entry) => ({
+    Processing: entry.name,
+    "Time (ms)": Number(entry.elapsedMs.toFixed(1)),
+  })));
+  console.groupEnd();
+}
+
+export function finalizeImageEditTiming(
+  timing: ImageEditTimingTrace,
+  elapsedMs: number,
+  terminalName = "Edited result image painted",
+): void {
+  if (timing.logged) return;
+  if (!timing.entries.some((entry) => entry.name === terminalName)) {
+    recordImageEditTiming(timing, terminalName, elapsedMs);
+  }
+  timing.logged = true;
+  logImageEditTiming(timing);
+}
+
+function scheduleImageEditTimingFinalization(
+  timing: ImageEditTimingTrace,
+): void {
+  // The real result <img> onLoad handler is the preferred measurement. If that
+  // callback never arrives, finalize from the main thread after two seconds.
+  // Do not rely on console output or timers inside an image/RAW worker.
+  window.setTimeout(() => {
+    if (timing.logged) return;
+    finalizeImageEditTiming(
+      timing,
+      performance.now() - timing.startedAtMs,
+    );
+  }, 2_000);
+}
 
 async function buildDefringeAnalysisSample(decoded: DecodedRgbImage16): Promise<LinearRgbSample> {
   const sourceW = Math.max(1, decoded.width);
@@ -7079,6 +7511,7 @@ async function developRawMasterOnePassInWorker(
 function developRawPreviewPixelsSync(
   decoded: DecodedRgbImage16,
   thumbnailReference: RawThumbnailMatchReference | undefined,
+  timing: RawDevelopmentTiming,
 ): RawProgressiveDevelopmentPlan {
   let mode: RawDevelopmentSettings["mode"] = "fallback";
   let luminance: RawDevelopmentLuminanceSettings | null = null;
@@ -7118,6 +7551,7 @@ function developRawPreviewPixelsSync(
       rawColorSampleDimensions.width,
       rawColorSampleDimensions.height,
       thumbnailReference!.linearSrgbSample,
+      thumbnailReference!.colorTargets,
     );
     if (plannedColor) {
       saturation = plannedColor.settings;
@@ -7152,6 +7586,7 @@ function developRawPreviewPixelsSync(
     luminance,
     headroom,
     saturation,
+    timing,
     ...(tonePlan ? { tonePlan } : {}),
     ...(fallbackPlan ? { fallbackPlan } : {}),
     ...(colorPlan ? { colorPlan } : {}),
@@ -7162,27 +7597,32 @@ function developRawPreviewPixelsSync(
 async function developRawPreviewPixels(
   decoded: DecodedRgbImage16,
   thumbnailReference: RawThumbnailMatchReference | undefined,
+  timing: RawDevelopmentTiming,
   onProgress?: ImageLoadProgressListener,
 ): Promise<RawProgressiveDevelopmentPlan> {
   const worker = createRawDevelopmentWorker();
-  if (!worker) return developRawPreviewPixelsSync(decoded, thumbnailReference);
+  if (!worker) return developRawPreviewPixelsSync(decoded, thumbnailReference, timing);
 
   const stage = async <T,>(name: string, task: () => Promise<T>): Promise<T> => {
-    onProgress?.({ stage: name });
+    onProgress?.({ stage: name, rawTiming: timing });
     if (onProgress) await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    return task();
+    return measureRawTiming(timing, "preview", name.replace(/…$/, ""), task);
   };
 
   let transferred = false;
   try {
-    const matched = thumbnailReference
-      ? planRawThumbnailMatchedBaseline(decoded, thumbnailReference.lumaPercentiles)
-      : null;
+    onProgress?.({ stage: "Planning RAW preview tone…", rawTiming: timing });
+    if (onProgress) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const matched = await measureRawTiming(timing, "preview", "Planning RAW preview tone", () =>
+      thumbnailReference
+        ? planRawThumbnailMatchedBaseline(decoded, thumbnailReference.lumaPercentiles)
+        : null,
+    );
     let plan: RawProgressiveDevelopmentPlan;
 
     if (matched) {
       const sourceBuffer = decoded.data.buffer as ArrayBuffer;
-      const toneResponse = await stage<RawWorkerToneResponse>("Developing preview tone…", () => {
+      const toneResponse = await stage<RawWorkerToneResponse>("Developing RAW preview tone…", () => {
         transferred = true;
         return requestRawDevelopmentWorker<RawWorkerToneResponse>(
           worker,
@@ -7209,16 +7649,19 @@ async function developRawPreviewPixels(
         decoded.height,
         RAW_THUMBNAIL_MATCH_SAMPLE_TARGET_PIXELS,
       );
-      onProgress?.({ stage: "Planning preview color…" });
+      onProgress?.({ stage: "Planning RAW preview color…", rawTiming: timing });
       if (onProgress) await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      const plannedColor = planRawThumbnailMatchedColor(
-        rawColorSample,
-        rawColorSampleDimensions.width,
-        rawColorSampleDimensions.height,
-        thumbnailReference!.linearSrgbSample,
+      const plannedColor = await measureRawTiming(timing, "preview", "Planning RAW preview color", () =>
+        planRawThumbnailMatchedColor(
+          rawColorSample,
+          rawColorSampleDimensions.width,
+          rawColorSampleDimensions.height,
+          thumbnailReference!.linearSrgbSample,
+          thumbnailReference!.colorTargets,
+        ),
       );
       if (plannedColor?.pass) {
-        await stage<RawWorkerColorResponse>("Developing preview color…", () =>
+        await stage<RawWorkerColorResponse>("Developing RAW preview color…", () =>
           requestRawDevelopmentWorker<RawWorkerColorResponse>(
             worker,
             "color-complete",
@@ -7231,12 +7674,13 @@ async function developRawPreviewPixels(
         luminance: matched.luminance,
         headroom: toneResponse.headroom,
         saturation: plannedColor?.settings ?? { saturation: 0, vibrance: 0 },
+        timing,
         tonePlan: matched.plan,
         ...(plannedColor?.pass ? { colorPlan: plannedColor.pass } : {}),
       };
     } else {
       const sourceBuffer = decoded.data.buffer as ArrayBuffer;
-      const fallbackResponse = await stage<RawWorkerFallbackResponse>("Developing preview tone…", () => {
+      const fallbackResponse = await stage<RawWorkerFallbackResponse>("Developing RAW preview tone…", () => {
         transferred = true;
         return requestRawDevelopmentWorker<RawWorkerFallbackResponse>(
           worker,
@@ -7266,6 +7710,7 @@ async function developRawPreviewPixels(
           },
           headroom: fallback.headroom,
           saturation: { saturation: 0, vibrance: 0 },
+          timing,
           fallbackPlan: fallback.plan,
         };
       } else {
@@ -7273,14 +7718,17 @@ async function developRawPreviewPixels(
           mode: "fallback",
           luminance: null,
           saturation: { saturation: 0, vibrance: 0 },
+          timing,
         };
       }
     }
 
-    const encodeResponse = await requestRawDevelopmentWorker<RawWorkerEncodeResponse>(
-      worker,
-      "encode-complete",
-      { type: "encode" },
+    const encodeResponse = await stage<RawWorkerEncodeResponse>("Encoding RAW preview gamma2 buffer…", () =>
+      requestRawDevelopmentWorker<RawWorkerEncodeResponse>(
+        worker,
+        "encode-complete",
+        { type: "encode" },
+      ),
     );
     decoded.data = new Uint16Array(encodeResponse.dataBuffer);
     decoded.linearRangeMax = encodeResponse.linearRangeMax;
@@ -7298,7 +7746,7 @@ async function developRawPreviewPixels(
         decoded.transfer = workerError.transfer;
       }
     }
-    if (!transferred) return developRawPreviewPixelsSync(decoded, thumbnailReference);
+    if (!transferred) return developRawPreviewPixelsSync(decoded, thumbnailReference, timing);
     throw error;
   } finally {
     worker.terminate();
@@ -7307,18 +7755,18 @@ async function developRawPreviewPixels(
 
 async function decodeRawPreviewImage(
   file: File,
+  timing: RawDevelopmentTiming,
   rawHighlightMode?: RawHighlightMode,
   onProgress?: ImageLoadProgressListener,
 ): Promise<RawPreviewDevelopmentResult> {
-  const startedAt = performance.now();
   async function runStage<T>(stage: string, task: () => Promise<T>): Promise<T> {
-    onProgress?.({ stage });
-    return task();
+    onProgress?.({ stage, rawTiming: timing });
+    return measureRawTiming(timing, "preview", stage.replace(/…$/, ""), task);
   }
   async function runBlockingStage<T>(stage: string, task: () => T): Promise<T> {
-    onProgress?.({ stage });
+    onProgress?.({ stage, rawTiming: timing });
     if (onProgress) await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    return task();
+    return measureRawTiming(timing, "preview", stage.replace(/…$/, ""), task);
   }
 
   let raw: LibRawInstanceLike | null = null;
@@ -7345,15 +7793,15 @@ async function decodeRawPreviewImage(
     ]));
     const isoValue = Number(metadata?.iso_speed);
 
-    let thumbnailReference: RawThumbnailMatchReference | undefined;
+    let thumbnailReferencePromise: Promise<RawThumbnailMatchReference | undefined> = Promise.resolve(undefined);
     if (RAW_USE_THUMBNAIL && raw.thumbnailData) {
       try {
-        const thumbnail = await runStage("Reading embedded preview…", () => Promise.race([
+        const thumbnail = await runStage("Reading embedded thumbnail…", () => Promise.race([
           raw!.thumbnailData!(),
           workerFailure!.promise,
         ]));
         const embeddedPreviewBase = await runStage(
-          "Preparing embedded preview…",
+          "Preparing embedded thumbnail display…",
           () => rawEmbeddedPreviewFromThumbnail(thumbnail),
         );
         const metadataWidth = Math.max(0, Math.round(Number(metadata?.width ?? 0)));
@@ -7367,25 +7815,33 @@ async function decodeRawPreviewImage(
             }
           : undefined;
         rawDebug.thumbnail = embeddedPreview;
-        onProgress?.({ stage: "Analyzing embedded preview…", embeddedPreview });
-        thumbnailReference = await rawThumbnailMatchReferenceFromThumbnail(thumbnail);
+        onProgress?.({ stage: "Analyzing embedded thumbnail…", embeddedPreview, rawTiming: timing });
+        // Thumbnail analysis runs in its own worker and is intentionally not awaited
+        // here. Linear RAW demosaic can therefore proceed concurrently on the
+        // LibRaw worker. The reference is only needed immediately before tone/color.
+        thumbnailReferencePromise = measureRawTiming(
+          timing,
+          "preview",
+          "Embedded thumbnail analysis subtotal",
+          () => rawThumbnailMatchReferenceFromThumbnailParallel(thumbnail, timing),
+        ).catch(() => undefined);
       } catch {
-        thumbnailReference = undefined;
+        thumbnailReferencePromise = Promise.resolve(undefined);
       }
     }
 
-    const image = await runStage("Demosaicing preview…", () => Promise.race([
+    const image = await runStage("Demosaicing RAW preview…", () => Promise.race([
       raw!.imageData(),
       workerFailure!.promise,
     ]));
     if (!image || !image.width || !image.height || !image.data) {
       throw new Error("RAW preview decode failed");
     }
-    const sourceDecoded = await runBlockingStage("Converting preview pixels…", () =>
+    const sourceDecoded = await runBlockingStage("Converting RAW preview pixels…", () =>
       libRawImageDataToDecoded(image),
     );
     const lensMetadata = rawLensMetadata(metadata);
-    sourceDecoded.lensCorrection = await runStage("Correcting preview lens…", () =>
+    sourceDecoded.lensCorrection = await runStage("Correcting RAW preview lens…", () =>
       buildRawLensfunCorrection(lensMetadata, sourceDecoded.width, sourceDecoded.height),
     );
     const lensfunSettings = buildRawDevelopmentLensfunSettings(
@@ -7400,19 +7856,34 @@ async function decodeRawPreviewImage(
       rawLensfunCorrectionMaps(sourceDecoded.lensCorrection),
     );
     const dimensions = rawPreviewDimensions(correctedDimensions.width, correctedDimensions.height);
-    onProgress?.({ stage: "Building preview image…" });
-    const decoded = await resampleRawDecodedInWorker(
-      sourceDecoded,
-      dimensions.width,
-      dimensions.height,
+    const decoded = await runStage("Building RAW preview image…", () =>
+      resampleRawDecodedInWorker(
+        sourceDecoded,
+        dimensions.width,
+        dimensions.height,
+      ),
     );
 
-    onProgress?.({ stage: "Planning preview tone…" });
-    if (onProgress) await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    const plan = await developRawPreviewPixels(decoded, thumbnailReference, onProgress);
+    const thumbnailReference = await measureRawTiming(
+      timing,
+      "preview",
+      "Waiting for embedded thumbnail analysis",
+      () => thumbnailReferencePromise,
+    );
+    const plan = await developRawPreviewPixels(decoded, thumbnailReference, timing, onProgress);
     rawDebug.preview = buildRawDebugImageSnapshot(decoded);
-    const previewElapsedSeconds = (performance.now() - startedAt) / 1000;
+    const previewElapsedMs = performance.now() - timing.startedAtMs;
+    const previewElapsedSeconds = previewElapsedMs / 1000;
     plan.previewElapsedSeconds = previewElapsedSeconds;
+    const toneColorSubtotal = rawTimingSubtotal(timing.preview, [
+      "Planning RAW preview tone",
+      "Developing RAW preview tone",
+      "Planning RAW preview color",
+      "Developing RAW preview color",
+      "Encoding RAW preview gamma2 buffer",
+    ]);
+    recordRawTiming(timing, "preview", "RAW preview tone/color subtotal", toneColorSubtotal);
+    recordRawTiming(timing, "preview", "RAW preview buffer ready", previewElapsedMs);
     decoded.rawDebug = rawDebug;
     decoded.rawDevelopment = {
       mode: plan.mode,
@@ -7422,10 +7893,13 @@ async function decodeRawPreviewImage(
       saturation: plan.saturation,
       headroom: plan.headroom,
       lensfun: lensfunSettings,
+      runtimeMode: timing.runtimeMode,
+      openMpThreads: timing.openMpThreads,
+      timing,
       previewElapsedSeconds,
       elapsedSeconds: previewElapsedSeconds,
     };
-    onProgress?.({ stage: "Preparing preview…" });
+    onProgress?.({ stage: "Preparing RAW preview…", rawTiming: timing });
     return { decoded, plan };
   } finally {
     workerFailure?.cleanup();
@@ -7442,39 +7916,54 @@ async function decodeRawMasterImage(
   rawHighlightMode?: RawHighlightMode,
 ): Promise<DecodedRgbImage16> {
   const startedAt = performance.now();
+  const timing = plan.timing;
   let raw: LibRawInstanceLike | null = null;
   let workerFailure: ReturnType<typeof createLibRawWorkerFailure> | null = null;
   try {
-    raw = await createLibRawInstance();
+    raw = await measureRawTiming(timing, "master", "Loading RAW master decoder", () => createLibRawInstance());
     workerFailure = createLibRawWorkerFailure(raw);
-    const rawBytes = new Uint8Array(await file.arrayBuffer());
+    const rawBytes = await measureRawTiming(timing, "master", "Reading RAW for master", async () =>
+      new Uint8Array(await file.arrayBuffer()),
+    );
     const settings: LibRawSettingsLike = {
       ...RAW_DECODE_SETTINGS,
       userQual: rawDemosaicQuality ?? 11,
       ...(rawHighlightMode === undefined ? {} : { highlight: rawHighlightMode }),
     };
-    await Promise.race([raw.open(rawBytes, settings), workerFailure.promise]);
-    const metadata = await Promise.race([raw.metadata(true), workerFailure.promise]);
+    await measureRawTiming(timing, "master", "Opening RAW master", () =>
+      Promise.race([raw!.open(rawBytes, settings), workerFailure!.promise]),
+    );
+    const metadata = await measureRawTiming(timing, "master", "Reading master metadata", () =>
+      Promise.race([raw!.metadata(true), workerFailure!.promise]),
+    );
     const isoValue = Number(metadata?.iso_speed);
     const medPasses = rawMedianDenoisePassesForIso(isoValue);
-    if (medPasses > 0) {
-      const denoiseRawBytes = new Uint8Array(await file.arrayBuffer());
-      await Promise.race([
-        raw.open(denoiseRawBytes, { ...settings, medPasses }),
-        workerFailure.promise,
-      ]);
-    }
-
-    const image = await Promise.race([raw.imageData(), workerFailure.promise]);
+    const image = await measureRawTiming(timing, "master", "Demosaicing master", async () => {
+      if (medPasses > 0) {
+        const denoiseRawBytes = new Uint8Array(await file.arrayBuffer());
+        await Promise.race([
+          raw!.open(denoiseRawBytes, { ...settings, medPasses }),
+          workerFailure!.promise,
+        ]);
+      }
+      return Promise.race([raw!.imageData(), workerFailure!.promise]);
+    });
     if (!image || !image.width || !image.height || !image.data) {
       throw new Error("RAW master decode failed");
     }
-    const sourceDecoded = libRawImageDataToDecoded(image);
+    const sourceDecoded = await measureRawTiming(timing, "master", "Converting master pixels", () =>
+      libRawImageDataToDecoded(image),
+    );
     const lensMetadata = rawLensMetadata(metadata);
-    sourceDecoded.lensCorrection = await buildRawLensfunCorrection(
-      lensMetadata,
-      sourceDecoded.width,
-      sourceDecoded.height,
+    sourceDecoded.lensCorrection = await measureRawTiming(
+      timing,
+      "master",
+      "Building LensFun master correction",
+      () => buildRawLensfunCorrection(
+        lensMetadata,
+        sourceDecoded.width,
+        sourceDecoded.height,
+      ),
     );
     const lensfunSettings = buildRawDevelopmentLensfunSettings(
       lensMetadata,
@@ -7482,7 +7971,9 @@ async function decodeRawMasterImage(
       sourceDecoded.width,
       sourceDecoded.height,
     );
-    const masterResult = await developRawMasterOnePassInWorker(sourceDecoded, plan);
+    const masterResult = await measureRawTiming(timing, "master", "Master one-pass", () =>
+      developRawMasterOnePassInWorker(sourceDecoded, plan),
+    );
     const decoded = masterResult.decoded;
     rawDebug.master = buildRawDebugImageFullCopy(decoded);
     decoded.rawDebug = rawDebug;
@@ -7494,9 +7985,14 @@ async function decodeRawMasterImage(
       saturation: plan.saturation,
       headroom: masterResult.headroom ?? plan.headroom,
       lensfun: lensfunSettings,
+      runtimeMode: timing.runtimeMode,
+      openMpThreads: timing.openMpThreads,
+      timing,
       previewElapsedSeconds: plan.previewElapsedSeconds,
       elapsedSeconds: (performance.now() - startedAt) / 1000,
     };
+    recordRawTiming(timing, "master", "Full-resolution Master ready", performance.now() - timing.startedAtMs);
+    logRawTimingSection("Master", timing, timing.master);
     return decoded;
   } finally {
     workerFailure?.cleanup();
@@ -7514,22 +8010,27 @@ async function decodeRawDenoiseImage(
   rawHighlightMode?: RawHighlightMode,
 ): Promise<DecodedRgbImage16> {
   const startedAt = performance.now();
+  const timing = plan.timing;
   let raw: LibRawInstanceLike | null = null;
   let workerFailure: ReturnType<typeof createLibRawWorkerFailure> | null = null;
   try {
     const isoValue = master.rawDevelopment?.iso ?? Number.NaN;
     const analysis = rawDebug.preview
-      ? await analyzeRawDenoiseInWorker(
-        rawDebug.preview,
-        Number.isFinite(isoValue) && isoValue > 0 ? isoValue : null,
+      ? await measureRawTiming(timing, "denoise", "Analyzing denoise weights", () =>
+        analyzeRawDenoiseInWorker(
+          rawDebug.preview!,
+          Number.isFinite(isoValue) && isoValue > 0 ? isoValue : null,
+        ),
       )
       : undefined;
     if (analysis) rawDebug.weightMap = analysis.weightMap;
 
     const denoiseSettings = rawDenoiseDecodeSettingsForIso(isoValue);
-    raw = await createLibRawInstance();
+    raw = await measureRawTiming(timing, "denoise", "Loading RAW denoise decoder", () => createLibRawInstance());
     workerFailure = createLibRawWorkerFailure(raw);
-    const rawBytes = new Uint8Array(await file.arrayBuffer());
+    const rawBytes = await measureRawTiming(timing, "denoise", "Reading RAW for denoise", async () =>
+      new Uint8Array(await file.arrayBuffer()),
+    );
     const settings: LibRawSettingsLike = {
       ...RAW_DECODE_SETTINGS,
       // LibRaw wavelet threshold uses a special internal bitmap path. Keep the
@@ -7541,24 +8042,39 @@ async function decodeRawDenoiseImage(
       threshold: denoiseSettings.threshold,
       ...(rawHighlightMode === undefined ? {} : { highlight: rawHighlightMode }),
     };
-    await Promise.race([raw.open(rawBytes, settings), workerFailure.promise]);
-    const metadata = await Promise.race([raw.metadata(true), workerFailure.promise]);
-    const image = await Promise.race([raw.imageData(), workerFailure.promise]);
+    await measureRawTiming(timing, "denoise", "Opening RAW denoise", () =>
+      Promise.race([raw!.open(rawBytes, settings), workerFailure!.promise]),
+    );
+    const metadata = await measureRawTiming(timing, "denoise", "Reading denoise metadata", () =>
+      Promise.race([raw!.metadata(true), workerFailure!.promise]),
+    );
+    const image = await measureRawTiming(timing, "denoise", "Demosaicing denoise", () =>
+      Promise.race([raw!.imageData(), workerFailure!.promise]),
+    );
     if (!image || !image.width || !image.height || !image.data) {
       throw new Error("RAW denoise decode failed");
     }
-    const sourceDecoded = libRawImageDataToDecoded(image);
+    const sourceDecoded = await measureRawTiming(timing, "denoise", "Converting denoise pixels", () =>
+      libRawImageDataToDecoded(image),
+    );
     const lensMetadata = rawLensMetadata(metadata);
-    sourceDecoded.lensCorrection = await buildRawLensfunCorrection(
-      lensMetadata,
-      sourceDecoded.width,
-      sourceDecoded.height,
+    sourceDecoded.lensCorrection = await measureRawTiming(
+      timing,
+      "denoise",
+      "Building LensFun denoise correction",
+      () => buildRawLensfunCorrection(
+        lensMetadata,
+        sourceDecoded.width,
+        sourceDecoded.height,
+      ),
     );
     // Run the denoise source through exactly the same LensFun/tone/color path
     // as Master. Keep D alive: the mounted editor will blend Master into this
     // buffer in place using the low-resolution weight map, then adopt D as the
     // final Denoised master.
-    const denoiseResult = await developRawMasterOnePassInWorker(sourceDecoded, plan);
+    const denoiseResult = await measureRawTiming(timing, "denoise", "Denoise one-pass", () =>
+      developRawMasterOnePassInWorker(sourceDecoded, plan),
+    );
     const decoded = denoiseResult.decoded;
     rawDebug.denoise = buildRawDebugImageFullCopy(decoded);
     decoded.rawDebug = rawDebug;
@@ -7588,6 +8104,8 @@ async function decodeRawDenoiseImage(
       }),
       denoise: denoiseDevelopment,
     };
+    recordRawTiming(timing, "denoise", "Denoise buffer ready", performance.now() - startedAt);
+    logRawTimingSection("Denoise", timing, timing.denoise);
     return decoded;
   } finally {
     workerFailure?.cleanup();
@@ -7602,7 +8120,8 @@ async function decodeRawImage(
   rawHighlightMode?: RawHighlightMode,
   onProgress?: ImageLoadProgressListener,
 ): Promise<DecodedRgbImage16> {
-  const preview = await decodeRawPreviewImage(file, rawHighlightMode, onProgress);
+  const timing = createRawDevelopmentTiming();
+  const preview = await decodeRawPreviewImage(file, timing, rawHighlightMode, onProgress);
   const rawDebug = preview.decoded.rawDebug ?? {};
   const masterPromise = decodeRawMasterImage(
     file,
@@ -8137,7 +8656,9 @@ async function buildEditedVariantFromDecoded(
   outputColorProfile: ImageEditOutputColorProfile,
   previewClarityMap?: ImageEditClarityMap | null,
   defringeMap?: DefringeAnalysisMap | null,
+  timing?: ImageEditTimingTrace,
 ): Promise<ImageEditPreparedVariant> {
+  const variantStartedAt = timing ? performance.now() : 0;
   const w = decoded.width;
   const h = decoded.height;
   const crop = normalizeCrop(params.crop);
@@ -8152,6 +8673,7 @@ async function buildEditedVariantFromDecoded(
   if (params.textOverlays.length > 0) {
     await ensureTextOverlayFontsReady(params.textOverlays);
   }
+  const renderStartedAt = timing ? performance.now() : 0;
   const clarityMap = resolveImageEditClarityMap(decoded, params, previewClarityMap, defringeMap);
 
   // Keep the common ProPhoto/gamma2.0 Uint16 RGB source representation through crop/rotation
@@ -8213,53 +8735,75 @@ async function buildEditedVariantFromDecoded(
       releaseCanvasIfNeeded(cropped);
     }
   }
+  if (timing) {
+    recordImageEditTiming(timing, "Rendering adjusted full output", performance.now() - renderStartedAt);
+  }
 
   const outputCtx = getCanvas2dContext(output, outputColorProfile);
   if (!outputCtx) throw new Error("2D context unavailable");
-  applySharpenToCanvas(output, params.sharpen, outputColorProfile);
-  applyVignetteToCanvas(
-    output,
-    params.vignetteOverlay,
-    w,
-    h,
-    sx,
-    sy,
-    sw,
-    sh,
-    0,
-    0,
-    dw,
-    dh,
-    outputColorProfile,
+  measureImageEditTimingSync(timing, "Applying sharpen", () =>
+    applySharpenToCanvas(output, params.sharpen, outputColorProfile),
   );
-  applyImageFilterToCanvas(output, params.filter, outputColorProfile);
-  applyMosaicRectsToCanvas(
-    output,
-    mosaicRegionsToOutputRects(params.mosaicRegions, w, h, sx, sy, sw, sh, dw, dh),
-    16,
-    outputColorProfile,
+  measureImageEditTimingSync(timing, "Applying vignette", () =>
+    applyVignetteToCanvas(
+      output,
+      params.vignetteOverlay,
+      w,
+      h,
+      sx,
+      sy,
+      sw,
+      sh,
+      0,
+      0,
+      dw,
+      dh,
+      outputColorProfile,
+    ),
   );
-  drawOverlaysToContext(
-    outputCtx,
-    params.drawOverlays,
-    w,
-    h,
-    sw,
-    sh,
-    dw,
-    dh,
+  measureImageEditTimingSync(timing, "Applying filter", () =>
+    applyImageFilterToCanvas(output, params.filter, outputColorProfile),
   );
-  drawTextOverlaysToContext(
-    outputCtx,
-    params.textOverlays,
-    w,
-    h,
-    sw,
-    sh,
-    dw,
-    dh,
-    outputColorProfile,
+  measureImageEditTimingSync(timing, "Applying mosaic", () =>
+    applyMosaicRectsToCanvas(
+      output,
+      mosaicRegionsToOutputRects(params.mosaicRegions, w, h, sx, sy, sw, sh, dw, dh),
+      16,
+      outputColorProfile,
+    ),
   );
+  measureImageEditTimingSync(timing, "Drawing vector overlays", () =>
+    drawOverlaysToContext(
+      outputCtx,
+      params.drawOverlays,
+      w,
+      h,
+      sw,
+      sh,
+      dw,
+      dh,
+    ),
+  );
+  measureImageEditTimingSync(timing, "Drawing text overlays", () =>
+    drawTextOverlaysToContext(
+      outputCtx,
+      params.textOverlays,
+      w,
+      h,
+      sw,
+      sh,
+      dw,
+      dh,
+      outputColorProfile,
+    ),
+  );
+  if (timing) {
+    recordImageEditTiming(
+      timing,
+      "Building full-resolution edited variant",
+      performance.now() - variantStartedAt,
+    );
+  }
   return { canvas: output, width: dw, height: dh, colorProfile: outputColorProfile };
 }
 
@@ -8275,6 +8819,7 @@ export async function buildEditedVariant(
   rawDemosaicQuality?: RawDemosaicQuality,
   previewClarityMap?: ImageEditClarityMap | null,
   defringeMap?: DefringeAnalysisMap | null,
+  timing?: ImageEditTimingTrace,
 ): Promise<ImageEditPreparedVariant> {
   const params = normalizeEditParams(edit, srcW, srcH);
   const ownsDecodedImage = !decodedImage;
@@ -8291,7 +8836,7 @@ export async function buildEditedVariant(
       ? defringeMap ?? await analyzeDefringeSampleAsync(await buildDefringeAnalysisSample(decoded))
       : null;
     return await buildEditedVariantFromDecoded(
-      decoded, params, outputColorProfile, previewClarityMap, resolvedDefringeMap,
+      decoded, params, outputColorProfile, previewClarityMap, resolvedDefringeMap, timing,
     );
   } finally {
     if (ownsDecodedImage) decoded.cleanup();
@@ -8714,6 +9259,7 @@ export async function buildOptimizedVariant(
   outputColorProfile?: ImageEditOutputColorProfile,
   previewClarityMap?: ImageEditClarityMap | null,
   defringeMap?: DefringeAnalysisMap | null,
+  timing?: ImageEditTimingTrace,
 ): Promise<{ blob: Blob; width: number; height: number }> {
   const resolvedOutputColorProfile =
     outputColorProfile ?? (await detectBestEditableImageOutputColorProfile(file));
@@ -8729,9 +9275,14 @@ export async function buildOptimizedVariant(
     undefined,
     previewClarityMap,
     defringeMap,
+    timing,
   );
   try {
-    return await encodeEditedVariant(prepared, quality, outputFormat, resolvedOutputColorProfile);
+    return await measureImageEditTiming(
+      timing,
+      outputFormat === "image/webp" ? "Encoding result WebP" : `Encoding result ${outputFormat}`,
+      () => encodeEditedVariant(prepared, quality, outputFormat, resolvedOutputColorProfile),
+    );
   } finally {
     releaseCanvasIfNeeded(prepared.canvas);
   }
@@ -8825,6 +9376,7 @@ type EditDialogProps = {
     decodedImage?: DecodedImage,
     clarityMap?: ImageEditClarityMap | null,
     defringeMap?: DefringeAnalysisMap | null,
+    timing?: ImageEditTimingTrace,
   ) => void;
   onError?: (message: string) => void;
 };
@@ -9233,6 +9785,7 @@ export function ImageEditDialog({
   const rawMasterPromiseRef = useRef<Promise<DecodedRgbImage16> | null>(null);
   const rawDenoisePromiseRef = useRef<Promise<DecodedRgbImage16> | null>(null);
   const rawForegroundPromiseRef = useRef<Promise<DecodedRgbImage16> | null>(null);
+  const rawDevelopmentTimingRef = useRef<RawDevelopmentTiming | null>(null);
   const editableThumbnailRequestRef = useRef(0);
   const editableThumbnailReadyRef = useRef(false);
   const rawLogicalSizeRef = useRef<{ width: number; height: number } | null>(null);
@@ -9622,6 +10175,7 @@ export function ImageEditDialog({
     rawMasterPromiseRef.current = null;
     rawDenoisePromiseRef.current = null;
     rawForegroundPromiseRef.current = null;
+    rawDevelopmentTimingRef.current = null;
     editableThumbnailRequestRef.current += 1;
     editableThumbnailReadyRef.current = false;
     previewRenderedRef.current = null;
@@ -9634,15 +10188,32 @@ export function ImageEditDialog({
 
     const onLoadProgress: ImageLoadProgressListener = (progress) => {
       if (cancelled) return;
+      if (progress.rawTiming) rawDevelopmentTimingRef.current = progress.rawTiming;
       if (!editableThumbnailReadyRef.current) setLoadingStage(progress.stage);
       if (progress.embeddedPreview) {
         showEmbeddedRawPreview(progress.embeddedPreview);
         const preview = progress.embeddedPreview;
+        const timing = progress.rawTiming ?? rawDevelopmentTimingRef.current ?? undefined;
+        const editableThumbnailStartedAt = performance.now();
         const requestId = ++editableThumbnailRequestRef.current;
         void rawEditableThumbnailToDecoded(preview).then((thumbnailDecoded) => {
           if (cancelled || editableThumbnailRequestRef.current !== requestId) {
             thumbnailDecoded.cleanup();
             return;
+          }
+          if (timing) {
+            recordRawTimingOnce(
+              timing,
+              "preview",
+              "Building editable thumbnail buffer",
+              performance.now() - editableThumbnailStartedAt,
+            );
+            recordRawTimingOnce(
+              timing,
+              "preview",
+              "Editable thumbnail buffer ready",
+              performance.now() - timing.startedAtMs,
+            );
           }
           const previousDecoded = decodedImageRef.current;
           thumbnailDecoded.rawDebug = { thumbnail: preview };
@@ -11443,6 +12014,28 @@ export function ImageEditDialog({
         height,
         key: renderedPreviewKey,
       };
+      const rawTiming = decoded.rawDevelopment?.timing ?? rawDevelopmentTimingRef.current;
+      if (rawTiming) {
+        if (editableThumbnailReadyRef.current && !decoded.rawDevelopment?.timing) {
+          recordRawTimingOnce(
+            rawTiming,
+            "preview",
+            "Initial editable thumbnail painted",
+            performance.now() - rawTiming.startedAtMs,
+          );
+        } else if (decoded.rawDevelopment?.timing && decoded.rawMasterPromise) {
+          const alreadyPainted = rawTiming.preview.some((entry) => entry.name === "RAW preview painted");
+          if (!alreadyPainted) {
+            recordRawTiming(
+              rawTiming,
+              "preview",
+              "RAW preview painted",
+              performance.now() - rawTiming.startedAtMs,
+            );
+            logRawTimingSection("RAW Preview", rawTiming, rawTiming.preview);
+          }
+        }
+      }
       const currentPreviewRasterSize = previewRasterSizeRef.current;
       if (
         !currentPreviewRasterSize ||
@@ -12323,6 +12916,8 @@ export function ImageEditDialog({
 
   const onSubmit = useCallback(() => {
     if (!displayed.w || !displayed.h || applyPendingRef.current) return;
+    const editTiming = createImageEditTimingTrace();
+    const collectStartedAt = performance.now();
     const left = (cropRect.x - displayed.x) / displayed.w;
     const top = (cropRect.y - displayed.y) / displayed.h;
     const right = 1 - (cropRect.x + cropRect.w - displayed.x) / displayed.w;
@@ -12350,16 +12945,28 @@ export function ImageEditDialog({
       vignetteOverlay: normalizeVignetteOverlay(vignetteOverlay),
       filter: normalizeImageFilter(imageFilter),
     };
+    recordImageEditTiming(
+      editTiming,
+      "Collecting edit parameters",
+      performance.now() - collectStartedAt,
+    );
     // Finish never waits for the optional Denoise stage. Invalidate any
     // in-progress merge immediately so the Master buffer can be handed to the
     // downstream pipeline without a concurrent background reader.
     rawDenoisePromiseRef.current = null;
     applyPendingRef.current = true;
     setApplyBusy(true);
+    const spinnerStartedAt = performance.now();
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
+        recordImageEditTiming(
+          editTiming,
+          "Showing busy spinner / entering async work",
+          performance.now() - spinnerStartedAt,
+        );
         void (async () => {
           try {
+            const masterWaitStartedAt = performance.now();
             let masterPromise = rawMasterPromiseRef.current;
             if (isRawImageFile(file.name, file.type) && !fullResolutionReady && !masterPromise) {
               const foregroundPromise = rawForegroundPromiseRef.current;
@@ -12376,16 +12983,27 @@ export function ImageEditDialog({
               invalidateBaseDerivedCaches(previousDecoded);
               rawMasterPromiseRef.current = null;
             }
+            recordImageEditTiming(
+              editTiming,
+              "Waiting for full-resolution Master",
+              performance.now() - masterWaitStartedAt,
+            );
             // Finish never adopts an optional Denoise result, even when it was
             // started while the foreground Preview/Master chain was resolving.
             rawDenoisePromiseRef.current = null;
             const decodedImage = decodedImageRef.current;
+            const analysisStartedAt = performance.now();
             const finalDefringeMap = decodedImage && clampDefringe(params.defringe) > 0
               ? await ensureDefringeMap(decodedImage)
               : null;
             const clarityMap = decodedImage ? resolvePreviewClarityMap(decodedImage) : null;
+            recordImageEditTiming(
+              editTiming,
+              "Preparing edit analysis",
+              performance.now() - analysisStartedAt,
+            );
             if (decodedImage) transferredDecodedImageRef.current = decodedImage;
-            onApply(params, decodedImage ?? undefined, clarityMap, finalDefringeMap);
+            onApply(params, decodedImage ?? undefined, clarityMap, finalDefringeMap, editTiming);
           } catch (error) {
             applyPendingRef.current = false;
             setApplyBusy(false);
@@ -13674,6 +14292,11 @@ export function ImageEditDialog({
                               <div>
                                 saturation: saturation={formatRawDevelopmentSetting(colorSaturationFactor(rawDevelopmentSettings.saturation.saturation))}, vibrance={formatRawDevelopmentSetting(colorVibranceFactor(rawDevelopmentSettings.saturation.vibrance))}
                               </div>
+                              {rawDevelopmentSettings.runtimeMode && (
+                                <div>
+                                  runtime: LibRaw={rawDevelopmentSettings.runtimeMode}, OpenMP threads={rawDevelopmentSettings.openMpThreads ?? 1}
+                                </div>
+                              )}
                               <div>
                                 source: ISO={rawDevelopmentSettings.iso === null ? "n/a" : formatRawDevelopmentSetting(rawDevelopmentSettings.iso)}, medPasses={rawDevelopmentSettings.medPasses}, mode={rawDevelopmentSettings.mode === "thumbnail-match" ? "thumbnail match" : "fallback"}
                               </div>
@@ -14540,6 +15163,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
   const revokeQueue = useRef<string[]>([]);
   const optimizeJobs = useRef<Map<string, number>>(new Map());
   const rawDevelopmentCacheRef = useRef<RawDevelopmentCacheEntry | null>(null);
+  const editTimingByPreviewUrlRef = useRef<Map<string, ImageEditTimingTrace>>(new Map());
 
   const storeRawDevelopmentCache = useCallback((
     itemId: string,
@@ -14741,9 +15365,11 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
   }, [files, maxCount, SINGLE_LIMIT, storeRawDevelopmentCache]);
 
   useEffect(() => {
+    const editTimingByPreviewUrl = editTimingByPreviewUrlRef.current;
     return () => {
       for (const url of revokeQueue.current) URL.revokeObjectURL(url);
       revokeQueue.current = [];
+      editTimingByPreviewUrl.clear();
       rawDevelopmentCacheRef.current?.decoded.cleanup();
       rawDevelopmentCacheRef.current = null;
     };
@@ -14755,6 +15381,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
     decodedImage?: DecodedImage,
     previewClarityMap?: ImageEditClarityMap | null,
     defringeMap?: DefringeAnalysisMap | null,
+    editTiming?: ImageEditTimingTrace,
   ) => {
     let processingDecoded = decodedImage;
     let cleanupProcessingDecoded = !!decodedImage;
@@ -14814,9 +15441,24 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
         undefined,
         previewClarityMap,
         defringeMap,
+        editTiming,
       );
-      if (optimizeJobs.current.get(snapshot.id) !== token) return;
-      const processedPreviewUrl = URL.createObjectURL(out.blob);
+      if (optimizeJobs.current.get(snapshot.id) !== token) {
+        if (editTiming) {
+          finalizeImageEditTiming(
+            editTiming,
+            performance.now() - editTiming.startedAtMs,
+            "Finish result superseded",
+          );
+        }
+        return;
+      }
+      const processedPreviewUrl = measureImageEditTimingSync(
+        editTiming,
+        "Creating result Blob URL",
+        () => URL.createObjectURL(out.blob),
+      );
+      if (editTiming) editTimingByPreviewUrlRef.current.set(processedPreviewUrl, editTiming);
       revokeQueue.current.push(processedPreviewUrl);
       setItems((prev) =>
         prev.map((x) => {
@@ -14837,7 +15479,21 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
           };
         }),
       );
-    } catch {
+      if (editTiming) {
+        // NextImage.onLoad is the preferred measurement because it observes the
+        // actual preview element. A main-thread timer is the fallback; do not
+        // depend on worker console output or worker-side timers.
+        scheduleImageEditTimingFinalization(editTiming);
+      }
+    } catch (error) {
+      if (editTiming) {
+        console.error("[RAW timing] Finish failed on main thread", error);
+        finalizeImageEditTiming(
+          editTiming,
+          performance.now() - editTiming.startedAtMs,
+          "Finish failed",
+        );
+      }
       if (optimizeJobs.current.get(snapshot.id) !== token) return;
       setItems((prev) =>
         prev.map((x) =>
@@ -15043,9 +15699,16 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
               ),
             );
           }}
-          onApply={(params, decodedImage, previewClarityMap, defringeMap) => {
+          onApply={(params, decodedImage, previewClarityMap, defringeMap, editTiming) => {
             setEditingItemId(null);
-            void reprocessItem(editingItem, params, decodedImage, previewClarityMap, defringeMap);
+            void reprocessItem(
+              editingItem,
+              params,
+              decodedImage,
+              previewClarityMap,
+              defringeMap,
+              editTiming,
+            );
           }}
         />
       )}
@@ -15124,6 +15787,17 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
                         unoptimized
                         className="object-contain"
                         sizes="(max-width: 640px) 70vw, (max-width: 1024px) 44vw, 28vw"
+                        onLoad={() => {
+                          const timing = it.previewUrl
+                            ? editTimingByPreviewUrlRef.current.get(it.previewUrl)
+                            : undefined;
+                          if (!timing || !it.previewUrl) return;
+                          editTimingByPreviewUrlRef.current.delete(it.previewUrl);
+                          finalizeImageEditTiming(
+                            timing,
+                            performance.now() - timing.startedAtMs,
+                          );
+                        }}
                       />
                     ) : (
                       <div className="absolute inset-0 flex items-center justify-center text-xs text-gray-500">

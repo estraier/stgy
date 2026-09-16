@@ -11,7 +11,7 @@
     "test": "jest",
     "fmt": "prettier --write .",
     "lint": "eslint src --ext .js,.jsx,.ts,.tsx",
-    "clean": "rm -rf node_modules dist out .next .turbo public/export-assets public/generated/local-stack-studio public/vendor/libraw-wasm public/vendor/lensfun-wasm public/vendor/opencv",
+    "clean": "rm -rf node_modules dist out .next .turbo public/export-assets public/generated/local-stack-studio public/vendor/libraw-wasm public/vendor/libraw-wasm-threaded public/vendor/lensfun-wasm public/vendor/opencv",
     "build:export-track-assets": "node scripts/build-export-track-assets.mjs",
     "build:libraw-assets": "node scripts/build-libraw-assets.mjs",
     "prebuild": "npm run build:export-track-assets && npm run build:libraw-assets && npm run build:lensfun-assets && npm run build:opencv-assets && npm run build:local-stack-workers",

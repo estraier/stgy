@@ -2875,8 +2875,10 @@ function rgbMatToHdr2FloatsAndBrightness(rgb, sourceColorSpace) {
 }
 
 function createHdrDebevecReinhardStreamWorker(width, height, imageCount, exposureTimes, preBrightnessSigmoidGain = 0) {
-  const worker = new Worker(new URL("/generated/local-stack-studio/hdr.worker.js", window.location.origin));
+  const workerUrl = new URL("/generated/local-stack-studio/hdr.worker.js", window.location.origin);
+  const worker = new Worker(workerUrl);
   let settled = false;
+  let workerFailure = null;
   let resolveResult = null;
   let rejectResult = null;
   const resultPromise = new Promise((resolve, reject) => {
@@ -2900,15 +2902,25 @@ function createHdrDebevecReinhardStreamWorker(width, height, imageCount, exposur
     if (message.type === "error") {
       if (settled) return;
       settled = true;
+      workerFailure = new Error(message.message || "HDR1 stream worker failed.");
       cleanup();
-      rejectResult(new Error(message.message || "HDR1 stream worker failed."));
+      rejectResult(workerFailure);
     }
   };
   worker.onerror = (event) => {
     if (settled) return;
     settled = true;
+    const detail = event.message ? `: ${event.message}` : "";
+    workerFailure = new Error(`Failed to start HDR1 stream worker ${workerUrl.pathname}${detail}`);
     cleanup();
-    rejectResult(new Error(event.message || "HDR1 stream worker failed."));
+    rejectResult(workerFailure);
+  };
+  worker.onmessageerror = () => {
+    if (settled) return;
+    settled = true;
+    workerFailure = new Error(`HDR1 stream worker ${workerUrl.pathname} returned an unreadable message.`);
+    cleanup();
+    rejectResult(workerFailure);
   };
 
   const times = exposureTimes ? new Float32Array(exposureTimes) : new Float32Array(0);
@@ -2927,7 +2939,7 @@ function createHdrDebevecReinhardStreamWorker(width, height, imageCount, exposur
   return {
     addImage(index, image, brightness) {
       if (settled) {
-        throw new Error("HDR1 stream worker is no longer available.");
+        throw workerFailure || new Error("HDR1 stream worker is no longer available.");
       }
       worker.postMessage(
         {

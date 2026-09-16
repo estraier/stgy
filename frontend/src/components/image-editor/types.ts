@@ -81,6 +81,20 @@ export type RawDebugArtifacts = {
   weightMap?: RawDebugWeightMap;
 };
 
+export type RawDevelopmentTimingEntry = {
+  name: string;
+  elapsedMs: number;
+};
+
+export type RawDevelopmentTiming = {
+  startedAtMs: number;
+  runtimeMode: "single" | "threaded";
+  openMpThreads: number;
+  preview: RawDevelopmentTimingEntry[];
+  master: RawDevelopmentTimingEntry[];
+  denoise: RawDevelopmentTimingEntry[];
+};
+
 export type RawDevelopmentSettings = {
   mode: "thumbnail-match" | "fallback";
   iso: number | null;
@@ -89,6 +103,9 @@ export type RawDevelopmentSettings = {
   saturation: RawDevelopmentSaturationSettings;
   headroom?: RawDevelopmentHeadroomStatistics;
   lensfun?: RawDevelopmentLensfunSettings;
+  runtimeMode?: "single" | "threaded";
+  openMpThreads?: number;
+  timing?: RawDevelopmentTiming;
   previewElapsedSeconds?: number;
   elapsedSeconds: number;
   denoise?: RawDenoiseSettings;

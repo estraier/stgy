@@ -1,7 +1,11 @@
 // LibRaw-Wasm browser adapter shared by Local Image Studio and Local Stack Studio.
-// The runtime files are built by STGY and served from public/vendor/libraw-wasm.
+// The runtime files are built by STGY and served from public/vendor/.
 
 export const LIBRAW_BROWSER_MODULE_URL = "/vendor/libraw-wasm/index.js";
+export const LIBRAW_THREADED_BROWSER_MODULE_URL = "/vendor/libraw-wasm-threaded/index.js";
+export const LIBRAW_THREADED_OPENMP_THREADS = 4;
+
+export type LibRawRuntimeMode = "single" | "threaded";
 
 export type LibRawSettingsLike = {
   outputColor?: number;
@@ -87,7 +91,10 @@ const RAW_IMAGE_MIMES = new Set([
   "image/x-sony-arw", "image/x-sony-sr2", "image/x-sony-srf", "image/x-sigma-x3f", "image/dng",
 ]);
 
-let modulePromise: Promise<{ default: new () => LibRawInstanceLike }> | null = null;
+type LibRawBrowserModule = { default: new () => LibRawInstanceLike };
+
+let singleModulePromise: Promise<LibRawBrowserModule> | null = null;
+let threadedModulePromise: Promise<LibRawBrowserModule> | null = null;
 
 export function isRawImageFile(name: string, type: string): boolean {
   const mime = String(type || "").toLowerCase();
@@ -96,22 +103,48 @@ export function isRawImageFile(name: string, type: string): boolean {
   return RAW_IMAGE_EXTS.has(extension);
 }
 
-async function loadLibRawModule(): Promise<{ default: new () => LibRawInstanceLike }> {
-  if (modulePromise) return modulePromise;
-  modulePromise = import(/* webpackIgnore: true */ LIBRAW_BROWSER_MODULE_URL) as Promise<{
-    default: new () => LibRawInstanceLike;
-  }>;
-  return modulePromise.catch((error) => {
-    modulePromise = null;
+function isLocalStudioPath(pathname: string): boolean {
+  const normalized = pathname.replace(/\/+$/, "") || "/";
+  return normalized === "/local-image-studio" || normalized === "/local-stack-studio";
+}
+
+export function resolveLibRawRuntimeMode(): LibRawRuntimeMode {
+  if (typeof window === "undefined") return "single";
+  if (!isLocalStudioPath(window.location.pathname)) return "single";
+  if (!window.crossOriginIsolated) {
+    throw new Error(
+      "Local Image Studio and Local Stack Studio require cross-origin isolation for threaded LibRaw. Reload this page after confirming the COOP/COEP response headers.",
+    );
+  }
+  return "threaded";
+}
+
+export function resolveLibRawOpenMpThreads(): number {
+  return resolveLibRawRuntimeMode() === "threaded" ? LIBRAW_THREADED_OPENMP_THREADS : 1;
+}
+
+async function loadLibRawModule(mode: LibRawRuntimeMode): Promise<LibRawBrowserModule> {
+  const moduleUrl = mode === "threaded" ? LIBRAW_THREADED_BROWSER_MODULE_URL : LIBRAW_BROWSER_MODULE_URL;
+  const currentPromise = mode === "threaded" ? threadedModulePromise : singleModulePromise;
+  if (currentPromise) return currentPromise;
+
+  const promise = import(/* webpackIgnore: true */ moduleUrl) as Promise<LibRawBrowserModule>;
+  if (mode === "threaded") threadedModulePromise = promise;
+  else singleModulePromise = promise;
+
+  return promise.catch((error) => {
+    if (mode === "threaded") threadedModulePromise = null;
+    else singleModulePromise = null;
     throw error;
   });
 }
 
 export async function createLibRawInstance(): Promise<LibRawInstanceLike> {
   if (typeof window === "undefined") throw new Error("LibRaw is only available in the browser");
-  const libRawModule = await loadLibRawModule();
+  const mode = resolveLibRawRuntimeMode();
+  const libRawModule = await loadLibRawModule(mode);
   if (typeof libRawModule?.default !== "function") {
-    throw new Error("LibRaw-Wasm module does not provide its default constructor.");
+    throw new Error(`LibRaw-Wasm ${mode} module does not provide its default constructor.`);
   }
   return new libRawModule.default();
 }
@@ -128,7 +161,13 @@ export function createLibRawWorkerFailure(raw: LibRawInstanceLike): {
   let onError: ((event: ErrorEvent) => void) | null = null;
   let onMessageError: (() => void) | null = null;
   const promise = new Promise<never>((_, reject) => {
-    onError = (event) => reject(new Error(event.message || "RAW decoder failed"));
+    onError = (event) => {
+      const location = [event.filename, event.lineno, event.colno]
+        .filter((value) => value !== undefined && value !== null && value !== "" && value !== 0)
+        .join(":");
+      const detail = event.message || "RAW decoder worker failed to load or initialize";
+      reject(new Error(location ? `${detail} (${location})` : detail));
+    };
     onMessageError = () => reject(new Error("RAW decoder worker communication failed"));
     worker.addEventListener("error", onError);
     worker.addEventListener("messageerror", onMessageError);
@@ -144,9 +183,10 @@ export function createLibRawWorkerFailure(raw: LibRawInstanceLike): {
 }
 
 export async function checkLibRawRuntime(): Promise<string> {
+  const mode = resolveLibRawRuntimeMode();
   const raw = await createLibRawInstance();
   try {
-    return "LibRaw-Wasm 1.6.0 / LibRaw 0.22.1";
+    return `LibRaw-Wasm 1.6.0 / LibRaw 0.22.1 (${mode})`;
   } finally {
     raw.dispose?.();
   }

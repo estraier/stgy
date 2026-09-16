@@ -6,7 +6,8 @@ RUN apt-get update \
 WORKDIR /app/frontend
 COPY frontend/scripts/build-libraw-wasm.sh ./scripts/build-libraw-wasm.sh
 RUN chmod +x ./scripts/build-libraw-wasm.sh \
-    && ./scripts/build-libraw-wasm.sh /app/libraw-cache
+    && ./scripts/build-libraw-wasm.sh /app/libraw-cache single \
+    && ./scripts/build-libraw-wasm.sh /app/libraw-cache-threaded threaded
 
 FROM node:24-alpine AS builder
 WORKDIR /app
@@ -19,6 +20,7 @@ RUN npm config set registry https://registry.npmjs.org/
 RUN npm ci --workspaces --include-workspace-root
 COPY frontend ./frontend
 COPY --from=libraw-builder /app/libraw-cache ./frontend/.cache/libraw-wasm-stgy-1.6.0
+COPY --from=libraw-builder /app/libraw-cache-threaded ./frontend/.cache/libraw-wasm-stgy-1.6.0-threaded
 COPY packages/markdown ./packages/markdown
 COPY packages/track ./packages/track
 COPY packages/geocoder ./packages/geocoder

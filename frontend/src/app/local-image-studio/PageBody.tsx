@@ -7,12 +7,16 @@ import {
   buildEditedVariant,
   detectBestEditableImageOutputColorProfile,
   encodeEditedVariant,
+  finalizeImageEditTiming,
+  measureImageEditTiming,
+  recordImageEditTiming,
   probeEditableImage,
   type DecodedImage,
   type ImageEditOutputColorProfile,
   type ImageEditOutputFormat,
   type ImageEditParams,
   type ImageEditPreparedVariant,
+  type ImageEditTimingTrace,
   type RawDemosaicQuality,
   type RawHighlightMode,
 } from "@/components/ImageUploadDialog";
@@ -20,6 +24,7 @@ import type { ImageEditClarityMap } from "@/components/image-editor/clarity";
 import type { DefringeAnalysisMap } from "@/components/image-editor/defringe";
 import { Config } from "@/config";
 import { isRawImageFile } from "@/image/libraw";
+import { warmupLensfunRuntime } from "@/image/lensfun";
 import { formatBytes } from "@/utils/format";
 
 type SourceImage = {
@@ -176,6 +181,11 @@ async function readImageSize(file: File): Promise<{ width: number; height: numbe
 export default function LocalImageStudio() {
   const inputRef = useRef<HTMLInputElement>(null);
   const resultUrlRef = useRef<string | null>(null);
+  const resultTimingRef = useRef<{
+    url: string;
+    timing: ImageEditTimingTrace;
+    timeoutId: number;
+  } | null>(null);
   const editedVariantRef = useRef<ImageEditPreparedVariant | null>(null);
   const rawDevelopmentRef = useRef<DecodedImage | null>(null);
   const [source, setSource] = useState<SourceImage | null>(null);
@@ -195,6 +205,15 @@ export default function LocalImageStudio() {
   const [resultZoomFocus, setResultZoomFocus] = useState<ResultZoomFocus | null>(null);
   const [resultZoomPan, setResultZoomPan] = useState<ResultZoomPan>({ x: 0, y: 0 });
 
+  useEffect(() => {
+    // Warm LensFun while the user is choosing an image so the first RAW preview
+    // does not pay the WASM/database initialization cost on its critical path.
+    void warmupLensfunRuntime().catch(() => {
+      // Non-fatal: getLensfunClient() clears its cached promise on failure, so
+      // the normal RAW processing path can retry when LensFun is actually used.
+    });
+  }, []);
+
   const clearEditedVariant = useCallback(() => {
     releasePreparedVariant(editedVariantRef.current);
     editedVariantRef.current = null;
@@ -210,6 +229,16 @@ export default function LocalImageStudio() {
   const clearResult = useCallback(() => {
     resultZoomDragRef.current = null;
     setResultZoomFocus(null);
+    const pendingTiming = resultTimingRef.current;
+    if (pendingTiming) {
+      window.clearTimeout(pendingTiming.timeoutId);
+      finalizeImageEditTiming(
+        pendingTiming.timing,
+        performance.now() - pendingTiming.timing.startedAtMs,
+        "Edited result superseded before paint",
+      );
+      resultTimingRef.current = null;
+    }
     if (resultUrlRef.current) {
       URL.revokeObjectURL(resultUrlRef.current);
       resultUrlRef.current = null;
@@ -466,6 +495,7 @@ export default function LocalImageStudio() {
     rebuildEditedVariant = false,
     previewClarityMap?: ImageEditClarityMap | null,
     defringeMap?: DefringeAnalysisMap | null,
+    editTiming?: ImageEditTimingTrace,
   ) => {
     setProcessing(true);
     setError(null);
@@ -485,6 +515,7 @@ export default function LocalImageStudio() {
           undefined,
           previewClarityMap,
           defringeMap,
+          editTiming,
         );
         releasePreparedVariant(editedVariantRef.current);
         editedVariantRef.current = nextPrepared;
@@ -492,15 +523,50 @@ export default function LocalImageStudio() {
       }
 
       const resolvedOutputColorProfile = resolveOutputColorProfile(sourceImage, outputColorProfileSelectionValue);
-      const processed = await encodeEditedVariant(
-        prepared,
-        0.8,
-        format,
-        resolvedOutputColorProfile,
+      const processed = await measureImageEditTiming(
+        editTiming,
+        format === "image/webp" ? "Encoding result WebP" : `Encoding result ${format}`,
+        () => encodeEditedVariant(
+          prepared,
+          0.8,
+          format,
+          resolvedOutputColorProfile,
+        ),
       );
+      const urlStartedAt = editTiming ? performance.now() : 0;
       const url = URL.createObjectURL(processed.blob);
+      if (editTiming) {
+        recordImageEditTiming(
+          editTiming,
+          "Creating result Blob URL",
+          performance.now() - urlStartedAt,
+        );
+      }
       const previousUrl = resultUrlRef.current;
+      const previousTiming = resultTimingRef.current;
+      if (previousTiming) {
+        window.clearTimeout(previousTiming.timeoutId);
+        finalizeImageEditTiming(
+          previousTiming.timing,
+          performance.now() - previousTiming.timing.startedAtMs,
+          "Edited result superseded before paint",
+        );
+        resultTimingRef.current = null;
+      }
       resultUrlRef.current = url;
+      if (editTiming) {
+        const timeoutId = window.setTimeout(() => {
+          const pending = resultTimingRef.current;
+          if (!pending || pending.url !== url || pending.timing !== editTiming) return;
+          resultTimingRef.current = null;
+          finalizeImageEditTiming(
+            editTiming,
+            performance.now() - editTiming.startedAtMs,
+            "Edited result image paint timeout",
+          );
+        }, 2_000);
+        resultTimingRef.current = { url, timing: editTiming, timeoutId };
+      }
       setResult({
         url,
         size: processed.blob.size,
@@ -511,6 +577,14 @@ export default function LocalImageStudio() {
       });
       if (previousUrl) URL.revokeObjectURL(previousUrl);
     } catch (e) {
+      if (editTiming) {
+        console.error("[RAW timing] LIS Finish failed on main thread", e);
+        finalizeImageEditTiming(
+          editTiming,
+          performance.now() - editTiming.startedAtMs,
+          "Finish failed",
+        );
+      }
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setProcessing(false);
@@ -527,8 +601,16 @@ export default function LocalImageStudio() {
     decodedImage?: DecodedImage,
     previewClarityMap?: ImageEditClarityMap | null,
     defringeMap?: DefringeAnalysisMap | null,
+    editTiming?: ImageEditTimingTrace,
   ) => {
     if (!source) {
+      if (editTiming) {
+        finalizeImageEditTiming(
+          editTiming,
+          performance.now() - editTiming.startedAtMs,
+          "Finish source missing",
+        );
+      }
       if (decodedImage && rawDevelopmentRef.current !== decodedImage) decodedImage.cleanup();
       return;
     }
@@ -545,6 +627,7 @@ export default function LocalImageStudio() {
         true,
         previewClarityMap,
         defringeMap,
+        editTiming,
       );
     } finally {
       if (decodedImage && rawDevelopmentRef.current !== decodedImage) decodedImage.cleanup();
@@ -740,6 +823,16 @@ export default function LocalImageStudio() {
                   alt="Edited result"
                   className="mx-auto block max-h-[70vh] max-w-full cursor-zoom-in object-contain"
                   onClick={openResultZoom}
+                  onLoad={() => {
+                    const pending = resultTimingRef.current;
+                    if (!pending || pending.url !== result.url) return;
+                    window.clearTimeout(pending.timeoutId);
+                    resultTimingRef.current = null;
+                    finalizeImageEditTiming(
+                      pending.timing,
+                      performance.now() - pending.timing.startedAtMs,
+                    );
+                  }}
                   draggable={false}
                 />
               </div>
@@ -827,8 +920,8 @@ export default function LocalImageStudio() {
           }}
           onCancel={() => setEditing(false)}
           onError={onEditError}
-          onApply={(params, decodedImage, previewClarityMap, defringeMap) =>
-            void onApply(params, decodedImage, previewClarityMap, defringeMap)
+          onApply={(params, decodedImage, previewClarityMap, defringeMap, editTiming) =>
+            void onApply(params, decodedImage, previewClarityMap, defringeMap, editTiming)
           }
         />
       )}
