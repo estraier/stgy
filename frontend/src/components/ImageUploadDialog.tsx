@@ -42,10 +42,9 @@ import type {
   LinearRgbSample,
   RawDevelopmentHeadroomStatistics,
   RawDevelopmentLensfunSettings,
+  RawDenoiseDevelopmentResult,
   RawDenoiseSettings,
-  RawDebugArtifacts,
-  RawDebugImageSnapshot,
-  RawDebugWeightMap,
+  RawDenoiseWeightMap,
   RawDevelopmentLuminanceSettings,
   RawDevelopmentSaturationSettings,
   RawDevelopmentSettings,
@@ -502,7 +501,6 @@ const RAW_THUMBNAIL_MATCH_COLOR_VALUE_MIN = 0.2;
 const DEBUG_PERCENTILES = [0, 1, 2, 5, 25, 50, 75, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100] as const;
 const RAW_THUMBNAIL_MATCH_SAMPLE_TARGET_PIXELS = 65_536;
 const RAW_EDITOR_PREVIEW_TARGET_PIXELS = 1_000_000;
-const RAW_DEBUG_TARGET_PIXELS = 1_000_000;
 const RAW_DENOISE_FULL_ISO = 800;
 const IMAGE_EDIT_CLAHE_MIN_PIXELS = 80 * 256 * 20; // 409,600 pixels.
 const RAW_PREVIEW_DEMOSAIC_QUALITY: RawDemosaicQuality = 2;
@@ -6770,8 +6768,27 @@ type RawWorkerDenoiseAnalyzeResponse = {
   weightP99: number;
 };
 
+type RawWorkerDenoiseMergeReadyResponse = {
+  type: "denoise-merge-ready";
+};
+
+type RawWorkerDenoiseMergeChunkResponse = {
+  type: "denoise-merge-chunk-complete";
+  denoiseBuffer: ArrayBuffer;
+  rowStart: number;
+  rowCount: number;
+};
+
+type RawWorkerDenoiseMergeSharedResponse = {
+  type: "denoise-merge-shared-complete";
+  workerIndex: number;
+  rowStart: number;
+  rowEnd: number;
+};
+
 type RawProgressiveDevelopmentPlan = {
   mode: RawDevelopmentSettings["mode"];
+  previewIso?: number | null;
   luminance: RawDevelopmentLuminanceSettings | null;
   headroom?: RawDevelopmentHeadroomStatistics;
   saturation: RawDevelopmentSaturationSettings;
@@ -7172,6 +7189,8 @@ function rawLensfunMapTransferables(correction: LensfunCorrection | undefined): 
 }
 
 const RAW_MASTER_ONE_PASS_MAX_WORKERS = 4;
+const RAW_DENOISE_MERGE_MAX_WORKERS = 4;
+const RAW_DENOISE_MERGE_CHUNK_ROWS = 128;
 
 function sharedFloat32Copy(source: Float32Array | undefined): Float32Array | undefined {
   if (!source) return undefined;
@@ -7234,70 +7253,66 @@ function rawPreviewDimensions(width: number, height: number): { width: number; h
   return analysisSampleDimensions(width, height, RAW_EDITOR_PREVIEW_TARGET_PIXELS);
 }
 
-function buildRawDebugImageSnapshot(decoded: DecodedRgbImage16): RawDebugImageSnapshot {
+type RawDenoiseAnalysisInput = {
+  width: number;
+  height: number;
+  linearRangeMax: number;
+  transfer: DecodedRgbImage16["transfer"];
+  data: Uint16Array;
+};
+
+type RawDenoiseAnalysisResult = Omit<RawWorkerDenoiseAnalyzeResponse, "type" | "weightBuffer"> & {
+  weightMap: RawDenoiseWeightMap;
+};
+
+function buildRawDenoiseAnalysisInput(preview: DecodedRgbImage16): RawDenoiseAnalysisInput {
   const dimensions = analysisSampleDimensions(
-    decoded.width,
-    decoded.height,
-    RAW_DEBUG_TARGET_PIXELS,
+    preview.width,
+    preview.height,
+    RAW_EDITOR_PREVIEW_TARGET_PIXELS,
   );
-  const output = new Uint16Array(dimensions.width * dimensions.height * 3);
+  const data = new Uint16Array(dimensions.width * dimensions.height * 3);
   let targetIndex = 0;
   for (let y = 0; y < dimensions.height; y++) {
     const sy = Math.min(
-      decoded.height - 1,
-      Math.max(0, Math.floor((y + 0.5) * decoded.height / dimensions.height)),
+      preview.height - 1,
+      Math.max(0, Math.floor((y + 0.5) * preview.height / dimensions.height)),
     );
     for (let x = 0; x < dimensions.width; x++, targetIndex += 3) {
       const sx = Math.min(
-        decoded.width - 1,
-        Math.max(0, Math.floor((x + 0.5) * decoded.width / dimensions.width)),
+        preview.width - 1,
+        Math.max(0, Math.floor((x + 0.5) * preview.width / dimensions.width)),
       );
-      const sourceIndex = (sy * decoded.width + sx) * 3;
-      output[targetIndex] = decoded.data[sourceIndex] ?? 0;
-      output[targetIndex + 1] = decoded.data[sourceIndex + 1] ?? 0;
-      output[targetIndex + 2] = decoded.data[sourceIndex + 2] ?? 0;
+      const sourceIndex = (sy * preview.width + sx) * 3;
+      data[targetIndex] = preview.data[sourceIndex] ?? 0;
+      data[targetIndex + 1] = preview.data[sourceIndex + 1] ?? 0;
+      data[targetIndex + 2] = preview.data[sourceIndex + 2] ?? 0;
     }
   }
   return {
     width: dimensions.width,
     height: dimensions.height,
-    sourceWidth: decoded.width,
-    sourceHeight: decoded.height,
-    linearRangeMax: decoded.linearRangeMax,
-    transfer: decoded.transfer,
-    data: output,
+    linearRangeMax: preview.linearRangeMax,
+    transfer: preview.transfer,
+    data,
   };
 }
-
-function buildRawDebugImageFullCopy(decoded: DecodedRgbImage16): RawDebugImageSnapshot {
-  return {
-    width: decoded.width,
-    height: decoded.height,
-    sourceWidth: decoded.width,
-    sourceHeight: decoded.height,
-    linearRangeMax: decoded.linearRangeMax,
-    transfer: decoded.transfer,
-    data: decoded.data.slice(),
-  };
-}
-
-type RawDenoiseAnalysisResult = Omit<RawWorkerDenoiseAnalyzeResponse, "type" | "weightBuffer"> & {
-  weightMap: RawDebugWeightMap;
-};
 
 async function analyzeRawDenoiseInWorker(
-  snapshot: RawDebugImageSnapshot,
+  preview: DecodedRgbImage16,
   iso?: number | null,
 ): Promise<RawDenoiseAnalysisResult> {
-  const data = snapshot.data.slice();
+  // Build the same <=1 MP nearest-neighbour sample used by Denoise analysis,
+  // but keep it only for this operation.
+  const input = buildRawDenoiseAnalysisInput(preview);
   const worker = createRawDevelopmentWorker();
   if (!worker) {
     const analysis = analyzeRawDenoiseMask(
-      data,
-      snapshot.width,
-      snapshot.height,
-      snapshot.linearRangeMax,
-      snapshot.transfer,
+      input.data,
+      input.width,
+      input.height,
+      input.linearRangeMax,
+      input.transfer,
       iso,
     );
     return {
@@ -7319,7 +7334,10 @@ async function analyzeRawDenoiseInWorker(
       },
     };
   }
-  const dataBuffer = data.buffer as ArrayBuffer;
+
+  // Transfer this sole temporary sample to the worker immediately. Unlike the
+  // old debug path there is no retained copy and no second .slice().
+  const dataBuffer = input.data.buffer as ArrayBuffer;
   try {
     const response = await requestRawDevelopmentWorker<RawWorkerDenoiseAnalyzeResponse>(
       worker,
@@ -7327,10 +7345,10 @@ async function analyzeRawDenoiseInWorker(
       {
         type: "denoise-analyze",
         dataBuffer,
-        width: snapshot.width,
-        height: snapshot.height,
-        sourceLinearRangeMax: snapshot.linearRangeMax,
-        sourceTransfer: snapshot.transfer,
+        width: input.width,
+        height: input.height,
+        sourceLinearRangeMax: input.linearRangeMax,
+        sourceTransfer: input.transfer,
         iso,
       },
       [dataBuffer],
@@ -7359,10 +7377,10 @@ async function analyzeRawDenoiseInWorker(
 }
 
 
-async function mergeRawDenoiseDevelopedImageInPlace(
+async function mergeRawMasterIntoDenoiseInPlace(
   master: DecodedRgbImage16,
   denoise: DecodedRgbImage16,
-  weightMap: RawDebugWeightMap,
+  weightMap: RawDenoiseWeightMap,
   shouldCancel: () => boolean,
 ): Promise<boolean> {
   if (
@@ -7374,27 +7392,169 @@ async function mergeRawDenoiseDevelopedImageInPlace(
   ) {
     throw new Error("RAW denoise merge inputs do not match Master");
   }
+  if (
+    weightMap.width <= 0 ||
+    weightMap.height <= 0 ||
+    weightMap.data.length < weightMap.width * weightMap.height
+  ) {
+    throw new Error("RAW denoise weight map is invalid");
+  }
+  if (shouldCancel()) return false;
+
+  const width = master.width;
+  const height = master.height;
+  const hardwareConcurrency = typeof navigator === "object"
+    ? Math.max(1, Math.floor(navigator.hardwareConcurrency || RAW_DENOISE_MERGE_MAX_WORKERS))
+    : RAW_DENOISE_MERGE_MAX_WORKERS;
+
+  if (
+    typeof Worker === "function"
+    && typeof SharedArrayBuffer === "function"
+    && globalThis.crossOriginIsolated === true
+    && master.data.buffer instanceof SharedArrayBuffer
+    && denoise.data.buffer instanceof SharedArrayBuffer
+  ) {
+    const workerCount = Math.min(RAW_DENOISE_MERGE_MAX_WORKERS, hardwareConcurrency, height);
+    const workers: Worker[] = [];
+    let workersReady = true;
+    for (let i = 0; i < workerCount; i++) {
+      const worker = createRawDevelopmentWorker();
+      if (!worker) {
+        workersReady = false;
+        break;
+      }
+      workers.push(worker);
+    }
+
+    if (workersReady && workers.length === workerCount) {
+      const sharedWeightBuffer = new SharedArrayBuffer(weightMap.data.byteLength);
+      new Float32Array(sharedWeightBuffer).set(weightMap.data);
+      try {
+        await Promise.all(workers.map((worker, workerIndex) => {
+          const rowStart = Math.floor(height * workerIndex / workerCount);
+          const rowEnd = Math.floor(height * (workerIndex + 1) / workerCount);
+          return requestRawDevelopmentWorker<RawWorkerDenoiseMergeSharedResponse>(
+            worker,
+            "denoise-merge-shared-complete",
+            {
+              type: "denoise-merge-shared",
+              masterBuffer: master.data.buffer as SharedArrayBuffer,
+              denoiseBuffer: denoise.data.buffer as SharedArrayBuffer,
+              weightBuffer: sharedWeightBuffer,
+              width,
+              height,
+              weightWidth: weightMap.width,
+              weightHeight: weightMap.height,
+              rowStart,
+              rowEnd,
+              workerIndex,
+            },
+          );
+        }));
+        return !shouldCancel();
+      } finally {
+        for (const worker of workers) worker.terminate();
+      }
+    }
+
+    for (const worker of workers) worker.terminate();
+  }
+
+  const worker = createRawDevelopmentWorker();
+  if (worker) {
+    let completedRow = 0;
+    try {
+      const weightCopy = weightMap.data.slice();
+      const weightBuffer = weightCopy.buffer as ArrayBuffer;
+      await requestRawDevelopmentWorker<RawWorkerDenoiseMergeReadyResponse>(
+        worker,
+        "denoise-merge-ready",
+        {
+          type: "denoise-merge-init",
+          weightBuffer,
+          weightWidth: weightMap.width,
+          weightHeight: weightMap.height,
+          imageWidth: width,
+          imageHeight: height,
+        },
+        [weightBuffer],
+      );
+
+      const rowStride = width * 3;
+      for (let startRow = 0; startRow < height; startRow += RAW_DENOISE_MERGE_CHUNK_ROWS) {
+        if (shouldCancel()) return false;
+        const endRow = Math.min(height, startRow + RAW_DENOISE_MERGE_CHUNK_ROWS);
+        const startIndex = startRow * rowStride;
+        const endIndex = endRow * rowStride;
+        const masterChunk = master.data.slice(startIndex, endIndex);
+        const denoiseChunk = denoise.data.slice(startIndex, endIndex);
+        const masterBuffer = masterChunk.buffer as ArrayBuffer;
+        const denoiseBuffer = denoiseChunk.buffer as ArrayBuffer;
+        const response = await requestRawDevelopmentWorker<RawWorkerDenoiseMergeChunkResponse>(
+          worker,
+          "denoise-merge-chunk-complete",
+          {
+            type: "denoise-merge-chunk",
+            masterBuffer,
+            denoiseBuffer,
+            rowStart: startRow,
+          },
+          [masterBuffer, denoiseBuffer],
+        );
+        if (shouldCancel()) return false;
+        denoise.data.set(new Uint16Array(response.denoiseBuffer), startIndex);
+        completedRow = endRow;
+      }
+      return !shouldCancel();
+    } catch {
+      // Temporary chunks are transferred, never the live Master/Denoise buffers.
+      // Rows already committed are complete, so a worker failure can safely
+      // continue on the main thread from the first uncommitted row.
+      const rowsPerChunk = 32;
+      for (let startRow = completedRow; startRow < height; startRow += rowsPerChunk) {
+        if (shouldCancel()) return false;
+        mergeRawDenoiseGamma20InPlaceRows(
+          master.data,
+          denoise.data,
+          width,
+          height,
+          weightMap.data,
+          weightMap.width,
+          weightMap.height,
+          startRow,
+          Math.min(height, startRow + rowsPerChunk),
+        );
+        if (startRow + rowsPerChunk < height) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        }
+      }
+      return !shouldCancel();
+    } finally {
+      worker.terminate();
+    }
+  }
 
   const rowsPerChunk = 32;
-  for (let startRow = 0; startRow < master.height; startRow += rowsPerChunk) {
+  for (let startRow = 0; startRow < height; startRow += rowsPerChunk) {
     if (shouldCancel()) return false;
     mergeRawDenoiseGamma20InPlaceRows(
       master.data,
       denoise.data,
-      master.width,
-      master.height,
+      width,
+      height,
       weightMap.data,
       weightMap.width,
       weightMap.height,
       startRow,
-      Math.min(master.height, startRow + rowsPerChunk),
+      Math.min(height, startRow + rowsPerChunk),
     );
-    if (startRow + rowsPerChunk < master.height) {
+    if (startRow + rowsPerChunk < height) {
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
   }
   return !shouldCancel();
 }
+
 
 function imageEditPreviewDimensions(
   sourceWidth: number,
@@ -7924,7 +8084,6 @@ async function decodeRawPreviewImage(
 
   let raw: LibRawInstanceLike | null = null;
   let workerFailure: ReturnType<typeof createLibRawWorkerFailure> | null = null;
-  const rawDebug: RawDebugArtifacts = {};
   try {
     raw = await runStage("Loading RAW preview decoder…", () => createLibRawInstance());
     workerFailure = createLibRawWorkerFailure(raw);
@@ -7967,7 +8126,6 @@ async function decodeRawPreviewImage(
                 : {}),
             }
           : undefined;
-        rawDebug.thumbnail = embeddedPreview;
         onProgress?.({ stage: "Analyzing embedded thumbnail…", embeddedPreview, rawTiming: timing });
         // Thumbnail analysis runs in its own worker and is intentionally not awaited
         // here. Linear RAW demosaic can therefore proceed concurrently on the
@@ -8024,7 +8182,7 @@ async function decodeRawPreviewImage(
       () => thumbnailReferencePromise,
     );
     const plan = await developRawPreviewPixels(decoded, thumbnailReference, timing, onProgress);
-    rawDebug.preview = buildRawDebugImageSnapshot(decoded);
+    plan.previewIso = Number.isFinite(isoValue) && isoValue > 0 ? isoValue : null;
     const previewElapsedMs = performance.now() - timing.startedAtMs;
     const previewElapsedSeconds = previewElapsedMs / 1000;
     plan.previewElapsedSeconds = previewElapsedSeconds;
@@ -8037,7 +8195,6 @@ async function decodeRawPreviewImage(
     ]);
     recordRawTiming(timing, "preview", "RAW preview tone/color subtotal", toneColorSubtotal);
     recordRawTiming(timing, "preview", "RAW preview buffer ready", previewElapsedMs);
-    decoded.rawDebug = rawDebug;
     decoded.rawDevelopment = {
       mode: plan.mode,
       iso: Number.isFinite(isoValue) && isoValue > 0 ? isoValue : null,
@@ -8064,7 +8221,6 @@ async function decodeRawPreviewImage(
 async function decodeRawMasterImage(
   file: File,
   plan: RawProgressiveDevelopmentPlan,
-  rawDebug: RawDebugArtifacts,
   rawDemosaicQuality?: RawDemosaicQuality,
   rawHighlightMode?: RawHighlightMode,
 ): Promise<DecodedRgbImage16> {
@@ -8078,9 +8234,11 @@ async function decodeRawMasterImage(
     const rawBytes = await measureRawTiming(timing, "master", "Reading RAW for master", async () =>
       new Uint8Array(await file.arrayBuffer()),
     );
+    const plannedMedPasses = rawMedianDenoisePassesForIso(plan.previewIso ?? Number.NaN);
     const settings: LibRawSettingsLike = {
       ...RAW_DECODE_SETTINGS,
       userQual: rawDemosaicQuality ?? 11,
+      ...(plannedMedPasses > 0 ? { medPasses: plannedMedPasses } : {}),
       ...(rawHighlightMode === undefined ? {} : { highlight: rawHighlightMode }),
     };
     await measureRawTiming(timing, "master", "Opening RAW master", () =>
@@ -8091,16 +8249,32 @@ async function decodeRawMasterImage(
     );
     const isoValue = Number(metadata?.iso_speed);
     const medPasses = rawMedianDenoisePassesForIso(isoValue);
-    const image = await measureRawTiming(timing, "master", "Demosaicing master", async () => {
-      if (medPasses > 0) {
-        const denoiseRawBytes = new Uint8Array(await file.arrayBuffer());
-        await Promise.race([
-          raw!.open(denoiseRawBytes, { ...settings, medPasses }),
+    if (medPasses !== plannedMedPasses) {
+      // Preview already supplied the ISO in the normal path, so Master opens the
+      // RAW only once. If metadata disagrees enough to cross a median-denoise
+      // threshold, reopen with the corrected setting. Reuse the existing bytes
+      // when the LibRaw adapter has not transferred/detached them.
+      const reopenBytes = rawBytes.byteLength > 0
+        ? rawBytes
+        : new Uint8Array(await measureRawTiming(
+            timing,
+            "master",
+            "Rereading RAW for master median denoise",
+            () => file.arrayBuffer(),
+          ));
+      await measureRawTiming(timing, "master", "Reopening RAW master for median denoise", () =>
+        Promise.race([
+          raw!.open(reopenBytes, {
+            ...settings,
+            ...(medPasses > 0 ? { medPasses } : { medPasses: 0 }),
+          }),
           workerFailure!.promise,
-        ]);
-      }
-      return Promise.race([raw!.imageData(), workerFailure!.promise]);
-    });
+        ]),
+      );
+    }
+    const image = await measureRawTiming(timing, "master", "Demosaicing master", () =>
+      Promise.race([raw!.imageData(), workerFailure!.promise]),
+    );
     if (!image || !image.width || !image.height || !image.data) {
       throw new Error("RAW master decode failed");
     }
@@ -8128,8 +8302,6 @@ async function decodeRawMasterImage(
       developRawMasterOnePassInWorker(sourceDecoded, plan),
     );
     const decoded = masterResult.decoded;
-    rawDebug.master = buildRawDebugImageFullCopy(decoded);
-    decoded.rawDebug = rawDebug;
     decoded.rawDevelopment = {
       mode: plan.mode,
       iso: Number.isFinite(isoValue) && isoValue > 0 ? isoValue : null,
@@ -8156,27 +8328,24 @@ async function decodeRawMasterImage(
 
 async function decodeRawDenoiseImage(
   file: File,
+  preview: DecodedRgbImage16,
   master: DecodedRgbImage16,
   plan: RawProgressiveDevelopmentPlan,
-  rawDebug: RawDebugArtifacts,
   rawDemosaicQuality?: RawDemosaicQuality,
   rawHighlightMode?: RawHighlightMode,
-): Promise<DecodedRgbImage16> {
+): Promise<RawDenoiseDevelopmentResult> {
   const startedAt = performance.now();
   const timing = plan.timing;
   let raw: LibRawInstanceLike | null = null;
   let workerFailure: ReturnType<typeof createLibRawWorkerFailure> | null = null;
   try {
     const isoValue = master.rawDevelopment?.iso ?? Number.NaN;
-    const analysis = rawDebug.preview
-      ? await measureRawTiming(timing, "denoise", "Analyzing denoise weights", () =>
-        analyzeRawDenoiseInWorker(
-          rawDebug.preview!,
-          Number.isFinite(isoValue) && isoValue > 0 ? isoValue : null,
-        ),
-      )
-      : undefined;
-    if (analysis) rawDebug.weightMap = analysis.weightMap;
+    const analysis = await measureRawTiming(timing, "denoise", "Analyzing denoise weights", () =>
+      analyzeRawDenoiseInWorker(
+        preview,
+        Number.isFinite(isoValue) && isoValue > 0 ? isoValue : null,
+      ),
+    );
 
     const denoiseSettings = rawDenoiseDecodeSettingsForIso(isoValue);
     raw = await measureRawTiming(timing, "denoise", "Loading RAW denoise decoder", () => createLibRawInstance());
@@ -8229,20 +8398,18 @@ async function decodeRawDenoiseImage(
       developRawMasterOnePassInWorker(sourceDecoded, plan),
     );
     const decoded = denoiseResult.decoded;
-    rawDebug.denoise = buildRawDebugImageFullCopy(decoded);
-    decoded.rawDebug = rawDebug;
     const denoiseDevelopment: RawDenoiseSettings = {
       fbdd: denoiseSettings.fbdd,
       medPasses: denoiseSettings.medPasses,
-      smoothMean: analysis?.smoothMean ?? 0,
-      smoothStddev: analysis?.smoothStddev ?? 0,
-      shadowMean: analysis?.shadowMean ?? 0,
-      shadowStddev: analysis?.shadowStddev ?? 0,
-      weightMean: analysis?.weightMean ?? 0,
-      weightStddev: analysis?.weightStddev ?? 0,
-      weightP50: analysis?.weightP50 ?? 0,
-      weightP90: analysis?.weightP90 ?? 0,
-      weightP99: analysis?.weightP99 ?? 0,
+      smoothMean: analysis.smoothMean,
+      smoothStddev: analysis.smoothStddev,
+      shadowMean: analysis.shadowMean,
+      shadowStddev: analysis.shadowStddev,
+      weightMean: analysis.weightMean,
+      weightStddev: analysis.weightStddev,
+      weightP50: analysis.weightP50,
+      weightP90: analysis.weightP90,
+      weightP99: analysis.weightP99,
       elapsedSeconds: (performance.now() - startedAt) / 1000,
     };
     decoded.rawDevelopment = {
@@ -8259,7 +8426,7 @@ async function decodeRawDenoiseImage(
     };
     recordRawTiming(timing, "denoise", "Denoise buffer ready", performance.now() - startedAt);
     logRawTimingSection("Denoise", timing, timing.denoise);
-    return decoded;
+    return { decoded, weightMap: analysis.weightMap };
   } finally {
     workerFailure?.cleanup();
     if (raw?.dispose) raw.dispose();
@@ -8275,11 +8442,9 @@ async function decodeRawImage(
 ): Promise<DecodedRgbImage16> {
   const timing = createRawDevelopmentTiming();
   const preview = await decodeRawPreviewImage(file, timing, rawHighlightMode, onProgress);
-  const rawDebug = preview.decoded.rawDebug ?? {};
   const masterPromise = decodeRawMasterImage(
     file,
     preview.plan,
-    rawDebug,
     rawDemosaicQuality,
     rawHighlightMode,
   );
@@ -8289,9 +8454,9 @@ async function decodeRawImage(
     master.rawDenoisePromise = denoisePromise;
     return decodeRawDenoiseImage(
       file,
+      preview.decoded,
       master,
       preview.plan,
-      rawDebug,
       rawDemosaicQuality,
       rawHighlightMode,
     );
@@ -9665,165 +9830,6 @@ function histogramPath(values: number[], maxCount: number, width: number, height
 }
 
 
-type RawDebugPanel = {
-  meta: HTMLElement;
-  content: HTMLElement;
-};
-
-function createRawDebugPage(title: string): Window | null {
-  const popup = window.open("", "_blank");
-  if (!popup) return null;
-  popup.document.open();
-  popup.document.write(
-    `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>` +
-      `<style>` +
-      `html,body{margin:0;min-height:100%;background:#202020;color:#eee;font-family:system-ui,sans-serif}` +
-      `body{padding:16px}` +
-      `h1{font-size:16px;font-weight:600;margin:0 0 12px}` +
-      `.tabs{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}` +
-      `.tab{appearance:none;border:1px solid #666;border-radius:5px;background:#303030;color:#ddd;padding:5px 10px;font:13px system-ui,sans-serif;cursor:pointer}` +
-      `.tab:hover{background:#3b3b3b}.tab.active{background:#eee;color:#111;border-color:#eee}` +
-      `.panel{display:none}.panel.active{display:block}` +
-      `.meta{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;margin:0 0 10px;color:#bbb}` +
-      `.content{overflow:auto;max-width:100%}` +
-      `.debug-media{display:block;width:auto;height:auto;max-width:min(900px,calc(100vw - 48px));max-height:calc(100vh - 150px);background:#111;object-fit:contain;cursor:zoom-in}` +
-      `.debug-media.expanded{max-width:none;max-height:none;cursor:zoom-out}` +
-      `.hint{font-size:11px;color:#888;margin-top:8px}` +
-      `</style></head>` +
-      `<body><h1>${title}</h1><div id="tabs" class="tabs"></div><div id="panels"></div>` +
-      `<div class="hint">Click an image to toggle between fitted and actual-size display.</div></body></html>`,
-  );
-  popup.document.close();
-  return popup;
-}
-
-function createRawDebugPanel(
-  popup: Window,
-  label: string,
-  active: boolean,
-): RawDebugPanel | null {
-  const doc = popup.document;
-  const tabs = doc.getElementById("tabs");
-  const panels = doc.getElementById("panels");
-  if (!tabs || !panels) return null;
-
-  const panel = doc.createElement("section");
-  panel.className = `panel${active ? " active" : ""}`;
-  const meta = doc.createElement("div");
-  meta.className = "meta";
-  meta.textContent = "rendering...";
-  const content = doc.createElement("div");
-  content.className = "content";
-  panel.append(meta, content);
-  panels.appendChild(panel);
-
-  const button = doc.createElement("button");
-  button.type = "button";
-  button.className = `tab${active ? " active" : ""}`;
-  button.textContent = label;
-  button.addEventListener("click", () => {
-    for (const item of Array.from(tabs.querySelectorAll(".tab"))) item.classList.remove("active");
-    for (const item of Array.from(panels.querySelectorAll(".panel"))) item.classList.remove("active");
-    button.classList.add("active");
-    panel.classList.add("active");
-  });
-  tabs.appendChild(button);
-  return { meta, content };
-}
-
-function makeRawDebugMediaZoomable(element: HTMLElement): void {
-  element.classList.add("debug-media");
-  element.addEventListener("click", () => {
-    element.classList.toggle("expanded");
-  });
-}
-
-function renderRawDebugSnapshot(
-  popup: Window,
-  panel: RawDebugPanel,
-  snapshot: RawDebugImageSnapshot,
-): void {
-  const doc = popup.document;
-  panel.meta.textContent = snapshot.width === snapshot.sourceWidth && snapshot.height === snapshot.sourceHeight
-    ? `${snapshot.width}x${snapshot.height}`
-    : `debug snapshot ${snapshot.width}x${snapshot.height}, source ${snapshot.sourceWidth}x${snapshot.sourceHeight}`;
-  const canvas = doc.createElement("canvas");
-  canvas.width = snapshot.width;
-  canvas.height = snapshot.height;
-  makeRawDebugMediaZoomable(canvas);
-  const ctx = canvas.getContext("2d", { alpha: false });
-  if (!ctx) return;
-  const imageData = ctx.createImageData(snapshot.width, snapshot.height);
-  const rgba = imageData.data;
-  for (let i = 0, j = 0; i < snapshot.data.length; i += 3, j += 4) {
-    const r = decodeStoredRgb16Channel(
-      snapshot.data[i] ?? 0,
-      snapshot.transfer,
-      snapshot.linearRangeMax,
-    );
-    const g = decodeStoredRgb16Channel(
-      snapshot.data[i + 1] ?? 0,
-      snapshot.transfer,
-      snapshot.linearRangeMax,
-    );
-    const b = decodeStoredRgb16Channel(
-      snapshot.data[i + 2] ?? 0,
-      snapshot.transfer,
-      snapshot.linearRangeMax,
-    );
-    const [sr, sg, sb] = convertLinearProPhotoToOutputRgb(r, g, b, "srgb");
-    rgba[j] = linearChannelToSrgb(sr);
-    rgba[j + 1] = linearChannelToSrgb(sg);
-    rgba[j + 2] = linearChannelToSrgb(sb);
-    rgba[j + 3] = 255;
-  }
-  ctx.putImageData(imageData, 0, 0);
-  panel.content.appendChild(canvas);
-}
-
-function renderRawDebugThumbnail(
-  popup: Window,
-  panel: RawDebugPanel,
-  thumbnail: NonNullable<RawDebugArtifacts["thumbnail"]>,
-): void {
-  const doc = popup.document;
-  panel.meta.textContent = `${thumbnail.width}x${thumbnail.height}`;
-  const url = URL.createObjectURL(thumbnail.blob);
-  const image = doc.createElement("img");
-  image.alt = "RAW thumbnail";
-  image.src = url;
-  makeRawDebugMediaZoomable(image);
-  image.addEventListener("load", () => URL.revokeObjectURL(url), { once: true });
-  image.addEventListener("error", () => URL.revokeObjectURL(url), { once: true });
-  panel.content.appendChild(image);
-}
-
-function renderRawDebugWeightMap(
-  popup: Window,
-  panel: RawDebugPanel,
-  weightMap: RawDebugWeightMap,
-): void {
-  const doc = popup.document;
-  panel.meta.textContent = `${weightMap.width}x${weightMap.height}`;
-  const canvas = doc.createElement("canvas");
-  canvas.width = weightMap.width;
-  canvas.height = weightMap.height;
-  makeRawDebugMediaZoomable(canvas);
-  const ctx = canvas.getContext("2d", { alpha: false });
-  if (!ctx) return;
-  const imageData = ctx.createImageData(weightMap.width, weightMap.height);
-  const rgba = imageData.data;
-  for (let i = 0, j = 0; i < weightMap.data.length; i++, j += 4) {
-    const value = Math.round(clamp01(weightMap.data[i] ?? 0) * 255);
-    rgba[j] = value;
-    rgba[j + 1] = value;
-    rgba[j + 2] = value;
-    rgba[j + 3] = 255;
-  }
-  ctx.putImageData(imageData, 0, 0);
-  panel.content.appendChild(canvas);
-}
-
 type ImageEditPanelKey = "crop" | "whiteBalance" | "tone" | "color" | "finishing";
 
 type ImageEditUiCollapsePreferences = {
@@ -9936,7 +9942,7 @@ export function ImageEditDialog({
   const decodedImageRef = useRef<DecodedImage | null>(null);
   const transferredDecodedImageRef = useRef<DecodedImage | null>(null);
   const rawMasterPromiseRef = useRef<Promise<DecodedRgbImage16> | null>(null);
-  const rawDenoisePromiseRef = useRef<Promise<DecodedRgbImage16> | null>(null);
+  const rawDenoisePromiseRef = useRef<Promise<RawDenoiseDevelopmentResult> | null>(null);
   const rawForegroundPromiseRef = useRef<Promise<DecodedRgbImage16> | null>(null);
   const rawDevelopmentTimingRef = useRef<RawDevelopmentTiming | null>(null);
   const editableThumbnailRequestRef = useRef(0);
@@ -10226,73 +10232,6 @@ export function ImageEditDialog({
     if (previousUrl) URL.revokeObjectURL(previousUrl);
   }, []);
 
-  const openRawDebugTabs = useCallback(() => {
-    const artifacts = decodedImageRef.current?.rawDebug;
-    if (!artifacts) return;
-
-    const entries: Array<{
-      label: string;
-      render: (popup: Window, panel: RawDebugPanel) => void;
-    }> = [];
-    if (artifacts.thumbnail) {
-      const thumbnail = artifacts.thumbnail;
-      entries.push({
-        label: "Thumbnail",
-        render: (popup, panel) => renderRawDebugThumbnail(popup, panel, thumbnail),
-      });
-    }
-    if (artifacts.preview) {
-      const preview = artifacts.preview;
-      entries.push({
-        label: "Preview",
-        render: (popup, panel) => renderRawDebugSnapshot(popup, panel, preview),
-      });
-    }
-    if (artifacts.master) {
-      const master = artifacts.master;
-      entries.push({
-        label: "Master",
-        render: (popup, panel) => renderRawDebugSnapshot(popup, panel, master),
-      });
-    }
-    if (artifacts.denoise) {
-      const denoise = artifacts.denoise;
-      entries.push({
-        label: "Denoise",
-        render: (popup, panel) => renderRawDebugSnapshot(popup, panel, denoise),
-      });
-    }
-    if (artifacts.blended) {
-      const blended = artifacts.blended;
-      entries.push({
-        label: "Blended",
-        render: (popup, panel) => renderRawDebugSnapshot(popup, panel, blended),
-      });
-    }
-    if (artifacts.weightMap) {
-      const weightMap = artifacts.weightMap;
-      entries.push({
-        label: "Weight map",
-        render: (popup, panel) => renderRawDebugWeightMap(popup, panel, weightMap),
-      });
-    }
-    if (!entries.length) return;
-
-    // Use one browser popup with internal tabs. Browsers commonly allow only the
-    // first of several window.open() calls from a single click, which made the
-    // old implementation appear to contain only the thumbnail.
-    const popup = createRawDebugPage("RAW debug");
-    if (!popup) return;
-    const renderJobs: Array<() => void> = [];
-    entries.forEach((entry, index) => {
-      const panel = createRawDebugPanel(popup, entry.label, index === 0);
-      if (!panel) return;
-      renderJobs.push(() => entry.render(popup, panel));
-    });
-    renderJobs.forEach((render, index) => {
-      window.setTimeout(render, index);
-    });
-  }, []);
 
   useEffect(() => {
     if (!showPercentileDebug) return;
@@ -10369,7 +10308,6 @@ export function ImageEditDialog({
             );
           }
           const previousDecoded = decodedImageRef.current;
-          thumbnailDecoded.rawDebug = { thumbnail: preview };
           decodedImageRef.current = thumbnailDecoded;
           cleanup = thumbnailDecoded.cleanup;
           editableThumbnailReadyRef.current = true;
@@ -10444,17 +10382,18 @@ export function ImageEditDialog({
         if (isRaw && decoded.rawDenoisePromise) {
           const denoisePromise = decoded.rawDenoisePromise;
           rawDenoisePromiseRef.current = denoisePromise;
-          void denoisePromise.then(async (denoiseDecoded) => {
+          void denoisePromise.then(async (denoiseResult) => {
+            const denoiseDecoded = denoiseResult.decoded;
+            const weightMap = denoiseResult.weightMap;
             let adopted = false;
             try {
               if (cancelled || rawDenoisePromiseRef.current !== denoisePromise) return;
               const masterDecoded = decodedImageRef.current;
-              const weightMap = denoiseDecoded.rawDebug?.weightMap;
-              if (!masterDecoded || !weightMap) {
+              if (!masterDecoded) {
                 throw new Error("RAW denoise merge inputs are unavailable");
               }
               const mergeStartedAt = performance.now();
-              const merged = await mergeRawDenoiseDevelopedImageInPlace(
+              const merged = await mergeRawMasterIntoDenoiseInPlace(
                 masterDecoded,
                 denoiseDecoded,
                 weightMap,
@@ -10466,11 +10405,13 @@ export function ImageEditDialog({
               if (denoiseDevelopment) {
                 denoiseDevelopment.elapsedSeconds += (performance.now() - mergeStartedAt) / 1000;
               }
-              const rawDebug = denoiseDecoded.rawDebug ?? {};
-              rawDebug.blended = buildRawDebugImageFullCopy(denoiseDecoded);
-              denoiseDecoded.rawDebug = rawDebug;
+              // The merge has consumed the low-resolution weight map. Drop its
+              // backing store even if a settled background Promise remains reachable.
+              denoiseResult.weightMap = { width: 0, height: 0, data: new Float32Array(0) };
+              masterDecoded.rawDenoisePromise = undefined;
               const previousCleanup = cleanup;
               decodedImageRef.current = denoiseDecoded;
+              decodedForEffect = denoiseDecoded;
               cleanup = denoiseDecoded.cleanup;
               rawDenoisePromiseRef.current = null;
               invalidateBaseDerivedCaches(masterDecoded);
@@ -10499,6 +10440,7 @@ export function ImageEditDialog({
             if (cancelled || rawMasterPromiseRef.current !== masterPromise) return;
             const previousDecoded = decodedImageRef.current;
             decodedImageRef.current = masterDecoded;
+            decodedForEffect = masterDecoded;
             cleanup = masterDecoded.cleanup;
             invalidateBaseDerivedCaches(previousDecoded);
             const logicalSize = rawLogicalSizeRef.current;
@@ -14335,21 +14277,6 @@ export function ImageEditDialog({
                         <path d={histogramPaths.b} stroke="rgba(100,160,255,0.8)" strokeWidth="1" fill="none" />
                       </svg>
                     </div>
-                  )}
-                  {!eyedropperMode && showHistogram && isRawImageFile(file.name, file.type) && (
-                    <button
-                      type="button"
-                      className="absolute right-10 bottom-2 z-30 flex h-6 w-6 items-center justify-center rounded border border-black/40 bg-white/80 text-xs font-semibold text-black opacity-10 transition-opacity hover:opacity-100 focus:opacity-100"
-                      onPointerDown={(e) => e.stopPropagation()}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openRawDebugTabs();
-                      }}
-                      aria-label="Show RAW debug images"
-                      title="RAW debug"
-                    >
-                      D
-                    </button>
                   )}
                   {!eyedropperMode && showHistogram && (
                     <button

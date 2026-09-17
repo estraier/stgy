@@ -9,6 +9,8 @@ import {
   convertRawLinearToGamma20InPlace,
   developRawMasterOnePassToGamma20,
   developRawMasterOnePassRowsToGamma20,
+  mergeRawDenoiseGamma20ChunkInPlace,
+  mergeRawDenoiseGamma20InPlaceRows,
   resampleRawWithLensfunToGamma20,
   sampleRawLinearRgb,
   type RawColorPassPlan,
@@ -41,10 +43,43 @@ type DenoiseAnalyzeMessage = StartMessageBase & {
   iso?: number | null;
 };
 
+type DenoiseMergeInitMessage = {
+  type: "denoise-merge-init";
+  weightBuffer: ArrayBuffer;
+  weightWidth: number;
+  weightHeight: number;
+  imageWidth: number;
+  imageHeight: number;
+};
+
+type DenoiseMergeChunkMessage = {
+  type: "denoise-merge-chunk";
+  masterBuffer: ArrayBuffer;
+  denoiseBuffer: ArrayBuffer;
+  rowStart: number;
+};
+
+type DenoiseMergeSharedMessage = {
+  type: "denoise-merge-shared";
+  masterBuffer: SharedArrayBuffer;
+  denoiseBuffer: SharedArrayBuffer;
+  weightBuffer: SharedArrayBuffer;
+  width: number;
+  height: number;
+  weightWidth: number;
+  weightHeight: number;
+  rowStart: number;
+  rowEnd: number;
+  workerIndex: number;
+};
+
 type RawDevelopmentWorkerRequest =
   | ({ type: "matched-tone"; plan: RawMatchedTonePlan; sampleTargetPixels: number } & StartMessageBase)
   | ({ type: "fallback-tone" } & StartMessageBase)
   | DenoiseAnalyzeMessage
+  | DenoiseMergeInitMessage
+  | DenoiseMergeChunkMessage
+  | DenoiseMergeSharedMessage
   | { type: "color"; plan: RawColorPassPlan }
   | { type: "encode" }
   | ({
@@ -79,6 +114,13 @@ type RawDevelopmentWorkerRequest =
 
 const workerScope = self as unknown as DedicatedWorkerGlobalScope;
 let state: WorkerState | null = null;
+let denoiseMergeState: {
+  weight: Float32Array;
+  weightWidth: number;
+  weightHeight: number;
+  imageWidth: number;
+  imageHeight: number;
+} | null = null;
 
 function postError(error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
@@ -99,6 +141,69 @@ function postError(error: unknown): void {
 workerScope.onmessage = (event: MessageEvent<RawDevelopmentWorkerRequest>) => {
   try {
     const message = event.data;
+
+    if (message.type === "denoise-merge-init") {
+      denoiseMergeState = {
+        weight: new Float32Array(message.weightBuffer),
+        weightWidth: message.weightWidth,
+        weightHeight: message.weightHeight,
+        imageWidth: message.imageWidth,
+        imageHeight: message.imageHeight,
+      };
+      workerScope.postMessage({ type: "denoise-merge-ready" });
+      return;
+    }
+
+    if (message.type === "denoise-merge-chunk") {
+      if (!denoiseMergeState) throw new Error("RAW denoise merge worker is not initialized");
+      const master = new Uint16Array(message.masterBuffer);
+      const denoise = new Uint16Array(message.denoiseBuffer);
+      mergeRawDenoiseGamma20ChunkInPlace(
+        master,
+        denoise,
+        denoiseMergeState.imageWidth,
+        denoiseMergeState.imageHeight,
+        denoiseMergeState.weight,
+        denoiseMergeState.weightWidth,
+        denoiseMergeState.weightHeight,
+        message.rowStart,
+      );
+      const denoiseBuffer = denoise.buffer as ArrayBuffer;
+      workerScope.postMessage(
+        {
+          type: "denoise-merge-chunk-complete",
+          denoiseBuffer,
+          rowStart: message.rowStart,
+          rowCount: denoise.length / (denoiseMergeState.imageWidth * 3),
+        },
+        [denoiseBuffer],
+      );
+      return;
+    }
+
+    if (message.type === "denoise-merge-shared") {
+      const master = new Uint16Array(message.masterBuffer);
+      const denoise = new Uint16Array(message.denoiseBuffer);
+      const weight = new Float32Array(message.weightBuffer);
+      mergeRawDenoiseGamma20InPlaceRows(
+        master,
+        denoise,
+        message.width,
+        message.height,
+        weight,
+        message.weightWidth,
+        message.weightHeight,
+        message.rowStart,
+        message.rowEnd,
+      );
+      workerScope.postMessage({
+        type: "denoise-merge-shared-complete",
+        workerIndex: message.workerIndex,
+        rowStart: message.rowStart,
+        rowEnd: message.rowEnd,
+      });
+      return;
+    }
 
     if (message.type === "denoise-analyze") {
       const data = new Uint16Array(message.dataBuffer);

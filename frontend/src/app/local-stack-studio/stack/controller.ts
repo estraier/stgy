@@ -3405,11 +3405,30 @@ function finalizeStoredGamma2Result(gamma2ProPhotoRgb16, width, height, outputCo
   if (!(gamma2ProPhotoRgb16 instanceof Uint16Array) || gamma2ProPhotoRgb16.length !== width * height * 3) {
     throw new Error("Stored gamma-2 result has an invalid Uint16 RGB buffer.");
   }
-  const linear = decodeStoredGamma2ToLinear(gamma2ProPhotoRgb16);
   setProgress(`Preparing ${formatColorSpaceName(outputColorSpace)} preview buffer...`);
-  const preview = buildPreviewLinearProPhotoForTargetPixels(linear, width, height, PREVIEW_TARGET_PIXELS);
-  const analysis = buildPreviewLinearProPhotoForTargetPixels(linear, width, height, TONE_ANALYSIS_TARGET_PIXELS);
-  const exposureRolloffBaseP998 = estimateMaxChannelPercentileSampled(linear, width, height, 0.998, 256);
+  // Keep the full-resolution stack in its compact Uint16 gamma-2 representation.
+  // Preview/analysis/rolloff only need sparse or downsampled reads, so decoding the
+  // entire image to Float32 here would create a large temporary buffer that is
+  // immediately discarded (about 275 MiB for a 24 MP RGB image).
+  const preview = buildPreviewLinearProPhotoFromStoredGamma2ForTargetPixels(
+    gamma2ProPhotoRgb16,
+    width,
+    height,
+    PREVIEW_TARGET_PIXELS,
+  );
+  const analysis = buildPreviewLinearProPhotoFromStoredGamma2ForTargetPixels(
+    gamma2ProPhotoRgb16,
+    width,
+    height,
+    TONE_ANALYSIS_TARGET_PIXELS,
+  );
+  const exposureRolloffBaseP998 = estimateStoredGamma2MaxChannelPercentileSampled(
+    gamma2ProPhotoRgb16,
+    width,
+    height,
+    0.998,
+    256,
+  );
   return {
     width,
     height,
@@ -3496,6 +3515,105 @@ function applyExposureAndRolloffInPlace(linear, gain, exposureRolloffBaseP998 = 
   }
 }
 
+let storedGamma2LinearLookup = null;
+
+function getStoredGamma2LinearLookup() {
+  if (storedGamma2LinearLookup) return storedGamma2LinearLookup;
+  const lookup = new Float32Array(RESULT_BUFFER_MAX_UINT16 + 1);
+  const inverseMax = 1 / RESULT_BUFFER_MAX_UINT16;
+  for (let value = 0; value <= RESULT_BUFFER_MAX_UINT16; value += 1) {
+    const encoded = value * inverseMax;
+    // Match assignment into decodeStoredGamma2ToLinear()'s Float32Array so the
+    // direct-sampling path remains numerically identical to the former full decode.
+    lookup[value] = Math.pow(encoded, RESULT_BUFFER_GAMMA);
+  }
+  storedGamma2LinearLookup = lookup;
+  return lookup;
+}
+
+function estimateStoredGamma2MaxChannelPercentileSampled(stored, width, height, q, maxSide) {
+  const linearLookup = getStoredGamma2LinearLookup();
+  const scale = Math.min(1, maxSide / Math.max(width, height));
+  const sampleWidth = Math.max(1, Math.round(width * scale));
+  const sampleHeight = Math.max(1, Math.round(height * scale));
+  const maxima = new Float32Array(sampleWidth * sampleHeight);
+  let targetIndex = 0;
+  for (let y = 0; y < sampleHeight; y += 1) {
+    const sourceY = Math.min(height - 1, Math.floor((y + 0.5) * height / sampleHeight));
+    for (let x = 0; x < sampleWidth; x += 1) {
+      const sourceX = Math.min(width - 1, Math.floor((x + 0.5) * width / sampleWidth));
+      const sourceIndex = (sourceY * width + sourceX) * 3;
+      const maxStored = Math.max(
+        stored[sourceIndex],
+        stored[sourceIndex + 1],
+        stored[sourceIndex + 2],
+      );
+      maxima[targetIndex++] = linearLookup[maxStored];
+    }
+  }
+  return percentileFromFloatArray(maxima, q);
+}
+
+function buildPreviewLinearProPhotoFromStoredGamma2ForTargetPixels(stored, width, height, targetPixels) {
+  const scale = Math.min(1, Math.sqrt(targetPixels / Math.max(1, width * height)));
+  const maxDimension = Math.max(1, Math.round(Math.max(width, height) * scale));
+  return buildPreviewLinearProPhotoFromStoredGamma2(stored, width, height, maxDimension);
+}
+
+function buildPreviewLinearProPhotoFromStoredGamma2(stored, width, height, maxDimension) {
+  const linearLookup = getStoredGamma2LinearLookup();
+  const sourceMax = Math.max(width, height);
+  if (!(sourceMax > maxDimension)) {
+    const data = new Float32Array(stored.length);
+    for (let i = 0; i < stored.length; i += 1) {
+      data[i] = linearLookup[stored[i]];
+    }
+    return { data, width, height };
+  }
+
+  const scale = maxDimension / sourceMax;
+  const previewWidth = Math.max(1, Math.round(width * scale));
+  const previewHeight = Math.max(1, Math.round(height * scale));
+  const previewData = new Float32Array(previewWidth * previewHeight * 3);
+  const xScale = width / previewWidth;
+  const yScale = height / previewHeight;
+
+  for (let y = 0; y < previewHeight; y += 1) {
+    const sourceY = (y + 0.5) * yScale - 0.5;
+    const y0 = Math.max(0, Math.min(height - 1, Math.floor(sourceY)));
+    const y1 = Math.min(height - 1, y0 + 1);
+    const fy = Math.max(0, Math.min(1, sourceY - y0));
+    for (let x = 0; x < previewWidth; x += 1) {
+      const sourceX = (x + 0.5) * xScale - 0.5;
+      const x0 = Math.max(0, Math.min(width - 1, Math.floor(sourceX)));
+      const x1 = Math.min(width - 1, x0 + 1);
+      const fx = Math.max(0, Math.min(1, sourceX - x0));
+      const w00 = (1 - fx) * (1 - fy);
+      const w10 = fx * (1 - fy);
+      const w01 = (1 - fx) * fy;
+      const w11 = fx * fy;
+      const dst = (y * previewWidth + x) * 3;
+      const s00 = (y0 * width + x0) * 3;
+      const s10 = (y0 * width + x1) * 3;
+      const s01 = (y1 * width + x0) * 3;
+      const s11 = (y1 * width + x1) * 3;
+      for (let channel = 0; channel < 3; channel += 1) {
+        previewData[dst + channel] =
+          linearLookup[stored[s00 + channel]] * w00 +
+          linearLookup[stored[s10 + channel]] * w10 +
+          linearLookup[stored[s01 + channel]] * w01 +
+          linearLookup[stored[s11 + channel]] * w11;
+      }
+    }
+  }
+
+  return {
+    data: previewData,
+    width: previewWidth,
+    height: previewHeight,
+  };
+}
+
 function estimateMaxChannelPercentileSampled(source, width, height, q, maxSide) {
   const scale = Math.min(1, maxSide / Math.max(width, height));
   const sampleWidth = Math.max(1, Math.round(width * scale));
@@ -3529,60 +3647,6 @@ function addWeightedLinearToAccumulator(accumulator, linear, weight) {
   for (let i = 0; i < accumulator.length; i += 1) {
     accumulator[i] += linear[i] * weight;
   }
-}
-
-function buildPreviewLinearProPhotoForTargetPixels(source, width, height, targetPixels) {
-  const scale = Math.min(1, Math.sqrt(targetPixels / Math.max(1, width * height)));
-  const maxDimension = Math.max(1, Math.round(Math.max(width, height) * scale));
-  return buildPreviewLinearProPhoto(source, width, height, maxDimension);
-}
-
-function buildPreviewLinearProPhoto(source, width, height, maxDimension) {
-  const sourceMax = Math.max(width, height);
-  if (!(sourceMax > maxDimension)) {
-    return {
-      data: new Float32Array(source),
-      width,
-      height,
-    };
-  }
-  const scale = maxDimension / sourceMax;
-  const previewWidth = Math.max(1, Math.round(width * scale));
-  const previewHeight = Math.max(1, Math.round(height * scale));
-  const previewData = new Float32Array(previewWidth * previewHeight * 3);
-  const xScale = width / previewWidth;
-  const yScale = height / previewHeight;
-
-  for (let y = 0; y < previewHeight; y += 1) {
-    const sourceY = (y + 0.5) * yScale - 0.5;
-    const y0 = Math.max(0, Math.min(height - 1, Math.floor(sourceY)));
-    const y1 = Math.min(height - 1, y0 + 1);
-    const fy = Math.max(0, Math.min(1, sourceY - y0));
-    for (let x = 0; x < previewWidth; x += 1) {
-      const sourceX = (x + 0.5) * xScale - 0.5;
-      const x0 = Math.max(0, Math.min(width - 1, Math.floor(sourceX)));
-      const x1 = Math.min(width - 1, x0 + 1);
-      const fx = Math.max(0, Math.min(1, sourceX - x0));
-      const w00 = (1 - fx) * (1 - fy);
-      const w10 = fx * (1 - fy);
-      const w01 = (1 - fx) * fy;
-      const w11 = fx * fy;
-      const dst = (y * previewWidth + x) * 3;
-      const s00 = (y0 * width + x0) * 3;
-      const s10 = (y0 * width + x1) * 3;
-      const s01 = (y1 * width + x0) * 3;
-      const s11 = (y1 * width + x1) * 3;
-      previewData[dst] = source[s00] * w00 + source[s10] * w10 + source[s01] * w01 + source[s11] * w11;
-      previewData[dst + 1] = source[s00 + 1] * w00 + source[s10 + 1] * w10 + source[s01 + 1] * w01 + source[s11 + 1] * w11;
-      previewData[dst + 2] = source[s00 + 2] * w00 + source[s10 + 2] * w10 + source[s01 + 2] * w01 + source[s11 + 2] * w11;
-    }
-  }
-
-  return {
-    data: previewData,
-    width: previewWidth,
-    height: previewHeight,
-  };
 }
 
 async function linearAccumulatorToJpeg(accumulator, width, height, outputColorSpace) {

@@ -52,35 +52,6 @@ export type RawDenoiseSettings = {
   elapsedSeconds: number;
 };
 
-export type RawDebugImageSnapshot = {
-  width: number;
-  height: number;
-  sourceWidth: number;
-  sourceHeight: number;
-  linearRangeMax: number;
-  transfer: "linear" | "gamma20";
-  data: Uint16Array;
-};
-
-export type RawDebugWeightMap = {
-  width: number;
-  height: number;
-  data: Float32Array;
-};
-
-export type RawDebugArtifacts = {
-  thumbnail?: {
-    blob: Blob;
-    width: number;
-    height: number;
-  };
-  preview?: RawDebugImageSnapshot;
-  master?: RawDebugImageSnapshot;
-  denoise?: RawDebugImageSnapshot;
-  blended?: RawDebugImageSnapshot;
-  weightMap?: RawDebugWeightMap;
-};
-
 export type RawDevelopmentTimingEntry = {
   name: string;
   elapsedMs: number;
@@ -120,10 +91,20 @@ export type DecodedRgbImage16 = {
   data: Uint16Array;
   lensCorrection?: LensfunCorrection;
   rawDevelopment?: RawDevelopmentSettings;
-  rawDebug?: RawDebugArtifacts;
   rawMasterPromise?: Promise<DecodedRgbImage16>;
-  rawDenoisePromise?: Promise<DecodedRgbImage16>;
+  rawDenoisePromise?: Promise<RawDenoiseDevelopmentResult>;
   cleanup: () => void;
+};
+
+export type RawDenoiseWeightMap = {
+  width: number;
+  height: number;
+  data: Float32Array;
+};
+
+export type RawDenoiseDevelopmentResult = {
+  decoded: DecodedRgbImage16;
+  weightMap: RawDenoiseWeightMap;
 };
 
 export type DecodedImage = DecodedRgbImage16;

@@ -1378,8 +1378,8 @@ export function analyzeRawDenoiseMask(
     shadowSumSq += shadow * shadow;
   }
 
-  // The displayed/debugged map is the actual final blend weight, including the
-  // soft spatial transition that will later be sampled at Master resolution.
+  // The blend map is the actual final weight, including the soft spatial
+  // transition that will later be sampled at Master resolution.
   // ISO then bends only the blend strength, not the spatial classification:
   // ISO 400 is neutral, and every stop changes logarithm by +/-2 using the same
   // scaled-log mapping as the Tone logarithm control.
@@ -1487,4 +1487,76 @@ export function mergeRawDenoiseGamma20InPlaceRows(
     }
   }
 }
+
+export function mergeRawDenoiseGamma20ChunkInPlace(
+  masterChunk: Uint16Array,
+  denoiseChunk: Uint16Array,
+  width: number,
+  height: number,
+  weight: Float32Array,
+  weightWidth: number,
+  weightHeight: number,
+  startRow: number,
+): void {
+  const imageWidth = Math.max(1, Math.round(width));
+  const imageHeight = Math.max(1, Math.round(height));
+  const maskWidth = Math.max(1, Math.round(weightWidth));
+  const maskHeight = Math.max(1, Math.round(weightHeight));
+  const rowStride = imageWidth * 3;
+  if (masterChunk.length !== denoiseChunk.length || masterChunk.length % rowStride !== 0) {
+    throw new Error("RAW denoise merge chunk buffers do not match complete image rows");
+  }
+  if (weight.length < maskWidth * maskHeight) {
+    throw new Error("RAW denoise weight map buffer is smaller than the mask");
+  }
+
+  const yBegin = Math.max(0, Math.min(imageHeight, Math.floor(startRow)));
+  const chunkRows = masterChunk.length / rowStride;
+  const yEnd = Math.min(imageHeight, yBegin + chunkRows);
+  const invMax = 1 / 65535;
+
+  for (let y = yBegin; y < yEnd; y++) {
+    const maskY = Math.max(0, Math.min(
+      maskHeight - 1,
+      (y + 0.5) * maskHeight / imageHeight - 0.5,
+    ));
+    const y0 = Math.floor(maskY);
+    const y1 = Math.min(maskHeight - 1, y0 + 1);
+    const ty = maskY - y0;
+    const row0 = y0 * maskWidth;
+    const row1 = y1 * maskWidth;
+    const localRow = (y - yBegin) * rowStride;
+    for (let x = 0; x < imageWidth; x++) {
+      const maskX = Math.max(0, Math.min(
+        maskWidth - 1,
+        (x + 0.5) * maskWidth / imageWidth - 0.5,
+      ));
+      const x0 = Math.floor(maskX);
+      const x1 = Math.min(maskWidth - 1, x0 + 1);
+      const tx = maskX - x0;
+      const w00 = weight[row0 + x0] ?? 0;
+      const w10 = weight[row0 + x1] ?? 0;
+      const w01 = weight[row1 + x0] ?? 0;
+      const w11 = weight[row1 + x1] ?? 0;
+      const top = w00 + (w10 - w00) * tx;
+      const bottom = w01 + (w11 - w01) * tx;
+      const blend = clamp01(top + (bottom - top) * ty);
+      const base = localRow + x * 3;
+      for (let channel = 0; channel < 3; channel++) {
+        const index = base + channel;
+        const masterEncoded = (masterChunk[index] ?? 0) * invMax;
+        const denoiseEncoded = (denoiseChunk[index] ?? 0) * invMax;
+        const masterLinear = masterEncoded * masterEncoded;
+        const denoiseLinear = denoiseEncoded * denoiseEncoded;
+        const epsilon = invMax * invMax;
+        const mixedLinear = Math.exp(
+          (1 - blend) * Math.log(masterLinear + epsilon)
+          + blend * Math.log(denoiseLinear + epsilon),
+        ) - epsilon;
+        denoiseChunk[index] = Math.round(Math.sqrt(Math.max(0, mixedLinear)) * 65535);
+      }
+    }
+  }
+}
+
 
