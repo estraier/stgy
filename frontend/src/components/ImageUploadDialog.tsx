@@ -9542,6 +9542,7 @@ async function buildRawUploadDefaultFastVariant(
   const outputH = Math.max(1, Math.round(sourceH * params.resizePercent / 100));
   const sourceCanvas = createImageEditCanvas(sourceW, sourceH);
   let output: HTMLCanvasElement | OffscreenCanvas = sourceCanvas;
+  let succeeded = false;
   try {
     const sourceCtx = getCanvas2dContext(sourceCanvas, outputColorProfile);
     if (!sourceCtx) throw new Error("2D context unavailable");
@@ -9572,12 +9573,15 @@ async function buildRawUploadDefaultFastVariant(
       outputCtx.drawImage(sourceCanvas, 0, 0, sourceW, sourceH, 0, 0, outputW, outputH);
     }
     applySharpenToCanvas(output, params.sharpen, outputColorProfile);
+    succeeded = true;
     return { canvas: output, width: outputW, height: outputH, colorProfile: outputColorProfile };
-  } catch (error) {
-    if (output !== sourceCanvas) releaseCanvasIfNeeded(output);
-    throw error;
   } finally {
-    if (output !== sourceCanvas) releaseCanvasIfNeeded(sourceCanvas);
+    if (output !== sourceCanvas) {
+      releaseCanvasIfNeeded(sourceCanvas);
+      if (!succeeded) releaseCanvasIfNeeded(output);
+    } else if (!succeeded) {
+      releaseCanvasIfNeeded(sourceCanvas);
+    }
   }
 }
 
