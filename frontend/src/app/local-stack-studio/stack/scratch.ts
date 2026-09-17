@@ -37,17 +37,23 @@ export function stackRgbTileKey(
   return `${sessionId}:${imageIndex}:${tileY}:${tileX}`;
 }
 
-export function putStackScratchBuffer(
+export type StackScratchBufferWrite = {
+  key: string;
+  buffer: ArrayBuffer;
+};
+
+export function putStackScratchBuffers(
   db: IDBDatabase,
-  key: string,
-  buffer: ArrayBuffer,
-  label = "scratch tile",
+  entries: readonly StackScratchBufferWrite[],
+  label = "scratch tiles",
 ): Promise<void> {
+  if (entries.length === 0) return Promise.resolve();
   return new Promise((resolve, reject) => {
     let transaction: IDBTransaction;
     try {
       transaction = db.transaction(STACK_SCRATCH_STORE, "readwrite");
-      transaction.objectStore(STACK_SCRATCH_STORE).put(buffer, key);
+      const store = transaction.objectStore(STACK_SCRATCH_STORE);
+      for (const entry of entries) store.put(entry.buffer, entry.key);
     } catch (error) {
       reject(error);
       return;
@@ -56,6 +62,15 @@ export function putStackScratchBuffer(
     transaction.onerror = () => reject(transaction.error || new Error(`Could not write ${label}.`));
     transaction.onabort = () => reject(transaction.error || new Error(`${label} write was aborted.`));
   });
+}
+
+export function putStackScratchBuffer(
+  db: IDBDatabase,
+  key: string,
+  buffer: ArrayBuffer,
+  label = "scratch tile",
+): Promise<void> {
+  return putStackScratchBuffers(db, [{ key, buffer }], label);
 }
 
 export function getStackScratchBuffers(

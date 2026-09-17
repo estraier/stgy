@@ -35,7 +35,7 @@ import {
   getStackRgbTiles as getMedianScratchTiles,
   getStackScratchBuffers as getScratchBuffers,
   openStackScratchDb as openMedianScratchDb,
-  putStackScratchBuffer as putMedianScratchTile,
+  putStackScratchBuffers as putMedianScratchTiles,
   stackRgbTileKey as medianScratchTileKey,
 } from "./scratch";
 import { FocusWorkerClient, OrbWorkerClient } from "./worker-clients";
@@ -113,6 +113,8 @@ const MEDIAN_TILE_SIZE = 1024;
 const FOCUS_TILE_SIZE = 1024;
 const FOCUS_SMOOTHNESS = 0.5;
 const FOCUS_PYRAMID_LEVELS = 8;
+const SCRATCH_WRITE_BATCH_MAX_TILES = 4;
+const SCRATCH_WRITE_BATCH_MAX_BYTES = 24 * 1024 * 1024;
 
 const inputFiles = getElement("input-files");
 const fileCount = getElement("file-count");
@@ -1769,9 +1771,8 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
   let alignmentWorker = null;
   let width = 0;
   let height = 0;
-  const hdrImages = new Array(files.length);
-  const hdrBrightnesses = new Array(files.length);
   let hdr1StreamWorker = null;
+  let hdr2StreamWorker = null;
   const alignmentMatrices = new Array(files.length).fill(null);
   const alignedIndices = new Set();
   const deferredAlignments = [];
@@ -1827,6 +1828,8 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
             files.length,
             mergePlan.hdrExposureTimes,
           );
+        } else if (mergePlan.mode === "hdr2") {
+          hdr2StreamWorker = createHdrMertensStreamWorker(width, height, files.length);
         }
         if (mergePlan.mode !== "hdr1" && mergePlan.mode !== "hdr2" && mergePlan.mode !== "median" && mergePlan.mode !== "focus") {
           accumulator = new Float32Array(width * height * 3);
@@ -1964,16 +1967,15 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
               files.length,
             );
           } else {
-            mergeStackSource(
+            await mergeStackSource(
               index,
               mergeSource,
               hasLinearProPhoto,
               inputInfo,
               mergePlan,
               accumulator,
-              hdrImages,
-              hdrBrightnesses,
               hdr1StreamWorker,
+              hdr2StreamWorker,
             );
           }
         }
@@ -2030,9 +2032,8 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
           mergePlan,
           alignmentPlan,
           accumulator,
-          hdrImages,
-          hdrBrightnesses,
           hdr1StreamWorker,
+          hdr2StreamWorker,
           medianScratchDb,
           medianScratchSessionId,
           focusWorker,
@@ -2073,17 +2074,12 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
         }
         accumulator = await hdr1StreamWorker.finalize();
       } else {
-        for (let index = 0; index < files.length; index += 1) {
-          const validImage = hdrImages[index] instanceof Float32Array;
-          if (!validImage || !Number.isFinite(hdrBrightnesses[index])) {
-            throw new Error(`${mergePlan.mode.toUpperCase()} input preparation failed for ${files[index].name}.`);
-          }
+        if (!hdr2StreamWorker) {
+          throw new Error("HDR2 stream worker was not initialized.");
         }
         setProgress("Merging HDR2 with Mertens exposure fusion...");
-        accumulator = await mergeHdrMertensInWorker(hdrImages, hdrBrightnesses, width, height);
+        accumulator = await hdr2StreamWorker.finalize();
       }
-      hdrImages.length = 0;
-      hdrBrightnesses.length = 0;
     }
 
     if (!accumulator) {
@@ -2095,6 +2091,7 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
     if (alignmentWorker) alignmentWorker.terminate();
     if (focusWorker) focusWorker.terminate();
     if (hdr1StreamWorker) hdr1StreamWorker.terminate();
+    if (hdr2StreamWorker) hdr2StreamWorker.terminate();
     if (medianScratchDb) {
       if (medianScratchSessionId) {
         try {
@@ -2250,9 +2247,8 @@ async function mergeDeferredAlignedImage(
   mergePlan,
   alignmentPlan,
   accumulator,
-  hdrImages,
-  hdrBrightnesses,
   hdr1StreamWorker,
+  hdr2StreamWorker,
   medianScratchDb,
   medianScratchSessionId,
   focusWorker,
@@ -2353,16 +2349,15 @@ async function mergeDeferredAlignedImage(
         files.length,
       );
     } else {
-      mergeStackSource(
+      await mergeStackSource(
         index,
         mergeSource,
         hasLinearProPhoto,
         inputInfo,
         mergePlan,
         accumulator,
-        hdrImages,
-        hdrBrightnesses,
         hdr1StreamWorker,
+        hdr2StreamWorker,
       );
     }
   } finally {
@@ -2375,16 +2370,15 @@ async function mergeDeferredAlignedImage(
   }
 }
 
-function mergeStackSource(
+async function mergeStackSource(
   index,
   mergeSource,
   hasLinearProPhoto,
   inputInfo,
   mergePlan,
   accumulator,
-  hdrImages,
-  hdrBrightnesses,
   hdr1StreamWorker,
+  hdr2StreamWorker,
 ) {
   if (mergePlan.mode === "hdr1" || mergePlan.mode === "hdr2") {
     const useHdr2Preparation = mergePlan.mode === "hdr2";
@@ -2401,8 +2395,10 @@ function mergeStackSource(
       }
       hdr1StreamWorker.addImage(index, prepared.floats, prepared.brightness);
     } else {
-      hdrImages[index] = prepared.floats;
-      hdrBrightnesses[index] = prepared.brightness;
+      if (!hdr2StreamWorker) {
+        throw new Error("HDR2 stream worker was not initialized.");
+      }
+      await hdr2StreamWorker.addImage(index, prepared.floats, prepared.brightness);
     }
   } else if (hasLinearProPhoto) {
     mergeLinearProPhotoMatIntoAccumulator(
@@ -2437,6 +2433,28 @@ function warnIfMedianScratchMayExceedQuota(width, height, imageCount) {
   }).catch(() => {});
 }
 
+async function flushScratchWriteBatch(db, batch, label, quotaErrorMessage) {
+  if (batch.length === 0) return;
+  try {
+    await putMedianScratchTiles(db, batch, label);
+  } catch (error) {
+    if (error && (error.name === "QuotaExceededError" || error.name === "UnknownError")) {
+      throw new Error(quotaErrorMessage);
+    }
+    throw error;
+  } finally {
+    batch.length = 0;
+  }
+  await yieldToBrowser();
+}
+
+function scratchWriteBatchWouldOverflow(batch, batchBytes, nextBytes) {
+  return batch.length > 0 && (
+    batch.length >= SCRATCH_WRITE_BATCH_MAX_TILES
+    || batchBytes + nextBytes > SCRATCH_WRITE_BATCH_MAX_BYTES
+  );
+}
+
 async function storeMedianAlignedImageTiles(
   db,
   sessionId,
@@ -2462,6 +2480,8 @@ async function storeMedianAlignedImageTiles(
 
   const convertRgb8 = hasLinearProPhoto ? null : createRgb8ToLinearProphotoConverter(sourceColorSpace);
   const converted = new Float32Array(3);
+  const writeBatch = [];
+  let writeBatchBytes = 0;
   let tileNumber = 0;
 
   for (let tileY = 0; tileY < tileRows; tileY += 1) {
@@ -2481,12 +2501,7 @@ async function storeMedianAlignedImageTiles(
             tile[targetOffset + 1] = Math.round(Math.sqrt(clamp01(source[sourceOffset + 1])) * RESULT_BUFFER_MAX_UINT16);
             tile[targetOffset + 2] = Math.round(Math.sqrt(clamp01(source[sourceOffset + 2])) * RESULT_BUFFER_MAX_UINT16);
           } else {
-            convertRgb8(
-              source[sourceOffset],
-              source[sourceOffset + 1],
-              source[sourceOffset + 2],
-              converted,
-            );
+            convertRgb8(source[sourceOffset], source[sourceOffset + 1], source[sourceOffset + 2], converted);
             tile[targetOffset] = Math.round(Math.sqrt(clamp01(converted[0])) * RESULT_BUFFER_MAX_UINT16);
             tile[targetOffset + 1] = Math.round(Math.sqrt(clamp01(converted[1])) * RESULT_BUFFER_MAX_UINT16);
             tile[targetOffset + 2] = Math.round(Math.sqrt(clamp01(converted[2])) * RESULT_BUFFER_MAX_UINT16);
@@ -2497,24 +2512,20 @@ async function storeMedianAlignedImageTiles(
       }
 
       tileNumber += 1;
-      setProgress(
-        `Storing denoise image ${imageIndex + 1}/${imageCount}, tile ${tileNumber}/${tileCount} (${tileWidth}x${tileHeight})...`,
-      );
-      try {
-        await putMedianScratchTile(
-          db,
-          medianScratchTileKey(sessionId, imageIndex, tileX, tileY),
-          tile.buffer,
-        );
-      } catch (error) {
-        if (error && (error.name === "QuotaExceededError" || error.name === "UnknownError")) {
-          throw new Error("Browser scratch storage is full while writing Denoise (median) tiles.");
-        }
-        throw error;
+      setProgress(`Storing denoise image ${imageIndex + 1}/${imageCount}, tile ${tileNumber}/${tileCount} (${tileWidth}x${tileHeight})...`);
+      if (scratchWriteBatchWouldOverflow(writeBatch, writeBatchBytes, tile.byteLength)) {
+        await flushScratchWriteBatch(db, writeBatch, "Denoise (median) scratch tile batch", "Browser scratch storage is full while writing Denoise (median) tiles.");
+        writeBatchBytes = 0;
       }
-      await yieldToBrowser();
+      writeBatch.push({ key: medianScratchTileKey(sessionId, imageIndex, tileX, tileY), buffer: tile.buffer });
+      writeBatchBytes += tile.byteLength;
+      if (writeBatch.length >= SCRATCH_WRITE_BATCH_MAX_TILES || writeBatchBytes >= SCRATCH_WRITE_BATCH_MAX_BYTES) {
+        await flushScratchWriteBatch(db, writeBatch, "Denoise (median) scratch tile batch", "Browser scratch storage is full while writing Denoise (median) tiles.");
+        writeBatchBytes = 0;
+      }
     }
   }
+  await flushScratchWriteBatch(db, writeBatch, "Denoise (median) scratch tile batch", "Browser scratch storage is full while writing Denoise (median) tiles.");
 }
 
 function exactMedianUint16Tile(tiles) {
@@ -2696,6 +2707,8 @@ async function storeFocusRgbTiles(db, sessionId, imageIndex, stored, width, heig
   const tileColumns = Math.ceil(width / FOCUS_TILE_SIZE);
   const tileRows = Math.ceil(height / FOCUS_TILE_SIZE);
   const tileCount = tileColumns * tileRows;
+  const writeBatch = [];
+  let writeBatchBytes = 0;
   let tileNumber = 0;
   for (let tileY = 0; tileY < tileRows; tileY += 1) {
     const y0 = tileY * FOCUS_TILE_SIZE;
@@ -2711,24 +2724,20 @@ async function storeFocusRgbTiles(db, sessionId, imageIndex, stored, width, heig
         tile.set(stored.subarray(sourceStart, sourceStart + rowLength), targetStart);
       }
       tileNumber += 1;
-      setProgress(
-        `Storing Focus RGB ${imageIndex + 1}/${imageCount}, tile ${tileNumber}/${tileCount} (${tileWidth}x${tileHeight})...`,
-      );
-      try {
-        await putMedianScratchTile(
-          db,
-          medianScratchTileKey(sessionId, imageIndex, tileX, tileY),
-          tile.buffer,
-        );
-      } catch (error) {
-        if (error && (error.name === "QuotaExceededError" || error.name === "UnknownError")) {
-          throw new Error("Browser scratch storage is full while writing Focus RGB tiles.");
-        }
-        throw error;
+      setProgress(`Storing Focus RGB ${imageIndex + 1}/${imageCount}, tile ${tileNumber}/${tileCount} (${tileWidth}x${tileHeight})...`);
+      if (scratchWriteBatchWouldOverflow(writeBatch, writeBatchBytes, tile.byteLength)) {
+        await flushScratchWriteBatch(db, writeBatch, "Focus RGB scratch tile batch", "Browser scratch storage is full while writing Focus RGB tiles.");
+        writeBatchBytes = 0;
       }
-      await yieldToBrowser();
+      writeBatch.push({ key: medianScratchTileKey(sessionId, imageIndex, tileX, tileY), buffer: tile.buffer });
+      writeBatchBytes += tile.byteLength;
+      if (writeBatch.length >= SCRATCH_WRITE_BATCH_MAX_TILES || writeBatchBytes >= SCRATCH_WRITE_BATCH_MAX_BYTES) {
+        await flushScratchWriteBatch(db, writeBatch, "Focus RGB scratch tile batch", "Browser scratch storage is full while writing Focus RGB tiles.");
+        writeBatchBytes = 0;
+      }
     }
   }
+  await flushScratchWriteBatch(db, writeBatch, "Focus RGB scratch tile batch", "Browser scratch storage is full while writing Focus RGB tiles.");
 }
 
 async function storeFocusSharpnessTiles(db, sessionId, imageIndex, sharpness, width, height, imageCount) {
@@ -2738,6 +2747,8 @@ async function storeFocusSharpnessTiles(db, sessionId, imageIndex, sharpness, wi
   const tileColumns = Math.ceil(width / FOCUS_TILE_SIZE);
   const tileRows = Math.ceil(height / FOCUS_TILE_SIZE);
   const tileCount = tileColumns * tileRows;
+  const writeBatch = [];
+  let writeBatchBytes = 0;
   let tileNumber = 0;
   for (let tileY = 0; tileY < tileRows; tileY += 1) {
     const y0 = tileY * FOCUS_TILE_SIZE;
@@ -2752,24 +2763,20 @@ async function storeFocusSharpnessTiles(db, sessionId, imageIndex, sharpness, wi
         tile.set(sharpness.subarray(sourceStart, sourceStart + tileWidth), targetStart);
       }
       tileNumber += 1;
-      setProgress(
-        `Storing Focus sharpness ${imageIndex + 1}/${imageCount}, tile ${tileNumber}/${tileCount}...`,
-      );
-      try {
-        await putMedianScratchTile(
-          db,
-          focusSharpnessTileKey(sessionId, imageIndex, tileX, tileY),
-          tile.buffer,
-        );
-      } catch (error) {
-        if (error && (error.name === "QuotaExceededError" || error.name === "UnknownError")) {
-          throw new Error("Browser scratch storage is full while writing Focus sharpness tiles.");
-        }
-        throw error;
+      setProgress(`Storing Focus sharpness ${imageIndex + 1}/${imageCount}, tile ${tileNumber}/${tileCount}...`);
+      if (scratchWriteBatchWouldOverflow(writeBatch, writeBatchBytes, tile.byteLength)) {
+        await flushScratchWriteBatch(db, writeBatch, "Focus sharpness scratch tile batch", "Browser scratch storage is full while writing Focus sharpness tiles.");
+        writeBatchBytes = 0;
       }
-      await yieldToBrowser();
+      writeBatch.push({ key: focusSharpnessTileKey(sessionId, imageIndex, tileX, tileY), buffer: tile.buffer });
+      writeBatchBytes += tile.byteLength;
+      if (writeBatch.length >= SCRATCH_WRITE_BATCH_MAX_TILES || writeBatchBytes >= SCRATCH_WRITE_BATCH_MAX_BYTES) {
+        await flushScratchWriteBatch(db, writeBatch, "Focus sharpness scratch tile batch", "Browser scratch storage is full while writing Focus sharpness tiles.");
+        writeBatchBytes = 0;
+      }
     }
   }
+  await flushScratchWriteBatch(db, writeBatch, "Focus sharpness scratch tile batch", "Browser scratch storage is full while writing Focus sharpness tiles.");
 }
 
 function getFocusSharpnessTiles(db, sessionId, imageCount, tileX, tileY) {
@@ -3138,54 +3145,137 @@ function createHdrDebevecReinhardStreamWorker(width, height, imageCount, exposur
   };
 }
 
-function mergeHdrMertensInWorker(images, brightnesses, width, height, preBrightnessSigmoidGain = 0) {
-  return new Promise((resolve, reject) => {
-    const worker = new Worker(new URL("/generated/local-stack-studio/hdr.worker.js", window.location.origin));
-    let settled = false;
-    const cleanup = () => worker.terminate();
-    worker.onmessage = (event) => {
-      const message = event.data || {};
-      if (message.type === "progress") {
-        if (message.message) setProgress(message.message);
-        return;
-      }
-      if (message.type === "mertens-result") {
-        settled = true;
-        cleanup();
-        // Keep the legacy transport field name for compatibility with the generated worker asset.
-        // Its payload is linear ProPhoto RGB after the HDR2 processing-space gamma removal.
-        resolve(new Float32Array(message.gamma2Buffer));
-        return;
-      }
-      if (message.type === "error") {
-        settled = true;
-        cleanup();
-        reject(new Error(message.message || "HDR2 Mertens worker failed."));
-      }
-    };
-    worker.onerror = (event) => {
-      if (settled) return;
+function createHdrMertensStreamWorker(width, height, imageCount, preBrightnessSigmoidGain = 0) {
+  const workerUrl = new URL("/generated/local-stack-studio/hdr.worker.js", window.location.origin);
+  const worker = new Worker(workerUrl);
+  let terminated = false;
+  let settled = false;
+  let nextRequestId = 1;
+  const pending = new Map();
+
+  const failAll = (error) => {
+    for (const request of pending.values()) request.reject(error);
+    pending.clear();
+  };
+  const cleanup = () => {
+    if (terminated) return;
+    terminated = true;
+    worker.terminate();
+  };
+  const request = (type, payload, transfer, expectedType) => new Promise((resolve, reject) => {
+    if (terminated) {
+      reject(new Error("HDR2 stream worker is no longer available."));
+      return;
+    }
+    const requestId = nextRequestId++;
+    pending.set(requestId, { resolve, reject, expectedType });
+    try {
+      worker.postMessage({ type, requestId, ...payload }, transfer);
+    } catch (error) {
+      pending.delete(requestId);
+      reject(error);
+    }
+  });
+
+  worker.onmessage = (event) => {
+    const message = event.data || {};
+    if (message.type === "progress") {
+      if (message.message) setProgress(message.message);
+      return;
+    }
+    if (message.type === "error") {
+      const error = new Error(message.message || "HDR2 Mertens stream worker failed.");
+      failAll(error);
       settled = true;
       cleanup();
-      reject(new Error(event.message || "HDR2 Mertens worker failed."));
-    };
+      return;
+    }
+    const requestId = Number(message.requestId);
+    if (!Number.isInteger(requestId)) return;
+    const pendingRequest = pending.get(requestId);
+    if (!pendingRequest || message.type !== pendingRequest.expectedType) return;
+    pending.delete(requestId);
+    if (message.type === "mertens-result") {
+      settled = true;
+      const result = new Float32Array(message.gamma2Buffer);
+      pendingRequest.resolve(result);
+      cleanup();
+      return;
+    }
+    pendingRequest.resolve(message);
+  };
+  worker.onerror = (event) => {
+    if (terminated) return;
+    const error = new Error(event.message || `HDR2 Mertens stream worker ${workerUrl.pathname} failed.`);
+    failAll(error);
+    settled = true;
+    cleanup();
+  };
+  worker.onmessageerror = () => {
+    if (terminated) return;
+    const error = new Error(`HDR2 Mertens stream worker ${workerUrl.pathname} returned an unreadable message.`);
+    failAll(error);
+    settled = true;
+    cleanup();
+  };
 
-    const imageBuffers = images.map((image) => image.buffer);
-    const inputBrightnesses = new Float32Array(brightnesses);
-    worker.postMessage(
-      {
-        type: "mertens",
-        width,
-        height,
-        imageBuffers,
-        brightnessesBuffer: inputBrightnesses.buffer,
-        saturationWeight: SINGLE_SHOT_HDR_SATURATION_WEIGHT,
-        exposureWeight: SINGLE_SHOT_HDR_EXPOSURE_WEIGHT,
-        preBrightnessSigmoidGain,
-      },
-      [...imageBuffers, inputBrightnesses.buffer],
-    );
-  });
+  const ready = request(
+    "mertens-stream-init",
+    {
+      width,
+      height,
+      imageCount,
+      saturationWeight: SINGLE_SHOT_HDR_SATURATION_WEIGHT,
+      exposureWeight: SINGLE_SHOT_HDR_EXPOSURE_WEIGHT,
+      preBrightnessSigmoidGain,
+    },
+    [],
+    "mertens-stream-ready",
+  );
+
+  return {
+    async addImage(index, image, brightness) {
+      await ready;
+      if (!(image instanceof Float32Array)) {
+        throw new Error("HDR2 stream input is not a Float32 RGB buffer.");
+      }
+      const imageBuffer = image.buffer;
+      await request(
+        "mertens-stream-image",
+        { imageIndex: index, brightness, imageBuffer },
+        [imageBuffer],
+        "mertens-stream-image-stored",
+      );
+    },
+    async finalize() {
+      await ready;
+      setProgress("Merging HDR2 with Mertens exposure fusion...");
+      return await request("mertens-stream-finalize", {}, [], "mertens-result");
+    },
+    terminate() {
+      if (terminated || settled) return;
+      const error = new Error("HDR2 stream worker was terminated.");
+      failAll(error);
+      const requestId = nextRequestId++;
+      try {
+        worker.postMessage({ type: "mertens-stream-abort", requestId });
+      } catch {
+        cleanup();
+        return;
+      }
+      const timeout = setTimeout(cleanup, 1000);
+      const previousOnMessage = worker.onmessage;
+      worker.onmessage = (event) => {
+        const message = event.data || {};
+        if (message.type === "mertens-stream-aborted" && message.requestId === requestId) {
+          clearTimeout(timeout);
+          cleanup();
+          return;
+        }
+        previousOnMessage?.(event);
+      };
+    },
+  };
 }
 
 async function processSingleInputHdrWithOpenCv(cv, file, inputInfo, mergePlan, outputColorSpace) {
@@ -3207,6 +3297,10 @@ async function processSingleInputHdrWithOpenCv(cv, file, inputInfo, mergePlan, o
       rgb = new cv.Mat();
       cv.cvtColor(rgba, rgb, cv.COLOR_RGBA2RGB);
       baseLinear = rgbMatToLinearProPhoto(rgb, inputInfo.sourceColorSpace);
+      rgb.delete();
+      rgb = null;
+      rgba.delete();
+      rgba = null;
     }
 
     const materials = mergePlan.syntheticMaterials;
@@ -3247,18 +3341,22 @@ async function processSingleInputHdrWithOpenCv(cv, file, inputInfo, mergePlan, o
 
     const hdrBase = buildSingleShotHdrBaseLinear(baseLinear, width, height, contrastStretch, true);
     const hdrBaseLinear = hdrBase.linear;
-    const images = [];
-    const brightnesses = new Float32Array(materials.length);
-    brightnesses.fill(computeAverageBrightnessFromLinear(hdrBaseLinear));
-    for (let i = 0; i < materials.length; i += 1) {
-      const material = materials[i];
-      setProgress(`Preparing HDR2 synthetic material ${i + 1}/${materials.length} (${material.label})...`);
-      images.push(buildSingleShotHdr2Material(hdrBaseLinear, material));
-      await yieldToBrowser();
+    baseLinear = null;
+    const brightness = computeAverageBrightnessFromLinear(hdrBaseLinear);
+    const hdr2StreamWorker = createHdrMertensStreamWorker(width, height, materials.length, 2);
+    try {
+      for (let i = 0; i < materials.length; i += 1) {
+        const material = materials[i];
+        setProgress(`Preparing HDR2 synthetic material ${i + 1}/${materials.length} (${material.label})...`);
+        const synthetic = buildSingleShotHdr2Material(hdrBaseLinear, material);
+        await hdr2StreamWorker.addImage(i, synthetic, brightness);
+        await yieldToBrowser();
+      }
+      const linearResult = await hdr2StreamWorker.finalize();
+      return finalizeStoredResult(linearResult, width, height, outputColorSpace);
+    } finally {
+      hdr2StreamWorker.terminate();
     }
-    setProgress("Merging HDR2 with Mertens exposure fusion...");
-    const linearResult = await mergeHdrMertensInWorker(images, brightnesses, width, height, 2);
-    return finalizeStoredResult(linearResult, width, height, outputColorSpace);
   } finally {
     if (rgb) rgb.delete();
     if (rgba) rgba.delete();
