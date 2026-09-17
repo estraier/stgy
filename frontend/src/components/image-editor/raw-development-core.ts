@@ -1371,19 +1371,25 @@ export function analyzeRawDenoiseMask(
     const smooth = 1 - smoothstep(-1.5, 1.5, sharpZ);
     const lumaZ = ((logLuma[i] ?? 0) - logLumaStats.mean) / logLumaStddev;
     const shadow = 1 - smoothstep(-1.5, 1.5, lumaZ);
-    rawWeight[i] = smooth * (0.25 + 0.75 * shadow);
+    rawWeight[i] = (shadow + 0.1) * (smooth + 0.1);
     smoothSum += smooth;
     smoothSumSq += smooth * smooth;
     shadowSum += shadow;
     shadowSumSq += shadow * shadow;
   }
 
-  // The blend map is the actual final weight, including the soft spatial
-  // transition that will later be sampled at Master resolution.
-  // ISO then bends only the blend strength, not the spatial classification:
-  // ISO 400 is neutral, and every stop changes logarithm by +/-2 using the same
+  // Normalize the combined shadow/smoothness score relative to this image.
+  // z <= -2 maps to 0, z >= +2 maps to 1, and the interval between them
+  // is linear. ISO then bends only this final blend strength: ISO 400 is
+  // neutral, and every stop changes logarithm by +/-2 using the same
   // scaled-log mapping as the Tone logarithm control.
-  const weight = gaussianBlurScalar(rawWeight, width, height, 1.2);
+  const rawWeightStats = scalarMeanStddev(rawWeight);
+  const rawWeightStddev = Math.max(rawWeightStats.stddev, 1e-12);
+  const weight = new Float32Array(pixels);
+  for (let i = 0; i < pixels; i++) {
+    const z = ((rawWeight[i] ?? 0) - rawWeightStats.mean) / rawWeightStddev;
+    weight[i] = clamp01((z + 2) / 4);
+  }
   const validIso = typeof iso === "number" && Number.isFinite(iso) && iso > 0;
   const isoLogarithm = validIso
     ? RAW_DENOISE_ISO_LOG_PER_STOP * Math.log2(iso / RAW_DENOISE_ISO_NEUTRAL)

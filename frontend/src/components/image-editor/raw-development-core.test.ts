@@ -36,7 +36,7 @@ describe("RAW denoise ISO weight scaling", () => {
     const iso800 = analyze(800);
     const unknown = analyze(null);
 
-    expect(iso400.weightMean).toBeCloseTo(0.3125, 6);
+    expect(iso400.weightMean).toBeCloseTo(0.5, 6);
     expect(unknown.weightMean).toBeCloseTo(iso400.weightMean, 6);
     expect(iso200.weightMean).toBeLessThan(iso400.weightMean);
     expect(iso800.weightMean).toBeGreaterThan(iso400.weightMean);
