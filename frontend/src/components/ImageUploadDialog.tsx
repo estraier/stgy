@@ -92,10 +92,11 @@ import {
   PROPHOTO_LUMA_G,
   PROPHOTO_LUMA_R,
   convertLinearProPhotoToOutputRgb,
+  convertLinearProPhotoToOutputRgbInto,
   encodedRgbToLinearProphoto,
   encodedRgbToLinearProphotoInto,
 } from "@/image/color";
-import { getCanvas2dContext, getCanvasImageData } from "./image-editor/canvas";
+import { createCanvasImageData, getCanvas2dContext, getCanvasImageData } from "./image-editor/canvas";
 import { applySharpenToCanvas, applySharpenToRgb16 } from "./image-editor/sharpen";
 import { applyDenoiseToCanvas, applyDenoiseToRgb16, clampDenoise } from "./image-editor/denoise";
 import {
@@ -8568,6 +8569,144 @@ async function decodeRawImage(
   return preview.decoded;
 }
 
+async function decodeRawUploadFastPath(
+  file: File,
+  rawDemosaicQuality?: RawDemosaicQuality,
+  rawHighlightMode?: RawHighlightMode,
+): Promise<DecodedRgbImage16> {
+  const timing = createRawDevelopmentTiming();
+  const startedAt = performance.now();
+  let raw: LibRawInstanceLike | null = null;
+  let workerFailure: ReturnType<typeof createLibRawWorkerFailure> | null = null;
+  try {
+    raw = await measureRawTiming(timing, "master", "Loading RAW master decoder", () => createLibRawInstance());
+    workerFailure = createLibRawWorkerFailure(raw);
+    const rawBytes = await measureRawTiming(timing, "master", "Reading RAW for master", async () =>
+      new Uint8Array(await file.arrayBuffer()),
+    );
+    const settings: LibRawSettingsLike = {
+      ...RAW_DECODE_SETTINGS,
+      userQual: rawDemosaicQuality ?? 11,
+      ...(rawHighlightMode === undefined ? {} : { highlight: rawHighlightMode }),
+    };
+    await measureRawTiming(timing, "master", "Opening RAW master", () =>
+      Promise.race([raw!.open(rawBytes, settings), workerFailure!.promise]),
+    );
+    const metadata = await measureRawTiming(timing, "master", "Reading master metadata", () =>
+      Promise.race([raw!.metadata(true), workerFailure!.promise]),
+    );
+    const isoValue = Number(metadata?.iso_speed);
+
+    let thumbnailReferencePromise: Promise<RawThumbnailMatchReference | undefined> = Promise.resolve(undefined);
+    if (RAW_USE_THUMBNAIL && raw.thumbnailData) {
+      try {
+        const thumbnail = await measureRawTiming(timing, "master", "Reading embedded thumbnail", () =>
+          Promise.race([raw!.thumbnailData!(), workerFailure!.promise]),
+        );
+        thumbnailReferencePromise = rawThumbnailMatchReferenceFromThumbnailParallel(thumbnail, timing)
+          .catch(() => undefined);
+      } catch {
+        thumbnailReferencePromise = Promise.resolve(undefined);
+      }
+    }
+
+    const medPasses = rawMedianDenoisePassesForIso(isoValue);
+    if (medPasses > 0) {
+      const reopenBytes = rawBytes.byteLength > 0
+        ? rawBytes
+        : new Uint8Array(await file.arrayBuffer());
+      await measureRawTiming(timing, "master", "Reopening RAW master for median denoise", () =>
+        Promise.race([
+          raw!.open(reopenBytes, { ...settings, medPasses }),
+          workerFailure!.promise,
+        ]),
+      );
+    }
+
+    const image = await measureRawTiming(timing, "master", "Demosaicing master", () =>
+      Promise.race([raw!.imageData(), workerFailure!.promise]),
+    );
+    if (!image || !image.width || !image.height || !image.data) {
+      throw new Error("RAW master decode failed");
+    }
+    const sourceDecoded = await measureRawTiming(timing, "master", "Converting master pixels", () =>
+      libRawImageDataToDecoded(image),
+    );
+    const lensMetadata = rawLensMetadata(metadata);
+    sourceDecoded.lensCorrection = await measureRawTiming(
+      timing,
+      "master",
+      "Building LensFun master correction",
+      () => buildRawLensfunCorrection(lensMetadata, sourceDecoded.width, sourceDecoded.height),
+    );
+    const lensfunSettings = buildRawDevelopmentLensfunSettings(
+      lensMetadata,
+      sourceDecoded.lensCorrection,
+      sourceDecoded.width,
+      sourceDecoded.height,
+    );
+
+    const correctionMaps = rawLensfunCorrectionMaps(sourceDecoded.lensCorrection);
+    const correctedDimensions = rawLensfunOutputDimensions(
+      sourceDecoded.width,
+      sourceDecoded.height,
+      correctionMaps,
+    );
+    const sampleDimensions = rawPreviewDimensions(correctedDimensions.width, correctedDimensions.height);
+    const planningSample: DecodedRgbImage16 = {
+      colorSpace: "prophoto",
+      transfer: "gamma20",
+      linearRangeMax: RAW_DEVELOPED_LINEAR_RANGE_MAX,
+      width: sampleDimensions.width,
+      height: sampleDimensions.height,
+      data: await measureRawTiming(timing, "master", "Building master analysis sample", () =>
+        resampleRawWithLensfunToGamma20(
+          sourceDecoded.data,
+          sourceDecoded.width,
+          sourceDecoded.height,
+          sourceDecoded.linearRangeMax,
+          sourceDecoded.transfer,
+          correctionMaps,
+          sampleDimensions.width,
+          sampleDimensions.height,
+        ),
+      ),
+      cleanup: () => {},
+    };
+
+    const thumbnailReference = await thumbnailReferencePromise;
+    const plan = await developRawPreviewPixels(planningSample, thumbnailReference, timing);
+    plan.previewIso = Number.isFinite(isoValue) && isoValue > 0 ? isoValue : null;
+    plan.previewElapsedSeconds = (performance.now() - startedAt) / 1000;
+
+    const masterResult = await measureRawTiming(timing, "master", "Master one-pass", () =>
+      developRawMasterOnePassInWorker(sourceDecoded, plan),
+    );
+    const decoded = masterResult.decoded;
+    decoded.rawDevelopment = {
+      mode: plan.mode,
+      iso: Number.isFinite(isoValue) && isoValue > 0 ? isoValue : null,
+      medPasses,
+      luminance: plan.luminance,
+      saturation: plan.saturation,
+      headroom: masterResult.headroom ?? plan.headroom,
+      lensfun: lensfunSettings,
+      runtimeMode: timing.runtimeMode,
+      openMpThreads: timing.openMpThreads,
+      timing,
+      previewElapsedSeconds: plan.previewElapsedSeconds,
+      elapsedSeconds: (performance.now() - startedAt) / 1000,
+    };
+    recordRawTiming(timing, "master", "Full-resolution Master ready", performance.now() - timing.startedAtMs);
+    logRawTimingSection("Master", timing, timing.master);
+    return decoded;
+  } finally {
+    workerFailure?.cleanup();
+    if (raw?.dispose) raw.dispose();
+    else raw?.worker?.terminate();
+  }
+}
+
 // RAW development is expensive and React Strict Mode may start the same editor effect
 // twice in development. Share only the in-flight Promise; the durable decoded result is
 // owned by ImageUploadDialog's one-entry RAW development cache.
@@ -8581,6 +8720,11 @@ type RawDevelopmentInFlightEntry = {
 const RAW_DEVELOPMENT_IN_FLIGHT = new WeakMap<
   File,
   Map<string, RawDevelopmentInFlightEntry>
+>();
+
+const RAW_UPLOAD_FAST_PATH_IN_FLIGHT = new WeakMap<
+  File,
+  Map<string, Promise<DecodedRgbImage16>>
 >();
 
 function decodeRawImageShared(
@@ -8633,6 +8777,30 @@ function decodeRawImageShared(
     });
   entry.promise = promise;
   pendingByQuality.set(key, entry);
+  return promise;
+}
+
+function decodeRawUploadFastPathShared(
+  file: File,
+  rawDemosaicQuality?: RawDemosaicQuality,
+  rawHighlightMode?: RawHighlightMode,
+): Promise<DecodedRgbImage16> {
+  const key = `${rawDemosaicQuality ?? "default"}:${rawHighlightMode ?? "default"}`;
+  let pendingByQuality = RAW_UPLOAD_FAST_PATH_IN_FLIGHT.get(file);
+  if (!pendingByQuality) {
+    pendingByQuality = new Map();
+    RAW_UPLOAD_FAST_PATH_IN_FLIGHT.set(file, pendingByQuality);
+  }
+  const existing = pendingByQuality.get(key);
+  if (existing) return existing;
+  const promise = decodeRawUploadFastPath(file, rawDemosaicQuality, rawHighlightMode).finally(() => {
+    const current = RAW_UPLOAD_FAST_PATH_IN_FLIGHT.get(file);
+    if (current?.get(key) === promise) {
+      current.delete(key);
+      if (current.size === 0) RAW_UPLOAD_FAST_PATH_IN_FLIGHT.delete(file);
+    }
+  });
+  pendingByQuality.set(key, promise);
   return promise;
 }
 
@@ -9360,6 +9528,56 @@ export async function buildEditedVariant(
     );
   } finally {
     if (ownsDecodedImage) decoded.cleanup();
+  }
+}
+
+async function buildRawUploadDefaultFastVariant(
+  decoded: DecodedRgbImage16,
+  params: ImageEditParams,
+  outputColorProfile: ImageEditOutputColorProfile,
+): Promise<ImageEditPreparedVariant> {
+  const sourceW = decoded.width;
+  const sourceH = decoded.height;
+  const outputW = Math.max(1, Math.round(sourceW * params.resizePercent / 100));
+  const outputH = Math.max(1, Math.round(sourceH * params.resizePercent / 100));
+  const sourceCanvas = createImageEditCanvas(sourceW, sourceH);
+  let output: HTMLCanvasElement | OffscreenCanvas = sourceCanvas;
+  try {
+    const sourceCtx = getCanvas2dContext(sourceCanvas, outputColorProfile);
+    if (!sourceCtx) throw new Error("2D context unavailable");
+    const imageData = createCanvasImageData(sourceCtx, sourceW, sourceH, outputColorProfile);
+    const rgba = imageData.data;
+    const converted: [number, number, number] = [0, 0, 0];
+    const pixels = sourceW * sourceH;
+    let si = 0;
+    let di = 0;
+    for (let pixel = 0; pixel < pixels; pixel += 1, si += 3, di += 4) {
+      const r = decodeStoredRgb16Channel(decoded.data[si] ?? 0, decoded.transfer, decoded.linearRangeMax);
+      const g = decodeStoredRgb16Channel(decoded.data[si + 1] ?? 0, decoded.transfer, decoded.linearRangeMax);
+      const b = decodeStoredRgb16Channel(decoded.data[si + 2] ?? 0, decoded.transfer, decoded.linearRangeMax);
+      convertLinearProPhotoToOutputRgbInto(r, g, b, outputColorProfile, converted);
+      rgba[di] = Math.round(clamp01(linearChannelToSrgb(converted[0])) * 255);
+      rgba[di + 1] = Math.round(clamp01(linearChannelToSrgb(converted[1])) * 255);
+      rgba[di + 2] = Math.round(clamp01(linearChannelToSrgb(converted[2])) * 255);
+      rgba[di + 3] = 255;
+    }
+    sourceCtx.putImageData(imageData, 0, 0);
+
+    if (outputW !== sourceW || outputH !== sourceH) {
+      output = createImageEditCanvas(outputW, outputH);
+      const outputCtx = getCanvas2dContext(output, outputColorProfile);
+      if (!outputCtx) throw new Error("2D context unavailable");
+      outputCtx.imageSmoothingEnabled = true;
+      outputCtx.imageSmoothingQuality = "high";
+      outputCtx.drawImage(sourceCanvas, 0, 0, sourceW, sourceH, 0, 0, outputW, outputH);
+    }
+    applySharpenToCanvas(output, params.sharpen, outputColorProfile);
+    return { canvas: output, width: outputW, height: outputH, colorProfile: outputColorProfile };
+  } catch (error) {
+    if (output !== sourceCanvas) releaseCanvasIfNeeded(output);
+    throw error;
+  } finally {
+    if (output !== sourceCanvas) releaseCanvasIfNeeded(sourceCanvas);
   }
 }
 
@@ -10488,6 +10706,7 @@ export function ImageEditDialog({
   }, [onRawDevelopmentReady]);
 
   useEffect(() => {
+    const peepTileCache = peepTileCacheRef.current;
     return () => {
       if (peepCompositeRafRef.current !== null) cancelAnimationFrame(peepCompositeRafRef.current);
       if (peepPanRafRef.current !== null) cancelAnimationFrame(peepPanRafRef.current);
@@ -10496,8 +10715,8 @@ export function ImageEditDialog({
         peepTileResumeTimerRef.current = null;
       }
       peepTileQueueRef.current = [];
-      for (const entry of peepTileCacheRef.current.values()) releasePeepTileSource(entry.source);
-      peepTileCacheRef.current.clear();
+      for (const entry of peepTileCache.values()) releasePeepTileSource(entry.source);
+      peepTileCache.clear();
     };
   }, []);
 
@@ -15896,16 +16115,64 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
             if (cached?.itemId === f.id && cached.file === f.file) {
               decodedForOptimize = cached.decoded;
             } else {
-              decodedForOptimize = await decodeImage(
-                f.file,
-                meta.width ?? 0,
-                meta.height ?? 0,
-                f.name,
-                f.type,
-              );
+              decodedForOptimize = await decodeRawUploadFastPathShared(f.file);
               if (cancelled) return;
               storeRawDevelopmentCache(f.id, f.file, decodedForOptimize);
             }
+
+            const defaultEdit = buildUploadDefaultEditParams(
+              f.name,
+              f.type,
+              meta.width ?? 0,
+              meta.height ?? 0,
+            );
+            const outputColorProfile = await detectBestEditableImageOutputColorProfile(f.file);
+            const prepared = await buildRawUploadDefaultFastVariant(
+              decodedForOptimize,
+              defaultEdit,
+              outputColorProfile,
+            );
+            let out: { blob: Blob; width: number; height: number };
+            try {
+              out = await encodeEditedVariant(
+                prepared,
+                0.8,
+                "image/webp",
+                outputColorProfile,
+              );
+            } finally {
+              releaseCanvasIfNeeded(prepared.canvas);
+            }
+
+            if (cancelled) return;
+
+            const optimizedPreviewUrl = URL.createObjectURL(out.blob);
+            revokeQueue.current.push(optimizedPreviewUrl);
+
+            setItems((prev) =>
+              prev.map((x) => {
+                if (x.id !== f.id) return x;
+                const isHalfOrLess = f.size >= 100 * 1024 && out.blob.size * 2 <= f.size;
+                const auto = x.forceOptimize ? true : x.needsAutoOptimize || isHalfOrLess;
+                return {
+                  ...x,
+                  previewUrl: x.previewUrl && x.decodable ? x.previewUrl : optimizedPreviewUrl,
+                  optimizedPreviewUrl,
+                  decodable: true,
+                  optimized: {
+                    blob: out.blob,
+                    size: out.blob.size,
+                    width: out.width,
+                    height: out.height,
+                  },
+                  needsAutoOptimize: auto,
+                  optimize: x.forceOptimize ? true : auto,
+                  status: "ready",
+                  error: undefined,
+                };
+              }),
+            );
+            continue;
           }
 
           const out = await buildOptimizedVariant(

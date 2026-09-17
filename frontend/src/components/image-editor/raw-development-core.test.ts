@@ -41,4 +41,29 @@ describe("RAW denoise ISO weight scaling", () => {
     expect(iso200.weightMean).toBeLessThan(iso400.weightMean);
     expect(iso800.weightMean).toBeGreaterThan(iso400.weightMean);
   });
+
+  test("maps relative shadow depth linearly across +/-2 sigma", () => {
+    const values = [1024, 4096, 16384, 32768, 60000];
+    const data = new Uint16Array(values.length * 3);
+    for (let pixel = 0; pixel < values.length; pixel += 1) {
+      const value = values[pixel] ?? 0;
+      const index = pixel * 3;
+      data[index] = value;
+      data[index + 1] = value;
+      data[index + 2] = value;
+    }
+    const analysis = analyzeRawDenoiseMask(
+      data,
+      values.length,
+      1,
+      1,
+      "linear",
+      400,
+    );
+
+    // With no +/-2 sigma clipping in this sample, a linear inverse mapping
+    // from a unit-standard-deviation z-score has stddev exactly 1/4.
+    expect(analysis.shadowMean).toBeCloseTo(0.5, 6);
+    expect(analysis.shadowStddev).toBeCloseTo(0.25, 6);
+  });
 });

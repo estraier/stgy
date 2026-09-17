@@ -103,11 +103,6 @@ function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value));
 }
 
-function smoothstep(low: number, high: number, value: number): number {
-  const t = clamp01((value - low) / Math.max(high - low, 1e-12));
-  return t * t * (3 - 2 * t);
-}
-
 function decodeLinearUint16(value: number, linearRangeMax: number): number {
   return clamp01(value / 65535) * linearRangeMax;
 }
@@ -1345,8 +1340,8 @@ export function analyzeRawDenoiseMask(
 
   // Normalize the combined sharpness field once more after mixing Laplacian
   // and Sobel. Their individual z-scores do not guarantee unit variance after
-  // combination. A +/-1.5 sigma transition keeps the mask soft instead of
-  // snapping a large fraction of pixels to fully smooth or fully sharp.
+  // combination. Smoothness is then a simple inverse linear mapping over
+  // +/-2 sigma; the final shadow*smoothness score is normalized separately.
   const sharpStats = scalarMeanStddev(sharp);
   const sharpStddev = Math.max(sharpStats.stddev, 1e-12);
 
@@ -1368,9 +1363,9 @@ export function analyzeRawDenoiseMask(
   let shadowSumSq = 0;
   for (let i = 0; i < pixels; i++) {
     const sharpZ = ((sharp[i] ?? 0) - sharpStats.mean) / sharpStddev;
-    const smooth = 1 - smoothstep(-1.5, 1.5, sharpZ);
+    const smooth = clamp01((2 - sharpZ) / 4);
     const lumaZ = ((logLuma[i] ?? 0) - logLumaStats.mean) / logLumaStddev;
-    const shadow = 1 - smoothstep(-1.5, 1.5, lumaZ);
+    const shadow = clamp01((2 - lumaZ) / 4);
     rawWeight[i] = (shadow + 0.1) * (smooth + 0.1);
     smoothSum += smooth;
     smoothSumSq += smooth * smooth;
