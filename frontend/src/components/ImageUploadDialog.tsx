@@ -9556,9 +9556,9 @@ async function buildRawUploadDefaultFastVariant(
       const g = decodeStoredRgb16Channel(decoded.data[si + 1] ?? 0, decoded.transfer, decoded.linearRangeMax);
       const b = decodeStoredRgb16Channel(decoded.data[si + 2] ?? 0, decoded.transfer, decoded.linearRangeMax);
       convertLinearProPhotoToOutputRgbInto(r, g, b, outputColorProfile, converted);
-      rgba[di] = Math.round(clamp01(linearChannelToSrgb(converted[0])) * 255);
-      rgba[di + 1] = Math.round(clamp01(linearChannelToSrgb(converted[1])) * 255);
-      rgba[di + 2] = Math.round(clamp01(linearChannelToSrgb(converted[2])) * 255);
+      rgba[di] = linearChannelToSrgb(converted[0]);
+      rgba[di + 1] = linearChannelToSrgb(converted[1]);
+      rgba[di + 2] = linearChannelToSrgb(converted[2]);
       rgba[di + 3] = 255;
     }
     sourceCtx.putImageData(imageData, 0, 0);
