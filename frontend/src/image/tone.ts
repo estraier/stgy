@@ -62,6 +62,8 @@ export type RolloffParams = {
   outputMax: number;
 };
 
+export type ToneRgbBuffer = [number, number, number] | number[];
+
 const TONE_ENDPOINT_SLOPE_EPSILON = 1e-5;
 const TONE_LUMINANCE_EPSILON = 1e-12;
 
@@ -114,6 +116,22 @@ export function applyLuminanceGainPreservingAboveOneLinearRgb(
   return [Math.max(0, r * gain), Math.max(0, g * gain), Math.max(0, b * gain)];
 }
 
+export function applyLuminanceGainPreservingAboveOneLinearRgbInto(
+  r: number,
+  g: number,
+  b: number,
+  gain: number,
+  output: ToneRgbBuffer,
+): void {
+  if (proPhotoLinearLuminance(r, g, b) > 1 || !Number.isFinite(gain)) {
+    output[0] = r; output[1] = g; output[2] = b;
+    return;
+  }
+  output[0] = Math.max(0, r * gain);
+  output[1] = Math.max(0, g * gain);
+  output[2] = Math.max(0, b * gain);
+}
+
 export function srgbChannelToLinear(v: number): number {
   const x = clamp01(v / 255);
   if (x <= 0.04045) return x / 12.92;
@@ -163,6 +181,24 @@ export function applyWhiteBalanceLinear(
   const wb = weight * gains.b + (1 - weight);
   // Preserve extended linear values; WB may carry values above 1 into Tone.
   return [r * wr, g * wg, b * wb];
+}
+
+export function applyWhiteBalanceLinearInto(
+  r: number,
+  g: number,
+  b: number,
+  gains: WhiteBalanceGains,
+  output: ToneRgbBuffer,
+): void {
+  const gray = proPhotoLinearLuminance(r, g, b);
+  const whiteThreshold = 0.98;
+  const weight = Math.sqrt(1 - clamp01((gray - (1 - whiteThreshold)) / whiteThreshold));
+  const wr = weight * gains.r + (1 - weight);
+  const wg = weight * gains.g + (1 - weight);
+  const wb = weight * gains.b + (1 - weight);
+  output[0] = r * wr;
+  output[1] = g * wg;
+  output[2] = b * wb;
 }
 
 export function applyScaledLogLinear(value: number, factor: number, limit = 20): number {
@@ -288,6 +324,13 @@ export function rgbToHsvExtended(r: number, g: number, b: number): [number, numb
   return [h, Math.max(0, Number.isFinite(saturation) ? saturation : 0), max];
 }
 
+export function rgbSaturationExtended(r: number, g: number, b: number): number {
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const saturation = max > 1e-12 ? (max - min) / max : 0;
+  return Math.max(0, Number.isFinite(saturation) ? saturation : 0);
+}
+
 function hsvUnitValueShape(h: number, saturation: number): [number, number, number] {
   const hh = ((h % 1) + 1) % 1 * 6;
   const s = Math.max(0, Number.isFinite(saturation) ? saturation : 0);
@@ -306,6 +349,30 @@ function hsvUnitValueShape(h: number, saturation: number): [number, number, numb
   return [rp + m, gp + m, bp + m];
 }
 
+function hsvUnitValueShapeInto(
+  h: number,
+  saturation: number,
+  output: ToneRgbBuffer,
+): void {
+  const hh = ((h % 1) + 1) % 1 * 6;
+  const s = Math.max(0, Number.isFinite(saturation) ? saturation : 0);
+  const c = s;
+  const x = c * (1 - Math.abs(hh % 2 - 1));
+  const m = 1 - c;
+  let rp = 0;
+  let gp = 0;
+  let bp = 0;
+  if (hh < 1) { rp = c; gp = x; }
+  else if (hh < 2) { rp = x; gp = c; }
+  else if (hh < 3) { gp = c; bp = x; }
+  else if (hh < 4) { gp = x; bp = c; }
+  else if (hh < 5) { rp = x; bp = c; }
+  else { rp = c; bp = x; }
+  output[0] = rp + m;
+  output[1] = gp + m;
+  output[2] = bp + m;
+}
+
 export function applyHsvSaturationPreservingProPhotoLuminance(
   r: number,
   g: number,
@@ -320,6 +387,44 @@ export function applyHsvSaturationPreservingProPhotoLuminance(
   if (!(shapeLuminance > TONE_LUMINANCE_EPSILON) || !Number.isFinite(shapeLuminance)) return [r, g, b];
   const scale = luminance / shapeLuminance;
   return [shapeR * scale, shapeG * scale, shapeB * scale];
+}
+
+export function applyHsvSaturationPreservingProPhotoLuminanceInto(
+  r: number,
+  g: number,
+  b: number,
+  targetSaturation: number,
+  output: ToneRgbBuffer,
+): void {
+  const luminance = proPhotoLinearLuminance(r, g, b);
+  if (!(luminance > TONE_LUMINANCE_EPSILON)) {
+    output[0] = r; output[1] = g; output[2] = b;
+    return;
+  }
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const delta = max - min;
+  let h = 0;
+  if (delta > 1e-12) {
+    if (max === r) h = ((g - b) / delta) % 6;
+    else if (max === g) h = (b - r) / delta + 2;
+    else h = (r - g) / delta + 4;
+    h /= 6;
+    if (h < 0) h += 1;
+  }
+  hsvUnitValueShapeInto(h, targetSaturation, output);
+  const shapeR = output[0] ?? 0;
+  const shapeG = output[1] ?? 0;
+  const shapeB = output[2] ?? 0;
+  const shapeLuminance = proPhotoLinearLuminance(shapeR, shapeG, shapeB);
+  if (!(shapeLuminance > TONE_LUMINANCE_EPSILON) || !Number.isFinite(shapeLuminance)) {
+    output[0] = r; output[1] = g; output[2] = b;
+    return;
+  }
+  const scale = luminance / shapeLuminance;
+  output[0] = shapeR * scale;
+  output[1] = shapeG * scale;
+  output[2] = shapeB * scale;
 }
 
 export function rolloffParams(
@@ -379,6 +484,29 @@ export function applyRolloffMaxChannelLinearRgb(
   if (!Number.isFinite(rolledMax)) return [r, g, b];
   const scale = rolledMax / maxChannel;
   return [r * scale, g * scale, b * scale];
+}
+
+export function applyRolloffMaxChannelLinearRgbInto(
+  r: number,
+  g: number,
+  b: number,
+  rolloff: RolloffParams | null,
+  output: ToneRgbBuffer,
+): void {
+  const maxChannel = Math.max(r, g, b);
+  if (!rolloff || !Number.isFinite(maxChannel) || maxChannel <= rolloff.inflection || maxChannel <= 0) {
+    output[0] = r; output[1] = g; output[2] = b;
+    return;
+  }
+  const rolledMax = applyRolloffScalar(maxChannel, rolloff);
+  if (!Number.isFinite(rolledMax)) {
+    output[0] = r; output[1] = g; output[2] = b;
+    return;
+  }
+  const scale = rolledMax / maxChannel;
+  output[0] = r * scale;
+  output[1] = g * scale;
+  output[2] = b * scale;
 }
 
 export function applyExposureLinearToRgb(
@@ -522,6 +650,19 @@ export function applyDisplayRolloffAndClipLinearToRgb(
   return [clamp01(r), clamp01(g), clamp01(b)];
 }
 
+export function applyDisplayRolloffAndClipLinearToRgbInto(
+  r: number,
+  g: number,
+  b: number,
+  rolloff: RolloffParams | null,
+  output: ToneRgbBuffer,
+): void {
+  applyRolloffMaxChannelLinearRgbInto(r, g, b, rolloff, output);
+  output[0] = clamp01(output[0] ?? 0);
+  output[1] = clamp01(output[1] ?? 0);
+  output[2] = clamp01(output[2] ?? 0);
+}
+
 export type ToneAdjustmentFlags = {
   hasExposure: boolean;
   hasShadow: boolean;
@@ -572,6 +713,59 @@ export function applyToneLinearToRgb(
   if (!Number.isFinite(luminance)) return [r, g, b];
   const scale = luminance / sourceLuminance;
   return [r * scale, g * scale, b * scale];
+}
+
+export function applyToneLinearToRgbInto(
+  r: number,
+  g: number,
+  b: number,
+  gains: WhiteBalanceGains,
+  hasWhiteBalance: boolean,
+  factor: number,
+  shadow: number,
+  highlight: number,
+  highlightRange: HighlightRange | null,
+  scaledLog: number,
+  sigmoid: number,
+  output: ToneRgbBuffer,
+  flags?: ToneAdjustmentFlags,
+): void {
+  const hasExposure = flags?.hasExposure ?? factor !== 1;
+  const hasShadow = flags?.hasShadow ?? shadow !== 0;
+  const hasHighlight = flags?.hasHighlight ?? (highlight !== 0 && highlightRange !== null);
+  const hasScaledLog = flags?.hasScaledLog ?? scaledLog !== 0;
+  const hasSigmoid = flags?.hasSigmoid ?? sigmoid !== 0;
+
+  if (hasWhiteBalance) {
+    applyWhiteBalanceLinearInto(r, g, b, gains, output);
+    r = output[0] ?? 0; g = output[1] ?? 0; b = output[2] ?? 0;
+  }
+  if (hasExposure) {
+    applyRolloffMaxChannelLinearRgbInto(
+      r * factor, g * factor, b * factor, flags?.exposureRolloff ?? null, output,
+    );
+    r = output[0] ?? 0; g = output[1] ?? 0; b = output[2] ?? 0;
+  }
+  const sourceLuminance = proPhotoLinearLuminance(r, g, b);
+  if (!(sourceLuminance > TONE_LUMINANCE_EPSILON)) {
+    output[0] = r; output[1] = g; output[2] = b;
+    return;
+  }
+
+  let luminance = sourceLuminance;
+  if (hasScaledLog) luminance = applyScaledLogLinearExtended(luminance, scaledLog);
+  if (hasSigmoid) luminance = applySigmoidLinearExtended(luminance, sigmoid);
+  if (hasShadow) luminance = applyShadowLinear(luminance, shadow);
+  if (hasHighlight) luminance = applyHighlightLinear(luminance, highlight, highlightRange);
+
+  if (!Number.isFinite(luminance)) {
+    output[0] = r; output[1] = g; output[2] = b;
+    return;
+  }
+  const scale = luminance / sourceLuminance;
+  output[0] = r * scale;
+  output[1] = g * scale;
+  output[2] = b * scale;
 }
 
 export type ColorAdjustmentContext = {
@@ -667,6 +861,63 @@ export function applyToneAdjustmentsLinearRgbRange(
   return [r * scale, g * scale, b * scale];
 }
 
+export function applyToneAdjustmentsLinearRgbRangeInto(
+  r: number,
+  g: number,
+  b: number,
+  context: ColorAdjustmentContext,
+  startStage: ToneAdjustmentStage,
+  endStage: ToneAdjustmentStage,
+  output: ToneRgbBuffer,
+): void {
+  const start = TONE_ADJUSTMENT_STAGE_INDEX[startStage];
+  const end = TONE_ADJUSTMENT_STAGE_INDEX[endStage];
+  if (start >= end) {
+    output[0] = r; output[1] = g; output[2] = b;
+    return;
+  }
+
+  if (start <= 0 && end > 0 && context.hasWhiteBalance) {
+    applyWhiteBalanceLinearInto(r, g, b, context.gains, output);
+    r = output[0] ?? 0; g = output[1] ?? 0; b = output[2] ?? 0;
+  }
+  if (start <= 1 && end > 1 && context.hasExposure) {
+    applyRolloffMaxChannelLinearRgbInto(
+      r * context.factor, g * context.factor, b * context.factor, context.exposureRolloff, output,
+    );
+    r = output[0] ?? 0; g = output[1] ?? 0; b = output[2] ?? 0;
+  }
+
+  const sourceLuminance = proPhotoLinearLuminance(r, g, b);
+  if (!(sourceLuminance > TONE_LUMINANCE_EPSILON)) {
+    output[0] = r; output[1] = g; output[2] = b;
+    return;
+  }
+  let luminance = sourceLuminance;
+
+  if (start <= 2 && end > 2 && context.hasScaledLog) {
+    luminance = applyScaledLogLinearExtended(luminance, context.scaledLog);
+  }
+  if (start <= 3 && end > 3 && context.hasSigmoid) {
+    luminance = applySigmoidLinearExtended(luminance, context.sigmoid);
+  }
+  if (start <= 4 && end > 4 && context.hasShadow) {
+    luminance = applyShadowLinear(luminance, context.shadow);
+  }
+  if (start <= 5 && end > 5 && context.hasHighlight) {
+    luminance = applyHighlightLinear(luminance, context.highlight, context.highlightRange);
+  }
+
+  if (!Number.isFinite(luminance)) {
+    output[0] = r; output[1] = g; output[2] = b;
+    return;
+  }
+  const scale = luminance / sourceLuminance;
+  output[0] = r * scale;
+  output[1] = g * scale;
+  output[2] = b * scale;
+}
+
 export function applyToneAdjustmentsLinearRgb(
   r: number,
   g: number,
@@ -685,6 +936,28 @@ export function applyToneAdjustmentsLinearRgb(
     context.highlightRange,
     context.scaledLog,
     context.sigmoid,
+    context,
+  );
+}
+
+export function applyToneAdjustmentsLinearRgbInto(
+  r: number,
+  g: number,
+  b: number,
+  context: ColorAdjustmentContext,
+  output: ToneRgbBuffer,
+): void {
+  applyToneLinearToRgbInto(
+    r, g, b,
+    context.gains,
+    context.hasWhiteBalance,
+    context.factor,
+    context.shadow,
+    context.highlight,
+    context.highlightRange,
+    context.scaledLog,
+    context.sigmoid,
+    output,
     context,
   );
 }
@@ -727,6 +1000,42 @@ export function applySaturationVibranceAndFinalRolloffLinearRgb(
   return applyDisplayRolloffAndClipLinearToRgb(r, g, b, finalRolloff ?? null);
 }
 
+export function applySaturationVibranceAndFinalRolloffLinearRgbInto(
+  r: number,
+  g: number,
+  b: number,
+  saturation: number,
+  vibrance: number,
+  applyFinalRolloff: boolean,
+  finalRolloff: RolloffParams | null | undefined,
+  saturationRolloff: RolloffParams | null,
+  output: ToneRgbBuffer,
+): void {
+  const normalizedSaturation = clampColorAdjustment(saturation);
+  const normalizedVibrance = clampColorAdjustment(vibrance);
+  if (normalizedSaturation !== 0) {
+    const currentSaturation = rgbSaturationExtended(r, g, b);
+    const scaledSaturation = currentSaturation * colorSaturationFactor(normalizedSaturation);
+    const targetSaturation = applyRolloffScalar(scaledSaturation, saturationRolloff);
+    applyHsvSaturationPreservingProPhotoLuminanceInto(r, g, b, targetSaturation, output);
+    r = output[0] ?? 0; g = output[1] ?? 0; b = output[2] ?? 0;
+  }
+  if (normalizedVibrance !== 0) {
+    const currentSaturation = rgbSaturationExtended(r, g, b);
+    const targetSaturation = applyScaledLogLinearExtended(
+      currentSaturation,
+      colorVibranceFactor(normalizedVibrance),
+    );
+    applyHsvSaturationPreservingProPhotoLuminanceInto(r, g, b, targetSaturation, output);
+    r = output[0] ?? 0; g = output[1] ?? 0; b = output[2] ?? 0;
+  }
+  if (!applyFinalRolloff) {
+    output[0] = r; output[1] = g; output[2] = b;
+    return;
+  }
+  applyDisplayRolloffAndClipLinearToRgbInto(r, g, b, finalRolloff ?? null, output);
+}
+
 export function applyColorAdjustmentsAfterToneLinearRgb(
   r: number,
   g: number,
@@ -746,6 +1055,31 @@ export function applyColorAdjustmentsAfterToneLinearRgb(
   );
   if (!applyFinalRolloff) return [r, g, b];
   return applyDisplayRolloffAndClipLinearToRgb(r, g, b, context.finalRolloff);
+}
+
+export function applyColorAdjustmentsAfterToneLinearRgbInto(
+  r: number,
+  g: number,
+  b: number,
+  context: ColorAdjustmentContext,
+  applyFinalRolloff: boolean,
+  output: ToneRgbBuffer,
+): void {
+  applySaturationVibranceAndFinalRolloffLinearRgbInto(
+    r,
+    g,
+    b,
+    context.normalizedSaturation,
+    context.normalizedVibrance,
+    false,
+    undefined,
+    context.saturationRolloff,
+    output,
+  );
+  if (!applyFinalRolloff) return;
+  applyDisplayRolloffAndClipLinearToRgbInto(
+    output[0] ?? 0, output[1] ?? 0, output[2] ?? 0, context.finalRolloff, output,
+  );
 }
 
 export function hasColorAdjustmentContextChanges(context: ColorAdjustmentContext): boolean {
@@ -772,6 +1106,24 @@ export function applyColorAdjustmentsLinearRgb(
     b,
     context,
     hasColorAdjustmentContextChanges(context),
+  );
+}
+
+export function applyColorAdjustmentsLinearRgbInto(
+  r: number,
+  g: number,
+  b: number,
+  context: ColorAdjustmentContext,
+  output: ToneRgbBuffer,
+): void {
+  applyToneAdjustmentsLinearRgbInto(r, g, b, context, output);
+  applyColorAdjustmentsAfterToneLinearRgbInto(
+    output[0] ?? 0,
+    output[1] ?? 0,
+    output[2] ?? 0,
+    context,
+    hasColorAdjustmentContextChanges(context),
+    output,
   );
 }
 

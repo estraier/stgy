@@ -338,6 +338,36 @@ export function sampleDefringeConfidence(
   };
 }
 
+export function sampleDefringeConfidenceInto(
+  map: DefringeAnalysisMap,
+  normalizedX: number,
+  normalizedY: number,
+  expandedBlend: number,
+  output: [number, number] | number[],
+): void {
+  const magentaBase = sampleMapPlane(map.magenta, map.width, map.height, normalizedX, normalizedY);
+  const greenBase = sampleMapPlane(map.green, map.width, map.height, normalizedX, normalizedY);
+  const magentaExpanded1 = map.magentaExpanded1
+    ? sampleMapPlane(map.magentaExpanded1, map.width, map.height, normalizedX, normalizedY)
+    : magentaBase;
+  const greenExpanded1 = map.greenExpanded1
+    ? sampleMapPlane(map.greenExpanded1, map.width, map.height, normalizedX, normalizedY)
+    : greenBase;
+  const magentaExpanded2 = map.magentaExpanded2
+    ? sampleMapPlane(map.magentaExpanded2, map.width, map.height, normalizedX, normalizedY)
+    : magentaExpanded1;
+  const greenExpanded2 = map.greenExpanded2
+    ? sampleMapPlane(map.greenExpanded2, map.width, map.height, normalizedX, normalizedY)
+    : greenExpanded1;
+  const expansionAmount = clamp01(expandedBlend);
+  output[0] = blendDefringeExpansion(
+    magentaBase, magentaExpanded1, magentaExpanded2, expansionAmount,
+  );
+  output[1] = blendDefringeExpansion(
+    greenBase, greenExpanded1, greenExpanded2, expansionAmount, GREEN_EXPANSION_BLEND_SCALE,
+  );
+}
+
 export function applyDefringeLinearRgb(
   r: number,
   g: number,
@@ -379,6 +409,53 @@ export function applyDefringeLinearRgb(
   ];
 }
 
+export function applyDefringeLinearRgbInto(
+  r: number,
+  g: number,
+  b: number,
+  map: DefringeAnalysisMap | null | undefined,
+  amount: number,
+  normalizedX: number,
+  normalizedY: number,
+  output: [number, number, number] | number[],
+  confidenceScratch?: [number, number] | number[],
+): void {
+  if (!map || !(amount > 0)) {
+    output[0] = r; output[1] = g; output[2] = b;
+    return;
+  }
+  const userAmount = clamp01(amount);
+  const effectiveAmount = clamp01(userAmount * 2);
+  const confidence = confidenceScratch ?? [0, 0];
+  sampleDefringeConfidenceInto(map, normalizedX, normalizedY, userAmount, confidence);
+  const confidenceMagenta = confidence[0] ?? 0;
+  const confidenceGreen = confidence[1] ?? 0;
+  if (!(confidenceMagenta > 0) && !(confidenceGreen > 0)) {
+    output[0] = r; output[1] = g; output[2] = b;
+    return;
+  }
+
+  const y = PROPHOTO_TONE_LUMA_R * r + PROPHOTO_TONE_LUMA_G * g + PROPHOTO_TONE_LUMA_B * b;
+  const cr = r - y;
+  const cg = g - y;
+  const cb = b - y;
+  const gm = GM_R * cr + GM_G * cg + GM_B * cb;
+  const by = BY_R * cr + BY_G * cg + BY_B * cb;
+  const magentaGate = magentaHueWeight(gm, by);
+  const greenGate = greenHueWeight(gm, by);
+  const magentaReduction = clamp01(effectiveAmount * MAGENTA_STRENGTH * confidenceMagenta * magentaGate);
+  const greenReduction = clamp01(effectiveAmount * GREEN_STRENGTH * confidenceGreen * greenGate);
+  const chromaReduction = Math.max(magentaReduction, greenReduction);
+  if (!(chromaReduction > 0)) {
+    output[0] = r; output[1] = g; output[2] = b;
+    return;
+  }
+  const chromaScale = 1 - chromaReduction;
+  output[0] = y + cr * chromaScale;
+  output[1] = y + cg * chromaScale;
+  output[2] = y + cb * chromaScale;
+}
+
 export function applyDefringeToSample(
   sample: LinearRgbSample,
   map: DefringeAnalysisMap | null | undefined,
@@ -388,6 +465,8 @@ export function applyDefringeToSample(
   const width = sample.width;
   const height = sample.height;
   const data = new Float32Array(sample.data.length);
+  const adjusted: [number, number, number] = [0, 0, 0];
+  const confidence: [number, number] = [0, 0];
   for (let y = 0; y < height; y += 1) {
     const ny = height > 1 ? y / (height - 1) : 0.5;
     for (let x = 0; x < width; x += 1) {
@@ -395,7 +474,7 @@ export function applyDefringeToSample(
       const i = pixel * 3;
       if (sample.valid && !sample.valid[pixel]) continue;
       const nx = width > 1 ? x / (width - 1) : 0.5;
-      const [r, g, b] = applyDefringeLinearRgb(
+      applyDefringeLinearRgbInto(
         sample.data[i] ?? 0,
         sample.data[i + 1] ?? 0,
         sample.data[i + 2] ?? 0,
@@ -403,10 +482,12 @@ export function applyDefringeToSample(
         amount,
         nx,
         ny,
+        adjusted,
+        confidence,
       );
-      data[i] = Math.fround(r);
-      data[i + 1] = Math.fround(g);
-      data[i + 2] = Math.fround(b);
+      data[i] = Math.fround(adjusted[0]);
+      data[i + 1] = Math.fround(adjusted[1]);
+      data[i + 2] = Math.fround(adjusted[2]);
     }
   }
   return { data, width, height, ...(sample.valid ? { valid: sample.valid } : {}) };
@@ -425,6 +506,8 @@ export function applyDefringeToRenderedSample(
   const width = Math.max(1, sample.width);
   const height = Math.max(1, sample.height);
   const data = new Float32Array(sample.data.length);
+  const adjusted: [number, number, number] = [0, 0, 0];
+  const confidence: [number, number] = [0, 0];
   const transform = buildRenderedPixelToSourceTransform(
     sourceWidth,
     sourceHeight,
@@ -443,7 +526,7 @@ export function applyDefringeToRenderedSample(
       const pixel = y * width + x;
       const i = pixel * 3;
       if (!sample.valid || sample.valid[pixel]) {
-        const [r, g, b] = applyDefringeLinearRgb(
+        applyDefringeLinearRgbInto(
           sample.data[i] ?? 0,
           sample.data[i + 1] ?? 0,
           sample.data[i + 2] ?? 0,
@@ -451,10 +534,12 @@ export function applyDefringeToRenderedSample(
           amount,
           sourceWidth > 1 ? sourceX / (sourceWidth - 1) : 0.5,
           sourceHeight > 1 ? sourceY / (sourceHeight - 1) : 0.5,
+          adjusted,
+          confidence,
         );
-        data[i] = Math.fround(r);
-        data[i + 1] = Math.fround(g);
-        data[i + 2] = Math.fround(b);
+        data[i] = Math.fround(adjusted[0]);
+        data[i + 1] = Math.fround(adjusted[1]);
+        data[i + 2] = Math.fround(adjusted[2]);
       }
       sourceX += transform.columnStepX;
       sourceY += transform.columnStepY;

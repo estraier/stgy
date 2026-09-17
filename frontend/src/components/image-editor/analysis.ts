@@ -17,13 +17,13 @@ import {
   HISTOGRAM_DISPLAY_GAMMA,
   ROLLOFF_SAVING_LIMIT_FACTOR,
   SATURATION_ROLLOFF_A,
-  applyColorAdjustmentsAfterToneLinearRgb, applyColorAdjustmentsLinearRgb,
-  applyLuminanceGainPreservingAboveOneLinearRgb, applyRolloffMaxChannelLinearRgb, applySaturationVibranceAndFinalRolloffLinearRgb,
+  applyColorAdjustmentsAfterToneLinearRgbInto, applyColorAdjustmentsLinearRgbInto,
+  applyLuminanceGainPreservingAboveOneLinearRgbInto, applyRolloffMaxChannelLinearRgbInto, applySaturationVibranceAndFinalRolloffLinearRgbInto,
   applyScaledLogLinearExtended, applyShadowLinear, applySigmoidLinearExtended,
-  applyToneAdjustmentsLinearRgb, applyToneLinearToRgb,
-  applyWhiteBalanceLinear, clamp01, clampColorAdjustment, clampExposureEv,
+  applyToneAdjustmentsLinearRgbInto, applyToneLinearToRgbInto,
+  applyWhiteBalanceLinearInto, clamp01, clampColorAdjustment, clampExposureEv,
   clampScaledLog, clampSigmoid, clampToneRangeAdjustment, clampWhiteBalanceValue,
-  colorSaturationFactor, colorVibranceFactor, proPhotoLinearLuminance, rgbToHsvExtended, rolloffParams,
+  colorSaturationFactor, colorVibranceFactor, proPhotoLinearLuminance, rgbSaturationExtended, rolloffParams,
   srgbChannelToLinear, whiteBalanceGains, type ColorAdjustmentContext, type HighlightRange, type RolloffParams,
 } from "@/image/tone";
 
@@ -109,6 +109,7 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
   const data = sample.data;
   const valid = sample.valid;
   const count = Math.floor(data.length / 3);
+  const adjusted: [number, number, number] = [0, 0, 0];
 
   let exposureRolloff: RolloffParams | null = null;
   if (hasExposure && factor > 1) {
@@ -119,7 +120,10 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
       let r = data[i] ?? 0;
       let g = data[i + 1] ?? 0;
       let b = data[i + 2] ?? 0;
-      if (hasWhiteBalance) [r, g, b] = applyWhiteBalanceLinear(r, g, b, gains);
+      if (hasWhiteBalance) {
+        applyWhiteBalanceLinearInto(r, g, b, gains, adjusted);
+        r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
+      }
       const maxChannel = Math.max(r * factor, g * factor, b * factor);
       if (Number.isFinite(maxChannel)) exposureMaxima.push(maxChannel);
     }
@@ -142,14 +146,19 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
       let r = data[i] ?? 0;
       let g = data[i + 1] ?? 0;
       let b = data[i + 2] ?? 0;
-      if (hasWhiteBalance) [r, g, b] = applyWhiteBalanceLinear(r, g, b, gains);
+      if (hasWhiteBalance) {
+        applyWhiteBalanceLinearInto(r, g, b, gains, adjusted);
+        r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
+      }
       if (hasExposure) {
-        [r, g, b] = applyRolloffMaxChannelLinearRgb(
+        applyRolloffMaxChannelLinearRgbInto(
           r * factor,
           g * factor,
           b * factor,
           exposureRolloff,
+          adjusted,
         );
+        r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
       }
       let highlightValue = proPhotoLinearLuminance(r, g, b);
       if (hasScaledLog) highlightValue = applyScaledLogLinearExtended(highlightValue, normalizedScaledLog);
@@ -177,7 +186,7 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
     for (let pixel = 0; pixel < count; pixel += 1) {
       if (ignoreInvalid && valid && !valid[pixel]) continue;
       const i = pixel * 3;
-      const [r, g, b] = applyToneLinearToRgb(
+      applyToneLinearToRgbInto(
         data[i] ?? 0,
         data[i + 1] ?? 0,
         data[i + 2] ?? 0,
@@ -189,6 +198,7 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
         highlightRange,
         normalizedScaledLog,
         normalizedSigmoid,
+        adjusted,
         {
           hasExposure,
           hasShadow,
@@ -198,11 +208,11 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
           exposureRolloff,
         },
       );
-      toneAdjusted[i] = r;
-      toneAdjusted[i + 1] = g;
-      toneAdjusted[i + 2] = b;
+      toneAdjusted[i] = adjusted[0];
+      toneAdjusted[i + 1] = adjusted[1];
+      toneAdjusted[i + 2] = adjusted[2];
       if (hasSaturation && saturationFactor > 1) {
-        saturationValues.push(rgbToHsvExtended(r, g, b)[1]);
+        saturationValues.push(rgbSaturationExtended(adjusted[0], adjusted[1], adjusted[2]));
       }
     }
 
@@ -222,10 +232,10 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
     for (let pixel = 0; pixel < count; pixel += 1) {
       if (ignoreInvalid && valid && !valid[pixel]) continue;
       const i = pixel * 3;
-      let r = toneAdjusted[i] ?? 0;
-      let g = toneAdjusted[i + 1] ?? 0;
-      let b = toneAdjusted[i + 2] ?? 0;
-      [r, g, b] = applySaturationVibranceAndFinalRolloffLinearRgb(
+      const r = toneAdjusted[i] ?? 0;
+      const g = toneAdjusted[i + 1] ?? 0;
+      const b = toneAdjusted[i + 2] ?? 0;
+      applySaturationVibranceAndFinalRolloffLinearRgbInto(
         r,
         g,
         b,
@@ -234,8 +244,9 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
         false,
         undefined,
         saturationRolloff,
+        adjusted,
       );
-      const maxChannel = Math.max(r, g, b);
+      const maxChannel = Math.max(adjusted[0], adjusted[1], adjusted[2]);
       if (Number.isFinite(maxChannel)) maxima.push(maxChannel);
     }
     const p998 = maxima.length ? percentileFromValues(maxima, 99.8) : 0;
@@ -409,6 +420,7 @@ export function computeHistogramDataFromRgb16(
       )
     : null;
   const pixelCount = Math.floor(sample.data.length / 3);
+  const adjustedRgb: [number, number, number] = [0, 0, 0];
   for (let pixel = 0; pixel < pixelCount; pixel++) {
     const i = pixel * 3;
     if (sample.valid && !sample.valid[pixel]) {
@@ -423,7 +435,8 @@ export function computeHistogramDataFromRgb16(
     let gg = sample.data[i + 1] ?? 0;
     let bb = sample.data[i + 2] ?? 0;
     if (hasClarity) {
-      [rr, gg, bb] = applyToneAdjustmentsLinearRgb(rr, gg, bb, adjustment);
+      applyToneAdjustmentsLinearRgbInto(rr, gg, bb, adjustment, adjustedRgb);
+      rr = adjustedRgb[0]; gg = adjustedRgb[1]; bb = adjustedRgb[2];
       const x = pixel % sample.width;
       const y = Math.floor(pixel / sample.width);
       const sourceX = clarityTransform
@@ -439,12 +452,15 @@ export function computeHistogramDataFromRgb16(
         decoded.width,
         decoded.height,
       );
-      [rr, gg, bb] = applyLuminanceGainPreservingAboveOneLinearRgb(
-        rr, gg, bb, clarityGain,
+      applyLuminanceGainPreservingAboveOneLinearRgbInto(
+        rr, gg, bb, clarityGain, adjustedRgb,
       );
-      [rr, gg, bb] = applyColorAdjustmentsAfterToneLinearRgb(rr, gg, bb, adjustment);
+      rr = adjustedRgb[0]; gg = adjustedRgb[1]; bb = adjustedRgb[2];
+      applyColorAdjustmentsAfterToneLinearRgbInto(rr, gg, bb, adjustment, true, adjustedRgb);
+      rr = adjustedRgb[0]; gg = adjustedRgb[1]; bb = adjustedRgb[2];
     } else {
-      [rr, gg, bb] = applyColorAdjustmentsLinearRgb(rr, gg, bb, adjustment);
+      applyColorAdjustmentsLinearRgbInto(rr, gg, bb, adjustment, adjustedRgb);
+      rr = adjustedRgb[0]; gg = adjustedRgb[1]; bb = adjustedRgb[2];
     }
     const sr = clamp01(PROPHOTO_TO_SRGB_M00 * rr + PROPHOTO_TO_SRGB_M01 * gg + PROPHOTO_TO_SRGB_M02 * bb);
     const sg = clamp01(PROPHOTO_TO_SRGB_M10 * rr + PROPHOTO_TO_SRGB_M11 * gg + PROPHOTO_TO_SRGB_M12 * bb);
@@ -613,13 +629,14 @@ export function buildToneLumaHistogram(
   );
   let total = 0;
   const pixelCount = Math.floor(sample.data.length / 3);
+  const adjustedRgb: [number, number, number] = [0, 0, 0];
   for (let pixel = 0; pixel < pixelCount; pixel++) {
     if (sample.valid && !sample.valid[pixel]) continue;
     const i = pixel * 3;
     let r = sample.data[i] ?? 0;
     let g = sample.data[i + 1] ?? 0;
     let b = sample.data[i + 2] ?? 0;
-    [r, g, b] = applyToneLinearToRgb(
+    applyToneLinearToRgbInto(
       r,
       g,
       b,
@@ -631,8 +648,10 @@ export function buildToneLumaHistogram(
       context.highlightRange,
       context.scaledLog,
       context.sigmoid,
+      adjustedRgb,
       context,
     );
+    r = adjustedRgb[0]; g = adjustedRgb[1]; b = adjustedRgb[2];
     const y = clamp01(PROPHOTO_LUMA_R * r + PROPHOTO_LUMA_G * g + PROPHOTO_LUMA_B * b);
     const display = histogramDisplayValue(y);
     const bin = Math.min(HISTOGRAM_BINS - 1, Math.max(0, Math.floor(display * HISTOGRAM_BINS)));
@@ -666,6 +685,7 @@ export function evaluateAutoExposure(
     true,
   );
   const pixelCount = Math.floor(sample.data.length / 3);
+  const adjustedRgb: [number, number, number] = [0, 0, 0];
   for (let pixel = 0; pixel < pixelCount; pixel++) {
     if (sample.valid && !sample.valid[pixel]) continue;
     const i = pixel * 3;
@@ -673,7 +693,8 @@ export function evaluateAutoExposure(
     let g = sample.data[i + 1] ?? 0;
     let b = sample.data[i + 2] ?? 0;
     if (context.hasWhiteBalance) {
-      [r, g, b] = applyWhiteBalanceLinear(r, g, b, context.gains);
+      applyWhiteBalanceLinearInto(r, g, b, context.gains, adjustedRgb);
+      r = adjustedRgb[0]; g = adjustedRgb[1]; b = adjustedRgb[2];
     }
     if (context.hasExposure) {
       r *= context.factor;

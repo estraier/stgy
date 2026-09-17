@@ -46,6 +46,16 @@ function srgbChannelToLinear(value: number): number {
   return Math.pow((x + 0.055) / 1.055, 2.4);
 }
 
+// Embedded thumbnails are 8-bit. Avoid millions of repeated pow() calls while
+// area-averaging the analysis sample; 256 exact double values are enough.
+const SRGB8_TO_LINEAR_LUT = (() => {
+  const lut = new Array<number>(256);
+  for (let value = 0; value < lut.length; value++) {
+    lut[value] = srgbChannelToLinear(value);
+  }
+  return lut;
+})();
+
 function analysisSampleDimensions(
   width: number,
   height: number,
@@ -96,9 +106,9 @@ function areaAverageRawThumbnailLinearSrgbSample(
           const area = wx * wy;
           if (!(area > 0)) continue;
           const sourceIndex = (sy * sourceWidth + sx) * channels;
-          sumR += srgbChannelToLinear(source[sourceIndex] ?? 0) * area;
-          sumG += srgbChannelToLinear(source[sourceIndex + 1] ?? 0) * area;
-          sumB += srgbChannelToLinear(source[sourceIndex + 2] ?? 0) * area;
+          sumR += (SRGB8_TO_LINEAR_LUT[source[sourceIndex] ?? 0] ?? 0) * area;
+          sumG += (SRGB8_TO_LINEAR_LUT[source[sourceIndex + 1] ?? 0] ?? 0) * area;
+          sumB += (SRGB8_TO_LINEAR_LUT[source[sourceIndex + 2] ?? 0] ?? 0) * area;
           totalWeight += area;
         }
       }

@@ -57,11 +57,11 @@ import {
   ROLLOFF_SAVING_LIMIT_FACTOR,
   SATURATION_ROLLOFF_A,
   SIGMOID_WORKING_GAMMA,
-  applyColorAdjustmentsAfterToneLinearRgb,
-  applyColorAdjustmentsLinearRgb,
+  applyColorAdjustmentsAfterToneLinearRgbInto,
+  applyColorAdjustmentsLinearRgbInto,
   applyHsvSaturationPreservingProPhotoLuminance,
-  applyLuminanceGainPreservingAboveOneLinearRgb,
-  applyToneAdjustmentsLinearRgb,
+  applyLuminanceGainPreservingAboveOneLinearRgbInto,
+  applyToneAdjustmentsLinearRgbInto,
   applyRolloffScalar,
   applyScaledLogLinear,
   applyScaledLogLinearExtended,
@@ -93,6 +93,7 @@ import {
   PROPHOTO_LUMA_R,
   convertLinearProPhotoToOutputRgb,
   encodedRgbToLinearProphoto,
+  encodedRgbToLinearProphotoInto,
 } from "@/image/color";
 import { getCanvas2dContext, getCanvasImageData } from "./image-editor/canvas";
 import { applySharpenToCanvas, applySharpenToRgb16 } from "./image-editor/sharpen";
@@ -100,7 +101,7 @@ import { applyDenoiseToCanvas, applyDenoiseToRgb16, clampDenoise } from "./image
 import {
   DEFRINGE_ANALYSIS_TARGET_PIXELS,
   analyzeDefringeSample,
-  applyDefringeLinearRgb,
+  applyDefringeLinearRgbInto,
   applyDefringeToRenderedSample,
   type DefringeAnalysisMap,
 } from "./image-editor/defringe";
@@ -591,6 +592,90 @@ async function rawEditableThumbnailToDecoded(
     return canvasSourceToDecodedRgb16(source, width, height, "srgb");
   } finally {
     cleanup();
+  }
+}
+
+type RawEditableThumbnailWorkerResponse = {
+  type: "editable-thumbnail-complete";
+  width: number;
+  height: number;
+  dataBuffer: ArrayBuffer;
+};
+
+function createRawEditableThumbnailWorker(): Worker | null {
+  if (typeof Worker !== "function") return null;
+  try {
+    return new Worker(new URL("./image-editor/raw-editable-thumbnail.worker.ts", import.meta.url), {
+      type: "module",
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function rawEditableThumbnailToDecodedParallel(
+  preview: ImageLoadEmbeddedPreview,
+): Promise<DecodedRgbImage16> {
+  const worker = createRawEditableThumbnailWorker();
+  if (!worker) return rawEditableThumbnailToDecoded(preview);
+  try {
+    const response = await new Promise<RawEditableThumbnailWorkerResponse>((resolve, reject) => {
+      let timeoutId: ReturnType<typeof setTimeout> | null = null;
+      const cleanup = () => {
+        if (timeoutId !== null) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+        worker.removeEventListener("message", onMessage);
+        worker.removeEventListener("error", onError);
+        worker.removeEventListener("messageerror", onMessageError);
+      };
+      const onMessage = (event: MessageEvent) => {
+        const payload = event.data as RawEditableThumbnailWorkerResponse | { type?: string; message?: string };
+        if (payload?.type === "error") {
+          cleanup();
+          reject(new Error(payload.message || "Editable thumbnail worker failed"));
+          return;
+        }
+        if (payload?.type !== "editable-thumbnail-complete") return;
+        cleanup();
+        resolve(payload as RawEditableThumbnailWorkerResponse);
+      };
+      const onError = (event: ErrorEvent) => {
+        cleanup();
+        reject(new Error(event.message || "Editable thumbnail worker failed"));
+      };
+      const onMessageError = () => {
+        cleanup();
+        reject(new Error("Editable thumbnail worker message failed"));
+      };
+      worker.addEventListener("message", onMessage);
+      worker.addEventListener("error", onError);
+      worker.addEventListener("messageerror", onMessageError);
+      timeoutId = setTimeout(() => {
+        cleanup();
+        reject(new Error("Editable thumbnail worker timed out"));
+      }, 30_000);
+      worker.postMessage({
+        type: "build-editable-thumbnail",
+        blob: preview.blob,
+        width: preview.width,
+        height: preview.height,
+      });
+    });
+    return {
+      colorSpace: "prophoto",
+      transfer: "gamma20",
+      linearRangeMax: 1,
+      width: response.width,
+      height: response.height,
+      data: new Uint16Array(response.dataBuffer),
+      cleanup: () => {},
+    };
+  } catch {
+    return rawEditableThumbnailToDecoded(preview);
+  } finally {
+    worker.terminate();
   }
 }
 
@@ -5079,18 +5164,20 @@ function writeRgba8ToDecodedRgb16(
   profile: ImageInputColorProfile,
 ): void {
   const count = Math.floor(rgba8.length / 4);
+  const linear: [number, number, number] = [0, 0, 0];
   for (let i = 0; i < count; i++) {
     const si = i * 4;
     const di = (destinationPixelOffset + i) * 3;
-    const [r, g, b] = encodedRgbToLinearProphoto(
+    encodedRgbToLinearProphotoInto(
       (rgba8[si] ?? 0) / 255,
       (rgba8[si + 1] ?? 0) / 255,
       (rgba8[si + 2] ?? 0) / 255,
       profile,
+      linear,
     );
-    rgb16[di] = encodeStoredRgb16Channel(r, "gamma20", 1);
-    rgb16[di + 1] = encodeStoredRgb16Channel(g, "gamma20", 1);
-    rgb16[di + 2] = encodeStoredRgb16Channel(b, "gamma20", 1);
+    rgb16[di] = encodeStoredRgb16Channel(linear[0], "gamma20", 1);
+    rgb16[di + 1] = encodeStoredRgb16Channel(linear[1], "gamma20", 1);
+    rgb16[di + 2] = encodeStoredRgb16Channel(linear[2], "gamma20", 1);
   }
 }
 
@@ -6181,25 +6268,35 @@ function adjustedDebugStatisticsFromLinearRgbSample(
     true,
   );
   const adjusted = new Float32Array(sample.data.length);
+  const adjustedRgb: [number, number, number] = [0, 0, 0];
   const pixelCount = Math.floor(sample.data.length / 3);
   for (let pixel = 0; pixel < pixelCount; pixel++) {
     if (sample.valid && !sample.valid[pixel]) continue;
     const i = pixel * 3;
-    const [r, g, b] = applyColorAdjustmentsLinearRgb(
+    applyColorAdjustmentsLinearRgbInto(
       sample.data[i] ?? 0,
       sample.data[i + 1] ?? 0,
       sample.data[i + 2] ?? 0,
       context,
+      adjustedRgb,
     );
-    adjusted[i] = r;
-    adjusted[i + 1] = g;
-    adjusted[i + 2] = b;
+    adjusted[i] = adjustedRgb[0];
+    adjusted[i + 1] = adjustedRgb[1];
+    adjusted[i + 2] = adjustedRgb[2];
   }
   return debugStatisticsFromLinearRgbSample(
     { ...sample, data: adjusted },
     colorSpace,
   );
 }
+
+const RAW_THUMBNAIL_SRGB8_TO_LINEAR_LUT = (() => {
+  const lut = new Array<number>(256);
+  for (let value = 0; value < lut.length; value++) {
+    lut[value] = srgbChannelToLinear(value);
+  }
+  return lut;
+})();
 
 function areaAverageRawThumbnailLinearSrgbSample(
   source: Uint8Array | Uint8ClampedArray,
@@ -6239,9 +6336,9 @@ function areaAverageRawThumbnailLinearSrgbSample(
           const area = wx * wy;
           if (!(area > 0)) continue;
           const sourceIndex = (sy * sourceWidth + sx) * channels;
-          sumR += srgbChannelToLinear(source[sourceIndex] ?? 0) * area;
-          sumG += srgbChannelToLinear(source[sourceIndex + 1] ?? 0) * area;
-          sumB += srgbChannelToLinear(source[sourceIndex + 2] ?? 0) * area;
+          sumR += (RAW_THUMBNAIL_SRGB8_TO_LINEAR_LUT[source[sourceIndex] ?? 0] ?? 0) * area;
+          sumG += (RAW_THUMBNAIL_SRGB8_TO_LINEAR_LUT[source[sourceIndex + 1] ?? 0] ?? 0) * area;
+          sumB += (RAW_THUMBNAIL_SRGB8_TO_LINEAR_LUT[source[sourceIndex + 2] ?? 0] ?? 0) * area;
           totalWeight += area;
         }
       }
@@ -9250,6 +9347,8 @@ export async function buildEditedDecodedRgb16(
     result.set(decoded.data);
   }
   const sample: LinearRgbBuffer = [0, 0, 0];
+  const adjustedRgb: [number, number, number] = [0, 0, 0];
+  const defringeConfidence: [number, number] = [0, 0];
   const samplingScratch = createRgb16SamplingScratch();
   const fallbackProfile: ImageInputColorProfile = outputColorProfile === "display-p3" ? "display-p3" : "srgb";
   const fallbackLinear = encodedRgbToLinearProphoto(128 / 255, 128 / 255, 128 / 255, fallbackProfile);
@@ -9263,14 +9362,18 @@ export async function buildEditedDecodedRgb16(
       if (activeDefringeMap && defringeAmount > 0) {
         const x = pixel % outputW;
         const y = Math.floor(pixel / outputW);
-        [r, g, b] = applyDefringeLinearRgb(
+        applyDefringeLinearRgbInto(
           r, g, b, activeDefringeMap, defringeAmount,
           sourceW > 1 ? x / (sourceW - 1) : 0.5,
           sourceH > 1 ? y / (sourceH - 1) : 0.5,
+          adjustedRgb,
+          defringeConfidence,
         );
+        r = adjustedRgb[0]; g = adjustedRgb[1]; b = adjustedRgb[2];
       }
       if (hasClarity) {
-        [r, g, b] = applyToneAdjustmentsLinearRgb(r, g, b, adjustmentContext);
+        applyToneAdjustmentsLinearRgbInto(r, g, b, adjustmentContext, adjustedRgb);
+        r = adjustedRgb[0]; g = adjustedRgb[1]; b = adjustedRgb[2];
         const x = pixel % outputW;
         const y = Math.floor(pixel / outputW);
         const clarityGain = sampleImageEditClarityGain(
@@ -9280,10 +9383,13 @@ export async function buildEditedDecodedRgb16(
           sourceW,
           sourceH,
         );
-        [r, g, b] = applyLuminanceGainPreservingAboveOneLinearRgb(r, g, b, clarityGain);
-        [r, g, b] = applyColorAdjustmentsAfterToneLinearRgb(r, g, b, adjustmentContext);
+        applyLuminanceGainPreservingAboveOneLinearRgbInto(r, g, b, clarityGain, adjustedRgb);
+        r = adjustedRgb[0]; g = adjustedRgb[1]; b = adjustedRgb[2];
+        applyColorAdjustmentsAfterToneLinearRgbInto(r, g, b, adjustmentContext, true, adjustedRgb);
+        r = adjustedRgb[0]; g = adjustedRgb[1]; b = adjustedRgb[2];
       } else {
-        [r, g, b] = applyColorAdjustmentsLinearRgb(r, g, b, adjustmentContext);
+        applyColorAdjustmentsLinearRgbInto(r, g, b, adjustmentContext, adjustedRgb);
+        r = adjustedRgb[0]; g = adjustedRgb[1]; b = adjustedRgb[2];
       }
       result[index] = encodeStoredRgb16Channel(r, "gamma20", 1);
       result[index + 1] = encodeStoredRgb16Channel(g, "gamma20", 1);
@@ -9311,19 +9417,24 @@ export async function buildEditedDecodedRgb16(
           let sourceG = sample[1];
           let sourceB = sample[2];
           if (activeDefringeMap && defringeAmount > 0) {
-            [sourceR, sourceG, sourceB] = applyDefringeLinearRgb(
+            applyDefringeLinearRgbInto(
               sourceR, sourceG, sourceB, activeDefringeMap, defringeAmount,
               sourceW > 1 ? sourceX / (sourceW - 1) : 0.5,
               sourceH > 1 ? sourceY / (sourceH - 1) : 0.5,
+              adjustedRgb,
+              defringeConfidence,
             );
+            sourceR = adjustedRgb[0]; sourceG = adjustedRgb[1]; sourceB = adjustedRgb[2];
           }
           if (hasClarity) {
-            [r, g, b] = applyToneAdjustmentsLinearRgb(
+            applyToneAdjustmentsLinearRgbInto(
               sourceR,
               sourceG,
               sourceB,
               adjustmentContext,
+              adjustedRgb,
             );
+            r = adjustedRgb[0]; g = adjustedRgb[1]; b = adjustedRgb[2];
             const clarityGain = sampleImageEditClarityGain(
               clarityMap,
               sourceX,
@@ -9331,12 +9442,15 @@ export async function buildEditedDecodedRgb16(
               sourceW,
               sourceH,
             );
-            [r, g, b] = applyLuminanceGainPreservingAboveOneLinearRgb(r, g, b, clarityGain);
-            [r, g, b] = applyColorAdjustmentsAfterToneLinearRgb(r, g, b, adjustmentContext);
+            applyLuminanceGainPreservingAboveOneLinearRgbInto(r, g, b, clarityGain, adjustedRgb);
+            r = adjustedRgb[0]; g = adjustedRgb[1]; b = adjustedRgb[2];
+            applyColorAdjustmentsAfterToneLinearRgbInto(r, g, b, adjustmentContext, true, adjustedRgb);
+            r = adjustedRgb[0]; g = adjustedRgb[1]; b = adjustedRgb[2];
           } else {
-            [r, g, b] = applyColorAdjustmentsLinearRgb(
-              sourceR, sourceG, sourceB, adjustmentContext,
+            applyColorAdjustmentsLinearRgbInto(
+              sourceR, sourceG, sourceB, adjustmentContext, adjustedRgb,
             );
+            r = adjustedRgb[0]; g = adjustedRgb[1]; b = adjustedRgb[2];
           }
         }
         result[dst] = encodeStoredRgb16Channel(r, "gamma20", 1);
@@ -9521,11 +9635,112 @@ function applyOverlaysToRgb16(
   }
 }
 
+type ImageEncodeWorkerResponse = {
+  type: "encode-complete";
+  blob: Blob;
+};
+
+function createImageEncodeWorker(): Worker | null {
+  if (typeof Worker !== "function") return null;
+  try {
+    return new Worker(new URL("./image-editor/image-encode.worker.ts", import.meta.url), {
+      type: "module",
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function encodeImageEditCanvasInWorker(
+  canvas: HTMLCanvasElement | OffscreenCanvas,
+  outputFormat: ImageEditOutputFormat,
+  quality: number,
+  outputColorProfile: ImageEditOutputColorProfile,
+): Promise<Blob | null> {
+  if (outputFormat !== "image/webp") return null;
+  const OSC = getOffscreenCanvasCtor();
+  if (!OSC) return null;
+  const worker = createImageEncodeWorker();
+  if (!worker) return null;
+
+  let transferableCanvas: OffscreenCanvas | null = null;
+  try {
+    transferableCanvas = new OSC(canvas.width, canvas.height);
+    const ctx = getCanvas2dContext(transferableCanvas, outputColorProfile);
+    if (!ctx) return null;
+    ctx.drawImage(canvas, 0, 0, canvas.width, canvas.height);
+
+    return await new Promise<Blob>((resolve, reject) => {
+      let timeoutId: ReturnType<typeof setTimeout> | null = null;
+      const cleanup = () => {
+        if (timeoutId !== null) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+        worker.removeEventListener("message", onMessage);
+        worker.removeEventListener("error", onError);
+        worker.removeEventListener("messageerror", onMessageError);
+      };
+      const onMessage = (event: MessageEvent) => {
+        const payload = event.data as ImageEncodeWorkerResponse | { type?: string; message?: string };
+        if (payload?.type === "error") {
+          cleanup();
+          reject(new Error(payload.message || "Image encode worker failed"));
+          return;
+        }
+        if (payload?.type !== "encode-complete") return;
+        cleanup();
+        resolve((payload as ImageEncodeWorkerResponse).blob);
+      };
+      const onError = (event: ErrorEvent) => {
+        cleanup();
+        reject(new Error(event.message || "Image encode worker failed"));
+      };
+      const onMessageError = () => {
+        cleanup();
+        reject(new Error("Image encode worker message failed"));
+      };
+      worker.addEventListener("message", onMessage);
+      worker.addEventListener("error", onError);
+      worker.addEventListener("messageerror", onMessageError);
+      timeoutId = setTimeout(() => {
+        cleanup();
+        reject(new Error("Image encode worker timed out"));
+      }, 30_000);
+      const transferred = transferableCanvas!;
+      worker.postMessage(
+        {
+          type: "encode-canvas",
+          canvas: transferred,
+          mimeType: outputFormat,
+          quality,
+        },
+        [transferred],
+      );
+      transferableCanvas = null;
+    });
+  } catch {
+    return null;
+  } finally {
+    if (transferableCanvas) releaseCanvasIfNeeded(transferableCanvas);
+    worker.terminate();
+  }
+}
+
 async function encodeImageEditCanvas(
   canvas: HTMLCanvasElement | OffscreenCanvas,
   outputFormat: ImageEditOutputFormat,
   quality: number,
+  outputColorProfile: ImageEditOutputColorProfile,
 ): Promise<Blob> {
+  const workerBlob = await encodeImageEditCanvasInWorker(
+    canvas,
+    outputFormat,
+    quality,
+    outputColorProfile,
+  );
+  if (workerBlob) return workerBlob;
+
   if ("convertToBlob" in canvas) {
     type EncodeOpts = { type?: string; quality?: number };
     const conv = (canvas as OffscreenCanvas & { convertToBlob(options?: EncodeOpts): Promise<Blob> }).convertToBlob;
@@ -9547,7 +9762,12 @@ export async function encodeEditedVariant(
   outputColorProfile: ImageEditOutputColorProfile = prepared.colorProfile,
 ): Promise<{ blob: Blob; width: number; height: number }> {
   if (prepared.colorProfile === outputColorProfile) {
-    const blob = await encodeImageEditCanvas(prepared.canvas, outputFormat, quality);
+    const blob = await encodeImageEditCanvas(
+      prepared.canvas,
+      outputFormat,
+      quality,
+      outputColorProfile,
+    );
     return { blob, width: prepared.width, height: prepared.height };
   }
 
@@ -9556,7 +9776,12 @@ export async function encodeEditedVariant(
     const ctx = getCanvas2dContext(converted, outputColorProfile);
     if (!ctx) throw new Error("2D context unavailable");
     ctx.drawImage(prepared.canvas, 0, 0, prepared.width, prepared.height);
-    const blob = await encodeImageEditCanvas(converted, outputFormat, quality);
+    const blob = await encodeImageEditCanvas(
+      converted,
+      outputFormat,
+      quality,
+      outputColorProfile,
+    );
     return { blob, width: prepared.width, height: prepared.height };
   } finally {
     releaseCanvasIfNeeded(converted);
@@ -10288,7 +10513,7 @@ export function ImageEditDialog({
         const timing = progress.rawTiming ?? rawDevelopmentTimingRef.current ?? undefined;
         const editableThumbnailStartedAt = performance.now();
         const requestId = ++editableThumbnailRequestRef.current;
-        void rawEditableThumbnailToDecoded(preview).then((thumbnailDecoded) => {
+        void rawEditableThumbnailToDecodedParallel(preview).then((thumbnailDecoded) => {
           if (cancelled || editableThumbnailRequestRef.current !== requestId) {
             thumbnailDecoded.cleanup();
             return;

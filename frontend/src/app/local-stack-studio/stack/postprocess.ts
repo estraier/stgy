@@ -5,10 +5,9 @@ import {
   ROLLOFF_SAVING_LIMIT_FACTOR,
   SATURATION_ROLLOFF_A,
   applyHighlightLinear,
-  applyLuminanceGainPreservingAboveOneLinearRgb,
-  applyLuminanceMappingToRgb,
-  applyRolloffMaxChannelLinearRgb,
-  applySaturationVibranceAndFinalRolloffLinearRgb,
+  applyLuminanceGainPreservingAboveOneLinearRgbInto,
+  applyRolloffMaxChannelLinearRgbInto,
+  applySaturationVibranceAndFinalRolloffLinearRgbInto,
   applyScaledLogLinearExtended,
   applyShadowLinear,
   applySigmoidLinearExtended,
@@ -18,7 +17,7 @@ import {
   clampToneRangeAdjustment,
   colorSaturationFactor,
   proPhotoLinearLuminance,
-  rgbToHsvExtended,
+  rgbSaturationExtended,
   rolloffParams,
   type RolloffParams,
 } from "@/image/tone";
@@ -46,6 +45,15 @@ export type StackFinalRolloff = {
   saturationRolloff: RolloffParams | null;
   finalRolloff: RolloffParams | null;
 } | null;
+
+const STACK_TONE_STAGE_INDEX: Record<StackToneStage, number> = {
+  source: 0,
+  exposure: 1,
+  logarithm: 2,
+  sigmoid: 3,
+  shadow: 4,
+  highlight: 5,
+};
 
 type StackToneContext = {
   gain: number;
@@ -115,14 +123,16 @@ export function computeStackHighlightP100(
       )
     : null;
   let p100 = -Infinity;
+  const adjusted: [number, number, number] = [0, 0, 0];
   for (let i = 0; i + 2 < sourceLinear.length; i += 3) {
-    const [r, g, b] = applyRolloffMaxChannelLinearRgb(
+    applyRolloffMaxChannelLinearRgbInto(
       (sourceLinear[i] ?? 0) * gain,
       (sourceLinear[i + 1] ?? 0) * gain,
       (sourceLinear[i + 2] ?? 0) * gain,
       exposureRolloff,
+      adjusted,
     );
-    let luminance = proPhotoLinearLuminance(r, g, b);
+    let luminance = proPhotoLinearLuminance(adjusted[0], adjusted[1], adjusted[2]);
     if (normalizedLog !== 0) {
       luminance = applyScaledLogLinearExtended(luminance, normalizedLog, STACK_LOGARITHM_LIMIT);
     }
@@ -172,20 +182,22 @@ export function computeStackFinalRolloff(
   const saturationFactor = colorSaturationFactor(saturation);
   const saturationValues = saturationFactor > 1 ? new Float32Array(pixelCount) : null;
   let saturationCount = 0;
+  const adjusted: [number, number, number] = [0, 0, 0];
   for (let pixel = 0, sourceIndex = 0; pixel < pixelCount; pixel += 1, sourceIndex += 3) {
-    const [r, g, b] = applyStackToneAdjustmentsLinearRgbRange(
+    applyStackToneAdjustmentsLinearRgbRangeInto(
       sourceLinear[sourceIndex] ?? 0,
       sourceLinear[sourceIndex + 1] ?? 0,
       sourceLinear[sourceIndex + 2] ?? 0,
       toneContext,
       "source",
       "highlight",
+      adjusted,
     );
-    toneAdjusted[sourceIndex] = r;
-    toneAdjusted[sourceIndex + 1] = g;
-    toneAdjusted[sourceIndex + 2] = b;
+    toneAdjusted[sourceIndex] = adjusted[0];
+    toneAdjusted[sourceIndex + 1] = adjusted[1];
+    toneAdjusted[sourceIndex + 2] = adjusted[2];
     if (saturationValues) {
-      saturationValues[saturationCount++] = rgbToHsvExtended(r, g, b)[1];
+      saturationValues[saturationCount++] = rgbSaturationExtended(adjusted[0], adjusted[1], adjusted[2]);
     }
   }
 
@@ -202,10 +214,10 @@ export function computeStackFinalRolloff(
   const maxima = new Float32Array(pixelCount);
   let count = 0;
   for (let sourceIndex = 0; sourceIndex + 2 < toneAdjusted.length; sourceIndex += 3) {
-    let r = toneAdjusted[sourceIndex] ?? 0;
-    let g = toneAdjusted[sourceIndex + 1] ?? 0;
-    let b = toneAdjusted[sourceIndex + 2] ?? 0;
-    [r, g, b] = applySaturationVibranceAndFinalRolloffLinearRgb(
+    const r = toneAdjusted[sourceIndex] ?? 0;
+    const g = toneAdjusted[sourceIndex + 1] ?? 0;
+    const b = toneAdjusted[sourceIndex + 2] ?? 0;
+    applySaturationVibranceAndFinalRolloffLinearRgbInto(
       r,
       g,
       b,
@@ -214,8 +226,9 @@ export function computeStackFinalRolloff(
       false,
       undefined,
       saturationRolloff,
+      adjusted,
     );
-    const maxChannel = Math.max(r, g, b);
+    const maxChannel = Math.max(adjusted[0], adjusted[1], adjusted[2]);
     if (Number.isFinite(maxChannel)) maxima[count++] = maxChannel;
   }
   if (count <= 0) return { saturationRolloff, finalRolloff: null };
@@ -514,6 +527,7 @@ export function adjustStackStoredGamma2RowsToLinear(
     || toneContext.hasShadow || toneContext.hasHighlight;
   const hasPostToneAdjustments = activeClaheMap !== null || options.vibrance !== 0
     || options.saturation !== 0 || options.applyFinalRolloff;
+  const adjusted: [number, number, number] = [0, 0, 0];
 
   for (let y = startRow; y < endRow; y += 1) {
     let sourceIndex = y * width * 3;
@@ -528,26 +542,28 @@ export function adjustStackStoredGamma2RowsToLinear(
       let b = Math.fround(Math.pow(encodedB, 2));
 
       if (hasToneAdjustments) {
-        [r, g, b] = applyStackToneAdjustmentsLinearRgbRange(
+        applyStackToneAdjustmentsLinearRgbRangeInto(
           r,
           g,
           b,
           toneContext,
           "source",
           "highlight",
+          adjusted,
         );
-        r = Math.fround(r);
-        g = Math.fround(g);
-        b = Math.fround(b);
+        r = Math.fround(adjusted[0]);
+        g = Math.fround(adjusted[1]);
+        b = Math.fround(adjusted[2]);
       }
 
       if (activeClaheMap) {
         const clarityGain = sampleStackClaheGain(activeClaheMap, x + 0.5, y + 0.5, width, height);
-        [r, g, b] = applyLuminanceGainPreservingAboveOneLinearRgb(r, g, b, clarityGain);
+        applyLuminanceGainPreservingAboveOneLinearRgbInto(r, g, b, clarityGain, adjusted);
+        r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
       }
 
       if (hasPostToneAdjustments) {
-        [r, g, b] = applySaturationVibranceAndFinalRolloffLinearRgb(
+        applySaturationVibranceAndFinalRolloffLinearRgbInto(
           r,
           g,
           b,
@@ -556,7 +572,9 @@ export function adjustStackStoredGamma2RowsToLinear(
           options.applyFinalRolloff,
           options.finalRolloff?.finalRolloff,
           options.finalRolloff?.saturationRolloff ?? null,
+          adjusted,
         );
+        r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
       }
       outputLinear[sourceIndex] = r;
       outputLinear[sourceIndex + 1] = g;
@@ -640,18 +658,20 @@ export function buildStackToneAdjustedLinearData(
   );
   if (startStage === endStage) return sourceLinear;
   const result = new Float32Array(sourceLinear.length);
+  const adjusted: [number, number, number] = [0, 0, 0];
   for (let sourceIndex = 0; sourceIndex < sourceLinear.length; sourceIndex += 3) {
-    const [r, g, b] = applyStackToneAdjustmentsLinearRgbRange(
+    applyStackToneAdjustmentsLinearRgbRangeInto(
       sourceLinear[sourceIndex] ?? 0,
       sourceLinear[sourceIndex + 1] ?? 0,
       sourceLinear[sourceIndex + 2] ?? 0,
       toneContext,
       startStage,
       endStage,
+      adjusted,
     );
-    result[sourceIndex] = r;
-    result[sourceIndex + 1] = g;
-    result[sourceIndex + 2] = b;
+    result[sourceIndex] = adjusted[0];
+    result[sourceIndex + 1] = adjusted[1];
+    result[sourceIndex + 2] = adjusted[2];
   }
   return result;
 }
@@ -674,6 +694,7 @@ export function adjustStackLinearDataPostTone(
   if (!hasClahe && vibrance === 0 && saturation === 0 && !applyFinalRolloff) return toneAdjustedLinear;
 
   const result = new Float32Array(toneAdjustedLinear.length);
+  const adjusted: [number, number, number] = [0, 0, 0];
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       const pixelIndex = y * width + x;
@@ -684,10 +705,11 @@ export function adjustStackLinearDataPostTone(
 
       if (hasClahe && activeClaheMap) {
         const clarityGain = sampleStackClaheGain(activeClaheMap, x + 0.5, y + 0.5, width, height);
-        [r, g, b] = applyLuminanceGainPreservingAboveOneLinearRgb(r, g, b, clarityGain);
+        applyLuminanceGainPreservingAboveOneLinearRgbInto(r, g, b, clarityGain, adjusted);
+        r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
       }
 
-      [r, g, b] = applySaturationVibranceAndFinalRolloffLinearRgb(
+      applySaturationVibranceAndFinalRolloffLinearRgbInto(
         r,
         g,
         b,
@@ -696,7 +718,9 @@ export function adjustStackLinearDataPostTone(
         applyFinalRolloff,
         finalRolloff?.finalRolloff,
         finalRolloff?.saturationRolloff ?? null,
+        adjusted,
       );
+      r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
       result[sourceIndex] = r;
       result[sourceIndex + 1] = g;
       result[sourceIndex + 2] = b;
@@ -748,48 +772,57 @@ function buildStackToneContext(
   };
 }
 
-function applyStackToneAdjustmentsLinearRgbRange(
+function applyStackToneAdjustmentsLinearRgbRangeInto(
   r: number,
   g: number,
   b: number,
   context: StackToneContext,
   startStage: StackToneStage,
   endStage: StackToneStage,
-): [number, number, number] {
-  const stageOrder: StackToneStage[] = [
-    "source",
-    "exposure",
-    "logarithm",
-    "sigmoid",
-    "shadow",
-    "highlight",
-  ];
-  const startIndex = Math.max(0, stageOrder.indexOf(startStage));
-  const endIndex = Math.max(0, stageOrder.indexOf(endStage));
+  output: [number, number, number],
+): void {
+  const startIndex = STACK_TONE_STAGE_INDEX[startStage];
+  const endIndex = STACK_TONE_STAGE_INDEX[endStage];
   for (let index = startIndex + 1; index <= endIndex; index += 1) {
-    const stage = stageOrder[index];
+    const stage = index === 1 ? "exposure"
+      : index === 2 ? "logarithm"
+        : index === 3 ? "sigmoid"
+          : index === 4 ? "shadow"
+            : "highlight";
     if (stage === "exposure" && context.hasExposure) {
-      [r, g, b] = applyRolloffMaxChannelLinearRgb(
+      applyRolloffMaxChannelLinearRgbInto(
         r * context.gain,
         g * context.gain,
         b * context.gain,
         context.exposureRolloff,
+        output,
       );
-    } else if (stage === "logarithm" && context.hasLogarithm) {
-      [r, g, b] = applyLuminanceMappingToRgb(r, g, b, (luminance) =>
-        applyScaledLogLinearExtended(luminance, context.normalizedLog, STACK_LOGARITHM_LIMIT));
-    } else if (stage === "sigmoid" && context.hasSigmoid) {
-      [r, g, b] = applyLuminanceMappingToRgb(r, g, b, (luminance) =>
-        applySigmoidLinearExtended(luminance, context.normalizedSigmoid));
-    } else if (stage === "shadow" && context.hasShadow) {
-      [r, g, b] = applyLuminanceMappingToRgb(r, g, b, (luminance) =>
-        applyShadowLinear(luminance, context.normalizedShadow));
-    } else if (stage === "highlight" && context.hasHighlight && context.highlightRange) {
-      [r, g, b] = applyLuminanceMappingToRgb(r, g, b, (luminance) =>
-        applyHighlightLinear(luminance, context.normalizedHighlight, context.highlightRange));
+      r = output[0]; g = output[1]; b = output[2];
+      continue;
     }
+    const sourceLuminance = proPhotoLinearLuminance(r, g, b);
+    if (!(sourceLuminance > 1e-12)) continue;
+    let targetLuminance = sourceLuminance;
+    if (stage === "logarithm" && context.hasLogarithm) {
+      targetLuminance = applyScaledLogLinearExtended(
+        sourceLuminance, context.normalizedLog, STACK_LOGARITHM_LIMIT,
+      );
+    } else if (stage === "sigmoid" && context.hasSigmoid) {
+      targetLuminance = applySigmoidLinearExtended(sourceLuminance, context.normalizedSigmoid);
+    } else if (stage === "shadow" && context.hasShadow) {
+      targetLuminance = applyShadowLinear(sourceLuminance, context.normalizedShadow);
+    } else if (stage === "highlight" && context.hasHighlight && context.highlightRange) {
+      targetLuminance = applyHighlightLinear(
+        sourceLuminance, context.normalizedHighlight, context.highlightRange,
+      );
+    } else {
+      continue;
+    }
+    if (!Number.isFinite(targetLuminance)) continue;
+    const scale = targetLuminance / sourceLuminance;
+    r *= scale; g *= scale; b *= scale;
   }
-  return [r, g, b];
+  output[0] = r; output[1] = g; output[2] = b;
 }
 
 function claheClipLimitFromStrength(strength: number): number {

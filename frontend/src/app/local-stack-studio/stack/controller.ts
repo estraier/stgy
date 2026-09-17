@@ -42,7 +42,7 @@ import { FocusWorkerClient, OrbWorkerClient } from "./worker-clients";
 import {
   EXPOSURE_ROLLOFF_A,
   ROLLOFF_SAVING_LIMIT_FACTOR,
-  applyRolloffMaxChannelLinearRgb,
+  applyRolloffMaxChannelLinearRgbInto,
   applyScaledLogLinear,
   applySigmoidLinear,
   applySigmoidLinearAtMidpoint,
@@ -3502,16 +3502,18 @@ function applyExposureAndRolloffInPlace(linear, gain, exposureRolloffBaseP998 = 
 
   const rolloff = rolloffParams(maxVal, EXPOSURE_ROLLOFF_A, ROLLOFF_SAVING_LIMIT_FACTOR, 1);
   if (!rolloff) return;
+  const adjusted: [number, number, number] = [0, 0, 0];
   for (let i = 0; i + 2 < linear.length; i += 3) {
-    const [r, g, b] = applyRolloffMaxChannelLinearRgb(
+    applyRolloffMaxChannelLinearRgbInto(
       linear[i] ?? 0,
       linear[i + 1] ?? 0,
       linear[i + 2] ?? 0,
       rolloff,
+      adjusted,
     );
-    linear[i] = r;
-    linear[i + 1] = g;
-    linear[i + 2] = b;
+    linear[i] = adjusted[0];
+    linear[i + 1] = adjusted[1];
+    linear[i + 2] = adjusted[2];
   }
 }
 

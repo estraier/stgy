@@ -1,5 +1,5 @@
 import type { DecodedRgbImage16, ImageEditOutputColorProfile, LinearRgbSample } from "./types";
-import { applyDefringeLinearRgb, applyDefringeToRenderedSample, type DefringeAnalysisMap } from "./defringe";
+import { applyDefringeLinearRgbInto, applyDefringeToRenderedSample, type DefringeAnalysisMap } from "./defringe";
 import { createCanvasImageData, getCanvas2dContext } from "./canvas";
 import { convertLinearProPhotoToOutputRgbInto } from "@/image/color";
 import { buildInteractiveColorAdjustmentContextFromLinearRgbSample } from "./analysis";
@@ -11,11 +11,11 @@ import {
 } from "./sampling";
 import type { LinearRgbBuffer } from "./sampling";
 import {
-  applyColorAdjustmentsAfterToneLinearRgb,
-  applyColorAdjustmentsLinearRgb,
-  applyLuminanceGainPreservingAboveOneLinearRgb,
-  applyToneAdjustmentsLinearRgb,
-  applyToneAdjustmentsLinearRgbRange,
+  applyColorAdjustmentsAfterToneLinearRgbInto,
+  applyColorAdjustmentsLinearRgbInto,
+  applyLuminanceGainPreservingAboveOneLinearRgbInto,
+  applyToneAdjustmentsLinearRgbInto,
+  applyToneAdjustmentsLinearRgbRangeInto,
   clamp01,
   hasColorAdjustmentContextChanges,
   type ColorAdjustmentContext,
@@ -126,6 +126,7 @@ export function buildImageEditPreviewSliderPrefixSample(
     && fullToneSample.data.length === sample.data.length
     ? fullToneSample.data
     : null;
+  const adjusted: [number, number, number] = [0, 0, 0];
 
   for (let pixel = 0, si = 0; pixel < pixelCount; pixel += 1, si += 3) {
     if (valid && !valid[pixel]) continue;
@@ -134,14 +135,16 @@ export function buildImageEditPreviewSliderPrefixSample(
     let b = toneSource ? (toneSource[si + 2] ?? 0) : (sample.data[si + 2] ?? 0);
 
     if (!toneSource) {
-      [r, g, b] = applyToneAdjustmentsLinearRgbRange(
+      applyToneAdjustmentsLinearRgbRangeInto(
         r,
         g,
         b,
         context,
         "white-balance",
         tonePrefixEnd,
+        adjusted,
       );
+      r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
     }
 
     if (stage === "color" && activeClarityMap) {
@@ -154,7 +157,8 @@ export function buildImageEditPreviewSliderPrefixSample(
             width,
             height,
           );
-      [r, g, b] = applyLuminanceGainPreservingAboveOneLinearRgb(r, g, b, clarityGain);
+      applyLuminanceGainPreservingAboveOneLinearRgbInto(r, g, b, clarityGain, adjusted);
+      r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
     }
 
     data[si] = Math.fround(r);
@@ -248,6 +252,7 @@ export function renderAdjustedLinearRgbSampleToCanvas(
   const continuousData = reusableContinuousPrefix?.data;
   const pixelCount = Math.floor(data.length / 3);
   const converted: [number, number, number] = [0, 0, 0];
+  const adjusted: [number, number, number] = [0, 0, 0];
   let di = 0;
   for (let pixel = 0; pixel < pixelCount; pixel++, di += 4) {
     if (valid && !valid[pixel]) {
@@ -279,7 +284,8 @@ export function renderAdjustedLinearRgbSampleToCanvas(
 
     if (stage && continuousData && !useFullToneCache) {
       if (isTonePreviewSliderStage(stage)) {
-        [r, g, b] = applyToneAdjustmentsLinearRgbRange(r, g, b, context, stage, "after-tone");
+        applyToneAdjustmentsLinearRgbRangeInto(r, g, b, context, stage, "after-tone", adjusted);
+        r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
       }
 
       if (stage !== "color") {
@@ -308,19 +314,23 @@ export function renderAdjustedLinearRgbSampleToCanvas(
             const y = Math.floor(pixel / width);
             clarityGain = sampleImageEditClarityGain(activeClarityMap, x + 0.5, y + 0.5, width, height);
           }
-          [r, g, b] = applyLuminanceGainPreservingAboveOneLinearRgb(r, g, b, clarityGain);
+          applyLuminanceGainPreservingAboveOneLinearRgbInto(r, g, b, clarityGain, adjusted);
+          r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
         }
       }
-      [r, g, b] = applyColorAdjustmentsAfterToneLinearRgb(
+      applyColorAdjustmentsAfterToneLinearRgbInto(
         r,
         g,
         b,
         context,
         hasClarity || hasColorAdjustmentContextChanges(context),
+        adjusted,
       );
+      r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
     } else if (hasClarity) {
       if (!toneData) {
-        [r, g, b] = applyToneAdjustmentsLinearRgb(r, g, b, context);
+        applyToneAdjustmentsLinearRgbInto(r, g, b, context, adjusted);
+        r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
       }
       let clarityGain: number;
       if (clarityTransform && claritySourceGeometry) {
@@ -346,10 +356,13 @@ export function renderAdjustedLinearRgbSampleToCanvas(
         const y = Math.floor(pixel / width);
         clarityGain = sampleImageEditClarityGain(activeClarityMap, x + 0.5, y + 0.5, width, height);
       }
-      [r, g, b] = applyLuminanceGainPreservingAboveOneLinearRgb(r, g, b, clarityGain);
-      [r, g, b] = applyColorAdjustmentsAfterToneLinearRgb(r, g, b, context);
+      applyLuminanceGainPreservingAboveOneLinearRgbInto(r, g, b, clarityGain, adjusted);
+      r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
+      applyColorAdjustmentsAfterToneLinearRgbInto(r, g, b, context, true, adjusted);
+      r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
     } else {
-      [r, g, b] = applyColorAdjustmentsLinearRgb(r, g, b, context);
+      applyColorAdjustmentsLinearRgbInto(r, g, b, context, adjusted);
+      r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
     }
     convertLinearProPhotoToOutputRgbInto(r, g, b, outputColorProfile, converted);
     output[di] = linearChannelToSrgbByteFromLut(converted[0]);
@@ -429,6 +442,8 @@ export function renderAdjustedRgb16RegionToCanvas(
   );
   const sample: LinearRgbBuffer = [0, 0, 0];
   const converted: [number, number, number] = [0, 0, 0];
+  const adjusted: [number, number, number] = [0, 0, 0];
+  const defringeConfidence: [number, number] = [0, 0];
   const samplingScratch = createRgb16SamplingScratch();
   let rowSourceX = transform.originX
     + regionX * transform.columnStepX
@@ -457,7 +472,7 @@ export function renderAdjustedRgb16RegionToCanvas(
         let g = sample[1];
         let b = sample[2];
         if (defringeMap && defringeAmount > 0) {
-          [r, g, b] = applyDefringeLinearRgb(
+          applyDefringeLinearRgbInto(
             r,
             g,
             b,
@@ -465,10 +480,14 @@ export function renderAdjustedRgb16RegionToCanvas(
             defringeAmount,
             decoded.width > 1 ? sourceX / (decoded.width - 1) : 0.5,
             decoded.height > 1 ? sourceY / (decoded.height - 1) : 0.5,
+            adjusted,
+            defringeConfidence,
           );
+          r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
         }
         if (hasClarity) {
-          [r, g, b] = applyToneAdjustmentsLinearRgb(r, g, b, context);
+          applyToneAdjustmentsLinearRgbInto(r, g, b, context, adjusted);
+          r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
           const clarityGain = sampleImageEditClarityGain(
             activeClarityMap,
             sourceX,
@@ -476,10 +495,13 @@ export function renderAdjustedRgb16RegionToCanvas(
             decoded.width,
             decoded.height,
           );
-          [r, g, b] = applyLuminanceGainPreservingAboveOneLinearRgb(r, g, b, clarityGain);
-          [r, g, b] = applyColorAdjustmentsAfterToneLinearRgb(r, g, b, context);
+          applyLuminanceGainPreservingAboveOneLinearRgbInto(r, g, b, clarityGain, adjusted);
+          r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
+          applyColorAdjustmentsAfterToneLinearRgbInto(r, g, b, context, true, adjusted);
+          r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
         } else {
-          [r, g, b] = applyColorAdjustmentsLinearRgb(r, g, b, context);
+          applyColorAdjustmentsLinearRgbInto(r, g, b, context, adjusted);
+          r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
         }
         convertLinearProPhotoToOutputRgbInto(r, g, b, outputColorProfile, converted);
         output[di] = linearChannelToSrgbByteFromLut(converted[0]);
@@ -561,6 +583,8 @@ export function renderAdjustedRgb16ToCanvas(
   );
   const sample: LinearRgbBuffer = [0, 0, 0];
   const converted: [number, number, number] = [0, 0, 0];
+  const adjusted: [number, number, number] = [0, 0, 0];
+  const defringeConfidence: [number, number] = [0, 0];
   const samplingScratch = createRgb16SamplingScratch();
   let rowSourceX = transform.originX;
   let rowSourceY = transform.originY;
@@ -585,14 +609,18 @@ export function renderAdjustedRgb16ToCanvas(
         let g = sample[1];
         let b = sample[2];
         if (defringeMap && defringeAmount > 0) {
-          [r, g, b] = applyDefringeLinearRgb(
+          applyDefringeLinearRgbInto(
             r, g, b, defringeMap, defringeAmount,
             decoded.width > 1 ? sourceX / (decoded.width - 1) : 0.5,
             decoded.height > 1 ? sourceY / (decoded.height - 1) : 0.5,
+            adjusted,
+            defringeConfidence,
           );
+          r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
         }
         if (hasClarity) {
-          [r, g, b] = applyToneAdjustmentsLinearRgb(r, g, b, context);
+          applyToneAdjustmentsLinearRgbInto(r, g, b, context, adjusted);
+          r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
           const clarityGain = sampleImageEditClarityGain(
             activeClarityMap,
             sourceX,
@@ -600,10 +628,13 @@ export function renderAdjustedRgb16ToCanvas(
             decoded.width,
             decoded.height,
           );
-          [r, g, b] = applyLuminanceGainPreservingAboveOneLinearRgb(r, g, b, clarityGain);
-          [r, g, b] = applyColorAdjustmentsAfterToneLinearRgb(r, g, b, context);
+          applyLuminanceGainPreservingAboveOneLinearRgbInto(r, g, b, clarityGain, adjusted);
+          r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
+          applyColorAdjustmentsAfterToneLinearRgbInto(r, g, b, context, true, adjusted);
+          r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
         } else {
-          [r, g, b] = applyColorAdjustmentsLinearRgb(r, g, b, context);
+          applyColorAdjustmentsLinearRgbInto(r, g, b, context, adjusted);
+          r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
         }
         convertLinearProPhotoToOutputRgbInto(r, g, b, outputColorProfile, converted);
         output[di] = linearChannelToSrgbByteFromLut(converted[0]);
