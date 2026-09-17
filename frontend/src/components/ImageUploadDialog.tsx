@@ -15871,8 +15871,8 @@ export function ImageEditDialog({
                 <div className="col-start-1 row-start-1 flex min-w-0 items-center gap-1">
                   <span>Resize</span>
                   {([
-                    ["1MP", 1_000_000],
-                    ["4MP", 4_000_000],
+                    ["2MP", 2_000_000],
+                    ["5MP", 5_000_000],
                   ] as const).map(([label, targetPixels]) => (
                     <button
                       key={label}
