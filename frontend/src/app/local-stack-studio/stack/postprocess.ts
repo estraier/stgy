@@ -458,6 +458,113 @@ export function buildStackClaheMapFromToneAdjusted(
   return { width, height, gain };
 }
 
+export type StackFullRenderOptions = {
+  exposureEv: number;
+  shadow: number;
+  highlight: number;
+  scaledLog: number;
+  sigmoid: number;
+  clahe: number;
+  vibrance: number;
+  saturation: number;
+  exposureRolloffBaseP998: number | null;
+  highlightP100: number | null;
+  claheMap: StackClaheMap | null;
+  applyFinalRolloff: boolean;
+  finalRolloff: StackFinalRolloff | undefined;
+};
+
+/**
+ * Decode stored gamma-2 ProPhoto RGB and apply the complete LSS tone/color
+ * pipeline for a row range in one pixel pass. This is used by the full-size
+ * render workers so the large intermediate linear/tone-adjusted buffers do not
+ * have to be materialized on the main thread.
+ */
+export function adjustStackStoredGamma2RowsToLinear(
+  sourceStored: Uint16Array,
+  outputLinear: Float32Array,
+  width: number,
+  height: number,
+  rowStart: number,
+  rowEnd: number,
+  options: StackFullRenderOptions,
+): void {
+  const expectedLength = width * height * 3;
+  if (sourceStored.length < expectedLength || outputLinear.length < expectedLength) {
+    throw new Error("LSS full-size render buffer is too small");
+  }
+
+  const startRow = Math.max(0, Math.min(height, Math.floor(rowStart)));
+  const endRow = Math.max(startRow, Math.min(height, Math.floor(rowEnd)));
+  const toneContext = buildStackToneContext(
+    options.exposureEv,
+    options.shadow,
+    options.highlight,
+    options.scaledLog,
+    options.sigmoid,
+    options.exposureRolloffBaseP998,
+    options.highlightP100,
+  );
+  const normalizedClahe = clampStackClahe(options.clahe);
+  const activeClaheMap = normalizedClahe !== 0 && isUsableStackClaheMap(options.claheMap)
+    ? options.claheMap
+    : null;
+  const inverseMax = 1 / 65535;
+  const hasToneAdjustments = toneContext.hasExposure || toneContext.hasLogarithm || toneContext.hasSigmoid
+    || toneContext.hasShadow || toneContext.hasHighlight;
+  const hasPostToneAdjustments = activeClaheMap !== null || options.vibrance !== 0
+    || options.saturation !== 0 || options.applyFinalRolloff;
+
+  for (let y = startRow; y < endRow; y += 1) {
+    let sourceIndex = y * width * 3;
+    for (let x = 0; x < width; x += 1, sourceIndex += 3) {
+      const encodedR = (sourceStored[sourceIndex] ?? 0) * inverseMax;
+      const encodedG = (sourceStored[sourceIndex + 1] ?? 0) * inverseMax;
+      const encodedB = (sourceStored[sourceIndex + 2] ?? 0) * inverseMax;
+      // Match the former materialized Float32 source/tone buffers exactly: the
+      // one-pass path keeps those two Float32 quantization boundaries via fround.
+      let r = Math.fround(Math.pow(encodedR, 2));
+      let g = Math.fround(Math.pow(encodedG, 2));
+      let b = Math.fround(Math.pow(encodedB, 2));
+
+      if (hasToneAdjustments) {
+        [r, g, b] = applyStackToneAdjustmentsLinearRgbRange(
+          r,
+          g,
+          b,
+          toneContext,
+          "source",
+          "highlight",
+        );
+        r = Math.fround(r);
+        g = Math.fround(g);
+        b = Math.fround(b);
+      }
+
+      if (activeClaheMap) {
+        const clarityGain = sampleStackClaheGain(activeClaheMap, x + 0.5, y + 0.5, width, height);
+        [r, g, b] = applyLuminanceGainPreservingAboveOneLinearRgb(r, g, b, clarityGain);
+      }
+
+      if (hasPostToneAdjustments) {
+        [r, g, b] = applySaturationVibranceAndFinalRolloffLinearRgb(
+          r,
+          g,
+          b,
+          options.saturation,
+          options.vibrance,
+          options.applyFinalRolloff,
+          options.finalRolloff?.finalRolloff,
+          options.finalRolloff?.saturationRolloff ?? null,
+        );
+      }
+      outputLinear[sourceIndex] = r;
+      outputLinear[sourceIndex + 1] = g;
+      outputLinear[sourceIndex + 2] = b;
+    }
+  }
+}
+
 export function adjustStackLinearData(
   sourceLinear: Float32Array,
   width: number,

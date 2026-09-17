@@ -169,6 +169,9 @@ let previewRenderScheduled = false;
 let currentZoomViewUrl = null;
 let currentStackResultRevision = 0;
 let fullSizeRenderCache = null;
+let fullSizeRenderPending = null;
+let fullSizeSharedSourceCache = null;
+let fullSizeSharedClaheMapCache = new WeakMap();
 let previewClaheMapCache = null;
 let previewStageCache = null;
 let previewPostToneCache = null;
@@ -389,7 +392,7 @@ listen(editButton, "click", async () => {
 
   try {
     await waitForBusyPaint();
-    const cache = ensureFullSizeRenderCache();
+    const cache = await ensureFullSizeRenderCache();
     const decodedImage = {
       colorSpace: "prophoto",
       transfer: "gamma20",
@@ -484,7 +487,7 @@ listen(downloadButton, "click", async () => {
   try {
     await waitForBusyPaint();
     const format = outputFormat.value;
-    const cache = ensureFullSizeRenderCache();
+    const cache = await ensureFullSizeRenderCache();
     const outputDimensions = getSelectedOutputDimensions(
       currentStackResult.width,
       currentStackResult.height,
@@ -1046,7 +1049,7 @@ function hasCurrentToneAdjustments() {
   );
 }
 
-function ensureFullSizeRenderCache() {
+async function ensureFullSizeRenderCache() {
   if (!currentStackResult) {
     throw new Error("No stacked image is available.");
   }
@@ -1054,41 +1057,210 @@ function ensureFullSizeRenderCache() {
   if (fullSizeRenderCache && fullSizeRenderCache.key === key) {
     return fullSizeRenderCache;
   }
+  if (fullSizeRenderPending && fullSizeRenderPending.key === key) {
+    return fullSizeRenderPending.promise;
+  }
 
-  const sourceLinear = decodeStoredGamma2ToLinear(currentStackResult.gamma2ProPhotoRgb16);
+  const stackResult = currentStackResult;
+  const resultRevision = currentStackResultRevision;
+  const promise = buildFullSizeRenderCache(stackResult, key, resultRevision);
+  fullSizeRenderPending = { key, promise };
+  try {
+    const cache = await promise;
+    if (
+      currentStackResult === stackResult &&
+      currentStackResultRevision === resultRevision &&
+      getFullSizeRenderCacheKey() === key
+    ) {
+      fullSizeRenderCache = cache;
+      return cache;
+    }
+    // The former synchronous path implicitly froze UI state while rendering.
+    // Workers make the UI responsive, so a slider/result may change mid-render;
+    // in that case render the newest state instead of returning a stale image.
+    if (currentStackResult) {
+      return await ensureFullSizeRenderCache();
+    }
+    throw new Error("No stacked image is available.");
+  } finally {
+    if (fullSizeRenderPending?.promise === promise) {
+      fullSizeRenderPending = null;
+    }
+  }
+}
+
+async function buildFullSizeRenderCache(stackResult, key, resultRevision) {
   const highlightP100 = getCurrentHighlightP100();
   const claheMap = getCurrentClaheMap(highlightP100);
-  const adjustedLinear = hasCurrentToneAdjustments()
-    ? adjustStackLinearData(
-        sourceLinear,
-        currentStackResult.width,
-        currentStackResult.height,
-        currentPreviewExposureEv,
-        currentPreviewShadow,
-        currentPreviewHighlight,
-        currentPreviewLogarithm,
-        currentPreviewSigmoid,
-        currentPreviewClahe,
-        currentPreviewVibrance,
-        currentPreviewSaturation,
-        currentStackResult.exposureRolloffBaseP998,
-        highlightP100,
-        claheMap,
-        currentPreviewColorSpace,
-        getCurrentFinalRolloff(highlightP100),
-      )
-    : sourceLinear;
+  const hasAdjustments = hasCurrentToneAdjustments();
+  const finalRolloff = hasAdjustments ? getCurrentFinalRolloff(highlightP100) : null;
+  const outputColorProfile = currentPreviewColorSpace;
+  const options = {
+    exposureEv: currentPreviewExposureEv,
+    shadow: currentPreviewShadow,
+    highlight: currentPreviewHighlight,
+    scaledLog: currentPreviewLogarithm,
+    sigmoid: currentPreviewSigmoid,
+    clahe: currentPreviewClahe,
+    vibrance: currentPreviewVibrance,
+    saturation: currentPreviewSaturation,
+    exposureRolloffBaseP998: stackResult.exposureRolloffBaseP998,
+    highlightP100,
+    claheMap,
+    applyFinalRolloff: hasAdjustments,
+    finalRolloff,
+  };
 
-  fullSizeRenderCache = {
+  let adjustedLinear = null;
+  if (
+    typeof Worker === "function" &&
+    typeof SharedArrayBuffer === "function" &&
+    globalThis.crossOriginIsolated === true
+  ) {
+    try {
+      adjustedLinear = await renderFullSizeStackInWorkers(
+        stackResult,
+        resultRevision,
+        options,
+      );
+    } catch (error) {
+      console.warn("LSS full-size worker render failed; using main-thread fallback.", error);
+    }
+  }
+
+  if (!adjustedLinear) {
+    const sourceLinear = decodeStoredGamma2ToLinear(stackResult.gamma2ProPhotoRgb16);
+    adjustedLinear = hasAdjustments
+      ? adjustStackLinearData(
+          sourceLinear,
+          stackResult.width,
+          stackResult.height,
+          options.exposureEv,
+          options.shadow,
+          options.highlight,
+          options.scaledLog,
+          options.sigmoid,
+          options.clahe,
+          options.vibrance,
+          options.saturation,
+          options.exposureRolloffBaseP998,
+          options.highlightP100,
+          options.claheMap,
+          outputColorProfile,
+          options.finalRolloff,
+        )
+      : sourceLinear;
+  }
+
+  return {
     key,
     adjustedLinear,
     jpegBlob: null,
   };
-  return fullSizeRenderCache;
+}
+
+async function renderFullSizeStackInWorkers(stackResult, resultRevision, options) {
+  const width = stackResult.width;
+  const height = stackResult.height;
+  const sourceBuffer = getFullSizeSharedSourceBuffer(stackResult, resultRevision);
+  const outputBuffer = new SharedArrayBuffer(
+    width * height * 3 * Float32Array.BYTES_PER_ELEMENT,
+  );
+  const sharedClaheMap = getFullSizeSharedClaheMap(options.claheMap);
+  const workerOptions = {
+    ...options,
+    claheMap: sharedClaheMap,
+  };
+  const hardwareConcurrency = typeof navigator === "object"
+    ? Math.max(1, Math.floor(navigator.hardwareConcurrency || 4))
+    : 4;
+  const workerCount = Math.max(1, Math.min(4, hardwareConcurrency, height));
+  const workers = [];
+
+  try {
+    const workerUrl = new URL("/generated/local-stack-studio/full-render.worker.js", window.location.origin);
+    for (let workerIndex = 0; workerIndex < workerCount; workerIndex += 1) {
+      workers.push(new Worker(workerUrl));
+    }
+    await Promise.all(workers.map((worker, workerIndex) => {
+      const rowStart = Math.floor(height * workerIndex / workerCount);
+      const rowEnd = Math.floor(height * (workerIndex + 1) / workerCount);
+      return requestFullSizeRenderWorker(worker, {
+        type: "render-rows",
+        requestId: workerIndex + 1,
+        workerIndex,
+        sourceBuffer,
+        outputBuffer,
+        width,
+        height,
+        rowStart,
+        rowEnd,
+        options: workerOptions,
+      });
+    }));
+    return new Float32Array(outputBuffer);
+  } finally {
+    for (const worker of workers) worker.terminate();
+  }
+}
+
+function requestFullSizeRenderWorker(worker, message) {
+  return new Promise((resolve, reject) => {
+    const requestId = message.requestId;
+    worker.onmessage = (event) => {
+      const response = event.data || {};
+      if (response.requestId !== requestId) return;
+      if (response.type === "error") {
+        reject(new Error(response.message || "LSS full-size render worker failed."));
+        return;
+      }
+      if (response.type === "render-rows-complete") resolve(response);
+    };
+    worker.onerror = (event) => {
+      reject(new Error(event.message || "LSS full-size render worker failed."));
+    };
+    worker.postMessage(message);
+  });
+}
+
+function getFullSizeSharedSourceBuffer(stackResult, resultRevision) {
+  if (
+    fullSizeSharedSourceCache &&
+    fullSizeSharedSourceCache.revision === resultRevision &&
+    fullSizeSharedSourceCache.source === stackResult.gamma2ProPhotoRgb16
+  ) {
+    return fullSizeSharedSourceCache.buffer;
+  }
+  const buffer = new SharedArrayBuffer(stackResult.gamma2ProPhotoRgb16.byteLength);
+  new Uint16Array(buffer).set(stackResult.gamma2ProPhotoRgb16);
+  fullSizeSharedSourceCache = {
+    revision: resultRevision,
+    source: stackResult.gamma2ProPhotoRgb16,
+    buffer,
+  };
+  return buffer;
+}
+
+function getFullSizeSharedClaheMap(claheMap) {
+  if (!claheMap) return null;
+  const cached = fullSizeSharedClaheMapCache.get(claheMap);
+  if (cached) return cached;
+  const gainBuffer = new SharedArrayBuffer(claheMap.gain.byteLength);
+  new Float32Array(gainBuffer).set(claheMap.gain);
+  const shared = {
+    width: claheMap.width,
+    height: claheMap.height,
+    gainBuffer,
+  };
+  fullSizeSharedClaheMapCache.set(claheMap, shared);
+  return shared;
 }
 
 function clearFullSizeRenderCache() {
   fullSizeRenderCache = null;
+  fullSizeRenderPending = null;
+  fullSizeSharedSourceCache = null;
+  fullSizeSharedClaheMapCache = new WeakMap();
 }
 
 function renderLinearDataToCanvas(
@@ -1167,7 +1339,7 @@ async function openZoomModalForPoint(normalizedX, normalizedY) {
 
   if (!hasCachedJpeg) {
     // Give the browser a chance to paint the modal and spinner before the
-    // full-size tone/color conversion starts blocking the main thread.
+    // full-size worker render begins.
     await waitForBusyPaint();
     if (requestId !== zoomRenderRequestId) {
       return;
@@ -1175,7 +1347,7 @@ async function openZoomModalForPoint(normalizedX, normalizedY) {
   }
 
   try {
-    const cache = ensureFullSizeRenderCache();
+    const cache = await ensureFullSizeRenderCache();
     let blob = cache.jpegBlob;
     if (!blob) {
       blob = await linearAccumulatorToJpeg(
