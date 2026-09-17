@@ -3145,7 +3145,7 @@ function createHdrDebevecReinhardStreamWorker(width, height, imageCount, exposur
   };
 }
 
-function createHdrMertensStreamWorker(width, height, imageCount, preBrightnessSigmoidGain = 0) {
+function createHdrMertensStreamWorker(width, height, imageCount) {
   const workerUrl = new URL("/generated/local-stack-studio/hdr.worker.js", window.location.origin);
   const worker = new Worker(workerUrl);
   let terminated = false;
@@ -3227,7 +3227,6 @@ function createHdrMertensStreamWorker(width, height, imageCount, preBrightnessSi
       imageCount,
       saturationWeight: SINGLE_SHOT_HDR_SATURATION_WEIGHT,
       exposureWeight: SINGLE_SHOT_HDR_EXPOSURE_WEIGHT,
-      preBrightnessSigmoidGain,
     },
     [],
     "mertens-stream-ready",
@@ -3343,7 +3342,7 @@ async function processSingleInputHdrWithOpenCv(cv, file, inputInfo, mergePlan, o
     const hdrBaseLinear = hdrBase.linear;
     baseLinear = null;
     const brightness = computeAverageBrightnessFromLinear(hdrBaseLinear);
-    const hdr2StreamWorker = createHdrMertensStreamWorker(width, height, materials.length, 2);
+    const hdr2StreamWorker = createHdrMertensStreamWorker(width, height, materials.length);
     try {
       for (let i = 0; i < materials.length; i += 1) {
         const material = materials[i];

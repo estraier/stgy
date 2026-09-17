@@ -296,10 +296,6 @@ async function processMertensMessage(message) {
   const saturationWeight = Number.isFinite(message.saturationWeight) ? Number(message.saturationWeight) : 0.1;
   const exposureWeight = Number.isFinite(message.exposureWeight) ? Number(message.exposureWeight) : 1;
   const targetBrightness = meanArray(brightnesses);
-  const preBrightnessSigmoidGain = Number.isFinite(message.preBrightnessSigmoidGain)
-    ? Number(message.preBrightnessSigmoidGain)
-    : 0;
-
   postProgress("Loading OpenCV for HDR2 Mertens exposure fusion...");
   const cv = await loadWorkerOpenCv("HDR2");
   if (typeof cv.pyrDown !== "function" || typeof cv.pyrUp !== "function") {
@@ -315,11 +311,6 @@ async function processMertensMessage(message) {
     saturationWeight,
     exposureWeight,
   );
-
-  if (Math.abs(preBrightnessSigmoidGain) > 1e-6) {
-    postProgress("Applying single-shot HDR2 sigmoid...");
-    applySigmoidInPlace(merged, preBrightnessSigmoidGain, 0.5);
-  }
 
   postProgress("Restoring HDR2 brightness...");
   adjustExposureToBrightnessInPlace(merged, targetBrightness);
@@ -466,9 +457,6 @@ async function initializeMertensStream(message) {
     receivedFlags: new Uint8Array(imageCount),
     saturationWeight: Number.isFinite(message.saturationWeight) ? Number(message.saturationWeight) : 0.1,
     exposureWeight: Number.isFinite(message.exposureWeight) ? Number(message.exposureWeight) : 1,
-    preBrightnessSigmoidGain: Number.isFinite(message.preBrightnessSigmoidGain)
-      ? Number(message.preBrightnessSigmoidGain)
-      : 0,
     db,
     sessionId: createHdr2ScratchSessionId(),
     memoryImages: new Map(),
@@ -598,10 +586,6 @@ async function finalizeMertensStream(message) {
   }
 
   const merged = reconstructMertensFusedLevels(cv, fusedLevels, dimensions, state.width, state.height);
-  if (Math.abs(state.preBrightnessSigmoidGain) > 1e-6) {
-    postProgress("Applying single-shot HDR2 sigmoid...");
-    applySigmoidInPlace(merged, state.preBrightnessSigmoidGain, 0.5);
-  }
   postProgress("Restoring HDR2 brightness...");
   adjustExposureToBrightnessInPlace(merged, meanArray(state.brightnesses));
   try {
