@@ -597,7 +597,7 @@ async function finalizeMertensStream(message) {
     await releaseMertensStreamImage(state, imageIndex);
   }
 
-  let merged = reconstructMertensFusedLevels(cv, fusedLevels, dimensions, state.width, state.height);
+  const merged = reconstructMertensFusedLevels(cv, fusedLevels, dimensions, state.width, state.height);
   if (Math.abs(state.preBrightnessSigmoidGain) > 1e-6) {
     postProgress("Applying single-shot HDR2 sigmoid...");
     applySigmoidInPlace(merged, state.preBrightnessSigmoidGain, 0.5);
