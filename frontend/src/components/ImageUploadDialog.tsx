@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from "react";
 import NextImage from "next/image";
 import { createPortal } from "react-dom";
 import { ChevronDown, ChevronUp, Move, Palette, Pipette, RotateCw } from "lucide-react";
@@ -8837,10 +8837,82 @@ function releaseCanvasIfNeeded(canvas: HTMLCanvasElement | OffscreenCanvas): voi
 
 const PEEP_DENOISE_HALO_PX = 16;
 const PEEP_OUTPUT_HALO_PX = 4;
+const PEEP_TILE_SIZE_PX = 400;
+const PEEP_TILE_CACHE_LIMIT = 128;
+const PEEP_TILE_PREFETCH_RINGS = 1;
+const PEEP_TILE_SLIDER_IDLE_MS = 200;
 
 type PeepOutputRect = { x: number; y: number; w: number; h: number };
+type PeepTileSource = ImageBitmap | HTMLCanvasElement | OffscreenCanvas;
+type PeepTileCacheEntry = { source: PeepTileSource; width: number; height: number };
+type PeepTileJob = { revision: number; tx: number; ty: number; rect: PeepOutputRect };
 
-async function buildPeepPreviewCanvasFromDecoded(
+function releasePeepTileSource(source: PeepTileSource): void {
+  if (typeof ImageBitmap !== "undefined" && source instanceof ImageBitmap) {
+    source.close();
+    return;
+  }
+  releaseCanvasIfNeeded(source as HTMLCanvasElement | OffscreenCanvas);
+}
+
+function peepTileKey(tx: number, ty: number): string {
+  return `${tx}:${ty}`;
+}
+
+function collectPeepTileCoordsSpiral(
+  rect: PeepOutputRect,
+  outputW: number,
+  outputH: number,
+  prefetchRings = 0,
+): Array<{ tx: number; ty: number }> {
+  const maxTx = Math.max(0, Math.ceil(outputW / PEEP_TILE_SIZE_PX) - 1);
+  const maxTy = Math.max(0, Math.ceil(outputH / PEEP_TILE_SIZE_PX) - 1);
+  const visibleMinTx = Math.max(0, Math.floor(rect.x / PEEP_TILE_SIZE_PX));
+  const visibleMinTy = Math.max(0, Math.floor(rect.y / PEEP_TILE_SIZE_PX));
+  const visibleMaxTx = Math.min(maxTx, Math.floor((rect.x + Math.max(0, rect.w - 1)) / PEEP_TILE_SIZE_PX));
+  const visibleMaxTy = Math.min(maxTy, Math.floor((rect.y + Math.max(0, rect.h - 1)) / PEEP_TILE_SIZE_PX));
+  const minTx = Math.max(0, visibleMinTx - prefetchRings);
+  const minTy = Math.max(0, visibleMinTy - prefetchRings);
+  const maxWantedTx = Math.min(maxTx, visibleMaxTx + prefetchRings);
+  const maxWantedTy = Math.min(maxTy, visibleMaxTy + prefetchRings);
+  const centerTx = Math.max(minTx, Math.min(maxWantedTx, Math.floor((rect.x + rect.w / 2) / PEEP_TILE_SIZE_PX)));
+  const centerTy = Math.max(minTy, Math.min(maxWantedTy, Math.floor((rect.y + rect.h / 2) / PEEP_TILE_SIZE_PX)));
+
+  const spiral = (filter: (tx: number, ty: number) => boolean) => {
+    const result: Array<{ tx: number; ty: number }> = [];
+    const maxRadius = Math.max(
+      Math.abs(centerTx - minTx),
+      Math.abs(maxWantedTx - centerTx),
+      Math.abs(centerTy - minTy),
+      Math.abs(maxWantedTy - centerTy),
+    );
+    const push = (tx: number, ty: number) => {
+      if (tx < minTx || tx > maxWantedTx || ty < minTy || ty > maxWantedTy || !filter(tx, ty)) return;
+      result.push({ tx, ty });
+    };
+    push(centerTx, centerTy);
+    for (let radius = 1; radius <= maxRadius; radius += 1) {
+      const left = centerTx - radius;
+      const right = centerTx + radius;
+      const top = centerTy - radius;
+      const bottom = centerTy + radius;
+      for (let tx = left; tx <= right; tx += 1) push(tx, top);
+      for (let ty = top + 1; ty <= bottom; ty += 1) push(right, ty);
+      for (let tx = right - 1; tx >= left; tx -= 1) push(tx, bottom);
+      for (let ty = bottom - 1; ty >= top; ty -= 1) push(left, ty);
+    }
+    return result;
+  };
+
+  const isVisible = (tx: number, ty: number) => (
+    tx >= visibleMinTx && tx <= visibleMaxTx && ty >= visibleMinTy && ty <= visibleMaxTy
+  );
+  const visible = spiral(isVisible);
+  if (prefetchRings <= 0) return visible;
+  return visible.concat(spiral((tx, ty) => !isVisible(tx, ty)));
+}
+
+async function buildPeepTileCanvasFromDecoded(
   decoded: DecodedRgbImage16,
   params: ImageEditParams,
   peepRect: PeepOutputRect,
@@ -9007,6 +9079,39 @@ async function buildPeepPreviewCanvasFromDecoded(
   } finally {
     releaseCanvasIfNeeded(preCanvas);
     releaseCanvasIfNeeded(extCanvas);
+  }
+}
+
+async function materializePeepTileSource(
+  canvas: HTMLCanvasElement | OffscreenCanvas,
+): Promise<PeepTileSource> {
+  if (typeof createImageBitmap === "function") {
+    try {
+      const bitmap = await createImageBitmap(canvas);
+      releaseCanvasIfNeeded(canvas);
+      return bitmap;
+    } catch {
+      // Keep the canvas as the cached source when ImageBitmap conversion is unavailable.
+    }
+  }
+  return canvas;
+}
+
+function storePeepTileCacheEntry(
+  cache: Map<string, PeepTileCacheEntry>,
+  key: string,
+  entry: PeepTileCacheEntry,
+): void {
+  const previous = cache.get(key);
+  if (previous && previous.source !== entry.source) releasePeepTileSource(previous.source);
+  cache.delete(key);
+  cache.set(key, entry);
+  while (cache.size > PEEP_TILE_CACHE_LIMIT) {
+    const oldestKey = cache.keys().next().value as string | undefined;
+    if (oldestKey === undefined) break;
+    const oldest = cache.get(oldestKey);
+    cache.delete(oldestKey);
+    if (oldest) releasePeepTileSource(oldest.source);
   }
 }
 
@@ -10263,18 +10368,27 @@ export function ImageEditDialog({
   const hasStoredCollapsePreferencesRef = useRef(false);
   const [peepMode, setPeepMode] = useState(false);
   const [peepExpanded, setPeepExpanded] = useState(false);
-  const [peepBusy, setPeepBusy] = useState(false);
   const [peepRect, setPeepRect] = useState<EditRect>({ x: 0, y: 0, w: 0, h: 0 });
   const peepRectRef = useRef<EditRect>({ x: 0, y: 0, w: 0, h: 0 });
   const [peepReferenceRasterSize, setPeepReferenceRasterSize] = useState<{ width: number; height: number } | null>(null);
   const [peepRenderRevision, setPeepRenderRevision] = useState(0);
+  const [peepTileQueueTick, setPeepTileQueueTick] = useState(0);
   const peepDisplayCanvasRef = useRef<HTMLCanvasElement>(null);
-  const peepRenderedCanvasRef = useRef<HTMLCanvasElement | OffscreenCanvas | null>(null);
-  const peepRequestIdRef = useRef(0);
-  const peepRerenderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const peepRenderedSettingsKeyRef = useRef<string | null>(null);
   const peepRequestedCenterRef = useRef<EditPoint | null>(null);
-  const peepAutoOpenRef = useRef(false);
+  const peepTileCacheRef = useRef<Map<string, PeepTileCacheEntry>>(new Map());
+  const peepTileQueueRef = useRef<PeepTileJob[]>([]);
+  const peepTileRevisionRef = useRef(0);
+  const peepTileSettingsKeyRef = useRef<string | null>(null);
+  const peepTileRenderingRef = useRef(false);
+  const peepTileResumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const peepSliderPointerActiveRef = useRef(false);
+  const peepSliderLastInputAtRef = useRef(0);
+  const peepSliderLastReleaseAtRef = useRef(0);
+  const peepSessionActiveRef = useRef(false);
+  const peepCompositeRafRef = useRef<number | null>(null);
+  const peepCompositePendingRectRef = useRef<EditRect | null>(null);
+  const peepPanRafRef = useRef<number | null>(null);
+  const peepPanPendingRectRef = useRef<EditRect | null>(null);
   const peepExpandedDragStateRef = useRef<
     | null
     | {
@@ -10375,11 +10489,15 @@ export function ImageEditDialog({
 
   useEffect(() => {
     return () => {
-      if (peepRerenderTimerRef.current) clearTimeout(peepRerenderTimerRef.current);
-      peepRequestIdRef.current += 1;
-      const rendered = peepRenderedCanvasRef.current;
-      peepRenderedCanvasRef.current = null;
-      if (rendered) releaseCanvasIfNeeded(rendered);
+      if (peepCompositeRafRef.current !== null) cancelAnimationFrame(peepCompositeRafRef.current);
+      if (peepPanRafRef.current !== null) cancelAnimationFrame(peepPanRafRef.current);
+      if (peepTileResumeTimerRef.current !== null) {
+        clearTimeout(peepTileResumeTimerRef.current);
+        peepTileResumeTimerRef.current = null;
+      }
+      peepTileQueueRef.current = [];
+      for (const entry of peepTileCacheRef.current.values()) releasePeepTileSource(entry.source);
+      peepTileCacheRef.current.clear();
     };
   }, []);
 
@@ -12164,7 +12282,7 @@ export function ImageEditDialog({
   useEffect(() => {
     const canvas = previewCanvasRef.current;
     const decoded = decodedImageRef.current;
-    if (!canvas || !decoded || !displayed.w || !displayed.h || peepExpanded) return;
+    if (!canvas || !decoded || !displayed.w || !displayed.h) return;
 
     // Match the backing sample to the physical on-screen image when that already
     // provides enough CLAHE data. Otherwise use the smallest integer backing
@@ -12366,6 +12484,7 @@ export function ImageEditDialog({
         previewRasterSizeRef.current = nextPreviewRasterSize;
         setPreviewRasterSize(nextPreviewRasterSize);
       }
+      if (peepExpanded) setPeepRenderRevision((revision) => revision + 1);
       if (isInitialPreview) {
         initialPreviewReadyRef.current = true;
         setLoadingStage(null);
@@ -12893,92 +13012,12 @@ export function ImageEditDialog({
     return { x, y, w, h };
   }, [outputDimensions, peepTargetRasterSize, cropRect]);
 
-
-  const deactivatePeepMode = useCallback(() => {
-    peepRequestIdRef.current += 1;
-    setPeepMode(false);
-    setPeepExpanded(false);
-    setPeepBusy(false);
-    setPeepReferenceRasterSize(null);
-    peepRectRef.current = { x: 0, y: 0, w: 0, h: 0 };
-    peepRequestedCenterRef.current = null;
-    peepAutoOpenRef.current = false;
-    peepExpandedDragStateRef.current = null;
-    peepRenderedSettingsKeyRef.current = null;
-    const rendered = peepRenderedCanvasRef.current;
-    peepRenderedCanvasRef.current = null;
-    if (rendered) releaseCanvasIfNeeded(rendered);
-  }, []);
-
-  const closePeepExpanded = useCallback(() => {
-    deactivatePeepMode();
-  }, [deactivatePeepMode]);
-
-  const beginPeepMode = useCallback((center: EditPoint | null = null, autoOpen = false) => {
-    peepRequestIdRef.current += 1;
-    peepAutoOpenRef.current = autoOpen;
-    peepExpandedDragStateRef.current = null;
-
-    const referenceRasterSize = {
-      width: Math.max(1, Math.round(previewRasterSizeRef.current?.width ?? displayed.w)),
-      height: Math.max(1, Math.round(previewRasterSizeRef.current?.height ?? displayed.h)),
-    };
-    setPeepReferenceRasterSize(referenceRasterSize);
-
-    // When Peep is opened by double-click, resolve the window immediately from
-    // that click instead of waiting for the peep-mode initialization effect.
-    // Keeping the requested center only in a ref allowed the first auto-open
-    // render to observe the default/previous rectangle and effectively start
-    // from the image center.
-    if (center && outputDimensions && cropRect.w > 0 && cropRect.h > 0) {
-      const targetWidth = Math.min(outputDimensions.w, referenceRasterSize.width);
-      const targetHeight = Math.min(outputDimensions.h, referenceRasterSize.height);
-      const w = Math.min(
-        cropRect.w,
-        Math.max(1, cropRect.w * targetWidth / Math.max(1, outputDimensions.w)),
-      );
-      const h = Math.min(
-        cropRect.h,
-        Math.max(1, cropRect.h * targetHeight / Math.max(1, outputDimensions.h)),
-      );
-      const centerX = Math.max(cropRect.x, Math.min(cropRect.x + cropRect.w, center.x));
-      const centerY = Math.max(cropRect.y, Math.min(cropRect.y + cropRect.h, center.y));
-      const next = {
-        x: Math.max(cropRect.x, Math.min(cropRect.x + cropRect.w - w, centerX - w / 2)),
-        y: Math.max(cropRect.y, Math.min(cropRect.y + cropRect.h - h, centerY - h / 2)),
-        w,
-        h,
-      };
-      peepRequestedCenterRef.current = null;
-      peepRectRef.current = next;
-      setPeepRect(next);
-    } else {
-      // Preserve the old deferred initialization path for callers without enough
-      // geometry yet (and for the legacy no-center path).
-      peepRequestedCenterRef.current = center;
-      if (center) {
-        const next = { x: center.x, y: center.y, w: 0, h: 0 };
-        peepRectRef.current = next;
-        setPeepRect(next);
-      }
-    }
-
-    setPeepExpanded(false);
-    setPeepBusy(false);
-    setPeepMode(true);
-  }, [cropRect, displayed.w, displayed.h, outputDimensions]);
-
-
-  const peepSettingsKey = useMemo(() => JSON.stringify([
+  const peepTileSettingsKey = useMemo(() => JSON.stringify([
     decodedRevision,
     cropRect.x,
     cropRect.y,
     cropRect.w,
     cropRect.h,
-    peepRect.x,
-    peepRect.y,
-    peepRect.w,
-    peepRect.h,
     rotationDegrees,
     temperature,
     tint,
@@ -13002,7 +13041,6 @@ export function ImageEditDialog({
   ]), [
     decodedRevision,
     cropRect,
-    peepRect,
     rotationDegrees,
     temperature,
     tint,
@@ -13025,58 +13063,365 @@ export function ImageEditDialog({
     drawOverlays,
   ]);
 
-  const renderPeep = useCallback(async (rectOverride?: EditRect | null) => {
-    const outputRect = resolvePeepOutputRect(rectOverride);
-    if (!outputRect) return;
-    const requestId = ++peepRequestIdRef.current;
-    setPeepBusy(true);
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    try {
-      let decoded = decodedImageRef.current;
-      const masterPromise = rawMasterPromiseRef.current;
-      if (masterPromise && rawDevelopmentStage !== "master" && rawDevelopmentStage !== "denoised") {
-        decoded = await masterPromise;
-      }
-      if (!decoded || requestId !== peepRequestIdRef.current) return;
-      const params = buildCurrentEditParams();
-      const defringeMap = clampDefringe(params.defringe) > 0
-        ? await ensureDefringeMap(decoded)
-        : null;
-      if (requestId !== peepRequestIdRef.current) return;
-      const clarityMap = resolvePreviewClarityMap(decoded);
-      const rendered = await buildPeepPreviewCanvasFromDecoded(
-        decoded,
-        params,
-        outputRect,
-        "srgb",
-        clarityMap,
-        defringeMap,
+  const drawPeepComposite = useCallback((rectOverride?: EditRect | null) => {
+    const displayCanvas = peepDisplayCanvasRef.current;
+    const rect = rectOverride ?? peepRectRef.current;
+    const outputRect = resolvePeepOutputRect(rect);
+    if (!displayCanvas || !outputRect || displayed.w <= 0 || displayed.h <= 0) return;
+
+    const width = Math.max(1, Math.round(outputRect.w));
+    const height = Math.max(1, Math.round(outputRect.h));
+    if (displayCanvas.width !== width) displayCanvas.width = width;
+    if (displayCanvas.height !== height) displayCanvas.height = height;
+    const ctx = displayCanvas.getContext("2d", { alpha: false });
+    if (!ctx) return;
+    ctx.save();
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, width, height);
+
+    // Immediate fallback: magnify the already-rendered preview to the requested
+    // 1:1 viewport. Real full-resolution tiles are painted over this as they arrive.
+    const preview = previewCanvasRef.current;
+    if (preview && preview.width > 0 && preview.height > 0) {
+      const sx = (rect.x - displayed.x) / displayed.w * preview.width;
+      const sy = (rect.y - displayed.y) / displayed.h * preview.height;
+      const sw = rect.w / displayed.w * preview.width;
+      const sh = rect.h / displayed.h * preview.height;
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(preview, sx, sy, sw, sh, 0, 0, width, height);
+    }
+
+    const revision = peepTileRevisionRef.current;
+    const visibleTiles = collectPeepTileCoordsSpiral(outputRect, outputDimensions?.w ?? width, outputDimensions?.h ?? height, 0);
+    const cache = peepTileCacheRef.current;
+    for (const { tx, ty } of visibleTiles) {
+      const key = `${revision}:${peepTileKey(tx, ty)}`;
+      const entry = cache.get(key);
+      if (!entry) continue;
+      // Touch the entry so the Map itself acts as an LRU queue.
+      cache.delete(key);
+      cache.set(key, entry);
+      const tileX = tx * PEEP_TILE_SIZE_PX;
+      const tileY = ty * PEEP_TILE_SIZE_PX;
+      const ix0 = Math.max(outputRect.x, tileX);
+      const iy0 = Math.max(outputRect.y, tileY);
+      const ix1 = Math.min(outputRect.x + outputRect.w, tileX + entry.width);
+      const iy1 = Math.min(outputRect.y + outputRect.h, tileY + entry.height);
+      if (ix1 <= ix0 || iy1 <= iy0) continue;
+      ctx.drawImage(
+        entry.source,
+        ix0 - tileX,
+        iy0 - tileY,
+        ix1 - ix0,
+        iy1 - iy0,
+        ix0 - outputRect.x,
+        iy0 - outputRect.y,
+        ix1 - ix0,
+        iy1 - iy0,
       );
-      if (requestId !== peepRequestIdRef.current) {
-        releaseCanvasIfNeeded(rendered);
-        return;
+    }
+    ctx.restore();
+  }, [resolvePeepOutputRect, displayed, outputDimensions]);
+
+  const schedulePeepComposite = useCallback((rectOverride?: EditRect | null) => {
+    if (rectOverride) peepCompositePendingRectRef.current = rectOverride;
+    if (peepCompositeRafRef.current !== null) return;
+    peepCompositeRafRef.current = requestAnimationFrame(() => {
+      peepCompositeRafRef.current = null;
+      const pending = peepCompositePendingRectRef.current;
+      peepCompositePendingRectRef.current = null;
+      drawPeepComposite(pending);
+    });
+  }, [drawPeepComposite]);
+
+  const enqueuePeepTiles = useCallback((rectOverride?: EditRect | null) => {
+    const outputRect = resolvePeepOutputRect(rectOverride);
+    if (!outputRect || !outputDimensions) return;
+    const revision = peepTileRevisionRef.current;
+    const cache = peepTileCacheRef.current;
+    const coords = collectPeepTileCoordsSpiral(
+      outputRect,
+      outputDimensions.w,
+      outputDimensions.h,
+      PEEP_TILE_PREFETCH_RINGS,
+    );
+    const jobs: PeepTileJob[] = [];
+    for (const { tx, ty } of coords) {
+      const key = `${revision}:${peepTileKey(tx, ty)}`;
+      if (cache.has(key)) continue;
+      const x = tx * PEEP_TILE_SIZE_PX;
+      const y = ty * PEEP_TILE_SIZE_PX;
+      const w = Math.max(0, Math.min(PEEP_TILE_SIZE_PX, outputDimensions.w - x));
+      const h = Math.max(0, Math.min(PEEP_TILE_SIZE_PX, outputDimensions.h - y));
+      if (w <= 0 || h <= 0) continue;
+      jobs.push({ revision, tx, ty, rect: { x, y, w, h } });
+    }
+    // Replacing the queue makes a newly panned viewport immediately outrank stale
+    // prefetch jobs from the previous location. A currently-rendering tile is allowed
+    // to finish, then the render loop observes this new queue.
+    peepTileQueueRef.current = jobs;
+    if (jobs.length > 0 && !peepTileRenderingRef.current) {
+      setPeepTileQueueTick((tick) => tick + 1);
+    }
+  }, [resolvePeepOutputRect, outputDimensions]);
+
+  const cancelPeepTileResume = useCallback(() => {
+    if (peepTileResumeTimerRef.current !== null) {
+      clearTimeout(peepTileResumeTimerRef.current);
+      peepTileResumeTimerRef.current = null;
+    }
+  }, []);
+
+  const schedulePeepTileResume = useCallback((delayMs: number) => {
+    cancelPeepTileResume();
+    peepTileResumeTimerRef.current = setTimeout(() => {
+      peepTileResumeTimerRef.current = null;
+      if (!peepSessionActiveRef.current || !peepExpanded) return;
+      enqueuePeepTiles();
+    }, Math.max(0, delayMs));
+  }, [cancelPeepTileResume, enqueuePeepTiles, peepExpanded]);
+
+  const deactivatePeepMode = useCallback(() => {
+    peepSessionActiveRef.current = false;
+    if (peepTileResumeTimerRef.current !== null) {
+      clearTimeout(peepTileResumeTimerRef.current);
+      peepTileResumeTimerRef.current = null;
+    }
+    peepSliderPointerActiveRef.current = false;
+    peepTileQueueRef.current = [];
+    setPeepMode(false);
+    setPeepExpanded(false);
+    setPeepReferenceRasterSize(null);
+    peepRectRef.current = { x: 0, y: 0, w: 0, h: 0 };
+    peepRequestedCenterRef.current = null;
+    peepExpandedDragStateRef.current = null;
+    peepCompositePendingRectRef.current = null;
+    peepPanPendingRectRef.current = null;
+    if (peepCompositeRafRef.current !== null) {
+      cancelAnimationFrame(peepCompositeRafRef.current);
+      peepCompositeRafRef.current = null;
+    }
+    if (peepPanRafRef.current !== null) {
+      cancelAnimationFrame(peepPanRafRef.current);
+      peepPanRafRef.current = null;
+    }
+  }, []);
+
+  const closePeepExpanded = useCallback(() => {
+    deactivatePeepMode();
+  }, [deactivatePeepMode]);
+
+  const beginPeepMode = useCallback((center: EditPoint | null = null) => {
+    peepSessionActiveRef.current = true;
+    peepExpandedDragStateRef.current = null;
+    const referenceRasterSize = {
+      width: Math.max(1, Math.round(previewRasterSizeRef.current?.width ?? displayed.w)),
+      height: Math.max(1, Math.round(previewRasterSizeRef.current?.height ?? displayed.h)),
+    };
+    setPeepReferenceRasterSize(referenceRasterSize);
+
+    if (center && outputDimensions && cropRect.w > 0 && cropRect.h > 0) {
+      const targetWidth = Math.min(outputDimensions.w, referenceRasterSize.width);
+      const targetHeight = Math.min(outputDimensions.h, referenceRasterSize.height);
+      const w = Math.min(
+        cropRect.w,
+        Math.max(1, cropRect.w * targetWidth / Math.max(1, outputDimensions.w)),
+      );
+      const h = Math.min(
+        cropRect.h,
+        Math.max(1, cropRect.h * targetHeight / Math.max(1, outputDimensions.h)),
+      );
+      const centerX = Math.max(cropRect.x, Math.min(cropRect.x + cropRect.w, center.x));
+      const centerY = Math.max(cropRect.y, Math.min(cropRect.y + cropRect.h, center.y));
+      const next = {
+        x: Math.max(cropRect.x, Math.min(cropRect.x + cropRect.w - w, centerX - w / 2)),
+        y: Math.max(cropRect.y, Math.min(cropRect.y + cropRect.h - h, centerY - h / 2)),
+        w,
+        h,
+      };
+      peepRequestedCenterRef.current = null;
+      peepRectRef.current = next;
+      setPeepRect(next);
+    } else {
+      peepRequestedCenterRef.current = center;
+      if (center) {
+        const next = { x: center.x, y: center.y, w: 0, h: 0 };
+        peepRectRef.current = next;
+        setPeepRect(next);
       }
-      const previous = peepRenderedCanvasRef.current;
-      peepRenderedCanvasRef.current = rendered;
-      if (previous && previous !== rendered) releaseCanvasIfNeeded(previous);
-      peepRenderedSettingsKeyRef.current = peepSettingsKey;
-      setPeepExpanded(true);
-      setPeepRenderRevision((revision) => revision + 1);
-    } catch (error) {
-      if (requestId === peepRequestIdRef.current) {
-        onErrorRef.current?.(error instanceof Error ? error.message : String(error));
+    }
+
+    // Open immediately. The first paint uses the existing preview image, so no
+    // full-resolution work is on the interaction critical path.
+    setPeepMode(true);
+    setPeepExpanded(true);
+  }, [cropRect, displayed.w, displayed.h, outputDimensions]);
+
+  const processPeepTileQueue = useCallback(async () => {
+    if (peepTileRenderingRef.current) return;
+    const job = peepTileQueueRef.current.shift();
+    if (!job) return;
+    peepTileRenderingRef.current = true;
+    try {
+      if (job.revision !== peepTileRevisionRef.current) return;
+      const cacheKey = `${job.revision}:${peepTileKey(job.tx, job.ty)}`;
+      if (peepTileCacheRef.current.has(cacheKey)) return;
+
+      // Process one tile per invocation. This intentionally prevents a long-lived
+      // async loop from retaining edit-parameter closures from an older render.
+      // The next tile is scheduled through React after this one finishes, so every
+      // tile starts with the latest settings callbacks.
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      if (!peepSessionActiveRef.current || job.revision !== peepTileRevisionRef.current) return;
+
+      try {
+        let decoded = decodedImageRef.current;
+        const masterPromise = rawMasterPromiseRef.current;
+        if (masterPromise && rawDevelopmentStage !== "master" && rawDevelopmentStage !== "denoised") {
+          decoded = await masterPromise;
+        }
+        if (!decoded || !peepSessionActiveRef.current || job.revision !== peepTileRevisionRef.current) return;
+        const params = buildCurrentEditParams();
+        const defringeMap = clampDefringe(params.defringe) > 0
+          ? await ensureDefringeMap(decoded)
+          : null;
+        if (!peepSessionActiveRef.current || job.revision !== peepTileRevisionRef.current) return;
+        const clarityMap = resolvePreviewClarityMap(decoded);
+        const tileCanvas = await buildPeepTileCanvasFromDecoded(
+          decoded,
+          params,
+          job.rect,
+          "srgb",
+          clarityMap,
+          defringeMap,
+        );
+        if (!peepSessionActiveRef.current || job.revision !== peepTileRevisionRef.current) {
+          releaseCanvasIfNeeded(tileCanvas);
+          return;
+        }
+        const source = await materializePeepTileSource(tileCanvas);
+        if (!peepSessionActiveRef.current || job.revision !== peepTileRevisionRef.current) {
+          releasePeepTileSource(source);
+          return;
+        }
+        storePeepTileCacheEntry(peepTileCacheRef.current, cacheKey, {
+          source,
+          width: Math.round(job.rect.w),
+          height: Math.round(job.rect.h),
+        });
+        schedulePeepComposite();
+      } catch (error) {
+        if (peepSessionActiveRef.current && job.revision === peepTileRevisionRef.current) {
+          onErrorRef.current?.(error instanceof Error ? error.message : String(error));
+        }
       }
     } finally {
-      if (requestId === peepRequestIdRef.current) setPeepBusy(false);
+      peepTileRenderingRef.current = false;
+      if (peepSessionActiveRef.current && peepTileQueueRef.current.length > 0) {
+        setPeepTileQueueTick((tick) => tick + 1);
+      }
     }
   }, [
-    resolvePeepOutputRect,
     rawDevelopmentStage,
     buildCurrentEditParams,
     ensureDefringeMap,
     resolvePreviewClarityMap,
-    peepSettingsKey,
+    schedulePeepComposite,
   ]);
+
+  useEffect(() => {
+    if (!peepExpanded) return;
+    void processPeepTileQueue();
+  }, [peepExpanded, peepTileQueueTick, processPeepTileQueue]);
+
+  useLayoutEffect(() => {
+    if (peepTileSettingsKeyRef.current === null) {
+      peepTileSettingsKeyRef.current = peepTileSettingsKey;
+      return;
+    }
+    if (peepTileSettingsKeyRef.current === peepTileSettingsKey) return;
+    peepTileSettingsKeyRef.current = peepTileSettingsKey;
+
+    // A cached tile is a finished image for one exact settings snapshot.
+    // Invalidate synchronously before the browser paints the new slider state,
+    // so an old tile can never survive visually into the new revision.
+    cancelPeepTileResume();
+    for (const entry of peepTileCacheRef.current.values()) releasePeepTileSource(entry.source);
+    peepTileCacheRef.current.clear();
+
+    const revision = peepTileRevisionRef.current + 1;
+    peepTileRevisionRef.current = revision;
+    peepTileQueueRef.current = [];
+    if (peepMode && peepExpanded) {
+      // Immediately redraw from the low-resolution preview. Full-resolution tiles
+      // are intentionally deferred while a range slider is moving.
+      schedulePeepComposite();
+      const now = performance.now();
+      const sliderInputStillPending = peepSliderLastInputAtRef.current > peepSliderLastReleaseAtRef.current
+        && now - peepSliderLastInputAtRef.current <= PEEP_TILE_SLIDER_IDLE_MS;
+      if (peepSliderPointerActiveRef.current || sliderInputStillPending) {
+        schedulePeepTileResume(PEEP_TILE_SLIDER_IDLE_MS);
+      } else {
+        enqueuePeepTiles();
+      }
+    }
+  }, [
+    peepMode,
+    peepExpanded,
+    peepTileSettingsKey,
+    schedulePeepComposite,
+    enqueuePeepTiles,
+    cancelPeepTileResume,
+    schedulePeepTileResume,
+  ]);
+
+  useEffect(() => {
+    if (!peepExpanded || peepRect.w <= 0 || peepRect.h <= 0) return;
+    schedulePeepComposite(peepRect);
+    enqueuePeepTiles(peepRect);
+  }, [peepExpanded, peepRect, schedulePeepComposite, enqueuePeepTiles]);
+
+  useEffect(() => {
+    if (!peepExpanded) return;
+    schedulePeepComposite();
+  }, [peepExpanded, peepRenderRevision, schedulePeepComposite]);
+
+  const onEditDialogPointerDownCapture = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const target = e.target;
+    if (!(target instanceof HTMLInputElement) || target.type !== "range") return;
+    peepSliderPointerActiveRef.current = true;
+    cancelPeepTileResume();
+  }, [cancelPeepTileResume]);
+
+  const onEditDialogInputCapture = useCallback((e: React.FormEvent<HTMLDivElement>) => {
+    const target = e.target;
+    if (!(target instanceof HTMLInputElement) || target.type !== "range") return;
+    peepSliderLastInputAtRef.current = performance.now();
+    // A previously scheduled 200 ms idle render must not fire after the slider
+    // has started moving again. The settings layout effect schedules a fresh one.
+    cancelPeepTileResume();
+  }, [cancelPeepTileResume]);
+
+  useEffect(() => {
+    const releaseSlider = () => {
+      if (!peepSliderPointerActiveRef.current) return;
+      peepSliderPointerActiveRef.current = false;
+      peepSliderLastReleaseAtRef.current = performance.now();
+      if (peepSessionActiveRef.current && peepExpanded) {
+        // setTimeout(0) lets the final range input/state commit invalidate the
+        // previous revision before full-resolution tile generation resumes.
+        schedulePeepTileResume(0);
+      }
+    };
+    window.addEventListener("pointerup", releaseSlider, true);
+    window.addEventListener("pointercancel", releaseSlider, true);
+    return () => {
+      window.removeEventListener("pointerup", releaseSlider, true);
+      window.removeEventListener("pointercancel", releaseSlider, true);
+    };
+  }, [peepExpanded, schedulePeepTileResume]);
 
   const onPreviewDoubleClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (
@@ -13088,7 +13433,6 @@ export function ImageEditDialog({
       || eyedropperMode
       || rotationMode
       || peepExpanded
-      || peepBusy
       || displayed.w <= 0
       || displayed.h <= 0
       || cropRect.w <= 0
@@ -13107,13 +13451,10 @@ export function ImageEditDialog({
     }
     e.preventDefault();
     e.stopPropagation();
-    beginPeepMode(
-      {
-        x: Math.max(cropRect.x, Math.min(cropRect.x + cropRect.w, point.x)),
-        y: Math.max(cropRect.y, Math.min(cropRect.y + cropRect.h, point.y)),
-      },
-      true,
-    );
+    beginPeepMode({
+      x: Math.max(cropRect.x, Math.min(cropRect.x + cropRect.w, point.x)),
+      y: Math.max(cropRect.y, Math.min(cropRect.y + cropRect.h, point.y)),
+    });
   }, [
     filterMode,
     textMode,
@@ -13123,31 +13464,14 @@ export function ImageEditDialog({
     eyedropperMode,
     rotationMode,
     peepExpanded,
-    peepBusy,
     displayed,
     cropRect,
     toLocal,
     beginPeepMode,
   ]);
 
-  useEffect(() => {
-    if (
-      !peepAutoOpenRef.current
-      || !peepMode
-      || peepExpanded
-      || peepBusy
-      || peepRect.w <= 0
-      || peepRect.h <= 0
-    ) {
-      return;
-    }
-    peepAutoOpenRef.current = false;
-    void renderPeep();
-  }, [peepMode, peepExpanded, peepBusy, peepRect, renderPeep]);
-
-
   const onPeepExpandedPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (!peepExpanded || peepBusy || e.button !== 0) return;
+    if (!peepExpanded || e.button !== 0) return;
     const canvas = peepDisplayCanvasRef.current;
     const rect = canvas?.getBoundingClientRect();
     if (!rect || rect.width <= 0 || rect.height <= 0) return;
@@ -13156,23 +13480,53 @@ export function ImageEditDialog({
       pointerId: e.pointerId,
       startClientX: e.clientX,
       startClientY: e.clientY,
-      startRect: peepRect,
+      startRect: peepRectRef.current,
       viewWidth: rect.width,
       viewHeight: rect.height,
       moved: false,
     };
     e.preventDefault();
     e.stopPropagation();
-  }, [peepExpanded, peepBusy, peepRect]);
+  }, [peepExpanded]);
 
   const onPeepExpandedPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const state = peepExpandedDragStateRef.current;
-    if (!state || state.pointerId !== e.pointerId) return;
-    const dx = e.clientX - state.startClientX;
-    const dy = e.clientY - state.startClientY;
-    if (Math.abs(dx) >= 2 || Math.abs(dy) >= 2) state.moved = true;
+    if (!state || state.pointerId !== e.pointerId || !outputDimensions || state.viewWidth <= 0 || state.viewHeight <= 0) return;
+    const dxCss = e.clientX - state.startClientX;
+    const dyCss = e.clientY - state.startClientY;
+    if (Math.abs(dxCss) >= 2 || Math.abs(dyCss) >= 2) state.moved = true;
+    const targetW = peepTargetRasterSize?.width ?? 1;
+    const targetH = peepTargetRasterSize?.height ?? 1;
+    const dxOutput = dxCss * targetW / state.viewWidth;
+    const dyOutput = dyCss * targetH / state.viewHeight;
+    const dxDisplay = dxOutput * cropRect.w / Math.max(1, outputDimensions.w);
+    const dyDisplay = dyOutput * cropRect.h / Math.max(1, outputDimensions.h);
+    const nextX = Math.max(
+      cropRect.x,
+      Math.min(cropRect.x + cropRect.w - state.startRect.w, state.startRect.x - dxDisplay),
+    );
+    const nextY = Math.max(
+      cropRect.y,
+      Math.min(cropRect.y + cropRect.h - state.startRect.h, state.startRect.y - dyDisplay),
+    );
+    peepPanPendingRectRef.current = { ...state.startRect, x: nextX, y: nextY };
+    if (peepPanRafRef.current === null) {
+      peepPanRafRef.current = requestAnimationFrame(() => {
+        peepPanRafRef.current = null;
+        const next = peepPanPendingRectRef.current;
+        peepPanPendingRectRef.current = null;
+        if (!next) return;
+        peepRectRef.current = next;
+        // Keep pointer tracking out of React's render cycle. The display is composited
+        // directly at requestAnimationFrame cadence, and newly exposed tiles are
+        // reprioritized immediately. The final rectangle is committed on pointer-up.
+        drawPeepComposite(next);
+        enqueuePeepTiles(next);
+      });
+    }
     e.preventDefault();
-  }, []);
+    e.stopPropagation();
+  }, [outputDimensions, peepTargetRasterSize, cropRect, drawPeepComposite, enqueuePeepTiles]);
 
   const onPeepExpandedPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const state = peepExpandedDragStateRef.current;
@@ -13181,58 +13535,16 @@ export function ImageEditDialog({
       (e.currentTarget as Element).releasePointerCapture(e.pointerId);
     } catch {}
     peepExpandedDragStateRef.current = null;
-    if (!state.moved || !outputDimensions || state.viewWidth <= 0 || state.viewHeight <= 0) {
-      e.preventDefault();
-      return;
-    }
-    const dxCss = e.clientX - state.startClientX;
-    const dyCss = e.clientY - state.startClientY;
-    const rendered = peepRenderedCanvasRef.current;
-    const renderedW = Math.max(1, rendered?.width ?? peepTargetRasterSize?.width ?? 1);
-    const renderedH = Math.max(1, rendered?.height ?? peepTargetRasterSize?.height ?? 1);
-    const dxOutput = dxCss * renderedW / state.viewWidth;
-    const dyOutput = dyCss * renderedH / state.viewHeight;
-    const dxDisplay = dxOutput * cropRect.w / Math.max(1, outputDimensions.w);
-    const dyDisplay = dyOutput * cropRect.h / Math.max(1, outputDimensions.h);
-    const nextX = Math.max(cropRect.x, Math.min(cropRect.x + cropRect.w - state.startRect.w, state.startRect.x - dxDisplay));
-    const nextY = Math.max(cropRect.y, Math.min(cropRect.y + cropRect.h - state.startRect.h, state.startRect.y - dyDisplay));
-    const next = { ...state.startRect, x: nextX, y: nextY };
-    peepRectRef.current = next;
-    setPeepRect(next);
-    peepRenderedSettingsKeyRef.current = null;
-    void renderPeep(next);
+    const pending = peepPanPendingRectRef.current;
+    peepPanPendingRectRef.current = null;
+    const finalRect = pending ?? peepRectRef.current;
+    peepRectRef.current = finalRect;
+    setPeepRect(finalRect);
+    drawPeepComposite(finalRect);
+    enqueuePeepTiles(finalRect);
     e.preventDefault();
     e.stopPropagation();
-  }, [outputDimensions, peepTargetRasterSize, cropRect, renderPeep]);
-
-  useEffect(() => {
-    if (!peepExpanded) return;
-    const displayCanvas = peepDisplayCanvasRef.current;
-    const rendered = peepRenderedCanvasRef.current;
-    if (!displayCanvas || !rendered) return;
-    displayCanvas.width = Math.max(1, rendered.width);
-    displayCanvas.height = Math.max(1, rendered.height);
-    const ctx = displayCanvas.getContext("2d", { alpha: false });
-    if (!ctx) return;
-    ctx.clearRect(0, 0, displayCanvas.width, displayCanvas.height);
-    ctx.drawImage(rendered, 0, 0);
-  }, [peepExpanded, peepRenderRevision]);
-
-  useEffect(() => {
-    if (!peepExpanded) return;
-    if (peepRenderedSettingsKeyRef.current === peepSettingsKey) return;
-    if (peepRerenderTimerRef.current) clearTimeout(peepRerenderTimerRef.current);
-    peepRerenderTimerRef.current = setTimeout(() => {
-      peepRerenderTimerRef.current = null;
-      void renderPeep();
-    }, 120);
-    return () => {
-      if (peepRerenderTimerRef.current) {
-        clearTimeout(peepRerenderTimerRef.current);
-        peepRerenderTimerRef.current = null;
-      }
-    };
-  }, [peepExpanded, peepSettingsKey, renderPeep]);
+  }, [drawPeepComposite, enqueuePeepTiles]);
 
   const onSubmit = useCallback(() => {
     if (!displayed.w || !displayed.h || applyPendingRef.current) return;
@@ -13375,23 +13687,32 @@ export function ImageEditDialog({
     setRotationDegrees(params.rotationDegrees);
     setRotationMode(false);
     rotationDragState.current = null;
+    peepSessionActiveRef.current = false;
+    if (peepTileResumeTimerRef.current !== null) {
+      clearTimeout(peepTileResumeTimerRef.current);
+      peepTileResumeTimerRef.current = null;
+    }
+    peepSliderPointerActiveRef.current = false;
+    peepTileQueueRef.current = [];
     setPeepMode(false);
     setPeepExpanded(false);
-    setPeepBusy(false);
     peepExpandedDragStateRef.current = null;
     setPeepReferenceRasterSize(null);
     peepRequestedCenterRef.current = null;
-    peepAutoOpenRef.current = false;
-    peepRequestIdRef.current += 1;
-    if (peepRerenderTimerRef.current) {
-      clearTimeout(peepRerenderTimerRef.current);
-      peepRerenderTimerRef.current = null;
+    peepCompositePendingRectRef.current = null;
+    peepPanPendingRectRef.current = null;
+    if (peepCompositeRafRef.current !== null) {
+      cancelAnimationFrame(peepCompositeRafRef.current);
+      peepCompositeRafRef.current = null;
     }
-    peepExpandedDragStateRef.current = null;
-    peepRenderedSettingsKeyRef.current = null;
-    const renderedPeep = peepRenderedCanvasRef.current;
-    peepRenderedCanvasRef.current = null;
-    if (renderedPeep) releaseCanvasIfNeeded(renderedPeep);
+    if (peepPanRafRef.current !== null) {
+      cancelAnimationFrame(peepPanRafRef.current);
+      peepPanRafRef.current = null;
+    }
+    for (const entry of peepTileCacheRef.current.values()) releasePeepTileSource(entry.source);
+    peepTileCacheRef.current.clear();
+    peepTileSettingsKeyRef.current = null;
+    peepTileRevisionRef.current += 1;
     setTemperature(params.temperature);
     setTint(params.tint);
     setDenoise(params.denoise);
@@ -13507,6 +13828,8 @@ export function ImageEditDialog({
     >
       <div
         className="bg-white rounded shadow max-w-[95vw] max-h-[95dvh] overflow-y-auto w-[min(1400px,95vw)] p-4 [@media(max-height:1399px)]:max-h-[calc(100dvh-4px)] [@media(max-width:999px)]:max-w-[calc(100vw-4px)] [@media(max-width:999px)]:w-[min(1400px,calc(100vw-4px))]"
+        onPointerDownCapture={onEditDialogPointerDownCapture}
+        onInputCapture={onEditDialogInputCapture}
         onClick={(e) => {
           e.stopPropagation();
           if (eyedropperMode) setEyedropperMode(false);
@@ -13921,8 +14244,8 @@ export function ImageEditDialog({
                         const next = { ...peepRectRef.current, x: nextX, y: nextY };
                         peepRectRef.current = next;
                         setPeepRect(next);
-                        peepRenderedSettingsKeyRef.current = null;
-                        void renderPeep(next);
+                        drawPeepComposite(next);
+                        enqueuePeepTiles(next);
                         e.preventDefault();
                         e.stopPropagation();
                       }}
@@ -13942,16 +14265,6 @@ export function ImageEditDialog({
                       >
                         ✕
                       </button>
-                      {peepBusy && (
-                        <div className="absolute inset-0 z-[39] flex items-center justify-center bg-black/20 pointer-events-none">
-                          <div className="h-10 w-10 rounded-full border-4 border-white/40 border-t-white animate-spin shadow-[0_0_0_1px_rgba(0,0,0,0.25)]" />
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {!peepExpanded && peepBusy && (
-                    <div className="absolute inset-0 z-[39] flex items-center justify-center bg-black/10 pointer-events-none">
-                      <div className="h-10 w-10 rounded-full border-4 border-white/40 border-t-white animate-spin shadow-[0_0_0_1px_rgba(0,0,0,0.25)]" />
                     </div>
                   )}
                   {eyedropperMode && (
