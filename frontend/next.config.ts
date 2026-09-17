@@ -48,6 +48,10 @@ const nextConfig: NextConfig = {
         source: "/generated/local-stack-studio/:path*",
         headers: isolatedWorkerHeaders,
       },
+      {
+        source: "/_next/static/:path*",
+        headers: isolatedWorkerHeaders,
+      },
     ];
   },
 };
