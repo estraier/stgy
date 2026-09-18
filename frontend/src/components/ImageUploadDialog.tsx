@@ -14531,7 +14531,7 @@ export function ImageEditDialog({
                   })()}
                   {!eyedropperMode && showHistogram && histogramPaths && (
                     <div
-                      className="absolute left-2 bottom-2 z-[33] w-[294px] h-[138px] rounded bg-black pointer-events-none lg:w-[382.2px] lg:h-[179.4px]"
+                      className="absolute left-2 bottom-2 z-[33] w-[294px] h-[138px] rounded bg-black pointer-events-none lg:w-[382.2px] lg:h-[179.4px] [zoom:var(--editor-ui-zoom)]"
                       aria-hidden="true"
                     />
                   )}
@@ -14693,7 +14693,7 @@ export function ImageEditDialog({
                   )}
                   {!eyedropperMode && filterMode && (
                     <div
-                      className="absolute right-2 top-2 z-[35] flex max-h-[calc(100%-1rem)] max-w-[min(340px,calc(100%-1rem))] flex-col gap-1 overflow-y-auto overscroll-contain rounded border border-black/30 bg-white/90 p-2 shadow"
+                      className="absolute right-2 top-2 z-[35] flex max-h-[calc(100%-1rem)] max-w-[min(340px,calc(100%-1rem))] flex-col gap-1 overflow-y-auto overscroll-contain rounded border border-black/30 bg-white/90 p-2 shadow [zoom:var(--editor-ui-zoom)]"
                       onPointerDown={(e) => e.stopPropagation()}
                       onClick={(e) => e.stopPropagation()}
                     >
@@ -15146,7 +15146,7 @@ export function ImageEditDialog({
                     );
                   })}
                   {!eyedropperMode && showHistogram && histogramPaths && (
-                    <div className="absolute left-2 bottom-2 z-[33] w-[294px] h-[138px] rounded border border-white/40 bg-black/80 shadow-sm pointer-events-none lg:w-[382.2px] lg:h-[179.4px]">
+                    <div className="absolute left-2 bottom-2 z-[33] w-[294px] h-[138px] rounded border border-white/40 bg-black/80 shadow-sm pointer-events-none lg:w-[382.2px] lg:h-[179.4px] [zoom:var(--editor-ui-zoom)]">
                       <svg
                         className="absolute inset-[6px] w-[calc(100%-12px)] h-[calc(100%-12px)]"
                         viewBox={`0 0 ${histogramPaths.width} ${histogramPaths.height}`}
@@ -15187,7 +15187,7 @@ export function ImageEditDialog({
                     >
                       <div
                         ref={percentilePanelRef}
-                        className="absolute left-2 top-2 max-h-[max(180px,28vh)] max-w-[480px] overflow-x-auto overflow-y-auto rounded border border-white/40 bg-black/85 p-2 text-[11px] leading-tight text-white shadow-lg lg:max-h-[800px]"
+                        className="absolute left-2 top-2 max-h-[max(180px,28vh)] max-w-[480px] overflow-x-auto overflow-y-auto rounded border border-white/40 bg-black/85 p-2 text-[11px] leading-tight text-white shadow-lg lg:max-h-[800px] [zoom:var(--editor-ui-zoom)]"
                         onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => e.stopPropagation()}
                       >
