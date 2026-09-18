@@ -1827,6 +1827,7 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
             height,
             files.length,
             mergePlan.hdrExposureTimes,
+            new Uint8Array(inputInfos.map((info) => info.isRaw ? 1 : 0)),
           );
         } else if (mergePlan.mode === "hdr2") {
           hdr2StreamWorker = createHdrMertensStreamWorker(width, height, files.length);
@@ -2393,7 +2394,7 @@ async function mergeStackSource(
       if (!hdr1StreamWorker) {
         throw new Error("HDR1 stream worker was not initialized.");
       }
-      hdr1StreamWorker.addImage(index, prepared.floats, prepared.brightness);
+      await hdr1StreamWorker.addImage(index, prepared.floats, prepared.brightness);
     } else {
       if (!hdr2StreamWorker) {
         throw new Error("HDR2 stream worker was not initialized.");
@@ -3053,94 +3054,154 @@ function rgbMatToHdr2FloatsAndBrightness(rgb, sourceColorSpace) {
   return linearProPhotoArrayToHdr2FloatsAndBrightness(linear);
 }
 
-function createHdrDebevecReinhardStreamWorker(width, height, imageCount, exposureTimes, preBrightnessSigmoidGain = 0) {
+function createHdrDebevecReinhardStreamWorker(
+  width,
+  height,
+  imageCount,
+  exposureTimes,
+  linearResponseFlags = null,
+  preBrightnessSigmoidGain = 0,
+) {
   const workerUrl = new URL("/generated/local-stack-studio/hdr.worker.js", window.location.origin);
   const worker = new Worker(workerUrl);
+  let terminated = false;
   let settled = false;
-  let workerFailure = null;
-  let resolveResult = null;
-  let rejectResult = null;
-  const resultPromise = new Promise((resolve, reject) => {
-    resolveResult = resolve;
-    rejectResult = reject;
+  let nextRequestId = 1;
+  const pending = new Map();
+
+  const failAll = (error) => {
+    for (const request of pending.values()) request.reject(error);
+    pending.clear();
+  };
+  const cleanup = () => {
+    if (terminated) return;
+    terminated = true;
+    worker.terminate();
+  };
+  const request = (type, payload, transfer, expectedType) => new Promise((resolve, reject) => {
+    if (terminated) {
+      reject(new Error("HDR1 stream worker is no longer available."));
+      return;
+    }
+    const requestId = nextRequestId++;
+    pending.set(requestId, { resolve, reject, expectedType });
+    try {
+      worker.postMessage({ type, requestId, ...payload }, transfer);
+    } catch (error) {
+      pending.delete(requestId);
+      reject(error);
+    }
   });
-  const cleanup = () => worker.terminate();
+
   worker.onmessage = (event) => {
     const message = event.data || {};
     if (message.type === "progress") {
       if (message.message) setProgress(message.message);
       return;
     }
-    if (message.type === "result") {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resolveResult(new Float32Array(message.linearProPhotoBuffer));
-      return;
-    }
     if (message.type === "error") {
       if (settled) return;
       settled = true;
-      workerFailure = new Error(message.message || "HDR1 stream worker failed.");
+      const error = new Error(message.message || "HDR1 stream worker failed.");
+      failAll(error);
       cleanup();
-      rejectResult(workerFailure);
+      return;
     }
+    const pendingRequest = pending.get(message.requestId);
+    if (!pendingRequest) return;
+    if (message.type !== pendingRequest.expectedType) {
+      const error = new Error(
+        `HDR1 stream worker returned ${message.type || "an unknown message"}; expected ${pendingRequest.expectedType}.`,
+      );
+      pending.delete(message.requestId);
+      pendingRequest.reject(error);
+      return;
+    }
+    pending.delete(message.requestId);
+    if (message.type === "result") {
+      settled = true;
+      const result = new Float32Array(message.linearProPhotoBuffer);
+      pendingRequest.resolve(result);
+      cleanup();
+      return;
+    }
+    pendingRequest.resolve(message);
   };
   worker.onerror = (event) => {
     if (settled) return;
     settled = true;
     const detail = event.message ? `: ${event.message}` : "";
-    workerFailure = new Error(`Failed to start HDR1 stream worker ${workerUrl.pathname}${detail}`);
+    const error = new Error(`Failed to start HDR1 stream worker ${workerUrl.pathname}${detail}`);
+    failAll(error);
     cleanup();
-    rejectResult(workerFailure);
   };
   worker.onmessageerror = () => {
     if (settled) return;
     settled = true;
-    workerFailure = new Error(`HDR1 stream worker ${workerUrl.pathname} returned an unreadable message.`);
+    const error = new Error(`HDR1 stream worker ${workerUrl.pathname} returned an unreadable message.`);
+    failAll(error);
     cleanup();
-    rejectResult(workerFailure);
   };
 
   const times = exposureTimes ? new Float32Array(exposureTimes) : new Float32Array(0);
-  worker.postMessage(
+  const flags = linearResponseFlags
+    ? new Uint8Array(linearResponseFlags)
+    : new Uint8Array(imageCount).fill(1);
+  const ready = request(
+    "merge-stream-init",
     {
-      type: "merge-stream-init",
       width,
       height,
       imageCount,
       exposureTimesBuffer: times.buffer,
+      linearResponseFlagsBuffer: flags.buffer,
       preBrightnessSigmoidGain,
     },
-    [times.buffer],
+    [times.buffer, flags.buffer],
+    "merge-stream-ready",
   );
 
   return {
-    addImage(index, image, brightness) {
-      if (settled) {
-        throw workerFailure || new Error("HDR1 stream worker is no longer available.");
+    async addImage(index, image, brightness) {
+      await ready;
+      if (!(image instanceof Float32Array)) {
+        throw new Error("HDR1 stream input is not a Float32 RGB buffer.");
       }
-      worker.postMessage(
-        {
-          type: "merge-stream-image",
-          imageIndex: index,
-          brightness,
-          imageBuffer: image.buffer,
-        },
-        [image.buffer],
+      const imageBuffer = image.buffer;
+      await request(
+        "merge-stream-image",
+        { imageIndex: index, brightness, imageBuffer },
+        [imageBuffer],
+        "merge-stream-image-stored",
       );
     },
     async finalize() {
-      if (!settled) {
-        worker.postMessage({ type: "merge-stream-finalize" });
-      }
-      return await resultPromise;
+      await ready;
+      setProgress("Merging HDR1 with Debevec radiance recovery...");
+      return await request("merge-stream-finalize", {}, [], "result");
     },
     terminate() {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      rejectResult(new Error("HDR1 stream worker terminated."));
+      if (terminated || settled) return;
+      const error = new Error("HDR1 stream worker was terminated.");
+      failAll(error);
+      const requestId = nextRequestId++;
+      try {
+        worker.postMessage({ type: "merge-stream-abort", requestId });
+      } catch {
+        cleanup();
+        return;
+      }
+      const timeout = setTimeout(cleanup, 1000);
+      const previousOnMessage = worker.onmessage;
+      worker.onmessage = (event) => {
+        const message = event.data || {};
+        if (message.type === "merge-stream-aborted" && message.requestId === requestId) {
+          clearTimeout(timeout);
+          cleanup();
+          return;
+        }
+        previousOnMessage?.(event);
+      };
     },
   };
 }
@@ -3318,13 +3379,14 @@ async function processSingleInputHdrWithOpenCv(cv, file, inputInfo, mergePlan, o
         height,
         materials.length,
         mergePlan.hdrExposureTimes,
+        new Uint8Array(materials.length).fill(1),
       );
       const brightness = computeAverageBrightnessFromLinear(hdrBaseLinear);
       try {
         for (let i = 0; i < materials.length; i += 1) {
           const material = materials[i];
           setProgress(`Preparing HDR1 synthetic material ${i + 1}/${materials.length} (${material.label})...`);
-          hdr1StreamWorker.addImage(i, buildSingleShotHdr1Material(hdrBaseLinear, material), brightness);
+          await hdr1StreamWorker.addImage(i, buildSingleShotHdr1Material(hdrBaseLinear, material), brightness);
           await yieldToBrowser();
         }
         const linearResult = await hdr1StreamWorker.finalize();

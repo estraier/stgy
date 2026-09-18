@@ -10,6 +10,11 @@ const REINHARD_LIGHT_ADAPT = 0.5;
 const REINHARD_COLOR_ADAPT = 0.5;
 const BRIGHTNESS_MAX_TRIES = 10;
 const BRIGHTNESS_MAX_DIST = 0.01;
+const HDR1_RESPONSE_KNOT_COUNT = 256;
+const HDR1_RESPONSE_SAMPLE_LIMIT = 4096;
+const HDR1_RESPONSE_SAMPLE_OBSERVATION_TARGET = 32768;
+const HDR1_RESPONSE_SMOOTHNESS = 10;
+const HDR1_RESPONSE_RIDGE = 1e-10;
 
 let debevecStreamState = null;
 let mertensStreamState = null;
@@ -20,6 +25,13 @@ self.onmessage = (event) => {
   workerMessageQueue = workerMessageQueue
     .then(() => dispatchWorkerMessage(message))
     .catch(async (error) => {
+      if (debevecStreamState) {
+        try {
+          await cleanupDebevecStreamState();
+        } catch {
+          // Best-effort scratch cleanup; report the original processing error.
+        }
+      }
       if (mertensStreamState) {
         try {
           await cleanupMertensStreamState();
@@ -40,15 +52,21 @@ async function dispatchWorkerMessage(message) {
     return;
   }
   if (message.type === "merge-stream-init") {
-    initializeDebevecStream(message);
+    await initializeDebevecStream(message);
     return;
   }
   if (message.type === "merge-stream-image") {
-    appendDebevecStreamImage(message);
+    await appendDebevecStreamImage(message);
     return;
   }
   if (message.type === "merge-stream-finalize") {
-    finalizeDebevecStream();
+    await finalizeDebevecStream(message);
+    return;
+  }
+  if (message.type === "merge-stream-abort") {
+    const requestId = message.requestId;
+    await cleanupDebevecStreamState();
+    self.postMessage({ type: "merge-stream-aborted", requestId });
     return;
   }
   if (message.type === "mertens") {
@@ -118,11 +136,13 @@ function processDebevecMessage(message) {
 }
 
 
-function initializeDebevecStream(message) {
+async function initializeDebevecStream(message) {
+  if (debevecStreamState) throw new Error("HDR1 stream worker is already initialized.");
   const width = Number(message.width);
   const height = Number(message.height);
   const imageCount = Number(message.imageCount);
   const suppliedExposureTimes = new Float32Array(message.exposureTimesBuffer || new ArrayBuffer(0));
+  const suppliedLinearResponseFlags = new Uint8Array(message.linearResponseFlagsBuffer || new ArrayBuffer(0));
   if (!(Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0)) {
     throw new Error("HDR worker received invalid image dimensions.");
   }
@@ -137,102 +157,141 @@ function initializeDebevecStream(message) {
       throw new Error(`HDR input ${i + 1} has an invalid exposure value.`);
     }
   }
+  if (suppliedLinearResponseFlags.length !== 0 && suppliedLinearResponseFlags.length !== imageCount) {
+    throw new Error("HDR response-mode count does not match the image count.");
+  }
+
+  const linearResponseFlags = suppliedLinearResponseFlags.length > 0
+    ? new Uint8Array(suppliedLinearResponseFlags)
+    : new Uint8Array(imageCount).fill(1);
+  const needsResponseCalibration = linearResponseFlags.some((value) => value === 0);
   const pixelCount = width * height;
+  const sampleCount = needsResponseCalibration
+    ? chooseDebevecResponseSampleCount(pixelCount, imageCount)
+    : 0;
+  let db = null;
+  if (needsResponseCalibration) {
+    try {
+      db = await openHdr2ScratchDb();
+    } catch (error) {
+      console.warn("HDR1 IndexedDB scratch is unavailable; using in-memory calibration fallback:", error);
+    }
+  }
+
   debevecStreamState = {
     width,
     height,
     imageCount,
     receivedCount: 0,
-    responseSums: new Float32Array(pixelCount * 3),
-    weightSums: new Float32Array(pixelCount),
-    weightedLogBrightnessSums: suppliedExposureTimes.length === 0 ? new Float32Array(pixelCount) : null,
+    responseSums: needsResponseCalibration ? null : new Float32Array(pixelCount * 3),
+    weightSums: needsResponseCalibration ? null : new Float32Array(pixelCount * 3),
+    weightedLogBrightnessSums: !needsResponseCalibration && suppliedExposureTimes.length === 0
+      ? new Float32Array(pixelCount * 3)
+      : null,
     brightnesses: new Float32Array(imageCount),
     receivedFlags: new Uint8Array(imageCount),
     suppliedExposureTimes,
+    linearResponseFlags,
+    needsResponseCalibration,
+    responseSampleIndices: needsResponseCalibration ? buildDebevecResponseSampleIndices(width, height, sampleCount) : null,
+    responseSamples: needsResponseCalibration ? new Float32Array(imageCount * sampleCount * 3) : null,
+    responseSampleCount: sampleCount,
+    db,
+    sessionId: needsResponseCalibration ? `hdr1-${createHdr2ScratchSessionId()}` : null,
+    memoryImages: new Map(),
+    scratchWriteDisabled: needsResponseCalibration && !db,
     preBrightnessSigmoidGain: Number.isFinite(message.preBrightnessSigmoidGain)
       ? Number(message.preBrightnessSigmoidGain)
       : 0,
   };
   debevecStreamState.brightnesses.fill(Number.NaN);
+  self.postMessage({ type: "merge-stream-ready", requestId: message.requestId });
 }
 
-function appendDebevecStreamImage(message) {
-  if (!debevecStreamState) {
-    throw new Error("HDR1 stream worker was not initialized.");
-  }
+async function appendDebevecStreamImage(message) {
+  const state = debevecStreamState;
+  if (!state) throw new Error("HDR1 stream worker was not initialized.");
   const imageIndex = Number(message.imageIndex);
   const brightness = Number(message.brightness);
-  if (!(Number.isInteger(imageIndex) && imageIndex >= 0 && imageIndex < debevecStreamState.imageCount)) {
+  if (!(Number.isInteger(imageIndex) && imageIndex >= 0 && imageIndex < state.imageCount)) {
     throw new Error("HDR1 stream worker received an invalid image index.");
   }
-  if (debevecStreamState.receivedFlags[imageIndex]) {
+  if (state.receivedFlags[imageIndex]) {
     throw new Error(`HDR input ${imageIndex + 1} was sent more than once.`);
   }
   if (!(Number.isFinite(brightness) && brightness >= 0)) {
     throw new Error(`HDR input ${imageIndex + 1} has an invalid brightness value.`);
   }
   const imageBuffer = message.imageBuffer;
-  const expectedLength = debevecStreamState.width * debevecStreamState.height * 3;
+  const expectedLength = state.width * state.height * 3;
   const expectedByteLength = expectedLength * Float32Array.BYTES_PER_ELEMENT;
   if (!(imageBuffer instanceof ArrayBuffer) || imageBuffer.byteLength !== expectedByteLength) {
     throw new Error(`HDR input ${imageIndex + 1} has an invalid Float32 RGB buffer.`);
   }
   const image = new Float32Array(imageBuffer);
-  const responseSums = debevecStreamState.responseSums;
-  const weightSums = debevecStreamState.weightSums;
-  const weightedLogBrightnessSums = debevecStreamState.weightedLogBrightnessSums;
-  const suppliedExposureTimes = debevecStreamState.suppliedExposureTimes;
-  const hasExposureTimes = suppliedExposureTimes.length > 0;
-  const logExposureTime = hasExposureTimes ? Math.log(suppliedExposureTimes[imageIndex]) : 0;
-  const logBrightness = hasExposureTimes ? 0 : Math.log(Math.max(brightness, 0.0001));
-  const pixelCount = debevecStreamState.width * debevecStreamState.height;
 
-  for (let pixel = 0, offset = 0; pixel < pixelCount; pixel += 1, offset += 3) {
-    const r = clamp01(image[offset]);
-    const g = clamp01(image[offset + 1]);
-    const b = clamp01(image[offset + 2]);
-    const weight = (debevecWeightFloat(r) + debevecWeightFloat(g) + debevecWeightFloat(b)) / 3;
-    responseSums[offset] += hasExposureTimes
-      ? weight * (debevecLogResponseFloat(r) - logExposureTime)
-      : weight * debevecLogResponseFloat(r);
-    responseSums[offset + 1] += hasExposureTimes
-      ? weight * (debevecLogResponseFloat(g) - logExposureTime)
-      : weight * debevecLogResponseFloat(g);
-    responseSums[offset + 2] += hasExposureTimes
-      ? weight * (debevecLogResponseFloat(b) - logExposureTime)
-      : weight * debevecLogResponseFloat(b);
-    weightSums[pixel] += weight;
-    if (weightedLogBrightnessSums) {
-      weightedLogBrightnessSums[pixel] += weight * logBrightness;
+  if (state.needsResponseCalibration) {
+    captureDebevecResponseSamples(state, imageIndex, image);
+    if (!state.scratchWriteDisabled && state.db) {
+      postProgress(`Storing HDR1 input ${imageIndex + 1}/${state.imageCount} for response calibration...`);
+      try {
+        await putHdr2ScratchImage(state.db, hdr2ScratchKey(state.sessionId, imageIndex), imageBuffer);
+      } catch (error) {
+        state.scratchWriteDisabled = true;
+        state.memoryImages.set(imageIndex, imageBuffer);
+        console.warn("HDR1 scratch write failed; keeping remaining inputs in worker memory:", error);
+      }
+    } else {
+      state.memoryImages.set(imageIndex, imageBuffer);
     }
+  } else {
+    accumulateLinearDebevecImage(state, imageIndex, image, brightness);
   }
 
-  debevecStreamState.receivedFlags[imageIndex] = 1;
-  debevecStreamState.brightnesses[imageIndex] = brightness;
-  debevecStreamState.receivedCount += 1;
+  state.receivedFlags[imageIndex] = 1;
+  state.brightnesses[imageIndex] = brightness;
+  state.receivedCount += 1;
+  self.postMessage({
+    type: "merge-stream-image-stored",
+    requestId: message.requestId,
+    imageIndex,
+  });
 }
 
-function finalizeDebevecStream() {
-  if (!debevecStreamState) {
-    throw new Error("HDR1 stream worker was not initialized.");
-  }
-  if (debevecStreamState.receivedCount !== debevecStreamState.imageCount) {
+async function finalizeDebevecStream(message) {
+  const state = debevecStreamState;
+  if (!state) throw new Error("HDR1 stream worker was not initialized.");
+  if (state.receivedCount !== state.imageCount) {
     throw new Error(
-      `HDR1 stream worker received ${debevecStreamState.receivedCount}/${debevecStreamState.imageCount} input images.`
+      `HDR1 stream worker received ${state.receivedCount}/${state.imageCount} input images.`
     );
   }
-  const brightnesses = debevecStreamState.brightnesses;
+  const brightnesses = state.brightnesses;
   for (let i = 0; i < brightnesses.length; i += 1) {
     if (!(Number.isFinite(brightnesses[i]) && brightnesses[i] >= 0)) {
       throw new Error(`HDR input ${i + 1} has an invalid brightness value.`);
     }
   }
 
-  postProgress("Finalizing streamed HDR with Debevec...");
-  const hdr = finalizeDebevecStreamToHdr(debevecStreamState);
+  let hdr;
+  if (state.needsResponseCalibration) {
+    postProgress("Calibrating HDR1 Debevec response curve...");
+    const exposureTimes = resolveExposureTimes(state.suppliedExposureTimes, brightnesses);
+    const responseCurves = estimateDebevecResponseCurves(state, exposureTimes);
+    postProgress("Merging HDR1 radiance with calibrated Debevec response...");
+    hdr = await mergeCalibratedDebevecStream(state, exposureTimes, responseCurves);
+  } else {
+    postProgress("Finalizing streamed HDR with linear Debevec response...");
+    hdr = finalizeLinearDebevecStreamToHdr(state);
+  }
+
   const targetBrightness = meanArray(brightnesses);
-  const preBrightnessSigmoidGain = debevecStreamState.preBrightnessSigmoidGain;
-  debevecStreamState = null;
+  const preBrightnessSigmoidGain = state.preBrightnessSigmoidGain;
+  try {
+    await cleanupDebevecStreamState();
+  } catch (error) {
+    console.warn("Could not fully clear HDR1 scratch images:", error);
+  }
 
   postProgress("Tone mapping HDR with Reinhard...");
   tonemapReinhardInPlace(
@@ -252,14 +311,37 @@ function finalizeDebevecStream() {
   adjustExposureToBrightnessInPlace(hdr, targetBrightness);
 
   self.postMessage(
-    { type: "result", linearProPhotoBuffer: hdr.buffer },
+    { type: "result", requestId: message.requestId, linearProPhotoBuffer: hdr.buffer },
     [hdr.buffer],
   );
 }
 
-function finalizeDebevecStreamToHdr(state) {
+function accumulateLinearDebevecImage(state, imageIndex, image, brightness) {
+  const responseSums = state.responseSums;
+  const weightSums = state.weightSums;
+  const weightedLogBrightnessSums = state.weightedLogBrightnessSums;
+  const suppliedExposureTimes = state.suppliedExposureTimes;
+  const hasExposureTimes = suppliedExposureTimes.length > 0;
+  const logExposureTime = hasExposureTimes ? Math.log(suppliedExposureTimes[imageIndex]) : 0;
+  const logBrightness = hasExposureTimes ? 0 : Math.log(Math.max(brightness, 0.0001));
   const pixelCount = state.width * state.height;
-  const result = new Float32Array(pixelCount * 3);
+
+  for (let pixel = 0, offset = 0; pixel < pixelCount; pixel += 1, offset += 3) {
+    for (let channel = 0; channel < 3; channel += 1) {
+      const value = clamp01(image[offset + channel]);
+      const weight = debevecWeightFloat(value);
+      responseSums[offset + channel] += weight * (
+        debevecLogResponseFloat(value) - logExposureTime
+      );
+      weightSums[offset + channel] += weight;
+      if (weightedLogBrightnessSums) {
+        weightedLogBrightnessSums[offset + channel] += weight * logBrightness;
+      }
+    }
+  }
+}
+
+function finalizeLinearDebevecStreamToHdr(state) {
   const responseSums = state.responseSums;
   const weightSums = state.weightSums;
   const weightedLogBrightnessSums = state.weightedLogBrightnessSums;
@@ -272,18 +354,392 @@ function finalizeDebevecStreamToHdr(state) {
   }
   const minLogBrightness = weightedLogBrightnessSums ? Math.log(minBrightness) : 0;
 
-  for (let pixel = 0, offset = 0; pixel < pixelCount; pixel += 1, offset += 3) {
-    const weightSum = weightSums[pixel];
-    const inverseWeight = weightSum > 0 ? 1 / weightSum : 0;
+  for (let offset = 0; offset < responseSums.length; offset += 1) {
+    const weightSum = weightSums[offset];
     const weightedLogTime = weightedLogBrightnessSums
-      ? (weightedLogBrightnessSums[pixel] - minLogBrightness * weightSum)
+      ? weightedLogBrightnessSums[offset] - minLogBrightness * weightSum
       : 0;
-    result[offset] = sanitizeHdrValue(Math.exp((responseSums[offset] - weightedLogTime) * inverseWeight));
-    result[offset + 1] = sanitizeHdrValue(Math.exp((responseSums[offset + 1] - weightedLogTime) * inverseWeight));
-    result[offset + 2] = sanitizeHdrValue(Math.exp((responseSums[offset + 2] - weightedLogTime) * inverseWeight));
+    const logRadiance = weightSum > 0
+      ? (responseSums[offset] - weightedLogTime) / weightSum
+      : 0;
+    responseSums[offset] = sanitizeHdrValue(Math.exp(logRadiance));
+  }
+  return responseSums;
+}
+
+function chooseDebevecResponseSampleCount(pixelCount, imageCount) {
+  const observationLimited = Math.max(
+    512,
+    Math.floor(HDR1_RESPONSE_SAMPLE_OBSERVATION_TARGET / Math.max(2, imageCount)),
+  );
+  return Math.max(1, Math.min(pixelCount, HDR1_RESPONSE_SAMPLE_LIMIT, observationLimited));
+}
+
+function buildDebevecResponseSampleIndices(width, height, sampleCount) {
+  const indices = new Uint32Array(sampleCount);
+  const used = new Set();
+  let output = 0;
+  let sequenceIndex = 1;
+  while (output < sampleCount) {
+    const x = Math.min(width - 1, Math.floor(radicalInverse(sequenceIndex, 2) * width));
+    const y = Math.min(height - 1, Math.floor(radicalInverse(sequenceIndex, 3) * height));
+    const pixel = y * width + x;
+    sequenceIndex += 1;
+    if (used.has(pixel)) continue;
+    used.add(pixel);
+    indices[output] = pixel;
+    output += 1;
+    if (used.size >= width * height) break;
+  }
+  if (output < sampleCount) {
+    for (let pixel = 0; pixel < width * height && output < sampleCount; pixel += 1) {
+      if (used.has(pixel)) continue;
+      used.add(pixel);
+      indices[output++] = pixel;
+    }
+  }
+  return indices;
+}
+
+function radicalInverse(index, base) {
+  let value = 0;
+  let denominator = 1;
+  let remaining = index;
+  while (remaining > 0) {
+    denominator *= base;
+    value += (remaining % base) / denominator;
+    remaining = Math.floor(remaining / base);
+  }
+  return value;
+}
+
+function captureDebevecResponseSamples(state, imageIndex, image) {
+  const sampleIndices = state.responseSampleIndices;
+  const sampleCount = state.responseSampleCount;
+  const destinationBase = imageIndex * sampleCount * 3;
+  for (let sample = 0; sample < sampleCount; sample += 1) {
+    const sourceOffset = sampleIndices[sample] * 3;
+    const destinationOffset = destinationBase + sample * 3;
+    state.responseSamples[destinationOffset] = clamp01(image[sourceOffset]);
+    state.responseSamples[destinationOffset + 1] = clamp01(image[sourceOffset + 1]);
+    state.responseSamples[destinationOffset + 2] = clamp01(image[sourceOffset + 2]);
+  }
+}
+
+function estimateDebevecResponseCurves(state, exposureTimes) {
+  const curves = new Array(3);
+  for (let channel = 0; channel < 3; channel += 1) {
+    curves[channel] = estimateDebevecResponseCurve(state, exposureTimes, channel);
+  }
+  return curves;
+}
+
+function estimateDebevecResponseCurve(state, exposureTimes, channel) {
+  // Debevec-Malik data term with the per-sample log-radiance variables
+  // analytically eliminated.  The weighted-variance identity turns each
+  // sample into pairwise equations between exposures; this is the same
+  // least-squares objective without allocating one unknown E_j per sample.
+  // Rendered inputs interpolate a smooth response g(z); RAW inputs contribute
+  // the known scene-linear response log(z), which also fixes the absolute
+  // response scale when RAW and rendered inputs are mixed.
+  const knotCount = HDR1_RESPONSE_KNOT_COUNT;
+  const matrix = new Float64Array(knotCount * knotCount);
+  const rhs = new Float64Array(knotCount);
+  const logTimes = new Float64Array(exposureTimes.length);
+  for (let i = 0; i < exposureTimes.length; i += 1) logTimes[i] = Math.log(exposureTimes[i]);
+  const sampleCount = state.responseSampleCount;
+  const imageCount = state.imageCount;
+  const samples = state.responseSamples;
+  const linearFlags = state.linearResponseFlags;
+  const observationWeights = new Float64Array(imageCount);
+  const constants = new Float64Array(imageCount);
+  const interpolationLeft = new Int32Array(imageCount);
+  const interpolationFraction = new Float64Array(imageCount);
+  let dataEquationCount = 0;
+
+  for (let sample = 0; sample < sampleCount; sample += 1) {
+    let totalObservationWeight = 0;
+    for (let imageIndex = 0; imageIndex < imageCount; imageIndex += 1) {
+      const sampleOffset = (imageIndex * sampleCount + sample) * 3 + channel;
+      const value = clamp01(samples[sampleOffset]);
+      const rowWeight = debevecCalibrationWeight(value);
+      const observationWeight = rowWeight * rowWeight;
+      observationWeights[imageIndex] = observationWeight;
+      totalObservationWeight += observationWeight;
+      if (linearFlags[imageIndex]) {
+        constants[imageIndex] = debevecLogResponseFloat(value) - logTimes[imageIndex];
+        interpolationLeft[imageIndex] = -1;
+        interpolationFraction[imageIndex] = 0;
+      } else {
+        constants[imageIndex] = -logTimes[imageIndex];
+        const position = value * (knotCount - 1);
+        const left = Math.min(knotCount - 2, Math.max(0, Math.floor(position)));
+        interpolationLeft[imageIndex] = left;
+        interpolationFraction[imageIndex] = position - left;
+      }
+    }
+    if (!(totalObservationWeight > 1e-12)) continue;
+
+    for (let first = 0; first < imageCount - 1; first += 1) {
+      const firstWeight = observationWeights[first];
+      if (!(firstWeight > 0)) continue;
+      for (let second = first + 1; second < imageCount; second += 1) {
+        const secondWeight = observationWeights[second];
+        if (!(secondWeight > 0)) continue;
+        if (linearFlags[first] && linearFlags[second]) continue;
+        const equationWeight = firstWeight * secondWeight / totalObservationWeight;
+        if (!(equationWeight > 1e-14)) continue;
+
+        const coefficientIndices = [];
+        const coefficientValues = [];
+        if (!linearFlags[first]) {
+          appendDebevecInterpolationCoefficients(
+            coefficientIndices,
+            coefficientValues,
+            interpolationLeft[first],
+            interpolationFraction[first],
+            1,
+          );
+        }
+        if (!linearFlags[second]) {
+          appendDebevecInterpolationCoefficients(
+            coefficientIndices,
+            coefficientValues,
+            interpolationLeft[second],
+            interpolationFraction[second],
+            -1,
+          );
+        }
+        const constantDifference = constants[first] - constants[second];
+        accumulateDebevecNormalEquation(
+          matrix,
+          rhs,
+          knotCount,
+          coefficientIndices,
+          coefficientValues,
+          constantDifference,
+          equationWeight,
+        );
+        dataEquationCount += 1;
+      }
+    }
   }
 
-  return result;
+  if (dataEquationCount === 0) {
+    console.warn(`HDR1 response channel ${channel}: calibration had no usable cross-exposure samples; using linear response.`);
+    return buildLinearDebevecResponseCurve(knotCount);
+  }
+
+  for (let knot = 1; knot < knotCount - 1; knot += 1) {
+    const z = knot / (knotCount - 1);
+    const rowWeight = HDR1_RESPONSE_SMOOTHNESS * debevecCalibrationWeight(z);
+    const equationWeight = rowWeight * rowWeight;
+    if (!(equationWeight > 0)) continue;
+    accumulateDebevecNormalEquation(
+      matrix,
+      rhs,
+      knotCount,
+      [knot - 1, knot, knot + 1],
+      [1, -2, 1],
+      0,
+      equationWeight,
+    );
+  }
+
+  const hasKnownLinearInput = linearFlags.some((value) => value !== 0);
+  if (!hasKnownLinearInput) {
+    const anchor = Math.floor((knotCount - 1) / 2);
+    matrix[anchor * knotCount + anchor] += 1;
+  }
+  for (let knot = 0; knot < knotCount; knot += 1) {
+    matrix[knot * knotCount + knot] += HDR1_RESPONSE_RIDGE;
+  }
+
+  let curve;
+  try {
+    curve = solveDebevecSymmetricPositiveSystem(matrix, rhs, knotCount);
+  } catch (error) {
+    console.warn(`HDR1 response channel ${channel}: calibration solver failed; using linear response.`, error);
+    return buildLinearDebevecResponseCurve(knotCount);
+  }
+  if (!curve.every(Number.isFinite)) {
+    console.warn(`HDR1 response channel ${channel}: calibration produced non-finite values; using linear response.`);
+    return buildLinearDebevecResponseCurve(knotCount);
+  }
+  return curve;
+}
+
+function appendDebevecInterpolationCoefficients(indices, coefficients, left, fraction, sign) {
+  const entries = [
+    [left, sign * (1 - fraction)],
+    [left + 1, sign * fraction],
+  ];
+  for (const [index, coefficient] of entries) {
+    if (Math.abs(coefficient) <= 1e-15) continue;
+    const existing = indices.indexOf(index);
+    if (existing >= 0) {
+      coefficients[existing] += coefficient;
+    } else {
+      indices.push(index);
+      coefficients.push(coefficient);
+    }
+  }
+}
+
+function accumulateDebevecNormalEquation(
+  matrix,
+  rhs,
+  size,
+  indices,
+  coefficients,
+  constant,
+  equationWeight,
+) {
+  for (let a = 0; a < indices.length; a += 1) {
+    const rowIndex = indices[a];
+    const rowCoefficient = coefficients[a];
+    rhs[rowIndex] -= equationWeight * rowCoefficient * constant;
+    const rowOffset = rowIndex * size;
+    for (let b = 0; b < indices.length; b += 1) {
+      matrix[rowOffset + indices[b]] += equationWeight * rowCoefficient * coefficients[b];
+    }
+  }
+}
+
+function solveDebevecSymmetricPositiveSystem(matrix, rhs, size) {
+  const lower = new Float64Array(matrix);
+  const pivotFloor = 1e-12;
+  for (let row = 0; row < size; row += 1) {
+    for (let column = 0; column <= row; column += 1) {
+      let sum = lower[row * size + column];
+      for (let k = 0; k < column; k += 1) {
+        sum -= lower[row * size + k] * lower[column * size + k];
+      }
+      if (row === column) {
+        if (!(sum > pivotFloor)) sum = pivotFloor;
+        lower[row * size + column] = Math.sqrt(sum);
+      } else {
+        lower[row * size + column] = sum / lower[column * size + column];
+      }
+    }
+    for (let column = row + 1; column < size; column += 1) {
+      lower[row * size + column] = 0;
+    }
+  }
+
+  const intermediate = new Float64Array(size);
+  for (let row = 0; row < size; row += 1) {
+    let sum = rhs[row];
+    for (let column = 0; column < row; column += 1) {
+      sum -= lower[row * size + column] * intermediate[column];
+    }
+    intermediate[row] = sum / lower[row * size + row];
+  }
+
+  const solution = new Float64Array(size);
+  for (let row = size - 1; row >= 0; row -= 1) {
+    let sum = intermediate[row];
+    for (let column = row + 1; column < size; column += 1) {
+      sum -= lower[column * size + row] * solution[column];
+    }
+    solution[row] = sum / lower[row * size + row];
+  }
+  return solution;
+}
+
+function buildLinearDebevecResponseCurve(knotCount) {
+  const curve = new Float64Array(knotCount);
+  for (let knot = 0; knot < knotCount; knot += 1) {
+    curve[knot] = debevecLogResponseFloat(knot / (knotCount - 1));
+  }
+  return curve;
+}
+
+function debevecCalibrationWeight(value) {
+  // Normalized triangular Debevec weight.  Squaring happens when the weighted
+  // residual row is converted to the normal equations.
+  const x = clamp01(value);
+  return Math.max(0, 1 - Math.abs(2 * x - 1));
+}
+
+function evaluateDebevecResponseCurve(curve, value) {
+  const position = clamp01(value) * (curve.length - 1);
+  const left = Math.min(curve.length - 2, Math.max(0, Math.floor(position)));
+  const fraction = position - left;
+  return curve[left] * (1 - fraction) + curve[left + 1] * fraction;
+}
+
+async function getDebevecStreamImageBuffer(state, imageIndex) {
+  const memoryBuffer = state.memoryImages.get(imageIndex);
+  if (memoryBuffer instanceof ArrayBuffer) return memoryBuffer;
+  if (!state.db) throw new Error(`HDR1 input ${imageIndex + 1} is unavailable.`);
+  return await getHdr2ScratchImage(state.db, hdr2ScratchKey(state.sessionId, imageIndex));
+}
+
+async function releaseDebevecStreamImage(state, imageIndex) {
+  if (state.memoryImages.delete(imageIndex)) return;
+  if (!state.db) return;
+  try {
+    await deleteHdr2ScratchImage(state.db, hdr2ScratchKey(state.sessionId, imageIndex));
+  } catch (error) {
+    console.warn(`Could not delete HDR1 scratch input ${imageIndex + 1}:`, error);
+  }
+}
+
+async function mergeCalibratedDebevecStream(state, exposureTimes, responseCurves) {
+  const pixelCount = state.width * state.height;
+  const responseSums = new Float32Array(pixelCount * 3);
+  const weightSums = new Float32Array(pixelCount * 3);
+  const logTimes = new Float64Array(exposureTimes.length);
+  for (let i = 0; i < exposureTimes.length; i += 1) logTimes[i] = Math.log(exposureTimes[i]);
+  const expectedByteLength = pixelCount * 3 * Float32Array.BYTES_PER_ELEMENT;
+
+  // Samples are no longer needed once the response curves have been solved.
+  state.responseSamples = null;
+  state.responseSampleIndices = null;
+
+  for (let imageIndex = 0; imageIndex < state.imageCount; imageIndex += 1) {
+    postProgress(`Merging calibrated HDR1 input ${imageIndex + 1}/${state.imageCount}...`);
+    const buffer = await getDebevecStreamImageBuffer(state, imageIndex);
+    if (buffer.byteLength !== expectedByteLength) {
+      throw new Error(`HDR1 scratch input ${imageIndex + 1} has an invalid size.`);
+    }
+    const image = new Float32Array(buffer);
+    const linearResponse = state.linearResponseFlags[imageIndex] !== 0;
+    const logTime = logTimes[imageIndex];
+    for (let offset = 0; offset < image.length; offset += 3) {
+      for (let channel = 0; channel < 3; channel += 1) {
+        const value = clamp01(image[offset + channel]);
+        const weight = debevecWeightFloat(value);
+        const response = linearResponse
+          ? debevecLogResponseFloat(value)
+          : evaluateDebevecResponseCurve(responseCurves[channel], value);
+        responseSums[offset + channel] += weight * (response - logTime);
+        weightSums[offset + channel] += weight;
+      }
+    }
+    await releaseDebevecStreamImage(state, imageIndex);
+  }
+
+  for (let offset = 0; offset < responseSums.length; offset += 1) {
+    const weightSum = weightSums[offset];
+    const logRadiance = weightSum > 0 ? responseSums[offset] / weightSum : 0;
+    responseSums[offset] = sanitizeHdrValue(Math.exp(logRadiance));
+  }
+  return responseSums;
+}
+
+async function cleanupDebevecStreamState() {
+  const state = debevecStreamState;
+  debevecStreamState = null;
+  if (!state) return;
+  state.memoryImages?.clear?.();
+  if (!state.db || !state.sessionId) return;
+  try {
+    await deleteHdr2ScratchSession(state.db, state.sessionId);
+  } finally {
+    state.db.close();
+  }
 }
 
 async function processMertensMessage(message) {
@@ -903,28 +1359,23 @@ function mergeDebevecWithLinearResponse(images, exposureTimes, width, height) {
   }
 
   for (let pixel = 0, offset = 0; pixel < pixelCount; pixel += 1, offset += 3) {
-    let sumR = 0;
-    let sumG = 0;
-    let sumB = 0;
-    let weightSum = 0;
-
+    const sums = [0, 0, 0];
+    const weightSums = [0, 0, 0];
     for (let imageIndex = 0; imageIndex < images.length; imageIndex += 1) {
       const image = images[imageIndex];
-      const r = clamp01(image[offset]);
-      const g = clamp01(image[offset + 1]);
-      const b = clamp01(image[offset + 2]);
-      const weight = (debevecWeightFloat(r) + debevecWeightFloat(g) + debevecWeightFloat(b)) / 3;
       const logTime = logTimes[imageIndex];
-      sumR += weight * (debevecLogResponseFloat(r) - logTime);
-      sumG += weight * (debevecLogResponseFloat(g) - logTime);
-      sumB += weight * (debevecLogResponseFloat(b) - logTime);
-      weightSum += weight;
+      for (let channel = 0; channel < 3; channel += 1) {
+        const value = clamp01(image[offset + channel]);
+        const weight = debevecWeightFloat(value);
+        sums[channel] += weight * (debevecLogResponseFloat(value) - logTime);
+        weightSums[channel] += weight;
+      }
     }
-
-    const inverseWeight = weightSum > 0 ? 1 / weightSum : 0;
-    result[offset] = sanitizeHdrValue(Math.exp(sumR * inverseWeight));
-    result[offset + 1] = sanitizeHdrValue(Math.exp(sumG * inverseWeight));
-    result[offset + 2] = sanitizeHdrValue(Math.exp(sumB * inverseWeight));
+    for (let channel = 0; channel < 3; channel += 1) {
+      result[offset + channel] = sanitizeHdrValue(Math.exp(
+        weightSums[channel] > 0 ? sums[channel] / weightSums[channel] : 0,
+      ));
+    }
   }
 
   return result;
