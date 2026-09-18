@@ -295,15 +295,16 @@ export type ImageDuotonePreset =
   | "duotone-cyan"
   | "duotone-blue"
   | "duotone-magenta";
+export type ImageEdgePreset = "edge-canny" | "edge-xdog" | "edge-multiscale";
 export type ImageOtherFilterPreset =
   | ImageChannelSwapPreset
   | ImageDichromePreset
   | ImageTrichromePreset
   | ImagePartColorPreset
   | ImageDuotonePreset
+  | ImageEdgePreset
   | "classic-chrome"
-  | "velvia"
-  | "edge";
+  | "velvia";
 export type ImageNonMonochromeFilterPreset = ImagePhotochemicalFilterPreset | ImageOtherFilterPreset;
 
 export type ImageFilter =
@@ -990,11 +991,16 @@ const DUOTONE_PRESET_SEQUENCE: readonly ImageDuotonePreset[] = [
   "duotone-magenta",
 ];
 
-const OTHER_FILTER_LABELS: Record<Extract<ImageOtherFilterPreset, "classic-chrome" | "velvia" | "edge">, string> = {
-  edge: "Edge",
+const OTHER_FILTER_LABELS: Record<Extract<ImageOtherFilterPreset, "classic-chrome" | "velvia">, string> = {
   velvia: "Velvia",
   "classic-chrome": "C. Chrome",
 };
+
+const EDGE_PRESET_SEQUENCE: readonly ImageEdgePreset[] = [
+  "edge-canny",
+  "edge-xdog",
+  "edge-multiscale",
+] as const;
 
 const TRICHROME_TARGET_PERCENTILE = 0.50;
 const SOLARIZATION_PEAK = 0.97;
@@ -1006,6 +1012,16 @@ const EDGE_LAPLACIAN_WEIGHT = 0.45;
 const EDGE_LEVEL_WEIGHT_DECAY = 0.78;
 const EDGE_LEVEL_RESPONSE_GAIN = 4.0;
 const EDGE_OUTPUT_GAMMA = 0.7;
+const EDGE_CANNY_GAUSSIAN_SIGMA = 1.1;
+const EDGE_CANNY_HIGH_PERCENTILE = 0.90;
+const EDGE_CANNY_LOW_THRESHOLD_RATIO = 0.45;
+const EDGE_CANNY_OUTPUT_GAMMA = 0.9;
+const EDGE_XDOG_SIGMA = 0.8;
+const EDGE_XDOG_SIGMA_RATIO = 1.6;
+const EDGE_XDOG_TAU = 0.98;
+const EDGE_XDOG_EPSILON = 0.01;
+const EDGE_XDOG_PHI = 12;
+const EDGE_XDOG_OUTPUT_GAMMA = 0.8;
 
 const SEPIA_GRAIN_AMOUNT = 0.002;
 const SEPIA_GRAIN_SHADOW_EXPONENT = 1.1;
@@ -1891,6 +1907,10 @@ function isDuotonePreset(value: unknown): value is ImageDuotonePreset {
   return typeof value === "string" && (DUOTONE_PRESET_SEQUENCE as readonly string[]).includes(value);
 }
 
+function isEdgePreset(value: unknown): value is ImageEdgePreset {
+  return typeof value === "string" && (EDGE_PRESET_SEQUENCE as readonly string[]).includes(value);
+}
+
 function cycleOtherFilterPreset<T extends ImageOtherFilterPreset>(
   current: ImageFilter | null | undefined,
   sequence: readonly T[],
@@ -1911,6 +1931,7 @@ function normalizeNonMonochromeFilterPreset(value: unknown): ImageNonMonochromeF
     || isTrichromePreset(value)
     || isPartColorPreset(value)
     || isDuotonePreset(value)
+    || isEdgePreset(value)
   ) {
     return value;
   }
@@ -1921,8 +1942,7 @@ function normalizeNonMonochromeFilterPreset(value: unknown): ImageNonMonochromeF
     value === "negative" ||
     value === "solarization" ||
     value === "classic-chrome" ||
-    value === "velvia" ||
-    value === "edge"
+    value === "velvia"
   ) {
     return value;
   }
@@ -3674,6 +3694,72 @@ function resizeGrayFloatImageBilinear(src: GrayFloatImage, dstWidth: number, dst
   return dst;
 }
 
+function buildGaussianKernel1d(sigma: number): Float32Array {
+  const safeSigma = Math.max(1e-6, sigma);
+  const radius = Math.max(1, Math.ceil(safeSigma * 3));
+  const size = radius * 2 + 1;
+  const kernel = new Float32Array(size);
+  let sum = 0;
+  for (let i = -radius; i <= radius; i += 1) {
+    const value = Math.exp(-(i * i) / (2 * safeSigma * safeSigma));
+    kernel[i + radius] = value;
+    sum += value;
+  }
+  const inv = sum > 0 ? 1 / sum : 1;
+  for (let i = 0; i < size; i += 1) kernel[i] *= inv;
+  return kernel;
+}
+
+function convolveGrayFloatImageSeparable(
+  src: Float32Array,
+  width: number,
+  height: number,
+  kernel: Float32Array,
+): Float32Array {
+  const radius = Math.floor(kernel.length / 2);
+  const tmp = new Float32Array(width * height);
+  const dst = new Float32Array(width * height);
+  for (let y = 0; y < height; y += 1) {
+    const row = y * width;
+    for (let x = 0; x < width; x += 1) {
+      let sum = 0;
+      for (let k = -radius; k <= radius; k += 1) {
+        const sx = Math.max(0, Math.min(width - 1, x + k));
+        sum += (src[row + sx] ?? 0) * (kernel[k + radius] ?? 0);
+      }
+      tmp[row + x] = sum;
+    }
+  }
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      let sum = 0;
+      for (let k = -radius; k <= radius; k += 1) {
+        const sy = Math.max(0, Math.min(height - 1, y + k));
+        sum += (tmp[sy * width + x] ?? 0) * (kernel[k + radius] ?? 0);
+      }
+      dst[y * width + x] = sum;
+    }
+  }
+  return dst;
+}
+
+function blurGrayFloatImageGaussian(
+  src: Float32Array,
+  width: number,
+  height: number,
+  sigma: number,
+): Float32Array {
+  return convolveGrayFloatImageSeparable(src, width, height, buildGaussianKernel1d(sigma));
+}
+
+function computeFloatArrayPercentile(values: Float32Array, percentile: number): number {
+  if (values.length <= 0) return 0;
+  const clamped = clamp01(percentile);
+  const sorted = Array.from(values).sort((a, b) => a - b);
+  const index = Math.max(0, Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * clamped)));
+  return sorted[index] ?? 0;
+}
+
 function computeMultiScaleEdgeLevel(level: GrayFloatImage, scaleIndex: number): Float32Array {
   const { width, height, data } = level;
   const result = new Float32Array(width * height);
@@ -3773,14 +3859,145 @@ function computeMultiScaleEdgeMapFromLuma(baseLuma: Float32Array, width: number,
   return output;
 }
 
+function computeCannyEdgeMapFromLuma(baseLuma: Float32Array, width: number, height: number): Float32Array {
+  const blurred = blurGrayFloatImageGaussian(baseLuma, width, height, EDGE_CANNY_GAUSSIAN_SIGMA);
+  const magnitude = new Float32Array(width * height);
+  const angle = new Float32Array(width * height);
+  let maxMagnitude = 0;
+  for (let y = 0; y < height; y += 1) {
+    const y0 = Math.max(0, y - 1);
+    const y1 = Math.min(height - 1, y + 1);
+    for (let x = 0; x < width; x += 1) {
+      const x0 = Math.max(0, Math.min(width - 1, x - 1));
+      const x1 = Math.max(0, Math.min(width - 1, x + 1));
+      const tl = blurred[y0 * width + x0] ?? 0;
+      const tc = blurred[y0 * width + x] ?? 0;
+      const tr = blurred[y0 * width + x1] ?? 0;
+      const ml = blurred[y * width + x0] ?? 0;
+      const mr = blurred[y * width + x1] ?? 0;
+      const bl = blurred[y1 * width + x0] ?? 0;
+      const bc = blurred[y1 * width + x] ?? 0;
+      const br = blurred[y1 * width + x1] ?? 0;
+      const gx = -tl - 2 * ml - bl + tr + 2 * mr + br;
+      const gy = -tl - 2 * tc - tr + bl + 2 * bc + br;
+      const index = y * width + x;
+      const mag = Math.hypot(gx, gy);
+      magnitude[index] = mag;
+      angle[index] = Math.atan2(gy, gx);
+      if (mag > maxMagnitude) maxMagnitude = mag;
+    }
+  }
+  const normalize = maxMagnitude > 1e-9 ? 1 / maxMagnitude : 1;
+  for (let i = 0; i < magnitude.length; i += 1) magnitude[i] *= normalize;
+
+  const suppressed = new Float32Array(width * height);
+  for (let y = 1; y < height - 1; y += 1) {
+    for (let x = 1; x < width - 1; x += 1) {
+      const index = y * width + x;
+      const mag = magnitude[index] ?? 0;
+      const degrees = ((angle[index] ?? 0) * 180 / Math.PI + 180) % 180;
+      let n1 = 0;
+      let n2 = 0;
+      if (degrees < 22.5 || degrees >= 157.5) {
+        n1 = magnitude[index - 1] ?? 0;
+        n2 = magnitude[index + 1] ?? 0;
+      } else if (degrees < 67.5) {
+        n1 = magnitude[(y - 1) * width + (x + 1)] ?? 0;
+        n2 = magnitude[(y + 1) * width + (x - 1)] ?? 0;
+      } else if (degrees < 112.5) {
+        n1 = magnitude[(y - 1) * width + x] ?? 0;
+        n2 = magnitude[(y + 1) * width + x] ?? 0;
+      } else {
+        n1 = magnitude[(y - 1) * width + (x - 1)] ?? 0;
+        n2 = magnitude[(y + 1) * width + (x + 1)] ?? 0;
+      }
+      if (mag >= n1 && mag >= n2) suppressed[index] = mag;
+    }
+  }
+
+  const high = Math.max(1e-4, computeFloatArrayPercentile(suppressed, EDGE_CANNY_HIGH_PERCENTILE));
+  const low = high * EDGE_CANNY_LOW_THRESHOLD_RATIO;
+  const result = new Float32Array(width * height);
+  const visited = new Uint8Array(width * height);
+  const stack = new Int32Array(width * height);
+  let stackSize = 0;
+  for (let i = 0; i < suppressed.length; i += 1) {
+    if ((suppressed[i] ?? 0) >= high) {
+      visited[i] = 1;
+      stack[stackSize] = i;
+      stackSize += 1;
+    }
+  }
+  while (stackSize > 0) {
+    stackSize -= 1;
+    const index = stack[stackSize] ?? 0;
+    const value = suppressed[index] ?? 0;
+    result[index] = Math.max(result[index] ?? 0, value);
+    const x = index % width;
+    const y = Math.floor(index / width);
+    for (let oy = -1; oy <= 1; oy += 1) {
+      const ny = y + oy;
+      if (ny < 0 || ny >= height) continue;
+      for (let ox = -1; ox <= 1; ox += 1) {
+        const nx = x + ox;
+        if (nx < 0 || nx >= width) continue;
+        const neighbor = ny * width + nx;
+        if (visited[neighbor]) continue;
+        if ((suppressed[neighbor] ?? 0) >= low) {
+          visited[neighbor] = 1;
+          stack[stackSize] = neighbor;
+          stackSize += 1;
+        }
+      }
+    }
+  }
+  for (let i = 0; i < result.length; i += 1) result[i] = Math.pow(clamp01(result[i]), EDGE_CANNY_OUTPUT_GAMMA);
+  return result;
+}
+
+function computeXDoGEdgeMapFromLuma(baseLuma: Float32Array, width: number, height: number): Float32Array {
+  const blur1 = blurGrayFloatImageGaussian(baseLuma, width, height, EDGE_XDOG_SIGMA);
+  const blur2 = blurGrayFloatImageGaussian(baseLuma, width, height, EDGE_XDOG_SIGMA * EDGE_XDOG_SIGMA_RATIO);
+  const output = new Float32Array(width * height);
+  let maxValue = 0;
+  for (let i = 0; i < output.length; i += 1) {
+    const dog = (blur1[i] ?? 0) - EDGE_XDOG_TAU * (blur2[i] ?? 0);
+    const whiteBg = dog >= EDGE_XDOG_EPSILON ? 1 : 1 + Math.tanh(EDGE_XDOG_PHI * (dog - EDGE_XDOG_EPSILON));
+    const edge = clamp01(1 - whiteBg);
+    output[i] = edge;
+    if (edge > maxValue) maxValue = edge;
+  }
+  const scale = maxValue > 1e-6 ? 1 / maxValue : 1;
+  for (let i = 0; i < output.length; i += 1) output[i] = Math.pow(clamp01(output[i] * scale), EDGE_XDOG_OUTPUT_GAMMA);
+  return output;
+}
+
+function computeEdgeMapFromLuma(
+  baseLuma: Float32Array,
+  width: number,
+  height: number,
+  preset: ImageEdgePreset,
+): Float32Array {
+  switch (preset) {
+    case "edge-canny":
+      return computeCannyEdgeMapFromLuma(baseLuma, width, height);
+    case "edge-xdog":
+      return computeXDoGEdgeMapFromLuma(baseLuma, width, height);
+    case "edge-multiscale":
+    default:
+      return computeMultiScaleEdgeMapFromLuma(baseLuma, width, height);
+  }
+}
+
 function applyEdgeFilterToCanvasData(
   rgba8: Uint8ClampedArray,
   width: number,
   height: number,
   profile: ImageEditOutputColorProfile,
+  preset: ImageEdgePreset,
 ): void {
   const luma = buildFilterLumaFromCanvasData(rgba8, width, height, profile);
-  const edge = computeMultiScaleEdgeMapFromLuma(luma, width, height);
+  const edge = computeEdgeMapFromLuma(luma, width, height, preset);
   for (let pixel = 0; pixel < width * height; pixel += 1) {
     const gray = edge[pixel] ?? 0;
     const [er, eg, eb] = convertLinearProPhotoToOutputRgb(gray, gray, gray, profile);
@@ -3791,9 +4008,9 @@ function applyEdgeFilterToCanvasData(
   }
 }
 
-function applyEdgeFilterToRgb16(data: Uint16Array, width: number, height: number): void {
+function applyEdgeFilterToRgb16(data: Uint16Array, width: number, height: number, preset: ImageEdgePreset): void {
   const luma = buildFilterLumaFromRgb16(data, width, height);
-  const edge = computeMultiScaleEdgeMapFromLuma(luma, width, height);
+  const edge = computeEdgeMapFromLuma(luma, width, height, preset);
   for (let pixel = 0; pixel < width * height; pixel += 1) {
     const gray = edge[pixel] ?? 0;
     const encoded = encodeStoredRgb16Channel(gray, "gamma20", 1);
@@ -3869,8 +4086,10 @@ function applyImageFilterToCanvas(
         case "velvia":
           applyVelviaFilterToCanvasData(rgba8, width, height, profile);
           break;
-        case "edge":
-          applyEdgeFilterToCanvasData(rgba8, width, height, profile);
+        case "edge-canny":
+        case "edge-xdog":
+        case "edge-multiscale":
+          applyEdgeFilterToCanvasData(rgba8, width, height, profile, filter.preset);
           break;
       }
     }
@@ -4382,8 +4601,10 @@ function applyImageFilterToRgb16(
     case "velvia":
       applyVelviaFilterToRgb16(data, width, height);
       return;
-    case "edge":
-      applyEdgeFilterToRgb16(data, width, height);
+    case "edge-canny":
+    case "edge-xdog":
+    case "edge-multiscale":
+      applyEdgeFilterToRgb16(data, width, height, filter.preset);
       return;
   }
 }
@@ -14873,7 +15094,35 @@ export function ImageEditDialog({
                               </button>
                             );
                           })()}
-                          {(["edge", "velvia", "classic-chrome"] as const).map((preset) => {
+                          {(() => {
+                            const preset = imageFilter?.kind === "other" && isEdgePreset(imageFilter.preset)
+                              ? imageFilter.preset
+                              : null;
+                            const label = "Edge";
+                            const title = preset === "edge-canny"
+                              ? "Edge (Canny); click to cycle Canny, XDoG, Multi-scale, and Off"
+                              : preset === "edge-xdog"
+                                ? "Edge (XDoG); click to cycle Canny, XDoG, Multi-scale, and Off"
+                                : preset === "edge-multiscale"
+                                  ? "Edge (Multi-scale); click to cycle Canny, XDoG, Multi-scale, and Off"
+                                  : "Edge; click to cycle Canny, XDoG, Multi-scale, and Off";
+                            return (
+                              <button
+                                type="button"
+                                className={`rounded border px-2 py-1 text-[11px] ${
+                                  preset
+                                    ? "border-blue-500 bg-blue-50 text-blue-700"
+                                    : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                                }`}
+                                onClick={() => setImageFilter((current) => cycleOtherFilterPreset(current, EDGE_PRESET_SEQUENCE))}
+                                aria-label={label}
+                                title={title}
+                              >
+                                {label}
+                              </button>
+                            );
+                          })()}
+                          {(["velvia", "classic-chrome"] as const).map((preset) => {
                             const label = OTHER_FILTER_LABELS[preset];
                             const selected = imageFilter?.kind === "other" && imageFilter.preset === preset;
                             return (
