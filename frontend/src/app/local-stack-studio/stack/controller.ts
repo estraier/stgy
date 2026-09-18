@@ -47,6 +47,7 @@ import {
   applySigmoidLinear,
   applySigmoidLinearAtMidpoint,
   clamp01,
+  proPhotoLinearLuminance,
   clampColorAdjustment,
   clampExposureEv,
   clampSigmoid,
@@ -3060,7 +3061,6 @@ function createHdrDebevecReinhardStreamWorker(
   imageCount,
   exposureTimes,
   linearResponseFlags = null,
-  preBrightnessSigmoidGain = 0,
 ) {
   const workerUrl = new URL("/generated/local-stack-studio/hdr.worker.js", window.location.origin);
   const worker = new Worker(workerUrl);
@@ -3155,7 +3155,6 @@ function createHdrDebevecReinhardStreamWorker(
       imageCount,
       exposureTimesBuffer: times.buffer,
       linearResponseFlagsBuffer: flags.buffer,
-      preBrightnessSigmoidGain,
     },
     [times.buffer, flags.buffer],
     "merge-stream-ready",
@@ -3372,7 +3371,9 @@ async function processSingleInputHdrWithOpenCv(cv, file, inputInfo, mergePlan, o
     const contrastStretch = prepareSingleShotHdrContrastStretch(baseLinear, width, height);
 
     if (mergePlan.mode === "hdr1") {
-      const hdrBase = buildSingleShotHdrBaseLinear(baseLinear, width, height, contrastStretch, false);
+      // Match the LIS Exposure stage: positive gain uses the P99.8 max-channel
+      // shoulder rolloff before the synthetic material's sigmoid is applied.
+      const hdrBase = buildSingleShotHdrBaseLinear(baseLinear, width, height, contrastStretch, true);
       const hdrBaseLinear = hdrBase.linear;
       const hdr1StreamWorker = createHdrDebevecReinhardStreamWorker(
         width,
@@ -3386,7 +3387,11 @@ async function processSingleInputHdrWithOpenCv(cv, file, inputInfo, mergePlan, o
         for (let i = 0; i < materials.length; i += 1) {
           const material = materials[i];
           setProgress(`Preparing HDR1 synthetic material ${i + 1}/${materials.length} (${material.label})...`);
-          await hdr1StreamWorker.addImage(i, buildSingleShotHdr1Material(hdrBaseLinear, material), brightness);
+          await hdr1StreamWorker.addImage(
+            i,
+            buildSingleShotHdr1Material(hdrBaseLinear, hdrBase.p998, material),
+            brightness,
+          );
           await yieldToBrowser();
         }
         const linearResult = await hdr1StreamWorker.finalize();
@@ -3424,13 +3429,28 @@ async function processSingleInputHdrWithOpenCv(cv, file, inputInfo, mergePlan, o
   }
 }
 
-function buildSingleShotHdr1Material(sourceLinear, material) {
-  const adjusted = applySingleShotHdrExposureToLinear(sourceLinear, null, material, false);
+function buildSingleShotHdr1Material(sourceLinear, baseP998, material) {
+  const adjusted = applySingleShotHdrExposureToLinear(sourceLinear, baseP998, material, true);
   const floats = new Float32Array(adjusted.length);
+  const sigmoidGain = Number.isFinite(material.sigmoidGain) ? material.sigmoidGain : 0;
+  const sigmoidMidpoint = Number.isFinite(material.sigmoidMidpoint) ? material.sigmoidMidpoint : 0.5;
+  const hasSigmoid = Math.abs(sigmoidGain) > 1e-6;
   for (let i = 0; i < adjusted.length; i += 3) {
-    floats[i] = clamp01(applySigmoidLinearAtMidpoint(adjusted[i], material.sigmoidGain, material.sigmoidMidpoint));
-    floats[i + 1] = clamp01(applySigmoidLinearAtMidpoint(adjusted[i + 1], material.sigmoidGain, material.sigmoidMidpoint));
-    floats[i + 2] = clamp01(applySigmoidLinearAtMidpoint(adjusted[i + 2], material.sigmoidGain, material.sigmoidMidpoint));
+    const r = adjusted[i];
+    const g = adjusted[i + 1];
+    const b = adjusted[i + 2];
+    const maxChannel = Math.max(r, g, b);
+    if (hasSigmoid && maxChannel > 1e-12) {
+      const rolledMax = clamp01(applySigmoidLinearAtMidpoint(maxChannel, sigmoidGain, sigmoidMidpoint));
+      const scale = rolledMax / maxChannel;
+      floats[i] = clamp01(r * scale);
+      floats[i + 1] = clamp01(g * scale);
+      floats[i + 2] = clamp01(b * scale);
+    } else {
+      floats[i] = clamp01(r);
+      floats[i + 1] = clamp01(g);
+      floats[i + 2] = clamp01(b);
+    }
   }
   return floats;
 }
@@ -3438,21 +3458,54 @@ function buildSingleShotHdr1Material(sourceLinear, material) {
 function buildSingleShotHdr2Material(sourceLinear, material) {
   const scaledLog = Number.isFinite(material.scaledLog) ? material.scaledLog : 0;
   const sigmoidGain = Number.isFinite(material.sigmoidGain) ? material.sigmoidGain : 0;
+  const hasScaledLog = Math.abs(scaledLog) > 1e-6;
   const hasSigmoid = Math.abs(sigmoidGain) > 1e-6;
   const sigmoidMidpoint = Number.isFinite(material.sigmoidMidpoint) ? material.sigmoidMidpoint : 0.5;
   const floats = new Float32Array(sourceLinear.length);
   for (let i = 0; i < sourceLinear.length; i += 3) {
-    let r = applyScaledLogLinear(sourceLinear[i], scaledLog);
-    let g = applyScaledLogLinear(sourceLinear[i + 1], scaledLog);
-    let b = applyScaledLogLinear(sourceLinear[i + 2], scaledLog);
-    if (hasSigmoid) {
-      r = applySigmoidLinearAtMidpoint(r, sigmoidGain, sigmoidMidpoint);
-      g = applySigmoidLinearAtMidpoint(g, sigmoidGain, sigmoidMidpoint);
-      b = applySigmoidLinearAtMidpoint(b, sigmoidGain, sigmoidMidpoint);
+    let r = sourceLinear[i];
+    let g = sourceLinear[i + 1];
+    let b = sourceLinear[i + 2];
+
+    if (hasScaledLog) {
+      const sourceLuminance = proPhotoLinearLuminance(r, g, b);
+      if (sourceLuminance > 1e-12) {
+        const targetLuminance = applyScaledLogLinear(sourceLuminance, scaledLog);
+        const scale = targetLuminance / sourceLuminance;
+        r *= scale;
+        g *= scale;
+        b *= scale;
+      }
     }
-    floats[i] = clamp01(r);
-    floats[i + 1] = clamp01(g);
-    floats[i + 2] = clamp01(b);
+
+    if (hasSigmoid) {
+      const sourceLuminance = proPhotoLinearLuminance(r, g, b);
+      if (sourceLuminance > 1e-12) {
+        const targetLuminance = applySigmoidLinearAtMidpoint(
+          sourceLuminance,
+          sigmoidGain,
+          sigmoidMidpoint,
+        );
+        const scale = targetLuminance / sourceLuminance;
+        r *= scale;
+        g *= scale;
+        b *= scale;
+      }
+    }
+
+    r = Math.max(0, r);
+    g = Math.max(0, g);
+    b = Math.max(0, b);
+    const maxChannel = Math.max(r, g, b);
+    if (maxChannel > 1) {
+      const fitScale = 1 / maxChannel;
+      r *= fitScale;
+      g *= fitScale;
+      b *= fitScale;
+    }
+    floats[i] = r;
+    floats[i + 1] = g;
+    floats[i + 2] = b;
   }
   return floats;
 }
@@ -3523,13 +3576,31 @@ function linearProPhotoArrayToHdr2FloatsAndBrightness(linear) {
   let brightnessSum = 0;
   const pixelCount = linear.length / 3;
   for (let i = 0; i < linear.length; i += 3) {
-    const r = applySigmoidLinear(linear[i], MULTI_SHOT_HDR2_SIGMOID_GAIN);
-    const g = applySigmoidLinear(linear[i + 1], MULTI_SHOT_HDR2_SIGMOID_GAIN);
-    const b = applySigmoidLinear(linear[i + 2], MULTI_SHOT_HDR2_SIGMOID_GAIN);
+    let r = linear[i];
+    let g = linear[i + 1];
+    let b = linear[i + 2];
+    const sourceLuminance = proPhotoLinearLuminance(r, g, b);
+    if (sourceLuminance > 1e-12) {
+      const targetLuminance = applySigmoidLinear(sourceLuminance, MULTI_SHOT_HDR2_SIGMOID_GAIN);
+      const scale = targetLuminance / sourceLuminance;
+      r *= scale;
+      g *= scale;
+      b *= scale;
+    }
+    r = Math.max(0, r);
+    g = Math.max(0, g);
+    b = Math.max(0, b);
+    const maxChannel = Math.max(r, g, b);
+    if (maxChannel > 1) {
+      const fitScale = 1 / maxChannel;
+      r *= fitScale;
+      g *= fitScale;
+      b *= fitScale;
+    }
     brightnessSum += 0.299 * r + 0.587 * g + 0.114 * b;
-    floats[i] = clamp01(r);
-    floats[i + 1] = clamp01(g);
-    floats[i + 2] = clamp01(b);
+    floats[i] = r;
+    floats[i + 1] = g;
+    floats[i + 2] = b;
   }
   return { floats, brightness: pixelCount > 0 ? brightnessSum / pixelCount : 0 };
 }

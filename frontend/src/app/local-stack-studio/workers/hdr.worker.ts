@@ -10,6 +10,9 @@ const REINHARD_LIGHT_ADAPT = 0.5;
 const REINHARD_COLOR_ADAPT = 0.5;
 const BRIGHTNESS_MAX_TRIES = 10;
 const BRIGHTNESS_MAX_DIST = 0.01;
+const PROPHOTO_TONE_LUMA_R = 0.2880402;
+const PROPHOTO_TONE_LUMA_G = 0.7118741;
+const PROPHOTO_TONE_LUMA_B = 0.0000857;
 const HDR1_RESPONSE_KNOT_COUNT = 256;
 const HDR1_RESPONSE_SAMPLE_LIMIT = 4096;
 const HDR1_RESPONSE_SAMPLE_OBSERVATION_TARGET = 32768;
@@ -103,9 +106,6 @@ function processDebevecMessage(message) {
   const images = imageBuffers.map((buffer) => new Float32Array(buffer));
   const exposureTimes = resolveExposureTimes(suppliedExposureTimes, brightnesses);
   const targetBrightness = meanArray(brightnesses);
-  const preBrightnessSigmoidGain = Number.isFinite(message.preBrightnessSigmoidGain)
-    ? Number(message.preBrightnessSigmoidGain)
-    : 0;
 
   postProgress("Merging HDR with Debevec...");
   const hdr = mergeDebevecWithLinearResponse(images, exposureTimes, width, height);
@@ -121,10 +121,6 @@ function processDebevecMessage(message) {
     REINHARD_COLOR_ADAPT,
   );
 
-  if (Math.abs(preBrightnessSigmoidGain) > 1e-6) {
-    postProgress("Applying single-shot HDR1 sigmoid...");
-    applySigmoidInPlace(hdr, preBrightnessSigmoidGain, 0.5);
-  }
 
   postProgress("Restoring HDR brightness...");
   adjustExposureToBrightnessInPlace(hdr, targetBrightness);
@@ -200,9 +196,6 @@ async function initializeDebevecStream(message) {
     sessionId: needsResponseCalibration ? `hdr1-${createHdr2ScratchSessionId()}` : null,
     memoryImages: new Map(),
     scratchWriteDisabled: needsResponseCalibration && !db,
-    preBrightnessSigmoidGain: Number.isFinite(message.preBrightnessSigmoidGain)
-      ? Number(message.preBrightnessSigmoidGain)
-      : 0,
   };
   debevecStreamState.brightnesses.fill(Number.NaN);
   self.postMessage({ type: "merge-stream-ready", requestId: message.requestId });
@@ -286,7 +279,6 @@ async function finalizeDebevecStream(message) {
   }
 
   const targetBrightness = meanArray(brightnesses);
-  const preBrightnessSigmoidGain = state.preBrightnessSigmoidGain;
   try {
     await cleanupDebevecStreamState();
   } catch (error) {
@@ -302,10 +294,6 @@ async function finalizeDebevecStream(message) {
     REINHARD_COLOR_ADAPT,
   );
 
-  if (Math.abs(preBrightnessSigmoidGain) > 1e-6) {
-    postProgress("Applying single-shot HDR1 sigmoid...");
-    applySigmoidInPlace(hdr, preBrightnessSigmoidGain, 0.5);
-  }
 
   postProgress("Restoring HDR brightness...");
   adjustExposureToBrightnessInPlace(hdr, targetBrightness);
@@ -1387,32 +1375,31 @@ function sanitizeHdrValue(value) {
   return value;
 }
 
+function proPhotoLinearLuminance(r, g, b) {
+  return PROPHOTO_TONE_LUMA_R * r + PROPHOTO_TONE_LUMA_G * g + PROPHOTO_TONE_LUMA_B * b;
+}
+
 function tonemapReinhardInPlace(image, gamma, intensity, lightAdapt, colorAdapt) {
-  // Mirrors OpenCV TonemapReinhardImpl::process().
+  // Keep HDR tone mapping chroma-preserving: derive the Reinhard mapping from
+  // one ProPhoto luminance value and apply the resulting scale to R/G/B.
+  // colorAdapt is intentionally ignored because channel-specific adaptation
+  // changes chromaticity.
+  void colorAdapt;
   normalizeRgbInPlace(image);
 
   const pixelCount = image.length / 3;
   let sumLog = 0;
   let logMin = Infinity;
   let logMax = -Infinity;
-  let sumR = 0;
-  let sumG = 0;
-  let sumB = 0;
-  let sumGray = 0;
+  let sumLuminance = 0;
 
   for (let i = 0; i < image.length; i += 3) {
-    const r = image[i];
-    const g = image[i + 1];
-    const b = image[i + 2];
-    const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-    const logGray = Math.log(Math.max(gray, 1e-4));
-    sumLog += logGray;
-    if (logGray < logMin) logMin = logGray;
-    if (logGray > logMax) logMax = logGray;
-    sumR += r;
-    sumG += g;
-    sumB += b;
-    sumGray += gray;
+    const luminance = Math.max(0, proPhotoLinearLuminance(image[i], image[i + 1], image[i + 2]));
+    const logLuminance = Math.log(Math.max(luminance, 1e-4));
+    sumLog += logLuminance;
+    if (logLuminance < logMin) logMin = logLuminance;
+    if (logLuminance > logMax) logMax = logLuminance;
+    sumLuminance += luminance;
   }
 
   const logMean = sumLog / pixelCount;
@@ -1420,42 +1407,38 @@ function tonemapReinhardInPlace(image, gamma, intensity, lightAdapt, colorAdapt)
   const key = logRange > Number.EPSILON ? (logMax - logMean) / logRange : 0.5;
   const mapKey = 0.3 + 0.7 * Math.pow(Math.max(0, key), 1.4);
   const intensityScale = Math.exp(-intensity);
-  const channelMeanR = sumR / pixelCount;
-  const channelMeanG = sumG / pixelCount;
-  const channelMeanB = sumB / pixelCount;
-  const grayMean = sumGray / pixelCount;
+  const globalLuminance = sumLuminance / pixelCount;
 
   for (let i = 0; i < image.length; i += 3) {
     const r = image[i];
     const g = image[i + 1];
     const b = image[i + 2];
-    const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+    const luminance = Math.max(0, proPhotoLinearLuminance(r, g, b));
+    if (!(luminance > 1e-12)) continue;
 
-    const localR = colorAdapt * r + (1 - colorAdapt) * gray;
-    const localG = colorAdapt * g + (1 - colorAdapt) * gray;
-    const localB = colorAdapt * b + (1 - colorAdapt) * gray;
-    const globalR = colorAdapt * channelMeanR + (1 - colorAdapt) * grayMean;
-    const globalG = colorAdapt * channelMeanG + (1 - colorAdapt) * grayMean;
-    const globalB = colorAdapt * channelMeanB + (1 - colorAdapt) * grayMean;
-
-    const adaptR = lightAdapt * localR + (1 - lightAdapt) * globalR;
-    const adaptG = lightAdapt * localG + (1 - lightAdapt) * globalG;
-    const adaptB = lightAdapt * localB + (1 - lightAdapt) * globalB;
-
-    const mappedAdaptR = Math.pow(Math.max(0, intensityScale * adaptR), mapKey);
-    const mappedAdaptG = Math.pow(Math.max(0, intensityScale * adaptG), mapKey);
-    const mappedAdaptB = Math.pow(Math.max(0, intensityScale * adaptB), mapKey);
-
-    image[i] = r / (mappedAdaptR + r);
-    image[i + 1] = g / (mappedAdaptG + g);
-    image[i + 2] = b / (mappedAdaptB + b);
+    const adapt = lightAdapt * luminance + (1 - lightAdapt) * globalLuminance;
+    const mappedAdapt = Math.pow(Math.max(0, intensityScale * adapt), mapKey);
+    const targetLuminance = luminance / (mappedAdapt + luminance);
+    const scale = targetLuminance / luminance;
+    image[i] = r * scale;
+    image[i + 1] = g * scale;
+    image[i + 2] = b * scale;
   }
 
   normalizeRgbInPlace(image);
   if (gamma !== 1) {
     const exponent = 1 / gamma;
-    for (let i = 0; i < image.length; i += 1) {
-      image[i] = Math.pow(Math.max(0, image[i]), exponent);
+    for (let i = 0; i < image.length; i += 3) {
+      const r = image[i];
+      const g = image[i + 1];
+      const b = image[i + 2];
+      const luminance = Math.max(0, proPhotoLinearLuminance(r, g, b));
+      if (!(luminance > 1e-12)) continue;
+      const targetLuminance = Math.pow(luminance, exponent);
+      const scale = targetLuminance / luminance;
+      image[i] = r * scale;
+      image[i + 1] = g * scale;
+      image[i + 2] = b * scale;
     }
   }
 }
@@ -1500,22 +1483,39 @@ function adjustExposureToBrightnessInPlace(image, targetBrightness) {
 
 function applyScaledLog(image, factor) {
   const output = new Float32Array(image.length);
-  if (factor > 1e-6) {
-    const denominator = Math.log1p(factor);
-    for (let i = 0; i < image.length; i += 1) {
-      output[i] = clamp01(Math.log1p(image[i] * factor) / denominator);
+  for (let i = 0; i < image.length; i += 3) {
+    const r = Math.max(0, image[i]);
+    const g = Math.max(0, image[i + 1]);
+    const b = Math.max(0, image[i + 2]);
+    const luminance = Math.max(0, proPhotoLinearLuminance(r, g, b));
+    let scale = 1;
+    if (luminance > 1e-12) {
+      let targetLuminance = luminance;
+      if (factor > 1e-6) {
+        const denominator = Math.log1p(factor);
+        targetLuminance = Math.log1p(clamp01(luminance) * factor) / denominator;
+      } else if (factor < -1e-6) {
+        const positiveFactor = -factor;
+        const logFactor = Math.log1p(positiveFactor);
+        targetLuminance = Math.expm1(clamp01(luminance) * logFactor) / positiveFactor;
+      }
+      scale = targetLuminance / luminance;
     }
-    return output;
-  }
-  if (factor < -1e-6) {
-    const positiveFactor = -factor;
-    const logFactor = Math.log1p(positiveFactor);
-    for (let i = 0; i < image.length; i += 1) {
-      output[i] = clamp01(Math.expm1(image[i] * logFactor) / positiveFactor);
+
+    let outR = r * scale;
+    let outG = g * scale;
+    let outB = b * scale;
+    const maxChannel = Math.max(outR, outG, outB);
+    if (maxChannel > 1) {
+      const fitScale = 1 / maxChannel;
+      outR *= fitScale;
+      outG *= fitScale;
+      outB *= fitScale;
     }
-    return output;
+    output[i] = outR;
+    output[i + 1] = outG;
+    output[i + 2] = outB;
   }
-  output.set(image);
   return output;
 }
 
@@ -1536,73 +1536,18 @@ function meanArray(values) {
 }
 
 function normalizeRgbInPlace(image) {
-  let minValue = Infinity;
-  let maxValue = -Infinity;
+  let maxValue = 0;
   for (let i = 0; i < image.length; i += 1) {
     const value = image[i];
-    if (!Number.isFinite(value)) continue;
-    if (value < minValue) minValue = value;
+    if (!Number.isFinite(value)) {
+      throw new Error("HDR processing produced non-finite image values.");
+    }
     if (value > maxValue) maxValue = value;
   }
-
-  if (!(Number.isFinite(minValue) && Number.isFinite(maxValue))) {
-    throw new Error("HDR processing produced non-finite image values.");
-  }
-  const range = maxValue - minValue;
-  if (!(range > Number.EPSILON)) return;
-
-  const inverseRange = 1 / range;
+  if (!(maxValue > Number.EPSILON)) return;
+  const scale = 1 / maxValue;
   for (let i = 0; i < image.length; i += 1) {
-    const value = image[i];
-    image[i] = Number.isFinite(value) ? (value - minValue) * inverseRange : 0;
-  }
-}
-
-function naiveSigmoid(x, gain, midpoint) {
-  return 1 / (1 + Math.exp(-gain * (x - midpoint)));
-}
-
-function naiveInverseSigmoid(x, gain, midpoint) {
-  if (x <= 0) return 0;
-  if (x >= 1) return 1;
-  const minVal = naiveSigmoid(0, gain, midpoint);
-  const maxVal = naiveSigmoid(1, gain, midpoint);
-  const a = (maxVal - minVal) * x + minVal;
-  return -Math.log(1 / a - 1) / gain;
-}
-
-function clampSigmoid(value) {
-  if (!Number.isFinite(value)) return 0;
-  if (value < -30) return -30;
-  if (value > 30) return 30;
-  return value;
-}
-
-function applySigmoidValue(value, gain, midpoint) {
-  const x = clamp01(value);
-  const g = clampSigmoid(gain);
-  const mid = clamp01(midpoint);
-  const gamma = 2.4;
-  const encoded = Math.pow(x, 1 / gamma);
-  if (g > 1e-6) {
-    const minVal = naiveSigmoid(0, g, mid);
-    const maxVal = naiveSigmoid(1, g, mid);
-    const adjusted = clamp01((naiveSigmoid(encoded, g, mid) - minVal) / (maxVal - minVal));
-    return clamp01(Math.pow(adjusted, gamma));
-  }
-  if (g < -1e-6) {
-    const magnitude = -g;
-    const minVal = naiveInverseSigmoid(0, magnitude, mid);
-    const maxVal = naiveInverseSigmoid(1, magnitude, mid);
-    const adjusted = clamp01((naiveInverseSigmoid(encoded, magnitude, mid) - minVal) / (maxVal - minVal));
-    return clamp01(Math.pow(adjusted, gamma));
-  }
-  return x;
-}
-
-function applySigmoidInPlace(image, gain, midpoint) {
-  for (let i = 0; i < image.length; i += 1) {
-    image[i] = applySigmoidValue(image[i], gain, midpoint);
+    image[i] = Math.max(0, image[i]) * scale;
   }
 }
 
