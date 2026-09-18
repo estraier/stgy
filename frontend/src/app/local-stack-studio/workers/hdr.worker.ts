@@ -180,9 +180,9 @@ async function initializeDebevecStream(message) {
     imageCount,
     receivedCount: 0,
     responseSums: needsResponseCalibration ? null : new Float32Array(pixelCount * 3),
-    weightSums: needsResponseCalibration ? null : new Float32Array(pixelCount * 3),
+    weightSums: needsResponseCalibration ? null : new Float32Array(pixelCount),
     weightedLogBrightnessSums: !needsResponseCalibration && suppliedExposureTimes.length === 0
-      ? new Float32Array(pixelCount * 3)
+      ? new Float32Array(pixelCount)
       : null,
     brightnesses: new Float32Array(imageCount),
     receivedFlags: new Uint8Array(imageCount),
@@ -315,16 +315,16 @@ function accumulateLinearDebevecImage(state, imageIndex, image, brightness) {
   const pixelCount = state.width * state.height;
 
   for (let pixel = 0, offset = 0; pixel < pixelCount; pixel += 1, offset += 3) {
-    for (let channel = 0; channel < 3; channel += 1) {
-      const value = clamp01(image[offset + channel]);
-      const weight = debevecWeightFloat(value);
-      responseSums[offset + channel] += weight * (
-        debevecLogResponseFloat(value) - logExposureTime
-      );
-      weightSums[offset + channel] += weight;
-      if (weightedLogBrightnessSums) {
-        weightedLogBrightnessSums[offset + channel] += weight * logBrightness;
-      }
+    const r = clamp01(image[offset]);
+    const g = clamp01(image[offset + 1]);
+    const b = clamp01(image[offset + 2]);
+    const weight = debevecPixelWeight(r, g, b);
+    responseSums[offset] += weight * (debevecLogResponseFloat(r) - logExposureTime);
+    responseSums[offset + 1] += weight * (debevecLogResponseFloat(g) - logExposureTime);
+    responseSums[offset + 2] += weight * (debevecLogResponseFloat(b) - logExposureTime);
+    weightSums[pixel] += weight;
+    if (weightedLogBrightnessSums) {
+      weightedLogBrightnessSums[pixel] += weight * logBrightness;
     }
   }
 }
@@ -341,16 +341,19 @@ function finalizeLinearDebevecStreamToHdr(state) {
     minBrightness = Math.max(minBrightness, 0.0001);
   }
   const minLogBrightness = weightedLogBrightnessSums ? Math.log(minBrightness) : 0;
+  const pixelCount = state.width * state.height;
 
-  for (let offset = 0; offset < responseSums.length; offset += 1) {
-    const weightSum = weightSums[offset];
+  for (let pixel = 0, offset = 0; pixel < pixelCount; pixel += 1, offset += 3) {
+    const weightSum = weightSums[pixel];
     const weightedLogTime = weightedLogBrightnessSums
-      ? weightedLogBrightnessSums[offset] - minLogBrightness * weightSum
+      ? weightedLogBrightnessSums[pixel] - minLogBrightness * weightSum
       : 0;
-    const logRadiance = weightSum > 0
-      ? (responseSums[offset] - weightedLogTime) / weightSum
-      : 0;
-    responseSums[offset] = sanitizeHdrValue(Math.exp(logRadiance));
+    for (let channel = 0; channel < 3; channel += 1) {
+      const logRadiance = weightSum > 0
+        ? (responseSums[offset + channel] - weightedLogTime) / weightSum
+        : 0;
+      responseSums[offset + channel] = sanitizeHdrValue(Math.exp(logRadiance));
+    }
   }
   return responseSums;
 }
@@ -677,7 +680,7 @@ async function releaseDebevecStreamImage(state, imageIndex) {
 async function mergeCalibratedDebevecStream(state, exposureTimes, responseCurves) {
   const pixelCount = state.width * state.height;
   const responseSums = new Float32Array(pixelCount * 3);
-  const weightSums = new Float32Array(pixelCount * 3);
+  const weightSums = new Float32Array(pixelCount);
   const logTimes = new Float64Array(exposureTimes.length);
   for (let i = 0; i < exposureTimes.length; i += 1) logTimes[i] = Math.log(exposureTimes[i]);
   const expectedByteLength = pixelCount * 3 * Float32Array.BYTES_PER_ELEMENT;
@@ -695,24 +698,34 @@ async function mergeCalibratedDebevecStream(state, exposureTimes, responseCurves
     const image = new Float32Array(buffer);
     const linearResponse = state.linearResponseFlags[imageIndex] !== 0;
     const logTime = logTimes[imageIndex];
-    for (let offset = 0; offset < image.length; offset += 3) {
-      for (let channel = 0; channel < 3; channel += 1) {
-        const value = clamp01(image[offset + channel]);
-        const weight = debevecWeightFloat(value);
-        const response = linearResponse
-          ? debevecLogResponseFloat(value)
-          : evaluateDebevecResponseCurve(responseCurves[channel], value);
-        responseSums[offset + channel] += weight * (response - logTime);
-        weightSums[offset + channel] += weight;
-      }
+    for (let pixel = 0, offset = 0; pixel < pixelCount; pixel += 1, offset += 3) {
+      const r = clamp01(image[offset]);
+      const g = clamp01(image[offset + 1]);
+      const b = clamp01(image[offset + 2]);
+      const weight = debevecPixelWeight(r, g, b);
+      const responseR = linearResponse
+        ? debevecLogResponseFloat(r)
+        : evaluateDebevecResponseCurve(responseCurves[0], r);
+      const responseG = linearResponse
+        ? debevecLogResponseFloat(g)
+        : evaluateDebevecResponseCurve(responseCurves[1], g);
+      const responseB = linearResponse
+        ? debevecLogResponseFloat(b)
+        : evaluateDebevecResponseCurve(responseCurves[2], b);
+      responseSums[offset] += weight * (responseR - logTime);
+      responseSums[offset + 1] += weight * (responseG - logTime);
+      responseSums[offset + 2] += weight * (responseB - logTime);
+      weightSums[pixel] += weight;
     }
     await releaseDebevecStreamImage(state, imageIndex);
   }
 
-  for (let offset = 0; offset < responseSums.length; offset += 1) {
-    const weightSum = weightSums[offset];
-    const logRadiance = weightSum > 0 ? responseSums[offset] / weightSum : 0;
-    responseSums[offset] = sanitizeHdrValue(Math.exp(logRadiance));
+  for (let pixel = 0, offset = 0; pixel < pixelCount; pixel += 1, offset += 3) {
+    const weightSum = weightSums[pixel];
+    for (let channel = 0; channel < 3; channel += 1) {
+      const logRadiance = weightSum > 0 ? responseSums[offset + channel] / weightSum : 0;
+      responseSums[offset + channel] = sanitizeHdrValue(Math.exp(logRadiance));
+    }
   }
   return responseSums;
 }
@@ -1315,6 +1328,14 @@ function debevecWeightFloat(value) {
   return Math.min(x, 1 - x);
 }
 
+function debevecPixelWeight(r, g, b) {
+  return (
+    debevecWeightFloat(r) +
+    debevecWeightFloat(g) +
+    debevecWeightFloat(b)
+  ) / 3;
+}
+
 function debevecLogResponseFloat(value) {
   // Float32 HDR1 materials are normalized linear RGB in [0,1].
   // Keep the normalized linear Float32 value continuous.  The floor is well
@@ -1350,20 +1371,22 @@ function mergeDebevecWithLinearResponse(images, exposureTimes, width, height) {
 
   for (let pixel = 0, offset = 0; pixel < pixelCount; pixel += 1, offset += 3) {
     const sums = [0, 0, 0];
-    const weightSums = [0, 0, 0];
+    let weightSum = 0;
     for (let imageIndex = 0; imageIndex < images.length; imageIndex += 1) {
       const image = images[imageIndex];
       const logTime = logTimes[imageIndex];
-      for (let channel = 0; channel < 3; channel += 1) {
-        const value = clamp01(image[offset + channel]);
-        const weight = debevecWeightFloat(value);
-        sums[channel] += weight * (debevecLogResponseFloat(value) - logTime);
-        weightSums[channel] += weight;
-      }
+      const r = clamp01(image[offset]);
+      const g = clamp01(image[offset + 1]);
+      const b = clamp01(image[offset + 2]);
+      const weight = debevecPixelWeight(r, g, b);
+      sums[0] += weight * (debevecLogResponseFloat(r) - logTime);
+      sums[1] += weight * (debevecLogResponseFloat(g) - logTime);
+      sums[2] += weight * (debevecLogResponseFloat(b) - logTime);
+      weightSum += weight;
     }
     for (let channel = 0; channel < 3; channel += 1) {
       result[offset + channel] = sanitizeHdrValue(Math.exp(
-        weightSums[channel] > 0 ? sums[channel] / weightSums[channel] : 0,
+        weightSum > 0 ? sums[channel] / weightSum : 0,
       ));
     }
   }
