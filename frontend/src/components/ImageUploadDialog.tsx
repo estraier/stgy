@@ -15639,7 +15639,7 @@ export function ImageEditDialog({
           </div>
           </div>
 
-          <div className="space-y-4 text-sm text-gray-800">
+          <div className="space-y-4 text-sm text-gray-800 select-none">
             <div className={`rounded border px-2 ${collapsedPanels.crop ? "py-1.5" : "py-3 lg:space-y-2"}`}>
               <div className="flex items-start justify-between gap-2">
                 <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1 gap-y-2 lg:gap-x-2">
