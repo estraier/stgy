@@ -1267,9 +1267,11 @@ function mertensGammaEncode(value) {
 function decodeMertensGammaBuffer(encoded, expectedLength) {
   const output = new Float32Array(expectedLength);
   for (let i = 0; i < expectedLength; i += 1) {
-    // Laplacian reconstruction can overshoot its nominal range. Clamp before
-    // inverse gamma so negative values cannot generate NaNs.
-    output[i] = Math.pow(clamp01(encoded[i]), MERTENS_PROCESSING_GAMMA);
+    // Laplacian reconstruction can overshoot its nominal range. Preserve
+    // positive highlight overshoot and clamp only negative values so inverse
+    // gamma cannot generate NaNs.
+    const value = encoded[i];
+    output[i] = value > 0 ? Math.pow(value, MERTENS_PROCESSING_GAMMA) : 0;
   }
   return output;
 }

@@ -106,6 +106,7 @@ const SINGLE_SHOT_HDR1_EXPOSURE_TIMES = new Float32Array([1, 4, 16]);
 const SINGLE_SHOT_HDR2_SCALED_LOGS = new Float32Array([-4, 0, 4]);
 const SINGLE_SHOT_HDR2_SIGMOID_GAINS = new Float32Array([4, 2, 4]);
 const MULTI_SHOT_HDR2_SIGMOID_GAIN = 4;
+const SINGLE_SHOT_HDR2_BASE_HEADROOM_GAIN = 0.95;
 const SINGLE_SHOT_HDR_SATURATION_WEIGHT = 0.1;
 const SINGLE_SHOT_HDR_EXPOSURE_WEIGHT = 1.0;
 const RESULT_BUFFER_GAMMA = 2.0;
@@ -2088,7 +2089,7 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
       throw new Error("No input images were processed.");
     }
 
-    return finalizeStoredResult(accumulator, width, height, outputColorSpace);
+    return finalizeStoredResult(accumulator, width, height, outputColorSpace, mergePlan.mode === "hdr2");
   } finally {
     if (alignmentWorker) alignmentWorker.terminate();
     if (focusWorker) focusWorker.terminate();
@@ -3395,7 +3396,7 @@ async function processSingleInputHdrWithOpenCv(cv, file, inputInfo, mergePlan, o
           await yieldToBrowser();
         }
         const linearResult = await hdr1StreamWorker.finalize();
-        return finalizeStoredResult(linearResult, width, height, outputColorSpace);
+        return finalizeStoredResult(linearResult, width, height, outputColorSpace, false);
       } finally {
         hdr1StreamWorker.terminate();
       }
@@ -3407,6 +3408,7 @@ async function processSingleInputHdrWithOpenCv(cv, file, inputInfo, mergePlan, o
 
     const hdrBase = buildSingleShotHdrBaseLinear(baseLinear, width, height, contrastStretch, true);
     const hdrBaseLinear = hdrBase.linear;
+    applyLinearGainInPlace(hdrBaseLinear, SINGLE_SHOT_HDR2_BASE_HEADROOM_GAIN);
     baseLinear = null;
     const brightness = computeAverageBrightnessFromLinear(hdrBaseLinear);
     const hdr2StreamWorker = createHdrMertensStreamWorker(width, height, materials.length);
@@ -3419,7 +3421,7 @@ async function processSingleInputHdrWithOpenCv(cv, file, inputInfo, mergePlan, o
         await yieldToBrowser();
       }
       const linearResult = await hdr2StreamWorker.finalize();
-      return finalizeStoredResult(linearResult, width, height, outputColorSpace);
+      return finalizeStoredResult(linearResult, width, height, outputColorSpace, true);
     } finally {
       hdr2StreamWorker.terminate();
     }
@@ -3605,6 +3607,32 @@ function linearProPhotoArrayToHdr2FloatsAndBrightness(linear) {
   return { floats, brightness: pixelCount > 0 ? brightnessSum / pixelCount : 0 };
 }
 
+function applyFinalStorageRolloffInPlace(linear, width, height) {
+  if (!(linear instanceof Float32Array) || linear.length !== width * height * 3) return;
+  let actualMax = 0;
+  for (let i = 0; i + 2 < linear.length; i += 3) {
+    actualMax = Math.max(actualMax, linear[i] ?? 0, linear[i + 1] ?? 0, linear[i + 2] ?? 0);
+  }
+  if (!(actualMax > 1)) return;
+  const p998 = estimateMaxChannelPercentileSampled(linear, width, height, 0.998, 256);
+  const rolloffBase = p998 > 1 ? p998 : actualMax;
+  const rolloff = rolloffParams(rolloffBase, EXPOSURE_ROLLOFF_A, ROLLOFF_SAVING_LIMIT_FACTOR, 1);
+  if (!rolloff) return;
+  const adjusted = [0, 0, 0];
+  for (let i = 0; i + 2 < linear.length; i += 3) {
+    applyRolloffMaxChannelLinearRgbInto(
+      linear[i] ?? 0,
+      linear[i + 1] ?? 0,
+      linear[i + 2] ?? 0,
+      rolloff,
+      adjusted,
+    );
+    linear[i] = adjusted[0];
+    linear[i + 1] = adjusted[1];
+    linear[i + 2] = adjusted[2];
+  }
+}
+
 function encodeLinearToStoredGamma2(linear) {
   const stored = new Uint16Array(linear.length);
   for (let i = 0; i < linear.length; i += 1) {
@@ -3626,7 +3654,10 @@ function decodeStoredGamma2ToLinear(stored) {
   return linear;
 }
 
-function finalizeStoredResult(source, width, height, outputColorSpace) {
+function finalizeStoredResult(source, width, height, outputColorSpace, applyFinalRolloff = false) {
+  if (applyFinalRolloff) {
+    applyFinalStorageRolloffInPlace(source, width, height);
+  }
   const gamma2ProPhotoRgb16 = encodeLinearToStoredGamma2(source);
   return finalizeStoredGamma2Result(gamma2ProPhotoRgb16, width, height, outputColorSpace);
 }
