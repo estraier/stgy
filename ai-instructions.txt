@@ -1,0 +1,154 @@
+STGY AI Development Instructions
+================================
+
+Purpose
+-------
+These instructions exist to prevent regressions during AI-assisted development of STGY. Treat them as project-level rules that apply to every code-reading, debugging, implementation, refactoring, and patch-generation task unless the user explicitly overrides them.
+
+1. Always work from the newest baseline
+---------------------------------------
+- The newest user-provided source archive, working tree, or explicitly approved state is the authoritative baseline.
+- Never create a new patch from an older extracted tree, an earlier ZIP, a stale temporary directory, or a previous conversation snapshot when a newer baseline exists.
+- Before editing, identify the newest baseline and verify that the files being modified come from that baseline.
+- If several incremental patches have been produced after the latest full source archive, reconstruct the latest cumulative state first. Do not apply a new fix to an older intermediate state.
+- Never assume that an earlier patch is still the current state merely because it is easier to access.
+
+Why regressions happen:
+- A new change is made on top of an old source snapshot and silently removes newer fixes.
+- A file from an earlier patch replaces a newer file containing unrelated fixes.
+- The AI remembers the intended behavior but edits code that no longer matches the latest implementation.
+
+2. Preserve all existing behavior unless the task explicitly changes it
+-----------------------------------------------------------------------
+- Make the smallest change that fully solves the requested problem.
+- Do not refactor unrelated code, rename unrelated symbols, reorder unrelated logic, or "clean up" code unless required for the fix.
+- Do not alter existing algorithms, UI behavior, defaults, data formats, API behavior, worker protocols, storage formats, or performance characteristics unless the user explicitly requests it or the change is strictly required by the fix.
+- A technically cleaner implementation is not automatically acceptable if it changes established behavior.
+- Do not replace a working implementation with a different design merely because the new design appears more elegant.
+
+3. Treat previous requested fixes as requirements
+-------------------------------------------------
+- Earlier user-requested changes are part of the current specification unless the user explicitly cancels or replaces them.
+- Before changing a file, inspect the relevant surrounding code and identify prior fixes that must remain intact.
+- After editing, verify that those prior fixes are still present.
+- When a task touches code that has recently changed, compare the final file against the latest known version and explicitly check that unrelated recent changes were not lost.
+
+Why regressions happen:
+- A fix is implemented correctly in isolation but overwrites another recent fix in the same file.
+- The AI focuses only on the current bug and fails to preserve cumulative project state.
+
+4. Do not leak caller provenance into shared algorithms
+-------------------------------------------------------
+- Shared algorithms must depend only on the inputs that logically belong to the algorithm.
+- Do not pass UI mode, provenance, "single-shot vs multi-shot", synthetic-vs-real origin, caller identity, or similar context into a shared algorithm unless that information is inherently part of the algorithm's mathematical input.
+- If special preparation is required for a particular caller, perform it before calling the shared algorithm or after the shared algorithm returns.
+- Avoid hidden mode-dependent branches inside shared workers and core algorithms.
+
+Why regressions happen:
+- A local workaround is added inside a shared algorithm and unintentionally changes behavior for other callers.
+- Shared code accumulates special cases that make later changes unpredictable.
+
+5. Respect numerical and color invariants
+-----------------------------------------
+- Preserve RGB ratios whenever an operation is intended to change only luminance, exposure, contrast, brightness, logarithmic tone, sigmoid tone, or highlight rolloff.
+- Except for explicitly color-altering filters such as Cross Process, do not apply independent R/G/B tone curves when a luminance-domain transform plus a common RGB scale is appropriate.
+- Do not introduce intermediate clipping merely to fit a temporary processing range. Preserve extended linear values when the pipeline supports them and perform range compression only at the correct final stage.
+- Do not silently change the domain of an algorithm (encoded RGB, linear RGB, scene-linear/radiometric RGB, gamma-processing space, etc.).
+
+6. Understand the current implementation before changing it
+------------------------------------------------------------
+- Read the complete relevant control flow, not only the function named in the bug report.
+- Trace data from input preparation through workers/shared helpers to final output when the bug could be caused by interactions between stages.
+- Verify whether a helper is shared with other features before modifying it.
+- Search all call sites before changing function arguments, defaults, semantics, or return values.
+- Distinguish the observed symptom from the actual cause. Fix the cause, not merely the visible symptom.
+
+7. Avoid speculative fixes
+--------------------------
+- Do not modify code based only on a plausible theory when the current source can be inspected.
+- Confirm the suspected path in the code first.
+- For numerical/image-processing bugs, use small synthetic calculations when useful to confirm that the suspected operation can actually produce the observed artifact.
+- If multiple causes are possible, isolate them before changing behavior.
+
+8. Keep diffs minimal and auditable
+-----------------------------------
+- Prefer modifying the fewest files possible.
+- After editing, inspect the exact diff against the newest baseline.
+- The final diff should contain only changes required by the task plus unavoidable supporting changes.
+- If an unrelated difference appears, investigate and remove it before delivering the patch.
+- Do not include generated files, build outputs, temporary files, caches, or unrelated formatting changes unless explicitly required.
+
+9. Validate before delivery
+---------------------------
+For every patch, perform as many of the following as the available environment permits:
+- TypeScript/compiler syntax checks for modified files.
+- Relevant unit/integration tests when available.
+- Production build when dependencies are available.
+- Static search for removed/renamed symbols and all call sites.
+- Diff review against the newest baseline.
+- Verification that previously requested fixes in the same area remain present.
+- For image-processing changes, numerical sanity checks for invariants such as RGB-ratio preservation, no unintended clipping, valid ranges, and no NaN/Infinity generation.
+
+If a full build or test cannot be run because dependencies or environment components are unavailable, state that explicitly. Do not imply that a full build passed when only syntax/static checks were performed.
+
+10. Never hide a regression behind a workaround
+------------------------------------------------
+- If a newly introduced change caused the problem, identify it as a regression and fix the regression at its source.
+- Do not add a caller-specific workaround that leaves the incorrect shared implementation in place.
+- Do not preserve a wrong implementation merely because other code has started depending on it unless the user explicitly decides to keep that behavior.
+
+11. Patch packaging rules
+-------------------------
+- Unless the user asks otherwise, provide only changed files in the ZIP.
+- ZIP paths must be relative to the STGY repository root.
+- The ZIP must be directly extractable while the current directory is the `stgy` repository root, so that extraction overwrites the intended existing files in place.
+- Do NOT wrap the files in an extra top-level directory such as `stgy/`, `patch/`, a timestamp directory, or the ZIP filename.
+
+Example:
+  Correct archive entry:
+    frontend/src/app/example/file.ts
+
+  Incorrect archive entries:
+    stgy/frontend/src/app/example/file.ts
+    patch/frontend/src/app/example/file.ts
+
+- Before delivery, inspect the ZIP file list and verify that every entry has the correct repository-relative path.
+- Do not include unchanged files merely to make the ZIP self-contained.
+
+12. File deletions must be reported separately
+----------------------------------------------
+- Extracting a ZIP can create and overwrite files, but it cannot delete obsolete files from the user's existing working tree.
+- If the change requires any file to be deleted, renamed, or moved such that the old path must disappear, explicitly list every path that must be removed after extraction.
+- Never assume that omission from the ZIP deletes an existing file.
+- For renames/moves, include the new file in the ZIP and separately state that the old path must be deleted.
+- If no deletion is required, say so when useful, especially for changes involving file moves or structural refactors.
+
+13. Do not make unrequested assumptions about deployment or configuration
+------------------------------------------------------------------------
+- Preserve existing deployment, Docker, environment-variable, database, CORS/COOP/COEP, storage, and runtime assumptions unless the task explicitly requires changing them.
+- Check how environment variables and runtime configuration are actually wired before adding or modifying them.
+- Do not silently broaden headers, permissions, browser isolation, worker behavior, or server scope to solve a local issue.
+
+14. Be explicit about cumulative state
+--------------------------------------
+Before delivering a patch that touches recently modified code:
+- Confirm which recent fixes are included in the baseline used for the patch.
+- Confirm that the new patch does not revert them.
+- If the patch intentionally replaces an earlier approach, say exactly which earlier behavior is superseded.
+
+15. Priority rule
+-----------------
+When there is tension between "make the requested fix quickly" and "avoid losing existing behavior", preserving the latest cumulative project state takes priority. A partial but regression-safe fix is preferable to a broader fix that silently reverts unrelated work.
+
+Summary checklist before every delivery
+---------------------------------------
+- Am I editing the newest cumulative baseline?
+- Did I inspect the full relevant data/control flow?
+- Did I keep the change minimal?
+- Did I preserve all unrelated recent fixes?
+- Did I avoid caller/provenance-specific branches inside shared algorithms?
+- Did I preserve required numerical/color invariants?
+- Did I review the exact diff against the newest baseline?
+- Did I run every feasible check without overstating what passed?
+- Is the ZIP rooted correctly for extraction from the `stgy` repository root?
+- Are required deletions listed separately because ZIP extraction cannot delete files?

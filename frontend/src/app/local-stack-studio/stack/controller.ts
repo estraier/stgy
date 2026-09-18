@@ -3369,12 +3369,12 @@ async function processSingleInputHdrWithOpenCv(cv, file, inputInfo, mergePlan, o
       throw new Error(`Single-input ${mergePlan.mode.toUpperCase()} requires ${expectedMaterialCount} synthetic materials.`);
     }
 
-    const contrastStretch = prepareSingleShotHdrContrastStretch(baseLinear, width, height);
-
     if (mergePlan.mode === "hdr1") {
-      // Match the LIS Exposure stage: positive gain uses the P99.8 max-channel
-      // shoulder rolloff before the synthetic material's sigmoid is applied.
-      const hdrBase = buildSingleShotHdrBaseLinear(baseLinear, width, height, contrastStretch, true);
+      // For single-shot HDR1, do not pre-stretch the base image. Debevec recovers
+      // radiance from the synthetic exposure ratios themselves, so a common
+      // contrast stretch only scales/warps all materials without helping
+      // highlight recovery.
+      const hdrBase = buildSingleShotHdrBaseLinear(baseLinear, width, height, null, true);
       const hdrBaseLinear = hdrBase.linear;
       const hdr1StreamWorker = createHdrDebevecReinhardStreamWorker(
         width,
@@ -3406,6 +3406,7 @@ async function processSingleInputHdrWithOpenCv(cv, file, inputInfo, mergePlan, o
       throw new Error(`Unsupported single-input HDR mode: ${mergePlan.mode}`);
     }
 
+    const contrastStretch = prepareSingleShotHdrContrastStretch(baseLinear, width, height);
     const hdrBase = buildSingleShotHdrBaseLinear(baseLinear, width, height, contrastStretch, true);
     const hdrBaseLinear = hdrBase.linear;
     applyLinearGainInPlace(hdrBaseLinear, SINGLE_SHOT_HDR2_BASE_HEADROOM_GAIN);
