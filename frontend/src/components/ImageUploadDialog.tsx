@@ -7651,54 +7651,24 @@ async function mergeRawMasterIntoDenoiseInPlace(
 function imageEditPreviewDimensions(
   sourceWidth: number,
   sourceHeight: number,
-  displayCssWidth: number,
-  displayCssHeight: number,
+  maxRasterWidth: number,
+  maxRasterHeight: number,
 ): { width: number; height: number } {
   const sourceW = Math.max(1, Math.round(Number.isFinite(sourceWidth) ? sourceWidth : 1));
   const sourceH = Math.max(1, Math.round(Number.isFinite(sourceHeight) ? sourceHeight : 1));
   const sourcePixels = sourceW * sourceH;
-  if (sourcePixels <= IMAGE_EDIT_CLAHE_MIN_PIXELS) {
-    return { width: sourceW, height: sourceH };
-  }
-
-  const cssW = Number.isFinite(displayCssWidth) && displayCssWidth > 0 ? displayCssWidth : 1;
-  const cssH = Number.isFinite(displayCssHeight) && displayCssHeight > 0 ? displayCssHeight : 1;
-
-  // Prefer a backing image that matches the CSS display one-for-one. If that
-  // already gives CLAHE enough samples, there is no benefit in rendering more
-  // pixels than the user can see.
-  const displayScale = Math.min(1, cssW / sourceW, cssH / sourceH);
-  const displayWidth = Math.max(1, Math.min(sourceW, Math.round(sourceW * displayScale)));
-  const displayHeight = Math.max(1, Math.min(sourceH, Math.round(sourceH * displayScale)));
-  if (displayWidth * displayHeight >= IMAGE_EDIT_CLAHE_MIN_PIXELS || displayScale >= 1) {
-    return { width: displayWidth, height: displayHeight };
-  }
-
-  // The display is too small for CLAHE. Grow the backing image by simple ratios
-  // so browser downsampling stays regular, and stop at the first ratio that
-  // reaches the CLAHE floor. Never upscale beyond the source itself.
-  const simpleScales = [4 / 3, 3 / 2, 2, 5 / 2, 3, 4] as const;
-  for (const scale of simpleScales) {
-    const width = Math.max(1, Math.min(sourceW, Math.round(displayWidth * scale)));
-    const height = Math.max(1, Math.min(sourceH, Math.round(displayHeight * scale)));
-    if (width >= sourceW || height >= sourceH) {
-      return { width: sourceW, height: sourceH };
-    }
-    if (width * height >= IMAGE_EDIT_CLAHE_MIN_PIXELS) {
-      return { width, height };
-    }
-  }
-
-  for (let scale = 5; ; scale += 1) {
-    const width = Math.max(1, Math.min(sourceW, Math.round(displayWidth * scale)));
-    const height = Math.max(1, Math.min(sourceH, Math.round(displayHeight * scale)));
-    if (width >= sourceW || height >= sourceH) {
-      return { width: sourceW, height: sourceH };
-    }
-    if (width * height >= IMAGE_EDIT_CLAHE_MIN_PIXELS) {
-      return { width, height };
-    }
-  }
+  const pixelBudgetScale = sourcePixels > RAW_EDITOR_PREVIEW_TARGET_PIXELS
+    ? Math.sqrt(RAW_EDITOR_PREVIEW_TARGET_PIXELS / sourcePixels)
+    : 1;
+  const budgetWidth = Math.max(1, Math.floor(sourceW * pixelBudgetScale));
+  const budgetHeight = Math.max(1, Math.floor(sourceH * pixelBudgetScale));
+  const rasterW = Math.max(1, Math.floor(Number.isFinite(maxRasterWidth) && maxRasterWidth > 0 ? maxRasterWidth : 1));
+  const rasterH = Math.max(1, Math.floor(Number.isFinite(maxRasterHeight) && maxRasterHeight > 0 ? maxRasterHeight : 1));
+  const fitScale = Math.min(1, rasterW / budgetWidth, rasterH / budgetHeight);
+  return {
+    width: Math.max(1, Math.floor(budgetWidth * fitScale)),
+    height: Math.max(1, Math.floor(budgetHeight * fitScale)),
+  };
 }
 
 async function resampleRawDecodedInWorker(
@@ -10452,6 +10422,7 @@ export function ImageEditDialog({
   const [rawDevelopmentStage, setRawDevelopmentStage] = useState<"thumbnail" | "preview" | "master" | "denoised" | null>(null);
   const initialPreviewReadyRef = useRef(false);
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
+  const previewAreaRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
   const previewRenderedRef = useRef<{
@@ -10463,6 +10434,7 @@ export function ImageEditDialog({
   const previewSourceSampleRef = useRef<{
     decoded: DecodedRgbImage16;
     sample: LinearRgbSample;
+    claritySample: LinearRgbSample;
     contextSample: LinearRgbSample;
   } | null>(null);
   const previewToneSampleCacheRef = useRef<{
@@ -10499,6 +10471,10 @@ export function ImageEditDialog({
   const [decodedRevision, setDecodedRevision] = useState(0);
   const onErrorRef = useRef(onError);
   const onRawDevelopmentReadyRef = useRef(onRawDevelopmentReady);
+  const [displayPixelRatio, setDisplayPixelRatio] = useState(1);
+  const [desktopEditorZoomEnabled, setDesktopEditorZoomEnabled] = useState(false);
+  const [viewportSize, setViewportSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  const [previewAreaSize, setPreviewAreaSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
   const [containerSize, setContainerSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
   const [displayed, setDisplayed] = useState<EditRect>({ x: 0, y: 0, w: 0, h: 0 });
   const [cropRect, setCropRect] = useState<EditRect>({ x: 0, y: 0, w: 0, h: 0 });
@@ -10588,7 +10564,6 @@ export function ImageEditDialog({
   const [peepExpanded, setPeepExpanded] = useState(false);
   const [peepRect, setPeepRect] = useState<EditRect>({ x: 0, y: 0, w: 0, h: 0 });
   const peepRectRef = useRef<EditRect>({ x: 0, y: 0, w: 0, h: 0 });
-  const [peepReferenceRasterSize, setPeepReferenceRasterSize] = useState<{ width: number; height: number } | null>(null);
   const [peepRenderRevision, setPeepRenderRevision] = useState(0);
   const [peepTileQueueTick, setPeepTileQueueTick] = useState(0);
   const peepDisplayCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -11073,13 +11048,129 @@ export function ImageEditDialog({
   }, [defringe, decodedRevision, ensureDefringeMap]);
 
   useEffect(() => {
+    if (!mounted || typeof window === "undefined") return;
+    let resolutionQuery: MediaQueryList | null = null;
+    const updatePixelRatio = () => {
+      const next = Number.isFinite(window.devicePixelRatio) && window.devicePixelRatio > 0
+        ? window.devicePixelRatio
+        : 1;
+      setDisplayPixelRatio((current) => Math.abs(current - next) > 1e-6 ? next : current);
+      if (resolutionQuery) resolutionQuery.removeEventListener("change", updatePixelRatio);
+      resolutionQuery = window.matchMedia(`(resolution: ${next}dppx)`);
+      resolutionQuery.addEventListener("change", updatePixelRatio);
+    };
+    updatePixelRatio();
+    window.addEventListener("resize", updatePixelRatio);
+    return () => {
+      window.removeEventListener("resize", updatePixelRatio);
+      resolutionQuery?.removeEventListener("change", updatePixelRatio);
+    };
+  }, [mounted]);
+
+  useEffect(() => {
+    if (!mounted || typeof window === "undefined") return;
+    const desktopInputQuery = window.matchMedia("(hover: hover) and (pointer: fine)");
+    const updateDesktopEditorZoom = () => setDesktopEditorZoomEnabled(desktopInputQuery.matches);
+    updateDesktopEditorZoom();
+    desktopInputQuery.addEventListener("change", updateDesktopEditorZoom);
+    return () => desktopInputQuery.removeEventListener("change", updateDesktopEditorZoom);
+  }, [mounted]);
+
+  useEffect(() => {
+    if (!mounted || typeof window === "undefined") return;
+    const updateViewportSize = () => {
+      const visualViewport = window.visualViewport;
+      const w = Math.max(1, visualViewport?.width ?? document.documentElement.clientWidth ?? window.innerWidth ?? 1);
+      const h = Math.max(1, visualViewport?.height ?? document.documentElement.clientHeight ?? window.innerHeight ?? 1);
+      setViewportSize((current) =>
+        Math.abs(current.w - w) > 0.01 || Math.abs(current.h - h) > 0.01 ? { w, h } : current,
+      );
+    };
+    updateViewportSize();
+    window.addEventListener("resize", updateViewportSize);
+    window.visualViewport?.addEventListener("resize", updateViewportSize);
+    return () => {
+      window.removeEventListener("resize", updateViewportSize);
+      window.visualViewport?.removeEventListener("resize", updateViewportSize);
+    };
+  }, [mounted]);
+
+  const editorUiZoom = desktopEditorZoomEnabled ? 1 / Math.max(1e-6, displayPixelRatio) : 1;
+  const imageStageZoom = desktopEditorZoomEnabled ? Math.max(1e-6, displayPixelRatio) : 1;
+  const editorLayoutViewport = useMemo(() => {
+    if (!desktopEditorZoomEnabled) return viewportSize;
+    return {
+      w: viewportSize.w / Math.max(1e-6, editorUiZoom),
+      h: viewportSize.h / Math.max(1e-6, editorUiZoom),
+    };
+  }, [desktopEditorZoomEnabled, editorUiZoom, viewportSize]);
+  const desktopDialogWidth = desktopEditorZoomEnabled && editorLayoutViewport.w > 0
+    ? Math.min(1400, editorLayoutViewport.w * 0.95)
+    : undefined;
+  const editorUsesSidePanel = editorLayoutViewport.w >= 1024;
+  const desktopDialogMaxHeight = desktopEditorZoomEnabled && editorLayoutViewport.h > 0
+    ? (editorLayoutViewport.h < 1400
+        ? Math.max(1, (viewportSize.h - 4) / Math.max(1e-6, editorUiZoom))
+        : editorLayoutViewport.h * 0.95)
+    : undefined;
+
+  useEffect(() => {
+    if (!mounted || typeof window === "undefined") return;
+    const previewArea = previewAreaRef.current;
+    if (!previewArea) return;
+    const updateSize = () => {
+      const rect = previewArea.getBoundingClientRect();
+      const viewportHeight = Math.max(1, window.visualViewport?.height ?? document.documentElement.clientHeight ?? window.innerHeight ?? 1);
+      const uiScreenScale = desktopEditorZoomEnabled ? editorUiZoom : 1;
+      const availableHeight = desktopEditorZoomEnabled
+        ? Math.min(1100 * uiScreenScale, Math.max(1, viewportHeight - 120 * uiScreenScale))
+        : Math.max(270, viewportHeight * 0.42);
+      let targetHeight = availableHeight;
+      if (!editorUsesSidePanel && natural && rect.width > 0 && displayPixelRatio > 0) {
+        const margin = EDIT_PREVIEW_MARGIN_PX;
+        const innerWidth = Math.max(1, rect.width - margin * 2);
+        const innerHeight = Math.max(1, availableHeight - margin * 2);
+        const raster = imageEditPreviewDimensions(
+          natural.w,
+          natural.h,
+          innerWidth * displayPixelRatio,
+          innerHeight * displayPixelRatio,
+        );
+        targetHeight = Math.min(
+          availableHeight,
+          Math.max(1, raster.height / displayPixelRatio + margin * 2),
+        );
+      }
+      setPreviewAreaSize((current) =>
+        Math.abs(current.w - rect.width) > 0.01 || Math.abs(current.h - targetHeight) > 0.01
+          ? { w: rect.width, h: targetHeight }
+          : current,
+      );
+    };
+    updateSize();
+    const ro = new ResizeObserver(updateSize);
+    ro.observe(previewArea);
+    window.addEventListener("resize", updateSize);
+    window.visualViewport?.addEventListener("resize", updateSize);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", updateSize);
+      window.visualViewport?.removeEventListener("resize", updateSize);
+    };
+  }, [mounted, desktopEditorZoomEnabled, editorUiZoom, editorUsesSidePanel, natural, displayPixelRatio]);
+
+  useEffect(() => {
     if (!mounted) return;
     const container = containerRef.current;
     if (!container) return;
     const updateSize = () => {
-      // Measure the actual gray preview area after the portal has mounted. The image fit and
-      // centering must be derived from this box, not from a placeholder size.
-      setContainerSize({ w: container.clientWidth, h: container.clientHeight });
+      // Use fractional CSS pixels so raster/DPR can remain an exact display size.
+      const rect = container.getBoundingClientRect();
+      setContainerSize((current) =>
+        Math.abs(current.w - rect.width) > 0.01 || Math.abs(current.h - rect.height) > 0.01
+          ? { w: rect.width, h: rect.height }
+          : current,
+      );
     };
     updateSize();
     const ro = new ResizeObserver(updateSize);
@@ -11096,20 +11187,27 @@ export function ImageEditDialog({
   }, [cropRect]);
 
   const fitImage = useCallback((nat: { w: number; h: number }, cw: number, ch: number): EditRect => {
-    if (nat.w <= 0 || nat.h <= 0 || cw <= 0 || ch <= 0) return { x: 0, y: 0, w: 0, h: 0 };
+    if (nat.w <= 0 || nat.h <= 0 || cw <= 0 || ch <= 0 || displayPixelRatio <= 0) {
+      return { x: 0, y: 0, w: 0, h: 0 };
+    }
     const margin = EDIT_PREVIEW_MARGIN_PX;
     const innerW = Math.max(1, cw - margin * 2);
     const innerH = Math.max(1, ch - margin * 2);
-    const scale = Math.min(innerW / nat.w, innerH / nat.h);
-    const w = nat.w * scale;
-    const h = nat.h * scale;
+    const raster = imageEditPreviewDimensions(
+      nat.w,
+      nat.h,
+      innerW * displayPixelRatio,
+      innerH * displayPixelRatio,
+    );
+    const w = raster.width / displayPixelRatio;
+    const h = raster.height / displayPixelRatio;
     return {
       x: (cw - w) / 2,
       y: (ch - h) / 2,
       w,
       h,
     };
-  }, []);
+  }, [displayPixelRatio]);
 
   useEffect(() => {
     if (!natural || containerSize.w <= 0 || containerSize.h <= 0) return;
@@ -12305,13 +12403,13 @@ export function ImageEditDialog({
 
   const resolvePreviewSourceSample = useCallback((
     decoded: DecodedRgbImage16,
-  ): { decoded: DecodedRgbImage16; sample: LinearRgbSample; contextSample: LinearRgbSample } => {
+  ): { decoded: DecodedRgbImage16; sample: LinearRgbSample; claritySample: LinearRgbSample; contextSample: LinearRgbSample } => {
     const previewSource = decoded;
     const previewSize = imageEditPreviewDimensions(
       previewSource.width,
       previewSource.height,
-      displayed.w,
-      displayed.h,
+      displayed.w * displayPixelRatio,
+      displayed.h * displayPixelRatio,
     );
     const cached = previewSourceSampleRef.current;
     if (
@@ -12323,15 +12421,20 @@ export function ImageEditDialog({
     }
 
     const sourceRect = { x: 0, y: 0, w: previewSource.width, h: previewSource.height };
+    const sample = getRenderedLinearRgbSample(
+      previewSource,
+      sourceRect,
+      0,
+      previewSize.width,
+      previewSize.height,
+    );
+    const claritySample = sample.width * sample.height >= IMAGE_EDIT_CLAHE_MIN_PIXELS
+      ? sample
+      : getAnalysisLinearRgbSample(previewSource, sourceRect, 0, IMAGE_EDIT_CLAHE_MIN_PIXELS);
     const next = {
       decoded: previewSource,
-      sample: getRenderedLinearRgbSample(
-        previewSource,
-        sourceRect,
-        0,
-        previewSize.width,
-        previewSize.height,
-      ),
+      sample,
+      claritySample,
       contextSample: getAnalysisLinearRgbSample(previewSource, sourceRect, 0),
     };
     previewSourceSampleRef.current = next;
@@ -12339,7 +12442,7 @@ export function ImageEditDialog({
     previewClarityMapCacheRef.current = null;
     previewContinuousPrefixCacheRef.current = null;
     return next;
-  }, [displayed.h, displayed.w]);
+  }, [displayed.h, displayed.w, displayPixelRatio]);
 
   const previewContinuousPrefixKey = useCallback((stage: ImageEditPreviewSliderStage): string => {
     const values: Array<number | null> = [
@@ -12438,8 +12541,9 @@ export function ImageEditDialog({
       clampScaledLog(scaledLog),
       clampSigmoid(sigmoid),
     ]);
+    const toneSourceSample = internalPreview.claritySample;
     const cached = previewToneSampleCacheRef.current;
-    if (cached?.source === internalPreview.sample && cached.key === key) return cached.sample;
+    if (cached?.source === toneSourceSample && cached.key === key) return cached.sample;
 
     const context = buildInteractiveColorAdjustmentContextFromLinearRgbSample(
       internalPreview.contextSample,
@@ -12456,12 +12560,12 @@ export function ImageEditDialog({
     );
     const activeStage = previewContinuousSliderRef.current;
     const tonePrefix = isTonePreviewSliderStage(activeStage)
-      ? resolvePreviewContinuousPrefixSample(internalPreview.sample, context)
+      ? resolvePreviewContinuousPrefixSample(toneSourceSample, context)
       : null;
     const sample = tonePrefix && isTonePreviewSliderStage(tonePrefix.stage)
       ? buildImageEditToneSample(tonePrefix.sample, context, tonePrefix.stage)
-      : buildImageEditToneSample(internalPreview.sample, context);
-    previewToneSampleCacheRef.current = { source: internalPreview.sample, key, sample };
+      : buildImageEditToneSample(toneSourceSample, context);
+    previewToneSampleCacheRef.current = { source: toneSourceSample, key, sample };
     previewClarityMapCacheRef.current = null;
     return sample;
   }, [
@@ -12503,10 +12607,9 @@ export function ImageEditDialog({
     const decoded = decodedImageRef.current;
     if (!canvas || !decoded || !displayed.w || !displayed.h) return;
 
-    // Match the backing sample to the physical on-screen image when that already
-    // provides enough CLAHE data. Otherwise use the smallest integer backing
-    // multiplier that reaches the 409,600-pixel CLAHE floor. The same immutable
-    // sample is shared by Clarity analysis and preview rendering.
+    // The preview backing raster is capped at 1 MP and sized to the physical
+    // on-screen image (CSS size × devicePixelRatio), so the browser never has
+    // to upscale the normal preview.
     const internalPreview = resolvePreviewSourceSample(decoded);
     const previewSource = internalPreview.decoded;
     const width = internalPreview.sample.width;
@@ -13124,14 +13227,12 @@ export function ImageEditDialog({
   }, [natural, displayed, cropRect, resizePercent]);
 
   const peepTargetRasterSize = useMemo(() => {
-    if (!outputDimensions) return null;
-    const previewWidth = Math.max(1, Math.round(peepReferenceRasterSize?.width ?? previewRasterSize?.width ?? displayed.w));
-    const previewHeight = Math.max(1, Math.round(peepReferenceRasterSize?.height ?? previewRasterSize?.height ?? displayed.h));
+    if (!outputDimensions || displayed.w <= 0 || displayed.h <= 0) return null;
     return {
-      width: Math.min(outputDimensions.w, previewWidth),
-      height: Math.min(outputDimensions.h, previewHeight),
+      width: Math.min(outputDimensions.w, Math.max(1, Math.floor(displayed.w * displayPixelRatio))),
+      height: Math.min(outputDimensions.h, Math.max(1, Math.floor(displayed.h * displayPixelRatio))),
     };
-  }, [outputDimensions, peepReferenceRasterSize, previewRasterSize, displayed.w, displayed.h]);
+  }, [outputDimensions, displayed.w, displayed.h, displayPixelRatio]);
 
   useEffect(() => {
     if (!peepMode || !outputDimensions || !peepTargetRasterSize || cropRect.w <= 0 || cropRect.h <= 0) return;
@@ -13412,7 +13513,6 @@ export function ImageEditDialog({
     peepTileQueueRef.current = [];
     setPeepMode(false);
     setPeepExpanded(false);
-    setPeepReferenceRasterSize(null);
     peepRectRef.current = { x: 0, y: 0, w: 0, h: 0 };
     peepRequestedCenterRef.current = null;
     peepExpandedDragStateRef.current = null;
@@ -13435,15 +13535,9 @@ export function ImageEditDialog({
   const beginPeepMode = useCallback((center: EditPoint | null = null) => {
     peepSessionActiveRef.current = true;
     peepExpandedDragStateRef.current = null;
-    const referenceRasterSize = {
-      width: Math.max(1, Math.round(previewRasterSizeRef.current?.width ?? displayed.w)),
-      height: Math.max(1, Math.round(previewRasterSizeRef.current?.height ?? displayed.h)),
-    };
-    setPeepReferenceRasterSize(referenceRasterSize);
-
-    if (center && outputDimensions && cropRect.w > 0 && cropRect.h > 0) {
-      const targetWidth = Math.min(outputDimensions.w, referenceRasterSize.width);
-      const targetHeight = Math.min(outputDimensions.h, referenceRasterSize.height);
+    if (center && outputDimensions && peepTargetRasterSize && cropRect.w > 0 && cropRect.h > 0) {
+      const targetWidth = peepTargetRasterSize.width;
+      const targetHeight = peepTargetRasterSize.height;
       const w = Math.min(
         cropRect.w,
         Math.max(1, cropRect.w * targetWidth / Math.max(1, outputDimensions.w)),
@@ -13476,7 +13570,7 @@ export function ImageEditDialog({
     // full-resolution work is on the interaction critical path.
     setPeepMode(true);
     setPeepExpanded(true);
-  }, [cropRect, displayed.w, displayed.h, outputDimensions]);
+  }, [cropRect, outputDimensions, peepTargetRasterSize]);
 
   const processPeepTileQueue = useCallback(async () => {
     if (peepTileRenderingRef.current) return;
@@ -13916,7 +14010,6 @@ export function ImageEditDialog({
     setPeepMode(false);
     setPeepExpanded(false);
     peepExpandedDragStateRef.current = null;
-    setPeepReferenceRasterSize(null);
     peepRequestedCenterRef.current = null;
     peepCompositePendingRectRef.current = null;
     peepPanPendingRectRef.current = null;
@@ -14046,7 +14139,14 @@ export function ImageEditDialog({
       }}
     >
       <div
-        className="bg-white rounded shadow max-w-[95vw] max-h-[95dvh] overflow-y-auto w-[min(1400px,95vw)] p-4 [@media(max-height:1399px)]:max-h-[calc(100dvh-4px)] [@media(max-width:999px)]:max-w-[calc(100vw-4px)] [@media(max-width:999px)]:w-[min(1400px,calc(100vw-4px))]"
+        className="bg-white rounded shadow max-w-[95vw] max-h-[95dvh] overflow-y-auto w-[min(1400px,95vw)] p-4 [zoom:var(--editor-ui-zoom)] [@media(max-height:1399px)]:max-h-[calc(100dvh-4px)] [@media(max-width:999px)]:max-w-[calc(100vw-4px)] [@media(max-width:999px)]:w-[min(1400px,calc(100vw-4px))]"
+        style={{
+          "--editor-ui-zoom": editorUiZoom,
+          ...(desktopDialogWidth !== undefined
+            ? { width: desktopDialogWidth, maxWidth: desktopDialogWidth }
+            : {}),
+          ...(desktopDialogMaxHeight !== undefined ? { maxHeight: desktopDialogMaxHeight } : {}),
+        } as React.CSSProperties}
         onPointerDownCapture={onEditDialogPointerDownCapture}
         onInputCapture={onEditDialogInputCapture}
         onClick={(e) => {
@@ -14278,10 +14378,30 @@ export function ImageEditDialog({
           </div>
         </div>
 
-        <div className="mt-3 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_250px] gap-4 lg:items-stretch">
+        <div
+          className="mt-3 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_250px] gap-4 items-stretch"
+          style={desktopEditorZoomEnabled
+            ? { gridTemplateColumns: editorUsesSidePanel ? "minmax(0,1fr) 250px" : "minmax(0,1fr)" }
+            : undefined}
+        >
+          <div
+            ref={previewAreaRef}
+            className="flex w-full h-[42vh] min-h-[270px] lg:h-[calc(100dvh-120px)] lg:max-h-[1100px] items-center justify-center [zoom:var(--image-stage-zoom)]"
+            style={{
+              "--image-stage-zoom": imageStageZoom,
+              ...(previewAreaSize.h > 0
+                ? {
+                    height: previewAreaSize.h,
+                    minHeight: previewAreaSize.h,
+                    maxHeight: previewAreaSize.h,
+                  }
+                : {}),
+            } as React.CSSProperties}
+          >
           <div
             ref={containerRef}
-            className={`relative w-full h-[42vh] min-h-[270px] lg:h-[calc(100dvh-120px)] lg:max-h-[1100px] rounded border bg-gray-200 overflow-hidden touch-none ${textMode ? "cursor-text" : !eyedropperMode && !rotationMode && (drawMode || mosaicMode || vignetteMode) ? "cursor-crosshair" : ""}`}
+            className={`relative rounded border bg-gray-200 overflow-hidden touch-none ${textMode ? "cursor-text" : !eyedropperMode && !rotationMode && (drawMode || mosaicMode || vignetteMode) ? "cursor-crosshair" : ""}`}
+            style={{ width: "100%", height: "100%" }}
             onPointerDown={eyedropperMode || rotationMode ? undefined : textMode ? onTextPointerDown : drawMode ? onDrawPointerDown : mosaicMode ? onMosaicPointerDown : vignetteMode ? onVignettePointerDown : undefined}
             onPointerMove={eyedropperMode ? undefined : rotationMode ? onRotationPointerMove : drawMode ? onDrawPointerMove : mosaicMode ? onMosaicPointerMove : vignetteMode ? onVignettePointerMove : onPointerMove}
             onPointerUp={eyedropperMode ? undefined : rotationMode ? onRotationPointerUp : drawMode ? (e) => finishDrawCreation(e) : mosaicMode ? onMosaicPointerUp : vignetteMode ? (e) => finishVignetteCreation(e) : onPointerUp}
@@ -14472,7 +14592,13 @@ export function ImageEditDialog({
                     >
                       <canvas
                         ref={peepDisplayCanvasRef}
-                        className="block max-h-full max-w-full"
+                        className="block"
+                        style={peepTargetRasterSize
+                          ? {
+                              width: Math.min(displayed.w, peepTargetRasterSize.width / displayPixelRatio),
+                              height: Math.min(displayed.h, peepTargetRasterSize.height / displayPixelRatio),
+                            }
+                          : undefined}
                       />
                       <button
                         type="button"
@@ -15510,6 +15636,7 @@ export function ImageEditDialog({
               ) : (
                 <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-500">Loading preview…</div>
               )}
+          </div>
           </div>
 
           <div className="space-y-4 text-sm text-gray-800">
