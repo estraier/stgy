@@ -89,10 +89,10 @@ const RAW_HEADROOM_HISTOGRAM_STEP = 0.1;
 const RAW_HEADROOM_HISTOGRAM_MAX = RAW_DEVELOPED_LINEAR_RANGE_MAX;
 const RAW_BASELINE_PERCENTILE = 98;
 const RAW_BASELINE_TARGET = 0.9;
-const RAW_THUMBNAIL_MATCH_LOG_MIN = -16;
-const RAW_THUMBNAIL_MATCH_LOG_MAX = 16;
-const RAW_THUMBNAIL_MATCH_SIGMOID_MIN = -10;
-const RAW_THUMBNAIL_MATCH_SIGMOID_MAX = 10;
+const RAW_THUMBNAIL_MATCH_LOG_MIN = -3;
+const RAW_THUMBNAIL_MATCH_LOG_MAX = 3;
+const RAW_THUMBNAIL_MATCH_SIGMOID_MIN = -3;
+const RAW_THUMBNAIL_MATCH_SIGMOID_MAX = 3;
 const RAW_DENOISE_ISO_NEUTRAL = 400;
 const RAW_DENOISE_ISO_LOG_PER_STOP = 2;
 const PROPHOTO_LUMA_R = 0.2880402;
@@ -1341,7 +1341,8 @@ export function analyzeRawDenoiseMask(
   // Normalize the combined sharpness field once more after mixing Laplacian
   // and Sobel. Their individual z-scores do not guarantee unit variance after
   // combination. Smoothness is then a simple inverse linear mapping over
-  // +/-2 sigma; the final shadow*smoothness score is normalized separately.
+  // +/-2 sigma; the final shadow/smoothness geometric-mean score is normalized
+  // separately.
   const sharpStats = scalarMeanStddev(sharp);
   const sharpStddev = Math.max(sharpStats.stddev, 1e-12);
 
@@ -1366,7 +1367,7 @@ export function analyzeRawDenoiseMask(
     const smooth = clamp01((2 - sharpZ) / 4);
     const lumaZ = ((logLuma[i] ?? 0) - logLumaStats.mean) / logLumaStddev;
     const shadow = clamp01((2 - lumaZ) / 4);
-    rawWeight[i] = (shadow + 0.1) * (smooth + 0.1);
+    rawWeight[i] = Math.sqrt((shadow + 0.1) * (smooth + 0.1));
     smoothSum += smooth;
     smoothSumSq += smooth * smooth;
     shadowSum += shadow;
