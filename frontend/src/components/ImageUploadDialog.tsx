@@ -4554,8 +4554,6 @@ function textOverlayOutlineRadius(fontSize: number): number {
 
 const TEXT_OVERLAY_OUTLINE_OPACITY = 0.8;
 const TEXT_OVERLAY_PREVIEW_SHADOW_OPACITY = 0.28;
-const EDIT_GRID_DIAGONAL_DIVISOR = 14;
-
 function hexColorWithAlpha(color: string, alpha: number): string {
   const match = /^#([0-9a-f]{6})$/i.exec(color);
   if (!match) return color;
@@ -4564,11 +4562,6 @@ function hexColorWithAlpha(color: string, alpha: number): string {
   const g = (value >> 8) & 0xff;
   const b = value & 0xff;
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
-function editGridCellSize(displayW: number, displayH: number): number {
-  const diagonal = Math.hypot(displayW, displayH);
-  return Math.max(8, Math.round(diagonal / EDIT_GRID_DIAGONAL_DIVISOR));
 }
 
 const textOverlayOutlineOffsetsCache = new Map<number, Array<[number, number]>>();
@@ -13087,19 +13080,19 @@ export function ImageEditDialog({
     if (!showGrid || displayed.w <= 0 || displayed.h <= 0) return null;
     const width = displayed.w;
     const height = displayed.h;
-    const cell = editGridCellSize(width, height);
+    const divisions = 10;
     const vertical: string[] = [];
     const horizontal: string[] = [];
-    for (let x = cell; x < width; x += cell) {
+    for (let i = 1; i < divisions; i += 1) {
+      const x = (width * i) / divisions;
+      const y = (height * i) / divisions;
       vertical.push(`M${x},0 V${height}`);
-    }
-    for (let y = cell; y < height; y += cell) {
       horizontal.push(`M0,${y} H${width}`);
     }
     return {
       width,
       height,
-      cell,
+      divisions,
       vertical: vertical.join(" "),
       horizontal: horizontal.join(" "),
     };
