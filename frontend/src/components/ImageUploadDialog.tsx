@@ -2406,7 +2406,8 @@ function vignetteStrengthAtPoint(geometry: VignetteGeometry, x: number, y: numbe
   const boundaryDistance = distance / normalizedRadius;
   const denominator = geometry.maxDistance - boundaryDistance;
   if (denominator <= 1e-6) return geometry.strengthEv;
-  return geometry.strengthEv * clamp01((distance - boundaryDistance) / denominator);
+  const t = clamp01((distance - boundaryDistance) / denominator);
+  return geometry.strengthEv * t * t;
 }
 
 function applyVignetteToCanvas(
@@ -10341,8 +10342,10 @@ const DRAW_STROKE_WIDTH_RATIOS = [0.001, 0.002, 0.004, 0.008] as const;
 const DRAW_STROKE_WIDTH_LABELS = ["Thin", "Medium", "Thick", "Extra thick"] as const;
 const DRAW_DEFAULT_STROKE_WIDTH_INDEX = 1;
 const DRAW_DEFAULT_COLOR_INDEX = 0;
-const VIGNETTE_DEFAULT_STRENGTH_EV = 1;
-const VIGNETTE_OUTLINE_COLOR = "rgba(70,70,70,0.95)";
+const VIGNETTE_DEFAULT_RADIUS_FRACTION = 0.5;
+const VIGNETTE_DEFAULT_STRENGTH_EV = 0.5;
+const VIGNETTE_OUTLINE_COLOR = "rgba(59,130,246,0.95)";
+const VIGNETTE_OUTLINE_WIDTH_PX = 2;
 
 function drawStrokeWidthIndexForOverlay(
   strokeWidth: number,
@@ -14225,7 +14228,7 @@ export function ImageEditDialog({
                     rotationDragState.current = null;
                     dragState.current = null;
                     if (!vignetteOverlay && displayed.w > 0 && displayed.h > 0) {
-                      const radius = 0.6 * Math.hypot(displayed.w / 2, displayed.h / 2);
+                      const radius = VIGNETTE_DEFAULT_RADIUS_FRACTION * Math.hypot(displayed.w / 2, displayed.h / 2);
                       setVignetteOverlay(normalizeVignetteOverlay({
                         id: makeOverlayId("vignette"),
                         x1: 0.5 - radius / displayed.w,
@@ -14353,7 +14356,7 @@ export function ImageEditDialog({
                             ry={height / 2}
                             fill="none"
                             stroke={VIGNETTE_OUTLINE_COLOR}
-                            strokeWidth={1.25}
+                            strokeWidth={VIGNETTE_OUTLINE_WIDTH_PX}
                             vectorEffect="non-scaling-stroke"
                             style={{ cursor: isCommitted ? "move" : "default" }}
                           />
