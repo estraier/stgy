@@ -749,49 +749,48 @@ type RawOutputRegion = {
   height: number;
 };
 
-function normalizedRawOutputRegion(
+function rawLensfunLogicalFrame(
+  sourceWidth: number,
+  sourceHeight: number,
+  outputCrop?: RawOutputCrop,
+): RawOutputCrop {
+  if (!outputCrop) {
+    return { left: 0, top: 0, width: sourceWidth, height: sourceHeight };
+  }
+  const left = Math.max(0, Math.min(sourceWidth, outputCrop.left));
+  const top = Math.max(0, Math.min(sourceHeight, outputCrop.top));
+  const right = Math.max(left, Math.min(sourceWidth, outputCrop.left + outputCrop.width));
+  const bottom = Math.max(top, Math.min(sourceHeight, outputCrop.top + outputCrop.height));
+  if (!(right > left) || !(bottom > top)) {
+    return { left: 0, top: 0, width: sourceWidth, height: sourceHeight };
+  }
+  return { left, top, width: right - left, height: bottom - top };
+}
+
+export function rawLensfunOutputRegion(
   sourceWidth: number,
   sourceHeight: number,
   correction: RawLensfunCorrectionMaps | undefined,
   outputCrop?: RawOutputCrop,
 ): RawOutputRegion {
+  // LensFun is calibrated against the logical image frame, not hidden RAW
+  // backing pixels. When a manufacturer inset crop exists, that crop defines
+  // LensFun's 0,0,width,height coordinate system. The backing offset is applied
+  // only when sampling the original RAW buffer.
+  const frame = rawLensfunLogicalFrame(sourceWidth, sourceHeight, outputCrop);
   const lensfunCrop = normalizedRawLensfunCrop(correction);
-  let left = sourceWidth * lensfunCrop.left;
-  let right = sourceWidth * (1 - lensfunCrop.right);
-  let top = sourceHeight * lensfunCrop.top;
-  let bottom = sourceHeight * (1 - lensfunCrop.bottom);
-
-  if (outputCrop) {
-    const cropLeft = Math.max(0, Math.min(sourceWidth, outputCrop.left));
-    const cropTop = Math.max(0, Math.min(sourceHeight, outputCrop.top));
-    const cropRight = Math.max(cropLeft, Math.min(sourceWidth, outputCrop.left + outputCrop.width));
-    const cropBottom = Math.max(cropTop, Math.min(sourceHeight, outputCrop.top + outputCrop.height));
-    const intersectLeft = Math.max(left, cropLeft);
-    const intersectRight = Math.min(right, cropRight);
-    const intersectTop = Math.max(top, cropTop);
-    const intersectBottom = Math.min(bottom, cropBottom);
-    if (intersectRight > intersectLeft && intersectBottom > intersectTop) {
-      left = intersectLeft;
-      right = intersectRight;
-      top = intersectTop;
-      bottom = intersectBottom;
-    } else if (cropRight > cropLeft && cropBottom > cropTop) {
-      // A valid manufacturer crop is safer than falling back to sensor edges if
-      // a malformed/over-aggressive LensFun auto-crop ever fails to intersect it.
-      left = cropLeft;
-      right = cropRight;
-      top = cropTop;
-      bottom = cropBottom;
-    }
-  }
+  let left = frame.width * lensfunCrop.left;
+  let right = frame.width * (1 - lensfunCrop.right);
+  let top = frame.height * lensfunCrop.top;
+  let bottom = frame.height * (1 - lensfunCrop.bottom);
 
   if (!(right > left)) {
     left = 0;
-    right = sourceWidth;
+    right = frame.width;
   }
   if (!(bottom > top)) {
     top = 0;
-    bottom = sourceHeight;
+    bottom = frame.height;
   }
   return {
     left,
@@ -807,7 +806,7 @@ export function rawLensfunOutputDimensions(
   correction: RawLensfunCorrectionMaps | undefined,
   outputCrop?: RawOutputCrop,
 ): { width: number; height: number } {
-  const region = normalizedRawOutputRegion(sourceWidth, sourceHeight, correction, outputCrop);
+  const region = rawLensfunOutputRegion(sourceWidth, sourceHeight, correction, outputCrop);
   return {
     width: Math.max(1, Math.round(region.width)),
     height: Math.max(1, Math.round(region.height)),
@@ -871,7 +870,8 @@ export function developRawMasterOnePassRowsToGamma20(
   rowStart: number,
   rowEnd: number,
 ): { width: number; height: number; headroom?: RawHeadroomStatistics } {
-  const outputRegion = normalizedRawOutputRegion(sourceWidth, sourceHeight, correction, outputCrop);
+  const frame = rawLensfunLogicalFrame(sourceWidth, sourceHeight, outputCrop);
+  const outputRegion = rawLensfunOutputRegion(sourceWidth, sourceHeight, correction, outputCrop);
   const outputDimensions = rawLensfunOutputDimensions(sourceWidth, sourceHeight, correction, outputCrop);
   const outputWidth = outputDimensions.width;
   const outputHeight = outputDimensions.height;
@@ -969,15 +969,15 @@ export function developRawMasterOnePassRowsToGamma20(
       );
       rawLensfunSourceCoordinatesInto(correction, outputX, outputY, coordinates);
       const sampledR = sampleRawStoredChannelBilinear(
-        data, sourceWidth, sourceHeight, coordinates[0], coordinates[1], 0,
+        data, sourceWidth, sourceHeight, coordinates[0] + frame.left, coordinates[1] + frame.top, 0,
         sourceLinearRangeMax, sourceTransfer,
       );
       const sampledG = sampleRawStoredChannelBilinear(
-        data, sourceWidth, sourceHeight, coordinates[2], coordinates[3], 1,
+        data, sourceWidth, sourceHeight, coordinates[2] + frame.left, coordinates[3] + frame.top, 1,
         sourceLinearRangeMax, sourceTransfer,
       );
       const sampledB = sampleRawStoredChannelBilinear(
-        data, sourceWidth, sourceHeight, coordinates[4], coordinates[5], 2,
+        data, sourceWidth, sourceHeight, coordinates[4] + frame.left, coordinates[5] + frame.top, 2,
         sourceLinearRangeMax, sourceTransfer,
       );
       if (sampledR === null || sampledG === null || sampledB === null) {
@@ -1159,7 +1159,8 @@ export function resampleRawWithLensfunToGamma20(
 ): Uint16Array {
   const outputWidth = Math.max(1, Math.round(targetWidth));
   const outputHeight = Math.max(1, Math.round(targetHeight));
-  const outputRegion = normalizedRawOutputRegion(sourceWidth, sourceHeight, correction, outputCrop);
+  const frame = rawLensfunLogicalFrame(sourceWidth, sourceHeight, outputCrop);
+  const outputRegion = rawLensfunOutputRegion(sourceWidth, sourceHeight, correction, outputCrop);
   const output = new Uint16Array(outputWidth * outputHeight * 3);
   const coordinates: [number, number, number, number, number, number] = [0, 0, 0, 0, 0, 0];
   const gains: [number, number, number] = [1, 1, 1];
@@ -1180,15 +1181,15 @@ export function resampleRawWithLensfunToGamma20(
       );
       rawLensfunSourceCoordinatesInto(correction, outputX, outputY, coordinates);
       const r = sampleRawStoredChannelBilinear(
-        data, sourceWidth, sourceHeight, coordinates[0], coordinates[1], 0,
+        data, sourceWidth, sourceHeight, coordinates[0] + frame.left, coordinates[1] + frame.top, 0,
         sourceLinearRangeMax, sourceTransfer,
       );
       const g = sampleRawStoredChannelBilinear(
-        data, sourceWidth, sourceHeight, coordinates[2], coordinates[3], 1,
+        data, sourceWidth, sourceHeight, coordinates[2] + frame.left, coordinates[3] + frame.top, 1,
         sourceLinearRangeMax, sourceTransfer,
       );
       const b = sampleRawStoredChannelBilinear(
-        data, sourceWidth, sourceHeight, coordinates[4], coordinates[5], 2,
+        data, sourceWidth, sourceHeight, coordinates[4] + frame.left, coordinates[5] + frame.top, 2,
         sourceLinearRangeMax, sourceTransfer,
       );
       if (r === null || g === null || b === null) continue;

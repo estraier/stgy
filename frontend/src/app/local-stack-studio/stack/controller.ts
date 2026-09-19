@@ -9,8 +9,9 @@ import {
   encodedRgbToLinearProphotoInto,
 } from "@/image/color";
 import {
-  applyLensfunCorrectionToLinearRgb,
+  applyLensfunCorrectionToLinearRgbFrame,
   buildRawLensfunCorrection,
+  lensfunOutputRegion,
   summarizeLensfunCorrection,
 } from "@/image/lensfun";
 import { createLibRawInstance, createLibRawWorkerFailure, isRawImageFile } from "@/image/libraw";
@@ -4152,7 +4153,7 @@ async function readRawInputInfo(file) {
       raw.open(new Uint8Array(await file.arrayBuffer())),
       workerFailure.promise,
     ]);
-    const metadata = await Promise.race([raw.metadata(false), workerFailure.promise]);
+    const metadata = await Promise.race([raw.metadata(true), workerFailure.promise]);
     const exposureTime = positiveNumberOrNull(metadata?.shutter);
     const fNumber = positiveNumberOrNull(metadata?.aperture);
     const iso = positiveNumberOrNull(metadata?.iso_speed);
@@ -4169,6 +4170,19 @@ async function readRawInputInfo(file) {
     if (!dimensions) {
       throw new Error("RAW dimensions are unavailable");
     }
+    const sourceWidth = dimensions.width;
+    const sourceHeight = dimensions.height;
+    const outputCrop = rawInsetOutputCropFromMetadata(metadata, sourceWidth, sourceHeight);
+    const lensfunFrame = outputCrop ?? { left: 0, top: 0, width: sourceWidth, height: sourceHeight };
+    const lensMetadata = rawLensMetadata(metadata);
+    const lensCorrection = lensMetadata
+      ? await buildRawLensfunCorrection(lensMetadata, lensfunFrame.width, lensfunFrame.height)
+      : undefined;
+    const outputRegion = lensfunOutputRegion(lensCorrection, lensfunFrame.width, lensfunFrame.height);
+    dimensions = {
+      width: Math.max(1, Math.round(outputRegion.width)),
+      height: Math.max(1, Math.round(outputRegion.height)),
+    };
     return {
       fNumber,
       exposureTime,
@@ -4176,7 +4190,8 @@ async function readRawInputInfo(file) {
       exposureScalar,
       sourceColorSpace: "prophoto-rgb",
       isRaw: true,
-      lensMetadata: rawLensMetadata(metadata),
+      lensMetadata,
+      lensCorrection,
       width: dimensions.width,
       height: dimensions.height,
     };
@@ -4206,6 +4221,61 @@ function rawMetadataImageDimensions(metadata) {
     if (width > 0 && height > 0) return { width, height };
   }
   return null;
+}
+
+function rawMetadataNonnegativeInteger(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? Math.round(number) : null;
+}
+
+function rawMetadataPositiveInteger(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.round(number) : null;
+}
+
+function rawInsetOutputCropFromMetadata(metadata, sourceWidth, sourceHeight) {
+  if (!metadata || sourceWidth <= 0 || sourceHeight <= 0) return null;
+  const sourceCrops = Array.isArray(metadata.raw_inset_crops) ? metadata.raw_inset_crops : [];
+  const crop = sourceCrops[0];
+  if (!crop) return null;
+
+  const insetLeft = rawMetadataNonnegativeInteger(crop.cleft);
+  const insetTop = rawMetadataNonnegativeInteger(crop.ctop);
+  const insetWidth = rawMetadataPositiveInteger(crop.cwidth);
+  const insetHeight = rawMetadataPositiveInteger(crop.cheight);
+  if (
+    insetLeft === null
+    || insetTop === null
+    || insetWidth === null
+    || insetHeight === null
+    || insetLeft >= 0xffff
+    || insetTop >= 0xffff
+  ) {
+    return null;
+  }
+
+  const rawWidth = rawMetadataPositiveInteger(metadata.raw_width);
+  const rawHeight = rawMetadataPositiveInteger(metadata.raw_height);
+  const visibleWidth = rawMetadataPositiveInteger(metadata.width);
+  const visibleHeight = rawMetadataPositiveInteger(metadata.height);
+  const leftMargin = rawMetadataNonnegativeInteger(metadata.left_margin) ?? 0;
+  const topMargin = rawMetadataNonnegativeInteger(metadata.top_margin) ?? 0;
+
+  const fits = (left, top) => {
+    if (left < 0 || top < 0) return null;
+    if (left + insetWidth > sourceWidth || top + insetHeight > sourceHeight) return null;
+    if (left === 0 && top === 0 && insetWidth === sourceWidth && insetHeight === sourceHeight) return null;
+    return { left, top, width: insetWidth, height: insetHeight };
+  };
+
+  if (rawWidth === sourceWidth && rawHeight === sourceHeight) {
+    return fits(insetLeft, insetTop);
+  }
+  if (visibleWidth === sourceWidth && visibleHeight === sourceHeight) {
+    return fits(insetLeft - leftMargin, insetTop - topMargin);
+  }
+  return fits(insetLeft, insetTop)
+    ?? fits(insetLeft - leftMargin, insetTop - topMargin);
 }
 
 function positiveNumberOrNull(value) {
@@ -4643,14 +4713,22 @@ async function decodeFileToDecodedImage(file, inputInfo) {
   const isRawInput = isRawImageFile(file.name, file.type);
   if (isRawInput) {
     console.info(`${file.name}: using LibRaw decoder path`);
-    return await decodeRawFileToDecodedImage(file, inputInfo?.lensMetadata || null);
+    return await decodeRawFileToDecodedImage(
+      file,
+      inputInfo?.lensMetadata || null,
+      inputInfo?.lensCorrection || null,
+    );
   }
   if (inputInfo.isRaw) {
     // Metadata classification must never send a RAW file through the browser
     // image decoder. Keep this fallback explicit in case MIME/extension
     // handling changes later.
     console.info(`${file.name}: using LibRaw decoder path from metadata classification`);
-    return await decodeRawFileToDecodedImage(file, inputInfo?.lensMetadata || null);
+    return await decodeRawFileToDecodedImage(
+      file,
+      inputInfo?.lensMetadata || null,
+      inputInfo?.lensCorrection || null,
+    );
   }
 
   if (isTiffFile(lowerName, file.type)) {
@@ -4789,7 +4867,7 @@ function tiffDecodedByteView(data) {
   return null;
 }
 
-async function decodeRawFileToDecodedImage(file, knownLensMetadata = null) {
+async function decodeRawFileToDecodedImage(file, knownLensMetadata = null, knownLensCorrection = null) {
   let raw = null;
   let workerFailure = null;
   try {
@@ -4800,58 +4878,86 @@ async function decodeRawFileToDecodedImage(file, knownLensMetadata = null) {
       workerFailure.promise,
     ]);
 
-    let lensMetadata = knownLensMetadata;
-    if (!lensMetadata) {
-      try {
-        const metadata = await Promise.race([raw.metadata(false), workerFailure.promise]);
-        lensMetadata = rawLensMetadata(metadata);
-      } catch {
-        lensMetadata = null;
-      }
+    let metadata = null;
+    try {
+      metadata = await Promise.race([raw.metadata(true), workerFailure.promise]);
+    } catch {
+      metadata = null;
     }
+    const lensMetadata = knownLensMetadata ?? rawLensMetadata(metadata);
 
     const image = await Promise.race([raw.imageData(), workerFailure.promise]);
     if (!image || !image.width || !image.height || !image.data) {
       throw new Error("RAW decode failed");
     }
+    const outputCrop = rawInsetOutputCropFromMetadata(metadata, image.width, image.height);
+    const lensfunFrame = outputCrop ?? { left: 0, top: 0, width: image.width, height: image.height };
     let linearProPhotoRgb = libRawImageDataToLinearProPhoto(image);
-
-    if (lensMetadata) {
+    let correction = knownLensCorrection;
+    if (!correction && lensMetadata) {
       try {
-        setProgress("Correcting lens with LensFun...");
-        const correction = await buildRawLensfunCorrection(lensMetadata, image.width, image.height);
-        if (correction) {
-          const summary = summarizeLensfunCorrection(correction, image.width, image.height);
-          linearProPhotoRgb = await applyLensfunCorrectionToLinearRgb(
-            linearProPhotoRgb,
-            image.width,
-            image.height,
-            correction,
-            (progress) => setProgress(`Correcting lens with LensFun... ${Math.round(progress * 100)}%`),
-          );
-          const parts = [summary.lensLabel];
-          if (Number.isFinite(summary.distortionPercent)) parts.push(`distortion=${summary.distortionPercent.toFixed(1)}%`);
-          if (Number.isFinite(summary.tcaRedPercent) || Number.isFinite(summary.tcaBluePercent)) {
-            const r = Number.isFinite(summary.tcaRedPercent) ? `${summary.tcaRedPercent.toFixed(3)}%` : "n/a";
-            const b = Number.isFinite(summary.tcaBluePercent) ? `${summary.tcaBluePercent.toFixed(3)}%` : "n/a";
-            parts.push(`TCA R=${r} B=${b}`);
-          }
-          if (Number.isFinite(summary.vignettingEv)) parts.push(`vignetting=${summary.vignettingEv.toFixed(2)}EV`);
-          console.info(`${file.name}: LensFun correction applied (${parts.join(", ")})`);
-        }
-      } catch (error) {
-        console.warn(`${file.name}: LensFun correction skipped`, error);
+        correction = await buildRawLensfunCorrection(lensMetadata, lensfunFrame.width, lensfunFrame.height);
+      } catch {
+        correction = null;
       }
+    }
+
+    let correctedWidth = lensfunFrame.width;
+    let correctedHeight = lensfunFrame.height;
+    try {
+      setProgress(correction ? "Correcting lens with LensFun..." : "Applying RAW image crop...");
+      const corrected = await applyLensfunCorrectionToLinearRgbFrame(
+        linearProPhotoRgb,
+        image.width,
+        image.height,
+        correction,
+        lensfunFrame,
+        (progress) => setProgress(
+          correction
+            ? `Correcting lens with LensFun... ${Math.round(progress * 100)}%`
+            : `Applying RAW image crop... ${Math.round(progress * 100)}%`,
+        ),
+      );
+      linearProPhotoRgb = corrected.data;
+      correctedWidth = corrected.width;
+      correctedHeight = corrected.height;
+
+      if (correction) {
+        const summary = summarizeLensfunCorrection(correction, lensfunFrame.width, lensfunFrame.height);
+        const parts = [summary.lensLabel];
+        if (Number.isFinite(summary.distortionPercent)) parts.push(`distortion=${summary.distortionPercent.toFixed(1)}%`);
+        if (Number.isFinite(summary.tcaRedPercent) || Number.isFinite(summary.tcaBluePercent)) {
+          const r = Number.isFinite(summary.tcaRedPercent) ? `${summary.tcaRedPercent.toFixed(3)}%` : "n/a";
+          const b = Number.isFinite(summary.tcaBluePercent) ? `${summary.tcaBluePercent.toFixed(3)}%` : "n/a";
+          parts.push(`TCA R=${r} B=${b}`);
+        }
+        if (Number.isFinite(summary.vignettingEv)) parts.push(`vignetting=${summary.vignettingEv.toFixed(2)}EV`);
+        parts.push(`frame=${lensfunFrame.width}x${lensfunFrame.height}`);
+        if (correction.autoCrop) parts.push(`output=${correctedWidth}x${correctedHeight}`);
+        console.info(`${file.name}: LensFun correction applied (${parts.join(", ")})`);
+      }
+    } catch (error) {
+      console.warn(`${file.name}: LensFun correction failed; applying metadata crop only`, error);
+      const fallback = await applyLensfunCorrectionToLinearRgbFrame(
+        linearProPhotoRgb,
+        image.width,
+        image.height,
+        null,
+        lensfunFrame,
+      );
+      linearProPhotoRgb = fallback.data;
+      correctedWidth = fallback.width;
+      correctedHeight = fallback.height;
     }
 
     const alignmentImageData = linearProPhotoToAlignmentImageData(
       linearProPhotoRgb,
-      image.width,
-      image.height,
+      correctedWidth,
+      correctedHeight,
     );
     return {
-      width: image.width,
-      height: image.height,
+      width: correctedWidth,
+      height: correctedHeight,
       sourceColorSpace: "prophoto-rgb",
       linearProPhotoRgb,
       alignmentImageData,

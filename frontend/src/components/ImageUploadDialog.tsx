@@ -43,6 +43,7 @@ import type {
   RawDevelopmentHeadroomStatistics,
   RawDevelopmentLensfunSettings,
   RawDevelopmentRawGeometry,
+  RawDevelopmentCropSettings,
   RawDenoiseDevelopmentResult,
   RawDenoiseSettings,
   RawDenoiseWeightMap,
@@ -158,6 +159,7 @@ import {
   developRawMasterOnePassToGamma20,
   mergeRawDenoiseGamma20InPlaceRows,
   rawLensfunOutputDimensions,
+  rawLensfunOutputRegion,
   resampleRawWithLensfunToGamma20,
   type RawColorPassPlan,
   type RawFallbackPlan,
@@ -6902,6 +6904,34 @@ function rawInsetOutputCropFromMetadata(
     );
 }
 
+function buildRawDevelopmentCropSettings(
+  sourceWidth: number,
+  sourceHeight: number,
+  correction: LensfunCorrection | undefined,
+  metadataCrop: RawOutputCrop | undefined,
+): RawDevelopmentCropSettings | undefined {
+  if (!correction?.autoCrop && !metadataCrop) return undefined;
+  const correctionMaps = rawLensfunCorrectionMaps(correction);
+  const frame = metadataCrop ?? { left: 0, top: 0, width: sourceWidth, height: sourceHeight };
+  const lensfunLocalRegion = rawLensfunOutputRegion(
+    sourceWidth,
+    sourceHeight,
+    correctionMaps,
+    metadataCrop,
+  );
+  const toBackingRegion = (region: RawOutputCrop): RawOutputCrop => ({
+    left: frame.left + region.left,
+    top: frame.top + region.top,
+    width: region.width,
+    height: region.height,
+  });
+  return {
+    lensfunAutoCrop: correction?.autoCrop ? toBackingRegion(lensfunLocalRegion) : null,
+    metadataCrop: metadataCrop ?? null,
+    finalCrop: toBackingRegion(lensfunLocalRegion),
+  };
+}
+
 function rawLensMetadata(metadata: LibRawMetadataLike | undefined): RawLensMetadata | null {
   if (!metadata) return null;
   const cameraMaker = rawMetadataString(metadata.normalized_make) || rawMetadataString(metadata.camera_make);
@@ -7046,6 +7076,25 @@ function formatRawDevelopmentGeometry(geometry: RawDevelopmentRawGeometry): stri
     `margins=left=${geometry.leftMargin ?? "n/a"} top=${geometry.topMargin ?? "n/a"}`,
     `inset[0]=${crop(geometry.insetCrops[0])}`,
     `inset[1]=${crop(geometry.insetCrops[1])}`,
+  ].join(", ");
+}
+
+function formatRawDevelopmentCropValue(value: number): string {
+  if (!Number.isFinite(value)) return "n/a";
+  const rounded = Math.round(value * 100) / 100;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2).replace(/\.?0+$/, "");
+}
+
+function formatRawDevelopmentCropRect(value: RawDevelopmentCropSettings["finalCrop"] | null): string {
+  if (!value) return "none";
+  return `left=${formatRawDevelopmentCropValue(value.left)} top=${formatRawDevelopmentCropValue(value.top)} width=${formatRawDevelopmentCropValue(value.width)} height=${formatRawDevelopmentCropValue(value.height)}`;
+}
+
+function formatRawDevelopmentCropSettings(settings: RawDevelopmentCropSettings): string {
+  return [
+    `lensfun auto=${formatRawDevelopmentCropRect(settings.lensfunAutoCrop)}`,
+    `metadata=${formatRawDevelopmentCropRect(settings.metadataCrop)}`,
+    `final=${formatRawDevelopmentCropRect(settings.finalCrop)}`,
   ].join(", ");
 }
 
@@ -8566,15 +8615,23 @@ async function decodeRawPreviewImage(
       libRawImageDataToDecoded(image),
     );
     const rawOutputCrop = rawInsetOutputCropFromMetadata(metadata, sourceDecoded.width, sourceDecoded.height);
+    const lensfunFrameWidth = rawOutputCrop?.width ?? sourceDecoded.width;
+    const lensfunFrameHeight = rawOutputCrop?.height ?? sourceDecoded.height;
     const lensMetadata = rawLensMetadata(metadata);
     sourceDecoded.lensCorrection = await runStage("Correcting RAW preview lens…", () =>
-      buildRawLensfunCorrection(lensMetadata, sourceDecoded.width, sourceDecoded.height),
+      buildRawLensfunCorrection(lensMetadata, lensfunFrameWidth, lensfunFrameHeight),
     );
     const lensfunSettings = buildRawDevelopmentLensfunSettings(
       lensMetadata,
       sourceDecoded.lensCorrection,
+      lensfunFrameWidth,
+      lensfunFrameHeight,
+    );
+    const cropSettings = buildRawDevelopmentCropSettings(
       sourceDecoded.width,
       sourceDecoded.height,
+      sourceDecoded.lensCorrection,
+      rawOutputCrop,
     );
     const correctedDimensions = rawLensfunOutputDimensions(
       sourceDecoded.width,
@@ -8621,6 +8678,7 @@ async function decodeRawPreviewImage(
       saturation: plan.saturation,
       headroom: plan.headroom,
       rawGeometry: plan.rawGeometry,
+      crop: cropSettings,
       lensfun: lensfunSettings,
       runtimeMode: timing.runtimeMode,
       openMpThreads: timing.openMpThreads,
@@ -8702,6 +8760,8 @@ async function decodeRawMasterImage(
       libRawImageDataToDecoded(image),
     );
     const rawOutputCrop = rawInsetOutputCropFromMetadata(metadata, sourceDecoded.width, sourceDecoded.height);
+    const lensfunFrameWidth = rawOutputCrop?.width ?? sourceDecoded.width;
+    const lensfunFrameHeight = rawOutputCrop?.height ?? sourceDecoded.height;
     const lensMetadata = rawLensMetadata(metadata);
     sourceDecoded.lensCorrection = await measureRawTiming(
       timing,
@@ -8709,15 +8769,21 @@ async function decodeRawMasterImage(
       "Building LensFun master correction",
       () => buildRawLensfunCorrection(
         lensMetadata,
-        sourceDecoded.width,
-        sourceDecoded.height,
+        lensfunFrameWidth,
+        lensfunFrameHeight,
       ),
     );
     const lensfunSettings = buildRawDevelopmentLensfunSettings(
       lensMetadata,
       sourceDecoded.lensCorrection,
+      lensfunFrameWidth,
+      lensfunFrameHeight,
+    );
+    const cropSettings = buildRawDevelopmentCropSettings(
       sourceDecoded.width,
       sourceDecoded.height,
+      sourceDecoded.lensCorrection,
+      rawOutputCrop,
     );
     const masterResult = await measureRawTiming(timing, "master", "Master one-pass", () =>
       developRawMasterOnePassInWorker(sourceDecoded, plan, rawOutputCrop),
@@ -8731,6 +8797,7 @@ async function decodeRawMasterImage(
       saturation: plan.saturation,
       headroom: masterResult.headroom ?? plan.headroom,
       rawGeometry,
+      crop: cropSettings,
       lensfun: lensfunSettings,
       runtimeMode: timing.runtimeMode,
       openMpThreads: timing.openMpThreads,
@@ -8802,6 +8869,8 @@ async function decodeRawDenoiseImage(
       libRawImageDataToDecoded(image),
     );
     const rawOutputCrop = rawInsetOutputCropFromMetadata(metadata, sourceDecoded.width, sourceDecoded.height);
+    const lensfunFrameWidth = rawOutputCrop?.width ?? sourceDecoded.width;
+    const lensfunFrameHeight = rawOutputCrop?.height ?? sourceDecoded.height;
     const lensMetadata = rawLensMetadata(metadata);
     sourceDecoded.lensCorrection = await measureRawTiming(
       timing,
@@ -8809,8 +8878,8 @@ async function decodeRawDenoiseImage(
       "Building LensFun denoise correction",
       () => buildRawLensfunCorrection(
         lensMetadata,
-        sourceDecoded.width,
-        sourceDecoded.height,
+        lensfunFrameWidth,
+        lensfunFrameHeight,
       ),
     );
     // Run the denoise source through exactly the same LensFun/tone/color path
@@ -8958,18 +9027,26 @@ async function decodeRawUploadFastPath(
       libRawImageDataToDecoded(image),
     );
     const rawOutputCrop = rawInsetOutputCropFromMetadata(metadata, sourceDecoded.width, sourceDecoded.height);
+    const lensfunFrameWidth = rawOutputCrop?.width ?? sourceDecoded.width;
+    const lensfunFrameHeight = rawOutputCrop?.height ?? sourceDecoded.height;
     const lensMetadata = rawLensMetadata(metadata);
     sourceDecoded.lensCorrection = await measureRawTiming(
       timing,
       "master",
       "Building LensFun master correction",
-      () => buildRawLensfunCorrection(lensMetadata, sourceDecoded.width, sourceDecoded.height),
+      () => buildRawLensfunCorrection(lensMetadata, lensfunFrameWidth, lensfunFrameHeight),
     );
     const lensfunSettings = buildRawDevelopmentLensfunSettings(
       lensMetadata,
       sourceDecoded.lensCorrection,
+      lensfunFrameWidth,
+      lensfunFrameHeight,
+    );
+    const cropSettings = buildRawDevelopmentCropSettings(
       sourceDecoded.width,
       sourceDecoded.height,
+      sourceDecoded.lensCorrection,
+      rawOutputCrop,
     );
 
     const correctionMaps = rawLensfunCorrectionMaps(sourceDecoded.lensCorrection);
@@ -9019,6 +9096,7 @@ async function decodeRawUploadFastPath(
       saturation: plan.saturation,
       headroom: masterResult.headroom ?? plan.headroom,
       rawGeometry: rawGeometryFromMetadata(metadata),
+      crop: cropSettings,
       lensfun: lensfunSettings,
       runtimeMode: timing.runtimeMode,
       openMpThreads: timing.openMpThreads,
@@ -15643,6 +15721,11 @@ export function ImageEditDialog({
                               {rawDevelopmentSettings.rawGeometry && (
                                 <div>
                                   raw geometry: {formatRawDevelopmentGeometry(rawDevelopmentSettings.rawGeometry)}
+                                </div>
+                              )}
+                              {rawDevelopmentSettings.crop && (
+                                <div>
+                                  crop: {formatRawDevelopmentCropSettings(rawDevelopmentSettings.crop)}
                                 </div>
                               )}
                               <div>

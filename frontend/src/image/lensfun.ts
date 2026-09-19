@@ -17,6 +17,20 @@ export type LensfunAutoCropInsets = {
   right: number;
 };
 
+export type LensfunLogicalFrame = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+};
+
+export type LensfunOutputRegion = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+};
+
 export type LensfunCorrection = {
   gridWidth: number;
   gridHeight: number;
@@ -452,6 +466,44 @@ export function lensfunAutoCropInsets(
   return { top: margin, bottom: margin, left: margin, right: margin };
 }
 
+export function lensfunOutputRegion(
+  correction: LensfunCorrection | null | undefined,
+  width: number,
+  height: number,
+): LensfunOutputRegion {
+  const crop = correction?.autoCrop;
+  if (!crop) return { left: 0, top: 0, width, height };
+  const leftInset = Math.min(0.495, Math.max(0, crop.left));
+  const rightInset = Math.min(
+    Math.min(0.495, Math.max(0, crop.right)),
+    Math.max(0, 0.99 - leftInset),
+  );
+  const topInset = Math.min(0.495, Math.max(0, crop.top));
+  const bottomInset = Math.min(
+    Math.min(0.495, Math.max(0, crop.bottom)),
+    Math.max(0, 0.99 - topInset),
+  );
+  const left = width * leftInset;
+  const right = width * (1 - rightInset);
+  const top = height * topInset;
+  const bottom = height * (1 - bottomInset);
+  return {
+    left,
+    top,
+    width: Math.max(1, right - left),
+    height: Math.max(1, bottom - top),
+  };
+}
+
+function lensfunOutputCoordinate(
+  index: number,
+  outputSize: number,
+  startEdge: number,
+  regionSize: number,
+): number {
+  return startEdge + (index + 0.5) * regionSize / Math.max(1, outputSize) - 0.5;
+}
+
 export async function buildRawLensfunCorrection(
   metadata: RawLensMetadata | null,
   width: number,
@@ -826,6 +878,87 @@ function sampleRgbBilinearInto(
       (source[i11 + channel] ?? 0) * w11;
   }
   return true;
+}
+
+export async function applyLensfunCorrectionToLinearRgbFrame(
+  source: Float32Array,
+  sourceWidth: number,
+  sourceHeight: number,
+  correction: LensfunCorrection | null | undefined,
+  frame: LensfunLogicalFrame,
+  onProgress?: (progress: number) => void,
+): Promise<{ data: Float32Array; width: number; height: number; region: LensfunOutputRegion }> {
+  if (source.length < sourceWidth * sourceHeight * 3) {
+    return { data: source, width: sourceWidth, height: sourceHeight, region: { left: 0, top: 0, width: sourceWidth, height: sourceHeight } };
+  }
+  const logicalWidth = Math.max(1, frame.width);
+  const logicalHeight = Math.max(1, frame.height);
+  const region = lensfunOutputRegion(correction, logicalWidth, logicalHeight);
+  const outputWidth = Math.max(1, Math.round(region.width));
+  const outputHeight = Math.max(1, Math.round(region.height));
+  const result = new Float32Array(outputWidth * outputHeight * 3);
+  const coordinates: LensfunSourceCoordinatesBuffer = [0, 0, 0, 0, 0, 0];
+  const gain: LensfunVignettingGainBuffer = [1, 1, 1];
+  const sampled = new Float32Array(3);
+  const reportStride = Math.max(32, Math.floor(outputHeight / 50));
+
+  for (let y = 0; y < outputHeight; y += 1) {
+    const logicalY = lensfunOutputCoordinate(y, outputHeight, region.top, region.height);
+    for (let x = 0; x < outputWidth; x += 1) {
+      const logicalX = lensfunOutputCoordinate(x, outputWidth, region.left, region.width);
+      const outputIndex = (y * outputWidth + x) * 3;
+      if (correction) lensfunSourceCoordinatesInto(correction, logicalX, logicalY, coordinates);
+      else {
+        coordinates[0] = logicalX; coordinates[1] = logicalY;
+        coordinates[2] = logicalX; coordinates[3] = logicalY;
+        coordinates[4] = logicalX; coordinates[5] = logicalY;
+      }
+
+      if (correction?.tca) {
+        const r = sampleChannelBilinear(source, sourceWidth, sourceHeight, coordinates[0] + frame.left, coordinates[1] + frame.top, 0);
+        const g = sampleChannelBilinear(source, sourceWidth, sourceHeight, coordinates[2] + frame.left, coordinates[3] + frame.top, 1);
+        const b = sampleChannelBilinear(source, sourceWidth, sourceHeight, coordinates[4] + frame.left, coordinates[5] + frame.top, 2);
+        if (r === null || g === null || b === null) continue;
+        result[outputIndex] = r;
+        result[outputIndex + 1] = g;
+        result[outputIndex + 2] = b;
+        if (correction.vignetting) {
+          lensfunVignettingGainInto(correction, coordinates[0], coordinates[1], gain);
+          result[outputIndex] *= gain[0];
+          lensfunVignettingGainInto(correction, coordinates[2], coordinates[3], gain);
+          result[outputIndex + 1] *= gain[1];
+          lensfunVignettingGainInto(correction, coordinates[4], coordinates[5], gain);
+          result[outputIndex + 2] *= gain[2];
+        }
+        continue;
+      }
+
+      if (!sampleRgbBilinearInto(
+        source,
+        sourceWidth,
+        sourceHeight,
+        coordinates[2] + frame.left,
+        coordinates[3] + frame.top,
+        sampled,
+      )) continue;
+      if (correction?.vignetting) {
+        lensfunVignettingGainInto(correction, coordinates[2], coordinates[3], gain);
+        sampled[0] *= gain[0];
+        sampled[1] *= gain[1];
+        sampled[2] *= gain[2];
+      }
+      result[outputIndex] = sampled[0];
+      result[outputIndex + 1] = sampled[1];
+      result[outputIndex + 2] = sampled[2];
+    }
+
+    if (onProgress && (y % reportStride === 0 || y === outputHeight - 1)) {
+      onProgress((y + 1) / outputHeight);
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+  }
+
+  return { data: result, width: outputWidth, height: outputHeight, region };
 }
 
 export async function applyLensfunCorrectionToLinearRgb(

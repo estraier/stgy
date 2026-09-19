@@ -42,6 +42,12 @@ export type RawDevelopmentRawGeometry = {
   insetCrops: [RawDevelopmentInsetCrop | null, RawDevelopmentInsetCrop | null];
 };
 
+export type RawDevelopmentCropSettings = {
+  lensfunAutoCrop: RawDevelopmentInsetCrop | null;
+  metadataCrop: RawDevelopmentInsetCrop | null;
+  finalCrop: RawDevelopmentInsetCrop;
+};
+
 export type RawDevelopmentLensfunSettings = {
   name: string;
   focal: number | null;
@@ -91,6 +97,7 @@ export type RawDevelopmentSettings = {
   saturation: RawDevelopmentSaturationSettings;
   headroom?: RawDevelopmentHeadroomStatistics;
   rawGeometry?: RawDevelopmentRawGeometry;
+  crop?: RawDevelopmentCropSettings;
   lensfun?: RawDevelopmentLensfunSettings;
   runtimeMode?: "single" | "threaded";
   openMpThreads?: number;
