@@ -18,7 +18,7 @@ import {
   ROLLOFF_SAVING_LIMIT_FACTOR,
   SATURATION_ROLLOFF_A,
   applyColorAdjustmentsAfterToneLinearRgbInto, applyColorAdjustmentsLinearRgbInto,
-  applyLuminanceGainPreservingAboveOneLinearRgbInto, applyExposureRolloffWithHighlightDesaturationLinearRgbInto, applySaturationVibranceAndFinalRolloffLinearRgbInto,
+  applyHighlightRolloffLinearRgbInto, applyLuminanceGainPreservingAboveOneLinearRgbInto, applySaturationVibranceAndFinalRolloffLinearRgbInto,
   applyScaledLogLinearExtended, applyShadowLinear, applySigmoidLinearExtended,
   applyToneAdjustmentsLinearRgbInto, applyToneLinearToRgbInto,
   applyWhiteBalanceLinearInto, clamp01, clampColorAdjustment, clampExposureEv,
@@ -151,7 +151,7 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
         r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
       }
       if (hasExposure) {
-        applyExposureRolloffWithHighlightDesaturationLinearRgbInto(
+        applyHighlightRolloffLinearRgbInto(
           r * factor,
           g * factor,
           b * factor,

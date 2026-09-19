@@ -45,6 +45,7 @@ jest.mock("@/image/lensfun", () => ({
 }));
 
 import { __imageEditorCharacterization as imageEditor } from "./image-editor/characterization";
+import { applyRolloffMaxChannelLinearRgb } from "@/image/tone";
 
 function rounded(values: number[]): number[] {
   return values.map((value) => Number(value.toFixed(12)));
@@ -299,10 +300,52 @@ describe("image editor tone characterization", () => {
     const rolled = imageEditor.applyDisplayRolloffAndClipLinearToRgb(1.2, 0.6, 0.3, finalRolloff);
     expect(rolled[0]).toBeLessThan(1);
     expect(rolled[0]).toBeGreaterThan(0.9999999);
-    // Max-channel rolloff must preserve RGB ratios instead of independently
-    // pulling every channel toward display white.
+    // Highlight rolloff now couples saturation loss to the amount of actual
+    // max-channel compression. It must not depend on an absolute RGB threshold.
+    expect(rolled[1] / rolled[0]).toBeGreaterThan(0.5);
+    expect(rolled[2] / rolled[0]).toBeGreaterThan(0.25);
+    expect(rolled[1] / rolled[0]).toBeLessThan(1);
+    expect(rolled[2] / rolled[0]).toBeLessThan(1);
+  });
+
+  test("keeps the low-level max-channel rolloff ratio-preserving for internal pipelines", () => {
+    const rolloff = imageEditor.rolloffParams(2, 0.5, 4, 1);
+    expect(rolloff).not.toBeNull();
+    const rolled = applyRolloffMaxChannelLinearRgb(2, 1, 0.5, rolloff);
     expect(rolled[1] / rolled[0]).toBeCloseTo(0.5, 12);
     expect(rolled[2] / rolled[0]).toBeCloseTo(0.25, 12);
+  });
+
+  test("desaturates only when exposure rolloff actually compresses the highlight", () => {
+    const flagsWithoutRolloff = {
+      hasExposure: true,
+      hasShadow: false,
+      hasHighlight: false,
+      hasScaledLog: false,
+      hasSigmoid: false,
+      exposureRolloff: null,
+    };
+    const unrolled = imageEditor.applyToneLinearToRgb(
+      1, 0.25, 0.125,
+      { r: 1, g: 1, b: 1 }, false,
+      4, 0, 0, null, 0, 0,
+      flagsWithoutRolloff,
+    );
+    expect(rounded(unrolled)).toEqual([4, 1, 0.5]);
+
+    const exposureRolloff = imageEditor.rolloffParams(4, 0.5, 4, 1);
+    const rolled = imageEditor.applyToneLinearToRgb(
+      1, 0.25, 0.125,
+      { r: 1, g: 1, b: 1 }, false,
+      4, 0, 0, null, 0, 0,
+      { ...flagsWithoutRolloff, exposureRolloff },
+    );
+    expect(rolled[0]).toBeLessThan(1);
+    expect(rolled[0]).toBeGreaterThan(0.99);
+    expect(rolled[1] / rolled[0]).toBeGreaterThan(0.25);
+    expect(rolled[2] / rolled[0]).toBeGreaterThan(0.125);
+    expect(rolled[1] / rolled[0]).toBeLessThan(1);
+    expect(rolled[2] / rolled[0]).toBeLessThan(1);
   });
 
   test("freezes Logarithm, Sigmoid, rolloff and the combined tone pipeline", () => {

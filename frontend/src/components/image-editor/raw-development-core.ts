@@ -1,6 +1,8 @@
 import {
   ROLLOFF_SAVING_LIMIT_FACTOR,
   SIGMOID_WORKING_GAMMA,
+  applyHighlightRolloffLinearRgbInto,
+  applyHighlightRolloffResultLinearRgbInto,
   applyRolloffScalar,
   applyScaledLogLinear,
   rolloffParams,
@@ -321,6 +323,7 @@ export function applyRawMatchedTonePass(
 ): RawHeadroomStatistics {
   const headroom = createHeadroomAccumulator();
   const gains: [number, number, number] = [1, 1, 1];
+  const rolledOutput: [number, number, number] = [0, 0, 0];
   let i = 0;
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++, i += 3) {
@@ -347,13 +350,13 @@ export function applyRawMatchedTonePass(
       let adjustedR = r * scale;
       let adjustedG = g * scale;
       let adjustedB = b * scale;
-      const adjustedMax = Math.max(adjustedR, adjustedG, adjustedB);
-      if (plan.rolloff && adjustedMax > plan.rolloff.inflection) {
-        const rolledMax = applyRolloffScalar(adjustedMax, plan.rolloff);
-        const rolloffScale = rolledMax / adjustedMax;
-        adjustedR *= rolloffScale;
-        adjustedG *= rolloffScale;
-        adjustedB *= rolloffScale;
+      if (plan.rolloff) {
+        applyHighlightRolloffLinearRgbInto(
+          adjustedR, adjustedG, adjustedB, plan.rolloff, rolledOutput,
+        );
+        adjustedR = rolledOutput[0];
+        adjustedG = rolledOutput[1];
+        adjustedB = rolledOutput[2];
       }
       recordHeadroom(headroom, adjustedR, adjustedG, adjustedB);
       data[i] = encodeGamma20Uint16(adjustedR, RAW_DEVELOPED_LINEAR_RANGE_MAX);
@@ -555,6 +558,7 @@ export function applyRawFallbackPlanPass(
 ): RawHeadroomStatistics {
   const headroom = createHeadroomAccumulator();
   const gains: [number, number, number] = [1, 1, 1];
+  const rolledOutput: [number, number, number] = [0, 0, 0];
   let i = 0;
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++, i += 3) {
@@ -562,13 +566,11 @@ export function applyRawFallbackPlanPass(
       let r = decodeStoredUint16(data[i] ?? 0, sourceLinearRangeMax, sourceTransfer) * gains[0] * plan.factor;
       let g = decodeStoredUint16(data[i + 1] ?? 0, sourceLinearRangeMax, sourceTransfer) * gains[1] * plan.factor;
       let b = decodeStoredUint16(data[i + 2] ?? 0, sourceLinearRangeMax, sourceTransfer) * gains[2] * plan.factor;
-      const maxChannel = Math.max(r, g, b);
-      if (plan.rolloff && maxChannel > plan.rolloff.inflection) {
-        const rolledMax = applyRolloffScalar(maxChannel, plan.rolloff);
-        const rolloffScale = rolledMax / maxChannel;
-        r *= rolloffScale;
-        g *= rolloffScale;
-        b *= rolloffScale;
+      if (plan.rolloff) {
+        applyHighlightRolloffLinearRgbInto(r, g, b, plan.rolloff, rolledOutput);
+        r = rolledOutput[0];
+        g = rolledOutput[1];
+        b = rolledOutput[2];
       }
       recordHeadroom(headroom, r, g, b);
       data[i] = encodeGamma20Uint16(r, RAW_DEVELOPED_LINEAR_RANGE_MAX);
@@ -1055,10 +1057,12 @@ export function developRawMasterOnePassRowsToGamma20(
               + toneRolloffShoulder * (
                 1 - Math.exp(-(maxChannel - toneRolloffInflection) / toneRolloffShoulder)
               );
-            const rolloffScale = rolledMax / maxChannel;
-            r *= rolloffScale;
-            g *= rolloffScale;
-            b *= rolloffScale;
+            applyHighlightRolloffResultLinearRgbInto(
+              r, g, b, maxChannel, rolledMax, colorOutput,
+            );
+            r = colorOutput[0];
+            g = colorOutput[1];
+            b = colorOutput[2];
           }
         } else {
           r = 0;
@@ -1075,10 +1079,12 @@ export function developRawMasterOnePassRowsToGamma20(
             + fallbackRolloffShoulder * (
               1 - Math.exp(-(maxChannel - fallbackRolloffInflection) / fallbackRolloffShoulder)
             );
-          const rolloffScale = rolledMax / maxChannel;
-          r *= rolloffScale;
-          g *= rolloffScale;
-          b *= rolloffScale;
+          applyHighlightRolloffResultLinearRgbInto(
+            r, g, b, maxChannel, rolledMax, colorOutput,
+          );
+          r = colorOutput[0];
+          g = colorOutput[1];
+          b = colorOutput[2];
         }
       }
 

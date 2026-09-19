@@ -5,8 +5,8 @@ import {
   ROLLOFF_SAVING_LIMIT_FACTOR,
   SATURATION_ROLLOFF_A,
   applyHighlightLinear,
+  applyHighlightRolloffLinearRgbInto,
   applyLuminanceGainPreservingAboveOneLinearRgbInto,
-  applyExposureRolloffWithHighlightDesaturationLinearRgbInto,
   applySaturationVibranceAndFinalRolloffLinearRgbInto,
   applyScaledLogLinearExtended,
   applyShadowLinear,
@@ -125,7 +125,7 @@ export function computeStackHighlightP100(
   let p100 = -Infinity;
   const adjusted: [number, number, number] = [0, 0, 0];
   for (let i = 0; i + 2 < sourceLinear.length; i += 3) {
-    applyExposureRolloffWithHighlightDesaturationLinearRgbInto(
+    applyHighlightRolloffLinearRgbInto(
       (sourceLinear[i] ?? 0) * gain,
       (sourceLinear[i + 1] ?? 0) * gain,
       (sourceLinear[i + 2] ?? 0) * gain,
@@ -790,7 +790,7 @@ function applyStackToneAdjustmentsLinearRgbRangeInto(
           : index === 4 ? "shadow"
             : "highlight";
     if (stage === "exposure" && context.hasExposure) {
-      applyExposureRolloffWithHighlightDesaturationLinearRgbInto(
+      applyHighlightRolloffLinearRgbInto(
         r * context.gain,
         g * context.gain,
         b * context.gain,
