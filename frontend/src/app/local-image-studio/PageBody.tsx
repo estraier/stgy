@@ -191,6 +191,7 @@ export default function LocalImageStudio() {
   const [source, setSource] = useState<SourceImage | null>(null);
   const [editing, setEditing] = useState(false);
   const [processing, setProcessing] = useState(false);
+  const [enginePreparing, setEnginePreparing] = useState(true);
   const [result, setResult] = useState<EditResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [outputFormat, setOutputFormat] = useState<ImageEditOutputFormat>("image/webp");
@@ -206,12 +207,24 @@ export default function LocalImageStudio() {
   const [resultZoomPan, setResultZoomPan] = useState<ResultZoomPan>({ x: 0, y: 0 });
 
   useEffect(() => {
+    let cancelled = false;
+
     // Warm LensFun while the user is choosing an image so the first RAW preview
     // does not pay the WASM/database initialization cost on its critical path.
-    void warmupLensfunRuntime().catch(() => {
-      // Non-fatal: getLensfunClient() clears its cached promise on failure, so
-      // the normal RAW processing path can retry when LensFun is actually used.
-    });
+    // This is deliberately non-blocking: the studio remains usable while the
+    // WASM/database download and initialization are in progress.
+    void warmupLensfunRuntime()
+      .catch(() => {
+        // Non-fatal: getLensfunClient() clears its cached promise on failure, so
+        // the normal RAW processing path can retry when LensFun is actually used.
+      })
+      .finally(() => {
+        if (!cancelled) setEnginePreparing(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const clearEditedVariant = useCallback(() => {
@@ -695,6 +708,20 @@ export default function LocalImageStudio() {
         </div>
 
         <div className="p-4 sm:p-6">
+          {enginePreparing && (
+            <div
+              role="status"
+              aria-live="polite"
+              className="mb-4 flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600"
+            >
+              <span
+                aria-hidden="true"
+                className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-gray-300 border-t-gray-700"
+              />
+              <span>Preparing image engine…</span>
+            </div>
+          )}
+
           <input
             ref={inputRef}
             type="file"
