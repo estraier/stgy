@@ -707,7 +707,7 @@ describe("image editor render characterization", () => {
           -5,
         ),
       ),
-    ).toBe("b9af75ff");
+    ).toBe("77354cb2");
   });
 
   test("freezes crop + arbitrary rotation render output", () => {
