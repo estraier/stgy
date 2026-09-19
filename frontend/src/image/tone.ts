@@ -54,6 +54,7 @@ export const EXPOSURE_ROLLOFF_A = 0.5;
 export const SATURATION_ROLLOFF_A = 0.7;
 export const FINAL_DISPLAY_ROLLOFF_A = 0.9;
 export const ROLLOFF_SAVING_LIMIT_FACTOR = 4;
+export const EXPOSURE_HIGHLIGHT_DESATURATION_STRENGTH = 0.5;
 
 export type RolloffParams = {
   inflection: number;
@@ -509,6 +510,58 @@ export function applyRolloffMaxChannelLinearRgbInto(
   output[2] = b * scale;
 }
 
+export function exposureHighlightSaturationRetention(
+  maxChannel: number,
+  strength = EXPOSURE_HIGHLIGHT_DESATURATION_STRENGTH,
+): number {
+  if (!(Number.isFinite(maxChannel) && maxChannel > 1)) return 1;
+  const clampedStrength = Number.isFinite(strength) ? Math.max(0, strength) : EXPOSURE_HIGHLIGHT_DESATURATION_STRENGTH;
+  if (!(clampedStrength > 0)) return 1;
+  return Math.pow(maxChannel, -clampedStrength);
+}
+
+export function applyExposureRolloffWithHighlightDesaturationLinearRgb(
+  r: number,
+  g: number,
+  b: number,
+  rolloff: RolloffParams | null,
+): [number, number, number] {
+  const output: [number, number, number] = [0, 0, 0];
+  applyExposureRolloffWithHighlightDesaturationLinearRgbInto(r, g, b, rolloff, output);
+  return output;
+}
+
+export function applyExposureRolloffWithHighlightDesaturationLinearRgbInto(
+  r: number,
+  g: number,
+  b: number,
+  rolloff: RolloffParams | null,
+  output: ToneRgbBuffer,
+): void {
+  const maxChannel = Math.max(r, g, b);
+  if (!(Number.isFinite(maxChannel) && maxChannel > 0)) {
+    output[0] = r; output[1] = g; output[2] = b;
+    return;
+  }
+  const rolledMax = rolloff ? applyRolloffScalar(maxChannel, rolloff) : maxChannel;
+  if (!Number.isFinite(rolledMax)) {
+    output[0] = r; output[1] = g; output[2] = b;
+    return;
+  }
+  const scale = rolledMax / maxChannel;
+  const scaledR = r * scale;
+  const scaledG = g * scale;
+  const scaledB = b * scale;
+  const retention = exposureHighlightSaturationRetention(maxChannel);
+  if (!(retention < 1)) {
+    output[0] = scaledR; output[1] = scaledG; output[2] = scaledB;
+    return;
+  }
+  output[0] = rolledMax + (scaledR - rolledMax) * retention;
+  output[1] = rolledMax + (scaledG - rolledMax) * retention;
+  output[2] = rolledMax + (scaledB - rolledMax) * retention;
+}
+
 export function applyExposureLinearToRgb(
   r: number,
   g: number,
@@ -694,7 +747,7 @@ export function applyToneLinearToRgb(
 
   if (hasWhiteBalance) [r, g, b] = applyWhiteBalanceLinear(r, g, b, gains);
   if (hasExposure) {
-    [r, g, b] = applyRolloffMaxChannelLinearRgb(
+    [r, g, b] = applyExposureRolloffWithHighlightDesaturationLinearRgb(
       r * factor,
       g * factor,
       b * factor,
@@ -741,7 +794,7 @@ export function applyToneLinearToRgbInto(
     r = output[0] ?? 0; g = output[1] ?? 0; b = output[2] ?? 0;
   }
   if (hasExposure) {
-    applyRolloffMaxChannelLinearRgbInto(
+    applyExposureRolloffWithHighlightDesaturationLinearRgbInto(
       r * factor, g * factor, b * factor, flags?.exposureRolloff ?? null, output,
     );
     r = output[0] ?? 0; g = output[1] ?? 0; b = output[2] ?? 0;
@@ -831,7 +884,7 @@ export function applyToneAdjustmentsLinearRgbRange(
     [r, g, b] = applyWhiteBalanceLinear(r, g, b, context.gains);
   }
   if (start <= 1 && end > 1 && context.hasExposure) {
-    [r, g, b] = applyRolloffMaxChannelLinearRgb(
+    [r, g, b] = applyExposureRolloffWithHighlightDesaturationLinearRgb(
       r * context.factor,
       g * context.factor,
       b * context.factor,
@@ -882,7 +935,7 @@ export function applyToneAdjustmentsLinearRgbRangeInto(
     r = output[0] ?? 0; g = output[1] ?? 0; b = output[2] ?? 0;
   }
   if (start <= 1 && end > 1 && context.hasExposure) {
-    applyRolloffMaxChannelLinearRgbInto(
+    applyExposureRolloffWithHighlightDesaturationLinearRgbInto(
       r * context.factor, g * context.factor, b * context.factor, context.exposureRolloff, output,
     );
     r = output[0] ?? 0; g = output[1] ?? 0; b = output[2] ?? 0;
