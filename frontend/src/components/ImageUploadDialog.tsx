@@ -128,6 +128,7 @@ import {
   getRenderedLinearRgbSample,
   inverseRotatePoint,
   normalizeRotationDegrees,
+  rotatePoint,
   sampleLinearRgb16BilinearInto,
   type LinearRgbBuffer,
 } from "./image-editor/sampling";
@@ -4885,15 +4886,44 @@ async function ensureTextOverlayFontsReady(overlays: ImageTextOverlay[]): Promis
   );
 }
 
+function sourceNormalizedPointToRenderedPoint(
+  x: number,
+  y: number,
+  sourceW: number,
+  sourceH: number,
+  cropX: number,
+  cropY: number,
+  cropW: number,
+  cropH: number,
+  outputW: number,
+  outputH: number,
+  rotationDegrees: number,
+): EditPoint {
+  const rotated = rotatePoint(
+    x * sourceW,
+    y * sourceH,
+    sourceW / 2,
+    sourceH / 2,
+    rotationDegrees,
+  );
+  return {
+    x: (rotated.x - cropX) * outputW / Math.max(1e-9, cropW),
+    y: (rotated.y - cropY) * outputH / Math.max(1e-9, cropH),
+  };
+}
+
 function drawOverlaysToContext(
   ctx: RotationCanvasContext,
   overlays: ImageDrawOverlay[],
   sourceW: number,
   sourceH: number,
+  cropX: number,
+  cropY: number,
   cropW: number,
   cropH: number,
   outputW: number,
   outputH: number,
+  rotationDegrees: number,
 ) {
   if (!overlays.length) return;
   const resizeScaleX = outputW / cropW;
@@ -4902,10 +4932,16 @@ function drawOverlaysToContext(
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   for (const overlay of overlays) {
-    const x1 = overlay.x1 * sourceW * resizeScaleX;
-    const y1 = overlay.y1 * sourceH * resizeScaleY;
-    const x2 = overlay.x2 * sourceW * resizeScaleX;
-    const y2 = overlay.y2 * sourceH * resizeScaleY;
+    const p1 = sourceNormalizedPointToRenderedPoint(
+      overlay.x1, overlay.y1, sourceW, sourceH, cropX, cropY, cropW, cropH, outputW, outputH, rotationDegrees,
+    );
+    const p2 = sourceNormalizedPointToRenderedPoint(
+      overlay.x2, overlay.y2, sourceW, sourceH, cropX, cropY, cropW, cropH, outputW, outputH, rotationDegrees,
+    );
+    const x1 = p1.x;
+    const y1 = p1.y;
+    const x2 = p2.x;
+    const y2 = p2.y;
     ctx.strokeStyle = TEXT_OVERLAY_COLORS[normalizeTextColorIndex(overlay.colorIndex)];
     ctx.lineWidth = Math.max(1, overlay.strokeWidth * Math.min(resizeScaleX, resizeScaleY));
     ctx.beginPath();
@@ -4935,10 +4971,13 @@ function drawTextOverlaysToContext(
   overlays: ImageTextOverlay[],
   sourceW: number,
   sourceH: number,
+  cropX: number,
+  cropY: number,
   cropW: number,
   cropH: number,
   outputW: number,
   outputH: number,
+  rotationDegrees: number,
   outputColorProfile: ImageEditOutputColorProfile = "srgb",
 ) {
   if (!overlays.length) return;
@@ -4950,10 +4989,13 @@ function drawTextOverlaysToContext(
     const fontSize = Math.max(1, overlay.fontSize * Math.min(resizeScaleX, resizeScaleY));
     const lineHeight = Math.max(1, fontSize * TEXT_OVERLAY_LINE_HEIGHT);
     const renderOffset = textOverlayRenderOffset(fontSize);
-    // Text overlays live in the post-crop/post-rotation output frame. Crop and
-    // rotation change the image underneath, but never transform the overlay.
-    const x = overlay.left * sourceW * resizeScaleX + renderOffset.x;
-    const y = overlay.top * sourceH * resizeScaleY + renderOffset.y;
+    // Overlay coordinates are fixed to the original, unprocessed image. Geometry
+    // changes only how that source position is projected into the rendered frame.
+    const anchor = sourceNormalizedPointToRenderedPoint(
+      overlay.left, overlay.top, sourceW, sourceH, cropX, cropY, cropW, cropH, outputW, outputH, rotationDegrees,
+    );
+    const x = anchor.x + renderOffset.x;
+    const y = anchor.y + renderOffset.y;
     ctx.font = textOverlayCanvasFont(overlay.fontIndex, fontSize);
     const fontMetrics = textOverlayFontMetrics(ctx, fontSize, lineHeight);
     const fillColor = TEXT_OVERLAY_COLORS[normalizeTextColorIndex(overlay.colorIndex)];
@@ -9613,20 +9655,26 @@ async function buildPeepTileCanvasFromDecoded(
         params.drawOverlays,
         sourceW,
         sourceH,
+        sx,
+        sy,
         cropW,
         cropH,
         outputW,
         outputH,
+        params.rotationDegrees,
       );
       drawTextOverlaysToContext(
         extCtx,
         params.textOverlays,
         sourceW,
         sourceH,
+        sx,
+        sy,
         cropW,
         cropH,
         outputW,
         outputH,
+        params.rotationDegrees,
         outputColorProfile,
       );
       extCtx.restore();
@@ -9872,10 +9920,13 @@ async function buildEditedVariantFromDecoded(
       params.drawOverlays,
       w,
       h,
+      sx,
+      sy,
       sw,
       sh,
       dw,
       dh,
+      params.rotationDegrees,
     ),
   );
   measureImageEditTimingSync(timing, "Drawing text overlays", () =>
@@ -9884,10 +9935,13 @@ async function buildEditedVariantFromDecoded(
       params.textOverlays,
       w,
       h,
+      sx,
+      sy,
       sw,
       sh,
       dw,
       dh,
+      params.rotationDegrees,
       outputColorProfile,
     ),
   );
@@ -10235,8 +10289,11 @@ export async function buildEditedDecodedRgb16(
     params,
     sourceW,
     sourceH,
+    sx,
+    sy,
     cropW,
     cropH,
+    params.rotationDegrees,
     outputColorProfile,
   );
 
@@ -10313,8 +10370,11 @@ function applyOverlaysToRgb16(
   params: ImageEditParams,
   sourceW: number,
   sourceH: number,
+  cropX: number,
+  cropY: number,
   cropW: number,
   cropH: number,
+  rotationDegrees: number,
   outputColorProfile: ImageEditOutputColorProfile,
 ): void {
   if (!params.drawOverlays.length && !params.textOverlays.length) return;
@@ -10328,20 +10388,26 @@ function applyOverlaysToRgb16(
       params.drawOverlays,
       sourceW,
       sourceH,
+      cropX,
+      cropY,
       cropW,
       cropH,
       width,
       height,
+      rotationDegrees,
     );
     drawTextOverlaysToContext(
       ctx,
       params.textOverlays,
       sourceW,
       sourceH,
+      cropX,
+      cropY,
       cropW,
       cropH,
       width,
       height,
+      rotationDegrees,
       outputColorProfile,
     );
     const overlay = getCanvasImageData(ctx, 0, 0, width, height, outputColorProfile).data;
@@ -11724,18 +11790,38 @@ export function ImageEditDialog({
     y: Math.max(cropRect.y, Math.min(cropRect.y + cropRect.h, point.y)),
   }), [cropRect]);
 
-  const cropPointToNormalized = useCallback((point: EditPoint): EditPoint | null => {
-    if (displayed.w <= 0 || displayed.h <= 0) return null;
+  const previewPointToSourceNormalized = useCallback((point: EditPoint): EditPoint | null => {
+    if (!natural || displayed.w <= 0 || displayed.h <= 0) return null;
+    const renderedX = (point.x - displayed.x) / displayed.w * natural.w;
+    const renderedY = (point.y - displayed.y) / displayed.h * natural.h;
+    const source = inverseRotatePoint(
+      renderedX,
+      renderedY,
+      natural.w / 2,
+      natural.h / 2,
+      rotationDegrees,
+    );
+    if (source.x < 0 || source.x > natural.w || source.y < 0 || source.y > natural.h) return null;
     return {
-      x: clamp01((point.x - cropRect.x) / displayed.w),
-      y: clamp01((point.y - cropRect.y) / displayed.h),
+      x: clamp01(source.x / natural.w),
+      y: clamp01(source.y / natural.h),
     };
-  }, [cropRect.x, cropRect.y, displayed.h, displayed.w]);
+  }, [displayed.h, displayed.w, displayed.x, displayed.y, natural, rotationDegrees]);
 
-  const normalizedToCropPoint = useCallback((x: number, y: number): EditPoint => ({
-    x: cropRect.x + x * displayed.w,
-    y: cropRect.y + y * displayed.h,
-  }), [cropRect.x, cropRect.y, displayed.h, displayed.w]);
+  const sourceNormalizedToPreviewPoint = useCallback((x: number, y: number): EditPoint | null => {
+    if (!natural || displayed.w <= 0 || displayed.h <= 0) return null;
+    const rendered = rotatePoint(
+      x * natural.w,
+      y * natural.h,
+      natural.w / 2,
+      natural.h / 2,
+      rotationDegrees,
+    );
+    return {
+      x: displayed.x + rendered.x / natural.w * displayed.w,
+      y: displayed.y + rendered.y / natural.h * displayed.h,
+    };
+  }, [displayed.h, displayed.w, displayed.x, displayed.y, natural, rotationDegrees]);
 
   const displayPointToNormalized = useCallback((point: EditPoint): EditPoint | null => {
     if (displayed.w <= 0 || displayed.h <= 0) return null;
@@ -11805,21 +11891,13 @@ export function ImageEditDialog({
   }, [clampPointToDisplayed, displayed]);
 
   const previewToOverlayPoint = useCallback((point: EditPoint): { left: number; top: number } | null => {
-    if (displayed.w <= 0 || displayed.h <= 0) return null;
-    const clamped = clampPointToCropRect(point);
-    return {
-      left: clamp01((clamped.x - cropRect.x) / displayed.w),
-      top: clamp01((clamped.y - cropRect.y) / displayed.h),
-    };
-  }, [clampPointToCropRect, cropRect.x, cropRect.y, displayed.h, displayed.w]);
+    const source = previewPointToSourceNormalized(clampPointToCropRect(point));
+    return source ? { left: source.x, top: source.y } : null;
+  }, [clampPointToCropRect, previewPointToSourceNormalized]);
 
-  const overlayToPreviewTextPoint = useCallback((overlay: ImageTextOverlay): EditPoint | null => {
-    if (!natural || displayed.w <= 0 || displayed.h <= 0) return null;
-    return {
-      x: cropRect.x + overlay.left * displayed.w,
-      y: cropRect.y + overlay.top * displayed.h,
-    };
-  }, [cropRect.x, cropRect.y, displayed.h, displayed.w, natural]);
+  const overlayToPreviewTextPoint = useCallback((overlay: ImageTextOverlay): EditPoint | null =>
+    sourceNormalizedToPreviewPoint(overlay.left, overlay.top),
+  [sourceNormalizedToPreviewPoint]);
 
   const previewTextLayouts = useMemo<TextOverlayLayout[]>(() => {
     if (!natural || displayed.w <= 0 || displayed.h <= 0) return [];
@@ -12006,8 +12084,8 @@ export function ImageEditDialog({
     strokeWidth: number,
     colorIndex: number,
   ): ImageDrawOverlay | null => {
-    const a = cropPointToNormalized(start);
-    const b = cropPointToNormalized(end);
+    const a = previewPointToSourceNormalized(start);
+    const b = previewPointToSourceNormalized(end);
     if (!a || !b) return null;
     if (type === "line") {
       return {
@@ -12033,7 +12111,7 @@ export function ImageEditDialog({
       colorIndex: normalizeTextColorIndex(colorIndex),
       fillColorIndex: null,
     };
-  }, [cropPointToNormalized]);
+  }, [previewPointToSourceNormalized]);
 
   const onDrawPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (!drawMode || e.button !== 0 || !natural || cropRect.w <= 0 || cropRect.h <= 0) return;
@@ -12170,36 +12248,41 @@ export function ImageEditDialog({
     if (!state || state.pointerId !== e.pointerId || cropRect.w <= 0 || cropRect.h <= 0) return;
     const point = clampPointToCropRect(toLocal(e));
     if (state.mode === "move") {
-      const dx = (point.x - state.startPoint.x) / displayed.w;
-      const dy = (point.y - state.startPoint.y) / displayed.h;
       const start = state.startOverlay;
-      const minX = Math.min(start.x1, start.x2);
-      const maxX = Math.max(start.x1, start.x2);
-      const minY = Math.min(start.y1, start.y2);
-      const maxY = Math.max(start.y1, start.y2);
-      const frameMaxX = cropRect.w / displayed.w;
-      const frameMaxY = cropRect.h / displayed.h;
-      const clampedDx = maxX - minX <= frameMaxX
-        ? Math.max(-minX, Math.min(frameMaxX - maxX, dx))
-        : dx;
-      const clampedDy = maxY - minY <= frameMaxY
-        ? Math.max(-minY, Math.min(frameMaxY - maxY, dy))
-        : dy;
+      const p1 = sourceNormalizedToPreviewPoint(start.x1, start.y1);
+      const p2 = sourceNormalizedToPreviewPoint(start.x2, start.y2);
+      if (!p1 || !p2) return;
+      const rawDx = point.x - state.startPoint.x;
+      const rawDy = point.y - state.startPoint.y;
+      const minX = Math.min(p1.x, p2.x);
+      const maxX = Math.max(p1.x, p2.x);
+      const minY = Math.min(p1.y, p2.y);
+      const maxY = Math.max(p1.y, p2.y);
+      const clampedDx = maxX - minX <= cropRect.w
+        ? Math.max(cropRect.x - minX, Math.min(cropRect.x + cropRect.w - maxX, rawDx))
+        : rawDx;
+      const clampedDy = maxY - minY <= cropRect.h
+        ? Math.max(cropRect.y - minY, Math.min(cropRect.y + cropRect.h - maxY, rawDy))
+        : rawDy;
+      const n1 = previewPointToSourceNormalized({ x: p1.x + clampedDx, y: p1.y + clampedDy });
+      const n2 = previewPointToSourceNormalized({ x: p2.x + clampedDx, y: p2.y + clampedDy });
+      if (!n1 || !n2) return;
       updateDrawOverlay(state.id, () => ({
         ...start,
-        x1: start.x1 + clampedDx,
-        y1: start.y1 + clampedDy,
-        x2: start.x2 + clampedDx,
-        y2: start.y2 + clampedDy,
+        x1: n1.x,
+        y1: n1.y,
+        x2: n2.x,
+        y2: n2.y,
       }));
     } else {
       const start = state.startOverlay;
       if (start.type === "line") {
         const fixed = state.handle === "start"
-          ? normalizedToCropPoint(start.x2, start.y2)
-          : normalizedToCropPoint(start.x1, start.y1);
+          ? sourceNormalizedToPreviewPoint(start.x2, start.y2)
+          : sourceNormalizedToPreviewPoint(start.x1, start.y1);
+        if (!fixed) return;
         const moving = constrainDrawEndPoint("line", fixed, point, e.shiftKey);
-        const normalized = cropPointToNormalized(moving);
+        const normalized = previewPointToSourceNormalized(moving);
         if (!normalized) return;
         updateDrawOverlay(state.id, () => state.handle === "start"
           ? { ...start, x1: normalized.x, y1: normalized.y }
@@ -12212,9 +12295,10 @@ export function ImageEditDialog({
             : state.handle === "sw"
               ? { x: start.x2, y: start.y1 }
               : { x: start.x1, y: start.y1 };
-        const fixed = normalizedToCropPoint(fixedNormalized.x, fixedNormalized.y);
+        const fixed = sourceNormalizedToPreviewPoint(fixedNormalized.x, fixedNormalized.y);
+        if (!fixed) return;
         const moving = constrainDrawEndPoint(start.type, fixed, point, e.shiftKey);
-        const normalized = cropPointToNormalized(moving);
+        const normalized = previewPointToSourceNormalized(moving);
         if (!normalized) return;
         updateDrawOverlay(state.id, () => ({
           ...start,
@@ -12230,12 +12314,12 @@ export function ImageEditDialog({
   }, [
     clampPointToCropRect,
     constrainDrawEndPoint,
-    cropPointToNormalized,
+    previewPointToSourceNormalized,
     cropRect.h,
     cropRect.w,
-    displayed.h,
-    displayed.w,
-    normalizedToCropPoint,
+    cropRect.x,
+    cropRect.y,
+    sourceNormalizedToPreviewPoint,
     toLocal,
     updateDrawOverlay,
   ]);
@@ -15457,10 +15541,13 @@ export function ImageEditDialog({
                       aria-hidden="true"
                     >
                       {drawOverlays.map((overlay) => {
-                        const x1 = overlay.x1 * displayed.w;
-                        const y1 = overlay.y1 * displayed.h;
-                        const x2 = overlay.x2 * displayed.w;
-                        const y2 = overlay.y2 * displayed.h;
+                        const p1 = sourceNormalizedToPreviewPoint(overlay.x1, overlay.y1);
+                        const p2 = sourceNormalizedToPreviewPoint(overlay.x2, overlay.y2);
+                        if (!p1 || !p2) return null;
+                        const x1 = p1.x - cropRect.x;
+                        const y1 = p1.y - cropRect.y;
+                        const x2 = p2.x - cropRect.x;
+                        const y2 = p2.y - cropRect.y;
                         const strokeWidth = Math.max(1, overlay.strokeWidth * displayed.w / natural.w);
                         const stroke = TEXT_OVERLAY_COLORS[normalizeTextColorIndex(overlay.colorIndex)];
                         const fill = overlay.type === "line" || overlay.fillColorIndex == null
@@ -15532,10 +15619,13 @@ export function ImageEditDialog({
                         );
                       })}
                       {drawDraft && (() => {
-                        const x1 = drawDraft.x1 * displayed.w;
-                        const y1 = drawDraft.y1 * displayed.h;
-                        const x2 = drawDraft.x2 * displayed.w;
-                        const y2 = drawDraft.y2 * displayed.h;
+                        const p1 = sourceNormalizedToPreviewPoint(drawDraft.x1, drawDraft.y1);
+                        const p2 = sourceNormalizedToPreviewPoint(drawDraft.x2, drawDraft.y2);
+                        if (!p1 || !p2) return null;
+                        const x1 = p1.x - cropRect.x;
+                        const y1 = p1.y - cropRect.y;
+                        const x2 = p2.x - cropRect.x;
+                        const y2 = p2.y - cropRect.y;
                         const strokeWidth = Math.max(1, drawDraft.strokeWidth * displayed.w / natural.w);
                         const stroke = TEXT_OVERLAY_COLORS[normalizeTextColorIndex(drawDraft.colorIndex)];
                         if (drawDraft.type === "line") {
@@ -15554,10 +15644,13 @@ export function ImageEditDialog({
                     </svg>
                   )}
                   {!eyedropperMode && drawMode && cropRect.w > 0 && cropRect.h > 0 && drawOverlays.map((overlay) => {
-                    const x1 = cropRect.x + overlay.x1 * displayed.w;
-                    const y1 = cropRect.y + overlay.y1 * displayed.h;
-                    const x2 = cropRect.x + overlay.x2 * displayed.w;
-                    const y2 = cropRect.y + overlay.y2 * displayed.h;
+                    const p1 = sourceNormalizedToPreviewPoint(overlay.x1, overlay.y1);
+                    const p2 = sourceNormalizedToPreviewPoint(overlay.x2, overlay.y2);
+                    if (!p1 || !p2) return null;
+                    const x1 = p1.x;
+                    const y1 = p1.y;
+                    const x2 = p2.x;
+                    const y2 = p2.y;
                     const handles: Array<[DrawHandle, number, number]> = overlay.type === "line"
                       ? [["start", x1, y1], ["end", x2, y2]]
                       : [
