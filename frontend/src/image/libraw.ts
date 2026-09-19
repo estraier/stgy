@@ -38,9 +38,21 @@ export type LibRawLensInfoLike = {
   [key: string]: unknown;
 };
 
+export type LibRawInsetCropLike = {
+  cleft?: number;
+  ctop?: number;
+  cwidth?: number;
+  cheight?: number;
+};
+
 export type LibRawMetadataLike = {
   width?: number;
   height?: number;
+  raw_width?: number;
+  raw_height?: number;
+  top_margin?: number;
+  left_margin?: number;
+  raw_inset_crops?: LibRawInsetCropLike[];
   iso_speed?: number;
   shutter?: number;
   aperture?: number;

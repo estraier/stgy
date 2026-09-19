@@ -17,6 +17,7 @@ import {
   type RawFallbackPlan,
   type RawLensfunCorrectionMaps,
   type RawMatchedTonePlan,
+  type RawOutputCrop,
   type RawStorageTransfer,
   type RawVignettingMap,
 } from "./raw-development-core";
@@ -85,12 +86,14 @@ type RawDevelopmentWorkerRequest =
   | ({
       type: "lensfun-resample";
       correction?: RawLensfunCorrectionMaps;
+      outputCrop?: RawOutputCrop;
       targetWidth: number;
       targetHeight: number;
     } & StartMessageBase)
   | ({
       type: "master-one-pass";
       correction?: RawLensfunCorrectionMaps;
+      outputCrop?: RawOutputCrop;
       tonePlan?: RawMatchedTonePlan;
       fallbackPlan?: RawFallbackPlan;
       colorPlan?: RawColorPassPlan;
@@ -104,6 +107,7 @@ type RawDevelopmentWorkerRequest =
       sourceLinearRangeMax: number;
       sourceTransfer?: RawStorageTransfer;
       correction?: RawLensfunCorrectionMaps;
+      outputCrop?: RawOutputCrop;
       tonePlan?: RawMatchedTonePlan;
       fallbackPlan?: RawFallbackPlan;
       colorPlan?: RawColorPassPlan;
@@ -253,6 +257,7 @@ workerScope.onmessage = (event: MessageEvent<RawDevelopmentWorkerRequest>) => {
         message.sourceLinearRangeMax,
         state.transfer,
         message.correction,
+        message.outputCrop,
         message.targetWidth,
         message.targetHeight,
       );
@@ -282,6 +287,7 @@ workerScope.onmessage = (event: MessageEvent<RawDevelopmentWorkerRequest>) => {
         message.sourceLinearRangeMax,
         message.sourceTransfer ?? "linear",
         message.correction,
+        message.outputCrop,
         message.tonePlan,
         message.fallbackPlan,
         message.colorPlan,
@@ -319,6 +325,7 @@ workerScope.onmessage = (event: MessageEvent<RawDevelopmentWorkerRequest>) => {
         message.sourceLinearRangeMax,
         state.transfer,
         message.correction,
+        message.outputCrop,
         message.tonePlan,
         message.fallbackPlan,
         message.colorPlan,

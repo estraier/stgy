@@ -42,6 +42,7 @@ import type {
   LinearRgbSample,
   RawDevelopmentHeadroomStatistics,
   RawDevelopmentLensfunSettings,
+  RawDevelopmentRawGeometry,
   RawDenoiseDevelopmentResult,
   RawDenoiseSettings,
   RawDenoiseWeightMap,
@@ -162,6 +163,7 @@ import {
   type RawFallbackPlan,
   type RawLensfunCorrectionMaps,
   type RawMatchedTonePlan,
+  type RawOutputCrop,
 } from "./image-editor/raw-development-core";
 export { __imageEditorCharacterization } from "./image-editor/characterization";
 
@@ -6802,6 +6804,104 @@ function rawMetadataPositiveNumber(value: unknown): number | undefined {
   return Number.isFinite(number) && number > 0 ? number : undefined;
 }
 
+function rawMetadataNonnegativeInteger(value: unknown): number | null {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? Math.round(number) : null;
+}
+
+function rawMetadataPositiveInteger(value: unknown): number | null {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.round(number) : null;
+}
+
+function rawGeometryFromMetadata(metadata: LibRawMetadataLike | undefined): RawDevelopmentRawGeometry | undefined {
+  if (!metadata) return undefined;
+  const rawWidth = rawMetadataPositiveInteger(metadata.raw_width);
+  const rawHeight = rawMetadataPositiveInteger(metadata.raw_height);
+  const visibleWidth = rawMetadataPositiveInteger(metadata.width);
+  const visibleHeight = rawMetadataPositiveInteger(metadata.height);
+  const leftMargin = rawMetadataNonnegativeInteger(metadata.left_margin);
+  const topMargin = rawMetadataNonnegativeInteger(metadata.top_margin);
+  const sourceCrops = Array.isArray(metadata.raw_inset_crops) ? metadata.raw_inset_crops : [];
+  const insetCrops = ([0, 1] as const).map((index) => {
+    const crop = sourceCrops[index];
+    if (!crop) return null;
+    const left = rawMetadataNonnegativeInteger(crop.cleft);
+    const top = rawMetadataNonnegativeInteger(crop.ctop);
+    const width = rawMetadataPositiveInteger(crop.cwidth);
+    const height = rawMetadataPositiveInteger(crop.cheight);
+    // LibRaw uses 0xffff for an uninitialized inset crop.
+    if (left === null || top === null || width === null || height === null || left >= 0xffff || top >= 0xffff) {
+      return null;
+    }
+    if (rawWidth !== null && left + width > rawWidth) return null;
+    if (rawHeight !== null && top + height > rawHeight) return null;
+    return { left, top, width, height };
+  }) as RawDevelopmentRawGeometry["insetCrops"];
+
+  if (
+    rawWidth === null
+    && rawHeight === null
+    && visibleWidth === null
+    && visibleHeight === null
+    && leftMargin === null
+    && topMargin === null
+    && insetCrops[0] === null
+    && insetCrops[1] === null
+  ) {
+    return undefined;
+  }
+  return {
+    rawWidth,
+    rawHeight,
+    visibleWidth,
+    visibleHeight,
+    leftMargin,
+    topMargin,
+    insetCrops,
+  };
+}
+
+function rawInsetOutputCropFromMetadata(
+  metadata: LibRawMetadataLike | undefined,
+  sourceWidth: number,
+  sourceHeight: number,
+): RawOutputCrop | undefined {
+  const geometry = rawGeometryFromMetadata(metadata);
+  const inset = geometry?.insetCrops[0];
+  if (!inset || sourceWidth <= 0 || sourceHeight <= 0) return undefined;
+
+  const fits = (left: number, top: number): RawOutputCrop | undefined => {
+    if (left < 0 || top < 0) return undefined;
+    if (left + inset.width > sourceWidth || top + inset.height > sourceHeight) return undefined;
+    if (left === 0 && top === 0 && inset.width === sourceWidth && inset.height === sourceHeight) {
+      return undefined;
+    }
+    return { left, top, width: inset.width, height: inset.height };
+  };
+
+  // raw_inset_crops[] is expressed in the full RAW sensor coordinate system.
+  // LibRaw imageData() may expose either that full geometry or the visible area
+  // with left/top margins already removed. Preserve the original sensor
+  // coordinate whenever the decoded buffer matches raw_width/raw_height; only
+  // subtract margins when the decoded buffer matches the visible dimensions.
+  if (geometry?.rawWidth === sourceWidth && geometry.rawHeight === sourceHeight) {
+    return fits(inset.left, inset.top);
+  }
+  if (geometry?.visibleWidth === sourceWidth && geometry.visibleHeight === sourceHeight) {
+    return fits(
+      inset.left - (geometry.leftMargin ?? 0),
+      inset.top - (geometry.topMargin ?? 0),
+    );
+  }
+
+  return fits(inset.left, inset.top)
+    ?? fits(
+      inset.left - (geometry?.leftMargin ?? 0),
+      inset.top - (geometry?.topMargin ?? 0),
+    );
+}
+
 function rawLensMetadata(metadata: LibRawMetadataLike | undefined): RawLensMetadata | null {
   if (!metadata) return null;
   const cameraMaker = rawMetadataString(metadata.normalized_make) || rawMetadataString(metadata.camera_make);
@@ -6931,6 +7031,22 @@ function formatRawDevelopmentSetting(value: number): string {
   if (!Number.isFinite(value)) return "n/a";
   const normalized = Math.abs(value) < 0.0005 ? 0 : value;
   return normalized.toFixed(2).replace(/\.?0+$/, "");
+}
+
+function formatRawDevelopmentGeometry(geometry: RawDevelopmentRawGeometry): string {
+  const dimensions = (width: number | null, height: number | null) =>
+    width === null || height === null ? "n/a" : `${width}x${height}`;
+  const crop = (value: RawDevelopmentRawGeometry["insetCrops"][number]) =>
+    value
+      ? `left=${value.left} top=${value.top} width=${value.width} height=${value.height}`
+      : "unset";
+  return [
+    `raw=${dimensions(geometry.rawWidth, geometry.rawHeight)}`,
+    `visible=${dimensions(geometry.visibleWidth, geometry.visibleHeight)}`,
+    `margins=left=${geometry.leftMargin ?? "n/a"} top=${geometry.topMargin ?? "n/a"}`,
+    `inset[0]=${crop(geometry.insetCrops[0])}`,
+    `inset[1]=${crop(geometry.insetCrops[1])}`,
+  ].join(", ");
 }
 
 function formatSignedLensfunValue(value: number, digits: number, suffix = ""): string {
@@ -7104,6 +7220,7 @@ type RawWorkerDenoiseMergeSharedResponse = {
 type RawProgressiveDevelopmentPlan = {
   mode: RawDevelopmentSettings["mode"];
   previewIso?: number | null;
+  rawGeometry?: RawDevelopmentRawGeometry;
   luminance: RawDevelopmentLuminanceSettings | null;
   headroom?: RawDevelopmentHeadroomStatistics;
   saturation: RawDevelopmentSaturationSettings;
@@ -7898,6 +8015,7 @@ async function resampleRawDecodedInWorker(
   decoded: DecodedRgbImage16,
   targetWidth: number,
   targetHeight: number,
+  outputCrop?: RawOutputCrop,
 ): Promise<DecodedRgbImage16> {
   const correction = decoded.lensCorrection;
   const correctionMaps = rawLensfunCorrectionMaps(correction);
@@ -7910,6 +8028,7 @@ async function resampleRawDecodedInWorker(
       decoded.linearRangeMax,
       decoded.transfer,
       correctionMaps,
+      outputCrop,
       targetWidth,
       targetHeight,
     );
@@ -7936,6 +8055,7 @@ async function resampleRawDecodedInWorker(
         sourceLinearRangeMax: decoded.linearRangeMax,
         sourceTransfer: decoded.transfer,
         correction: correctionMaps,
+        outputCrop,
         targetWidth,
         targetHeight,
       },
@@ -7958,6 +8078,7 @@ async function resampleRawDecodedInWorker(
 async function developRawMasterOnePassInWorker(
   sourceDecoded: DecodedRgbImage16,
   plan: RawProgressiveDevelopmentPlan,
+  outputCrop?: RawOutputCrop,
 ): Promise<{ decoded: DecodedRgbImage16; headroom?: RawDevelopmentHeadroomStatistics }> {
   const correction = sourceDecoded.lensCorrection;
   const correctionMaps = rawLensfunCorrectionMaps(correction);
@@ -7971,6 +8092,7 @@ async function developRawMasterOnePassInWorker(
       sourceDecoded.width,
       sourceDecoded.height,
       correctionMaps,
+      outputCrop,
     );
     const hardwareConcurrency = typeof navigator === "object"
       ? Math.max(1, Math.floor(navigator.hardwareConcurrency || RAW_MASTER_ONE_PASS_MAX_WORKERS))
@@ -8012,6 +8134,7 @@ async function developRawMasterOnePassInWorker(
               sourceLinearRangeMax: sourceDecoded.linearRangeMax,
               sourceTransfer: sourceDecoded.transfer,
               correction: sharedCorrection,
+              outputCrop,
               tonePlan: plan.tonePlan,
               fallbackPlan: plan.fallbackPlan,
               colorPlan: plan.colorPlan,
@@ -8052,6 +8175,7 @@ async function developRawMasterOnePassInWorker(
       sourceDecoded.linearRangeMax,
       sourceDecoded.transfer,
       correctionMaps,
+      outputCrop,
       plan.tonePlan,
       plan.fallbackPlan,
       plan.colorPlan,
@@ -8083,6 +8207,7 @@ async function developRawMasterOnePassInWorker(
         sourceLinearRangeMax: sourceDecoded.linearRangeMax,
         sourceTransfer: sourceDecoded.transfer,
         correction: correctionMaps,
+        outputCrop,
         tonePlan: plan.tonePlan,
         fallbackPlan: plan.fallbackPlan,
         colorPlan: plan.colorPlan,
@@ -8401,8 +8526,12 @@ async function decodeRawPreviewImage(
           "Preparing embedded thumbnail display…",
           () => rawEmbeddedPreviewFromThumbnail(thumbnail),
         );
-        const metadataWidth = Math.max(0, Math.round(Number(metadata?.width ?? 0)));
-        const metadataHeight = Math.max(0, Math.round(Number(metadata?.height ?? 0)));
+        const metadataGeometry = rawGeometryFromMetadata(metadata);
+        const insetPreviewCrop = metadataGeometry?.insetCrops[0];
+        const metadataWidth = insetPreviewCrop?.width
+          ?? Math.max(0, Math.round(Number(metadata?.width ?? 0)));
+        const metadataHeight = insetPreviewCrop?.height
+          ?? Math.max(0, Math.round(Number(metadata?.height ?? 0)));
         const embeddedPreview = embeddedPreviewBase
           ? {
               ...embeddedPreviewBase,
@@ -8436,6 +8565,7 @@ async function decodeRawPreviewImage(
     const sourceDecoded = await runBlockingStage("Converting RAW preview pixels…", () =>
       libRawImageDataToDecoded(image),
     );
+    const rawOutputCrop = rawInsetOutputCropFromMetadata(metadata, sourceDecoded.width, sourceDecoded.height);
     const lensMetadata = rawLensMetadata(metadata);
     sourceDecoded.lensCorrection = await runStage("Correcting RAW preview lens…", () =>
       buildRawLensfunCorrection(lensMetadata, sourceDecoded.width, sourceDecoded.height),
@@ -8450,6 +8580,7 @@ async function decodeRawPreviewImage(
       sourceDecoded.width,
       sourceDecoded.height,
       rawLensfunCorrectionMaps(sourceDecoded.lensCorrection),
+      rawOutputCrop,
     );
     const dimensions = rawPreviewDimensions(correctedDimensions.width, correctedDimensions.height);
     const decoded = await runStage("Building RAW preview image…", () =>
@@ -8457,6 +8588,7 @@ async function decodeRawPreviewImage(
         sourceDecoded,
         dimensions.width,
         dimensions.height,
+        rawOutputCrop,
       ),
     );
 
@@ -8468,6 +8600,7 @@ async function decodeRawPreviewImage(
     );
     const plan = await developRawPreviewPixels(decoded, thumbnailReference, timing, onProgress);
     plan.previewIso = Number.isFinite(isoValue) && isoValue > 0 ? isoValue : null;
+    plan.rawGeometry = rawGeometryFromMetadata(metadata);
     const previewElapsedMs = performance.now() - timing.startedAtMs;
     const previewElapsedSeconds = previewElapsedMs / 1000;
     plan.previewElapsedSeconds = previewElapsedSeconds;
@@ -8487,6 +8620,7 @@ async function decodeRawPreviewImage(
       luminance: plan.luminance,
       saturation: plan.saturation,
       headroom: plan.headroom,
+      rawGeometry: plan.rawGeometry,
       lensfun: lensfunSettings,
       runtimeMode: timing.runtimeMode,
       openMpThreads: timing.openMpThreads,
@@ -8533,6 +8667,7 @@ async function decodeRawMasterImage(
       Promise.race([raw!.metadata(true), workerFailure!.promise]),
     );
     const isoValue = Number(metadata?.iso_speed);
+    const rawGeometry = rawGeometryFromMetadata(metadata) ?? plan.rawGeometry;
     const medPasses = rawMedianDenoisePassesForIso(isoValue);
     if (medPasses !== plannedMedPasses) {
       // Preview already supplied the ISO in the normal path, so Master opens the
@@ -8566,6 +8701,7 @@ async function decodeRawMasterImage(
     const sourceDecoded = await measureRawTiming(timing, "master", "Converting master pixels", () =>
       libRawImageDataToDecoded(image),
     );
+    const rawOutputCrop = rawInsetOutputCropFromMetadata(metadata, sourceDecoded.width, sourceDecoded.height);
     const lensMetadata = rawLensMetadata(metadata);
     sourceDecoded.lensCorrection = await measureRawTiming(
       timing,
@@ -8584,7 +8720,7 @@ async function decodeRawMasterImage(
       sourceDecoded.height,
     );
     const masterResult = await measureRawTiming(timing, "master", "Master one-pass", () =>
-      developRawMasterOnePassInWorker(sourceDecoded, plan),
+      developRawMasterOnePassInWorker(sourceDecoded, plan, rawOutputCrop),
     );
     const decoded = masterResult.decoded;
     decoded.rawDevelopment = {
@@ -8594,6 +8730,7 @@ async function decodeRawMasterImage(
       luminance: plan.luminance,
       saturation: plan.saturation,
       headroom: masterResult.headroom ?? plan.headroom,
+      rawGeometry,
       lensfun: lensfunSettings,
       runtimeMode: timing.runtimeMode,
       openMpThreads: timing.openMpThreads,
@@ -8664,6 +8801,7 @@ async function decodeRawDenoiseImage(
     const sourceDecoded = await measureRawTiming(timing, "denoise", "Converting denoise pixels", () =>
       libRawImageDataToDecoded(image),
     );
+    const rawOutputCrop = rawInsetOutputCropFromMetadata(metadata, sourceDecoded.width, sourceDecoded.height);
     const lensMetadata = rawLensMetadata(metadata);
     sourceDecoded.lensCorrection = await measureRawTiming(
       timing,
@@ -8680,7 +8818,7 @@ async function decodeRawDenoiseImage(
     // buffer in place using the low-resolution weight map, then adopt D as the
     // final Denoised master.
     const denoiseResult = await measureRawTiming(timing, "denoise", "Denoise one-pass", () =>
-      developRawMasterOnePassInWorker(sourceDecoded, plan),
+      developRawMasterOnePassInWorker(sourceDecoded, plan, rawOutputCrop),
     );
     const decoded = denoiseResult.decoded;
     const denoiseDevelopment: RawDenoiseSettings = {
@@ -8819,6 +8957,7 @@ async function decodeRawUploadFastPath(
     const sourceDecoded = await measureRawTiming(timing, "master", "Converting master pixels", () =>
       libRawImageDataToDecoded(image),
     );
+    const rawOutputCrop = rawInsetOutputCropFromMetadata(metadata, sourceDecoded.width, sourceDecoded.height);
     const lensMetadata = rawLensMetadata(metadata);
     sourceDecoded.lensCorrection = await measureRawTiming(
       timing,
@@ -8838,6 +8977,7 @@ async function decodeRawUploadFastPath(
       sourceDecoded.width,
       sourceDecoded.height,
       correctionMaps,
+      rawOutputCrop,
     );
     const sampleDimensions = rawPreviewDimensions(correctedDimensions.width, correctedDimensions.height);
     const planningSample: DecodedRgbImage16 = {
@@ -8854,6 +8994,7 @@ async function decodeRawUploadFastPath(
           sourceDecoded.linearRangeMax,
           sourceDecoded.transfer,
           correctionMaps,
+          rawOutputCrop,
           sampleDimensions.width,
           sampleDimensions.height,
         ),
@@ -8867,7 +9008,7 @@ async function decodeRawUploadFastPath(
     plan.previewElapsedSeconds = (performance.now() - startedAt) / 1000;
 
     const masterResult = await measureRawTiming(timing, "master", "Master one-pass", () =>
-      developRawMasterOnePassInWorker(sourceDecoded, plan),
+      developRawMasterOnePassInWorker(sourceDecoded, plan, rawOutputCrop),
     );
     const decoded = masterResult.decoded;
     decoded.rawDevelopment = {
@@ -8877,6 +9018,7 @@ async function decodeRawUploadFastPath(
       luminance: plan.luminance,
       saturation: plan.saturation,
       headroom: masterResult.headroom ?? plan.headroom,
+      rawGeometry: rawGeometryFromMetadata(metadata),
       lensfun: lensfunSettings,
       runtimeMode: timing.runtimeMode,
       openMpThreads: timing.openMpThreads,
@@ -15497,6 +15639,11 @@ export function ImageEditDialog({
                                 </div>
                               ) : (
                                 <div>master size: processing...</div>
+                              )}
+                              {rawDevelopmentSettings.rawGeometry && (
+                                <div>
+                                  raw geometry: {formatRawDevelopmentGeometry(rawDevelopmentSettings.rawGeometry)}
+                                </div>
                               )}
                               <div>
                                 luminance: {rawDevelopmentSettings.luminance

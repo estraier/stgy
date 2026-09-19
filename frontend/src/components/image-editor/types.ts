@@ -25,6 +25,23 @@ export type RawDevelopmentSaturationSettings = {
   vibrance: number;
 };
 
+export type RawDevelopmentInsetCrop = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+};
+
+export type RawDevelopmentRawGeometry = {
+  rawWidth: number | null;
+  rawHeight: number | null;
+  visibleWidth: number | null;
+  visibleHeight: number | null;
+  leftMargin: number | null;
+  topMargin: number | null;
+  insetCrops: [RawDevelopmentInsetCrop | null, RawDevelopmentInsetCrop | null];
+};
+
 export type RawDevelopmentLensfunSettings = {
   name: string;
   focal: number | null;
@@ -73,6 +90,7 @@ export type RawDevelopmentSettings = {
   luminance: RawDevelopmentLuminanceSettings | null;
   saturation: RawDevelopmentSaturationSettings;
   headroom?: RawDevelopmentHeadroomStatistics;
+  rawGeometry?: RawDevelopmentRawGeometry;
   lensfun?: RawDevelopmentLensfunSettings;
   runtimeMode?: "single" | "threaded";
   openMpThreads?: number;
