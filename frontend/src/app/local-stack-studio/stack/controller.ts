@@ -48,6 +48,7 @@ import {
   applySigmoidLinear,
   applySigmoidLinearAtMidpoint,
   clamp01,
+  srgbChannelToLinear,
   proPhotoLinearLuminance,
   clampColorAdjustment,
   clampExposureEv,
@@ -85,6 +86,10 @@ const RAW_DECODE_SETTINGS = {
   userQual: 11,
 };
 const PREVIEW_TARGET_PIXELS = 1_000_000;
+const CENTER_FILL_GRAY_BYTE = 128;
+const CENTER_FILL_GRAY_LINEAR = srgbChannelToLinear(CENTER_FILL_GRAY_BYTE);
+const TILE_BORDER_MIN_PIXELS = 2;
+const TILE_BORDER_DIAGONAL_RATIO = 0.01;
 const PREVIEW_COLOR_SPACE = "srgb";
 const LINEAR_TO_SRGB_BYTE_LUT = buildLinearToSrgbByteLut(16384);
 const OUTPUT_SIZE_PRESETS = [
@@ -112,6 +117,9 @@ const SINGLE_SHOT_HDR_SATURATION_WEIGHT = 0.1;
 const SINGLE_SHOT_HDR_EXPOSURE_WEIGHT = 1.0;
 const RESULT_BUFFER_GAMMA = 2.0;
 const RESULT_BUFFER_MAX_UINT16 = 65535;
+const CENTER_FILL_GRAY_STORED_GAMMA2 = Math.round(
+  Math.sqrt(CENTER_FILL_GRAY_LINEAR) * RESULT_BUFFER_MAX_UINT16,
+);
 const MEDIAN_TILE_SIZE = 1024;
 const FOCUS_TILE_SIZE = 1024;
 const FOCUS_SMOOTHNESS = 0.5;
@@ -306,10 +314,10 @@ listen(processButton, "click", async () => {
     if (files.length < 1) {
       throw new Error("Choose at least one input image.");
     }
-    if (!["average", "median", "stf", "hdr1", "hdr2", "focus"].includes(mergeMode.value)) {
+    if (!["average", "median", "stf", "hdr1", "hdr2", "focus", "tile-vertical", "tile-horizontal"].includes(mergeMode.value)) {
       throw new Error(`Unsupported merge mode: ${mergeMode.value}`);
     }
-    if (!["auto", "center-crop", "fit", "feature-match"].includes(alignmentMode.value)) {
+    if (!["auto", "center-crop", "center-fill", "top-left-fill", "feature-match"].includes(alignmentMode.value)) {
       throw new Error(`Unsupported alignment mode: ${alignmentMode.value}`);
     }
 
@@ -323,12 +331,19 @@ ${buildInfo}` : "OpenCV.js is ready.");
     setProgress("Reading metadata, ICC profiles, and image sizes...");
     const inputInfos = await readInputInfos(files);
     const useSyntheticSingleInputHdr = files.length === 1 && (mergeMode.value === "hdr1" || mergeMode.value === "hdr2");
-    const effectiveMergeMode = useSyntheticSingleInputHdr ? mergeMode.value : files.length === 1 ? "average" : mergeMode.value;
+    const preserveSingleInputMerge = isTileMergeMode(mergeMode.value);
+    const effectiveMergeMode = useSyntheticSingleInputHdr
+      ? mergeMode.value
+      : files.length === 1 && !preserveSingleInputMerge
+        ? "average"
+        : mergeMode.value;
     if (files.length === 1) {
       console.info(
         useSyntheticSingleInputHdr
           ? `${files[0].name}: single input ${mergeMode.value.toUpperCase()} mode; generating three synthetic materials and skipping ORB alignment.`
-          : `${files[0].name}: single input; skipping ORB alignment and merge operation.`,
+          : preserveSingleInputMerge
+            ? `${files[0].name}: single input ${mergeMode.value}; preserving tile layout and border.`
+            : `${files[0].name}: single input; skipping ORB alignment and merge operation.`,
       );
     }
     const mergePlan = buildMergePlan(files, inputInfos, effectiveMergeMode);
@@ -1556,13 +1571,41 @@ async function readInputInfos(files) {
 
 function formatAlignmentModeName(mode) {
   if (mode === "center-crop") return "Center crop";
-  if (mode === "fit") return "Fit";
+  if (mode === "center-fill") return "Center fill";
+  if (mode === "top-left-fill") return "Top left fill";
   if (mode === "feature-match") return "Feature match";
   return "Auto";
 }
 
+function isTileMergeMode(mode) {
+  return mode === "tile-vertical" || mode === "tile-horizontal";
+}
+
+function buildTileLayout(mode, imageWidth, imageHeight, imageCount) {
+  if (!isTileMergeMode(mode)) {
+    throw new Error(`Unsupported tile mode: ${mode}`);
+  }
+  const count = Math.max(1, Math.round(Number(imageCount) || 0));
+  const border = Math.max(
+    TILE_BORDER_MIN_PIXELS,
+    Math.round(Math.hypot(imageWidth, imageHeight) * TILE_BORDER_DIAGONAL_RATIO),
+  );
+  const vertical = mode === "tile-vertical";
+  const outputWidth = vertical
+    ? imageWidth + border * 2
+    : imageWidth * count + border * (count + 1);
+  const outputHeight = vertical
+    ? imageHeight * count + border * (count + 1)
+    : imageHeight + border * 2;
+  const positions = Array.from({ length: count }, (_, index) => ({
+    x: vertical ? border : border + index * (imageWidth + border),
+    y: vertical ? border + index * (imageHeight + border) : border,
+  }));
+  return { border, outputWidth, outputHeight, positions };
+}
+
 function buildAlignmentPlan(files, inputInfos, selectedMode, mergeMode) {
-  const validModes = ["auto", "center-crop", "fit", "feature-match"];
+  const validModes = ["auto", "center-crop", "center-fill", "top-left-fill", "feature-match"];
   if (!validModes.includes(selectedMode)) {
     throw new Error(`Unsupported alignment mode: ${selectedMode}`);
   }
@@ -1593,8 +1636,10 @@ function buildAlignmentPlan(files, inputInfos, selectedMode, mergeMode) {
   );
   const centerCropWidth = Math.min(...dimensions.map((entry) => entry.width));
   const centerCropHeight = Math.min(...dimensions.map((entry) => entry.height));
+  const centerFillWidth = Math.max(...dimensions.map((entry) => entry.width));
+  const centerFillHeight = Math.max(...dimensions.map((entry) => entry.height));
   const effectiveMode = selectedMode === "auto"
-    ? (mergeMode === "average" ? "center-crop" : "feature-match")
+    ? (isTileMergeMode(mergeMode) ? "center-fill" : mergeMode === "average" ? "center-crop" : "feature-match")
     : selectedMode;
 
   if (effectiveMode === "feature-match") {
@@ -1617,18 +1662,17 @@ function buildAlignmentPlan(files, inputInfos, selectedMode, mergeMode) {
     };
   }
 
-  const largest = dimensions.reduce((best, entry) => {
-    const bestPixels = best.width * best.height;
-    const entryPixels = entry.width * entry.height;
-    return entryPixels > bestPixels ? entry : best;
-  }, dimensions[0]);
-  return {
-    selectedMode,
-    effectiveMode,
-    normalizationMode: "fit",
-    targetWidth: largest.width,
-    targetHeight: largest.height,
-  };
+  if (effectiveMode === "center-fill" || effectiveMode === "top-left-fill") {
+    return {
+      selectedMode,
+      effectiveMode,
+      normalizationMode: effectiveMode,
+      targetWidth: centerFillWidth,
+      targetHeight: centerFillHeight,
+    };
+  }
+
+  throw new Error(`Unsupported effective alignment mode: ${effectiveMode}`);
 }
 
 function buildMergePlan(files, inputInfos, mode) {
@@ -1782,6 +1826,8 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
   let medianScratchDb = null;
   let medianScratchSessionId = null;
   let focusWorker = null;
+  let tileLayout = null;
+  let tileStoredBuffer = null;
 
   try {
     const needsAlignment = files.length > 1 && alignmentPlan.effectiveMode === "feature-match";
@@ -1835,7 +1881,15 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
         } else if (mergePlan.mode === "hdr2") {
           hdr2StreamWorker = createHdrMertensStreamWorker(width, height, files.length);
         }
-        if (mergePlan.mode !== "hdr1" && mergePlan.mode !== "hdr2" && mergePlan.mode !== "median" && mergePlan.mode !== "focus") {
+        if (isTileMergeMode(mergePlan.mode)) {
+          tileLayout = buildTileLayout(mergePlan.mode, width, height, files.length);
+          tileStoredBuffer = new Uint16Array(tileLayout.outputWidth * tileLayout.outputHeight * 3);
+          tileStoredBuffer.fill(CENTER_FILL_GRAY_STORED_GAMMA2);
+          console.info(
+            `Tile layout: ${tileLayout.outputWidth}x${tileLayout.outputHeight}, border=${tileLayout.border}px, ` +
+            `image=${width}x${height}, count=${files.length}.`,
+          );
+        } else if (mergePlan.mode !== "hdr1" && mergePlan.mode !== "hdr2" && mergePlan.mode !== "median" && mergePlan.mode !== "focus") {
           accumulator = new Float32Array(width * height * 3);
         }
         if (mergePlan.mode === "median") {
@@ -1945,7 +1999,18 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
 
         if (shouldMerge) {
           setProgress(describeMergeStep(index, files.length, mergePlan));
-          if (mergePlan.mode === "median") {
+          if (isTileMergeMode(mergePlan.mode)) {
+            placeTileMergeSource(
+              index,
+              mergeSource,
+              hasLinearProPhoto,
+              inputInfo.sourceColorSpace,
+              tileStoredBuffer,
+              tileLayout,
+              width,
+              height,
+            );
+          } else if (mergePlan.mode === "median") {
             await storeMedianAlignedImageTiles(
               medianScratchDb,
               medianScratchSessionId,
@@ -2036,16 +2101,30 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
           mergePlan,
           alignmentPlan,
           accumulator,
+          tileStoredBuffer,
           hdr1StreamWorker,
           hdr2StreamWorker,
           medianScratchDb,
           medianScratchSessionId,
           focusWorker,
+          tileLayout,
         );
         await yieldToBrowser();
       }
     }
 
+
+    if (isTileMergeMode(mergePlan.mode)) {
+      if (!tileStoredBuffer || !tileLayout) {
+        throw new Error("Tile output was not initialized.");
+      }
+      return finalizeStoredGamma2Result(
+        tileStoredBuffer,
+        tileLayout.outputWidth,
+        tileLayout.outputHeight,
+        outputColorSpace,
+      );
+    }
 
     if (mergePlan.mode === "median") {
       setProgress("Computing exact median from IndexedDB tiles...");
@@ -2251,11 +2330,13 @@ async function mergeDeferredAlignedImage(
   mergePlan,
   alignmentPlan,
   accumulator,
+  tileStoredBuffer,
   hdr1StreamWorker,
   hdr2StreamWorker,
   medianScratchDb,
   medianScratchSessionId,
   focusWorker,
+  tileLayout,
 ) {
   const file = files[index];
   const inputInfo = inputInfos[index];
@@ -2327,7 +2408,18 @@ async function mergeDeferredAlignedImage(
     }
 
     setProgress(describeMergeStep(index, files.length, mergePlan));
-    if (mergePlan.mode === "median") {
+    if (isTileMergeMode(mergePlan.mode)) {
+      placeTileMergeSource(
+        index,
+        mergeSource,
+        hasLinearProPhoto,
+        inputInfo.sourceColorSpace,
+        tileStoredBuffer,
+        tileLayout,
+        width,
+        height,
+      );
+    } else if (mergePlan.mode === "median") {
       await storeMedianAlignedImageTiles(
         medianScratchDb,
         medianScratchSessionId,
@@ -2371,6 +2463,69 @@ async function mergeDeferredAlignedImage(
     if (linearRgb) linearRgb.delete();
     if (rgb) rgb.delete();
     rgba.delete();
+  }
+}
+
+function linearChannelToStoredGamma2(value) {
+  return Math.round(Math.sqrt(clamp01(value)) * RESULT_BUFFER_MAX_UINT16);
+}
+
+function placeTileMergeSource(
+  index,
+  mergeSource,
+  hasLinearProPhoto,
+  sourceColorSpace,
+  tileStoredBuffer,
+  tileLayout,
+  width,
+  height,
+) {
+  if (!tileStoredBuffer || !tileLayout) {
+    throw new Error("Tile output was not initialized.");
+  }
+  const position = tileLayout.positions[index];
+  if (!position) {
+    throw new Error(`Tile position is missing for image ${index + 1}.`);
+  }
+
+  if (hasLinearProPhoto) {
+    const source = mergeSource.data32F;
+    const expectedLength = width * height * 3;
+    if (!source || source.length < expectedLength) {
+      throw new Error("Tile source has an invalid linear RGB buffer.");
+    }
+    for (let y = 0; y < height; y += 1) {
+      let sourceIndex = y * width * 3;
+      let targetIndex = ((position.y + y) * tileLayout.outputWidth + position.x) * 3;
+      for (let x = 0; x < width; x += 1) {
+        tileStoredBuffer[targetIndex] = linearChannelToStoredGamma2(source[sourceIndex]);
+        tileStoredBuffer[targetIndex + 1] = linearChannelToStoredGamma2(source[sourceIndex + 1]);
+        tileStoredBuffer[targetIndex + 2] = linearChannelToStoredGamma2(source[sourceIndex + 2]);
+        sourceIndex += 3;
+        targetIndex += 3;
+      }
+    }
+    return;
+  }
+
+  const source = mergeSource.data;
+  const expectedLength = width * height * 3;
+  if (!source || source.length < expectedLength) {
+    throw new Error("Tile source has an invalid RGB buffer.");
+  }
+  const convertRgb8 = createRgb8ToLinearProphotoConverter(sourceColorSpace);
+  const converted = new Float32Array(3);
+  for (let y = 0; y < height; y += 1) {
+    let sourceIndex = y * width * 3;
+    let targetIndex = ((position.y + y) * tileLayout.outputWidth + position.x) * 3;
+    for (let x = 0; x < width; x += 1) {
+      convertRgb8(source[sourceIndex], source[sourceIndex + 1], source[sourceIndex + 2], converted);
+      tileStoredBuffer[targetIndex] = linearChannelToStoredGamma2(converted[0]);
+      tileStoredBuffer[targetIndex + 1] = linearChannelToStoredGamma2(converted[1]);
+      tileStoredBuffer[targetIndex + 2] = linearChannelToStoredGamma2(converted[2]);
+      sourceIndex += 3;
+      targetIndex += 3;
+    }
   }
 }
 
@@ -2951,6 +3106,9 @@ function describeMergeStep(index, total, mergePlan) {
   }
   if (mergePlan.mode === "stf") {
     return `Applying STF ${index + 1}/${total}...`;
+  }
+  if (mergePlan.mode === "tile-vertical" || mergePlan.mode === "tile-horizontal") {
+    return `Placing tile ${index + 1}/${total}...`;
   }
   return `Blending image ${index + 1}/${total}...`;
 }
@@ -4645,6 +4803,16 @@ function transformImageDataForAlignment(sourceImageData, targetWidth, targetHeig
       targetWidth,
       targetHeight,
     );
+  } else if (alignmentMode === "center-fill" || alignmentMode === "top-left-fill") {
+    outputContext.fillStyle = `rgb(${CENTER_FILL_GRAY_BYTE}, ${CENTER_FILL_GRAY_BYTE}, ${CENTER_FILL_GRAY_BYTE})`;
+    outputContext.fillRect(0, 0, targetWidth, targetHeight);
+    const dx = alignmentMode === "center-fill"
+      ? Math.floor((targetWidth - sourceImageData.width) / 2)
+      : 0;
+    const dy = alignmentMode === "center-fill"
+      ? Math.floor((targetHeight - sourceImageData.height) / 2)
+      : 0;
+    outputContext.drawImage(sourceCanvas, dx, dy);
   } else {
     const scale = Math.max(
       targetWidth / sourceImageData.width,
@@ -4668,6 +4836,29 @@ function transformLinearProPhotoForAlignment(
   targetHeight,
   alignmentMode,
 ) {
+  if (alignmentMode === "center-fill" || alignmentMode === "top-left-fill") {
+    if (sourceWidth > targetWidth || sourceHeight > targetHeight) {
+      throw new Error(
+        `${formatAlignmentModeName(alignmentMode)} target ${targetWidth}x${targetHeight} is smaller than source ${sourceWidth}x${sourceHeight}.`,
+      );
+    }
+    const output = new Float32Array(targetWidth * targetHeight * 3);
+    output.fill(CENTER_FILL_GRAY_LINEAR);
+    const dx = alignmentMode === "center-fill"
+      ? Math.floor((targetWidth - sourceWidth) / 2)
+      : 0;
+    const dy = alignmentMode === "center-fill"
+      ? Math.floor((targetHeight - sourceHeight) / 2)
+      : 0;
+    const sourceRowLength = sourceWidth * 3;
+    for (let y = 0; y < sourceHeight; y += 1) {
+      const sourceStart = y * sourceRowLength;
+      const targetStart = ((dy + y) * targetWidth + dx) * 3;
+      output.set(linearProPhotoRgb.subarray(sourceStart, sourceStart + sourceRowLength), targetStart);
+    }
+    return output;
+  }
+
   const sourceMat = matFromLinearProPhoto(cv, linearProPhotoRgb, sourceWidth, sourceHeight);
   let resized = null;
   let roi = null;
