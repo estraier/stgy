@@ -300,6 +300,7 @@ export type ImageDuotonePreset =
   | "duotone-cyan"
   | "duotone-blue"
   | "duotone-magenta";
+export type ImageSuperMcPreset = "super-mc-red" | "super-mc-green" | "super-mc-blue";
 export type ImageEdgePreset = "edge-canny" | "edge-xdog" | "edge-multiscale";
 export type ImageOtherFilterPreset =
   | ImageChannelSwapPreset
@@ -307,6 +308,7 @@ export type ImageOtherFilterPreset =
   | ImageTrichromePreset
   | ImagePartColorPreset
   | ImageDuotonePreset
+  | ImageSuperMcPreset
   | ImageEdgePreset
   | "classic-chrome"
   | "velvia";
@@ -995,6 +997,25 @@ const DUOTONE_PRESET_SEQUENCE: readonly ImageDuotonePreset[] = [
   "duotone-blue",
   "duotone-magenta",
 ];
+
+const SUPER_MC_PRESET_SEQUENCE: readonly ImageSuperMcPreset[] = [
+  "super-mc-red",
+  "super-mc-green",
+  "super-mc-blue",
+];
+
+const SUPER_MC_BLACK_ROLLOFF_B = 0.05;
+const SUPER_MC_WHITE_ROLLOFF_A = 0.5;
+const SUPER_MC_TARGET_PERCENTILE = 0.50;
+const SUPER_MC_WHITE_ROLLOFF_PERCENTILE = 0.998;
+const SUPER_MC_WHITE_ROLLOFF_HISTOGRAM_BINS = 16384;
+const SUPER_MC_WHITE_ROLLOFF_MIN_EV = -16;
+
+const SUPER_MC_WEIGHTS: Record<ImageSuperMcPreset, readonly [number, number, number]> = {
+  "super-mc-red": [1.0, 0.5, -0.5],
+  "super-mc-green": [-0.25, 1.5, -0.25],
+  "super-mc-blue": [-0.5, 0.5, 1.0],
+};
 
 const OTHER_FILTER_LABELS: Record<Extract<ImageOtherFilterPreset, "classic-chrome" | "velvia">, string> = {
   velvia: "Velvia",
@@ -1912,6 +1933,10 @@ function isDuotonePreset(value: unknown): value is ImageDuotonePreset {
   return typeof value === "string" && (DUOTONE_PRESET_SEQUENCE as readonly string[]).includes(value);
 }
 
+function isSuperMcPreset(value: unknown): value is ImageSuperMcPreset {
+  return typeof value === "string" && (SUPER_MC_PRESET_SEQUENCE as readonly string[]).includes(value);
+}
+
 function isEdgePreset(value: unknown): value is ImageEdgePreset {
   return typeof value === "string" && (EDGE_PRESET_SEQUENCE as readonly string[]).includes(value);
 }
@@ -1936,6 +1961,7 @@ function normalizeNonMonochromeFilterPreset(value: unknown): ImageNonMonochromeF
     || isTrichromePreset(value)
     || isPartColorPreset(value)
     || isDuotonePreset(value)
+    || isSuperMcPreset(value)
     || isEdgePreset(value)
   ) {
     return value;
@@ -3268,6 +3294,181 @@ function applyDuotoneFilterToRgb16(
   }
 }
 
+function applySuperMcBlackRolloff(value: number): number {
+  if (value >= SUPER_MC_BLACK_ROLLOFF_B) return value;
+  return SUPER_MC_BLACK_ROLLOFF_B * Math.exp(
+    (value - SUPER_MC_BLACK_ROLLOFF_B) / SUPER_MC_BLACK_ROLLOFF_B,
+  );
+}
+
+function applySuperMcWhiteRolloff(value: number, rolloff: ReturnType<typeof toneRolloffParams>): number {
+  if (!rolloff) return value;
+  return applyRolloffScalar(value, rolloff);
+}
+
+function applySuperMcChannelMix(
+  r: number,
+  g: number,
+  b: number,
+  preset: ImageSuperMcPreset,
+): number {
+  const [wr, wg, wb] = SUPER_MC_WEIGHTS[preset];
+  return r * wr + g * wg + b * wb;
+}
+
+function estimateSuperMcWhiteRolloffPercentile(
+  values: Float32Array,
+  maxValue: number,
+): number {
+  if (!(maxValue > 0) || values.length <= 0) return 0;
+  const maxEv = Math.max(0, Math.ceil(Math.log2(maxValue)));
+  const minEv = Math.min(SUPER_MC_WHITE_ROLLOFF_MIN_EV, maxEv - 1);
+  const evRange = Math.max(1e-6, maxEv - minEv);
+  const histogram = new Uint32Array(SUPER_MC_WHITE_ROLLOFF_HISTOGRAM_BINS);
+  const bins = histogram.length;
+  for (let i = 0; i < values.length; i += 1) {
+    const value = Math.max(Math.pow(2, minEv), values[i] ?? 0);
+    const ev = Math.log2(value);
+    const normalized = clamp01((ev - minEv) / evRange);
+    const index = Math.max(0, Math.min(bins - 1, Math.round(normalized * (bins - 1))));
+    histogram[index] = (histogram[index] ?? 0) + 1;
+  }
+  const target = Math.max(
+    0,
+    Math.min(values.length - 1, Math.floor((values.length - 1) * SUPER_MC_WHITE_ROLLOFF_PERCENTILE)),
+  );
+  let cumulative = 0;
+  for (let i = 0; i < bins; i += 1) {
+    cumulative += histogram[i] ?? 0;
+    if (cumulative > target) {
+      const ev = minEv + (i / Math.max(1, bins - 1)) * evRange;
+      return Math.min(maxValue, Math.pow(2, ev));
+    }
+  }
+  return maxValue;
+}
+
+function buildSuperMcWhiteRolloff(
+  values: Float32Array,
+  maxValue: number,
+): ReturnType<typeof toneRolloffParams> {
+  const p998 = estimateSuperMcWhiteRolloffPercentile(values, maxValue);
+  return toneRolloffParams(
+    p998,
+    SUPER_MC_WHITE_ROLLOFF_A,
+    ROLLOFF_SAVING_LIMIT_FACTOR,
+    1,
+  );
+}
+
+function applySuperMcFilterToCanvasData(
+  rgba8: Uint8ClampedArray,
+  profile: ImageEditOutputColorProfile,
+  preset: ImageSuperMcPreset,
+): void {
+  const pixelCount = Math.floor(rgba8.length / 4);
+  const beforeHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
+  const filteredHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
+  const filteredValues = new Float32Array(pixelCount);
+  let maxBlackRolled = 0;
+
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const index = pixel * 4;
+    const [r, g, b] = encodedRgbToLinearProphoto(
+      (rgba8[index] ?? 0) / 255,
+      (rgba8[index + 1] ?? 0) / 255,
+      (rgba8[index + 2] ?? 0) / 255,
+      profile,
+    );
+    const mixed = applySuperMcChannelMix(r, g, b, preset);
+    const blackRolled = applySuperMcBlackRolloff(mixed);
+    accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
+    filteredValues[pixel] = blackRolled;
+    maxBlackRolled = Math.max(maxBlackRolled, blackRolled);
+  }
+
+  const whiteRolloff = buildSuperMcWhiteRolloff(filteredValues, maxBlackRolled);
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const whiteRolled = applySuperMcWhiteRolloff(filteredValues[pixel] ?? 0, whiteRolloff);
+    filteredValues[pixel] = whiteRolled;
+    accumulateLogLumaHistogram(filteredHistogram, whiteRolled);
+  }
+
+  const beforeP50Ev = estimateLogPercentileFromHistogram(beforeHistogram, SUPER_MC_TARGET_PERCENTILE);
+  const filteredP50Ev = estimateLogPercentileFromHistogram(filteredHistogram, SUPER_MC_TARGET_PERCENTILE);
+  const beforeP50Luma = Math.pow(2, beforeP50Ev);
+  const filteredP50Luma = Math.pow(2, filteredP50Ev);
+  const recoveryScaledLog = solveFilterScaledLogForTargetLuma(filteredP50Luma, beforeP50Luma);
+
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const index = pixel * 4;
+    const y = filteredValues[pixel] ?? 0;
+    const [recoveredR, recoveredG, recoveredB] = applyFilterScaledLogToLinearRgb(
+      y,
+      y,
+      y,
+      recoveryScaledLog,
+    );
+    const [er, eg, eb] = convertLinearProPhotoToOutputRgb(recoveredR, recoveredG, recoveredB, profile);
+    rgba8[index] = linearChannelToSrgb(er);
+    rgba8[index + 1] = linearChannelToSrgb(eg);
+    rgba8[index + 2] = linearChannelToSrgb(eb);
+  }
+}
+
+function applySuperMcFilterToRgb16(
+  data: Uint16Array,
+  width: number,
+  height: number,
+  preset: ImageSuperMcPreset,
+): void {
+  const beforeHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
+  const filteredHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
+  const pixelCount = width * height;
+  const filteredValues = new Float32Array(pixelCount);
+  let maxBlackRolled = 0;
+
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const index = pixel * 3;
+    const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
+    const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
+    const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
+    const mixed = applySuperMcChannelMix(r, g, b, preset);
+    const blackRolled = applySuperMcBlackRolloff(mixed);
+    accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
+    filteredValues[pixel] = blackRolled;
+    maxBlackRolled = Math.max(maxBlackRolled, blackRolled);
+  }
+
+  const whiteRolloff = buildSuperMcWhiteRolloff(filteredValues, maxBlackRolled);
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const whiteRolled = applySuperMcWhiteRolloff(filteredValues[pixel] ?? 0, whiteRolloff);
+    filteredValues[pixel] = whiteRolled;
+    accumulateLogLumaHistogram(filteredHistogram, whiteRolled);
+  }
+
+  const beforeP50Ev = estimateLogPercentileFromHistogram(beforeHistogram, SUPER_MC_TARGET_PERCENTILE);
+  const filteredP50Ev = estimateLogPercentileFromHistogram(filteredHistogram, SUPER_MC_TARGET_PERCENTILE);
+  const beforeP50Luma = Math.pow(2, beforeP50Ev);
+  const filteredP50Luma = Math.pow(2, filteredP50Ev);
+  const recoveryScaledLog = solveFilterScaledLogForTargetLuma(filteredP50Luma, beforeP50Luma);
+
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const index = pixel * 3;
+    const y = filteredValues[pixel] ?? 0;
+    const [recoveredR, recoveredG, recoveredB] = applyFilterScaledLogToLinearRgb(
+      y,
+      y,
+      y,
+      recoveryScaledLog,
+    );
+    data[index] = encodeStoredRgb16Channel(recoveredR, "gamma20", 1);
+    data[index + 1] = encodeStoredRgb16Channel(recoveredG, "gamma20", 1);
+    data[index + 2] = encodeStoredRgb16Channel(recoveredB, "gamma20", 1);
+  }
+}
+
+
 const DICHROME_SPOT_HUE_CORE_HALF_WIDTH_DEGREES = 30;
 const DICHROME_SPOT_HUE_OUTER_HALF_WIDTH_DEGREES = 60;
 const DICHROME_SPOT_KEEP_CHANNEL_ABSORPTION = 0.15;
@@ -4064,6 +4265,8 @@ function applyImageFilterToCanvas(
       applyPartColorFilterToCanvasData(rgba8, profile, filter.preset);
     } else if (isDuotonePreset(filter.preset)) {
       applyDuotoneFilterToCanvasData(rgba8, profile, filter.preset);
+    } else if (isSuperMcPreset(filter.preset)) {
+      applySuperMcFilterToCanvasData(rgba8, profile, filter.preset);
     } else {
       switch (filter.preset) {
         case "sepia":
@@ -4577,6 +4780,10 @@ function applyImageFilterToRgb16(
   }
   if (isDuotonePreset(filter.preset)) {
     applyDuotoneFilterToRgb16(data, width, height, filter.preset);
+    return;
+  }
+  if (isSuperMcPreset(filter.preset)) {
+    applySuperMcFilterToRgb16(data, width, height, filter.preset);
     return;
   }
 
@@ -15433,6 +15640,34 @@ export function ImageEditDialog({
                                 onClick={() => setImageFilter((current) => cycleOtherFilterPreset(current, DUOTONE_PRESET_SEQUENCE))}
                                 aria-label={label}
                                 title="Duotone; click to cycle Red, Yellow, Green, Cyan, Blue, Magenta, and Off"
+                              >
+                                {label}
+                              </button>
+                            );
+                          })()}
+                          {(() => {
+                            const preset = imageFilter?.kind === "other" && isSuperMcPreset(imageFilter.preset)
+                              ? imageFilter.preset
+                              : null;
+                            const label = "Super MC";
+                            const title = preset === "super-mc-red"
+                              ? "Super MC (Red: R=1.0, G=0.5, B=-0.5); click to cycle Red, Green, Blue, and Off"
+                              : preset === "super-mc-green"
+                                ? "Super MC (Green: R=-0.25, G=1.5, B=-0.25); click to cycle Red, Green, Blue, and Off"
+                                : preset === "super-mc-blue"
+                                  ? "Super MC (Blue: R=-0.5, G=0.5, B=1.0); click to cycle Red, Green, Blue, and Off"
+                                  : "Super MC; click to cycle Red, Green, Blue, and Off";
+                            return (
+                              <button
+                                type="button"
+                                className={`rounded border px-2 py-1 text-[11px] ${
+                                  preset
+                                    ? "border-blue-500 bg-blue-50 text-blue-700"
+                                    : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                                }`}
+                                onClick={() => setImageFilter((current) => cycleOtherFilterPreset(current, SUPER_MC_PRESET_SEQUENCE))}
+                                aria-label={label}
+                                title={title}
                               >
                                 {label}
                               </button>
