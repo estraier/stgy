@@ -168,6 +168,7 @@ export default function PageBody() {
               <select id="alignment-mode" defaultValue="auto" className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm">
                 <option value="auto">Auto</option>
                 <option value="center-crop">Center crop</option>
+                <option value="center-fit">Center fit</option>
                 <option value="center-fill">Center fill</option>
                 <option value="top-left-fill">Top left fill</option>
                 <option value="feature-match">Feature match</option>

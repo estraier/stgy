@@ -317,7 +317,7 @@ listen(processButton, "click", async () => {
     if (!["average", "median", "stf", "hdr1", "hdr2", "focus", "tile-vertical", "tile-horizontal"].includes(mergeMode.value)) {
       throw new Error(`Unsupported merge mode: ${mergeMode.value}`);
     }
-    if (!["auto", "center-crop", "center-fill", "top-left-fill", "feature-match"].includes(alignmentMode.value)) {
+    if (!["auto", "center-crop", "center-fit", "center-fill", "top-left-fill", "feature-match"].includes(alignmentMode.value)) {
       throw new Error(`Unsupported alignment mode: ${alignmentMode.value}`);
     }
 
@@ -1571,6 +1571,7 @@ async function readInputInfos(files) {
 
 function formatAlignmentModeName(mode) {
   if (mode === "center-crop") return "Center crop";
+  if (mode === "center-fit") return "Center fit";
   if (mode === "center-fill") return "Center fill";
   if (mode === "top-left-fill") return "Top left fill";
   if (mode === "feature-match") return "Feature match";
@@ -1605,7 +1606,7 @@ function buildTileLayout(mode, imageWidth, imageHeight, imageCount) {
 }
 
 function buildAlignmentPlan(files, inputInfos, selectedMode, mergeMode) {
-  const validModes = ["auto", "center-crop", "center-fill", "top-left-fill", "feature-match"];
+  const validModes = ["auto", "center-crop", "center-fit", "center-fill", "top-left-fill", "feature-match"];
   if (!validModes.includes(selectedMode)) {
     throw new Error(`Unsupported alignment mode: ${selectedMode}`);
   }
@@ -1659,6 +1660,21 @@ function buildAlignmentPlan(files, inputInfos, selectedMode, mergeMode) {
       normalizationMode: "center-crop",
       targetWidth: centerCropWidth,
       targetHeight: centerCropHeight,
+    };
+  }
+
+  if (effectiveMode === "center-fit") {
+    const largest = dimensions.reduce((best, entry) => {
+      const bestPixels = best.width * best.height;
+      const entryPixels = entry.width * entry.height;
+      return entryPixels > bestPixels ? entry : best;
+    }, dimensions[0]);
+    return {
+      selectedMode,
+      effectiveMode,
+      normalizationMode: "center-fit",
+      targetWidth: largest.width,
+      targetHeight: largest.height,
     };
   }
 
@@ -4813,7 +4829,7 @@ function transformImageDataForAlignment(sourceImageData, targetWidth, targetHeig
       ? Math.floor((targetHeight - sourceImageData.height) / 2)
       : 0;
     outputContext.drawImage(sourceCanvas, dx, dy);
-  } else {
+  } else if (alignmentMode === "center-fit") {
     const scale = Math.max(
       targetWidth / sourceImageData.width,
       targetHeight / sourceImageData.height,
@@ -4823,6 +4839,8 @@ function transformImageDataForAlignment(sourceImageData, targetWidth, targetHeig
     const dx = Math.floor((targetWidth - drawWidth) / 2);
     const dy = Math.floor((targetHeight - drawHeight) / 2);
     outputContext.drawImage(sourceCanvas, dx, dy, drawWidth, drawHeight);
+  } else {
+    throw new Error(`Unsupported alignment mode: ${alignmentMode}`);
   }
   return outputContext.getImageData(0, 0, targetWidth, targetHeight);
 }
@@ -4869,7 +4887,7 @@ function transformLinearProPhotoForAlignment(
       const cropY = Math.floor((sourceHeight - targetHeight) / 2);
       roi = sourceMat.roi(new cv.Rect(cropX, cropY, targetWidth, targetHeight));
       transformed = roi.clone();
-    } else {
+    } else if (alignmentMode === "center-fit") {
       const scale = Math.max(targetWidth / sourceWidth, targetHeight / sourceHeight);
       const resizedWidth = Math.max(targetWidth, Math.round(sourceWidth * scale));
       const resizedHeight = Math.max(targetHeight, Math.round(sourceHeight * scale));
@@ -4886,6 +4904,8 @@ function transformLinearProPhotoForAlignment(
       const cropY = Math.floor((resizedHeight - targetHeight) / 2);
       roi = resized.roi(new cv.Rect(cropX, cropY, targetWidth, targetHeight));
       transformed = roi.clone();
+    } else {
+      throw new Error(`Unsupported alignment mode: ${alignmentMode}`);
     }
 
     const output = new Float32Array(targetWidth * targetHeight * 3);
