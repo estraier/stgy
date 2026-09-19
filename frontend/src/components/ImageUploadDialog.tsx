@@ -13669,18 +13669,51 @@ export function ImageEditDialog({
     };
   }, [natural, displayed, cropRect, resizePercent]);
 
-  const peepTargetRasterSize = useMemo(() => {
-    if (!outputDimensions || displayed.w <= 0 || displayed.h <= 0) return null;
+  // Peep tiles are rendered from the current full-resolution decoded image. RAW
+  // Preview/Master can have a different raster size from `natural` because LensFun
+  // auto-crop is applied after the metadata frame is established. Derive Peep's
+  // output grid from the same final raster geometry that the tile renderer uses,
+  // rather than from the UI's logical `natural` size.
+  const peepOutputDimensions = useMemo(() => {
+    // decodedImageRef is updated together with decodedRevision; reading the ref here
+    // intentionally avoids keeping a second copy of the large decoded object in state.
+    void decodedRevision;
+    const decoded = decodedImageRef.current;
+    if (!decoded || displayed.w <= 0 || displayed.h <= 0 || cropRect.w <= 0 || cropRect.h <= 0) {
+      return outputDimensions;
+    }
+    const finalRawCrop = decoded.rawDevelopment?.crop?.finalCrop;
+    const sourceW = Math.max(1, Math.round(finalRawCrop?.width ?? decoded.width));
+    const sourceH = Math.max(1, Math.round(finalRawCrop?.height ?? decoded.height));
+    const crop = normalizeCrop({
+      left: (cropRect.x - displayed.x) / displayed.w,
+      top: (cropRect.y - displayed.y) / displayed.h,
+      right: 1 - (cropRect.x + cropRect.w - displayed.x) / displayed.w,
+      bottom: 1 - (cropRect.y + cropRect.h - displayed.y) / displayed.h,
+    });
+    const sx = Math.max(0, Math.min(sourceW - 1, Math.round(sourceW * crop.left)));
+    const sy = Math.max(0, Math.min(sourceH - 1, Math.round(sourceH * crop.top)));
+    const ex = Math.max(sx + 1, Math.min(sourceW, Math.round(sourceW * (1 - crop.right))));
+    const ey = Math.max(sy + 1, Math.min(sourceH, Math.round(sourceH * (1 - crop.bottom))));
+    const percent = Math.min(100, Math.max(1, Math.round(resizePercent)));
     return {
-      width: Math.min(outputDimensions.w, Math.max(1, Math.floor(displayed.w * displayPixelRatio))),
-      height: Math.min(outputDimensions.h, Math.max(1, Math.floor(displayed.h * displayPixelRatio))),
+      w: Math.max(1, Math.round((ex - sx) * percent / 100)),
+      h: Math.max(1, Math.round((ey - sy) * percent / 100)),
     };
-  }, [outputDimensions, displayed.w, displayed.h, displayPixelRatio]);
+  }, [decodedRevision, displayed, cropRect, resizePercent, outputDimensions]);
+
+  const peepTargetRasterSize = useMemo(() => {
+    if (!peepOutputDimensions || displayed.w <= 0 || displayed.h <= 0) return null;
+    return {
+      width: Math.min(peepOutputDimensions.w, Math.max(1, Math.floor(displayed.w * displayPixelRatio))),
+      height: Math.min(peepOutputDimensions.h, Math.max(1, Math.floor(displayed.h * displayPixelRatio))),
+    };
+  }, [peepOutputDimensions, displayed.w, displayed.h, displayPixelRatio]);
 
   useEffect(() => {
-    if (!peepMode || !outputDimensions || !peepTargetRasterSize || cropRect.w <= 0 || cropRect.h <= 0) return;
-    const width = Math.max(1, cropRect.w * peepTargetRasterSize.width / Math.max(1, outputDimensions.w));
-    const height = Math.max(1, cropRect.h * peepTargetRasterSize.height / Math.max(1, outputDimensions.h));
+    if (!peepMode || !peepOutputDimensions || !peepTargetRasterSize || cropRect.w <= 0 || cropRect.h <= 0) return;
+    const width = Math.max(1, cropRect.w * peepTargetRasterSize.width / Math.max(1, peepOutputDimensions.w));
+    const height = Math.max(1, cropRect.h * peepTargetRasterSize.height / Math.max(1, peepOutputDimensions.h));
     setPeepRect((current) => {
       const requestedCenter = peepRequestedCenterRef.current;
       const centerX = requestedCenter?.x
@@ -13696,7 +13729,7 @@ export function ImageEditDialog({
       peepRectRef.current = next;
       return next;
     });
-  }, [peepMode, outputDimensions, peepTargetRasterSize, cropRect]);
+  }, [peepMode, peepOutputDimensions, peepTargetRasterSize, cropRect]);
 
   const buildCurrentEditParams = useCallback((): ImageEditParams => {
     const left = displayed.w > 0 ? (cropRect.x - displayed.x) / displayed.w : 0;
@@ -13753,7 +13786,7 @@ export function ImageEditDialog({
 
   const resolvePeepOutputRect = useCallback((rectOverride?: EditRect | null): PeepOutputRect | null => {
     const rect = rectOverride ?? peepRectRef.current;
-    if (!outputDimensions || !peepTargetRasterSize || cropRect.w <= 0 || cropRect.h <= 0 || rect.w <= 0 || rect.h <= 0) {
+    if (!peepOutputDimensions || !peepTargetRasterSize || cropRect.w <= 0 || cropRect.h <= 0 || rect.w <= 0 || rect.h <= 0) {
       return null;
     }
     const w = peepTargetRasterSize.width;
@@ -13761,19 +13794,19 @@ export function ImageEditDialog({
     const x = Math.max(
       0,
       Math.min(
-        outputDimensions.w - w,
-        Math.round((rect.x - cropRect.x) / cropRect.w * outputDimensions.w),
+        peepOutputDimensions.w - w,
+        Math.round((rect.x - cropRect.x) / cropRect.w * peepOutputDimensions.w),
       ),
     );
     const y = Math.max(
       0,
       Math.min(
-        outputDimensions.h - h,
-        Math.round((rect.y - cropRect.y) / cropRect.h * outputDimensions.h),
+        peepOutputDimensions.h - h,
+        Math.round((rect.y - cropRect.y) / cropRect.h * peepOutputDimensions.h),
       ),
     );
     return { x, y, w, h };
-  }, [outputDimensions, peepTargetRasterSize, cropRect]);
+  }, [peepOutputDimensions, peepTargetRasterSize, cropRect]);
 
   const peepTileSettingsKey = useMemo(() => JSON.stringify([
     decodedRevision,
@@ -13843,10 +13876,13 @@ export function ImageEditDialog({
     ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, width, height);
 
-    // Immediate fallback: magnify the already-rendered preview to the requested
-    // 1:1 viewport. Real full-resolution tiles are painted over this as they arrive.
+    // Immediate fallback: magnify exactly the rectangle that is visible in the
+    // normal preview. The preview canvas is already the rendered/rotated image and
+    // is stretched into `displayed`, so display-space is the authoritative mapping
+    // for this fallback. Full-resolution tiles use `peepOutputDimensions`; PeepRect
+    // itself is the bridge between these two representations.
     const preview = previewCanvasRef.current;
-    if (preview && preview.width > 0 && preview.height > 0) {
+    if (preview && preview.width > 0 && preview.height > 0 && displayed.w > 0 && displayed.h > 0) {
       const sx = (rect.x - displayed.x) / displayed.w * preview.width;
       const sy = (rect.y - displayed.y) / displayed.h * preview.height;
       const sw = rect.w / displayed.w * preview.width;
@@ -13857,7 +13893,12 @@ export function ImageEditDialog({
     }
 
     const revision = peepTileRevisionRef.current;
-    const visibleTiles = collectPeepTileCoordsSpiral(outputRect, outputDimensions?.w ?? width, outputDimensions?.h ?? height, 0);
+    const visibleTiles = collectPeepTileCoordsSpiral(
+      outputRect,
+      peepOutputDimensions?.w ?? width,
+      peepOutputDimensions?.h ?? height,
+      0,
+    );
     const cache = peepTileCacheRef.current;
     for (const { tx, ty } of visibleTiles) {
       const key = `${revision}:${peepTileKey(tx, ty)}`;
@@ -13886,7 +13927,7 @@ export function ImageEditDialog({
       );
     }
     ctx.restore();
-  }, [resolvePeepOutputRect, displayed, outputDimensions]);
+  }, [resolvePeepOutputRect, displayed, peepOutputDimensions]);
 
   const schedulePeepComposite = useCallback((rectOverride?: EditRect | null) => {
     if (rectOverride) peepCompositePendingRectRef.current = rectOverride;
@@ -13901,13 +13942,13 @@ export function ImageEditDialog({
 
   const enqueuePeepTiles = useCallback((rectOverride?: EditRect | null) => {
     const outputRect = resolvePeepOutputRect(rectOverride);
-    if (!outputRect || !outputDimensions) return;
+    if (!outputRect || !peepOutputDimensions) return;
     const revision = peepTileRevisionRef.current;
     const cache = peepTileCacheRef.current;
     const coords = collectPeepTileCoordsSpiral(
       outputRect,
-      outputDimensions.w,
-      outputDimensions.h,
+      peepOutputDimensions.w,
+      peepOutputDimensions.h,
       PEEP_TILE_PREFETCH_RINGS,
     );
     const jobs: PeepTileJob[] = [];
@@ -13916,8 +13957,8 @@ export function ImageEditDialog({
       if (cache.has(key)) continue;
       const x = tx * PEEP_TILE_SIZE_PX;
       const y = ty * PEEP_TILE_SIZE_PX;
-      const w = Math.max(0, Math.min(PEEP_TILE_SIZE_PX, outputDimensions.w - x));
-      const h = Math.max(0, Math.min(PEEP_TILE_SIZE_PX, outputDimensions.h - y));
+      const w = Math.max(0, Math.min(PEEP_TILE_SIZE_PX, peepOutputDimensions.w - x));
+      const h = Math.max(0, Math.min(PEEP_TILE_SIZE_PX, peepOutputDimensions.h - y));
       if (w <= 0 || h <= 0) continue;
       jobs.push({ revision, tx, ty, rect: { x, y, w, h } });
     }
@@ -13928,7 +13969,7 @@ export function ImageEditDialog({
     if (jobs.length > 0 && !peepTileRenderingRef.current) {
       setPeepTileQueueTick((tick) => tick + 1);
     }
-  }, [resolvePeepOutputRect, outputDimensions]);
+  }, [resolvePeepOutputRect, peepOutputDimensions]);
 
   const cancelPeepTileResume = useCallback(() => {
     if (peepTileResumeTimerRef.current !== null) {
@@ -13978,16 +14019,16 @@ export function ImageEditDialog({
   const beginPeepMode = useCallback((center: EditPoint | null = null) => {
     peepSessionActiveRef.current = true;
     peepExpandedDragStateRef.current = null;
-    if (center && outputDimensions && peepTargetRasterSize && cropRect.w > 0 && cropRect.h > 0) {
+    if (center && peepOutputDimensions && peepTargetRasterSize && cropRect.w > 0 && cropRect.h > 0) {
       const targetWidth = peepTargetRasterSize.width;
       const targetHeight = peepTargetRasterSize.height;
       const w = Math.min(
         cropRect.w,
-        Math.max(1, cropRect.w * targetWidth / Math.max(1, outputDimensions.w)),
+        Math.max(1, cropRect.w * targetWidth / Math.max(1, peepOutputDimensions.w)),
       );
       const h = Math.min(
         cropRect.h,
-        Math.max(1, cropRect.h * targetHeight / Math.max(1, outputDimensions.h)),
+        Math.max(1, cropRect.h * targetHeight / Math.max(1, peepOutputDimensions.h)),
       );
       const centerX = Math.max(cropRect.x, Math.min(cropRect.x + cropRect.w, center.x));
       const centerY = Math.max(cropRect.y, Math.min(cropRect.y + cropRect.h, center.y));
@@ -14013,7 +14054,7 @@ export function ImageEditDialog({
     // full-resolution work is on the interaction critical path.
     setPeepMode(true);
     setPeepExpanded(true);
-  }, [cropRect, outputDimensions, peepTargetRasterSize]);
+  }, [cropRect, peepOutputDimensions, peepTargetRasterSize]);
 
   const processPeepTileQueue = useCallback(async () => {
     if (peepTileRenderingRef.current) return;
@@ -14247,7 +14288,7 @@ export function ImageEditDialog({
 
   const onPeepExpandedPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const state = peepExpandedDragStateRef.current;
-    if (!state || state.pointerId !== e.pointerId || !outputDimensions || state.viewWidth <= 0 || state.viewHeight <= 0) return;
+    if (!state || state.pointerId !== e.pointerId || !peepOutputDimensions || state.viewWidth <= 0 || state.viewHeight <= 0) return;
     const dxCss = e.clientX - state.startClientX;
     const dyCss = e.clientY - state.startClientY;
     if (Math.abs(dxCss) >= 2 || Math.abs(dyCss) >= 2) state.moved = true;
@@ -14255,8 +14296,8 @@ export function ImageEditDialog({
     const targetH = peepTargetRasterSize?.height ?? 1;
     const dxOutput = dxCss * targetW / state.viewWidth;
     const dyOutput = dyCss * targetH / state.viewHeight;
-    const dxDisplay = dxOutput * cropRect.w / Math.max(1, outputDimensions.w);
-    const dyDisplay = dyOutput * cropRect.h / Math.max(1, outputDimensions.h);
+    const dxDisplay = dxOutput * cropRect.w / Math.max(1, peepOutputDimensions.w);
+    const dyDisplay = dyOutput * cropRect.h / Math.max(1, peepOutputDimensions.h);
     const nextX = Math.max(
       cropRect.x,
       Math.min(cropRect.x + cropRect.w - state.startRect.w, state.startRect.x - dxDisplay),
@@ -14282,7 +14323,7 @@ export function ImageEditDialog({
     }
     e.preventDefault();
     e.stopPropagation();
-  }, [outputDimensions, peepTargetRasterSize, cropRect, drawPeepComposite, enqueuePeepTiles]);
+  }, [peepOutputDimensions, peepTargetRasterSize, cropRect, drawPeepComposite, enqueuePeepTiles]);
 
   const onPeepExpandedPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const state = peepExpandedDragStateRef.current;
