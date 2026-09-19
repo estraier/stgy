@@ -465,7 +465,7 @@ POIのlabelへ設定
 ]
 ```
 
-``track-sandbox`` はログインを前提にしないため、ブラウザの ``navigator.languages`` または ``navigator.language`` を使う。英語環境なら ``Tomi, Nagano, Japan`` のようなlabelになる。POIの逆ジオコーディングはフロントエンド共通の ``decodeGeo`` を通り、そこで全クエリパラメータからハッシュを計算して ``X-STGY-QueryHash`` ヘッダに入れてから ``/geo/decode`` を呼ぶ。そのため匿名の ``track-sandbox`` も、上記のquery-hashヘッダフィルタと匿名共有タイマースロットリングを通る。
+``Local Track Studio`` はログインを前提にしないため、ブラウザの ``navigator.languages`` または ``navigator.language`` を使う。英語環境なら ``Tomi, Nagano, Japan`` のようなlabelになる。POIの逆ジオコーディングはフロントエンド共通の ``decodeGeo`` を通り、そこで全クエリパラメータからハッシュを計算して ``X-STGY-QueryHash`` ヘッダに入れてから ``/geo/decode`` を呼ぶ。そのため匿名の ``Local Track Studio`` も、上記のquery-hashヘッダフィルタと匿名共有タイマースロットリングを通る。
 
 この処理は ``packages/track`` の内部へ直接組み込まない。``applyTrackJsonPoiLabels`` は、座標とlabelの対応を受け取り、座標が一致するPOIへlabelを設定するだけである。地名データを持たない単独のTrackJSON変換ツールでも ``packages/track`` を利用できる。
 
@@ -493,7 +493,7 @@ POIのlabelへ設定
 
 ## 開発用の画面とコマンド
 
-``packages/track`` には、FITやTrackJSONをブラウザで読み込んで変換結果を確認する ``fit-demo.html`` がある。フロントエンドには、同じ変換機能を使った ``/track-sandbox`` がある。ファイルを選ぶと、経路、メタデータ、グラフ、分析結果、生成されたTrackJSONを確認できる。
+``packages/track`` には、FITやTrackJSONをブラウザで読み込んで変換結果を確認する ``fit-demo.html`` がある。フロントエンドには、同じ変換機能を使った ``/local-track-studio`` がある。ファイルを選ぶと、経路、メタデータ、グラフ、分析結果、生成されたTrackJSONを確認できる。
 
 パッケージ単体の主なコマンドは以下である。
 

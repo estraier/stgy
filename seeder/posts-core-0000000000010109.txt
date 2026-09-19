@@ -465,7 +465,7 @@ The backend's track-preview generation explicitly requests Japanese, so the stor
 ]
 ```
 
-``track-sandbox`` does not assume login and therefore uses the browser's ``navigator.languages`` or ``navigator.language``. In an English environment, labels look like ``Tomi, Nagano, Japan``. POI reverse geocoding goes through the frontend's common ``decodeGeo`` helper, which calculates the hash from all query parameters and sends it in ``X-STGY-QueryHash`` before calling ``/geo/decode``. Anonymous ``track-sandbox`` therefore passes through the query-hash-header filter and the shared anonymous timer throttle described above.
+``Local Track Studio`` does not assume login and therefore uses the browser's ``navigator.languages`` or ``navigator.language``. In an English environment, labels look like ``Tomi, Nagano, Japan``. POI reverse geocoding goes through the frontend's common ``decodeGeo`` helper, which calculates the hash from all query parameters and sends it in ``X-STGY-QueryHash`` before calling ``/geo/decode``. Anonymous ``Local Track Studio`` therefore passes through the query-hash-header filter and the shared anonymous timer throttle described above.
 
 This behavior is not built directly into ``packages/track``. ``applyTrackJsonPoiLabels`` merely accepts coordinate-to-label mappings and assigns a label to a POI whose coordinates match. A standalone TrackJSON conversion tool without place-name data can therefore still use ``packages/track``.
 
@@ -493,7 +493,7 @@ Storage key design, presigned POST, monthly quotas, finalize-time validation, an
 
 ## Development Screens and Commands
 
-``packages/track`` includes ``fit-demo.html``, which loads FIT and TrackJSON in a browser and lets developers inspect conversion results. The frontend provides ``/track-sandbox`` using the same conversion functions. Selecting a file displays the route, metadata, graphs, analysis results, and generated TrackJSON.
+``packages/track`` includes ``fit-demo.html``, which loads FIT and TrackJSON in a browser and lets developers inspect conversion results. The frontend provides ``/local-track-studio`` using the same conversion functions. Selecting a file displays the route, metadata, graphs, analysis results, and generated TrackJSON.
 
 The main package-level commands are as follows.
 

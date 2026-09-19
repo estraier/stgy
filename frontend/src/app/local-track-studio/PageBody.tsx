@@ -61,8 +61,8 @@ import {
 import {
   getTrackElevationSummaryItems,
   getTrackJsonPropertySummaryLines,
-  getTrackSandboxMetadataSummaryLines,
-  orderTrackSandboxSummaryCards,
+  getLocalTrackStudioMetadataSummaryLines,
+  orderLocalTrackStudioSummaryCards,
 } from "@/utils/trackSummary";
 import { getBrowserLocale } from "@/utils/locale";
 import { addTrackJsonPoiLabels } from "@/utils/trackPoiLabels";
@@ -135,7 +135,7 @@ const DEFAULT_MAX_POINTS = 10000;
 const SCATTER_AXIS_TICK_TARGET = 8;
 const ANALYSIS_BAR_FILL_COLOR = "#0078A8";
 
-export default function TrackSandbox() {
+export default function LocalTrackStudio() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [downsample, setDownsample] = useState(false);
@@ -258,7 +258,7 @@ export default function TrackSandbox() {
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-700">
               STGY Tracks
             </p>
-            <h1 className="text-2xl font-bold text-slate-950">Track sandbox</h1>
+            <h1 className="text-2xl font-bold text-slate-950">Local Track Studio</h1>
             <p className="mt-1 text-sm text-slate-500">
               Convert FIT / GPX / TrackJSON rides, preview them on a cycling map,
               and download public-safe TrackJSON, GPX, and FIT.
@@ -603,7 +603,7 @@ function TrackMap({
   const reactId = useId();
   const sourceId = useMemo(() => {
     const safeId = reactId.replace(/[^a-zA-Z0-9_-]/g, "");
-    return `track-sandbox-${safeId}`;
+    return `local-track-studio-${safeId}`;
   }, [reactId]);
 
   useEffect(() => {
@@ -756,7 +756,7 @@ function RideAnalysis({
   lthrBpm: number;
 }) {
   const metadataSummaryLines = useMemo(() => {
-    return getTrackSandboxMetadataSummaryLines([
+    return getLocalTrackStudioMetadataSummaryLines([
       ...getActivityMetadataSummaryLines(activity, { ftpW }),
       ...getTrackJsonPropertySummaryLines(trackJsonData),
     ]);
@@ -1515,7 +1515,7 @@ function buildSummaryCards(activity: TrackActivity, trackJsonData: unknown): Sum
   }
 
   void metadataRecord;
-  return orderTrackSandboxSummaryCards(cards);
+  return orderLocalTrackStudioSummaryCards(cards);
 }
 
 function buildRideContextSummary(

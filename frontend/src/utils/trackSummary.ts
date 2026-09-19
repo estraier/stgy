@@ -50,7 +50,7 @@ export function getTrackJsonPropertySummaryLines(
   return lines;
 }
 
-export function getTrackSandboxMetadataSummaryLines(
+export function getLocalTrackStudioMetadataSummaryLines(
   lines: TrackMetadataSummaryLine[],
 ): TrackMetadataSummaryLine[] {
   const byKey = new Map(lines.map((line) => [line.key, line]));
@@ -86,7 +86,7 @@ export function getTrackSandboxMetadataSummaryLines(
   return ordered;
 }
 
-export function orderTrackSandboxSummaryCards<T extends { label: string }>(
+export function orderLocalTrackStudioSummaryCards<T extends { label: string }>(
   cards: T[],
 ): T[] {
   const order = new Map([

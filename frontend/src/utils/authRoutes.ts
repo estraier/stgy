@@ -3,7 +3,7 @@ const SESSION_INDEPENDENT_PATHS = [
   "/local-stack-studio",
   "/captcha-sandbox",
   "/markdown-sandbox",
-  "/track-sandbox",
+  "/local-track-studio",
 ] as const;
 
 export function isSessionIndependentPath(pathname: string): boolean {

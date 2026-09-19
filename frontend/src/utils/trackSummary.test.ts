@@ -2,8 +2,8 @@ import type { TrackMetadataSummaryLine } from "stgy-track/analysis";
 import {
   getTrackElevationSummaryItems,
   getTrackJsonPropertySummaryLines,
-  getTrackSandboxMetadataSummaryLines,
-  orderTrackSandboxSummaryCards,
+  getLocalTrackStudioMetadataSummaryLines,
+  orderLocalTrackStudioSummaryCards,
 } from "./trackSummary";
 
 describe("getTrackElevationSummaryItems", () => {
@@ -65,7 +65,7 @@ describe("getTrackJsonPropertySummaryLines", () => {
   });
 });
 
-describe("getTrackSandboxMetadataSummaryLines", () => {
+describe("getLocalTrackStudioMetadataSummaryLines", () => {
   test("orders gross, net, and elevation and omits moving threshold", () => {
     const lines: TrackMetadataSummaryLine[] = [
       { key: "time", text: "time range" },
@@ -80,7 +80,7 @@ describe("getTrackSandboxMetadataSummaryLines", () => {
       { key: "speedKph", text: "speed" },
     ];
 
-    expect(getTrackSandboxMetadataSummaryLines(lines)).toEqual([
+    expect(getLocalTrackStudioMetadataSummaryLines(lines)).toEqual([
       { key: "local-time-offset", text: "local time" },
       { key: "time", text: "time range" },
       { key: "gross", text: "gross" },
@@ -94,7 +94,7 @@ describe("getTrackSandboxMetadataSummaryLines", () => {
   });
 });
 
-describe("orderTrackSandboxSummaryCards", () => {
+describe("orderLocalTrackStudioSummaryCards", () => {
   test("orders the leading cards and keeps average temperature last", () => {
     const cards = [
       { label: "Average speed" },
@@ -107,7 +107,7 @@ describe("orderTrackSandboxSummaryCards", () => {
       { label: "Average power" },
     ];
 
-    expect(orderTrackSandboxSummaryCards(cards).map((card) => card.label)).toEqual([
+    expect(orderLocalTrackStudioSummaryCards(cards).map((card) => card.label)).toEqual([
       "Context",
       "Elapsed time",
       "Moving time",
