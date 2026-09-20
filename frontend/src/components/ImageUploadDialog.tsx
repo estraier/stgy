@@ -11090,6 +11090,7 @@ type PercentileDebugData = {
   output: DebugPercentileStatistics;
 };
 const EDIT_PREVIEW_MARGIN_PX = 8;
+const EDIT_PREVIEW_SAFE_MARGIN_PX = 4;
 const TEXT_OVERLAY_DEFAULT_FONT_SIZE_RATIO = 0.05;
 const TEXT_OVERLAY_FONT_STEP = Math.pow(2, 1 / 8);
 const TEXT_OVERLAY_FONTS = [
@@ -11268,6 +11269,7 @@ export function ImageEditDialog({
     sample: LinearRgbSample;
   } | null>(null);
   const previewRgba8Ref = useRef<Uint8ClampedArray | null>(null);
+  const previewDisplayLogKeyRef = useRef<string | null>(null);
   const defringeMapRef = useRef<{ decoded: DecodedRgbImage16; map: DefringeAnalysisMap } | null>(null);
   const defringeMapPromiseRef = useRef<{ decoded: DecodedRgbImage16; requestId: number; promise: Promise<DefringeAnalysisMap> } | null>(null);
   const defringeRequestIdRef = useRef(0);
@@ -11920,6 +11922,20 @@ export function ImageEditDialog({
     ? Math.min(1400, editorLayoutViewport.w * 0.95)
     : undefined;
   const editorUsesSidePanel = editorLayoutViewport.w >= 1024;
+  const previewLayoutNatural = useMemo(() => {
+    // The display raster must follow the aspect ratio of the pixels that are
+    // actually rendered. `natural` is a logical/source geometry and can differ
+    // from the current decoded raster (for example for orientation-aware image
+    // decoders). Using it as the CSS/backing aspect can stretch a portrait
+    // raster into a landscape box. decodedRevision changes whenever the active
+    // thumbnail/preview/master buffer changes, so re-read the ref then.
+    void decodedRevision;
+    const decoded = decodedImageRef.current;
+    if (decoded?.width && decoded?.height) {
+      return { w: decoded.width, h: decoded.height };
+    }
+    return natural;
+  }, [decodedRevision, natural]);
   const desktopDialogMaxHeight = desktopEditorZoomEnabled && editorLayoutViewport.h > 0
     ? (editorLayoutViewport.h < 1400
         ? Math.max(1, (viewportSize.h - 4) / Math.max(1e-6, editorUiZoom))
@@ -11938,13 +11954,13 @@ export function ImageEditDialog({
         ? Math.min(1100 * uiScreenScale, Math.max(1, viewportHeight - 120 * uiScreenScale))
         : Math.max(270, viewportHeight * 0.42);
       let targetHeight = availableHeight;
-      if (!editorUsesSidePanel && natural && rect.width > 0 && displayPixelRatio > 0) {
-        const margin = EDIT_PREVIEW_MARGIN_PX;
+      if (!editorUsesSidePanel && previewLayoutNatural && rect.width > 0 && displayPixelRatio > 0) {
+        const margin = EDIT_PREVIEW_MARGIN_PX + EDIT_PREVIEW_SAFE_MARGIN_PX;
         const innerWidth = Math.max(1, rect.width - margin * 2);
         const innerHeight = Math.max(1, availableHeight - margin * 2);
         const raster = imageEditPreviewDimensions(
-          natural.w,
-          natural.h,
+          previewLayoutNatural.w,
+          previewLayoutNatural.h,
           innerWidth * displayPixelRatio,
           innerHeight * displayPixelRatio,
         );
@@ -11969,18 +11985,27 @@ export function ImageEditDialog({
       window.removeEventListener("resize", updateSize);
       window.visualViewport?.removeEventListener("resize", updateSize);
     };
-  }, [mounted, desktopEditorZoomEnabled, editorUiZoom, editorUsesSidePanel, natural, displayPixelRatio]);
+  }, [mounted, desktopEditorZoomEnabled, editorUiZoom, editorUsesSidePanel, previewLayoutNatural, displayPixelRatio]);
 
   useEffect(() => {
     if (!mounted) return;
     const container = containerRef.current;
     if (!container) return;
     const updateSize = () => {
-      // Use fractional CSS pixels so raster/DPR can remain an exact display size.
+      // Absolute children are laid out against the container padding box. Use that
+      // same box here instead of the border box, while preserving fractional CSS
+      // pixels so raster/DPR can remain an exact display size.
       const rect = container.getBoundingClientRect();
+      const style = window.getComputedStyle(container);
+      const borderLeft = Number.parseFloat(style.borderLeftWidth) || 0;
+      const borderRight = Number.parseFloat(style.borderRightWidth) || 0;
+      const borderTop = Number.parseFloat(style.borderTopWidth) || 0;
+      const borderBottom = Number.parseFloat(style.borderBottomWidth) || 0;
+      const width = Math.max(1, rect.width - borderLeft - borderRight);
+      const height = Math.max(1, rect.height - borderTop - borderBottom);
       setContainerSize((current) =>
-        Math.abs(current.w - rect.width) > 0.01 || Math.abs(current.h - rect.height) > 0.01
-          ? { w: rect.width, h: rect.height }
+        Math.abs(current.w - width) > 0.01 || Math.abs(current.h - height) > 0.01
+          ? { w: width, h: height }
           : current,
       );
     };
@@ -12002,7 +12027,7 @@ export function ImageEditDialog({
     if (nat.w <= 0 || nat.h <= 0 || cw <= 0 || ch <= 0 || displayPixelRatio <= 0) {
       return { x: 0, y: 0, w: 0, h: 0 };
     }
-    const margin = EDIT_PREVIEW_MARGIN_PX;
+    const margin = EDIT_PREVIEW_MARGIN_PX + EDIT_PREVIEW_SAFE_MARGIN_PX;
     const innerW = Math.max(1, cw - margin * 2);
     const innerH = Math.max(1, ch - margin * 2);
     const raster = imageEditPreviewDimensions(
@@ -12013,19 +12038,20 @@ export function ImageEditDialog({
     );
     const w = raster.width / displayPixelRatio;
     const h = raster.height / displayPixelRatio;
-    return {
-      x: (cw - w) / 2,
-      y: (ch - h) / 2,
-      w,
-      h,
-    };
+    // Keep the canvas origin on a device-pixel boundary. When the remaining
+    // space is an odd number of device pixels, exact geometric centering and
+    // pixel alignment cannot both be satisfied; prefer the latter and allow at
+    // most a half-device-pixel visual offset.
+    const x = Math.round(((cw - w) * displayPixelRatio) / 2) / displayPixelRatio;
+    const y = Math.round(((ch - h) * displayPixelRatio) / 2) / displayPixelRatio;
+    return { x, y, w, h };
   }, [displayPixelRatio]);
 
   useEffect(() => {
     if (!natural || containerSize.w <= 0 || containerSize.h <= 0) return;
     const previousDisplayed = displayedRef.current;
     const previousCropRect = cropRectRef.current;
-    const d = fitImage(natural, containerSize.w, containerSize.h);
+    const d = fitImage(previewLayoutNatural ?? natural, containerSize.w, containerSize.h);
     let crop = normalizeCrop(initialParams.crop);
     if (
       layoutInitializedRef.current &&
@@ -12056,7 +12082,7 @@ export function ImageEditDialog({
     cropRectRef.current = nextCropRect;
     setDisplayed(d);
     setCropRect(nextCropRect);
-  }, [natural, containerSize.w, containerSize.h, fitImage, initialParams.crop]);
+  }, [natural, previewLayoutNatural, containerSize.w, containerSize.h, fitImage, initialParams.crop]);
 
 
   const clampCropRect = useCallback(
@@ -12080,8 +12106,15 @@ export function ImageEditDialog({
   );
 
   const toLocal = useCallback((e: React.PointerEvent | React.MouseEvent): EditPoint => {
-    const rect = containerRef.current!.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    const container = containerRef.current!;
+    const rect = container.getBoundingClientRect();
+    const style = window.getComputedStyle(container);
+    const borderLeft = Number.parseFloat(style.borderLeftWidth) || 0;
+    const borderTop = Number.parseFloat(style.borderTopWidth) || 0;
+    return {
+      x: e.clientX - rect.left - borderLeft,
+      y: e.clientY - rect.top - borderTop,
+    };
   }, []);
 
   const clampPointToDisplayed = useCallback((point: EditPoint): EditPoint => ({
@@ -12958,8 +12991,11 @@ export function ImageEditDialog({
     if (!img || !container) return;
 
     const rect = container.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    const style = window.getComputedStyle(container);
+    const borderLeft = Number.parseFloat(style.borderLeftWidth) || 0;
+    const borderTop = Number.parseFloat(style.borderTopWidth) || 0;
+    const x = e.clientX - rect.left - borderLeft;
+    const y = e.clientY - rect.top - borderTop;
     const resizedWidth = Math.max(1, Math.round(displayed.w));
     const resizedHeight = Math.max(1, Math.round(displayed.h));
     const rotatedX = (x - displayed.x) / displayed.w * resizedWidth;
@@ -13235,12 +13271,15 @@ export function ImageEditDialog({
     decoded: DecodedRgbImage16,
   ): { decoded: DecodedRgbImage16; sample: LinearRgbSample; claritySample: LinearRgbSample; contextSample: LinearRgbSample } => {
     const previewSource = decoded;
-    const previewSize = imageEditPreviewDimensions(
-      previewSource.width,
-      previewSource.height,
-      displayed.w * displayPixelRatio,
-      displayed.h * displayPixelRatio,
-    );
+    // fitImage() already chose the final integer backing raster under the 1 MP
+    // budget and the display bounds. Recomputing imageEditPreviewDimensions()
+    // here can floor one axis a second time (for example 1084 -> 1083), which
+    // makes the browser stretch the canvas by a pixel. Recover that one chosen
+    // raster directly from its CSS size instead.
+    const previewSize = {
+      width: Math.max(1, Math.round(displayed.w * displayPixelRatio)),
+      height: Math.max(1, Math.round(displayed.h * displayPixelRatio)),
+    };
     const cached = previewSourceSampleRef.current;
     if (
       cached?.decoded === previewSource
@@ -13437,6 +13476,23 @@ export function ImageEditDialog({
     const decoded = decodedImageRef.current;
     if (!canvas || !decoded || !displayed.w || !displayed.h) return;
 
+    // decodedImageRef can advance from the logical source to the embedded
+    // thumbnail, RAW preview, or Master one render before the displayed rect
+    // has been recomputed for that raster's aspect ratio. Never draw the new
+    // raster into the stale rect: keep the previous canvas frame until the
+    // layout catches up, then render pixel-for-pixel into the matching rect.
+    const expectedDisplayed = fitImage(
+      { w: decoded.width, h: decoded.height },
+      containerSize.w,
+      containerSize.h,
+    );
+    const layoutMatchesDecoded =
+      Math.abs(displayed.x - expectedDisplayed.x) <= 0.01
+      && Math.abs(displayed.y - expectedDisplayed.y) <= 0.01
+      && Math.abs(displayed.w - expectedDisplayed.w) <= 0.01
+      && Math.abs(displayed.h - expectedDisplayed.h) <= 0.01;
+    if (!layoutMatchesDecoded) return;
+
     // The preview backing raster is capped at 1 MP and sized to the physical
     // on-screen image (CSS size × devicePixelRatio), so the browser never has
     // to upscale the normal preview.
@@ -13468,6 +13524,59 @@ export function ImageEditDialog({
       includeMosaic ? mosaicRegions : null,
     ]);
 
+    const logPreviewDisplayGeometry = () => {
+      const container = containerRef.current;
+      if (!container || typeof window === "undefined") return;
+
+      const containerRect = container.getBoundingClientRect();
+      const canvasRect = canvas.getBoundingClientRect();
+      const containerStyle = window.getComputedStyle(container);
+      const browserDpr = Number.isFinite(window.devicePixelRatio) && window.devicePixelRatio > 0
+        ? window.devicePixelRatio
+        : 1;
+      const physicalWidth = canvasRect.width * browserDpr;
+      const physicalHeight = canvasRect.height * browserDpr;
+      const backingPerPhysicalX = physicalWidth > 0 ? canvas.width / physicalWidth : 0;
+      const backingPerPhysicalY = physicalHeight > 0 ? canvas.height / physicalHeight : 0;
+      const key = JSON.stringify([
+        previewSource.width,
+        previewSource.height,
+        width,
+        height,
+        canvas.width,
+        canvas.height,
+        canvasRect.width,
+        canvasRect.height,
+        containerRect.width,
+        containerRect.height,
+        container.clientWidth,
+        container.clientHeight,
+        displayPixelRatio,
+        browserDpr,
+      ]);
+      if (previewDisplayLogKeyRef.current === key) return;
+      previewDisplayLogKeyRef.current = key;
+
+      const n = (value: number) => Number(value.toFixed(4));
+      console.group("[Image preview display]");
+      console.table([
+        { Metric: "Source raster", Width: previewSource.width, Height: previewSource.height, Unit: "px" },
+        { Metric: "Preview raster target", Width: width, Height: height, Unit: "px" },
+        { Metric: "Canvas backing raster", Width: canvas.width, Height: canvas.height, Unit: "px" },
+        { Metric: "Canvas CSS style", Width: n(displayed.w), Height: n(displayed.h), Unit: "CSS px" },
+        { Metric: "Canvas rendered box", Width: n(canvasRect.width), Height: n(canvasRect.height), Unit: "CSS px" },
+        { Metric: "Container border box", Width: n(containerRect.width), Height: n(containerRect.height), Unit: "CSS px" },
+        { Metric: "Container client box", Width: container.clientWidth, Height: container.clientHeight, Unit: "CSS px" },
+        { Metric: "Physical display target", Width: n(physicalWidth), Height: n(physicalHeight), Unit: "device px" },
+      ]);
+      console.info(
+        `DPR: state=${displayPixelRatio}, browser=${browserDpr}; `
+        + `container border L/R/T/B=${containerStyle.borderLeftWidth}/${containerStyle.borderRightWidth}/${containerStyle.borderTopWidth}/${containerStyle.borderBottomWidth}; `
+        + `backing/physical=${backingPerPhysicalX.toFixed(6)} x ${backingPerPhysicalY.toFixed(6)} (1.000000 = pixel-for-pixel)`,
+      );
+      console.groupEnd();
+    };
+
     const rendered = previewRenderedRef.current;
     if (
       rendered?.decoded === previewSource &&
@@ -13477,6 +13586,7 @@ export function ImageEditDialog({
       canvas.width === width &&
       canvas.height === height
     ) {
+      logPreviewDisplayGeometry();
       return;
     }
 
@@ -13488,6 +13598,7 @@ export function ImageEditDialog({
       const isInitialPreview = !initialPreviewReadyRef.current;
       if (canvas.width !== width) canvas.width = width;
       if (canvas.height !== height) canvas.height = height;
+      logPreviewDisplayGeometry();
 
       const previewSourceRect = { x: 0, y: 0, w: previewSource.width, h: previewSource.height };
       const normalizedRotation = normalizeRotationDegrees(rotationDegrees);
@@ -13650,6 +13761,10 @@ export function ImageEditDialog({
     displayed.y,
     displayed.w,
     displayed.h,
+    displayPixelRatio,
+    containerSize.w,
+    containerSize.h,
+    fitImage,
     peepExpanded,
     cropRect.x,
     cropRect.y,
