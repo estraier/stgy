@@ -489,9 +489,9 @@ const RAW_MEDIAN_DENOISE_STRONG_ISO = 3200;
 const RAW_THUMBNAIL_MATCH_ITERATIONS = 20;
 const RAW_THUMBNAIL_MATCH_SEARCH_STEPS = 24;
 const RAW_THUMBNAIL_MATCH_GAIN_MAX = 1 << 16;
-const RAW_THUMBNAIL_MATCH_LOG_MIN = -3;
-const RAW_THUMBNAIL_MATCH_LOG_MAX = 3;
-const RAW_THUMBNAIL_MATCH_SIGMOID_MIN = -3;
+const RAW_THUMBNAIL_MATCH_LOG_MIN = -2;
+const RAW_THUMBNAIL_MATCH_LOG_MAX = 4;
+const RAW_THUMBNAIL_MATCH_SIGMOID_MIN = -2;
 const RAW_THUMBNAIL_MATCH_SIGMOID_MAX = 3;
 const RAW_THUMBNAIL_MATCH_SIGMOID_STEP = 0.1;
 const RAW_THUMBNAIL_MATCH_EXPOSURE_RELAXATION = 0.7;
@@ -6079,7 +6079,7 @@ function solveRawThumbnailMatchSigmoid(
 
   let bestSigmoid = 0;
   let bestError = Number.POSITIVE_INFINITY;
-  // Sigmoid is exposed at 0.1 precision, so scan the complete -10..10 grid
+  // Sigmoid is exposed at 0.1 precision, so scan the complete configured range
   // at that precision. Keep the global search because P25-P75 contrast is not
   // guaranteed to be monotonic in sigmoid strength.
   for (
