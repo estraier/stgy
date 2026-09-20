@@ -1004,7 +1004,7 @@ const SUPER_MC_PRESET_SEQUENCE: readonly ImageSuperMcPreset[] = [
   "super-mc-blue",
 ];
 
-const SUPER_MC_BLACK_ROLLOFF_B = 0.05;
+const SUPER_MC_BLACK_ROLLOFF_B = 0.025;
 const SUPER_MC_WHITE_ROLLOFF_A = 0.5;
 const SUPER_MC_TARGET_PERCENTILE = 0.50;
 const SUPER_MC_WHITE_ROLLOFF_PERCENTILE = 0.998;
