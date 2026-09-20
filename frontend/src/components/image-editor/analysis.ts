@@ -777,30 +777,34 @@ export function findAutoLogarithm(
   temperature: number,
   tint: number,
   exposureEv: number,
+  minValue = TONE_AUTO_LOG_MIN,
+  maxValue = TONE_AUTO_LOG_MAX,
 ): number {
+  const lowerBound = Math.min(minValue, maxValue);
+  const upperBound = Math.max(minValue, maxValue);
   const initial = buildToneLumaHistogram(sample, temperature, tint, exposureEv, 0, 0);
   const initialMean = toneHistogramTrimmedMean(initial.histogram, initial.total);
   if (initialMean >= TONE_AUTO_LOG_LOWER && initialMean <= TONE_AUTO_LOG_UPPER) return 0;
 
   if (initialMean < TONE_AUTO_LOG_LOWER) {
-    for (let step = 1; step <= Math.round(TONE_AUTO_LOG_MAX * 10); step++) {
+    for (let step = 1; step <= Math.round(Math.max(0, upperBound) * 10); step++) {
       const value = step / 10;
       const result = buildToneLumaHistogram(sample, temperature, tint, exposureEv, value, 0);
       if (toneHistogramTrimmedMean(result.histogram, result.total) >= TONE_AUTO_LOG_LOWER) {
         return clampScaledLog(value);
       }
     }
-    return clampScaledLog(TONE_AUTO_LOG_MAX);
+    return clampScaledLog(Math.max(0, upperBound));
   }
 
-  for (let step = 1; step <= Math.round(Math.abs(TONE_AUTO_LOG_MIN) * 10); step++) {
+  for (let step = 1; step <= Math.round(Math.abs(Math.min(0, lowerBound)) * 10); step++) {
     const value = -step / 10;
     const result = buildToneLumaHistogram(sample, temperature, tint, exposureEv, value, 0);
     if (toneHistogramTrimmedMean(result.histogram, result.total) <= TONE_AUTO_LOG_UPPER) {
       return clampScaledLog(value);
     }
   }
-  return clampScaledLog(TONE_AUTO_LOG_MIN);
+  return clampScaledLog(Math.min(0, lowerBound));
 }
 
 export function findAutoSigmoid(
@@ -809,7 +813,11 @@ export function findAutoSigmoid(
   tint: number,
   exposureEv: number,
   scaledLog: number,
+  minValue = -TONE_AUTO_SIGMOID_MAX,
+  maxValue = TONE_AUTO_SIGMOID_MAX,
 ): number {
+  const lowerBound = Math.min(minValue, maxValue);
+  const upperBound = Math.max(minValue, maxValue);
   const baseline = buildToneLumaHistogram(
     sample,
     temperature,
@@ -835,8 +843,8 @@ export function findAutoSigmoid(
   let bestScore = -Infinity;
 
   for (
-    let step = -Math.round(TONE_AUTO_SIGMOID_MAX * 10);
-    step <= Math.round(TONE_AUTO_SIGMOID_MAX * 10);
+    let step = Math.ceil(lowerBound * 10);
+    step <= Math.floor(upperBound * 10);
     step++
   ) {
     const value = step / 10;

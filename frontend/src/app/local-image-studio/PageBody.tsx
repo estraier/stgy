@@ -19,6 +19,7 @@ import {
   type ImageEditTimingTrace,
   type RawDemosaicQuality,
   type RawHighlightMode,
+  type RawToneMode,
 } from "@/components/ImageUploadDialog";
 import type { ImageEditClarityMap } from "@/components/image-editor/clarity";
 import type { DefringeAnalysisMap } from "@/components/image-editor/defringe";
@@ -119,6 +120,12 @@ const RAW_HIGHLIGHT_OPTIONS: { value: RawHighlightMode; label: string }[] = [
   { value: 9, label: "Rebuild (9)" },
 ];
 
+const RAW_TONE_OPTIONS: { value: RawToneMode; label: string }[] = [
+  { value: "thumbnail", label: "Thumbnail" },
+  { value: "entropy", label: "Entropy" },
+  { value: "linear", label: "Linear" },
+];
+
 const IMAGE_ALLOWED_TYPE_TOKENS = Config.IMAGE_ALLOWED_TYPES
   .split(",")
   .map((value) => value.trim().toLowerCase())
@@ -198,6 +205,7 @@ export default function LocalImageStudio() {
   const [outputColorProfileSelection, setOutputColorProfileSelection] = useState<OutputColorProfileSelection>("best");
   const [rawDemosaicQuality, setRawDemosaicQuality] = useState<RawDemosaicQuality>(11);
   const [rawHighlightMode, setRawHighlightMode] = useState<RawHighlightMode>(2);
+  const [rawToneMode, setRawToneMode] = useState<RawToneMode>("thumbnail");
   const [showRawDemosaicSelector, setShowRawDemosaicSelector] = useState(false);
   const altOnlyPressRef = useRef(false);
   const resultZoomViewportRef = useRef<HTMLDivElement | null>(null);
@@ -679,6 +687,15 @@ export default function LocalImageStudio() {
     setEditing(true);
   }, [clearEditedVariant, clearRawDevelopment, clearResult, source]);
 
+  const onRawToneModeChange = useCallback((mode: RawToneMode) => {
+    setRawToneMode(mode);
+    if (!source || !isRawImageFile(source.file.name, source.file.type)) return;
+    clearResult();
+    clearEditedVariant();
+    clearRawDevelopment();
+    setEditing(true);
+  }, [clearEditedVariant, clearRawDevelopment, clearResult, source]);
+
   const onReEdit = useCallback(() => {
     clearEditedVariant();
     setEditing(true);
@@ -731,25 +748,68 @@ export default function LocalImageStudio() {
             className="hidden"
           />
 
-          <div className="flex flex-col gap-4 rounded-xl border border-gray-200 bg-gray-50 p-4 sm:flex-row sm:flex-wrap sm:items-end">
-            <div>
-              <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-500">Input</div>
-              <button
-                type="button"
-                onClick={() => inputRef.current?.click()}
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  setShowRawDemosaicSelector((visible) => !visible);
-                }}
-                disabled={processing}
-                className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 shadow-sm hover:bg-gray-100 disabled:opacity-50"
-              >
-                Choose file
-              </button>
+          <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+            <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end">
+              <div>
+                <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-500">Input</div>
+                <button
+                  type="button"
+                  onClick={() => inputRef.current?.click()}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    setShowRawDemosaicSelector((visible) => !visible);
+                  }}
+                  disabled={processing}
+                  className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 shadow-sm hover:bg-gray-100 disabled:opacity-50"
+                >
+                  Choose file
+                </button>
+              </div>
+
+              <div>
+                <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-500">Output</div>
+                <div className="inline-flex items-center">
+                  <select
+                    value={outputFormat}
+                    onChange={(e) => onOutputFormatChange(e.target.value as ImageEditOutputFormat)}
+                    disabled={processing}
+                    className="rounded-l-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"
+                  >
+                    {OUTPUT_FORMAT_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={outputColorProfileSelection}
+                    onChange={(e) => onOutputColorProfileSelectionChange(e.target.value as OutputColorProfileSelection)}
+                    disabled={processing}
+                    className="-ml-px rounded-r-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"
+                  >
+                    {OUTPUT_COLOR_PROFILE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {result && source && (
+                <button
+                  type="button"
+                  className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 shadow-sm hover:bg-gray-100 disabled:text-gray-400 sm:ml-auto"
+                  onClick={onReEdit}
+                  disabled={processing}
+                >
+                  Re-edit
+                </button>
+              )}
             </div>
 
             {showRawDemosaicSelector && (
-              <>
+              <div className="mt-4 flex flex-col gap-4 border-t border-gray-200 pt-4 sm:flex-row sm:flex-wrap sm:items-end">
                 <div>
                   <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-500">RAW demosaic</div>
                   <select
@@ -781,48 +841,23 @@ export default function LocalImageStudio() {
                     ))}
                   </select>
                 </div>
-              </>
-            )}
 
-            <div>
-              <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-500">Output</div>
-              <div className="inline-flex items-center">
-                <select
-                  value={outputFormat}
-                  onChange={(e) => onOutputFormatChange(e.target.value as ImageEditOutputFormat)}
-                  disabled={processing}
-                  className="rounded-l-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"
-                >
-                  {OUTPUT_FORMAT_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  value={outputColorProfileSelection}
-                  onChange={(e) => onOutputColorProfileSelectionChange(e.target.value as OutputColorProfileSelection)}
-                  disabled={processing}
-                  className="-ml-px rounded-r-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"
-                >
-                  {OUTPUT_COLOR_PROFILE_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
+                <div>
+                  <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-gray-500">RAW tone</div>
+                  <select
+                    value={rawToneMode}
+                    onChange={(e) => onRawToneModeChange(e.target.value as RawToneMode)}
+                    disabled={processing}
+                    className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"
+                  >
+                    {RAW_TONE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
-            </div>
-
-            {result && source && (
-              <button
-                type="button"
-                className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 shadow-sm hover:bg-gray-100 disabled:text-gray-400 sm:ml-auto"
-                onClick={onReEdit}
-                disabled={processing}
-              >
-                Re-edit
-              </button>
             )}
           </div>
 
@@ -940,6 +975,7 @@ export default function LocalImageStudio() {
           initialDecodedImage={rawDevelopmentRef.current ?? undefined}
           rawDemosaicQuality={rawDemosaicQuality}
           rawHighlightMode={rawHighlightMode}
+          rawToneMode={rawToneMode}
           onRawDevelopmentReady={(decodedImage) => {
             const previous = rawDevelopmentRef.current;
             if (previous && previous !== decodedImage) previous.cleanup();

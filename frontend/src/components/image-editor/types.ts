@@ -90,7 +90,7 @@ export type RawDevelopmentTiming = {
 };
 
 export type RawDevelopmentSettings = {
-  mode: "thumbnail-match" | "fallback";
+  mode: "thumbnail-match" | "entropy" | "linear" | "fallback";
   iso: number | null;
   medPasses: number;
   luminance: RawDevelopmentLuminanceSettings | null;

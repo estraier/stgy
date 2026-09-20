@@ -155,7 +155,6 @@ import {
   RAW_DEVELOPED_ROLLOFF_A,
   analyzeRawDenoiseMask,
   applyRawColorPass,
-  applyRawFallbackBaselinePass,
   applyRawMatchedTonePass,
   developRawMasterOnePassToGamma20,
   mergeRawDenoiseGamma20InPlaceRows,
@@ -351,6 +350,7 @@ export type ImageEditParams = {
 export type ImageEditOutputFormat = "image/webp" | "image/jpeg" | "image/png";
 export type RawDemosaicQuality = 0 | 1 | 2 | 3 | 4 | 11 | 12;
 export type RawHighlightMode = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+export type RawToneMode = "thumbnail" | "entropy" | "linear";
 
 type Props = {
   userId: string;
@@ -6105,6 +6105,108 @@ function solveRawThumbnailMatchSigmoid(
   );
 }
 
+function buildRawMatchedTonePlanningResult(
+  sample: Float32Array,
+  gain: number,
+  scaledLog: number,
+  sigmoid: number,
+): RawMatchedTonePlanningResult | null {
+  if (!sample.length || !(gain > 0)) return null;
+  const toneSlopeAtWhite = rawBaselineToneSlopeAtWhite(scaledLog, sigmoid);
+  const maxChannels = new Array<number>(Math.floor(sample.length / 3));
+  for (let pixel = 0; pixel < maxChannels.length; pixel += 1) {
+    const i = pixel * 3;
+    const r = sample[i] ?? 0;
+    const g = sample[i + 1] ?? 0;
+    const b = sample[i + 2] ?? 0;
+    const luma = PROPHOTO_LUMA_R * r + PROPHOTO_LUMA_G * g + PROPHOTO_LUMA_B * b;
+    let adjustedLuma = 0;
+    if (luma > 1e-12) {
+      const exposed = luma * gain;
+      adjustedLuma = exposed <= 1
+        ? rawBaselineToneCurveValue(exposed, scaledLog, sigmoid)
+        : 1 + toneSlopeAtWhite * (exposed - 1);
+    }
+    const scale = luma > 1e-12 ? adjustedLuma / luma : 0;
+    maxChannels[pixel] = Math.max(r * scale, g * scale, b * scale);
+  }
+  const maxP998 = percentileFromValues(maxChannels, 99.8);
+  const rolloff = toneRolloffParams(
+    maxP998,
+    RAW_DEVELOPED_ROLLOFF_A,
+    ROLLOFF_SAVING_LIMIT_FACTOR,
+    RAW_DEVELOPED_LINEAR_RANGE_MAX,
+  );
+  return {
+    plan: { gain, scaledLog, sigmoid, toneSlopeAtWhite, rolloff },
+    luminance: {
+      exposureEv: Math.log2(Math.max(gain, Number.MIN_VALUE)),
+      logarithm: scaledLog,
+      sigmoid,
+      toneSlopeAtWhite,
+    },
+  };
+}
+
+function planRawEntropyBaseline(
+  decoded: DecodedRgbImage16,
+): RawMatchedTonePlanningResult | null {
+  const data = sampleRawThumbnailMatchLinearRgbFromRgb16(decoded);
+  if (!data.length) return null;
+  const dimensions = analysisSampleDimensions(
+    decoded.width,
+    decoded.height,
+    RAW_THUMBNAIL_MATCH_SAMPLE_TARGET_PIXELS,
+  );
+  const sample: ToneAutoSample = {
+    data,
+    width: dimensions.width,
+    height: dimensions.height,
+  };
+  const exposureEv = findAutoExposure(sample, 0, 0);
+  const scaledLog = findAutoLogarithm(
+    sample,
+    0,
+    0,
+    exposureEv,
+    RAW_THUMBNAIL_MATCH_LOG_MIN,
+    RAW_THUMBNAIL_MATCH_LOG_MAX,
+  );
+  const sigmoid = findAutoSigmoid(
+    sample,
+    0,
+    0,
+    exposureEv,
+    scaledLog,
+    RAW_THUMBNAIL_MATCH_SIGMOID_MIN,
+    RAW_THUMBNAIL_MATCH_SIGMOID_MAX,
+  );
+  return buildRawMatchedTonePlanningResult(
+    data,
+    Math.pow(2, exposureEv),
+    scaledLog,
+    sigmoid,
+  );
+}
+
+function rawLinearBaseline(): RawMatchedTonePlanningResult {
+  return {
+    plan: {
+      gain: 1,
+      scaledLog: 0,
+      sigmoid: 0,
+      toneSlopeAtWhite: 1,
+      rolloff: null,
+    },
+    luminance: {
+      exposureEv: 0,
+      logarithm: 0,
+      sigmoid: 0,
+      toneSlopeAtWhite: 1,
+    },
+  };
+}
+
 function planRawThumbnailMatchedBaseline(
   decoded: DecodedRgbImage16,
   thumbnailPercentiles: DebugPercentileValues,
@@ -6177,40 +6279,7 @@ function planRawThumbnailMatchedBaseline(
     sigmoid += RAW_THUMBNAIL_MATCH_SIGMOID_RELAXATION * relaxationScale * (targetSigmoid - sigmoid);
   }
 
-  const toneSlopeAtWhite = rawBaselineToneSlopeAtWhite(scaledLog, sigmoid);
-  const maxChannels = new Array<number>(Math.floor(sample.length / 3));
-  for (let pixel = 0; pixel < maxChannels.length; pixel += 1) {
-    const i = pixel * 3;
-    const r = sample[i] ?? 0;
-    const g = sample[i + 1] ?? 0;
-    const b = sample[i + 2] ?? 0;
-    const luma = PROPHOTO_LUMA_R * r + PROPHOTO_LUMA_G * g + PROPHOTO_LUMA_B * b;
-    let adjustedLuma = 0;
-    if (luma > 1e-12) {
-      const exposed = luma * gain;
-      adjustedLuma = exposed <= 1
-        ? rawBaselineToneCurveValue(exposed, scaledLog, sigmoid)
-        : 1 + toneSlopeAtWhite * (exposed - 1);
-    }
-    const scale = luma > 1e-12 ? adjustedLuma / luma : 0;
-    maxChannels[pixel] = Math.max(r * scale, g * scale, b * scale);
-  }
-  const maxP998 = percentileFromValues(maxChannels, 99.8);
-  const rolloff = toneRolloffParams(
-    maxP998,
-    RAW_DEVELOPED_ROLLOFF_A,
-    ROLLOFF_SAVING_LIMIT_FACTOR,
-    RAW_DEVELOPED_LINEAR_RANGE_MAX,
-  );
-  return {
-    plan: { gain, scaledLog, sigmoid, toneSlopeAtWhite, rolloff },
-    luminance: {
-      exposureEv: Math.log2(Math.max(gain, Number.MIN_VALUE)),
-      logarithm: scaledLog,
-      sigmoid,
-      toneSlopeAtWhite,
-    },
-  };
+  return buildRawMatchedTonePlanningResult(sample, gain, scaledLog, sigmoid);
 }
 
 function sortedValueIndices(values: Float32Array): number[] {
@@ -7527,15 +7596,6 @@ type RawWorkerToneResponse = {
   colorSample: ArrayBuffer;
 };
 
-type RawWorkerFallbackResponse = {
-  type: "fallback-tone-complete";
-  result: {
-    exposureEv: number;
-    headroom: RawDevelopmentHeadroomStatistics;
-    plan: RawFallbackPlan;
-  } | null;
-};
-
 type RawWorkerColorResponse = {
   type: "color-complete";
 };
@@ -8629,34 +8689,43 @@ function developRawPreviewPixelsSync(
   decoded: DecodedRgbImage16,
   thumbnailReference: RawThumbnailMatchReference | undefined,
   timing: RawDevelopmentTiming,
+  rawToneMode: RawToneMode = "thumbnail",
 ): RawProgressiveDevelopmentPlan {
-  let mode: RawDevelopmentSettings["mode"] = "fallback";
+  let mode: RawDevelopmentSettings["mode"] = "linear";
   let luminance: RawDevelopmentLuminanceSettings | null = null;
   let headroom: RawDevelopmentHeadroomStatistics | undefined;
   let saturation: RawDevelopmentSaturationSettings = { saturation: 0, vibrance: 0 };
   let tonePlan: RawMatchedTonePlan | undefined;
-  let fallbackPlan: RawFallbackPlan | undefined;
   let colorPlan: RawColorPassPlan | undefined;
 
-  const matched = thumbnailReference
+  const thumbnailMatched = rawToneMode === "thumbnail" && thumbnailReference
     ? planRawThumbnailMatchedBaseline(decoded, thumbnailReference.lumaPercentiles)
     : null;
-  if (matched) {
-    tonePlan = matched.plan;
-    headroom = applyRawMatchedTonePass(
-      decoded.data,
-      decoded.width,
-      decoded.height,
-      decoded.linearRangeMax,
-      undefined,
-      tonePlan,
-      decoded.transfer,
-    );
-    decoded.linearRangeMax = RAW_DEVELOPED_LINEAR_RANGE_MAX;
-    decoded.transfer = "gamma20";
-    mode = "thumbnail-match";
-    luminance = matched.luminance;
+  const entropyMatched = rawToneMode === "entropy" || (rawToneMode === "thumbnail" && !thumbnailMatched)
+    ? planRawEntropyBaseline(decoded)
+    : null;
+  const selectedTone = thumbnailMatched ?? entropyMatched ?? rawLinearBaseline();
 
+  mode = thumbnailMatched
+    ? "thumbnail-match"
+    : entropyMatched
+      ? "entropy"
+      : "linear";
+  tonePlan = selectedTone.plan;
+  luminance = selectedTone.luminance;
+  headroom = applyRawMatchedTonePass(
+    decoded.data,
+    decoded.width,
+    decoded.height,
+    decoded.linearRangeMax,
+    undefined,
+    tonePlan,
+    decoded.transfer,
+  );
+  decoded.linearRangeMax = RAW_DEVELOPED_LINEAR_RANGE_MAX;
+  decoded.transfer = "gamma20";
+
+  if (thumbnailMatched && thumbnailReference) {
     const rawColorSample = sampleRawThumbnailMatchLinearRgbFromRgb16(decoded);
     const rawColorSampleDimensions = analysisSampleDimensions(
       decoded.width,
@@ -8667,34 +8736,13 @@ function developRawPreviewPixelsSync(
       rawColorSample,
       rawColorSampleDimensions.width,
       rawColorSampleDimensions.height,
-      thumbnailReference!.linearSrgbSample,
-      thumbnailReference!.colorTargets,
+      thumbnailReference.linearSrgbSample,
+      thumbnailReference.colorTargets,
     );
     if (plannedColor) {
       saturation = plannedColor.settings;
       colorPlan = plannedColor.pass ?? undefined;
       if (colorPlan) applyRawColorPass(decoded.data, decoded.linearRangeMax, colorPlan);
-    }
-  } else {
-    const fallback = applyRawFallbackBaselinePass(
-      decoded.data,
-      decoded.width,
-      decoded.height,
-      decoded.linearRangeMax,
-      undefined,
-      decoded.transfer,
-    );
-    if (fallback) {
-      fallbackPlan = fallback.plan;
-      headroom = fallback.headroom;
-      decoded.linearRangeMax = RAW_DEVELOPED_LINEAR_RANGE_MAX;
-      decoded.transfer = "gamma20";
-      luminance = {
-        exposureEv: fallback.exposureEv,
-        logarithm: 0,
-        sigmoid: 0,
-        toneSlopeAtWhite: 1,
-      };
     }
   }
 
@@ -8704,21 +8752,20 @@ function developRawPreviewPixelsSync(
     headroom,
     saturation,
     timing,
-    ...(tonePlan ? { tonePlan } : {}),
-    ...(fallbackPlan ? { fallbackPlan } : {}),
+    tonePlan,
     ...(colorPlan ? { colorPlan } : {}),
   };
 }
-
 
 async function developRawPreviewPixels(
   decoded: DecodedRgbImage16,
   thumbnailReference: RawThumbnailMatchReference | undefined,
   timing: RawDevelopmentTiming,
   onProgress?: ImageLoadProgressListener,
+  rawToneMode: RawToneMode = "thumbnail",
 ): Promise<RawProgressiveDevelopmentPlan> {
   const worker = createRawDevelopmentWorker();
-  if (!worker) return developRawPreviewPixelsSync(decoded, thumbnailReference, timing);
+  if (!worker) return developRawPreviewPixelsSync(decoded, thumbnailReference, timing, rawToneMode);
 
   const stage = async <T,>(name: string, task: () => Promise<T>): Promise<T> => {
     onProgress?.({ stage: name, rawTiming: timing });
@@ -8730,36 +8777,50 @@ async function developRawPreviewPixels(
   try {
     onProgress?.({ stage: "Planning RAW preview tone…", rawTiming: timing });
     if (onProgress) await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    const matched = await measureRawTiming(timing, "preview", "Planning RAW preview tone", () =>
-      thumbnailReference
+    const planned = await measureRawTiming(timing, "preview", "Planning RAW preview tone", () => {
+      const thumbnailMatched = rawToneMode === "thumbnail" && thumbnailReference
         ? planRawThumbnailMatchedBaseline(decoded, thumbnailReference.lumaPercentiles)
-        : null,
-    );
-    let plan: RawProgressiveDevelopmentPlan;
+        : null;
+      const entropyMatched = rawToneMode === "entropy" || (rawToneMode === "thumbnail" && !thumbnailMatched)
+        ? planRawEntropyBaseline(decoded)
+        : null;
+      const selectedTone = thumbnailMatched ?? entropyMatched ?? rawLinearBaseline();
+      return {
+        selectedTone,
+        mode: thumbnailMatched
+          ? "thumbnail-match" as const
+          : entropyMatched
+            ? "entropy" as const
+            : "linear" as const,
+        useThumbnailColor: !!thumbnailMatched,
+      };
+    });
 
-    if (matched) {
-      const sourceBuffer = decoded.data.buffer as ArrayBuffer;
-      const toneResponse = await stage<RawWorkerToneResponse>("Developing RAW preview tone…", () => {
-        transferred = true;
-        return requestRawDevelopmentWorker<RawWorkerToneResponse>(
-          worker,
-          "tone-complete",
-          {
-            type: "matched-tone",
-            dataBuffer: sourceBuffer,
-            width: decoded.width,
-            height: decoded.height,
-            sourceLinearRangeMax: decoded.linearRangeMax,
-            sourceTransfer: decoded.transfer,
-            plan: matched.plan,
-            sampleTargetPixels: RAW_THUMBNAIL_MATCH_SAMPLE_TARGET_PIXELS,
-          },
-          [sourceBuffer],
-        );
-      });
-      decoded.linearRangeMax = RAW_DEVELOPED_LINEAR_RANGE_MAX;
-      decoded.transfer = "gamma20";
+    const sourceBuffer = decoded.data.buffer as ArrayBuffer;
+    const toneResponse = await stage<RawWorkerToneResponse>("Developing RAW preview tone…", () => {
+      transferred = true;
+      return requestRawDevelopmentWorker<RawWorkerToneResponse>(
+        worker,
+        "tone-complete",
+        {
+          type: "matched-tone",
+          dataBuffer: sourceBuffer,
+          width: decoded.width,
+          height: decoded.height,
+          sourceLinearRangeMax: decoded.linearRangeMax,
+          sourceTransfer: decoded.transfer,
+          plan: planned.selectedTone.plan,
+          sampleTargetPixels: RAW_THUMBNAIL_MATCH_SAMPLE_TARGET_PIXELS,
+        },
+        [sourceBuffer],
+      );
+    });
+    decoded.linearRangeMax = RAW_DEVELOPED_LINEAR_RANGE_MAX;
+    decoded.transfer = "gamma20";
 
+    let saturation: RawDevelopmentSaturationSettings = { saturation: 0, vibrance: 0 };
+    let colorPlan: RawColorPassPlan | undefined;
+    if (planned.useThumbnailColor && thumbnailReference) {
       const rawColorSample = new Float32Array(toneResponse.colorSample);
       const rawColorSampleDimensions = analysisSampleDimensions(
         decoded.width,
@@ -8773,72 +8834,32 @@ async function developRawPreviewPixels(
           rawColorSample,
           rawColorSampleDimensions.width,
           rawColorSampleDimensions.height,
-          thumbnailReference!.linearSrgbSample,
-          thumbnailReference!.colorTargets,
+          thumbnailReference.linearSrgbSample,
+          thumbnailReference.colorTargets,
         ),
       );
-      if (plannedColor?.pass) {
+      saturation = plannedColor?.settings ?? saturation;
+      colorPlan = plannedColor?.pass ?? undefined;
+      if (colorPlan) {
         await stage<RawWorkerColorResponse>("Developing RAW preview color…", () =>
           requestRawDevelopmentWorker<RawWorkerColorResponse>(
             worker,
             "color-complete",
-            { type: "color", plan: plannedColor.pass! },
+            { type: "color", plan: colorPlan! },
           ),
         );
       }
-      plan = {
-        mode: "thumbnail-match",
-        luminance: matched.luminance,
-        headroom: toneResponse.headroom,
-        saturation: plannedColor?.settings ?? { saturation: 0, vibrance: 0 },
-        timing,
-        tonePlan: matched.plan,
-        ...(plannedColor?.pass ? { colorPlan: plannedColor.pass } : {}),
-      };
-    } else {
-      const sourceBuffer = decoded.data.buffer as ArrayBuffer;
-      const fallbackResponse = await stage<RawWorkerFallbackResponse>("Developing RAW preview tone…", () => {
-        transferred = true;
-        return requestRawDevelopmentWorker<RawWorkerFallbackResponse>(
-          worker,
-          "fallback-tone-complete",
-          {
-            type: "fallback-tone",
-            dataBuffer: sourceBuffer,
-            width: decoded.width,
-            height: decoded.height,
-            sourceLinearRangeMax: decoded.linearRangeMax,
-            sourceTransfer: decoded.transfer,
-          },
-          [sourceBuffer],
-        );
-      });
-      const fallback = fallbackResponse.result;
-      if (fallback) {
-        decoded.linearRangeMax = RAW_DEVELOPED_LINEAR_RANGE_MAX;
-        decoded.transfer = "gamma20";
-        plan = {
-          mode: "fallback",
-          luminance: {
-            exposureEv: fallback.exposureEv,
-            logarithm: 0,
-            sigmoid: 0,
-            toneSlopeAtWhite: 1,
-          },
-          headroom: fallback.headroom,
-          saturation: { saturation: 0, vibrance: 0 },
-          timing,
-          fallbackPlan: fallback.plan,
-        };
-      } else {
-        plan = {
-          mode: "fallback",
-          luminance: null,
-          saturation: { saturation: 0, vibrance: 0 },
-          timing,
-        };
-      }
     }
+
+    const plan: RawProgressiveDevelopmentPlan = {
+      mode: planned.mode,
+      luminance: planned.selectedTone.luminance,
+      headroom: toneResponse.headroom,
+      saturation,
+      timing,
+      tonePlan: planned.selectedTone.plan,
+      ...(colorPlan ? { colorPlan } : {}),
+    };
 
     const encodeResponse = await stage<RawWorkerEncodeResponse>("Encoding RAW preview gamma2 buffer…", () =>
       requestRawDevelopmentWorker<RawWorkerEncodeResponse>(
@@ -8863,7 +8884,7 @@ async function developRawPreviewPixels(
         decoded.transfer = workerError.transfer;
       }
     }
-    if (!transferred) return developRawPreviewPixelsSync(decoded, thumbnailReference, timing);
+    if (!transferred) return developRawPreviewPixelsSync(decoded, thumbnailReference, timing, rawToneMode);
     throw error;
   } finally {
     worker.terminate();
@@ -8874,6 +8895,7 @@ async function decodeRawPreviewImage(
   file: File,
   timing: RawDevelopmentTiming,
   rawHighlightMode?: RawHighlightMode,
+  rawToneMode: RawToneMode = "thumbnail",
   onProgress?: ImageLoadProgressListener,
 ): Promise<RawPreviewDevelopmentResult> {
   async function runStage<T>(stage: string, task: () => Promise<T>): Promise<T> {
@@ -8934,16 +8956,22 @@ async function decodeRawPreviewImage(
                 : {}),
             }
           : undefined;
-        onProgress?.({ stage: "Analyzing embedded thumbnail…", embeddedPreview, rawTiming: timing });
-        // Thumbnail analysis runs in its own worker and is intentionally not awaited
-        // here. Linear RAW demosaic can therefore proceed concurrently on the
-        // LibRaw worker. The reference is only needed immediately before tone/color.
-        thumbnailReferencePromise = measureRawTiming(
-          timing,
-          "preview",
-          "Embedded thumbnail analysis subtotal",
-          () => rawThumbnailMatchReferenceFromThumbnailParallel(thumbnail, timing),
-        ).catch(() => undefined);
+        onProgress?.({
+          stage: rawToneMode === "thumbnail" ? "Analyzing embedded thumbnail…" : "Preparing RAW preview…",
+          embeddedPreview,
+          rawTiming: timing,
+        });
+        if (rawToneMode === "thumbnail") {
+          // Thumbnail analysis runs in its own worker and is intentionally not awaited
+          // here. Linear RAW demosaic can therefore proceed concurrently on the
+          // LibRaw worker. The reference is only needed immediately before tone/color.
+          thumbnailReferencePromise = measureRawTiming(
+            timing,
+            "preview",
+            "Embedded thumbnail analysis subtotal",
+            () => rawThumbnailMatchReferenceFromThumbnailParallel(thumbnail, timing),
+          ).catch(() => undefined);
+        }
       } catch {
         thumbnailReferencePromise = Promise.resolve(undefined);
       }
@@ -9000,7 +9028,7 @@ async function decodeRawPreviewImage(
       "Waiting for embedded thumbnail analysis",
       () => thumbnailReferencePromise,
     );
-    const plan = await developRawPreviewPixels(decoded, thumbnailReference, timing, onProgress);
+    const plan = await developRawPreviewPixels(decoded, thumbnailReference, timing, onProgress, rawToneMode);
     plan.previewIso = Number.isFinite(isoValue) && isoValue > 0 ? isoValue : null;
     plan.rawGeometry = rawGeometryFromMetadata(metadata);
     const previewElapsedMs = performance.now() - timing.startedAtMs;
@@ -9275,10 +9303,11 @@ async function decodeRawImage(
   file: File,
   rawDemosaicQuality?: RawDemosaicQuality,
   rawHighlightMode?: RawHighlightMode,
+  rawToneMode: RawToneMode = "thumbnail",
   onProgress?: ImageLoadProgressListener,
 ): Promise<DecodedRgbImage16> {
   const timing = createRawDevelopmentTiming();
-  const preview = await decodeRawPreviewImage(file, timing, rawHighlightMode, onProgress);
+  const preview = await decodeRawPreviewImage(file, timing, rawHighlightMode, rawToneMode, onProgress);
   const masterPromise = decodeRawMasterImage(
     file,
     preview.plan,
@@ -9483,9 +9512,10 @@ function decodeRawImageShared(
   file: File,
   rawDemosaicQuality?: RawDemosaicQuality,
   rawHighlightMode?: RawHighlightMode,
+  rawToneMode: RawToneMode = "thumbnail",
   onProgress?: ImageLoadProgressListener,
 ): Promise<DecodedRgbImage16> {
-  const key = `${rawDemosaicQuality ?? "default"}:${rawHighlightMode ?? "default"}`;
+  const key = `${rawDemosaicQuality ?? "default"}:${rawHighlightMode ?? "default"}:${rawToneMode}`;
   let pendingByQuality = RAW_DEVELOPMENT_IN_FLIGHT.get(file);
   if (!pendingByQuality) {
     pendingByQuality = new Map();
@@ -9518,6 +9548,7 @@ function decodeRawImageShared(
     file,
     rawDemosaicQuality,
     rawHighlightMode,
+    rawToneMode,
     onProgress ? emitProgress : undefined,
   ).finally(() => {
       const current = RAW_DEVELOPMENT_IN_FLIGHT.get(file);
@@ -9633,6 +9664,7 @@ async function decodeImage(
   type?: string,
   rawDemosaicQuality?: RawDemosaicQuality,
   rawHighlightMode?: RawHighlightMode,
+  rawToneMode: RawToneMode = "thumbnail",
   onProgress?: ImageLoadProgressListener,
 ): Promise<DecodedImage> {
   async function runStage<T>(stage: string, task: () => Promise<T>): Promise<T> {
@@ -9648,7 +9680,7 @@ async function decodeImage(
   }
 
   if (isRawImageFile(name || "", type || "")) {
-    return decodeRawImageShared(file, rawDemosaicQuality, rawHighlightMode, onProgress);
+    return decodeRawImageShared(file, rawDemosaicQuality, rawHighlightMode, rawToneMode, onProgress);
   }
 
   if (isTiff(name || "", type || "")) {
@@ -11015,6 +11047,7 @@ type EditDialogProps = {
   initialDecodedImage?: DecodedImage;
   rawDemosaicQuality?: RawDemosaicQuality;
   rawHighlightMode?: RawHighlightMode;
+  rawToneMode?: RawToneMode;
   onRawDevelopmentReady?: (decodedImage: DecodedRgbImage16) => void;
   onCancel: () => void;
   onApply: (
@@ -11214,6 +11247,7 @@ export function ImageEditDialog({
   initialDecodedImage,
   rawDemosaicQuality,
   rawHighlightMode,
+  rawToneMode = "thumbnail",
   onRawDevelopmentReady,
   onCancel,
   onApply,
@@ -11692,6 +11726,7 @@ export function ImageEditDialog({
               file.type,
               rawDemosaicQuality,
               rawHighlightMode,
+              rawToneMode,
               onLoadProgress,
             );
         if (isRaw) rawForegroundPromiseRef.current = foregroundPromise;
@@ -11848,6 +11883,7 @@ export function ImageEditDialog({
     initialDecodedImage,
     rawDemosaicQuality,
     rawHighlightMode,
+    rawToneMode,
     clearEmbeddedRawPreview,
     showEmbeddedRawPreview,
     invalidateBaseDerivedCaches,
@@ -16380,7 +16416,13 @@ export function ImageEditDialog({
                                 </div>
                               )}
                               <div>
-                                source: ISO={rawDevelopmentSettings.iso === null ? "n/a" : formatRawDevelopmentSetting(rawDevelopmentSettings.iso)}, medPasses={rawDevelopmentSettings.medPasses}, mode={rawDevelopmentSettings.mode === "thumbnail-match" ? "thumbnail match" : "fallback"}
+                                source: ISO={rawDevelopmentSettings.iso === null ? "n/a" : formatRawDevelopmentSetting(rawDevelopmentSettings.iso)}, medPasses={rawDevelopmentSettings.medPasses}, mode={rawDevelopmentSettings.mode === "thumbnail-match"
+                                  ? "thumbnail match"
+                                  : rawDevelopmentSettings.mode === "entropy"
+                                    ? "entropy"
+                                    : rawDevelopmentSettings.mode === "linear"
+                                      ? "linear"
+                                      : "fallback"}
                               </div>
                               {(rawDevelopmentSettings.denoise || rawDenoisePromiseRef.current) && (() => {
                                 const denoise = rawDevelopmentSettings.denoise;
