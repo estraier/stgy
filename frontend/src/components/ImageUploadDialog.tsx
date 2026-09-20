@@ -15078,6 +15078,19 @@ export function ImageEditDialog({
     );
   };
 
+  const sliderGrid96Class = editorUsesSidePanel
+    ? "grid grid-cols-2 items-center gap-x-2 gap-y-1"
+    : "grid grid-cols-[96px_minmax(0,1fr)_56px] items-center gap-x-2 gap-y-1";
+  const sliderGrid112Class = editorUsesSidePanel
+    ? "grid grid-cols-2 items-center gap-x-2 gap-y-1"
+    : "grid grid-cols-[112px_minmax(0,1fr)_56px] items-center gap-x-2 gap-y-1";
+  const sliderValueClass = editorUsesSidePanel
+    ? "col-start-2 row-start-1 w-auto justify-self-end text-right font-mono text-[12px]"
+    : "col-start-3 row-start-1 w-14 justify-self-end text-right font-mono text-[12px]";
+  const sliderInputClass = editorUsesSidePanel
+    ? "col-span-2 col-start-1 row-start-2 w-full"
+    : "col-start-2 row-start-1 w-full";
+
   const rawDevelopmentSettings = (() => {
     if (!isRawImageFile(file.name, file.type)) return undefined;
     const decoded = decodedImageRef.current;
@@ -15144,10 +15157,12 @@ export function ImageEditDialog({
           }
         }}
       >
-        <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between lg:gap-3">
+        <div className={`flex gap-2 ${editorUsesSidePanel ? "flex-row items-center justify-between gap-3" : "flex-col"}`}>
           <h2 className="text-base font-semibold break-all">Edit image</h2>
-          <div className="grid grid-cols-3 items-center gap-x-3 gap-y-2 lg:flex lg:gap-3">
-            <div className={mobileToolsCollapsed ? "hidden lg:contents" : "contents"}>
+          <div className={editorUsesSidePanel
+            ? "flex items-center gap-3"
+            : "grid grid-cols-3 items-center gap-x-3 gap-y-2"}>
+            <div className={mobileToolsCollapsed && !editorUsesSidePanel ? "hidden" : "contents"}>
             <label className="inline-flex items-center gap-2 text-sm text-gray-700 select-none">
               <input
                 type="checkbox"
@@ -15339,27 +15354,29 @@ export function ImageEditDialog({
               <span>Grid</span>
             </label>
             </div>
-            <div className="col-span-3 flex items-center justify-between lg:contents">
+            <div className={editorUsesSidePanel ? "contents" : "col-span-3 flex items-center justify-between"}>
               <button
-                className="justify-self-start px-2 py-0.5 text-sm rounded border border-gray-300 hover:bg-gray-100 lg:col-auto lg:justify-self-auto"
+                className="justify-self-start px-2 py-0.5 text-sm rounded border border-gray-300 hover:bg-gray-100"
                 onClick={onReset}
               >
                 Reset
               </button>
-              <button
-                type="button"
-                className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-100 lg:hidden"
-                onClick={() => setMobileToolsCollapsed((current) => !current)}
-                aria-label={`${mobileToolsCollapsed ? "Expand" : "Collapse"} editor tools`}
-                aria-expanded={!mobileToolsCollapsed}
-                title={`${mobileToolsCollapsed ? "Expand" : "Collapse"} editor tools`}
-              >
-                {mobileToolsCollapsed ? (
-                  <ChevronDown size={13} strokeWidth={1.8} />
-                ) : (
-                  <ChevronUp size={13} strokeWidth={1.8} />
-                )}
-              </button>
+              {!editorUsesSidePanel && (
+                <button
+                  type="button"
+                  className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                  onClick={() => setMobileToolsCollapsed((current) => !current)}
+                  aria-label={`${mobileToolsCollapsed ? "Expand" : "Collapse"} editor tools`}
+                  aria-expanded={!mobileToolsCollapsed}
+                  title={`${mobileToolsCollapsed ? "Expand" : "Collapse"} editor tools`}
+                >
+                  {mobileToolsCollapsed ? (
+                    <ChevronDown size={13} strokeWidth={1.8} />
+                  ) : (
+                    <ChevronUp size={13} strokeWidth={1.8} />
+                  )}
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -16798,9 +16815,9 @@ export function ImageEditDialog({
                 {panelCollapseButton("whiteBalance", "White balance")}
               </div>
               <div className={collapsedPanels.whiteBalance ? "hidden" : "space-y-2 lg:space-y-3"}>
-              <label className="grid grid-cols-[96px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+              <label className={sliderGrid96Class}>
                 <span className="col-start-1 row-start-1">Temperature</span>
-                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">
+                <span className={sliderValueClass}>
                   {temperature >= 0 ? "+" : ""}{temperature}
                 </span>
                 <input
@@ -16811,12 +16828,12 @@ export function ImageEditDialog({
                   value={temperature}
                   onChange={(e) => { previewContinuousSliderRef.current = "white-balance"; setTemperature(clampWhiteBalanceValue(Number(e.target.value))); }}
                   onDoubleClick={() => { previewContinuousSliderRef.current = "white-balance"; setTemperature(sliderDefaults.temperature); }}
-                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
+                  className={sliderInputClass}
                 />
               </label>
-              <label className="grid grid-cols-[96px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+              <label className={sliderGrid96Class}>
                 <span className="col-start-1 row-start-1">Tint</span>
-                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{tint >= 0 ? "+" : ""}{tint}</span>
+                <span className={sliderValueClass}>{tint >= 0 ? "+" : ""}{tint}</span>
                 <input
                   type="range"
                   min={-100}
@@ -16825,7 +16842,7 @@ export function ImageEditDialog({
                   value={tint}
                   onChange={(e) => { previewContinuousSliderRef.current = "white-balance"; setTint(clampWhiteBalanceValue(Number(e.target.value))); }}
                   onDoubleClick={() => { previewContinuousSliderRef.current = "white-balance"; setTint(sliderDefaults.tint); }}
-                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
+                  className={sliderInputClass}
                 />
               </label>
               </div>
@@ -16850,7 +16867,7 @@ export function ImageEditDialog({
                 {panelCollapseButton("tone", "Tone")}
               </div>
               <div className={collapsedPanels.tone ? "hidden" : "space-y-2 lg:space-y-3"}>
-              <div className="grid grid-cols-[112px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+              <div className={sliderGrid112Class}>
                 <div className="col-start-1 row-start-1 flex min-w-0 items-center gap-1">
                   <span>Exposure</span>
                   <button
@@ -16863,7 +16880,7 @@ export function ImageEditDialog({
                     Auto
                   </button>
                 </div>
-                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{formatSignedEv(exposureEv)}</span>
+                <span className={sliderValueClass}>{formatSignedEv(exposureEv)}</span>
                 <input
                   aria-label="Exposure"
                   type="range"
@@ -16873,10 +16890,10 @@ export function ImageEditDialog({
                   value={exposureEv}
                   onChange={(e) => { previewContinuousSliderRef.current = "exposure"; setExposureEv(clampExposureEv(Number(e.target.value))); }}
                   onDoubleClick={() => { previewContinuousSliderRef.current = "exposure"; setExposureEv(sliderDefaults.exposureEv); }}
-                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
+                  className={sliderInputClass}
                 />
               </div>
-              <div className="grid grid-cols-[112px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+              <div className={sliderGrid112Class}>
                 <div className="col-start-1 row-start-1 flex min-w-0 items-center gap-1">
                   <span>Midtone</span>
                   <button
@@ -16889,7 +16906,7 @@ export function ImageEditDialog({
                     Auto
                   </button>
                 </div>
-                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{scaledLog >= 0 ? "+" : ""}{scaledLog.toFixed(1)}</span>
+                <span className={sliderValueClass}>{scaledLog >= 0 ? "+" : ""}{scaledLog.toFixed(1)}</span>
                 <input
                   aria-label="Midtone"
                   type="range"
@@ -16899,10 +16916,10 @@ export function ImageEditDialog({
                   value={scaledLog}
                   onChange={(e) => { previewContinuousSliderRef.current = "scaled-log"; setScaledLog(clampScaledLog(Number(e.target.value))); }}
                   onDoubleClick={() => { previewContinuousSliderRef.current = "scaled-log"; setScaledLog(sliderDefaults.scaledLog); }}
-                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
+                  className={sliderInputClass}
                 />
               </div>
-              <div className="grid grid-cols-[112px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+              <div className={sliderGrid112Class}>
                 <div className="col-start-1 row-start-1 flex min-w-0 items-center gap-1">
                   <span>Contrast</span>
                   <button
@@ -16915,7 +16932,7 @@ export function ImageEditDialog({
                     Auto
                   </button>
                 </div>
-                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{sigmoid >= 0 ? "+" : ""}{sigmoid.toFixed(1)}</span>
+                <span className={sliderValueClass}>{sigmoid >= 0 ? "+" : ""}{sigmoid.toFixed(1)}</span>
                 <input
                   aria-label="Contrast"
                   type="range"
@@ -16925,14 +16942,14 @@ export function ImageEditDialog({
                   value={sigmoid}
                   onChange={(e) => { previewContinuousSliderRef.current = "sigmoid"; setSigmoid(clampSigmoid(Number(e.target.value))); }}
                   onDoubleClick={() => { previewContinuousSliderRef.current = "sigmoid"; setSigmoid(sliderDefaults.sigmoid); }}
-                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
+                  className={sliderInputClass}
                 />
               </div>
-              <div className="grid grid-cols-[112px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+              <div className={sliderGrid112Class}>
                 <div className="col-start-1 row-start-1 flex min-w-0 items-center gap-1">
                   <span>Shadow</span>
                 </div>
-                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{shadow >= 0 ? "+" : ""}{shadow}</span>
+                <span className={sliderValueClass}>{shadow >= 0 ? "+" : ""}{shadow}</span>
                 <input
                   aria-label="Shadow"
                   type="range"
@@ -16942,12 +16959,12 @@ export function ImageEditDialog({
                   value={shadow}
                   onChange={(e) => { previewContinuousSliderRef.current = "shadow"; setShadow(clampToneRangeAdjustment(Number(e.target.value))); }}
                   onDoubleClick={() => { previewContinuousSliderRef.current = "shadow"; setShadow(sliderDefaults.shadow); }}
-                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
+                  className={sliderInputClass}
                 />
               </div>
-              <label className="grid grid-cols-[112px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+              <label className={sliderGrid112Class}>
                 <span className="col-start-1 row-start-1">Highlight</span>
-                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{highlight >= 0 ? "+" : ""}{highlight}</span>
+                <span className={sliderValueClass}>{highlight >= 0 ? "+" : ""}{highlight}</span>
                 <input
                   aria-label="Highlight"
                   type="range"
@@ -16957,12 +16974,12 @@ export function ImageEditDialog({
                   value={highlight}
                   onChange={(e) => { previewContinuousSliderRef.current = "highlight"; setHighlight(clampToneRangeAdjustment(Number(e.target.value))); }}
                   onDoubleClick={() => { previewContinuousSliderRef.current = "highlight"; setHighlight(sliderDefaults.highlight); }}
-                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
+                  className={sliderInputClass}
                 />
               </label>
-              <label className="grid grid-cols-[112px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+              <label className={sliderGrid112Class}>
                 <span className="col-start-1 row-start-1">Clarity</span>
-                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{clarity >= 0 ? "+" : ""}{clarity}</span>
+                <span className={sliderValueClass}>{clarity >= 0 ? "+" : ""}{clarity}</span>
                 <input
                   aria-label="Clarity"
                   type="range"
@@ -16972,7 +16989,7 @@ export function ImageEditDialog({
                   value={clarity}
                   onChange={(e) => { previewContinuousSliderRef.current = "clarity"; setClarity(clampClarity(Number(e.target.value))); }}
                   onDoubleClick={() => { previewContinuousSliderRef.current = "clarity"; setClarity(sliderDefaults.clarity); }}
-                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
+                  className={sliderInputClass}
                 />
               </label>
               </div>
@@ -16984,9 +17001,9 @@ export function ImageEditDialog({
                 {panelCollapseButton("color", "Color")}
               </div>
               <div className={collapsedPanels.color ? "hidden" : "space-y-2 lg:space-y-3"}>
-              <label className="grid grid-cols-[96px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+              <label className={sliderGrid96Class}>
                 <span className="col-start-1 row-start-1">Saturation</span>
-                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{saturation >= 0 ? "+" : ""}{saturation}</span>
+                <span className={sliderValueClass}>{saturation >= 0 ? "+" : ""}{saturation}</span>
                 <input
                   type="range"
                   min={-100}
@@ -16995,12 +17012,12 @@ export function ImageEditDialog({
                   value={saturation}
                   onChange={(e) => { previewContinuousSliderRef.current = "color"; setSaturation(clampColorAdjustment(Number(e.target.value))); }}
                   onDoubleClick={() => { previewContinuousSliderRef.current = "color"; setSaturation(sliderDefaults.saturation); }}
-                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
+                  className={sliderInputClass}
                 />
               </label>
-              <label className="grid grid-cols-[96px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+              <label className={sliderGrid96Class}>
                 <span className="col-start-1 row-start-1">Vibrance</span>
-                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{vibrance >= 0 ? "+" : ""}{vibrance}</span>
+                <span className={sliderValueClass}>{vibrance >= 0 ? "+" : ""}{vibrance}</span>
                 <input
                   type="range"
                   min={-100}
@@ -17009,7 +17026,7 @@ export function ImageEditDialog({
                   value={vibrance}
                   onChange={(e) => { previewContinuousSliderRef.current = "color"; setVibrance(clampColorAdjustment(Number(e.target.value))); }}
                   onDoubleClick={() => { previewContinuousSliderRef.current = "color"; setVibrance(sliderDefaults.vibrance); }}
-                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
+                  className={sliderInputClass}
                 />
               </label>
               </div>
@@ -17021,9 +17038,9 @@ export function ImageEditDialog({
                 {panelCollapseButton("finishing", "Finishing")}
               </div>
               <div className={collapsedPanels.finishing ? "hidden" : "space-y-2 lg:space-y-3"}>
-              <label className="grid grid-cols-[112px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+              <label className={sliderGrid112Class}>
                 <span className="col-start-1 row-start-1">Denoise</span>
-                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{denoise}</span>
+                <span className={sliderValueClass}>{denoise}</span>
                 <input
                   aria-label="Denoise"
                   type="range"
@@ -17033,12 +17050,12 @@ export function ImageEditDialog({
                   value={denoise}
                   onChange={(e) => setDenoise(clampDenoise(Number(e.target.value)))}
                   onDoubleClick={() => setDenoise(sliderDefaults.denoise)}
-                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
+                  className={sliderInputClass}
                 />
               </label>
-              <label className="grid grid-cols-[112px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+              <label className={sliderGrid112Class}>
                 <span className="col-start-1 row-start-1">Defringe</span>
-                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{defringe}</span>
+                <span className={sliderValueClass}>{defringe}</span>
                 <input
                   aria-label="Defringe"
                   type="range"
@@ -17048,10 +17065,10 @@ export function ImageEditDialog({
                   value={defringe}
                   onChange={(e) => setDefringe(clampDefringe(Number(e.target.value)))}
                   onDoubleClick={() => setDefringe(sliderDefaults.defringe)}
-                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
+                  className={sliderInputClass}
                 />
               </label>
-              <div className="grid grid-cols-[112px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+              <div className={sliderGrid112Class}>
                 <div className="col-start-1 row-start-1 flex min-w-0 items-center gap-1">
                   <span>Resize</span>
                   {([
@@ -17068,7 +17085,7 @@ export function ImageEditDialog({
                     </button>
                   ))}
                 </div>
-                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{resizePercent}%</span>
+                <span className={sliderValueClass}>{resizePercent}%</span>
                 <input
                   type="range"
                   aria-label="Resize"
@@ -17078,12 +17095,12 @@ export function ImageEditDialog({
                   value={resizePercent}
                   onChange={(e) => setResizePercent(Math.min(100, Math.max(1, Number(e.target.value) || 100)))}
                   onDoubleClick={() => setResizePercent(sliderDefaults.resizePercent)}
-                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
+                  className={sliderInputClass}
                 />
               </div>
-              <label className="grid grid-cols-[112px_minmax(0,1fr)_56px] lg:grid-cols-2 items-center gap-x-2 gap-y-1">
+              <label className={sliderGrid112Class}>
                 <span className="col-start-1 row-start-1">Sharpen</span>
-                <span className="col-start-3 row-start-1 w-14 text-right lg:w-auto lg:col-start-2 justify-self-end font-mono text-[12px]">{sharpen}</span>
+                <span className={sliderValueClass}>{sharpen}</span>
                 <input
                   type="range"
                   aria-label="Sharpen"
@@ -17093,7 +17110,7 @@ export function ImageEditDialog({
                   value={sharpen}
                   onChange={(e) => setSharpen(clampSharpen(Number(e.target.value)))}
                   onDoubleClick={() => setSharpen(sliderDefaults.sharpen)}
-                  className="col-start-2 row-start-1 lg:col-span-2 lg:col-start-1 lg:row-start-2 w-full"
+                  className={sliderInputClass}
                 />
               </label>
               </div>
