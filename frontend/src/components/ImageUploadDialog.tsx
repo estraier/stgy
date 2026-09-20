@@ -1005,6 +1005,8 @@ const SUPER_MC_PRESET_SEQUENCE: readonly ImageSuperMcPreset[] = [
 ];
 
 const SUPER_MC_BLACK_ROLLOFF_B = 0.025;
+const SUPER_MC_BLACK_ROLLOFF_PERCENTILE = 0.003;
+const SUPER_MC_BLACK_ROLLOFF_HISTOGRAM_BINS = 16384;
 const SUPER_MC_WHITE_ROLLOFF_A = 0.5;
 const SUPER_MC_TARGET_PERCENTILE = 0.50;
 const SUPER_MC_WHITE_ROLLOFF_PERCENTILE = 0.998;
@@ -3294,11 +3296,90 @@ function applyDuotoneFilterToRgb16(
   }
 }
 
-function applySuperMcBlackRolloff(value: number): number {
-  if (value >= SUPER_MC_BLACK_ROLLOFF_B) return value;
-  return SUPER_MC_BLACK_ROLLOFF_B * Math.exp(
-    (value - SUPER_MC_BLACK_ROLLOFF_B) / SUPER_MC_BLACK_ROLLOFF_B,
+type SuperMcBlackRolloff = {
+  minimum: number;
+  exponent: number;
+  preExpansionSlope: number;
+};
+
+function estimateSuperMcBlackRolloffPercentile(
+  values: Float32Array,
+  minValue: number,
+): number {
+  if (!(minValue < 0) || values.length <= 0) return 0;
+
+  const histogram = new Uint32Array(SUPER_MC_BLACK_ROLLOFF_HISTOGRAM_BINS);
+  const bins = histogram.length;
+  let negativeCount = 0;
+  for (let i = 0; i < values.length; i += 1) {
+    const value = values[i] ?? 0;
+    if (!(value < 0)) continue;
+    negativeCount += 1;
+    const normalized = clamp01((value - minValue) / -minValue);
+    const index = Math.max(0, Math.min(bins - 1, Math.round(normalized * (bins - 1))));
+    histogram[index] = (histogram[index] ?? 0) + 1;
+  }
+
+  const target = Math.max(
+    0,
+    Math.min(values.length - 1, Math.floor((values.length - 1) * SUPER_MC_BLACK_ROLLOFF_PERCENTILE)),
   );
+  // If fewer than 0.3% of the pixels are negative, P0.3 is already >= 0.
+  if (negativeCount <= target) return 0;
+
+  let cumulative = 0;
+  for (let i = 0; i < bins; i += 1) {
+    cumulative += histogram[i] ?? 0;
+    if (cumulative > target) {
+      return minValue + (i / Math.max(1, bins - 1)) * -minValue;
+    }
+  }
+  return 0;
+}
+
+function buildSuperMcBlackRolloff(
+  values: Float32Array,
+  minValue: number,
+): SuperMcBlackRolloff | null {
+  const minimum = estimateSuperMcBlackRolloffPercentile(values, minValue);
+  if (!(minimum < 0)) return null;
+
+  const span = SUPER_MC_BLACK_ROLLOFF_B - minimum;
+  const exponent = span / SUPER_MC_BLACK_ROLLOFF_B;
+  const normalizedAtZero = -minimum / span;
+  const slopeAtZero = Math.pow(normalizedAtZero, exponent - 1);
+  const preExpansionSlope = 1 / Math.max(1e-12, slopeAtZero);
+  return { minimum, exponent, preExpansionSlope };
+}
+
+function applySuperMcBlackPreExpansion(
+  value: number,
+  rolloff: SuperMcBlackRolloff | null,
+): number {
+  // Keep the negative side unchanged so the measured P0.3 remains the exact
+  // clipping/rolloff minimum. Compensate only the original positive shadow
+  // detail that would otherwise be flattened by the toe around zero.
+  if (!rolloff || !(value > 0) || value >= SUPER_MC_BLACK_ROLLOFF_B) return value;
+
+  const normalized = value / SUPER_MC_BLACK_ROLLOFF_B;
+  return SUPER_MC_BLACK_ROLLOFF_B * (
+    normalized
+    + (rolloff.preExpansionSlope - 1)
+      * normalized * (1 - normalized) * (1 - normalized)
+  );
+}
+
+function applySuperMcBlackRolloff(
+  value: number,
+  rolloff: SuperMcBlackRolloff | null,
+): number {
+  if (!rolloff) return Math.max(0, value);
+  if (value <= rolloff.minimum) return 0;
+  if (value >= SUPER_MC_BLACK_ROLLOFF_B) return value;
+
+  const normalized = (value - rolloff.minimum)
+    / (SUPER_MC_BLACK_ROLLOFF_B - rolloff.minimum);
+  return SUPER_MC_BLACK_ROLLOFF_B * Math.pow(normalized, rolloff.exponent);
 }
 
 function applySuperMcWhiteRolloff(value: number, rolloff: ReturnType<typeof toneRolloffParams>): number {
@@ -3370,7 +3451,7 @@ function applySuperMcFilterToCanvasData(
   const beforeHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
   const filteredHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
   const filteredValues = new Float32Array(pixelCount);
-  let maxBlackRolled = 0;
+  let minMixed = 0;
 
   for (let pixel = 0; pixel < pixelCount; pixel += 1) {
     const index = pixel * 4;
@@ -3381,8 +3462,16 @@ function applySuperMcFilterToCanvasData(
       profile,
     );
     const mixed = applySuperMcChannelMix(r, g, b, preset);
-    const blackRolled = applySuperMcBlackRolloff(mixed);
     accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
+    filteredValues[pixel] = mixed;
+    minMixed = Math.min(minMixed, mixed);
+  }
+
+  const blackRolloff = buildSuperMcBlackRolloff(filteredValues, minMixed);
+  let maxBlackRolled = 0;
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const blackExpanded = applySuperMcBlackPreExpansion(filteredValues[pixel] ?? 0, blackRolloff);
+    const blackRolled = applySuperMcBlackRolloff(blackExpanded, blackRolloff);
     filteredValues[pixel] = blackRolled;
     maxBlackRolled = Math.max(maxBlackRolled, blackRolled);
   }
@@ -3426,7 +3515,7 @@ function applySuperMcFilterToRgb16(
   const filteredHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
   const pixelCount = width * height;
   const filteredValues = new Float32Array(pixelCount);
-  let maxBlackRolled = 0;
+  let minMixed = 0;
 
   for (let pixel = 0; pixel < pixelCount; pixel += 1) {
     const index = pixel * 3;
@@ -3434,8 +3523,16 @@ function applySuperMcFilterToRgb16(
     const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
     const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
     const mixed = applySuperMcChannelMix(r, g, b, preset);
-    const blackRolled = applySuperMcBlackRolloff(mixed);
     accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
+    filteredValues[pixel] = mixed;
+    minMixed = Math.min(minMixed, mixed);
+  }
+
+  const blackRolloff = buildSuperMcBlackRolloff(filteredValues, minMixed);
+  let maxBlackRolled = 0;
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const blackExpanded = applySuperMcBlackPreExpansion(filteredValues[pixel] ?? 0, blackRolloff);
+    const blackRolled = applySuperMcBlackRolloff(blackExpanded, blackRolloff);
     filteredValues[pixel] = blackRolled;
     maxBlackRolled = Math.max(maxBlackRolled, blackRolled);
   }
