@@ -11911,6 +11911,10 @@ export function ImageEditDialog({
 
   const editorUiZoom = desktopEditorZoomEnabled ? 1 / Math.max(1e-6, displayPixelRatio) : 1;
   const imageStageZoom = desktopEditorZoomEnabled ? Math.max(1e-6, displayPixelRatio) : 1;
+  // The image stage cancels the editor UI zoom so the image can stay pixel-for-pixel.
+  // Histogram/debug overlays are UI, not image pixels: keep them at editorUiZoom.
+  // Their responsive size must still follow editorUsesSidePanel (the effective
+  // 100%-zoom layout), not Tailwind's browser-zoomed viewport breakpoints.
   const editorLayoutViewport = useMemo(() => {
     if (!desktopEditorZoomEnabled) return viewportSize;
     return {
@@ -11922,6 +11926,14 @@ export function ImageEditDialog({
     ? Math.min(1400, editorLayoutViewport.w * 0.95)
     : undefined;
   const editorUsesSidePanel = editorLayoutViewport.w >= 1024;
+  const histogramPanelBaseSize = editorUsesSidePanel
+    ? { width: 382.2, height: 179.4 }
+    : { width: 294, height: 138 };
+  const histogramPanelSize = histogramPanelBaseSize;
+  const percentilePanelMaxWidth = 480;
+  const percentilePanelMaxHeight = editorUsesSidePanel
+    ? 800
+    : Math.max(180, editorLayoutViewport.h * 0.28);
   const previewLayoutNatural = useMemo(() => {
     // The display raster must follow the aspect ratio of the pixels that are
     // actually rendered. `natural` is a logical/source geometry and can differ
@@ -14112,17 +14124,22 @@ export function ImageEditDialog({
 
   const histogramPaths = useMemo(() => {
     if (!histogram || histogram.maxCount <= 0) return null;
-    const width = 256;
-    const height = 80;
+    // Draw directly at the visible histogram panel size. The panel frame is not
+    // zoomed, so the SVG is rendered at its final display geometry rather than
+    // enlarging a smaller pre-rendered graph.
+    const inset = 6;
+    const width = Math.max(1, Math.round(histogramPanelSize.width - inset * 2));
+    const height = Math.max(1, Math.round(histogramPanelSize.height - inset * 2));
     return {
       width,
       height,
+      inset,
       luma: histogramPath(histogram.luma, histogram.maxCount, width, height),
       r: histogramPath(histogram.r, histogram.maxCount, width, height),
       g: histogramPath(histogram.g, histogram.maxCount, width, height),
       b: histogramPath(histogram.b, histogram.maxCount, width, height),
     };
-  }, [histogram]);
+  }, [histogram, histogramPanelSize.height, histogramPanelSize.width]);
 
   const gridPaths = useMemo(() => {
     if (!showGrid || displayed.w <= 0 || displayed.h <= 0) return null;
@@ -15534,7 +15551,12 @@ export function ImageEditDialog({
                   })()}
                   {!eyedropperMode && showHistogram && histogramPaths && (
                     <div
-                      className="absolute left-2 bottom-2 z-[33] w-[294px] h-[138px] rounded bg-black pointer-events-none lg:w-[382.2px] lg:h-[179.4px] [zoom:var(--editor-ui-zoom)]"
+                      className="absolute left-2 bottom-2 rounded bg-black pointer-events-none"
+                      style={{
+                        width: histogramPanelSize.width,
+                        height: histogramPanelSize.height,
+                        zoom: editorUiZoom,
+                      }}
                       aria-hidden="true"
                     />
                   )}
@@ -16214,9 +16236,22 @@ export function ImageEditDialog({
                     );
                   })}
                   {!eyedropperMode && showHistogram && histogramPaths && (
-                    <div className="absolute left-2 bottom-2 z-[33] w-[294px] h-[138px] rounded border border-white/40 bg-black/80 shadow-sm pointer-events-none lg:w-[382.2px] lg:h-[179.4px] [zoom:var(--editor-ui-zoom)]">
+                    <div
+                      className="absolute left-2 bottom-2 z-[33] rounded border border-white/40 bg-black/80 shadow-sm pointer-events-none"
+                      style={{
+                        width: histogramPanelSize.width,
+                        height: histogramPanelSize.height,
+                        zoom: editorUiZoom,
+                      }}
+                    >
                       <svg
-                        className="absolute inset-[6px] w-[calc(100%-12px)] h-[calc(100%-12px)]"
+                        className="absolute"
+                        style={{
+                          left: histogramPaths.inset,
+                          top: histogramPaths.inset,
+                          width: histogramPaths.width,
+                          height: histogramPaths.height,
+                        }}
                         viewBox={`0 0 ${histogramPaths.width} ${histogramPaths.height}`}
                         preserveAspectRatio="none"
                         aria-hidden="true"
@@ -16255,11 +16290,17 @@ export function ImageEditDialog({
                     >
                       <div
                         ref={percentilePanelRef}
-                        className="absolute left-2 top-2 max-h-[max(180px,28vh)] max-w-[480px] overflow-x-auto overflow-y-auto rounded border border-white/40 bg-black/85 p-2 text-[11px] leading-tight text-white shadow-lg lg:max-h-[800px] [zoom:var(--editor-ui-zoom)]"
+                        className="absolute left-2 top-2 overflow-x-auto overflow-y-auto rounded border border-white/40 bg-black/85 p-2 text-white shadow-lg"
+                        style={{
+                          maxWidth: percentilePanelMaxWidth,
+                          maxHeight: percentilePanelMaxHeight,
+                          zoom: editorUiZoom,
+                        }}
                         onPointerDown={(e) => e.stopPropagation()}
                         onClick={(e) => e.stopPropagation()}
                       >
-                        <div className="flex items-start gap-3">
+                        <div className="text-[11px] leading-tight">
+                          <div className="flex items-start gap-3">
                           {([
                             ["luminance", "luminance"],
                             ["saturation", "saturation"],
@@ -16426,6 +16467,7 @@ export function ImageEditDialog({
                             </div>
                           </div>
                         )}
+                        </div>
                       </div>
                     </div>
                   )}
@@ -17118,8 +17160,8 @@ export function ImageEditDialog({
           </div>
         </div>
 
-        <div className="mt-4 flex flex-col gap-2 lg:flex-row lg:items-center">
-          <div className="flex flex-col gap-y-0.5 text-[12px] text-gray-600 font-mono whitespace-nowrap lg:mr-auto lg:flex-row lg:flex-nowrap lg:gap-x-6 lg:gap-y-0">
+        <div className={`mt-4 flex gap-2 ${editorUsesSidePanel ? "flex-row items-center" : "flex-col"}`}>
+          <div className={`flex text-[12px] text-gray-600 font-mono whitespace-nowrap ${editorUsesSidePanel ? "mr-auto flex-row flex-nowrap gap-x-6 gap-y-0" : "flex-col gap-y-0.5"}`}>
             <span>
               Input: {natural ? `${natural.w}x${natural.h}, ${(natural.w * natural.h / 1_000_000).toFixed(1)}MP` : "—"}
             </span>
