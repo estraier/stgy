@@ -5869,7 +5869,7 @@ function histogramPercentile16(
 
 function applyRawBaselineScaledLogLinear(value: number, factor: number): number {
   const x = clamp01(value);
-  const f = Math.min(RAW_THUMBNAIL_MATCH_LOG_MAX, Math.max(RAW_THUMBNAIL_MATCH_LOG_MIN, factor));
+  const f = factor;
   if (f > 1e-8) {
     return clamp01(Math.log1p(x * f) / Math.log1p(f));
   }
@@ -5882,10 +5882,7 @@ function applyRawBaselineScaledLogLinear(value: number, factor: number): number 
 
 function applyRawBaselineSigmoidLinear(value: number, gain: number): number {
   const x = clamp01(value);
-  const g = Math.min(
-    RAW_THUMBNAIL_MATCH_SIGMOID_MAX,
-    Math.max(RAW_THUMBNAIL_MATCH_SIGMOID_MIN, gain),
-  );
+  const g = gain;
   const mid = 0.5;
   const gamma = SIGMOID_WORKING_GAMMA;
   const encoded = Math.pow(x, 1 / gamma);
@@ -8693,9 +8690,7 @@ function developRawPreviewPixelsSync(
 ): RawProgressiveDevelopmentPlan {
   let mode: RawDevelopmentSettings["mode"] = "linear";
   let luminance: RawDevelopmentLuminanceSettings | null = null;
-  let headroom: RawDevelopmentHeadroomStatistics | undefined;
   let saturation: RawDevelopmentSaturationSettings = { saturation: 0, vibrance: 0 };
-  let tonePlan: RawMatchedTonePlan | undefined;
   let colorPlan: RawColorPassPlan | undefined;
 
   const thumbnailMatched = rawToneMode === "thumbnail" && thumbnailReference
@@ -8711,9 +8706,9 @@ function developRawPreviewPixelsSync(
     : entropyMatched
       ? "entropy"
       : "linear";
-  tonePlan = selectedTone.plan;
+  const tonePlan = selectedTone.plan;
   luminance = selectedTone.luminance;
-  headroom = applyRawMatchedTonePass(
+  const headroom = applyRawMatchedTonePass(
     decoded.data,
     decoded.width,
     decoded.height,

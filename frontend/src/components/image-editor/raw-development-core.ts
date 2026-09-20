@@ -98,10 +98,6 @@ const RAW_HEADROOM_HISTOGRAM_STEP = 0.1;
 const RAW_HEADROOM_HISTOGRAM_MAX = RAW_DEVELOPED_LINEAR_RANGE_MAX;
 const RAW_BASELINE_PERCENTILE = 98;
 const RAW_BASELINE_TARGET = 0.9;
-const RAW_THUMBNAIL_MATCH_LOG_MIN = -2;
-const RAW_THUMBNAIL_MATCH_LOG_MAX = 4;
-const RAW_THUMBNAIL_MATCH_SIGMOID_MIN = -2;
-const RAW_THUMBNAIL_MATCH_SIGMOID_MAX = 3;
 const RAW_DENOISE_ISO_NEUTRAL = 400;
 const RAW_DENOISE_ISO_LOG_PER_STOP = 2;
 const PROPHOTO_LUMA_R = 0.2880402;
@@ -148,7 +144,7 @@ function naiveInverseSigmoid(value: number, gain: number, mid: number): number {
 
 function applyRawBaselineScaledLogLinear(value: number, factor: number): number {
   const x = clamp01(value);
-  const f = Math.min(RAW_THUMBNAIL_MATCH_LOG_MAX, Math.max(RAW_THUMBNAIL_MATCH_LOG_MIN, factor));
+  const f = factor;
   if (f > 1e-8) return clamp01(Math.log1p(x * f) / Math.log1p(f));
   if (f < -1e-8) {
     const magnitude = -f;
@@ -159,10 +155,7 @@ function applyRawBaselineScaledLogLinear(value: number, factor: number): number 
 
 function applyRawBaselineSigmoidLinear(value: number, gain: number): number {
   const x = clamp01(value);
-  const g = Math.min(
-    RAW_THUMBNAIL_MATCH_SIGMOID_MAX,
-    Math.max(RAW_THUMBNAIL_MATCH_SIGMOID_MIN, gain),
-  );
+  const g = gain;
   const mid = 0.5;
   const gamma = SIGMOID_WORKING_GAMMA;
   const encoded = Math.pow(x, 1 / gamma);
@@ -896,24 +889,14 @@ export function developRawMasterOnePassRowsToGamma20(
   // vibrance logarithms for every full-resolution pixel.
   const toneGain = tonePlan?.gain ?? 0;
   const toneSlopeAtWhite = tonePlan?.toneSlopeAtWhite ?? 1;
-  const toneScaledLog = tonePlan
-    ? Math.min(
-      RAW_THUMBNAIL_MATCH_LOG_MAX,
-      Math.max(RAW_THUMBNAIL_MATCH_LOG_MIN, tonePlan.scaledLog),
-    )
-    : 0;
+  const toneScaledLog = tonePlan?.scaledLog ?? 0;
   const toneScaledLogMode = toneScaledLog > 1e-8 ? 1 : toneScaledLog < -1e-8 ? -1 : 0;
   const toneScaledLogMagnitude = Math.abs(toneScaledLog);
   const toneScaledLogDenominator = toneScaledLogMode === 0
     ? 0
     : Math.log1p(toneScaledLogMagnitude);
 
-  const toneSigmoid = tonePlan
-    ? Math.min(
-      RAW_THUMBNAIL_MATCH_SIGMOID_MAX,
-      Math.max(RAW_THUMBNAIL_MATCH_SIGMOID_MIN, tonePlan.sigmoid),
-    )
-    : 0;
+  const toneSigmoid = tonePlan?.sigmoid ?? 0;
   const toneSigmoidMode = toneSigmoid > 1e-8 ? 1 : toneSigmoid < -1e-8 ? -1 : 0;
   const toneSigmoidMagnitude = Math.abs(toneSigmoid);
   let toneSigmoidMin = 0;
