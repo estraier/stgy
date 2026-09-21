@@ -1015,7 +1015,7 @@ const SUPER_MC_WHITE_ROLLOFF_MIN_EV = -16;
 
 const SUPER_MC_WEIGHTS: Record<ImageSuperMcPreset, readonly [number, number, number]> = {
   "super-mc-red": [1.0, 0.5, -0.5],
-  "super-mc-green": [-0.25, 1.5, -0.25],
+  "super-mc-green": [-0.2, 1.5, -0.3],
   "super-mc-blue": [-0.5, 0.5, 1.0],
 };
 
