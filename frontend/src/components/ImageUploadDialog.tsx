@@ -1076,6 +1076,12 @@ const PHOTOCHEMICAL_STAIN_MEDIUM_CYCLES_PER_DIAGONAL = 24;
 const PHOTOCHEMICAL_STAIN_MAX_OPACITY = 0.02;
 const PHOTOCHEMICAL_TARGET_PERCENTILE = 0.50;
 const CROSS_PROCESS_TONE_MIX = 0.95;
+const CROSS_PROCESS_CURVE_R_K = 6.0;
+const CROSS_PROCESS_CURVE_G_K = 5.5;
+const CROSS_PROCESS_CURVE_B_K = 6.5;
+const CROSS_PROCESS_CURVE_R_X0 = 0.51;
+const CROSS_PROCESS_CURVE_G_X0 = 0.47;
+const CROSS_PROCESS_CURVE_B_X0 = 0.56;
 const CROSS_PROCESS_CONTRAST_LOW_PERCENTILE = 0.10;
 const CROSS_PROCESS_TARGET_PERCENTILE = 0.50;
 const CROSS_PROCESS_CONTRAST_HIGH_PERCENTILE = 0.90;
@@ -2591,22 +2597,21 @@ function applyChemicalCrossProcessLinearRgb(r: number, g: number, b: number): [n
     const max = 1 / (1 + Math.exp(-k * (1 - x0)));
     return max - min > 1e-9 ? (val - min) / (max - min) : 0;
   };
-
   const workR = clampInput(r);
   const workG = clampInput(g);
   const workB = clampInput(b);
 
-  const devR = applyHDCurve(workR, 4.25, 0.516);
-  const devG = applyHDCurve(workG, 4.00, 0.500);
-  const devB = applyHDCurve(workB, 3.75, 0.484);
+  const devR = applyHDCurve(workR, CROSS_PROCESS_CURVE_R_K, CROSS_PROCESS_CURVE_R_X0);
+  const devG = applyHDCurve(workG, CROSS_PROCESS_CURVE_G_K, CROSS_PROCESS_CURVE_G_X0);
+  const devB = applyHDCurve(workB, CROSS_PROCESS_CURVE_B_K, CROSS_PROCESS_CURVE_B_X0);
 
   const crossR = workR * (1 - CROSS_PROCESS_TONE_MIX) + devR * CROSS_PROCESS_TONE_MIX;
   const crossG = workG * (1 - CROSS_PROCESS_TONE_MIX) + devG * CROSS_PROCESS_TONE_MIX;
   const crossB = workB * (1 - CROSS_PROCESS_TONE_MIX) + devB * CROSS_PROCESS_TONE_MIX;
 
-  const dyeR = 1.014 * crossR - 0.009 * crossG - 0.002 * crossB;
+  const dyeR = 1.014 * crossR - 0.018 * crossG - 0.002 * crossB;
   const dyeG = -0.007 * crossR + 1.014 * crossG - 0.007 * crossB;
-  const dyeB = -0.009 * crossR - 0.015 * crossG + 1.022 * crossB;
+  const dyeB = -0.009 * crossR - 0.030 * crossG + 1.022 * crossB;
 
   return [clamp01(dyeR), clamp01(dyeG), clamp01(dyeB)];
 }
