@@ -1,0 +1,450 @@
+import { applyScaledLogLinearExtended, clamp01, colorVibranceFactor } from "@/image/tone";
+
+export const IMAGE_MIXER_LUT_SIZE = 32;
+export const IMAGE_MIXER_LUT_CHANNELS = 3;
+export const IMAGE_MIXER_SETTING_COUNT = 36;
+
+const MIXER_HUE_FULL_WEIGHT_DEGREES = 25;
+const MIXER_HUE_ZERO_WEIGHT_DEGREES = 65;
+const MIXER_SATURATION_CHROMA_ZERO = 0.005;
+const MIXER_SATURATION_CHROMA_FULL = 0.07;
+const MIXER_LUMINANCE_CHROMA_ZERO = 0.02;
+const MIXER_LUMINANCE_CHROMA_FULL = 0.10;
+const MIXER_HUE_MAX_SHIFT_DEGREES = 60;
+const MIXER_SATURATION_VIBRANCE_STRENGTH = 1.5;
+const MIXER_LUMINANCE_MIDTONE_MAX = 30;
+const PROPHOTO_LUMA_R = 0.2880402;
+const PROPHOTO_LUMA_G = 0.7118741;
+const PROPHOTO_LUMA_B = 0.0000857;
+
+// Canonical sRGB hues for a 12-step wheel (R, O, Y, Chartreuse, G,
+// Spring Green, C, Azure, B, Violet, M, Rose) after conversion to OKLab.
+// They are mapped piecewise to a virtual 30-degree Mixer wheel so the UI can
+// expose 12 evenly spaced color controls while classification itself is
+// performed in a perceptual hue space.
+const OKLAB_ANCHOR_HUES = [
+  29.233885192342633,
+  52.984679593971286,
+  109.76923207652123,
+  135.8923516605372,
+  142.49533888780996,
+  151.1848269852735,
+  194.76894793196382,
+  256.09895765186343,
+  264.052020638055,
+  293.9376408144792,
+  328.36341792345144,
+  362.47076075330204,
+] as const;
+
+const VIRTUAL_MIXER_HUES = [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330] as const;
+
+export type ImageMixerLut = {
+  key: string;
+  size: number;
+  data: Float32Array;
+};
+
+export type ImageMixerLutBuildResult = ImageMixerLut;
+
+function clampMixerControl(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(-100, Math.min(100, value));
+}
+
+export function imageMixerLutKey(settings: ArrayLike<number>): string {
+  const values: string[] = [];
+  for (let i = 0; i < IMAGE_MIXER_SETTING_COUNT; i += 1) {
+    values.push(String(Math.round(clampMixerControl(settings[i] ?? 0))));
+  }
+  return values.join(",");
+}
+
+function circularHueDistanceDegrees(a: number, b: number): number {
+  const raw = Math.abs(a - b) % 360;
+  return Math.min(raw, 360 - raw);
+}
+
+function mixerHueWeight(distanceDegrees: number): number {
+  const distance = Math.abs(distanceDegrees);
+  if (distance <= MIXER_HUE_FULL_WEIGHT_DEGREES) return 1;
+  if (distance >= MIXER_HUE_ZERO_WEIGHT_DEGREES) return 0;
+  const t = (distance - MIXER_HUE_FULL_WEIGHT_DEGREES)
+    / (MIXER_HUE_ZERO_WEIGHT_DEGREES - MIXER_HUE_FULL_WEIGHT_DEGREES);
+  return 0.5 * (1 + Math.cos(Math.PI * t));
+}
+
+function mixerSaturationChromaWeight(chroma: number): number {
+  const span = MIXER_SATURATION_CHROMA_FULL - MIXER_SATURATION_CHROMA_ZERO;
+  if (!(span > 0)) return chroma > MIXER_SATURATION_CHROMA_ZERO ? 1 : 0;
+  const t = clamp01((chroma - MIXER_SATURATION_CHROMA_ZERO) / span);
+  return t * t * (3 - 2 * t);
+}
+
+function mixerLuminanceChromaWeight(chroma: number): number {
+  const span = MIXER_LUMINANCE_CHROMA_FULL - MIXER_LUMINANCE_CHROMA_ZERO;
+  if (!(span > 0)) return chroma > MIXER_LUMINANCE_CHROMA_ZERO ? 1 : 0;
+  const t = clamp01((chroma - MIXER_LUMINANCE_CHROMA_ZERO) / span);
+  return t * t * (3 - 2 * t);
+}
+
+function normalizeDegrees(value: number): number {
+  return ((value % 360) + 360) % 360;
+}
+
+function findCircularSegment(value: number, anchors: readonly number[]): { index: number; t: number } {
+  const normalized = normalizeDegrees(value);
+  for (let i = 0; i < anchors.length; i += 1) {
+    const start = anchors[i] ?? 0;
+    const nextRaw = anchors[(i + 1) % anchors.length] ?? 0;
+    const end = i === anchors.length - 1 ? nextRaw + 360 : nextRaw;
+    const candidate = i === anchors.length - 1 && normalized < start ? normalized + 360 : normalized;
+    if (candidate >= start && candidate <= end) {
+      const span = end - start;
+      return { index: i, t: span > 1e-12 ? (candidate - start) / span : 0 };
+    }
+  }
+  return { index: 0, t: 0 };
+}
+
+function oklabHueToMixerHue(hueDegrees: number): number {
+  const { index, t } = findCircularSegment(hueDegrees, OKLAB_ANCHOR_HUES);
+  const start = VIRTUAL_MIXER_HUES[index] ?? 0;
+  const end = index === VIRTUAL_MIXER_HUES.length - 1
+    ? (VIRTUAL_MIXER_HUES[0] ?? 0) + 360
+    : (VIRTUAL_MIXER_HUES[index + 1] ?? 0);
+  return normalizeDegrees(start + (end - start) * t);
+}
+
+function mixerHueToOklabHue(mixerHueDegrees: number): number {
+  const { index, t } = findCircularSegment(mixerHueDegrees, VIRTUAL_MIXER_HUES);
+  const start = OKLAB_ANCHOR_HUES[index] ?? 0;
+  const end = index === OKLAB_ANCHOR_HUES.length - 1
+    ? (OKLAB_ANCHOR_HUES[0] ?? 0) + 360
+    : (OKLAB_ANCHOR_HUES[index + 1] ?? 0);
+  return normalizeDegrees(start + (end - start) * t);
+}
+
+function linearProPhotoToOklab(r: number, g: number, b: number): [number, number, number] {
+  // Linear ProPhoto RGB (D50) -> XYZ D50.
+  const x50 = 0.7976749 * r + 0.1351917 * g + 0.0313534 * b;
+  const y50 = 0.2880402 * r + 0.7118741 * g + 0.0000857 * b;
+  const z50 = 0.8252100 * b;
+
+  // Bradford D50 -> D65.
+  const x65 = 0.9555766 * x50 - 0.0230393 * y50 + 0.0631636 * z50;
+  const y65 = -0.0282895 * x50 + 1.0099416 * y50 + 0.0210077 * z50;
+  const z65 = 0.0122982 * x50 - 0.0204830 * y50 + 1.3299098 * z50;
+
+  // XYZ D65 -> linear sRGB -> OKLab. Using the published linear-sRGB
+  // OKLab matrices here keeps the forward/inverse pair numerically stable.
+  const sr = 3.2404542 * x65 - 1.5371385 * y65 - 0.4985314 * z65;
+  const sg = -0.9692660 * x65 + 1.8760108 * y65 + 0.0415560 * z65;
+  const sb = 0.0556434 * x65 - 0.2040259 * y65 + 1.0572252 * z65;
+
+  const l = 0.4122214708 * sr + 0.5363325363 * sg + 0.0514459929 * sb;
+  const m = 0.2119034982 * sr + 0.6806995451 * sg + 0.1073969566 * sb;
+  const ss = 0.0883024619 * sr + 0.2817188376 * sg + 0.6299787005 * sb;
+  const lRoot = Math.cbrt(l);
+  const mRoot = Math.cbrt(m);
+  const sRoot = Math.cbrt(ss);
+
+  return [
+    0.2104542553 * lRoot + 0.7936177850 * mRoot - 0.0040720468 * sRoot,
+    1.9779984951 * lRoot - 2.4285922050 * mRoot + 0.4505937099 * sRoot,
+    0.0259040371 * lRoot + 0.7827717662 * mRoot - 0.8086757660 * sRoot,
+  ];
+}
+
+function oklabToLinearProPhoto(L: number, a: number, b: number): [number, number, number] {
+  const lRoot = L + 0.3963377774 * a + 0.2158037573 * b;
+  const mRoot = L - 0.1055613458 * a - 0.0638541728 * b;
+  const sRoot = L - 0.0894841775 * a - 1.2914855480 * b;
+  const l = lRoot * lRoot * lRoot;
+  const m = mRoot * mRoot * mRoot;
+  const ss = sRoot * sRoot * sRoot;
+
+  const sr = 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * ss;
+  const sg = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * ss;
+  const sb = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * ss;
+
+  // linear sRGB -> XYZ D65.
+  const x65 = 0.4124564 * sr + 0.3575761 * sg + 0.1804375 * sb;
+  const y65 = 0.2126729 * sr + 0.7151522 * sg + 0.0721750 * sb;
+  const z65 = 0.0193339 * sr + 0.1191920 * sg + 0.9503041 * sb;
+
+  // Bradford D65 -> D50.
+  const x50 = 1.0478112 * x65 + 0.0228866 * y65 - 0.0501270 * z65;
+  const y50 = 0.0295424 * x65 + 0.9904844 * y65 - 0.0170491 * z65;
+  const z50 = -0.0092345 * x65 + 0.0150436 * y65 + 0.7521316 * z65;
+
+  // XYZ D50 -> linear ProPhoto RGB.
+  return [
+    1.3459433 * x50 - 0.2556075 * y50 - 0.0511118 * z50,
+    -0.5445989 * x50 + 1.5081673 * y50 + 0.0205351 * z50,
+    1.2118128 * z50,
+  ];
+}
+
+function prophotoLuma(r: number, g: number, b: number): number {
+  return Math.max(0, r * PROPHOTO_LUMA_R + g * PROPHOTO_LUMA_G + b * PROPHOTO_LUMA_B);
+}
+
+function scaleRgbToLuma(r: number, g: number, b: number, targetLuma: number): [number, number, number] {
+  const sourceLuma = prophotoLuma(r, g, b);
+  if (!(sourceLuma > 1e-12) || !Number.isFinite(sourceLuma) || !Number.isFinite(targetLuma)) {
+    return [r, g, b];
+  }
+  const scale = targetLuma / sourceLuma;
+  return [r * scale, g * scale, b * scale];
+}
+
+function applyRichMixerLinearRgb(
+  r: number,
+  g: number,
+  b: number,
+  settings: ArrayLike<number>,
+): [number, number, number] {
+  const originalLuma = prophotoLuma(r, g, b);
+  if (!(originalLuma > 1e-12)) return [r, g, b];
+
+  const [L, a, bb] = linearProPhotoToOklab(r, g, b);
+  const chroma = Math.hypot(a, bb);
+  const hueDegrees = chroma > 1e-12 ? normalizeDegrees(Math.atan2(bb, a) * 180 / Math.PI) : 0;
+  const mixerHueDegrees = oklabHueToMixerHue(hueDegrees);
+  const saturationChromaWeight = mixerSaturationChromaWeight(chroma);
+  const luminanceChromaWeight = mixerLuminanceChromaWeight(chroma);
+
+  let hueControl = 0;
+  let saturationControl = 0;
+  let luminanceControl = 0;
+  let hueControlLimit = 0;
+  let saturationControlLimit = 0;
+  let luminanceControlLimit = 0;
+
+  for (let colorIndex = 0; colorIndex < 12; colorIndex += 1) {
+    const base = colorIndex * 3;
+    const hueAdjustment = clampMixerControl(settings[base] ?? 0);
+    const saturationAdjustment = clampMixerControl(settings[base + 1] ?? 0);
+    const luminanceAdjustment = clampMixerControl(settings[base + 2] ?? 0);
+    if (hueAdjustment === 0 && saturationAdjustment === 0 && luminanceAdjustment === 0) continue;
+    const center = colorIndex * 30;
+    const weight = mixerHueWeight(circularHueDistanceDegrees(mixerHueDegrees, center));
+    if (!(weight > 0)) continue;
+
+    if (hueAdjustment !== 0) {
+      hueControl += hueAdjustment * weight;
+      hueControlLimit = Math.max(hueControlLimit, Math.abs(hueAdjustment));
+    }
+    if (saturationAdjustment !== 0 && saturationChromaWeight > 0) {
+      saturationControl += saturationAdjustment * weight * saturationChromaWeight;
+      saturationControlLimit = Math.max(saturationControlLimit, Math.abs(saturationAdjustment));
+    }
+    if (luminanceAdjustment !== 0 && luminanceChromaWeight > 0) {
+      luminanceControl += luminanceAdjustment * weight * luminanceChromaWeight;
+      luminanceControlLimit = Math.max(luminanceControlLimit, Math.abs(luminanceAdjustment));
+    }
+  }
+
+  hueControl = Math.max(-hueControlLimit, Math.min(hueControlLimit, hueControl));
+  saturationControl = Math.max(-saturationControlLimit, Math.min(saturationControlLimit, saturationControl));
+  luminanceControl = Math.max(-luminanceControlLimit, Math.min(luminanceControlLimit, luminanceControl));
+
+  const hueShift = Math.max(-MIXER_HUE_MAX_SHIFT_DEGREES, Math.min(
+    MIXER_HUE_MAX_SHIFT_DEGREES,
+    hueControl * (MIXER_HUE_MAX_SHIFT_DEGREES / 100),
+  ));
+  const saturationAmount = saturationControl;
+  const luminanceAmount = luminanceControl;
+
+  let mixedR = r;
+  let mixedG = g;
+  let mixedB = b;
+
+  if (Math.abs(hueShift) > 1e-9 || Math.abs(saturationAmount) > 1e-9) {
+    const adjustedMixerHue = Math.abs(hueShift) > 1e-9
+      ? normalizeDegrees(mixerHueDegrees + hueShift)
+      : mixerHueDegrees;
+    const adjustedOklabHue = mixerHueToOklabHue(adjustedMixerHue);
+    const adjustedChroma = Math.abs(saturationAmount) > 1e-9
+      ? Math.max(0, applyScaledLogLinearExtended(
+          chroma,
+          colorVibranceFactor(saturationAmount) * MIXER_SATURATION_VIBRANCE_STRENGTH,
+        ))
+      : chroma;
+
+    const hueRadians = adjustedOklabHue * Math.PI / 180;
+    const adjustedA = adjustedChroma * Math.cos(hueRadians);
+    const adjustedB = adjustedChroma * Math.sin(hueRadians);
+    [mixedR, mixedG, mixedB] = oklabToLinearProPhoto(L, adjustedA, adjustedB);
+
+    // Hue/chroma edits should not implicitly alter image brightness. Restore
+    // the original ProPhoto luminance before explicit Luminance adjustment.
+    [mixedR, mixedG, mixedB] = scaleRgbToLuma(mixedR, mixedG, mixedB, originalLuma);
+  }
+
+  if (Math.abs(luminanceAmount) > 1e-9) {
+    const scaledLog = luminanceAmount * (MIXER_LUMINANCE_MIDTONE_MAX / 100);
+    const targetLuma = applyScaledLogLinearExtended(originalLuma, scaledLog);
+    [mixedR, mixedG, mixedB] = scaleRgbToLuma(mixedR, mixedG, mixedB, targetLuma);
+  }
+
+  return [mixedR, mixedG, mixedB];
+}
+
+export function buildImageMixerLut(
+  settings: ArrayLike<number>,
+  key = imageMixerLutKey(settings),
+  size = IMAGE_MIXER_LUT_SIZE,
+): ImageMixerLutBuildResult {
+  const normalizedSize = Math.max(2, Math.round(size));
+  const data = new Float32Array(normalizedSize * normalizedSize * normalizedSize * IMAGE_MIXER_LUT_CHANNELS);
+  const maxIndex = normalizedSize - 1;
+  let offset = 0;
+
+  for (let ri = 0; ri < normalizedSize; ri += 1) {
+    const encodedR = ri / maxIndex;
+    const r = encodedR * encodedR;
+    for (let gi = 0; gi < normalizedSize; gi += 1) {
+      const encodedG = gi / maxIndex;
+      const g = encodedG * encodedG;
+      for (let bi = 0; bi < normalizedSize; bi += 1) {
+        const encodedB = bi / maxIndex;
+        const b = encodedB * encodedB;
+        const [mr, mg, mb] = applyRichMixerLinearRgb(r, g, b, settings);
+        data[offset] = Math.sqrt(clamp01(mr));
+        data[offset + 1] = Math.sqrt(clamp01(mg));
+        data[offset + 2] = Math.sqrt(clamp01(mb));
+        offset += 3;
+      }
+    }
+  }
+
+  return { key, size: normalizedSize, data };
+}
+
+function lutOffset(size: number, r: number, g: number, b: number): number {
+  return ((r * size + g) * size + b) * 3;
+}
+
+function addVertex(
+  data: Float32Array,
+  size: number,
+  r: number,
+  g: number,
+  b: number,
+  weight: number,
+  out: number[],
+): void {
+  if (!(weight !== 0)) return;
+  const index = lutOffset(size, r, g, b);
+  out[0] = (out[0] ?? 0) + (data[index] ?? 0) * weight;
+  out[1] = (out[1] ?? 0) + (data[index + 1] ?? 0) * weight;
+  out[2] = (out[2] ?? 0) + (data[index + 2] ?? 0) * weight;
+}
+
+export function sampleImageMixerLutTetrahedralInto(
+  lut: ImageMixerLut,
+  encodedR: number,
+  encodedG: number,
+  encodedB: number,
+  out: number[],
+): void {
+  const size = lut.size;
+  const maxIndex = size - 1;
+  const xr = clamp01(encodedR) * maxIndex;
+  const xg = clamp01(encodedG) * maxIndex;
+  const xb = clamp01(encodedB) * maxIndex;
+  const r0 = Math.min(maxIndex - 1, Math.floor(xr));
+  const g0 = Math.min(maxIndex - 1, Math.floor(xg));
+  const b0 = Math.min(maxIndex - 1, Math.floor(xb));
+  const fr = xr - r0;
+  const fg = xg - g0;
+  const fb = xb - b0;
+  const r1 = r0 + 1;
+  const g1 = g0 + 1;
+  const b1 = b0 + 1;
+
+  out[0] = 0;
+  out[1] = 0;
+  out[2] = 0;
+
+  if (fr >= fg) {
+    if (fg >= fb) {
+      // r >= g >= b
+      addVertex(lut.data, size, r0, g0, b0, 1 - fr, out);
+      addVertex(lut.data, size, r1, g0, b0, fr - fg, out);
+      addVertex(lut.data, size, r1, g1, b0, fg - fb, out);
+      addVertex(lut.data, size, r1, g1, b1, fb, out);
+    } else if (fr >= fb) {
+      // r >= b > g
+      addVertex(lut.data, size, r0, g0, b0, 1 - fr, out);
+      addVertex(lut.data, size, r1, g0, b0, fr - fb, out);
+      addVertex(lut.data, size, r1, g0, b1, fb - fg, out);
+      addVertex(lut.data, size, r1, g1, b1, fg, out);
+    } else {
+      // b > r >= g
+      addVertex(lut.data, size, r0, g0, b0, 1 - fb, out);
+      addVertex(lut.data, size, r0, g0, b1, fb - fr, out);
+      addVertex(lut.data, size, r1, g0, b1, fr - fg, out);
+      addVertex(lut.data, size, r1, g1, b1, fg, out);
+    }
+  } else if (fr >= fb) {
+    // g > r >= b
+    addVertex(lut.data, size, r0, g0, b0, 1 - fg, out);
+    addVertex(lut.data, size, r0, g1, b0, fg - fr, out);
+    addVertex(lut.data, size, r1, g1, b0, fr - fb, out);
+    addVertex(lut.data, size, r1, g1, b1, fb, out);
+  } else if (fg >= fb) {
+    // g >= b > r
+    addVertex(lut.data, size, r0, g0, b0, 1 - fg, out);
+    addVertex(lut.data, size, r0, g1, b0, fg - fb, out);
+    addVertex(lut.data, size, r0, g1, b1, fb - fr, out);
+    addVertex(lut.data, size, r1, g1, b1, fr, out);
+  } else {
+    // b > g > r
+    addVertex(lut.data, size, r0, g0, b0, 1 - fb, out);
+    addVertex(lut.data, size, r0, g0, b1, fb - fg, out);
+    addVertex(lut.data, size, r0, g1, b1, fg - fr, out);
+    addVertex(lut.data, size, r1, g1, b1, fr, out);
+  }
+}
+
+const MIXER_LUT_CACHE_MAX = 6;
+const mixerLutCache = new Map<string, ImageMixerLut>();
+
+function mixerLutCacheKey(key: string, size: number): string {
+  return `${key}@${size}`;
+}
+
+export function getCachedImageMixerLut(
+  key: string,
+  size = IMAGE_MIXER_LUT_SIZE,
+): ImageMixerLut | null {
+  const cacheKey = mixerLutCacheKey(key, size);
+  const lut = mixerLutCache.get(cacheKey);
+  if (!lut) return null;
+  mixerLutCache.delete(cacheKey);
+  mixerLutCache.set(cacheKey, lut);
+  return lut;
+}
+
+export function cacheImageMixerLut(lut: ImageMixerLut): void {
+  const cacheKey = mixerLutCacheKey(lut.key, lut.size);
+  mixerLutCache.delete(cacheKey);
+  mixerLutCache.set(cacheKey, lut);
+  while (mixerLutCache.size > MIXER_LUT_CACHE_MAX) {
+    const oldest = mixerLutCache.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    mixerLutCache.delete(oldest);
+  }
+}
+
+export function getOrBuildImageMixerLut(settings: ArrayLike<number>): ImageMixerLut {
+  const key = imageMixerLutKey(settings);
+  const cached = getCachedImageMixerLut(key, IMAGE_MIXER_LUT_SIZE);
+  if (cached) return cached;
+  const built = buildImageMixerLut(settings, key, IMAGE_MIXER_LUT_SIZE);
+  cacheImageMixerLut(built);
+  return built;
+}
