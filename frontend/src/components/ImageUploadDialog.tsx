@@ -98,6 +98,15 @@ import {
   encodedRgbToLinearProphoto,
   encodedRgbToLinearProphotoInto,
 } from "@/image/color";
+import {
+  IMAGE_MIXER_LUT_SIZE,
+  cacheImageMixerLut,
+  getCachedImageMixerLut,
+  getOrBuildImageMixerLut,
+  imageMixerLutKey,
+  sampleImageMixerLutTetrahedralInto,
+  type ImageMixerLut,
+} from "./image-editor/mixer-lut";
 import { createCanvasImageData, getCanvas2dContext, getCanvasImageData } from "./image-editor/canvas";
 import { applySharpenToCanvas, applySharpenToRgb16 } from "./image-editor/sharpen";
 import { applyDenoiseToCanvas, applyDenoiseToRgb16, clampDenoise } from "./image-editor/denoise";
@@ -323,6 +332,17 @@ export type ImageFilter =
       preset: ImageNonMonochromeFilterPreset;
     };
 
+export type ImageMixerColorKey = "red" | "yellow" | "green" | "cyan" | "blue" | "magenta";
+export type ImageMixerAdjustmentKey = "hue" | "saturation" | "luminance";
+
+export type ImageMixerColorAdjustment = {
+  hue: number;
+  saturation: number;
+  luminance: number;
+};
+
+export type ImageMixerSettings = Record<ImageMixerColorKey, ImageMixerColorAdjustment>;
+
 export type ImageEditParams = {
   crop: ImageCropInsets;
   rotationDegrees: number;
@@ -344,6 +364,7 @@ export type ImageEditParams = {
   textOverlays: ImageTextOverlay[];
   drawOverlays: ImageDrawOverlay[];
   vignetteOverlay: ImageVignetteOverlay | null;
+  mixer: ImageMixerSettings | null;
   filter: ImageFilter | null;
 };
 
@@ -1003,6 +1024,40 @@ const SUPER_MC_PRESET_SEQUENCE: readonly ImageSuperMcPreset[] = [
   "super-mc-green",
   "super-mc-blue",
 ];
+
+const MIXER_COLOR_KEYS: readonly ImageMixerColorKey[] = [
+  "red",
+  "yellow",
+  "green",
+  "cyan",
+  "blue",
+  "magenta",
+] as const;
+
+const MIXER_COLOR_LABELS: Record<ImageMixerColorKey, string> = {
+  red: "R",
+  yellow: "Y",
+  green: "G",
+  cyan: "C",
+  blue: "B",
+  magenta: "M",
+};
+
+type MixerColorButtonStyle = {
+  background: string;
+  selectedBackground: string;
+  border: string;
+  text: string;
+};
+
+const MIXER_COLOR_BUTTON_STYLES: Record<ImageMixerColorKey, MixerColorButtonStyle> = {
+  red: { background: "#fee2e2", selectedBackground: "#fecaca", border: "#ef4444", text: "#b91c1c" },
+  yellow: { background: "#fef9c3", selectedBackground: "#fde68a", border: "#eab308", text: "#a16207" },
+  green: { background: "#dcfce7", selectedBackground: "#bbf7d0", border: "#22c55e", text: "#15803d" },
+  cyan: { background: "#cffafe", selectedBackground: "#a5f3fc", border: "#06b6d4", text: "#0e7490" },
+  blue: { background: "#dbeafe", selectedBackground: "#bfdbfe", border: "#3b82f6", text: "#1d4ed8" },
+  magenta: { background: "#fae8ff", selectedBackground: "#f5d0fe", border: "#d946ef", text: "#a21caf" },
+};
 
 const SUPER_MC_BLACK_ROLLOFF_B = 0.04;
 const SUPER_MC_BLACK_ROLLOFF_PERCENTILE = 0.003;
@@ -1988,6 +2043,78 @@ function normalizeNonMonochromeFilterPreset(value: unknown): ImageNonMonochromeF
   return "sepia";
 }
 
+function clampMixerAdjustment(value: number | undefined): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(100, Math.max(-100, Math.round(value ?? 0)));
+}
+
+function buildEmptyImageMixerSettings(): ImageMixerSettings {
+  return {
+    red: { hue: 0, saturation: 0, luminance: 0 },
+    yellow: { hue: 0, saturation: 0, luminance: 0 },
+    green: { hue: 0, saturation: 0, luminance: 0 },
+    cyan: { hue: 0, saturation: 0, luminance: 0 },
+    blue: { hue: 0, saturation: 0, luminance: 0 },
+    magenta: { hue: 0, saturation: 0, luminance: 0 },
+  };
+}
+
+function normalizeImageMixerSettings(
+  mixer?: Partial<ImageMixerSettings> | null,
+): ImageMixerSettings | null {
+  if (!mixer) return null;
+  const normalized = buildEmptyImageMixerSettings();
+  let active = false;
+  for (const color of MIXER_COLOR_KEYS) {
+    const source = mixer[color];
+    const adjustment: ImageMixerColorAdjustment = {
+      hue: clampMixerAdjustment(source?.hue),
+      saturation: clampMixerAdjustment(source?.saturation),
+      luminance: clampMixerAdjustment(source?.luminance),
+    };
+    normalized[color] = adjustment;
+    active ||= adjustment.hue !== 0 || adjustment.saturation !== 0 || adjustment.luminance !== 0;
+  }
+  return active ? normalized : null;
+}
+
+function updateImageMixerSetting(
+  mixer: ImageMixerSettings | null | undefined,
+  color: ImageMixerColorKey,
+  adjustment: ImageMixerAdjustmentKey,
+  value: number,
+): ImageMixerSettings | null {
+  const next = mixer ? normalizeImageMixerSettings(mixer) ?? buildEmptyImageMixerSettings() : buildEmptyImageMixerSettings();
+  next[color] = {
+    ...next[color],
+    [adjustment]: clampMixerAdjustment(value),
+  };
+  return normalizeImageMixerSettings(next);
+}
+
+function serializeImageMixerSettings(mixer: ImageMixerSettings): Float32Array {
+  const values = new Float32Array(MIXER_COLOR_KEYS.length * 3);
+  let offset = 0;
+  for (const color of MIXER_COLOR_KEYS) {
+    const adjustment = mixer[color];
+    values[offset] = adjustment.hue;
+    values[offset + 1] = adjustment.saturation;
+    values[offset + 2] = adjustment.luminance;
+    offset += 3;
+  }
+  return values;
+}
+
+function resolveImageMixerLut(
+  mixer: ImageMixerSettings,
+  suppliedLut?: ImageMixerLut | null,
+): ImageMixerLut {
+  const settings = serializeImageMixerSettings(mixer);
+  const key = imageMixerLutKey(settings);
+  if (suppliedLut?.key === key) return suppliedLut;
+  return getCachedImageMixerLut(key) ?? getOrBuildImageMixerLut(settings);
+}
+
 function normalizeImageFilter(filter?: Partial<ImageFilter> | null): ImageFilter | null {
   if (!filter) return null;
   if (filter.kind === "monochrome") {
@@ -2062,6 +2189,7 @@ export function buildDefaultEditParams(w?: number, h?: number): ImageEditParams 
     textOverlays: [],
     drawOverlays: [],
     vignetteOverlay: null,
+    mixer: null,
     filter: null,
   };
 }
@@ -2102,6 +2230,7 @@ function normalizeEditParams(params: ImageEditParams | undefined, w?: number, h?
     textOverlays: normalizeTextOverlays(params?.textOverlays ?? defaults.textOverlays),
     drawOverlays: normalizeDrawOverlays(params?.drawOverlays ?? defaults.drawOverlays),
     vignetteOverlay: normalizeVignetteOverlay(params?.vignetteOverlay ?? defaults.vignetteOverlay),
+    mixer: normalizeImageMixerSettings(params?.mixer ?? defaults.mixer),
     filter: normalizeImageFilter(params?.filter ?? defaults.filter),
   };
 }
@@ -2139,6 +2268,7 @@ function isMeaningfullyEdited(
     normalized.textOverlays.length > 0 ||
     normalized.drawOverlays.length > 0 ||
     normalized.vignetteOverlay !== null ||
+    normalized.mixer !== null ||
     normalized.filter !== null
   );
 }
@@ -4325,6 +4455,76 @@ function applyEdgeFilterToRgb16(data: Uint16Array, width: number, height: number
     data[index] = encoded;
     data[index + 1] = encoded;
     data[index + 2] = encoded;
+  }
+}
+
+function applyImageMixerToCanvas(
+  canvas: HTMLCanvasElement | OffscreenCanvas,
+  mixer: ImageMixerSettings | null | undefined,
+  outputColorProfile: ImageEditOutputColorProfile = "srgb",
+  suppliedLut?: ImageMixerLut | null,
+): void {
+  if (!mixer) return;
+  const ctx = getCanvas2dContext(canvas, outputColorProfile, true);
+  if (!ctx) return;
+  const width = canvas.width;
+  const height = canvas.height;
+  if (width <= 0 || height <= 0) return;
+  const lut = resolveImageMixerLut(mixer, suppliedLut);
+  const imageData = getCanvasImageData(ctx, 0, 0, width, height, outputColorProfile);
+  const rgba8 = imageData.data;
+  const profile: ImageEditOutputColorProfile = outputColorProfile === "display-p3" ? "display-p3" : "srgb";
+  const mixed = [0, 0, 0];
+
+  for (let i = 0; i < rgba8.length; i += 4) {
+    const [r, g, b] = encodedRgbToLinearProphoto(
+      (rgba8[i] ?? 0) / 255,
+      (rgba8[i + 1] ?? 0) / 255,
+      (rgba8[i + 2] ?? 0) / 255,
+      profile,
+    );
+    sampleImageMixerLutTetrahedralInto(
+      lut,
+      Math.sqrt(clamp01(r)),
+      Math.sqrt(clamp01(g)),
+      Math.sqrt(clamp01(b)),
+      mixed,
+    );
+    const mr = (mixed[0] ?? 0) * (mixed[0] ?? 0);
+    const mg = (mixed[1] ?? 0) * (mixed[1] ?? 0);
+    const mb = (mixed[2] ?? 0) * (mixed[2] ?? 0);
+    const [er, eg, eb] = convertLinearProPhotoToOutputRgb(mr, mg, mb, profile);
+    rgba8[i] = linearChannelToSrgb(er);
+    rgba8[i + 1] = linearChannelToSrgb(eg);
+    rgba8[i + 2] = linearChannelToSrgb(eb);
+  }
+
+  ctx.putImageData(imageData, 0, 0);
+}
+
+function applyImageMixerToRgb16(
+  data: Uint16Array,
+  width: number,
+  height: number,
+  mixer: ImageMixerSettings | null | undefined,
+  suppliedLut?: ImageMixerLut | null,
+): void {
+  if (!mixer || width <= 0 || height <= 0) return;
+  const lut = resolveImageMixerLut(mixer, suppliedLut);
+  const pixelCount = width * height;
+  const mixed = [0, 0, 0];
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const index = pixel * 3;
+    sampleImageMixerLutTetrahedralInto(
+      lut,
+      (data[index] ?? 0) / 65535,
+      (data[index + 1] ?? 0) / 65535,
+      (data[index + 2] ?? 0) / 65535,
+      mixed,
+    );
+    data[index] = Math.round(clamp01(mixed[0] ?? 0) * 65535);
+    data[index + 1] = Math.round(clamp01(mixed[1] ?? 0) * 65535);
+    data[index + 2] = Math.round(clamp01(mixed[2] ?? 0) * 65535);
   }
 }
 
@@ -9966,6 +10166,7 @@ async function buildPeepTileCanvasFromDecoded(
       outputH,
       outputColorProfile,
     );
+    if (params.mixer) applyImageMixerToCanvas(extCanvas, params.mixer, outputColorProfile);
     applyImageFilterToCanvas(extCanvas, params.filter, outputColorProfile);
     applyMosaicRectsToCanvas(
       extCanvas,
@@ -10239,6 +10440,11 @@ async function buildEditedVariantFromDecoded(
       outputColorProfile,
     ),
   );
+  if (params.mixer) {
+    measureImageEditTimingSync(timing, "Applying mixer", () =>
+      applyImageMixerToCanvas(output, params.mixer, outputColorProfile),
+    );
+  }
   measureImageEditTimingSync(timing, "Applying filter", () =>
     applyImageFilterToCanvas(output, params.filter, outputColorProfile),
   );
@@ -10601,6 +10807,7 @@ export async function buildEditedDecodedRgb16(
     cropW,
     cropH,
   );
+  if (params.mixer) applyImageMixerToRgb16(result, outputW, outputH, params.mixer);
   applyImageFilterToRgb16(result, outputW, outputH, params.filter);
   applyMosaicRectsToRgb16(
     result,
@@ -11355,6 +11562,14 @@ export function ImageEditDialog({
     Math.min(100, Math.max(1, Math.round(initialParams.resizePercent))),
   );
   const [sharpen, setSharpen] = useState<number>(clampSharpen(initialParams.sharpen ?? 0));
+  const [mixerMode, setMixerMode] = useState(false);
+  const [imageMixer, setImageMixer] = useState<ImageMixerSettings | null>(
+    normalizeImageMixerSettings(initialParams.mixer),
+  );
+  const [imageMixerLut, setImageMixerLut] = useState<ImageMixerLut | null>(null);
+  const mixerLutWorkerRef = useRef<Worker | null>(null);
+  const mixerLutRequestRef = useRef(0);
+  const [activeMixerColor, setActiveMixerColor] = useState<ImageMixerColorKey>("red");
   const [filterMode, setFilterMode] = useState(false);
   const [imageFilter, setImageFilter] = useState<ImageFilter | null>(
     normalizeImageFilter(initialParams.filter),
@@ -11476,6 +11691,78 @@ export function ImageEditDialog({
     collapsePreferencesLoadedRef.current = true;
     setMounted(true);
   }, []);
+
+
+  useEffect(() => () => {
+    mixerLutWorkerRef.current?.terminate();
+    mixerLutWorkerRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    // Any settings change invalidates an in-flight generation immediately.
+    mixerLutWorkerRef.current?.terminate();
+    mixerLutWorkerRef.current = null;
+
+    if (!imageMixer) {
+      mixerLutRequestRef.current += 1;
+      setImageMixerLut(null);
+      return;
+    }
+
+    const settings = serializeImageMixerSettings(imageMixer);
+    const key = imageMixerLutKey(settings);
+    const cached = getCachedImageMixerLut(key, IMAGE_MIXER_LUT_SIZE);
+    if (cached) {
+      mixerLutRequestRef.current += 1;
+      setImageMixerLut(cached);
+      return;
+    }
+
+    if (typeof Worker === "undefined") {
+      const lut = getOrBuildImageMixerLut(settings);
+      setImageMixerLut(lut);
+      return;
+    }
+
+    // Mixer uses one 32^3 LUT for preview and final rendering. Any new slider
+    // value terminates the in-flight worker so stale generations never queue
+    // behind the latest settings.
+    const requestId = mixerLutRequestRef.current + 1;
+    mixerLutRequestRef.current = requestId;
+    const timer = window.setTimeout(() => {
+      const buildSynchronously = () => {
+        if (requestId !== mixerLutRequestRef.current) return;
+        const lut = getOrBuildImageMixerLut(settings);
+        setImageMixerLut(lut);
+      };
+
+      try {
+        const worker = new Worker(new URL("./image-editor/mixer-lut.worker.ts", import.meta.url), { type: "module" });
+        mixerLutWorkerRef.current = worker;
+        worker.onmessage = (event: MessageEvent<{ id: number; key: string; size: number; data: Float32Array }>) => {
+          const { id, key: resultKey, size: resultSize, data } = event.data;
+          const lut: ImageMixerLut = { key: resultKey, size: resultSize, data };
+          cacheImageMixerLut(lut);
+          worker.terminate();
+          if (mixerLutWorkerRef.current === worker) mixerLutWorkerRef.current = null;
+          if (id !== mixerLutRequestRef.current) return;
+          setImageMixerLut(lut);
+        };
+        worker.onerror = () => {
+          worker.terminate();
+          if (mixerLutWorkerRef.current === worker) mixerLutWorkerRef.current = null;
+          buildSynchronously();
+        };
+        worker.postMessage({ id: requestId, key, settings });
+      } catch {
+        mixerLutWorkerRef.current?.terminate();
+        mixerLutWorkerRef.current = null;
+        buildSynchronously();
+      }
+    }, 40);
+
+    return () => window.clearTimeout(timer);
+  }, [imageMixer]);
 
   const togglePanelCollapsed = useCallback((panel: ImageEditPanelKey) => {
     setCollapsedPanels((current) => ({ ...current, [panel]: !current[panel] }));
@@ -13551,6 +13838,10 @@ export function ImageEditDialog({
     const previewColorProfile: ImageEditOutputColorProfile = "srgb";
     const includeMosaic = !eyedropperMode && !rotationMode && mosaicRegions.length > 0 && !!natural?.w;
     const previewVignetteOverlay = !eyedropperMode && !rotationMode ? (vignetteDraft ?? vignetteOverlay) : null;
+    const previewMixer = !eyedropperMode && !rotationMode ? imageMixer : null;
+    const previewMixerKey = previewMixer ? imageMixerLutKey(serializeImageMixerSettings(previewMixer)) : null;
+    const previewMixerLut = previewMixerKey && imageMixerLut?.key === previewMixerKey ? imageMixerLut : null;
+    if (previewMixer && !previewMixerLut) return;
     const previewFilter = !eyedropperMode && !rotationMode ? imageFilter : null;
     const renderedPreviewKey = JSON.stringify([
       width,
@@ -13568,6 +13859,7 @@ export function ImageEditDialog({
       vibrance,
       saturation,
       previewVignetteOverlay,
+      previewMixer,
       previewFilter,
       includeMosaic ? mosaicRegions : null,
     ]);
@@ -13741,6 +14033,9 @@ export function ImageEditDialog({
           previewColorProfile,
         );
       }
+      if (previewMixer && previewMixerLut) {
+        applyImageMixerToCanvas(canvas, previewMixer, previewColorProfile, previewMixerLut);
+      }
       applyImageFilterToCanvas(canvas, previewFilter, previewColorProfile);
       if (includeMosaic) {
         const previewScale = width / Math.max(1, displayed.w);
@@ -13835,6 +14130,8 @@ export function ImageEditDialog({
     mosaicRegions,
     vignetteOverlay,
     vignetteDraft,
+    imageMixer,
+    imageMixerLut,
     imageFilter,
     eyedropperMode,
     clearEmbeddedRawPreview,
@@ -14312,6 +14609,7 @@ export function ImageEditDialog({
       textOverlays: normalizeTextOverlays(textOverlays),
       drawOverlays: normalizeDrawOverlays(drawOverlays),
       vignetteOverlay: normalizeVignetteOverlay(vignetteOverlay),
+      mixer: normalizeImageMixerSettings(imageMixer),
       filter: normalizeImageFilter(imageFilter),
     };
   }, [
@@ -14336,6 +14634,7 @@ export function ImageEditDialog({
     textOverlays,
     drawOverlays,
     vignetteOverlay,
+    imageMixer,
     imageFilter,
   ]);
 
@@ -14777,7 +15076,8 @@ export function ImageEditDialog({
 
   const onPreviewDoubleClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (
-      filterMode
+      mixerMode
+      || filterMode
       || textMode
       || drawMode
       || mosaicMode
@@ -14808,6 +15108,7 @@ export function ImageEditDialog({
       y: Math.max(cropRect.y, Math.min(cropRect.y + cropRect.h, point.y)),
     });
   }, [
+    mixerMode,
     filterMode,
     textMode,
     drawMode,
@@ -14927,6 +15228,7 @@ export function ImageEditDialog({
       textOverlays: normalizeTextOverlays(textOverlays),
       drawOverlays: normalizeDrawOverlays(drawOverlays),
       vignetteOverlay: normalizeVignetteOverlay(vignetteOverlay),
+      mixer: normalizeImageMixerSettings(imageMixer),
       filter: normalizeImageFilter(imageFilter),
     };
     recordImageEditTiming(
@@ -15017,6 +15319,7 @@ export function ImageEditDialog({
     saturation,
     resizePercent,
     sharpen,
+    imageMixer,
     imageFilter,
     mosaicRegions,
     textOverlays,
@@ -15078,6 +15381,8 @@ export function ImageEditDialog({
     setSaturation(params.saturation);
     setResizePercent(params.resizePercent);
     setSharpen(params.sharpen);
+    setMixerMode(false);
+    setImageMixer(params.mixer);
     setFilterMode(false);
     setImageFilter(params.filter);
     setTextMode(false);
@@ -15143,6 +15448,12 @@ export function ImageEditDialog({
   const sliderInputClass = editorUsesSidePanel
     ? "col-span-2 col-start-1 row-start-2 w-full"
     : "col-start-2 row-start-1 w-full";
+
+  const activeMixerAdjustment = imageMixer?.[activeMixerColor] ?? {
+    hue: 0,
+    saturation: 0,
+    luminance: 0,
+  };
 
   const rawDevelopmentSettings = (() => {
     if (!isRawImageFile(file.name, file.type)) return undefined;
@@ -15219,11 +15530,45 @@ export function ImageEditDialog({
             <label className="inline-flex items-center gap-2 text-sm text-gray-700 select-none">
               <input
                 type="checkbox"
+                checked={mixerMode}
+                onChange={(e) => {
+                  const next = e.target.checked;
+                  setMixerMode(next);
+                  if (next) {
+                    setFilterMode(false);
+                    setTextMode(false);
+                    setActiveTextId(null);
+                    textMoveState.current = null;
+                    setDrawMode(false);
+                    setDrawDraft(null);
+                    drawCreateState.current = null;
+                    drawEditState.current = null;
+                    setMosaicMode(false);
+                    mosaicDragStart.current = null;
+                    mosaicMoveState.current = null;
+                    setMosaicDraft(null);
+                    setVignetteMode(false);
+                    setVignetteDraft(null);
+                    vignetteCreateState.current = null;
+                    vignetteEditState.current = null;
+                    setEyedropperMode(false);
+                    setRotationMode(false);
+                    rotationDragState.current = null;
+                    dragState.current = null;
+                  }
+                }}
+              />
+              <span>Mixer</span>
+            </label>
+            <label className="inline-flex items-center gap-2 text-sm text-gray-700 select-none">
+              <input
+                type="checkbox"
                 checked={filterMode}
                 onChange={(e) => {
                   const next = e.target.checked;
                   setFilterMode(next);
                   if (next) {
+                    setMixerMode(false);
                     setTextMode(false);
                     setActiveTextId(null);
                     textMoveState.current = null;
@@ -15256,6 +15601,7 @@ export function ImageEditDialog({
                   const next = e.target.checked;
                   if (next) {
                     setFilterMode(false);
+                    setMixerMode(false);
                     setTextMode(true);
                     setActiveTextId(null);
                     textMoveState.current = null;
@@ -15296,6 +15642,7 @@ export function ImageEditDialog({
                   setDrawDraft(null);
                   if (next) {
                     setFilterMode(false);
+                    setMixerMode(false);
                     setTextMode(false);
                     setActiveTextId(null);
                     textMoveState.current = null;
@@ -15325,6 +15672,7 @@ export function ImageEditDialog({
                   setMosaicMode(next);
                   if (next) {
                     setFilterMode(false);
+                    setMixerMode(false);
                     setTextMode(false);
                     setActiveTextId(null);
                     textMoveState.current = null;
@@ -15359,6 +15707,7 @@ export function ImageEditDialog({
                   setVignetteDraft(null);
                   if (next) {
                     setFilterMode(false);
+                    setMixerMode(false);
                     setTextMode(false);
                     setActiveTextId(null);
                     textMoveState.current = null;
@@ -15750,6 +16099,86 @@ export function ImageEditDialog({
                           <path d={gridPaths.horizontal} stroke="rgba(255,255,255,0.45)" strokeWidth="1" fill="none" />
                         ) : null}
                       </svg>
+                    </div>
+                  )}
+                  {!eyedropperMode && mixerMode && (
+                    <div
+                      className="absolute right-2 top-2 z-[35] flex w-[min(340px,calc(100%-1rem))] max-h-[calc(100%-1rem)] flex-col gap-2 overflow-y-auto overscroll-contain rounded border border-black/30 bg-white/90 p-2 shadow [zoom:var(--editor-ui-zoom)]"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-medium text-gray-700">Mixer</span>
+                        <button
+                          type="button"
+                          className="rounded border border-gray-300 bg-white px-2 py-0.5 text-[11px] text-gray-700 hover:bg-gray-100 disabled:cursor-default disabled:opacity-50"
+                          onClick={() => setImageMixer(null)}
+                          disabled={imageMixer === null}
+                          aria-label="Reset mixer"
+                          title="Reset mixer"
+                        >
+                          Reset
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-6 gap-1">
+                        {MIXER_COLOR_KEYS.map((color) => {
+                          const selected = activeMixerColor === color;
+                          const colorStyle = MIXER_COLOR_BUTTON_STYLES[color];
+                          return (
+                            <button
+                              key={color}
+                              type="button"
+                              className="rounded border px-1.5 py-1 text-[11px] font-semibold transition-[filter,box-shadow] hover:brightness-95"
+                              style={{
+                                backgroundColor: selected ? colorStyle.selectedBackground : colorStyle.background,
+                                borderColor: selected ? colorStyle.border : `${colorStyle.border}66`,
+                                borderWidth: selected ? "2px" : "1px",
+                                color: selected ? colorStyle.text : "#374151",
+                                boxShadow: selected ? `0 0 0 1px ${colorStyle.border}55` : undefined,
+                              }}
+                              onClick={() => setActiveMixerColor(color)}
+                              aria-pressed={selected}
+                              title={color[0]?.toUpperCase() + color.slice(1)}
+                            >
+                              {MIXER_COLOR_LABELS[color]}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className="space-y-2">
+                        {([
+                          ["hue", "Hue"],
+                          ["saturation", "Saturation"],
+                          ["luminance", "Luminance"],
+                        ] as const).map(([adjustment, label]) => {
+                          const value = activeMixerAdjustment[adjustment];
+                          return (
+                            <label key={adjustment} className="grid grid-cols-[1fr_48px] items-center gap-x-2 gap-y-1 text-xs text-gray-700">
+                              <span>{label}</span>
+                              <span className="text-right font-mono tabular-nums">
+                                {value >= 0 ? "+" : ""}{value}
+                              </span>
+                              <input
+                                type="range"
+                                min={-100}
+                                max={100}
+                                step={1}
+                                value={value}
+                                onChange={(e) => {
+                                  const nextValue = Number(e.target.value);
+                                  setImageMixer((current) =>
+                                    updateImageMixerSetting(current, activeMixerColor, adjustment, nextValue));
+                                }}
+                                onDoubleClick={() =>
+                                  setImageMixer((current) =>
+                                    updateImageMixerSetting(current, activeMixerColor, adjustment, 0))}
+                                className="col-span-2 w-full"
+                                aria-label={`${MIXER_COLOR_LABELS[activeMixerColor]} ${label}`}
+                              />
+                            </label>
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
                   {!eyedropperMode && filterMode && (
@@ -16819,6 +17248,7 @@ export function ImageEditDialog({
                         onClick={(e) => {
                           e.stopPropagation();
                           setFilterMode(false);
+                          setMixerMode(false);
                           setTextMode(false);
                           setActiveTextId(null);
                           textMoveState.current = null;
@@ -16869,6 +17299,7 @@ export function ImageEditDialog({
                   }`}
                   onClick={() => {
                     setFilterMode(false);
+                    setMixerMode(false);
                     setTextMode(false);
                     setActiveTextId(null);
                     textMoveState.current = null;
