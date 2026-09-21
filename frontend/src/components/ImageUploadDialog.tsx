@@ -332,7 +332,7 @@ export type ImageFilter =
       preset: ImageNonMonochromeFilterPreset;
     };
 
-export type ImageMixerColorKey = "red" | "yellow" | "green" | "cyan" | "blue" | "magenta";
+export type ImageMixerColorKey = "red" | "orange" | "yellow" | "chartreuse" | "green" | "spring" | "cyan" | "azure" | "blue" | "violet" | "magenta" | "rose";
 export type ImageMixerAdjustmentKey = "hue" | "saturation" | "luminance";
 
 export type ImageMixerColorAdjustment = {
@@ -1027,20 +1027,32 @@ const SUPER_MC_PRESET_SEQUENCE: readonly ImageSuperMcPreset[] = [
 
 const MIXER_COLOR_KEYS: readonly ImageMixerColorKey[] = [
   "red",
+  "orange",
   "yellow",
+  "chartreuse",
   "green",
+  "spring",
   "cyan",
+  "azure",
   "blue",
+  "violet",
   "magenta",
+  "rose",
 ] as const;
 
-const MIXER_COLOR_LABELS: Record<ImageMixerColorKey, string> = {
-  red: "R",
-  yellow: "Y",
-  green: "G",
-  cyan: "C",
-  blue: "B",
-  magenta: "M",
+const MIXER_COLOR_NAMES: Record<ImageMixerColorKey, string> = {
+  red: "Red",
+  orange: "Orange",
+  yellow: "Yellow",
+  chartreuse: "Chartreuse",
+  green: "Green",
+  spring: "Spring Green",
+  cyan: "Cyan",
+  azure: "Azure",
+  blue: "Blue",
+  violet: "Violet",
+  magenta: "Magenta",
+  rose: "Rose",
 };
 
 type MixerColorButtonStyle = {
@@ -1052,11 +1064,17 @@ type MixerColorButtonStyle = {
 
 const MIXER_COLOR_BUTTON_STYLES: Record<ImageMixerColorKey, MixerColorButtonStyle> = {
   red: { background: "#fee2e2", selectedBackground: "#fecaca", border: "#ef4444", text: "#b91c1c" },
+  orange: { background: "#ffedd5", selectedBackground: "#fed7aa", border: "#f97316", text: "#c2410c" },
   yellow: { background: "#fef9c3", selectedBackground: "#fde68a", border: "#eab308", text: "#a16207" },
+  chartreuse: { background: "#ecfccb", selectedBackground: "#d9f99d", border: "#84cc16", text: "#4d7c0f" },
   green: { background: "#dcfce7", selectedBackground: "#bbf7d0", border: "#22c55e", text: "#15803d" },
+  spring: { background: "#d1fae5", selectedBackground: "#a7f3d0", border: "#10b981", text: "#047857" },
   cyan: { background: "#cffafe", selectedBackground: "#a5f3fc", border: "#06b6d4", text: "#0e7490" },
-  blue: { background: "#dbeafe", selectedBackground: "#bfdbfe", border: "#3b82f6", text: "#1d4ed8" },
+  azure: { background: "#dbeafe", selectedBackground: "#bfdbfe", border: "#60a5fa", text: "#2563eb" },
+  blue: { background: "#dbeafe", selectedBackground: "#93c5fd", border: "#3b82f6", text: "#1d4ed8" },
+  violet: { background: "#ede9fe", selectedBackground: "#ddd6fe", border: "#8b5cf6", text: "#6d28d9" },
   magenta: { background: "#fae8ff", selectedBackground: "#f5d0fe", border: "#d946ef", text: "#a21caf" },
+  rose: { background: "#ffe4e6", selectedBackground: "#fecdd3", border: "#f43f5e", text: "#be123c" },
 };
 
 const SUPER_MC_BLACK_ROLLOFF_B = 0.04;
@@ -2049,14 +2067,11 @@ function clampMixerAdjustment(value: number | undefined): number {
 }
 
 function buildEmptyImageMixerSettings(): ImageMixerSettings {
-  return {
-    red: { hue: 0, saturation: 0, luminance: 0 },
-    yellow: { hue: 0, saturation: 0, luminance: 0 },
-    green: { hue: 0, saturation: 0, luminance: 0 },
-    cyan: { hue: 0, saturation: 0, luminance: 0 },
-    blue: { hue: 0, saturation: 0, luminance: 0 },
-    magenta: { hue: 0, saturation: 0, luminance: 0 },
-  };
+  const mixer = {} as ImageMixerSettings;
+  for (const color of MIXER_COLOR_KEYS) {
+    mixer[color] = { hue: 0, saturation: 0, luminance: 0 };
+  }
+  return mixer;
 }
 
 function normalizeImageMixerSettings(
@@ -16120,15 +16135,16 @@ export function ImageEditDialog({
                           Reset
                         </button>
                       </div>
-                      <div className="grid grid-cols-6 gap-1">
+                      <div className="grid grid-cols-6 gap-1.5">
                         {MIXER_COLOR_KEYS.map((color) => {
                           const selected = activeMixerColor === color;
                           const colorStyle = MIXER_COLOR_BUTTON_STYLES[color];
+                          const colorName = MIXER_COLOR_NAMES[color];
                           return (
                             <button
                               key={color}
                               type="button"
-                              className="rounded border px-1.5 py-1 text-[11px] font-semibold transition-[filter,box-shadow] hover:brightness-95"
+                              className="h-8 rounded-md border transition-[filter,box-shadow,transform] hover:brightness-95"
                               style={{
                                 backgroundColor: selected ? colorStyle.selectedBackground : colorStyle.background,
                                 borderColor: selected ? colorStyle.border : `${colorStyle.border}66`,
@@ -16138,10 +16154,9 @@ export function ImageEditDialog({
                               }}
                               onClick={() => setActiveMixerColor(color)}
                               aria-pressed={selected}
-                              title={color[0]?.toUpperCase() + color.slice(1)}
-                            >
-                              {MIXER_COLOR_LABELS[color]}
-                            </button>
+                              aria-label={colorName}
+                              title={colorName}
+                            />
                           );
                         })}
                       </div>
@@ -16173,7 +16188,7 @@ export function ImageEditDialog({
                                   setImageMixer((current) =>
                                     updateImageMixerSetting(current, activeMixerColor, adjustment, 0))}
                                 className="col-span-2 w-full"
-                                aria-label={`${MIXER_COLOR_LABELS[activeMixerColor]} ${label}`}
+                                aria-label={`${MIXER_COLOR_NAMES[activeMixerColor]} ${label}`}
                               />
                             </label>
                           );
