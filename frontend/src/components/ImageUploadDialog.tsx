@@ -103,6 +103,7 @@ import {
   cacheImageMixerLut,
   getCachedImageMixerLut,
   getOrBuildImageMixerLut,
+  imageMixerColorIndexForLinearProPhoto,
   imageMixerLutKey,
   sampleImageMixerLutTetrahedralInto,
   type ImageMixerLut,
@@ -13392,6 +13393,43 @@ export function ImageEditDialog({
     e.stopPropagation();
   }, [displayed, eyedropperMode, natural, rotationDegrees]);
 
+  const onMixerPickerPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!mixerMode || e.button !== 0 || e.ctrlKey) return;
+    const canvas = previewCanvasRef.current;
+    if (!canvas || canvas.width <= 0 || canvas.height <= 0) return;
+
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const fx = (e.clientX - rect.left) / rect.width;
+    const fy = (e.clientY - rect.top) / rect.height;
+    if (fx < 0 || fx >= 1 || fy < 0 || fy >= 1) return;
+
+    const px = Math.min(canvas.width - 1, Math.max(0, Math.floor(fx * canvas.width)));
+    const py = Math.min(canvas.height - 1, Math.max(0, Math.floor(fy * canvas.height)));
+    const rgb = sampleEyedropperRgb8(
+      canvas,
+      canvas.width,
+      canvas.height,
+      canvas.width,
+      canvas.height,
+      px,
+      py,
+    );
+    if (!rgb) return;
+    const [r, g, b] = encodedRgbToLinearProphoto(
+      rgb[0] / 255,
+      rgb[1] / 255,
+      rgb[2] / 255,
+      "srgb",
+    );
+    const colorIndex = imageMixerColorIndexForLinearProPhoto(r, g, b);
+    const color = colorIndex === null ? undefined : MIXER_COLOR_KEYS[colorIndex];
+    if (color) setActiveMixerColor(color);
+
+    e.preventDefault();
+    e.stopPropagation();
+  }, [mixerMode]);
+
   const onRotationHandlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (!rotationMode || displayed.w <= 0 || displayed.h <= 0) return;
     const point = toLocal(e);
@@ -15550,6 +15588,7 @@ export function ImageEditDialog({
                   const next = e.target.checked;
                   setMixerMode(next);
                   if (next) {
+                    deactivatePeepMode();
                     setFilterMode(false);
                     setTextMode(false);
                     setActiveTextId(null);
@@ -15583,6 +15622,7 @@ export function ImageEditDialog({
                   const next = e.target.checked;
                   setFilterMode(next);
                   if (next) {
+                    deactivatePeepMode();
                     setMixerMode(false);
                     setTextMode(false);
                     setActiveTextId(null);
@@ -16053,6 +16093,20 @@ export function ImageEditDialog({
                       onPointerDown={onEyedropperPointerDown}
                       onClick={(e) => e.stopPropagation()}
                       aria-label="Pick neutral white balance point"
+                    />
+                  )}
+                  {!eyedropperMode && mixerMode && (
+                    <div
+                      className="absolute z-30 cursor-crosshair"
+                      style={{
+                        left: displayed.x,
+                        top: displayed.y,
+                        width: displayed.w,
+                        height: displayed.h,
+                      }}
+                      onPointerDown={onMixerPickerPointerDown}
+                      onClick={(e) => e.stopPropagation()}
+                      aria-label="Pick Mixer color from image"
                     />
                   )}
                   {!eyedropperMode && rotationMode && (
@@ -17222,7 +17276,7 @@ export function ImageEditDialog({
                           />
                         </svg>
                       )}
-                      {!mosaicMode && !textMode && !drawMode && !vignetteMode && (["nw", "ne", "sw", "se"] as EditCorner[]).map((corner) => {
+                      {!mosaicMode && !textMode && !drawMode && !vignetteMode && !mixerMode && (["nw", "ne", "sw", "se"] as EditCorner[]).map((corner) => {
                           const style =
                             corner === "nw"
                               ? { left: -6, top: -6 }

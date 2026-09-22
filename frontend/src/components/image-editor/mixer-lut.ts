@@ -125,6 +125,19 @@ function mixerHueToOklabHue(mixerHueDegrees: number): number {
   return normalizeDegrees(start + (end - start) * t);
 }
 
+export function imageMixerColorIndexForLinearProPhoto(
+  r: number,
+  g: number,
+  b: number,
+): number | null {
+  const [, a, bb] = linearProPhotoToOklab(r, g, b);
+  const chroma = Math.hypot(a, bb);
+  if (!(chroma > 1e-6)) return null;
+  const hueDegrees = normalizeDegrees(Math.atan2(bb, a) * 180 / Math.PI);
+  const mixerHueDegrees = oklabHueToMixerHue(hueDegrees);
+  return Math.round(mixerHueDegrees / 30) % VIRTUAL_MIXER_HUES.length;
+}
+
 function linearProPhotoToOklab(r: number, g: number, b: number): [number, number, number] {
   // Linear ProPhoto RGB (D50) -> XYZ D50.
   const x50 = 0.7976749 * r + 0.1351917 * g + 0.0313534 * b;
