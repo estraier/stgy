@@ -15615,6 +15615,7 @@ export function ImageEditDialog({
                 onChange={(e) => {
                   const next = e.target.checked;
                   if (next) {
+                    deactivatePeepMode();
                     setFilterMode(false);
                     setMixerMode(false);
                     setTextMode(true);
@@ -15656,6 +15657,7 @@ export function ImageEditDialog({
                   drawEditState.current = null;
                   setDrawDraft(null);
                   if (next) {
+                    deactivatePeepMode();
                     setFilterMode(false);
                     setMixerMode(false);
                     setTextMode(false);
@@ -15686,6 +15688,7 @@ export function ImageEditDialog({
                   const next = e.target.checked;
                   setMosaicMode(next);
                   if (next) {
+                    deactivatePeepMode();
                     setFilterMode(false);
                     setMixerMode(false);
                     setTextMode(false);
@@ -15721,6 +15724,7 @@ export function ImageEditDialog({
                   vignetteEditState.current = null;
                   setVignetteDraft(null);
                   if (next) {
+                    deactivatePeepMode();
                     setFilterMode(false);
                     setMixerMode(false);
                     setTextMode(false);
@@ -16118,7 +16122,7 @@ export function ImageEditDialog({
                   )}
                   {!eyedropperMode && mixerMode && (
                     <div
-                      className="absolute right-2 top-2 z-[35] flex w-[min(340px,calc(100%-1rem))] max-h-[calc(100%-1rem)] flex-col gap-2 overflow-y-auto overscroll-contain rounded border border-black/30 bg-white/90 p-2 shadow [zoom:var(--editor-ui-zoom)]"
+                      className="absolute right-2 top-2 z-[45] flex w-[min(340px,calc(100%-1rem))] max-h-[calc(100%-1rem)] flex-col gap-2 overflow-y-auto overscroll-contain rounded border border-black/30 bg-white/90 p-2 shadow [zoom:var(--editor-ui-zoom)]"
                       onPointerDown={(e) => e.stopPropagation()}
                       onClick={(e) => e.stopPropagation()}
                     >
@@ -16198,7 +16202,7 @@ export function ImageEditDialog({
                   )}
                   {!eyedropperMode && filterMode && (
                     <div
-                      className="absolute right-2 top-2 z-[35] flex max-h-[calc(100%-1rem)] max-w-[min(340px,calc(100%-1rem))] flex-col gap-1 overflow-y-auto overscroll-contain rounded border border-black/30 bg-white/90 p-2 shadow [zoom:var(--editor-ui-zoom)]"
+                      className="absolute right-2 top-2 z-[45] flex max-h-[calc(100%-1rem)] max-w-[min(340px,calc(100%-1rem))] flex-col gap-1 overflow-y-auto overscroll-contain rounded border border-black/30 bg-white/90 p-2 shadow [zoom:var(--editor-ui-zoom)]"
                       onPointerDown={(e) => e.stopPropagation()}
                       onClick={(e) => e.stopPropagation()}
                     >
@@ -17218,7 +17222,7 @@ export function ImageEditDialog({
                           />
                         </svg>
                       )}
-                      {!mosaicMode && !textMode && !drawMode && (["nw", "ne", "sw", "se"] as EditCorner[]).map((corner) => {
+                      {!mosaicMode && !textMode && !drawMode && !vignetteMode && (["nw", "ne", "sw", "se"] as EditCorner[]).map((corner) => {
                           const style =
                             corner === "nw"
                               ? { left: -6, top: -6 }
