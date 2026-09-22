@@ -74,6 +74,13 @@ function mixerHueWeight(distanceDegrees: number): number {
   return 0.5 * (1 + Math.cos(Math.PI * t));
 }
 
+function mixerGainHill(distanceDegrees: number): number {
+  const distance = Math.abs(distanceDegrees);
+  if (distance >= 60) return 0;
+  const raisedCosine = 0.5 * (1 + Math.cos(Math.PI * distance / 60));
+  return 2 * raisedCosine * raisedCosine;
+}
+
 function mixerSaturationChromaWeight(chroma: number): number {
   const span = MIXER_SATURATION_CHROMA_FULL - MIXER_SATURATION_CHROMA_ZERO;
   if (!(span > 0)) return chroma > MIXER_SATURATION_CHROMA_ZERO ? 1 : 0;
@@ -229,11 +236,8 @@ function applyRichMixerLinearRgb(
   const luminanceChromaWeight = mixerLuminanceChromaWeight(chroma);
 
   let hueControl = 0;
-  let saturationControl = 0;
-  let luminanceControl = 0;
-  let hueControlLimit = 0;
-  let saturationControlLimit = 0;
-  let luminanceControlLimit = 0;
+  let saturationLogGain = 0;
+  let luminanceLogGain = 0;
 
   for (let colorIndex = 0; colorIndex < 12; colorIndex += 1) {
     const base = colorIndex * 3;
@@ -242,33 +246,29 @@ function applyRichMixerLinearRgb(
     const luminanceAdjustment = clampMixerControl(settings[base + 2] ?? 0);
     if (hueAdjustment === 0 && saturationAdjustment === 0 && luminanceAdjustment === 0) continue;
     const center = colorIndex * 30;
-    const weight = mixerHueWeight(circularHueDistanceDegrees(mixerHueDegrees, center));
-    if (!(weight > 0)) continue;
+    const distance = circularHueDistanceDegrees(mixerHueDegrees, center);
+    const hueWeight = mixerHueWeight(distance);
+    const gainHill = mixerGainHill(distance);
+    if (!(hueWeight > 0) && !(gainHill > 0)) continue;
 
-    if (hueAdjustment !== 0) {
-      hueControl += hueAdjustment * weight;
-      hueControlLimit = Math.max(hueControlLimit, Math.abs(hueAdjustment));
+    if (hueAdjustment !== 0 && gainHill > 0) {
+      hueControl += (hueAdjustment / 100) * gainHill;
     }
-    if (saturationAdjustment !== 0 && saturationChromaWeight > 0) {
-      saturationControl += saturationAdjustment * weight * saturationChromaWeight;
-      saturationControlLimit = Math.max(saturationControlLimit, Math.abs(saturationAdjustment));
+    if (saturationAdjustment !== 0 && saturationChromaWeight > 0 && gainHill > 0) {
+      saturationLogGain += (saturationAdjustment / 100) * gainHill * saturationChromaWeight;
     }
-    if (luminanceAdjustment !== 0 && luminanceChromaWeight > 0) {
-      luminanceControl += luminanceAdjustment * weight * luminanceChromaWeight;
-      luminanceControlLimit = Math.max(luminanceControlLimit, Math.abs(luminanceAdjustment));
+    if (luminanceAdjustment !== 0 && luminanceChromaWeight > 0 && gainHill > 0) {
+      luminanceLogGain += (luminanceAdjustment / 100) * gainHill * luminanceChromaWeight;
     }
   }
 
-  hueControl = Math.max(-hueControlLimit, Math.min(hueControlLimit, hueControl));
-  saturationControl = Math.max(-saturationControlLimit, Math.min(saturationControlLimit, saturationControl));
-  luminanceControl = Math.max(-luminanceControlLimit, Math.min(luminanceControlLimit, luminanceControl));
+  hueControl = Math.max(-1, Math.min(1, hueControl));
+  saturationLogGain = Math.max(-1, Math.min(1, saturationLogGain));
+  luminanceLogGain = Math.max(-1, Math.min(1, luminanceLogGain));
 
-  const hueShift = Math.max(-MIXER_HUE_MAX_SHIFT_DEGREES, Math.min(
-    MIXER_HUE_MAX_SHIFT_DEGREES,
-    hueControl * (MIXER_HUE_MAX_SHIFT_DEGREES / 100),
-  ));
-  const saturationAmount = saturationControl;
-  const luminanceAmount = luminanceControl;
+  const hueShift = hueControl * MIXER_HUE_MAX_SHIFT_DEGREES;
+  const saturationAmount = saturationLogGain * 100;
+  const luminanceAmount = luminanceLogGain * 100;
 
   let mixedR = r;
   let mixedG = g;
