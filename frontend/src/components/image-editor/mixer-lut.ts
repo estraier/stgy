@@ -4,40 +4,23 @@ export const IMAGE_MIXER_LUT_SIZE = 32;
 export const IMAGE_MIXER_LUT_CHANNELS = 3;
 export const IMAGE_MIXER_SETTING_COUNT = 36;
 
-const MIXER_HUE_FULL_WEIGHT_DEGREES = 25;
-const MIXER_HUE_ZERO_WEIGHT_DEGREES = 65;
 const MIXER_SATURATION_CHROMA_ZERO = 0.005;
 const MIXER_SATURATION_CHROMA_FULL = 0.07;
 const MIXER_LUMINANCE_CHROMA_ZERO = 0.02;
 const MIXER_LUMINANCE_CHROMA_FULL = 0.10;
 const MIXER_HUE_MAX_SHIFT_DEGREES = 60;
-const MIXER_SATURATION_VIBRANCE_STRENGTH = 1.5;
-const MIXER_LUMINANCE_MIDTONE_MAX = 30;
+const MIXER_SATURATION_VIBRANCE_STRENGTH = 1.0;
+const MIXER_LUMINANCE_MIDTONE_MAX = 20;
 const PROPHOTO_LUMA_R = 0.2880402;
 const PROPHOTO_LUMA_G = 0.7118741;
 const PROPHOTO_LUMA_B = 0.0000857;
 
-// Canonical sRGB hues for a 12-step wheel (R, O, Y, Chartreuse, G,
-// Spring Green, C, Azure, B, Violet, M, Rose) after conversion to OKLab.
-// They are mapped piecewise to a virtual 30-degree Mixer wheel so the UI can
-// expose 12 evenly spaced color controls while classification itself is
-// performed in a perceptual hue space.
-const OKLAB_ANCHOR_HUES = [
-  29.233885192342633,
-  52.984679593971286,
-  109.76923207652123,
-  135.8923516605372,
-  142.49533888780996,
-  151.1848269852735,
-  194.76894793196382,
-  256.09895765186343,
-  264.052020638055,
-  293.9376408144792,
-  328.36341792345144,
-  362.47076075330204,
-] as const;
-
-const VIRTUAL_MIXER_HUES = [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330] as const;
+// Mixer color centers are 12 equal 30-degree divisions of OKLab hue,
+// globally offset by 22 degrees. The UI palette, picker classification, and
+// processing all use this same coordinate system directly.
+const MIXER_COLOR_COUNT = 12;
+const MIXER_HUE_STEP_DEGREES = 360 / MIXER_COLOR_COUNT;
+const MIXER_HUE_OFFSET_DEGREES = 22;
 
 export type ImageMixerLut = {
   key: string;
@@ -65,15 +48,6 @@ function circularHueDistanceDegrees(a: number, b: number): number {
   return Math.min(raw, 360 - raw);
 }
 
-function mixerHueWeight(distanceDegrees: number): number {
-  const distance = Math.abs(distanceDegrees);
-  if (distance <= MIXER_HUE_FULL_WEIGHT_DEGREES) return 1;
-  if (distance >= MIXER_HUE_ZERO_WEIGHT_DEGREES) return 0;
-  const t = (distance - MIXER_HUE_FULL_WEIGHT_DEGREES)
-    / (MIXER_HUE_ZERO_WEIGHT_DEGREES - MIXER_HUE_FULL_WEIGHT_DEGREES);
-  return 0.5 * (1 + Math.cos(Math.PI * t));
-}
-
 function mixerGainHill(distanceDegrees: number): number {
   const distance = Math.abs(distanceDegrees);
   if (distance >= 60) return 0;
@@ -99,39 +73,6 @@ function normalizeDegrees(value: number): number {
   return ((value % 360) + 360) % 360;
 }
 
-function findCircularSegment(value: number, anchors: readonly number[]): { index: number; t: number } {
-  const normalized = normalizeDegrees(value);
-  for (let i = 0; i < anchors.length; i += 1) {
-    const start = anchors[i] ?? 0;
-    const nextRaw = anchors[(i + 1) % anchors.length] ?? 0;
-    const end = i === anchors.length - 1 ? nextRaw + 360 : nextRaw;
-    const candidate = i === anchors.length - 1 && normalized < start ? normalized + 360 : normalized;
-    if (candidate >= start && candidate <= end) {
-      const span = end - start;
-      return { index: i, t: span > 1e-12 ? (candidate - start) / span : 0 };
-    }
-  }
-  return { index: 0, t: 0 };
-}
-
-function oklabHueToMixerHue(hueDegrees: number): number {
-  const { index, t } = findCircularSegment(hueDegrees, OKLAB_ANCHOR_HUES);
-  const start = VIRTUAL_MIXER_HUES[index] ?? 0;
-  const end = index === VIRTUAL_MIXER_HUES.length - 1
-    ? (VIRTUAL_MIXER_HUES[0] ?? 0) + 360
-    : (VIRTUAL_MIXER_HUES[index + 1] ?? 0);
-  return normalizeDegrees(start + (end - start) * t);
-}
-
-function mixerHueToOklabHue(mixerHueDegrees: number): number {
-  const { index, t } = findCircularSegment(mixerHueDegrees, VIRTUAL_MIXER_HUES);
-  const start = OKLAB_ANCHOR_HUES[index] ?? 0;
-  const end = index === OKLAB_ANCHOR_HUES.length - 1
-    ? (OKLAB_ANCHOR_HUES[0] ?? 0) + 360
-    : (OKLAB_ANCHOR_HUES[index + 1] ?? 0);
-  return normalizeDegrees(start + (end - start) * t);
-}
-
 export function imageMixerColorIndexForLinearProPhoto(
   r: number,
   g: number,
@@ -141,8 +82,8 @@ export function imageMixerColorIndexForLinearProPhoto(
   const chroma = Math.hypot(a, bb);
   if (!(chroma > 1e-6)) return null;
   const hueDegrees = normalizeDegrees(Math.atan2(bb, a) * 180 / Math.PI);
-  const mixerHueDegrees = oklabHueToMixerHue(hueDegrees);
-  return Math.round(mixerHueDegrees / 30) % VIRTUAL_MIXER_HUES.length;
+  const shiftedHue = normalizeDegrees(hueDegrees - MIXER_HUE_OFFSET_DEGREES);
+  return Math.round(shiftedHue / MIXER_HUE_STEP_DEGREES) % MIXER_COLOR_COUNT;
 }
 
 function linearProPhotoToOklab(r: number, g: number, b: number): [number, number, number] {
@@ -231,7 +172,7 @@ function applyRichMixerLinearRgb(
   const [L, a, bb] = linearProPhotoToOklab(r, g, b);
   const chroma = Math.hypot(a, bb);
   const hueDegrees = chroma > 1e-12 ? normalizeDegrees(Math.atan2(bb, a) * 180 / Math.PI) : 0;
-  const mixerHueDegrees = oklabHueToMixerHue(hueDegrees);
+  const mixerHueDegrees = hueDegrees;
   const saturationChromaWeight = mixerSaturationChromaWeight(chroma);
   const luminanceChromaWeight = mixerLuminanceChromaWeight(chroma);
 
@@ -239,17 +180,16 @@ function applyRichMixerLinearRgb(
   let saturationLogGain = 0;
   let luminanceLogGain = 0;
 
-  for (let colorIndex = 0; colorIndex < 12; colorIndex += 1) {
+  for (let colorIndex = 0; colorIndex < MIXER_COLOR_COUNT; colorIndex += 1) {
     const base = colorIndex * 3;
     const hueAdjustment = clampMixerControl(settings[base] ?? 0);
     const saturationAdjustment = clampMixerControl(settings[base + 1] ?? 0);
     const luminanceAdjustment = clampMixerControl(settings[base + 2] ?? 0);
     if (hueAdjustment === 0 && saturationAdjustment === 0 && luminanceAdjustment === 0) continue;
-    const center = colorIndex * 30;
+    const center = normalizeDegrees(MIXER_HUE_OFFSET_DEGREES + colorIndex * MIXER_HUE_STEP_DEGREES);
     const distance = circularHueDistanceDegrees(mixerHueDegrees, center);
-    const hueWeight = mixerHueWeight(distance);
     const gainHill = mixerGainHill(distance);
-    if (!(hueWeight > 0) && !(gainHill > 0)) continue;
+    if (!(gainHill > 0)) continue;
 
     if (hueAdjustment !== 0 && gainHill > 0) {
       hueControl += (hueAdjustment / 100) * gainHill;
@@ -278,7 +218,7 @@ function applyRichMixerLinearRgb(
     const adjustedMixerHue = Math.abs(hueShift) > 1e-9
       ? normalizeDegrees(mixerHueDegrees + hueShift)
       : mixerHueDegrees;
-    const adjustedOklabHue = mixerHueToOklabHue(adjustedMixerHue);
+    const adjustedOklabHue = adjustedMixerHue;
     const adjustedChroma = Math.abs(saturationAmount) > 1e-9
       ? Math.max(0, applyScaledLogLinearExtended(
           chroma,

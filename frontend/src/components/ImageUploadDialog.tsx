@@ -1042,18 +1042,27 @@ const MIXER_COLOR_KEYS: readonly ImageMixerColorKey[] = [
 ] as const;
 
 const MIXER_COLOR_NAMES: Record<ImageMixerColorKey, string> = {
-  red: "Red",
-  orange: "Orange",
-  yellow: "Yellow",
-  chartreuse: "Chartreuse",
-  green: "Green",
-  spring: "Spring Green",
-  cyan: "Cyan",
-  azure: "Azure",
-  blue: "Blue",
-  violet: "Violet",
-  magenta: "Magenta",
-  rose: "Rose",
+  red: "22° (Red)",
+  orange: "52°",
+  yellow: "82° (Yellow)",
+  chartreuse: "112°",
+  green: "142° (Green)",
+  spring: "172°",
+  cyan: "202° (Cyan)",
+  azure: "232°",
+  blue: "262° (Blue)",
+  violet: "292°",
+  magenta: "322° (Magenta)",
+  rose: "352°",
+};
+
+const MIXER_COLOR_LETTERS: Partial<Record<ImageMixerColorKey, string>> = {
+  red: "R",
+  yellow: "Y",
+  green: "G",
+  cyan: "C",
+  blue: "B",
+  magenta: "M",
 };
 
 type MixerColorButtonStyle = {
@@ -1064,18 +1073,18 @@ type MixerColorButtonStyle = {
 };
 
 const MIXER_COLOR_BUTTON_STYLES: Record<ImageMixerColorKey, MixerColorButtonStyle> = {
-  red: { background: "#fee2e2", selectedBackground: "#fecaca", border: "#ef4444", text: "#b91c1c" },
-  orange: { background: "#ffedd5", selectedBackground: "#fed7aa", border: "#f97316", text: "#c2410c" },
-  yellow: { background: "#fef9c3", selectedBackground: "#fde68a", border: "#eab308", text: "#a16207" },
-  chartreuse: { background: "#ecfccb", selectedBackground: "#d9f99d", border: "#84cc16", text: "#4d7c0f" },
-  green: { background: "#dcfce7", selectedBackground: "#bbf7d0", border: "#22c55e", text: "#15803d" },
-  spring: { background: "#d1fae5", selectedBackground: "#a7f3d0", border: "#10b981", text: "#047857" },
-  cyan: { background: "#cffafe", selectedBackground: "#a5f3fc", border: "#06b6d4", text: "#0e7490" },
-  azure: { background: "#dbeafe", selectedBackground: "#bfdbfe", border: "#60a5fa", text: "#2563eb" },
-  blue: { background: "#dbeafe", selectedBackground: "#93c5fd", border: "#3b82f6", text: "#1d4ed8" },
-  violet: { background: "#ede9fe", selectedBackground: "#ddd6fe", border: "#8b5cf6", text: "#6d28d9" },
-  magenta: { background: "#fae8ff", selectedBackground: "#f5d0fe", border: "#d946ef", text: "#a21caf" },
-  rose: { background: "#ffe4e6", selectedBackground: "#fecdd3", border: "#f43f5e", text: "#be123c" },
+  red: { background: "oklch(75% 0.12 22deg)", selectedBackground: "oklch(75% 0.12 22deg)", border: "oklch(52% 0.12 22deg)", text: "#111827" },
+  orange: { background: "oklch(75% 0.12 52deg)", selectedBackground: "oklch(75% 0.12 52deg)", border: "oklch(52% 0.12 52deg)", text: "#111827" },
+  yellow: { background: "oklch(75% 0.12 82deg)", selectedBackground: "oklch(75% 0.12 82deg)", border: "oklch(52% 0.12 82deg)", text: "#111827" },
+  chartreuse: { background: "oklch(75% 0.12 112deg)", selectedBackground: "oklch(75% 0.12 112deg)", border: "oklch(52% 0.12 112deg)", text: "#111827" },
+  green: { background: "oklch(75% 0.12 142deg)", selectedBackground: "oklch(75% 0.12 142deg)", border: "oklch(52% 0.12 142deg)", text: "#111827" },
+  spring: { background: "oklch(75% 0.12 172deg)", selectedBackground: "oklch(75% 0.12 172deg)", border: "oklch(52% 0.12 172deg)", text: "#111827" },
+  cyan: { background: "oklch(75% 0.12 202deg)", selectedBackground: "oklch(75% 0.12 202deg)", border: "oklch(52% 0.12 202deg)", text: "#111827" },
+  azure: { background: "oklch(75% 0.12 232deg)", selectedBackground: "oklch(75% 0.12 232deg)", border: "oklch(52% 0.12 232deg)", text: "#111827" },
+  blue: { background: "oklch(75% 0.12 262deg)", selectedBackground: "oklch(75% 0.12 262deg)", border: "oklch(52% 0.12 262deg)", text: "#111827" },
+  violet: { background: "oklch(75% 0.12 292deg)", selectedBackground: "oklch(75% 0.12 292deg)", border: "oklch(52% 0.12 292deg)", text: "#111827" },
+  magenta: { background: "oklch(75% 0.12 322deg)", selectedBackground: "oklch(75% 0.12 322deg)", border: "oklch(52% 0.12 322deg)", text: "#111827" },
+  rose: { background: "oklch(75% 0.12 352deg)", selectedBackground: "oklch(75% 0.12 352deg)", border: "oklch(52% 0.12 352deg)", text: "#111827" },
 };
 
 const SUPER_MC_BLACK_ROLLOFF_B = 0.04;
@@ -16198,23 +16207,26 @@ export function ImageEditDialog({
                           const selected = activeMixerColor === color;
                           const colorStyle = MIXER_COLOR_BUTTON_STYLES[color];
                           const colorName = MIXER_COLOR_NAMES[color];
+                          const colorLetter = MIXER_COLOR_LETTERS[color];
                           return (
                             <button
                               key={color}
                               type="button"
-                              className="h-8 rounded-md border transition-[filter,box-shadow,transform] hover:brightness-95"
+                              className="flex h-8 items-center justify-center rounded-md border text-[11px] font-semibold transition-[filter,box-shadow,transform] hover:brightness-95"
                               style={{
                                 backgroundColor: selected ? colorStyle.selectedBackground : colorStyle.background,
-                                borderColor: selected ? colorStyle.border : `${colorStyle.border}66`,
-                                borderWidth: selected ? "2px" : "1px",
-                                color: selected ? colorStyle.text : "#374151",
-                                boxShadow: selected ? `0 0 0 1px ${colorStyle.border}55` : undefined,
+                                borderColor: selected ? colorStyle.border : "rgba(55, 65, 81, 0.28)",
+                                borderWidth: selected ? "3px" : "1px",
+                                color: colorStyle.text,
+                                boxShadow: selected ? "0 0 0 1px rgba(17, 24, 39, 0.18)" : undefined,
                               }}
                               onClick={() => setActiveMixerColor(color)}
                               aria-pressed={selected}
                               aria-label={colorName}
                               title={colorName}
-                            />
+                            >
+                              {colorLetter ?? null}
+                            </button>
                           );
                         })}
                       </div>
