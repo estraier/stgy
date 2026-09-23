@@ -1,4 +1,10 @@
-import { applyScaledLogLinearExtended, clamp01, colorVibranceFactor } from "@/image/tone";
+import {
+  applyHsvSaturationPreservingProPhotoLuminance,
+  applyScaledLogLinearExtended,
+  clamp01,
+  colorVibranceFactor,
+  rgbToHsvExtended,
+} from "@/image/tone";
 
 export const IMAGE_MIXER_LUT_SIZE = 32;
 export const IMAGE_MIXER_LUT_CHANNELS = 3;
@@ -229,26 +235,30 @@ function applyRichMixerLinearRgb(
   let mixedG = g;
   let mixedB = b;
 
-  if (Math.abs(hueShift) > 1e-9 || Math.abs(saturationAmount) > 1e-9) {
-    const adjustedMixerHue = Math.abs(hueShift) > 1e-9
-      ? normalizeDegrees(mixerHueDegrees + hueShift)
-      : mixerHueDegrees;
-    const adjustedOklabHue = adjustedMixerHue;
-    const adjustedChroma = Math.abs(saturationAmount) > 1e-9
-      ? Math.max(0, applyScaledLogLinearExtended(
-          chroma,
-          colorVibranceFactor(saturationAmount) * MIXER_SATURATION_VIBRANCE_STRENGTH,
-        ))
-      : chroma;
-
-    const hueRadians = adjustedOklabHue * Math.PI / 180;
-    const adjustedA = adjustedChroma * Math.cos(hueRadians);
-    const adjustedB = adjustedChroma * Math.sin(hueRadians);
+  if (Math.abs(hueShift) > 1e-9) {
+    const adjustedMixerHue = normalizeDegrees(mixerHueDegrees + hueShift);
+    const hueRadians = adjustedMixerHue * Math.PI / 180;
+    const adjustedA = chroma * Math.cos(hueRadians);
+    const adjustedB = chroma * Math.sin(hueRadians);
     [mixedR, mixedG, mixedB] = oklabToLinearProPhoto(L, adjustedA, adjustedB);
 
-    // Hue/chroma edits should not implicitly alter image brightness. Restore
-    // the original ProPhoto luminance before explicit Luminance adjustment.
+    // Hue edits should not implicitly alter image brightness. Restore the
+    // original ProPhoto luminance before Saturation/Luminance adjustment.
     [mixedR, mixedG, mixedB] = scaleRgbToLuma(mixedR, mixedG, mixedB, originalLuma);
+  }
+
+  if (Math.abs(saturationAmount) > 1e-9) {
+    const [, currentSaturation] = rgbToHsvExtended(mixedR, mixedG, mixedB);
+    const targetSaturation = Math.max(0, applyScaledLogLinearExtended(
+      currentSaturation,
+      colorVibranceFactor(saturationAmount) * MIXER_SATURATION_VIBRANCE_STRENGTH,
+    ));
+    [mixedR, mixedG, mixedB] = applyHsvSaturationPreservingProPhotoLuminance(
+      mixedR,
+      mixedG,
+      mixedB,
+      targetSaturation,
+    );
   }
 
   if (Math.abs(luminanceAmount) > 1e-9) {
