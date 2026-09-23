@@ -11504,6 +11504,11 @@ export function ImageEditDialog({
   const previewAreaRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
+  const previewPixelTextRef = useRef<HTMLSpanElement>(null);
+  const previewPixelTextValueRef = useRef("");
+  const previewPixelPointerRef = useRef<{ clientX: number; clientY: number } | null>(null);
+  const previewPixelFrameRef = useRef<number | null>(null);
+  const peepDisplayedOutputRectRef = useRef<PeepOutputRect | null>(null);
   const previewRenderedRef = useRef<{
     decoded: DecodedRgbImage16;
     width: number;
@@ -12274,6 +12279,9 @@ export function ImageEditDialog({
     ? Math.min(1400, editorLayoutViewport.w * 0.95)
     : undefined;
   const editorUsesSidePanel = editorLayoutViewport.w >= 1024;
+  const footerUsesMobilePortraitLayout = !editorUsesSidePanel
+    && viewportSize.w > 0
+    && viewportSize.h >= viewportSize.w;
   const histogramPanelBaseSize = editorUsesSidePanel
     ? { width: 382.2, height: 179.4 }
     : { width: 294, height: 138 };
@@ -13868,6 +13876,162 @@ export function ImageEditDialog({
     return map;
   }, [clarity, resolvePreviewToneSample]);
 
+  const clearPreviewPixelReadout = useCallback(() => {
+    previewPixelTextValueRef.current = "";
+    const target = previewPixelTextRef.current;
+    if (target) target.textContent = "";
+  }, []);
+
+  useLayoutEffect(() => {
+    const target = previewPixelTextRef.current;
+    if (target && target.textContent !== previewPixelTextValueRef.current) {
+      target.textContent = previewPixelTextValueRef.current;
+    }
+  });
+
+  const refreshPreviewPixelReadout = useCallback(() => {
+    const point = previewPixelPointerRef.current;
+    const target = previewPixelTextRef.current;
+    if (!point || !target) {
+      clearPreviewPixelReadout();
+      return;
+    }
+
+    if (peepExpanded) {
+      const canvas = peepDisplayCanvasRef.current;
+      const outputRect = peepDisplayedOutputRectRef.current;
+      if (!canvas || !outputRect || canvas.width <= 0 || canvas.height <= 0) {
+        clearPreviewPixelReadout();
+        return;
+      }
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) {
+        clearPreviewPixelReadout();
+        return;
+      }
+      const fx = (point.clientX - rect.left) / rect.width;
+      const fy = (point.clientY - rect.top) / rect.height;
+      if (fx < 0 || fx >= 1 || fy < 0 || fy >= 1) {
+        clearPreviewPixelReadout();
+        return;
+      }
+
+      const pixelX = Math.min(canvas.width - 1, Math.max(0, Math.floor(fx * canvas.width)));
+      const pixelY = Math.min(canvas.height - 1, Math.max(0, Math.floor(fy * canvas.height)));
+      try {
+        const ctx = getCanvas2dContext(canvas, "srgb", true);
+        if (!ctx) {
+          clearPreviewPixelReadout();
+          return;
+        }
+        const rgba = getCanvasImageData(ctx, pixelX, pixelY, 1, 1, "srgb").data;
+        const x = Math.min(
+          Math.max(0, Math.round(outputRect.x + outputRect.w) - 1),
+          Math.max(0, Math.round(outputRect.x) + pixelX),
+        );
+        const y = Math.min(
+          Math.max(0, Math.round(outputRect.y + outputRect.h) - 1),
+          Math.max(0, Math.round(outputRect.y) + pixelY),
+        );
+        // The Peep canvas is an sRGB display surface only. Report the sampled
+        // color in LIS's linear ProPhoto working space, independent of export profile.
+        const [r, g, b] = encodedRgbToLinearProphoto(
+          (rgba[0] ?? 0) / 255,
+          (rgba[1] ?? 0) / 255,
+          (rgba[2] ?? 0) / 255,
+          "srgb",
+        );
+        const text = `Pixel: ${x},${y} (${r.toFixed(3)},${g.toFixed(3)},${b.toFixed(3)})`;
+        previewPixelTextValueRef.current = text;
+        target.textContent = text;
+      } catch {
+        clearPreviewPixelReadout();
+      }
+      return;
+    }
+
+    const canvas = previewCanvasRef.current;
+    const rendered = previewRenderedRef.current;
+    if (
+      !canvas
+      || !rendered
+      || rendered.width !== canvas.width
+      || rendered.height !== canvas.height
+    ) {
+      clearPreviewPixelReadout();
+      return;
+    }
+
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0 || canvas.width <= 0 || canvas.height <= 0) {
+      clearPreviewPixelReadout();
+      return;
+    }
+    const fx = (point.clientX - rect.left) / rect.width;
+    const fy = (point.clientY - rect.top) / rect.height;
+    if (fx < 0 || fx >= 1 || fy < 0 || fy >= 1) {
+      clearPreviewPixelReadout();
+      return;
+    }
+
+    const previewX = Math.min(canvas.width - 1, Math.max(0, Math.floor(fx * canvas.width)));
+    const previewY = Math.min(canvas.height - 1, Math.max(0, Math.floor(fy * canvas.height)));
+    try {
+      const ctx = getCanvas2dContext(canvas, "srgb", true);
+      if (!ctx) {
+        clearPreviewPixelReadout();
+        return;
+      }
+      const rgba = getCanvasImageData(ctx, previewX, previewY, 1, 1, "srgb").data;
+      const imageWidth = Math.max(1, rendered.decoded.width);
+      const imageHeight = Math.max(1, rendered.decoded.height);
+      const x = Math.min(imageWidth - 1, Math.max(0, Math.floor(fx * imageWidth)));
+      const y = Math.min(imageHeight - 1, Math.max(0, Math.floor(fy * imageHeight)));
+      // The preview canvas is an sRGB display surface only. Report the sampled
+      // color in LIS's linear ProPhoto working space, independent of export profile.
+      const [r, g, b] = encodedRgbToLinearProphoto(
+        (rgba[0] ?? 0) / 255,
+        (rgba[1] ?? 0) / 255,
+        (rgba[2] ?? 0) / 255,
+        "srgb",
+      );
+      const text = `Pixel: ${x},${y} (${r.toFixed(3)},${g.toFixed(3)},${b.toFixed(3)})`;
+      previewPixelTextValueRef.current = text;
+      target.textContent = text;
+    } catch {
+      clearPreviewPixelReadout();
+    }
+  }, [clearPreviewPixelReadout, peepExpanded]);
+
+  const schedulePreviewPixelReadout = useCallback((clientX: number, clientY: number) => {
+    previewPixelPointerRef.current = { clientX, clientY };
+    if (previewPixelFrameRef.current !== null) return;
+    previewPixelFrameRef.current = requestAnimationFrame(() => {
+      previewPixelFrameRef.current = null;
+      refreshPreviewPixelReadout();
+    });
+  }, [refreshPreviewPixelReadout]);
+
+  const onPreviewPixelPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    schedulePreviewPixelReadout(e.clientX, e.clientY);
+  }, [schedulePreviewPixelReadout]);
+
+  const onPreviewPixelPointerLeave = useCallback(() => {
+    previewPixelPointerRef.current = null;
+    if (previewPixelFrameRef.current !== null) {
+      cancelAnimationFrame(previewPixelFrameRef.current);
+      previewPixelFrameRef.current = null;
+    }
+    clearPreviewPixelReadout();
+  }, [clearPreviewPixelReadout]);
+
+  useEffect(() => () => {
+    if (previewPixelFrameRef.current !== null) {
+      cancelAnimationFrame(previewPixelFrameRef.current);
+      previewPixelFrameRef.current = null;
+    }
+  }, []);
+
   useEffect(() => {
     const canvas = previewCanvasRef.current;
     const decoded = decodedImageRef.current;
@@ -14120,6 +14284,7 @@ export function ImageEditDialog({
         height,
         key: renderedPreviewKey,
       };
+      refreshPreviewPixelReadout();
       const rawTiming = decoded.rawDevelopment?.timing ?? rawDevelopmentTimingRef.current;
       if (rawTiming) {
         if (editableThumbnailReadyRef.current && !decoded.rawDevelopment?.timing) {
@@ -14201,6 +14366,7 @@ export function ImageEditDialog({
     resolvePreviewToneSample,
     resolvePreviewClarityMap,
     resolvePreviewContinuousPrefixSample,
+    refreshPreviewPixelReadout,
   ]);
 
   useEffect(() => {
@@ -14783,6 +14949,7 @@ export function ImageEditDialog({
 
     const width = Math.max(1, Math.round(outputRect.w));
     const height = Math.max(1, Math.round(outputRect.h));
+    peepDisplayedOutputRectRef.current = outputRect;
     if (displayCanvas.width !== width) displayCanvas.width = width;
     if (displayCanvas.height !== height) displayCanvas.height = height;
     const ctx = displayCanvas.getContext("2d", { alpha: false });
@@ -14843,7 +15010,8 @@ export function ImageEditDialog({
       );
     }
     ctx.restore();
-  }, [resolvePeepOutputRect, displayed, peepOutputDimensions]);
+    if (previewPixelPointerRef.current) refreshPreviewPixelReadout();
+  }, [resolvePeepOutputRect, displayed, peepOutputDimensions, refreshPreviewPixelReadout]);
 
   const schedulePeepComposite = useCallback((rectOverride?: EditRect | null) => {
     if (rectOverride) peepCompositePendingRectRef.current = rectOverride;
@@ -14913,6 +15081,7 @@ export function ImageEditDialog({
     peepTileQueueRef.current = [];
     setPeepMode(false);
     setPeepExpanded(false);
+    peepDisplayedOutputRectRef.current = null;
     peepRectRef.current = { x: 0, y: 0, w: 0, h: 0 };
     peepRequestedCenterRef.current = null;
     peepExpandedDragStateRef.current = null;
@@ -15876,6 +16045,8 @@ export function ImageEditDialog({
             className={`relative rounded border bg-gray-200 overflow-hidden touch-none ${textMode ? "cursor-text" : !eyedropperMode && !rotationMode && (drawMode || mosaicMode || vignetteMode) ? "cursor-crosshair" : ""}`}
             style={{ width: "100%", height: "100%" }}
             onPointerDown={eyedropperMode || rotationMode ? undefined : textMode ? onTextPointerDown : drawMode ? onDrawPointerDown : mosaicMode ? onMosaicPointerDown : vignetteMode ? onVignettePointerDown : undefined}
+            onPointerMoveCapture={onPreviewPixelPointerMove}
+            onPointerLeave={onPreviewPixelPointerLeave}
             onPointerMove={eyedropperMode ? undefined : rotationMode ? onRotationPointerMove : drawMode ? onDrawPointerMove : mosaicMode ? onMosaicPointerMove : vignetteMode ? onVignettePointerMove : onPointerMove}
             onPointerUp={eyedropperMode ? undefined : rotationMode ? onRotationPointerUp : drawMode ? (e) => finishDrawCreation(e) : mosaicMode ? onMosaicPointerUp : vignetteMode ? (e) => finishVignetteCreation(e) : onPointerUp}
             onPointerCancel={eyedropperMode ? undefined : rotationMode ? onRotationPointerUp : drawMode ? (e) => finishDrawCreation(e, true) : mosaicMode ? onMosaicPointerCancel : vignetteMode ? (e) => finishVignetteCreation(e, true) : onPointerUp}
@@ -17720,28 +17891,31 @@ export function ImageEditDialog({
 
         <div className={`mt-4 flex gap-2 ${editorUsesSidePanel ? "flex-row items-center" : "flex-col"}`}>
           <div className={`flex text-[12px] text-gray-600 font-mono whitespace-nowrap ${editorUsesSidePanel ? "mr-auto flex-row flex-nowrap gap-x-6 gap-y-0" : "flex-col gap-y-0.5"}`}>
-            <span>
-              Input: {natural ? `${natural.w}x${natural.h}, ${(natural.w * natural.h / 1_000_000).toFixed(1)}MP` : "—"}
-            </span>
-            <span>
-              {isRawImageFile(file.name, file.type)
-                ? rawDevelopmentStage === "thumbnail"
-                  ? rawThumbnailRasterSize
-                    ? `Thumbnail: ${rawThumbnailRasterSize.width}x${rawThumbnailRasterSize.height}, ${(rawThumbnailRasterSize.width * rawThumbnailRasterSize.height / 1_000_000).toFixed(1)}MP`
-                    : "Thumbnail: —"
-                  : rawDevelopmentStage === "preview"
-                    ? previewRasterSize
-                      ? `Preview: ${previewRasterSize.width}x${previewRasterSize.height}, ${(previewRasterSize.width * previewRasterSize.height / 1_000_000).toFixed(1)}MP`
-                      : natural
-                        ? `Preview: ${natural.w}x${natural.h}, ${(natural.w * natural.h / 1_000_000).toFixed(1)}MP`
-                        : "Preview: —"
-                    : rawDevelopmentStage === "denoised"
-                      ? `Denoised: ${outputDimensions ? `${outputDimensions.w}x${outputDimensions.h}, ${(outputDimensions.w * outputDimensions.h / 1_000_000).toFixed(1)}MP` : "—"}`
-                      : rawDevelopmentStage === "master"
-                        ? `Master: ${outputDimensions ? `${outputDimensions.w}x${outputDimensions.h}, ${(outputDimensions.w * outputDimensions.h / 1_000_000).toFixed(1)}MP` : "—"}`
-                        : "Preview: —"
-                : `Output: ${outputDimensions ? `${outputDimensions.w}x${outputDimensions.h}, ${(outputDimensions.w * outputDimensions.h / 1_000_000).toFixed(1)}MP` : "—"}`}
-            </span>
+            <div className={footerUsesMobilePortraitLayout ? "flex w-full flex-row flex-nowrap items-center justify-between gap-x-2 text-[11px]" : "contents"}>
+              <span>
+                Input: {natural ? `${natural.w}x${natural.h}, ${(natural.w * natural.h / 1_000_000).toFixed(1)}MP` : "—"}
+              </span>
+              <span>
+                {isRawImageFile(file.name, file.type)
+                  ? rawDevelopmentStage === "thumbnail"
+                    ? rawThumbnailRasterSize
+                      ? `Thumbnail: ${rawThumbnailRasterSize.width}x${rawThumbnailRasterSize.height}, ${(rawThumbnailRasterSize.width * rawThumbnailRasterSize.height / 1_000_000).toFixed(1)}MP`
+                      : "Thumbnail: —"
+                    : rawDevelopmentStage === "preview"
+                      ? previewRasterSize
+                        ? `Preview: ${previewRasterSize.width}x${previewRasterSize.height}, ${(previewRasterSize.width * previewRasterSize.height / 1_000_000).toFixed(1)}MP`
+                        : natural
+                          ? `Preview: ${natural.w}x${natural.h}, ${(natural.w * natural.h / 1_000_000).toFixed(1)}MP`
+                          : "Preview: —"
+                      : rawDevelopmentStage === "denoised"
+                        ? `Denoised: ${outputDimensions ? `${outputDimensions.w}x${outputDimensions.h}, ${(outputDimensions.w * outputDimensions.h / 1_000_000).toFixed(1)}MP` : "—"}`
+                        : rawDevelopmentStage === "master"
+                          ? `Master: ${outputDimensions ? `${outputDimensions.w}x${outputDimensions.h}, ${(outputDimensions.w * outputDimensions.h / 1_000_000).toFixed(1)}MP` : "—"}`
+                          : "Preview: —"
+                  : `Output: ${outputDimensions ? `${outputDimensions.w}x${outputDimensions.h}, ${(outputDimensions.w * outputDimensions.h / 1_000_000).toFixed(1)}MP` : "—"}`}
+              </span>
+            </div>
+            <span ref={previewPixelTextRef} className="empty:hidden" />
           </div>
           <div className="flex justify-end gap-2">
             <button
