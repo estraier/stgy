@@ -52,7 +52,7 @@ export const PROPHOTO_TONE_LUMA_G = 0.7118741;
 export const PROPHOTO_TONE_LUMA_B = 0.0000857;
 export const EXPOSURE_ROLLOFF_A = 0.5;
 export const SATURATION_ROLLOFF_A = 0.7;
-export const FINAL_DISPLAY_ROLLOFF_A = 0.9;
+export const FINAL_DISPLAY_ROLLOFF_A = 0.5;
 export const ROLLOFF_SAVING_LIMIT_FACTOR = 4;
 
 export type RolloffParams = {
