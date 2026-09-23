@@ -1171,7 +1171,7 @@ export function applyColorAdjustmentsLinearRgb(
     g,
     b,
     context,
-    hasColorAdjustmentContextChanges(context),
+    true,
   );
 }
 
@@ -1188,7 +1188,7 @@ export function applyColorAdjustmentsLinearRgbInto(
     output[1] ?? 0,
     output[2] ?? 0,
     context,
-    hasColorAdjustmentContextChanges(context),
+    true,
     output,
   );
 }

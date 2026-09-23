@@ -10024,6 +10024,183 @@ type PeepTileSource = ImageBitmap | HTMLCanvasElement | OffscreenCanvas;
 type PeepTileCacheEntry = { source: PeepTileSource; width: number; height: number };
 type PeepTileJob = { revision: number; tx: number; ty: number; rect: PeepOutputRect };
 
+type LinearProPhotoPixelSampler = {
+  decoded: DecodedRgbImage16;
+  outputWidth: number;
+  outputHeight: number;
+  transform: ReturnType<typeof buildRenderedPixelToSourceTransform>;
+  context: ColorAdjustmentContext;
+  clarityMap: ImageEditClarityMap | null;
+  defringeMap: DefringeAnalysisMap | null;
+  defringeAmount: number;
+  samplingScratch: ReturnType<typeof createRgb16SamplingScratch>;
+};
+
+function linearProPhotoPixelSamplerKey(
+  decoded: DecodedRgbImage16,
+  params: ImageEditParams,
+  defringeMap: DefringeAnalysisMap | null,
+): string {
+  return JSON.stringify([
+    decoded.width,
+    decoded.height,
+    decoded.linearRangeMax,
+    decoded.transfer,
+    params.crop.left,
+    params.crop.top,
+    params.crop.right,
+    params.crop.bottom,
+    params.rotationDegrees,
+    params.temperature,
+    params.tint,
+    params.defringe,
+    params.exposureEv,
+    params.shadow,
+    params.highlight,
+    params.scaledLog,
+    params.sigmoid,
+    params.clarity,
+    params.vibrance,
+    params.saturation,
+    params.resizePercent,
+    defringeMap ? 1 : 0,
+  ]);
+}
+
+function buildLinearProPhotoPixelSampler(
+  decoded: DecodedRgbImage16,
+  params: ImageEditParams,
+  clarityMap: ImageEditClarityMap | null,
+  defringeMap: DefringeAnalysisMap | null,
+): LinearProPhotoPixelSampler {
+  const sourceW = decoded.width;
+  const sourceH = decoded.height;
+  const crop = normalizeCrop(params.crop);
+  const sx = Math.max(0, Math.min(sourceW - 1, Math.round(sourceW * crop.left)));
+  const sy = Math.max(0, Math.min(sourceH - 1, Math.round(sourceH * crop.top)));
+  const ex = Math.max(sx + 1, Math.min(sourceW, Math.round(sourceW * (1 - crop.right))));
+  const ey = Math.max(sy + 1, Math.min(sourceH, Math.round(sourceH * (1 - crop.bottom))));
+  const cropW = Math.max(1, ex - sx);
+  const cropH = Math.max(1, ey - sy);
+  const outputWidth = Math.max(1, Math.round(cropW * params.resizePercent / 100));
+  const outputHeight = Math.max(1, Math.round(cropH * params.resizePercent / 100));
+  const sourceRect = { x: sx, y: sy, w: cropW, h: cropH };
+  const rawContextSample = getAnalysisLinearRgbSample(decoded, sourceRect, params.rotationDegrees);
+  const defringeAmount = clampDefringe(params.defringe) / 100;
+  const contextSample = defringeMap && defringeAmount > 0
+    ? applyDefringeToRenderedSample(
+        rawContextSample,
+        defringeMap,
+        defringeAmount,
+        sourceW,
+        sourceH,
+        sourceRect,
+        params.rotationDegrees,
+      )
+    : rawContextSample;
+  const context = buildInteractiveColorAdjustmentContextFromLinearRgbSample(
+    contextSample,
+    params.temperature,
+    params.tint,
+    params.exposureEv,
+    params.shadow,
+    params.highlight,
+    params.scaledLog,
+    params.sigmoid,
+    params.vibrance,
+    params.saturation,
+    true,
+  );
+  return {
+    decoded,
+    outputWidth,
+    outputHeight,
+    transform: buildRenderedPixelToSourceTransform(
+      sourceW,
+      sourceH,
+      sx,
+      sy,
+      outputWidth / cropW,
+      outputHeight / cropH,
+      params.rotationDegrees,
+    ),
+    context,
+    clarityMap: isUsableImageEditClarityMap(clarityMap) ? clarityMap : null,
+    defringeMap,
+    defringeAmount,
+    samplingScratch: createRgb16SamplingScratch(),
+  };
+}
+
+function sampleLinearProPhotoPixel(
+  sampler: LinearProPhotoPixelSampler,
+  x: number,
+  y: number,
+): [number, number, number] | null {
+  if (
+    x < 0 || x >= sampler.outputWidth ||
+    y < 0 || y >= sampler.outputHeight
+  ) return null;
+
+  const sourceX = sampler.transform.originX
+    + x * sampler.transform.columnStepX
+    + y * sampler.transform.rowStepX;
+  const sourceY = sampler.transform.originY
+    + x * sampler.transform.columnStepY
+    + y * sampler.transform.rowStepY;
+  const decoded = sampler.decoded;
+  if (
+    sourceX < 0 || sourceX >= decoded.width ||
+    sourceY < 0 || sourceY >= decoded.height
+  ) return null;
+
+  const sample: LinearRgbBuffer = [0, 0, 0];
+  if (!sampleLinearRgb16BilinearInto(decoded, sourceX, sourceY, sample, sampler.samplingScratch)) {
+    return null;
+  }
+  const adjusted: [number, number, number] = [0, 0, 0];
+  let r = sample[0];
+  let g = sample[1];
+  let b = sample[2];
+
+  if (sampler.defringeMap && sampler.defringeAmount > 0) {
+    const confidence: [number, number] = [0, 0];
+    applyDefringeLinearRgbInto(
+      r,
+      g,
+      b,
+      sampler.defringeMap,
+      sampler.defringeAmount,
+      decoded.width > 1 ? sourceX / (decoded.width - 1) : 0.5,
+      decoded.height > 1 ? sourceY / (decoded.height - 1) : 0.5,
+      adjusted,
+      confidence,
+    );
+    r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
+  }
+
+  if (sampler.clarityMap) {
+    applyToneAdjustmentsLinearRgbInto(r, g, b, sampler.context, adjusted);
+    r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
+    const clarityGain = sampleImageEditClarityGain(
+      sampler.clarityMap,
+      sourceX,
+      sourceY,
+      decoded.width,
+      decoded.height,
+    );
+    applyLuminanceGainPreservingAboveOneLinearRgbInto(r, g, b, clarityGain, adjusted);
+    r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
+    applyColorAdjustmentsAfterToneLinearRgbInto(r, g, b, sampler.context, true, adjusted);
+    r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
+  } else {
+    applyColorAdjustmentsLinearRgbInto(r, g, b, sampler.context, adjusted);
+    r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
+  }
+
+  return [r, g, b];
+}
+
 function releasePeepTileSource(source: PeepTileSource): void {
   if (typeof ImageBitmap !== "undefined" && source instanceof ImageBitmap) {
     source.close();
@@ -11508,7 +11685,14 @@ export function ImageEditDialog({
   const previewPixelTextValueRef = useRef("");
   const previewPixelPointerRef = useRef<{ clientX: number; clientY: number } | null>(null);
   const previewPixelFrameRef = useRef<number | null>(null);
+  const previewLinearProPhotoRef = useRef<Float32Array | null>(null);
   const peepDisplayedOutputRectRef = useRef<PeepOutputRect | null>(null);
+  const peepPixelDecodedRef = useRef<DecodedRgbImage16 | null>(null);
+  const peepPixelSamplerRef = useRef<{
+    decoded: DecodedRgbImage16;
+    key: string;
+    sampler: LinearProPhotoPixelSampler;
+  } | null>(null);
   const previewRenderedRef = useRef<{
     decoded: DecodedRgbImage16;
     width: number;
@@ -11872,6 +12056,9 @@ export function ImageEditDialog({
     previewClarityMapCacheRef.current = null;
     previewContinuousPrefixCacheRef.current = null;
     previewRgba8Ref.current = null;
+    previewLinearProPhotoRef.current = null;
+    peepPixelSamplerRef.current = null;
+    peepPixelDecodedRef.current = null;
     previewRasterSizeRef.current = null;
     setPreviewRasterSize(null);
     setHistogram(null);
@@ -13876,6 +14063,61 @@ export function ImageEditDialog({
     return map;
   }, [clarity, resolvePreviewToneSample]);
 
+  const buildCurrentEditParams = useCallback((): ImageEditParams => {
+    const left = displayed.w > 0 ? (cropRect.x - displayed.x) / displayed.w : 0;
+    const top = displayed.h > 0 ? (cropRect.y - displayed.y) / displayed.h : 0;
+    const right = displayed.w > 0 ? 1 - (cropRect.x + cropRect.w - displayed.x) / displayed.w : 0;
+    const bottom = displayed.h > 0 ? 1 - (cropRect.y + cropRect.h - displayed.y) / displayed.h : 0;
+    return {
+      crop: normalizeCrop({ left, top, right, bottom }),
+      rotationDegrees: normalizeRotationDegrees(rotationDegrees),
+      temperature: clampWhiteBalanceValue(temperature),
+      tint: clampWhiteBalanceValue(tint),
+      denoise: clampDenoise(denoise),
+      defringe: clampDefringe(defringe),
+      exposureEv: clampExposureEv(exposureEv),
+      shadow: clampToneRangeAdjustment(shadow),
+      highlight: clampToneRangeAdjustment(highlight),
+      scaledLog: clampScaledLog(scaledLog),
+      sigmoid: clampSigmoid(sigmoid),
+      clarity: clampClarity(clarity),
+      vibrance: clampColorAdjustment(vibrance),
+      saturation: clampColorAdjustment(saturation),
+      resizePercent: Math.min(100, Math.max(1, Math.round(resizePercent))),
+      sharpen: clampSharpen(sharpen),
+      mosaicRegions: normalizeMosaicRegions(mosaicRegions),
+      textOverlays: normalizeTextOverlays(textOverlays),
+      drawOverlays: normalizeDrawOverlays(drawOverlays),
+      vignetteOverlay: normalizeVignetteOverlay(vignetteOverlay),
+      mixer: normalizeImageMixerSettings(imageMixer),
+      filter: normalizeImageFilter(imageFilter),
+    };
+  }, [
+    displayed,
+    cropRect,
+    rotationDegrees,
+    temperature,
+    tint,
+    denoise,
+    defringe,
+    exposureEv,
+    shadow,
+    highlight,
+    scaledLog,
+    sigmoid,
+    clarity,
+    vibrance,
+    saturation,
+    resizePercent,
+    sharpen,
+    mosaicRegions,
+    textOverlays,
+    drawOverlays,
+    vignetteOverlay,
+    imageMixer,
+    imageFilter,
+  ]);
+
   const clearPreviewPixelReadout = useCallback(() => {
     previewPixelTextValueRef.current = "";
     const target = previewPixelTextRef.current;
@@ -13918,29 +14160,46 @@ export function ImageEditDialog({
 
       const pixelX = Math.min(canvas.width - 1, Math.max(0, Math.floor(fx * canvas.width)));
       const pixelY = Math.min(canvas.height - 1, Math.max(0, Math.floor(fy * canvas.height)));
+      const x = Math.min(
+        Math.max(0, Math.round(outputRect.x + outputRect.w) - 1),
+        Math.max(0, Math.round(outputRect.x) + pixelX),
+      );
+      const y = Math.min(
+        Math.max(0, Math.round(outputRect.y + outputRect.h) - 1),
+        Math.max(0, Math.round(outputRect.y) + pixelY),
+      );
+      const decoded = peepPixelDecodedRef.current ?? decodedImageRef.current;
+      if (!decoded) {
+        clearPreviewPixelReadout();
+        return;
+      }
       try {
-        const ctx = getCanvas2dContext(canvas, "srgb", true);
-        if (!ctx) {
+        const params = buildCurrentEditParams();
+        const activeDefringe = clampDefringe(params.defringe) > 0
+          && defringeMapRef.current?.decoded === decoded
+          ? defringeMapRef.current.map
+          : null;
+        const key = linearProPhotoPixelSamplerKey(decoded, params, activeDefringe);
+        let cached = peepPixelSamplerRef.current;
+        if (!cached || cached.decoded !== decoded || cached.key !== key) {
+          cached = {
+            decoded,
+            key,
+            sampler: buildLinearProPhotoPixelSampler(
+              decoded,
+              params,
+              resolvePreviewClarityMap(decoded),
+              activeDefringe,
+            ),
+          };
+          peepPixelSamplerRef.current = cached;
+        }
+        const rgb = sampleLinearProPhotoPixel(cached.sampler, x, y);
+        if (!rgb) {
           clearPreviewPixelReadout();
           return;
         }
-        const rgba = getCanvasImageData(ctx, pixelX, pixelY, 1, 1, "srgb").data;
-        const x = Math.min(
-          Math.max(0, Math.round(outputRect.x + outputRect.w) - 1),
-          Math.max(0, Math.round(outputRect.x) + pixelX),
-        );
-        const y = Math.min(
-          Math.max(0, Math.round(outputRect.y + outputRect.h) - 1),
-          Math.max(0, Math.round(outputRect.y) + pixelY),
-        );
-        // The Peep canvas is an sRGB display surface only. Report the sampled
-        // color in LIS's linear ProPhoto working space, independent of export profile.
-        const [r, g, b] = encodedRgbToLinearProphoto(
-          (rgba[0] ?? 0) / 255,
-          (rgba[1] ?? 0) / 255,
-          (rgba[2] ?? 0) / 255,
-          "srgb",
-        );
+        const [r, g, b] = rgb;
         const text = `Pixel: ${x},${y} (${r.toFixed(3)},${g.toFixed(3)},${b.toFixed(3)})`;
         previewPixelTextValueRef.current = text;
         target.textContent = text;
@@ -13977,31 +14236,35 @@ export function ImageEditDialog({
     const previewX = Math.min(canvas.width - 1, Math.max(0, Math.floor(fx * canvas.width)));
     const previewY = Math.min(canvas.height - 1, Math.max(0, Math.floor(fy * canvas.height)));
     try {
-      const ctx = getCanvas2dContext(canvas, "srgb", true);
-      if (!ctx) {
+      const linear = previewLinearProPhotoRef.current;
+      const linearIndex = (previewY * canvas.width + previewX) * 3;
+      if (!linear || linearIndex + 2 >= linear.length) {
         clearPreviewPixelReadout();
         return;
       }
-      const rgba = getCanvasImageData(ctx, previewX, previewY, 1, 1, "srgb").data;
       const imageWidth = Math.max(1, rendered.decoded.width);
       const imageHeight = Math.max(1, rendered.decoded.height);
       const x = Math.min(imageWidth - 1, Math.max(0, Math.floor(fx * imageWidth)));
       const y = Math.min(imageHeight - 1, Math.max(0, Math.floor(fy * imageHeight)));
-      // The preview canvas is an sRGB display surface only. Report the sampled
-      // color in LIS's linear ProPhoto working space, independent of export profile.
-      const [r, g, b] = encodedRgbToLinearProphoto(
-        (rgba[0] ?? 0) / 255,
-        (rgba[1] ?? 0) / 255,
-        (rgba[2] ?? 0) / 255,
-        "srgb",
-      );
+      const r = linear[linearIndex] ?? Number.NaN;
+      const g = linear[linearIndex + 1] ?? Number.NaN;
+      const b = linear[linearIndex + 2] ?? Number.NaN;
+      if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) {
+        clearPreviewPixelReadout();
+        return;
+      }
       const text = `Pixel: ${x},${y} (${r.toFixed(3)},${g.toFixed(3)},${b.toFixed(3)})`;
       previewPixelTextValueRef.current = text;
       target.textContent = text;
     } catch {
       clearPreviewPixelReadout();
     }
-  }, [clearPreviewPixelReadout, peepExpanded]);
+  }, [
+    buildCurrentEditParams,
+    clearPreviewPixelReadout,
+    peepExpanded,
+    resolvePreviewClarityMap,
+  ]);
 
   const schedulePreviewPixelReadout = useCallback((clientX: number, clientY: number) => {
     previewPixelPointerRef.current = { clientX, clientY };
@@ -14213,6 +14476,9 @@ export function ImageEditDialog({
       if (!previewRgba8Ref.current || previewRgba8Ref.current.length !== previewPixelCount * 4) {
         previewRgba8Ref.current = new Uint8ClampedArray(previewPixelCount * 4);
       }
+      if (!previewLinearProPhotoRef.current || previewLinearProPhotoRef.current.length !== previewPixelCount * 3) {
+        previewLinearProPhotoRef.current = new Float32Array(previewPixelCount * 3);
+      }
       renderAdjustedLinearRgbSampleToCanvas(
         canvas,
         previewSourceSample,
@@ -14241,6 +14507,7 @@ export function ImageEditDialog({
         continuousPrefix?.stage,
         continuousPrefix?.sample,
         previewRgba8Ref.current,
+        previewLinearProPhotoRef.current,
       );
       if (previewVignetteOverlay && cropRect.w > 0 && cropRect.h > 0 && displayed.w > 0 && displayed.h > 0) {
         applyVignetteToCanvas(
@@ -14811,61 +15078,6 @@ export function ImageEditDialog({
     });
   }, [peepMode, peepOutputDimensions, peepTargetRasterSize, cropRect]);
 
-  const buildCurrentEditParams = useCallback((): ImageEditParams => {
-    const left = displayed.w > 0 ? (cropRect.x - displayed.x) / displayed.w : 0;
-    const top = displayed.h > 0 ? (cropRect.y - displayed.y) / displayed.h : 0;
-    const right = displayed.w > 0 ? 1 - (cropRect.x + cropRect.w - displayed.x) / displayed.w : 0;
-    const bottom = displayed.h > 0 ? 1 - (cropRect.y + cropRect.h - displayed.y) / displayed.h : 0;
-    return {
-      crop: normalizeCrop({ left, top, right, bottom }),
-      rotationDegrees: normalizeRotationDegrees(rotationDegrees),
-      temperature: clampWhiteBalanceValue(temperature),
-      tint: clampWhiteBalanceValue(tint),
-      denoise: clampDenoise(denoise),
-      defringe: clampDefringe(defringe),
-      exposureEv: clampExposureEv(exposureEv),
-      shadow: clampToneRangeAdjustment(shadow),
-      highlight: clampToneRangeAdjustment(highlight),
-      scaledLog: clampScaledLog(scaledLog),
-      sigmoid: clampSigmoid(sigmoid),
-      clarity: clampClarity(clarity),
-      vibrance: clampColorAdjustment(vibrance),
-      saturation: clampColorAdjustment(saturation),
-      resizePercent: Math.min(100, Math.max(1, Math.round(resizePercent))),
-      sharpen: clampSharpen(sharpen),
-      mosaicRegions: normalizeMosaicRegions(mosaicRegions),
-      textOverlays: normalizeTextOverlays(textOverlays),
-      drawOverlays: normalizeDrawOverlays(drawOverlays),
-      vignetteOverlay: normalizeVignetteOverlay(vignetteOverlay),
-      mixer: normalizeImageMixerSettings(imageMixer),
-      filter: normalizeImageFilter(imageFilter),
-    };
-  }, [
-    displayed,
-    cropRect,
-    rotationDegrees,
-    temperature,
-    tint,
-    denoise,
-    defringe,
-    exposureEv,
-    shadow,
-    highlight,
-    scaledLog,
-    sigmoid,
-    clarity,
-    vibrance,
-    saturation,
-    resizePercent,
-    sharpen,
-    mosaicRegions,
-    textOverlays,
-    drawOverlays,
-    vignetteOverlay,
-    imageMixer,
-    imageFilter,
-  ]);
-
   const resolvePeepOutputRect = useCallback((rectOverride?: EditRect | null): PeepOutputRect | null => {
     const rect = rectOverride ?? peepRectRef.current;
     if (!peepOutputDimensions || !peepTargetRasterSize || cropRect.w <= 0 || cropRect.h <= 0 || rect.w <= 0 || rect.h <= 0) {
@@ -15165,6 +15377,7 @@ export function ImageEditDialog({
           decoded = await masterPromise;
         }
         if (!decoded || !peepSessionActiveRef.current || job.revision !== peepTileRevisionRef.current) return;
+        peepPixelDecodedRef.current = decoded;
         const params = buildCurrentEditParams();
         const defringeMap = clampDefringe(params.defringe) > 0
           ? await ensureDefringeMap(decoded)
@@ -15217,6 +15430,12 @@ export function ImageEditDialog({
     if (!peepExpanded) return;
     void processPeepTileQueue();
   }, [peepExpanded, peepTileQueueTick, processPeepTileQueue]);
+
+  useEffect(() => {
+    if (peepExpanded) return;
+    peepPixelDecodedRef.current = null;
+    peepPixelSamplerRef.current = null;
+  }, [peepExpanded]);
 
   useLayoutEffect(() => {
     if (peepTileSettingsKeyRef.current === null) {
@@ -16356,7 +16575,7 @@ export function ImageEditDialog({
                   )}
                   {!eyedropperMode && mixerMode && (
                     <div
-                      className="absolute right-2 top-2 z-[45] flex w-[min(340px,calc(100%-1rem))] max-h-[calc(100%-1rem)] flex-col gap-2 overflow-y-auto overscroll-contain rounded border border-black/30 bg-white/90 p-2 shadow [zoom:var(--editor-ui-zoom)]"
+                      className="absolute right-2 top-2 z-[45] flex w-[min(340px,calc(100%-1rem))] max-h-[calc(100%-1rem)] select-none flex-col gap-2 overflow-y-auto overscroll-contain rounded border border-black/30 bg-white/90 p-2 shadow [zoom:var(--editor-ui-zoom)]"
                       onPointerDown={(e) => e.stopPropagation()}
                       onClick={(e) => e.stopPropagation()}
                     >
@@ -16439,7 +16658,7 @@ export function ImageEditDialog({
                   )}
                   {!eyedropperMode && filterMode && (
                     <div
-                      className="absolute right-2 top-2 z-[45] flex max-h-[calc(100%-1rem)] max-w-[min(340px,calc(100%-1rem))] flex-col gap-1 overflow-y-auto overscroll-contain rounded border border-black/30 bg-white/90 p-2 shadow [zoom:var(--editor-ui-zoom)]"
+                      className="absolute right-2 top-2 z-[45] flex max-h-[calc(100%-1rem)] max-w-[min(340px,calc(100%-1rem))] select-none flex-col gap-1 overflow-y-auto overscroll-contain rounded border border-black/30 bg-white/90 p-2 shadow [zoom:var(--editor-ui-zoom)]"
                       onPointerDown={(e) => e.stopPropagation()}
                       onClick={(e) => e.stopPropagation()}
                     >

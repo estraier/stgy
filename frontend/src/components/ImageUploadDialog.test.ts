@@ -551,6 +551,24 @@ describe("image editor RGB16 characterization", () => {
     }
   });
 
+  test("applies the final display rolloff even when all user adjustments are at defaults", () => {
+    const sample = {
+      data: new Float32Array([
+        4, 3, 2,
+        0.4, 0.3, 0.2,
+        0.2, 0.15, 0.1,
+      ]),
+      width: 3,
+      height: 1,
+    };
+    const context = imageEditor.buildInteractiveColorAdjustmentContextFromLinearRgbSample(
+      sample, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    );
+
+    expect(context.finalRolloff).not.toBeNull();
+    expect(context.finalRolloff?.inputMax).toBeGreaterThan(1);
+  });
+
   test("uses the same shared context and final display rolloff for normal analysis paths", () => {
     const sample = {
       data: new Float32Array([

@@ -97,14 +97,6 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
   const hasVibrance = normalizedVibrance !== 0;
   const hasSaturationOrVibrance = hasSaturation || hasVibrance;
   const needsHighlightRange = normalizedHighlight !== 0;
-  const needsFinalRolloff = hasWhiteBalance
-    || hasExposure
-    || hasShadow
-    || needsHighlightRange
-    || hasScaledLog
-    || hasSigmoid
-    || hasSaturation
-    || hasVibrance;
 
   const data = sample.data;
   const valid = sample.valid;
@@ -175,88 +167,85 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
   const vibranceFactor = colorVibranceFactor(normalizedVibrance);
 
   let saturationRolloff: RolloffParams | null = null;
-  let finalRolloff: RolloffParams | null = null;
-  if (needsFinalRolloff) {
-    // Analyze the same fixed-area sample that drives the interactive render.
-    // Saturation uses P99.8 before its multiplier; the final display rolloff uses
-    // P99.8 after Tone + Saturation/Vibrance. Both use the shared nonlinear
-    // rolloff with savingLimit = output range * 4.
-    const toneAdjusted = new Float32Array(count * 3);
-    const saturationValues: number[] = [];
-    for (let pixel = 0; pixel < count; pixel += 1) {
-      if (ignoreInvalid && valid && !valid[pixel]) continue;
-      const i = pixel * 3;
-      applyToneLinearToRgbInto(
-        data[i] ?? 0,
-        data[i + 1] ?? 0,
-        data[i + 2] ?? 0,
-        gains,
-        hasWhiteBalance,
-        factor,
-        normalizedShadow,
-        normalizedHighlight,
-        highlightRange,
-        normalizedScaledLog,
-        normalizedSigmoid,
-        adjusted,
-        {
-          hasExposure,
-          hasShadow,
-          hasHighlight,
-          hasScaledLog,
-          hasSigmoid,
-          exposureRolloff,
-        },
-      );
-      toneAdjusted[i] = adjusted[0];
-      toneAdjusted[i + 1] = adjusted[1];
-      toneAdjusted[i + 2] = adjusted[2];
-      if (hasSaturation && saturationFactor > 1) {
-        saturationValues.push(rgbSaturationExtended(adjusted[0], adjusted[1], adjusted[2]));
-      }
-    }
-
-    const saturationP998 = saturationValues.length
-      ? percentileFromValues(saturationValues, 99.8)
-      : 0;
-    saturationRolloff = hasSaturation && saturationFactor > 1
-      ? rolloffParams(
-          saturationP998 * saturationFactor,
-          SATURATION_ROLLOFF_A,
-          ROLLOFF_SAVING_LIMIT_FACTOR,
-          1,
-        )
-      : null;
-
-    const maxima: number[] = [];
-    for (let pixel = 0; pixel < count; pixel += 1) {
-      if (ignoreInvalid && valid && !valid[pixel]) continue;
-      const i = pixel * 3;
-      const r = toneAdjusted[i] ?? 0;
-      const g = toneAdjusted[i + 1] ?? 0;
-      const b = toneAdjusted[i + 2] ?? 0;
-      applySaturationVibranceAndFinalRolloffLinearRgbInto(
-        r,
-        g,
-        b,
-        normalizedSaturation,
-        normalizedVibrance,
-        false,
-        undefined,
-        saturationRolloff,
-        adjusted,
-      );
-      const maxChannel = Math.max(adjusted[0], adjusted[1], adjusted[2]);
-      if (Number.isFinite(maxChannel)) maxima.push(maxChannel);
-    }
-    const p998 = maxima.length ? percentileFromValues(maxima, 99.8) : 0;
-    finalRolloff = rolloffParams(
-      p998,
-      FINAL_DISPLAY_ROLLOFF_A,
-      ROLLOFF_SAVING_LIMIT_FACTOR,
-      1,
+  // Always analyze the same fixed-area sample that drives the interactive render.
+  // Saturation uses P99.8 before its multiplier; the final display rolloff uses
+  // P99.8 after Tone + Saturation/Vibrance. The final display stage is part of
+  // the rendering pipeline even when every user adjustment is at its default.
+  const toneAdjusted = new Float32Array(count * 3);
+  const saturationValues: number[] = [];
+  for (let pixel = 0; pixel < count; pixel += 1) {
+    if (ignoreInvalid && valid && !valid[pixel]) continue;
+    const i = pixel * 3;
+    applyToneLinearToRgbInto(
+      data[i] ?? 0,
+      data[i + 1] ?? 0,
+      data[i + 2] ?? 0,
+      gains,
+      hasWhiteBalance,
+      factor,
+      normalizedShadow,
+      normalizedHighlight,
+      highlightRange,
+      normalizedScaledLog,
+      normalizedSigmoid,
+      adjusted,
+      {
+        hasExposure,
+        hasShadow,
+        hasHighlight,
+        hasScaledLog,
+        hasSigmoid,
+        exposureRolloff,
+      },
     );
+    toneAdjusted[i] = adjusted[0];
+    toneAdjusted[i + 1] = adjusted[1];
+    toneAdjusted[i + 2] = adjusted[2];
+    if (hasSaturation && saturationFactor > 1) {
+      saturationValues.push(rgbSaturationExtended(adjusted[0], adjusted[1], adjusted[2]));
+    }
   }
+
+  const saturationP998 = saturationValues.length
+    ? percentileFromValues(saturationValues, 99.8)
+    : 0;
+  saturationRolloff = hasSaturation && saturationFactor > 1
+    ? rolloffParams(
+        saturationP998 * saturationFactor,
+        SATURATION_ROLLOFF_A,
+        ROLLOFF_SAVING_LIMIT_FACTOR,
+        1,
+      )
+    : null;
+
+  const maxima: number[] = [];
+  for (let pixel = 0; pixel < count; pixel += 1) {
+    if (ignoreInvalid && valid && !valid[pixel]) continue;
+    const i = pixel * 3;
+    const r = toneAdjusted[i] ?? 0;
+    const g = toneAdjusted[i + 1] ?? 0;
+    const b = toneAdjusted[i + 2] ?? 0;
+    applySaturationVibranceAndFinalRolloffLinearRgbInto(
+      r,
+      g,
+      b,
+      normalizedSaturation,
+      normalizedVibrance,
+      false,
+      undefined,
+      saturationRolloff,
+      adjusted,
+    );
+    const maxChannel = Math.max(adjusted[0], adjusted[1], adjusted[2]);
+    if (Number.isFinite(maxChannel)) maxima.push(maxChannel);
+  }
+  const p998 = maxima.length ? percentileFromValues(maxima, 99.8) : 0;
+  const finalRolloff = rolloffParams(
+    p998,
+    FINAL_DISPLAY_ROLLOFF_A,
+    ROLLOFF_SAVING_LIMIT_FACTOR,
+    1,
+  );
 
   return {
     gains,

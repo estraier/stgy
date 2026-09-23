@@ -17,7 +17,6 @@ import {
   applyToneAdjustmentsLinearRgbInto,
   applyToneAdjustmentsLinearRgbRangeInto,
   clamp01,
-  hasColorAdjustmentContextChanges,
   type ColorAdjustmentContext,
   type ToneAdjustmentStage,
 } from "@/image/tone";
@@ -191,6 +190,7 @@ export function renderAdjustedLinearRgbSampleToCanvas(
   continuousEditStage?: ImageEditPreviewSliderStage,
   continuousPrefixSample?: LinearRgbSample,
   reusableRgba8?: Uint8ClampedArray | null,
+  reusableLinearProPhoto?: Float32Array | null,
 ) {
   const ctx = getCanvas2dContext(canvas, outputColorProfile);
   if (!ctx) throw new Error("2D context unavailable");
@@ -251,6 +251,9 @@ export function renderAdjustedLinearRgbSampleToCanvas(
     : null;
   const continuousData = reusableContinuousPrefix?.data;
   const pixelCount = Math.floor(data.length / 3);
+  const linearOutput = reusableLinearProPhoto && reusableLinearProPhoto.length >= pixelCount * 3
+    ? reusableLinearProPhoto
+    : null;
   const converted: [number, number, number] = [0, 0, 0];
   const adjusted: [number, number, number] = [0, 0, 0];
   let di = 0;
@@ -260,6 +263,12 @@ export function renderAdjustedLinearRgbSampleToCanvas(
       output[di + 1] = 128;
       output[di + 2] = 128;
       output[di + 3] = 255;
+      if (linearOutput) {
+        const li = pixel * 3;
+        linearOutput[li] = Number.NaN;
+        linearOutput[li + 1] = Number.NaN;
+        linearOutput[li + 2] = Number.NaN;
+      }
       continue;
     }
     const si = pixel * 3;
@@ -323,7 +332,7 @@ export function renderAdjustedLinearRgbSampleToCanvas(
         g,
         b,
         context,
-        hasClarity || hasColorAdjustmentContextChanges(context),
+        true,
         adjusted,
       );
       r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
@@ -363,6 +372,12 @@ export function renderAdjustedLinearRgbSampleToCanvas(
     } else {
       applyColorAdjustmentsLinearRgbInto(r, g, b, context, adjusted);
       r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
+    }
+    if (linearOutput) {
+      const li = pixel * 3;
+      linearOutput[li] = Math.fround(r);
+      linearOutput[li + 1] = Math.fround(g);
+      linearOutput[li + 2] = Math.fround(b);
     }
     convertLinearProPhotoToOutputRgbInto(r, g, b, outputColorProfile, converted);
     output[di] = linearChannelToSrgbByteFromLut(converted[0]);
