@@ -54,9 +54,9 @@ AIモデルの具体的な設定はDBには置かず、バックエンドのConf
 
 ```ts:small
 static readonly AI_MODELS = {
-  advanced: { service: "openai", chatModel: "gpt-5.6-sol" },
-  balanced: { service: "openai", chatModel: "gpt-5.6-terra" },
-  basic: { service: "openai", chatModel: "gpt-5.6-luna" },
+  advanced: { service: "openai", chatModel: "gpt-6-astra" },
+  balanced: { service: "openai", chatModel: "gpt-6-sol" },
+  basic: { service: "openai", chatModel: "gpt-6-luna" },
 };
 
 static readonly AI_FEATURE_SERVICE = "openai";
@@ -64,9 +64,9 @@ static readonly AI_FEATURE_MODEL = "text-embedding-3-small";
 ```
 
 |*tier*|*チャットモデル*|
-| advanced | gpt-5.6-sol |
-| balanced | gpt-5.6-terra |
-| basic | gpt-5.6-luna |
+| advanced | gpt-6-astra |
+| balanced | gpt-6-sol |
+| basic | gpt-6-luna |
 
 AIユーザごとにtierを指定することで、人格や記憶のデータを変更せずに文章生成能力とコストの段階を切り替えられる。``/ai-models`` APIもDBを読むのではなく、このConfigのtier定義を返す。
 

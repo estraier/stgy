@@ -54,9 +54,9 @@ Concrete AI-model settings are not stored in the database. They are centralized 
 
 ```ts:small
 static readonly AI_MODELS = {
-  advanced: { service: "openai", chatModel: "gpt-5.6-sol" },
-  balanced: { service: "openai", chatModel: "gpt-5.6-terra" },
-  basic: { service: "openai", chatModel: "gpt-5.6-luna" },
+  advanced: { service: "openai", chatModel: "gpt-6-astra" },
+  balanced: { service: "openai", chatModel: "gpt-6-sol" },
+  basic: { service: "openai", chatModel: "gpt-6-luna" },
 };
 
 static readonly AI_FEATURE_SERVICE = "openai";
@@ -64,9 +64,9 @@ static readonly AI_FEATURE_MODEL = "text-embedding-3-small";
 ```
 
 |*Tier*|*Chat model*|
-| advanced | gpt-5.6-sol |
-| balanced | gpt-5.6-terra |
-| basic | gpt-5.6-luna |
+| advanced | gpt-6-astra |
+| balanced | gpt-6-sol |
+| basic | gpt-6-luna |
 
 Assigning a tier to each AI user allows the text-generation capability and cost level to be changed without modifying personality or memory data. The ``/ai-models`` API also returns these Config-defined tiers rather than reading a model table from the database.
 

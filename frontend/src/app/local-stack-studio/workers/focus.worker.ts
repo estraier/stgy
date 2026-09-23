@@ -355,7 +355,11 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
       }
     }
 
-    const maxLevels = Math.max(0, Math.floor(Math.log2(Math.min(width, height))) - 3);
+    // The controller chooses one pyramid depth from the full image dimensions
+    // and uses it for every haloed processing region.  Edge regions can be
+    // smaller than the central core, so only clamp when a region is genuinely
+    // too small to downsample to the requested image-wide depth.
+    const maxLevels = Math.max(0, Math.floor(Math.log2(Math.min(width, height))));
     const pyramidLevels = Math.max(0, Math.min(Math.trunc(requestedLevels), maxLevels));
     let mergedLinear;
     if (pyramidLevels <= 1 || Math.min(width, height) < 256) {

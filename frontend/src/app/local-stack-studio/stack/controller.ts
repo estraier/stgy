@@ -121,9 +121,11 @@ const CENTER_FILL_GRAY_STORED_GAMMA2 = Math.round(
   Math.sqrt(CENTER_FILL_GRAY_LINEAR) * RESULT_BUFFER_MAX_UINT16,
 );
 const MEDIAN_TILE_SIZE = 1024;
-const FOCUS_TILE_SIZE = 1024;
+const FOCUS_STORAGE_TILE_SIZE = 512;
+const FOCUS_PROCESSING_CORE_SIZE = 2048;
+const FOCUS_HALO_SIZE = 512;
 const FOCUS_SMOOTHNESS = 0.5;
-const FOCUS_PYRAMID_LEVELS = 8;
+const FOCUS_MAX_PYRAMID_LEVELS = 7;
 const SCRATCH_WRITE_BATCH_MAX_TILES = 4;
 const SCRATCH_WRITE_BATCH_MAX_BYTES = 24 * 1024 * 1024;
 
@@ -2879,18 +2881,18 @@ function alignedMatToGamma2Uint16(mat, hasLinearProPhoto, sourceColorSpace, widt
 }
 
 async function storeFocusRgbTiles(db, sessionId, imageIndex, stored, width, height, imageCount) {
-  const tileColumns = Math.ceil(width / FOCUS_TILE_SIZE);
-  const tileRows = Math.ceil(height / FOCUS_TILE_SIZE);
+  const tileColumns = Math.ceil(width / FOCUS_STORAGE_TILE_SIZE);
+  const tileRows = Math.ceil(height / FOCUS_STORAGE_TILE_SIZE);
   const tileCount = tileColumns * tileRows;
   const writeBatch = [];
   let writeBatchBytes = 0;
   let tileNumber = 0;
   for (let tileY = 0; tileY < tileRows; tileY += 1) {
-    const y0 = tileY * FOCUS_TILE_SIZE;
-    const tileHeight = Math.min(FOCUS_TILE_SIZE, height - y0);
+    const y0 = tileY * FOCUS_STORAGE_TILE_SIZE;
+    const tileHeight = Math.min(FOCUS_STORAGE_TILE_SIZE, height - y0);
     for (let tileX = 0; tileX < tileColumns; tileX += 1) {
-      const x0 = tileX * FOCUS_TILE_SIZE;
-      const tileWidth = Math.min(FOCUS_TILE_SIZE, width - x0);
+      const x0 = tileX * FOCUS_STORAGE_TILE_SIZE;
+      const tileWidth = Math.min(FOCUS_STORAGE_TILE_SIZE, width - x0);
       const tile = new Uint16Array(tileWidth * tileHeight * 3);
       const rowLength = tileWidth * 3;
       for (let localY = 0; localY < tileHeight; localY += 1) {
@@ -2919,18 +2921,18 @@ async function storeFocusSharpnessTiles(db, sessionId, imageIndex, sharpness, wi
   if (!(sharpness instanceof Float32Array) || sharpness.length !== width * height) {
     throw new Error("Focus worker returned an invalid full-image sharpness map.");
   }
-  const tileColumns = Math.ceil(width / FOCUS_TILE_SIZE);
-  const tileRows = Math.ceil(height / FOCUS_TILE_SIZE);
+  const tileColumns = Math.ceil(width / FOCUS_STORAGE_TILE_SIZE);
+  const tileRows = Math.ceil(height / FOCUS_STORAGE_TILE_SIZE);
   const tileCount = tileColumns * tileRows;
   const writeBatch = [];
   let writeBatchBytes = 0;
   let tileNumber = 0;
   for (let tileY = 0; tileY < tileRows; tileY += 1) {
-    const y0 = tileY * FOCUS_TILE_SIZE;
-    const tileHeight = Math.min(FOCUS_TILE_SIZE, height - y0);
+    const y0 = tileY * FOCUS_STORAGE_TILE_SIZE;
+    const tileHeight = Math.min(FOCUS_STORAGE_TILE_SIZE, height - y0);
     for (let tileX = 0; tileX < tileColumns; tileX += 1) {
-      const x0 = tileX * FOCUS_TILE_SIZE;
-      const tileWidth = Math.min(FOCUS_TILE_SIZE, width - x0);
+      const x0 = tileX * FOCUS_STORAGE_TILE_SIZE;
+      const tileWidth = Math.min(FOCUS_STORAGE_TILE_SIZE, width - x0);
       const tile = new Float32Array(tileWidth * tileHeight);
       for (let localY = 0; localY < tileHeight; localY += 1) {
         const sourceStart = (y0 + localY) * width + x0;
@@ -2978,9 +2980,97 @@ async function getFocusRgbAndSharpnessTiles(db, sessionId, imageCount, tileX, ti
   };
 }
 
+async function getFocusRgbAndSharpnessRegion(
+  db,
+  sessionId,
+  imageCount,
+  imageWidth,
+  imageHeight,
+  regionX,
+  regionY,
+  regionWidth,
+  regionHeight,
+) {
+  if (!(regionWidth > 0 && regionHeight > 0)) {
+    throw new Error("Focus processing region has invalid dimensions.");
+  }
+  const regionRight = regionX + regionWidth;
+  const regionBottom = regionY + regionHeight;
+  if (regionX < 0 || regionY < 0 || regionRight > imageWidth || regionBottom > imageHeight) {
+    throw new Error("Focus processing region is outside the image bounds.");
+  }
+
+  const rgbTiles = Array.from(
+    { length: imageCount },
+    () => new Uint16Array(regionWidth * regionHeight * 3),
+  );
+  const sharpnessTiles = Array.from(
+    { length: imageCount },
+    () => new Float32Array(regionWidth * regionHeight),
+  );
+
+  const firstTileX = Math.floor(regionX / FOCUS_STORAGE_TILE_SIZE);
+  const lastTileX = Math.floor((regionRight - 1) / FOCUS_STORAGE_TILE_SIZE);
+  const firstTileY = Math.floor(regionY / FOCUS_STORAGE_TILE_SIZE);
+  const lastTileY = Math.floor((regionBottom - 1) / FOCUS_STORAGE_TILE_SIZE);
+
+  for (let tileY = firstTileY; tileY <= lastTileY; tileY += 1) {
+    const tileY0 = tileY * FOCUS_STORAGE_TILE_SIZE;
+    const tileHeight = Math.min(FOCUS_STORAGE_TILE_SIZE, imageHeight - tileY0);
+    for (let tileX = firstTileX; tileX <= lastTileX; tileX += 1) {
+      const tileX0 = tileX * FOCUS_STORAGE_TILE_SIZE;
+      const tileWidth = Math.min(FOCUS_STORAGE_TILE_SIZE, imageWidth - tileX0);
+      const { rgbTiles: storedRgbTiles, sharpnessTiles: storedSharpnessTiles } =
+        await getFocusRgbAndSharpnessTiles(db, sessionId, imageCount, tileX, tileY);
+      const expectedRgbLength = tileWidth * tileHeight * 3;
+      const expectedSharpnessLength = tileWidth * tileHeight;
+      if (
+        storedRgbTiles.some((tile) => tile.length !== expectedRgbLength) ||
+        storedSharpnessTiles.some((tile) => tile.length !== expectedSharpnessLength)
+      ) {
+        throw new Error(`Focus scratch tile ${tileX},${tileY} has an invalid size.`);
+      }
+
+      const copyX0 = Math.max(regionX, tileX0);
+      const copyY0 = Math.max(regionY, tileY0);
+      const copyX1 = Math.min(regionRight, tileX0 + tileWidth);
+      const copyY1 = Math.min(regionBottom, tileY0 + tileHeight);
+      const copyWidth = copyX1 - copyX0;
+      if (!(copyWidth > 0 && copyY1 > copyY0)) continue;
+
+      const sourceX = copyX0 - tileX0;
+      const targetX = copyX0 - regionX;
+      for (let imageIndex = 0; imageIndex < imageCount; imageIndex += 1) {
+        const sourceRgb = storedRgbTiles[imageIndex];
+        const targetRgb = rgbTiles[imageIndex];
+        const sourceSharpness = storedSharpnessTiles[imageIndex];
+        const targetSharpness = sharpnessTiles[imageIndex];
+        for (let y = copyY0; y < copyY1; y += 1) {
+          const sourceY = y - tileY0;
+          const targetY = y - regionY;
+          const sourceRgbStart = (sourceY * tileWidth + sourceX) * 3;
+          const targetRgbStart = (targetY * regionWidth + targetX) * 3;
+          targetRgb.set(
+            sourceRgb.subarray(sourceRgbStart, sourceRgbStart + copyWidth * 3),
+            targetRgbStart,
+          );
+          const sourceSharpnessStart = sourceY * tileWidth + sourceX;
+          const targetSharpnessStart = targetY * regionWidth + targetX;
+          targetSharpness.set(
+            sourceSharpness.subarray(sourceSharpnessStart, sourceSharpnessStart + copyWidth),
+            targetSharpnessStart,
+          );
+        }
+      }
+    }
+  }
+
+  return { rgbTiles, sharpnessTiles };
+}
+
 async function computeFocusGlobalTau(db, sessionId, focusWorker, imageCount, width, height) {
-  const tileColumns = Math.ceil(width / FOCUS_TILE_SIZE);
-  const tileRows = Math.ceil(height / FOCUS_TILE_SIZE);
+  const tileColumns = Math.ceil(width / FOCUS_STORAGE_TILE_SIZE);
+  const tileRows = Math.ceil(height / FOCUS_STORAGE_TILE_SIZE);
   const tileCount = tileColumns * tileRows;
   let tileNumber = 0;
   let sum = 0;
@@ -3011,38 +3101,62 @@ async function mergeFocusScratchTiles(db, sessionId, focusWorker, imageCount, wi
   console.info(`Focus global tau=${tau.toFixed(6)}, smoothness=${FOCUS_SMOOTHNESS}`);
 
   const output = new Uint16Array(width * height * 3);
-  const tileColumns = Math.ceil(width / FOCUS_TILE_SIZE);
-  const tileRows = Math.ceil(height / FOCUS_TILE_SIZE);
-  const tileCount = tileColumns * tileRows;
-  let tileNumber = 0;
-  for (let tileY = 0; tileY < tileRows; tileY += 1) {
-    const y0 = tileY * FOCUS_TILE_SIZE;
-    const tileHeight = Math.min(FOCUS_TILE_SIZE, height - y0);
-    for (let tileX = 0; tileX < tileColumns; tileX += 1) {
-      const x0 = tileX * FOCUS_TILE_SIZE;
-      const tileWidth = Math.min(FOCUS_TILE_SIZE, width - x0);
-      tileNumber += 1;
-      setProgress(`Focus merging tile ${tileNumber}/${tileCount} (${tileWidth}x${tileHeight})...`);
-      const { rgbTiles, sharpnessTiles } = await getFocusRgbAndSharpnessTiles(
+  const imageShortSide = Math.min(width, height);
+  const pyramidLevels = Math.max(
+    0,
+    Math.min(
+      FOCUS_MAX_PYRAMID_LEVELS,
+      Math.floor(Math.log2(Math.max(1, imageShortSide))) - 3,
+    ),
+  );
+  console.info(`Focus pyramid levels=${pyramidLevels}, image short side=${imageShortSide}`);
+  const coreColumns = Math.ceil(width / FOCUS_PROCESSING_CORE_SIZE);
+  const coreRows = Math.ceil(height / FOCUS_PROCESSING_CORE_SIZE);
+  const coreCount = coreColumns * coreRows;
+  let coreNumber = 0;
+  for (let coreY = 0; coreY < coreRows; coreY += 1) {
+    const y0 = coreY * FOCUS_PROCESSING_CORE_SIZE;
+    const coreHeight = Math.min(FOCUS_PROCESSING_CORE_SIZE, height - y0);
+    for (let coreX = 0; coreX < coreColumns; coreX += 1) {
+      const x0 = coreX * FOCUS_PROCESSING_CORE_SIZE;
+      const coreWidth = Math.min(FOCUS_PROCESSING_CORE_SIZE, width - x0);
+      const regionX = Math.max(0, x0 - FOCUS_HALO_SIZE);
+      const regionY = Math.max(0, y0 - FOCUS_HALO_SIZE);
+      const regionRight = Math.min(width, x0 + coreWidth + FOCUS_HALO_SIZE);
+      const regionBottom = Math.min(height, y0 + coreHeight + FOCUS_HALO_SIZE);
+      const regionWidth = regionRight - regionX;
+      const regionHeight = regionBottom - regionY;
+      const coreOffsetX = x0 - regionX;
+      const coreOffsetY = y0 - regionY;
+      coreNumber += 1;
+      setProgress(
+        `Focus merging core ${coreNumber}/${coreCount} ` +
+        `(${coreWidth}x${coreHeight}, processing ${regionWidth}x${regionHeight})...`,
+      );
+      const focusRegionInputs = await getFocusRgbAndSharpnessRegion(
         db,
         sessionId,
         imageCount,
-        tileX,
-        tileY,
+        width,
+        height,
+        regionX,
+        regionY,
+        regionWidth,
+        regionHeight,
       );
-      const focusTile = await focusWorker.mergeTile(
-        rgbTiles,
-        sharpnessTiles,
-        tileWidth,
-        tileHeight,
+      const focusRegion = await focusWorker.mergeTile(
+        focusRegionInputs.rgbTiles,
+        focusRegionInputs.sharpnessTiles,
+        regionWidth,
+        regionHeight,
         tau,
-        FOCUS_PYRAMID_LEVELS,
+        pyramidLevels,
       );
-      const rowLength = tileWidth * 3;
-      for (let localY = 0; localY < tileHeight; localY += 1) {
-        const sourceStart = localY * rowLength;
+      const coreRowLength = coreWidth * 3;
+      for (let localY = 0; localY < coreHeight; localY += 1) {
+        const sourceStart = ((coreOffsetY + localY) * regionWidth + coreOffsetX) * 3;
         const targetStart = ((y0 + localY) * width + x0) * 3;
-        output.set(focusTile.subarray(sourceStart, sourceStart + rowLength), targetStart);
+        output.set(focusRegion.subarray(sourceStart, sourceStart + coreRowLength), targetStart);
       }
       await yieldToBrowser();
     }
@@ -4854,6 +4968,36 @@ function transformLinearProPhotoForAlignment(
   targetHeight,
   alignmentMode,
 ) {
+  const expectedSourceLength = sourceWidth * sourceHeight * 3;
+  if (!(linearProPhotoRgb instanceof Float32Array) || linearProPhotoRgb.length !== expectedSourceLength) {
+    throw new Error(
+      `Linear ProPhoto buffer size ${linearProPhotoRgb?.length ?? 0} does not match source dimensions ${sourceWidth}x${sourceHeight}.`,
+    );
+  }
+
+  if (alignmentMode === "center-crop") {
+    if (targetWidth > sourceWidth || targetHeight > sourceHeight) {
+      throw new Error(
+        `Center crop target ${targetWidth}x${targetHeight} is larger than source ${sourceWidth}x${sourceHeight}.`,
+      );
+    }
+    const cropX = Math.floor((sourceWidth - targetWidth) / 2);
+    const cropY = Math.floor((sourceHeight - targetHeight) / 2);
+    const output = new Float32Array(targetWidth * targetHeight * 3);
+    const sourceRowLength = sourceWidth * 3;
+    const targetRowLength = targetWidth * 3;
+    const sourceCropOffset = cropX * 3;
+    for (let y = 0; y < targetHeight; y += 1) {
+      const sourceStart = (cropY + y) * sourceRowLength + sourceCropOffset;
+      const targetStart = y * targetRowLength;
+      output.set(
+        linearProPhotoRgb.subarray(sourceStart, sourceStart + targetRowLength),
+        targetStart,
+      );
+    }
+    return output;
+  }
+
   if (alignmentMode === "center-fill" || alignmentMode === "top-left-fill") {
     if (sourceWidth > targetWidth || sourceHeight > targetHeight) {
       throw new Error(
@@ -4882,12 +5026,7 @@ function transformLinearProPhotoForAlignment(
   let roi = null;
   let transformed = null;
   try {
-    if (alignmentMode === "center-crop") {
-      const cropX = Math.floor((sourceWidth - targetWidth) / 2);
-      const cropY = Math.floor((sourceHeight - targetHeight) / 2);
-      roi = sourceMat.roi(new cv.Rect(cropX, cropY, targetWidth, targetHeight));
-      transformed = roi.clone();
-    } else if (alignmentMode === "center-fit") {
+    if (alignmentMode === "center-fit") {
       const scale = Math.max(targetWidth / sourceWidth, targetHeight / sourceHeight);
       const resizedWidth = Math.max(targetWidth, Math.round(sourceWidth * scale));
       const resizedHeight = Math.max(targetHeight, Math.round(sourceHeight * scale));

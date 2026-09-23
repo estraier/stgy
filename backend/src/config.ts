@@ -208,15 +208,15 @@ export class Config {
   static readonly AI_MODELS: Readonly<Record<AIModelTier, { service: string; chatModel: string }>> = {
     advanced: {
       service: "openai",
-      chatModel: "gpt-5.6-sol",
+      chatModel: "gpt-6-astra",
     },
     balanced: {
       service: "openai",
-      chatModel: "gpt-5.6-terra",
+      chatModel: "gpt-6-sol",
     },
     basic: {
       service: "openai",
-      chatModel: "gpt-5.6-luna",
+      chatModel: "gpt-6-luna",
     },
   };
   static readonly AI_FEATURE_SERVICE: string = "openai";
