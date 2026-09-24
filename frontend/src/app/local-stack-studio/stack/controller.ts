@@ -42,7 +42,11 @@ import {
 } from "./scratch";
 import { FocusWorkerClient, OrbWorkerClient } from "./worker-clients";
 import {
+  FOCUS_TILE_GAIN_SIGMA,
+  computeFocusFinalMaps,
+  computeFocusTileScores,
   emptyFocusRunningStats,
+  focusGridDimensions,
   focusRunningStatsStd,
   focusSharpnessWorkingDimensions,
   mergeFocusRunningStats,
@@ -129,10 +133,12 @@ const CENTER_FILL_GRAY_STORED_GAMMA2 = Math.round(
 );
 const MEDIAN_TILE_SIZE = 1024;
 const FOCUS_STORAGE_TILE_SIZE = 512;
-const FOCUS_PROCESSING_CORE_SIZE = 2048;
-const FOCUS_HALO_SIZE = 512;
+// FocusGrid is scoring-only; processing and storage tiling remain independent.
+const FOCUS_PROCESSING_CORE_SIZE = 1024;
+// Five pyrDown operations require about 124px of source support; keep a 128px halo.
+const FOCUS_HALO_SIZE = 128;
 const FOCUS_SMOOTHNESS = 0.5;
-const FOCUS_MAX_PYRAMID_LEVELS = 7;
+const FOCUS_MAX_PYRAMID_DOWNSAMPLES = 5;
 const FOCUS_MERGE_MAX_WORKERS = 4;
 const SCRATCH_WRITE_BATCH_MAX_TILES = 4;
 const SCRATCH_WRITE_BATCH_MAX_BYTES = 24 * 1024 * 1024;
@@ -3111,10 +3117,10 @@ async function prepareFocusSharpnessMaps(
   };
 }
 
-async function getFocusRgbRegion(
+async function getFocusRgbRegionForImage(
   db,
   sessionId,
-  imageCount,
+  imageIndex,
   imageWidth,
   imageHeight,
   regionX,
@@ -3131,64 +3137,65 @@ async function getFocusRgbRegion(
     throw new Error("Focus processing region is outside the image bounds.");
   }
 
-  const rgbTiles = Array.from(
-    { length: imageCount },
-    () => new Uint16Array(regionWidth * regionHeight * 3),
-  );
-
   const firstTileX = Math.floor(regionX / FOCUS_STORAGE_TILE_SIZE);
   const lastTileX = Math.floor((regionRight - 1) / FOCUS_STORAGE_TILE_SIZE);
   const firstTileY = Math.floor(regionY / FOCUS_STORAGE_TILE_SIZE);
   const lastTileY = Math.floor((regionBottom - 1) / FOCUS_STORAGE_TILE_SIZE);
-
+  const tileDescriptors = [];
+  const tileKeys = [];
   for (let tileY = firstTileY; tileY <= lastTileY; tileY += 1) {
     const tileY0 = tileY * FOCUS_STORAGE_TILE_SIZE;
     const tileHeight = Math.min(FOCUS_STORAGE_TILE_SIZE, imageHeight - tileY0);
     for (let tileX = firstTileX; tileX <= lastTileX; tileX += 1) {
       const tileX0 = tileX * FOCUS_STORAGE_TILE_SIZE;
       const tileWidth = Math.min(FOCUS_STORAGE_TILE_SIZE, imageWidth - tileX0);
-      const storedRgbTiles = await getMedianScratchTiles(db, sessionId, imageCount, tileX, tileY);
-      const expectedRgbLength = tileWidth * tileHeight * 3;
-      if (storedRgbTiles.some((tile) => tile.length !== expectedRgbLength)) {
-        throw new Error(`Focus RGB scratch tile ${tileX},${tileY} has an invalid size.`);
-      }
-
-      const copyX0 = Math.max(regionX, tileX0);
-      const copyY0 = Math.max(regionY, tileY0);
-      const copyX1 = Math.min(regionRight, tileX0 + tileWidth);
-      const copyY1 = Math.min(regionBottom, tileY0 + tileHeight);
-      const copyWidth = copyX1 - copyX0;
-      if (!(copyWidth > 0 && copyY1 > copyY0)) continue;
-
-      const sourceX = copyX0 - tileX0;
-      const targetX = copyX0 - regionX;
-      for (let imageIndex = 0; imageIndex < imageCount; imageIndex += 1) {
-        const sourceRgb = storedRgbTiles[imageIndex];
-        const targetRgb = rgbTiles[imageIndex];
-        for (let y = copyY0; y < copyY1; y += 1) {
-          const sourceY = y - tileY0;
-          const targetY = y - regionY;
-          const sourceRgbStart = (sourceY * tileWidth + sourceX) * 3;
-          const targetRgbStart = (targetY * regionWidth + targetX) * 3;
-          targetRgb.set(
-            sourceRgb.subarray(sourceRgbStart, sourceRgbStart + copyWidth * 3),
-            targetRgbStart,
-          );
-        }
-      }
+      tileDescriptors.push({ tileX, tileY, tileX0, tileY0, tileWidth, tileHeight });
+      tileKeys.push(medianScratchTileKey(sessionId, imageIndex, tileX, tileY));
     }
   }
 
-  return rgbTiles;
+  const tileBuffers = await getScratchBuffers(
+    db,
+    tileKeys,
+    `Focus RGB region for image ${imageIndex + 1}`,
+  );
+  const rgb = new Uint16Array(regionWidth * regionHeight * 3);
+  for (let tileIndex = 0; tileIndex < tileDescriptors.length; tileIndex += 1) {
+    const descriptor = tileDescriptors[tileIndex];
+    const sourceRgb = new Uint16Array(tileBuffers[tileIndex]);
+    const expectedRgbLength = descriptor.tileWidth * descriptor.tileHeight * 3;
+    if (sourceRgb.length !== expectedRgbLength) {
+      throw new Error(`Focus RGB scratch tile ${descriptor.tileX},${descriptor.tileY} has an invalid size.`);
+    }
+
+    const copyX0 = Math.max(regionX, descriptor.tileX0);
+    const copyY0 = Math.max(regionY, descriptor.tileY0);
+    const copyX1 = Math.min(regionRight, descriptor.tileX0 + descriptor.tileWidth);
+    const copyY1 = Math.min(regionBottom, descriptor.tileY0 + descriptor.tileHeight);
+    const copyWidth = copyX1 - copyX0;
+    if (!(copyWidth > 0 && copyY1 > copyY0)) continue;
+
+    const sourceX = copyX0 - descriptor.tileX0;
+    const targetX = copyX0 - regionX;
+    for (let y = copyY0; y < copyY1; y += 1) {
+      const sourceY = y - descriptor.tileY0;
+      const targetY = y - regionY;
+      const sourceRgbStart = (sourceY * descriptor.tileWidth + sourceX) * 3;
+      const targetRgbStart = (targetY * regionWidth + targetX) * 3;
+      rgb.set(
+        sourceRgb.subarray(sourceRgbStart, sourceRgbStart + copyWidth * 3),
+        targetRgbStart,
+      );
+    }
+  }
+
+  return rgb;
 }
 
-async function computeFocusGlobalTau(focusWorker, sharpnessMaps) {
+async function computeFocusGlobalTau(focusWorker, finalMaps) {
   if (!focusWorker) throw new Error("Focus worker is not initialized.");
-  if (!Array.isArray(sharpnessMaps) || sharpnessMaps.length === 0) {
-    throw new Error("Focus sharpness maps are empty.");
-  }
   setProgress("Analyzing Focus weights...");
-  const stats = await focusWorker.computeTauStats(sharpnessMaps);
+  const stats = await focusWorker.computeTauStats(finalMaps);
   if (!(stats.count > 0)) throw new Error("Focus sharpness statistics are empty.");
   const mean = stats.sum / stats.count;
   const variance = Math.max(0, stats.sumSq / stats.count - mean * mean);
@@ -3205,20 +3212,56 @@ async function mergeFocusScratchTiles(db, sessionId, focusWorker, imageCount, wi
     width,
     height,
   );
+  const focusGrid = focusGridDimensions(width, height);
+  setProgress(`Aggregating Focus support grid ${focusGrid.cols}x${focusGrid.rows}...`);
+  const tileScores = computeFocusTileScores(
+    preparedSharpness.sharpnessMaps,
+    preparedSharpness.workingWidth,
+    preparedSharpness.workingHeight,
+    focusGrid,
+  );
+  console.info(
+    `Focus support grid=${focusGrid.cols}x${focusGrid.rows} ` +
+    `(${focusGrid.cols * focusGrid.rows} cells), tile sigma=${FOCUS_TILE_GAIN_SIGMA}`,
+  );
+  setProgress("Composing Focus final map...");
+  const finalMaps = computeFocusFinalMaps(
+    preparedSharpness.sharpnessMaps,
+    preparedSharpness.workingWidth,
+    preparedSharpness.workingHeight,
+    tileScores,
+    focusGrid,
+    FOCUS_TILE_GAIN_SIGMA,
+  );
+  preparedSharpness.sharpnessMaps.length = 0;
+  tileScores.length = 0;
+
   setProgress("Computing global Focus softmax scale...");
-  const tau = await computeFocusGlobalTau(focusWorker, preparedSharpness.sharpnessMaps);
+  const tau = await computeFocusGlobalTau(focusWorker, finalMaps);
   console.info(`Focus global tau=${tau.toFixed(6)}, smoothness=${FOCUS_SMOOTHNESS}`);
+
+  setProgress("Initializing primary Focus merge worker...");
+  await focusWorker.initializeWorkingSharpness(
+    finalMaps,
+    preparedSharpness.workingWidth,
+    preparedSharpness.workingHeight,
+    width,
+    height,
+  );
 
   const output = new Uint16Array(width * height * 3);
   const imageShortSide = Math.min(width, height);
-  const pyramidLevels = Math.max(
+  const pyramidDownsamples = Math.max(
     0,
     Math.min(
-      FOCUS_MAX_PYRAMID_LEVELS,
+      FOCUS_MAX_PYRAMID_DOWNSAMPLES,
       Math.floor(Math.log2(Math.max(1, imageShortSide))) - 3,
     ),
   );
-  console.info(`Focus pyramid levels=${pyramidLevels}, image short side=${imageShortSide}`);
+  console.info(
+    `Focus pyramid downsamples=${pyramidDownsamples}, image short side=${imageShortSide}, ` +
+    `core=${FOCUS_PROCESSING_CORE_SIZE}, halo=${FOCUS_HALO_SIZE}`,
+  );
 
   const coreColumns = Math.ceil(width / FOCUS_PROCESSING_CORE_SIZE);
   const coreRows = Math.ceil(height / FOCUS_PROCESSING_CORE_SIZE);
@@ -3243,16 +3286,18 @@ async function mergeFocusScratchTiles(db, sessionId, focusWorker, imageCount, wi
   );
 
   try {
-    setProgress(`Initializing ${mergeWorkerCount} Focus merge worker${mergeWorkerCount === 1 ? "" : "s"}...`);
-    await Promise.all(mergeWorkers.map((worker) =>
-      worker.initializeWorkingSharpness(
-        preparedSharpness.sharpnessMaps,
-        preparedSharpness.workingWidth,
-        preparedSharpness.workingHeight,
-        width,
-        height,
-      )));
-    preparedSharpness.sharpnessMaps.length = 0;
+    if (extraMergeWorkers.length > 0) {
+      setProgress(`Initializing ${extraMergeWorkers.length} additional Focus merge worker${extraMergeWorkers.length === 1 ? "" : "s"}...`);
+      await Promise.all(extraMergeWorkers.map((worker) =>
+        worker.initializeWorkingSharpness(
+          finalMaps,
+          preparedSharpness.workingWidth,
+          preparedSharpness.workingHeight,
+          width,
+          height,
+        )));
+    }
+    finalMaps.length = 0;
 
     let nextCoreIndex = 0;
     let completedCoreCount = 0;
@@ -3279,31 +3324,41 @@ async function mergeFocusScratchTiles(db, sessionId, focusWorker, imageCount, wi
         const coreOffsetX = x0 - regionX;
         const coreOffsetY = y0 - regionY;
 
-        const rgbTiles = await getFocusRgbRegion(
-          db,
-          sessionId,
-          imageCount,
-          width,
-          height,
+        await worker.beginFocusCore(
           regionX,
           regionY,
           regionWidth,
           regionHeight,
-        );
-        const focusRegion = await worker.mergeTileWithInitializedSharpness(
-          rgbTiles,
-          regionX,
-          regionY,
-          regionWidth,
-          regionHeight,
+          coreOffsetX,
+          coreOffsetY,
+          coreWidth,
+          coreHeight,
           tau,
-          pyramidLevels,
+          pyramidDownsamples,
         );
+        for (let imageIndex = 0; imageIndex < imageCount; imageIndex += 1) {
+          const rgb = await getFocusRgbRegionForImage(
+            db,
+            sessionId,
+            imageIndex,
+            width,
+            height,
+            regionX,
+            regionY,
+            regionWidth,
+            regionHeight,
+          );
+          await worker.addFocusCoreImage(imageIndex, rgb);
+        }
+        const focusCore = await worker.finishFocusCore();
+        if (focusCore.length !== coreWidth * coreHeight * 3) {
+          throw new Error("Focus worker returned an invalid core size.");
+        }
         const coreRowLength = coreWidth * 3;
         for (let localY = 0; localY < coreHeight; localY += 1) {
-          const sourceStart = ((coreOffsetY + localY) * regionWidth + coreOffsetX) * 3;
+          const sourceStart = localY * coreRowLength;
           const targetStart = ((y0 + localY) * width + x0) * 3;
-          output.set(focusRegion.subarray(sourceStart, sourceStart + coreRowLength), targetStart);
+          output.set(focusCore.subarray(sourceStart, sourceStart + coreRowLength), targetStart);
         }
         completedCoreCount += 1;
         setProgress(
@@ -3318,6 +3373,7 @@ async function mergeFocusScratchTiles(db, sessionId, focusWorker, imageCount, wi
     return output;
   } finally {
     preparedSharpness.sharpnessMaps.length = 0;
+    finalMaps.length = 0;
     for (const worker of extraMergeWorkers) worker.terminate();
   }
 }

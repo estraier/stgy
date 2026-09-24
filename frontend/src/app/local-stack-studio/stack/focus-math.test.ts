@@ -1,10 +1,15 @@
 import {
   emptyFocusRunningStats,
   focusRunningStatsFromValues,
+  focusGridDimensions,
+  computeFocusTileScores,
+  computeFocusFinalMaps,
   focusRunningStatsStd,
   focusSharpnessWorkingDimensions,
+  focusTileGain,
   isUsableFocusStd,
   mergeFocusRunningStats,
+  sampleFocusGridBilinear,
 } from "./focus-math";
 
 describe("Focus stack-global sharpness statistics", () => {
@@ -63,5 +68,70 @@ describe("Focus stack-global sharpness statistics", () => {
       height: 867,
       isScaled: true,
     });
+  });
+});
+
+
+describe("Focus tile support", () => {
+  test("grid targets about 80 cells while keeping cells near square", () => {
+    expect(focusGridDimensions(4000, 3000)).toEqual({ cols: 10, rows: 8 });
+    expect(focusGridDimensions(6000, 4000)).toEqual({ cols: 11, rows: 7 });
+    expect(focusGridDimensions(3000, 3000)).toEqual({ cols: 9, rows: 9 });
+    expect(focusGridDimensions(4000, 6000)).toEqual({ cols: 7, rows: 11 });
+    expect(focusGridDimensions(2, 2)).toEqual({ cols: 2, rows: 2 });
+  });
+
+  test("tile scores are simple means of the existing map scores", () => {
+    const first = new Float32Array([
+      1, 3, 10, 14,
+      5, 7, 18, 22,
+      2, 4, 20, 24,
+      6, 8, 28, 32,
+    ]);
+    const second = new Float32Array(first.length).fill(-2);
+    const scores = computeFocusTileScores([first, second], 4, 4, { cols: 2, rows: 2 });
+    expect(Array.from(scores[0])).toEqual([4, 16, 5, 26]);
+    expect(Array.from(scores[1])).toEqual([-2, -2, -2, -2]);
+  });
+
+  test("tile interpolation is continuous and clamps at the image edge", () => {
+    const values = new Float32Array([0, 10, 20, 30]);
+    expect(sampleFocusGridBilinear(values, 2, 2, 0.5, 0.5)).toBeCloseTo(15, 12);
+    expect(sampleFocusGridBilinear(values, 2, 2, 0, 0)).toBeCloseTo(0, 12);
+    expect(sampleFocusGridBilinear(values, 2, 2, 1, 1)).toBeCloseTo(30, 12);
+    const left = sampleFocusGridBilinear(values, 2, 2, 0.5 - 1e-6, 0.25);
+    const right = sampleFocusGridBilinear(values, 2, 2, 0.5 + 1e-6, 0.25);
+    expect(Math.abs(left - right)).toBeLessThan(1e-3);
+  });
+
+  test("tile gain falls smoothly as the local map margin increases", () => {
+    expect(focusTileGain(0)).toBeCloseTo(1, 12);
+    expect(focusTileGain(1)).toBeCloseTo(Math.exp(-1), 12);
+    expect(focusTileGain(2)).toBeCloseTo(Math.exp(-4), 12);
+    expect(focusTileGain(Infinity)).toBe(0);
+    expect(focusTileGain(0.999)).toBeGreaterThan(focusTileGain(1.001));
+  });
+
+
+  test("final maps are composed on the working-resolution map before full-resolution merge", () => {
+    const first = new Float32Array([
+      5, 0,
+      0, 0,
+    ]);
+    const second = new Float32Array([
+      0, 0,
+      0, 0,
+    ]);
+    const tileScores = computeFocusTileScores([first, second], 2, 2, { cols: 1, rows: 1 });
+    const finals = computeFocusFinalMaps([first, second], 2, 2, tileScores, { cols: 1, rows: 1 }, 1);
+    expect(Array.from(tileScores[0])).toEqual([1.25]);
+    expect(Array.from(tileScores[1])).toEqual([0]);
+    // Strong local winner at (0,0) keeps tile support almost suppressed.
+    expect(finals[0][0]).toBeCloseTo(5 + Math.exp(-25) * 1.25, 6);
+    expect(finals[1][0]).toBeCloseTo(0, 12);
+    // Ambiguous flat pixels inherit the coarse tile support in the working map itself.
+    expect(finals[0][1]).toBeCloseTo(1.25, 6);
+    expect(finals[0][2]).toBeCloseTo(1.25, 6);
+    expect(finals[0][3]).toBeCloseTo(1.25, 6);
   });
 });

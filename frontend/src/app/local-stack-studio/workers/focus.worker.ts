@@ -19,6 +19,7 @@ import {
 
   let cvPromise = null;
   let workingSharpnessState = null;
+  let focusCoreState = null;
 
   self.onmessage = async (event) => {
     const message = event.data || {};
@@ -101,7 +102,64 @@ import {
           imageWidth,
           imageHeight,
         };
+        focusCoreState = null;
         self.postMessage({ type: "working-sharpness-init-result", requestId });
+        return;
+      }
+
+      if (message.type === "focus-core-begin") {
+        await getOpenCv();
+        if (!workingSharpnessState) {
+          throw new Error("Focus worker working sharpness cache is not initialized.");
+        }
+        if (focusCoreState) {
+          throw new Error("Focus worker already has an active core.");
+        }
+        focusCoreState = beginFocusCore(
+          workingSharpnessState,
+          Number(message.regionX),
+          Number(message.regionY),
+          Number(message.regionWidth),
+          Number(message.regionHeight),
+          Number(message.coreOffsetX),
+          Number(message.coreOffsetY),
+          Number(message.coreWidth),
+          Number(message.coreHeight),
+          Number(message.tau),
+          Number(message.pyramidDownsamples),
+        );
+        self.postMessage({ type: "focus-core-begin-result", requestId });
+        return;
+      }
+
+      if (message.type === "focus-core-add-image") {
+        const cv = await getOpenCv();
+        if (!workingSharpnessState || !focusCoreState) {
+          throw new Error("Focus worker core is not initialized.");
+        }
+        addFocusCoreImage(
+          cv,
+          workingSharpnessState,
+          focusCoreState,
+          Number(message.imageIndex),
+          new Uint16Array(message.rgbBuffer),
+        );
+        self.postMessage({ type: "focus-core-add-image-result", requestId });
+        return;
+      }
+
+      if (message.type === "focus-core-finish") {
+        const cv = await getOpenCv();
+        if (!workingSharpnessState || !focusCoreState) {
+          throw new Error("Focus worker core is not initialized.");
+        }
+        const completedState = focusCoreState;
+        focusCoreState = null;
+        const merged = finishFocusCore(cv, workingSharpnessState, completedState);
+        self.postMessage(
+          { type: "focus-core-finish-result", requestId, gamma2Buffer: merged.buffer },
+          [merged.buffer],
+        );
         return;
       }
 
@@ -164,6 +222,9 @@ import {
         return;
       }
     } catch (error) {
+      if (typeof message.type === "string" && message.type.startsWith("focus-core-")) {
+        focusCoreState = null;
+      }
       self.postMessage({
         type: "error",
         requestId,
@@ -475,6 +536,335 @@ import {
     let sum = 0;
     for (let i = 0; i < k; i += 1) sum += means[i];
     return sum / k;
+  }
+
+  function buildRegionSamplingState(state, regionX, regionY, regionWidth, regionHeight) {
+    const workingX0 = new Int32Array(regionWidth);
+    const workingX1 = new Int32Array(regionWidth);
+    const workingFx = new Float32Array(regionWidth);
+    for (let localX = 0; localX < regionWidth; localX += 1) {
+      const imageX = regionX + localX;
+      const srcX = (imageX + 0.5) * state.workingWidth / state.imageWidth - 0.5;
+      const workingX0Raw = Math.floor(srcX);
+      workingFx[localX] = Math.max(0, Math.min(1, srcX - workingX0Raw));
+      workingX0[localX] = Math.max(0, Math.min(state.workingWidth - 1, workingX0Raw));
+      workingX1[localX] = Math.max(0, Math.min(state.workingWidth - 1, workingX0Raw + 1));
+    }
+
+    const workingY0 = new Int32Array(regionHeight);
+    const workingY1 = new Int32Array(regionHeight);
+    const workingFy = new Float32Array(regionHeight);
+    for (let localY = 0; localY < regionHeight; localY += 1) {
+      const imageY = regionY + localY;
+      const srcY = (imageY + 0.5) * state.workingHeight / state.imageHeight - 0.5;
+      const workingY0Raw = Math.floor(srcY);
+      workingFy[localY] = Math.max(0, Math.min(1, srcY - workingY0Raw));
+      workingY0[localY] = Math.max(0, Math.min(state.workingHeight - 1, workingY0Raw));
+      workingY1[localY] = Math.max(0, Math.min(state.workingHeight - 1, workingY0Raw + 1));
+    }
+
+    return {
+      workingX0,
+      workingX1,
+      workingFx,
+      workingY0,
+      workingY1,
+      workingFy,
+    };
+  }
+
+  function sampleWorkingSharpnessRegion(state, sampling, imageIndex, localX, localY) {
+    const sharpness = state.sharpnessMaps[imageIndex];
+    const x0 = sampling.workingX0[localX];
+    const x1 = sampling.workingX1[localX];
+    const y0 = sampling.workingY0[localY];
+    const y1 = sampling.workingY1[localY];
+    const fx = sampling.workingFx[localX];
+    const fy = sampling.workingFy[localY];
+    const v00 = sharpness[y0 * state.workingWidth + x0];
+    const v10 = sharpness[y0 * state.workingWidth + x1];
+    const v01 = sharpness[y1 * state.workingWidth + x0];
+    const v11 = sharpness[y1 * state.workingWidth + x1];
+    const top = v00 + (v10 - v00) * fx;
+    const bottom = v01 + (v11 - v01) * fx;
+    return top + (bottom - top) * fy;
+  }
+
+
+
+  function beginFocusCore(
+    workingState,
+    regionX,
+    regionY,
+    regionWidth,
+    regionHeight,
+    coreOffsetX,
+    coreOffsetY,
+    coreWidth,
+    coreHeight,
+    tau,
+    requestedDownsamples,
+  ) {
+    if (!(Number.isInteger(regionX) && regionX >= 0 && Number.isInteger(regionY) && regionY >= 0)) {
+      throw new Error("Focus core received invalid region coordinates.");
+    }
+    if (!(Number.isInteger(regionWidth) && regionWidth > 0 && Number.isInteger(regionHeight) && regionHeight > 0)) {
+      throw new Error("Focus core received invalid region dimensions.");
+    }
+    if (
+      regionX + regionWidth > workingState.imageWidth ||
+      regionY + regionHeight > workingState.imageHeight
+    ) {
+      throw new Error("Focus core region is outside the image bounds.");
+    }
+    if (
+      !(Number.isInteger(coreOffsetX) && coreOffsetX >= 0 && Number.isInteger(coreOffsetY) && coreOffsetY >= 0) ||
+      !(Number.isInteger(coreWidth) && coreWidth > 0 && Number.isInteger(coreHeight) && coreHeight > 0) ||
+      coreOffsetX + coreWidth > regionWidth ||
+      coreOffsetY + coreHeight > regionHeight
+    ) {
+      throw new Error("Focus core crop is outside the processing region.");
+    }
+    if (!(Number.isFinite(tau) && tau > 0)) throw new Error("Focus core received an invalid softmax tau.");
+
+    const maxDownsamples = Math.max(0, Math.floor(Math.log2(Math.min(regionWidth, regionHeight))));
+    const pyramidDownsamples = Math.max(
+      0,
+      Math.min(Math.trunc(requestedDownsamples), maxDownsamples),
+    );
+    const usePyramid = pyramidDownsamples > 1 && Math.min(regionWidth, regionHeight) >= 256;
+    const dimensions = [{ width: regionWidth, height: regionHeight }];
+    if (usePyramid) {
+      for (let level = 0; level < pyramidDownsamples; level += 1) {
+        const previous = dimensions[dimensions.length - 1];
+        dimensions.push({
+          width: Math.ceil(previous.width / 2),
+          height: Math.ceil(previous.height / 2),
+        });
+      }
+    }
+
+    const pixelCount = regionWidth * regionHeight;
+    const logZ = new Float32Array(pixelCount);
+    const imageCount = workingState.sharpnessMaps.length;
+    const sampling = buildRegionSamplingState(
+      workingState,
+      regionX,
+      regionY,
+      regionWidth,
+      regionHeight,
+    );
+    for (let localY = 0; localY < regionHeight; localY += 1) {
+      for (let localX = 0; localX < regionWidth; localX += 1) {
+        const pixel = localY * regionWidth + localX;
+        let maxScaled = -Infinity;
+        let expSum = 0;
+        for (let imageIndex = 0; imageIndex < imageCount; imageIndex += 1) {
+          const finalScore = sampleWorkingSharpnessRegion(workingState, sampling, imageIndex, localX, localY);
+          const scaled = finalScore / tau;
+          if (scaled <= maxScaled) {
+            expSum += Math.exp(scaled - maxScaled);
+          } else {
+            expSum = maxScaled === -Infinity ? 1 : expSum * Math.exp(maxScaled - scaled) + 1;
+            maxScaled = scaled;
+          }
+        }
+        logZ[pixel] = maxScaled + Math.log(Math.max(expSum, 1e-30));
+      }
+    }
+
+    return {
+      regionX,
+      regionY,
+      regionWidth,
+      regionHeight,
+      coreOffsetX,
+      coreOffsetY,
+      coreWidth,
+      coreHeight,
+      tau,
+      pyramidDownsamples,
+      usePyramid,
+      dimensions,
+      sampling,
+      logZ,
+      fused: usePyramid
+        ? dimensions.map(({ width, height }) => new Float32Array(width * height * 3))
+        : null,
+      directOutput: usePyramid ? null : new Float32Array(pixelCount * 3),
+      processedImages: 0,
+    };
+  }
+
+  function focusWeightForPixel(workingState, coreState, imageIndex, pixel, localX, localY) {
+    const finalScore = sampleWorkingSharpnessRegion(
+      workingState,
+      coreState.sampling,
+      imageIndex,
+      localX,
+      localY,
+    );
+    return Math.exp(finalScore / coreState.tau - coreState.logZ[pixel]);
+  }
+
+  function addFocusCoreImage(cv, workingState, coreState, imageIndex, rgb) {
+    const imageCount = workingState.sharpnessMaps.length;
+    if (!(Number.isInteger(imageIndex) && imageIndex >= 0 && imageIndex < imageCount)) {
+      throw new Error("Focus core received an invalid image index.");
+    }
+    if (imageIndex !== coreState.processedImages) {
+      throw new Error("Focus core images must be streamed in input order.");
+    }
+    const pixelCount = coreState.regionWidth * coreState.regionHeight;
+    if (!(rgb instanceof Uint16Array) || rgb.length !== pixelCount * 3) {
+      throw new Error(`Focus RGB image ${imageIndex + 1} has an invalid region size.`);
+    }
+
+    if (!coreState.usePyramid) {
+      const output = coreState.directOutput;
+      for (let localY = 0; localY < coreState.regionHeight; localY += 1) {
+        for (let localX = 0; localX < coreState.regionWidth; localX += 1) {
+          const pixel = localY * coreState.regionWidth + localX;
+          const weight = focusWeightForPixel(workingState, coreState, imageIndex, pixel, localX, localY);
+          const offset = pixel * 3;
+          output[offset] += gamma2Uint16ToLinear(rgb[offset]) * weight;
+          output[offset + 1] += gamma2Uint16ToLinear(rgb[offset + 1]) * weight;
+          output[offset + 2] += gamma2Uint16ToLinear(rgb[offset + 2]) * weight;
+        }
+      }
+      coreState.processedImages += 1;
+      return;
+    }
+
+    let currentRgb = new cv.Mat(coreState.regionHeight, coreState.regionWidth, cv.CV_32FC3);
+    let currentWeight = new cv.Mat(coreState.regionHeight, coreState.regionWidth, cv.CV_32FC1);
+    for (let localY = 0; localY < coreState.regionHeight; localY += 1) {
+      for (let localX = 0; localX < coreState.regionWidth; localX += 1) {
+        const pixel = localY * coreState.regionWidth + localX;
+        const offset = pixel * 3;
+        currentRgb.data32F[offset] = gamma2Uint16ToLinear(rgb[offset]);
+        currentRgb.data32F[offset + 1] = gamma2Uint16ToLinear(rgb[offset + 1]);
+        currentRgb.data32F[offset + 2] = gamma2Uint16ToLinear(rgb[offset + 2]);
+        currentWeight.data32F[pixel] = focusWeightForPixel(
+          workingState,
+          coreState,
+          imageIndex,
+          pixel,
+          localX,
+          localY,
+        );
+      }
+    }
+
+    try {
+      for (let level = 0; level < coreState.pyramidDownsamples; level += 1) {
+        const nextDim = coreState.dimensions[level + 1];
+        const nextRgb = new cv.Mat();
+        const nextWeight = new cv.Mat();
+        const upRgb = new cv.Mat();
+        try {
+          cv.pyrDown(currentRgb, nextRgb, new cv.Size(nextDim.width, nextDim.height));
+          cv.pyrDown(currentWeight, nextWeight, new cv.Size(nextDim.width, nextDim.height));
+          cv.pyrUp(nextRgb, upRgb, new cv.Size(currentRgb.cols, currentRgb.rows));
+
+          const rgbData = currentRgb.data32F;
+          const upData = upRgb.data32F;
+          const weightData = currentWeight.data32F;
+          const target = coreState.fused[level];
+          for (let pixel = 0; pixel < weightData.length; pixel += 1) {
+            const weight = weightData[pixel];
+            const offset = pixel * 3;
+            target[offset] += (rgbData[offset] - upData[offset]) * weight;
+            target[offset + 1] += (rgbData[offset + 1] - upData[offset + 1]) * weight;
+            target[offset + 2] += (rgbData[offset + 2] - upData[offset + 2]) * weight;
+          }
+        } catch (error) {
+          nextRgb.delete();
+          nextWeight.delete();
+          throw error;
+        } finally {
+          upRgb.delete();
+        }
+        currentRgb.delete();
+        currentWeight.delete();
+        currentRgb = nextRgb;
+        currentWeight = nextWeight;
+      }
+
+      const lowestTarget = coreState.fused[coreState.pyramidDownsamples];
+      const lowestRgb = currentRgb.data32F;
+      const lowestWeight = currentWeight.data32F;
+      for (let pixel = 0; pixel < lowestWeight.length; pixel += 1) {
+        const weight = lowestWeight[pixel];
+        const offset = pixel * 3;
+        lowestTarget[offset] += lowestRgb[offset] * weight;
+        lowestTarget[offset + 1] += lowestRgb[offset + 1] * weight;
+        lowestTarget[offset + 2] += lowestRgb[offset + 2] * weight;
+      }
+    } finally {
+      if (currentRgb) currentRgb.delete();
+      if (currentWeight) currentWeight.delete();
+    }
+    coreState.processedImages += 1;
+  }
+
+  function finishFocusCore(cv, workingState, coreState) {
+    if (coreState.processedImages !== workingState.sharpnessMaps.length) {
+      throw new Error("Focus core is incomplete.");
+    }
+
+    let reconstructed;
+    if (coreState.usePyramid) {
+      reconstructed = coreState.fused[coreState.pyramidDownsamples];
+      for (let level = coreState.pyramidDownsamples - 1; level >= 0; level -= 1) {
+        const sourceDim = coreState.dimensions[level + 1];
+        const targetDim = coreState.dimensions[level];
+        const sourceMat = new cv.Mat(sourceDim.height, sourceDim.width, cv.CV_32FC3);
+        const up = new cv.Mat();
+        sourceMat.data32F.set(reconstructed);
+        try {
+          cv.pyrUp(sourceMat, up, new cv.Size(targetDim.width, targetDim.height));
+          const next = coreState.fused[level];
+          const upData = up.data32F;
+          for (let i = 0; i < next.length; i += 1) next[i] += upData[i];
+          reconstructed = next;
+        } finally {
+          sourceMat.delete();
+          up.delete();
+        }
+      }
+    } else {
+      reconstructed = coreState.directOutput;
+    }
+
+    return encodeLinearCoreToGamma2Uint16(
+      reconstructed,
+      coreState.regionWidth,
+      coreState.coreOffsetX,
+      coreState.coreOffsetY,
+      coreState.coreWidth,
+      coreState.coreHeight,
+    );
+  }
+
+  function encodeLinearCoreToGamma2Uint16(
+    linear,
+    regionWidth,
+    coreOffsetX,
+    coreOffsetY,
+    coreWidth,
+    coreHeight,
+  ) {
+    const output = new Uint16Array(coreWidth * coreHeight * 3);
+    const rowLength = coreWidth * 3;
+    for (let y = 0; y < coreHeight; y += 1) {
+      const sourceStart = ((coreOffsetY + y) * regionWidth + coreOffsetX) * 3;
+      const targetStart = y * rowLength;
+      for (let i = 0; i < rowLength; i += 1) {
+        output[targetStart + i] = Math.round(Math.sqrt(clamp01(linear[sourceStart + i])) * RESULT_BUFFER_MAX_UINT16);
+      }
+    }
+    return output;
   }
 
   function computeTauStats(sharpnessTiles) {

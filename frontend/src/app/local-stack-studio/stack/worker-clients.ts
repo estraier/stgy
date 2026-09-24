@@ -177,34 +177,58 @@ export class FocusWorkerClient {
         imageWidth,
         imageHeight,
       },
-      sharpnessBuffers,
+      [...sharpnessBuffers],
       "working-sharpness-init-result",
     ).then(() => undefined);
   }
 
-  mergeTileWithInitializedSharpness(
-    rgbTiles: Uint16Array[],
+  beginFocusCore(
     regionX: number,
     regionY: number,
     regionWidth: number,
     regionHeight: number,
+    coreOffsetX: number,
+    coreOffsetY: number,
+    coreWidth: number,
+    coreHeight: number,
     tau: number,
-    pyramidLevels: number,
-  ): Promise<Uint16Array> {
-    const rgbBuffers = rgbTiles.map(typedArrayBuffer);
+    pyramidDownsamples: number,
+  ): Promise<void> {
     return this.request(
-      "merge-tile-working",
+      "focus-core-begin",
       {
-        rgbBuffers,
         regionX,
         regionY,
         regionWidth,
         regionHeight,
+        coreOffsetX,
+        coreOffsetY,
+        coreWidth,
+        coreHeight,
         tau,
-        pyramidLevels,
+        pyramidDownsamples,
       },
-      rgbBuffers,
-      "merge-tile-working-result",
+      [],
+      "focus-core-begin-result",
+    ).then(() => undefined);
+  }
+
+  addFocusCoreImage(imageIndex: number, rgb: Uint16Array): Promise<void> {
+    const rgbBuffer = typedArrayBuffer(rgb);
+    return this.request(
+      "focus-core-add-image",
+      { imageIndex, rgbBuffer },
+      [rgbBuffer],
+      "focus-core-add-image-result",
+    ).then(() => undefined);
+  }
+
+  finishFocusCore(): Promise<Uint16Array> {
+    return this.request(
+      "focus-core-finish",
+      {},
+      [],
+      "focus-core-finish-result",
     ).then((message) => new Uint16Array(asArrayBuffer(message.gamma2Buffer, "focus merge")));
   }
 
