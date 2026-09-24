@@ -166,8 +166,11 @@ export class FocusWorkerClient {
     workingHeight: number,
     imageWidth: number,
     imageHeight: number,
+    transferOwnership = false,
   ): Promise<void> {
-    const sharpnessBuffers = sharpnessMaps.map(copiedTypedArrayBuffer);
+    const sharpnessBuffers = transferOwnership
+      ? sharpnessMaps.map(typedArrayBuffer)
+      : sharpnessMaps.map(copiedTypedArrayBuffer);
     return this.request(
       "working-sharpness-init",
       {

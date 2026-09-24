@@ -132,7 +132,7 @@ const CENTER_FILL_GRAY_STORED_GAMMA2 = Math.round(
   Math.sqrt(CENTER_FILL_GRAY_LINEAR) * RESULT_BUFFER_MAX_UINT16,
 );
 const MEDIAN_TILE_SIZE = 1024;
-const FOCUS_STORAGE_TILE_SIZE = 512;
+const FOCUS_STORAGE_TILE_SIZE = 384;
 // FocusGrid is scoring-only; processing and storage tiling remain independent.
 const FOCUS_PROCESSING_CORE_SIZE = 1024;
 // Five pyrDown operations require about 124px of source support; keep a 128px halo.
@@ -142,6 +142,8 @@ const FOCUS_MAX_PYRAMID_DOWNSAMPLES = 5;
 const FOCUS_MERGE_MAX_WORKERS = 4;
 const SCRATCH_WRITE_BATCH_MAX_TILES = 4;
 const SCRATCH_WRITE_BATCH_MAX_BYTES = 24 * 1024 * 1024;
+const FOCUS_SCRATCH_WRITE_BATCH_MAX_TILES = 16;
+const FOCUS_SCRATCH_WRITE_BATCH_MAX_BYTES = 24 * 1024 * 1024;
 
 const inputFiles = getElement("input-files");
 const fileCount = getElement("file-count");
@@ -2662,6 +2664,13 @@ function scratchWriteBatchWouldOverflow(batch, batchBytes, nextBytes) {
   );
 }
 
+function focusScratchWriteBatchWouldOverflow(batch, batchBytes, nextBytes) {
+  return batch.length > 0 && (
+    batch.length >= FOCUS_SCRATCH_WRITE_BATCH_MAX_TILES
+    || batchBytes + nextBytes > FOCUS_SCRATCH_WRITE_BATCH_MAX_BYTES
+  );
+}
+
 async function storeMedianAlignedImageTiles(
   db,
   sessionId,
@@ -3009,13 +3018,13 @@ async function storeFocusRgbTiles(db, sessionId, imageIndex, stored, width, heig
       }
       tileNumber += 1;
       setProgress(`Storing Focus RGB ${imageIndex + 1}/${imageCount}, tile ${tileNumber}/${tileCount} (${tileWidth}x${tileHeight})...`);
-      if (scratchWriteBatchWouldOverflow(writeBatch, writeBatchBytes, tile.byteLength)) {
+      if (focusScratchWriteBatchWouldOverflow(writeBatch, writeBatchBytes, tile.byteLength)) {
         await flushScratchWriteBatch(db, writeBatch, "Focus RGB scratch tile batch", "Browser scratch storage is full while writing Focus RGB tiles.");
         writeBatchBytes = 0;
       }
       writeBatch.push({ key: medianScratchTileKey(sessionId, imageIndex, tileX, tileY), buffer: tile.buffer });
       writeBatchBytes += tile.byteLength;
-      if (writeBatch.length >= SCRATCH_WRITE_BATCH_MAX_TILES || writeBatchBytes >= SCRATCH_WRITE_BATCH_MAX_BYTES) {
+      if (writeBatch.length >= FOCUS_SCRATCH_WRITE_BATCH_MAX_TILES || writeBatchBytes >= FOCUS_SCRATCH_WRITE_BATCH_MAX_BYTES) {
         await flushScratchWriteBatch(db, writeBatch, "Focus RGB scratch tile batch", "Browser scratch storage is full while writing Focus RGB tiles.");
         writeBatchBytes = 0;
       }
@@ -3192,11 +3201,8 @@ async function getFocusRgbRegionForImage(
   return rgb;
 }
 
-async function computeFocusGlobalTau(focusWorker, finalMaps) {
-  if (!focusWorker) throw new Error("Focus worker is not initialized.");
-  setProgress("Analyzing Focus weights...");
-  const stats = await focusWorker.computeTauStats(finalMaps);
-  if (!(stats.count > 0)) throw new Error("Focus sharpness statistics are empty.");
+function computeFocusGlobalTau(stats) {
+  if (!(stats && stats.count > 0)) throw new Error("Focus sharpness statistics are empty.");
   const mean = stats.sum / stats.count;
   const variance = Math.max(0, stats.sumSq / stats.count - mean * mean);
   return Math.max(Math.sqrt(variance) * FOCUS_SMOOTHNESS, 1e-4);
@@ -3224,8 +3230,8 @@ async function mergeFocusScratchTiles(db, sessionId, focusWorker, imageCount, wi
     `Focus support grid=${focusGrid.cols}x${focusGrid.rows} ` +
     `(${focusGrid.cols * focusGrid.rows} cells), tile sigma=${FOCUS_TILE_GAIN_SIGMA}`,
   );
-  setProgress("Composing Focus final map...");
-  const finalMaps = computeFocusFinalMaps(
+  setProgress("Composing Focus final map and weight statistics...");
+  const finalMapResult = computeFocusFinalMaps(
     preparedSharpness.sharpnessMaps,
     preparedSharpness.workingWidth,
     preparedSharpness.workingHeight,
@@ -3233,21 +3239,12 @@ async function mergeFocusScratchTiles(db, sessionId, focusWorker, imageCount, wi
     focusGrid,
     FOCUS_TILE_GAIN_SIGMA,
   );
+  const finalMaps = finalMapResult.finalMaps;
   preparedSharpness.sharpnessMaps.length = 0;
   tileScores.length = 0;
 
-  setProgress("Computing global Focus softmax scale...");
-  const tau = await computeFocusGlobalTau(focusWorker, finalMaps);
+  const tau = computeFocusGlobalTau(finalMapResult.stats);
   console.info(`Focus global tau=${tau.toFixed(6)}, smoothness=${FOCUS_SMOOTHNESS}`);
-
-  setProgress("Initializing primary Focus merge worker...");
-  await focusWorker.initializeWorkingSharpness(
-    finalMaps,
-    preparedSharpness.workingWidth,
-    preparedSharpness.workingHeight,
-    width,
-    height,
-  );
 
   const output = new Uint16Array(width * height * 3);
   const imageShortSide = Math.min(width, height);
@@ -3297,6 +3294,15 @@ async function mergeFocusScratchTiles(db, sessionId, focusWorker, imageCount, wi
           height,
         )));
     }
+    setProgress("Initializing primary Focus merge worker...");
+    await focusWorker.initializeWorkingSharpness(
+      finalMaps,
+      preparedSharpness.workingWidth,
+      preparedSharpness.workingHeight,
+      width,
+      height,
+      true,
+    );
     finalMaps.length = 0;
 
     let nextCoreIndex = 0;

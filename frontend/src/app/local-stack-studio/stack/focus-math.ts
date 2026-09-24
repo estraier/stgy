@@ -201,6 +201,17 @@ export function sampleFocusGridBilinear(
 }
 
 
+export type FocusScoreStats = {
+  sum: number;
+  sumSq: number;
+  count: number;
+};
+
+export type FocusFinalMapsResult = {
+  finalMaps: Float32Array[];
+  stats: FocusScoreStats;
+};
+
 export function computeFocusFinalMaps(
   sharpnessMaps: readonly Float32Array[],
   workingWidth: number,
@@ -208,7 +219,7 @@ export function computeFocusFinalMaps(
   tileScores: readonly Float32Array[],
   grid: FocusGridDimensions,
   sigma = FOCUS_TILE_GAIN_SIGMA,
-): Float32Array[] {
+): FocusFinalMapsResult {
   if (!(Number.isInteger(workingWidth) && workingWidth > 0 && Number.isInteger(workingHeight) && workingHeight > 0)) {
     throw new Error("Focus final map received invalid working dimensions.");
   }
@@ -236,7 +247,10 @@ export function computeFocusFinalMaps(
     }
   }
 
-  const finals = sharpnessMaps.map(() => new Float32Array(pixelCount));
+  const finalMaps = sharpnessMaps.map(() => new Float32Array(pixelCount));
+  let sum = 0;
+  let sumSq = 0;
+  let count = 0;
   for (let y = 0; y < workingHeight; y += 1) {
     const normalizedY = (y + 0.5) / workingHeight;
     for (let x = 0; x < workingWidth; x += 1) {
@@ -254,18 +268,28 @@ export function computeFocusFinalMaps(
         }
       }
       const gain = focusTileGain(best - second, sigma);
+      let maxFinal = -Infinity;
       for (let imageIndex = 0; imageIndex < sharpnessMaps.length; imageIndex += 1) {
-        finals[imageIndex][pixel] = sharpnessMaps[imageIndex][pixel] + gain * sampleFocusGridBilinear(
+        const finalScore = sharpnessMaps[imageIndex][pixel] + gain * sampleFocusGridBilinear(
           tileScores[imageIndex],
           grid.cols,
           grid.rows,
           normalizedX,
           normalizedY,
         );
+        finalMaps[imageIndex][pixel] = finalScore;
+        const storedFinalScore = finalMaps[imageIndex][pixel];
+        if (storedFinalScore > maxFinal) maxFinal = storedFinalScore;
+      }
+      for (let imageIndex = 0; imageIndex < finalMaps.length; imageIndex += 1) {
+        const adjusted = finalMaps[imageIndex][pixel] - maxFinal;
+        sum += adjusted;
+        sumSq += adjusted * adjusted;
+        count += 1;
       }
     }
   }
-  return finals;
+  return { finalMaps, stats: { sum, sumSq, count } };
 }
 
 export function focusTileGain(mapMargin: number, sigma = FOCUS_TILE_GAIN_SIGMA): number {

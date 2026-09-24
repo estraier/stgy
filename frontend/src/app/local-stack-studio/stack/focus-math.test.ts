@@ -123,7 +123,8 @@ describe("Focus tile support", () => {
       0, 0,
     ]);
     const tileScores = computeFocusTileScores([first, second], 2, 2, { cols: 1, rows: 1 });
-    const finals = computeFocusFinalMaps([first, second], 2, 2, tileScores, { cols: 1, rows: 1 }, 1);
+    const result = computeFocusFinalMaps([first, second], 2, 2, tileScores, { cols: 1, rows: 1 }, 1);
+    const finals = result.finalMaps;
     expect(Array.from(tileScores[0])).toEqual([1.25]);
     expect(Array.from(tileScores[1])).toEqual([0]);
     // Strong local winner at (0,0) keeps tile support almost suppressed.
@@ -133,5 +134,20 @@ describe("Focus tile support", () => {
     expect(finals[0][1]).toBeCloseTo(1.25, 6);
     expect(finals[0][2]).toBeCloseTo(1.25, 6);
     expect(finals[0][3]).toBeCloseTo(1.25, 6);
+    let expectedSum = 0;
+    let expectedSumSq = 0;
+    let expectedCount = 0;
+    for (let pixel = 0; pixel < first.length; pixel += 1) {
+      const maxFinal = Math.max(finals[0][pixel], finals[1][pixel]);
+      for (let imageIndex = 0; imageIndex < finals.length; imageIndex += 1) {
+        const adjusted = finals[imageIndex][pixel] - maxFinal;
+        expectedSum += adjusted;
+        expectedSumSq += adjusted * adjusted;
+        expectedCount += 1;
+      }
+    }
+    expect(result.stats.count).toBe(expectedCount);
+    expect(result.stats.sum).toBeCloseTo(expectedSum, 12);
+    expect(result.stats.sumSq).toBeCloseTo(expectedSumSq, 12);
   });
 });
