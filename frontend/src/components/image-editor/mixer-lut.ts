@@ -10,10 +10,19 @@ export const IMAGE_MIXER_LUT_SIZE = 32;
 export const IMAGE_MIXER_LUT_CHANNELS = 3;
 export const IMAGE_MIXER_SETTING_COUNT = 36;
 
-const MIXER_SATURATION_CHROMA_ZERO = 0.005;
-const MIXER_SATURATION_CHROMA_FULL = 0.07;
-const MIXER_LUMINANCE_CHROMA_ZERO = 0.02;
-const MIXER_LUMINANCE_CHROMA_FULL = 0.10;
+const MIXER_RELATIVE_CHROMA_L_MIN = 0.20;
+const MIXER_RELATIVE_CHROMA_L_MAX = 0.90;
+const MIXER_SATURATION_RELATIVE_CHROMA_ZERO = 0.05;
+const MIXER_SATURATION_RELATIVE_CHROMA_FULL = 0.35;
+const MIXER_LUMINANCE_RELATIVE_CHROMA_ZERO = 0.10;
+const MIXER_LUMINANCE_RELATIVE_CHROMA_FULL = 0.50;
+const MIXER_CMAX_BINARY_SEARCH_STEPS = 14;
+const MIXER_CMAX_LIGHTNESS_BINS = 128;
+const MIXER_CMAX_HUE_BINS = 360;
+const mixerCmaxCache = new Float32Array(
+  (MIXER_CMAX_LIGHTNESS_BINS + 1) * MIXER_CMAX_HUE_BINS,
+);
+mixerCmaxCache.fill(Number.NaN);
 const MIXER_HUE_MAX_SHIFT_DEGREES = 60;
 const MIXER_SATURATION_VIBRANCE_STRENGTH = 1.0;
 const MIXER_LUMINANCE_MIDTONE_MAX = 20;
@@ -70,18 +79,27 @@ function composeMixerControl(weightedSum: number, strongestAdjustment: number): 
   return combinedWeight * strongestAdjustment;
 }
 
-function mixerSaturationChromaWeight(chroma: number): number {
-  const span = MIXER_SATURATION_CHROMA_FULL - MIXER_SATURATION_CHROMA_ZERO;
-  if (!(span > 0)) return chroma > MIXER_SATURATION_CHROMA_ZERO ? 1 : 0;
-  const t = clamp01((chroma - MIXER_SATURATION_CHROMA_ZERO) / span);
+function smoothstepWeight(value: number, zero: number, full: number): number {
+  const span = full - zero;
+  if (!(span > 0)) return value > zero ? 1 : 0;
+  const t = clamp01((value - zero) / span);
   return t * t * (3 - 2 * t);
 }
 
-function mixerLuminanceChromaWeight(chroma: number): number {
-  const span = MIXER_LUMINANCE_CHROMA_FULL - MIXER_LUMINANCE_CHROMA_ZERO;
-  if (!(span > 0)) return chroma > MIXER_LUMINANCE_CHROMA_ZERO ? 1 : 0;
-  const t = clamp01((chroma - MIXER_LUMINANCE_CHROMA_ZERO) / span);
-  return t * t * (3 - 2 * t);
+function mixerSaturationRelativeChromaWeight(relativeChroma: number): number {
+  return smoothstepWeight(
+    relativeChroma,
+    MIXER_SATURATION_RELATIVE_CHROMA_ZERO,
+    MIXER_SATURATION_RELATIVE_CHROMA_FULL,
+  );
+}
+
+function mixerLuminanceRelativeChromaWeight(relativeChroma: number): number {
+  return smoothstepWeight(
+    relativeChroma,
+    MIXER_LUMINANCE_RELATIVE_CHROMA_ZERO,
+    MIXER_LUMINANCE_RELATIVE_CHROMA_FULL,
+  );
 }
 
 function normalizeDegrees(value: number): number {
@@ -162,6 +180,76 @@ function oklabToLinearProPhoto(L: number, a: number, b: number): [number, number
   ];
 }
 
+function isLinearProPhotoUnitGamut(r: number, g: number, b: number): boolean {
+  return Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)
+    && r >= 0 && r <= 1
+    && g >= 0 && g <= 1
+    && b >= 0 && b <= 1;
+}
+
+function maxOklabChromaForLinearProPhotoGamut(L: number, hueDegrees: number): number {
+  const hueRadians = hueDegrees * Math.PI / 180;
+  const hueA = Math.cos(hueRadians);
+  const hueB = Math.sin(hueRadians);
+
+  const isInGamut = (chroma: number): boolean => {
+    const [r, g, b] = oklabToLinearProPhoto(L, chroma * hueA, chroma * hueB);
+    return isLinearProPhotoUnitGamut(r, g, b);
+  };
+
+  // Find an out-of-gamut upper bound first. ProPhoto is wide enough that a
+  // fixed sRGB-like Chroma ceiling would bias the normalization by hue.
+  let low = 0;
+  let high = 0.25;
+  while (high < 2 && isInGamut(high)) {
+    low = high;
+    high *= 2;
+  }
+  if (high > 2) high = 2;
+  if (isInGamut(high)) return high;
+
+  for (let i = 0; i < MIXER_CMAX_BINARY_SEARCH_STEPS; i += 1) {
+    const mid = (low + high) * 0.5;
+    if (isInGamut(mid)) low = mid;
+    else high = mid;
+  }
+  return low;
+}
+
+function cachedMaxOklabChromaForMixerReference(L: number, hueDegrees: number): number {
+  const lightnessSpan = MIXER_RELATIVE_CHROMA_L_MAX - MIXER_RELATIVE_CHROMA_L_MIN;
+  const normalizedL = lightnessSpan > 0
+    ? clamp01((L - MIXER_RELATIVE_CHROMA_L_MIN) / lightnessSpan)
+    : 0;
+  const lightnessIndex = Math.round(normalizedL * MIXER_CMAX_LIGHTNESS_BINS);
+  const hueIndex = Math.round(normalizeDegrees(hueDegrees)) % MIXER_CMAX_HUE_BINS;
+  const cacheIndex = lightnessIndex * MIXER_CMAX_HUE_BINS + hueIndex;
+  const cached = mixerCmaxCache[cacheIndex];
+  if (Number.isFinite(cached)) return cached;
+
+  const quantizedL = MIXER_RELATIVE_CHROMA_L_MIN
+    + lightnessSpan * (lightnessIndex / MIXER_CMAX_LIGHTNESS_BINS);
+  const quantizedHue = hueIndex * (360 / MIXER_CMAX_HUE_BINS);
+  const maxChroma = maxOklabChromaForLinearProPhotoGamut(quantizedL, quantizedHue);
+  mixerCmaxCache[cacheIndex] = maxChroma;
+  return maxChroma;
+}
+
+function mixerRelativeChroma(L: number, chroma: number, hueDegrees: number): number {
+  if (!(chroma > 1e-12)) return 0;
+  // Clamp only the lightness used to define the reference gamut boundary.
+  // This prevents tiny dark-noise chroma from becoming fully chromatic as
+  // Cmax collapses near black, and also avoids overrating tiny near-white
+  // color differences.
+  const referenceL = Math.max(
+    MIXER_RELATIVE_CHROMA_L_MIN,
+    Math.min(MIXER_RELATIVE_CHROMA_L_MAX, L),
+  );
+  const maxChroma = cachedMaxOklabChromaForMixerReference(referenceL, hueDegrees);
+  if (!(maxChroma > 1e-12) || !Number.isFinite(maxChroma)) return 0;
+  return Math.max(0, chroma / maxChroma);
+}
+
 function prophotoLuma(r: number, g: number, b: number): number {
   return Math.max(0, r * PROPHOTO_LUMA_R + g * PROPHOTO_LUMA_G + b * PROPHOTO_LUMA_B);
 }
@@ -188,8 +276,6 @@ function applyRichMixerLinearRgb(
   const chroma = Math.hypot(a, bb);
   const hueDegrees = chroma > 1e-12 ? normalizeDegrees(Math.atan2(bb, a) * 180 / Math.PI) : 0;
   const mixerHueDegrees = hueDegrees;
-  const saturationChromaWeight = mixerSaturationChromaWeight(chroma);
-  const luminanceChromaWeight = mixerLuminanceChromaWeight(chroma);
 
   let hueControl = 0;
   let saturationControl = 0;
@@ -213,11 +299,11 @@ function applyRichMixerLinearRgb(
       hueControl += hueAdjustment * gainHill;
       hueControlLimit = Math.max(hueControlLimit, Math.abs(hueAdjustment));
     }
-    if (saturationAdjustment !== 0 && saturationChromaWeight > 0) {
+    if (saturationAdjustment !== 0) {
       saturationControl += saturationAdjustment * gainHill;
       saturationControlLimit = Math.max(saturationControlLimit, Math.abs(saturationAdjustment));
     }
-    if (luminanceAdjustment !== 0 && luminanceChromaWeight > 0) {
+    if (luminanceAdjustment !== 0) {
       luminanceControl += luminanceAdjustment * gainHill;
       luminanceControlLimit = Math.max(luminanceControlLimit, Math.abs(luminanceAdjustment));
     }
@@ -227,9 +313,21 @@ function applyRichMixerLinearRgb(
   saturationControl = composeMixerControl(saturationControl, saturationControlLimit);
   luminanceControl = composeMixerControl(luminanceControl, luminanceControlLimit);
 
+  let saturationRelativeChromaWeight = 0;
+  let luminanceRelativeChromaWeight = 0;
+  if (Math.abs(saturationControl) > 1e-9 || Math.abs(luminanceControl) > 1e-9) {
+    const relativeChroma = mixerRelativeChroma(L, chroma, mixerHueDegrees);
+    if (Math.abs(saturationControl) > 1e-9) {
+      saturationRelativeChromaWeight = mixerSaturationRelativeChromaWeight(relativeChroma);
+    }
+    if (Math.abs(luminanceControl) > 1e-9) {
+      luminanceRelativeChromaWeight = mixerLuminanceRelativeChromaWeight(relativeChroma);
+    }
+  }
+
   const hueShift = (hueControl / 100) * MIXER_HUE_MAX_SHIFT_DEGREES;
-  const saturationAmount = saturationControl * saturationChromaWeight;
-  const luminanceAmount = luminanceControl * luminanceChromaWeight;
+  const saturationAmount = saturationControl * saturationRelativeChromaWeight;
+  const luminanceAmount = luminanceControl * luminanceRelativeChromaWeight;
 
   let mixedR = r;
   let mixedG = g;
