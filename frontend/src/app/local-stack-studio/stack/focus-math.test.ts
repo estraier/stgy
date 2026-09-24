@@ -6,7 +6,6 @@ import {
   computeFocusFinalMaps,
   focusRunningStatsStd,
   focusSharpnessWorkingDimensions,
-  focusTileGain,
   isUsableFocusStd,
   mergeFocusRunningStats,
   sampleFocusGridBilinear,
@@ -104,16 +103,9 @@ describe("Focus tile support", () => {
     expect(Math.abs(left - right)).toBeLessThan(1e-3);
   });
 
-  test("tile gain falls smoothly as the local map margin increases", () => {
-    expect(focusTileGain(0)).toBeCloseTo(1, 12);
-    expect(focusTileGain(1)).toBeCloseTo(Math.exp(-1), 12);
-    expect(focusTileGain(2)).toBeCloseTo(Math.exp(-4), 12);
-    expect(focusTileGain(Infinity)).toBe(0);
-    expect(focusTileGain(0.999)).toBeGreaterThan(focusTileGain(1.001));
-  });
 
 
-  test("final maps are composed on the working-resolution map before full-resolution merge", () => {
+  test("final maps are composed on the working-resolution map using 2*mapScore + tileScore", () => {
     const first = new Float32Array([
       5, 0,
       0, 0,
@@ -123,14 +115,12 @@ describe("Focus tile support", () => {
       0, 0,
     ]);
     const tileScores = computeFocusTileScores([first, second], 2, 2, { cols: 1, rows: 1 });
-    const result = computeFocusFinalMaps([first, second], 2, 2, tileScores, { cols: 1, rows: 1 }, 1);
+    const result = computeFocusFinalMaps([first, second], 2, 2, tileScores, { cols: 1, rows: 1 });
     const finals = result.finalMaps;
     expect(Array.from(tileScores[0])).toEqual([1.25]);
     expect(Array.from(tileScores[1])).toEqual([0]);
-    // Strong local winner at (0,0) keeps tile support almost suppressed.
-    expect(finals[0][0]).toBeCloseTo(5 + Math.exp(-25) * 1.25, 6);
+    expect(finals[0][0]).toBeCloseTo(11.25, 6);
     expect(finals[1][0]).toBeCloseTo(0, 12);
-    // Ambiguous flat pixels inherit the coarse tile support in the working map itself.
     expect(finals[0][1]).toBeCloseTo(1.25, 6);
     expect(finals[0][2]).toBeCloseTo(1.25, 6);
     expect(finals[0][3]).toBeCloseTo(1.25, 6);

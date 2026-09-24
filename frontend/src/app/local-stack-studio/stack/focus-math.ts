@@ -70,7 +70,8 @@ export function focusSharpnessWorkingDimensions(
 }
 
 export const FOCUS_TILE_TARGET_CELLS = 80;
-export const FOCUS_TILE_GAIN_SIGMA = 1.0;
+export const FOCUS_MAP_SCORE_SCALE = 2.0;
+export const FOCUS_TILE_SCORE_SCALE = 1.0;
 
 export type FocusGridDimensions = {
   cols: number;
@@ -218,7 +219,8 @@ export function computeFocusFinalMaps(
   workingHeight: number,
   tileScores: readonly Float32Array[],
   grid: FocusGridDimensions,
-  sigma = FOCUS_TILE_GAIN_SIGMA,
+  mapScale = FOCUS_MAP_SCORE_SCALE,
+  tileScale = FOCUS_TILE_SCORE_SCALE,
 ): FocusFinalMapsResult {
   if (!(Number.isInteger(workingWidth) && workingWidth > 0 && Number.isInteger(workingHeight) && workingHeight > 0)) {
     throw new Error("Focus final map received invalid working dimensions.");
@@ -226,8 +228,11 @@ export function computeFocusFinalMaps(
   if (!(Number.isInteger(grid.cols) && grid.cols > 0 && Number.isInteger(grid.rows) && grid.rows > 0)) {
     throw new Error("Focus final map received invalid grid dimensions.");
   }
-  if (!(Number.isFinite(sigma) && sigma > 0)) {
-    throw new Error("Focus final map received an invalid tile gain sigma.");
+  if (!(Number.isFinite(mapScale) && mapScale > 0)) {
+    throw new Error("Focus final map received an invalid map score scale.");
+  }
+  if (!(Number.isFinite(tileScale) && tileScale >= 0)) {
+    throw new Error("Focus final map received an invalid tile score scale.");
   }
   if (!Array.isArray(sharpnessMaps) || sharpnessMaps.length === 0) {
     throw new Error("Focus final map received no sharpness maps.");
@@ -256,21 +261,9 @@ export function computeFocusFinalMaps(
     for (let x = 0; x < workingWidth; x += 1) {
       const normalizedX = (x + 0.5) / workingWidth;
       const pixel = y * workingWidth + x;
-      let best = -Infinity;
-      let second = -Infinity;
-      for (let imageIndex = 0; imageIndex < sharpnessMaps.length; imageIndex += 1) {
-        const value = sharpnessMaps[imageIndex][pixel];
-        if (value > best) {
-          second = best;
-          best = value;
-        } else if (value > second) {
-          second = value;
-        }
-      }
-      const gain = focusTileGain(best - second, sigma);
       let maxFinal = -Infinity;
       for (let imageIndex = 0; imageIndex < sharpnessMaps.length; imageIndex += 1) {
-        const finalScore = sharpnessMaps[imageIndex][pixel] + gain * sampleFocusGridBilinear(
+        const finalScore = mapScale * sharpnessMaps[imageIndex][pixel] + tileScale * sampleFocusGridBilinear(
           tileScores[imageIndex],
           grid.cols,
           grid.rows,
@@ -292,10 +285,3 @@ export function computeFocusFinalMaps(
   return { finalMaps, stats: { sum, sumSq, count } };
 }
 
-export function focusTileGain(mapMargin: number, sigma = FOCUS_TILE_GAIN_SIGMA): number {
-  if (!(Number.isFinite(sigma) && sigma > 0)) throw new Error("Focus tile gain sigma must be positive.");
-  if (mapMargin === Infinity) return 0;
-  const margin = Math.max(0, Number.isFinite(mapMargin) ? mapMargin : 0);
-  const scaled = margin / sigma;
-  return Math.exp(-(scaled * scaled));
-}

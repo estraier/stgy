@@ -42,7 +42,6 @@ import {
 } from "./scratch";
 import { FocusWorkerClient, OrbWorkerClient } from "./worker-clients";
 import {
-  FOCUS_TILE_GAIN_SIGMA,
   computeFocusFinalMaps,
   computeFocusTileScores,
   emptyFocusRunningStats,
@@ -137,7 +136,7 @@ const FOCUS_STORAGE_TILE_SIZE = 384;
 const FOCUS_PROCESSING_CORE_SIZE = 1024;
 // Five pyrDown operations require about 124px of source support; keep a 128px halo.
 const FOCUS_HALO_SIZE = 128;
-const FOCUS_SMOOTHNESS = 0.5;
+const FOCUS_SMOOTHNESS = 0.4;
 const FOCUS_MAX_PYRAMID_DOWNSAMPLES = 5;
 const FOCUS_MERGE_MAX_WORKERS = 4;
 const SCRATCH_WRITE_BATCH_MAX_TILES = 4;
@@ -3228,7 +3227,7 @@ async function mergeFocusScratchTiles(db, sessionId, focusWorker, imageCount, wi
   );
   console.info(
     `Focus support grid=${focusGrid.cols}x${focusGrid.rows} ` +
-    `(${focusGrid.cols * focusGrid.rows} cells), tile sigma=${FOCUS_TILE_GAIN_SIGMA}`,
+    `(${focusGrid.cols * focusGrid.rows} cells), finalScore = 2*mapScore + tileScore`,
   );
   setProgress("Composing Focus final map and weight statistics...");
   const finalMapResult = computeFocusFinalMaps(
@@ -3237,7 +3236,6 @@ async function mergeFocusScratchTiles(db, sessionId, focusWorker, imageCount, wi
     preparedSharpness.workingHeight,
     tileScores,
     focusGrid,
-    FOCUS_TILE_GAIN_SIGMA,
   );
   const finalMaps = finalMapResult.finalMaps;
   preparedSharpness.sharpnessMaps.length = 0;
