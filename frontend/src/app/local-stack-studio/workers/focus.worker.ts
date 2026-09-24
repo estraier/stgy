@@ -2,12 +2,15 @@
 // @ts-nocheck
 // Local Stack Studio worker source. Built to public/generated/local-stack-studio.
 import { loadWorkerOpenCv } from "./opencv-runtime";
+import {
+  focusSharpnessWorkingDimensions,
+  isUsableFocusStd,
+} from "../stack/focus-math";
 
 (() => {
   "use strict";
 
   const RESULT_BUFFER_MAX_UINT16 = 65535;
-  const SHARPNESS_BASE_AREA = 1000000;
   const SHARPNESS_BLUR_RADIUS = 2;
   const SHARPNESS_CLAHE_CLIP_LIMIT = 0.3;
   const SHARPNESS_CLAHE_GAMMA = 2.8;
@@ -15,22 +18,55 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
   const SHARPNESS_SUPPRESS_NOISE = 0.5;
 
   let cvPromise = null;
+  let workingSharpnessState = null;
 
   self.onmessage = async (event) => {
     const message = event.data || {};
     const requestId = message.requestId;
     try {
-      if (message.type === "sharpness") {
+      if (message.type === "sharpness-features") {
         const cv = await getOpenCv();
-        postProgress(requestId, message.progressMessage || "Computing focus sharpness map...");
-        const sharpness = computeSharpnessMap(
+        postProgress(requestId, message.progressMessage || "Computing focus sharpness features...");
+        const result = computeSharpnessFeatures(
           cv,
           new Uint16Array(message.gamma2Buffer),
           Number(message.width),
           Number(message.height),
         );
         self.postMessage(
-          { type: "sharpness-result", requestId, sharpnessBuffer: sharpness.buffer },
+          {
+            type: "sharpness-features-result",
+            requestId,
+            featureBuffer: result.features.buffer,
+            workingWidth: result.workingWidth,
+            workingHeight: result.workingHeight,
+            lapCount: result.lapStats.count,
+            lapMean: result.lapStats.mean,
+            lapM2: result.lapStats.m2,
+            sobelCount: result.sobelStats.count,
+            sobelMean: result.sobelStats.mean,
+            sobelM2: result.sobelStats.m2,
+          },
+          [result.features.buffer],
+        );
+        return;
+      }
+
+      if (message.type === "sharpness-compose") {
+        postProgress(requestId, message.progressMessage || "Composing focus sharpness map...");
+        const sharpness = composeSharpnessMap(
+          new Float32Array(message.featureBuffer),
+          Number(message.workingWidth),
+          Number(message.workingHeight),
+          Number(message.width),
+          Number(message.height),
+          Number(message.globalLapMean),
+          Number(message.globalLapStd),
+          Number(message.globalSobelMean),
+          Number(message.globalSobelStd),
+        );
+        self.postMessage(
+          { type: "sharpness-compose-result", requestId, sharpnessBuffer: sharpness.buffer },
           [sharpness.buffer],
         );
         return;
@@ -40,6 +76,32 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
         const sharpnessTiles = (message.sharpnessBuffers || []).map((buffer) => new Float32Array(buffer));
         const stats = computeTauStats(sharpnessTiles);
         self.postMessage({ type: "tau-stats-result", requestId, ...stats });
+        return;
+      }
+
+      if (message.type === "working-sharpness-init") {
+        const sharpnessMaps = (message.sharpnessBuffers || []).map((buffer) => new Float32Array(buffer));
+        const workingWidth = Number(message.workingWidth);
+        const workingHeight = Number(message.workingHeight);
+        const imageWidth = Number(message.imageWidth);
+        const imageHeight = Number(message.imageHeight);
+        const expectedWorking = focusSharpnessWorkingDimensions(imageWidth, imageHeight);
+        if (
+          workingWidth !== expectedWorking.width ||
+          workingHeight !== expectedWorking.height ||
+          sharpnessMaps.length === 0 ||
+          sharpnessMaps.some((map) => map.length !== workingWidth * workingHeight)
+        ) {
+          throw new Error("Focus worker received invalid cached working sharpness maps.");
+        }
+        workingSharpnessState = {
+          sharpnessMaps,
+          workingWidth,
+          workingHeight,
+          imageWidth,
+          imageHeight,
+        };
+        self.postMessage({ type: "working-sharpness-init-result", requestId });
         return;
       }
 
@@ -60,6 +122,46 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
           { type: "merge-tile-result", requestId, gamma2Buffer: merged.buffer },
           [merged.buffer],
         );
+        return;
+      }
+
+      if (message.type === "merge-tile-working") {
+        const cv = await getOpenCv();
+        if (!workingSharpnessState) {
+          throw new Error("Focus worker working sharpness cache is not initialized.");
+        }
+        const rgbTiles = (message.rgbBuffers || []).map((buffer) => new Uint16Array(buffer));
+        const regionWidth = Number(message.regionWidth);
+        const regionHeight = Number(message.regionHeight);
+        if (rgbTiles.length !== workingSharpnessState.sharpnessMaps.length) {
+          throw new Error("Focus merge RGB image count does not match cached sharpness maps.");
+        }
+        const sharpnessTiles = workingSharpnessState.sharpnessMaps.map((sharpness) =>
+          expandSharpnessRegionBilinear(
+            sharpness,
+            workingSharpnessState.workingWidth,
+            workingSharpnessState.workingHeight,
+            workingSharpnessState.imageWidth,
+            workingSharpnessState.imageHeight,
+            Number(message.regionX),
+            Number(message.regionY),
+            regionWidth,
+            regionHeight,
+          ));
+        const merged = mergeFocusTile(
+          cv,
+          rgbTiles,
+          sharpnessTiles,
+          regionWidth,
+          regionHeight,
+          Number(message.tau),
+          Number(message.pyramidLevels),
+        );
+        self.postMessage(
+          { type: "merge-tile-working-result", requestId, gamma2Buffer: merged.buffer },
+          [merged.buffer],
+        );
+        return;
       }
     } catch (error) {
       self.postMessage({
@@ -96,11 +198,9 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     }
   }
 
-  function computeSharpnessMap(cv, gamma2Rgb, width, height) {
+  function computeSharpnessFeatures(cv, gamma2Rgb, width, height) {
     const expectedLength = width * height * 3;
-    if (!(Number.isInteger(width) && width > 0 && Number.isInteger(height) && height > 0)) {
-      throw new Error("Focus sharpness received invalid image dimensions.");
-    }
+    const workingDimensions = focusSharpnessWorkingDimensions(width, height);
     if (gamma2Rgb.length !== expectedLength) {
       throw new Error("Focus sharpness received an invalid gamma-2 RGB buffer.");
     }
@@ -114,121 +214,153 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     }
 
     let working = null;
+    let claheWorking = null;
     let blurred = null;
     let laplacian = null;
     let sobelX = null;
     let sobelY = null;
-    let sharpSmallMat = null;
-    let sharpFullMat = null;
     try {
-      const claheGray = applyClaheGrayImage(cv, gray, SHARPNESS_CLAHE_CLIP_LIMIT, SHARPNESS_CLAHE_GAMMA);
-      gray.delete();
-      gray = claheGray;
-
-      const area = width * height;
-      let workingWidth = width;
-      let workingHeight = height;
-      const isScaled = area > SHARPNESS_BASE_AREA * 2;
-      if (isScaled) {
-        const scale = Math.sqrt(SHARPNESS_BASE_AREA / area);
-        workingWidth = Math.ceil(width * scale);
-        workingHeight = Math.ceil(height * scale);
+      if (workingDimensions.isScaled) {
         working = new cv.Mat();
-        cv.resize(gray, working, new cv.Size(workingWidth, workingHeight), 0, 0, cv.INTER_AREA);
+        cv.resize(
+          gray,
+          working,
+          new cv.Size(workingDimensions.width, workingDimensions.height),
+          0,
+          0,
+          cv.INTER_AREA,
+        );
       } else {
         working = gray.clone();
       }
+      gray.delete();
+      gray = null;
+
+      claheWorking = applyClaheGrayImage(cv, working, SHARPNESS_CLAHE_CLIP_LIMIT, SHARPNESS_CLAHE_GAMMA);
+      working.delete();
+      working = null;
 
       if (SHARPNESS_BLUR_RADIUS > 1) {
         const ksize = Math.ceil(2 * SHARPNESS_BLUR_RADIUS) + 1;
         blurred = new cv.Mat();
-        cv.GaussianBlur(working, blurred, new cv.Size(ksize, ksize), 0, 0, cv.BORDER_DEFAULT);
+        cv.GaussianBlur(claheWorking, blurred, new cv.Size(ksize, ksize), 0, 0, cv.BORDER_DEFAULT);
       } else {
-        blurred = working.clone();
+        blurred = claheWorking.clone();
       }
 
       laplacian = new cv.Mat();
       cv.Laplacian(blurred, laplacian, cv.CV_32F ?? cv.CV_32FC1, 3);
-      const absLap = new Float32Array(laplacian.data32F.length);
+      const pixelCount = laplacian.data32F.length;
+      const features = new Float32Array(pixelCount * 2);
+      const absLap = features.subarray(0, pixelCount);
       let lapMean = 0;
-      for (let i = 0; i < absLap.length; i += 1) {
+      for (let i = 0; i < pixelCount; i += 1) {
         const value = Math.abs(laplacian.data32F[i]);
         absLap[i] = value;
         lapMean += value;
       }
-      lapMean = absLap.length > 0 ? lapMean / absLap.length : 0;
+      lapMean = pixelCount > 0 ? lapMean / pixelCount : 0;
       if (SHARPNESS_SUPPRESS_NOISE > 0) {
         const noiseFloor = Math.min(
-          estimateWhiteNoiseLevelFromLaplacian(absLap, workingWidth, workingHeight),
+          estimateWhiteNoiseLevelFromLaplacian(
+            absLap,
+            workingDimensions.width,
+            workingDimensions.height,
+          ),
           lapMean * 0.5,
         );
         const subtract = SHARPNESS_SUPPRESS_NOISE * noiseFloor;
-        for (let i = 0; i < absLap.length; i += 1) {
+        for (let i = 0; i < pixelCount; i += 1) {
           absLap[i] = Math.max(0, absLap[i] - subtract);
         }
       }
-      zScoreInPlace(absLap);
+      const lapStats = createRunningStats();
+      for (let i = 0; i < pixelCount; i += 1) {
+        updateRunningStats(lapStats, absLap[i]);
+      }
 
       sobelX = new cv.Mat();
       sobelY = new cv.Mat();
       cv.Sobel(blurred, sobelX, cv.CV_32F ?? cv.CV_32FC1, 1, 0, 3);
       cv.Sobel(blurred, sobelY, cv.CV_32F ?? cv.CV_32FC1, 0, 1, 3);
-      const sobel = new Float32Array(sobelX.data32F.length);
-      for (let i = 0; i < sobel.length; i += 1) {
-        sobel[i] = Math.hypot(sobelX.data32F[i], sobelY.data32F[i]);
-      }
-      zScoreInPlace(sobel);
-
-      const sharpSmall = new Float32Array(absLap.length);
-      for (let i = 0; i < sharpSmall.length; i += 1) {
-        sharpSmall[i] = SHARPNESS_HIGH_LOW_BALANCE * absLap[i] +
-          (1 - SHARPNESS_HIGH_LOW_BALANCE) * sobel[i];
+      const sobel = features.subarray(pixelCount);
+      const sobelStats = createRunningStats();
+      for (let i = 0; i < pixelCount; i += 1) {
+        const value = Math.hypot(sobelX.data32F[i], sobelY.data32F[i]);
+        sobel[i] = value;
+        updateRunningStats(sobelStats, value);
       }
 
-      let sharpness;
-      if (isScaled) {
-        sharpSmallMat = new cv.Mat(workingHeight, workingWidth, cv.CV_32FC1);
-        sharpSmallMat.data32F.set(sharpSmall);
-        sharpFullMat = new cv.Mat();
-        cv.resize(sharpSmallMat, sharpFullMat, new cv.Size(width, height), 0, 0, cv.INTER_LANCZOS4);
-        sharpness = new Float32Array(sharpFullMat.data32F);
-      } else {
-        sharpness = sharpSmall;
-      }
-
-      zScoreInPlace(sharpness);
-      for (let i = 0; i < sharpness.length; i += 1) {
-        sharpness[i] = Math.max(-10, Math.min(10, sharpness[i]));
-      }
-      return sharpness;
+      return {
+        features,
+        workingWidth: workingDimensions.width,
+        workingHeight: workingDimensions.height,
+        lapStats: finalizeRunningStats(lapStats),
+        sobelStats: finalizeRunningStats(sobelStats),
+      };
     } finally {
-      if (sharpFullMat) sharpFullMat.delete();
-      if (sharpSmallMat) sharpSmallMat.delete();
       if (sobelY) sobelY.delete();
       if (sobelX) sobelX.delete();
       if (laplacian) laplacian.delete();
       if (blurred) blurred.delete();
+      if (claheWorking) claheWorking.delete();
       if (working) working.delete();
       if (gray) gray.delete();
     }
   }
 
-  function applyClaheGrayImage(cv, gray, clipLimit, gamma) {
-    const pixelCount = gray.rows * gray.cols;
-    const bytes = new Uint8Array(pixelCount);
-    const floatRatio = new Float32Array(pixelCount);
-    const image255 = new Float32Array(pixelCount);
-    for (let i = 0; i < pixelCount; i += 1) {
-      const value255 = Math.pow(clamp01(gray.data32F[i]), 1 / gamma) * 255;
-      image255[i] = value255;
-      const byteValue = Math.max(0, Math.min(255, Math.trunc(value255)));
-      bytes[i] = byteValue;
-      floatRatio[i] = byteValue > 0 ? byteValue / Math.max(value255, 1e-6) : 1;
+  function composeSharpnessMap(
+    features,
+    workingWidth,
+    workingHeight,
+    width,
+    height,
+    globalLapMean,
+    globalLapStd,
+    globalSobelMean,
+    globalSobelStd,
+  ) {
+    const expectedWorking = focusSharpnessWorkingDimensions(width, height);
+    if (
+      workingWidth !== expectedWorking.width ||
+      workingHeight !== expectedWorking.height ||
+      !(Number.isInteger(workingWidth) && workingWidth > 0 && Number.isInteger(workingHeight) && workingHeight > 0)
+    ) {
+      throw new Error("Focus sharpness features have invalid working dimensions.");
+    }
+    const pixelCount = workingWidth * workingHeight;
+    if (features.length !== pixelCount * 2) {
+      throw new Error("Focus sharpness features have an invalid buffer size.");
+    }
+    if (!Number.isFinite(globalLapMean) || !Number.isFinite(globalSobelMean)) {
+      throw new Error("Focus sharpness received invalid global means.");
     }
 
+    const useLap = isUsableFocusStd(globalLapStd);
+    const useSobel = isUsableFocusStd(globalSobelStd);
+    const sharpSmall = new Float32Array(pixelCount);
+    for (let i = 0; i < pixelCount; i += 1) {
+      const lapZ = useLap ? (features[i] - globalLapMean) / globalLapStd : 0;
+      const sobelZ = useSobel ? (features[pixelCount + i] - globalSobelMean) / globalSobelStd : 0;
+      const value = SHARPNESS_HIGH_LOW_BALANCE * lapZ +
+        (1 - SHARPNESS_HIGH_LOW_BALANCE) * sobelZ;
+      sharpSmall[i] = Math.max(-10, Math.min(10, Number.isFinite(value) ? value : 0));
+    }
+    return sharpSmall;
+  }
+
+  function applyClaheGrayImage(cv, gray, clipLimit, gamma) {
+    const pixelCount = gray.rows * gray.cols;
     const src = new cv.Mat(gray.rows, gray.cols, cv.CV_8UC1);
     const dst = new cv.Mat();
-    src.data.set(bytes);
+    const ratio = new Float32Array(pixelCount);
+    for (let i = 0; i < pixelCount; i += 1) {
+      const value255 = Math.pow(clamp01(gray.data32F[i]), 1 / gamma) * 255;
+      const byteValue = Math.max(0, Math.min(255, Math.trunc(value255)));
+      src.data[i] = byteValue;
+      ratio[i] = byteValue > 0 ? byteValue / Math.max(value255, 1e-6) : 1;
+    }
+
     const tileGridSize = new cv.Size(8, 8);
     const clahe = cv.createCLAHE
       ? cv.createCLAHE(clipLimit, tileGridSize)
@@ -238,8 +370,10 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
       const restored = new cv.Mat(gray.rows, gray.cols, cv.CV_32FC1);
       for (let i = 0; i < pixelCount; i += 1) {
         const converted = dst.data[i];
-        let restored255 = converted / Math.max(floatRatio[i], 0.5);
-        if (converted === 0) restored255 = Math.min(image255[i] * 0.9, 0.9);
+        let restored255 = converted / Math.max(ratio[i], 0.5);
+        if (converted === 0) {
+          restored255 = Math.min(Math.pow(clamp01(gray.data32F[i]), 1 / gamma) * 255 * 0.9, 0.9);
+        }
         restored.data32F[i] = clamp01(Math.pow(Math.max(0, restored255) / 255, gamma));
       }
       return restored;
@@ -248,6 +382,64 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
       src.delete();
       dst.delete();
     }
+  }
+
+  function createRunningStats() {
+    return { count: 0, mean: 0, m2: 0 };
+  }
+
+  function updateRunningStats(stats, value) {
+    if (!Number.isFinite(value)) return;
+    stats.count += 1;
+    const delta = value - stats.mean;
+    stats.mean += delta / stats.count;
+    const delta2 = value - stats.mean;
+    stats.m2 += delta * delta2;
+  }
+
+  function finalizeRunningStats(stats) {
+    return { count: stats.count, mean: stats.mean, m2: Math.max(0, stats.m2) };
+  }
+
+  function expandSharpnessRegionBilinear(
+    sharpness,
+    workingWidth,
+    workingHeight,
+    imageWidth,
+    imageHeight,
+    regionX,
+    regionY,
+    regionWidth,
+    regionHeight,
+  ) {
+    if (sharpness.length !== workingWidth * workingHeight) {
+      throw new Error("Focus sharpness working map has an invalid size.");
+    }
+    const out = new Float32Array(regionWidth * regionHeight);
+    const scaleX = workingWidth / imageWidth;
+    const scaleY = workingHeight / imageHeight;
+    for (let y = 0; y < regionHeight; y += 1) {
+      const srcY = (regionY + y + 0.5) * scaleY - 0.5;
+      const y0 = Math.max(0, Math.min(workingHeight - 1, Math.floor(srcY)));
+      const y1 = Math.max(0, Math.min(workingHeight - 1, y0 + 1));
+      const fy = Math.max(0, Math.min(1, srcY - y0));
+      const row0 = y0 * workingWidth;
+      const row1 = y1 * workingWidth;
+      for (let x = 0; x < regionWidth; x += 1) {
+        const srcX = (regionX + x + 0.5) * scaleX - 0.5;
+        const x0 = Math.max(0, Math.min(workingWidth - 1, Math.floor(srcX)));
+        const x1 = Math.max(0, Math.min(workingWidth - 1, x0 + 1));
+        const fx = Math.max(0, Math.min(1, srcX - x0));
+        const v00 = sharpness[row0 + x0];
+        const v01 = sharpness[row0 + x1];
+        const v10 = sharpness[row1 + x0];
+        const v11 = sharpness[row1 + x1];
+        const top = v00 + (v01 - v00) * fx;
+        const bottom = v10 + (v11 - v10) * fx;
+        out[y * regionWidth + x] = top + (bottom - top) * fy;
+      }
+    }
+    return out;
   }
 
   function estimateWhiteNoiseLevelFromLaplacian(absLap, width, height, numTiles = 400, percentile = 10) {
@@ -283,21 +475,6 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     let sum = 0;
     for (let i = 0; i < k; i += 1) sum += means[i];
     return sum / k;
-  }
-
-  function zScoreInPlace(values) {
-    if (values.length === 0) return;
-    let sum = 0;
-    for (let i = 0; i < values.length; i += 1) sum += values[i];
-    const mean = sum / values.length;
-    let varianceSum = 0;
-    for (let i = 0; i < values.length; i += 1) {
-      const delta = values[i] - mean;
-      varianceSum += delta * delta;
-    }
-    const std = Math.sqrt(varianceSum / values.length);
-    const divisor = std + 1e-6;
-    for (let i = 0; i < values.length; i += 1) values[i] = (values[i] - mean) / divisor;
   }
 
   function computeTauStats(sharpnessTiles) {

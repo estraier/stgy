@@ -124,6 +124,28 @@ export async function getStackRgbTiles(
   return buffers.map((buffer) => new Uint16Array(buffer));
 }
 
+export function deleteStackScratchBuffers(
+  db: IDBDatabase,
+  keys: readonly string[],
+  label = "scratch buffers",
+): Promise<void> {
+  if (keys.length === 0) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    let transaction: IDBTransaction;
+    try {
+      transaction = db.transaction(STACK_SCRATCH_STORE, "readwrite");
+      const store = transaction.objectStore(STACK_SCRATCH_STORE);
+      for (const key of keys) store.delete(key);
+    } catch (error) {
+      reject(error);
+      return;
+    }
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error || new Error(`Could not delete ${label}.`));
+    transaction.onabort = () => reject(transaction.error || new Error(`${label} deletion was aborted.`));
+  });
+}
+
 export function deleteStackScratchSession(db: IDBDatabase, sessionId: string): Promise<void> {
   return new Promise((resolve, reject) => {
     let transaction: IDBTransaction;

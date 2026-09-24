@@ -1,3 +1,5 @@
+import type { FocusRunningStats } from "./focus-math";
+
 // Worker protocol types are intentionally kept local to Local Stack Studio.
 // The generated worker bundles are implementation details; callers use these typed clients.
 
@@ -28,6 +30,10 @@ function typedArrayBuffer(value: Uint16Array | Float32Array | Uint8Array): Array
   return value.slice().buffer as ArrayBuffer;
 }
 
+function copiedTypedArrayBuffer(value: Uint16Array | Float32Array | Uint8Array): ArrayBuffer {
+  return value.slice().buffer as ArrayBuffer;
+}
+
 export class FocusWorkerClient {
   private readonly worker: Worker;
   private readonly pending = new Map<number, PendingRequest>();
@@ -43,15 +49,21 @@ export class FocusWorkerClient {
     };
   }
 
-  computeSharpness(
+  computeSharpnessFeatures(
     gamma2Rgb: Uint16Array,
     width: number,
     height: number,
     progressMessage: string,
-  ): Promise<Float32Array> {
+  ): Promise<{
+    features: Float32Array;
+    workingWidth: number;
+    workingHeight: number;
+    lapStats: FocusRunningStats;
+    sobelStats: FocusRunningStats;
+  }> {
     const gamma2Buffer = typedArrayBuffer(gamma2Rgb);
     return this.request(
-      "sharpness",
+      "sharpness-features",
       {
         width,
         height,
@@ -59,12 +71,58 @@ export class FocusWorkerClient {
         progressMessage,
       },
       [gamma2Buffer],
-      "sharpness-result",
+      "sharpness-features-result",
+    ).then((message) => ({
+      features: new Float32Array(asArrayBuffer(message.featureBuffer, "sharpness feature")),
+      workingWidth: Number(message.workingWidth),
+      workingHeight: Number(message.workingHeight),
+      lapStats: {
+        count: Number(message.lapCount),
+        mean: Number(message.lapMean),
+        m2: Number(message.lapM2),
+      },
+      sobelStats: {
+        count: Number(message.sobelCount),
+        mean: Number(message.sobelMean),
+        m2: Number(message.sobelM2),
+      },
+    }));
+  }
+
+  composeSharpness(
+    features: Float32Array,
+    workingWidth: number,
+    workingHeight: number,
+    width: number,
+    height: number,
+    globalLapMean: number,
+    globalLapStd: number,
+    globalSobelMean: number,
+    globalSobelStd: number,
+    progressMessage: string,
+  ): Promise<Float32Array> {
+    const featureBuffer = typedArrayBuffer(features);
+    return this.request(
+      "sharpness-compose",
+      {
+        workingWidth,
+        workingHeight,
+        width,
+        height,
+        globalLapMean,
+        globalLapStd,
+        globalSobelMean,
+        globalSobelStd,
+        featureBuffer,
+        progressMessage,
+      },
+      [featureBuffer],
+      "sharpness-compose-result",
     ).then((message) => new Float32Array(asArrayBuffer(message.sharpnessBuffer, "sharpness")));
   }
 
   computeTauStats(sharpnessTiles: Float32Array[]): Promise<{ sum: number; sumSq: number; count: number }> {
-    const buffers = sharpnessTiles.map(typedArrayBuffer);
+    const buffers = sharpnessTiles.map(copiedTypedArrayBuffer);
     return this.request(
       "tau-stats",
       { sharpnessBuffers: buffers },
@@ -99,6 +157,54 @@ export class FocusWorkerClient {
       },
       [...rgbBuffers, ...sharpnessBuffers],
       "merge-tile-result",
+    ).then((message) => new Uint16Array(asArrayBuffer(message.gamma2Buffer, "focus merge")));
+  }
+
+  initializeWorkingSharpness(
+    sharpnessMaps: Float32Array[],
+    workingWidth: number,
+    workingHeight: number,
+    imageWidth: number,
+    imageHeight: number,
+  ): Promise<void> {
+    const sharpnessBuffers = sharpnessMaps.map(copiedTypedArrayBuffer);
+    return this.request(
+      "working-sharpness-init",
+      {
+        sharpnessBuffers,
+        workingWidth,
+        workingHeight,
+        imageWidth,
+        imageHeight,
+      },
+      sharpnessBuffers,
+      "working-sharpness-init-result",
+    ).then(() => undefined);
+  }
+
+  mergeTileWithInitializedSharpness(
+    rgbTiles: Uint16Array[],
+    regionX: number,
+    regionY: number,
+    regionWidth: number,
+    regionHeight: number,
+    tau: number,
+    pyramidLevels: number,
+  ): Promise<Uint16Array> {
+    const rgbBuffers = rgbTiles.map(typedArrayBuffer);
+    return this.request(
+      "merge-tile-working",
+      {
+        rgbBuffers,
+        regionX,
+        regionY,
+        regionWidth,
+        regionHeight,
+        tau,
+        pyramidLevels,
+      },
+      rgbBuffers,
+      "merge-tile-working-result",
     ).then((message) => new Uint16Array(asArrayBuffer(message.gamma2Buffer, "focus merge")));
   }
 
