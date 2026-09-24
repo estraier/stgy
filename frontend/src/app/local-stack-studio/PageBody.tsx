@@ -171,7 +171,8 @@ export default function PageBody() {
                 <option value="center-fit">Center fit</option>
                 <option value="center-fill">Center fill</option>
                 <option value="top-left-fill">Top left fill</option>
-                <option value="feature-match">Feature match</option>
+                <option value="feature-match-ecc">Feature match (ECC)</option>
+                <option value="feature-match-orb">Feature match (ORB)</option>
               </select>
             </label>
 

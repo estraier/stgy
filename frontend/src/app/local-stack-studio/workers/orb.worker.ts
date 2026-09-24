@@ -12,6 +12,7 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
   const ORB_MIN_GOOD_MATCHES = 11;
   const ORB_MIN_FALLBACK_MATCHES = 6;
   const ORB_RANSAC_REPROJECTION_THRESHOLD = 5.0;
+  const ORB_RANSAC_MAX_ITERATIONS = 2000;
   const ORB_FALLBACK_MEDIAN_REPROJECTION_ERROR = 3.0;
   const ORB_FALLBACK_P95_REPROJECTION_ERROR = 10.0;
   const ALIGNMENT_BILATERAL_DIAMETER = 5;
@@ -255,46 +256,191 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
   }
 
   function estimateAlignment(candidates, validateLowMatchFallback) {
-    const targetPoints = [];
-    const referencePoints = [];
+    const matrix = estimatePartialAffineRansac(candidates);
+    if (!isPartialAffinePlausible(matrix)) {
+      throw new Error("ORB produced an implausible partial affine transform.");
+    }
+
+    const reprojection = measureReprojectionErrors(matrix, candidates);
+    if (validateLowMatchFallback) {
+      validateFallbackReprojection(reprojection);
+    }
+
+    return { matrix, reprojection };
+  }
+
+  function estimatePartialAffineRansac(candidates) {
+    if (!Array.isArray(candidates) || candidates.length < 2) {
+      throw new Error("ORB needs at least two matches for a partial affine transform.");
+    }
+
+    const thresholdSq = ORB_RANSAC_REPROJECTION_THRESHOLD * ORB_RANSAC_REPROJECTION_THRESHOLD;
+    const count = candidates.length;
+    const maxIterations = Math.min(
+      ORB_RANSAC_MAX_ITERATIONS,
+      Math.max(1, count * (count - 1) / 2),
+    );
+    let bestModel = null;
+    let bestInlierCount = -1;
+    let bestInlierError = Number.POSITIVE_INFINITY;
+
+    if (count * (count - 1) / 2 <= ORB_RANSAC_MAX_ITERATIONS) {
+      outer:
+      for (let i = 0; i < count - 1; i += 1) {
+        for (let j = i + 1; j < count; j += 1) {
+          const model = partialAffineFromTwoMatches(candidates[i], candidates[j]);
+          if (!model) continue;
+          const score = scorePartialAffineModel(model, candidates, thresholdSq);
+          if (
+            score.inlierCount > bestInlierCount ||
+            (score.inlierCount === bestInlierCount && score.inlierError < bestInlierError)
+          ) {
+            bestModel = model;
+            bestInlierCount = score.inlierCount;
+            bestInlierError = score.inlierError;
+            if (bestInlierCount === count) break outer;
+          }
+        }
+      }
+    } else {
+      let state = (0x9e3779b9 ^ count) >>> 0;
+      for (let iteration = 0; iteration < maxIterations; iteration += 1) {
+        state = nextRansacState(state);
+        const i = state % count;
+        state = nextRansacState(state);
+        let j = state % count;
+        if (j === i) j = (j + 1) % count;
+        const model = partialAffineFromTwoMatches(candidates[i], candidates[j]);
+        if (!model) continue;
+        const score = scorePartialAffineModel(model, candidates, thresholdSq);
+        if (
+          score.inlierCount > bestInlierCount ||
+          (score.inlierCount === bestInlierCount && score.inlierError < bestInlierError)
+        ) {
+          bestModel = model;
+          bestInlierCount = score.inlierCount;
+          bestInlierError = score.inlierError;
+          if (bestInlierCount === count) break;
+        }
+      }
+    }
+
+    if (!bestModel || bestInlierCount < 2) {
+      throw new Error("ORB could not estimate a partial affine transform.");
+    }
+
+    const inliers = collectPartialAffineInliers(bestModel, candidates, thresholdSq);
+    let refined = fitPartialAffineLeastSquares(inliers);
+    if (!refined) refined = bestModel;
+
+    const refinedInliers = collectPartialAffineInliers(refined, candidates, thresholdSq);
+    if (refinedInliers.length >= 2) {
+      const secondRefinement = fitPartialAffineLeastSquares(refinedInliers);
+      if (secondRefinement) refined = secondRefinement;
+    }
+    return refined;
+  }
+
+  function nextRansacState(state) {
+    return (Math.imul(state, 1664525) + 1013904223) >>> 0;
+  }
+
+  function partialAffineFromTwoMatches(first, second) {
+    const px = second.targetX - first.targetX;
+    const py = second.targetY - first.targetY;
+    const qx = second.referenceX - first.referenceX;
+    const qy = second.referenceY - first.referenceY;
+    const denominator = px * px + py * py;
+    if (!(denominator > 1e-8)) return null;
+
+    const a = (px * qx + py * qy) / denominator;
+    const b = (px * qy - py * qx) / denominator;
+    const tx = first.referenceX - a * first.targetX + b * first.targetY;
+    const ty = first.referenceY - b * first.targetX - a * first.targetY;
+    const matrix = new Float64Array([
+      a, -b, tx,
+      b, a, ty,
+      0, 0, 1,
+    ]);
+    return isFiniteAlignmentMatrix(matrix) ? matrix : null;
+  }
+
+  function scorePartialAffineModel(matrix, candidates, thresholdSq) {
+    let inlierCount = 0;
+    let inlierError = 0;
     for (const match of candidates) {
-      targetPoints.push(match.targetX, match.targetY);
-      referencePoints.push(match.referenceX, match.referenceY);
+      const dx = matrix[0] * match.targetX + matrix[1] * match.targetY + matrix[2] - match.referenceX;
+      const dy = matrix[3] * match.targetX + matrix[4] * match.targetY + matrix[5] - match.referenceY;
+      const errorSq = dx * dx + dy * dy;
+      if (Number.isFinite(errorSq) && errorSq <= thresholdSq) {
+        inlierCount += 1;
+        inlierError += errorSq;
+      }
     }
+    return { inlierCount, inlierError };
+  }
 
-    const targetPointsMat = cv.matFromArray(candidates.length, 1, cv.CV_32FC2, targetPoints);
-    const referencePointsMat = cv.matFromArray(candidates.length, 1, cv.CV_32FC2, referencePoints);
-    let homography = null;
-
-    try {
-      const ransacMethod = cv.RANSAC !== undefined ? cv.RANSAC : cv.FM_RANSAC;
-      homography = cv.findHomography(
-        targetPointsMat,
-        referencePointsMat,
-        ransacMethod,
-        ORB_RANSAC_REPROJECTION_THRESHOLD,
-      );
-
-      if (!homography || homography.rows !== 3 || homography.cols !== 3) {
-        throw new Error("ORB could not estimate a homography.");
-      }
-
-      const matrix = readHomography(homography);
-      if (!isHomographyPlausible(matrix)) {
-        throw new Error("ORB produced an implausible homography.");
-      }
-
-      const reprojection = measureReprojectionErrors(matrix, candidates);
-      if (validateLowMatchFallback) {
-        validateFallbackReprojection(reprojection);
-      }
-
-      return { matrix, reprojection };
-    } finally {
-      if (homography) homography.delete();
-      referencePointsMat.delete();
-      targetPointsMat.delete();
+  function collectPartialAffineInliers(matrix, candidates, thresholdSq) {
+    const inliers = [];
+    for (const match of candidates) {
+      const dx = matrix[0] * match.targetX + matrix[1] * match.targetY + matrix[2] - match.referenceX;
+      const dy = matrix[3] * match.targetX + matrix[4] * match.targetY + matrix[5] - match.referenceY;
+      const errorSq = dx * dx + dy * dy;
+      if (Number.isFinite(errorSq) && errorSq <= thresholdSq) inliers.push(match);
     }
+    return inliers;
+  }
+
+  function fitPartialAffineLeastSquares(matches) {
+    if (!Array.isArray(matches) || matches.length < 2) return null;
+    let sourceMeanX = 0;
+    let sourceMeanY = 0;
+    let targetMeanX = 0;
+    let targetMeanY = 0;
+    for (const match of matches) {
+      sourceMeanX += match.targetX;
+      sourceMeanY += match.targetY;
+      targetMeanX += match.referenceX;
+      targetMeanY += match.referenceY;
+    }
+    const inverseCount = 1 / matches.length;
+    sourceMeanX *= inverseCount;
+    sourceMeanY *= inverseCount;
+    targetMeanX *= inverseCount;
+    targetMeanY *= inverseCount;
+
+    let dot = 0;
+    let cross = 0;
+    let denominator = 0;
+    for (const match of matches) {
+      const px = match.targetX - sourceMeanX;
+      const py = match.targetY - sourceMeanY;
+      const qx = match.referenceX - targetMeanX;
+      const qy = match.referenceY - targetMeanY;
+      dot += px * qx + py * qy;
+      cross += px * qy - py * qx;
+      denominator += px * px + py * py;
+    }
+    if (!(denominator > 1e-8)) return null;
+
+    const a = dot / denominator;
+    const b = cross / denominator;
+    const tx = targetMeanX - a * sourceMeanX + b * sourceMeanY;
+    const ty = targetMeanY - b * sourceMeanX - a * sourceMeanY;
+    const matrix = new Float64Array([
+      a, -b, tx,
+      b, a, ty,
+      0, 0, 1,
+    ]);
+    return isFiniteAlignmentMatrix(matrix) ? matrix : null;
+  }
+
+  function isFiniteAlignmentMatrix(matrix) {
+    if (!matrix || matrix.length < 9) return false;
+    for (let i = 0; i < 9; i += 1) {
+      if (!Number.isFinite(matrix[i])) return false;
+    }
+    return true;
   }
 
   function buildAlignmentResult(
@@ -668,33 +814,7 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     throw new Error("This OpenCV.js build does not provide BFMatcher.");
   }
 
-  function readHomography(homography) {
-    let source = null;
-    if (homography.data64F && homography.data64F.length >= 9) {
-      source = homography.data64F;
-    } else if (homography.data32F && homography.data32F.length >= 9) {
-      source = homography.data32F;
-    }
-    if (!source) {
-      throw new Error("OpenCV returned a homography with an unsupported data layout.");
-    }
-
-    const denominator = source[8];
-    if (!Number.isFinite(denominator) || Math.abs(denominator) < 1e-12) {
-      throw new Error("OpenCV returned an invalid homography.");
-    }
-
-    const matrix = new Float64Array(9);
-    for (let i = 0; i < 9; i += 1) {
-      matrix[i] = source[i] / denominator;
-      if (!Number.isFinite(matrix[i])) {
-        throw new Error("OpenCV returned an invalid homography.");
-      }
-    }
-    return matrix;
-  }
-
-  function isHomographyPlausible(m) {
+  function isPartialAffinePlausible(m) {
     const scaleAllowance = 0.05;
     const shiftAllowance = 0.05;
     const rotationAllowance = 0.05;
@@ -719,15 +839,11 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     if (!cv.BFMatcher) missing.push("BFMatcher");
     if (!cv.KeyPointVector) missing.push("KeyPointVector");
     if (!cv.DMatchVector) missing.push("DMatchVector");
-    if (!cv.findHomography) missing.push("findHomography");
-    if (!cv.matFromArray) missing.push("matFromArray");
     if (!cv.bilateralFilter) missing.push("bilateralFilter");
     if (!cv.createCLAHE && !cv.CLAHE) missing.push("CLAHE");
     if (!cv.Size) missing.push("Size");
     if (cv.CV_8UC1 === undefined) missing.push("CV_8UC1");
-    if (cv.CV_32FC2 === undefined) missing.push("CV_32FC2");
     if (cv.NORM_HAMMING === undefined) missing.push("NORM_HAMMING");
-    if (cv.RANSAC === undefined && cv.FM_RANSAC === undefined) missing.push("RANSAC");
     if (missing.length > 0) {
       throw new Error(`This OpenCV.js build is missing ORB APIs: ${missing.join(", ")}`);
     }

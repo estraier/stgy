@@ -281,6 +281,22 @@ export class FocusWorkerClient {
   }
 }
 
+export type EccAlignmentResult = {
+  matrix: Float64Array;
+  correlation: number;
+  workingWidth: number;
+  workingHeight: number;
+  pyramidLevels: number;
+  scaleX: number;
+  scaleY: number;
+  shearCosine: number;
+  translationRatio: number;
+  referenceExposureGain: number;
+  targetExposureGain: number;
+  exposureMatchSource: string;
+  maskCoverage: number;
+};
+
 export type OrbAlignmentResult = {
   matrix: Float64Array;
   referenceFeatureCount: number;
@@ -298,19 +314,123 @@ export type OrbAlignmentResult = {
   claheClipLimit: number;
 };
 
-export class OrbWorkerClient {
+class AlignmentWorkerRpcClient {
   private readonly worker: Worker;
   private readonly pending = new Map<number, PendingRequest>();
   private nextMessageId = 1;
 
-  constructor(url: URL) {
+  constructor(url: URL, private readonly label: string) {
     this.worker = new Worker(url);
     this.worker.onmessage = (event) => this.handleMessage(event.data);
     this.worker.onerror = (event) => {
-      const error = new Error(event.message || "ORB worker failed.");
+      const error = new Error(event.message || `${this.label} worker failed.`);
       for (const pending of this.pending.values()) pending.reject(error);
       this.pending.clear();
     };
+  }
+
+  protected request(
+    message: Record<string, unknown>,
+    transfers: Transferable[],
+    expectedType: string,
+  ): Promise<WorkerMessage> {
+    const requestId = this.nextMessageId++;
+    const requestMessage = { ...message, requestId };
+    return new Promise((resolve, reject) => {
+      this.pending.set(requestId, { resolve, reject, expectedType });
+      try {
+        this.worker.postMessage(requestMessage, transfers);
+      } catch (error) {
+        this.pending.delete(requestId);
+        reject(error);
+      }
+    });
+  }
+
+  private handleMessage(value: unknown): void {
+    const message = asWorkerMessage(value);
+    const requestId = typeof message.requestId === "number" ? message.requestId : null;
+    let pending = requestId !== null ? this.pending.get(requestId) ?? null : null;
+    if (!pending && this.pending.size === 1) {
+      const key = this.pending.keys().next().value as number | undefined;
+      if (key !== undefined) {
+        pending = this.pending.get(key) ?? null;
+        this.pending.delete(key);
+      }
+    } else if (pending && requestId !== null) {
+      this.pending.delete(requestId);
+    }
+    if (!pending) return;
+    if (message.type === "error") {
+      pending.reject(new Error(message.message || `${this.label} worker failed.`));
+      return;
+    }
+    if (message.type !== pending.expectedType) {
+      pending.reject(new Error(`Unexpected ${this.label} worker response: ${String(message.type)}`));
+      return;
+    }
+    pending.resolve(message);
+  }
+
+  terminate(): void {
+    this.worker.terminate();
+    const error = new Error(`${this.label} worker terminated.`);
+    for (const pending of this.pending.values()) pending.reject(error);
+    this.pending.clear();
+  }
+}
+
+export class EccWorkerClient extends AlignmentWorkerRpcClient {
+  constructor(url: URL) {
+    super(url, "ECC");
+  }
+
+  initialize(
+    width: number,
+    height: number,
+    grayBytes: Uint8Array,
+    exposureScalar: number | null = null,
+  ): Promise<WorkerMessage> {
+    const grayBuffer = typedArrayBuffer(grayBytes);
+    return this.request(
+      { type: "init", width, height, grayBuffer, exposureScalar },
+      [grayBuffer],
+      "ready",
+    );
+  }
+
+  align(
+    id: number,
+    fileName: string,
+    grayBytes: Uint8Array,
+    exposureScalar: number | null = null,
+  ): Promise<EccAlignmentResult> {
+    const grayBuffer = typedArrayBuffer(grayBytes);
+    return this.request(
+      { type: "align", id, fileName, grayBuffer, exposureScalar },
+      [grayBuffer],
+      "result",
+    ).then((response) => ({
+      matrix: new Float64Array(asArrayBuffer(response.matrixBuffer, "alignment matrix")),
+      correlation: Number(response.correlation),
+      workingWidth: Number(response.workingWidth),
+      workingHeight: Number(response.workingHeight),
+      pyramidLevels: Number(response.pyramidLevels),
+      scaleX: Number(response.scaleX),
+      scaleY: Number(response.scaleY),
+      shearCosine: Number(response.shearCosine),
+      translationRatio: Number(response.translationRatio),
+      referenceExposureGain: Number(response.referenceExposureGain),
+      targetExposureGain: Number(response.targetExposureGain),
+      exposureMatchSource: String(response.exposureMatchSource ?? ""),
+      maskCoverage: Number(response.maskCoverage),
+    }));
+  }
+}
+
+export class OrbWorkerClient extends AlignmentWorkerRpcClient {
+  constructor(url: URL) {
+    super(url, "ORB");
   }
 
   initialize(
@@ -354,55 +474,5 @@ export class OrbWorkerClient {
       exposureMatchSource: String(response.exposureMatchSource ?? ""),
       claheClipLimit: Number(response.claheClipLimit),
     }));
-  }
-
-  private request(
-    message: Record<string, unknown>,
-    transfers: Transferable[],
-    expectedType: string,
-  ): Promise<WorkerMessage> {
-    const requestId = this.nextMessageId++;
-    const requestMessage = { ...message, requestId };
-    return new Promise((resolve, reject) => {
-      this.pending.set(requestId, { resolve, reject, expectedType });
-      try {
-        this.worker.postMessage(requestMessage, transfers);
-      } catch (error) {
-        this.pending.delete(requestId);
-        reject(error);
-      }
-    });
-  }
-
-  private handleMessage(value: unknown): void {
-    const message = asWorkerMessage(value);
-    const requestId = typeof message.requestId === "number" ? message.requestId : null;
-    let pending = requestId !== null ? this.pending.get(requestId) ?? null : null;
-    if (!pending && this.pending.size === 1) {
-      const key = this.pending.keys().next().value as number | undefined;
-      if (key !== undefined) {
-        pending = this.pending.get(key) ?? null;
-        this.pending.delete(key);
-      }
-    } else if (pending && requestId !== null) {
-      this.pending.delete(requestId);
-    }
-    if (!pending) return;
-    if (message.type === "error") {
-      pending.reject(new Error(message.message || "ORB worker failed."));
-      return;
-    }
-    if (message.type !== pending.expectedType) {
-      pending.reject(new Error(`Unexpected ORB worker response: ${String(message.type)}`));
-      return;
-    }
-    pending.resolve(message);
-  }
-
-  terminate(): void {
-    this.worker.terminate();
-    const error = new Error("ORB worker terminated.");
-    for (const pending of this.pending.values()) pending.reject(error);
-    this.pending.clear();
   }
 }

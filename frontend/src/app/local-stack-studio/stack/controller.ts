@@ -40,7 +40,7 @@ import {
   putStackScratchBuffers as putMedianScratchTiles,
   stackRgbTileKey as medianScratchTileKey,
 } from "./scratch";
-import { FocusWorkerClient, OrbWorkerClient } from "./worker-clients";
+import { EccWorkerClient, FocusWorkerClient, OrbWorkerClient } from "./worker-clients";
 import {
   computeFocusFinalMaps,
   computeFocusTileScores,
@@ -334,7 +334,7 @@ listen(processButton, "click", async () => {
     if (!["average", "median", "stf", "hdr1", "hdr2", "focus", "tile-vertical", "tile-horizontal"].includes(mergeMode.value)) {
       throw new Error(`Unsupported merge mode: ${mergeMode.value}`);
     }
-    if (!["auto", "center-crop", "center-fit", "center-fill", "top-left-fill", "feature-match"].includes(alignmentMode.value)) {
+    if (!["auto", "center-crop", "center-fit", "center-fill", "top-left-fill", "feature-match-ecc", "feature-match-orb"].includes(alignmentMode.value)) {
       throw new Error(`Unsupported alignment mode: ${alignmentMode.value}`);
     }
 
@@ -357,10 +357,10 @@ ${buildInfo}` : "OpenCV.js is ready.");
     if (files.length === 1) {
       console.info(
         useSyntheticSingleInputHdr
-          ? `${files[0].name}: single input ${mergeMode.value.toUpperCase()} mode; generating three synthetic materials and skipping ORB alignment.`
+          ? `${files[0].name}: single input ${mergeMode.value.toUpperCase()} mode; generating three synthetic materials and skipping feature matching.`
           : preserveSingleInputMerge
             ? `${files[0].name}: single input ${mergeMode.value}; preserving tile layout and border.`
-            : `${files[0].name}: single input; skipping ORB alignment and merge operation.`,
+            : `${files[0].name}: single input; skipping feature matching and merge operation.`,
       );
     }
     const mergePlan = buildMergePlan(files, inputInfos, effectiveMergeMode);
@@ -1592,11 +1592,109 @@ function formatAlignmentModeName(mode) {
   if (mode === "center-fill") return "Center fill";
   if (mode === "top-left-fill") return "Top left fill";
   if (mode === "feature-match") return "Feature match";
+  if (mode === "feature-match-ecc") return "Feature match (ECC)";
+  if (mode === "feature-match-orb") return "Feature match (ORB)";
   return "Auto";
+}
+
+function isFeatureMatchAlignmentMode(mode) {
+  return mode === "feature-match-ecc" || mode === "feature-match-orb";
+}
+
+function alignmentAlgorithmFromMode(mode) {
+  if (mode === "feature-match-ecc") return "ECC";
+  if (mode === "feature-match-orb") return "ORB";
+  return null;
+}
+
+function resolveAutoAlignmentMode(mergeMode) {
+  if (isTileMergeMode(mergeMode)) return "center-fill";
+  if (mergeMode === "average") return "center-crop";
+  return "feature-match-ecc";
 }
 
 function isTileMergeMode(mode) {
   return mode === "tile-vertical" || mode === "tile-horizontal";
+}
+
+
+function secondaryAlignmentAlgorithm(primaryAlgorithm) {
+  return primaryAlgorithm === "ECC" ? "ORB" : "ECC";
+}
+
+function createAlignmentWorkers() {
+  return {
+    ECC: new EccWorkerClient(
+      new URL("/generated/local-stack-studio/ecc.worker.js", window.location.origin),
+    ),
+    ORB: new OrbWorkerClient(
+      new URL("/generated/local-stack-studio/orb.worker.js", window.location.origin),
+    ),
+  };
+}
+
+async function initializeAlignmentReference(
+  alignmentWorkers,
+  preferredAlgorithm,
+  width,
+  height,
+  grayBytes,
+  exposureScalar,
+) {
+  const tried = [];
+  for (const algorithm of [preferredAlgorithm, secondaryAlignmentAlgorithm(preferredAlgorithm)]) {
+    try {
+      const ready = await alignmentWorkers[algorithm].initialize(
+        width,
+        height,
+        new Uint8Array(grayBytes),
+        exposureScalar,
+      );
+      return { algorithm, ready };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      tried.push(`${algorithm}: ${message}`);
+      console.warn(`Could not initialize ${algorithm} alignment reference: ${message}`);
+    }
+  }
+  throw new Error(`Could not initialize alignment reference. ${tried.join("; ")}`);
+}
+
+async function alignWithFallback(
+  alignmentWorkers,
+  primaryAlgorithm,
+  referenceContext,
+  id,
+  fileName,
+  grayBytes,
+  exposureScalar,
+) {
+  const tried = [];
+  for (const algorithm of [primaryAlgorithm, secondaryAlignmentAlgorithm(primaryAlgorithm)]) {
+    try {
+      if (algorithm !== referenceContext.algorithm) {
+        const ready = await alignmentWorkers[algorithm].initialize(
+          referenceContext.width,
+          referenceContext.height,
+          new Uint8Array(referenceContext.grayBytes),
+          referenceContext.exposureScalar,
+        );
+        console.info(`${algorithm} fallback reference ready: ${describeAlignmentReady(algorithm, ready)}`);
+      }
+      const result = await alignmentWorkers[algorithm].align(
+        id,
+        fileName,
+        new Uint8Array(grayBytes),
+        exposureScalar,
+      );
+      return { algorithm, result };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      tried.push(`${algorithm}: ${message}`);
+      console.info(`${fileName}: ${algorithm} alignment attempt failed: ${message}`);
+    }
+  }
+  throw new Error(tried.join("; "));
 }
 
 function buildTileLayout(mode, imageWidth, imageHeight, imageCount) {
@@ -1623,7 +1721,7 @@ function buildTileLayout(mode, imageWidth, imageHeight, imageCount) {
 }
 
 function buildAlignmentPlan(files, inputInfos, selectedMode, mergeMode) {
-  const validModes = ["auto", "center-crop", "center-fit", "center-fill", "top-left-fill", "feature-match"];
+  const validModes = ["auto", "center-crop", "center-fit", "center-fill", "top-left-fill", "feature-match-ecc", "feature-match-orb"];
   if (!validModes.includes(selectedMode)) {
     throw new Error(`Unsupported alignment mode: ${selectedMode}`);
   }
@@ -1639,10 +1737,11 @@ function buildAlignmentPlan(files, inputInfos, selectedMode, mergeMode) {
   }
 
   if (dimensions.length === 0) {
+    const effectiveMode = selectedMode === "auto" ? resolveAutoAlignmentMode(mergeMode) : selectedMode;
     return {
       selectedMode,
-      effectiveMode: "feature-match",
-      normalizationMode: "feature-match",
+      effectiveMode,
+      normalizationMode: isFeatureMatchAlignmentMode(effectiveMode) ? "feature-match" : effectiveMode,
       targetWidth: 0,
       targetHeight: 0,
     };
@@ -1657,10 +1756,10 @@ function buildAlignmentPlan(files, inputInfos, selectedMode, mergeMode) {
   const centerFillWidth = Math.max(...dimensions.map((entry) => entry.width));
   const centerFillHeight = Math.max(...dimensions.map((entry) => entry.height));
   const effectiveMode = selectedMode === "auto"
-    ? (isTileMergeMode(mergeMode) ? "center-fill" : mergeMode === "average" ? "center-crop" : "feature-match")
+    ? resolveAutoAlignmentMode(mergeMode)
     : selectedMode;
 
-  if (effectiveMode === "feature-match") {
+  if (isFeatureMatchAlignmentMode(effectiveMode)) {
     return {
       selectedMode,
       effectiveMode,
@@ -1848,11 +1947,14 @@ function buildHdrExposureTimes(files, inputInfos) {
 
 async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, alignmentPlan, outputColorSpace) {
   let accumulator = null;
-  let alignmentWorker = null;
+  let alignmentWorkers = null;
   let width = 0;
   let height = 0;
   let hdr1StreamWorker = null;
   let hdr2StreamWorker = null;
+  let firstAlignmentReferenceGrayBytes = null;
+  let firstAlignmentReferenceExposureScalar = null;
+  let firstAlignmentReferenceAlgorithm = null;
   const alignmentMatrices = new Array(files.length).fill(null);
   const alignedIndices = new Set();
   const deferredAlignments = [];
@@ -1864,7 +1966,7 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
   let tileStoredBuffer = null;
 
   try {
-    const needsAlignment = files.length > 1 && alignmentPlan.effectiveMode === "feature-match";
+    const needsAlignment = files.length > 1 && isFeatureMatchAlignmentMode(alignmentPlan.effectiveMode);
     if (mergePlan.mode === "median" || mergePlan.mode === "focus") {
       const scratchLabel = mergePlan.mode === "focus" ? "Focus" : "Denoise (median)";
       setProgress(`Opening IndexedDB scratch space for ${scratchLabel} tiles...`);
@@ -1881,8 +1983,17 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
     if (syntheticSingleInputHdr) {
       return await processSingleInputHdrWithOpenCv(cv, files[0], inputInfos[0], mergePlan, outputColorSpace);
     }
+    const alignmentAlgorithm = alignmentAlgorithmFromMode(alignmentPlan.effectiveMode);
     if (needsAlignment) {
-      alignmentWorker = new OrbWorkerClient(new URL("/generated/local-stack-studio/orb.worker.js", window.location.origin));
+      if (!alignmentAlgorithm) {
+        throw new Error(`Unsupported feature matching mode: ${alignmentPlan.effectiveMode}`);
+      }
+      alignmentWorkers = createAlignmentWorkers();
+      console.info("ECC transform model=affine, coarse-to-fine pyramid");
+      console.info("ORB transform model=partial-affine");
+      console.info(
+        `Alignment fallback order: primary=${alignmentAlgorithm}, secondary=${secondaryAlignmentAlgorithm(alignmentAlgorithm)}`,
+      );
     }
 
     for (let index = 0; index < files.length; index += 1) {
@@ -1965,31 +2076,55 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
         let mergeSource = linearRgb || rgb;
 
         if (index === 0) {
-          alignmentMatrices[index] = identityHomography();
+          alignmentMatrices[index] = identityAlignmentMatrix();
           alignedIndices.add(index);
           if (needsAlignment) {
             if (alignmentPlan.normalizationMode !== "feature-match") {
               setProgress(
-                `Applying ${formatAlignmentModeName(alignmentPlan.normalizationMode)} preprocessing and detecting reference features...`,
+                `Applying ${formatAlignmentModeName(alignmentPlan.normalizationMode)} preprocessing and initializing ${alignmentAlgorithm} alignment...`,
               );
             } else {
-              setProgress("Initializing ORB worker and detecting reference features...");
+              setProgress(`Initializing ${alignmentAlgorithm} alignment worker...`);
             }
-            const ready = await alignmentWorker.initialize(width, height, grayBytes, inputInfo.exposureScalar);
-            console.info(`Reference ORB baseline features: ${ready.referenceFeatureCount}`);
+            const initialized = await initializeAlignmentReference(
+              alignmentWorkers,
+              alignmentAlgorithm,
+              width,
+              height,
+              grayBytes,
+              inputInfo.exposureScalar,
+            );
+            firstAlignmentReferenceGrayBytes = new Uint8Array(grayBytes);
+            firstAlignmentReferenceExposureScalar = inputInfo.exposureScalar;
+            firstAlignmentReferenceAlgorithm = initialized.algorithm;
+            logAlignmentReady(initialized.algorithm, initialized.ready);
           } else {
             setProgress(`Applying ${formatAlignmentModeName(alignmentPlan.normalizationMode)} alignment...`);
           }
         } else if (needsAlignment) {
-          setProgress(`Aligning image ${index + 1}/${files.length} with feature matching...`);
+          setProgress(`Aligning image ${index + 1}/${files.length} with ${alignmentAlgorithm} feature matching...`);
           const retryGrayBytes = new Uint8Array(grayBytes);
           try {
-            const result = await alignmentWorker.align(index, file.name, grayBytes, inputInfo.exposureScalar);
-            logOrbAlignmentResult(file.name, result);
-            alignmentMatrices[index] = result.matrix;
+            const aligned = await alignWithFallback(
+              alignmentWorkers,
+              firstAlignmentReferenceAlgorithm || alignmentAlgorithm,
+              {
+                algorithm: firstAlignmentReferenceAlgorithm || alignmentAlgorithm,
+                width,
+                height,
+                grayBytes: firstAlignmentReferenceGrayBytes,
+                exposureScalar: firstAlignmentReferenceExposureScalar,
+              },
+              index,
+              file.name,
+              grayBytes,
+              inputInfo.exposureScalar,
+            );
+            logAlignmentResult(aligned.algorithm, file.name, aligned.result);
+            alignmentMatrices[index] = aligned.result.matrix;
             alignedIndices.add(index);
 
-            homography = cv.matFromArray(3, 3, cv.CV_64F, Array.from(result.matrix));
+            homography = cv.matFromArray(3, 3, cv.CV_64F, Array.from(aligned.result.matrix));
             if (linearRgb) {
               alignedLinearRgb = new cv.Mat();
               cv.warpPerspective(
@@ -2113,12 +2248,13 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
     if (deferredAlignments.length > 0) {
       await recoverDeferredAlignments(
         cv,
-        alignmentWorker,
+        alignmentWorkers,
         files,
         inputInfos,
         width,
         height,
         alignmentPlan,
+        alignmentAlgorithm,
         alignmentMatrices,
         alignedIndices,
         deferredAlignments,
@@ -2220,7 +2356,10 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
 
     return finalizeStoredResult(accumulator, width, height, outputColorSpace, mergePlan.mode === "hdr2");
   } finally {
-    if (alignmentWorker) alignmentWorker.terminate();
+    if (alignmentWorkers) {
+      alignmentWorkers.ECC.terminate();
+      alignmentWorkers.ORB.terminate();
+    }
     if (focusWorker) focusWorker.terminate();
     if (hdr1StreamWorker) hdr1StreamWorker.terminate();
     if (hdr2StreamWorker) hdr2StreamWorker.terminate();
@@ -2239,12 +2378,13 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
 
 async function recoverDeferredAlignments(
   cv,
-  alignmentWorker,
+  alignmentWorkers,
   files,
   inputInfos,
   width,
   height,
   alignmentPlan,
+  alignmentAlgorithm,
   alignmentMatrices,
   alignedIndices,
   deferredAlignments,
@@ -2286,21 +2426,32 @@ async function recoverDeferredAlignments(
             height,
             alignmentPlan.normalizationMode,
           );
-          const ready = await alignmentWorker.initialize(
+          const initialized = await initializeAlignmentReference(
+            alignmentWorkers,
+            alignmentAlgorithm,
             width,
             height,
             referenceGrayBytes,
             inputInfos[referenceIndex].exposureScalar,
           );
-          const result = await alignmentWorker.align(
+          const aligned = await alignWithFallback(
+            alignmentWorkers,
+            initialized.algorithm,
+            {
+              algorithm: initialized.algorithm,
+              width,
+              height,
+              grayBytes: referenceGrayBytes,
+              exposureScalar: inputInfos[referenceIndex].exposureScalar,
+            },
             entry.index,
             targetFile.name,
-            new Uint8Array(entry.grayBytes),
+            entry.grayBytes,
             inputInfos[entry.index].exposureScalar,
           );
-          const composedMatrix = multiplyHomographies(
+          const composedMatrix = multiplyAlignmentMatrices(
             alignmentMatrices[referenceIndex],
-            result.matrix,
+            aligned.result.matrix,
           );
 
           alignmentMatrices[entry.index] = composedMatrix;
@@ -2308,19 +2459,24 @@ async function recoverDeferredAlignments(
           madeProgress = true;
 
           console.info(
-            `${targetFile.name}: recovered by matching against ${referenceFile.name} ` +
-            `(reference ORB features=${ready.referenceFeatureCount})`,
+            `${targetFile.name}: recovered by ${aligned.algorithm} matching against ${referenceFile.name} ` +
+            `(${describeAlignmentReady(initialized.algorithm, initialized.ready)})`,
           );
-          logOrbAlignmentResult(targetFile.name, result, `local to ${referenceFile.name}`);
+          logAlignmentResult(
+            aligned.algorithm,
+            targetFile.name,
+            aligned.result,
+            `local to ${referenceFile.name}`,
+          );
           console.info(
-            `${targetFile.name}: composed transform to first image, ${describeHomography(composedMatrix)}`,
+            `${targetFile.name}: composed transform to first image, ${describeAlignmentMatrix(composedMatrix)}`,
           );
           break;
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           entry.attempts.push({ referenceIndex, error: message });
           console.info(
-            `${targetFile.name}: alternate ORB reference ${referenceFile.name} did not match: ${message}`,
+            `${targetFile.name}: alternate feature-match reference ${referenceFile.name} did not match: ${message}`,
           );
         }
       }
@@ -2336,7 +2492,7 @@ async function decodeAlignmentGrayBytes(
   expectedHeight,
   normalizationMode = "feature-match",
 ) {
-  setProgress(`Preparing alternate ORB reference ${file.name}...`);
+  setProgress(`Preparing alternate alignment reference ${file.name}...`);
   const decoded = await decodeFileToDecodedImage(file, inputInfo);
   const normalizedDecoded = normalizeDecodedImageForAlignment(
     cv,
@@ -3382,7 +3538,7 @@ async function mergeFocusScratchTiles(db, sessionId, focusWorker, imageCount, wi
   }
 }
 
-function identityHomography() {
+function identityAlignmentMatrix() {
   return new Float64Array([
     1, 0, 0,
     0, 1, 0,
@@ -3390,7 +3546,7 @@ function identityHomography() {
   ]);
 }
 
-function multiplyHomographies(left, right) {
+function multiplyAlignmentMatrices(left, right) {
   const result = new Float64Array(9);
   for (let row = 0; row < 3; row += 1) {
     for (let col = 0; col < 3; col += 1) {
@@ -3404,15 +3560,56 @@ function multiplyHomographies(left, right) {
 
   const denominator = result[8];
   if (!Number.isFinite(denominator) || Math.abs(denominator) < 1e-12) {
-    throw new Error("Composed ORB homography is invalid.");
+    throw new Error("Composed alignment transform is invalid.");
   }
   for (let i = 0; i < result.length; i += 1) {
     result[i] /= denominator;
     if (!Number.isFinite(result[i])) {
-      throw new Error("Composed ORB homography contains a non-finite value.");
+      throw new Error("Composed alignment transform contains a non-finite value.");
     }
   }
   return result;
+}
+
+function describeAlignmentReady(algorithm, ready) {
+  if (algorithm === "ECC") {
+    const workingWidth = Number(ready?.workingWidth);
+    const workingHeight = Number(ready?.workingHeight);
+    const pyramidLevels = Number(ready?.pyramidLevels);
+    return `working=${workingWidth}x${workingHeight}, pyramid=${pyramidLevels}`;
+  }
+  return `reference features=${Number(ready?.referenceFeatureCount)}`;
+}
+
+function logAlignmentReady(algorithm, ready) {
+  console.info(`${algorithm} reference ready: ${describeAlignmentReady(algorithm, ready)}`);
+}
+
+function logAlignmentResult(algorithm, fileName, result, context = "") {
+  if (algorithm === "ECC") {
+    logEccAlignmentResult(fileName, result, context);
+    return;
+  }
+  logOrbAlignmentResult(fileName, result, context);
+}
+
+function logEccAlignmentResult(fileName, result, context = "") {
+  const contextDetail = context ? ` (${context})` : "";
+  const correlation = Number(result.correlation);
+  const correlationDetail = Number.isFinite(correlation) ? correlation.toFixed(6) : "n/a";
+  const preprocessingDetail = Number.isFinite(result.referenceExposureGain) && Number.isFinite(result.targetExposureGain)
+    ? `, preprocess=${result.exposureMatchSource || "unknown"} midpoint ` +
+      `gains(ref=${result.referenceExposureGain.toFixed(3)}, target=${result.targetExposureGain.toFixed(3)}), ` +
+      `mask=${(Number(result.maskCoverage) * 100).toFixed(1)}%`
+    : "";
+  console.info(
+    `${fileName}${contextDetail}: ECC correlation=${correlationDetail}, model=affine, ` +
+    `working=${result.workingWidth}x${result.workingHeight}, pyramid=${result.pyramidLevels}, ` +
+    `scale=(${Number(result.scaleX).toFixed(4)}, ${Number(result.scaleY).toFixed(4)}), ` +
+    `shearCos=${Number(result.shearCosine).toFixed(4)}, ` +
+    `translation=${(Number(result.translationRatio) * 100).toFixed(2)}% diagonal` +
+    `${preprocessingDetail}, ${describeAlignmentMatrix(result.matrix)}`,
+  );
 }
 
 function logOrbAlignmentResult(fileName, result, context = "") {
@@ -3435,10 +3632,11 @@ function logOrbAlignmentResult(fileName, result, context = "") {
     ? `ref=${result.referenceFeatureCount}, target=${result.targetFeatureCount}`
     : `target=${result.targetFeatureCount}`;
   const contextDetail = context ? ` (${context})` : "";
+  const transformDetail = ", model=partial-affine";
   console.info(
     `${fileName}${contextDetail}: ORB features(${referenceFeatureDetail}), matches=${result.matchCount}, ` +
-    `usable=${result.usableMatchCount}${shiftDetail}` +
-    `${fallbackDetail}${reprojectionDetail}${preprocessingDetail}, ${describeHomography(result.matrix)}`,
+    `usable=${result.usableMatchCount}${shiftDetail}${transformDetail}` +
+    `${fallbackDetail}${reprojectionDetail}${preprocessingDetail}, ${describeAlignmentMatrix(result.matrix)}`,
   );
 }
 
@@ -3469,7 +3667,7 @@ function copyMatBytes(mat, expectedLength) {
   return new Uint8Array(mat.data.slice(0, expectedLength));
 }
 
-function describeHomography(m) {
+function describeAlignmentMatrix(m) {
   const scaleX = Math.hypot(m[0], m[1]);
   const scaleY = Math.hypot(m[4], m[3]);
   const angle = Math.atan2(m[3], m[0]) * 180 / Math.PI;
