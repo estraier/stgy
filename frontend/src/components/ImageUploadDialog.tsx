@@ -108,6 +108,15 @@ import {
   sampleImageMixerLutTetrahedralInto,
   type ImageMixerLut,
 } from "./image-editor/mixer-lut";
+import {
+  FILM_SIMULATION_LABELS,
+  FILM_SIMULATION_SEQUENCE,
+  type FilmSimulationPreset,
+} from "./image-editor/film-simulation-params";
+import {
+  getOrBuildFilmSimulationLut,
+  sampleFilmSimulationLutLinearInto,
+} from "./image-editor/film-simulation-lut";
 import { createCanvasImageData, getCanvas2dContext, getCanvasImageData } from "./image-editor/canvas";
 import { applySharpenToCanvas, applySharpenToRgb16 } from "./image-editor/sharpen";
 import { applyDenoiseToCanvas, applyDenoiseToRgb16, clampDenoise } from "./image-editor/denoise";
@@ -311,6 +320,7 @@ export type ImageDuotonePreset =
   | "duotone-magenta";
 export type ImageSuperMcPreset = "super-mc-red" | "super-mc-green" | "super-mc-blue";
 export type ImageEdgePreset = "edge-canny" | "edge-xdog" | "edge-multiscale";
+export type ImageSimulationFilterPreset = FilmSimulationPreset;
 export type ImageOtherFilterPreset =
   | ImageChannelSwapPreset
   | ImageDichromePreset
@@ -319,8 +329,7 @@ export type ImageOtherFilterPreset =
   | ImageDuotonePreset
   | ImageSuperMcPreset
   | ImageEdgePreset
-  | "classic-chrome"
-  | "velvia";
+  | ImageSimulationFilterPreset;
 export type ImageNonMonochromeFilterPreset = ImagePhotochemicalFilterPreset | ImageOtherFilterPreset;
 
 export type ImageFilter =
@@ -1102,11 +1111,6 @@ const SUPER_MC_WEIGHTS: Record<ImageSuperMcPreset, readonly [number, number, num
   "super-mc-blue": [-0.5, 0.5, 1.0],
 };
 
-const OTHER_FILTER_LABELS: Record<Extract<ImageOtherFilterPreset, "classic-chrome" | "velvia">, string> = {
-  velvia: "Velvia",
-  "classic-chrome": "C. Chrome",
-};
-
 const EDGE_PRESET_SEQUENCE: readonly ImageEdgePreset[] = [
   "edge-canny",
   "edge-xdog",
@@ -1181,83 +1185,6 @@ const BLEACH_BYPASS_TARGET_HUE_DEGREES = 200;
 const BLEACH_BYPASS_SATURATION_DISTANCE_MAX_DEGREES = 180;
 const BLEACH_BYPASS_HUE_EXPONENT = 1.2;
 const BLEACH_BYPASS_TARGET_PERCENTILE = 0.50;
-const CLASSIC_CHROME_CONTRAST_LOW_PERCENTILE = 0.10;
-const CLASSIC_CHROME_TARGET_PERCENTILE = 0.50;
-const CLASSIC_CHROME_CONTRAST_HIGH_PERCENTILE = 0.90;
-const CLASSIC_CHROME_TARGET_CONTRAST_SCALE = 1.10;
-const CLASSIC_CHROME_CALIBRATION_STRENGTH = 0.40;
-const CLASSIC_CHROME_GLOBAL_SATURATION = 0.95;
-const CLASSIC_CHROME_VIBRANCE = -0.15;
-const CLASSIC_CHROME_SHADOW_GREEN_AMOUNT = 0.006;
-const CLASSIC_CHROME_HIGHLIGHT_EV = 0.10;
-const CLASSIC_CHROME_SHADOW_EV = -0.05;
-const CLASSIC_CHROME_WHITE_EV = -0.16;
-const CLASSIC_CHROME_HUE_ADJUSTMENTS: readonly (readonly [number, number])[] = [
-  [0, -5],
-  [30, 0],
-  [60, 5],
-  [120, 10],
-  [180, 5],
-  [240, 0],
-  [270, 0],
-  [300, 0],
-  [360, -5],
-];
-const CLASSIC_CHROME_LUMINANCE_ADJUSTMENTS: readonly (readonly [number, number])[] = [
-  [0, 5],
-  [30, -5],
-  [60, -10],
-  [120, -10],
-  [180, -10],
-  [240, -10],
-  [270, -10],
-  [300, -5],
-  [360, 5],
-];
-const VELVIA_CONTRAST_LOW_PERCENTILE = 0.10;
-const VELVIA_TARGET_PERCENTILE = 0.50;
-const VELVIA_CONTRAST_HIGH_PERCENTILE = 0.90;
-const VELVIA_TARGET_CONTRAST_SCALE = 1.05;
-const VELVIA_CALIBRATION_STRENGTH = 0.45;
-const VELVIA_VIBRANCE = 0.25;
-const VELVIA_SHADOW_MAGENTA_AMOUNT = 0.009;
-const VELVIA_BLACK_EV = -0.20;
-const VELVIA_SHADOW_EV = 0.04;
-const VELVIA_HIGHLIGHT_EV = -0.04;
-const VELVIA_WHITE_EV = -0.18;
-const VELVIA_HUE_ADJUSTMENTS: readonly (readonly [number, number])[] = [
-  [0, 1],
-  [30, -2],
-  [60, -5],
-  [120, 5],
-  [180, 10],
-  [240, 5],
-  [270, 0],
-  [300, 0],
-  [360, 1],
-];
-const VELVIA_SATURATION_ADJUSTMENTS: readonly (readonly [number, number])[] = [
-  [0, 0],
-  [30, 0],
-  [60, -10],
-  [120, -5],
-  [180, 0],
-  [240, 0],
-  [270, 0],
-  [300, 0],
-  [360, 0],
-];
-const VELVIA_LUMINANCE_ADJUSTMENTS: readonly (readonly [number, number])[] = [
-  [0, 40],
-  [30, 15],
-  [60, -5],
-  [120, -5],
-  [180, -5],
-  [240, -5],
-  [270, 15],
-  [300, 30],
-  [360, 40],
-];
 const FILTER_HUE_GATE_SATURATION_LOW = 0.02;
 const FILTER_HUE_GATE_SATURATION_HIGH = 0.12;
 const PART_COLOR_CORE_HALF_WIDTH_DEGREES = 30;
@@ -1413,31 +1340,6 @@ function applyCrossProcessToneRecoveryLinearRgb(
   return [Math.max(0, r * scale), Math.max(0, g * scale), Math.max(0, b * scale)];
 }
 
-type ClassicChromeToneRecovery = {
-  beforeP50Ev: number;
-  filteredP50Ev: number;
-  contrastScale: number;
-};
-
-function interpolateFilterHueTable(
-  hueDegrees: number,
-  table: readonly (readonly [number, number])[],
-): number {
-  if (table.length === 0) return 0;
-  let hue = hueDegrees % 360;
-  if (hue < 0) hue += 360;
-  for (let index = 0; index < table.length - 1; index += 1) {
-    const current = table[index];
-    const next = table[index + 1];
-    if (!current || !next) continue;
-    if (hue < current[0] || hue > next[0]) continue;
-    const span = Math.max(1e-9, next[0] - current[0]);
-    const t = smoothstep01((hue - current[0]) / span);
-    return current[1] * (1 - t) + next[1] * t;
-  }
-  return table[table.length - 1]?.[1] ?? 0;
-}
-
 function filterHueDependenceWeight(saturation: number): number {
   const span = FILTER_HUE_GATE_SATURATION_HIGH - FILTER_HUE_GATE_SATURATION_LOW;
   if (!(span > 0)) return saturation > FILTER_HUE_GATE_SATURATION_LOW ? 1 : 0;
@@ -1463,333 +1365,6 @@ function scaleLinearRgbToFilterLuma(
   }
   const scale = targetLuma / sourceLuma;
   return [Math.max(0, r * scale), Math.max(0, g * scale), Math.max(0, b * scale)];
-}
-
-function applyClassicChromeToneCurve(luma: number): number {
-  const x = clamp01(luma);
-  const points: readonly (readonly [number, number])[] = [
-    [0, 0],
-    [5 / 255, 5 / 255],
-    [150 / 255, 162 / 255],
-    [250 / 255, 250 / 255],
-    [1, 1],
-  ];
-  for (let index = 0; index < points.length - 1; index += 1) {
-    const current = points[index];
-    const next = points[index + 1];
-    if (!current || !next || x < current[0] || x > next[0]) continue;
-    const t = (x - current[0]) / Math.max(1e-9, next[0] - current[0]);
-    return current[1] * (1 - t) + next[1] * t;
-  }
-  return x;
-}
-
-function applyClassicChromeLinearRgb(r: number, g: number, b: number): [number, number, number] {
-  const workR = clamp01(r);
-  const workG = clamp01(g);
-  const workB = clamp01(b);
-  const originalLuma = prophotoLumaForFilter(workR, workG, workB);
-  const [baseHue, baseSaturation, baseValue] = rgbToHsv(workR, workG, workB);
-  const maxChannel = Math.max(workR, workG, workB);
-  const minChannel = Math.min(workR, workG, workB);
-  const chroma = Math.max(1e-8, maxChannel - minChannel);
-  const redDominance = clamp01((workR - Math.max(workG, workB)) / chroma);
-  const blueDominance = clamp01((workB - Math.max(workR, workG)) / chroma);
-  const hueDependenceWeight = filterHueDependenceWeight(baseSaturation);
-
-  // Hue becomes numerically unstable close to neutral gray. Fade all hue-dependent
-  // calibration/HSL operations out there so tiny RGB differences cannot become bands.
-  const calibrationHueShift = hueDependenceWeight * CLASSIC_CHROME_CALIBRATION_STRENGTH
-    * (5 * redDominance - 15 * blueDominance);
-  const calibratedHueDegrees = ((baseHue * 360 + calibrationHueShift) % 360 + 360) % 360;
-  const hueAdjustment = hueDependenceWeight * interpolateFilterHueTable(
-    calibratedHueDegrees,
-    CLASSIC_CHROME_HUE_ADJUSTMENTS,
-  );
-  const luminanceAdjustment = hueDependenceWeight * interpolateFilterHueTable(
-    calibratedHueDegrees,
-    CLASSIC_CHROME_LUMINANCE_ADJUSTMENTS,
-  );
-  const adjustedHue = ((calibratedHueDegrees + hueAdjustment) % 360 + 360) % 360 / 360;
-  const calibratedSaturation = clamp01(
-    baseSaturation * (1 - hueDependenceWeight * CLASSIC_CHROME_CALIBRATION_STRENGTH * 0.05 * redDominance),
-  );
-  let [linearR, linearG, linearB] = hsvToRgb(adjustedHue, calibratedSaturation, baseValue);
-
-  // Hue changes should not accidentally redefine brightness; apply the preset's
-  // HSL luminance adjustments explicitly in log-luminance instead.
-  const hueTargetLuma = originalLuma * Math.pow(2, luminanceAdjustment * 0.01);
-  [linearR, linearG, linearB] = scaleLinearRgbToFilterLuma(
-    linearR,
-    linearG,
-    linearB,
-    hueTargetLuma,
-  );
-
-  const [, currentSaturation] = rgbToHsvExtended(linearR, linearG, linearB);
-  const globallyReducedSaturation = currentSaturation * CLASSIC_CHROME_GLOBAL_SATURATION;
-  const targetSaturation = applyScaledLogLinearExtended(
-    globallyReducedSaturation,
-    CLASSIC_CHROME_VIBRANCE,
-  );
-  [linearR, linearG, linearB] = applyHsvSaturationPreservingProPhotoLuminance(
-    linearR,
-    linearG,
-    linearB,
-    targetSaturation,
-  );
-
-  // ShadowTint=-2: a very small green bias in shadows, with luminance restored.
-  const preTintLuma = prophotoLumaForFilter(linearR, linearG, linearB);
-  const shadowTintWeight = Math.pow(1 - clamp01(preTintLuma), 2);
-  linearG *= 1 + CLASSIC_CHROME_SHADOW_GREEN_AMOUNT * shadowTintWeight;
-  [linearR, linearG, linearB] = scaleLinearRgbToFilterLuma(
-    linearR,
-    linearG,
-    linearB,
-    preTintLuma,
-  );
-
-  const toneInputLuma = prophotoLumaForFilter(linearR, linearG, linearB);
-  const curvedLuma = applyClassicChromeToneCurve(toneInputLuma);
-  const shadowWeight = 1 - smoothstep01((toneInputLuma - 0.08) / 0.35);
-  const highlightWeight = smoothstep01((toneInputLuma - 0.45) / 0.35)
-    * (1 - smoothstep01((toneInputLuma - 0.86) / 0.14));
-  const whiteWeight = smoothstep01((toneInputLuma - 0.72) / 0.28);
-  const toneEv = CLASSIC_CHROME_SHADOW_EV * shadowWeight
-    + CLASSIC_CHROME_HIGHLIGHT_EV * highlightWeight
-    + CLASSIC_CHROME_WHITE_EV * whiteWeight;
-  const targetToneLuma = curvedLuma * Math.pow(2, toneEv);
-  [linearR, linearG, linearB] = scaleLinearRgbToFilterLuma(
-    linearR,
-    linearG,
-    linearB,
-    targetToneLuma,
-  );
-
-  return limitFilterLinearRgbToUnitMax(linearR, linearG, linearB);
-}
-
-function computeClassicChromeToneRecovery(
-  beforeHistogram: Uint32Array,
-  filteredHistogram: Uint32Array,
-): ClassicChromeToneRecovery {
-  const beforeP10Ev = estimateLogPercentileFromHistogram(
-    beforeHistogram,
-    CLASSIC_CHROME_CONTRAST_LOW_PERCENTILE,
-  );
-  const beforeP50Ev = estimateLogPercentileFromHistogram(
-    beforeHistogram,
-    CLASSIC_CHROME_TARGET_PERCENTILE,
-  );
-  const beforeP90Ev = estimateLogPercentileFromHistogram(
-    beforeHistogram,
-    CLASSIC_CHROME_CONTRAST_HIGH_PERCENTILE,
-  );
-  const filteredP10Ev = estimateLogPercentileFromHistogram(
-    filteredHistogram,
-    CLASSIC_CHROME_CONTRAST_LOW_PERCENTILE,
-  );
-  const filteredP50Ev = estimateLogPercentileFromHistogram(
-    filteredHistogram,
-    CLASSIC_CHROME_TARGET_PERCENTILE,
-  );
-  const filteredP90Ev = estimateLogPercentileFromHistogram(
-    filteredHistogram,
-    CLASSIC_CHROME_CONTRAST_HIGH_PERCENTILE,
-  );
-  const beforeContrastEv = Math.max(1e-6, beforeP90Ev - beforeP10Ev);
-  const filteredContrastEv = Math.max(1e-6, filteredP90Ev - filteredP10Ev);
-  const targetContrastEv = beforeContrastEv * CLASSIC_CHROME_TARGET_CONTRAST_SCALE;
-  const contrastScale = Math.max(0.75, Math.min(1.25, targetContrastEv / filteredContrastEv));
-  return { beforeP50Ev, filteredP50Ev, contrastScale };
-}
-
-function applyClassicChromeToneRecoveryLinearRgb(
-  r: number,
-  g: number,
-  b: number,
-  recovery: ClassicChromeToneRecovery,
-): [number, number, number] {
-  const sourceLuma = prophotoLumaForFilter(r, g, b);
-  if (!(sourceLuma > 1e-12)) return [r, g, b];
-  const sourceEv = Math.log2(Math.max(1e-8, sourceLuma));
-  const targetEv = recovery.beforeP50Ev
-    + (sourceEv - recovery.filteredP50Ev) * recovery.contrastScale;
-  const targetLuma = Math.pow(2, targetEv);
-  return scaleLinearRgbToFilterLuma(r, g, b, targetLuma);
-}
-
-type VelviaToneRecovery = {
-  beforeP50Ev: number;
-  filteredP50Ev: number;
-  contrastScale: number;
-};
-
-function applyVelviaToneCurve(luma: number): number {
-  const x = clamp01(luma);
-  const points: readonly (readonly [number, number])[] = [
-    [0, 0],
-    [5 / 255, 5 / 255],
-    [150 / 255, 162 / 255],
-    [250 / 255, 250 / 255],
-    [1, 1],
-  ];
-  for (let index = 0; index < points.length - 1; index += 1) {
-    const current = points[index];
-    const next = points[index + 1];
-    if (!current || !next || x < current[0] || x > next[0]) continue;
-    const t = (x - current[0]) / Math.max(1e-9, next[0] - current[0]);
-    return current[1] * (1 - t) + next[1] * t;
-  }
-  return x;
-}
-
-function applyVelviaLinearRgb(r: number, g: number, b: number): [number, number, number] {
-  const workR = clamp01(r);
-  const workG = clamp01(g);
-  const workB = clamp01(b);
-  const originalLuma = prophotoLumaForFilter(workR, workG, workB);
-  const [baseHue, baseSaturation, baseValue] = rgbToHsv(workR, workG, workB);
-  const maxChannel = Math.max(workR, workG, workB);
-  const minChannel = Math.min(workR, workG, workB);
-  const chroma = Math.max(1e-8, maxChannel - minChannel);
-  const redDominance = clamp01((workR - Math.max(workG, workB)) / chroma);
-  const greenDominance = clamp01((workG - Math.max(workR, workB)) / chroma);
-  const blueDominance = clamp01((workB - Math.max(workR, workG)) / chroma);
-  const hueDependenceWeight = filterHueDependenceWeight(baseSaturation);
-
-  // Weak approximation of Lightroom primary calibration: RedSat +10,
-  // GreenHue -2, BlueHue +4. Fade it out near neutral gray where hue is unstable.
-  const calibrationHueShift = hueDependenceWeight * VELVIA_CALIBRATION_STRENGTH
-    * (-2 * greenDominance + 4 * blueDominance);
-  const calibratedHueDegrees = ((baseHue * 360 + calibrationHueShift) % 360 + 360) % 360;
-  const hueAdjustment = hueDependenceWeight * interpolateFilterHueTable(
-    calibratedHueDegrees,
-    VELVIA_HUE_ADJUSTMENTS,
-  );
-  const saturationAdjustment = hueDependenceWeight * interpolateFilterHueTable(
-    calibratedHueDegrees,
-    VELVIA_SATURATION_ADJUSTMENTS,
-  );
-  const luminanceAdjustment = hueDependenceWeight * interpolateFilterHueTable(
-    calibratedHueDegrees,
-    VELVIA_LUMINANCE_ADJUSTMENTS,
-  );
-  const adjustedHue = ((calibratedHueDegrees + hueAdjustment) % 360 + 360) % 360 / 360;
-  const calibratedSaturation = clamp01(
-    baseSaturation * (1 + hueDependenceWeight * VELVIA_CALIBRATION_STRENGTH * 0.10 * redDominance),
-  );
-  const hslAdjustedSaturation = clamp01(
-    calibratedSaturation * (1 + saturationAdjustment * 0.01),
-  );
-  let [linearR, linearG, linearB] = hsvToRgb(adjustedHue, hslAdjustedSaturation, baseValue);
-
-  // Apply HSL luminance adjustments in luminance rather than changing RGB
-  // independently, so hue remains stable.
-  const hueTargetLuma = originalLuma * Math.pow(2, luminanceAdjustment * 0.01);
-  [linearR, linearG, linearB] = scaleLinearRgbToFilterLuma(
-    linearR,
-    linearG,
-    linearB,
-    hueTargetLuma,
-  );
-
-  // Velvia relies more on vibrance than on a global saturation multiplier.
-  const [, currentSaturation] = rgbToHsvExtended(linearR, linearG, linearB);
-  const targetSaturation = applyScaledLogLinearExtended(
-    currentSaturation,
-    VELVIA_VIBRANCE,
-  );
-  [linearR, linearG, linearB] = applyHsvSaturationPreservingProPhotoLuminance(
-    linearR,
-    linearG,
-    linearB,
-    targetSaturation,
-  );
-
-  // ShadowTint=+3: a small magenta bias in shadows, with luminance restored.
-  const preTintLuma = prophotoLumaForFilter(linearR, linearG, linearB);
-  const shadowTintWeight = Math.pow(1 - clamp01(preTintLuma), 2);
-  linearG *= 1 - VELVIA_SHADOW_MAGENTA_AMOUNT * shadowTintWeight;
-  [linearR, linearG, linearB] = scaleLinearRgbToFilterLuma(
-    linearR,
-    linearG,
-    linearB,
-    preTintLuma,
-  );
-
-  const toneInputLuma = prophotoLumaForFilter(linearR, linearG, linearB);
-  const curvedLuma = applyVelviaToneCurve(toneInputLuma);
-  const blackWeight = 1 - smoothstep01((toneInputLuma - 0.015) / 0.14);
-  const shadowWeight = smoothstep01((toneInputLuma - 0.035) / 0.18)
-    * (1 - smoothstep01((toneInputLuma - 0.30) / 0.24));
-  const highlightWeight = smoothstep01((toneInputLuma - 0.45) / 0.30)
-    * (1 - smoothstep01((toneInputLuma - 0.86) / 0.14));
-  const whiteWeight = smoothstep01((toneInputLuma - 0.72) / 0.28);
-  const toneEv = VELVIA_BLACK_EV * blackWeight
-    + VELVIA_SHADOW_EV * shadowWeight
-    + VELVIA_HIGHLIGHT_EV * highlightWeight
-    + VELVIA_WHITE_EV * whiteWeight;
-  const targetToneLuma = curvedLuma * Math.pow(2, toneEv);
-  [linearR, linearG, linearB] = scaleLinearRgbToFilterLuma(
-    linearR,
-    linearG,
-    linearB,
-    targetToneLuma,
-  );
-
-  return limitFilterLinearRgbToUnitMax(linearR, linearG, linearB);
-}
-
-function computeVelviaToneRecovery(
-  beforeHistogram: Uint32Array,
-  filteredHistogram: Uint32Array,
-): VelviaToneRecovery {
-  const beforeP10Ev = estimateLogPercentileFromHistogram(
-    beforeHistogram,
-    VELVIA_CONTRAST_LOW_PERCENTILE,
-  );
-  const beforeP50Ev = estimateLogPercentileFromHistogram(
-    beforeHistogram,
-    VELVIA_TARGET_PERCENTILE,
-  );
-  const beforeP90Ev = estimateLogPercentileFromHistogram(
-    beforeHistogram,
-    VELVIA_CONTRAST_HIGH_PERCENTILE,
-  );
-  const filteredP10Ev = estimateLogPercentileFromHistogram(
-    filteredHistogram,
-    VELVIA_CONTRAST_LOW_PERCENTILE,
-  );
-  const filteredP50Ev = estimateLogPercentileFromHistogram(
-    filteredHistogram,
-    VELVIA_TARGET_PERCENTILE,
-  );
-  const filteredP90Ev = estimateLogPercentileFromHistogram(
-    filteredHistogram,
-    VELVIA_CONTRAST_HIGH_PERCENTILE,
-  );
-  const beforeContrastEv = Math.max(1e-6, beforeP90Ev - beforeP10Ev);
-  const filteredContrastEv = Math.max(1e-6, filteredP90Ev - filteredP10Ev);
-  const targetContrastEv = beforeContrastEv * VELVIA_TARGET_CONTRAST_SCALE;
-  const contrastScale = Math.max(0.80, Math.min(1.20, targetContrastEv / filteredContrastEv));
-  return { beforeP50Ev, filteredP50Ev, contrastScale };
-}
-
-function applyVelviaToneRecoveryLinearRgb(
-  r: number,
-  g: number,
-  b: number,
-  recovery: VelviaToneRecovery,
-): [number, number, number] {
-  const sourceLuma = prophotoLumaForFilter(r, g, b);
-  if (!(sourceLuma > 1e-12)) return [r, g, b];
-  const sourceEv = Math.log2(Math.max(1e-8, sourceLuma));
-  const targetEv = recovery.beforeP50Ev
-    + (sourceEv - recovery.filteredP50Ev) * recovery.contrastScale;
-  const targetLuma = Math.pow(2, targetEv);
-  return scaleLinearRgbToFilterLuma(r, g, b, targetLuma);
 }
 
 function applyFilterScaledLogToRgb16(data: Uint16Array, width: number, height: number, scaledLog: number): void {
@@ -2032,6 +1607,10 @@ function isEdgePreset(value: unknown): value is ImageEdgePreset {
   return typeof value === "string" && (EDGE_PRESET_SEQUENCE as readonly string[]).includes(value);
 }
 
+function isSimulationPreset(value: unknown): value is ImageSimulationFilterPreset {
+  return typeof value === "string" && (FILM_SIMULATION_SEQUENCE as readonly string[]).includes(value);
+}
+
 function cycleOtherFilterPreset<T extends ImageOtherFilterPreset>(
   current: ImageFilter | null | undefined,
   sequence: readonly T[],
@@ -2054,6 +1633,7 @@ function normalizeNonMonochromeFilterPreset(value: unknown): ImageNonMonochromeF
     || isDuotonePreset(value)
     || isSuperMcPreset(value)
     || isEdgePreset(value)
+    || isSimulationPreset(value)
   ) {
     return value;
   }
@@ -2062,9 +1642,7 @@ function normalizeNonMonochromeFilterPreset(value: unknown): ImageNonMonochromeF
     value === "cross-process" ||
     value === "bleach-bypass" ||
     value === "negative" ||
-    value === "solarization" ||
-    value === "classic-chrome" ||
-    value === "velvia"
+    value === "solarization"
   ) {
     return value;
   }
@@ -3036,69 +2614,28 @@ function applyCyanotypeFilterToCanvasData(
   }
 }
 
-function applyClassicChromeFilterToCanvasData(
-  rgba8: Uint8ClampedArray,
-  width: number,
-  height: number,
-  profile: ImageEditOutputColorProfile,
-): void {
-  const beforeHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
-  const filteredHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
-  const filteredLinear = new Float32Array(width * height * 3);
-
-  for (let i = 0; i < rgba8.length; i += 4) {
-    const pixelIndex = Math.floor(i / 4);
-    const linearIndex = pixelIndex * 3;
-    const [r, g, b] = encodedRgbToLinearProphoto(
-      (rgba8[i] ?? 0) / 255,
-      (rgba8[i + 1] ?? 0) / 255,
-      (rgba8[i + 2] ?? 0) / 255,
-      profile,
-    );
-    const [fr, fg, fb] = applyClassicChromeLinearRgb(r, g, b);
-    accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
-    accumulateLogLumaHistogram(filteredHistogram, prophotoLumaForFilter(fr, fg, fb));
-    filteredLinear[linearIndex] = fr;
-    filteredLinear[linearIndex + 1] = fg;
-    filteredLinear[linearIndex + 2] = fb;
-  }
-
-  const toneRecovery = computeClassicChromeToneRecovery(beforeHistogram, filteredHistogram);
-  for (let i = 0; i < rgba8.length; i += 4) {
-    const pixelIndex = Math.floor(i / 4);
-    const linearIndex = pixelIndex * 3;
-    const [recoveredR, recoveredG, recoveredB] = applyClassicChromeToneRecoveryLinearRgb(
-      filteredLinear[linearIndex] ?? 0,
-      filteredLinear[linearIndex + 1] ?? 0,
-      filteredLinear[linearIndex + 2] ?? 0,
-      toneRecovery,
-    );
-    const [limitedR, limitedG, limitedB] = limitFilterLinearRgbToUnitMax(
-      recoveredR,
-      recoveredG,
-      recoveredB,
-    );
-    const [er, eg, eb] = convertLinearProPhotoToOutputRgb(
-      limitedR,
-      limitedG,
-      limitedB,
-      profile,
-    );
-    rgba8[i] = linearChannelToSrgb(er);
-    rgba8[i + 1] = linearChannelToSrgb(eg);
-    rgba8[i + 2] = linearChannelToSrgb(eb);
-  }
+function filmSimulationMedianGain(
+  beforeHistogram: Uint32Array,
+  filteredHistogram: Uint32Array,
+): number {
+  const beforeP50Ev = estimateLogPercentileFromHistogram(beforeHistogram, 0.50);
+  const filteredP50Ev = estimateLogPercentileFromHistogram(filteredHistogram, 0.50);
+  const gain = Math.pow(2, beforeP50Ev - filteredP50Ev);
+  return Number.isFinite(gain) && gain > 0 ? gain : 1;
 }
 
-function applyVelviaFilterToCanvasData(
+function applyFilmSimulationFilterToCanvasData(
   rgba8: Uint8ClampedArray,
   width: number,
   height: number,
   profile: ImageEditOutputColorProfile,
+  preset: ImageSimulationFilterPreset,
 ): void {
+  const lut = getOrBuildFilmSimulationLut(preset);
   const beforeHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
   const filteredHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
   const filteredLinear = new Float32Array(width * height * 3);
+  const sampled = [0, 0, 0];
 
   for (let i = 0; i < rgba8.length; i += 4) {
     const pixelIndex = Math.floor(i / 4);
@@ -3109,7 +2646,10 @@ function applyVelviaFilterToCanvasData(
       (rgba8[i + 2] ?? 0) / 255,
       profile,
     );
-    const [fr, fg, fb] = applyVelviaLinearRgb(r, g, b);
+    sampleFilmSimulationLutLinearInto(lut, r, g, b, sampled);
+    const fr = sampled[0] ?? 0;
+    const fg = sampled[1] ?? 0;
+    const fb = sampled[2] ?? 0;
     accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
     accumulateLogLumaHistogram(filteredHistogram, prophotoLumaForFilter(fr, fg, fb));
     filteredLinear[linearIndex] = fr;
@@ -3117,20 +2657,14 @@ function applyVelviaFilterToCanvasData(
     filteredLinear[linearIndex + 2] = fb;
   }
 
-  const toneRecovery = computeVelviaToneRecovery(beforeHistogram, filteredHistogram);
+  const medianGain = filmSimulationMedianGain(beforeHistogram, filteredHistogram);
   for (let i = 0; i < rgba8.length; i += 4) {
     const pixelIndex = Math.floor(i / 4);
     const linearIndex = pixelIndex * 3;
-    const [recoveredR, recoveredG, recoveredB] = applyVelviaToneRecoveryLinearRgb(
-      filteredLinear[linearIndex] ?? 0,
-      filteredLinear[linearIndex + 1] ?? 0,
-      filteredLinear[linearIndex + 2] ?? 0,
-      toneRecovery,
-    );
     const [limitedR, limitedG, limitedB] = limitFilterLinearRgbToUnitMax(
-      recoveredR,
-      recoveredG,
-      recoveredB,
+      (filteredLinear[linearIndex] ?? 0) * medianGain,
+      (filteredLinear[linearIndex + 1] ?? 0) * medianGain,
+      (filteredLinear[linearIndex + 2] ?? 0) * medianGain,
     );
     const [er, eg, eb] = convertLinearProPhotoToOutputRgb(
       limitedR,
@@ -4594,6 +4128,8 @@ function applyImageFilterToCanvas(
       applyDuotoneFilterToCanvasData(rgba8, profile, filter.preset);
     } else if (isSuperMcPreset(filter.preset)) {
       applySuperMcFilterToCanvasData(rgba8, profile, filter.preset);
+    } else if (isSimulationPreset(filter.preset)) {
+      applyFilmSimulationFilterToCanvasData(rgba8, width, height, profile, filter.preset);
     } else {
       switch (filter.preset) {
         case "sepia":
@@ -4613,12 +4149,6 @@ function applyImageFilterToCanvas(
           break;
         case "solarization":
           applySolarizationFilterToCanvasData(rgba8, profile);
-          break;
-        case "classic-chrome":
-          applyClassicChromeFilterToCanvasData(rgba8, width, height, profile);
-          break;
-        case "velvia":
-          applyVelviaFilterToCanvasData(rgba8, width, height, profile);
           break;
         case "edge-canny":
         case "edge-xdog":
@@ -4951,17 +4481,27 @@ function applyCyanotypeFilterToRgb16(data: Uint16Array, width: number, height: n
   }
 }
 
-function applyClassicChromeFilterToRgb16(data: Uint16Array, width: number, height: number): void {
+function applyFilmSimulationFilterToRgb16(
+  data: Uint16Array,
+  width: number,
+  height: number,
+  preset: ImageSimulationFilterPreset,
+): void {
+  const lut = getOrBuildFilmSimulationLut(preset);
   const beforeHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
   const filteredHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
   const pixelCount = width * height;
+  const sampled = [0, 0, 0];
 
   for (let pixel = 0; pixel < pixelCount; pixel += 1) {
     const index = pixel * 3;
     const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
     const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
     const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
-    const [fr, fg, fb] = applyClassicChromeLinearRgb(r, g, b);
+    sampleFilmSimulationLutLinearInto(lut, r, g, b, sampled);
+    const fr = sampled[0] ?? 0;
+    const fg = sampled[1] ?? 0;
+    const fb = sampled[2] ?? 0;
     accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
     accumulateLogLumaHistogram(filteredHistogram, prophotoLumaForFilter(fr, fg, fb));
     data[index] = encodeStoredRgb16Channel(fr, "gamma20", 1);
@@ -4969,64 +4509,13 @@ function applyClassicChromeFilterToRgb16(data: Uint16Array, width: number, heigh
     data[index + 2] = encodeStoredRgb16Channel(fb, "gamma20", 1);
   }
 
-  const toneRecovery = computeClassicChromeToneRecovery(beforeHistogram, filteredHistogram);
+  const medianGain = filmSimulationMedianGain(beforeHistogram, filteredHistogram);
   for (let pixel = 0; pixel < pixelCount; pixel += 1) {
     const index = pixel * 3;
-    const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
-    const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
-    const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
-    const [recoveredR, recoveredG, recoveredB] = applyClassicChromeToneRecoveryLinearRgb(
-      r,
-      g,
-      b,
-      toneRecovery,
-    );
-    const [limitedR, limitedG, limitedB] = limitFilterLinearRgbToUnitMax(
-      recoveredR,
-      recoveredG,
-      recoveredB,
-    );
-    data[index] = encodeStoredRgb16Channel(limitedR, "gamma20", 1);
-    data[index + 1] = encodeStoredRgb16Channel(limitedG, "gamma20", 1);
-    data[index + 2] = encodeStoredRgb16Channel(limitedB, "gamma20", 1);
-  }
-}
-
-function applyVelviaFilterToRgb16(data: Uint16Array, width: number, height: number): void {
-  const beforeHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
-  const filteredHistogram = new Uint32Array(FILTER_LOG_HISTOGRAM_BINS);
-  const pixelCount = width * height;
-
-  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
-    const index = pixel * 3;
-    const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
-    const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
-    const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
-    const [fr, fg, fb] = applyVelviaLinearRgb(r, g, b);
-    accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
-    accumulateLogLumaHistogram(filteredHistogram, prophotoLumaForFilter(fr, fg, fb));
-    data[index] = encodeStoredRgb16Channel(fr, "gamma20", 1);
-    data[index + 1] = encodeStoredRgb16Channel(fg, "gamma20", 1);
-    data[index + 2] = encodeStoredRgb16Channel(fb, "gamma20", 1);
-  }
-
-  const toneRecovery = computeVelviaToneRecovery(beforeHistogram, filteredHistogram);
-  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
-    const index = pixel * 3;
-    const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
-    const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
-    const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
-    const [recoveredR, recoveredG, recoveredB] = applyVelviaToneRecoveryLinearRgb(
-      r,
-      g,
-      b,
-      toneRecovery,
-    );
-    const [limitedR, limitedG, limitedB] = limitFilterLinearRgbToUnitMax(
-      recoveredR,
-      recoveredG,
-      recoveredB,
-    );
+    const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1) * medianGain;
+    const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1) * medianGain;
+    const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1) * medianGain;
+    const [limitedR, limitedG, limitedB] = limitFilterLinearRgbToUnitMax(r, g, b);
     data[index] = encodeStoredRgb16Channel(limitedR, "gamma20", 1);
     data[index + 1] = encodeStoredRgb16Channel(limitedG, "gamma20", 1);
     data[index + 2] = encodeStoredRgb16Channel(limitedB, "gamma20", 1);
@@ -5113,6 +4602,10 @@ function applyImageFilterToRgb16(
     applySuperMcFilterToRgb16(data, width, height, filter.preset);
     return;
   }
+  if (isSimulationPreset(filter.preset)) {
+    applyFilmSimulationFilterToRgb16(data, width, height, filter.preset);
+    return;
+  }
 
   switch (filter.preset) {
     case "sepia":
@@ -5132,12 +4625,6 @@ function applyImageFilterToRgb16(
       return;
     case "solarization":
       applySolarizationFilterToRgb16(data, width, height);
-      return;
-    case "classic-chrome":
-      applyClassicChromeFilterToRgb16(data, width, height);
-      return;
-    case "velvia":
-      applyVelviaFilterToRgb16(data, width, height);
       return;
     case "edge-canny":
     case "edge-xdog":
@@ -16813,6 +16300,31 @@ export function ImageEditDialog({
                         </div>
                       </div>
                       <div className="flex flex-col gap-1">
+                        <span className="text-xs font-medium text-gray-700">Simulation</span>
+                        <div className="grid grid-cols-2 gap-1">
+                          {FILM_SIMULATION_SEQUENCE.map((preset) => {
+                            const label = FILM_SIMULATION_LABELS[preset];
+                            const selected = imageFilter?.kind === "other" && imageFilter.preset === preset;
+                            return (
+                              <button
+                                key={preset}
+                                type="button"
+                                className={`rounded border px-2 py-1 text-[11px] ${
+                                  selected
+                                    ? "border-blue-500 bg-blue-50 text-blue-700"
+                                    : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                                }`}
+                                onClick={() => setImageFilter(selected ? null : { kind: "other", preset })}
+                                aria-label={label}
+                                title={label}
+                              >
+                                {label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <div className="flex flex-col gap-1">
                         <span className="text-xs font-medium text-gray-700">Others</span>
                         <div className="grid grid-cols-2 gap-1">
                           {(() => {
@@ -16976,26 +16488,6 @@ export function ImageEditDialog({
                               </button>
                             );
                           })()}
-                          {(["velvia", "classic-chrome"] as const).map((preset) => {
-                            const label = OTHER_FILTER_LABELS[preset];
-                            const selected = imageFilter?.kind === "other" && imageFilter.preset === preset;
-                            return (
-                              <button
-                                key={preset}
-                                type="button"
-                                className={`rounded border px-2 py-1 text-[11px] ${
-                                  selected
-                                    ? "border-blue-500 bg-blue-50 text-blue-700"
-                                    : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
-                                }`}
-                                onClick={() => setImageFilter(selected ? null : { kind: "other", preset })}
-                                aria-label={label}
-                                title={label}
-                              >
-                                {label}
-                              </button>
-                            );
-                          })}
                         </div>
                       </div>
                     </div>
