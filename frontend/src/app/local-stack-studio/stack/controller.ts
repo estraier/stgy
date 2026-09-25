@@ -142,7 +142,7 @@ const FOCUS_STORAGE_TILE_SIZE = 384;
 const FOCUS_PROCESSING_CORE_SIZE = 1024;
 // Five pyrDown operations require about 124px of source support; keep a 128px halo.
 const FOCUS_HALO_SIZE = 128;
-const FOCUS_SMOOTHNESS = 0.4;
+const FOCUS_SMOOTHNESS = 0.25;
 const FOCUS_MAX_PYRAMID_DOWNSAMPLES = 5;
 const FOCUS_MERGE_MAX_WORKERS = 4;
 const SCRATCH_WRITE_BATCH_MAX_TILES = 4;
