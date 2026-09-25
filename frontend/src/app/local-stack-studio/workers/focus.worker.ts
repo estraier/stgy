@@ -1,7 +1,11 @@
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-nocheck
 // Local Stack Studio worker source. Built to public/generated/local-stack-studio.
-import { loadWorkerOpenCv } from "./opencv-runtime";
+import {
+  loadWorkerOpenCv,
+  type OpenCvDynamic,
+  type OpenCvRuntime,
+} from "./opencv-runtime";
+import type { FocusWorkerRequest, FocusWorkerResponse } from "./protocols/focus-protocol";
+import { transferableBuffer } from "./transfer-buffer";
 import {
   focusSharpnessWorkingDimensions,
   isUsableFocusStd,
@@ -10,6 +14,49 @@ import {
 (() => {
   "use strict";
 
+  type WorkerScope = {
+    onmessage: ((event: MessageEvent<FocusWorkerRequest>) => void | Promise<void>) | null;
+    postMessage: (message: FocusWorkerResponse, transfer?: Transferable[]) => void;
+  };
+  const workerScope = globalThis as unknown as WorkerScope;
+
+  type RunningStats = { count: number; mean: number; m2: number };
+  type WorkingSharpnessState = {
+    sharpnessMaps: Float32Array[];
+    workingWidth: number;
+    workingHeight: number;
+    imageWidth: number;
+    imageHeight: number;
+  };
+  type RegionSamplingState = {
+    workingX0: Int32Array;
+    workingX1: Int32Array;
+    workingFx: Float32Array;
+    workingY0: Int32Array;
+    workingY1: Int32Array;
+    workingFy: Float32Array;
+  };
+  type PyramidDimension = { width: number; height: number };
+  type FocusCoreState = {
+    regionX: number;
+    regionY: number;
+    regionWidth: number;
+    regionHeight: number;
+    coreOffsetX: number;
+    coreOffsetY: number;
+    coreWidth: number;
+    coreHeight: number;
+    tau: number;
+    pyramidDownsamples: number;
+    usePyramid: boolean;
+    dimensions: PyramidDimension[];
+    sampling: RegionSamplingState;
+    logZ: Float32Array;
+    fused: Float32Array[] | null;
+    directOutput: Float32Array | null;
+    processedImages: number;
+  };
+
   const RESULT_BUFFER_MAX_UINT16 = 65535;
   const SHARPNESS_BLUR_RADIUS = 2;
   const SHARPNESS_CLAHE_CLIP_LIMIT = 0.3;
@@ -17,12 +64,12 @@ import {
   const SHARPNESS_HIGH_LOW_BALANCE = 0.5;
   const SHARPNESS_SUPPRESS_NOISE = 0.5;
 
-  let cvPromise = null;
-  let workingSharpnessState = null;
-  let focusCoreState = null;
+  let cvPromise: Promise<OpenCvRuntime> | null = null;
+  let workingSharpnessState: WorkingSharpnessState | null = null;
+  let focusCoreState: FocusCoreState | null = null;
 
-  self.onmessage = async (event) => {
-    const message = event.data || {};
+  workerScope.onmessage = async (event: MessageEvent<FocusWorkerRequest>) => {
+    const message = event.data;
     const requestId = message.requestId;
     try {
       if (message.type === "sharpness-features") {
@@ -34,11 +81,12 @@ import {
           Number(message.width),
           Number(message.height),
         );
-        self.postMessage(
+        const featureBuffer = transferableBuffer(result.features);
+        workerScope.postMessage(
           {
             type: "sharpness-features-result",
             requestId,
-            featureBuffer: result.features.buffer,
+            featureBuffer,
             workingWidth: result.workingWidth,
             workingHeight: result.workingHeight,
             lapCount: result.lapStats.count,
@@ -48,7 +96,7 @@ import {
             sobelMean: result.sobelStats.mean,
             sobelM2: result.sobelStats.m2,
           },
-          [result.features.buffer],
+          [featureBuffer],
         );
         return;
       }
@@ -66,9 +114,10 @@ import {
           Number(message.globalSobelMean),
           Number(message.globalSobelStd),
         );
-        self.postMessage(
-          { type: "sharpness-compose-result", requestId, sharpnessBuffer: sharpness.buffer },
-          [sharpness.buffer],
+        const sharpnessBuffer = transferableBuffer(sharpness);
+        workerScope.postMessage(
+          { type: "sharpness-compose-result", requestId, sharpnessBuffer },
+          [sharpnessBuffer],
         );
         return;
       }
@@ -76,7 +125,7 @@ import {
       if (message.type === "tau-stats") {
         const sharpnessTiles = (message.sharpnessBuffers || []).map((buffer) => new Float32Array(buffer));
         const stats = computeTauStats(sharpnessTiles);
-        self.postMessage({ type: "tau-stats-result", requestId, ...stats });
+        workerScope.postMessage({ type: "tau-stats-result", requestId, ...stats });
         return;
       }
 
@@ -103,7 +152,7 @@ import {
           imageHeight,
         };
         focusCoreState = null;
-        self.postMessage({ type: "working-sharpness-init-result", requestId });
+        workerScope.postMessage({ type: "working-sharpness-init-result", requestId });
         return;
       }
 
@@ -128,7 +177,7 @@ import {
           Number(message.tau),
           Number(message.pyramidDownsamples),
         );
-        self.postMessage({ type: "focus-core-begin-result", requestId });
+        workerScope.postMessage({ type: "focus-core-begin-result", requestId });
         return;
       }
 
@@ -144,7 +193,7 @@ import {
           Number(message.imageIndex),
           new Uint16Array(message.rgbBuffer),
         );
-        self.postMessage({ type: "focus-core-add-image-result", requestId });
+        workerScope.postMessage({ type: "focus-core-add-image-result", requestId });
         return;
       }
 
@@ -156,9 +205,10 @@ import {
         const completedState = focusCoreState;
         focusCoreState = null;
         const merged = finishFocusCore(cv, workingSharpnessState, completedState);
-        self.postMessage(
-          { type: "focus-core-finish-result", requestId, gamma2Buffer: merged.buffer },
-          [merged.buffer],
+        const gamma2Buffer = transferableBuffer(merged);
+        workerScope.postMessage(
+          { type: "focus-core-finish-result", requestId, gamma2Buffer },
+          [gamma2Buffer],
         );
         return;
       }
@@ -176,9 +226,10 @@ import {
           Number(message.tau),
           Number(message.pyramidLevels),
         );
-        self.postMessage(
-          { type: "merge-tile-result", requestId, gamma2Buffer: merged.buffer },
-          [merged.buffer],
+        const gamma2Buffer = transferableBuffer(merged);
+        workerScope.postMessage(
+          { type: "merge-tile-result", requestId, gamma2Buffer },
+          [gamma2Buffer],
         );
         return;
       }
@@ -188,19 +239,20 @@ import {
         if (!workingSharpnessState) {
           throw new Error("Focus worker working sharpness cache is not initialized.");
         }
+        const state = workingSharpnessState;
         const rgbTiles = (message.rgbBuffers || []).map((buffer) => new Uint16Array(buffer));
         const regionWidth = Number(message.regionWidth);
         const regionHeight = Number(message.regionHeight);
-        if (rgbTiles.length !== workingSharpnessState.sharpnessMaps.length) {
+        if (rgbTiles.length !== state.sharpnessMaps.length) {
           throw new Error("Focus merge RGB image count does not match cached sharpness maps.");
         }
-        const sharpnessTiles = workingSharpnessState.sharpnessMaps.map((sharpness) =>
+        const sharpnessTiles = state.sharpnessMaps.map((sharpness: Float32Array) =>
           expandSharpnessRegionBilinear(
             sharpness,
-            workingSharpnessState.workingWidth,
-            workingSharpnessState.workingHeight,
-            workingSharpnessState.imageWidth,
-            workingSharpnessState.imageHeight,
+            state.workingWidth,
+            state.workingHeight,
+            state.imageWidth,
+            state.imageHeight,
             Number(message.regionX),
             Number(message.regionY),
             regionWidth,
@@ -215,9 +267,10 @@ import {
           Number(message.tau),
           Number(message.pyramidLevels),
         );
-        self.postMessage(
-          { type: "merge-tile-working-result", requestId, gamma2Buffer: merged.buffer },
-          [merged.buffer],
+        const gamma2Buffer = transferableBuffer(merged);
+        workerScope.postMessage(
+          { type: "merge-tile-working-result", requestId, gamma2Buffer },
+          [gamma2Buffer],
         );
         return;
       }
@@ -225,7 +278,7 @@ import {
       if (typeof message.type === "string" && message.type.startsWith("focus-core-")) {
         focusCoreState = null;
       }
-      self.postMessage({
+      workerScope.postMessage({
         type: "error",
         requestId,
         message: error instanceof Error ? error.message : String(error),
@@ -233,17 +286,17 @@ import {
     }
   };
 
-  function postProgress(requestId, message) {
-    self.postMessage({ type: "progress", requestId, message });
+  function postProgress(requestId: number, message: string): void {
+    workerScope.postMessage({ type: "progress", requestId, message });
   }
 
-  async function getOpenCv() {
+  async function getOpenCv(): Promise<OpenCvRuntime> {
     if (!cvPromise) cvPromise = loadWorkerOpenCv("Focus").then((cv) => { assertFocusApis(cv); return cv; });
     return cvPromise;
   }
 
-  function assertFocusApis(cv) {
-    const missing = [];
+  function assertFocusApis(cv: OpenCvRuntime): void {
+    const missing: string[] = [];
     if (!cv.createCLAHE && !cv.CLAHE) missing.push("CLAHE");
     if (!cv.GaussianBlur) missing.push("GaussianBlur");
     if (!cv.Laplacian) missing.push("Laplacian");
@@ -259,7 +312,7 @@ import {
     }
   }
 
-  function computeSharpnessFeatures(cv, gamma2Rgb, width, height) {
+  function computeSharpnessFeatures(cv: OpenCvRuntime, gamma2Rgb: Uint16Array, width: number, height: number) {
     const expectedLength = width * height * 3;
     const workingDimensions = focusSharpnessWorkingDimensions(width, height);
     if (gamma2Rgb.length !== expectedLength) {
@@ -274,12 +327,12 @@ import {
       gray.data32F[pixel] = 0.299 * r + 0.587 * g + 0.114 * b;
     }
 
-    let working = null;
-    let claheWorking = null;
-    let blurred = null;
-    let laplacian = null;
-    let sobelX = null;
-    let sobelY = null;
+    let working: OpenCvDynamic | null = null;
+    let claheWorking: OpenCvDynamic | null = null;
+    let blurred: OpenCvDynamic | null = null;
+    let laplacian: OpenCvDynamic | null = null;
+    let sobelX: OpenCvDynamic | null = null;
+    let sobelY: OpenCvDynamic | null = null;
     try {
       if (workingDimensions.isScaled) {
         working = new cv.Mat();
@@ -371,16 +424,16 @@ import {
   }
 
   function composeSharpnessMap(
-    features,
-    workingWidth,
-    workingHeight,
-    width,
-    height,
-    globalLapMean,
-    globalLapStd,
-    globalSobelMean,
-    globalSobelStd,
-  ) {
+    features: Float32Array,
+    workingWidth: number,
+    workingHeight: number,
+    width: number,
+    height: number,
+    globalLapMean: number,
+    globalLapStd: number,
+    globalSobelMean: number,
+    globalSobelStd: number,
+  ): Float32Array {
     const expectedWorking = focusSharpnessWorkingDimensions(width, height);
     if (
       workingWidth !== expectedWorking.width ||
@@ -410,7 +463,7 @@ import {
     return sharpSmall;
   }
 
-  function applyClaheGrayImage(cv, gray, clipLimit, gamma) {
+  function applyClaheGrayImage(cv: OpenCvRuntime, gray: OpenCvDynamic, clipLimit: number, gamma: number): OpenCvDynamic {
     const pixelCount = gray.rows * gray.cols;
     const src = new cv.Mat(gray.rows, gray.cols, cv.CV_8UC1);
     const dst = new cv.Mat();
@@ -445,11 +498,11 @@ import {
     }
   }
 
-  function createRunningStats() {
+  function createRunningStats(): RunningStats {
     return { count: 0, mean: 0, m2: 0 };
   }
 
-  function updateRunningStats(stats, value) {
+  function updateRunningStats(stats: RunningStats, value: number): void {
     if (!Number.isFinite(value)) return;
     stats.count += 1;
     const delta = value - stats.mean;
@@ -458,21 +511,21 @@ import {
     stats.m2 += delta * delta2;
   }
 
-  function finalizeRunningStats(stats) {
+  function finalizeRunningStats(stats: RunningStats): RunningStats {
     return { count: stats.count, mean: stats.mean, m2: Math.max(0, stats.m2) };
   }
 
   function expandSharpnessRegionBilinear(
-    sharpness,
-    workingWidth,
-    workingHeight,
-    imageWidth,
-    imageHeight,
-    regionX,
-    regionY,
-    regionWidth,
-    regionHeight,
-  ) {
+    sharpness: Float32Array,
+    workingWidth: number,
+    workingHeight: number,
+    imageWidth: number,
+    imageHeight: number,
+    regionX: number,
+    regionY: number,
+    regionWidth: number,
+    regionHeight: number,
+  ): Float32Array {
     if (sharpness.length !== workingWidth * workingHeight) {
       throw new Error("Focus sharpness working map has an invalid size.");
     }
@@ -503,11 +556,11 @@ import {
     return out;
   }
 
-  function estimateWhiteNoiseLevelFromLaplacian(absLap, width, height, numTiles = 400, percentile = 10) {
+  function estimateWhiteNoiseLevelFromLaplacian(absLap: Float32Array, width: number, height: number, numTiles = 400, percentile = 10): number {
     const area = width * height;
     const tileUnit = Math.max(Math.round(Math.sqrt(area) / Math.sqrt(numTiles)), 1);
     const tileSizeMax = Math.trunc(tileUnit * 1.5);
-    const means = [];
+    const means: number[] = [];
     let x = 0;
     while (x < width) {
       let tileWidth = tileUnit;
@@ -538,7 +591,7 @@ import {
     return sum / k;
   }
 
-  function buildRegionSamplingState(state, regionX, regionY, regionWidth, regionHeight) {
+  function buildRegionSamplingState(state: WorkingSharpnessState, regionX: number, regionY: number, regionWidth: number, regionHeight: number): RegionSamplingState {
     const workingX0 = new Int32Array(regionWidth);
     const workingX1 = new Int32Array(regionWidth);
     const workingFx = new Float32Array(regionWidth);
@@ -573,7 +626,7 @@ import {
     };
   }
 
-  function sampleWorkingSharpnessRegion(state, sampling, imageIndex, localX, localY) {
+  function sampleWorkingSharpnessRegion(state: WorkingSharpnessState, sampling: RegionSamplingState, imageIndex: number, localX: number, localY: number): number {
     const sharpness = state.sharpnessMaps[imageIndex];
     const x0 = sampling.workingX0[localX];
     const x1 = sampling.workingX1[localX];
@@ -593,18 +646,18 @@ import {
 
 
   function beginFocusCore(
-    workingState,
-    regionX,
-    regionY,
-    regionWidth,
-    regionHeight,
-    coreOffsetX,
-    coreOffsetY,
-    coreWidth,
-    coreHeight,
-    tau,
-    requestedDownsamples,
-  ) {
+    workingState: WorkingSharpnessState,
+    regionX: number,
+    regionY: number,
+    regionWidth: number,
+    regionHeight: number,
+    coreOffsetX: number,
+    coreOffsetY: number,
+    coreWidth: number,
+    coreHeight: number,
+    tau: number,
+    requestedDownsamples: number,
+  ): FocusCoreState {
     if (!(Number.isInteger(regionX) && regionX >= 0 && Number.isInteger(regionY) && regionY >= 0)) {
       throw new Error("Focus core received invalid region coordinates.");
     }
@@ -696,7 +749,7 @@ import {
     };
   }
 
-  function focusWeightForPixel(workingState, coreState, imageIndex, pixel, localX, localY) {
+  function focusWeightForPixel(workingState: WorkingSharpnessState, coreState: FocusCoreState, imageIndex: number, pixel: number, localX: number, localY: number): number {
     const finalScore = sampleWorkingSharpnessRegion(
       workingState,
       coreState.sampling,
@@ -707,7 +760,7 @@ import {
     return Math.exp(finalScore / coreState.tau - coreState.logZ[pixel]);
   }
 
-  function addFocusCoreImage(cv, workingState, coreState, imageIndex, rgb) {
+  function addFocusCoreImage(cv: OpenCvRuntime, workingState: WorkingSharpnessState, coreState: FocusCoreState, imageIndex: number, rgb: Uint16Array): void {
     const imageCount = workingState.sharpnessMaps.length;
     if (!(Number.isInteger(imageIndex) && imageIndex >= 0 && imageIndex < imageCount)) {
       throw new Error("Focus core received an invalid image index.");
@@ -722,6 +775,7 @@ import {
 
     if (!coreState.usePyramid) {
       const output = coreState.directOutput;
+      if (!output) throw new Error("Focus core direct output is unavailable.");
       for (let localY = 0; localY < coreState.regionHeight; localY += 1) {
         for (let localX = 0; localX < coreState.regionWidth; localX += 1) {
           const pixel = localY * coreState.regionWidth + localX;
@@ -736,6 +790,8 @@ import {
       return;
     }
 
+    const fused = coreState.fused;
+    if (!fused) throw new Error("Focus core pyramid output is unavailable.");
     let currentRgb = new cv.Mat(coreState.regionHeight, coreState.regionWidth, cv.CV_32FC3);
     let currentWeight = new cv.Mat(coreState.regionHeight, coreState.regionWidth, cv.CV_32FC1);
     for (let localY = 0; localY < coreState.regionHeight; localY += 1) {
@@ -770,7 +826,7 @@ import {
           const rgbData = currentRgb.data32F;
           const upData = upRgb.data32F;
           const weightData = currentWeight.data32F;
-          const target = coreState.fused[level];
+          const target = fused[level];
           for (let pixel = 0; pixel < weightData.length; pixel += 1) {
             const weight = weightData[pixel];
             const offset = pixel * 3;
@@ -791,7 +847,7 @@ import {
         currentWeight = nextWeight;
       }
 
-      const lowestTarget = coreState.fused[coreState.pyramidDownsamples];
+      const lowestTarget = fused[coreState.pyramidDownsamples];
       const lowestRgb = currentRgb.data32F;
       const lowestWeight = currentWeight.data32F;
       for (let pixel = 0; pixel < lowestWeight.length; pixel += 1) {
@@ -808,14 +864,16 @@ import {
     coreState.processedImages += 1;
   }
 
-  function finishFocusCore(cv, workingState, coreState) {
+  function finishFocusCore(cv: OpenCvRuntime, workingState: WorkingSharpnessState, coreState: FocusCoreState): Uint16Array {
     if (coreState.processedImages !== workingState.sharpnessMaps.length) {
       throw new Error("Focus core is incomplete.");
     }
 
-    let reconstructed;
+    let reconstructed: Float32Array;
     if (coreState.usePyramid) {
-      reconstructed = coreState.fused[coreState.pyramidDownsamples];
+      const fused = coreState.fused;
+      if (!fused) throw new Error("Focus core pyramid output is unavailable.");
+      reconstructed = fused[coreState.pyramidDownsamples];
       for (let level = coreState.pyramidDownsamples - 1; level >= 0; level -= 1) {
         const sourceDim = coreState.dimensions[level + 1];
         const targetDim = coreState.dimensions[level];
@@ -824,7 +882,7 @@ import {
         sourceMat.data32F.set(reconstructed);
         try {
           cv.pyrUp(sourceMat, up, new cv.Size(targetDim.width, targetDim.height));
-          const next = coreState.fused[level];
+          const next = fused[level];
           const upData = up.data32F;
           for (let i = 0; i < next.length; i += 1) next[i] += upData[i];
           reconstructed = next;
@@ -834,6 +892,7 @@ import {
         }
       }
     } else {
+      if (!coreState.directOutput) throw new Error("Focus core direct output is unavailable.");
       reconstructed = coreState.directOutput;
     }
 
@@ -848,13 +907,13 @@ import {
   }
 
   function encodeLinearCoreToGamma2Uint16(
-    linear,
-    regionWidth,
-    coreOffsetX,
-    coreOffsetY,
-    coreWidth,
-    coreHeight,
-  ) {
+    linear: Float32Array,
+    regionWidth: number,
+    coreOffsetX: number,
+    coreOffsetY: number,
+    coreWidth: number,
+    coreHeight: number,
+  ): Uint16Array {
     const output = new Uint16Array(coreWidth * coreHeight * 3);
     const rowLength = coreWidth * 3;
     for (let y = 0; y < coreHeight; y += 1) {
@@ -867,7 +926,7 @@ import {
     return output;
   }
 
-  function computeTauStats(sharpnessTiles) {
+  function computeTauStats(sharpnessTiles: Float32Array[]): { sum: number; sumSq: number; count: number } {
     validateSharpnessTiles(sharpnessTiles);
     const pixelCount = sharpnessTiles[0].length;
     let sum = 0;
@@ -889,7 +948,7 @@ import {
     return { sum, sumSq, count };
   }
 
-  function mergeFocusTile(cv, rgbTiles, sharpnessTiles, width, height, tau, requestedLevels) {
+  function mergeFocusTile(cv: OpenCvRuntime, rgbTiles: Uint16Array[], sharpnessTiles: Float32Array[], width: number, height: number, tau: number, requestedLevels: number): Uint16Array {
     if (!(Number.isInteger(width) && width > 0 && Number.isInteger(height) && height > 0)) {
       throw new Error("Focus merge received invalid tile dimensions.");
     }
@@ -947,7 +1006,7 @@ import {
     return encodeLinearToGamma2Uint16(mergedLinear);
   }
 
-  function mergeFocusDirect(rgbTiles, sharpnessTiles, maxValues, denominators, tau, pixelCount) {
+  function mergeFocusDirect(rgbTiles: Uint16Array[], sharpnessTiles: Float32Array[], maxValues: Float32Array, denominators: Float32Array, tau: number, pixelCount: number): Float32Array {
     const output = new Float32Array(pixelCount * 3);
     for (let imageIndex = 0; imageIndex < rgbTiles.length; imageIndex += 1) {
       const rgb = rgbTiles[imageIndex];
@@ -965,16 +1024,16 @@ import {
   }
 
   function mergeFocusPyramids(
-    cv,
-    rgbTiles,
-    sharpnessTiles,
-    maxValues,
-    denominators,
-    tau,
-    width,
-    height,
-    pyramidLevels,
-  ) {
+    cv: OpenCvRuntime,
+    rgbTiles: Uint16Array[],
+    sharpnessTiles: Float32Array[],
+    maxValues: Float32Array,
+    denominators: Float32Array,
+    tau: number,
+    width: number,
+    height: number,
+    pyramidLevels: number,
+  ): Float32Array {
     const dimensions = [{ width, height }];
     for (let level = 0; level < pyramidLevels; level += 1) {
       const previous = dimensions[dimensions.length - 1];
@@ -1072,7 +1131,7 @@ import {
     return reconstructed;
   }
 
-  function validateSharpnessTiles(tiles, expectedLength = null) {
+  function validateSharpnessTiles(tiles: Float32Array[], expectedLength: number | null = null): void {
     if (!Array.isArray(tiles) || tiles.length === 0) throw new Error("Focus sharpness tile set is empty.");
     const length = expectedLength ?? tiles[0].length;
     for (let i = 0; i < tiles.length; i += 1) {
@@ -1082,7 +1141,7 @@ import {
     }
   }
 
-  function encodeLinearToGamma2Uint16(linear) {
+  function encodeLinearToGamma2Uint16(linear: Float32Array): Uint16Array {
     const output = new Uint16Array(linear.length);
     for (let i = 0; i < linear.length; i += 1) {
       output[i] = Math.round(Math.sqrt(clamp01(linear[i])) * RESULT_BUFFER_MAX_UINT16);
@@ -1090,12 +1149,12 @@ import {
     return output;
   }
 
-  function gamma2Uint16ToLinear(value) {
+  function gamma2Uint16ToLinear(value: number): number {
     const encoded = value / RESULT_BUFFER_MAX_UINT16;
     return encoded * encoded;
   }
 
-  function clamp01(value) {
+  function clamp01(value: number): number {
     if (!Number.isFinite(value) || value <= 0) return 0;
     if (value >= 1) return 1;
     return value;

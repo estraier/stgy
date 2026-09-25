@@ -9,6 +9,7 @@
     "start": "next start",
     "dev": "next dev --turbopack",
     "test": "jest",
+    "check:lss": "node scripts/check-local-stack-types.mjs && eslint src/app/local-stack-studio/workers/alignment-preprocess.ts src/app/local-stack-studio/workers/transfer-buffer.ts src/app/local-stack-studio/workers/opencv-runtime.ts src/app/local-stack-studio/workers/protocols/*.ts src/app/local-stack-studio/workers/orb.worker.ts src/app/local-stack-studio/workers/ecc.worker.ts src/app/local-stack-studio/workers/focus.worker.ts src/app/local-stack-studio/stack/worker-clients.ts && jest src/app/local-stack-studio --runInBand && npm run build:local-stack-workers",
     "fmt": "prettier --write .",
     "lint": "eslint src --ext .js,.jsx,.ts,.tsx",
     "clean": "rm -rf node_modules dist out .next .turbo public/export-assets public/generated/local-stack-studio public/vendor/libraw-wasm public/vendor/libraw-wasm-threaded public/vendor/lensfun-wasm public/vendor/opencv",

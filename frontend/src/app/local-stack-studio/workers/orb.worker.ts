@@ -1,10 +1,74 @@
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-nocheck
 // Local Stack Studio worker source. Built to public/generated/local-stack-studio.
-import { loadWorkerOpenCv } from "./opencv-runtime";
+import {
+  loadWorkerOpenCv,
+  type OpenCvDynamic,
+  type OpenCvRuntime,
+} from "./opencv-runtime";
+import {
+  applyAlignmentExposureToGrayBytes,
+  positiveExposureOrNull,
+  prepareAlignmentExposurePair,
+  type AlignmentExposureMatchSource,
+} from "./alignment-preprocess";
+import { transferableBuffer } from "./transfer-buffer";
+import type {
+  AlignmentInitRequest,
+  AlignmentWorkerRequest,
+  OrbFallbackMode,
+  OrbReadyResponse,
+  OrbResultResponse,
+  OrbWorkerResponse,
+} from "./protocols/alignment-protocol";
 
 (() => {
   "use strict";
+
+  type WorkerScope = {
+    onmessage: ((event: MessageEvent<AlignmentWorkerRequest>) => void | Promise<void>) | null;
+    postMessage: (message: OrbWorkerResponse, transfer?: Transferable[]) => void;
+  };
+  const workerScope = globalThis as unknown as WorkerScope;
+
+  type MatchCandidate = {
+    referenceX: number;
+    referenceY: number;
+    targetX: number;
+    targetY: number;
+    distance: number;
+  };
+  type ReprojectionStats = {
+    inlierCount: number;
+    medianError: number;
+    p95Error: number;
+  };
+  type PartialAffineEstimate = {
+    matrix: Float64Array;
+    reprojection: ReprojectionStats;
+  };
+  type OrbPreprocessing = {
+    referenceGray: OpenCvDynamic;
+    targetGray: OpenCvDynamic;
+    referenceExposureGain: number;
+    targetExposureGain: number;
+    exposureMatchSource: AlignmentExposureMatchSource;
+  };
+
+  type OrbAlignmentComputationResult = {
+    matrix: Float64Array;
+    referenceFeatureCount: number;
+    targetFeatureCount: number;
+    matchCount: number;
+    usableMatchCount: number;
+    matchShiftLimit: number;
+    fallbackMode: OrbFallbackMode;
+    reprojectionInlierCount: number;
+    reprojectionMedianError: number;
+    reprojectionP95Error: number;
+    referenceExposureGain: number;
+    targetExposureGain: number;
+    exposureMatchSource: AlignmentExposureMatchSource;
+    claheClipLimit: number;
+  };
 
   const ORB_MAX_FEATURES = 5000;
   const ORB_MATCH_SHIFT_LIMIT = 0.10;
@@ -20,33 +84,28 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
   const ALIGNMENT_BILATERAL_SIGMA_SPACE = 10;
   const ALIGNMENT_CLAHE_CLIP_LIMIT = 1.0;
   const ALIGNMENT_CLAHE_TILE_GRID = 8;
-  const ALIGNMENT_EXPOSURE_MAX_GAIN = 16;
-  const ALIGNMENT_EXPOSURE_SAMPLE_LIMIT = 65536;
-  const ALIGNMENT_EXPOSURE_ROLLOFF_A = 0.5;
-  const ALIGNMENT_EXPOSURE_ROLLOFF_OUTPUT_MAX = 1;
-  const ALIGNMENT_EXPOSURE_ROLLOFF_SAVING_LIMIT_FACTOR = 4;
-  const SRGB_TO_LINEAR_LUT = buildSrgbToLinearLut();
 
-  let cv = null;
-  let orb = null;
-  let matcher = null;
-  let emptyMask = null;
-  let referenceGrayBytes = null;
-  let referenceExposureScalar = null;
+  let cv: OpenCvRuntime;
+  let orb: OpenCvDynamic = null;
+  let matcher: OpenCvDynamic = null;
+  let emptyMask: OpenCvDynamic = null;
+  let referenceGrayBytes: Uint8Array | null = null;
+  let referenceExposureScalar: number | null = null;
   let width = 0;
   let height = 0;
   let ready = false;
 
-  self.onmessage = async (event) => {
+  workerScope.onmessage = async (event: MessageEvent<AlignmentWorkerRequest>) => {
     const message = event.data;
     try {
       if (message.type === "init") {
         const referenceFeatureCount = await initialize(message);
-        self.postMessage({
+        const response: OrbReadyResponse = {
           type: "ready",
           requestId: message.requestId,
           referenceFeatureCount,
-        });
+        };
+        workerScope.postMessage(response);
         return;
       }
 
@@ -57,13 +116,13 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
           message.fileName || `image ${message.id}`,
           message.exposureScalar,
         );
-        self.postMessage(
-          {
+        const matrixBuffer = transferableBuffer(result.matrix);
+        const response: OrbResultResponse = {
             type: "result",
             requestId: message.requestId,
             id: message.id,
             fileName: message.fileName,
-            matrixBuffer: result.matrix.buffer,
+            matrixBuffer,
             referenceFeatureCount: result.referenceFeatureCount,
             targetFeatureCount: result.targetFeatureCount,
             matchCount: result.matchCount,
@@ -77,22 +136,20 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
             targetExposureGain: result.targetExposureGain,
             exposureMatchSource: result.exposureMatchSource,
             claheClipLimit: result.claheClipLimit,
-          },
-          [result.matrix.buffer],
-        );
+          };
+        workerScope.postMessage(response, [matrixBuffer]);
       }
     } catch (error) {
-      const response = {
+      workerScope.postMessage({
         type: "error",
-        requestId: message && typeof message.requestId === "number" ? message.requestId : null,
-        id: message && typeof message.id === "number" ? message.id : null,
+        requestId: message.requestId,
+        id: message.type === "align" ? message.id : null,
         message: error instanceof Error ? error.message : String(error),
-      };
-      self.postMessage(response);
+      });
     }
   };
 
-  async function initialize(message) {
+  async function initialize(message: AlignmentInitRequest) {
     cleanup();
     width = message.width;
     height = message.height;
@@ -111,7 +168,7 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     referenceGrayBytes = bytes;
     referenceExposureScalar = positiveExposureOrNull(message.exposureScalar);
 
-    const baselineGray = preprocessAlignmentGray(referenceGrayBytes, 1);
+    const baselineGray = preprocessAlignmentGray(applyAlignmentExposureToGrayBytes(referenceGrayBytes, 1));
     try {
       const referenceFeatureCount = countOrbFeatures(baselineGray);
       ready = true;
@@ -121,12 +178,13 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     }
   }
 
-  function alignTarget(grayBuffer, fileName, targetExposureScalar) {
+  function alignTarget(grayBuffer: ArrayBuffer, fileName: string, targetExposureScalar: number | null): OrbAlignmentComputationResult {
     const targetGrayBytes = new Uint8Array(grayBuffer);
     if (targetGrayBytes.length !== width * height) {
       throw new Error(`Invalid target grayscale buffer size: ${targetGrayBytes.length} vs ${width * height}.`);
     }
 
+    if (!referenceGrayBytes) throw new Error("ORB reference grayscale buffer is unavailable.");
     const preprocessing = prepareAlignmentPair(
       referenceGrayBytes,
       targetGrayBytes,
@@ -255,7 +313,7 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     }
   }
 
-  function estimateAlignment(candidates, validateLowMatchFallback) {
+  function estimateAlignment(candidates: MatchCandidate[], validateLowMatchFallback: boolean): PartialAffineEstimate {
     const matrix = estimatePartialAffineRansac(candidates);
     if (!isPartialAffinePlausible(matrix)) {
       throw new Error("ORB produced an implausible partial affine transform.");
@@ -269,7 +327,7 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     return { matrix, reprojection };
   }
 
-  function estimatePartialAffineRansac(candidates) {
+  function estimatePartialAffineRansac(candidates: MatchCandidate[]): Float64Array {
     if (!Array.isArray(candidates) || candidates.length < 2) {
       throw new Error("ORB needs at least two matches for a partial affine transform.");
     }
@@ -341,11 +399,11 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     return refined;
   }
 
-  function nextRansacState(state) {
+  function nextRansacState(state: number): number {
     return (Math.imul(state, 1664525) + 1013904223) >>> 0;
   }
 
-  function partialAffineFromTwoMatches(first, second) {
+  function partialAffineFromTwoMatches(first: MatchCandidate, second: MatchCandidate): Float64Array | null {
     const px = second.targetX - first.targetX;
     const py = second.targetY - first.targetY;
     const qx = second.referenceX - first.referenceX;
@@ -365,7 +423,7 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     return isFiniteAlignmentMatrix(matrix) ? matrix : null;
   }
 
-  function scorePartialAffineModel(matrix, candidates, thresholdSq) {
+  function scorePartialAffineModel(matrix: Float64Array, candidates: MatchCandidate[], thresholdSq: number) {
     let inlierCount = 0;
     let inlierError = 0;
     for (const match of candidates) {
@@ -380,7 +438,7 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     return { inlierCount, inlierError };
   }
 
-  function collectPartialAffineInliers(matrix, candidates, thresholdSq) {
+  function collectPartialAffineInliers(matrix: Float64Array, candidates: MatchCandidate[], thresholdSq: number): MatchCandidate[] {
     const inliers = [];
     for (const match of candidates) {
       const dx = matrix[0] * match.targetX + matrix[1] * match.targetY + matrix[2] - match.referenceX;
@@ -391,7 +449,7 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     return inliers;
   }
 
-  function fitPartialAffineLeastSquares(matches) {
+  function fitPartialAffineLeastSquares(matches: MatchCandidate[]): Float64Array | null {
     if (!Array.isArray(matches) || matches.length < 2) return null;
     let sourceMeanX = 0;
     let sourceMeanY = 0;
@@ -435,7 +493,7 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     return isFiniteAlignmentMatrix(matrix) ? matrix : null;
   }
 
-  function isFiniteAlignmentMatrix(matrix) {
+  function isFiniteAlignmentMatrix(matrix: ArrayLike<number> | null): boolean {
     if (!matrix || matrix.length < 9) return false;
     for (let i = 0; i < 9; i += 1) {
       if (!Number.isFinite(matrix[i])) return false;
@@ -444,15 +502,15 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
   }
 
   function buildAlignmentResult(
-    alignment,
-    referenceFeatureCount,
-    targetFeatureCount,
-    matchCount,
-    usableMatchCount,
-    matchShiftLimit,
-    fallbackMode,
-    preprocessing,
-  ) {
+    alignment: PartialAffineEstimate,
+    referenceFeatureCount: number,
+    targetFeatureCount: number,
+    matchCount: number,
+    usableMatchCount: number,
+    matchShiftLimit: number,
+    fallbackMode: OrbFallbackMode,
+    preprocessing: OrbPreprocessing,
+  ): OrbAlignmentComputationResult {
     return {
       matrix: alignment.matrix,
       referenceFeatureCount,
@@ -471,16 +529,26 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     };
   }
 
-  function prepareAlignmentPair(referenceBytes, targetBytes, referenceExposure, targetExposure) {
-    const exposure = resolvePairExposure(referenceBytes, targetBytes, referenceExposure, targetExposure);
-    const referenceGray = preprocessAlignmentGray(referenceBytes, exposure.referenceGain);
+  function prepareAlignmentPair(
+    referenceBytes: Uint8Array,
+    targetBytes: Uint8Array,
+    referenceExposure: number | null,
+    targetExposure: number | null,
+  ): OrbPreprocessing {
+    const exposure = prepareAlignmentExposurePair(
+      referenceBytes,
+      targetBytes,
+      referenceExposure,
+      targetExposure,
+    );
+    const referenceGray = preprocessAlignmentGray(exposure.referenceBytes);
     try {
       return {
         referenceGray,
-        targetGray: preprocessAlignmentGray(targetBytes, exposure.targetGain),
-        referenceExposureGain: exposure.referenceGain,
-        targetExposureGain: exposure.targetGain,
-        exposureMatchSource: exposure.source,
+        targetGray: preprocessAlignmentGray(exposure.targetBytes),
+        referenceExposureGain: exposure.referenceExposureGain,
+        targetExposureGain: exposure.targetExposureGain,
+        exposureMatchSource: exposure.exposureMatchSource,
       };
     } catch (error) {
       referenceGray.delete();
@@ -488,88 +556,11 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     }
   }
 
-  function resolvePairExposure(referenceBytes, targetBytes, referenceExposure, targetExposure) {
-    let referenceLevel;
-    let targetLevel;
-    let source;
-
-    if (positiveExposureOrNull(referenceExposure) && positiveExposureOrNull(targetExposure)) {
-      referenceLevel = referenceExposure;
-      targetLevel = targetExposure;
-      source = "metadata";
-    } else {
-      referenceLevel = estimateRobustExposureLevel(referenceBytes);
-      targetLevel = estimateRobustExposureLevel(targetBytes);
-      source = "image-statistics";
-    }
-
-    if (!(referenceLevel > 0 && targetLevel > 0)) {
-      return { referenceGain: 1, targetGain: 1, source: "none" };
-    }
-
-    const midpoint = Math.sqrt(referenceLevel * targetLevel);
-    const referenceGain = clampExposureGain(midpoint / referenceLevel);
-    const targetGain = clampExposureGain(midpoint / targetLevel);
-    return { referenceGain, targetGain, source };
-  }
-
-  function positiveExposureOrNull(value) {
-    const number = Number(value);
-    return Number.isFinite(number) && number > 0 ? number : null;
-  }
-
-  function clampExposureGain(gain) {
-    if (!(Number.isFinite(gain) && gain > 0)) return 1;
-    return Math.max(1 / ALIGNMENT_EXPOSURE_MAX_GAIN, Math.min(ALIGNMENT_EXPOSURE_MAX_GAIN, gain));
-  }
-
-  function estimateRobustExposureLevel(bytes) {
-    const histogram = buildSampledByteHistogram(bytes);
-    let total = 0;
-    for (let value = 1; value < 255; value += 1) total += histogram[value];
-    if (total <= 0) return 0;
-
-    const targetRank = Math.max(1, Math.ceil(total * 0.60));
-    let cumulative = 0;
-    for (let value = 1; value < 255; value += 1) {
-      cumulative += histogram[value];
-      if (cumulative >= targetRank) {
-        return Math.max(SRGB_TO_LINEAR_LUT[value], 1e-6);
-      }
-    }
-    return Math.max(SRGB_TO_LINEAR_LUT[254], 1e-6);
-  }
-
-  function buildSampledByteHistogram(bytes) {
-    const histogram = new Uint32Array(256);
-    const stride = Math.max(1, Math.ceil(bytes.length / ALIGNMENT_EXPOSURE_SAMPLE_LIMIT));
-    const offset = Math.floor(stride / 2);
-    for (let i = offset; i < bytes.length; i += stride) {
-      histogram[bytes[i]] += 1;
-    }
-    return histogram;
-  }
-
-  function estimateScaledLinearPercentile(bytes, gain, q) {
-    const histogram = buildSampledByteHistogram(bytes);
-    let total = 0;
-    for (let value = 0; value < 256; value += 1) total += histogram[value];
-    if (total <= 0) return 0;
-    const rank = Math.max(1, Math.ceil(total * Math.max(0, Math.min(1, q))));
-    let cumulative = 0;
-    for (let value = 0; value < 256; value += 1) {
-      cumulative += histogram[value];
-      if (cumulative >= rank) return SRGB_TO_LINEAR_LUT[value] * gain;
-    }
-    return gain;
-  }
-
-  function preprocessAlignmentGray(bytes, gain) {
-    const exposedBytes = applyExposureToGrayBytes(bytes, gain);
-    const source = makeGrayMatFromBytes(exposedBytes);
+  function preprocessAlignmentGray(bytes: Uint8Array): OpenCvDynamic {
+    const source = makeGrayMatFromBytes(bytes);
     const bilateral = new cv.Mat();
     const output = new cv.Mat();
-    let clahe = null;
+    let clahe: OpenCvDynamic | null = null;
 
     try {
       const borderType = cv.BORDER_DEFAULT !== undefined ? cv.BORDER_DEFAULT : 4;
@@ -597,67 +588,7 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     }
   }
 
-  function applyExposureToGrayBytes(bytes, gain) {
-    const adjustedGain = clampExposureGain(gain);
-    const maxVal = adjustedGain > 1
-      ? estimateScaledLinearPercentile(bytes, adjustedGain, 0.998)
-      : 0;
-    const rolloff = alignmentExposureRolloffParams(maxVal);
-    const lut = new Uint8Array(256);
-
-    for (let value = 0; value < 256; value += 1) {
-      let linear = SRGB_TO_LINEAR_LUT[value] * adjustedGain;
-      if (rolloff) linear = applyAlignmentExposureRolloffScalar(linear, rolloff);
-      lut[value] = linearToSrgbByte(linear);
-    }
-
-    const output = new Uint8Array(bytes.length);
-    for (let i = 0; i < bytes.length; i += 1) output[i] = lut[bytes[i]];
-    return output;
-  }
-
-  function alignmentExposureRolloffParams(maxVal) {
-    if (!(Number.isFinite(maxVal) && maxVal > 1)) return null;
-    const outputMax = ALIGNMENT_EXPOSURE_ROLLOFF_OUTPUT_MAX;
-    const savingLimitValue = outputMax * ALIGNMENT_EXPOSURE_ROLLOFF_SAVING_LIMIT_FACTOR;
-    let a = ALIGNMENT_EXPOSURE_ROLLOFF_A;
-    if (maxVal > savingLimitValue) {
-      a = Math.pow(a / outputMax, savingLimitValue / maxVal) * outputMax;
-    }
-    const inflection = a + (outputMax - a) * outputMax / maxVal;
-    if (!(outputMax > inflection)) return null;
-    return { inflection, inputMax: maxVal, outputMax };
-  }
-
-  function applyAlignmentExposureRolloffScalar(value, rolloff) {
-    if (!rolloff || !Number.isFinite(value) || value <= rolloff.inflection) return value;
-    const shoulder = rolloff.outputMax - rolloff.inflection;
-    if (!(shoulder > 0)) return value;
-    return rolloff.inflection
-      + shoulder * (1 - Math.exp(-(value - rolloff.inflection) / shoulder));
-  }
-
-  function buildSrgbToLinearLut() {
-    const lut = new Float32Array(256);
-    for (let value = 0; value < 256; value += 1) {
-      const encoded = value / 255;
-      lut[value] = encoded <= 0.04045
-        ? encoded / 12.92
-        : Math.pow((encoded + 0.055) / 1.055, 2.4);
-    }
-    return lut;
-  }
-
-  function linearToSrgbByte(linear) {
-    if (!(Number.isFinite(linear) && linear > 0)) return 0;
-    if (linear >= 1) return 255;
-    const encoded = linear <= 0.0031308
-      ? linear * 12.92
-      : 1.055 * Math.pow(linear, 1 / 2.4) - 0.055;
-    return Math.max(0, Math.min(255, Math.round(encoded * 255)));
-  }
-
-  function createClahe() {
+  function createClahe(): OpenCvDynamic {
     const tileGridSize = new cv.Size(ALIGNMENT_CLAHE_TILE_GRID, ALIGNMENT_CLAHE_TILE_GRID);
     if (typeof cv.createCLAHE === "function") {
       return cv.createCLAHE(ALIGNMENT_CLAHE_CLIP_LIMIT, tileGridSize);
@@ -668,7 +599,7 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     throw new Error("This OpenCV.js build does not provide CLAHE.");
   }
 
-  function countOrbFeatures(gray) {
+  function countOrbFeatures(gray: OpenCvDynamic): number {
     const keypoints = new cv.KeyPointVector();
     const descriptors = new cv.Mat();
     try {
@@ -680,7 +611,7 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     }
   }
 
-  function makeGrayMatFromBytes(bytes) {
+  function makeGrayMatFromBytes(bytes: Uint8Array): OpenCvDynamic {
     if (bytes.length !== width * height) {
       throw new Error(`Invalid grayscale buffer size: ${bytes.length} vs ${width * height}.`);
     }
@@ -693,9 +624,9 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     return mat;
   }
 
-  function collectMatchCandidates(matches, referenceKeypoints, targetKeypoints, shiftLimit) {
+  function collectMatchCandidates(matches: OpenCvDynamic, referenceKeypoints: OpenCvDynamic, targetKeypoints: OpenCvDynamic, shiftLimit: number): MatchCandidate[] {
     const sidesMean = (width + height) / 2;
-    const candidates = [];
+    const candidates: MatchCandidate[] = [];
 
     for (let i = 0; i < matches.size(); i += 1) {
       const match = matches.get(i);
@@ -721,8 +652,8 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     return candidates;
   }
 
-  function measureReprojectionErrors(matrix, candidates) {
-    const errors = [];
+  function measureReprojectionErrors(matrix: Float64Array, candidates: MatchCandidate[]): ReprojectionStats {
+    const errors: number[] = [];
     let inlierCount = 0;
 
     for (const match of candidates) {
@@ -755,7 +686,7 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     };
   }
 
-  function validateFallbackReprojection(reprojection) {
+  function validateFallbackReprojection(reprojection: ReprojectionStats): void {
     if (reprojection.inlierCount < ORB_MIN_FALLBACK_MATCHES) {
       throw new Error(
         `validated fallback has only ${reprojection.inlierCount} reprojection inliers ` +
@@ -776,18 +707,18 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     }
   }
 
-  function percentileSorted(values, q) {
+  function percentileSorted(values: number[], q: number): number {
     if (values.length === 0) return Number.POSITIVE_INFINITY;
     const rank = Math.ceil(Math.max(0, Math.min(1, q)) * values.length);
     const index = Math.min(values.length - 1, Math.max(0, rank - 1));
     return values[index];
   }
 
-  function formatPixels(value) {
+  function formatPixels(value: number): string {
     return Number.isFinite(value) ? `${value.toFixed(2)} px` : "non-finite";
   }
 
-  function createOrb(cv) {
+  function createOrb(cv: OpenCvRuntime): OpenCvDynamic {
     let instance;
     if (cv.ORB && typeof cv.ORB.create === "function") {
       instance = cv.ORB.create();
@@ -804,7 +735,7 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     return instance;
   }
 
-  function createHammingMatcher(cv) {
+  function createHammingMatcher(cv: OpenCvRuntime): OpenCvDynamic {
     if (cv.BFMatcher && typeof cv.BFMatcher.create === "function") {
       return cv.BFMatcher.create(cv.NORM_HAMMING, true);
     }
@@ -814,7 +745,7 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     throw new Error("This OpenCV.js build does not provide BFMatcher.");
   }
 
-  function isPartialAffinePlausible(m) {
+  function isPartialAffinePlausible(m: ArrayLike<number>): boolean {
     const scaleAllowance = 0.05;
     const shiftAllowance = 0.05;
     const rotationAllowance = 0.05;
@@ -833,8 +764,8 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     );
   }
 
-  function assertOrbApis(cv) {
-    const missing = [];
+  function assertOrbApis(cv: OpenCvRuntime): void {
+    const missing: string[] = [];
     if (!cv.ORB && !cv.ORB_create) missing.push("ORB");
     if (!cv.BFMatcher) missing.push("BFMatcher");
     if (!cv.KeyPointVector) missing.push("KeyPointVector");

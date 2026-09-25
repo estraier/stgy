@@ -1,9 +1,15 @@
 // Shared OpenCV bootstrap for Local Stack Studio workers.
 const OPENCV_SCRIPT_URL = "/vendor/opencv/opencv.js";
 
-type OpenCvRuntime = {
-  Mat: unknown;
-  [key: string]: unknown;
+// OpenCV.js is loaded dynamically rather than through the npm module at runtime.
+// Keep that external API as the one intentionally dynamic boundary; worker messages
+// and LSS-owned data structures remain statically typed.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type OpenCvDynamic = any;
+
+export type OpenCvRuntime = {
+  Mat: OpenCvDynamic;
+  [key: string]: OpenCvDynamic;
 };
 
 type WorkerOpenCvGlobal = typeof globalThis & {

@@ -2,6 +2,7 @@
 // @ts-nocheck
 // Local Stack Studio worker source. Built to public/generated/local-stack-studio.
 import { loadWorkerOpenCv } from "./opencv-runtime";
+import { asHdrWorkerRequest, type HdrWorkerRequest } from "./protocols/hdr-protocol";
 const HDR_FLOAT_MIN_RESPONSE = 1e-12;
 const HDR_FLOAT_WEIGHT_EPSILON = 1e-12;
 const REINHARD_GAMMA = 1.0;
@@ -24,7 +25,11 @@ let mertensStreamState = null;
 let workerMessageQueue = Promise.resolve();
 
 self.onmessage = (event) => {
-  const message = event.data || {};
+  const message = asHdrWorkerRequest(event.data);
+  if (!message) {
+    self.postMessage({ type: "error", message: "HDR worker received an unsupported message." });
+    return;
+  }
   workerMessageQueue = workerMessageQueue
     .then(() => dispatchWorkerMessage(message))
     .catch(async (error) => {
@@ -49,7 +54,7 @@ self.onmessage = (event) => {
     });
 };
 
-async function dispatchWorkerMessage(message) {
+async function dispatchWorkerMessage(message: HdrWorkerRequest) {
   if (message.type === "merge") {
     processDebevecMessage(message);
     return;

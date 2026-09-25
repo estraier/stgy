@@ -40,7 +40,13 @@ import {
   putStackScratchBuffers as putMedianScratchTiles,
   stackRgbTileKey as medianScratchTileKey,
 } from "./scratch";
-import { EccWorkerClient, FocusWorkerClient, OrbWorkerClient } from "./worker-clients";
+import {
+  createHdrDebevecReinhardStreamWorkerClient,
+  createHdrMertensStreamWorkerClient,
+  EccWorkerClient,
+  FocusWorkerClient,
+  OrbWorkerClient,
+} from "./worker-clients";
 import {
   computeFocusFinalMaps,
   computeFocusTileScores,
@@ -1613,10 +1619,138 @@ function resolveAutoAlignmentMode(mergeMode) {
   return "feature-match-ecc";
 }
 
+function computeExifLightValue(inputInfo) {
+  const exposureTime = Number(inputInfo?.exposureTime);
+  const fNumber = Number(inputInfo?.fNumber);
+  const iso = Number(inputInfo?.iso);
+  if (!(exposureTime > 0 && fNumber > 0 && iso > 0)) return null;
+  const lightValue = Math.log2((fNumber * fNumber) / exposureTime) - Math.log2(iso / 100);
+  return Number.isFinite(lightValue) ? lightValue : null;
+}
+
+function chooseAlignmentReferenceIndex(inputInfos, mergeMode) {
+  const count = inputInfos.length;
+  if (count <= 1) return 0;
+
+  if (mergeMode === "focus") {
+    return Math.floor(count / 2);
+  }
+
+  const lightValues = inputInfos.map(computeExifLightValue);
+  if (!lightValues.every((value) => Number.isFinite(value))) return 0;
+
+  const minLightValue = Math.min(...lightValues);
+  const maxLightValue = Math.max(...lightValues);
+  if (maxLightValue - minLightValue < 1) return 0;
+
+  const centerLightValue = (minLightValue + maxLightValue) / 2;
+  let bestIndex = 0;
+  let bestDistance = Infinity;
+  for (let index = 0; index < lightValues.length; index += 1) {
+    const distance = Math.abs(lightValues[index] - centerLightValue);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = index;
+    }
+  }
+  return bestIndex;
+}
+
+function describeAlignmentReferenceChoice(inputInfos, mergeMode, referenceIndex) {
+  if (mergeMode === "focus") {
+    return `Focus middle frame ${referenceIndex + 1}/${inputInfos.length}`;
+  }
+  const lightValues = inputInfos.map(computeExifLightValue);
+  if (lightValues.every((value) => Number.isFinite(value))) {
+    const minLightValue = Math.min(...lightValues);
+    const maxLightValue = Math.max(...lightValues);
+    const range = maxLightValue - minLightValue;
+    if (range >= 1) {
+      const center = (minLightValue + maxLightValue) / 2;
+      return `EXIF LV range=${range.toFixed(2)}EV, midpoint=${center.toFixed(2)}, reference LV=${lightValues[referenceIndex].toFixed(2)}`;
+    }
+    return `EXIF LV range=${range.toFixed(2)}EV (<1EV), using first frame`;
+  }
+  return "complete EXIF exposure metadata unavailable, using first frame";
+}
+
 function isTileMergeMode(mode) {
   return mode === "tile-vertical" || mode === "tile-horizontal";
 }
 
+const ALIGNMENT_FRAME_BASE_AREA = 1_000_000;
+
+function alignmentFrameDimensions(fullWidth, fullHeight) {
+  const area = fullWidth * fullHeight;
+  if (area <= ALIGNMENT_FRAME_BASE_AREA) {
+    return { width: fullWidth, height: fullHeight };
+  }
+  const scale = Math.sqrt(ALIGNMENT_FRAME_BASE_AREA / area);
+  return {
+    width: Math.max(1, Math.round(fullWidth * scale)),
+    height: Math.max(1, Math.round(fullHeight * scale)),
+  };
+}
+
+function createAlignmentFrameFromRgba(cv, rgba, fullWidth, fullHeight, exposureScalar) {
+  const dimensions = alignmentFrameDimensions(fullWidth, fullHeight);
+  const resized = dimensions.width === fullWidth && dimensions.height === fullHeight
+    ? null
+    : new cv.Mat();
+  const gray = new cv.Mat();
+  try {
+    const source = resized || rgba;
+    if (resized) {
+      cv.resize(
+        rgba,
+        resized,
+        new cv.Size(dimensions.width, dimensions.height),
+        0,
+        0,
+        cv.INTER_AREA,
+      );
+    }
+    cv.cvtColor(source, gray, cv.COLOR_RGBA2GRAY);
+    return {
+      width: dimensions.width,
+      height: dimensions.height,
+      fullWidth,
+      fullHeight,
+      grayBytes: copyMatBytes(gray, dimensions.width * dimensions.height),
+      exposureScalar,
+    };
+  } finally {
+    gray.delete();
+    if (resized) resized.delete();
+  }
+}
+
+function scaleAlignmentMatrixToFullResolution(matrix, referenceFrame, targetFrame) {
+  const referenceScaleX = referenceFrame.width / referenceFrame.fullWidth;
+  const referenceScaleY = referenceFrame.height / referenceFrame.fullHeight;
+  const targetScaleX = targetFrame.width / targetFrame.fullWidth;
+  const targetScaleY = targetFrame.height / targetFrame.fullHeight;
+  if (
+    !(referenceScaleX > 0 && referenceScaleY > 0 && targetScaleX > 0 && targetScaleY > 0)
+  ) {
+    throw new Error("Alignment frame scale is invalid.");
+  }
+  const result = new Float64Array([
+    matrix[0] * targetScaleX / referenceScaleX,
+    matrix[1] * targetScaleY / referenceScaleX,
+    matrix[2] / referenceScaleX,
+    matrix[3] * targetScaleX / referenceScaleY,
+    matrix[4] * targetScaleY / referenceScaleY,
+    matrix[5] / referenceScaleY,
+    0,
+    0,
+    1,
+  ]);
+  for (const value of result) {
+    if (!Number.isFinite(value)) throw new Error("Scaled alignment matrix contains a non-finite value.");
+  }
+  return result;
+}
 
 function secondaryAlignmentAlgorithm(primaryAlgorithm) {
   return primaryAlgorithm === "ECC" ? "ORB" : "ECC";
@@ -1636,19 +1770,16 @@ function createAlignmentWorkers() {
 async function initializeAlignmentReference(
   alignmentWorkers,
   preferredAlgorithm,
-  width,
-  height,
-  grayBytes,
-  exposureScalar,
+  referenceFrame,
 ) {
   const tried = [];
   for (const algorithm of [preferredAlgorithm, secondaryAlignmentAlgorithm(preferredAlgorithm)]) {
     try {
       const ready = await alignmentWorkers[algorithm].initialize(
-        width,
-        height,
-        new Uint8Array(grayBytes),
-        exposureScalar,
+        referenceFrame.width,
+        referenceFrame.height,
+        new Uint8Array(referenceFrame.grayBytes),
+        referenceFrame.exposureScalar,
       );
       return { algorithm, ready };
     } catch (error) {
@@ -1666,28 +1797,37 @@ async function alignWithFallback(
   referenceContext,
   id,
   fileName,
-  grayBytes,
-  exposureScalar,
+  targetFrame,
 ) {
   const tried = [];
   for (const algorithm of [primaryAlgorithm, secondaryAlignmentAlgorithm(primaryAlgorithm)]) {
     try {
       if (algorithm !== referenceContext.algorithm) {
         const ready = await alignmentWorkers[algorithm].initialize(
-          referenceContext.width,
-          referenceContext.height,
-          new Uint8Array(referenceContext.grayBytes),
-          referenceContext.exposureScalar,
+          referenceContext.frame.width,
+          referenceContext.frame.height,
+          new Uint8Array(referenceContext.frame.grayBytes),
+          referenceContext.frame.exposureScalar,
         );
         console.info(`${algorithm} fallback reference ready: ${describeAlignmentReady(algorithm, ready)}`);
       }
       const result = await alignmentWorkers[algorithm].align(
         id,
         fileName,
-        new Uint8Array(grayBytes),
-        exposureScalar,
+        new Uint8Array(targetFrame.grayBytes),
+        targetFrame.exposureScalar,
       );
-      return { algorithm, result };
+      return {
+        algorithm,
+        result: {
+          ...result,
+          matrix: scaleAlignmentMatrixToFullResolution(
+            result.matrix,
+            referenceContext.frame,
+            targetFrame,
+          ),
+        },
+      };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       tried.push(`${algorithm}: ${message}`);
@@ -1952,9 +2092,9 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
   let height = 0;
   let hdr1StreamWorker = null;
   let hdr2StreamWorker = null;
-  let firstAlignmentReferenceGrayBytes = null;
-  let firstAlignmentReferenceExposureScalar = null;
-  let firstAlignmentReferenceAlgorithm = null;
+  let alignmentReferenceFrame = null;
+  let alignmentReferenceAlgorithm = null;
+  const alignmentFrames = new Array(files.length).fill(null);
   const alignmentMatrices = new Array(files.length).fill(null);
   const alignedIndices = new Set();
   const deferredAlignments = [];
@@ -1967,6 +2107,18 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
 
   try {
     const needsAlignment = files.length > 1 && isFeatureMatchAlignmentMode(alignmentPlan.effectiveMode);
+    const alignmentReferenceIndex = needsAlignment
+      ? chooseAlignmentReferenceIndex(inputInfos, mergePlan.mode)
+      : 0;
+    const processingOrder = needsAlignment && alignmentReferenceIndex !== 0
+      ? [alignmentReferenceIndex, ...files.map((_, index) => index).filter((index) => index !== alignmentReferenceIndex)]
+      : files.map((_, index) => index);
+    if (needsAlignment) {
+      console.info(
+        `Alignment reference: ${files[alignmentReferenceIndex].name} (index ${alignmentReferenceIndex + 1}/${files.length}; ` +
+        `${describeAlignmentReferenceChoice(inputInfos, mergePlan.mode, alignmentReferenceIndex)}).`,
+      );
+    }
     if (mergePlan.mode === "median" || mergePlan.mode === "focus") {
       const scratchLabel = mergePlan.mode === "focus" ? "Focus" : "Denoise (median)";
       setProgress(`Opening IndexedDB scratch space for ${scratchLabel} tiles...`);
@@ -1996,10 +2148,11 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
       );
     }
 
-    for (let index = 0; index < files.length; index += 1) {
+    for (let processingPosition = 0; processingPosition < processingOrder.length; processingPosition += 1) {
+      const index = processingOrder[processingPosition];
       const file = files[index];
       const inputInfo = inputInfos[index];
-      setProgress(`${inputInfo.isRaw ? "Developing RAW" : "Reading image"} ${index + 1}/${files.length}...`);
+      setProgress(`${inputInfo.isRaw ? "Developing RAW" : "Reading image"} ${processingPosition + 1}/${files.length}...`);
       const decoded = await decodeFileToDecodedImage(file, inputInfo);
       const normalizedDecoded = normalizeDecodedImageForAlignment(
         cv,
@@ -2012,7 +2165,7 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
       const decodedWidth = normalizedDecoded.width || imageData.width;
       const decodedHeight = normalizedDecoded.height || imageData.height;
 
-      if (index === 0) {
+      if (processingPosition === 0) {
         width = decodedWidth;
         height = decodedHeight;
         if (mergePlan.mode === "hdr1") {
@@ -2044,7 +2197,7 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
         }
       } else if (decodedWidth !== width || decodedHeight !== height) {
         throw new Error(
-          `${file.name} is ${decodedWidth}x${decodedHeight}, but the first image is ${width}x${height}. ` +
+          `${file.name} is ${decodedWidth}x${decodedHeight}, but the alignment reference is ${width}x${height}. ` +
           "All input images must have identical dimensions after alignment normalization."
         );
       }
@@ -2052,7 +2205,6 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
       const rgba = cv.matFromImageData(imageData);
       if (normalizedDecoded.alignmentImageData) normalizedDecoded.alignmentImageData = null;
       imageData = null;
-      const gray = needsAlignment ? new cv.Mat() : null;
       const hasLinearProPhoto = normalizedDecoded.linearProPhotoRgb instanceof Float32Array;
       let rgb = null;
       let linearRgb = null;
@@ -2062,9 +2214,10 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
       let shouldMerge = true;
 
       try {
-        if (gray) {
-          cv.cvtColor(rgba, gray, cv.COLOR_RGBA2GRAY);
-        }
+        const alignmentFrame = needsAlignment
+          ? createAlignmentFrameFromRgba(cv, rgba, width, height, inputInfo.exposureScalar)
+          : null;
+        if (alignmentFrame) alignmentFrames[index] = alignmentFrame;
         if (hasLinearProPhoto) {
           linearRgb = matFromLinearProPhoto(cv, normalizedDecoded.linearProPhotoRgb, width, height);
           normalizedDecoded.linearProPhotoRgb = null;
@@ -2072,10 +2225,9 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
           rgb = new cv.Mat();
           cv.cvtColor(rgba, rgb, cv.COLOR_RGBA2RGB);
         }
-        const grayBytes = gray ? copyMatBytes(gray, width * height) : null;
         let mergeSource = linearRgb || rgb;
 
-        if (index === 0) {
+        if (index === alignmentReferenceIndex) {
           alignmentMatrices[index] = identityAlignmentMatrix();
           alignedIndices.add(index);
           if (needsAlignment) {
@@ -2089,36 +2241,31 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
             const initialized = await initializeAlignmentReference(
               alignmentWorkers,
               alignmentAlgorithm,
-              width,
-              height,
-              grayBytes,
-              inputInfo.exposureScalar,
+              alignmentFrame,
             );
-            firstAlignmentReferenceGrayBytes = new Uint8Array(grayBytes);
-            firstAlignmentReferenceExposureScalar = inputInfo.exposureScalar;
-            firstAlignmentReferenceAlgorithm = initialized.algorithm;
+            alignmentReferenceFrame = alignmentFrame;
+            alignmentReferenceAlgorithm = initialized.algorithm;
+            console.info(
+              `Alignment frame cache: ${alignmentFrame.width}x${alignmentFrame.height} ` +
+              `(${alignmentFrame.grayBytes.byteLength} bytes/image, full=${width}x${height}).`,
+            );
             logAlignmentReady(initialized.algorithm, initialized.ready);
           } else {
             setProgress(`Applying ${formatAlignmentModeName(alignmentPlan.normalizationMode)} alignment...`);
           }
         } else if (needsAlignment) {
-          setProgress(`Aligning image ${index + 1}/${files.length} with ${alignmentAlgorithm} feature matching...`);
-          const retryGrayBytes = new Uint8Array(grayBytes);
+          setProgress(`Aligning image ${processingPosition + 1}/${files.length} with ${alignmentAlgorithm} feature matching...`);
           try {
             const aligned = await alignWithFallback(
               alignmentWorkers,
-              firstAlignmentReferenceAlgorithm || alignmentAlgorithm,
+              alignmentReferenceAlgorithm || alignmentAlgorithm,
               {
-                algorithm: firstAlignmentReferenceAlgorithm || alignmentAlgorithm,
-                width,
-                height,
-                grayBytes: firstAlignmentReferenceGrayBytes,
-                exposureScalar: firstAlignmentReferenceExposureScalar,
+                algorithm: alignmentReferenceAlgorithm || alignmentAlgorithm,
+                frame: alignmentReferenceFrame,
               },
               index,
               file.name,
-              grayBytes,
-              inputInfo.exposureScalar,
+              alignmentFrame,
             );
             logAlignmentResult(aligned.algorithm, file.name, aligned.result);
             alignmentMatrices[index] = aligned.result.matrix;
@@ -2155,13 +2302,12 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
             const initialError = error instanceof Error ? error.message : String(error);
             deferredAlignments.push({
               index,
-              grayBytes: retryGrayBytes,
               initialError,
-              attemptedReferences: new Set([0]),
+              attemptedReferences: new Set([alignmentReferenceIndex]),
               attempts: [],
             });
             console.warn(
-              `${file.name}: alignment against the first image failed; deferring until the initial pass completes: ${initialError}`,
+              `${file.name}: alignment against the reference image failed; deferring until the initial pass completes: ${initialError}`,
             );
           }
         }
@@ -2233,7 +2379,6 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
         if (alignedRgb) alignedRgb.delete();
         if (linearRgb) linearRgb.delete();
         if (rgb) rgb.delete();
-        if (gray) gray.delete();
         rgba.delete();
       }
 
@@ -2247,13 +2392,9 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
 
     if (deferredAlignments.length > 0) {
       await recoverDeferredAlignments(
-        cv,
         alignmentWorkers,
         files,
-        inputInfos,
-        width,
-        height,
-        alignmentPlan,
+        alignmentFrames,
         alignmentAlgorithm,
         alignmentMatrices,
         alignedIndices,
@@ -2377,13 +2518,9 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
 }
 
 async function recoverDeferredAlignments(
-  cv,
   alignmentWorkers,
   files,
-  inputInfos,
-  width,
-  height,
-  alignmentPlan,
+  alignmentFrames,
   alignmentAlgorithm,
   alignmentMatrices,
   alignedIndices,
@@ -2418,36 +2555,26 @@ async function recoverDeferredAlignments(
         );
 
         try {
-          const referenceGrayBytes = await decodeAlignmentGrayBytes(
-            cv,
-            referenceFile,
-            inputInfos[referenceIndex],
-            width,
-            height,
-            alignmentPlan.normalizationMode,
-          );
+          const referenceFrame = alignmentFrames[referenceIndex];
+          const targetFrame = alignmentFrames[entry.index];
+          if (!referenceFrame || !targetFrame) {
+            throw new Error("Cached alignment frame is unavailable.");
+          }
           const initialized = await initializeAlignmentReference(
             alignmentWorkers,
             alignmentAlgorithm,
-            width,
-            height,
-            referenceGrayBytes,
-            inputInfos[referenceIndex].exposureScalar,
+            referenceFrame,
           );
           const aligned = await alignWithFallback(
             alignmentWorkers,
             initialized.algorithm,
             {
               algorithm: initialized.algorithm,
-              width,
-              height,
-              grayBytes: referenceGrayBytes,
-              exposureScalar: inputInfos[referenceIndex].exposureScalar,
+              frame: referenceFrame,
             },
             entry.index,
             targetFile.name,
-            entry.grayBytes,
-            inputInfos[entry.index].exposureScalar,
+            targetFrame,
           );
           const composedMatrix = multiplyAlignmentMatrices(
             alignmentMatrices[referenceIndex],
@@ -2469,7 +2596,7 @@ async function recoverDeferredAlignments(
             `local to ${referenceFile.name}`,
           );
           console.info(
-            `${targetFile.name}: composed transform to first image, ${describeAlignmentMatrix(composedMatrix)}`,
+            `${targetFile.name}: composed transform to alignment reference, ${describeAlignmentMatrix(composedMatrix)}`,
           );
           break;
         } catch (error) {
@@ -2481,46 +2608,6 @@ async function recoverDeferredAlignments(
         }
       }
     }
-  }
-}
-
-async function decodeAlignmentGrayBytes(
-  cv,
-  file,
-  inputInfo,
-  expectedWidth,
-  expectedHeight,
-  normalizationMode = "feature-match",
-) {
-  setProgress(`Preparing alternate alignment reference ${file.name}...`);
-  const decoded = await decodeFileToDecodedImage(file, inputInfo);
-  const normalizedDecoded = normalizeDecodedImageForAlignment(
-    cv,
-    decoded,
-    normalizationMode,
-    expectedWidth,
-    expectedHeight,
-  );
-  let imageData = normalizedDecoded.alignmentImageData || normalizedDecoded.imageData;
-  const decodedWidth = normalizedDecoded.width || imageData.width;
-  const decodedHeight = normalizedDecoded.height || imageData.height;
-
-  if (decodedWidth !== expectedWidth || decodedHeight !== expectedHeight) {
-    throw new Error(
-      `${file.name} is ${decodedWidth}x${decodedHeight}, expected ${expectedWidth}x${expectedHeight}.`,
-    );
-  }
-
-  const rgba = cv.matFromImageData(imageData);
-  if (normalizedDecoded.alignmentImageData) normalizedDecoded.alignmentImageData = null;
-  imageData = null;
-  const gray = new cv.Mat();
-  try {
-    cv.cvtColor(rgba, gray, cv.COLOR_RGBA2GRAY);
-    return copyMatBytes(gray, expectedWidth * expectedHeight);
-  } finally {
-    gray.delete();
-    rgba.delete();
   }
 }
 
@@ -2560,7 +2647,7 @@ async function mergeDeferredAlignedImage(
 
   if (decodedWidth !== width || decodedHeight !== height) {
     throw new Error(
-      `${file.name} is ${decodedWidth}x${decodedHeight}, but the first image is ${width}x${height}. ` +
+      `${file.name} is ${decodedWidth}x${decodedHeight}, but the alignment reference is ${width}x${height}. ` +
       "All input images must have identical dimensions after alignment normalization."
     );
   }
@@ -3596,15 +3683,22 @@ function logAlignmentResult(algorithm, fileName, result, context = "") {
 function logEccAlignmentResult(fileName, result, context = "") {
   const contextDetail = context ? ` (${context})` : "";
   const correlation = Number(result.correlation);
+  const initialCorrelation = Number(result.initialCorrelation);
+  const correlationImprovement = Number(result.correlationImprovement);
   const correlationDetail = Number.isFinite(correlation) ? correlation.toFixed(6) : "n/a";
+  const confidenceDetail = Number.isFinite(initialCorrelation) && Number.isFinite(correlationImprovement)
+    ? `, correlation=${initialCorrelation.toFixed(6)}->${correlationDetail} ` +
+      `(delta=${correlationImprovement >= 0 ? "+" : ""}${correlationImprovement.toFixed(6)})`
+    : "";
   const preprocessingDetail = Number.isFinite(result.referenceExposureGain) && Number.isFinite(result.targetExposureGain)
     ? `, preprocess=${result.exposureMatchSource || "unknown"} midpoint ` +
       `gains(ref=${result.referenceExposureGain.toFixed(3)}, target=${result.targetExposureGain.toFixed(3)}), ` +
       `mask=${(Number(result.maskCoverage) * 100).toFixed(1)}%`
     : "";
   console.info(
-    `${fileName}${contextDetail}: ECC correlation=${correlationDetail}, model=affine, ` +
-    `working=${result.workingWidth}x${result.workingHeight}, pyramid=${result.pyramidLevels}, ` +
+    `${fileName}${contextDetail}: ECC model=affine, ` +
+    `working=${result.workingWidth}x${result.workingHeight}, pyramid=${result.pyramidLevels}` +
+    `${confidenceDetail}, ` +
     `scale=(${Number(result.scaleX).toFixed(4)}, ${Number(result.scaleY).toFixed(4)}), ` +
     `shearCos=${Number(result.shearCosine).toFixed(4)}, ` +
     `translation=${(Number(result.translationRatio) * 100).toFixed(2)}% diagonal` +
@@ -3768,279 +3862,27 @@ function createHdrDebevecReinhardStreamWorker(
   exposureTimes,
   linearResponseFlags = null,
 ) {
-  const workerUrl = new URL("/generated/local-stack-studio/hdr.worker.js", window.location.origin);
-  const worker = new Worker(workerUrl);
-  let terminated = false;
-  let settled = false;
-  let nextRequestId = 1;
-  const pending = new Map();
-
-  const failAll = (error) => {
-    for (const request of pending.values()) request.reject(error);
-    pending.clear();
-  };
-  const cleanup = () => {
-    if (terminated) return;
-    terminated = true;
-    worker.terminate();
-  };
-  const request = (type, payload, transfer, expectedType) => new Promise((resolve, reject) => {
-    if (terminated) {
-      reject(new Error("HDR1 stream worker is no longer available."));
-      return;
-    }
-    const requestId = nextRequestId++;
-    pending.set(requestId, { resolve, reject, expectedType });
-    try {
-      worker.postMessage({ type, requestId, ...payload }, transfer);
-    } catch (error) {
-      pending.delete(requestId);
-      reject(error);
-    }
-  });
-
-  worker.onmessage = (event) => {
-    const message = event.data || {};
-    if (message.type === "progress") {
-      if (message.message) setProgress(message.message);
-      return;
-    }
-    if (message.type === "error") {
-      if (settled) return;
-      settled = true;
-      const error = new Error(message.message || "HDR1 stream worker failed.");
-      failAll(error);
-      cleanup();
-      return;
-    }
-    const pendingRequest = pending.get(message.requestId);
-    if (!pendingRequest) return;
-    if (message.type !== pendingRequest.expectedType) {
-      const error = new Error(
-        `HDR1 stream worker returned ${message.type || "an unknown message"}; expected ${pendingRequest.expectedType}.`,
-      );
-      pending.delete(message.requestId);
-      pendingRequest.reject(error);
-      return;
-    }
-    pending.delete(message.requestId);
-    if (message.type === "result") {
-      settled = true;
-      const result = new Float32Array(message.linearProPhotoBuffer);
-      pendingRequest.resolve(result);
-      cleanup();
-      return;
-    }
-    pendingRequest.resolve(message);
-  };
-  worker.onerror = (event) => {
-    if (settled) return;
-    settled = true;
-    const detail = event.message ? `: ${event.message}` : "";
-    const error = new Error(`Failed to start HDR1 stream worker ${workerUrl.pathname}${detail}`);
-    failAll(error);
-    cleanup();
-  };
-  worker.onmessageerror = () => {
-    if (settled) return;
-    settled = true;
-    const error = new Error(`HDR1 stream worker ${workerUrl.pathname} returned an unreadable message.`);
-    failAll(error);
-    cleanup();
-  };
-
-  const times = exposureTimes ? new Float32Array(exposureTimes) : new Float32Array(0);
-  const flags = linearResponseFlags
-    ? new Uint8Array(linearResponseFlags)
-    : new Uint8Array(imageCount).fill(1);
-  const ready = request(
-    "merge-stream-init",
-    {
-      width,
-      height,
-      imageCount,
-      exposureTimesBuffer: times.buffer,
-      linearResponseFlagsBuffer: flags.buffer,
-    },
-    [times.buffer, flags.buffer],
-    "merge-stream-ready",
+  return createHdrDebevecReinhardStreamWorkerClient(
+    new URL("/generated/local-stack-studio/hdr.worker.js", window.location.origin),
+    setProgress,
+    width,
+    height,
+    imageCount,
+    exposureTimes,
+    linearResponseFlags,
   );
-
-  return {
-    async addImage(index, image, brightness) {
-      await ready;
-      if (!(image instanceof Float32Array)) {
-        throw new Error("HDR1 stream input is not a Float32 RGB buffer.");
-      }
-      const imageBuffer = image.buffer;
-      await request(
-        "merge-stream-image",
-        { imageIndex: index, brightness, imageBuffer },
-        [imageBuffer],
-        "merge-stream-image-stored",
-      );
-    },
-    async finalize() {
-      await ready;
-      setProgress("Merging HDR1 with Debevec radiance recovery...");
-      return await request("merge-stream-finalize", {}, [], "result");
-    },
-    terminate() {
-      if (terminated || settled) return;
-      const error = new Error("HDR1 stream worker was terminated.");
-      failAll(error);
-      const requestId = nextRequestId++;
-      try {
-        worker.postMessage({ type: "merge-stream-abort", requestId });
-      } catch {
-        cleanup();
-        return;
-      }
-      const timeout = setTimeout(cleanup, 1000);
-      const previousOnMessage = worker.onmessage;
-      worker.onmessage = (event) => {
-        const message = event.data || {};
-        if (message.type === "merge-stream-aborted" && message.requestId === requestId) {
-          clearTimeout(timeout);
-          cleanup();
-          return;
-        }
-        previousOnMessage?.(event);
-      };
-    },
-  };
 }
 
 function createHdrMertensStreamWorker(width, height, imageCount) {
-  const workerUrl = new URL("/generated/local-stack-studio/hdr.worker.js", window.location.origin);
-  const worker = new Worker(workerUrl);
-  let terminated = false;
-  let settled = false;
-  let nextRequestId = 1;
-  const pending = new Map();
-
-  const failAll = (error) => {
-    for (const request of pending.values()) request.reject(error);
-    pending.clear();
-  };
-  const cleanup = () => {
-    if (terminated) return;
-    terminated = true;
-    worker.terminate();
-  };
-  const request = (type, payload, transfer, expectedType) => new Promise((resolve, reject) => {
-    if (terminated) {
-      reject(new Error("HDR2 stream worker is no longer available."));
-      return;
-    }
-    const requestId = nextRequestId++;
-    pending.set(requestId, { resolve, reject, expectedType });
-    try {
-      worker.postMessage({ type, requestId, ...payload }, transfer);
-    } catch (error) {
-      pending.delete(requestId);
-      reject(error);
-    }
-  });
-
-  worker.onmessage = (event) => {
-    const message = event.data || {};
-    if (message.type === "progress") {
-      if (message.message) setProgress(message.message);
-      return;
-    }
-    if (message.type === "error") {
-      const error = new Error(message.message || "HDR2 Mertens stream worker failed.");
-      failAll(error);
-      settled = true;
-      cleanup();
-      return;
-    }
-    const requestId = Number(message.requestId);
-    if (!Number.isInteger(requestId)) return;
-    const pendingRequest = pending.get(requestId);
-    if (!pendingRequest || message.type !== pendingRequest.expectedType) return;
-    pending.delete(requestId);
-    if (message.type === "mertens-result") {
-      settled = true;
-      const result = new Float32Array(message.gamma2Buffer);
-      pendingRequest.resolve(result);
-      cleanup();
-      return;
-    }
-    pendingRequest.resolve(message);
-  };
-  worker.onerror = (event) => {
-    if (terminated) return;
-    const error = new Error(event.message || `HDR2 Mertens stream worker ${workerUrl.pathname} failed.`);
-    failAll(error);
-    settled = true;
-    cleanup();
-  };
-  worker.onmessageerror = () => {
-    if (terminated) return;
-    const error = new Error(`HDR2 Mertens stream worker ${workerUrl.pathname} returned an unreadable message.`);
-    failAll(error);
-    settled = true;
-    cleanup();
-  };
-
-  const ready = request(
-    "mertens-stream-init",
-    {
-      width,
-      height,
-      imageCount,
-      saturationWeight: SINGLE_SHOT_HDR_SATURATION_WEIGHT,
-      exposureWeight: SINGLE_SHOT_HDR_EXPOSURE_WEIGHT,
-    },
-    [],
-    "mertens-stream-ready",
+  return createHdrMertensStreamWorkerClient(
+    new URL("/generated/local-stack-studio/hdr.worker.js", window.location.origin),
+    setProgress,
+    width,
+    height,
+    imageCount,
+    SINGLE_SHOT_HDR_SATURATION_WEIGHT,
+    SINGLE_SHOT_HDR_EXPOSURE_WEIGHT,
   );
-
-  return {
-    async addImage(index, image, brightness) {
-      await ready;
-      if (!(image instanceof Float32Array)) {
-        throw new Error("HDR2 stream input is not a Float32 RGB buffer.");
-      }
-      const imageBuffer = image.buffer;
-      await request(
-        "mertens-stream-image",
-        { imageIndex: index, brightness, imageBuffer },
-        [imageBuffer],
-        "mertens-stream-image-stored",
-      );
-    },
-    async finalize() {
-      await ready;
-      setProgress("Merging HDR2 with Mertens exposure fusion...");
-      return await request("mertens-stream-finalize", {}, [], "mertens-result");
-    },
-    terminate() {
-      if (terminated || settled) return;
-      const error = new Error("HDR2 stream worker was terminated.");
-      failAll(error);
-      const requestId = nextRequestId++;
-      try {
-        worker.postMessage({ type: "mertens-stream-abort", requestId });
-      } catch {
-        cleanup();
-        return;
-      }
-      const timeout = setTimeout(cleanup, 1000);
-      const previousOnMessage = worker.onmessage;
-      worker.onmessage = (event) => {
-        const message = event.data || {};
-        if (message.type === "mertens-stream-aborted" && message.requestId === requestId) {
-          clearTimeout(timeout);
-          cleanup();
-          return;
-        }
-        previousOnMessage?.(event);
-      };
-    },
-  };
 }
 
 async function processSingleInputHdrWithOpenCv(cv, file, inputInfo, mergePlan, outputColorSpace) {

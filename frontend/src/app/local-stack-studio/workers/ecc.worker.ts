@@ -1,10 +1,47 @@
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-nocheck
 // Local Stack Studio ECC alignment worker. Built to public/generated/local-stack-studio.
-import { loadWorkerOpenCv } from "./opencv-runtime";
+import {
+  loadWorkerOpenCv,
+  type OpenCvDynamic,
+  type OpenCvRuntime,
+} from "./opencv-runtime";
+import {
+  positiveExposureOrNull,
+  prepareAlignmentExposurePair,
+  type AlignmentExposureMatchSource,
+} from "./alignment-preprocess";
+import { transferableBuffer } from "./transfer-buffer";
+import type {
+  AlignmentInitRequest,
+  AlignmentWorkerRequest,
+  EccReadyResponse,
+  EccResultResponse,
+  EccWorkerResponse,
+} from "./protocols/alignment-protocol";
 
 (() => {
   "use strict";
+
+  type WorkerScope = {
+    onmessage: ((event: MessageEvent<AlignmentWorkerRequest>) => void | Promise<void>) | null;
+    postMessage: (message: EccWorkerResponse, transfer?: Transferable[]) => void;
+  };
+  const workerScope = globalThis as unknown as WorkerScope;
+
+  type EccPreprocessing = {
+    referenceBytes: Uint8Array;
+    targetBytes: Uint8Array;
+    maskBytes: Uint8Array;
+    maskCoverage: number;
+    referenceExposureGain: number;
+    targetExposureGain: number;
+    exposureMatchSource: AlignmentExposureMatchSource;
+  };
+  type EccTransformMetrics = {
+    scaleX: number;
+    scaleY: number;
+    shearCosine: number;
+    translationRatio: number;
+  };
 
   const ECC_BASE_AREA = 1_000_000;
   const ECC_MAX_PYRAMID_DOWNSAMPLES = 3;
@@ -16,38 +53,41 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
   const ECC_MAX_SCALE_DEVIATION = 0.25;
   const ECC_MAX_SHEAR_COSINE = 0.30;
   const ECC_MAX_TRANSLATION_DIAGONAL_RATIO = 0.35;
-  const ALIGNMENT_EXPOSURE_MAX_GAIN = 16;
-  const ALIGNMENT_EXPOSURE_SAMPLE_LIMIT = 65536;
-  const ALIGNMENT_EXPOSURE_ROLLOFF_A = 0.5;
-  const ALIGNMENT_EXPOSURE_ROLLOFF_OUTPUT_MAX = 1;
-  const ALIGNMENT_EXPOSURE_ROLLOFF_SAVING_LIMIT_FACTOR = 4;
+  const ECC_MIN_FINAL_CORRELATION = 0.65;
+  const ECC_HIGH_INITIAL_CORRELATION = 0.90;
+  const ECC_MIN_CORRELATION_IMPROVEMENT = 0.01;
+  const ECC_MAX_CORRELATION_REGRESSION = 0.002;
+  const ECC_IDENTITY_TRANSLATION_RATIO = 0.001;
+  const ECC_IDENTITY_SCALE_DEVIATION = 0.0015;
+  const ECC_IDENTITY_SHEAR_COSINE = 0.002;
+  const ECC_IDENTITY_ROTATION_RADIANS = 0.001;
   const ECC_MASK_LOW_BYTE = 5;
   const ECC_MASK_HIGH_BYTE = 250;
   const ECC_MIN_MASK_RATIO = 0.02;
   const ECC_MIN_MASK_PIXELS = 1024;
-  const SRGB_TO_LINEAR_LUT = buildSrgbToLinearLut();
 
-  let cv = null;
+  let cv: OpenCvRuntime;
   let width = 0;
   let height = 0;
   let workingWidth = 0;
   let workingHeight = 0;
-  let referenceGrayBytes = null;
-  let referenceExposureScalar = null;
+  let referenceGrayBytes: Uint8Array | null = null;
+  let referenceExposureScalar: number | null = null;
   let ready = false;
 
-  self.onmessage = async (event) => {
-    const message = event.data || {};
+  workerScope.onmessage = async (event: MessageEvent<AlignmentWorkerRequest>) => {
+    const message = event.data;
     try {
       if (message.type === "init") {
         const result = await initialize(message);
-        self.postMessage({
+        const response: EccReadyResponse = {
           type: "ready",
           requestId: message.requestId,
           workingWidth: result.workingWidth,
           workingHeight: result.workingHeight,
           pyramidLevels: result.pyramidLevels,
-        });
+        };
+        workerScope.postMessage(response);
         return;
       }
 
@@ -58,14 +98,16 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
           message.fileName || `image ${message.id}`,
           message.exposureScalar,
         );
-        self.postMessage(
-          {
+        const matrixBuffer = transferableBuffer(result.matrix);
+        const response: EccResultResponse = {
             type: "result",
             requestId: message.requestId,
             id: message.id,
             fileName: message.fileName,
-            matrixBuffer: result.matrix.buffer,
+            matrixBuffer,
             correlation: result.correlation,
+            initialCorrelation: result.initialCorrelation,
+            correlationImprovement: result.correlationImprovement,
             workingWidth,
             workingHeight,
             pyramidLevels: result.pyramidLevels,
@@ -77,21 +119,20 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
             targetExposureGain: result.targetExposureGain,
             exposureMatchSource: result.exposureMatchSource,
             maskCoverage: result.maskCoverage,
-          },
-          [result.matrix.buffer],
-        );
+          };
+        workerScope.postMessage(response, [matrixBuffer]);
       }
     } catch (error) {
-      self.postMessage({
+      workerScope.postMessage({
         type: "error",
-        requestId: typeof message.requestId === "number" ? message.requestId : null,
-        id: typeof message.id === "number" ? message.id : null,
+        requestId: message.requestId,
+        id: message.type === "align" ? message.id : null,
         message: error instanceof Error ? error.message : String(error),
       });
     }
   };
 
-  async function initialize(message) {
+  async function initialize(message: AlignmentInitRequest) {
     cleanup();
     width = Number(message.width);
     height = Number(message.height);
@@ -119,12 +160,13 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     };
   }
 
-  function alignTarget(grayBuffer, fileName, targetExposureScalar) {
+  function alignTarget(grayBuffer: ArrayBuffer, fileName: string, targetExposureScalar: number | null) {
     const bytes = new Uint8Array(grayBuffer);
     if (bytes.length !== width * height) {
       throw new Error(`Invalid ECC target grayscale buffer size for ${fileName}: ${bytes.length} vs ${width * height}.`);
     }
 
+    if (!referenceGrayBytes) throw new Error("ECC reference grayscale buffer is unavailable.");
     const preprocessing = prepareEccPair(
       referenceGrayBytes,
       bytes,
@@ -134,16 +176,26 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     const referencePyramid = buildEccPyramid(preprocessing.referenceBytes);
     const targetPyramid = buildEccPyramid(preprocessing.targetBytes);
     const maskPyramid = buildMaskPyramid(preprocessing.maskBytes);
-    let warp = null;
+    let warp: OpenCvDynamic | null = null;
     let lastWidth = 0;
     let lastHeight = 0;
     let correlation = NaN;
+    let initialCorrelation = NaN;
     try {
       if (
         targetPyramid.length !== referencePyramid.length ||
         maskPyramid.length !== referencePyramid.length
       ) {
         throw new Error("ECC reference, target, and mask pyramids do not match.");
+      }
+
+      initialCorrelation = computeInitialEccCorrelation(
+        referencePyramid[0],
+        targetPyramid[0],
+        maskPyramid[0],
+      );
+      if (!Number.isFinite(initialCorrelation)) {
+        throw new Error(`${fileName} ECC could not measure the initial image correlation.`);
       }
 
       for (let level = referencePyramid.length - 1; level >= 0; level -= 1) {
@@ -174,9 +226,18 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
       );
       const targetToReference = invertAffineMatrix3x3(fullForward);
       const metrics = validateEccTransform(targetToReference, width, height, fileName);
+      const correlationImprovement = validateEccConfidence(
+        initialCorrelation,
+        correlation,
+        targetToReference,
+        metrics,
+        fileName,
+      );
       return {
         matrix: new Float64Array(targetToReference),
         correlation,
+        initialCorrelation,
+        correlationImprovement,
         pyramidLevels: referencePyramid.length,
         referenceExposureGain: preprocessing.referenceExposureGain,
         targetExposureGain: preprocessing.targetExposureGain,
@@ -192,135 +253,36 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     }
   }
 
-  function prepareEccPair(referenceBytes, targetBytes, referenceExposure, targetExposure) {
-    const exposure = resolvePairExposure(referenceBytes, targetBytes, referenceExposure, targetExposure);
-    const referenceAdjusted = applyExposureToGrayBytes(referenceBytes, exposure.referenceGain);
-    const targetAdjusted = applyExposureToGrayBytes(targetBytes, exposure.targetGain);
-    const maskBytes = buildEccPairMask(referenceBytes, targetBytes, referenceAdjusted, targetAdjusted);
+  function prepareEccPair(
+    referenceBytes: Uint8Array,
+    targetBytes: Uint8Array,
+    referenceExposure: number | null,
+    targetExposure: number | null,
+  ): EccPreprocessing {
+    const exposure = prepareAlignmentExposurePair(
+      referenceBytes,
+      targetBytes,
+      referenceExposure,
+      targetExposure,
+    );
+    const maskBytes = buildEccPairMask(
+      referenceBytes,
+      targetBytes,
+      exposure.referenceBytes,
+      exposure.targetBytes,
+    );
     return {
-      referenceBytes: referenceAdjusted,
-      targetBytes: targetAdjusted,
+      referenceBytes: exposure.referenceBytes,
+      targetBytes: exposure.targetBytes,
       maskBytes,
       maskCoverage: countMaskCoverage(maskBytes),
-      referenceExposureGain: exposure.referenceGain,
-      targetExposureGain: exposure.targetGain,
-      exposureMatchSource: exposure.source,
+      referenceExposureGain: exposure.referenceExposureGain,
+      targetExposureGain: exposure.targetExposureGain,
+      exposureMatchSource: exposure.exposureMatchSource,
     };
   }
 
-  function resolvePairExposure(referenceBytes, targetBytes, referenceExposure, targetExposure) {
-    let referenceLevel;
-    let targetLevel;
-    let source;
-
-    if (positiveExposureOrNull(referenceExposure) && positiveExposureOrNull(targetExposure)) {
-      referenceLevel = referenceExposure;
-      targetLevel = targetExposure;
-      source = "metadata";
-    } else {
-      referenceLevel = estimateRobustExposureLevel(referenceBytes);
-      targetLevel = estimateRobustExposureLevel(targetBytes);
-      source = "image-statistics";
-    }
-
-    if (!(referenceLevel > 0 && targetLevel > 0)) {
-      return { referenceGain: 1, targetGain: 1, source: "none" };
-    }
-
-    const midpoint = Math.sqrt(referenceLevel * targetLevel);
-    return {
-      referenceGain: clampExposureGain(midpoint / referenceLevel),
-      targetGain: clampExposureGain(midpoint / targetLevel),
-      source,
-    };
-  }
-
-  function positiveExposureOrNull(value) {
-    const number = Number(value);
-    return Number.isFinite(number) && number > 0 ? number : null;
-  }
-
-  function clampExposureGain(gain) {
-    if (!(Number.isFinite(gain) && gain > 0)) return 1;
-    return Math.max(1 / ALIGNMENT_EXPOSURE_MAX_GAIN, Math.min(ALIGNMENT_EXPOSURE_MAX_GAIN, gain));
-  }
-
-  function estimateRobustExposureLevel(bytes) {
-    const histogram = buildSampledByteHistogram(bytes);
-    let total = 0;
-    for (let value = 1; value < 255; value += 1) total += histogram[value];
-    if (total <= 0) return 0;
-
-    const targetRank = Math.max(1, Math.ceil(total * 0.60));
-    let cumulative = 0;
-    for (let value = 1; value < 255; value += 1) {
-      cumulative += histogram[value];
-      if (cumulative >= targetRank) {
-        return Math.max(SRGB_TO_LINEAR_LUT[value], 1e-6);
-      }
-    }
-    return Math.max(SRGB_TO_LINEAR_LUT[254], 1e-6);
-  }
-
-  function buildSampledByteHistogram(bytes) {
-    const histogram = new Uint32Array(256);
-    const stride = Math.max(1, Math.ceil(bytes.length / ALIGNMENT_EXPOSURE_SAMPLE_LIMIT));
-    const offset = Math.floor(stride / 2);
-    for (let i = offset; i < bytes.length; i += stride) histogram[bytes[i]] += 1;
-    return histogram;
-  }
-
-  function estimateScaledLinearPercentile(bytes, gain, q) {
-    const histogram = buildSampledByteHistogram(bytes);
-    let total = 0;
-    for (let value = 0; value < 256; value += 1) total += histogram[value];
-    if (total <= 0) return 0;
-    const rank = Math.max(1, Math.ceil(total * Math.max(0, Math.min(1, q))));
-    let cumulative = 0;
-    for (let value = 0; value < 256; value += 1) {
-      cumulative += histogram[value];
-      if (cumulative >= rank) return SRGB_TO_LINEAR_LUT[value] * gain;
-    }
-    return gain;
-  }
-
-  function applyExposureToGrayBytes(bytes, gain) {
-    const adjustedGain = clampExposureGain(gain);
-    const maxVal = adjustedGain > 1 ? estimateScaledLinearPercentile(bytes, adjustedGain, 0.998) : 0;
-    const rolloff = alignmentExposureRolloffParams(maxVal);
-    const lut = new Uint8Array(256);
-    for (let value = 0; value < 256; value += 1) {
-      let linear = SRGB_TO_LINEAR_LUT[value] * adjustedGain;
-      if (rolloff) linear = applyAlignmentExposureRolloffScalar(linear, rolloff);
-      lut[value] = linearToSrgbByte(linear);
-    }
-    const output = new Uint8Array(bytes.length);
-    for (let i = 0; i < bytes.length; i += 1) output[i] = lut[bytes[i]];
-    return output;
-  }
-
-  function alignmentExposureRolloffParams(maxVal) {
-    if (!(Number.isFinite(maxVal) && maxVal > 1)) return null;
-    const outputMax = ALIGNMENT_EXPOSURE_ROLLOFF_OUTPUT_MAX;
-    const savingLimitValue = outputMax * ALIGNMENT_EXPOSURE_ROLLOFF_SAVING_LIMIT_FACTOR;
-    let a = ALIGNMENT_EXPOSURE_ROLLOFF_A;
-    if (maxVal > savingLimitValue) {
-      a = Math.pow(a / outputMax, savingLimitValue / maxVal) * outputMax;
-    }
-    const inflection = a + (outputMax - a) * outputMax / maxVal;
-    if (!(outputMax > inflection)) return null;
-    return { inflection, inputMax: maxVal, outputMax };
-  }
-
-  function applyAlignmentExposureRolloffScalar(value, rolloff) {
-    if (!rolloff || !Number.isFinite(value) || value <= rolloff.inflection) return value;
-    const shoulder = rolloff.outputMax - rolloff.inflection;
-    if (!(shoulder > 0)) return value;
-    return rolloff.inflection
-      + shoulder * (1 - Math.exp(-(value - rolloff.inflection) / shoulder));
-  }
-
-  function buildEccPairMask(referenceOriginal, targetOriginal, referenceAdjusted, targetAdjusted) {
+  function buildEccPairMask(referenceOriginal: Uint8Array, targetOriginal: Uint8Array, referenceAdjusted: Uint8Array, targetAdjusted: Uint8Array): Uint8Array {
     const mask = new Uint8Array(referenceOriginal.length);
     let valid = 0;
     for (let i = 0; i < mask.length; i += 1) {
@@ -339,11 +301,11 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     return mask;
   }
 
-  function isUsableEccMaskValue(value) {
+  function isUsableEccMaskValue(value: number): boolean {
     return value >= ECC_MASK_LOW_BYTE && value <= ECC_MASK_HIGH_BYTE;
   }
 
-  function countMaskCoverage(maskBytes) {
+  function countMaskCoverage(maskBytes: Uint8Array): number {
     let valid = 0;
     for (let i = 0; i < maskBytes.length; i += 1) {
       if (maskBytes[i] > 0) valid += 1;
@@ -351,7 +313,100 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     return valid / Math.max(maskBytes.length, 1);
   }
 
-  function runFindTransformEcc(reference, target, warp, mask) {
+  function computeInitialEccCorrelation(reference: OpenCvDynamic, target: OpenCvDynamic, mask: OpenCvDynamic): number {
+    if (ECC_GAUSSIAN_FILTER_SIZE <= 1) {
+      return computeMaskedCorrelation(reference, target, mask);
+    }
+    const referenceFiltered = new cv.Mat();
+    const targetFiltered = new cv.Mat();
+    const kernel = new cv.Size(ECC_GAUSSIAN_FILTER_SIZE, ECC_GAUSSIAN_FILTER_SIZE);
+    const borderType = cv.BORDER_DEFAULT !== undefined ? cv.BORDER_DEFAULT : 4;
+    try {
+      cv.GaussianBlur(reference, referenceFiltered, kernel, 0, 0, borderType);
+      cv.GaussianBlur(target, targetFiltered, kernel, 0, 0, borderType);
+      return computeMaskedCorrelation(referenceFiltered, targetFiltered, mask);
+    } finally {
+      targetFiltered.delete();
+      referenceFiltered.delete();
+    }
+  }
+
+  function computeMaskedCorrelation(reference: OpenCvDynamic, target: OpenCvDynamic, mask: OpenCvDynamic): number {
+    if (
+      reference.rows !== target.rows || reference.cols !== target.cols ||
+      reference.rows !== mask.rows || reference.cols !== mask.cols
+    ) {
+      throw new Error("ECC correlation inputs do not have matching dimensions.");
+    }
+    const referenceData = reference.data;
+    const targetData = target.data;
+    const maskData = mask.data;
+    let count = 0;
+    let sumReference = 0;
+    let sumTarget = 0;
+    let sumReferenceSq = 0;
+    let sumTargetSq = 0;
+    let sumProduct = 0;
+    for (let i = 0; i < referenceData.length; i += 1) {
+      if (maskData[i] === 0) continue;
+      const referenceValue = referenceData[i];
+      const targetValue = targetData[i];
+      count += 1;
+      sumReference += referenceValue;
+      sumTarget += targetValue;
+      sumReferenceSq += referenceValue * referenceValue;
+      sumTargetSq += targetValue * targetValue;
+      sumProduct += referenceValue * targetValue;
+    }
+    if (count < 2) return NaN;
+    const covariance = count * sumProduct - sumReference * sumTarget;
+    const referenceVariance = count * sumReferenceSq - sumReference * sumReference;
+    const targetVariance = count * sumTargetSq - sumTarget * sumTarget;
+    const denominator = Math.sqrt(Math.max(0, referenceVariance) * Math.max(0, targetVariance));
+    if (!(denominator > 0)) return NaN;
+    return Math.max(-1, Math.min(1, covariance / denominator));
+  }
+
+  function validateEccConfidence(initialCorrelation: number, finalCorrelation: number, matrix: ArrayLike<number>, metrics: EccTransformMetrics, fileName: string): number {
+    if (!(Number.isFinite(initialCorrelation) && Number.isFinite(finalCorrelation))) {
+      throw new Error(`${fileName} ECC correlation confidence is not finite.`);
+    }
+    const improvement = finalCorrelation - initialCorrelation;
+    if (finalCorrelation < ECC_MIN_FINAL_CORRELATION) {
+      throw new Error(
+        `${fileName} ECC correlation is too low (${finalCorrelation.toFixed(4)} < ` +
+        `${ECC_MIN_FINAL_CORRELATION.toFixed(2)}; initial=${initialCorrelation.toFixed(4)}).`,
+      );
+    }
+    if (improvement < -ECC_MAX_CORRELATION_REGRESSION) {
+      throw new Error(
+        `${fileName} ECC reduced correlation (${initialCorrelation.toFixed(4)} -> ` +
+        `${finalCorrelation.toFixed(4)}).`,
+      );
+    }
+
+    const rotationRadians = Math.abs(Math.atan2(matrix[3], matrix[0]));
+    const significantTransform =
+      metrics.translationRatio > ECC_IDENTITY_TRANSLATION_RATIO ||
+      Math.abs(metrics.scaleX - 1) > ECC_IDENTITY_SCALE_DEVIATION ||
+      Math.abs(metrics.scaleY - 1) > ECC_IDENTITY_SCALE_DEVIATION ||
+      metrics.shearCosine > ECC_IDENTITY_SHEAR_COSINE ||
+      rotationRadians > ECC_IDENTITY_ROTATION_RADIANS;
+    if (
+      significantTransform &&
+      initialCorrelation < ECC_HIGH_INITIAL_CORRELATION &&
+      improvement < ECC_MIN_CORRELATION_IMPROVEMENT
+    ) {
+      throw new Error(
+        `${fileName} ECC correlation improvement is too small for a non-trivial transform (` +
+        `${initialCorrelation.toFixed(4)} -> ${finalCorrelation.toFixed(4)}, ` +
+        `delta=${improvement.toFixed(4)}).`,
+      );
+    }
+    return improvement;
+  }
+
+  function runFindTransformEcc(reference: OpenCvDynamic, target: OpenCvDynamic, warp: OpenCvDynamic, mask: OpenCvDynamic): number {
     const criteria = new cv.TermCriteria(
       cv.TermCriteria_COUNT | cv.TermCriteria_EPS,
       ECC_MAX_ITERATIONS,
@@ -372,12 +427,12 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     }
   }
 
-  function buildEccPyramid(grayBytes) {
+  function buildEccPyramid(grayBytes: Uint8Array): OpenCvDynamic[] {
     const source = new cv.Mat(height, width, cv.CV_8UC1);
     source.data.set(grayBytes);
-    const pyramid = [];
-    let resized = null;
-    let smoothed = null;
+    const pyramid: OpenCvDynamic[] = [];
+    let resized: OpenCvDynamic | null = null;
+    let smoothed: OpenCvDynamic | null = null;
     try {
       if (workingWidth === width && workingHeight === height) {
         resized = source.clone();
@@ -419,11 +474,11 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     }
   }
 
-  function buildMaskPyramid(maskBytes) {
+  function buildMaskPyramid(maskBytes: Uint8Array): OpenCvDynamic[] {
     const source = new cv.Mat(height, width, cv.CV_8UC1);
     source.data.set(maskBytes);
-    const pyramid = [];
-    let working = null;
+    const pyramid: OpenCvDynamic[] = [];
+    let working: OpenCvDynamic | null = null;
     try {
       if (workingWidth === width && workingHeight === height) {
         working = source.clone();
@@ -455,12 +510,12 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     }
   }
 
-  function binarizeMaskMatInPlace(mask) {
+  function binarizeMaskMatInPlace(mask: OpenCvDynamic): void {
     const data = mask.data;
     for (let i = 0; i < data.length; i += 1) data[i] = data[i] >= 128 ? 255 : 0;
   }
 
-  function countEccPyramidLevels(baseWidth, baseHeight) {
+  function countEccPyramidLevels(baseWidth: number, baseHeight: number): number {
     let levels = 1;
     let cols = baseWidth;
     let rows = baseHeight;
@@ -475,7 +530,7 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     return levels;
   }
 
-  function eccWorkingDimensions(imageWidth, imageHeight) {
+  function eccWorkingDimensions(imageWidth: number, imageHeight: number): { width: number; height: number } {
     const area = imageWidth * imageHeight;
     if (area <= ECC_BASE_AREA) return { width: imageWidth, height: imageHeight };
     const scale = Math.sqrt(ECC_BASE_AREA / area);
@@ -485,7 +540,7 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     };
   }
 
-  function rescaleAffineWarpInPlace(values, scaleX, scaleY) {
+  function rescaleAffineWarpInPlace(values: Float32Array, scaleX: number, scaleY: number): void {
     if (!values || values.length < 6) throw new Error("ECC affine warp is invalid.");
     if (!(Number.isFinite(scaleX) && scaleX > 0 && Number.isFinite(scaleY) && scaleY > 0)) {
       throw new Error("ECC pyramid scale is invalid.");
@@ -496,7 +551,7 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     values[5] *= scaleY;
   }
 
-  function affine2x3ToMatrix3x3(values) {
+  function affine2x3ToMatrix3x3(values: ArrayLike<number>): number[] {
     if (!values || values.length < 6) throw new Error("ECC returned an invalid affine matrix.");
     return [
       Number(values[0]), Number(values[1]), Number(values[2]),
@@ -505,7 +560,7 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     ];
   }
 
-  function scaleAffineBetweenCoordinateSystems(matrix, scaleX, scaleY) {
+  function scaleAffineBetweenCoordinateSystems(matrix: ArrayLike<number>, scaleX: number, scaleY: number): number[] {
     if (!(Number.isFinite(scaleX) && scaleX > 0 && Number.isFinite(scaleY) && scaleY > 0)) {
       throw new Error("ECC working scale is invalid.");
     }
@@ -516,7 +571,7 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     ];
   }
 
-  function invertAffineMatrix3x3(matrix) {
+  function invertAffineMatrix3x3(matrix: ArrayLike<number>): number[] {
     const a = matrix[0];
     const b = matrix[1];
     const tx = matrix[2];
@@ -539,7 +594,7 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     ];
   }
 
-  function validateEccTransform(matrix, imageWidth, imageHeight, fileName) {
+  function validateEccTransform(matrix: ArrayLike<number>, imageWidth: number, imageHeight: number, fileName: string): EccTransformMetrics {
     for (let i = 0; i < matrix.length; i += 1) {
       if (!Number.isFinite(matrix[i])) {
         throw new Error(`${fileName} ECC produced a non-finite affine transform.`);
@@ -583,27 +638,7 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     return { scaleX, scaleY, shearCosine, translationRatio };
   }
 
-  function buildSrgbToLinearLut() {
-    const lut = new Float32Array(256);
-    for (let value = 0; value < 256; value += 1) {
-      const encoded = value / 255;
-      lut[value] = encoded <= 0.04045
-        ? encoded / 12.92
-        : Math.pow((encoded + 0.055) / 1.055, 2.4);
-    }
-    return lut;
-  }
-
-  function linearToSrgbByte(linear) {
-    if (!(Number.isFinite(linear) && linear > 0)) return 0;
-    if (linear >= 1) return 255;
-    const encoded = linear <= 0.0031308
-      ? linear * 12.92
-      : 1.055 * Math.pow(linear, 1 / 2.4) - 0.055;
-    return Math.max(0, Math.min(255, Math.round(encoded * 255)));
-  }
-
-  function deleteMatArray(mats) {
+  function deleteMatArray(mats: OpenCvDynamic[] | null): void {
     if (!Array.isArray(mats)) return;
     for (const mat of mats) if (mat) mat.delete();
   }
@@ -618,8 +653,8 @@ import { loadWorkerOpenCv } from "./opencv-runtime";
     referenceExposureScalar = null;
   }
 
-  function assertEccApis(runtime) {
-    const missing = [];
+  function assertEccApis(runtime: OpenCvRuntime): void {
+    const missing: string[] = [];
     if (!runtime.findTransformECC) missing.push("findTransformECC");
     if (!runtime.TermCriteria) missing.push("TermCriteria");
     if (runtime.TermCriteria_COUNT === undefined) missing.push("TermCriteria_COUNT");
