@@ -5,6 +5,7 @@ import { buildImageMixerLut } from "./mixer-lut";
 type MixerLutWorkerRequest = {
   id: number;
   key: string;
+  size: number;
   settings: Float32Array;
 };
 
@@ -16,8 +17,8 @@ type MixerLutWorkerResponse = {
 };
 
 self.onmessage = (event: MessageEvent<MixerLutWorkerRequest>) => {
-  const { id, key, settings } = event.data;
-  const lut = buildImageMixerLut(settings, key);
+  const { id, key, size, settings } = event.data;
+  const lut = buildImageMixerLut(settings, key, size);
   const response: MixerLutWorkerResponse = {
     id,
     key: lut.key,
