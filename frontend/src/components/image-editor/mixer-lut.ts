@@ -31,11 +31,11 @@ const PROPHOTO_LUMA_G = 0.7118741;
 const PROPHOTO_LUMA_B = 0.0000857;
 
 // Mixer color centers are 12 equal 30-degree divisions of OKLab hue,
-// globally offset by 22 degrees. The UI palette, picker classification, and
+// globally offset by 22.5 degrees. The UI palette, picker classification, and
 // processing all use this same coordinate system directly.
 const MIXER_COLOR_COUNT = 12;
 const MIXER_HUE_STEP_DEGREES = 360 / MIXER_COLOR_COUNT;
-const MIXER_HUE_OFFSET_DEGREES = 22;
+const MIXER_HUE_OFFSET_DEGREES = 22.5;
 
 export type ImageMixerLut = {
   key: string;
