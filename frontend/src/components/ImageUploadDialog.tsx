@@ -11603,7 +11603,7 @@ function histogramPath(values: number[], maxCount: number, width: number, height
 }
 
 
-type ImageEditPanelKey = "crop" | "whiteBalance" | "tone" | "color" | "finishing";
+type ImageEditPanelKey = "whiteBalance" | "tone" | "color" | "finishing";
 
 type ImageEditUiCollapsePreferences = {
   panels: Record<ImageEditPanelKey, boolean>;
@@ -11613,11 +11613,11 @@ type ImageEditUiCollapsePreferences = {
 const IMAGE_EDIT_UI_COLLAPSE_STORAGE_KEY = "stgy:image-edit-ui-collapse:v1";
 
 function expandedImageEditPanels(): Record<ImageEditPanelKey, boolean> {
-  return { crop: false, whiteBalance: false, tone: false, color: false, finishing: false };
+  return { whiteBalance: false, tone: false, color: false, finishing: false };
 }
 
 function collapsedImageEditPanels(): Record<ImageEditPanelKey, boolean> {
-  return { crop: true, whiteBalance: true, tone: true, color: true, finishing: true };
+  return { whiteBalance: true, tone: true, color: true, finishing: true };
 }
 
 function loadImageEditUiCollapsePreferences(): ImageEditUiCollapsePreferences | null {
@@ -11747,6 +11747,7 @@ export function ImageEditDialog({
   const [containerSize, setContainerSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
   const [displayed, setDisplayed] = useState<EditRect>({ x: 0, y: 0, w: 0, h: 0 });
   const [cropRect, setCropRect] = useState<EditRect>({ x: 0, y: 0, w: 0, h: 0 });
+  const [cropMode, setCropMode] = useState(false);
   const displayedRef = useRef<EditRect>({ x: 0, y: 0, w: 0, h: 0 });
   const cropRectRef = useRef<EditRect>({ x: 0, y: 0, w: 0, h: 0 });
   const layoutInitializedRef = useRef(false);
@@ -15794,6 +15795,7 @@ export function ImageEditDialog({
       natural?.h,
     );
     setRotationDegrees(params.rotationDegrees);
+    setCropMode(false);
     setRotationMode(false);
     rotationDragState.current = null;
     peepSessionActiveRef.current = false;
@@ -15877,9 +15879,7 @@ export function ImageEditDialog({
     return (
       <button
         type="button"
-        className={`inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-100 ${
-          panel === "crop" ? "-mr-1" : "-mr-1.5"
-        }`}
+        className="-mr-1.5 inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded border border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
         onClick={() => togglePanelCollapsed(panel)}
         aria-label={`${collapsed ? "Expand" : "Collapse"} ${label} panel`}
         aria-expanded={!collapsed}
@@ -16007,6 +16007,7 @@ export function ImageEditDialog({
                     vignetteCreateState.current = null;
                     vignetteEditState.current = null;
                     setEyedropperMode(false);
+                    setCropMode(false);
                     setRotationMode(false);
                     rotationDragState.current = null;
                     dragState.current = null;
@@ -16041,6 +16042,7 @@ export function ImageEditDialog({
                     vignetteCreateState.current = null;
                     vignetteEditState.current = null;
                     setEyedropperMode(false);
+                    setCropMode(false);
                     setRotationMode(false);
                     rotationDragState.current = null;
                     dragState.current = null;
@@ -16071,6 +16073,7 @@ export function ImageEditDialog({
                     vignetteCreateState.current = null;
                     vignetteEditState.current = null;
                     setEyedropperMode(false);
+                    setCropMode(false);
                     setRotationMode(false);
                     rotationDragState.current = null;
                     setMosaicMode(false);
@@ -16113,6 +16116,7 @@ export function ImageEditDialog({
                     vignetteCreateState.current = null;
                     vignetteEditState.current = null;
                     setEyedropperMode(false);
+                    setCropMode(false);
                     setRotationMode(false);
                     rotationDragState.current = null;
                     dragState.current = null;
@@ -16144,6 +16148,7 @@ export function ImageEditDialog({
                     vignetteCreateState.current = null;
                     vignetteEditState.current = null;
                     setEyedropperMode(false);
+                    setCropMode(false);
                     setRotationMode(false);
                     rotationDragState.current = null;
                   }
@@ -16180,6 +16185,7 @@ export function ImageEditDialog({
                     mosaicMoveState.current = null;
                     setMosaicDraft(null);
                     setEyedropperMode(false);
+                    setCropMode(false);
                     setRotationMode(false);
                     rotationDragState.current = null;
                     dragState.current = null;
@@ -16198,6 +16204,42 @@ export function ImageEditDialog({
                 }}
               />
               <span>Vignette</span>
+            </label>
+            <label className="inline-flex items-center gap-2 text-sm text-gray-700 select-none">
+              <input
+                type="checkbox"
+                checked={cropMode}
+                onChange={(e) => {
+                  const next = e.target.checked;
+                  setCropMode(next);
+                  setRotationMode(false);
+                  rotationDragState.current = null;
+                  dragState.current = null;
+                  setHistogramGeometryDragging(false);
+                  if (next) {
+                    deactivatePeepMode();
+                    setFilterMode(false);
+                    setMixerMode(false);
+                    setTextMode(false);
+                    setActiveTextId(null);
+                    textMoveState.current = null;
+                    setDrawMode(false);
+                    setDrawDraft(null);
+                    drawCreateState.current = null;
+                    drawEditState.current = null;
+                    setMosaicMode(false);
+                    mosaicDragStart.current = null;
+                    mosaicMoveState.current = null;
+                    setMosaicDraft(null);
+                    setVignetteMode(false);
+                    setVignetteDraft(null);
+                    vignetteCreateState.current = null;
+                    vignetteEditState.current = null;
+                    setEyedropperMode(false);
+                  }
+                }}
+              />
+              <span>Crop</span>
             </label>
             <label className="inline-flex items-center gap-2 text-sm text-gray-700 select-none">
               <input
@@ -16576,6 +16618,44 @@ export function ImageEditDialog({
                         ) : null}
                       </svg>
                     </div>
+                  )}
+                  {!eyedropperMode && cropMode && (
+                    <>
+                      <div
+                        className="absolute right-2 top-2 z-[45] flex items-center gap-1 rounded border border-black/30 bg-white/90 p-1 shadow [zoom:var(--editor-ui-zoom)]"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {cropAspectButtons}
+                        <button
+                          type="button"
+                          className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border ${
+                            rotationMode
+                              ? "border-blue-500 bg-blue-50 text-blue-700"
+                              : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                          }`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setRotationMode((current) => !current);
+                            rotationDragState.current = null;
+                            dragState.current = null;
+                            setHistogramGeometryDragging(false);
+                          }}
+                          aria-label="Rotate image"
+                          aria-pressed={rotationMode}
+                          title="Rotate image"
+                        >
+                          <RotateCw size={13} strokeWidth={1.8} />
+                        </button>
+                      </div>
+                      <div
+                        className="absolute bottom-2 left-2 z-[45] rounded border border-black/30 bg-white/90 px-1.5 py-0.5 text-[10px] font-mono leading-5 text-gray-700 shadow [zoom:var(--editor-ui-zoom)]"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {cropMarginsText}
+                      </div>
+                    </>
                   )}
                   {!eyedropperMode && mixerMode && (
                     <div
@@ -17653,11 +17733,17 @@ export function ImageEditDialog({
                       style={{ left: mosaicDraft.x, top: mosaicDraft.y, width: mosaicDraft.w, height: mosaicDraft.h }}
                     />
                   )}
-                  {!eyedropperMode && !rotationMode && (
+                  {!eyedropperMode && (
                     <div
-                      className={`absolute border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,0.45)] bg-transparent ${mosaicMode || textMode || drawMode || vignetteMode ? "pointer-events-none" : "cursor-move"}`}
-                      style={{ left: cropRect.x, top: cropRect.y, width: cropRect.w, height: cropRect.h }}
-                      onPointerDown={mosaicMode || textMode || drawMode || vignetteMode ? undefined : onCropPointerDown}
+                      className={`absolute border-2 bg-transparent ${cropMode && !rotationMode ? "cursor-move" : "pointer-events-none"}`}
+                      style={{
+                        left: cropRect.x,
+                        top: cropRect.y,
+                        width: cropRect.w,
+                        height: cropRect.h,
+                        borderColor: cropMode ? "rgb(230, 230, 230)" : "rgb(128, 128, 128)",
+                      }}
+                      onPointerDown={cropMode && !rotationMode ? onCropPointerDown : undefined}
                     >
                       {cropDragging && (
                         <svg
@@ -17682,7 +17768,7 @@ export function ImageEditDialog({
                           />
                         </svg>
                       )}
-                      {!mosaicMode && !textMode && !drawMode && !vignetteMode && !mixerMode && (["nw", "ne", "sw", "se"] as EditCorner[]).map((corner) => {
+                      {cropMode && !rotationMode && (["nw", "ne", "sw", "se"] as EditCorner[]).map((corner) => {
                           const style =
                             corner === "nw"
                               ? { left: -6, top: -6 }
@@ -17710,60 +17796,6 @@ export function ImageEditDialog({
           </div>
 
           <div className="space-y-4 text-sm text-gray-800 select-none">
-            <div className={`rounded border px-2 ${collapsedPanels.crop ? "py-1.5" : "py-3 lg:space-y-2"}`}>
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1 gap-y-2 lg:gap-x-2">
-                  <div className="shrink-0 font-medium">Crop</div>
-                  {!collapsedPanels.crop && (
-                    <>
-                      {cropAspectButtons}
-                      <button
-                        type="button"
-                        className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border ${
-                          rotationMode
-                            ? "border-blue-500 bg-blue-50 text-blue-700"
-                            : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
-                        }`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setFilterMode(false);
-                          setMixerMode(false);
-                          setTextMode(false);
-                          setActiveTextId(null);
-                          textMoveState.current = null;
-                          setDrawMode(false);
-                          setDrawDraft(null);
-                          drawCreateState.current = null;
-                          drawEditState.current = null;
-                          setRotationMode((current) => !current);
-                          setEyedropperMode(false);
-                          rotationDragState.current = null;
-                          mosaicDragStart.current = null;
-                          mosaicMoveState.current = null;
-                          setMosaicDraft(null);
-                          dragState.current = null;
-                        }}
-                        aria-label="Rotate image"
-                        aria-pressed={rotationMode}
-                        title="Rotate image"
-                      >
-                        <RotateCw size={13} strokeWidth={1.8} />
-                      </button>
-                      <div className="lg:hidden min-w-0 text-[10px] text-gray-700 leading-5 font-mono whitespace-nowrap">
-                        {cropMarginsText}
-                      </div>
-                    </>
-                  )}
-                </div>
-                {panelCollapseButton("crop", "Crop")}
-              </div>
-              {!collapsedPanels.crop && (
-                <div className="hidden lg:block min-w-0 text-[10px] text-gray-700 leading-5 font-mono whitespace-nowrap">
-                  {cropMarginsText}
-                </div>
-              )}
-            </div>
-
             <div className={`rounded border px-3 ${collapsedPanels.whiteBalance ? "py-1.5" : "py-3 space-y-2 lg:space-y-3"}`}>
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-1 font-medium">
@@ -17787,6 +17819,7 @@ export function ImageEditDialog({
                     drawCreateState.current = null;
                     drawEditState.current = null;
                     setEyedropperMode((current) => !current);
+                    setCropMode(false);
                     setRotationMode(false);
                     rotationDragState.current = null;
                     setVignetteMode(false);
