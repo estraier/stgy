@@ -6,8 +6,7 @@ import {
   rgbToHsvExtended,
 } from "@/image/tone";
 
-export const IMAGE_MIXER_PREVIEW_LUT_SIZE = 24;
-export const IMAGE_MIXER_OUTPUT_LUT_SIZE = 32;
+export const IMAGE_MIXER_LUT_SIZE = 32;
 export const IMAGE_MIXER_LUT_CHANNELS = 3;
 export const IMAGE_MIXER_SETTING_COUNT = 36;
 
@@ -372,20 +371,19 @@ function applyRichMixerLinearRgb(
 export function buildImageMixerLut(
   settings: ArrayLike<number>,
   key = imageMixerLutKey(settings),
-  size = IMAGE_MIXER_OUTPUT_LUT_SIZE,
 ): ImageMixerLutBuildResult {
-  const normalizedSize = Math.max(2, Math.round(size));
-  const data = new Float32Array(normalizedSize * normalizedSize * normalizedSize * IMAGE_MIXER_LUT_CHANNELS);
-  const maxIndex = normalizedSize - 1;
+  const size = IMAGE_MIXER_LUT_SIZE;
+  const data = new Float32Array(size * size * size * IMAGE_MIXER_LUT_CHANNELS);
+  const maxIndex = size - 1;
   let offset = 0;
 
-  for (let ri = 0; ri < normalizedSize; ri += 1) {
+  for (let ri = 0; ri < size; ri += 1) {
     const encodedR = ri / maxIndex;
     const r = encodedR * encodedR;
-    for (let gi = 0; gi < normalizedSize; gi += 1) {
+    for (let gi = 0; gi < size; gi += 1) {
       const encodedG = gi / maxIndex;
       const g = encodedG * encodedG;
-      for (let bi = 0; bi < normalizedSize; bi += 1) {
+      for (let bi = 0; bi < size; bi += 1) {
         const encodedB = bi / maxIndex;
         const b = encodedB * encodedB;
         const [mr, mg, mb] = applyRichMixerLinearRgb(r, g, b, settings);
@@ -397,7 +395,7 @@ export function buildImageMixerLut(
     }
   }
 
-  return { key, size: normalizedSize, data };
+  return { key, size, data };
 }
 
 function lutOffset(size: number, r: number, g: number, b: number): number {
@@ -490,26 +488,21 @@ export function sampleImageMixerLutTetrahedralInto(
 const MIXER_LUT_CACHE_MAX = 6;
 const mixerLutCache = new Map<string, ImageMixerLut>();
 
-function mixerLutCacheKey(key: string, size: number): string {
-  return `${key}@${size}`;
-}
-
-export function getCachedImageMixerLut(
-  key: string,
-  size = IMAGE_MIXER_OUTPUT_LUT_SIZE,
-): ImageMixerLut | null {
-  const cacheKey = mixerLutCacheKey(key, size);
-  const lut = mixerLutCache.get(cacheKey);
-  if (!lut) return null;
-  mixerLutCache.delete(cacheKey);
-  mixerLutCache.set(cacheKey, lut);
+export function getCachedImageMixerLut(key: string): ImageMixerLut | null {
+  const lut = mixerLutCache.get(key);
+  if (!lut || lut.size !== IMAGE_MIXER_LUT_SIZE) {
+    if (lut) mixerLutCache.delete(key);
+    return null;
+  }
+  mixerLutCache.delete(key);
+  mixerLutCache.set(key, lut);
   return lut;
 }
 
 export function cacheImageMixerLut(lut: ImageMixerLut): void {
-  const cacheKey = mixerLutCacheKey(lut.key, lut.size);
-  mixerLutCache.delete(cacheKey);
-  mixerLutCache.set(cacheKey, lut);
+  if (lut.size !== IMAGE_MIXER_LUT_SIZE) return;
+  mixerLutCache.delete(lut.key);
+  mixerLutCache.set(lut.key, lut);
   while (mixerLutCache.size > MIXER_LUT_CACHE_MAX) {
     const oldest = mixerLutCache.keys().next().value as string | undefined;
     if (oldest === undefined) break;
@@ -517,15 +510,11 @@ export function cacheImageMixerLut(lut: ImageMixerLut): void {
   }
 }
 
-export function getOrBuildImageMixerLut(
-  settings: ArrayLike<number>,
-  size = IMAGE_MIXER_OUTPUT_LUT_SIZE,
-): ImageMixerLut {
+export function getOrBuildImageMixerLut(settings: ArrayLike<number>): ImageMixerLut {
   const key = imageMixerLutKey(settings);
-  const normalizedSize = Math.max(2, Math.round(size));
-  const cached = getCachedImageMixerLut(key, normalizedSize);
+  const cached = getCachedImageMixerLut(key);
   if (cached) return cached;
-  const built = buildImageMixerLut(settings, key, normalizedSize);
+  const built = buildImageMixerLut(settings, key);
   cacheImageMixerLut(built);
   return built;
 }

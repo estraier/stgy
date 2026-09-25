@@ -99,7 +99,7 @@ import {
   encodedRgbToLinearProphotoInto,
 } from "@/image/color";
 import {
-  IMAGE_MIXER_PREVIEW_LUT_SIZE,
+  IMAGE_MIXER_LUT_SIZE,
   cacheImageMixerLut,
   getCachedImageMixerLut,
   getOrBuildImageMixerLut,
@@ -2136,7 +2136,7 @@ function resolveImageMixerLut(
 ): ImageMixerLut {
   const settings = serializeImageMixerSettings(mixer);
   const key = imageMixerLutKey(settings);
-  if (suppliedLut?.key === key) return suppliedLut;
+  if (suppliedLut?.key === key && suppliedLut.size === IMAGE_MIXER_LUT_SIZE) return suppliedLut;
   return getCachedImageMixerLut(key) ?? getOrBuildImageMixerLut(settings);
 }
 
@@ -11925,7 +11925,7 @@ export function ImageEditDialog({
 
     const settings = serializeImageMixerSettings(imageMixer);
     const key = imageMixerLutKey(settings);
-    const cached = getCachedImageMixerLut(key, IMAGE_MIXER_PREVIEW_LUT_SIZE);
+    const cached = getCachedImageMixerLut(key);
     if (cached) {
       mixerLutRequestRef.current += 1;
       setImageMixerLut(cached);
@@ -11933,21 +11933,20 @@ export function ImageEditDialog({
     }
 
     if (typeof Worker === "undefined") {
-      const lut = getOrBuildImageMixerLut(settings, IMAGE_MIXER_PREVIEW_LUT_SIZE);
+      const lut = getOrBuildImageMixerLut(settings);
       setImageMixerLut(lut);
       return;
     }
 
-    // Interactive preview uses a smaller 24^3 LUT for faster regeneration.
-    // Final rendering keeps the default 32^3 LUT. Any new slider value
-    // terminates the in-flight worker so stale generations never queue behind
-    // the latest settings.
+    // Preview and final rendering share the same 32^3 LUT definition. Any new
+    // slider value terminates the in-flight worker so stale generations never
+    // queue behind the latest settings.
     const requestId = mixerLutRequestRef.current + 1;
     mixerLutRequestRef.current = requestId;
     const timer = window.setTimeout(() => {
       const buildSynchronously = () => {
         if (requestId !== mixerLutRequestRef.current) return;
-        const lut = getOrBuildImageMixerLut(settings, IMAGE_MIXER_PREVIEW_LUT_SIZE);
+        const lut = getOrBuildImageMixerLut(settings);
         setImageMixerLut(lut);
       };
 
@@ -11968,7 +11967,7 @@ export function ImageEditDialog({
           if (mixerLutWorkerRef.current === worker) mixerLutWorkerRef.current = null;
           buildSynchronously();
         };
-        worker.postMessage({ id: requestId, key, size: IMAGE_MIXER_PREVIEW_LUT_SIZE, settings });
+        worker.postMessage({ id: requestId, key, settings });
       } catch {
         mixerLutWorkerRef.current?.terminate();
         mixerLutWorkerRef.current = null;
@@ -14332,7 +14331,7 @@ export function ImageEditDialog({
     const previewMixerKey = previewMixer ? imageMixerLutKey(serializeImageMixerSettings(previewMixer)) : null;
     const previewMixerLut = previewMixerKey
       && imageMixerLut?.key === previewMixerKey
-      && imageMixerLut.size === IMAGE_MIXER_PREVIEW_LUT_SIZE
+      && imageMixerLut.size === IMAGE_MIXER_LUT_SIZE
       ? imageMixerLut
       : null;
     if (previewMixer && !previewMixerLut) return;
