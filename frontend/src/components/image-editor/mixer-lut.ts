@@ -303,7 +303,7 @@ function applyPrimaryMixerLinearRgb(
   const originalLuma = prophotoLuma(r, g, b);
   if (!(originalLuma > 1e-12)) return [r, g, b];
 
-  let [hue, saturation] = rgbToHsvExtended(r, g, b);
+  const [hue, saturation] = rgbToHsvExtended(r, g, b);
   const hueDegrees = normalizeDegrees(hue * 360);
 
   let hueControl = 0;

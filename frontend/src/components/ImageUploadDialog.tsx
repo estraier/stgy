@@ -16108,6 +16108,123 @@ export function ImageEditDialog({
                   )}
                   {!eyedropperMode && mixerMode && (
                     <div
+                      className="absolute z-30 cursor-crosshair"
+                      style={{
+                        left: displayed.x,
+                        top: displayed.y,
+                        width: displayed.w,
+                        height: displayed.h,
+                      }}
+                      onPointerDown={onMixerPickerPointerDown}
+                      onClick={(e) => e.stopPropagation()}
+                      aria-label="Pick Mixer color from image"
+                    />
+                  )}
+                  {!eyedropperMode && rotationMode && (
+                    <div
+                      className="absolute z-30"
+                      style={{
+                        left: displayed.x,
+                        top: displayed.y,
+                        width: displayed.w,
+                        height: displayed.h,
+                      }}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={(e) => e.stopPropagation()}
+                      aria-label="Rotate image"
+                    >
+                      {(["nw", "ne", "sw", "se"] as EditCorner[]).map((corner) => {
+                        const style =
+                          corner === "nw"
+                            ? { left: -7, top: -7 }
+                            : corner === "ne"
+                              ? { right: -7, top: -7 }
+                              : corner === "sw"
+                                ? { left: -7, bottom: -7 }
+                                : { right: -7, bottom: -7 };
+                        return (
+                          <div
+                            key={corner}
+                            className="absolute w-4 h-4 rounded-full bg-white border border-black shadow cursor-grab active:cursor-grabbing"
+                            style={style}
+                            onPointerDown={onRotationHandlePointerDown}
+                            aria-label="Rotation handle"
+                            title="Drag to rotate"
+                          />
+                        );
+                      })}
+                    </div>
+                  )}
+                  {!eyedropperMode && !rotationMode && (
+                    <svg className="absolute inset-0 w-full h-full pointer-events-none" aria-hidden="true">
+                      <path d={`${overlayPath.outer} ${overlayPath.inner}`} fill="rgba(0,0,0,0.45)" fillRule="evenodd" />
+                    </svg>
+                  )}
+                  {!eyedropperMode && !cropDragging && gridPaths && (
+                    <div
+                      className="absolute pointer-events-none"
+                      style={{
+                        left: displayed.x,
+                        top: displayed.y,
+                        width: displayed.w,
+                        height: displayed.h,
+                      }}
+                      aria-hidden="true"
+                    >
+                      <svg
+                        className="absolute inset-0 w-full h-full"
+                        viewBox={`0 0 ${gridPaths.width} ${gridPaths.height}`}
+                        preserveAspectRatio="none"
+                      >
+                        {gridPaths.vertical ? (
+                          <path d={gridPaths.vertical} stroke="rgba(255,255,255,0.45)" strokeWidth="1" fill="none" />
+                        ) : null}
+                        {gridPaths.horizontal ? (
+                          <path d={gridPaths.horizontal} stroke="rgba(255,255,255,0.45)" strokeWidth="1" fill="none" />
+                        ) : null}
+                      </svg>
+                    </div>
+                  )}
+                  {!eyedropperMode && cropMode && (
+                    <>
+                      <div
+                        className="absolute right-2 top-2 z-[45] flex items-center gap-1 rounded border border-black/30 bg-white/90 p-1 shadow [zoom:var(--editor-ui-zoom)]"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {cropAspectButtons}
+                        <button
+                          type="button"
+                          className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border ${
+                            rotationMode
+                              ? "border-blue-500 bg-blue-50 text-blue-700"
+                              : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                          }`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setRotationMode((current) => !current);
+                            rotationDragState.current = null;
+                            dragState.current = null;
+                            setHistogramGeometryDragging(false);
+                          }}
+                          aria-label="Rotate image"
+                          aria-pressed={rotationMode}
+                          title="Rotate image"
+                        >
+                          <RotateCw size={13} strokeWidth={1.8} />
+                        </button>
+                      </div>
+                      <div
+                        className="absolute bottom-2 left-2 z-[45] rounded border border-black/30 bg-white/90 px-1.5 py-0.5 text-[10px] font-mono leading-5 text-gray-700 shadow [zoom:var(--editor-ui-zoom)]"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {cropMarginsText}
+                      </div>
+                    </>
+                  )}
+                  {!eyedropperMode && mixerMode && (
+                    <div
                       className="absolute right-2 top-2 z-[45] flex w-[min(340px,calc(100%-1rem))] max-h-[calc(100%-1rem)] select-none flex-col gap-2 overflow-y-auto overscroll-contain rounded border border-black/30 bg-white/90 p-2 shadow [zoom:var(--editor-ui-zoom)]"
                       onPointerDown={(e) => e.stopPropagation()}
                       onClick={(e) => e.stopPropagation()}
@@ -16117,7 +16234,7 @@ export function ImageEditDialog({
                         <div className="flex items-center gap-1">
                           <button
                             type="button"
-                            className={`flex h-[22px] w-[22px] items-center justify-center rounded border ${
+                            className={`flex h-5 w-5 items-center justify-center rounded border ${
                               activeMixerPalette === "primary"
                                 ? "border-blue-500 bg-blue-50 text-blue-700"
                                 : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
