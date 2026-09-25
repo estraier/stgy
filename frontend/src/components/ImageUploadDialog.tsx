@@ -105,6 +105,7 @@ import {
   getOrBuildImageMixerLut,
   imageMixerColorIndexForLinearProPhoto,
   imageMixerLutKey,
+  imageMixerPrimaryIndexForLinearProPhoto,
   sampleImageMixerLutTetrahedralInto,
   type ImageMixerLut,
 } from "./image-editor/mixer-lut";
@@ -343,7 +344,9 @@ export type ImageFilter =
     };
 
 export type ImageMixerColorKey = "red" | "orange" | "yellow" | "chartreuse" | "green" | "spring" | "cyan" | "azure" | "blue" | "violet" | "magenta" | "rose";
+export type ImageMixerPrimaryKey = "red" | "green" | "blue";
 export type ImageMixerAdjustmentKey = "hue" | "saturation" | "luminance";
+export type ImageMixerPaletteMode = "colors" | "primary";
 
 export type ImageMixerColorAdjustment = {
   hue: number;
@@ -351,7 +354,12 @@ export type ImageMixerColorAdjustment = {
   luminance: number;
 };
 
-export type ImageMixerSettings = Record<ImageMixerColorKey, ImageMixerColorAdjustment>;
+export type ImageMixerColorSettings = Record<ImageMixerColorKey, ImageMixerColorAdjustment>;
+export type ImageMixerPrimarySettings = Record<ImageMixerPrimaryKey, ImageMixerColorAdjustment>;
+export type ImageMixerSettings = {
+  colors: ImageMixerColorSettings;
+  primary: ImageMixerPrimarySettings;
+};
 
 export type ImageEditParams = {
   crop: ImageCropInsets;
@@ -1050,6 +1058,8 @@ const MIXER_COLOR_KEYS: readonly ImageMixerColorKey[] = [
   "rose",
 ] as const;
 
+const MIXER_PRIMARY_KEYS: readonly ImageMixerPrimaryKey[] = ["red", "green", "blue"] as const;
+
 const MIXER_COLOR_NAMES: Record<ImageMixerColorKey, string> = {
   red: "22° (Red)",
   orange: "52°",
@@ -1094,6 +1104,25 @@ const MIXER_COLOR_BUTTON_STYLES: Record<ImageMixerColorKey, MixerColorButtonStyl
   violet: { background: "oklch(75% 0.12 292deg)", selectedBackground: "oklch(75% 0.12 292deg)", border: "oklch(52% 0.12 292deg)", text: "#111827" },
   magenta: { background: "oklch(75% 0.12 322deg)", selectedBackground: "oklch(75% 0.12 322deg)", border: "oklch(52% 0.12 322deg)", text: "#111827" },
   rose: { background: "oklch(75% 0.12 352deg)", selectedBackground: "oklch(75% 0.12 352deg)", border: "oklch(52% 0.12 352deg)", text: "#111827" },
+};
+
+
+const MIXER_PRIMARY_NAMES: Record<ImageMixerPrimaryKey, string> = {
+  red: "R (HSV Primary)",
+  green: "G (HSV Primary)",
+  blue: "B (HSV Primary)",
+};
+
+const MIXER_PRIMARY_LETTERS: Record<ImageMixerPrimaryKey, string> = {
+  red: "R",
+  green: "G",
+  blue: "B",
+};
+
+const MIXER_PRIMARY_BUTTON_STYLES: Record<ImageMixerPrimaryKey, MixerColorButtonStyle> = {
+  red: { background: "#fecaca", selectedBackground: "#fca5a5", border: "#dc2626", text: "#111827" },
+  green: { background: "#bbf7d0", selectedBackground: "#86efac", border: "#16a34a", text: "#111827" },
+  blue: { background: "#bfdbfe", selectedBackground: "#93c5fd", border: "#2563eb", text: "#111827" },
 };
 
 const SUPER_MC_BLACK_ROLLOFF_B = 0.04;
@@ -1655,27 +1684,45 @@ function clampMixerAdjustment(value: number | undefined): number {
 }
 
 function buildEmptyImageMixerSettings(): ImageMixerSettings {
-  const mixer = {} as ImageMixerSettings;
+  const colors = {} as ImageMixerColorSettings;
   for (const color of MIXER_COLOR_KEYS) {
-    mixer[color] = { hue: 0, saturation: 0, luminance: 0 };
+    colors[color] = { hue: 0, saturation: 0, luminance: 0 };
   }
-  return mixer;
+  const primary = {} as ImageMixerPrimarySettings;
+  for (const color of MIXER_PRIMARY_KEYS) {
+    primary[color] = { hue: 0, saturation: 0, luminance: 0 };
+  }
+  return { colors, primary };
 }
 
 function normalizeImageMixerSettings(
-  mixer?: Partial<ImageMixerSettings> | null,
+  mixer?: Partial<ImageMixerSettings> | Partial<Record<ImageMixerColorKey, ImageMixerColorAdjustment>> | null,
 ): ImageMixerSettings | null {
   if (!mixer) return null;
   const normalized = buildEmptyImageMixerSettings();
+  const nextMixer = mixer as Partial<ImageMixerSettings>;
+  const legacyMixer = ("colors" in nextMixer || "primary" in nextMixer)
+    ? null
+    : mixer as Partial<Record<ImageMixerColorKey, ImageMixerColorAdjustment>>;
   let active = false;
   for (const color of MIXER_COLOR_KEYS) {
-    const source = mixer[color];
+    const source = nextMixer.colors?.[color] ?? legacyMixer?.[color];
     const adjustment: ImageMixerColorAdjustment = {
       hue: clampMixerAdjustment(source?.hue),
       saturation: clampMixerAdjustment(source?.saturation),
       luminance: clampMixerAdjustment(source?.luminance),
     };
-    normalized[color] = adjustment;
+    normalized.colors[color] = adjustment;
+    active ||= adjustment.hue !== 0 || adjustment.saturation !== 0 || adjustment.luminance !== 0;
+  }
+  for (const color of MIXER_PRIMARY_KEYS) {
+    const source = nextMixer.primary?.[color];
+    const adjustment: ImageMixerColorAdjustment = {
+      hue: clampMixerAdjustment(source?.hue),
+      saturation: clampMixerAdjustment(source?.saturation),
+      luminance: clampMixerAdjustment(source?.luminance),
+    };
+    normalized.primary[color] = adjustment;
     active ||= adjustment.hue !== 0 || adjustment.saturation !== 0 || adjustment.luminance !== 0;
   }
   return active ? normalized : null;
@@ -1683,23 +1730,40 @@ function normalizeImageMixerSettings(
 
 function updateImageMixerSetting(
   mixer: ImageMixerSettings | null | undefined,
-  color: ImageMixerColorKey,
+  palette: ImageMixerPaletteMode,
+  color: ImageMixerColorKey | ImageMixerPrimaryKey,
   adjustment: ImageMixerAdjustmentKey,
   value: number,
 ): ImageMixerSettings | null {
   const next = mixer ? normalizeImageMixerSettings(mixer) ?? buildEmptyImageMixerSettings() : buildEmptyImageMixerSettings();
-  next[color] = {
-    ...next[color],
-    [adjustment]: clampMixerAdjustment(value),
-  };
+  if (palette === "colors") {
+    const key = color as ImageMixerColorKey;
+    next.colors[key] = {
+      ...next.colors[key],
+      [adjustment]: clampMixerAdjustment(value),
+    };
+  } else {
+    const key = color as ImageMixerPrimaryKey;
+    next.primary[key] = {
+      ...next.primary[key],
+      [adjustment]: clampMixerAdjustment(value),
+    };
+  }
   return normalizeImageMixerSettings(next);
 }
 
 function serializeImageMixerSettings(mixer: ImageMixerSettings): Float32Array {
-  const values = new Float32Array(MIXER_COLOR_KEYS.length * 3);
+  const values = new Float32Array((MIXER_COLOR_KEYS.length + MIXER_PRIMARY_KEYS.length) * 3);
   let offset = 0;
   for (const color of MIXER_COLOR_KEYS) {
-    const adjustment = mixer[color];
+    const adjustment = mixer.colors[color];
+    values[offset] = adjustment.hue;
+    values[offset + 1] = adjustment.saturation;
+    values[offset + 2] = adjustment.luminance;
+    offset += 3;
+  }
+  for (const color of MIXER_PRIMARY_KEYS) {
+    const adjustment = mixer.primary[color];
     values[offset] = adjustment.hue;
     values[offset + 1] = adjustment.saturation;
     values[offset + 2] = adjustment.luminance;
@@ -11271,7 +11335,9 @@ export function ImageEditDialog({
   const [imageMixerLut, setImageMixerLut] = useState<ImageMixerLut | null>(null);
   const mixerLutWorkerRef = useRef<Worker | null>(null);
   const mixerLutRequestRef = useRef(0);
+  const [activeMixerPalette, setActiveMixerPalette] = useState<ImageMixerPaletteMode>("colors");
   const [activeMixerColor, setActiveMixerColor] = useState<ImageMixerColorKey>("red");
+  const [activeMixerPrimaryColor, setActiveMixerPrimaryColor] = useState<ImageMixerPrimaryKey>("red");
   const [filterMode, setFilterMode] = useState(false);
   const [imageFilter, setImageFilter] = useState<ImageFilter | null>(
     normalizeImageFilter(initialParams.filter),
@@ -13114,13 +13180,19 @@ export function ImageEditDialog({
       rgb[2] / 255,
       "srgb",
     );
-    const colorIndex = imageMixerColorIndexForLinearProPhoto(r, g, b);
-    const color = colorIndex === null ? undefined : MIXER_COLOR_KEYS[colorIndex];
-    if (color) setActiveMixerColor(color);
+    if (activeMixerPalette === "primary") {
+      const primaryIndex = imageMixerPrimaryIndexForLinearProPhoto(r, g, b);
+      const color = primaryIndex === null ? undefined : MIXER_PRIMARY_KEYS[primaryIndex];
+      if (color) setActiveMixerPrimaryColor(color);
+    } else {
+      const colorIndex = imageMixerColorIndexForLinearProPhoto(r, g, b);
+      const color = colorIndex === null ? undefined : MIXER_COLOR_KEYS[colorIndex];
+      if (color) setActiveMixerColor(color);
+    }
 
     e.preventDefault();
     e.stopPropagation();
-  }, [mixerMode]);
+  }, [activeMixerPalette, mixerMode]);
 
   const onRotationHandlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (!rotationMode || displayed.w <= 0 || displayed.h <= 0) return;
@@ -15390,11 +15462,18 @@ export function ImageEditDialog({
     ? "col-span-2 col-start-1 row-start-2 w-full"
     : "col-start-2 row-start-1 w-full";
 
-  const activeMixerAdjustment = imageMixer?.[activeMixerColor] ?? {
-    hue: 0,
-    saturation: 0,
-    luminance: 0,
-  };
+  const activeMixerSelection = activeMixerPalette === "colors" ? activeMixerColor : activeMixerPrimaryColor;
+  const activeMixerAdjustment = activeMixerPalette === "colors"
+    ? (imageMixer?.colors[activeMixerColor] ?? {
+        hue: 0,
+        saturation: 0,
+        luminance: 0,
+      })
+    : (imageMixer?.primary[activeMixerPrimaryColor] ?? {
+        hue: 0,
+        saturation: 0,
+        luminance: 0,
+      });
 
   const rawDevelopmentSettings = (() => {
     if (!isRawImageFile(file.name, file.type)) return undefined;
@@ -16029,167 +16108,92 @@ export function ImageEditDialog({
                   )}
                   {!eyedropperMode && mixerMode && (
                     <div
-                      className="absolute z-30 cursor-crosshair"
-                      style={{
-                        left: displayed.x,
-                        top: displayed.y,
-                        width: displayed.w,
-                        height: displayed.h,
-                      }}
-                      onPointerDown={onMixerPickerPointerDown}
-                      onClick={(e) => e.stopPropagation()}
-                      aria-label="Pick Mixer color from image"
-                    />
-                  )}
-                  {!eyedropperMode && rotationMode && (
-                    <div
-                      className="absolute z-30"
-                      style={{
-                        left: displayed.x,
-                        top: displayed.y,
-                        width: displayed.w,
-                        height: displayed.h,
-                      }}
-                      onPointerDown={(e) => e.stopPropagation()}
-                      onClick={(e) => e.stopPropagation()}
-                      aria-label="Rotate image"
-                    >
-                      {(["nw", "ne", "sw", "se"] as EditCorner[]).map((corner) => {
-                        const style =
-                          corner === "nw"
-                            ? { left: -7, top: -7 }
-                            : corner === "ne"
-                              ? { right: -7, top: -7 }
-                              : corner === "sw"
-                                ? { left: -7, bottom: -7 }
-                                : { right: -7, bottom: -7 };
-                        return (
-                          <div
-                            key={corner}
-                            className="absolute w-4 h-4 rounded-full bg-white border border-black shadow cursor-grab active:cursor-grabbing"
-                            style={style}
-                            onPointerDown={onRotationHandlePointerDown}
-                            aria-label="Rotation handle"
-                            title="Drag to rotate"
-                          />
-                        );
-                      })}
-                    </div>
-                  )}
-                  {!eyedropperMode && !rotationMode && (
-                    <svg className="absolute inset-0 w-full h-full pointer-events-none" aria-hidden="true">
-                      <path d={`${overlayPath.outer} ${overlayPath.inner}`} fill="rgba(0,0,0,0.45)" fillRule="evenodd" />
-                    </svg>
-                  )}
-                  {!eyedropperMode && !cropDragging && gridPaths && (
-                    <div
-                      className="absolute pointer-events-none"
-                      style={{
-                        left: displayed.x,
-                        top: displayed.y,
-                        width: displayed.w,
-                        height: displayed.h,
-                      }}
-                      aria-hidden="true"
-                    >
-                      <svg
-                        className="absolute inset-0 w-full h-full"
-                        viewBox={`0 0 ${gridPaths.width} ${gridPaths.height}`}
-                        preserveAspectRatio="none"
-                      >
-                        {gridPaths.vertical ? (
-                          <path d={gridPaths.vertical} stroke="rgba(255,255,255,0.45)" strokeWidth="1" fill="none" />
-                        ) : null}
-                        {gridPaths.horizontal ? (
-                          <path d={gridPaths.horizontal} stroke="rgba(255,255,255,0.45)" strokeWidth="1" fill="none" />
-                        ) : null}
-                      </svg>
-                    </div>
-                  )}
-                  {!eyedropperMode && cropMode && (
-                    <>
-                      <div
-                        className="absolute right-2 top-2 z-[45] flex items-center gap-1 rounded border border-black/30 bg-white/90 p-1 shadow [zoom:var(--editor-ui-zoom)]"
-                        onPointerDown={(e) => e.stopPropagation()}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {cropAspectButtons}
-                        <button
-                          type="button"
-                          className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border ${
-                            rotationMode
-                              ? "border-blue-500 bg-blue-50 text-blue-700"
-                              : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
-                          }`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setRotationMode((current) => !current);
-                            rotationDragState.current = null;
-                            dragState.current = null;
-                            setHistogramGeometryDragging(false);
-                          }}
-                          aria-label="Rotate image"
-                          aria-pressed={rotationMode}
-                          title="Rotate image"
-                        >
-                          <RotateCw size={13} strokeWidth={1.8} />
-                        </button>
-                      </div>
-                      <div
-                        className="absolute bottom-2 left-2 z-[45] rounded border border-black/30 bg-white/90 px-1.5 py-0.5 text-[10px] font-mono leading-5 text-gray-700 shadow [zoom:var(--editor-ui-zoom)]"
-                        onPointerDown={(e) => e.stopPropagation()}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {cropMarginsText}
-                      </div>
-                    </>
-                  )}
-                  {!eyedropperMode && mixerMode && (
-                    <div
                       className="absolute right-2 top-2 z-[45] flex w-[min(340px,calc(100%-1rem))] max-h-[calc(100%-1rem)] select-none flex-col gap-2 overflow-y-auto overscroll-contain rounded border border-black/30 bg-white/90 p-2 shadow [zoom:var(--editor-ui-zoom)]"
                       onPointerDown={(e) => e.stopPropagation()}
                       onClick={(e) => e.stopPropagation()}
                     >
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-xs font-medium text-gray-700">Mixer</span>
-                        <button
-                          type="button"
-                          className="rounded border border-gray-300 bg-white px-2 py-0.5 text-[11px] text-gray-700 hover:bg-gray-100 disabled:cursor-default disabled:opacity-50"
-                          onClick={() => setImageMixer(null)}
-                          disabled={imageMixer === null}
-                          aria-label="Reset mixer"
-                          title="Reset mixer"
-                        >
-                          Reset
-                        </button>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            className={`flex h-[22px] w-[22px] items-center justify-center rounded border ${
+                              activeMixerPalette === "primary"
+                                ? "border-blue-500 bg-blue-50 text-blue-700"
+                                : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                            }`}
+                            onClick={() => setActiveMixerPalette((current) => current === "colors" ? "primary" : "colors")}
+                            aria-label={activeMixerPalette === "colors" ? "Switch to primary RGB palette" : "Switch to 12-color palette"}
+                            title={activeMixerPalette === "colors" ? "Primary RGB palette" : "12-color palette"}
+                          >
+                            <Palette size={13} strokeWidth={1.8} />
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded border border-gray-300 bg-white px-2 py-0.5 text-[11px] text-gray-700 hover:bg-gray-100 disabled:cursor-default disabled:opacity-50"
+                            onClick={() => setImageMixer(null)}
+                            disabled={imageMixer === null}
+                            aria-label="Reset mixer"
+                            title="Reset mixer"
+                          >
+                            Reset
+                          </button>
+                        </div>
                       </div>
-                      <div className="grid grid-cols-6 gap-1.5">
-                        {MIXER_COLOR_KEYS.map((color) => {
-                          const selected = activeMixerColor === color;
-                          const colorStyle = MIXER_COLOR_BUTTON_STYLES[color];
-                          const colorName = MIXER_COLOR_NAMES[color];
-                          const colorLetter = MIXER_COLOR_LETTERS[color];
-                          return (
-                            <button
-                              key={color}
-                              type="button"
-                              className="flex h-8 items-center justify-center rounded-md border text-[11px] font-semibold transition-[filter,box-shadow,transform] hover:brightness-95"
-                              style={{
-                                backgroundColor: selected ? colorStyle.selectedBackground : colorStyle.background,
-                                borderColor: selected ? colorStyle.border : "rgba(55, 65, 81, 0.28)",
-                                borderWidth: selected ? "3px" : "1px",
-                                color: colorStyle.text,
-                                boxShadow: selected ? "0 0 0 1px rgba(17, 24, 39, 0.18)" : undefined,
-                              }}
-                              onClick={() => setActiveMixerColor(color)}
-                              aria-pressed={selected}
-                              aria-label={colorName}
-                              title={colorName}
-                            >
-                              {colorLetter ?? null}
-                            </button>
-                          );
-                        })}
+                      <div className={activeMixerPalette === "colors" ? "grid grid-cols-6 gap-1.5" : "grid grid-cols-3 gap-1.5"}>
+                        {activeMixerPalette === "colors"
+                          ? MIXER_COLOR_KEYS.map((color) => {
+                              const selected = activeMixerColor === color;
+                              const colorStyle = MIXER_COLOR_BUTTON_STYLES[color];
+                              const colorName = MIXER_COLOR_NAMES[color];
+                              const colorLetter = MIXER_COLOR_LETTERS[color];
+                              return (
+                                <button
+                                  key={color}
+                                  type="button"
+                                  className="flex h-8 items-center justify-center rounded-md border text-[11px] font-semibold transition-[filter,box-shadow,transform] hover:brightness-95"
+                                  style={{
+                                    backgroundColor: selected ? colorStyle.selectedBackground : colorStyle.background,
+                                    borderColor: selected ? colorStyle.border : "rgba(55, 65, 81, 0.28)",
+                                    borderWidth: selected ? "3px" : "1px",
+                                    color: colorStyle.text,
+                                    boxShadow: selected ? "0 0 0 1px rgba(17, 24, 39, 0.18)" : undefined,
+                                  }}
+                                  onClick={() => setActiveMixerColor(color)}
+                                  aria-pressed={selected}
+                                  aria-label={colorName}
+                                  title={colorName}
+                                >
+                                  {colorLetter ?? null}
+                                </button>
+                              );
+                            })
+                          : MIXER_PRIMARY_KEYS.map((color) => {
+                              const selected = activeMixerPrimaryColor === color;
+                              const colorStyle = MIXER_PRIMARY_BUTTON_STYLES[color];
+                              const colorName = MIXER_PRIMARY_NAMES[color];
+                              const colorLetter = MIXER_PRIMARY_LETTERS[color];
+                              return (
+                                <button
+                                  key={color}
+                                  type="button"
+                                  className="flex h-8 items-center justify-center rounded-md border text-[11px] font-semibold transition-[filter,box-shadow,transform] hover:brightness-95"
+                                  style={{
+                                    backgroundColor: selected ? colorStyle.selectedBackground : colorStyle.background,
+                                    borderColor: selected ? colorStyle.border : "rgba(55, 65, 81, 0.28)",
+                                    borderWidth: selected ? "3px" : "1px",
+                                    color: colorStyle.text,
+                                    boxShadow: selected ? "0 0 0 1px rgba(17, 24, 39, 0.18)" : undefined,
+                                  }}
+                                  onClick={() => setActiveMixerPrimaryColor(color)}
+                                  aria-pressed={selected}
+                                  aria-label={colorName}
+                                  title={colorName}
+                                >
+                                  {colorLetter}
+                                </button>
+                              );
+                            })}
                       </div>
                       <div className="space-y-2">
                         {([
@@ -16213,13 +16217,13 @@ export function ImageEditDialog({
                                 onChange={(e) => {
                                   const nextValue = Number(e.target.value);
                                   setImageMixer((current) =>
-                                    updateImageMixerSetting(current, activeMixerColor, adjustment, nextValue));
+                                    updateImageMixerSetting(current, activeMixerPalette, activeMixerSelection, adjustment, nextValue));
                                 }}
                                 onDoubleClick={() =>
                                   setImageMixer((current) =>
-                                    updateImageMixerSetting(current, activeMixerColor, adjustment, 0))}
+                                    updateImageMixerSetting(current, activeMixerPalette, activeMixerSelection, adjustment, 0))}
                                 className="col-span-2 w-full"
-                                aria-label={`${MIXER_COLOR_NAMES[activeMixerColor]} ${label}`}
+                                aria-label={`${activeMixerPalette === "colors" ? MIXER_COLOR_NAMES[activeMixerColor] : MIXER_PRIMARY_NAMES[activeMixerPrimaryColor]} ${label}`}
                               />
                             </label>
                           );

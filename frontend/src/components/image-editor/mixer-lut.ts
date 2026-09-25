@@ -3,12 +3,13 @@ import {
   applyScaledLogLinearExtended,
   clamp01,
   colorVibranceFactor,
+  hsvToRgb,
   rgbToHsvExtended,
 } from "@/image/tone";
 
 export const IMAGE_MIXER_LUT_SIZE = 32;
 export const IMAGE_MIXER_LUT_CHANNELS = 3;
-export const IMAGE_MIXER_SETTING_COUNT = 36;
+export const IMAGE_MIXER_SETTING_COUNT = 45;
 
 const MIXER_RELATIVE_CHROMA_L_MIN = 0.20;
 const MIXER_RELATIVE_CHROMA_L_MAX = 0.95;
@@ -36,6 +37,9 @@ const PROPHOTO_LUMA_B = 0.0000857;
 const MIXER_COLOR_COUNT = 12;
 const MIXER_HUE_STEP_DEGREES = 360 / MIXER_COLOR_COUNT;
 const MIXER_HUE_OFFSET_DEGREES = 22.5;
+const MIXER_PRIMARY_COUNT = 3;
+const MIXER_PRIMARY_HUE_RADIUS_DEGREES = 90;
+const MIXER_PRIMARY_SETTINGS_OFFSET = MIXER_COLOR_COUNT * 3;
 
 export type ImageMixerLut = {
   key: string;
@@ -61,6 +65,12 @@ export function imageMixerLutKey(settings: ArrayLike<number>): string {
 function circularHueDistanceDegrees(a: number, b: number): number {
   const raw = Math.abs(a - b) % 360;
   return Math.min(raw, 360 - raw);
+}
+
+function primaryMixerWeight(hueDegrees: number, centerDegrees: number): number {
+  const distance = circularHueDistanceDegrees(hueDegrees, centerDegrees);
+  if (distance >= MIXER_PRIMARY_HUE_RADIUS_DEGREES) return 0;
+  return 0.5 * (1 + Math.cos(Math.PI * distance / MIXER_PRIMARY_HUE_RADIUS_DEGREES));
 }
 
 function mixerGainHill(distanceDegrees: number): number {
@@ -117,6 +127,27 @@ export function imageMixerColorIndexForLinearProPhoto(
   const hueDegrees = normalizeDegrees(Math.atan2(bb, a) * 180 / Math.PI);
   const shiftedHue = normalizeDegrees(hueDegrees - MIXER_HUE_OFFSET_DEGREES);
   return Math.round(shiftedHue / MIXER_HUE_STEP_DEGREES) % MIXER_COLOR_COUNT;
+}
+
+export function imageMixerPrimaryIndexForLinearProPhoto(
+  r: number,
+  g: number,
+  b: number,
+): number | null {
+  const [hue, saturation] = rgbToHsvExtended(r, g, b);
+  if (!(saturation > 1e-6)) return null;
+  const hueDegrees = normalizeDegrees(hue * 360);
+  let bestIndex: number | null = null;
+  let bestWeight = 0;
+  for (let i = 0; i < MIXER_PRIMARY_COUNT; i += 1) {
+    const center = i * 120;
+    const weight = primaryMixerWeight(hueDegrees, center);
+    if (weight > bestWeight) {
+      bestWeight = weight;
+      bestIndex = i;
+    }
+  }
+  return bestWeight > 0 ? bestIndex : null;
 }
 
 function linearProPhotoToOklab(r: number, g: number, b: number): [number, number, number] {
@@ -263,6 +294,89 @@ function scaleRgbToLuma(r: number, g: number, b: number, targetLuma: number): [n
   return [r * scale, g * scale, b * scale];
 }
 
+function applyPrimaryMixerLinearRgb(
+  r: number,
+  g: number,
+  b: number,
+  settings: ArrayLike<number>,
+): [number, number, number] {
+  const originalLuma = prophotoLuma(r, g, b);
+  if (!(originalLuma > 1e-12)) return [r, g, b];
+
+  let [hue, saturation] = rgbToHsvExtended(r, g, b);
+  const hueDegrees = normalizeDegrees(hue * 360);
+
+  let hueControl = 0;
+  let saturationControl = 0;
+  let luminanceControl = 0;
+  let hueControlLimit = 0;
+  let saturationControlLimit = 0;
+  let luminanceControlLimit = 0;
+
+  for (let primaryIndex = 0; primaryIndex < MIXER_PRIMARY_COUNT; primaryIndex += 1) {
+    const base = MIXER_PRIMARY_SETTINGS_OFFSET + primaryIndex * 3;
+    const hueAdjustment = clampMixerControl(settings[base] ?? 0);
+    const saturationAdjustment = clampMixerControl(settings[base + 1] ?? 0);
+    const luminanceAdjustment = clampMixerControl(settings[base + 2] ?? 0);
+    if (hueAdjustment === 0 && saturationAdjustment === 0 && luminanceAdjustment === 0) continue;
+    const weight = primaryMixerWeight(hueDegrees, primaryIndex * 120);
+    if (!(weight > 0)) continue;
+
+    if (hueAdjustment !== 0) {
+      hueControl += hueAdjustment * weight;
+      hueControlLimit = Math.max(hueControlLimit, Math.abs(hueAdjustment));
+    }
+    if (saturationAdjustment !== 0) {
+      saturationControl += saturationAdjustment * weight;
+      saturationControlLimit = Math.max(saturationControlLimit, Math.abs(saturationAdjustment));
+    }
+    if (luminanceAdjustment !== 0) {
+      luminanceControl += luminanceAdjustment * weight;
+      luminanceControlLimit = Math.max(luminanceControlLimit, Math.abs(luminanceAdjustment));
+    }
+  }
+
+  hueControl = composeMixerControl(hueControl, hueControlLimit);
+  saturationControl = composeMixerControl(saturationControl, saturationControlLimit);
+  luminanceControl = composeMixerControl(luminanceControl, luminanceControlLimit);
+
+  const hueShift = (hueControl / 100) * MIXER_HUE_MAX_SHIFT_DEGREES;
+  const saturationAmount = saturationControl;
+  const luminanceAmount = luminanceControl;
+
+  let mixedR = r;
+  let mixedG = g;
+  let mixedB = b;
+
+  if (Math.abs(hueShift) > 1e-9) {
+    const [, , value] = rgbToHsvExtended(mixedR, mixedG, mixedB);
+    [mixedR, mixedG, mixedB] = hsvToRgb(normalizeDegrees(hueDegrees + hueShift) / 360, saturation, value);
+    [mixedR, mixedG, mixedB] = scaleRgbToLuma(mixedR, mixedG, mixedB, originalLuma);
+  }
+
+  if (Math.abs(saturationAmount) > 1e-9) {
+    const [, currentSaturation] = rgbToHsvExtended(mixedR, mixedG, mixedB);
+    const targetSaturation = Math.max(0, applyScaledLogLinearExtended(
+      currentSaturation,
+      colorVibranceFactor(saturationAmount) * MIXER_SATURATION_VIBRANCE_STRENGTH,
+    ));
+    [mixedR, mixedG, mixedB] = applyHsvSaturationPreservingProPhotoLuminance(
+      mixedR,
+      mixedG,
+      mixedB,
+      targetSaturation,
+    );
+  }
+
+  if (Math.abs(luminanceAmount) > 1e-9) {
+    const scaledLog = luminanceAmount * (MIXER_LUMINANCE_MIDTONE_MAX / 100);
+    const targetLuma = applyScaledLogLinearExtended(originalLuma, scaledLog);
+    [mixedR, mixedG, mixedB] = scaleRgbToLuma(mixedR, mixedG, mixedB, targetLuma);
+  }
+
+  return [mixedR, mixedG, mixedB];
+}
+
 function applyRichMixerLinearRgb(
   r: number,
   g: number,
@@ -386,7 +500,8 @@ export function buildImageMixerLut(
       for (let bi = 0; bi < size; bi += 1) {
         const encodedB = bi / maxIndex;
         const b = encodedB * encodedB;
-        const [mr, mg, mb] = applyRichMixerLinearRgb(r, g, b, settings);
+        const [pr, pg, pb] = applyPrimaryMixerLinearRgb(r, g, b, settings);
+        const [mr, mg, mb] = applyRichMixerLinearRgb(pr, pg, pb, settings);
         data[offset] = Math.sqrt(clamp01(mr));
         data[offset + 1] = Math.sqrt(clamp01(mg));
         data[offset + 2] = Math.sqrt(clamp01(mb));
