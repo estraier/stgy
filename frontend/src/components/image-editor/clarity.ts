@@ -1,5 +1,6 @@
 import {
-  applyToneAdjustmentsLinearRgbRange,
+  applyToneAdjustmentsLinearRgbRangeWithGamma20GainLutInto,
+  buildToneAdjustmentGamma20GainLut,
   clamp01,
   proPhotoLinearLuminance,
   type ColorAdjustmentContext,
@@ -183,21 +184,36 @@ export function buildImageEditToneSample(
 
   const data = new Float32Array(sample.data.length);
   const valid = sample.valid;
+  const toneGamma20GainLut = buildToneAdjustmentGamma20GainLut(
+    context,
+    startStage,
+    "after-tone",
+    sample.linearRangeMax ?? 1,
+  );
+  const adjusted: [number, number, number] = [0, 0, 0];
   for (let pixelIndex = 0, sourceIndex = 0; pixelIndex < pixelCount; pixelIndex += 1, sourceIndex += 3) {
     if (valid && !valid[pixelIndex]) continue;
-    const [toneR, toneG, toneB] = applyToneAdjustmentsLinearRgbRange(
+    applyToneAdjustmentsLinearRgbRangeWithGamma20GainLutInto(
       sample.data[sourceIndex] ?? 0,
       sample.data[sourceIndex + 1] ?? 0,
       sample.data[sourceIndex + 2] ?? 0,
       context,
       startStage,
       "after-tone",
+      toneGamma20GainLut,
+      adjusted,
     );
-    data[sourceIndex] = Math.fround(toneR);
-    data[sourceIndex + 1] = Math.fround(toneG);
-    data[sourceIndex + 2] = Math.fround(toneB);
+    data[sourceIndex] = Math.fround(adjusted[0]);
+    data[sourceIndex + 1] = Math.fround(adjusted[1]);
+    data[sourceIndex + 2] = Math.fround(adjusted[2]);
   }
-  return { data, width, height, ...(valid ? { valid } : {}) };
+  return {
+    data,
+    width,
+    height,
+    ...(Number.isFinite(sample.linearRangeMax) ? { linearRangeMax: sample.linearRangeMax } : {}),
+    ...(valid ? { valid } : {}),
+  };
 }
 
 /**

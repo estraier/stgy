@@ -164,7 +164,13 @@ export function buildImageEditPreviewSliderPrefixSample(
     data[si + 1] = Math.fround(g);
     data[si + 2] = Math.fround(b);
   }
-  return { data, width, height, ...(valid ? { valid } : {}) };
+  return {
+    data,
+    width,
+    height,
+    ...(Number.isFinite(sample.linearRangeMax) ? { linearRangeMax: sample.linearRangeMax } : {}),
+    ...(valid ? { valid } : {}),
+  };
 }
 
 // Pixel rendering is kept separate from React/UI state so later hot-loop optimization is isolated.

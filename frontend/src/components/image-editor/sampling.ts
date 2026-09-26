@@ -405,7 +405,13 @@ export function sampleLinearRgbFromRgb16RegionAtSize(
     rowSourceX += transform.rowStepX;
     rowSourceY += transform.rowStepY;
   }
-  return { data, width: sampleW, height: sampleH, valid };
+  return {
+    data,
+    width: sampleW,
+    height: sampleH,
+    linearRangeMax: decoded.linearRangeMax,
+    valid,
+  };
 }
 
 export function sampleLinearRgbFromRgb16Region(

@@ -65,6 +65,27 @@ export function percentileFromValues(values: number[], percentile: number): numb
   return percentilesFromValues(values, [percentile])[0] ?? 0;
 }
 
+function finalDisplayRolloffParams(maxVal: number): RolloffParams {
+  const rolloff = rolloffParams(
+    maxVal,
+    FINAL_DISPLAY_ROLLOFF_A,
+    ROLLOFF_SAVING_LIMIT_FACTOR,
+    1,
+  );
+  if (rolloff) return rolloff;
+
+  // Final display rolloff is always part of the pipeline. When P99.8 is
+  // already within display range there is no shoulder to apply, so represent
+  // that state explicitly as an identity shoulder at display white instead of
+  // disabling the stage with null. Exceptional values above 1 still reach the
+  // existing final clip, matching the previous safe-range behavior.
+  return {
+    inflection: 1,
+    inputMax: Number.isFinite(maxVal) ? Math.max(0, maxVal) : 0,
+    outputMax: 1,
+  };
+}
+
 function buildColorAdjustmentContextFromLinearRgbSampleInternal(
   sample: LinearRgbSample,
   temperature: number,
@@ -171,6 +192,11 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
   const hasHighlight = normalizedHighlight !== 0 && highlightRange !== null;
 
   let whiteRange: WhiteRange | null = null;
+  // Negative White compresses highlight headroom. Do not let that compression
+  // feed back into the final display-rolloff parameters, otherwise the final
+  // shoulder can weaken or disappear exactly at White=-100. Reuse the
+  // already-required pre-White pass as the stable max-RGB reference.
+  const preWhiteToneAdjusted = normalizedWhite < 0 ? new Float32Array(count * 3) : null;
   if (hasWhite) {
     const whiteValues: number[] = [];
     for (let pixel = 0; pixel < count; pixel++) {
@@ -201,6 +227,11 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
         },
         normalizedBlack,
       );
+      if (preWhiteToneAdjusted) {
+        preWhiteToneAdjusted[i] = adjusted[0];
+        preWhiteToneAdjusted[i + 1] = adjusted[1];
+        preWhiteToneAdjusted[i + 2] = adjusted[2];
+      }
       const value = proPhotoLinearLuminance(adjusted[0], adjusted[1], adjusted[2]);
       if (Number.isFinite(value)) whiteValues.push(value);
     }
@@ -269,12 +300,17 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
     : null;
 
   const maxima: number[] = [];
+  // For negative White, parameterize the final max-RGB shoulder from the
+  // pre-White tone result. White is itself a highlight-rescue control, so its
+  // compression must not weaken the later safety shoulder. This also keeps the
+  // -99 -> -100 transition continuous without adding another color pass.
+  const finalRolloffToneAdjusted = preWhiteToneAdjusted ?? toneAdjusted;
   for (let pixel = 0; pixel < count; pixel += 1) {
     if (ignoreInvalid && valid && !valid[pixel]) continue;
     const i = pixel * 3;
-    const r = toneAdjusted[i] ?? 0;
-    const g = toneAdjusted[i + 1] ?? 0;
-    const b = toneAdjusted[i + 2] ?? 0;
+    const r = finalRolloffToneAdjusted[i] ?? 0;
+    const g = finalRolloffToneAdjusted[i + 1] ?? 0;
+    const b = finalRolloffToneAdjusted[i + 2] ?? 0;
     applySaturationVibranceAndFinalRolloffLinearRgbInto(
       r,
       g,
@@ -290,12 +326,7 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
     if (Number.isFinite(maxChannel)) maxima.push(maxChannel);
   }
   const p998 = maxima.length ? percentileFromValues(maxima, 99.8) : 0;
-  const finalRolloff = rolloffParams(
-    p998,
-    FINAL_DISPLAY_ROLLOFF_A,
-    ROLLOFF_SAVING_LIMIT_FACTOR,
-    1,
-  );
+  const finalRolloff = finalDisplayRolloffParams(p998);
 
   return {
     gains,

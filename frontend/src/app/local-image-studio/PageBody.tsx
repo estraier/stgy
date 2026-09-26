@@ -971,6 +971,7 @@ export default function LocalImageStudio() {
         <ImageEditDialog
           file={source.file}
           initialParams={source.edit}
+          closeOnBackdropClick={false}
           defaultParams={studioDefaultEditParams}
           initialDecodedImage={rawDevelopmentRef.current ?? undefined}
           rawDemosaicQuality={rawDemosaicQuality}

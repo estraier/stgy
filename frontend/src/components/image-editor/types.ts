@@ -139,6 +139,7 @@ export type LinearRgbSample = {
   data: Float32Array;
   width: number;
   height: number;
+  linearRangeMax?: number;
   valid?: Uint8Array;
 };
 

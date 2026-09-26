@@ -490,7 +490,13 @@ export function applyDefringeToSample(
       data[i + 2] = Math.fround(adjusted[2]);
     }
   }
-  return { data, width, height, ...(sample.valid ? { valid: sample.valid } : {}) };
+  return {
+    data,
+    width,
+    height,
+    ...(Number.isFinite(sample.linearRangeMax) ? { linearRangeMax: sample.linearRangeMax } : {}),
+    ...(sample.valid ? { valid: sample.valid } : {}),
+  };
 }
 
 export function applyDefringeToRenderedSample(
@@ -547,5 +553,11 @@ export function applyDefringeToRenderedSample(
     rowSourceX += transform.rowStepX;
     rowSourceY += transform.rowStepY;
   }
-  return { data, width, height, ...(sample.valid ? { valid: sample.valid } : {}) };
+  return {
+    data,
+    width,
+    height,
+    ...(Number.isFinite(sample.linearRangeMax) ? { linearRangeMax: sample.linearRangeMax } : {}),
+    ...(sample.valid ? { valid: sample.valid } : {}),
+  };
 }

@@ -588,8 +588,8 @@ export const SHADOW_MAX_SIGMOID_GAIN = 4;
 export const SHADOW_WORKING_GAMMA = 12;
 export const HIGHLIGHT_MAX_SIGMOID_GAIN = 4;
 export const BLACK_MAX_TOE_WIDTH = 0.08;
-export const WHITE_MAX_SHOULDER_WIDTH = 0.26;
-export const WHITE_RANGE_STRENGTH_MAX_M = 3;
+export const WHITE_MAX_SHOULDER_WIDTH = 0.16;
+const BLACK_LOCAL_TOE_END_MULTIPLIER = 4;
 export const HIGHLIGHT_WORKING_GAMMA = 0.48;
 
 export type HighlightRange = {
@@ -691,28 +691,64 @@ export function applyHighlightLinear(
 }
 
 /**
- * Move the luminance black point without changing hue/chroma.
- * Negative Black uses a smooth toe from (0, 0) to (k, k/4), then continues
- * with slope 1 as y = x - 3k/4. Positive Black applies the exact inverse.
+ * Move only the local black-toe region without changing hue/chroma.
+ *
+ * Negative Black keeps the existing quartic toe through x=k, where
+ * (k, k/4) and slope 1 are preserved. Instead of carrying the resulting
+ * -3k/4 offset through every brighter tone, that offset is smoothly removed
+ * over [k, 4k]. Values at and above 4k are therefore exact identity.
+ *
+ * Positive Black is the exact inverse of this localized negative curve.
+ * This preserves reversibility around zero while preventing Black from acting
+ * as a broad brightness shift.
  */
-export function applyBlackLinear(value: number, black: number): number {
+function applyLocalizedBlackLinear(
+  value: number,
+  black: number,
+  maxToeWidth: number,
+): number {
   const normalized = clampToneRangeAdjustment(black);
   if (normalized === 0 || !Number.isFinite(value) || value <= 0) return value;
 
-  const pivot = BLACK_MAX_TOE_WIDTH * Math.abs(normalized) / 100;
+  const pivot = maxToeWidth * Math.abs(normalized) / 100;
   if (!(pivot > 0)) return value;
 
+  const localEnd = pivot * BLACK_LOCAL_TOE_END_MULTIPLIER;
+
   if (normalized < 0) {
-    if (value >= pivot) return value - pivot * 0.75;
-    return Math.pow(value, 4) / (4 * Math.pow(pivot, 3));
+    if (value >= localEnd) return value;
+    if (value <= pivot) return Math.pow(value, 4) / (4 * Math.pow(pivot, 3));
+
+    // Remove the old -3k/4 continuation smoothly while matching slope 1 at
+    // both ends. smoothstep has zero endpoint derivatives, so this joins the
+    // quartic toe and the identity branch without a tonal kink.
+    const s = (value - pivot) / (localEnd - pivot);
+    const smooth = s * s * (3 - 2 * s);
+    return value - pivot * 0.75 * (1 - smooth);
   }
 
-  // Positive Black is the exact inverse of the negative curve. This keeps the
-  // control reversible around zero while preserving hue/chroma because the
-  // resulting luminance change is applied as one common RGB gain.
+  // Positive Black is the exact inverse of the localized negative curve.
   const toeOutput = pivot * 0.25;
-  if (value >= toeOutput) return value + pivot * 0.75;
-  return Math.pow(4 * Math.pow(pivot, 3) * value, 0.25);
+  if (value >= localEnd) return value;
+  if (value <= toeOutput) return Math.pow(4 * Math.pow(pivot, 3) * value, 0.25);
+
+  // In the recovery interval, write x=k(1+3s). The negative curve becomes
+  // y/k = 1/4 + 3s + 9s^2/4 - 3s^3/2, which is strictly increasing on
+  // s in [0,1]. A few Newton steps therefore recover the exact inverse using
+  // only inexpensive arithmetic.
+  const target = value / pivot;
+  let s = Math.min(1, Math.max(0, (target - 0.25) / 3.75));
+  for (let iteration = 0; iteration < 4; iteration += 1) {
+    const s2 = s * s;
+    const f = 0.25 + 3 * s + 2.25 * s2 - 1.5 * s2 * s - target;
+    const derivative = 3 + 4.5 * s - 4.5 * s2;
+    s = Math.min(1, Math.max(0, s - f / derivative));
+  }
+  return pivot * (1 + 3 * s);
+}
+
+export function applyBlackLinear(value: number, black: number): number {
+  return applyLocalizedBlackLinear(value, black, BLACK_MAX_TOE_WIDTH);
 }
 
 
@@ -721,17 +757,29 @@ export type WhiteRange = {
 };
 
 /**
- * Move the image-dependent white point M=P99.8 while keeping black fixed.
+ * Apply White with the same localized curve shape as Black, vertically mirrored
+ * around display white 1.0, but with its own independent shoulder width.
  *
- * The shoulder width is boosted by clamp(M, 1, 3) so highlight
- * action stays perceptible even when P99.8 extends above 1.
- * Positive White raises highlights toward M.  At x=M-k the curve reaches
- * y=M-k/4, matching the mirrored Black control point, while the lower branch
- * bends smoothly back to (0, 0) instead of degenerating into a global +3k/4
- * translation.  The upper branch is the mirrored Black quartic shoulder.
- * Negative White applies the exact inverse, so extended highlights below M
- * can be pulled downward without changing hue/chroma when the luminance
- * mapping is later applied as one common RGB gain.
+ * In [0, 1], the base transform is:
+ *   White(x, w) = 1 - LocalBlack(1 - x, -w, WHITE_MAX_SHOULDER_WIDTH)
+ *
+ * Positive White uses that mirrored transform directly and leaves values above
+ * 1 unchanged. Negative White additionally rescues highlight headroom when
+ * P99.8=M extends above 1. The mirrored inverse-Black branch joins its upper
+ * shoulder at:
+ *   k = WHITE_MAX_SHOULDER_WIDTH * abs(w) / 100
+ *   P = 1 - k/4, Y(P) = 1 - k
+ *
+ * From that slider-dependent join point to M, use a monotonic linear rescue
+ * segment. Its endpoint is interpolated by the negative slider strength t:
+ *   T(M) = M - (M - 1) * t
+ * so White=-100 maps M to 1 exactly, while weaker negative values rescue only
+ * the corresponding fraction. Above M the curve continues with slope 1-t;
+ * therefore White=-100 caps all higher luminance at 1.
+ *
+ * If M<=1 there is no P99.8 headroom interval to rescue. The mirrored White
+ * curve is kept through 1, and only luminance above 1 is compressed with
+ * slope 1-t so the -100 endpoint still cannot exceed display white.
  */
 export function applyWhiteLinear(
   value: number,
@@ -739,54 +787,51 @@ export function applyWhiteLinear(
   range: WhiteRange | null,
 ): number {
   const normalized = clampToneRangeAdjustment(white);
-  if (normalized === 0 || !range || !Number.isFinite(value)) return value;
+  if (normalized === 0 || !range || !Number.isFinite(value) || value < 0) return value;
+
   const M = range.p998;
-  if (!(Number.isFinite(M) && M > 0) || value < 0 || value > M) return value;
+  if (!(Number.isFinite(M) && M > 0)) return value;
 
-  const whiteRangeStrength = Math.min(Math.max(M, 1), WHITE_RANGE_STRENGTH_MAX_M);
-  const requestedPivot = WHITE_MAX_SHOULDER_WIDTH
-    * whiteRangeStrength
-    * Math.abs(normalized) / 100;
-  if (!(requestedPivot > 0)) return value;
-  // Keep a finite lower branch even for extremely dark images whose P99.8 is
-  // below the nominal maximum shoulder width.
-  const pivot = Math.min(requestedPivot, M * 0.8);
-  if (!(pivot > 0)) return value;
+  // Mirror the localized Black curve shape around display white, using the
+  // independent White shoulder width. Non-positive mirrored coordinates pass
+  // through unchanged, so values above 1 are only changed by negative rescue.
+  const mirrored = 1 - applyLocalizedBlackLinear(
+    1 - value,
+    -normalized,
+    WHITE_MAX_SHOULDER_WIDTH,
+  );
+  if (normalized > 0) return mirrored;
 
-  const lowerEndX = M - pivot;
-  const lowerEndY = M - pivot * 0.25;
-  const lift = lowerEndY - lowerEndX; // 3k/4.
+  const strength = -normalized / 100;
+  if (!(strength > 0)) return mirrored;
 
-  if (normalized > 0) {
-    if (value <= lowerEndX) {
-      if (!(lowerEndX > TONE_LUMINANCE_EPSILON)) return value;
-      const t = value / lowerEndX;
-      // delta = lift * (2t - t^2): delta(0)=0, delta(1)=lift,
-      // and delta' reaches zero at the join, so the curve meets the shoulder
-      // with slope 1 instead of becoming a global translation.
-      return value + lift * (2 * t - t * t);
-    }
-    const distance = M - value;
-    return M - Math.pow(distance, 4) / (4 * Math.pow(pivot, 3));
+  // Without P99.8 headroom above display white, preserve the exact mirrored
+  // curve through x=1 and only compress the excess above 1. At -100 this
+  // becomes a hard y=1 continuation, so no highlight can remain above white.
+  if (M <= 1) {
+    if (value <= 1) return mirrored;
+    return 1 + (value - 1) * (1 - strength);
   }
 
-  // Exact inverse of the positive curve.
-  if (value >= lowerEndY) {
-    const outputDistance = M - value;
-    return M - Math.pow(4 * Math.pow(pivot, 3) * outputDistance, 0.25);
+  const pivot = WHITE_MAX_SHOULDER_WIDTH * strength;
+  const rescueStart = 1 - pivot * 0.25;
+  if (value <= rescueStart) return mirrored;
+
+  // At the inverse-Black/mirrored shoulder join, x=P maps exactly to 1-k.
+  const rescueStartOutput = 1 - pivot;
+  const rescuedAtM = M - (M - 1) * strength;
+
+  if (value <= M) {
+    const span = M - rescueStart;
+    if (!(span > TONE_LUMINANCE_EPSILON)) return mirrored;
+    const t = (value - rescueStart) / span;
+    return rescueStartOutput + (rescuedAtM - rescueStartOutput) * t;
   }
 
-  if (!(lowerEndX > TONE_LUMINANCE_EPSILON) || !(lift > 0)) return value;
-  // Positive lower branch:
-  //   y = A*x - B*x^2,
-  // where A=1+2*lift/lowerEndX and B=lift/lowerEndX^2.
-  // Use the stable form of the smaller quadratic root to avoid cancellation
-  // close to black.
-  const A = 1 + 2 * lift / lowerEndX;
-  const B = lift / (lowerEndX * lowerEndX);
-  const discriminant = Math.max(0, A * A - 4 * B * value);
-  const denominator = A + Math.sqrt(discriminant);
-  return denominator > TONE_LUMINANCE_EPSILON ? 2 * value / denominator : value;
+  // Keep the mapping continuous above sampled P99.8. Full negative White has
+  // zero slope here (all values stay at 1); partial strength retains 1-t of
+  // the original excess instead of creating a discontinuity at M.
+  return rescuedAtM + (value - M) * (1 - strength);
 }
 
 export function applyShadowHighlightLinearToRgb(
@@ -1006,6 +1051,211 @@ const TONE_ADJUSTMENT_STAGE_INDEX: Record<ToneAdjustmentStage, number> = {
   white: 7,
   "after-tone": 8,
 };
+
+const TONE_GAMMA20_GAIN_LUT_SIZE = 4096;
+const TONE_LUMINANCE_STAGE_START_INDEX = TONE_ADJUSTMENT_STAGE_INDEX["scaled-log"];
+const TONE_AFTER_STAGE_INDEX = TONE_ADJUSTMENT_STAGE_INDEX["after-tone"];
+
+function hasActiveToneLuminanceStage(
+  context: ColorAdjustmentContext,
+  stageIndex: number,
+): boolean {
+  switch (stageIndex) {
+    case 2: return context.hasScaledLog;
+    case 3: return context.hasSigmoid;
+    case 4: return context.hasShadow;
+    case 5: return context.hasHighlight;
+    case 6: return context.hasBlack;
+    case 7: return context.hasWhite;
+    default: return false;
+  }
+}
+
+function applyToneLuminanceAdjustmentStages(
+  luminance: number,
+  context: ColorAdjustmentContext,
+  startIndex: number,
+  endIndex: number,
+): number {
+  let adjusted = luminance;
+  if (startIndex <= 2 && endIndex > 2 && context.hasScaledLog) {
+    adjusted = applyScaledLogLinearExtended(adjusted, context.scaledLog);
+  }
+  if (startIndex <= 3 && endIndex > 3 && context.hasSigmoid) {
+    adjusted = applySigmoidLinearExtended(adjusted, context.sigmoid);
+  }
+  if (startIndex <= 4 && endIndex > 4 && context.hasShadow) {
+    adjusted = applyShadowLinear(adjusted, context.shadow);
+  }
+  if (startIndex <= 5 && endIndex > 5 && context.hasHighlight) {
+    adjusted = applyHighlightLinear(adjusted, context.highlight, context.highlightRange);
+  }
+  if (startIndex <= 6 && endIndex > 6 && context.hasBlack) {
+    adjusted = applyBlackLinear(adjusted, context.black);
+  }
+  if (startIndex <= 7 && endIndex > 7 && context.hasWhite) {
+    adjusted = applyWhiteLinear(adjusted, context.white, context.whiteRange);
+  }
+  return adjusted;
+}
+
+function normalizeToneGamma20RangeMax(rangeMax: number): number {
+  return Number.isFinite(rangeMax) && rangeMax > 0 ? rangeMax : 1;
+}
+
+function toneGamma20CoordinateFromLinear(value: number, rangeMax: number): number {
+  if (!(value > 0)) return 0;
+  return Math.sqrt(value * rangeMax);
+}
+
+function toneLinearFromGamma20Coordinate(value: number, rangeMax: number): number {
+  if (!(value > 0)) return 0;
+  return value * value / rangeMax;
+}
+
+export type ToneAdjustmentGamma20GainLut = {
+  gammaRangeMax: number;
+  sampleScale: number;
+  startStage: ToneAdjustmentStage;
+  endStage: ToneAdjustmentStage;
+  values: Float32Array;
+};
+
+export function buildToneAdjustmentGamma20GainLut(
+  context: ColorAdjustmentContext,
+  startStage: ToneAdjustmentStage = "white-balance",
+  endStage: ToneAdjustmentStage = "after-tone",
+  gammaRangeMax = 1,
+): ToneAdjustmentGamma20GainLut | null {
+  const start = Math.max(
+    TONE_LUMINANCE_STAGE_START_INDEX,
+    TONE_ADJUSTMENT_STAGE_INDEX[startStage],
+  );
+  const end = Math.min(TONE_AFTER_STAGE_INDEX, TONE_ADJUSTMENT_STAGE_INDEX[endStage]);
+  if (start >= end) return null;
+
+  let hasActiveStage = false;
+  for (let stage = start; stage < end; stage += 1) {
+    if (hasActiveToneLuminanceStage(context, stage)) {
+      hasActiveStage = true;
+      break;
+    }
+  }
+  if (!hasActiveStage) return null;
+
+  const normalizedRange = normalizeToneGamma20RangeMax(gammaRangeMax);
+  const sampleScale = (TONE_GAMMA20_GAIN_LUT_SIZE - 1) / normalizedRange;
+  const values = new Float32Array(TONE_GAMMA20_GAIN_LUT_SIZE);
+  values.fill(1);
+
+  for (let i = 1; i < TONE_GAMMA20_GAIN_LUT_SIZE; i += 1) {
+    const gammaValue = i / sampleScale;
+    const sourceLuminance = toneLinearFromGamma20Coordinate(gammaValue, normalizedRange);
+    const adjustedLuminance = applyToneLuminanceAdjustmentStages(
+      sourceLuminance,
+      context,
+      start,
+      end,
+    );
+    // Preserve the scalar tone mapping exactly, including negative luminance
+    // produced by the Black-mirrored negative White curve near black. Clamping
+    // this gain to zero would make the CLAHE/LUT path disagree with direct tone.
+    const gain = sourceLuminance > TONE_LUMINANCE_EPSILON && Number.isFinite(adjustedLuminance)
+      ? adjustedLuminance / sourceLuminance
+      : 1;
+    values[i] = Math.fround(gain);
+  }
+  values[0] = values[1] ?? 1;
+
+  return {
+    gammaRangeMax: normalizedRange,
+    sampleScale,
+    startStage,
+    endStage,
+    values,
+  };
+}
+
+export function sampleToneAdjustmentGamma20GainLut(
+  lut: ToneAdjustmentGamma20GainLut,
+  sourceLuminance: number,
+): number | null {
+  if (!(sourceLuminance >= 0)) return null;
+  const gammaValue = toneGamma20CoordinateFromLinear(sourceLuminance, lut.gammaRangeMax);
+  if (!Number.isFinite(gammaValue) || gammaValue > lut.gammaRangeMax) return null;
+
+  const position = gammaValue * lut.sampleScale;
+  const lower = Math.max(0, Math.min(lut.values.length - 1, Math.floor(position)));
+  const upper = Math.min(lut.values.length - 1, lower + 1);
+  const fraction = position - lower;
+  const lo = lut.values[lower] ?? 1;
+  const hi = lut.values[upper] ?? lo;
+  return lo + (hi - lo) * fraction;
+}
+
+export function applyToneAdjustmentsLinearRgbRangeWithGamma20GainLutInto(
+  r: number,
+  g: number,
+  b: number,
+  context: ColorAdjustmentContext,
+  startStage: ToneAdjustmentStage,
+  endStage: ToneAdjustmentStage,
+  lut: ToneAdjustmentGamma20GainLut | null,
+  output: ToneRgbBuffer,
+): void {
+  const start = TONE_ADJUSTMENT_STAGE_INDEX[startStage];
+  const end = TONE_ADJUSTMENT_STAGE_INDEX[endStage];
+  if (start >= end) {
+    output[0] = r; output[1] = g; output[2] = b;
+    return;
+  }
+
+  if (start <= 0 && end > 0 && context.hasWhiteBalance) {
+    applyWhiteBalanceLinearInto(r, g, b, context.gains, output);
+    r = output[0] ?? 0; g = output[1] ?? 0; b = output[2] ?? 0;
+  }
+  if (start <= 1 && end > 1 && context.hasExposure) {
+    applyHighlightRolloffLinearRgbInto(
+      r * context.factor,
+      g * context.factor,
+      b * context.factor,
+      context.exposureRolloff,
+      output,
+    );
+    r = output[0] ?? 0; g = output[1] ?? 0; b = output[2] ?? 0;
+  }
+
+  const luminanceStart = Math.max(start, TONE_LUMINANCE_STAGE_START_INDEX);
+  if (luminanceStart >= end) {
+    output[0] = r; output[1] = g; output[2] = b;
+    return;
+  }
+
+  const sourceLuminance = proPhotoLinearLuminance(r, g, b);
+  if (!(sourceLuminance > TONE_LUMINANCE_EPSILON)) {
+    output[0] = r; output[1] = g; output[2] = b;
+    return;
+  }
+
+  const gain = lut ? sampleToneAdjustmentGamma20GainLut(lut, sourceLuminance) : null;
+  if (gain !== null && Number.isFinite(gain)) {
+    output[0] = r * gain;
+    output[1] = g * gain;
+    output[2] = b * gain;
+    return;
+  }
+
+  const luminance = applyToneLuminanceAdjustmentStages(sourceLuminance, context, luminanceStart, end);
+  if (!Number.isFinite(luminance)) {
+    output[0] = r; output[1] = g; output[2] = b;
+    return;
+  }
+
+  const scale = luminance / sourceLuminance;
+  output[0] = r * scale;
+  output[1] = g * scale;
+  output[2] = b * scale;
+}
 
 /** Apply a contiguous subrange of the luminance Tone pipeline. `endStage` is exclusive. */
 export function applyToneAdjustmentsLinearRgbRange(

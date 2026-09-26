@@ -11034,6 +11034,7 @@ type EditDialogProps = {
   rawDemosaicQuality?: RawDemosaicQuality;
   rawHighlightMode?: RawHighlightMode;
   rawToneMode?: RawToneMode;
+  closeOnBackdropClick?: boolean;
   onRawDevelopmentReady?: (decodedImage: DecodedRgbImage16) => void;
   onCancel: () => void;
   onApply: (
@@ -11234,6 +11235,7 @@ export function ImageEditDialog({
   rawDemosaicQuality,
   rawHighlightMode,
   rawToneMode = "thumbnail",
+  closeOnBackdropClick = true,
   onRawDevelopmentReady,
   onCancel,
   onApply,
@@ -15581,16 +15583,18 @@ export function ImageEditDialog({
   return createPortal(
     <div
       className="fixed inset-0 z-[70] bg-black/70 flex items-center justify-center p-4 [@media(max-height:1399px)]:py-[2px] [@media(max-width:999px)]:px-[2px]"
-      onClick={
-        eyedropperMode
-          ? () => setEyedropperMode(false)
-          : rotationMode
-            ? () => {
-                setRotationMode(false);
-                rotationDragState.current = null;
-              }
-            : onCancel
-      }
+      onClick={() => {
+        if (eyedropperMode) {
+          setEyedropperMode(false);
+          return;
+        }
+        if (rotationMode) {
+          setRotationMode(false);
+          rotationDragState.current = null;
+          return;
+        }
+        if (closeOnBackdropClick) onCancel();
+      }}
       onContextMenuCapture={() => {
         if (eyedropperMode) setEyedropperMode(false);
       }}
@@ -16125,22 +16129,9 @@ export function ImageEditDialog({
                       onPointerUp={onPeepExpandedPointerUp}
                       onPointerCancel={onPeepExpandedPointerUp}
                       onDoubleClick={(e) => {
-                        const canvas = peepDisplayCanvasRef.current;
-                        const rect = canvas?.getBoundingClientRect();
-                        if (!rect || rect.width <= 0 || rect.height <= 0 || peepRect.w <= 0 || peepRect.h <= 0) return;
-                        const fx = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-                        const fy = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
-                        const centerX = peepRect.x + fx * peepRect.w;
-                        const centerY = peepRect.y + fy * peepRect.h;
-                        const nextX = Math.max(cropRect.x, Math.min(cropRect.x + cropRect.w - peepRect.w, centerX - peepRect.w / 2));
-                        const nextY = Math.max(cropRect.y, Math.min(cropRect.y + cropRect.h - peepRect.h, centerY - peepRect.h / 2));
-                        const next = { ...peepRectRef.current, x: nextX, y: nextY };
-                        peepRectRef.current = next;
-                        setPeepRect(next);
-                        drawPeepComposite(next);
-                        enqueuePeepTiles(next);
                         e.preventDefault();
                         e.stopPropagation();
+                        closePeepExpanded();
                       }}
                       onClick={(e) => e.stopPropagation()}
                     >

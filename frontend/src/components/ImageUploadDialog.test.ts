@@ -45,7 +45,7 @@ jest.mock("@/image/lensfun", () => ({
 }));
 
 import { __imageEditorCharacterization as imageEditor } from "./image-editor/characterization";
-import { applyRolloffMaxChannelLinearRgb } from "@/image/tone";
+import { applyRolloffMaxChannelLinearRgb, WHITE_MAX_SHOULDER_WIDTH } from "@/image/tone";
 
 function rounded(values: number[]): number[] {
   return values.map((value) => Number(value.toFixed(12)));
@@ -316,12 +316,17 @@ describe("image editor tone characterization", () => {
     expect(rolled[2] / rolled[0]).toBeCloseTo(0.25, 12);
   });
 
-  test("Black uses a smooth toe and is reversible around zero", () => {
+  test("Black uses a localized smooth toe and is reversible around zero", () => {
     expect(imageEditor.applyBlackLinear(0.08, -100)).toBeCloseTo(0.02, 12);
-    expect(imageEditor.applyBlackLinear(0.18, -100)).toBeCloseTo(0.12, 12);
-    expect(imageEditor.applyBlackLinear(0.5, -100)).toBeCloseTo(0.44, 12);
+    expect(imageEditor.applyBlackLinear(0.18, -100)).toBeCloseTo(0.14256944444444444, 12);
 
-    for (const value of [0.005, 0.02, 0.05, 0.08, 0.18, 0.5]) {
+    // The old implementation carried a constant offset through all brighter
+    // tones. The localized toe must be exact identity after 4k (=0.32 here).
+    expect(imageEditor.applyBlackLinear(0.32, -100)).toBeCloseTo(0.32, 12);
+    expect(imageEditor.applyBlackLinear(0.5, -100)).toBeCloseTo(0.5, 12);
+    expect(imageEditor.applyBlackLinear(0.5, 100)).toBeCloseTo(0.5, 12);
+
+    for (const value of [0.005, 0.02, 0.05, 0.08, 0.18, 0.32, 0.5]) {
       const tightened = imageEditor.applyBlackLinear(value, -65);
       const restored = imageEditor.applyBlackLinear(tightened, 65);
       expect(restored).toBeCloseTo(value, 12);
@@ -329,26 +334,55 @@ describe("image editor tone characterization", () => {
   });
 
 
-  test("White keeps black fixed and concentrates adjustment toward P99.8", () => {
-    expect(imageEditor.applyWhiteLinear(0, 100, { p998: 1 })).toBe(0);
-    expect(imageEditor.applyWhiteLinear(0.92, 100, { p998: 1 })).toBeCloseTo(0.98, 12);
-    expect(imageEditor.applyWhiteLinear(1.42, 100, { p998: 1.5 })).toBeCloseTo(1.48, 12);
+  test("White mirrors Black's curve shape with an independent 0.16 shoulder and rescues extended highlights only in the negative direction", () => {
+    const range = { p998: 4 };
+    expect(WHITE_MAX_SHOULDER_WIDTH).toBe(0.16);
 
-    const midAtM1 = imageEditor.applyWhiteLinear(0.5, 100, { p998: 1 });
-    const midAtM4 = imageEditor.applyWhiteLinear(0.5, 100, { p998: 4 });
-    expect(midAtM1).toBeGreaterThan(0.5);
-    expect(midAtM1).toBeLessThan(0.56);
-    expect(midAtM4).toBeGreaterThan(0.5);
-    expect(midAtM4).toBeLessThan(midAtM1);
-
-    expect(imageEditor.applyWhiteLinear(1.2, -100, { p998: 1.5 })).toBeLessThan(1.2);
-
-    const range = { p998: 1.5 };
-    for (const value of [0.1, 0.5, 1.0, 1.2, 1.42, 1.48, 1.5]) {
-      const tightened = imageEditor.applyWhiteLinear(value, 65, range);
-      const restored = imageEditor.applyWhiteLinear(tightened, -65, range);
-      expect(restored).toBeCloseTo(value, 12);
+    // White uses the same normalized local curve as Black, but at twice the
+    // width (0.16 vs 0.08). By homogeneity, a 0.16-width mirrored White is
+    // equivalent to scaling the public 0.08-width Black coordinates by 2.
+    for (const value of [0, 0.2, 0.5, 0.9, 0.98, 1]) {
+      expect(imageEditor.applyWhiteLinear(value, 100, range)).toBeCloseTo(
+        1 - 2 * imageEditor.applyBlackLinear((1 - value) / 2, -100),
+        12,
+      );
     }
+    expect(imageEditor.applyWhiteLinear(1.2, 100, range)).toBeCloseTo(1.2, 12);
+
+    // Negative White follows the mirrored positive curve up to its
+    // slider-dependent join point P=1-k/4. With the independent White width,
+    // full strength uses k=0.16 and therefore P=0.96, Y(P)=0.84.
+    const k100 = WHITE_MAX_SHOULDER_WIDTH;
+    const p100 = 1 - k100 / 4;
+    expect(p100).toBeCloseTo(0.96, 12);
+    expect(imageEditor.applyWhiteLinear(p100, -100, range)).toBeCloseTo(0.84, 12);
+    expect(imageEditor.applyWhiteLinear(0.9, -100, range)).toBeCloseTo(0.7844496264988194, 12);
+
+    // Black and White remain separate controls: Black is localized to the low
+    // end, while White uses the mirrored shape with its independently wider
+    // high-end shoulder.
+    expect(imageEditor.applyBlackLinear(0.9, -100)).toBeCloseTo(0.9, 12);
+    expect(imageEditor.applyWhiteLinear(0.1, -100, range)).toBeCloseTo(0.1, 12);
+    expect(imageEditor.applyBlackLinear(0.1, -100)).toBeLessThan(0.1);
+    expect(imageEditor.applyWhiteLinear(0.9, -100, range)).toBeLessThan(0.9);
+
+    // Full rescue maps M to display white and keeps every value above M at 1.
+    expect(imageEditor.applyWhiteLinear(4, -100, range)).toBeCloseTo(1, 12);
+    expect(imageEditor.applyWhiteLinear(5, -100, range)).toBeCloseTo(1, 12);
+    expect(imageEditor.applyWhiteLinear(1, -100, range)).toBeCloseTo(0.8421052631578947, 12);
+    expect(imageEditor.applyWhiteLinear(1.2, -100, range)).toBeCloseTo(0.8526315789473684, 12);
+
+    // Half strength rescues only halfway: M -> (M+1)/2, then continues with
+    // half the original slope above M. Its own k=0.08 gives P=0.98.
+    expect(imageEditor.applyWhiteLinear(4, -50, range)).toBeCloseTo(2.5, 12);
+    expect(imageEditor.applyWhiteLinear(5, -50, range)).toBeCloseTo(3, 12);
+    expect(imageEditor.applyWhiteLinear(1, -50, range)).toBeCloseTo(0.9304635761589405, 12);
+
+    // When P99.8 does not exceed 1 there is no sampled headroom interval, but
+    // negative White still compresses values above display white.
+    const lowRange = { p998: 0.75 };
+    expect(imageEditor.applyWhiteLinear(1.2, -50, lowRange)).toBeCloseTo(1.1, 12);
+    expect(imageEditor.applyWhiteLinear(1.2, -100, lowRange)).toBeCloseTo(1, 12);
   });
 
   test("desaturates only when exposure rolloff actually compresses the highlight", () => {
@@ -584,6 +618,49 @@ describe("image editor RGB16 characterization", () => {
       const expectedInflection = 0.7 + 0.3 / context.saturationRolloff.inputMax;
       expect(context.saturationRolloff.inflection).toBeCloseTo(expectedInflection, 12);
     }
+  });
+
+  test("keeps the final display rolloff stage active inside display range", () => {
+    const sample = {
+      data: new Float32Array([
+        0.8, 0.6, 0.4,
+        0.4, 0.3, 0.2,
+        0.2, 0.15, 0.1,
+      ]),
+      width: 3,
+      height: 1,
+    };
+    const context = imageEditor.buildInteractiveColorAdjustmentContextFromLinearRgbSample(
+      sample, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    );
+
+    expect(context.finalRolloff).not.toBeNull();
+    expect(context.finalRolloff?.inflection).toBe(1);
+    expect(context.finalRolloff?.outputMax).toBe(1);
+  });
+
+  test("negative White cannot weaken or disable the final max-RGB rolloff", () => {
+    const sample = {
+      data: new Float32Array([
+        4, 3, 2,
+        2, 1.5, 1,
+        1.2, 1.0, 0.8,
+        0.9, 0.8, 0.7,
+      ]),
+      width: 4,
+      height: 1,
+    };
+    const atMinus99 = imageEditor.buildInteractiveColorAdjustmentContextFromLinearRgbSample(
+      sample, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, 0, -99,
+    );
+    const atMinus100 = imageEditor.buildInteractiveColorAdjustmentContextFromLinearRgbSample(
+      sample, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, 0, -100,
+    );
+
+    expect(atMinus99.finalRolloff).not.toBeNull();
+    expect(atMinus100.finalRolloff).not.toBeNull();
+    expect(atMinus100.finalRolloff).toEqual(atMinus99.finalRolloff);
+    expect(atMinus100.finalRolloff?.inputMax).toBeGreaterThan(1);
   });
 
   test("applies the final display rolloff even when all user adjustments are at defaults", () => {
