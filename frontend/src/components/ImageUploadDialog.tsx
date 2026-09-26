@@ -371,6 +371,8 @@ export type ImageEditParams = {
   exposureEv: number;
   shadow: number;
   highlight: number;
+  black: number;
+  white: number;
   scaledLog: number;
   sigmoid: number;
   clarity: number;
@@ -1845,6 +1847,8 @@ export function buildDefaultEditParams(w?: number, h?: number): ImageEditParams 
     exposureEv: 0,
     shadow: 0,
     highlight: 0,
+    black: 0,
+    white: 0,
     scaledLog: 0,
     sigmoid: 0,
     clarity: 0,
@@ -1886,6 +1890,8 @@ function normalizeEditParams(params: ImageEditParams | undefined, w?: number, h?
     exposureEv: clampExposureEv(params?.exposureEv ?? defaults.exposureEv),
     shadow: clampToneRangeAdjustment(params?.shadow ?? defaults.shadow),
     highlight: clampToneRangeAdjustment(params?.highlight ?? defaults.highlight),
+    black: clampToneRangeAdjustment(params?.black ?? defaults.black),
+    white: clampToneRangeAdjustment(params?.white ?? defaults.white),
     scaledLog: clampScaledLog(params?.scaledLog ?? defaults.scaledLog),
     sigmoid: clampSigmoid(params?.sigmoid ?? defaults.sigmoid),
     clarity: clampClarity(params?.clarity ?? defaults.clarity),
@@ -1924,6 +1930,8 @@ function isMeaningfullyEdited(
     Math.abs(normalized.exposureEv) > 0.0001 ||
     normalized.shadow !== 0 ||
     normalized.highlight !== 0 ||
+    normalized.black !== 0 ||
+    normalized.white !== 0 ||
     Math.abs(normalized.scaledLog) > 0.0001 ||
     Math.abs(normalized.sigmoid) > 0.0001 ||
     normalized.clarity !== 0 ||
@@ -6662,6 +6670,8 @@ function adjustedDebugStatisticsFromLinearRgbSample(
   exposureEv: number,
   shadow: number,
   highlight: number,
+  black: number,
+  white: number,
   scaledLog: number,
   sigmoid: number,
   vibrance: number,
@@ -6680,6 +6690,8 @@ function adjustedDebugStatisticsFromLinearRgbSample(
     vibrance,
     saturation,
     true,
+    black,
+    white,
   );
   const adjusted = new Float32Array(sample.data.length);
   const adjustedRgb: [number, number, number] = [0, 0, 0];
@@ -9661,6 +9673,8 @@ function buildLinearProPhotoPixelSampler(
     params.vibrance,
     params.saturation,
     true,
+    params.black,
+    params.white,
   );
   return {
     decoded,
@@ -9884,6 +9898,8 @@ async function buildPeepTileCanvasFromDecoded(
       clarityMap,
       activeDefringeMap,
       clampDefringe(params.defringe) / 100,
+      params.black,
+      params.white,
     );
     applyDenoiseToCanvas(preCanvas, params.denoise, outputColorProfile);
 
@@ -10067,6 +10083,8 @@ function buildFallbackImageEditClarityMap(
     0,
     0,
     true,
+    params.black,
+    params.white,
   );
   return buildImageEditClarityMap(internalPreview, context, normalizedClarity);
 }
@@ -10133,6 +10151,8 @@ async function buildEditedVariantFromDecoded(
       clarityMap,
       defringeMap ?? null,
       clampDefringe(params.defringe) / 100,
+      params.black,
+      params.white,
     );
     applyDenoiseToCanvas(output, params.denoise, outputColorProfile);
   } else {
@@ -10156,6 +10176,8 @@ async function buildEditedVariantFromDecoded(
         clarityMap,
         defringeMap ?? null,
         clampDefringe(params.defringe) / 100,
+        params.black,
+        params.white,
       );
       applyDenoiseToCanvas(cropped, params.denoise, outputColorProfile);
       const outputCtx = getCanvas2dContext(output, outputColorProfile);
@@ -10390,6 +10412,8 @@ export async function buildEditedDecodedRgb16(
     params.vibrance,
     params.saturation,
     true,
+    params.black,
+    params.white,
   );
   const transform = buildRenderedPixelToSourceTransform(
     sourceW,
@@ -10418,6 +10442,8 @@ export async function buildEditedDecodedRgb16(
     params.exposureEv === 0 &&
     params.shadow === 0 &&
     params.highlight === 0 &&
+    params.black === 0 &&
+    params.white === 0 &&
     params.scaledLog === 0 &&
     params.sigmoid === 0 &&
     params.clarity === 0 &&
@@ -11319,6 +11345,8 @@ export function ImageEditDialog({
   const [exposureEv, setExposureEv] = useState<number>(clampExposureEv(initialParams.exposureEv));
   const [shadow, setShadow] = useState<number>(clampToneRangeAdjustment(initialParams.shadow ?? 0));
   const [highlight, setHighlight] = useState<number>(clampToneRangeAdjustment(initialParams.highlight ?? 0));
+  const [black, setBlack] = useState<number>(clampToneRangeAdjustment(initialParams.black ?? 0));
+  const [white, setWhite] = useState<number>(clampToneRangeAdjustment(initialParams.white ?? 0));
   const [scaledLog, setScaledLog] = useState<number>(clampScaledLog(initialParams.scaledLog));
   const [sigmoid, setSigmoid] = useState<number>(clampSigmoid(initialParams.sigmoid));
   const [clarity, setClarity] = useState<number>(clampClarity(initialParams.clarity ?? 0));
@@ -13472,6 +13500,8 @@ export function ImageEditDialog({
       clampExposureEv(exposureEv),
       clampToneRangeAdjustment(shadow),
       clampToneRangeAdjustment(highlight),
+      clampToneRangeAdjustment(black),
+      clampToneRangeAdjustment(white),
       clampScaledLog(scaledLog),
       clampSigmoid(sigmoid),
       clampClarity(clarity),
@@ -13487,15 +13517,19 @@ export function ImageEditDialog({
       values[3] = null;
     } else if (stage === "highlight") {
       values[4] = null;
-    } else if (stage === "scaled-log") {
+    } else if (stage === "black") {
       values[5] = null;
-    } else if (stage === "sigmoid") {
+    } else if (stage === "white") {
       values[6] = null;
-    } else if (stage === "clarity") {
+    } else if (stage === "scaled-log") {
       values[7] = null;
-    } else if (stage === "color") {
+    } else if (stage === "sigmoid") {
       values[8] = null;
+    } else if (stage === "clarity") {
       values[9] = null;
+    } else if (stage === "color") {
+      values[10] = null;
+      values[11] = null;
     }
     return JSON.stringify(values);
   }, [
@@ -13504,6 +13538,8 @@ export function ImageEditDialog({
     exposureEv,
     shadow,
     highlight,
+    black,
+    white,
     scaledLog,
     sigmoid,
     clarity,
@@ -13559,6 +13595,8 @@ export function ImageEditDialog({
       clampExposureEv(exposureEv),
       clampToneRangeAdjustment(shadow),
       clampToneRangeAdjustment(highlight),
+      clampToneRangeAdjustment(black),
+      clampToneRangeAdjustment(white),
       clampScaledLog(scaledLog),
       clampSigmoid(sigmoid),
     ]);
@@ -13578,6 +13616,8 @@ export function ImageEditDialog({
       0,
       0,
       true,
+      black,
+      white,
     );
     const activeStage = previewContinuousSliderRef.current;
     const tonePrefix = isTonePreviewSliderStage(activeStage)
@@ -13596,6 +13636,8 @@ export function ImageEditDialog({
     exposureEv,
     shadow,
     highlight,
+    black,
+    white,
     scaledLog,
     sigmoid,
     resolvePreviewSourceSample,
@@ -13638,6 +13680,8 @@ export function ImageEditDialog({
       exposureEv: clampExposureEv(exposureEv),
       shadow: clampToneRangeAdjustment(shadow),
       highlight: clampToneRangeAdjustment(highlight),
+      black: clampToneRangeAdjustment(black),
+      white: clampToneRangeAdjustment(white),
       scaledLog: clampScaledLog(scaledLog),
       sigmoid: clampSigmoid(sigmoid),
       clarity: clampClarity(clarity),
@@ -13663,6 +13707,8 @@ export function ImageEditDialog({
     exposureEv,
     shadow,
     highlight,
+    black,
+    white,
     scaledLog,
     sigmoid,
     clarity,
@@ -13906,6 +13952,8 @@ export function ImageEditDialog({
       exposureEv,
       shadow,
       highlight,
+      black,
+      white,
       scaledLog,
       sigmoid,
       clarity,
@@ -14023,6 +14071,8 @@ export function ImageEditDialog({
         vibrance,
         saturation,
         true,
+        black,
+        white,
       );
       const clarityMap = resolvePreviewClarityMap(decoded);
       const previewToneSample = clarityMap && normalizedRotation === 0
@@ -14177,6 +14227,8 @@ export function ImageEditDialog({
     exposureEv,
     shadow,
     highlight,
+    black,
+    white,
     scaledLog,
     sigmoid,
     clarity,
@@ -14227,6 +14279,8 @@ export function ImageEditDialog({
         sigmoid,
         vibrance,
         saturation,
+        black,
+        white,
         clarityMap,
         histogramSample,
       ),
@@ -14242,6 +14296,8 @@ export function ImageEditDialog({
     exposureEv,
     shadow,
     highlight,
+    black,
+    white,
     scaledLog,
     sigmoid,
     clarity,
@@ -14368,6 +14424,8 @@ export function ImageEditDialog({
       exposureEv,
       shadow,
       highlight,
+      black,
+      white,
       scaledLog,
       sigmoid,
       vibrance,
@@ -14384,6 +14442,8 @@ export function ImageEditDialog({
         exposureEv,
         shadow,
         highlight,
+        black,
+        white,
         scaledLog,
         sigmoid,
         vibrance,
@@ -14411,6 +14471,8 @@ export function ImageEditDialog({
     exposureEv,
     shadow,
     highlight,
+    black,
+    white,
     scaledLog,
     sigmoid,
     vibrance,
@@ -14488,6 +14550,8 @@ export function ImageEditDialog({
       if (!sample) return;
       setShadow(0);
       setHighlight(0);
+      setBlack(0);
+      setWhite(0);
       setClarity(0);
       await setStage("Optimizing exposure…");
       const autoExposure = findAutoExposure(sample, temperature, tint);
@@ -14680,6 +14744,8 @@ export function ImageEditDialog({
     exposureEv,
     shadow,
     highlight,
+    black,
+    white,
     scaledLog,
     sigmoid,
     clarity,
@@ -14703,6 +14769,8 @@ export function ImageEditDialog({
     exposureEv,
     shadow,
     highlight,
+    black,
+    white,
     scaledLog,
     sigmoid,
     clarity,
@@ -15231,6 +15299,8 @@ export function ImageEditDialog({
       exposureEv: clampExposureEv(exposureEv),
       shadow: clampToneRangeAdjustment(shadow),
       highlight: clampToneRangeAdjustment(highlight),
+      black: clampToneRangeAdjustment(black),
+      white: clampToneRangeAdjustment(white),
       scaledLog: clampScaledLog(scaledLog),
       sigmoid: clampSigmoid(sigmoid),
       clarity: clampClarity(clarity),
@@ -15326,6 +15396,8 @@ export function ImageEditDialog({
     exposureEv,
     shadow,
     highlight,
+    black,
+    white,
     scaledLog,
     sigmoid,
     clarity,
@@ -15389,6 +15461,8 @@ export function ImageEditDialog({
     setExposureEv(params.exposureEv);
     setShadow(params.shadow);
     setHighlight(params.highlight);
+    setBlack(params.black);
+    setWhite(params.white);
     setScaledLog(params.scaledLog);
     setSigmoid(params.sigmoid);
     setClarity(params.clarity);
@@ -17614,6 +17688,36 @@ export function ImageEditDialog({
                   value={highlight}
                   onChange={(e) => { previewContinuousSliderRef.current = "highlight"; setHighlight(clampToneRangeAdjustment(Number(e.target.value))); }}
                   onDoubleClick={() => { previewContinuousSliderRef.current = "highlight"; setHighlight(sliderDefaults.highlight); }}
+                  className={sliderInputClass}
+                />
+              </label>
+              <label className={sliderGrid112Class}>
+                <span className="col-start-1 row-start-1">Black</span>
+                <span className={sliderValueClass}>{black >= 0 ? "+" : ""}{black}</span>
+                <input
+                  aria-label="Black"
+                  type="range"
+                  min={-100}
+                  max={100}
+                  step={1}
+                  value={black}
+                  onChange={(e) => { previewContinuousSliderRef.current = "black"; setBlack(clampToneRangeAdjustment(Number(e.target.value))); }}
+                  onDoubleClick={() => { previewContinuousSliderRef.current = "black"; setBlack(sliderDefaults.black); }}
+                  className={sliderInputClass}
+                />
+              </label>
+              <label className={sliderGrid112Class}>
+                <span className="col-start-1 row-start-1">White</span>
+                <span className={sliderValueClass}>{white >= 0 ? "+" : ""}{white}</span>
+                <input
+                  aria-label="White"
+                  type="range"
+                  min={-100}
+                  max={100}
+                  step={1}
+                  value={white}
+                  onChange={(e) => { previewContinuousSliderRef.current = "white"; setWhite(clampToneRangeAdjustment(Number(e.target.value))); }}
+                  onDoubleClick={() => { previewContinuousSliderRef.current = "white"; setWhite(sliderDefaults.white); }}
                   className={sliderInputClass}
                 />
               </label>

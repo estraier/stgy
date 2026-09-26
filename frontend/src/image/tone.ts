@@ -587,6 +587,9 @@ export function applyExposureLinearToRgb(
 export const SHADOW_MAX_SIGMOID_GAIN = 4;
 export const SHADOW_WORKING_GAMMA = 12;
 export const HIGHLIGHT_MAX_SIGMOID_GAIN = 4;
+export const BLACK_MAX_TOE_WIDTH = 0.08;
+export const WHITE_MAX_SHOULDER_WIDTH = 0.26;
+export const WHITE_RANGE_STRENGTH_MAX_M = 3;
 export const HIGHLIGHT_WORKING_GAMMA = 0.48;
 
 export type HighlightRange = {
@@ -687,6 +690,105 @@ export function applyHighlightLinear(
   return adjustedNormalizedValue * p100;
 }
 
+/**
+ * Move the luminance black point without changing hue/chroma.
+ * Negative Black uses a smooth toe from (0, 0) to (k, k/4), then continues
+ * with slope 1 as y = x - 3k/4. Positive Black applies the exact inverse.
+ */
+export function applyBlackLinear(value: number, black: number): number {
+  const normalized = clampToneRangeAdjustment(black);
+  if (normalized === 0 || !Number.isFinite(value) || value <= 0) return value;
+
+  const pivot = BLACK_MAX_TOE_WIDTH * Math.abs(normalized) / 100;
+  if (!(pivot > 0)) return value;
+
+  if (normalized < 0) {
+    if (value >= pivot) return value - pivot * 0.75;
+    return Math.pow(value, 4) / (4 * Math.pow(pivot, 3));
+  }
+
+  // Positive Black is the exact inverse of the negative curve. This keeps the
+  // control reversible around zero while preserving hue/chroma because the
+  // resulting luminance change is applied as one common RGB gain.
+  const toeOutput = pivot * 0.25;
+  if (value >= toeOutput) return value + pivot * 0.75;
+  return Math.pow(4 * Math.pow(pivot, 3) * value, 0.25);
+}
+
+
+export type WhiteRange = {
+  p998: number;
+};
+
+/**
+ * Move the image-dependent white point M=P99.8 while keeping black fixed.
+ *
+ * The shoulder width is boosted by clamp(M, 1, 3) so highlight
+ * action stays perceptible even when P99.8 extends above 1.
+ * Positive White raises highlights toward M.  At x=M-k the curve reaches
+ * y=M-k/4, matching the mirrored Black control point, while the lower branch
+ * bends smoothly back to (0, 0) instead of degenerating into a global +3k/4
+ * translation.  The upper branch is the mirrored Black quartic shoulder.
+ * Negative White applies the exact inverse, so extended highlights below M
+ * can be pulled downward without changing hue/chroma when the luminance
+ * mapping is later applied as one common RGB gain.
+ */
+export function applyWhiteLinear(
+  value: number,
+  white: number,
+  range: WhiteRange | null,
+): number {
+  const normalized = clampToneRangeAdjustment(white);
+  if (normalized === 0 || !range || !Number.isFinite(value)) return value;
+  const M = range.p998;
+  if (!(Number.isFinite(M) && M > 0) || value < 0 || value > M) return value;
+
+  const whiteRangeStrength = Math.min(Math.max(M, 1), WHITE_RANGE_STRENGTH_MAX_M);
+  const requestedPivot = WHITE_MAX_SHOULDER_WIDTH
+    * whiteRangeStrength
+    * Math.abs(normalized) / 100;
+  if (!(requestedPivot > 0)) return value;
+  // Keep a finite lower branch even for extremely dark images whose P99.8 is
+  // below the nominal maximum shoulder width.
+  const pivot = Math.min(requestedPivot, M * 0.8);
+  if (!(pivot > 0)) return value;
+
+  const lowerEndX = M - pivot;
+  const lowerEndY = M - pivot * 0.25;
+  const lift = lowerEndY - lowerEndX; // 3k/4.
+
+  if (normalized > 0) {
+    if (value <= lowerEndX) {
+      if (!(lowerEndX > TONE_LUMINANCE_EPSILON)) return value;
+      const t = value / lowerEndX;
+      // delta = lift * (2t - t^2): delta(0)=0, delta(1)=lift,
+      // and delta' reaches zero at the join, so the curve meets the shoulder
+      // with slope 1 instead of becoming a global translation.
+      return value + lift * (2 * t - t * t);
+    }
+    const distance = M - value;
+    return M - Math.pow(distance, 4) / (4 * Math.pow(pivot, 3));
+  }
+
+  // Exact inverse of the positive curve.
+  if (value >= lowerEndY) {
+    const outputDistance = M - value;
+    return M - Math.pow(4 * Math.pow(pivot, 3) * outputDistance, 0.25);
+  }
+
+  if (!(lowerEndX > TONE_LUMINANCE_EPSILON) || !(lift > 0)) return value;
+  // Positive lower branch:
+  //   y = A*x - B*x^2,
+  // where A=1+2*lift/lowerEndX and B=lift/lowerEndX^2.
+  // Use the stable form of the smaller quadratic root to avoid cancellation
+  // close to black.
+  const A = 1 + 2 * lift / lowerEndX;
+  const B = lift / (lowerEndX * lowerEndX);
+  const discriminant = Math.max(0, A * A - 4 * B * value);
+  const denominator = A + Math.sqrt(discriminant);
+  return denominator > TONE_LUMINANCE_EPSILON ? 2 * value / denominator : value;
+}
+
 export function applyShadowHighlightLinearToRgb(
   r: number,
   g: number,
@@ -733,6 +835,8 @@ export type ToneAdjustmentFlags = {
   hasExposure: boolean;
   hasShadow: boolean;
   hasHighlight: boolean;
+  hasBlack?: boolean;
+  hasWhite?: boolean;
   hasScaledLog: boolean;
   hasSigmoid: boolean;
   exposureRolloff?: RolloffParams | null;
@@ -751,10 +855,15 @@ export function applyToneLinearToRgb(
   scaledLog: number,
   sigmoid: number,
   flags?: ToneAdjustmentFlags,
+  black = 0,
+  white = 0,
+  whiteRange: WhiteRange | null = null,
 ): [number, number, number] {
   const hasExposure = flags?.hasExposure ?? factor !== 1;
   const hasShadow = flags?.hasShadow ?? shadow !== 0;
   const hasHighlight = flags?.hasHighlight ?? (highlight !== 0 && highlightRange !== null);
+  const hasBlack = flags?.hasBlack ?? black !== 0;
+  const hasWhite = flags?.hasWhite ?? (white !== 0 && whiteRange !== null);
   const hasScaledLog = flags?.hasScaledLog ?? scaledLog !== 0;
   const hasSigmoid = flags?.hasSigmoid ?? sigmoid !== 0;
 
@@ -775,6 +884,8 @@ export function applyToneLinearToRgb(
   if (hasSigmoid) luminance = applySigmoidLinearExtended(luminance, sigmoid);
   if (hasShadow) luminance = applyShadowLinear(luminance, shadow);
   if (hasHighlight) luminance = applyHighlightLinear(luminance, highlight, highlightRange);
+  if (hasBlack) luminance = applyBlackLinear(luminance, black);
+  if (hasWhite) luminance = applyWhiteLinear(luminance, white, whiteRange);
 
   if (!Number.isFinite(luminance)) return [r, g, b];
   const scale = luminance / sourceLuminance;
@@ -795,10 +906,15 @@ export function applyToneLinearToRgbInto(
   sigmoid: number,
   output: ToneRgbBuffer,
   flags?: ToneAdjustmentFlags,
+  black = 0,
+  white = 0,
+  whiteRange: WhiteRange | null = null,
 ): void {
   const hasExposure = flags?.hasExposure ?? factor !== 1;
   const hasShadow = flags?.hasShadow ?? shadow !== 0;
   const hasHighlight = flags?.hasHighlight ?? (highlight !== 0 && highlightRange !== null);
+  const hasBlack = flags?.hasBlack ?? black !== 0;
+  const hasWhite = flags?.hasWhite ?? (white !== 0 && whiteRange !== null);
   const hasScaledLog = flags?.hasScaledLog ?? scaledLog !== 0;
   const hasSigmoid = flags?.hasSigmoid ?? sigmoid !== 0;
 
@@ -823,6 +939,8 @@ export function applyToneLinearToRgbInto(
   if (hasSigmoid) luminance = applySigmoidLinearExtended(luminance, sigmoid);
   if (hasShadow) luminance = applyShadowLinear(luminance, shadow);
   if (hasHighlight) luminance = applyHighlightLinear(luminance, highlight, highlightRange);
+  if (hasBlack) luminance = applyBlackLinear(luminance, black);
+  if (hasWhite) luminance = applyWhiteLinear(luminance, white, whiteRange);
 
   if (!Number.isFinite(luminance)) {
     output[0] = r; output[1] = g; output[2] = b;
@@ -840,6 +958,8 @@ export type ColorAdjustmentContext = {
   hasExposure: boolean;
   hasShadow: boolean;
   hasHighlight: boolean;
+  hasBlack: boolean;
+  hasWhite: boolean;
   hasScaledLog: boolean;
   hasSigmoid: boolean;
   hasSaturation: boolean;
@@ -848,7 +968,10 @@ export type ColorAdjustmentContext = {
   factor: number;
   shadow: number;
   highlight: number;
+  black: number;
+  white: number;
   highlightRange: HighlightRange | null;
+  whiteRange: WhiteRange | null;
   // Exposure, Saturation and final display shoulders are percentile-derived rolloffs.
   exposureRolloff: RolloffParams | null;
   saturationRolloff: RolloffParams | null;
@@ -868,6 +991,8 @@ export type ToneAdjustmentStage =
   | "sigmoid"
   | "shadow"
   | "highlight"
+  | "black"
+  | "white"
   | "after-tone";
 
 const TONE_ADJUSTMENT_STAGE_INDEX: Record<ToneAdjustmentStage, number> = {
@@ -877,7 +1002,9 @@ const TONE_ADJUSTMENT_STAGE_INDEX: Record<ToneAdjustmentStage, number> = {
   sigmoid: 3,
   shadow: 4,
   highlight: 5,
-  "after-tone": 6,
+  black: 6,
+  white: 7,
+  "after-tone": 8,
 };
 
 /** Apply a contiguous subrange of the luminance Tone pipeline. `endStage` is exclusive. */
@@ -920,6 +1047,12 @@ export function applyToneAdjustmentsLinearRgbRange(
   }
   if (start <= 5 && end > 5 && context.hasHighlight) {
     luminance = applyHighlightLinear(luminance, context.highlight, context.highlightRange);
+  }
+  if (start <= 6 && end > 6 && context.hasBlack) {
+    luminance = applyBlackLinear(luminance, context.black);
+  }
+  if (start <= 7 && end > 7 && context.hasWhite) {
+    luminance = applyWhiteLinear(luminance, context.white, context.whiteRange);
   }
 
   if (!Number.isFinite(luminance)) return [r, g, b];
@@ -973,6 +1106,12 @@ export function applyToneAdjustmentsLinearRgbRangeInto(
   if (start <= 5 && end > 5 && context.hasHighlight) {
     luminance = applyHighlightLinear(luminance, context.highlight, context.highlightRange);
   }
+  if (start <= 6 && end > 6 && context.hasBlack) {
+    luminance = applyBlackLinear(luminance, context.black);
+  }
+  if (start <= 7 && end > 7 && context.hasWhite) {
+    luminance = applyWhiteLinear(luminance, context.white, context.whiteRange);
+  }
 
   if (!Number.isFinite(luminance)) {
     output[0] = r; output[1] = g; output[2] = b;
@@ -1003,6 +1142,9 @@ export function applyToneAdjustmentsLinearRgb(
     context.scaledLog,
     context.sigmoid,
     context,
+    context.black,
+    context.white,
+    context.whiteRange,
   );
 }
 
@@ -1025,6 +1167,9 @@ export function applyToneAdjustmentsLinearRgbInto(
     context.sigmoid,
     output,
     context,
+    context.black,
+    context.white,
+    context.whiteRange,
   );
 }
 
@@ -1155,6 +1300,8 @@ export function hasColorAdjustmentContextChanges(context: ColorAdjustmentContext
     || context.hasSigmoid
     || context.hasShadow
     || context.hasHighlight
+    || context.hasBlack
+    || context.hasWhite
     || context.hasSaturation
     || context.hasVibrance;
 }

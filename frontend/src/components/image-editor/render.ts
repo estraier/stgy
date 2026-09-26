@@ -191,6 +191,8 @@ export function renderAdjustedLinearRgbSampleToCanvas(
   continuousPrefixSample?: LinearRgbSample,
   reusableRgba8?: Uint8ClampedArray | null,
   reusableLinearProPhoto?: Float32Array | null,
+  black = 0,
+  white = 0,
 ) {
   const ctx = getCanvas2dContext(canvas, outputColorProfile);
   if (!ctx) throw new Error("2D context unavailable");
@@ -216,6 +218,8 @@ export function renderAdjustedLinearRgbSampleToCanvas(
     vibrance,
     saturation,
     true,
+    black,
+    white,
   );
   const activeClarityMap = isUsableImageEditClarityMap(clarityMap) ? clarityMap : null;
   const hasClarity = activeClarityMap !== null;
@@ -410,6 +414,8 @@ export function renderAdjustedRgb16RegionToCanvas(
   clarityMap: ImageEditClarityMap | null = null,
   defringeMap: DefringeAnalysisMap | null = null,
   defringeAmount = 0,
+  black = 0,
+  white = 0,
 ) {
   const ctx = getCanvas2dContext(canvas, outputColorProfile);
   if (!ctx) throw new Error("2D context unavailable");
@@ -443,6 +449,8 @@ export function renderAdjustedRgb16RegionToCanvas(
     vibrance,
     saturation,
     true,
+    black,
+    white,
   );
   const activeClarityMap = isUsableImageEditClarityMap(clarityMap) ? clarityMap : null;
   const hasClarity = activeClarityMap !== null;
@@ -551,6 +559,8 @@ export function renderAdjustedRgb16ToCanvas(
   clarityMap: ImageEditClarityMap | null = null,
   defringeMap: DefringeAnalysisMap | null = null,
   defringeAmount = 0,
+  black = 0,
+  white = 0,
 ) {
   const ctx = getCanvas2dContext(canvas, outputColorProfile);
   if (!ctx) throw new Error("2D context unavailable");
@@ -582,6 +592,8 @@ export function renderAdjustedRgb16ToCanvas(
     vibrance,
     saturation,
     true,
+    black,
+    white,
   );
   const activeClarityMap = isUsableImageEditClarityMap(clarityMap) ? clarityMap : null;
   const hasClarity = activeClarityMap !== null;

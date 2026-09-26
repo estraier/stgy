@@ -24,7 +24,7 @@ import {
   applyWhiteBalanceLinearInto, clamp01, clampColorAdjustment, clampExposureEv,
   clampScaledLog, clampSigmoid, clampToneRangeAdjustment, clampWhiteBalanceValue,
   colorSaturationFactor, colorVibranceFactor, proPhotoLinearLuminance, rgbSaturationExtended, rolloffParams,
-  srgbChannelToLinear, whiteBalanceGains, type ColorAdjustmentContext, type HighlightRange, type RolloffParams,
+  srgbChannelToLinear, whiteBalanceGains, type ColorAdjustmentContext, type HighlightRange, type RolloffParams, type WhiteRange,
 } from "@/image/tone";
 
 // Statistical analysis and Auto Tone share the fixed-area analysis sample.
@@ -77,11 +77,15 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
   vibrance: number,
   saturation: number,
   ignoreInvalid: boolean,
+  black = 0,
+  white = 0,
 ): ColorAdjustmentContext {
   const normalizedTemperature = clampWhiteBalanceValue(temperature);
   const normalizedTint = clampWhiteBalanceValue(tint);
   const normalizedShadow = clampToneRangeAdjustment(shadow);
   const normalizedHighlight = clampToneRangeAdjustment(highlight);
+  const normalizedBlack = clampToneRangeAdjustment(black);
+  const normalizedWhite = clampToneRangeAdjustment(white);
   const normalizedScaledLog = clampScaledLog(scaledLog);
   const normalizedSigmoid = clampSigmoid(sigmoid);
   const normalizedVibrance = clampColorAdjustment(vibrance);
@@ -91,6 +95,8 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
   const hasWhiteBalance = normalizedTemperature !== 0 || normalizedTint !== 0;
   const hasExposure = factor !== 1;
   const hasShadow = normalizedShadow !== 0;
+  const hasBlack = normalizedBlack !== 0;
+  const hasWhite = normalizedWhite !== 0;
   const hasScaledLog = normalizedScaledLog !== 0;
   const hasSigmoid = normalizedSigmoid !== 0;
   const hasSaturation = normalizedSaturation !== 0;
@@ -163,6 +169,45 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
     ? { p100: highlightMax }
     : null;
   const hasHighlight = normalizedHighlight !== 0 && highlightRange !== null;
+
+  let whiteRange: WhiteRange | null = null;
+  if (hasWhite) {
+    const whiteValues: number[] = [];
+    for (let pixel = 0; pixel < count; pixel++) {
+      if (ignoreInvalid && valid && !valid[pixel]) continue;
+      const i = pixel * 3;
+      applyToneLinearToRgbInto(
+        data[i] ?? 0,
+        data[i + 1] ?? 0,
+        data[i + 2] ?? 0,
+        gains,
+        hasWhiteBalance,
+        factor,
+        normalizedShadow,
+        normalizedHighlight,
+        highlightRange,
+        normalizedScaledLog,
+        normalizedSigmoid,
+        adjusted,
+        {
+          hasExposure,
+          hasShadow,
+          hasHighlight,
+          hasBlack,
+          hasWhite: false,
+          hasScaledLog,
+          hasSigmoid,
+          exposureRolloff,
+        },
+        normalizedBlack,
+      );
+      const value = proPhotoLinearLuminance(adjusted[0], adjusted[1], adjusted[2]);
+      if (Number.isFinite(value)) whiteValues.push(value);
+    }
+    const whiteP998 = whiteValues.length ? percentileFromValues(whiteValues, 99.8) : 0;
+    if (Number.isFinite(whiteP998) && whiteP998 > 0) whiteRange = { p998: whiteP998 };
+  }
+  const activeWhite = hasWhite && whiteRange !== null;
   const saturationFactor = colorSaturationFactor(normalizedSaturation);
   const vibranceFactor = colorVibranceFactor(normalizedVibrance);
 
@@ -193,10 +238,15 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
         hasExposure,
         hasShadow,
         hasHighlight,
+        hasBlack,
+        hasWhite: activeWhite,
         hasScaledLog,
         hasSigmoid,
         exposureRolloff,
       },
+      normalizedBlack,
+      normalizedWhite,
+      whiteRange,
     );
     toneAdjusted[i] = adjusted[0];
     toneAdjusted[i + 1] = adjusted[1];
@@ -253,6 +303,8 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
     hasExposure,
     hasShadow,
     hasHighlight,
+    hasBlack,
+    hasWhite: activeWhite,
     hasScaledLog,
     hasSigmoid,
     hasSaturation,
@@ -261,7 +313,10 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
     factor,
     shadow: normalizedShadow,
     highlight: normalizedHighlight,
+    black: normalizedBlack,
+    white: normalizedWhite,
     highlightRange,
+    whiteRange,
     exposureRolloff,
     saturationRolloff,
     finalRolloff,
@@ -287,6 +342,8 @@ export function buildColorAdjustmentContextFromLinearRgbSample(
   vibrance: number,
   saturation: number,
   ignoreInvalid = false,
+  black = 0,
+  white = 0,
 ): ColorAdjustmentContext {
   return buildColorAdjustmentContextFromLinearRgbSampleInternal(
     sample,
@@ -300,6 +357,8 @@ export function buildColorAdjustmentContextFromLinearRgbSample(
     vibrance,
     saturation,
     ignoreInvalid,
+    black,
+    white,
   );
 }
 
@@ -316,6 +375,8 @@ export function buildInteractiveColorAdjustmentContextFromLinearRgbSample(
   vibrance: number,
   saturation: number,
   ignoreInvalid = false,
+  black = 0,
+  white = 0,
 ): ColorAdjustmentContext {
   return buildColorAdjustmentContextFromLinearRgbSampleInternal(
     sample,
@@ -329,6 +390,8 @@ export function buildInteractiveColorAdjustmentContextFromLinearRgbSample(
     vibrance,
     saturation,
     ignoreInvalid,
+    black,
+    white,
   );
 }
 
@@ -343,6 +406,8 @@ export function colorAdjustmentContextFromLinearRgbSample(
   sigmoid: number,
   vibrance: number,
   saturation: number,
+  black = 0,
+  white = 0,
 ): ColorAdjustmentContext {
   return buildColorAdjustmentContextFromLinearRgbSample(
     { data: sample, width: Math.floor(sample.length / 3), height: 1 },
@@ -355,6 +420,9 @@ export function colorAdjustmentContextFromLinearRgbSample(
     sigmoid,
     vibrance,
     saturation,
+    false,
+    black,
+    white,
   );
 }
 
@@ -371,6 +439,8 @@ export function computeHistogramDataFromRgb16(
   sigmoid: number,
   vibrance: number,
   saturation: number,
+  black = 0,
+  white = 0,
   clarityMap: ImageEditClarityMap | null = null,
   sourceSample?: LinearRgbSample,
 ): HistogramData | null {
@@ -389,6 +459,8 @@ export function computeHistogramDataFromRgb16(
     vibrance,
     saturation,
     true,
+    black,
+    white,
   );
   const activeClarityMap = isUsableImageEditClarityMap(clarityMap) ? clarityMap : null;
   const hasClarity = activeClarityMap !== null;
@@ -639,6 +711,7 @@ export function buildToneLumaHistogram(
       context.sigmoid,
       adjustedRgb,
       context,
+      context.black,
     );
     r = adjustedRgb[0]; g = adjustedRgb[1]; b = adjustedRgb[2];
     const y = clamp01(PROPHOTO_LUMA_R * r + PROPHOTO_LUMA_G * g + PROPHOTO_LUMA_B * b);

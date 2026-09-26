@@ -316,6 +316,41 @@ describe("image editor tone characterization", () => {
     expect(rolled[2] / rolled[0]).toBeCloseTo(0.25, 12);
   });
 
+  test("Black uses a smooth toe and is reversible around zero", () => {
+    expect(imageEditor.applyBlackLinear(0.08, -100)).toBeCloseTo(0.02, 12);
+    expect(imageEditor.applyBlackLinear(0.18, -100)).toBeCloseTo(0.12, 12);
+    expect(imageEditor.applyBlackLinear(0.5, -100)).toBeCloseTo(0.44, 12);
+
+    for (const value of [0.005, 0.02, 0.05, 0.08, 0.18, 0.5]) {
+      const tightened = imageEditor.applyBlackLinear(value, -65);
+      const restored = imageEditor.applyBlackLinear(tightened, 65);
+      expect(restored).toBeCloseTo(value, 12);
+    }
+  });
+
+
+  test("White keeps black fixed and concentrates adjustment toward P99.8", () => {
+    expect(imageEditor.applyWhiteLinear(0, 100, { p998: 1 })).toBe(0);
+    expect(imageEditor.applyWhiteLinear(0.92, 100, { p998: 1 })).toBeCloseTo(0.98, 12);
+    expect(imageEditor.applyWhiteLinear(1.42, 100, { p998: 1.5 })).toBeCloseTo(1.48, 12);
+
+    const midAtM1 = imageEditor.applyWhiteLinear(0.5, 100, { p998: 1 });
+    const midAtM4 = imageEditor.applyWhiteLinear(0.5, 100, { p998: 4 });
+    expect(midAtM1).toBeGreaterThan(0.5);
+    expect(midAtM1).toBeLessThan(0.56);
+    expect(midAtM4).toBeGreaterThan(0.5);
+    expect(midAtM4).toBeLessThan(midAtM1);
+
+    expect(imageEditor.applyWhiteLinear(1.2, -100, { p998: 1.5 })).toBeLessThan(1.2);
+
+    const range = { p998: 1.5 };
+    for (const value of [0.1, 0.5, 1.0, 1.2, 1.42, 1.48, 1.5]) {
+      const tightened = imageEditor.applyWhiteLinear(value, 65, range);
+      const restored = imageEditor.applyWhiteLinear(tightened, -65, range);
+      expect(restored).toBeCloseTo(value, 12);
+    }
+  });
+
   test("desaturates only when exposure rolloff actually compresses the highlight", () => {
     const flagsWithoutRolloff = {
       hasExposure: true,
