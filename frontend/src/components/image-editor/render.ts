@@ -19,6 +19,7 @@ import {
   clamp01,
   type ColorAdjustmentContext,
   type ToneAdjustmentStage,
+  type ToneCurvePoint,
 } from "@/image/tone";
 import {
   isUsableImageEditClarityMap,
@@ -199,6 +200,7 @@ export function renderAdjustedLinearRgbSampleToCanvas(
   reusableLinearProPhoto?: Float32Array | null,
   black = 0,
   white = 0,
+  toneCurvePoints: readonly ToneCurvePoint[] | null = null,
 ) {
   const ctx = getCanvas2dContext(canvas, outputColorProfile);
   if (!ctx) throw new Error("2D context unavailable");
@@ -226,6 +228,7 @@ export function renderAdjustedLinearRgbSampleToCanvas(
     true,
     black,
     white,
+    toneCurvePoints,
   );
   const activeClarityMap = isUsableImageEditClarityMap(clarityMap) ? clarityMap : null;
   const hasClarity = activeClarityMap !== null;
@@ -422,6 +425,7 @@ export function renderAdjustedRgb16RegionToCanvas(
   defringeAmount = 0,
   black = 0,
   white = 0,
+  toneCurvePoints: readonly ToneCurvePoint[] | null = null,
 ) {
   const ctx = getCanvas2dContext(canvas, outputColorProfile);
   if (!ctx) throw new Error("2D context unavailable");
@@ -457,6 +461,7 @@ export function renderAdjustedRgb16RegionToCanvas(
     true,
     black,
     white,
+    toneCurvePoints,
   );
   const activeClarityMap = isUsableImageEditClarityMap(clarityMap) ? clarityMap : null;
   const hasClarity = activeClarityMap !== null;
@@ -567,6 +572,7 @@ export function renderAdjustedRgb16ToCanvas(
   defringeAmount = 0,
   black = 0,
   white = 0,
+  toneCurvePoints: readonly ToneCurvePoint[] | null = null,
 ) {
   const ctx = getCanvas2dContext(canvas, outputColorProfile);
   if (!ctx) throw new Error("2D context unavailable");
@@ -600,6 +606,7 @@ export function renderAdjustedRgb16ToCanvas(
     true,
     black,
     white,
+    toneCurvePoints,
   );
   const activeClarityMap = isUsableImageEditClarityMap(clarityMap) ? clarityMap : null;
   const hasClarity = activeClarityMap !== null;

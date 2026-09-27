@@ -111,6 +111,34 @@ describe("buildImageEditToneSample", () => {
     expectSamplesClose(actual, expected, 3);
   });
 
+  test("integrates Exposure into the shared Tone LUT without an Exposure-specific rolloff", () => {
+    const sample = makeSample(3, 1, [
+      [0.1, 0.05, 0.025],
+      [0.5, 0.25, 0.125],
+      [1.2, 0.6, 0.3],
+    ], 4);
+    const context = buildInteractiveColorAdjustmentContextFromLinearRgbSample(
+      sample,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      true,
+    );
+
+    const actual = buildImageEditToneSample(sample, context);
+    const expected = buildExactToneSample(sample, context);
+    expectSamplesClose(actual, expected, 4);
+    expect(actual.data[0]).toBeCloseTo(0.2, 4);
+    expect(actual.data[3]).toBeCloseTo(1.0, 4);
+    expect(actual.data[6]).toBeCloseTo(2.4, 4);
+  });
+
   test("matches the direct tone pipeline for RAW-range samples", () => {
     const sample = makeSample(4, 3, [
       [0.04, 0.06, 0.08],
@@ -181,9 +209,9 @@ describe("buildImageEditToneSample", () => {
 
     const actual = buildImageEditToneSample(sample, context);
     const expected = buildExactToneSample(sample, context);
-    // Localized White must leave deep shadows outside its shoulder untouched.
-    expect(actual.data[0]).toBeCloseTo(0.02, 6);
+    // Full negative White rescues the sampled headroom to display white.
     for (const value of actual.data) {
+      expect(Number.isFinite(value)).toBe(true);
       expect(value).toBeLessThanOrEqual(1.000001);
     }
     expectSamplesClose(actual, expected, 3);
@@ -228,4 +256,47 @@ describe("buildImageEditToneSample", () => {
     expect(actual.linearRangeMax).toBe(4);
     expectSamplesClose(actual, expected, 3);
   });
+  test("bakes the tone curve directly into the shared Tone LUT", () => {
+    const sample = makeSample(4, 3, [
+      [0.0008, 0.0008, 0.0008],
+      [0.01, 0.01, 0.01],
+      [0.03, 0.03, 0.03],
+      [0.05, 0.05, 0.05],
+      [0.08, 0.08, 0.08],
+      [0.12, 0.12, 0.12],
+      [0.2, 0.2, 0.2],
+      [0.35, 0.35, 0.35],
+      [0.5, 0.5, 0.5],
+      [0.7, 0.7, 0.7],
+      [0.9, 0.9, 0.9],
+      [1.2, 1.2, 1.2],
+    ], 4);
+    const context = buildInteractiveColorAdjustmentContextFromLinearRgbSample(
+      sample,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      true,
+      0,
+      0,
+      [
+        { x: 0.0008, y: 0.05 },
+        { x: 0.05, y: 0.08 },
+        { x: 0.5, y: 0.7 },
+      ],
+    );
+
+    const actual = buildImageEditToneSample(sample, context);
+    const expected = buildExactToneSample(sample, context);
+    expectSamplesClose(actual, expected, 3);
+    // Values above display white remain identity in the Tone Curve stage.
+    expect(actual.data[33]).toBeCloseTo(1.2, 3);
+  });
+
 });

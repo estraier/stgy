@@ -78,6 +78,11 @@ import {
   clampWhiteBalanceValue,
   colorSaturationFactor,
   colorVibranceFactor,
+  buildToneCurveSpline,
+  normalizeToneCurvePoints,
+  sampleToneCurveSpline,
+  toneCurveDisplayToLinear,
+  toneCurveLinearToDisplay,
   hsvToRgb,
   linearChannelToSrgb,
   naiveInverseSigmoid,
@@ -88,6 +93,7 @@ import {
   srgbChannelToLinear,
   whiteBalanceGains,
   type ColorAdjustmentContext,
+  type ToneCurvePoint,
 } from "@/image/tone";
 import {
   PROPHOTO_LUMA_B,
@@ -155,6 +161,7 @@ import {
 import {
   buildInteractiveColorAdjustmentContextFromLinearRgbSample,
   computeHistogramDataFromRgb16,
+  computeToneCurveLumaHistogramFromLinearRgbSample,
   createToneAutoSampleFromRgb16,
   findAutoExposure,
   findAutoLogarithm,
@@ -373,6 +380,7 @@ export type ImageEditParams = {
   highlight: number;
   black: number;
   white: number;
+  toneCurve: ToneCurvePoint[];
   scaledLog: number;
   sigmoid: number;
   clarity: number;
@@ -1849,6 +1857,7 @@ export function buildDefaultEditParams(w?: number, h?: number): ImageEditParams 
     highlight: 0,
     black: 0,
     white: 0,
+    toneCurve: [],
     scaledLog: 0,
     sigmoid: 0,
     clarity: 0,
@@ -1892,6 +1901,7 @@ function normalizeEditParams(params: ImageEditParams | undefined, w?: number, h?
     highlight: clampToneRangeAdjustment(params?.highlight ?? defaults.highlight),
     black: clampToneRangeAdjustment(params?.black ?? defaults.black),
     white: clampToneRangeAdjustment(params?.white ?? defaults.white),
+    toneCurve: normalizeToneCurvePoints(params?.toneCurve ?? defaults.toneCurve),
     scaledLog: clampScaledLog(params?.scaledLog ?? defaults.scaledLog),
     sigmoid: clampSigmoid(params?.sigmoid ?? defaults.sigmoid),
     clarity: clampClarity(params?.clarity ?? defaults.clarity),
@@ -1932,6 +1942,7 @@ function isMeaningfullyEdited(
     normalized.highlight !== 0 ||
     normalized.black !== 0 ||
     normalized.white !== 0 ||
+    normalized.toneCurve.length > 0 ||
     Math.abs(normalized.scaledLog) > 0.0001 ||
     Math.abs(normalized.sigmoid) > 0.0001 ||
     normalized.clarity !== 0 ||
@@ -9675,6 +9686,7 @@ function buildLinearProPhotoPixelSampler(
     true,
     params.black,
     params.white,
+    params.toneCurve,
   );
   return {
     decoded,
@@ -9900,6 +9912,7 @@ async function buildPeepTileCanvasFromDecoded(
       clampDefringe(params.defringe) / 100,
       params.black,
       params.white,
+      params.toneCurve,
     );
     applyDenoiseToCanvas(preCanvas, params.denoise, outputColorProfile);
 
@@ -10085,6 +10098,7 @@ function buildFallbackImageEditClarityMap(
     true,
     params.black,
     params.white,
+    params.toneCurve,
   );
   return buildImageEditClarityMap(internalPreview, context, normalizedClarity);
 }
@@ -10153,6 +10167,7 @@ async function buildEditedVariantFromDecoded(
       clampDefringe(params.defringe) / 100,
       params.black,
       params.white,
+      params.toneCurve,
     );
     applyDenoiseToCanvas(output, params.denoise, outputColorProfile);
   } else {
@@ -10414,6 +10429,7 @@ export async function buildEditedDecodedRgb16(
     true,
     params.black,
     params.white,
+    params.toneCurve,
   );
   const transform = buildRenderedPixelToSourceTransform(
     sourceW,
@@ -11048,6 +11064,14 @@ type EditDialogProps = {
 };
 
 type EditRect = { x: number; y: number; w: number; h: number };
+type FloatingPanelPosition = { x: number; y: number };
+type FloatingPanelDragState = {
+  pointerId: number;
+  startClientX: number;
+  startClientY: number;
+  startX: number;
+  startY: number;
+};
 type EditCorner = "nw" | "ne" | "sw" | "se";
 type DrawHandle = EditCorner | "start" | "end";
 type DrawCreateState = {
@@ -11180,6 +11204,52 @@ function histogramPath(values: number[], maxCount: number, width: number, height
     .join(" ");
 }
 
+
+
+function toneCurveSvgPath(points: readonly ToneCurvePoint[], width: number, height: number): string {
+  const spline = buildToneCurveSpline(points);
+  if (!spline) return `M0,${height} L${width},0`;
+
+  // Sample uniformly in the gamma-2.4 display space so the expanded shadow
+  // region receives the same visual density as the rest of the graph. Add the
+  // exact control-point X positions as samples so the rendered polyline always
+  // passes through every displayed control point.
+  const samples = 512;
+  const displayXs: number[] = [];
+  for (let i = 0; i < samples; i += 1) displayXs.push(i / (samples - 1));
+  for (const point of normalizeToneCurvePoints(points)) {
+    displayXs.push(toneCurveLinearToDisplay(point.x));
+  }
+  displayXs.sort((a, b) => a - b);
+
+  const parts: string[] = [];
+  let previousDisplayX = Number.NaN;
+  for (const displayX of displayXs) {
+    if (Number.isFinite(previousDisplayX) && Math.abs(displayX - previousDisplayX) < 1e-10) continue;
+    previousDisplayX = displayX;
+    const x = toneCurveDisplayToLinear(displayX);
+    const y = sampleToneCurveSpline(spline, x);
+    const px = displayX * width;
+    const py = (1 - toneCurveLinearToDisplay(y)) * height;
+    parts.push(`${parts.length === 0 ? "M" : "L"}${px.toFixed(2)},${py.toFixed(2)}`);
+  }
+  return parts.join(" ");
+}
+
+function toneCurveHistogramSvgPath(values: readonly number[], width: number, height: number): string {
+  if (!values.length) return `M0,${height} L${width},${height} Z`;
+  let maxCount = 0;
+  for (const value of values) maxCount = Math.max(maxCount, value);
+  if (!(maxCount > 0)) return `M0,${height} L${width},${height} Z`;
+  const parts = [`M0,${height}`];
+  for (let i = 0; i < values.length; i += 1) {
+    const x = values.length <= 1 ? 0 : i / (values.length - 1) * width;
+    const y = height - (values[i] / maxCount) * height;
+    parts.push(`L${x.toFixed(2)},${y.toFixed(2)}`);
+  }
+  parts.push(`L${width},${height} Z`);
+  return parts.join(" ");
+}
 
 type ImageEditPanelKey = "whiteBalance" | "tone" | "color" | "finishing";
 
@@ -11349,6 +11419,15 @@ export function ImageEditDialog({
   const [highlight, setHighlight] = useState<number>(clampToneRangeAdjustment(initialParams.highlight ?? 0));
   const [black, setBlack] = useState<number>(clampToneRangeAdjustment(initialParams.black ?? 0));
   const [white, setWhite] = useState<number>(clampToneRangeAdjustment(initialParams.white ?? 0));
+  const [toneCurvePoints, setToneCurvePoints] = useState<ToneCurvePoint[]>(normalizeToneCurvePoints(initialParams.toneCurve));
+  const [appliedToneCurvePoints, setAppliedToneCurvePoints] = useState<ToneCurvePoint[]>(normalizeToneCurvePoints(initialParams.toneCurve));
+  const [showToneCurve, setShowToneCurve] = useState(false);
+  const [toneCurveHistogram, setToneCurveHistogram] = useState<number[]>([]);
+  const toneCurveGraphRef = useRef<SVGSVGElement>(null);
+  const toneCurveDragRef = useRef<{ pointerId: number; index: number } | null>(null);
+  const toneCurvePanelRef = useRef<HTMLDivElement>(null);
+  const toneCurvePanelDragRef = useRef<FloatingPanelDragState | null>(null);
+  const [toneCurvePanelPosition, setToneCurvePanelPosition] = useState<FloatingPanelPosition | null>(null);
   const [scaledLog, setScaledLog] = useState<number>(clampScaledLog(initialParams.scaledLog));
   const [sigmoid, setSigmoid] = useState<number>(clampSigmoid(initialParams.sigmoid));
   const [clarity, setClarity] = useState<number>(clampClarity(initialParams.clarity ?? 0));
@@ -11409,6 +11488,9 @@ export function ImageEditDialog({
   const [showGrid, setShowGrid] = useState(false);
   const [histogram, setHistogram] = useState<HistogramData | null>(null);
   const [histogramGeometryDragging, setHistogramGeometryDragging] = useState(false);
+  const histogramPanelRef = useRef<HTMLDivElement>(null);
+  const histogramPanelDragRef = useRef<FloatingPanelDragState | null>(null);
+  const [histogramPanelPosition, setHistogramPanelPosition] = useState<FloatingPanelPosition | null>(null);
   const [eyedropperMode, setEyedropperMode] = useState(false);
   const [autoToneBusy, setAutoToneBusy] = useState(false);
   const [autoToneStage, setAutoToneStage] = useState<string | null>(null);
@@ -13414,6 +13496,294 @@ export function ImageEditDialog({
     cropRect.w,
     cropRect.h,
   ]);
+
+
+  useEffect(() => {
+    const normalized = normalizeToneCurvePoints(toneCurvePoints);
+    const timer = setTimeout(() => {
+      setAppliedToneCurvePoints(normalized);
+      previewToneSampleCacheRef.current = null;
+      previewClarityMapCacheRef.current = null;
+      previewContinuousPrefixCacheRef.current = null;
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [toneCurvePoints]);
+
+  useEffect(() => {
+    if (!showToneCurve) {
+      setToneCurveHistogram([]);
+      return;
+    }
+    const decoded = decodedImageRef.current;
+    if (!decoded || !analysisSourceRect) {
+      setToneCurveHistogram([]);
+      return;
+    }
+    const rawSample = getAnalysisLinearRgbSample(decoded, analysisSourceRect, rotationDegrees);
+    const activeDefringe = clampDefringe(defringe) > 0 && defringeMapRef.current?.decoded === decoded
+      ? defringeMapRef.current.map
+      : null;
+    const sample = activeDefringe
+      ? applyDefringeToRenderedSample(
+          rawSample,
+          activeDefringe,
+          clampDefringe(defringe) / 100,
+          decoded.width,
+          decoded.height,
+          analysisSourceRect,
+          rotationDegrees,
+        )
+      : rawSample;
+    setToneCurveHistogram(computeToneCurveLumaHistogramFromLinearRgbSample(
+      sample,
+      temperature,
+      tint,
+      exposureEv,
+      shadow,
+      highlight,
+      scaledLog,
+      sigmoid,
+      black,
+      white,
+    ));
+  }, [
+    showToneCurve,
+    decodedRevision,
+    analysisSourceRect,
+    rotationDegrees,
+    defringe,
+    temperature,
+    tint,
+    exposureEv,
+    shadow,
+    highlight,
+    scaledLog,
+    sigmoid,
+    black,
+    white,
+  ]);
+
+  const toneCurveGraphPointFromClient = useCallback((clientX: number, clientY: number) => {
+    const graph = toneCurveGraphRef.current;
+    if (!graph) return null;
+    const rect = graph.getBoundingClientRect();
+    if (!(rect.width > 0) || !(rect.height > 0)) return null;
+    const displayX = clamp01((clientX - rect.left) / rect.width);
+    const displayY = clamp01(1 - (clientY - rect.top) / rect.height);
+    return {
+      x: toneCurveDisplayToLinear(displayX),
+      y: toneCurveDisplayToLinear(displayY),
+    };
+  }, []);
+
+  const beginToneCurvePointDrag = useCallback((
+    e: React.PointerEvent<SVGElement>,
+    index: number,
+  ) => {
+    if (e.button !== 0 || e.ctrlKey) return;
+    const graph = toneCurveGraphRef.current;
+    if (!graph) return;
+    toneCurveDragRef.current = { pointerId: e.pointerId, index };
+    try { graph.setPointerCapture(e.pointerId); } catch {}
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const onToneCurveCreatePoint = useCallback((e: React.PointerEvent<SVGPathElement>) => {
+    const point = toneCurveGraphPointFromClient(e.clientX, e.clientY);
+    if (!point || point.x <= 1e-4 || point.x >= 1 - 1e-4) return;
+    const spline = buildToneCurveSpline(toneCurvePoints);
+    const y = sampleToneCurveSpline(spline, point.x);
+    const next = normalizeToneCurvePoints([...toneCurvePoints, { x: point.x, y }]);
+    let index = next.findIndex((candidate) => Math.abs(candidate.x - point.x) < 1e-5);
+    if (index < 0) index = Math.max(0, next.findIndex((candidate) => candidate.x > point.x) - 1);
+    setToneCurvePoints(next);
+    const graph = toneCurveGraphRef.current;
+    if (graph) {
+      toneCurveDragRef.current = { pointerId: e.pointerId, index };
+      try { graph.setPointerCapture(e.pointerId); } catch {}
+    }
+    e.preventDefault();
+    e.stopPropagation();
+  }, [toneCurveGraphPointFromClient, toneCurvePoints]);
+
+  const onToneCurvePointerMove = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
+    const drag = toneCurveDragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    const point = toneCurveGraphPointFromClient(e.clientX, e.clientY);
+    if (!point) return;
+    setToneCurvePoints((current) => {
+      if (drag.index < 0 || drag.index >= current.length) return current;
+      const previousX = drag.index > 0 ? current[drag.index - 1].x : 0;
+      const nextX = drag.index + 1 < current.length ? current[drag.index + 1].x : 1;
+      const epsilon = 1e-4;
+      const x = Math.max(previousX + epsilon, Math.min(nextX - epsilon, point.x));
+      const next = current.map((candidate, index) => index === drag.index
+        ? { x, y: point.y }
+        : candidate);
+      return normalizeToneCurvePoints(next);
+    });
+    e.preventDefault();
+  }, [toneCurveGraphPointFromClient]);
+
+  const onToneCurvePointerUp = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
+    const drag = toneCurveDragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    toneCurveDragRef.current = null;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch {}
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const removeToneCurvePoint = useCallback((index: number) => {
+    setToneCurvePoints((current) => current.filter((_, pointIndex) => pointIndex !== index));
+  }, []);
+
+  const resetToneCurve = useCallback(() => {
+    toneCurveDragRef.current = null;
+    setToneCurvePoints([]);
+    setAppliedToneCurvePoints([]);
+    previewToneSampleCacheRef.current = null;
+    previewClarityMapCacheRef.current = null;
+    previewContinuousPrefixCacheRef.current = null;
+  }, []);
+
+  const toneCurvePanelWidth = histogramPanelSize.width;
+  const toneCurveGraphWidth = Math.max(1, toneCurvePanelWidth - 16);
+  const toneCurveGraphHeight = 224;
+
+  const floatingPanelBounds = useCallback((panel: HTMLDivElement) => {
+    const container = containerRef.current;
+    if (!container) return null;
+    const containerRect = container.getBoundingClientRect();
+    const panelRect = panel.getBoundingClientRect();
+    const scaleX = container.offsetWidth > 0 ? containerRect.width / container.offsetWidth : 1;
+    const scaleY = container.offsetHeight > 0 ? containerRect.height / container.offsetHeight : 1;
+    const safeScaleX = Math.max(1e-6, scaleX);
+    const safeScaleY = Math.max(1e-6, scaleY);
+    const style = window.getComputedStyle(container);
+    const borderLeft = Number.parseFloat(style.borderLeftWidth) || 0;
+    const borderTop = Number.parseFloat(style.borderTopWidth) || 0;
+    const panelWidth = panelRect.width / safeScaleX;
+    const panelHeight = panelRect.height / safeScaleY;
+    return {
+      scaleX: safeScaleX,
+      scaleY: safeScaleY,
+      originX: containerRect.left + borderLeft * safeScaleX,
+      originY: containerRect.top + borderTop * safeScaleY,
+      maxX: Math.max(0, container.clientWidth - panelWidth),
+      maxY: Math.max(0, container.clientHeight - panelHeight),
+    };
+  }, []);
+
+  const clampFloatingPanelPosition = useCallback((
+    panel: HTMLDivElement,
+    position: FloatingPanelPosition,
+  ): FloatingPanelPosition => {
+    const bounds = floatingPanelBounds(panel);
+    if (!bounds) return position;
+    return {
+      x: Math.max(0, Math.min(bounds.maxX, position.x)),
+      y: Math.max(0, Math.min(bounds.maxY, position.y)),
+    };
+  }, [floatingPanelBounds]);
+
+  const beginFloatingPanelDrag = useCallback((
+    e: React.PointerEvent<HTMLElement>,
+    panel: HTMLDivElement | null,
+    dragRef: { current: FloatingPanelDragState | null },
+    setPosition: React.Dispatch<React.SetStateAction<FloatingPanelPosition | null>>,
+  ) => {
+    if (e.button !== 0 || !panel) return;
+    const bounds = floatingPanelBounds(panel);
+    if (!bounds) return;
+    const panelRect = panel.getBoundingClientRect();
+    const start = clampFloatingPanelPosition(panel, {
+      x: (panelRect.left - bounds.originX) / bounds.scaleX,
+      y: (panelRect.top - bounds.originY) / bounds.scaleY,
+    });
+    dragRef.current = {
+      pointerId: e.pointerId,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      startX: start.x,
+      startY: start.y,
+    };
+    setPosition(start);
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+    e.preventDefault();
+    e.stopPropagation();
+  }, [clampFloatingPanelPosition, floatingPanelBounds]);
+
+  const moveFloatingPanel = useCallback((
+    e: React.PointerEvent<HTMLElement>,
+    panel: HTMLDivElement | null,
+    dragRef: { current: FloatingPanelDragState | null },
+    setPosition: React.Dispatch<React.SetStateAction<FloatingPanelPosition | null>>,
+  ) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId || !panel) return;
+    const bounds = floatingPanelBounds(panel);
+    if (!bounds) return;
+    const next = clampFloatingPanelPosition(panel, {
+      x: drag.startX + (e.clientX - drag.startClientX) / bounds.scaleX,
+      y: drag.startY + (e.clientY - drag.startClientY) / bounds.scaleY,
+    });
+    setPosition(next);
+    e.preventDefault();
+    e.stopPropagation();
+  }, [clampFloatingPanelPosition, floatingPanelBounds]);
+
+  const endFloatingPanelDrag = useCallback((
+    e: React.PointerEvent<HTMLElement>,
+    dragRef: { current: FloatingPanelDragState | null },
+  ) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    dragRef.current = null;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch {}
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  useLayoutEffect(() => {
+    if (toneCurvePanelPosition && toneCurvePanelRef.current) {
+      setToneCurvePanelPosition((current) => {
+        if (!current || !toneCurvePanelRef.current) return current;
+        const next = clampFloatingPanelPosition(toneCurvePanelRef.current, current);
+        return Math.abs(next.x - current.x) > 0.01 || Math.abs(next.y - current.y) > 0.01
+          ? next
+          : current;
+      });
+    }
+    if (histogramPanelPosition && histogramPanelRef.current) {
+      setHistogramPanelPosition((current) => {
+        if (!current || !histogramPanelRef.current) return current;
+        const next = clampFloatingPanelPosition(histogramPanelRef.current, current);
+        return Math.abs(next.x - current.x) > 0.01 || Math.abs(next.y - current.y) > 0.01
+          ? next
+          : current;
+      });
+    }
+  }, [
+    clampFloatingPanelPosition,
+    containerSize.h,
+    containerSize.w,
+    editorUiZoom,
+    editorUsesSidePanel,
+    histogramPanelPosition,
+    showHistogram,
+    showToneCurve,
+    toneCurvePanelPosition,
+  ]);
+  const toneCurvePath = useMemo(
+    () => toneCurveSvgPath(toneCurvePoints, toneCurveGraphWidth, toneCurveGraphHeight),
+    [toneCurveGraphHeight, toneCurveGraphWidth, toneCurvePoints],
+  );
+  const toneCurveHistogramPath = useMemo(
+    () => toneCurveHistogramSvgPath(toneCurveHistogram, toneCurveGraphWidth, toneCurveGraphHeight),
+    [toneCurveGraphHeight, toneCurveGraphWidth, toneCurveHistogram],
+  );
   const cropAspectButtons = (
     <div className="flex items-center gap-1 shrink-0">
       {(usePortraitCropRatios
@@ -13496,7 +13866,7 @@ export function ImageEditDialog({
   }, [displayed.h, displayed.w, displayPixelRatio]);
 
   const previewContinuousPrefixKey = useCallback((stage: ImageEditPreviewSliderStage): string => {
-    const values: Array<number | null> = [
+    const values: Array<number | string | null> = [
       clampWhiteBalanceValue(temperature),
       clampWhiteBalanceValue(tint),
       clampExposureEv(exposureEv),
@@ -13509,6 +13879,7 @@ export function ImageEditDialog({
       clampClarity(clarity),
       clampColorAdjustment(saturation),
       clampColorAdjustment(vibrance),
+      JSON.stringify(normalizeToneCurvePoints(appliedToneCurvePoints)),
     ];
     if (stage === "white-balance") {
       values[0] = null;
@@ -13542,6 +13913,7 @@ export function ImageEditDialog({
     highlight,
     black,
     white,
+    appliedToneCurvePoints,
     scaledLog,
     sigmoid,
     clarity,
@@ -13599,6 +13971,7 @@ export function ImageEditDialog({
       clampToneRangeAdjustment(highlight),
       clampToneRangeAdjustment(black),
       clampToneRangeAdjustment(white),
+      normalizeToneCurvePoints(appliedToneCurvePoints),
       clampScaledLog(scaledLog),
       clampSigmoid(sigmoid),
     ]);
@@ -13620,6 +13993,7 @@ export function ImageEditDialog({
       true,
       black,
       white,
+      appliedToneCurvePoints,
     );
     const activeStage = previewContinuousSliderRef.current;
     const tonePrefix = isTonePreviewSliderStage(activeStage)
@@ -13640,6 +14014,7 @@ export function ImageEditDialog({
     highlight,
     black,
     white,
+    appliedToneCurvePoints,
     scaledLog,
     sigmoid,
     resolvePreviewSourceSample,
@@ -13684,6 +14059,7 @@ export function ImageEditDialog({
       highlight: clampToneRangeAdjustment(highlight),
       black: clampToneRangeAdjustment(black),
       white: clampToneRangeAdjustment(white),
+      toneCurve: normalizeToneCurvePoints(toneCurvePoints),
       scaledLog: clampScaledLog(scaledLog),
       sigmoid: clampSigmoid(sigmoid),
       clarity: clampClarity(clarity),
@@ -13711,6 +14087,7 @@ export function ImageEditDialog({
     highlight,
     black,
     white,
+    toneCurvePoints,
     scaledLog,
     sigmoid,
     clarity,
@@ -13956,6 +14333,7 @@ export function ImageEditDialog({
       highlight,
       black,
       white,
+      normalizeToneCurvePoints(appliedToneCurvePoints),
       scaledLog,
       sigmoid,
       clarity,
@@ -14075,6 +14453,7 @@ export function ImageEditDialog({
         true,
         black,
         white,
+        appliedToneCurvePoints,
       );
       const clarityMap = resolvePreviewClarityMap(decoded);
       const previewToneSample = clarityMap && normalizedRotation === 0
@@ -14231,6 +14610,7 @@ export function ImageEditDialog({
     highlight,
     black,
     white,
+    appliedToneCurvePoints,
     scaledLog,
     sigmoid,
     clarity,
@@ -14285,6 +14665,7 @@ export function ImageEditDialog({
         white,
         clarityMap,
         histogramSample,
+        appliedToneCurvePoints,
       ),
     );
   }, [
@@ -14300,6 +14681,7 @@ export function ImageEditDialog({
     highlight,
     black,
     white,
+    appliedToneCurvePoints,
     scaledLog,
     sigmoid,
     clarity,
@@ -14748,6 +15130,7 @@ export function ImageEditDialog({
     highlight,
     black,
     white,
+    appliedToneCurvePoints,
     scaledLog,
     sigmoid,
     clarity,
@@ -14773,6 +15156,7 @@ export function ImageEditDialog({
     highlight,
     black,
     white,
+    appliedToneCurvePoints,
     scaledLog,
     sigmoid,
     clarity,
@@ -15303,6 +15687,7 @@ export function ImageEditDialog({
       highlight: clampToneRangeAdjustment(highlight),
       black: clampToneRangeAdjustment(black),
       white: clampToneRangeAdjustment(white),
+      toneCurve: normalizeToneCurvePoints(toneCurvePoints),
       scaledLog: clampScaledLog(scaledLog),
       sigmoid: clampSigmoid(sigmoid),
       clarity: clampClarity(clarity),
@@ -15400,6 +15785,7 @@ export function ImageEditDialog({
     highlight,
     black,
     white,
+    toneCurvePoints,
     scaledLog,
     sigmoid,
     clarity,
@@ -15465,6 +15851,8 @@ export function ImageEditDialog({
     setHighlight(params.highlight);
     setBlack(params.black);
     setWhite(params.white);
+    setToneCurvePoints(params.toneCurve);
+    setAppliedToneCurvePoints(params.toneCurve);
     setScaledLog(params.scaledLog);
     setSigmoid(params.sigmoid);
     setClarity(params.clarity);
@@ -16084,11 +16472,14 @@ export function ImageEditDialog({
                   })()}
                   {!eyedropperMode && showHistogram && histogramPaths && (
                     <div
-                      className="absolute left-2 bottom-2 rounded bg-black pointer-events-none"
+                      className="absolute rounded bg-black pointer-events-none"
                       style={{
                         width: histogramPanelSize.width,
                         height: histogramPanelSize.height,
                         zoom: editorUiZoom,
+                        ...(histogramPanelPosition
+                          ? { left: histogramPanelPosition.x, top: histogramPanelPosition.y }
+                          : { left: 8, bottom: 8 }),
                       }}
                       aria-hidden="true"
                     />
@@ -16103,6 +16494,139 @@ export function ImageEditDialog({
                       height: displayed.h,
                     }}
                   />
+
+                  {showToneCurve && !eyedropperMode && (
+                    <div
+                      ref={toneCurvePanelRef}
+                      className="absolute z-[52] select-none rounded border border-gray-400 bg-white shadow-lg"
+                      style={{
+                        width: toneCurvePanelWidth,
+                        zoom: editorUiZoom,
+                        ...(toneCurvePanelPosition
+                          ? { left: toneCurvePanelPosition.x, top: toneCurvePanelPosition.y }
+                          : { right: 8, top: 8 }),
+                      }}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={(e) => e.stopPropagation()}
+                      onDragStart={(e) => e.preventDefault()}
+                    >
+                      <div
+                        className="flex h-8 touch-none cursor-move select-none items-center justify-between border-b border-gray-300 px-2 text-xs font-medium text-gray-800"
+                        onPointerDown={(e) => {
+                          if ((e.target as HTMLElement).closest("button")) return;
+                          beginFloatingPanelDrag(e, toneCurvePanelRef.current, toneCurvePanelDragRef, setToneCurvePanelPosition);
+                        }}
+                        onPointerMove={(e) => moveFloatingPanel(e, toneCurvePanelRef.current, toneCurvePanelDragRef, setToneCurvePanelPosition)}
+                        onPointerUp={(e) => endFloatingPanelDrag(e, toneCurvePanelDragRef)}
+                        onPointerCancel={(e) => endFloatingPanelDrag(e, toneCurvePanelDragRef)}
+                      >
+                        <span>Tone curve</span>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            className="h-5 rounded border border-gray-300 bg-white px-1.5 text-[10px] font-normal text-gray-700 hover:bg-gray-100"
+                            onClick={(e) => { e.stopPropagation(); resetToneCurve(); }}
+                            aria-label="Reset tone curve"
+                            title="Reset tone curve"
+                          >
+                            Reset
+                          </button>
+                          <button
+                            type="button"
+                            className="inline-flex h-5 w-5 items-center justify-center rounded text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                            onClick={(e) => { e.stopPropagation(); setShowToneCurve(false); }}
+                            aria-label="Close tone curve"
+                            title="Close"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                      <div className="p-2">
+                        <svg
+                          ref={toneCurveGraphRef}
+                          className="block touch-none select-none bg-black"
+                          width={toneCurveGraphWidth}
+                          height={toneCurveGraphHeight}
+                          viewBox={`0 0 ${toneCurveGraphWidth} ${toneCurveGraphHeight}`}
+                          onPointerMove={onToneCurvePointerMove}
+                          onPointerUp={onToneCurvePointerUp}
+                          onPointerCancel={onToneCurvePointerUp}
+                          onContextMenu={(e) => e.preventDefault()}
+                          aria-label="Tone curve graph"
+                        >
+                          <path d={toneCurveHistogramPath} fill="rgb(51,51,51)" stroke="none" />
+                          {Array.from({ length: 7 }, (_, index) => index + 1).map((division) => {
+                            const x = division / 8 * toneCurveGraphWidth;
+                            const center = division === 4;
+                            return (
+                              <line
+                                key={`tone-curve-v-${division}`}
+                                x1={x}
+                                y1={0}
+                                x2={x}
+                                y2={toneCurveGraphHeight}
+                                stroke={center ? "rgb(128,128,128)" : "rgb(77,77,77)"}
+                                strokeWidth={1}
+                              />
+                            );
+                          })}
+                          {Array.from({ length: 7 }, (_, index) => index + 1).map((division) => {
+                            const y = division / 8 * toneCurveGraphHeight;
+                            const center = division === 4;
+                            return (
+                              <line
+                                key={`tone-curve-h-${division}`}
+                                x1={0}
+                                y1={y}
+                                x2={toneCurveGraphWidth}
+                                y2={y}
+                                stroke={center ? "rgb(128,128,128)" : "rgb(77,77,77)"}
+                                strokeWidth={1}
+                              />
+                            );
+                          })}
+                          <path d={toneCurvePath} fill="none" stroke="white" strokeWidth={1.5} />
+                          <path
+                            d={toneCurvePath}
+                            fill="none"
+                            stroke="transparent"
+                            strokeWidth={12}
+                            pointerEvents="stroke"
+                            onPointerDown={onToneCurveCreatePoint}
+                          />
+                          <circle cx={0} cy={toneCurveGraphHeight} r={3.5} fill="white" />
+                          <circle cx={toneCurveGraphWidth} cy={0} r={3.5} fill="white" />
+                          {toneCurvePoints.map((point, index) => (
+                            <circle
+                              key={`tone-curve-point-${index}-${point.x.toFixed(5)}`}
+                              cx={toneCurveLinearToDisplay(point.x) * toneCurveGraphWidth}
+                              cy={(1 - toneCurveLinearToDisplay(point.y)) * toneCurveGraphHeight}
+                              r={4.5}
+                              fill="white"
+                              stroke="black"
+                              strokeWidth={1}
+                              className="cursor-grab active:cursor-grabbing"
+                              onPointerDown={(e) => {
+                                if (e.button === 2 || e.ctrlKey) {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  removeToneCurvePoint(index);
+                                  return;
+                                }
+                                beginToneCurvePointDrag(e, index);
+                              }}
+                              onContextMenu={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                removeToneCurvePoint(index);
+                              }}
+                            />
+                          ))}
+                        </svg>
+                      </div>
+                    </div>
+                  )}
                   {autoToneBusy && (
                     <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/10 pointer-events-none">
                       <div className="flex flex-col items-center gap-2 text-white">
@@ -16939,12 +17463,22 @@ export function ImageEditDialog({
                   })}
                   {!eyedropperMode && showHistogram && histogramPaths && (
                     <div
-                      className="absolute left-2 bottom-2 z-[33] rounded border border-white/40 bg-black/80 shadow-sm pointer-events-none"
+                      ref={histogramPanelRef}
+                      className="absolute z-[33] touch-none select-none cursor-move rounded border border-white/40 bg-black/80 shadow-sm"
                       style={{
                         width: histogramPanelSize.width,
                         height: histogramPanelSize.height,
                         zoom: editorUiZoom,
+                        ...(histogramPanelPosition
+                          ? { left: histogramPanelPosition.x, top: histogramPanelPosition.y }
+                          : { left: 8, bottom: 8 }),
                       }}
+                      onPointerDown={(e) => beginFloatingPanelDrag(e, histogramPanelRef.current, histogramPanelDragRef, setHistogramPanelPosition)}
+                      onPointerMove={(e) => moveFloatingPanel(e, histogramPanelRef.current, histogramPanelDragRef, setHistogramPanelPosition)}
+                      onPointerUp={(e) => endFloatingPanelDrag(e, histogramPanelDragRef)}
+                      onPointerCancel={(e) => endFloatingPanelDrag(e, histogramPanelDragRef)}
+                      onClick={(e) => e.stopPropagation()}
+                      onDragStart={(e) => e.preventDefault()}
                     >
                       <svg
                         className="absolute"
@@ -17558,6 +18092,7 @@ export function ImageEditDialog({
                 <div className="flex items-center gap-2 font-medium">
                   <span>Tone</span>
                   {!collapsedPanels.tone && (
+                <>
                 <button
                   type="button"
                   className="h-5 rounded border border-gray-300 bg-white px-1.5 text-[10px] font-normal text-gray-700 hover:bg-gray-100 disabled:cursor-default disabled:opacity-60"
@@ -17567,6 +18102,23 @@ export function ImageEditDialog({
                 >
                     Auto
                   </button>
+                  <button
+                    type="button"
+                    className={`inline-flex h-5 w-5 items-center justify-center rounded border ${
+                      showToneCurve
+                        ? "border-blue-500 bg-blue-50 text-blue-700"
+                        : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                    }`}
+                    onClick={() => setShowToneCurve((current) => !current)}
+                    aria-label="Tone curve"
+                    aria-pressed={showToneCurve}
+                    title="Tone curve"
+                  >
+                    <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden="true">
+                      <path d="M2 13.5C5.2 13.5 5 7.5 8.3 7.5S10.8 2.5 14 2.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                </>
                   )}
                 </div>
                 {panelCollapseButton("tone", "Tone")}

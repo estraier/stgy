@@ -584,17 +584,11 @@ export function applyExposureLinearToRgb(
   return [r * factor, g * factor, b * factor];
 }
 
-export const SHADOW_MAX_SIGMOID_GAIN = 4;
-export const SHADOW_WORKING_GAMMA = 12;
-export const HIGHLIGHT_MAX_SIGMOID_GAIN = 4;
+export const SHADOW_MAX_GAMMA = 4;
+export const HIGHLIGHT_MAX_GAMMA = 6;
 export const BLACK_MAX_TOE_WIDTH = 0.08;
-export const WHITE_MAX_SHOULDER_WIDTH = 0.16;
+export const WHITE_MAX_SHOULDER_WIDTH = 0.32;
 const BLACK_LOCAL_TOE_END_MULTIPLIER = 4;
-export const HIGHLIGHT_WORKING_GAMMA = 0.48;
-
-export type HighlightRange = {
-  p100: number;
-};
 
 export function applySigmoidLinearAtMidpoint(
   value: number,
@@ -624,70 +618,28 @@ export function applySigmoidLinearAtMidpoint(
   return x;
 }
 
-export function applySigmoidLinearAtMidpointWithWorkingGamma(
-  value: number,
-  gain: number,
-  midpoint: number,
-  workingGamma: number,
-): number {
-  if (!Number.isFinite(value) || value <= 0) return 0;
-  const g = clampSigmoid(gain);
-  if (Math.abs(g) <= 1e-6 || value >= 1) return value;
-  const mid = clamp01(midpoint);
-  const gamma = Number.isFinite(workingGamma) && workingGamma > 0
-    ? workingGamma
-    : SIGMOID_WORKING_GAMMA;
-  const encoded = Math.pow(clamp01(value), 1 / gamma);
-  if (g > 1e-6) {
-    const minVal = naiveSigmoid(0, g, mid);
-    const maxVal = naiveSigmoid(1, g, mid);
-    const adjusted = clamp01((naiveSigmoid(encoded, g, mid) - minVal) / (maxVal - minVal));
-    return Math.pow(adjusted, gamma);
-  }
-  const magnitude = -g;
-  const minVal = naiveInverseSigmoid(0, magnitude, mid);
-  const maxVal = naiveInverseSigmoid(1, magnitude, mid);
-  const adjusted = clamp01(
-    (naiveInverseSigmoid(encoded, magnitude, mid) - minVal) / (maxVal - minVal),
-  );
-  return Math.pow(adjusted, gamma);
-}
-
 export function applyShadowLinear(value: number, shadow: number): number {
   const normalized = clampToneRangeAdjustment(shadow);
-  if (normalized === 0) return value;
-  const gain = SHADOW_MAX_SIGMOID_GAIN * normalized / 100;
-  return applySigmoidLinearAtMidpointWithWorkingGamma(
-    value,
-    gain,
-    0,
-    SHADOW_WORKING_GAMMA,
-  );
+  if (normalized === 0 || !Number.isFinite(value) || value <= 0 || value >= 1) return value;
+
+  // Pure gamma correction over display-referred luminance [0, 1]. Positive
+  // Shadow lifts dark tones with gamma < 1; negative Shadow deepens them with
+  // the reciprocal gamma. Values above display white stay untouched so RAW
+  // highlight headroom remains available to later Highlight/White processing.
+  const gamma = Math.pow(SHADOW_MAX_GAMMA, -normalized / 100);
+  return Math.pow(value, gamma);
 }
 
-export function applyHighlightLinear(
-  value: number,
-  highlight: number,
-  range: HighlightRange | null,
-): number {
+export function applyHighlightLinear(value: number, highlight: number): number {
   const normalized = clampToneRangeAdjustment(highlight);
-  if (normalized === 0 || !range) return value;
+  if (normalized === 0 || !Number.isFinite(value) || value <= 0 || value >= 1) return value;
 
-  const { p100 } = range;
-  if (!(Number.isFinite(p100) && p100 > 1e-12) || value <= 0 || value >= p100) return value;
-
-  // Normalize sampled P100 to 1, apply a high-end-focused sigmoid there,
-  // then restore the original P100 scale. P100 itself stays fixed, while values
-  // between display white (1) and P100 can move back below 1 when Highlight is reduced.
-  const gain = -HIGHLIGHT_MAX_SIGMOID_GAIN * normalized / 100;
-  const normalizedValue = value / p100;
-  const adjustedNormalizedValue = applySigmoidLinearAtMidpointWithWorkingGamma(
-    normalizedValue,
-    gain,
-    1,
-    HIGHLIGHT_WORKING_GAMMA,
-  );
-  return adjustedNormalizedValue * p100;
+  // White-side mirror of a gamma correction. Positive Highlight bends the
+  // curve above identity; negative Highlight bends it below identity. Keep
+  // extended RAW values above display white unchanged; White remains the
+  // dedicated control for rescuing >1 highlight headroom.
+  const gamma = Math.pow(HIGHLIGHT_MAX_GAMMA, normalized / 100);
+  return 1 - Math.pow(1 - value, gamma);
 }
 
 /**
@@ -840,7 +792,6 @@ export function applyShadowHighlightLinearToRgb(
   b: number,
   shadow: number,
   highlight: number,
-  highlightRange: HighlightRange | null,
 ): [number, number, number] {
   r = applyShadowLinear(r, shadow);
   g = applyShadowLinear(g, shadow);
@@ -848,7 +799,7 @@ export function applyShadowHighlightLinearToRgb(
 
   const maxChannel = Math.max(r, g, b);
   if (maxChannel <= 0) return [r, g, b];
-  const adjustedMax = applyHighlightLinear(maxChannel, highlight, highlightRange);
+  const adjustedMax = applyHighlightLinear(maxChannel, highlight);
   const scale = adjustedMax / maxChannel;
   return [r * scale, g * scale, b * scale];
 }
@@ -876,15 +827,162 @@ export function applyDisplayRolloffAndClipLinearToRgbInto(
   output[2] = clamp01(output[2] ?? 0);
 }
 
+
+export type ToneCurvePoint = {
+  x: number;
+  y: number;
+};
+
+export const TONE_CURVE_DISPLAY_GAMMA = 2.4;
+
+export function toneCurveLinearToDisplay(value: number): number {
+  return Math.pow(clamp01(value), 1 / TONE_CURVE_DISPLAY_GAMMA);
+}
+
+export function toneCurveDisplayToLinear(value: number): number {
+  return Math.pow(clamp01(value), TONE_CURVE_DISPLAY_GAMMA);
+}
+
+export function normalizeToneCurvePoints(
+  points: readonly ToneCurvePoint[] | null | undefined,
+): ToneCurvePoint[] {
+  if (!points?.length) return [];
+  const normalized = points
+    .map((point) => ({ x: clamp01(point.x), y: clamp01(point.y) }))
+    .filter((point) => point.x > 1e-6 && point.x < 1 - 1e-6)
+    .sort((a, b) => a.x - b.x);
+  const result: ToneCurvePoint[] = [];
+  for (const point of normalized) {
+    const previous = result[result.length - 1];
+    if (previous && Math.abs(previous.x - point.x) < 1e-5) {
+      previous.y = point.y;
+    } else {
+      result.push(point);
+    }
+  }
+  return result;
+}
+
+export type ToneCurveSpline = {
+  knots: ToneCurvePoint[];
+  tangents: Float64Array;
+};
+
+function toneCurveEndpointTangent(
+  h0: number,
+  h1: number,
+  delta0: number,
+  delta1: number,
+): number {
+  const tangent = ((2 * h0 + h1) * delta0 - h0 * delta1) / Math.max(1e-12, h0 + h1);
+  if (tangent * delta0 <= 0) return 0;
+  if (delta0 * delta1 < 0 && Math.abs(tangent) > Math.abs(3 * delta0)) return 3 * delta0;
+  return tangent;
+}
+
+/**
+ * Build a shape-preserving cubic Hermite spline through the fixed endpoints
+ * and user control points. The Fritsch-Carlson/PCHIP-style tangents prevent
+ * each interval from overshooting the Y range of its endpoints while still
+ * allowing the overall curve to rise and fall across successive intervals.
+ */
+export function buildToneCurveSpline(
+  points: readonly ToneCurvePoint[] | null | undefined,
+): ToneCurveSpline | null {
+  const normalized = normalizeToneCurvePoints(points);
+  if (!normalized.length) return null;
+
+  const knots: ToneCurvePoint[] = [{ x: 0, y: 0 }, ...normalized, { x: 1, y: 1 }];
+  const count = knots.length;
+  const h = new Float64Array(count - 1);
+  const delta = new Float64Array(count - 1);
+  for (let i = 0; i < count - 1; i += 1) {
+    const width = Math.max(1e-12, knots[i + 1].x - knots[i].x);
+    h[i] = width;
+    delta[i] = (knots[i + 1].y - knots[i].y) / width;
+  }
+
+  const tangents = new Float64Array(count);
+  if (count === 2) {
+    tangents[0] = delta[0];
+    tangents[1] = delta[0];
+  } else {
+    tangents[0] = toneCurveEndpointTangent(h[0], h[1], delta[0], delta[1]);
+    for (let i = 1; i < count - 1; i += 1) {
+      const left = delta[i - 1];
+      const right = delta[i];
+      if (left * right <= 0) {
+        tangents[i] = 0;
+        continue;
+      }
+      const w1 = 2 * h[i] + h[i - 1];
+      const w2 = h[i] + 2 * h[i - 1];
+      tangents[i] = (w1 + w2) / (w1 / left + w2 / right);
+    }
+    tangents[count - 1] = toneCurveEndpointTangent(
+      h[count - 2],
+      h[count - 3],
+      delta[count - 2],
+      delta[count - 3],
+    );
+  }
+
+  return { knots, tangents };
+}
+
+/** Evaluate the linear-Y tone curve directly. Values outside [0, 1] are identity. */
+export function sampleToneCurveSpline(
+  spline: ToneCurveSpline | null,
+  value: number,
+): number {
+  if (!spline || !Number.isFinite(value) || value < 0 || value > 1) return value;
+  if (value <= 0) return 0;
+  if (value >= 1) return 1;
+
+  const knots = spline.knots;
+  let low = 0;
+  let high = knots.length - 2;
+  while (low <= high) {
+    const middle = (low + high) >> 1;
+    if (value < knots[middle].x) {
+      high = middle - 1;
+    } else if (value > knots[middle + 1].x) {
+      low = middle + 1;
+    } else {
+      const p0 = knots[middle];
+      const p1 = knots[middle + 1];
+      if (Math.abs(value - p0.x) <= 1e-12) return p0.y;
+      if (Math.abs(value - p1.x) <= 1e-12) return p1.y;
+      const width = Math.max(1e-12, p1.x - p0.x);
+      const t = clamp01((value - p0.x) / width);
+      const t2 = t * t;
+      const t3 = t2 * t;
+      const h00 = 2 * t3 - 3 * t2 + 1;
+      const h10 = t3 - 2 * t2 + t;
+      const h01 = -2 * t3 + 3 * t2;
+      const h11 = t3 - t2;
+      const result = h00 * p0.y
+        + h10 * width * spline.tangents[middle]
+        + h01 * p1.y
+        + h11 * width * spline.tangents[middle + 1];
+      // Shape-preserving tangents keep the result inside the interval endpoints;
+      // clamp only for floating-point noise at 0/1.
+      return clamp01(result);
+    }
+  }
+  return value;
+}
+
 export type ToneAdjustmentFlags = {
   hasExposure: boolean;
   hasShadow: boolean;
   hasHighlight: boolean;
   hasBlack?: boolean;
   hasWhite?: boolean;
+  hasToneCurve?: boolean;
+  toneCurve?: ToneCurveSpline | null;
   hasScaledLog: boolean;
   hasSigmoid: boolean;
-  exposureRolloff?: RolloffParams | null;
 };
 
 export function applyToneLinearToRgb(
@@ -896,7 +994,6 @@ export function applyToneLinearToRgb(
   factor: number,
   shadow: number,
   highlight: number,
-  highlightRange: HighlightRange | null,
   scaledLog: number,
   sigmoid: number,
   flags?: ToneAdjustmentFlags,
@@ -906,31 +1003,26 @@ export function applyToneLinearToRgb(
 ): [number, number, number] {
   const hasExposure = flags?.hasExposure ?? factor !== 1;
   const hasShadow = flags?.hasShadow ?? shadow !== 0;
-  const hasHighlight = flags?.hasHighlight ?? (highlight !== 0 && highlightRange !== null);
+  const hasHighlight = flags?.hasHighlight ?? highlight !== 0;
   const hasBlack = flags?.hasBlack ?? black !== 0;
   const hasWhite = flags?.hasWhite ?? (white !== 0 && whiteRange !== null);
+  const hasToneCurve = flags?.hasToneCurve ?? !!flags?.toneCurve;
   const hasScaledLog = flags?.hasScaledLog ?? scaledLog !== 0;
   const hasSigmoid = flags?.hasSigmoid ?? sigmoid !== 0;
 
   if (hasWhiteBalance) [r, g, b] = applyWhiteBalanceLinear(r, g, b, gains);
-  if (hasExposure) {
-    [r, g, b] = applyHighlightRolloffLinearRgb(
-      r * factor,
-      g * factor,
-      b * factor,
-      flags?.exposureRolloff ?? null,
-    );
-  }
   const sourceLuminance = proPhotoLinearLuminance(r, g, b);
   if (!(sourceLuminance > TONE_LUMINANCE_EPSILON)) return [r, g, b];
 
   let luminance = sourceLuminance;
+  if (hasExposure) luminance *= factor;
   if (hasScaledLog) luminance = applyScaledLogLinearExtended(luminance, scaledLog);
   if (hasSigmoid) luminance = applySigmoidLinearExtended(luminance, sigmoid);
   if (hasShadow) luminance = applyShadowLinear(luminance, shadow);
-  if (hasHighlight) luminance = applyHighlightLinear(luminance, highlight, highlightRange);
+  if (hasHighlight) luminance = applyHighlightLinear(luminance, highlight);
   if (hasBlack) luminance = applyBlackLinear(luminance, black);
   if (hasWhite) luminance = applyWhiteLinear(luminance, white, whiteRange);
+  if (hasToneCurve) luminance = sampleToneCurveSpline(flags?.toneCurve ?? null, luminance);
 
   if (!Number.isFinite(luminance)) return [r, g, b];
   const scale = luminance / sourceLuminance;
@@ -946,7 +1038,6 @@ export function applyToneLinearToRgbInto(
   factor: number,
   shadow: number,
   highlight: number,
-  highlightRange: HighlightRange | null,
   scaledLog: number,
   sigmoid: number,
   output: ToneRgbBuffer,
@@ -957,20 +1048,15 @@ export function applyToneLinearToRgbInto(
 ): void {
   const hasExposure = flags?.hasExposure ?? factor !== 1;
   const hasShadow = flags?.hasShadow ?? shadow !== 0;
-  const hasHighlight = flags?.hasHighlight ?? (highlight !== 0 && highlightRange !== null);
+  const hasHighlight = flags?.hasHighlight ?? highlight !== 0;
   const hasBlack = flags?.hasBlack ?? black !== 0;
   const hasWhite = flags?.hasWhite ?? (white !== 0 && whiteRange !== null);
+  const hasToneCurve = flags?.hasToneCurve ?? !!flags?.toneCurve;
   const hasScaledLog = flags?.hasScaledLog ?? scaledLog !== 0;
   const hasSigmoid = flags?.hasSigmoid ?? sigmoid !== 0;
 
   if (hasWhiteBalance) {
     applyWhiteBalanceLinearInto(r, g, b, gains, output);
-    r = output[0] ?? 0; g = output[1] ?? 0; b = output[2] ?? 0;
-  }
-  if (hasExposure) {
-    applyHighlightRolloffLinearRgbInto(
-      r * factor, g * factor, b * factor, flags?.exposureRolloff ?? null, output,
-    );
     r = output[0] ?? 0; g = output[1] ?? 0; b = output[2] ?? 0;
   }
   const sourceLuminance = proPhotoLinearLuminance(r, g, b);
@@ -980,12 +1066,14 @@ export function applyToneLinearToRgbInto(
   }
 
   let luminance = sourceLuminance;
+  if (hasExposure) luminance *= factor;
   if (hasScaledLog) luminance = applyScaledLogLinearExtended(luminance, scaledLog);
   if (hasSigmoid) luminance = applySigmoidLinearExtended(luminance, sigmoid);
   if (hasShadow) luminance = applyShadowLinear(luminance, shadow);
-  if (hasHighlight) luminance = applyHighlightLinear(luminance, highlight, highlightRange);
+  if (hasHighlight) luminance = applyHighlightLinear(luminance, highlight);
   if (hasBlack) luminance = applyBlackLinear(luminance, black);
   if (hasWhite) luminance = applyWhiteLinear(luminance, white, whiteRange);
+  if (hasToneCurve) luminance = sampleToneCurveSpline(flags?.toneCurve ?? null, luminance);
 
   if (!Number.isFinite(luminance)) {
     output[0] = r; output[1] = g; output[2] = b;
@@ -1005,6 +1093,8 @@ export type ColorAdjustmentContext = {
   hasHighlight: boolean;
   hasBlack: boolean;
   hasWhite: boolean;
+  hasToneCurve: boolean;
+  toneCurve: ToneCurveSpline | null;
   hasScaledLog: boolean;
   hasSigmoid: boolean;
   hasSaturation: boolean;
@@ -1015,10 +1105,8 @@ export type ColorAdjustmentContext = {
   highlight: number;
   black: number;
   white: number;
-  highlightRange: HighlightRange | null;
   whiteRange: WhiteRange | null;
-  // Exposure, Saturation and final display shoulders are percentile-derived rolloffs.
-  exposureRolloff: RolloffParams | null;
+  // Saturation and final display shoulders are percentile-derived rolloffs.
   saturationRolloff: RolloffParams | null;
   finalRolloff: RolloffParams | null;
   scaledLog: number;
@@ -1038,6 +1126,7 @@ export type ToneAdjustmentStage =
   | "highlight"
   | "black"
   | "white"
+  | "tone-curve"
   | "after-tone";
 
 const TONE_ADJUSTMENT_STAGE_INDEX: Record<ToneAdjustmentStage, number> = {
@@ -1049,11 +1138,12 @@ const TONE_ADJUSTMENT_STAGE_INDEX: Record<ToneAdjustmentStage, number> = {
   highlight: 5,
   black: 6,
   white: 7,
-  "after-tone": 8,
+  "tone-curve": 8,
+  "after-tone": 9,
 };
 
 const TONE_GAMMA20_GAIN_LUT_SIZE = 4096;
-const TONE_LUMINANCE_STAGE_START_INDEX = TONE_ADJUSTMENT_STAGE_INDEX["scaled-log"];
+const TONE_LUMINANCE_STAGE_START_INDEX = TONE_ADJUSTMENT_STAGE_INDEX.exposure;
 const TONE_AFTER_STAGE_INDEX = TONE_ADJUSTMENT_STAGE_INDEX["after-tone"];
 
 function hasActiveToneLuminanceStage(
@@ -1061,12 +1151,14 @@ function hasActiveToneLuminanceStage(
   stageIndex: number,
 ): boolean {
   switch (stageIndex) {
+    case 1: return context.hasExposure;
     case 2: return context.hasScaledLog;
     case 3: return context.hasSigmoid;
     case 4: return context.hasShadow;
     case 5: return context.hasHighlight;
     case 6: return context.hasBlack;
     case 7: return context.hasWhite;
+    case 8: return context.hasToneCurve;
     default: return false;
   }
 }
@@ -1078,6 +1170,9 @@ function applyToneLuminanceAdjustmentStages(
   endIndex: number,
 ): number {
   let adjusted = luminance;
+  if (startIndex <= 1 && endIndex > 1 && context.hasExposure) {
+    adjusted *= context.factor;
+  }
   if (startIndex <= 2 && endIndex > 2 && context.hasScaledLog) {
     adjusted = applyScaledLogLinearExtended(adjusted, context.scaledLog);
   }
@@ -1088,13 +1183,16 @@ function applyToneLuminanceAdjustmentStages(
     adjusted = applyShadowLinear(adjusted, context.shadow);
   }
   if (startIndex <= 5 && endIndex > 5 && context.hasHighlight) {
-    adjusted = applyHighlightLinear(adjusted, context.highlight, context.highlightRange);
+    adjusted = applyHighlightLinear(adjusted, context.highlight);
   }
   if (startIndex <= 6 && endIndex > 6 && context.hasBlack) {
     adjusted = applyBlackLinear(adjusted, context.black);
   }
   if (startIndex <= 7 && endIndex > 7 && context.hasWhite) {
     adjusted = applyWhiteLinear(adjusted, context.white, context.whiteRange);
+  }
+  if (startIndex <= 8 && endIndex > 8 && context.hasToneCurve) {
+    adjusted = sampleToneCurveSpline(context.toneCurve, adjusted);
   }
   return adjusted;
 }
@@ -1214,17 +1312,6 @@ export function applyToneAdjustmentsLinearRgbRangeWithGamma20GainLutInto(
     applyWhiteBalanceLinearInto(r, g, b, context.gains, output);
     r = output[0] ?? 0; g = output[1] ?? 0; b = output[2] ?? 0;
   }
-  if (start <= 1 && end > 1 && context.hasExposure) {
-    applyHighlightRolloffLinearRgbInto(
-      r * context.factor,
-      g * context.factor,
-      b * context.factor,
-      context.exposureRolloff,
-      output,
-    );
-    r = output[0] ?? 0; g = output[1] ?? 0; b = output[2] ?? 0;
-  }
-
   const luminanceStart = Math.max(start, TONE_LUMINANCE_STAGE_START_INDEX);
   if (luminanceStart >= end) {
     output[0] = r; output[1] = g; output[2] = b;
@@ -1273,19 +1360,13 @@ export function applyToneAdjustmentsLinearRgbRange(
   if (start <= 0 && end > 0 && context.hasWhiteBalance) {
     [r, g, b] = applyWhiteBalanceLinear(r, g, b, context.gains);
   }
-  if (start <= 1 && end > 1 && context.hasExposure) {
-    [r, g, b] = applyHighlightRolloffLinearRgb(
-      r * context.factor,
-      g * context.factor,
-      b * context.factor,
-      context.exposureRolloff,
-    );
-  }
-
   const sourceLuminance = proPhotoLinearLuminance(r, g, b);
   if (!(sourceLuminance > TONE_LUMINANCE_EPSILON)) return [r, g, b];
   let luminance = sourceLuminance;
 
+  if (start <= 1 && end > 1 && context.hasExposure) {
+    luminance *= context.factor;
+  }
   if (start <= 2 && end > 2 && context.hasScaledLog) {
     luminance = applyScaledLogLinearExtended(luminance, context.scaledLog);
   }
@@ -1296,13 +1377,16 @@ export function applyToneAdjustmentsLinearRgbRange(
     luminance = applyShadowLinear(luminance, context.shadow);
   }
   if (start <= 5 && end > 5 && context.hasHighlight) {
-    luminance = applyHighlightLinear(luminance, context.highlight, context.highlightRange);
+    luminance = applyHighlightLinear(luminance, context.highlight);
   }
   if (start <= 6 && end > 6 && context.hasBlack) {
     luminance = applyBlackLinear(luminance, context.black);
   }
   if (start <= 7 && end > 7 && context.hasWhite) {
     luminance = applyWhiteLinear(luminance, context.white, context.whiteRange);
+  }
+  if (start <= 8 && end > 8 && context.hasToneCurve) {
+    luminance = sampleToneCurveSpline(context.toneCurve, luminance);
   }
 
   if (!Number.isFinite(luminance)) return [r, g, b];
@@ -1330,13 +1414,6 @@ export function applyToneAdjustmentsLinearRgbRangeInto(
     applyWhiteBalanceLinearInto(r, g, b, context.gains, output);
     r = output[0] ?? 0; g = output[1] ?? 0; b = output[2] ?? 0;
   }
-  if (start <= 1 && end > 1 && context.hasExposure) {
-    applyHighlightRolloffLinearRgbInto(
-      r * context.factor, g * context.factor, b * context.factor, context.exposureRolloff, output,
-    );
-    r = output[0] ?? 0; g = output[1] ?? 0; b = output[2] ?? 0;
-  }
-
   const sourceLuminance = proPhotoLinearLuminance(r, g, b);
   if (!(sourceLuminance > TONE_LUMINANCE_EPSILON)) {
     output[0] = r; output[1] = g; output[2] = b;
@@ -1344,6 +1421,9 @@ export function applyToneAdjustmentsLinearRgbRangeInto(
   }
   let luminance = sourceLuminance;
 
+  if (start <= 1 && end > 1 && context.hasExposure) {
+    luminance *= context.factor;
+  }
   if (start <= 2 && end > 2 && context.hasScaledLog) {
     luminance = applyScaledLogLinearExtended(luminance, context.scaledLog);
   }
@@ -1354,13 +1434,16 @@ export function applyToneAdjustmentsLinearRgbRangeInto(
     luminance = applyShadowLinear(luminance, context.shadow);
   }
   if (start <= 5 && end > 5 && context.hasHighlight) {
-    luminance = applyHighlightLinear(luminance, context.highlight, context.highlightRange);
+    luminance = applyHighlightLinear(luminance, context.highlight);
   }
   if (start <= 6 && end > 6 && context.hasBlack) {
     luminance = applyBlackLinear(luminance, context.black);
   }
   if (start <= 7 && end > 7 && context.hasWhite) {
     luminance = applyWhiteLinear(luminance, context.white, context.whiteRange);
+  }
+  if (start <= 8 && end > 8 && context.hasToneCurve) {
+    luminance = sampleToneCurveSpline(context.toneCurve, luminance);
   }
 
   if (!Number.isFinite(luminance)) {
@@ -1388,7 +1471,6 @@ export function applyToneAdjustmentsLinearRgb(
     context.factor,
     context.shadow,
     context.highlight,
-    context.highlightRange,
     context.scaledLog,
     context.sigmoid,
     context,
@@ -1412,7 +1494,6 @@ export function applyToneAdjustmentsLinearRgbInto(
     context.factor,
     context.shadow,
     context.highlight,
-    context.highlightRange,
     context.scaledLog,
     context.sigmoid,
     output,
@@ -1552,6 +1633,7 @@ export function hasColorAdjustmentContextChanges(context: ColorAdjustmentContext
     || context.hasHighlight
     || context.hasBlack
     || context.hasWhite
+    || context.hasToneCurve
     || context.hasSaturation
     || context.hasVibrance;
 }

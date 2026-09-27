@@ -12,19 +12,17 @@ import {
   type ImageEditClarityMap,
 } from "./clarity";
 import {
-  EXPOSURE_ROLLOFF_A,
   FINAL_DISPLAY_ROLLOFF_A,
   HISTOGRAM_DISPLAY_GAMMA,
   ROLLOFF_SAVING_LIMIT_FACTOR,
   SATURATION_ROLLOFF_A,
   applyColorAdjustmentsAfterToneLinearRgbInto, applyColorAdjustmentsLinearRgbInto,
-  applyHighlightRolloffLinearRgbInto, applyLuminanceGainPreservingAboveOneLinearRgbInto, applySaturationVibranceAndFinalRolloffLinearRgbInto,
-  applyScaledLogLinearExtended, applyShadowLinear, applySigmoidLinearExtended,
-  applyToneAdjustmentsLinearRgbInto, applyToneLinearToRgbInto,
+  applyLuminanceGainPreservingAboveOneLinearRgbInto, applySaturationVibranceAndFinalRolloffLinearRgbInto,
+  applyToneAdjustmentsLinearRgbInto, applyToneAdjustmentsLinearRgbRangeInto, applyToneLinearToRgbInto,
   applyWhiteBalanceLinearInto, clamp01, clampColorAdjustment, clampExposureEv,
   clampScaledLog, clampSigmoid, clampToneRangeAdjustment, clampWhiteBalanceValue,
-  colorSaturationFactor, colorVibranceFactor, proPhotoLinearLuminance, rgbSaturationExtended, rolloffParams,
-  srgbChannelToLinear, whiteBalanceGains, type ColorAdjustmentContext, type HighlightRange, type RolloffParams, type WhiteRange,
+  buildToneCurveSpline, colorSaturationFactor, colorVibranceFactor, proPhotoLinearLuminance, rgbSaturationExtended, rolloffParams,
+  srgbChannelToLinear, toneCurveLinearToDisplay, whiteBalanceGains, type ColorAdjustmentContext, type RolloffParams, type ToneCurvePoint, type WhiteRange,
 } from "@/image/tone";
 
 // Statistical analysis and Auto Tone share the fixed-area analysis sample.
@@ -100,6 +98,7 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
   ignoreInvalid: boolean,
   black = 0,
   white = 0,
+  toneCurvePoints: readonly ToneCurvePoint[] | null = null,
 ): ColorAdjustmentContext {
   const normalizedTemperature = clampWhiteBalanceValue(temperature);
   const normalizedTint = clampWhiteBalanceValue(tint);
@@ -107,6 +106,8 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
   const normalizedHighlight = clampToneRangeAdjustment(highlight);
   const normalizedBlack = clampToneRangeAdjustment(black);
   const normalizedWhite = clampToneRangeAdjustment(white);
+  const toneCurve = buildToneCurveSpline(toneCurvePoints);
+  const hasToneCurve = toneCurve !== null;
   const normalizedScaledLog = clampScaledLog(scaledLog);
   const normalizedSigmoid = clampSigmoid(sigmoid);
   const normalizedVibrance = clampColorAdjustment(vibrance);
@@ -123,73 +124,12 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
   const hasSaturation = normalizedSaturation !== 0;
   const hasVibrance = normalizedVibrance !== 0;
   const hasSaturationOrVibrance = hasSaturation || hasVibrance;
-  const needsHighlightRange = normalizedHighlight !== 0;
+  const hasHighlight = normalizedHighlight !== 0;
 
   const data = sample.data;
   const valid = sample.valid;
   const count = Math.floor(data.length / 3);
   const adjusted: [number, number, number] = [0, 0, 0];
-
-  let exposureRolloff: RolloffParams | null = null;
-  if (hasExposure && factor > 1) {
-    const exposureMaxima: number[] = [];
-    for (let pixel = 0; pixel < count; pixel++) {
-      if (ignoreInvalid && valid && !valid[pixel]) continue;
-      const i = pixel * 3;
-      let r = data[i] ?? 0;
-      let g = data[i + 1] ?? 0;
-      let b = data[i + 2] ?? 0;
-      if (hasWhiteBalance) {
-        applyWhiteBalanceLinearInto(r, g, b, gains, adjusted);
-        r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
-      }
-      const maxChannel = Math.max(r * factor, g * factor, b * factor);
-      if (Number.isFinite(maxChannel)) exposureMaxima.push(maxChannel);
-    }
-    const exposureP998 = exposureMaxima.length
-      ? percentileFromValues(exposureMaxima, 99.8)
-      : 0;
-    exposureRolloff = rolloffParams(
-      exposureP998,
-      EXPOSURE_ROLLOFF_A,
-      ROLLOFF_SAVING_LIMIT_FACTOR,
-      1,
-    );
-  }
-
-  let highlightMax = -Infinity;
-  if (needsHighlightRange) {
-    for (let pixel = 0; pixel < count; pixel++) {
-      if (ignoreInvalid && valid && !valid[pixel]) continue;
-      const i = pixel * 3;
-      let r = data[i] ?? 0;
-      let g = data[i + 1] ?? 0;
-      let b = data[i + 2] ?? 0;
-      if (hasWhiteBalance) {
-        applyWhiteBalanceLinearInto(r, g, b, gains, adjusted);
-        r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
-      }
-      if (hasExposure) {
-        applyHighlightRolloffLinearRgbInto(
-          r * factor,
-          g * factor,
-          b * factor,
-          exposureRolloff,
-          adjusted,
-        );
-        r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
-      }
-      let highlightValue = proPhotoLinearLuminance(r, g, b);
-      if (hasScaledLog) highlightValue = applyScaledLogLinearExtended(highlightValue, normalizedScaledLog);
-      if (hasSigmoid) highlightValue = applySigmoidLinearExtended(highlightValue, normalizedSigmoid);
-      if (hasShadow) highlightValue = applyShadowLinear(highlightValue, normalizedShadow);
-      highlightMax = Math.max(highlightMax, highlightValue);
-    }
-  }
-  const highlightRange: HighlightRange | null = normalizedHighlight !== 0 && Number.isFinite(highlightMax)
-    ? { p100: highlightMax }
-    : null;
-  const hasHighlight = normalizedHighlight !== 0 && highlightRange !== null;
 
   let whiteRange: WhiteRange | null = null;
   // Negative White compresses highlight headroom. Do not let that compression
@@ -211,7 +151,6 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
         factor,
         normalizedShadow,
         normalizedHighlight,
-        highlightRange,
         normalizedScaledLog,
         normalizedSigmoid,
         adjusted,
@@ -223,7 +162,6 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
           hasWhite: false,
           hasScaledLog,
           hasSigmoid,
-          exposureRolloff,
         },
         normalizedBlack,
       );
@@ -261,7 +199,6 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
       factor,
       normalizedShadow,
       normalizedHighlight,
-      highlightRange,
       normalizedScaledLog,
       normalizedSigmoid,
       adjusted,
@@ -271,9 +208,10 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
         hasHighlight,
         hasBlack,
         hasWhite: activeWhite,
+        hasToneCurve,
+        toneCurve,
         hasScaledLog,
         hasSigmoid,
-        exposureRolloff,
       },
       normalizedBlack,
       normalizedWhite,
@@ -336,6 +274,8 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
     hasHighlight,
     hasBlack,
     hasWhite: activeWhite,
+    hasToneCurve,
+    toneCurve,
     hasScaledLog,
     hasSigmoid,
     hasSaturation,
@@ -346,9 +286,7 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
     highlight: normalizedHighlight,
     black: normalizedBlack,
     white: normalizedWhite,
-    highlightRange,
     whiteRange,
-    exposureRolloff,
     saturationRolloff,
     finalRolloff,
     scaledLog: normalizedScaledLog,
@@ -375,6 +313,7 @@ export function buildColorAdjustmentContextFromLinearRgbSample(
   ignoreInvalid = false,
   black = 0,
   white = 0,
+  toneCurvePoints: readonly ToneCurvePoint[] | null = null,
 ): ColorAdjustmentContext {
   return buildColorAdjustmentContextFromLinearRgbSampleInternal(
     sample,
@@ -390,6 +329,7 @@ export function buildColorAdjustmentContextFromLinearRgbSample(
     ignoreInvalid,
     black,
     white,
+    toneCurvePoints,
   );
 }
 
@@ -408,6 +348,7 @@ export function buildInteractiveColorAdjustmentContextFromLinearRgbSample(
   ignoreInvalid = false,
   black = 0,
   white = 0,
+  toneCurvePoints: readonly ToneCurvePoint[] | null = null,
 ): ColorAdjustmentContext {
   return buildColorAdjustmentContextFromLinearRgbSampleInternal(
     sample,
@@ -423,6 +364,7 @@ export function buildInteractiveColorAdjustmentContextFromLinearRgbSample(
     ignoreInvalid,
     black,
     white,
+    toneCurvePoints,
   );
 }
 
@@ -439,6 +381,7 @@ export function colorAdjustmentContextFromLinearRgbSample(
   saturation: number,
   black = 0,
   white = 0,
+  toneCurvePoints: readonly ToneCurvePoint[] | null = null,
 ): ColorAdjustmentContext {
   return buildColorAdjustmentContextFromLinearRgbSample(
     { data: sample, width: Math.floor(sample.length / 3), height: 1 },
@@ -454,7 +397,61 @@ export function colorAdjustmentContextFromLinearRgbSample(
     false,
     black,
     white,
+    toneCurvePoints,
   );
+}
+
+
+export function computeToneCurveLumaHistogramFromLinearRgbSample(
+  sample: LinearRgbSample,
+  temperature: number,
+  tint: number,
+  exposureEv: number,
+  shadow: number,
+  highlight: number,
+  scaledLog: number,
+  sigmoid: number,
+  black = 0,
+  white = 0,
+): number[] {
+  const bins = new Array<number>(HISTOGRAM_BINS).fill(0);
+  if (!sample.data.length) return bins;
+  const context = buildInteractiveColorAdjustmentContextFromLinearRgbSample(
+    sample,
+    temperature,
+    tint,
+    exposureEv,
+    shadow,
+    highlight,
+    scaledLog,
+    sigmoid,
+    0,
+    0,
+    true,
+    black,
+    white,
+    null,
+  );
+  const adjusted: [number, number, number] = [0, 0, 0];
+  const count = Math.floor(sample.data.length / 3);
+  for (let pixel = 0; pixel < count; pixel += 1) {
+    if (sample.valid && !sample.valid[pixel]) continue;
+    const i = pixel * 3;
+    applyToneAdjustmentsLinearRgbRangeInto(
+      sample.data[i] ?? 0,
+      sample.data[i + 1] ?? 0,
+      sample.data[i + 2] ?? 0,
+      context,
+      "white-balance",
+      "tone-curve",
+      adjusted,
+    );
+    const y = clamp01(proPhotoLinearLuminance(adjusted[0], adjusted[1], adjusted[2]));
+    const displayY = toneCurveLinearToDisplay(y);
+    const bin = Math.min(HISTOGRAM_BINS - 1, Math.max(0, Math.floor(displayY * HISTOGRAM_BINS)));
+    bins[bin] += 1;
+  }
+  return bins;
 }
 
 export function computeHistogramDataFromRgb16(
@@ -474,6 +471,7 @@ export function computeHistogramDataFromRgb16(
   white = 0,
   clarityMap: ImageEditClarityMap | null = null,
   sourceSample?: LinearRgbSample,
+  toneCurvePoints: readonly ToneCurvePoint[] | null = null,
 ): HistogramData | null {
   if (decoded.width <= 0 || decoded.height <= 0) return null;
   const sample = sourceSample ?? getAnalysisLinearRgbSample(decoded, sourceRect, rotationDegrees);
@@ -492,6 +490,7 @@ export function computeHistogramDataFromRgb16(
     true,
     black,
     white,
+    toneCurvePoints,
   );
   const activeClarityMap = isUsableImageEditClarityMap(clarityMap) ? clarityMap : null;
   const hasClarity = activeClarityMap !== null;
@@ -737,7 +736,6 @@ export function buildToneLumaHistogram(
       context.factor,
       context.shadow,
       context.highlight,
-      context.highlightRange,
       context.scaledLog,
       context.sigmoid,
       adjustedRgb,

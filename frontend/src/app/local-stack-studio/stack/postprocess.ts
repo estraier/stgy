@@ -62,7 +62,6 @@ type StackToneContext = {
   normalizedHighlight: number;
   normalizedLog: number;
   normalizedSigmoid: number;
-  highlightRange: { p100: number } | null;
   hasExposure: boolean;
   hasShadow: boolean;
   hasHighlight: boolean;
@@ -106,45 +105,16 @@ export function computeStackHighlightP100(
   sigmoid = 0,
   exposureRolloffBaseP998: number | null = null,
 ): number | null {
-  if (!sourceLinear || sourceLinear.length < 3) return null;
-  const normalizedShadow = clampToneRangeAdjustment(shadow);
-  const normalizedLog = clampStackScaledLog(scaledLog);
-  const normalizedSigmoid = clampSigmoid(sigmoid);
-  const resolvedExposureBaseP998 = resolveStackExposureRolloffBaseP998(
-    sourceLinear,
-    exposureRolloffBaseP998,
-  );
-  const exposureRolloff = gain > 1 && Number.isFinite(resolvedExposureBaseP998)
-    ? rolloffParams(
-        Number(resolvedExposureBaseP998) * gain,
-        EXPOSURE_ROLLOFF_A,
-        ROLLOFF_SAVING_LIMIT_FACTOR,
-        1,
-      )
-    : null;
-  let p100 = -Infinity;
-  const adjusted: [number, number, number] = [0, 0, 0];
-  for (let i = 0; i + 2 < sourceLinear.length; i += 3) {
-    applyHighlightRolloffLinearRgbInto(
-      (sourceLinear[i] ?? 0) * gain,
-      (sourceLinear[i + 1] ?? 0) * gain,
-      (sourceLinear[i + 2] ?? 0) * gain,
-      exposureRolloff,
-      adjusted,
-    );
-    let luminance = proPhotoLinearLuminance(adjusted[0], adjusted[1], adjusted[2]);
-    if (normalizedLog !== 0) {
-      luminance = applyScaledLogLinearExtended(luminance, normalizedLog, STACK_LOGARITHM_LIMIT);
-    }
-    if (normalizedSigmoid !== 0) {
-      luminance = applySigmoidLinearExtended(luminance, normalizedSigmoid);
-    }
-    if (normalizedShadow !== 0) {
-      luminance = applyShadowLinear(luminance, normalizedShadow);
-    }
-    p100 = Math.max(p100, luminance);
-  }
-  return Number.isFinite(p100) ? p100 : null;
+  // Highlight is now a fixed gamma curve and no longer depends on image P100.
+  // Keep this compatibility entry point temporarily so existing LSS callers do
+  // not need a broad unrelated refactor; it intentionally performs no scan.
+  void sourceLinear;
+  void gain;
+  void shadow;
+  void scaledLog;
+  void sigmoid;
+  void exposureRolloffBaseP998;
+  return null;
 }
 
 export function computeStackFinalRolloff(
@@ -736,7 +706,7 @@ function buildStackToneContext(
   scaledLog: number,
   sigmoid: number,
   exposureRolloffBaseP998: number | null,
-  highlightP100: number | null,
+  _highlightP100: number | null,
 ): StackToneContext {
   const gain = Math.pow(2, exposureEv);
   const normalizedShadow = clampToneRangeAdjustment(shadow);
@@ -753,9 +723,6 @@ function buildStackToneContext(
       )
     : null;
   const hasShadow = normalizedShadow !== 0;
-  const highlightRange = normalizedHighlight !== 0 && Number.isFinite(highlightP100) && Number(highlightP100) > 0
-    ? { p100: Number(highlightP100) }
-    : null;
   return {
     gain,
     exposureRolloff,
@@ -763,10 +730,9 @@ function buildStackToneContext(
     normalizedHighlight,
     normalizedLog,
     normalizedSigmoid,
-    highlightRange,
     hasExposure,
     hasShadow,
-    hasHighlight: highlightRange !== null,
+    hasHighlight: normalizedHighlight !== 0,
     hasLogarithm: normalizedLog !== 0,
     hasSigmoid: normalizedSigmoid !== 0,
   };
@@ -811,10 +777,8 @@ function applyStackToneAdjustmentsLinearRgbRangeInto(
       targetLuminance = applySigmoidLinearExtended(sourceLuminance, context.normalizedSigmoid);
     } else if (stage === "shadow" && context.hasShadow) {
       targetLuminance = applyShadowLinear(sourceLuminance, context.normalizedShadow);
-    } else if (stage === "highlight" && context.hasHighlight && context.highlightRange) {
-      targetLuminance = applyHighlightLinear(
-        sourceLuminance, context.normalizedHighlight, context.highlightRange,
-      );
+    } else if (stage === "highlight" && context.hasHighlight) {
+      targetLuminance = applyHighlightLinear(sourceLuminance, context.normalizedHighlight);
     } else {
       continue;
     }
