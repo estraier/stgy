@@ -22,7 +22,7 @@ import {
   applyWhiteBalanceLinearInto, clamp01, clampColorAdjustment, clampExposureEv,
   clampScaledLog, clampSigmoid, clampToneRangeAdjustment, clampWhiteBalanceValue,
   buildToneCurveSpline, colorSaturationFactor, colorVibranceFactor, proPhotoLinearLuminance, rgbSaturationExtended, rolloffParams,
-  srgbChannelToLinear, toneCurveLinearToDisplay, whiteBalanceGains, type ColorAdjustmentContext, type RolloffParams, type ToneCurvePoint, type WhiteRange,
+  srgbChannelToLinear, toneCurveLinearToDisplay, whiteBalanceGains, type ColorAdjustmentContext, type RolloffParams, type ToneCurvePoint,
 } from "@/image/tone";
 
 // Statistical analysis and Auto Tone share the fixed-area analysis sample.
@@ -131,15 +131,13 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
   const count = Math.floor(data.length / 3);
   const adjusted: [number, number, number] = [0, 0, 0];
 
-  let whiteRange: WhiteRange | null = null;
-  // Negative White compresses highlight headroom. Do not let that compression
-  // feed back into the final display-rolloff parameters, otherwise the final
-  // shoulder can weaken or disappear exactly at White=-100. Reuse the
-  // already-required pre-White pass as the stable max-RGB reference.
+  const activeWhite = hasWhite;
+  // Negative White rescues >1 headroom. Keep a pre-White Tone result only for
+  // the final-rolloff analysis so White's own compression cannot weaken or
+  // disable the later safety shoulder near the -100 endpoint.
   const preWhiteToneAdjusted = normalizedWhite < 0 ? new Float32Array(count * 3) : null;
-  if (hasWhite) {
-    const whiteValues: number[] = [];
-    for (let pixel = 0; pixel < count; pixel++) {
+  if (preWhiteToneAdjusted) {
+    for (let pixel = 0; pixel < count; pixel += 1) {
       if (ignoreInvalid && valid && !valid[pixel]) continue;
       const i = pixel * 3;
       applyToneLinearToRgbInto(
@@ -160,23 +158,19 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
           hasHighlight,
           hasBlack,
           hasWhite: false,
+          hasToneCurve,
+          toneCurve,
           hasScaledLog,
           hasSigmoid,
         },
         normalizedBlack,
+        normalizedWhite,
       );
-      if (preWhiteToneAdjusted) {
-        preWhiteToneAdjusted[i] = adjusted[0];
-        preWhiteToneAdjusted[i + 1] = adjusted[1];
-        preWhiteToneAdjusted[i + 2] = adjusted[2];
-      }
-      const value = proPhotoLinearLuminance(adjusted[0], adjusted[1], adjusted[2]);
-      if (Number.isFinite(value)) whiteValues.push(value);
+      preWhiteToneAdjusted[i] = adjusted[0];
+      preWhiteToneAdjusted[i + 1] = adjusted[1];
+      preWhiteToneAdjusted[i + 2] = adjusted[2];
     }
-    const whiteP998 = whiteValues.length ? percentileFromValues(whiteValues, 99.8) : 0;
-    if (Number.isFinite(whiteP998) && whiteP998 > 0) whiteRange = { p998: whiteP998 };
   }
-  const activeWhite = hasWhite && whiteRange !== null;
   const saturationFactor = colorSaturationFactor(normalizedSaturation);
   const vibranceFactor = colorVibranceFactor(normalizedVibrance);
 
@@ -215,7 +209,6 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
       },
       normalizedBlack,
       normalizedWhite,
-      whiteRange,
     );
     toneAdjusted[i] = adjusted[0];
     toneAdjusted[i + 1] = adjusted[1];
@@ -238,10 +231,10 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
     : null;
 
   const maxima: number[] = [];
-  // For negative White, parameterize the final max-RGB shoulder from the
-  // pre-White tone result. White is itself a highlight-rescue control, so its
-  // compression must not weaken the later safety shoulder. This also keeps the
-  // -99 -> -100 transition continuous without adding another color pass.
+  // Parameterize the final display shoulder from the pre-White result when
+  // White is negative. White is itself a headroom-rescue control, so allowing
+  // its compression to reduce P99.8 would make the final shoulder weaken or
+  // disappear as the slider approaches -100.
   const finalRolloffToneAdjusted = preWhiteToneAdjusted ?? toneAdjusted;
   for (let pixel = 0; pixel < count; pixel += 1) {
     if (ignoreInvalid && valid && !valid[pixel]) continue;
@@ -286,7 +279,6 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
     highlight: normalizedHighlight,
     black: normalizedBlack,
     white: normalizedWhite,
-    whiteRange,
     saturationRolloff,
     finalRolloff,
     scaledLog: normalizedScaledLog,

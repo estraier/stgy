@@ -45,7 +45,7 @@ jest.mock("@/image/lensfun", () => ({
 }));
 
 import { __imageEditorCharacterization as imageEditor } from "./image-editor/characterization";
-import { applyRolloffMaxChannelLinearRgb, HIGHLIGHT_MAX_GAMMA, SHADOW_MAX_GAMMA, WHITE_MAX_SHOULDER_WIDTH } from "@/image/tone";
+import { applyRolloffMaxChannelLinearRgb, HIGHLIGHT_MAX_GAMMA, SHADOW_MAX_GAMMA, WHITE_MIRROR_GAMMA, WHITE_MIRROR_MAX_TOE_WIDTH } from "@/image/tone";
 
 function rounded(values: number[]): number[] {
   return values.map((value) => Number(value.toFixed(12)));
@@ -211,12 +211,12 @@ function renderCachedPreviewToBytes(
 }
 
 describe("image editor tone characterization", () => {
-  test("Shadow uses pure gamma correction with reciprocal max gamma 4", () => {
-    expect(SHADOW_MAX_GAMMA).toBe(4);
+  test("Shadow uses pure gamma correction with reciprocal max gamma 2.5", () => {
+    expect(SHADOW_MAX_GAMMA).toBe(2.5);
     const points = [0, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1];
     for (const x of points) {
-      expect(imageEditor.applyShadowLinear(x, -100)).toBeCloseTo(Math.pow(x, 4), 12);
-      expect(imageEditor.applyShadowLinear(x, 100)).toBeCloseTo(Math.pow(x, 0.25), 12);
+      expect(imageEditor.applyShadowLinear(x, -100)).toBeCloseTo(Math.pow(x, 2.5), 12);
+      expect(imageEditor.applyShadowLinear(x, 100)).toBeCloseTo(Math.pow(x, 1 / 2.5), 12);
       expect(imageEditor.applyShadowLinear(x, 0)).toBeCloseTo(x, 12);
     }
     // Shadow is confined to display-referred luminance; RAW headroom is preserved.
@@ -224,16 +224,16 @@ describe("image editor tone characterization", () => {
     expect(imageEditor.applyShadowLinear(1.2, 100)).toBe(1.2);
   });
 
-  test("Highlight is the white-side gamma mirror with reciprocal max gamma 6", () => {
-    expect(HIGHLIGHT_MAX_GAMMA).toBe(6);
+  test("Highlight is the white-side gamma mirror with reciprocal max gamma 5", () => {
+    expect(HIGHLIGHT_MAX_GAMMA).toBe(5);
     const points = [0, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1];
     for (const x of points) {
       expect(imageEditor.applyHighlightLinear(x, 100)).toBeCloseTo(
-        1 - Math.pow(1 - x, 6),
+        1 - Math.pow(1 - x, 5),
         12,
       );
       expect(imageEditor.applyHighlightLinear(x, -100)).toBeCloseTo(
-        1 - Math.pow(1 - x, 1 / 6),
+        1 - Math.pow(1 - x, 1 / 5),
         12,
       );
       expect(imageEditor.applyHighlightLinear(x, 0)).toBeCloseTo(x, 12);
@@ -300,55 +300,48 @@ describe("image editor tone characterization", () => {
   });
 
 
-  test("White mirrors Black's curve shape with an independent 0.32 shoulder and rescues extended highlights only in the negative direction", () => {
-    const range = { p998: 4 };
-    expect(WHITE_MAX_SHOULDER_WIDTH).toBe(0.32);
+  test("White is an independent gamma-2.4 mirror of Black inside display range", () => {
+    expect(WHITE_MIRROR_GAMMA).toBe(2.4);
+    expect(WHITE_MIRROR_MAX_TOE_WIDTH).toBe(0.08);
 
-    // White uses the same normalized local curve as Black, but at four times the
-    // width (0.32 vs 0.08). By homogeneity, a 0.32-width mirrored White is
-    // equivalent to scaling the public 0.08-width Black coordinates by 4.
-    for (const value of [0, 0.2, 0.5, 0.9, 0.98, 1]) {
-      expect(imageEditor.applyWhiteLinear(value, 100, range)).toBeCloseTo(
-        1 - 4 * imageEditor.applyBlackLinear((1 - value) / 4, -100),
+    const gamma = WHITE_MIRROR_GAMMA;
+    const displaySamples = [0, 0.05, 0.1, 0.2, 0.35, 0.5, 0.7, 0.85, 0.95, 1];
+    for (const white of [-100, -65, -25, 25, 65, 100]) {
+      for (const displayInput of displaySamples) {
+        const linearInput = Math.pow(displayInput, gamma);
+        const mirroredDisplayInput = 1 - displayInput;
+        const mirroredLinearInput = Math.pow(mirroredDisplayInput, gamma);
+        // This comparison verifies the intended geometry only.  The production
+        // White implementation must remain independent and must not call Black.
+        const mirroredBlackLinear = imageEditor.applyBlackLinear(mirroredLinearInput, -white);
+        const mirroredBlackDisplay = Math.pow(Math.max(0, mirroredBlackLinear), 1 / gamma);
+        const expectedDisplayOutput = 1 - mirroredBlackDisplay;
+        const expectedLinearOutput = Math.pow(Math.max(0, expectedDisplayOutput), gamma);
+        expect(imageEditor.applyWhiteLinear(linearInput, white)).toBeCloseTo(expectedLinearOutput, 12);
+      }
+    }
+
+    // The gamma-2.4 mirror is confined to [0,1]. Positive White leaves RAW
+    // headroom untouched, while negative White rescues only the >1 excess in
+    // a separate post-process.
+    for (const value of [1.01, 1.2, 2, 4]) {
+      expect(imageEditor.applyWhiteLinear(value, 100)).toBe(value);
+      expect(imageEditor.applyWhiteLinear(value, -50)).toBeCloseTo(
+        1 + (value - 1) * 0.5,
         12,
       );
+      expect(imageEditor.applyWhiteLinear(value, -100)).toBeCloseTo(1, 12);
     }
-    expect(imageEditor.applyWhiteLinear(1.2, 100, range)).toBeCloseTo(1.2, 12);
+    expect(imageEditor.applyWhiteLinear(1, -100)).toBeCloseTo(1, 12);
 
-    // Negative White follows the mirrored positive curve up to its
-    // slider-dependent join point P=1-k/4. With the independent White width,
-    // full strength uses k=0.32 and therefore P=0.92, Y(P)=0.68.
-    const k100 = WHITE_MAX_SHOULDER_WIDTH;
-    const p100 = 1 - k100 / 4;
-    expect(p100).toBeCloseTo(0.92, 12);
-    expect(imageEditor.applyWhiteLinear(p100, -100, range)).toBeCloseTo(0.68, 12);
-    expect(imageEditor.applyWhiteLinear(0.9, -100, range)).toBeCloseTo(0.6602990753117968, 12);
-
-    // Black and White remain separate controls: Black is localized to the low
-    // end, while White uses the mirrored shape with its independently wider
-    // high-end shoulder.
-    expect(imageEditor.applyBlackLinear(0.9, -100)).toBeCloseTo(0.9, 12);
-    expect(imageEditor.applyWhiteLinear(0.1, -50, range)).toBeCloseTo(0.1, 12);
-    expect(imageEditor.applyBlackLinear(0.1, -100)).toBeLessThan(0.1);
-    expect(imageEditor.applyWhiteLinear(0.9, -100, range)).toBeCloseTo(0.6602990753117968, 12);
-
-    // Full rescue maps M to display white and keeps every value above M at 1.
-    expect(imageEditor.applyWhiteLinear(4, -100, range)).toBeCloseTo(1, 12);
-    expect(imageEditor.applyWhiteLinear(5, -100, range)).toBeCloseTo(1, 12);
-    expect(imageEditor.applyWhiteLinear(1, -100, range)).toBeCloseTo(0.6883116883116882, 12);
-    expect(imageEditor.applyWhiteLinear(1.2, -100, range)).toBeCloseTo(0.709090909090909, 12);
-
-    // Half strength rescues only halfway: M -> (M+1)/2, then continues with
-    // half the original slope above M. Its own k=0.16 gives P=0.96.
-    expect(imageEditor.applyWhiteLinear(4, -50, range)).toBeCloseTo(2.5, 12);
-    expect(imageEditor.applyWhiteLinear(5, -50, range)).toBeCloseTo(3, 12);
-    expect(imageEditor.applyWhiteLinear(1, -50, range)).toBeCloseTo(0.8618421052631579, 12);
-
-    // When P99.8 does not exceed 1 there is no sampled headroom interval, but
-    // negative White still compresses values above display white.
-    const lowRange = { p998: 0.75 };
-    expect(imageEditor.applyWhiteLinear(1.2, -50, lowRange)).toBeCloseTo(1.1, 12);
-    expect(imageEditor.applyWhiteLinear(1.2, -100, lowRange)).toBeCloseTo(1, 12);
+    // Positive and negative White are exact inverse controls on [0,1].
+    for (const value of [0, 0.02, 0.1, 0.25, 0.5, 0.75, 0.9, 0.98, 1]) {
+      const raised = imageEditor.applyWhiteLinear(value, 65);
+      const restored = imageEditor.applyWhiteLinear(raised, -65);
+      // Gamma-2.4 encode/decode round trips accumulate sub-picounit floating-point
+      // error near display white even though the paired curves are mathematical inverses.
+      expect(Math.abs(restored - value)).toBeLessThanOrEqual(1e-11);
+    }
   });
 
   test("applies Exposure as a pure common RGB gain before the luminance Tone stages", () => {
@@ -441,7 +434,7 @@ describe("image editor tone characterization", () => {
       0.8,
       -1.2,
     );
-    expect(rounded(tone)).toEqual([0.287819842372, 1.199249343218, 3.118048292367]);
+    expect(rounded(tone)).toEqual([0.2887246879, 1.203019532918, 3.127850785588]);
   });
 });
 
@@ -786,7 +779,7 @@ describe("image editor render characterization", () => {
           -5,
         ),
       ),
-    ).toBe("60e9e7be");
+    ).toBe("924f874f");
   });
 
   test("freezes crop + arbitrary rotation render output", () => {
@@ -805,7 +798,7 @@ describe("image editor render characterization", () => {
       0,
       0,
     );
-    expect(fnv1a32(bytes)).toBe("a8f5498b");
+    expect(fnv1a32(bytes)).toBe("a5f4bd5d");
   });
 
   test("matches direct preview rendering when using the preview-resolution linear RGB cache", () => {

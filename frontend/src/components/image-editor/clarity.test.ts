@@ -3,6 +3,7 @@ import { buildImageEditToneSample } from "./clarity";
 import { buildInteractiveColorAdjustmentContextFromLinearRgbSample } from "./analysis";
 import {
   applyToneAdjustmentsLinearRgbRange,
+  buildToneAdjustmentGamma20GainLut,
   type ToneAdjustmentStage,
 } from "@/image/tone";
 import type { LinearRgbSample } from "./types";
@@ -176,7 +177,7 @@ describe("buildImageEditToneSample", () => {
     expectSamplesClose(actual, expected, 3);
   });
 
-  test("matches direct tone for localized negative White rescue", () => {
+  test("matches direct tone for negative White extended-highlight rescue", () => {
     const sample = makeSample(4, 3, [
       [0.02, 0.02, 0.02],
       [0.08, 0.08, 0.08],
@@ -209,11 +210,158 @@ describe("buildImageEditToneSample", () => {
 
     const actual = buildImageEditToneSample(sample, context);
     const expected = buildExactToneSample(sample, context);
-    // Full negative White rescues the sampled headroom to display white.
     for (const value of actual.data) {
       expect(Number.isFinite(value)).toBe(true);
+    }
+    // Full negative White preserves the [0,1] mirror and then rescues every
+    // value above display white to 1 in its independent post-process.
+    for (const value of actual.data) {
       expect(value).toBeLessThanOrEqual(1.000001);
     }
+    expectSamplesClose(actual, expected, 3);
+  });
+
+  test("keeps steep zero/white boundaries inside the shared Tone LUT", () => {
+    const sample = makeSample(5, 3, [
+      [0.00000001, 0.00000001, 0.00000001],
+      [0.000001, 0.000001, 0.000001],
+      [0.0001, 0.0001, 0.0001],
+      [0.01, 0.01, 0.01],
+      [0.5, 0.5, 0.5],
+      [0.98, 0.98, 0.98],
+      [0.995, 0.995, 0.995],
+      [0.999, 0.999, 0.999],
+      [0.9999, 0.9999, 0.9999],
+      [1.0, 1.0, 1.0],
+      [1.0001, 1.0001, 1.0001],
+      [1.01, 1.01, 1.01],
+      [1.2, 1.2, 1.2],
+      [2.0, 2.0, 2.0],
+      [3.9, 3.9, 3.9],
+    ], 4);
+    const context = buildInteractiveColorAdjustmentContextFromLinearRgbSample(
+      sample,
+      0,
+      0,
+      0,
+      100,
+      -100,
+      0,
+      0,
+      0,
+      0,
+      true,
+      100,
+      -100,
+    );
+
+    const lut = buildToneAdjustmentGamma20GainLut(
+      context,
+      "white-balance",
+      "after-tone",
+      sample.linearRangeMax,
+    );
+    expect(lut).not.toBeNull();
+    expect(lut?.values).toHaveLength(4096);
+    expect(lut?.endStage).toBe("after-tone");
+
+    const actual = buildImageEditToneSample(sample, context);
+    const expected = buildExactToneSample(sample, context);
+    expectSamplesClose(actual, expected, 3);
+    expect(actual.data[9 * 3]).toBeCloseTo(1, 6);
+  });
+
+  test("keeps a negative Highlight shoulder inside the shared Tone LUT", () => {
+    const sample = makeSample(4, 3, [
+      [0.9, 0.9, 0.9],
+      [0.97, 0.97, 0.97],
+      [0.99, 0.99, 0.99],
+      [0.995, 0.995, 0.995],
+      [0.999, 0.999, 0.999],
+      [0.9999, 0.9999, 0.9999],
+      [1.0, 1.0, 1.0],
+      [1.0001, 1.0001, 1.0001],
+      [1.01, 1.01, 1.01],
+      [1.2, 1.2, 1.2],
+      [2.0, 2.0, 2.0],
+      [3.9, 3.9, 3.9],
+    ], 4);
+    const context = buildInteractiveColorAdjustmentContextFromLinearRgbSample(
+      sample,
+      0,
+      0,
+      0,
+      0,
+      -100,
+      0,
+      0,
+      0,
+      0,
+      true,
+      0,
+      0,
+    );
+
+    const lut = buildToneAdjustmentGamma20GainLut(
+      context,
+      "white-balance",
+      "after-tone",
+      sample.linearRangeMax,
+    );
+    expect(lut).not.toBeNull();
+    expect(lut?.values).toHaveLength(4096);
+    expect(lut?.endStage).toBe("after-tone");
+
+    const actual = buildImageEditToneSample(sample, context);
+    const expected = buildExactToneSample(sample, context);
+    expectSamplesClose(actual, expected, 3);
+    expect(actual.data[6 * 3]).toBeCloseTo(1, 6);
+  });
+
+  test("keeps a steep manual Tone Curve knot inside the shared Tone LUT", () => {
+    const sample = makeSample(4, 3, [
+      [0.95, 0.95, 0.95],
+      [0.97, 0.97, 0.97],
+      [0.979, 0.979, 0.979],
+      [0.98, 0.98, 0.98],
+      [0.981, 0.981, 0.981],
+      [0.99, 0.99, 0.99],
+      [0.999, 0.999, 0.999],
+      [1.0, 1.0, 1.0],
+      [1.01, 1.01, 1.01],
+      [1.2, 1.2, 1.2],
+      [2.0, 2.0, 2.0],
+      [3.9, 3.9, 3.9],
+    ], 4);
+    const context = buildInteractiveColorAdjustmentContextFromLinearRgbSample(
+      sample,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      true,
+      0,
+      0,
+      [{ x: 0.98, y: 0.1 }],
+    );
+
+    const lut = buildToneAdjustmentGamma20GainLut(
+      context,
+      "white-balance",
+      "after-tone",
+      sample.linearRangeMax,
+    );
+    expect(lut).not.toBeNull();
+    expect(lut?.values).toHaveLength(4096);
+    expect(lut?.endStage).toBe("after-tone");
+
+    const actual = buildImageEditToneSample(sample, context);
+    const expected = buildExactToneSample(sample, context);
     expectSamplesClose(actual, expected, 3);
   });
 
