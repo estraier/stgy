@@ -6,6 +6,7 @@ import {
   applyRolloffScalar,
   applyScaledLogLinear,
   rolloffParams,
+  toneLinearIntensity,
   type RolloffParams,
 } from "@/image/tone";
 
@@ -100,9 +101,6 @@ const RAW_BASELINE_PERCENTILE = 98;
 const RAW_BASELINE_TARGET = 0.9;
 const RAW_DENOISE_ISO_NEUTRAL = 400;
 const RAW_DENOISE_ISO_LOG_PER_STOP = 2;
-const PROPHOTO_LUMA_R = 0.2880402;
-const PROPHOTO_LUMA_G = 0.7118741;
-const PROPHOTO_LUMA_B = 0.0000857;
 
 function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value));
@@ -324,7 +322,7 @@ export function applyRawMatchedTonePass(
       const r = decodeStoredUint16(data[i] ?? 0, sourceLinearRangeMax, sourceTransfer) * gains[0];
       const g = decodeStoredUint16(data[i + 1] ?? 0, sourceLinearRangeMax, sourceTransfer) * gains[1];
       const b = decodeStoredUint16(data[i + 2] ?? 0, sourceLinearRangeMax, sourceTransfer) * gains[2];
-      const luma = PROPHOTO_LUMA_R * r + PROPHOTO_LUMA_G * g + PROPHOTO_LUMA_B * b;
+      const luma = toneLinearIntensity(r, g, b);
       if (!(luma > 1e-12)) {
         data[i] = 0;
         data[i + 1] = 0;
@@ -989,7 +987,7 @@ export function developRawMasterOnePassRowsToGamma20(
       b = Math.min(RAW_DEVELOPED_LINEAR_RANGE_MAX, Math.max(0, b));
 
       if (tonePlan) {
-        const luma = PROPHOTO_LUMA_R * r + PROPHOTO_LUMA_G * g + PROPHOTO_LUMA_B * b;
+        const luma = toneLinearIntensity(r, g, b);
         if (luma > 1e-12) {
           const exposed = luma * toneGain;
           let adjustedLuma: number;
@@ -1343,7 +1341,7 @@ export function analyzeRawDenoiseMask(
     const r = decodeStoredUint16(data[source] ?? 0, linearRangeMax, transfer);
     const g = decodeStoredUint16(data[source + 1] ?? 0, linearRangeMax, transfer);
     const b = decodeStoredUint16(data[source + 2] ?? 0, linearRangeMax, transfer);
-    luma[pixel] = PROPHOTO_LUMA_R * r + PROPHOTO_LUMA_G * g + PROPHOTO_LUMA_B * b;
+    luma[pixel] = toneLinearIntensity(r, g, b);
   }
 
   // Suppress single-pixel noise before measuring structure. This follows the
@@ -1400,8 +1398,9 @@ export function analyzeRawDenoiseMask(
   const sharpStats = scalarMeanStddev(sharp);
   const sharpStddev = Math.max(sharpStats.stddev, 1e-12);
 
-  // Judge shadow depth relative to the image instead of against fixed display
-  // luminance thresholds. Global exposure/ISO gain shifts log luminance by an
+  // Judge shadow depth relative to the image on the editor's shared 3:5:2
+  // tone-intensity axis instead of against fixed display thresholds. Global
+  // exposure/ISO gain shifts log intensity by an
   // approximately constant amount, which disappears after z-score normalization.
   // A small floor prevents clipped black pixels from producing -Infinity.
   const logLuma = new Float32Array(pixels);

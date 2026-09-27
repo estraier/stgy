@@ -212,7 +212,7 @@ export default function PageBody() {
 
             <div className="mt-4 grid gap-3 rounded-xl border border-gray-200 bg-gray-50 p-4">
               <ToneControl id="preview-exposure" label="Exposure" min="-5" max="5" step="0.1" value="0" valueId="preview-exposure-value" valueText="0 EV" />
-              <ToneControl id="preview-logarithm" label="Midtone" min="-30" max="30" step="0.1" value="0" valueId="preview-logarithm-value" valueText="0" />
+              <ToneControl id="preview-logarithm" label="Midtone" min="-20" max="20" step="0.1" value="0" valueId="preview-logarithm-value" valueText="0" />
               <ToneControl id="preview-sigmoid" label="Contrast" min="-10" max="10" step="0.1" value="0" valueId="preview-sigmoid-value" valueText="0" />
               <ToneControl id="preview-shadow" label="Shadow" min="-100" max="100" step="1" value="0" valueId="preview-shadow-value" valueText="0" />
               <ToneControl id="preview-highlight" label="Highlight" min="-100" max="100" step="1" value="0" valueId="preview-highlight-value" valueText="0" />

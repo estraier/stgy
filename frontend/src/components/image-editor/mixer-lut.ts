@@ -1,10 +1,11 @@
 import {
-  applyHsvSaturationPreservingProPhotoLuminance,
+  applyHsvSaturationPreservingToneIntensity,
   applyScaledLogLinearExtended,
   clamp01,
   colorVibranceFactor,
   hsvToRgb,
   rgbToHsvExtended,
+  toneLinearIntensity,
 } from "@/image/tone";
 
 export const IMAGE_MIXER_LUT_SIZE = 32;
@@ -27,9 +28,6 @@ mixerCmaxCache.fill(Number.NaN);
 const MIXER_HUE_MAX_SHIFT_DEGREES = 60;
 const MIXER_SATURATION_VIBRANCE_STRENGTH = 1.0;
 const MIXER_LUMINANCE_MIDTONE_MAX = 20;
-const PROPHOTO_LUMA_R = 0.2880402;
-const PROPHOTO_LUMA_G = 0.7118741;
-const PROPHOTO_LUMA_B = 0.0000857;
 
 // Mixer color centers are 12 equal 30-degree divisions of OKLab hue,
 // globally offset by 22.5 degrees. The UI palette, picker classification, and
@@ -281,16 +279,25 @@ function mixerRelativeChroma(L: number, chroma: number, hueDegrees: number): num
   return Math.max(0, chroma / maxChroma);
 }
 
-function prophotoLuma(r: number, g: number, b: number): number {
-  return Math.max(0, r * PROPHOTO_LUMA_R + g * PROPHOTO_LUMA_G + b * PROPHOTO_LUMA_B);
+function mixerToneIntensity(r: number, g: number, b: number): number {
+  return Math.max(0, toneLinearIntensity(r, g, b));
 }
 
-function scaleRgbToLuma(r: number, g: number, b: number, targetLuma: number): [number, number, number] {
-  const sourceLuma = prophotoLuma(r, g, b);
-  if (!(sourceLuma > 1e-12) || !Number.isFinite(sourceLuma) || !Number.isFinite(targetLuma)) {
+function scaleRgbToToneIntensity(
+  r: number,
+  g: number,
+  b: number,
+  targetIntensity: number,
+): [number, number, number] {
+  const sourceIntensity = mixerToneIntensity(r, g, b);
+  if (
+    !(sourceIntensity > 1e-12)
+    || !Number.isFinite(sourceIntensity)
+    || !Number.isFinite(targetIntensity)
+  ) {
     return [r, g, b];
   }
-  const scale = targetLuma / sourceLuma;
+  const scale = targetIntensity / sourceIntensity;
   return [r * scale, g * scale, b * scale];
 }
 
@@ -300,8 +307,8 @@ function applyPrimaryMixerLinearRgb(
   b: number,
   settings: ArrayLike<number>,
 ): [number, number, number] {
-  const originalLuma = prophotoLuma(r, g, b);
-  if (!(originalLuma > 1e-12)) return [r, g, b];
+  const originalIntensity = mixerToneIntensity(r, g, b);
+  if (!(originalIntensity > 1e-12)) return [r, g, b];
 
   const [hue, saturation] = rgbToHsvExtended(r, g, b);
   const hueDegrees = normalizeDegrees(hue * 360);
@@ -351,7 +358,7 @@ function applyPrimaryMixerLinearRgb(
   if (Math.abs(hueShift) > 1e-9) {
     const [, , value] = rgbToHsvExtended(mixedR, mixedG, mixedB);
     [mixedR, mixedG, mixedB] = hsvToRgb(normalizeDegrees(hueDegrees + hueShift) / 360, saturation, value);
-    [mixedR, mixedG, mixedB] = scaleRgbToLuma(mixedR, mixedG, mixedB, originalLuma);
+    [mixedR, mixedG, mixedB] = scaleRgbToToneIntensity(mixedR, mixedG, mixedB, originalIntensity);
   }
 
   if (Math.abs(saturationAmount) > 1e-9) {
@@ -360,7 +367,7 @@ function applyPrimaryMixerLinearRgb(
       currentSaturation,
       colorVibranceFactor(saturationAmount) * MIXER_SATURATION_VIBRANCE_STRENGTH,
     ));
-    [mixedR, mixedG, mixedB] = applyHsvSaturationPreservingProPhotoLuminance(
+    [mixedR, mixedG, mixedB] = applyHsvSaturationPreservingToneIntensity(
       mixedR,
       mixedG,
       mixedB,
@@ -370,8 +377,8 @@ function applyPrimaryMixerLinearRgb(
 
   if (Math.abs(luminanceAmount) > 1e-9) {
     const scaledLog = luminanceAmount * (MIXER_LUMINANCE_MIDTONE_MAX / 100);
-    const targetLuma = applyScaledLogLinearExtended(originalLuma, scaledLog);
-    [mixedR, mixedG, mixedB] = scaleRgbToLuma(mixedR, mixedG, mixedB, targetLuma);
+    const targetIntensity = applyScaledLogLinearExtended(originalIntensity, scaledLog);
+    [mixedR, mixedG, mixedB] = scaleRgbToToneIntensity(mixedR, mixedG, mixedB, targetIntensity);
   }
 
   return [mixedR, mixedG, mixedB];
@@ -383,8 +390,8 @@ function applyRichMixerLinearRgb(
   b: number,
   settings: ArrayLike<number>,
 ): [number, number, number] {
-  const originalLuma = prophotoLuma(r, g, b);
-  if (!(originalLuma > 1e-12)) return [r, g, b];
+  const originalIntensity = mixerToneIntensity(r, g, b);
+  if (!(originalIntensity > 1e-12)) return [r, g, b];
 
   const [L, a, bb] = linearProPhotoToOklab(r, g, b);
   const chroma = Math.hypot(a, bb);
@@ -455,8 +462,8 @@ function applyRichMixerLinearRgb(
     [mixedR, mixedG, mixedB] = oklabToLinearProPhoto(L, adjustedA, adjustedB);
 
     // Hue edits should not implicitly alter image brightness. Restore the
-    // original ProPhoto luminance before Saturation/Luminance adjustment.
-    [mixedR, mixedG, mixedB] = scaleRgbToLuma(mixedR, mixedG, mixedB, originalLuma);
+    // editor's shared 3:5:2 tone intensity before Saturation/Luminance adjustment.
+    [mixedR, mixedG, mixedB] = scaleRgbToToneIntensity(mixedR, mixedG, mixedB, originalIntensity);
   }
 
   if (Math.abs(saturationAmount) > 1e-9) {
@@ -465,7 +472,7 @@ function applyRichMixerLinearRgb(
       currentSaturation,
       colorVibranceFactor(saturationAmount) * MIXER_SATURATION_VIBRANCE_STRENGTH,
     ));
-    [mixedR, mixedG, mixedB] = applyHsvSaturationPreservingProPhotoLuminance(
+    [mixedR, mixedG, mixedB] = applyHsvSaturationPreservingToneIntensity(
       mixedR,
       mixedG,
       mixedB,
@@ -475,8 +482,8 @@ function applyRichMixerLinearRgb(
 
   if (Math.abs(luminanceAmount) > 1e-9) {
     const scaledLog = luminanceAmount * (MIXER_LUMINANCE_MIDTONE_MAX / 100);
-    const targetLuma = applyScaledLogLinearExtended(originalLuma, scaledLog);
-    [mixedR, mixedG, mixedB] = scaleRgbToLuma(mixedR, mixedG, mixedB, targetLuma);
+    const targetIntensity = applyScaledLogLinearExtended(originalIntensity, scaledLog);
+    [mixedR, mixedG, mixedB] = scaleRgbToToneIntensity(mixedR, mixedG, mixedB, targetIntensity);
   }
 
   return [mixedR, mixedG, mixedB];

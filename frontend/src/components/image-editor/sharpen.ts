@@ -5,9 +5,7 @@ import {
   clamp01,
   clampSharpen,
   linearChannelToSrgb,
-  PROPHOTO_TONE_LUMA_B,
-  PROPHOTO_TONE_LUMA_G,
-  PROPHOTO_TONE_LUMA_R,
+  toneLinearIntensity,
   srgbChannelToLinear,
 } from "@/image/tone";
 
@@ -242,7 +240,7 @@ export function applySharpenToRgb16(
     const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
     const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
     const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
-    luma[i] = PROPHOTO_TONE_LUMA_R * r + PROPHOTO_TONE_LUMA_G * g + PROPHOTO_TONE_LUMA_B * b;
+    luma[i] = toneLinearIntensity(r, g, b);
   }
 
   const sharpenedLuma = applySharpenLevelToLuma(luma, width, height, sharpen);

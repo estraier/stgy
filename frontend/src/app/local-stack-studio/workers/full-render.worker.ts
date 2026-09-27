@@ -20,6 +20,7 @@ type FullRenderRequest = {
     claheMap: null | {
       width: number;
       height: number;
+      strength: number;
       gainBuffer: SharedArrayBuffer;
     };
   };
@@ -36,6 +37,7 @@ workerScope.onmessage = (event: MessageEvent<FullRenderRequest>) => {
       ? {
           width: message.options.claheMap.width,
           height: message.options.claheMap.height,
+          strength: message.options.claheMap.strength,
           gain: new Float32Array(message.options.claheMap.gainBuffer),
         }
       : null;

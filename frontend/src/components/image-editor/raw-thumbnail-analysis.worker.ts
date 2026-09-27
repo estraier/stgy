@@ -36,6 +36,12 @@ type RawThumbnailAnalysisResponse = {
 
 const workerScope = self as unknown as DedicatedWorkerGlobalScope;
 
+// 3:5:2 tone intensity after the editor's linear-sRGB -> ProPhoto matrix.
+// Keep Rec.709 Y below for chroma denoising; only tone matching uses these.
+const SRGB_LINEAR_TO_PROPHOTO_TONE_R = 0.211367564;
+const SRGB_LINEAR_TO_PROPHOTO_TONE_G = 0.559286863;
+const SRGB_LINEAR_TO_PROPHOTO_TONE_B = 0.229345579;
+
 function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value));
 }
@@ -374,14 +380,14 @@ workerScope.onmessage = async (event: MessageEvent<RawThumbnailAnalysisRequest>)
       return output;
     });
 
-    const lumaPercentiles = measure("Computing embedded thumbnail luminance percentiles", () => {
+    const lumaPercentiles = measure("Computing embedded thumbnail tone percentiles", () => {
       const values = new Array<number>(pixels);
       for (let i = 0; i < pixels; i++) {
         const si = i * 3;
         values[i] = clamp01(
-          0.2126 * (statisticsSample[si] ?? 0)
-          + 0.7152 * (statisticsSample[si + 1] ?? 0)
-          + 0.0722 * (statisticsSample[si + 2] ?? 0),
+          SRGB_LINEAR_TO_PROPHOTO_TONE_R * (statisticsSample[si] ?? 0)
+          + SRGB_LINEAR_TO_PROPHOTO_TONE_G * (statisticsSample[si + 1] ?? 0)
+          + SRGB_LINEAR_TO_PROPHOTO_TONE_B * (statisticsSample[si + 2] ?? 0),
         );
       }
       return percentilesFromValues(values, message.percentiles);

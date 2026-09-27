@@ -1,8 +1,8 @@
 import type { ImageEditOutputColorProfile, ImageInputColorProfile } from "./types";
 import {
-  PROPHOTO_TONE_LUMA_B,
-  PROPHOTO_TONE_LUMA_G,
-  PROPHOTO_TONE_LUMA_R,
+  PROPHOTO_XYZ_Y_B,
+  PROPHOTO_XYZ_Y_G,
+  PROPHOTO_XYZ_Y_R,
   clamp01,
   srgbChannelToLinear,
 } from "./tone";
@@ -65,9 +65,10 @@ export const REC_2020_TO_PROPHOTO_M21 = 0.03632883;
 export const REC_2020_TO_PROPHOTO_M22 = 0.96607458;
 export const REC_2020_TRANSFER_ALPHA = 1.09929682680944;
 export const REC_2020_TRANSFER_BETA = 0.018053968510807;
-export const PROPHOTO_LUMA_R = PROPHOTO_TONE_LUMA_R;
-export const PROPHOTO_LUMA_G = PROPHOTO_TONE_LUMA_G;
-export const PROPHOTO_LUMA_B = PROPHOTO_TONE_LUMA_B;
+// Re-export the explicitly colorimetric names for code that performs real
+// ProPhoto RGB <-> XYZ/luma decomposition. Editorial tone processing must use
+// toneLinearIntensity() from tone.ts instead.
+export { PROPHOTO_XYZ_Y_R, PROPHOTO_XYZ_Y_G, PROPHOTO_XYZ_Y_B };
 
 
 export const D65_TO_D50 = [

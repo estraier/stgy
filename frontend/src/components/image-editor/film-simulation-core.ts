@@ -3,12 +3,8 @@ import {
   clamp01,
   hsvToRgb,
   rgbToHsvExtended,
+  toneLinearIntensity,
 } from "@/image/tone";
-import {
-  PROPHOTO_LUMA_B,
-  PROPHOTO_LUMA_G,
-  PROPHOTO_LUMA_R,
-} from "@/image/color";
 import type { FilmSimulationParams } from "./film-simulation-params";
 
 const PRIMARY_HUE_RADIUS_DEGREES = 90;
@@ -48,16 +44,25 @@ function primaryWeight(hueDegrees: number, centerDegrees: number): number {
   return 0.5 * (1 + Math.cos(Math.PI * distance / PRIMARY_HUE_RADIUS_DEGREES));
 }
 
-function prophotoLuma(r: number, g: number, b: number): number {
-  return Math.max(0, r * PROPHOTO_LUMA_R + g * PROPHOTO_LUMA_G + b * PROPHOTO_LUMA_B);
+function filmToneIntensity(r: number, g: number, b: number): number {
+  return Math.max(0, toneLinearIntensity(r, g, b));
 }
 
-function scaleRgbToLuma(r: number, g: number, b: number, targetLuma: number): [number, number, number] {
-  const sourceLuma = prophotoLuma(r, g, b);
-  if (!(sourceLuma > 1e-12) || !Number.isFinite(sourceLuma) || !Number.isFinite(targetLuma)) {
+function scaleRgbToToneIntensity(
+  r: number,
+  g: number,
+  b: number,
+  targetIntensity: number,
+): [number, number, number] {
+  const sourceIntensity = filmToneIntensity(r, g, b);
+  if (
+    !(sourceIntensity > 1e-12)
+    || !Number.isFinite(sourceIntensity)
+    || !Number.isFinite(targetIntensity)
+  ) {
     return [r, g, b];
   }
-  const scale = Math.max(0, targetLuma) / sourceLuma;
+  const scale = Math.max(0, targetIntensity) / sourceIntensity;
   return [Math.max(0, r * scale), Math.max(0, g * scale), Math.max(0, b * scale)];
 }
 
@@ -208,8 +213,13 @@ export function applyFilmSimulationCoreLinearRgb(
   [rr, gg, bb] = hsvToRgb(hue, saturation, value);
 
   if (Math.abs(hslLuminance) > 1e-9) {
-    const currentLuma = prophotoLuma(rr, gg, bb);
-    [rr, gg, bb] = scaleRgbToLuma(rr, gg, bb, currentLuma * Math.pow(2, hslLuminance * 0.01));
+    const currentIntensity = filmToneIntensity(rr, gg, bb);
+    [rr, gg, bb] = scaleRgbToToneIntensity(
+      rr,
+      gg,
+      bb,
+      currentIntensity * Math.pow(2, hslLuminance * 0.01),
+    );
   }
 
   [hue, saturation, value] = rgbToHsvExtended(rr, gg, bb);
@@ -221,13 +231,13 @@ export function applyFilmSimulationCoreLinearRgb(
   }
   [rr, gg, bb] = hsvToRgb(hue, saturation, value);
 
-  const tintLuma = prophotoLuma(rr, gg, bb);
-  const shadowTintWeight = Math.pow(1 - clamp01(tintLuma), 2);
+  const tintIntensity = filmToneIntensity(rr, gg, bb);
+  const shadowTintWeight = Math.pow(1 - clamp01(tintIntensity), 2);
   gg *= 1 - params.shadowTint * SHADOW_TINT_GREEN_PER_UNIT * shadowTintWeight;
 
-  const toneInputLuma = prophotoLuma(rr, gg, bb);
-  const targetLuma = evaluateMonotoneSpline(compiled.toneSpline, toneInputLuma);
-  [rr, gg, bb] = scaleRgbToLuma(rr, gg, bb, targetLuma);
+  const toneInputIntensity = filmToneIntensity(rr, gg, bb);
+  const targetIntensity = evaluateMonotoneSpline(compiled.toneSpline, toneInputIntensity);
+  [rr, gg, bb] = scaleRgbToToneIntensity(rr, gg, bb, targetIntensity);
 
   return limitToUnitMax(rr, gg, bb);
 }

@@ -1,4 +1,4 @@
-import { applyBlackLinear, applyWhiteLinear, applyDisplayRolloffAndClipLinearToRgb, applyHighlightLinear, applyRolloffScalar, applySaturationVibranceAndFinalRolloffLinearRgb, applyScaledLogLinear, applyScaledLogLinearExtended, applyShadowLinear, applySigmoidLinear, applySigmoidLinearExtended, applyToneLinearToRgb, applyWhiteBalanceLinear, proPhotoLinearLuminance, rolloffParams, whiteBalanceGains } from "@/image/tone";
+import { applyBlackLinear, applyWhiteLinear, applyDisplayRolloffAndClipLinearToRgb, applyHighlightLinear, applyRolloffScalar, applySaturationVibranceAndFinalRolloffLinearRgb, applyScaledLogLinear, applyScaledLogLinearExtended, applyShadowLinear, applySigmoidLinear, applySigmoidLinearExtended, applyToneLinearToRgb, applyWhiteBalanceLinear, proPhotoLinearLuminance, toneLinearIntensity, rolloffParams, whiteBalanceGains } from "@/image/tone";
 import { analysisSampleDimensions, buildRenderedPixelToSourceTransform, createRgb16SamplingScratch, decodeStoredRgb16Channel, encodeStoredRgb16Channel, getAnalysisLinearRgbSample, getRenderedLinearRgbSample, renderedPixelToSourcePoint, sampleLinearRgb16Bilinear, sampleLinearRgb16BilinearAtSource, sampleLinearRgb16BilinearAtSourceInto, sampleLinearRgb16BilinearInto, sampleLinearRgbFromRgb16RegionAtSize } from "./sampling";
 import { buildColorAdjustmentContextFromLinearRgbSample, buildInteractiveColorAdjustmentContextFromLinearRgbSample, findAutoExposure, findAutoLogarithm, findAutoSigmoid, percentileFromValues, percentilesFromValues } from "./analysis";
 import { renderAdjustedLinearRgbSampleToCanvas, renderAdjustedRgb16ToCanvas } from "./render";
@@ -13,6 +13,7 @@ export const __imageEditorCharacterization = {
   applyWhiteBalanceLinear,
   whiteBalanceGains,
   proPhotoLinearLuminance,
+  toneLinearIntensity,
   applySaturationVibranceAndFinalRolloffLinearRgb,
   applyDisplayRolloffAndClipLinearToRgb,
   rolloffParams,

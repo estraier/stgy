@@ -7,9 +7,9 @@ import {
 } from "@/image/color";
 import {
   linearChannelToSrgb,
-  PROPHOTO_TONE_LUMA_B,
-  PROPHOTO_TONE_LUMA_G,
-  PROPHOTO_TONE_LUMA_R,
+  PROPHOTO_XYZ_Y_B,
+  PROPHOTO_XYZ_Y_G,
+  PROPHOTO_XYZ_Y_R,
 } from "@/image/tone";
 
 const DENOISE_TILE_SIZE = 384;
@@ -138,7 +138,7 @@ type LinearRgbReader = (x: number, y: number, output: RgbBuffer) => void;
 type LinearRgbWriter = (x: number, y: number, r: number, g: number, b: number) => void;
 
 function componentsFromRgbInto(r: number, g: number, b: number, output: RgbBuffer): void {
-  const y = PROPHOTO_TONE_LUMA_R * r + PROPHOTO_TONE_LUMA_G * g + PROPHOTO_TONE_LUMA_B * b;
+  const y = PROPHOTO_XYZ_Y_R * r + PROPHOTO_XYZ_Y_G * g + PROPHOTO_XYZ_Y_B * b;
   const cr = r - y;
   const cg = g - y;
   const cb = b - y;

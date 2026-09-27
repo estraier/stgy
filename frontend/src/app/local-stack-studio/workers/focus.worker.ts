@@ -58,6 +58,9 @@ import {
   };
 
   const RESULT_BUFFER_MAX_UINT16 = 65535;
+  const TONE_INTENSITY_R = 0.3;
+  const TONE_INTENSITY_G = 0.5;
+  const TONE_INTENSITY_B = 0.2;
   const SHARPNESS_BLUR_RADIUS = 2;
   const SHARPNESS_CLAHE_CLIP_LIMIT = 0.3;
   const SHARPNESS_CLAHE_GAMMA = 2.8;
@@ -324,7 +327,7 @@ import {
       const r = gamma2Uint16ToLinear(gamma2Rgb[source]);
       const g = gamma2Uint16ToLinear(gamma2Rgb[source + 1]);
       const b = gamma2Uint16ToLinear(gamma2Rgb[source + 2]);
-      gray.data32F[pixel] = 0.299 * r + 0.587 * g + 0.114 * b;
+      gray.data32F[pixel] = TONE_INTENSITY_R * r + TONE_INTENSITY_G * g + TONE_INTENSITY_B * b;
     }
 
     let working: OpenCvDynamic | null = null;

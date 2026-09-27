@@ -4,9 +4,9 @@ import {
   sampleDefringeConfidence,
 } from "./defringe";
 import {
-  PROPHOTO_TONE_LUMA_B,
-  PROPHOTO_TONE_LUMA_G,
-  PROPHOTO_TONE_LUMA_R,
+  PROPHOTO_XYZ_Y_B,
+  PROPHOTO_XYZ_Y_G,
+  PROPHOTO_XYZ_Y_R,
 } from "@/image/tone";
 
 function makeUniformSample(width: number, height: number, rgb: [number, number, number]) {
@@ -21,9 +21,9 @@ function makeUniformSample(width: number, height: number, rgb: [number, number, 
 }
 
 function luma(rgb: [number, number, number]): number {
-  return PROPHOTO_TONE_LUMA_R * rgb[0]
-    + PROPHOTO_TONE_LUMA_G * rgb[1]
-    + PROPHOTO_TONE_LUMA_B * rgb[2];
+  return PROPHOTO_XYZ_Y_R * rgb[0]
+    + PROPHOTO_XYZ_Y_G * rgb[1]
+    + PROPHOTO_XYZ_Y_B * rgb[2];
 }
 
 function chromaMagnitude(rgb: [number, number, number]): number {

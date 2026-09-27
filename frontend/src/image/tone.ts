@@ -47,11 +47,11 @@ export function colorVibranceFactor(vibrance: number): number {
 
 // Linear ProPhoto RGB luminance (XYZ D50 Y row). Keep these here instead of
 // importing color.ts because color.ts already depends on this module. This is
-// physical/colorimetric luminance and remains the reference for operations that
-// explicitly preserve or analyze ProPhoto luminance.
-export const PROPHOTO_TONE_LUMA_R = 0.2880402;
-export const PROPHOTO_TONE_LUMA_G = 0.7118741;
-export const PROPHOTO_TONE_LUMA_B = 0.0000857;
+// physical/colorimetric luminance only; editorial brightness/tone operations
+// must use toneLinearIntensity() instead.
+export const PROPHOTO_XYZ_Y_R = 0.2880402;
+export const PROPHOTO_XYZ_Y_G = 0.7118741;
+export const PROPHOTO_XYZ_Y_B = 0.0000857;
 
 // Tone and Clarity use a deliberately non-colorimetric 3:5:2 RGB intensity. A
 // wide-gamut working-space Y row makes saturated ProPhoto blue almost zero,
@@ -84,7 +84,7 @@ function snapToneUnitBoundary(value: number): number {
 }
 
 export function proPhotoLinearLuminance(r: number, g: number, b: number): number {
-  return PROPHOTO_TONE_LUMA_R * r + PROPHOTO_TONE_LUMA_G * g + PROPHOTO_TONE_LUMA_B * b;
+  return PROPHOTO_XYZ_Y_R * r + PROPHOTO_XYZ_Y_G * g + PROPHOTO_XYZ_Y_B * b;
 }
 
 export function toneLinearIntensity(r: number, g: number, b: number): number {
@@ -394,31 +394,31 @@ function hsvUnitValueShapeInto(
   output[2] = bp + m;
 }
 
-export function applyHsvSaturationPreservingProPhotoLuminance(
+export function applyHsvSaturationPreservingToneIntensity(
   r: number,
   g: number,
   b: number,
   targetSaturation: number,
 ): [number, number, number] {
-  const luminance = proPhotoLinearLuminance(r, g, b);
-  if (!(luminance > TONE_LUMINANCE_EPSILON)) return [r, g, b];
+  const intensity = toneLinearIntensity(r, g, b);
+  if (!(intensity > TONE_LUMINANCE_EPSILON)) return [r, g, b];
   const [h] = rgbToHsvExtended(r, g, b);
   const [shapeR, shapeG, shapeB] = hsvUnitValueShape(h, targetSaturation);
-  const shapeLuminance = proPhotoLinearLuminance(shapeR, shapeG, shapeB);
-  if (!(shapeLuminance > TONE_LUMINANCE_EPSILON) || !Number.isFinite(shapeLuminance)) return [r, g, b];
-  const scale = luminance / shapeLuminance;
+  const shapeIntensity = toneLinearIntensity(shapeR, shapeG, shapeB);
+  if (!(shapeIntensity > TONE_LUMINANCE_EPSILON) || !Number.isFinite(shapeIntensity)) return [r, g, b];
+  const scale = intensity / shapeIntensity;
   return [shapeR * scale, shapeG * scale, shapeB * scale];
 }
 
-export function applyHsvSaturationPreservingProPhotoLuminanceInto(
+export function applyHsvSaturationPreservingToneIntensityInto(
   r: number,
   g: number,
   b: number,
   targetSaturation: number,
   output: ToneRgbBuffer,
 ): void {
-  const luminance = proPhotoLinearLuminance(r, g, b);
-  if (!(luminance > TONE_LUMINANCE_EPSILON)) {
+  const intensity = toneLinearIntensity(r, g, b);
+  if (!(intensity > TONE_LUMINANCE_EPSILON)) {
     output[0] = r; output[1] = g; output[2] = b;
     return;
   }
@@ -437,12 +437,12 @@ export function applyHsvSaturationPreservingProPhotoLuminanceInto(
   const shapeR = output[0] ?? 0;
   const shapeG = output[1] ?? 0;
   const shapeB = output[2] ?? 0;
-  const shapeLuminance = proPhotoLinearLuminance(shapeR, shapeG, shapeB);
-  if (!(shapeLuminance > TONE_LUMINANCE_EPSILON) || !Number.isFinite(shapeLuminance)) {
+  const shapeIntensity = toneLinearIntensity(shapeR, shapeG, shapeB);
+  if (!(shapeIntensity > TONE_LUMINANCE_EPSILON) || !Number.isFinite(shapeIntensity)) {
     output[0] = r; output[1] = g; output[2] = b;
     return;
   }
-  const scale = luminance / shapeLuminance;
+  const scale = intensity / shapeIntensity;
   output[0] = shapeR * scale;
   output[1] = shapeG * scale;
   output[2] = shapeB * scale;
@@ -1770,7 +1770,7 @@ export function applySaturationVibranceAndFinalRolloffLinearRgb(
     const [, currentSaturation] = rgbToHsvExtended(r, g, b);
     const scaledSaturation = currentSaturation * colorSaturationFactor(normalizedSaturation);
     const targetSaturation = applyRolloffScalar(scaledSaturation, saturationRolloff);
-    [r, g, b] = applyHsvSaturationPreservingProPhotoLuminance(
+    [r, g, b] = applyHsvSaturationPreservingToneIntensity(
       r, g, b,
       targetSaturation,
     );
@@ -1781,7 +1781,7 @@ export function applySaturationVibranceAndFinalRolloffLinearRgb(
       currentSaturation,
       colorVibranceFactor(normalizedVibrance),
     );
-    [r, g, b] = applyHsvSaturationPreservingProPhotoLuminance(
+    [r, g, b] = applyHsvSaturationPreservingToneIntensity(
       r, g, b,
       targetSaturation,
     );
@@ -1809,7 +1809,7 @@ export function applySaturationVibranceAndFinalRolloffLinearRgbInto(
     const currentSaturation = rgbSaturationExtended(r, g, b);
     const scaledSaturation = currentSaturation * colorSaturationFactor(normalizedSaturation);
     const targetSaturation = applyRolloffScalar(scaledSaturation, saturationRolloff);
-    applyHsvSaturationPreservingProPhotoLuminanceInto(r, g, b, targetSaturation, output);
+    applyHsvSaturationPreservingToneIntensityInto(r, g, b, targetSaturation, output);
     r = output[0] ?? 0; g = output[1] ?? 0; b = output[2] ?? 0;
   }
   if (normalizedVibrance !== 0) {
@@ -1818,7 +1818,7 @@ export function applySaturationVibranceAndFinalRolloffLinearRgbInto(
       currentSaturation,
       colorVibranceFactor(normalizedVibrance),
     );
-    applyHsvSaturationPreservingProPhotoLuminanceInto(r, g, b, targetSaturation, output);
+    applyHsvSaturationPreservingToneIntensityInto(r, g, b, targetSaturation, output);
     r = output[0] ?? 0; g = output[1] ?? 0; b = output[2] ?? 0;
   }
   if (!applyFinalRolloff) {

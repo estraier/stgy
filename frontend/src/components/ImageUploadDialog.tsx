@@ -61,7 +61,7 @@ import {
   SIGMOID_WORKING_GAMMA,
   applyColorAdjustmentsAfterToneLinearRgbInto,
   applyColorAdjustmentsLinearRgbInto,
-  applyHsvSaturationPreservingProPhotoLuminance,
+  applyHsvSaturationPreservingToneIntensity,
   applyLuminanceGainPreservingAboveOneLinearRgbInto,
   applyToneAdjustmentsLinearRgbInto,
   applyRolloffScalar,
@@ -83,6 +83,7 @@ import {
   sampleToneCurveSpline,
   toneCurveDisplayToLinear,
   toneCurveLinearToDisplay,
+  toneLinearIntensity,
   hsvToRgb,
   linearChannelToSrgb,
   naiveInverseSigmoid,
@@ -96,9 +97,9 @@ import {
   type ToneCurvePoint,
 } from "@/image/tone";
 import {
-  PROPHOTO_LUMA_B,
-  PROPHOTO_LUMA_G,
-  PROPHOTO_LUMA_R,
+  PROPHOTO_XYZ_Y_B,
+  PROPHOTO_XYZ_Y_G,
+  PROPHOTO_XYZ_Y_R,
   convertLinearProPhotoToOutputRgb,
   convertLinearProPhotoToOutputRgbInto,
   encodedRgbToLinearProphoto,
@@ -1236,8 +1237,8 @@ const FILTER_LOG_LUMA_MIN_EV = -16;
 const FILTER_LOG_LUMA_MAX_EV = 2;
 const FILTER_TONE_RECOVERY_LOG_LIMIT = 20;
 
-function prophotoLumaForFilter(r: number, g: number, b: number): number {
-  return Math.max(0, r * PROPHOTO_LUMA_R + g * PROPHOTO_LUMA_G + b * PROPHOTO_LUMA_B);
+function filterToneIntensity(r: number, g: number, b: number): number {
+  return Math.max(0, toneLinearIntensity(r, g, b));
 }
 
 function clampHistogramUnitValue(value: number): number {
@@ -1312,7 +1313,7 @@ function solveFilterScaledLogForTargetLuma(sourceLuma: number, targetLuma: numbe
 
 function applyFilterScaledLogToLinearRgb(r: number, g: number, b: number, scaledLog: number): [number, number, number] {
   if (!Number.isFinite(scaledLog) || Math.abs(scaledLog) < 1e-6) return [r, g, b];
-  const sourceLuma = prophotoLumaForFilter(r, g, b);
+  const sourceLuma = filterToneIntensity(r, g, b);
   if (!(sourceLuma > 1e-12)) return [r, g, b];
   const targetLuma = applyScaledLogLinearExtended(sourceLuma, scaledLog, FILTER_TONE_RECOVERY_LOG_LIMIT);
   if (!Number.isFinite(targetLuma)) return [r, g, b];
@@ -1368,7 +1369,7 @@ function applyCrossProcessToneRecoveryLinearRgb(
   b: number,
   recovery: CrossProcessToneRecovery,
 ): [number, number, number] {
-  const sourceLuma = prophotoLumaForFilter(r, g, b);
+  const sourceLuma = filterToneIntensity(r, g, b);
   if (!(sourceLuma > 1e-12)) return [r, g, b];
   const sourceEv = Math.log2(Math.max(1e-8, sourceLuma));
   const targetEv = recovery.beforeP50Ev
@@ -1392,13 +1393,13 @@ function limitFilterLinearRgbToUnitMax(r: number, g: number, b: number): [number
   return [Math.max(0, r * scale), Math.max(0, g * scale), Math.max(0, b * scale)];
 }
 
-function scaleLinearRgbToFilterLuma(
+function scaleLinearRgbToFilterToneIntensity(
   r: number,
   g: number,
   b: number,
   targetLuma: number,
 ): [number, number, number] {
-  const sourceLuma = prophotoLumaForFilter(r, g, b);
+  const sourceLuma = filterToneIntensity(r, g, b);
   if (!(sourceLuma > 1e-12) || !(targetLuma >= 0) || !Number.isFinite(targetLuma)) {
     return [r, g, b];
   }
@@ -1554,7 +1555,7 @@ function solvePhotochemicalExposureScaledLog(
   materialG: number,
   materialB: number,
 ): number {
-  const materialLuma = prophotoLumaForFilter(materialR, materialG, materialB);
+  const materialLuma = filterToneIntensity(materialR, materialG, materialB);
   const range = 1 - materialLuma;
   if (!(range > 1e-8)) return 0;
   const targetExposure = clamp01((targetOutputLumaP50 - materialLuma) / range);
@@ -2485,7 +2486,7 @@ function applyBleachBypassLinearRgb(r: number, g: number, b: number): [number, n
     currentSaturation,
     vibranceByValue * vibranceByHue,
   );
-  [linearR, linearG, linearB] = applyHsvSaturationPreservingProPhotoLuminance(
+  [linearR, linearG, linearB] = applyHsvSaturationPreservingToneIntensity(
     linearR,
     linearG,
     linearB,
@@ -2564,7 +2565,7 @@ function applySepiaFilterToCanvasData(
       (rgba8[i + 2] ?? 0) / 255,
       profile,
     );
-    accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
+    accumulateLogLumaHistogram(beforeHistogram, filterToneIntensity(r, g, b));
     accumulateLogLumaHistogram(exposureHistogram, computeSepiaExposure(r, g, b));
   }
 
@@ -2620,8 +2621,8 @@ function applyCrossProcessFilterToCanvasData(
       profile,
     );
     const [fr, fg, fb] = applyChemicalCrossProcessLinearRgb(r, g, b);
-    accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
-    accumulateLogLumaHistogram(filteredHistogram, prophotoLumaForFilter(fr, fg, fb));
+    accumulateLogLumaHistogram(beforeHistogram, filterToneIntensity(r, g, b));
+    accumulateLogLumaHistogram(filteredHistogram, filterToneIntensity(fr, fg, fb));
     filteredLinear[linearIndex] = fr;
     filteredLinear[linearIndex + 1] = fg;
     filteredLinear[linearIndex + 2] = fb;
@@ -2661,7 +2662,7 @@ function applyCyanotypeFilterToCanvasData(
       (rgba8[i + 2] ?? 0) / 255,
       profile,
     );
-    accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
+    accumulateLogLumaHistogram(beforeHistogram, filterToneIntensity(r, g, b));
     accumulateLogLumaHistogram(exposureHistogram, computeCyanotypeExposure(r, g, b));
   }
 
@@ -2733,8 +2734,8 @@ function applyFilmSimulationFilterToCanvasData(
     const fr = sampled[0] ?? 0;
     const fg = sampled[1] ?? 0;
     const fb = sampled[2] ?? 0;
-    accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
-    accumulateLogLumaHistogram(filteredHistogram, prophotoLumaForFilter(fr, fg, fb));
+    accumulateLogLumaHistogram(beforeHistogram, filterToneIntensity(r, g, b));
+    accumulateLogLumaHistogram(filteredHistogram, filterToneIntensity(fr, fg, fb));
     filteredLinear[linearIndex] = fr;
     filteredLinear[linearIndex + 1] = fg;
     filteredLinear[linearIndex + 2] = fb;
@@ -2781,8 +2782,8 @@ function applyBleachBypassFilterToCanvasData(
       profile,
     );
     const [fr, fg, fb] = applyBleachBypassLinearRgb(r, g, b);
-    accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
-    accumulateLogLumaHistogram(filteredHistogram, prophotoLumaForFilter(fr, fg, fb));
+    accumulateLogLumaHistogram(beforeHistogram, filterToneIntensity(r, g, b));
+    accumulateLogLumaHistogram(filteredHistogram, filterToneIntensity(fr, fg, fb));
     filteredLinear[linearIndex] = fr;
     filteredLinear[linearIndex + 1] = fg;
     filteredLinear[linearIndex + 2] = fb;
@@ -2837,7 +2838,7 @@ function applyPartColorLinearRgb(
   const workR = clamp01(r);
   const workG = clamp01(g);
   const workB = clamp01(b);
-  const originalLuma = prophotoLumaForFilter(workR, workG, workB);
+  const originalLuma = filterToneIntensity(workR, workG, workB);
   const [hue, saturation, value] = rgbToHsv(workR, workG, workB);
   if (!(saturation > 0)) return [workR, workG, workB];
 
@@ -2880,7 +2881,7 @@ function applyPartColorLinearRgb(
     targetSaturation,
     value,
   );
-  [linearR, linearG, linearB] = scaleLinearRgbToFilterLuma(
+  [linearR, linearG, linearB] = scaleLinearRgbToFilterToneIntensity(
     linearR,
     linearG,
     linearB,
@@ -3239,7 +3240,7 @@ function applySuperMcFilterToCanvasData(
       profile,
     );
     const mixed = applySuperMcChannelMix(r, g, b, preset);
-    accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
+    accumulateLogLumaHistogram(beforeHistogram, filterToneIntensity(r, g, b));
     filteredValues[pixel] = mixed;
     minMixed = Math.min(minMixed, mixed);
   }
@@ -3300,7 +3301,7 @@ function applySuperMcFilterToRgb16(
     const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
     const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
     const mixed = applySuperMcChannelMix(r, g, b, preset);
-    accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
+    accumulateLogLumaHistogram(beforeHistogram, filterToneIntensity(r, g, b));
     filteredValues[pixel] = mixed;
     minMixed = Math.min(minMixed, mixed);
   }
@@ -3627,8 +3628,8 @@ function applyTrichromeFilterToCanvasData(
       profile,
     );
     const [fr, fg, fb] = applyTrichromeChannelProjectionLinearRgb(r, g, b, preset);
-    accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
-    accumulateLogLumaHistogram(filteredHistogram, prophotoLumaForFilter(fr, fg, fb));
+    accumulateLogLumaHistogram(beforeHistogram, filterToneIntensity(r, g, b));
+    accumulateLogLumaHistogram(filteredHistogram, filterToneIntensity(fr, fg, fb));
     filteredLinear[linearIndex] = fr;
     filteredLinear[linearIndex + 1] = fg;
     filteredLinear[linearIndex + 2] = fb;
@@ -3672,8 +3673,8 @@ function applyTrichromeFilterToRgb16(
     const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
     const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
     const [fr, fg, fb] = applyTrichromeChannelProjectionLinearRgb(r, g, b, preset);
-    accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
-    accumulateLogLumaHistogram(filteredHistogram, prophotoLumaForFilter(fr, fg, fb));
+    accumulateLogLumaHistogram(beforeHistogram, filterToneIntensity(r, g, b));
+    accumulateLogLumaHistogram(filteredHistogram, filterToneIntensity(fr, fg, fb));
     data[index] = encodeStoredRgb16Channel(fr, "gamma20", 1);
     data[index + 1] = encodeStoredRgb16Channel(fg, "gamma20", 1);
     data[index + 2] = encodeStoredRgb16Channel(fb, "gamma20", 1);
@@ -3702,7 +3703,7 @@ function buildFilterLumaFromCanvasData(
       (rgba8[index + 2] ?? 0) / 255,
       profile,
     );
-    luma[pixel] = prophotoLumaForFilter(r, g, b);
+    luma[pixel] = filterToneIntensity(r, g, b);
   }
   return luma;
 }
@@ -3714,7 +3715,7 @@ function buildFilterLumaFromRgb16(data: Uint16Array, width: number, height: numb
     const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
     const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
     const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
-    luma[pixel] = prophotoLumaForFilter(r, g, b);
+    luma[pixel] = filterToneIntensity(r, g, b);
   }
   return luma;
 }
@@ -4318,8 +4319,8 @@ function applySolarizationFilterToCanvasData(
       profile,
     );
     const [fr, fg, fb] = applySolarizationLinearRgb(r, g, b);
-    accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
-    accumulateLogLumaHistogram(filteredHistogram, prophotoLumaForFilter(fr, fg, fb));
+    accumulateLogLumaHistogram(beforeHistogram, filterToneIntensity(r, g, b));
+    accumulateLogLumaHistogram(filteredHistogram, filterToneIntensity(fr, fg, fb));
   }
 
   const beforeP50Ev = estimateLogPercentileFromHistogram(beforeHistogram, SOLARIZATION_TARGET_PERCENTILE);
@@ -4360,8 +4361,8 @@ function applySolarizationFilterToRgb16(data: Uint16Array, width: number, height
     const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
     const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
     const [fr, fg, fb] = applySolarizationLinearRgb(r, g, b);
-    accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
-    accumulateLogLumaHistogram(filteredHistogram, prophotoLumaForFilter(fr, fg, fb));
+    accumulateLogLumaHistogram(beforeHistogram, filterToneIntensity(r, g, b));
+    accumulateLogLumaHistogram(filteredHistogram, filterToneIntensity(fr, fg, fb));
   }
 
   const beforeP50Ev = estimateLogPercentileFromHistogram(beforeHistogram, SOLARIZATION_TARGET_PERCENTILE);
@@ -4456,7 +4457,7 @@ function applySepiaFilterToRgb16(data: Uint16Array, width: number, height: numbe
     const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
     const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
     const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
-    accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
+    accumulateLogLumaHistogram(beforeHistogram, filterToneIntensity(r, g, b));
     accumulateLogLumaHistogram(exposureHistogram, computeSepiaExposure(r, g, b));
   }
 
@@ -4498,8 +4499,8 @@ function applyCrossProcessFilterToRgb16(data: Uint16Array, width: number, height
     const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
     const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
     const [fr, fg, fb] = applyChemicalCrossProcessLinearRgb(r, g, b);
-    accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
-    accumulateLogLumaHistogram(filteredHistogram, prophotoLumaForFilter(fr, fg, fb));
+    accumulateLogLumaHistogram(beforeHistogram, filterToneIntensity(r, g, b));
+    accumulateLogLumaHistogram(filteredHistogram, filterToneIntensity(fr, fg, fb));
     data[index] = encodeStoredRgb16Channel(fr, "gamma20", 1);
     data[index + 1] = encodeStoredRgb16Channel(fg, "gamma20", 1);
     data[index + 2] = encodeStoredRgb16Channel(fb, "gamma20", 1);
@@ -4532,7 +4533,7 @@ function applyCyanotypeFilterToRgb16(data: Uint16Array, width: number, height: n
     const r = decodeStoredRgb16Channel(data[index] ?? 0, "gamma20", 1);
     const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
     const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
-    accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
+    accumulateLogLumaHistogram(beforeHistogram, filterToneIntensity(r, g, b));
     accumulateLogLumaHistogram(exposureHistogram, computeCyanotypeExposure(r, g, b));
   }
 
@@ -4585,8 +4586,8 @@ function applyFilmSimulationFilterToRgb16(
     const fr = sampled[0] ?? 0;
     const fg = sampled[1] ?? 0;
     const fb = sampled[2] ?? 0;
-    accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
-    accumulateLogLumaHistogram(filteredHistogram, prophotoLumaForFilter(fr, fg, fb));
+    accumulateLogLumaHistogram(beforeHistogram, filterToneIntensity(r, g, b));
+    accumulateLogLumaHistogram(filteredHistogram, filterToneIntensity(fr, fg, fb));
     data[index] = encodeStoredRgb16Channel(fr, "gamma20", 1);
     data[index + 1] = encodeStoredRgb16Channel(fg, "gamma20", 1);
     data[index + 2] = encodeStoredRgb16Channel(fb, "gamma20", 1);
@@ -4616,8 +4617,8 @@ function applyBleachBypassFilterToRgb16(data: Uint16Array, width: number, height
     const g = decodeStoredRgb16Channel(data[index + 1] ?? 0, "gamma20", 1);
     const b = decodeStoredRgb16Channel(data[index + 2] ?? 0, "gamma20", 1);
     const [fr, fg, fb] = applyBleachBypassLinearRgb(r, g, b);
-    accumulateLogLumaHistogram(beforeHistogram, prophotoLumaForFilter(r, g, b));
-    accumulateLogLumaHistogram(filteredHistogram, prophotoLumaForFilter(fr, fg, fb));
+    accumulateLogLumaHistogram(beforeHistogram, filterToneIntensity(r, g, b));
+    accumulateLogLumaHistogram(filteredHistogram, filterToneIntensity(fr, fg, fb));
     data[index] = encodeStoredRgb16Channel(fr, "gamma20", 1);
     data[index + 1] = encodeStoredRgb16Channel(fg, "gamma20", 1);
     data[index + 2] = encodeStoredRgb16Channel(fb, "gamma20", 1);
@@ -5916,15 +5917,15 @@ function buildRawMatchedTonePlanningResult(
     const r = sample[i] ?? 0;
     const g = sample[i + 1] ?? 0;
     const b = sample[i + 2] ?? 0;
-    const luma = PROPHOTO_LUMA_R * r + PROPHOTO_LUMA_G * g + PROPHOTO_LUMA_B * b;
-    let adjustedLuma = 0;
-    if (luma > 1e-12) {
-      const exposed = luma * gain;
-      adjustedLuma = exposed <= 1
+    const intensity = toneLinearIntensity(r, g, b);
+    let adjustedIntensity = 0;
+    if (intensity > 1e-12) {
+      const exposed = intensity * gain;
+      adjustedIntensity = exposed <= 1
         ? rawBaselineToneCurveValue(exposed, scaledLog, sigmoid)
         : 1 + toneSlopeAtWhite * (exposed - 1);
     }
-    const scale = luma > 1e-12 ? adjustedLuma / luma : 0;
+    const scale = intensity > 1e-12 ? adjustedIntensity / intensity : 0;
     maxChannels[pixel] = Math.max(r * scale, g * scale, b * scale);
   }
   const maxP998 = percentileFromValues(maxChannels, 99.8);
@@ -6024,10 +6025,10 @@ function planRawThumbnailMatchedBaseline(
 
   const sample = sampleRawThumbnailMatchLinearRgbFromRgb16(decoded);
   if (!sample.length) return null;
-  // Tone matching uses luminance only. Chroma denoise is intentionally kept in
-  // color planning, where it prevents high-ISO color noise from inflating the
-  // measured saturation, but it is unnecessary here.
-  const rawPercentiles = debugPercentilesFromLinearRgbSample(sample, "prophoto");
+  // Tone matching uses the shared 3:5:2 editorial intensity only. Chroma
+  // denoise is intentionally kept in color planning, where it prevents
+  // high-ISO color noise from inflating measured saturation.
+  const rawPercentiles = toneIntensityPercentilesFromLinearRgbSample(sample, "prophoto");
   const rawP25 = rawPercentiles[p25Index];
   const rawP50 = rawPercentiles[p50Index];
   const rawP75 = rawPercentiles[p75Index];
@@ -6393,9 +6394,9 @@ function denoiseRawThumbnailMatchChroma(
     return linearRgbSample.slice();
   }
 
-  const lumaR = colorSpace === "prophoto" ? PROPHOTO_LUMA_R : 0.2126;
-  const lumaG = colorSpace === "prophoto" ? PROPHOTO_LUMA_G : 0.7152;
-  const lumaB = colorSpace === "prophoto" ? PROPHOTO_LUMA_B : 0.0722;
+  const lumaR = colorSpace === "prophoto" ? PROPHOTO_XYZ_Y_R : 0.2126;
+  const lumaG = colorSpace === "prophoto" ? PROPHOTO_XYZ_Y_G : 0.7152;
+  const lumaB = colorSpace === "prophoto" ? PROPHOTO_XYZ_Y_B : 0.0722;
   const rangeMax = colorSpace === "prophoto" ? RAW_DEVELOPED_LINEAR_RANGE_MAX : 1;
   const { luma, chromaR, chromaB } = measureRawTimingSync(
     timing,
@@ -6550,6 +6551,40 @@ function planRawThumbnailMatchedColor(
   };
 }
 
+// Embedded thumbnails are sampled in linear sRGB, while RAW editing happens in
+// linear ProPhoto RGB. These weights are 3:5:2 applied after the existing
+// linear-sRGB -> ProPhoto matrix, so thumbnail matching uses the same editorial
+// tone axis as the actual RAW tone pass without changing chroma denoising.
+const SRGB_LINEAR_TO_PROPHOTO_TONE_R = 0.211367564;
+const SRGB_LINEAR_TO_PROPHOTO_TONE_G = 0.559286863;
+const SRGB_LINEAR_TO_PROPHOTO_TONE_B = 0.229345579;
+
+function toneIntensityPercentilesFromLinearRgbSample(
+  sample: Float32Array | LinearRgbSample,
+  colorSpace: "srgb" | "prophoto",
+): DebugPercentileValues {
+  const data = sample instanceof Float32Array ? sample : sample.data;
+  const valid = sample instanceof Float32Array ? undefined : sample.valid;
+  const count = Math.floor(data.length / 3);
+  if (count <= 0) return DEBUG_PERCENTILES.map(() => 0);
+  const values: number[] = [];
+  for (let i = 0; i < count; i++) {
+    if (valid && !valid[i]) continue;
+    const si = i * 3;
+    const r = data[si] ?? 0;
+    const g = data[si + 1] ?? 0;
+    const b = data[si + 2] ?? 0;
+    const intensity = colorSpace === "prophoto"
+      ? toneLinearIntensity(r, g, b)
+      : SRGB_LINEAR_TO_PROPHOTO_TONE_R * r
+        + SRGB_LINEAR_TO_PROPHOTO_TONE_G * g
+        + SRGB_LINEAR_TO_PROPHOTO_TONE_B * b;
+    values.push(clamp01(intensity));
+  }
+  if (!values.length) return DEBUG_PERCENTILES.map(() => 0);
+  return percentilesFromValues(values, DEBUG_PERCENTILES);
+}
+
 function debugPercentilesFromLinearRgbSample(
   sample: Float32Array | LinearRgbSample,
   colorSpace: "srgb" | "prophoto" = "srgb",
@@ -6558,9 +6593,9 @@ function debugPercentilesFromLinearRgbSample(
   const valid = sample instanceof Float32Array ? undefined : sample.valid;
   const count = Math.floor(data.length / 3);
   if (count <= 0) return DEBUG_PERCENTILES.map(() => 0);
-  const lumaR = colorSpace === "prophoto" ? PROPHOTO_LUMA_R : 0.2126;
-  const lumaG = colorSpace === "prophoto" ? PROPHOTO_LUMA_G : 0.7152;
-  const lumaB = colorSpace === "prophoto" ? PROPHOTO_LUMA_B : 0.0722;
+  const lumaR = colorSpace === "prophoto" ? PROPHOTO_XYZ_Y_R : 0.2126;
+  const lumaG = colorSpace === "prophoto" ? PROPHOTO_XYZ_Y_G : 0.7152;
+  const lumaB = colorSpace === "prophoto" ? PROPHOTO_XYZ_Y_B : 0.0722;
   const luma: number[] = [];
   for (let i = 0; i < count; i++) {
     if (valid && !valid[i]) continue;
@@ -6886,8 +6921,8 @@ async function rawThumbnailMatchReferenceFromThumbnail(
   const lumaPercentiles = measureRawTimingSync(
     timing,
     "preview",
-    "Computing embedded thumbnail luminance percentiles",
-    () => debugPercentilesFromLinearRgbSample(statisticsSample),
+    "Computing embedded thumbnail tone percentiles",
+    () => toneIntensityPercentilesFromLinearRgbSample(statisticsSample, "srgb"),
   );
   const saturationPercentiles = measureRawTimingSync(
     timing,

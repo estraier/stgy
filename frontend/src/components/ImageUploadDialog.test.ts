@@ -245,7 +245,7 @@ describe("image editor tone characterization", () => {
     expect(imageEditor.applyHighlightLinear(1.2, 100)).toBe(1.2);
   });
 
-  test("preserves extended-range Tone and luminance-preserving Color behavior", () => {
+  test("preserves extended-range Tone and 3:5:2 intensity-preserving Color behavior", () => {
     const gains = imageEditor.whiteBalanceGains(50, 0);
     expect(Math.max(...imageEditor.applyWhiteBalanceLinear(1.2, 0.8, 0.6, gains))).toBeGreaterThan(1);
 
@@ -253,14 +253,14 @@ describe("image editor tone characterization", () => {
     expect(imageEditor.applySigmoidLinearExtended(1.2, 5)).toBeGreaterThan(1);
 
     const source: [number, number, number] = [0.7, 0.3, 0.1];
-    const sourceY = imageEditor.proPhotoLinearLuminance(...source);
+    const sourceIntensity = imageEditor.toneLinearIntensity(...source);
     const saturated = imageEditor.applySaturationVibranceAndFinalRolloffLinearRgb(
       ...source,
       50,
       0,
       false,
     );
-    expect(imageEditor.proPhotoLinearLuminance(...saturated)).toBeCloseTo(sourceY, 12);
+    expect(imageEditor.toneLinearIntensity(...saturated)).toBeCloseTo(sourceIntensity, 12);
 
     const finalRolloff = imageEditor.rolloffParams(1.2, 0.9, 4, 1);
     const rolled = imageEditor.applyDisplayRolloffAndClipLinearToRgb(1.2, 0.6, 0.3, finalRolloff);
@@ -779,7 +779,7 @@ describe("image editor render characterization", () => {
           -5,
         ),
       ),
-    ).toBe("099ca79f");
+    ).toBe("a652693f");
   });
 
   test("freezes crop + arbitrary rotation render output", () => {

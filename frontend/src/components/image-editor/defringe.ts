@@ -1,9 +1,9 @@
 import type { LinearRgbSample } from "./types";
 import { buildRenderedPixelToSourceTransform } from "./sampling";
 import {
-  PROPHOTO_TONE_LUMA_B,
-  PROPHOTO_TONE_LUMA_G,
-  PROPHOTO_TONE_LUMA_R,
+  PROPHOTO_XYZ_Y_B,
+  PROPHOTO_XYZ_Y_G,
+  PROPHOTO_XYZ_Y_R,
 } from "@/image/tone";
 
 export type DefringeAnalysisMap = {
@@ -203,7 +203,7 @@ export function analyzeDefringeSample(sample: LinearRgbSample): DefringeAnalysis
     const r = sample.data[i] ?? 0;
     const g = sample.data[i + 1] ?? 0;
     const b = sample.data[i + 2] ?? 0;
-    const y = Math.max(0, PROPHOTO_TONE_LUMA_R * r + PROPHOTO_TONE_LUMA_G * g + PROPHOTO_TONE_LUMA_B * b);
+    const y = Math.max(0, PROPHOTO_XYZ_Y_R * r + PROPHOTO_XYZ_Y_G * g + PROPHOTO_XYZ_Y_B * b);
     const [gm, by] = chromaCoordinates(r, g, b, y);
     const invY = 1 / Math.max(DEFRINGE_Y_FLOOR, y);
     yPlane[pixel] = y;
@@ -383,7 +383,7 @@ export function applyDefringeLinearRgb(
   const confidence = sampleDefringeConfidence(map, normalizedX, normalizedY, userAmount);
   if (!(confidence.magenta > 0) && !(confidence.green > 0)) return [r, g, b];
 
-  const y = PROPHOTO_TONE_LUMA_R * r + PROPHOTO_TONE_LUMA_G * g + PROPHOTO_TONE_LUMA_B * b;
+  const y = PROPHOTO_XYZ_Y_R * r + PROPHOTO_XYZ_Y_G * g + PROPHOTO_XYZ_Y_B * b;
   const cr = r - y;
   const cg = g - y;
   const cb = b - y;
@@ -435,7 +435,7 @@ export function applyDefringeLinearRgbInto(
     return;
   }
 
-  const y = PROPHOTO_TONE_LUMA_R * r + PROPHOTO_TONE_LUMA_G * g + PROPHOTO_TONE_LUMA_B * b;
+  const y = PROPHOTO_XYZ_Y_R * r + PROPHOTO_XYZ_Y_G * g + PROPHOTO_XYZ_Y_B * b;
   const cr = r - y;
   const cg = g - y;
   const cb = b - y;

@@ -11,9 +11,15 @@ const REINHARD_LIGHT_ADAPT = 0.5;
 const REINHARD_COLOR_ADAPT = 0.5;
 const BRIGHTNESS_MAX_TRIES = 10;
 const BRIGHTNESS_MAX_DIST = 0.01;
-const PROPHOTO_TONE_LUMA_R = 0.2880402;
-const PROPHOTO_TONE_LUMA_G = 0.7118741;
-const PROPHOTO_TONE_LUMA_B = 0.0000857;
+// Physical/colorimetric ProPhoto RGB -> XYZ D50 Y. Reinhard uses this
+// luminance by design; editorial brightness restoration uses the separate
+// 3:5:2 Tone intensity below.
+const PROPHOTO_XYZ_Y_R = 0.2880402;
+const PROPHOTO_XYZ_Y_G = 0.7118741;
+const PROPHOTO_XYZ_Y_B = 0.0000857;
+const TONE_INTENSITY_R = 0.3;
+const TONE_INTENSITY_G = 0.5;
+const TONE_INTENSITY_B = 0.2;
 const HDR1_RESPONSE_KNOT_COUNT = 256;
 const HDR1_RESPONSE_SAMPLE_LIMIT = 4096;
 const HDR1_RESPONSE_SAMPLE_OBSERVATION_TARGET = 32768;
@@ -1406,7 +1412,11 @@ function sanitizeHdrValue(value) {
 }
 
 function proPhotoLinearLuminance(r, g, b) {
-  return PROPHOTO_TONE_LUMA_R * r + PROPHOTO_TONE_LUMA_G * g + PROPHOTO_TONE_LUMA_B * b;
+  return PROPHOTO_XYZ_Y_R * r + PROPHOTO_XYZ_Y_G * g + PROPHOTO_XYZ_Y_B * b;
+}
+
+function toneLinearIntensity(r, g, b) {
+  return TONE_INTENSITY_R * r + TONE_INTENSITY_G * g + TONE_INTENSITY_B * b;
 }
 
 function tonemapReinhardInPlace(image, gamma, intensity, lightAdapt, colorAdapt) {
@@ -1517,19 +1527,19 @@ function applyScaledLog(image, factor) {
     const r = Math.max(0, image[i]);
     const g = Math.max(0, image[i + 1]);
     const b = Math.max(0, image[i + 2]);
-    const luminance = Math.max(0, proPhotoLinearLuminance(r, g, b));
+    const toneIntensity = Math.max(0, toneLinearIntensity(r, g, b));
     let scale = 1;
-    if (luminance > 1e-12) {
-      let targetLuminance = luminance;
+    if (toneIntensity > 1e-12) {
+      let targetToneIntensity = toneIntensity;
       if (factor > 1e-6) {
         const denominator = Math.log1p(factor);
-        targetLuminance = Math.log1p(clamp01(luminance) * factor) / denominator;
+        targetToneIntensity = Math.log1p(clamp01(toneIntensity) * factor) / denominator;
       } else if (factor < -1e-6) {
         const positiveFactor = -factor;
         const logFactor = Math.log1p(positiveFactor);
-        targetLuminance = Math.expm1(clamp01(luminance) * logFactor) / positiveFactor;
+        targetToneIntensity = Math.expm1(clamp01(toneIntensity) * logFactor) / positiveFactor;
       }
-      scale = targetLuminance / luminance;
+      scale = targetToneIntensity / toneIntensity;
     }
 
     let outR = r * scale;
@@ -1553,7 +1563,7 @@ function computeBrightness(image) {
   let sum = 0;
   const pixelCount = image.length / 3;
   for (let i = 0; i < image.length; i += 3) {
-    sum += 0.299 * image[i] + 0.587 * image[i + 1] + 0.114 * image[i + 2];
+    sum += toneLinearIntensity(image[i], image[i + 1], image[i + 2]);
   }
   return pixelCount > 0 ? sum / pixelCount : 0;
 }

@@ -28,7 +28,6 @@ import {
   computeStackFinalRolloff,
   clampStackClahe,
   clampStackScaledLog,
-  computeStackHighlightP100,
 } from "./postprocess";
 import {
   createStackScratchSessionId as createMedianScratchSessionId,
@@ -65,7 +64,7 @@ import {
   applySigmoidLinearAtMidpoint,
   clamp01,
   srgbChannelToLinear,
-  proPhotoLinearLuminance,
+  toneLinearIntensity,
   clampColorAdjustment,
   clampExposureEv,
   clampSigmoid,
@@ -744,8 +743,7 @@ function schedulePreviewRender() {
 
 function renderPreviewForCurrentTone() {
   if (!currentStackResult) return;
-  const highlightP100 = getCurrentHighlightP100();
-  const adjustedLinear = getCurrentPreviewAdjustedLinear(highlightP100);
+  const adjustedLinear = getCurrentPreviewAdjustedLinear();
   renderLinearDataToCanvas(
     previewImage,
     adjustedLinear,
@@ -765,19 +763,7 @@ function renderPreviewForCurrentTone() {
   resultPanel.classList.remove("hidden");
 }
 
-function getCurrentHighlightP100() {
-  if (!currentStackResult || currentPreviewHighlight === 0) return null;
-  return computeStackHighlightP100(
-    currentStackResult.analysisLinearProPhotoRgb,
-    Math.pow(2, currentPreviewExposureEv),
-    currentPreviewShadow,
-    currentPreviewLogarithm,
-    currentPreviewSigmoid,
-    currentStackResult.exposureRolloffBaseP998,
-  );
-}
-
-function getCurrentFinalRolloff(highlightP100) {
+function getCurrentFinalRolloff() {
   if (!currentStackResult) return null;
   const key = JSON.stringify([
     currentStackResultRevision,
@@ -788,8 +774,6 @@ function getCurrentFinalRolloff(highlightP100) {
     currentPreviewSigmoid,
     currentPreviewVibrance,
     currentPreviewSaturation,
-    currentStackResult.exposureRolloffBaseP998,
-    highlightP100,
   ]);
   if (previewFinalRolloffCache && previewFinalRolloffCache.key === key) {
     return previewFinalRolloffCache.rolloff;
@@ -803,21 +787,18 @@ function getCurrentFinalRolloff(highlightP100) {
     currentPreviewSigmoid,
     currentPreviewVibrance,
     currentPreviewSaturation,
-    highlightP100,
-    currentStackResult.exposureRolloffBaseP998,
   );
   previewFinalRolloffCache = { key, rolloff };
   return rolloff;
 }
 
-function getCurrentPreviewAdjustedLinear(highlightP100) {
+function getCurrentPreviewAdjustedLinear() {
   if (!currentStackResult) {
     throw new Error("No stacked image is available.");
   }
-  const hasAdjustments = hasCurrentToneAdjustments();
-  const finalRolloff = hasAdjustments ? getCurrentFinalRolloff(highlightP100) : null;
+  const finalRolloff = getCurrentFinalRolloff();
   if (currentActivePreviewControl === "vibrance" || currentActivePreviewControl === "saturation") {
-    const postClahe = getCurrentPreviewPostClaheBase(highlightP100);
+    const postClahe = getCurrentPreviewPostClaheBase();
     return adjustStackLinearDataPostTone(
       postClahe,
       currentStackResult.previewWidth,
@@ -827,13 +808,13 @@ function getCurrentPreviewAdjustedLinear(highlightP100) {
       currentPreviewSaturation,
       null,
       currentPreviewColorSpace,
-      hasAdjustments,
+      true,
       finalRolloff,
     );
   }
 
-  const toneAdjusted = getCurrentPreviewFullTone(highlightP100);
-  const claheMap = getCurrentClaheMap(highlightP100, toneAdjusted);
+  const toneAdjusted = getCurrentPreviewFullTone();
+  const claheMap = getCurrentClaheMap(toneAdjusted);
   return adjustStackLinearDataPostTone(
     toneAdjusted,
     currentStackResult.previewWidth,
@@ -843,12 +824,12 @@ function getCurrentPreviewAdjustedLinear(highlightP100) {
     currentPreviewSaturation,
     claheMap,
     currentPreviewColorSpace,
-    hasAdjustments,
+    true,
     finalRolloff,
   );
 }
 
-function getCurrentClaheMap(highlightP100, toneAdjustedLinear = null) {
+function getCurrentClaheMap(toneAdjustedLinear = null) {
   if (!currentStackResult) return null;
   const normalizedClahe = clampStackClahe(currentPreviewClahe);
   if (normalizedClahe === 0) {
@@ -865,13 +846,11 @@ function getCurrentClaheMap(highlightP100, toneAdjustedLinear = null) {
     currentPreviewLogarithm,
     currentPreviewSigmoid,
     normalizedClahe,
-    currentStackResult.exposureRolloffBaseP998,
-    highlightP100,
   ]);
   if (previewClaheMapCache && previewClaheMapCache.key === key) {
     return previewClaheMapCache.map;
   }
-  const toneAdjusted = toneAdjustedLinear ?? getCurrentPreviewFullTone(highlightP100);
+  const toneAdjusted = toneAdjustedLinear ?? getCurrentPreviewFullTone();
   const map = buildStackClaheMapFromToneAdjusted(
     toneAdjusted,
     currentStackResult.previewWidth,
@@ -899,7 +878,7 @@ function clearPreviewRenderCaches() {
   currentActivePreviewControl = null;
 }
 
-function getCurrentPreviewFullTone(highlightP100) {
+function getCurrentPreviewFullTone() {
   if (!currentStackResult) {
     throw new Error("No stacked image is available.");
   }
@@ -912,18 +891,16 @@ function getCurrentPreviewFullTone(highlightP100) {
     currentPreviewHighlight,
     currentPreviewLogarithm,
     currentPreviewSigmoid,
-    currentStackResult.exposureRolloffBaseP998,
-    highlightP100,
   ]);
   if (previewPostToneCache && previewPostToneCache.key === key) {
     return previewPostToneCache.data;
   }
-  const data = getPreviewToneAdjustedForActiveControl(highlightP100);
+  const data = getPreviewToneAdjustedForActiveControl();
   previewPostToneCache = { key, data };
   return data;
 }
 
-function getPreviewToneAdjustedForActiveControl(highlightP100) {
+function getPreviewToneAdjustedForActiveControl() {
   if (!currentStackResult) {
     throw new Error("No stacked image is available.");
   }
@@ -938,11 +915,9 @@ function getPreviewToneAdjustedForActiveControl(highlightP100) {
       currentPreviewHighlight,
       currentPreviewLogarithm,
       currentPreviewSigmoid,
-      currentStackResult.exposureRolloffBaseP998,
-      highlightP100,
     );
   }
-  const prefixData = getCachedPreviewToneStage(config.prefixStage, highlightP100);
+  const prefixData = getCachedPreviewToneStage(config.prefixStage);
   return buildStackToneAdjustedLinearData(
     prefixData,
     currentStackResult.previewWidth,
@@ -952,14 +927,12 @@ function getPreviewToneAdjustedForActiveControl(highlightP100) {
     currentPreviewHighlight,
     currentPreviewLogarithm,
     currentPreviewSigmoid,
-    currentStackResult.exposureRolloffBaseP998,
-    highlightP100,
     config.prefixStage,
     "highlight",
   );
 }
 
-function getCurrentPreviewPostClaheBase(highlightP100) {
+function getCurrentPreviewPostClaheBase() {
   if (!currentStackResult) {
     throw new Error("No stacked image is available.");
   }
@@ -974,14 +947,12 @@ function getCurrentPreviewPostClaheBase(highlightP100) {
     currentPreviewSigmoid,
     currentPreviewClahe,
     currentPreviewColorSpace,
-    currentStackResult.exposureRolloffBaseP998,
-    highlightP100,
   ]);
   if (previewPostClaheCache && previewPostClaheCache.key === key) {
     return previewPostClaheCache.data;
   }
-  const toneAdjusted = getCurrentPreviewFullTone(highlightP100);
-  const claheMap = getCurrentClaheMap(highlightP100, toneAdjusted);
+  const toneAdjusted = getCurrentPreviewFullTone();
+  const claheMap = getCurrentClaheMap(toneAdjusted);
   const data = adjustStackLinearDataPostTone(
     toneAdjusted,
     currentStackResult.previewWidth,
@@ -997,7 +968,7 @@ function getCurrentPreviewPostClaheBase(highlightP100) {
   return data;
 }
 
-function getCachedPreviewToneStage(stage, highlightP100) {
+function getCachedPreviewToneStage(stage) {
   if (!currentStackResult) {
     throw new Error("No stacked image is available.");
   }
@@ -1016,8 +987,6 @@ function getCachedPreviewToneStage(stage, highlightP100) {
     includes("sigmoid") ? currentPreviewSigmoid : null,
     includes("shadow") ? currentPreviewShadow : null,
     includes("highlight") ? currentPreviewHighlight : null,
-    currentStackResult.exposureRolloffBaseP998,
-    includes("highlight") ? highlightP100 : null,
   ]);
   if (previewStageCache && previewStageCache.key === key) {
     return previewStageCache.data;
@@ -1031,8 +1000,6 @@ function getCachedPreviewToneStage(stage, highlightP100) {
     currentPreviewHighlight,
     currentPreviewLogarithm,
     currentPreviewSigmoid,
-    currentStackResult.exposureRolloffBaseP998,
-    highlightP100,
     "source",
     stage,
   );
@@ -1079,18 +1046,6 @@ function getFullSizeRenderCacheKey() {
   ]);
 }
 
-function hasCurrentToneAdjustments() {
-  return (
-    currentPreviewExposureEv !== 0 ||
-    currentPreviewShadow !== 0 ||
-    currentPreviewHighlight !== 0 ||
-    currentPreviewLogarithm !== 0 ||
-    currentPreviewSigmoid !== 0 ||
-    currentPreviewClahe !== 0 ||
-    currentPreviewVibrance !== 0 ||
-    currentPreviewSaturation !== 0
-  );
-}
 
 async function ensureFullSizeRenderCache() {
   if (!currentStackResult) {
@@ -1133,10 +1088,8 @@ async function ensureFullSizeRenderCache() {
 }
 
 async function buildFullSizeRenderCache(stackResult, key, resultRevision) {
-  const highlightP100 = getCurrentHighlightP100();
-  const claheMap = getCurrentClaheMap(highlightP100);
-  const hasAdjustments = hasCurrentToneAdjustments();
-  const finalRolloff = hasAdjustments ? getCurrentFinalRolloff(highlightP100) : null;
+  const claheMap = getCurrentClaheMap();
+  const finalRolloff = getCurrentFinalRolloff();
   const outputColorProfile = currentPreviewColorSpace;
   const options = {
     exposureEv: currentPreviewExposureEv,
@@ -1147,10 +1100,8 @@ async function buildFullSizeRenderCache(stackResult, key, resultRevision) {
     clahe: currentPreviewClahe,
     vibrance: currentPreviewVibrance,
     saturation: currentPreviewSaturation,
-    exposureRolloffBaseP998: stackResult.exposureRolloffBaseP998,
-    highlightP100,
     claheMap,
-    applyFinalRolloff: hasAdjustments,
+    applyFinalRolloff: true,
     finalRolloff,
   };
 
@@ -1173,26 +1124,22 @@ async function buildFullSizeRenderCache(stackResult, key, resultRevision) {
 
   if (!adjustedLinear) {
     const sourceLinear = decodeStoredGamma2ToLinear(stackResult.gamma2ProPhotoRgb16);
-    adjustedLinear = hasAdjustments
-      ? adjustStackLinearData(
-          sourceLinear,
-          stackResult.width,
-          stackResult.height,
-          options.exposureEv,
-          options.shadow,
-          options.highlight,
-          options.scaledLog,
-          options.sigmoid,
-          options.clahe,
-          options.vibrance,
-          options.saturation,
-          options.exposureRolloffBaseP998,
-          options.highlightP100,
-          options.claheMap,
-          outputColorProfile,
-          options.finalRolloff,
-        )
-      : sourceLinear;
+    adjustedLinear = adjustStackLinearData(
+      sourceLinear,
+      stackResult.width,
+      stackResult.height,
+      options.exposureEv,
+      options.shadow,
+      options.highlight,
+      options.scaledLog,
+      options.sigmoid,
+      options.clahe,
+      options.vibrance,
+      options.saturation,
+      options.claheMap,
+      outputColorProfile,
+      options.finalRolloff,
+    );
   }
 
   return {
@@ -1293,6 +1240,7 @@ function getFullSizeSharedClaheMap(claheMap) {
   const shared = {
     width: claheMap.width,
     height: claheMap.height,
+    strength: claheMap.strength,
     gainBuffer,
   };
   fullSizeSharedClaheMapCache.set(claheMap, shared);
@@ -3796,7 +3744,7 @@ function linearProPhotoMatToFloatsAndBrightness(mat) {
     const r = clamp01(linear[i]);
     const g = clamp01(linear[i + 1]);
     const b = clamp01(linear[i + 2]);
-    brightnessSum += 0.299 * r + 0.587 * g + 0.114 * b;
+    brightnessSum += toneLinearIntensity(r, g, b);
     floats[i] = r;
     floats[i + 1] = g;
     floats[i + 2] = b;
@@ -3837,7 +3785,7 @@ function rgbMatToLinearProPhotoFloatsAndBrightness(rgb, sourceColorSpace) {
     const r = clamp01(linear[i]);
     const g = clamp01(linear[i + 1]);
     const b = clamp01(linear[i + 2]);
-    brightnessSum += 0.299 * r + 0.587 * g + 0.114 * b;
+    brightnessSum += toneLinearIntensity(r, g, b);
     floats[i] = r;
     floats[i + 1] = g;
     floats[i + 2] = b;
@@ -4018,7 +3966,7 @@ function buildSingleShotHdr2Material(sourceLinear, material) {
     let b = sourceLinear[i + 2];
 
     if (hasScaledLog) {
-      const sourceLuminance = proPhotoLinearLuminance(r, g, b);
+      const sourceLuminance = toneLinearIntensity(r, g, b);
       if (sourceLuminance > 1e-12) {
         const targetLuminance = applyScaledLogLinear(sourceLuminance, scaledLog);
         const scale = targetLuminance / sourceLuminance;
@@ -4029,7 +3977,7 @@ function buildSingleShotHdr2Material(sourceLinear, material) {
     }
 
     if (hasSigmoid) {
-      const sourceLuminance = proPhotoLinearLuminance(r, g, b);
+      const sourceLuminance = toneLinearIntensity(r, g, b);
       if (sourceLuminance > 1e-12) {
         const targetLuminance = applySigmoidLinearAtMidpoint(
           sourceLuminance,
@@ -4106,7 +4054,7 @@ function computeAverageBrightnessFromLinear(sourceLinear) {
   if (pixelCount <= 0) return 0;
   let brightnessSum = 0;
   for (let i = 0; i < sourceLinear.length; i += 3) {
-    brightnessSum += 0.299 * sourceLinear[i] + 0.587 * sourceLinear[i + 1] + 0.114 * sourceLinear[i + 2];
+    brightnessSum += toneLinearIntensity(sourceLinear[i], sourceLinear[i + 1], sourceLinear[i + 2]);
   }
   return brightnessSum / pixelCount;
 }
@@ -4129,7 +4077,7 @@ function linearProPhotoArrayToHdr2FloatsAndBrightness(linear) {
     let r = linear[i];
     let g = linear[i + 1];
     let b = linear[i + 2];
-    const sourceLuminance = proPhotoLinearLuminance(r, g, b);
+    const sourceLuminance = toneLinearIntensity(r, g, b);
     if (sourceLuminance > 1e-12) {
       const targetLuminance = applySigmoidLinear(sourceLuminance, MULTI_SHOT_HDR2_SIGMOID_GAIN);
       const scale = targetLuminance / sourceLuminance;
@@ -4147,7 +4095,7 @@ function linearProPhotoArrayToHdr2FloatsAndBrightness(linear) {
       g *= fitScale;
       b *= fitScale;
     }
-    brightnessSum += 0.299 * r + 0.587 * g + 0.114 * b;
+    brightnessSum += toneLinearIntensity(r, g, b);
     floats[i] = r;
     floats[i + 1] = g;
     floats[i + 2] = b;
@@ -4231,13 +4179,6 @@ function finalizeStoredGamma2Result(gamma2ProPhotoRgb16, width, height, outputCo
     height,
     TONE_ANALYSIS_TARGET_PIXELS,
   );
-  const exposureRolloffBaseP998 = estimateStoredGamma2MaxChannelPercentileSampled(
-    gamma2ProPhotoRgb16,
-    width,
-    height,
-    0.998,
-    256,
-  );
   return {
     width,
     height,
@@ -4247,7 +4188,6 @@ function finalizeStoredGamma2Result(gamma2ProPhotoRgb16, width, height, outputCo
     previewHeight: preview.height,
     analysisLinearProPhotoRgb: analysis.data,
     previewRgba8: new Uint8ClampedArray(preview.width * preview.height * 4),
-    exposureRolloffBaseP998,
   };
 }
 
@@ -4342,28 +4282,6 @@ function getStoredGamma2LinearLookup() {
   return lookup;
 }
 
-function estimateStoredGamma2MaxChannelPercentileSampled(stored, width, height, q, maxSide) {
-  const linearLookup = getStoredGamma2LinearLookup();
-  const scale = Math.min(1, maxSide / Math.max(width, height));
-  const sampleWidth = Math.max(1, Math.round(width * scale));
-  const sampleHeight = Math.max(1, Math.round(height * scale));
-  const maxima = new Float32Array(sampleWidth * sampleHeight);
-  let targetIndex = 0;
-  for (let y = 0; y < sampleHeight; y += 1) {
-    const sourceY = Math.min(height - 1, Math.floor((y + 0.5) * height / sampleHeight));
-    for (let x = 0; x < sampleWidth; x += 1) {
-      const sourceX = Math.min(width - 1, Math.floor((x + 0.5) * width / sampleWidth));
-      const sourceIndex = (sourceY * width + sourceX) * 3;
-      const maxStored = Math.max(
-        stored[sourceIndex],
-        stored[sourceIndex + 1],
-        stored[sourceIndex + 2],
-      );
-      maxima[targetIndex++] = linearLookup[maxStored];
-    }
-  }
-  return percentileFromFloatArray(maxima, q);
-}
 
 function buildPreviewLinearProPhotoFromStoredGamma2ForTargetPixels(stored, width, height, targetPixels) {
   const scale = Math.min(1, Math.sqrt(targetPixels / Math.max(1, width * height)));
