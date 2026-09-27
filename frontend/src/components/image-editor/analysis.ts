@@ -1,6 +1,5 @@
 import type { DecodedRgbImage16, HistogramData, LinearRgbSample, ToneAutoSample } from "./types";
 import {
-  PROPHOTO_LUMA_R, PROPHOTO_LUMA_G, PROPHOTO_LUMA_B,
   PROPHOTO_TO_SRGB_M00, PROPHOTO_TO_SRGB_M01, PROPHOTO_TO_SRGB_M02,
   PROPHOTO_TO_SRGB_M10, PROPHOTO_TO_SRGB_M11, PROPHOTO_TO_SRGB_M12,
   PROPHOTO_TO_SRGB_M20, PROPHOTO_TO_SRGB_M21, PROPHOTO_TO_SRGB_M22,
@@ -21,7 +20,7 @@ import {
   applyToneAdjustmentsLinearRgbInto, applyToneAdjustmentsLinearRgbRangeInto, applyToneLinearToRgbInto,
   applyWhiteBalanceLinearInto, clamp01, clampColorAdjustment, clampExposureEv,
   clampScaledLog, clampSigmoid, clampToneRangeAdjustment, clampWhiteBalanceValue,
-  buildToneCurveSpline, colorSaturationFactor, colorVibranceFactor, proPhotoLinearLuminance, rgbSaturationExtended, rolloffParams,
+  buildToneCurveSpline, colorSaturationFactor, colorVibranceFactor, rgbSaturationExtended, rolloffParams, toneLinearIntensity,
   srgbChannelToLinear, toneCurveLinearToDisplay, whiteBalanceGains, type ColorAdjustmentContext, type RolloffParams, type ToneCurvePoint,
 } from "@/image/tone";
 
@@ -438,7 +437,7 @@ export function computeToneCurveLumaHistogramFromLinearRgbSample(
       "tone-curve",
       adjusted,
     );
-    const y = clamp01(proPhotoLinearLuminance(adjusted[0], adjusted[1], adjusted[2]));
+    const y = clamp01(toneLinearIntensity(adjusted[0], adjusted[1], adjusted[2]));
     const displayY = toneCurveLinearToDisplay(y);
     const bin = Math.min(HISTOGRAM_BINS - 1, Math.max(0, Math.floor(displayY * HISTOGRAM_BINS)));
     bins[bin] += 1;
@@ -735,7 +734,7 @@ export function buildToneLumaHistogram(
       context.black,
     );
     r = adjustedRgb[0]; g = adjustedRgb[1]; b = adjustedRgb[2];
-    const y = clamp01(PROPHOTO_LUMA_R * r + PROPHOTO_LUMA_G * g + PROPHOTO_LUMA_B * b);
+    const y = clamp01(toneLinearIntensity(r, g, b));
     const display = histogramDisplayValue(y);
     const bin = Math.min(HISTOGRAM_BINS - 1, Math.max(0, Math.floor(display * HISTOGRAM_BINS)));
     histogram[bin] += 1;
@@ -793,11 +792,7 @@ export function evaluateAutoExposure(
       );
       highlightPressure += pressure * pressure;
     }
-    const y = clamp01(
-      PROPHOTO_LUMA_R * clamp01(r) +
-      PROPHOTO_LUMA_G * clamp01(g) +
-      PROPHOTO_LUMA_B * clamp01(b),
-    );
+    const y = clamp01(toneLinearIntensity(clamp01(r), clamp01(g), clamp01(b)));
     const display = histogramDisplayValue(y);
     const bin = Math.min(HISTOGRAM_BINS - 1, Math.max(0, Math.floor(display * HISTOGRAM_BINS)));
     histogram[bin] += 1;

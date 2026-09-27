@@ -434,7 +434,7 @@ describe("image editor tone characterization", () => {
       0.8,
       -1.2,
     );
-    expect(rounded(tone)).toEqual([0.2887246879, 1.203019532918, 3.127850785588]);
+    expect(rounded(tone)).toEqual([0.219421483788, 0.914256182452, 2.377066074375]);
   });
 });
 
@@ -779,7 +779,7 @@ describe("image editor render characterization", () => {
           -5,
         ),
       ),
-    ).toBe("924f874f");
+    ).toBe("099ca79f");
   });
 
   test("freezes crop + arbitrary rotation render output", () => {
@@ -798,7 +798,7 @@ describe("image editor render characterization", () => {
       0,
       0,
     );
-    expect(fnv1a32(bytes)).toBe("a5f4bd5d");
+    expect(fnv1a32(bytes)).toBe("e75269ff");
   });
 
   test("matches direct preview rendering when using the preview-resolution linear RGB cache", () => {

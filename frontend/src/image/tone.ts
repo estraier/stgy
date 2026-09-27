@@ -46,10 +46,21 @@ export function colorVibranceFactor(vibrance: number): number {
 }
 
 // Linear ProPhoto RGB luminance (XYZ D50 Y row). Keep these here instead of
-// importing color.ts because color.ts already depends on this module.
+// importing color.ts because color.ts already depends on this module. This is
+// physical/colorimetric luminance and remains the reference for operations that
+// explicitly preserve or analyze ProPhoto luminance.
 export const PROPHOTO_TONE_LUMA_R = 0.2880402;
 export const PROPHOTO_TONE_LUMA_G = 0.7118741;
 export const PROPHOTO_TONE_LUMA_B = 0.0000857;
+
+// Tone uses a deliberately non-colorimetric 3:5:2 RGB intensity. A wide-gamut
+// working-space Y row makes saturated ProPhoto blue almost zero, which causes
+// extreme hue-dependent gains for nonlinear Tone curves. 3:5:2 keeps the broad
+// perceptual ordering (G > R > B) while avoiding that wide-gamut singularity.
+// The weights sum to 1, so neutral RGB values keep exactly the same Tone curve.
+export const TONE_INTENSITY_R = 0.3;
+export const TONE_INTENSITY_G = 0.5;
+export const TONE_INTENSITY_B = 0.2;
 export const EXPOSURE_ROLLOFF_A = 0.5;
 export const SATURATION_ROLLOFF_A = 0.7;
 export const FINAL_DISPLAY_ROLLOFF_A = 0.5;
@@ -73,6 +84,10 @@ function snapToneUnitBoundary(value: number): number {
 
 export function proPhotoLinearLuminance(r: number, g: number, b: number): number {
   return PROPHOTO_TONE_LUMA_R * r + PROPHOTO_TONE_LUMA_G * g + PROPHOTO_TONE_LUMA_B * b;
+}
+
+export function toneLinearIntensity(r: number, g: number, b: number): number {
+  return TONE_INTENSITY_R * r + TONE_INTENSITY_G * g + TONE_INTENSITY_B * b;
 }
 
 function applyUnitIntervalTangentExtension(
@@ -1046,7 +1061,7 @@ export function applyToneLinearToRgb(
   const hasSigmoid = flags?.hasSigmoid ?? sigmoid !== 0;
 
   if (hasWhiteBalance) [r, g, b] = applyWhiteBalanceLinear(r, g, b, gains);
-  const sourceLuminance = proPhotoLinearLuminance(r, g, b);
+  const sourceLuminance = toneLinearIntensity(r, g, b);
   if (!(sourceLuminance > TONE_LUMINANCE_EPSILON)) return [r, g, b];
 
   let luminance = sourceLuminance;
@@ -1093,7 +1108,7 @@ export function applyToneLinearToRgbInto(
     applyWhiteBalanceLinearInto(r, g, b, gains, output);
     r = output[0] ?? 0; g = output[1] ?? 0; b = output[2] ?? 0;
   }
-  const sourceLuminance = proPhotoLinearLuminance(r, g, b);
+  const sourceLuminance = toneLinearIntensity(r, g, b);
   if (!(sourceLuminance > TONE_LUMINANCE_EPSILON)) {
     output[0] = r; output[1] = g; output[2] = b;
     return;
@@ -1553,7 +1568,7 @@ export function applyToneAdjustmentsLinearRgbRangeWithGamma20GainLutInto(
     return;
   }
 
-  const sourceLuminance = proPhotoLinearLuminance(r, g, b);
+  const sourceLuminance = toneLinearIntensity(r, g, b);
   if (!(sourceLuminance > TONE_LUMINANCE_EPSILON)) {
     output[0] = r; output[1] = g; output[2] = b;
     return;
@@ -1595,7 +1610,7 @@ export function applyToneAdjustmentsLinearRgbRange(
   if (start <= 0 && end > 0 && context.hasWhiteBalance) {
     [r, g, b] = applyWhiteBalanceLinear(r, g, b, context.gains);
   }
-  const sourceLuminance = proPhotoLinearLuminance(r, g, b);
+  const sourceLuminance = toneLinearIntensity(r, g, b);
   if (!(sourceLuminance > TONE_LUMINANCE_EPSILON)) return [r, g, b];
   let luminance = sourceLuminance;
 
@@ -1649,7 +1664,7 @@ export function applyToneAdjustmentsLinearRgbRangeInto(
     applyWhiteBalanceLinearInto(r, g, b, context.gains, output);
     r = output[0] ?? 0; g = output[1] ?? 0; b = output[2] ?? 0;
   }
-  const sourceLuminance = proPhotoLinearLuminance(r, g, b);
+  const sourceLuminance = toneLinearIntensity(r, g, b);
   if (!(sourceLuminance > TONE_LUMINANCE_EPSILON)) {
     output[0] = r; output[1] = g; output[2] = b;
     return;

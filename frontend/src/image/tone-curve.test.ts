@@ -4,6 +4,8 @@ import {
   sampleToneCurveSpline,
   toneCurveDisplayToLinear,
   toneCurveLinearToDisplay,
+  toneLinearIntensity,
+  applyToneLinearToRgb,
 } from "./tone";
 
 describe("tone curve", () => {
@@ -76,5 +78,45 @@ describe("tone curve", () => {
       { x: 0.2, y: 0 },
       { x: 0.8, y: 1 },
     ]);
+  });
+});
+
+describe("tone RGB intensity", () => {
+  test("uses the 3:5:2 model and preserves the neutral axis", () => {
+    expect(toneLinearIntensity(1, 0, 0)).toBeCloseTo(0.3, 12);
+    expect(toneLinearIntensity(0, 1, 0)).toBeCloseTo(0.5, 12);
+    expect(toneLinearIntensity(0, 0, 1)).toBeCloseTo(0.2, 12);
+    expect(toneLinearIntensity(0.42, 0.42, 0.42)).toBeCloseTo(0.42, 12);
+  });
+
+  test("drives nonlinear Tone gain from 3:5:2 intensity while preserving RGB ratios", () => {
+    const source: [number, number, number] = [0.1, 0.2, 0.9];
+    const sourceTone = toneLinearIntensity(...source);
+    const shadow = 100;
+    const gamma = 1 / 2.5;
+    const targetTone = Math.pow(sourceTone, gamma);
+    const expectedGain = targetTone / sourceTone;
+    const adjusted = applyToneLinearToRgb(
+      ...source,
+      { r: 1, g: 1, b: 1 },
+      false,
+      1,
+      shadow,
+      0,
+      0,
+      0,
+      {
+        hasExposure: false,
+        hasShadow: true,
+        hasHighlight: false,
+        hasScaledLog: false,
+        hasSigmoid: false,
+      },
+    );
+    expect(adjusted[0]).toBeCloseTo(source[0] * expectedGain, 12);
+    expect(adjusted[1]).toBeCloseTo(source[1] * expectedGain, 12);
+    expect(adjusted[2]).toBeCloseTo(source[2] * expectedGain, 12);
+    expect(adjusted[1] / adjusted[0]).toBeCloseTo(source[1] / source[0], 12);
+    expect(adjusted[2] / adjusted[0]).toBeCloseTo(source[2] / source[0], 12);
   });
 });
