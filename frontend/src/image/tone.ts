@@ -53,11 +53,12 @@ export const PROPHOTO_TONE_LUMA_R = 0.2880402;
 export const PROPHOTO_TONE_LUMA_G = 0.7118741;
 export const PROPHOTO_TONE_LUMA_B = 0.0000857;
 
-// Tone uses a deliberately non-colorimetric 3:5:2 RGB intensity. A wide-gamut
-// working-space Y row makes saturated ProPhoto blue almost zero, which causes
-// extreme hue-dependent gains for nonlinear Tone curves. 3:5:2 keeps the broad
-// perceptual ordering (G > R > B) while avoiding that wide-gamut singularity.
-// The weights sum to 1, so neutral RGB values keep exactly the same Tone curve.
+// Tone and Clarity use a deliberately non-colorimetric 3:5:2 RGB intensity. A
+// wide-gamut working-space Y row makes saturated ProPhoto blue almost zero,
+// which causes extreme hue-dependent gains for nonlinear editorial tone
+// operations. 3:5:2 keeps the broad perceptual ordering (G > R > B) while
+// avoiding that wide-gamut singularity. The weights sum to 1, so neutral RGB
+// values keep exactly the same Tone/Clarity axis.
 export const TONE_INTENSITY_R = 0.3;
 export const TONE_INTENSITY_G = 0.5;
 export const TONE_INTENSITY_B = 0.2;
@@ -129,9 +130,10 @@ export function applyLuminanceGainPreservingAboveOneLinearRgb(
   b: number,
   gain: number,
 ): [number, number, number] {
-  // CLAHE only defines a mapping through display white. Keep extended highlights
-  // untouched even when a lower-resolution gain map is sampled at this pixel.
-  if (proPhotoLinearLuminance(r, g, b) > 1 || !Number.isFinite(gain)) return [r, g, b];
+  // CLAHE uses the same 3:5:2 Tone intensity as the Tone pipeline. Keep
+  // extended highlights on that shared axis untouched even when a
+  // lower-resolution gain map is sampled at this pixel.
+  if (toneLinearIntensity(r, g, b) > 1 || !Number.isFinite(gain)) return [r, g, b];
   return [Math.max(0, r * gain), Math.max(0, g * gain), Math.max(0, b * gain)];
 }
 
@@ -142,7 +144,7 @@ export function applyLuminanceGainPreservingAboveOneLinearRgbInto(
   gain: number,
   output: ToneRgbBuffer,
 ): void {
-  if (proPhotoLinearLuminance(r, g, b) > 1 || !Number.isFinite(gain)) {
+  if (toneLinearIntensity(r, g, b) > 1 || !Number.isFinite(gain)) {
     output[0] = r; output[1] = g; output[2] = b;
     return;
   }

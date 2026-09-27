@@ -2,7 +2,7 @@ import {
   applyToneAdjustmentsLinearRgbRangeWithGamma20GainLutInto,
   buildToneAdjustmentGamma20GainLut,
   clamp01,
-  proPhotoLinearLuminance,
+  toneLinearIntensity,
   type ColorAdjustmentContext,
   type ToneAdjustmentStage,
 } from "@/image/tone";
@@ -78,7 +78,7 @@ function computeClarityTileGrid(width: number, height: number) {
   };
 }
 
-function boxBlurLinearLuminance(
+function boxBlurToneIntensity(
   source: Float32Array,
   valid: Uint8Array | undefined,
   width: number,
@@ -93,7 +93,7 @@ function boxBlurLinearLuminance(
   if (rx === 0 && ry === 0) return new Float32Array(source);
 
   // Keep invalid rotation-border pixels out of the local mean. The two-pass box
-  // filter carries both luminance sum and valid-pixel count.
+  // filter carries both Tone-intensity sum and valid-pixel count.
   const horizontalSum = new Float64Array(pixelCount);
   const horizontalCount = new Uint32Array(pixelCount);
   for (let y = 0; y < height; y += 1) {
@@ -231,20 +231,20 @@ export function buildImageEditClarityMapFromToneSample(
   if (toneSample.data.length !== pixelCount * 3) return null;
 
   const valid = toneSample.valid;
-  const luminance = new Float32Array(pixelCount);
-  const encodedLuminance = normalized > 0 ? new Uint8Array(pixelCount) : null;
+  const toneIntensity = new Float32Array(pixelCount);
+  const encodedToneIntensity = normalized > 0 ? new Uint8Array(pixelCount) : null;
 
   for (let pixelIndex = 0, sourceIndex = 0; pixelIndex < pixelCount; pixelIndex += 1, sourceIndex += 3) {
     if (valid && !valid[pixelIndex]) continue;
     const r = toneSample.data[sourceIndex] ?? 0;
     const g = toneSample.data[sourceIndex + 1] ?? 0;
     const b = toneSample.data[sourceIndex + 2] ?? 0;
-    const linearLuma = Math.max(0, proPhotoLinearLuminance(r, g, b));
-    luminance[pixelIndex] = linearLuma;
-    if (encodedLuminance) {
-      encodedLuminance[pixelIndex] = Math.max(
+    const linearToneIntensity = Math.max(0, toneLinearIntensity(r, g, b));
+    toneIntensity[pixelIndex] = linearToneIntensity;
+    if (encodedToneIntensity) {
+      encodedToneIntensity[pixelIndex] = Math.max(
         0,
-        Math.min(255, Math.round(Math.sqrt(clamp01(linearLuma)) * 255)),
+        Math.min(255, Math.round(Math.sqrt(clamp01(linearToneIntensity)) * 255)),
       );
     }
   }
@@ -257,8 +257,8 @@ export function buildImageEditClarityMapFromToneSample(
     const t = Math.abs(normalized) / 100;
     const radiusX = Math.max(1, Math.round(tileWidth / 2));
     const radiusY = Math.max(1, Math.round(tileHeight / 2));
-    const localMean = boxBlurLinearLuminance(
-      luminance,
+    const localMean = boxBlurToneIntensity(
+      toneIntensity,
       valid,
       width,
       height,
@@ -268,22 +268,25 @@ export function buildImageEditClarityMapFromToneSample(
     const detailAttenuation = 1 / (1 + 4 * t);
     for (let pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += 1) {
       if (valid && !valid[pixelIndex]) continue;
-      const sourceLinearLuma = luminance[pixelIndex] ?? 0;
-      if (sourceLinearLuma > 1) {
+      const sourceLinearToneIntensity = toneIntensity[pixelIndex] ?? 0;
+      if (sourceLinearToneIntensity > 1) {
         gain[pixelIndex] = 1;
         continue;
       }
-      const meanLinearLuma = localMean[pixelIndex] ?? sourceLinearLuma;
-      const targetLinearLuma = Math.max(
+      const meanLinearToneIntensity = localMean[pixelIndex] ?? sourceLinearToneIntensity;
+      const targetLinearToneIntensity = Math.max(
         0,
-        meanLinearLuma + (sourceLinearLuma - meanLinearLuma) * detailAttenuation,
+        meanLinearToneIntensity
+          + (sourceLinearToneIntensity - meanLinearToneIntensity) * detailAttenuation,
       );
-      gain[pixelIndex] = sourceLinearLuma > 1e-8 ? targetLinearLuma / sourceLinearLuma : 0;
+      gain[pixelIndex] = sourceLinearToneIntensity > 1e-8
+        ? targetLinearToneIntensity / sourceLinearToneIntensity
+        : 0;
     }
     return { width, height, gain, strength: normalized };
   }
 
-  const encoded = encodedLuminance!;
+  const encoded = encodedToneIntensity!;
   const bins = 256;
   const tileCount = tilesX * tilesY;
   const luts = new Float32Array(tileCount * bins);
@@ -386,14 +389,15 @@ export function buildImageEditClarityMapFromToneSample(
       const top = lut00 * (1 - fx) + lut10 * fx;
       const bottom = lut01 * (1 - fx) + lut11 * fx;
       const encodedEqualized = top * (1 - fy) + bottom * fy;
-      const targetLinearLuma = encodedEqualized * encodedEqualized;
-      const sourceLinearLuma = luminance[pixelIndex] ?? 0;
-      // Values above display white remain extended-range data. They participate
-      // in the top histogram bin but CLAHE itself leaves their magnitude intact.
-      gain[pixelIndex] = sourceLinearLuma > 1
+      const targetLinearToneIntensity = encodedEqualized * encodedEqualized;
+      const sourceLinearToneIntensity = toneIntensity[pixelIndex] ?? 0;
+      // Values above display white on the shared 3:5:2 Tone axis remain
+      // extended-range data. They participate in the top histogram bin but
+      // CLAHE itself leaves their magnitude intact.
+      gain[pixelIndex] = sourceLinearToneIntensity > 1
         ? 1
-        : sourceLinearLuma > 1e-8
-          ? targetLinearLuma / sourceLinearLuma
+        : sourceLinearToneIntensity > 1e-8
+          ? targetLinearToneIntensity / sourceLinearToneIntensity
           : 0;
     }
   }

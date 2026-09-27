@@ -1,9 +1,12 @@
 import { buildImageEditPreviewSliderPrefixSample } from "./render";
-import { buildImageEditToneSample } from "./clarity";
+import { buildImageEditClarityMapFromToneSample, buildImageEditToneSample } from "./clarity";
 import { buildInteractiveColorAdjustmentContextFromLinearRgbSample } from "./analysis";
 import {
+  applyLuminanceGainPreservingAboveOneLinearRgb,
   applyToneAdjustmentsLinearRgbRange,
   buildToneAdjustmentGamma20GainLut,
+  proPhotoLinearLuminance,
+  toneLinearIntensity,
   type ToneAdjustmentStage,
 } from "@/image/tone";
 import type { LinearRgbSample } from "./types";
@@ -447,4 +450,44 @@ describe("buildImageEditToneSample", () => {
     expect(actual.data[33]).toBeCloseTo(1.2, 3);
   });
 
+});
+
+
+describe("Clarity Tone intensity", () => {
+  test("uses the shared 3:5:2 axis for negative Clarity and the >1 boundary", () => {
+    const sample = makeSample(3, 1, [
+      [0, 0, 0],
+      [0, 1.5, 0],
+      [0, 0, 0],
+    ], 4);
+
+    // This saturated green is above display white in colorimetric ProPhoto Y,
+    // but remains below white on the shared editorial Tone axis. Clarity must
+    // therefore process it, just like the Tone controls do.
+    expect(proPhotoLinearLuminance(0, 1.5, 0)).toBeGreaterThan(1);
+    expect(toneLinearIntensity(0, 1.5, 0)).toBeCloseTo(0.75, 12);
+
+    const map = buildImageEditClarityMapFromToneSample(sample, -100);
+    expect(map).not.toBeNull();
+    const gain = map?.gain[1] ?? 1;
+    expect(gain).toBeCloseTo(0.35 / 0.75, 6);
+
+    const adjusted = applyLuminanceGainPreservingAboveOneLinearRgb(0, 1.5, 0, gain);
+    expect(adjusted[0]).toBeCloseTo(0, 12);
+    expect(adjusted[1]).toBeCloseTo(0.7, 6);
+    expect(adjusted[2]).toBeCloseTo(0, 12);
+  });
+
+  test("gives equal positive-CLAHE gain to colors with equal 3:5:2 intensity", () => {
+    const sample = makeSample(4, 1, [
+      [2 / 3, 0, 0], // 0.3 * 2/3 = 0.2
+      [0, 0, 1],     // 0.2 * 1   = 0.2
+      [0.4, 0.4, 0.4],
+      [0.8, 0.8, 0.8],
+    ], 1);
+
+    const map = buildImageEditClarityMapFromToneSample(sample, 100);
+    expect(map).not.toBeNull();
+    expect(map?.gain[0] ?? 0).toBeCloseTo(map?.gain[1] ?? 0, 6);
+  });
 });
