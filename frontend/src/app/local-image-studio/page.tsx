@@ -15,6 +15,14 @@ const imageUrl = new URL(
 export const metadata: Metadata = {
   title,
   description,
+  manifest: "/manifest-lis.json",
+  icons: {
+    icon: [
+      { url: "/icons/lis-192.png", type: "image/png", sizes: "192x192" },
+      { url: "/icons/lis-512.png", type: "image/png", sizes: "512x512" },
+    ],
+    apple: [{ url: "/icons/lis-apple.png", type: "image/png", sizes: "180x180" }],
+  },
   alternates: {
     canonical: canonicalUrl,
   },

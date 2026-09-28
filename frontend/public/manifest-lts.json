@@ -1,0 +1,33 @@
+{
+  "id": "/local-track-studio",
+  "name": "Local Track Studio",
+  "short_name": "LTS",
+  "description": "Open and convert FIT, GPX, TrackJSON, and TRJGZ tracks, preview routes and ride analysis, trim or downsample activities, protect start and end locations, and export TrackJSON, GPX, and FIT.",
+  "lang": "ja",
+  "dir": "ltr",
+  "start_url": "/local-track-studio?source=pwa",
+  "scope": "/local-track-studio",
+  "display": "standalone",
+  "display_override": [
+    "standalone",
+    "minimal-ui",
+    "browser"
+  ],
+  "orientation": "any",
+  "theme_color": "#0b1020",
+  "background_color": "#0b1020",
+  "icons": [
+    {
+      "src": "/icons/lts-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/lts-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

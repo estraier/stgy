@@ -14,6 +14,14 @@ const imageUrl = new URL(
 export const metadata: Metadata = {
   title,
   description,
+  manifest: "/manifest-lss.json",
+  icons: {
+    icon: [
+      { url: "/icons/lss-192.png", type: "image/png", sizes: "192x192" },
+      { url: "/icons/lss-512.png", type: "image/png", sizes: "512x512" },
+    ],
+    apple: [{ url: "/icons/lss-apple.png", type: "image/png", sizes: "180x180" }],
+  },
   alternates: {
     canonical: canonicalUrl,
   },
