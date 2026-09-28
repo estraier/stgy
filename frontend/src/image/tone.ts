@@ -1192,7 +1192,8 @@ const TONE_ADJUSTMENT_STAGE_INDEX: Record<ToneAdjustmentStage, number> = {
   "after-tone": 9,
 };
 
-const TONE_GAMMA20_GAIN_LUT_SIZE = 4096;
+export const TONE_GAMMA20_GAIN_LUT_PREVIEW_SIZE = 4096;
+export const TONE_GAMMA20_GAIN_LUT_FINAL_SIZE = 16384;
 const TONE_LUMINANCE_STAGE_START_INDEX = TONE_ADJUSTMENT_STAGE_INDEX.exposure;
 const TONE_AFTER_STAGE_INDEX = TONE_ADJUSTMENT_STAGE_INDEX["after-tone"];
 
@@ -1261,13 +1262,21 @@ function toneLinearFromGamma20Coordinate(value: number, rangeMax: number): numbe
   return value * value / rangeMax;
 }
 
-const TONE_ADAPTIVE_LUT_ERROR_TOLERANCE = 1e-5;
-const TONE_ADAPTIVE_LUT_MAX_DEPTH = 40;
-
-type ToneAdjustmentAdaptiveLutCell = {
-  fractions: Float64Array;
-  outputs: Float64Array;
-};
+function normalizeToneGamma20GainLutSize(size: number, rangeMax: number): number {
+  const requested = Number.isFinite(size)
+    ? Math.max(2, Math.round(size))
+    : TONE_GAMMA20_GAIN_LUT_PREVIEW_SIZE;
+  // Extended RAW Tone uses linearRangeMax=4 and changes behavior at T=1.
+  // Keep that semantic boundary on an exact fixed-LUT sample so interpolation
+  // never crosses from the 0..1 curve into the >1 continuation/rescue path.
+  const root = Math.sqrt(rangeMax);
+  const integerRoot = Math.round(root);
+  if (integerRoot > 1 && Math.abs(root - integerRoot) <= 1e-12) {
+    const remainder = (requested - 1) % integerRoot;
+    if (remainder !== 0) return requested + (integerRoot - remainder);
+  }
+  return requested;
+}
 
 function evaluateToneLuminanceForLut(
   sourceLuminance: number,
@@ -1279,167 +1288,12 @@ function evaluateToneLuminanceForLut(
   return applyToneLuminanceAdjustmentStages(sourceLuminance, context, start, end);
 }
 
-function appendAdaptiveToneLutCellInterval(
-  evaluate: (fraction: number) => number,
-  fractionA: number,
-  outputA: number,
-  fractionB: number,
-  outputB: number,
-  depth: number,
-  fractions: number[],
-  outputs: number[],
-): void {
-  const width = fractionB - fractionA;
-  if (!(width > 0)) return;
-  if (depth >= TONE_ADAPTIVE_LUT_MAX_DEPTH || width <= 1e-12) {
-    fractions.push(fractionB);
-    outputs.push(outputB);
-    return;
-  }
-
-  const quarter = fractionA + width * 0.25;
-  const middle = fractionA + width * 0.5;
-  const threeQuarter = fractionA + width * 0.75;
-  const outputQuarter = evaluate(quarter);
-  const outputMiddle = evaluate(middle);
-  const outputThreeQuarter = evaluate(threeQuarter);
-  if (!Number.isFinite(outputQuarter)
-    || !Number.isFinite(outputMiddle)
-    || !Number.isFinite(outputThreeQuarter)) {
-    fractions.push(fractionB);
-    outputs.push(outputB);
-    return;
-  }
-
-  const delta = outputB - outputA;
-  const error = Math.max(
-    Math.abs(outputQuarter - (outputA + delta * 0.25)),
-    Math.abs(outputMiddle - (outputA + delta * 0.5)),
-    Math.abs(outputThreeQuarter - (outputA + delta * 0.75)),
-  );
-  if (error <= TONE_ADAPTIVE_LUT_ERROR_TOLERANCE) {
-    fractions.push(fractionB);
-    outputs.push(outputB);
-    return;
-  }
-
-  appendAdaptiveToneLutCellInterval(
-    evaluate,
-    fractionA,
-    outputA,
-    middle,
-    outputMiddle,
-    depth + 1,
-    fractions,
-    outputs,
-  );
-  appendAdaptiveToneLutCellInterval(
-    evaluate,
-    middle,
-    outputMiddle,
-    fractionB,
-    outputB,
-    depth + 1,
-    fractions,
-    outputs,
-  );
-}
-
-function buildAdaptiveToneLutCell(
-  context: ColorAdjustmentContext,
-  start: number,
-  end: number,
-  rangeMax: number,
-  sampleScale: number,
-  cellIndex: number,
-  lowerGain: number,
-  upperGain: number,
-): ToneAdjustmentAdaptiveLutCell | null {
-  const gammaA = cellIndex / sampleScale;
-  const gammaB = (cellIndex + 1) / sampleScale;
-  const sourceA = toneLinearFromGamma20Coordinate(gammaA, rangeMax);
-  const sourceB = toneLinearFromGamma20Coordinate(gammaB, rangeMax);
-  const outputA = evaluateToneLuminanceForLut(sourceA, context, start, end);
-  const outputB = evaluateToneLuminanceForLut(sourceB, context, start, end);
-  if (!Number.isFinite(outputA) || !Number.isFinite(outputB)) return null;
-
-  const exactAt = (fraction: number): number => {
-    const gamma = gammaA + (gammaB - gammaA) * fraction;
-    const source = toneLinearFromGamma20Coordinate(gamma, rangeMax);
-    return evaluateToneLuminanceForLut(source, context, start, end);
-  };
-  const mainAt = (fraction: number): number => {
-    const gamma = gammaA + (gammaB - gammaA) * fraction;
-    const source = toneLinearFromGamma20Coordinate(gamma, rangeMax);
-    const gain = lowerGain + (upperGain - lowerGain) * fraction;
-    return source * gain;
-  };
-
-  const probes = [0.25, 0.5, 0.75] as const;
-  let needsRefinement = false;
-  for (const fraction of probes) {
-    const exact = exactAt(fraction);
-    if (!Number.isFinite(exact)
-      || Math.abs(exact - mainAt(fraction)) > TONE_ADAPTIVE_LUT_ERROR_TOLERANCE) {
-      needsRefinement = true;
-      break;
-    }
-  }
-  if (!needsRefinement) return null;
-
-  const fractions: number[] = [0];
-  const outputs: number[] = [outputA];
-  appendAdaptiveToneLutCellInterval(
-    exactAt,
-    0,
-    outputA,
-    1,
-    outputB,
-    0,
-    fractions,
-    outputs,
-  );
-  return fractions.length >= 2
-    ? { fractions: Float64Array.from(fractions), outputs: Float64Array.from(outputs) }
-    : null;
-}
-
-function sampleAdaptiveToneLutCell(
-  cell: ToneAdjustmentAdaptiveLutCell,
-  fraction: number,
-): number | null {
-  const fractions = cell.fractions;
-  const outputs = cell.outputs;
-  if (fractions.length < 2 || outputs.length !== fractions.length) return null;
-  if (fraction <= 0) return outputs[0] ?? null;
-  if (fraction >= 1) return outputs[outputs.length - 1] ?? null;
-
-  let low = 0;
-  let high = fractions.length - 2;
-  while (low <= high) {
-    const middle = (low + high) >> 1;
-    const fractionA = fractions[middle] ?? 0;
-    const fractionB = fractions[middle + 1] ?? 1;
-    if (fraction < fractionA) high = middle - 1;
-    else if (fraction > fractionB) low = middle + 1;
-    else {
-      const outputA = outputs[middle] ?? 0;
-      const outputB = outputs[middle + 1] ?? outputA;
-      if (!(fractionB > fractionA)) return outputA;
-      const localFraction = (fraction - fractionA) / (fractionB - fractionA);
-      return outputA + (outputB - outputA) * localFraction;
-    }
-  }
-  return null;
-}
-
 export type ToneAdjustmentGamma20GainLut = {
   gammaRangeMax: number;
   sampleScale: number;
   startStage: ToneAdjustmentStage;
   endStage: ToneAdjustmentStage;
   values: Float32Array;
-  adaptiveCells?: Array<ToneAdjustmentAdaptiveLutCell | null>;
 };
 
 export function buildToneAdjustmentGamma20GainLut(
@@ -1447,6 +1301,7 @@ export function buildToneAdjustmentGamma20GainLut(
   startStage: ToneAdjustmentStage = "white-balance",
   endStage: ToneAdjustmentStage = "after-tone",
   gammaRangeMax = 1,
+  lutSize = TONE_GAMMA20_GAIN_LUT_PREVIEW_SIZE,
 ): ToneAdjustmentGamma20GainLut | null {
   const start = Math.max(
     TONE_LUMINANCE_STAGE_START_INDEX,
@@ -1465,11 +1320,16 @@ export function buildToneAdjustmentGamma20GainLut(
   if (!hasActiveStage) return null;
 
   const normalizedRange = normalizeToneGamma20RangeMax(gammaRangeMax);
-  const sampleScale = (TONE_GAMMA20_GAIN_LUT_SIZE - 1) / normalizedRange;
-  const values = new Float32Array(TONE_GAMMA20_GAIN_LUT_SIZE);
-  values.fill(1);
+  const normalizedLutSize = normalizeToneGamma20GainLutSize(lutSize, normalizedRange);
+  const sampleScale = (normalizedLutSize - 1) / normalizedRange;
+  // Store the mapped Tone value T' rather than T'/T. A gain LUT becomes
+  // singular near T=0 for Shadow-style power curves, while T' remains finite
+  // and can be interpolated accurately on the fixed gamma-2 grid. Lookup then
+  // performs the one division required to apply the common RGB scale.
+  const values = new Float32Array(normalizedLutSize);
+  values[0] = 0;
 
-  for (let i = 1; i < TONE_GAMMA20_GAIN_LUT_SIZE; i += 1) {
+  for (let i = 1; i < normalizedLutSize; i += 1) {
     const gammaValue = i / sampleScale;
     const sourceLuminance = toneLinearFromGamma20Coordinate(gammaValue, normalizedRange);
     const adjustedLuminance = evaluateToneLuminanceForLut(
@@ -1478,33 +1338,9 @@ export function buildToneAdjustmentGamma20GainLut(
       start,
       end,
     );
-    // Preserve the signed scalar mapping. Clamping the gain here would make
-    // the LUT path diverge from the direct Tone functions.
-    const gain = sourceLuminance > TONE_LUMINANCE_EPSILON && Number.isFinite(adjustedLuminance)
-      ? adjustedLuminance / sourceLuminance
-      : 1;
-    values[i] = Math.fround(gain);
-  }
-  values[0] = values[1] ?? 1;
-  const adaptiveCells: Array<ToneAdjustmentAdaptiveLutCell | null> = new Array(
-    TONE_GAMMA20_GAIN_LUT_SIZE - 1,
-  ).fill(null);
-  let hasAdaptiveCell = false;
-  for (let cellIndex = 0; cellIndex < adaptiveCells.length; cellIndex += 1) {
-    const cell = buildAdaptiveToneLutCell(
-      context,
-      start,
-      end,
-      normalizedRange,
-      sampleScale,
-      cellIndex,
-      values[cellIndex] ?? 1,
-      values[cellIndex + 1] ?? values[cellIndex] ?? 1,
-    );
-    if (cell) {
-      adaptiveCells[cellIndex] = cell;
-      hasAdaptiveCell = true;
-    }
+    values[i] = Number.isFinite(adjustedLuminance)
+      ? Math.fround(adjustedLuminance)
+      : Math.fround(sourceLuminance);
   }
 
   return {
@@ -1513,7 +1349,6 @@ export function buildToneAdjustmentGamma20GainLut(
     startStage,
     endStage,
     values,
-    ...(hasAdaptiveCell ? { adaptiveCells } : {}),
   };
 }
 
@@ -1526,21 +1361,20 @@ export function sampleToneAdjustmentGamma20GainLut(
   if (!Number.isFinite(gammaValue) || gammaValue > lut.gammaRangeMax) return null;
 
   const position = gammaValue * lut.sampleScale;
+  // The first fixed cell contains T=0, where Shadow-style gain is singular.
+  // Let the caller use the exact Tone function only for this vanishingly small
+  // interval; all normal pixels stay on the fixed LUT path.
+  if (position < 1 && sourceLuminance > TONE_LUMINANCE_EPSILON) return null;
   const lower = Math.max(0, Math.min(lut.values.length - 1, Math.floor(position)));
   const upper = Math.min(lut.values.length - 1, lower + 1);
   const fraction = position - lower;
-  if (sourceLuminance > TONE_LUMINANCE_EPSILON && lower < lut.values.length - 1) {
-    const adaptiveCell = lut.adaptiveCells?.[lower] ?? null;
-    if (adaptiveCell) {
-      const adjustedLuminance = sampleAdaptiveToneLutCell(adaptiveCell, fraction);
-      if (adjustedLuminance !== null && Number.isFinite(adjustedLuminance)) {
-        return adjustedLuminance / sourceLuminance;
-      }
-    }
-  }
-  const lo = lut.values[lower] ?? 1;
+  const lo = lut.values[lower] ?? sourceLuminance;
   const hi = lut.values[upper] ?? lo;
-  return lo + (hi - lo) * fraction;
+  const adjustedLuminance = lo + (hi - lo) * fraction;
+  if (!(sourceLuminance > TONE_LUMINANCE_EPSILON) || !Number.isFinite(adjustedLuminance)) {
+    return 1;
+  }
+  return adjustedLuminance / sourceLuminance;
 }
 
 export function applyToneAdjustmentsLinearRgbRangeWithGamma20GainLutInto(

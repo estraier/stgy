@@ -65,6 +65,7 @@ import {
   clamp01,
   srgbChannelToLinear,
   toneLinearIntensity,
+  TONE_GAMMA20_GAIN_LUT_FINAL_SIZE,
   clampColorAdjustment,
   clampExposureEv,
   clampSigmoid,
@@ -1103,6 +1104,7 @@ async function buildFullSizeRenderCache(stackResult, key, resultRevision) {
     claheMap,
     applyFinalRolloff: true,
     finalRolloff,
+    toneLutSize: TONE_GAMMA20_GAIN_LUT_FINAL_SIZE,
   };
 
   let adjustedLinear = null;
@@ -1139,6 +1141,7 @@ async function buildFullSizeRenderCache(stackResult, key, resultRevision) {
       options.claheMap,
       outputColorProfile,
       options.finalRolloff,
+      options.toneLutSize,
     );
   }
 

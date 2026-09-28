@@ -5,15 +5,19 @@ import {
   SATURATION_ROLLOFF_A,
   applyLuminanceGainPreservingAboveOneLinearRgbInto,
   applySaturationVibranceAndFinalRolloffLinearRgbInto,
-  applyToneAdjustmentsLinearRgbRangeInto,
+  applyToneAdjustmentsLinearRgbRangeWithGamma20GainLutInto,
+  buildToneAdjustmentGamma20GainLut,
   clampScaledLog,
   clampSigmoid,
   clampToneRangeAdjustment,
   colorSaturationFactor,
   rgbSaturationExtended,
   rolloffParams,
+  TONE_GAMMA20_GAIN_LUT_FINAL_SIZE,
+  TONE_GAMMA20_GAIN_LUT_PREVIEW_SIZE,
   type ColorAdjustmentContext,
   type RolloffParams,
+  type ToneAdjustmentGamma20GainLut,
   type ToneAdjustmentStage,
 } from "@/image/tone";
 import {
@@ -100,6 +104,12 @@ export function computeStackFinalRolloff(
   );
   const pixelCount = Math.floor(sourceLinear.length / 3);
   if (pixelCount <= 0) return { saturationRolloff: null, finalRolloff: null };
+  const toneGamma20GainLut = buildStackToneGamma20GainLut(
+    toneContext,
+    "source",
+    "highlight",
+    TONE_GAMMA20_GAIN_LUT_PREVIEW_SIZE,
+  );
 
   const toneAdjusted = new Float32Array(pixelCount * 3);
   const saturationFactor = colorSaturationFactor(saturation);
@@ -114,6 +124,7 @@ export function computeStackFinalRolloff(
       toneContext,
       "source",
       "highlight",
+      toneGamma20GainLut,
       adjusted,
     );
     toneAdjusted[sourceIndex] = adjusted[0];
@@ -252,6 +263,7 @@ export type StackFullRenderOptions = {
   claheMap: StackClaheMap | null;
   applyFinalRolloff: boolean;
   finalRolloff: StackFinalRolloff | undefined;
+  toneLutSize?: number;
 };
 
 /**
@@ -282,6 +294,12 @@ export function adjustStackStoredGamma2RowsToLinear(
     options.highlight,
     options.scaledLog,
     options.sigmoid,
+  );
+  const toneGamma20GainLut = buildStackToneGamma20GainLut(
+    toneContext,
+    "source",
+    "highlight",
+    options.toneLutSize ?? TONE_GAMMA20_GAIN_LUT_FINAL_SIZE,
   );
   const normalizedClahe = clampStackClahe(options.clahe);
   const activeClaheMap = normalizedClahe !== 0 && isUsableStackClaheMap(options.claheMap)
@@ -314,6 +332,7 @@ export function adjustStackStoredGamma2RowsToLinear(
           toneContext,
           "source",
           "highlight",
+          toneGamma20GainLut,
           adjusted,
         );
         r = Math.fround(adjusted[0]);
@@ -363,6 +382,7 @@ export function adjustStackLinearData(
   claheMap: StackClaheMap | null = null,
   outputColorProfile: ImageEditOutputColorProfile = "srgb",
   finalRolloff: StackFinalRolloff | undefined = undefined,
+  toneLutSize = TONE_GAMMA20_GAIN_LUT_PREVIEW_SIZE,
 ): Float32Array {
   const toneAdjusted = buildStackToneAdjustedLinearData(
     sourceLinear,
@@ -373,6 +393,9 @@ export function adjustStackLinearData(
     highlight,
     scaledLog,
     sigmoid,
+    "source",
+    "highlight",
+    toneLutSize,
   );
   return adjustStackLinearDataPostTone(
     toneAdjusted,
@@ -399,6 +422,7 @@ export function buildStackToneAdjustedLinearData(
   sigmoid: number,
   startStage: StackToneStage = "source",
   endStage: StackToneStage = "highlight",
+  toneLutSize = TONE_GAMMA20_GAIN_LUT_PREVIEW_SIZE,
 ): Float32Array {
   const toneContext = buildStackToneContext(
     exposureEv,
@@ -408,6 +432,12 @@ export function buildStackToneAdjustedLinearData(
     sigmoid,
   );
   if (startStage === endStage) return sourceLinear;
+  const toneGamma20GainLut = buildStackToneGamma20GainLut(
+    toneContext,
+    startStage,
+    endStage,
+    toneLutSize,
+  );
   const result = new Float32Array(sourceLinear.length);
   const adjusted: [number, number, number] = [0, 0, 0];
   for (let sourceIndex = 0; sourceIndex < sourceLinear.length; sourceIndex += 3) {
@@ -418,6 +448,7 @@ export function buildStackToneAdjustedLinearData(
       toneContext,
       startStage,
       endStage,
+      toneGamma20GainLut,
       adjusted,
     );
     result[sourceIndex] = adjusted[0];
@@ -525,6 +556,21 @@ function buildStackToneContext(
   };
 }
 
+function buildStackToneGamma20GainLut(
+  context: StackToneContext,
+  startStage: StackToneStage,
+  endStage: StackToneStage,
+  lutSize: number,
+): ToneAdjustmentGamma20GainLut | null {
+  return buildToneAdjustmentGamma20GainLut(
+    context,
+    STACK_TONE_STAGE_BOUNDARY[startStage],
+    STACK_TONE_STAGE_BOUNDARY[endStage],
+    1,
+    lutSize,
+  );
+}
+
 function applyStackToneAdjustmentsLinearRgbRangeInto(
   r: number,
   g: number,
@@ -532,15 +578,17 @@ function applyStackToneAdjustmentsLinearRgbRangeInto(
   context: StackToneContext,
   startStage: StackToneStage,
   endStage: StackToneStage,
+  lut: ToneAdjustmentGamma20GainLut | null,
   output: [number, number, number],
 ): void {
-  applyToneAdjustmentsLinearRgbRangeInto(
+  applyToneAdjustmentsLinearRgbRangeWithGamma20GainLutInto(
     r,
     g,
     b,
     context,
     STACK_TONE_STAGE_BOUNDARY[startStage],
     STACK_TONE_STAGE_BOUNDARY[endStage],
+    lut,
     output,
   );
 }

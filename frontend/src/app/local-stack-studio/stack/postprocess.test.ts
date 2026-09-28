@@ -1,7 +1,9 @@
 import {
   applyLuminanceGainPreservingAboveOneLinearRgbInto,
   applySaturationVibranceAndFinalRolloffLinearRgbInto,
-  applyToneAdjustmentsLinearRgbRangeInto,
+  applyToneAdjustmentsLinearRgbRangeWithGamma20GainLutInto,
+  buildToneAdjustmentGamma20GainLut,
+  TONE_GAMMA20_GAIN_LUT_PREVIEW_SIZE,
 } from "@/image/tone";
 import { buildColorAdjustmentContextFromLinearRgbSample } from "@/components/image-editor/analysis";
 import {
@@ -75,14 +77,22 @@ describe("Local Stack Studio shared Tone/Color pipeline", () => {
     );
     const expected = new Float32Array(sample.data.length);
     const adjusted: [number, number, number] = [0, 0, 0];
+    const lut = buildToneAdjustmentGamma20GainLut(
+      context,
+      "exposure",
+      "black",
+      1,
+      TONE_GAMMA20_GAIN_LUT_PREVIEW_SIZE,
+    );
     for (let i = 0; i < sample.data.length; i += 3) {
-      applyToneAdjustmentsLinearRgbRangeInto(
+      applyToneAdjustmentsLinearRgbRangeWithGamma20GainLutInto(
         sample.data[i],
         sample.data[i + 1],
         sample.data[i + 2],
         context,
         "exposure",
         "black",
+        lut,
         adjusted,
       );
       expected[i] = adjusted[0];

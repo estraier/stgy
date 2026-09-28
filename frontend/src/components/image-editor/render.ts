@@ -12,11 +12,12 @@ import {
 import type { LinearRgbBuffer } from "./sampling";
 import {
   applyColorAdjustmentsAfterToneLinearRgbInto,
-  applyColorAdjustmentsLinearRgbInto,
   applyLuminanceGainPreservingAboveOneLinearRgbInto,
-  applyToneAdjustmentsLinearRgbInto,
-  applyToneAdjustmentsLinearRgbRangeInto,
+  applyToneAdjustmentsLinearRgbRangeWithGamma20GainLutInto,
+  buildToneAdjustmentGamma20GainLut,
   clamp01,
+  TONE_GAMMA20_GAIN_LUT_FINAL_SIZE,
+  TONE_GAMMA20_GAIN_LUT_PREVIEW_SIZE,
   type ColorAdjustmentContext,
   type ToneAdjustmentStage,
   type ToneCurvePoint,
@@ -127,6 +128,13 @@ export function buildImageEditPreviewSliderPrefixSample(
     ? fullToneSample.data
     : null;
   const adjusted: [number, number, number] = [0, 0, 0];
+  const toneGamma20GainLut = buildToneAdjustmentGamma20GainLut(
+    context,
+    "white-balance",
+    tonePrefixEnd,
+    sample.linearRangeMax ?? 1,
+    TONE_GAMMA20_GAIN_LUT_PREVIEW_SIZE,
+  );
 
   for (let pixel = 0, si = 0; pixel < pixelCount; pixel += 1, si += 3) {
     if (valid && !valid[pixel]) continue;
@@ -135,13 +143,14 @@ export function buildImageEditPreviewSliderPrefixSample(
     let b = toneSource ? (toneSource[si + 2] ?? 0) : (sample.data[si + 2] ?? 0);
 
     if (!toneSource) {
-      applyToneAdjustmentsLinearRgbRangeInto(
+      applyToneAdjustmentsLinearRgbRangeWithGamma20GainLutInto(
         r,
         g,
         b,
         context,
         "white-balance",
         tonePrefixEnd,
+        toneGamma20GainLut,
         adjusted,
       );
       r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
@@ -269,6 +278,23 @@ export function renderAdjustedLinearRgbSampleToCanvas(
     : null;
   const converted: [number, number, number] = [0, 0, 0];
   const adjusted: [number, number, number] = [0, 0, 0];
+  const toneRangeMax = renderedSample.linearRangeMax ?? contextSample.linearRangeMax ?? 1;
+  const fullToneGamma20GainLut = buildToneAdjustmentGamma20GainLut(
+    context,
+    "white-balance",
+    "after-tone",
+    toneRangeMax,
+    TONE_GAMMA20_GAIN_LUT_PREVIEW_SIZE,
+  );
+  const continuousToneGamma20GainLut = continuousEditStage && isTonePreviewSliderStage(continuousEditStage)
+    ? buildToneAdjustmentGamma20GainLut(
+        context,
+        continuousEditStage,
+        "after-tone",
+        toneRangeMax,
+        TONE_GAMMA20_GAIN_LUT_PREVIEW_SIZE,
+      )
+    : null;
   let di = 0;
   for (let pixel = 0; pixel < pixelCount; pixel++, di += 4) {
     if (valid && !valid[pixel]) {
@@ -306,7 +332,9 @@ export function renderAdjustedLinearRgbSampleToCanvas(
 
     if (stage && continuousData && !useFullToneCache) {
       if (isTonePreviewSliderStage(stage)) {
-        applyToneAdjustmentsLinearRgbRangeInto(r, g, b, context, stage, "after-tone", adjusted);
+        applyToneAdjustmentsLinearRgbRangeWithGamma20GainLutInto(
+          r, g, b, context, stage, "after-tone", continuousToneGamma20GainLut, adjusted,
+        );
         r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
       }
 
@@ -351,7 +379,9 @@ export function renderAdjustedLinearRgbSampleToCanvas(
       r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
     } else if (hasClarity) {
       if (!toneData) {
-        applyToneAdjustmentsLinearRgbInto(r, g, b, context, adjusted);
+        applyToneAdjustmentsLinearRgbRangeWithGamma20GainLutInto(
+          r, g, b, context, "white-balance", "after-tone", fullToneGamma20GainLut, adjusted,
+        );
         r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
       }
       let clarityGain: number;
@@ -383,7 +413,11 @@ export function renderAdjustedLinearRgbSampleToCanvas(
       applyColorAdjustmentsAfterToneLinearRgbInto(r, g, b, context, true, adjusted);
       r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
     } else {
-      applyColorAdjustmentsLinearRgbInto(r, g, b, context, adjusted);
+      applyToneAdjustmentsLinearRgbRangeWithGamma20GainLutInto(
+        r, g, b, context, "white-balance", "after-tone", fullToneGamma20GainLut, adjusted,
+      );
+      r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
+      applyColorAdjustmentsAfterToneLinearRgbInto(r, g, b, context, true, adjusted);
       r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
     }
     if (linearOutput) {
@@ -426,6 +460,7 @@ export function renderAdjustedRgb16RegionToCanvas(
   black = 0,
   white = 0,
   toneCurvePoints: readonly ToneCurvePoint[] | null = null,
+  toneLutSize = TONE_GAMMA20_GAIN_LUT_PREVIEW_SIZE,
 ) {
   const ctx = getCanvas2dContext(canvas, outputColorProfile);
   if (!ctx) throw new Error("2D context unavailable");
@@ -462,6 +497,13 @@ export function renderAdjustedRgb16RegionToCanvas(
     black,
     white,
     toneCurvePoints,
+  );
+  const toneGamma20GainLut = buildToneAdjustmentGamma20GainLut(
+    context,
+    "white-balance",
+    "after-tone",
+    decoded.linearRangeMax,
+    toneLutSize,
   );
   const activeClarityMap = isUsableImageEditClarityMap(clarityMap) ? clarityMap : null;
   const hasClarity = activeClarityMap !== null;
@@ -520,7 +562,9 @@ export function renderAdjustedRgb16RegionToCanvas(
           r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
         }
         if (hasClarity) {
-          applyToneAdjustmentsLinearRgbInto(r, g, b, context, adjusted);
+          applyToneAdjustmentsLinearRgbRangeWithGamma20GainLutInto(
+            r, g, b, context, "white-balance", "after-tone", toneGamma20GainLut, adjusted,
+          );
           r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
           const clarityGain = sampleImageEditClarityGain(
             activeClarityMap,
@@ -534,7 +578,11 @@ export function renderAdjustedRgb16RegionToCanvas(
           applyColorAdjustmentsAfterToneLinearRgbInto(r, g, b, context, true, adjusted);
           r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
         } else {
-          applyColorAdjustmentsLinearRgbInto(r, g, b, context, adjusted);
+          applyToneAdjustmentsLinearRgbRangeWithGamma20GainLutInto(
+            r, g, b, context, "white-balance", "after-tone", toneGamma20GainLut, adjusted,
+          );
+          r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
+          applyColorAdjustmentsAfterToneLinearRgbInto(r, g, b, context, true, adjusted);
           r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
         }
         convertLinearProPhotoToOutputRgbInto(r, g, b, outputColorProfile, converted);
@@ -573,6 +621,7 @@ export function renderAdjustedRgb16ToCanvas(
   black = 0,
   white = 0,
   toneCurvePoints: readonly ToneCurvePoint[] | null = null,
+  toneLutSize = TONE_GAMMA20_GAIN_LUT_FINAL_SIZE,
 ) {
   const ctx = getCanvas2dContext(canvas, outputColorProfile);
   if (!ctx) throw new Error("2D context unavailable");
@@ -607,6 +656,13 @@ export function renderAdjustedRgb16ToCanvas(
     black,
     white,
     toneCurvePoints,
+  );
+  const toneGamma20GainLut = buildToneAdjustmentGamma20GainLut(
+    context,
+    "white-balance",
+    "after-tone",
+    decoded.linearRangeMax,
+    toneLutSize,
   );
   const activeClarityMap = isUsableImageEditClarityMap(clarityMap) ? clarityMap : null;
   const hasClarity = activeClarityMap !== null;
@@ -659,7 +715,9 @@ export function renderAdjustedRgb16ToCanvas(
           r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
         }
         if (hasClarity) {
-          applyToneAdjustmentsLinearRgbInto(r, g, b, context, adjusted);
+          applyToneAdjustmentsLinearRgbRangeWithGamma20GainLutInto(
+            r, g, b, context, "white-balance", "after-tone", toneGamma20GainLut, adjusted,
+          );
           r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
           const clarityGain = sampleImageEditClarityGain(
             activeClarityMap,
@@ -673,7 +731,11 @@ export function renderAdjustedRgb16ToCanvas(
           applyColorAdjustmentsAfterToneLinearRgbInto(r, g, b, context, true, adjusted);
           r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
         } else {
-          applyColorAdjustmentsLinearRgbInto(r, g, b, context, adjusted);
+          applyToneAdjustmentsLinearRgbRangeWithGamma20GainLutInto(
+            r, g, b, context, "white-balance", "after-tone", toneGamma20GainLut, adjusted,
+          );
+          r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
+          applyColorAdjustmentsAfterToneLinearRgbInto(r, g, b, context, true, adjusted);
           r = adjusted[0]; g = adjusted[1]; b = adjusted[2];
         }
         convertLinearProPhotoToOutputRgbInto(r, g, b, outputColorProfile, converted);

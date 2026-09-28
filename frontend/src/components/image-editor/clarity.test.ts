@@ -5,6 +5,9 @@ import {
   applyLuminanceGainPreservingAboveOneLinearRgb,
   applyToneAdjustmentsLinearRgbRange,
   buildToneAdjustmentGamma20GainLut,
+  sampleToneAdjustmentGamma20GainLut,
+  TONE_GAMMA20_GAIN_LUT_FINAL_SIZE,
+  TONE_GAMMA20_GAIN_LUT_PREVIEW_SIZE,
   proPhotoLinearLuminance,
   toneLinearIntensity,
   type ToneAdjustmentStage,
@@ -78,6 +81,32 @@ function buildExactToneSample(
 }
 
 describe("buildImageEditToneSample", () => {
+  test("uses fixed preview/final Tone LUT densities without adaptive cells", () => {
+    const sample = makeSample(2, 1, [
+      [0.5, 0.5, 0.5],
+      [1, 1, 1],
+    ], 4);
+    const context = buildInteractiveColorAdjustmentContextFromLinearRgbSample(
+      sample,
+      0, 0, 0, 0, -100, 0, 0, 0, 0, true, 0, 0,
+    );
+    const previewLut = buildToneAdjustmentGamma20GainLut(
+      context, "white-balance", "after-tone", 4, TONE_GAMMA20_GAIN_LUT_PREVIEW_SIZE,
+    );
+    const finalLut = buildToneAdjustmentGamma20GainLut(
+      context, "white-balance", "after-tone", 4, TONE_GAMMA20_GAIN_LUT_FINAL_SIZE,
+    );
+    expect(previewLut).not.toBeNull();
+    expect(finalLut).not.toBeNull();
+    // RAW range 0..4 adds one fixed endpoint-alignment sample so T=1 is exact.
+    expect(previewLut?.values).toHaveLength(4097);
+    expect(finalLut?.values).toHaveLength(16385);
+    expect((previewLut as unknown as { adaptiveCells?: unknown }).adaptiveCells).toBe(undefined);
+    expect((finalLut as unknown as { adaptiveCells?: unknown }).adaptiveCells).toBe(undefined);
+    expect(sampleToneAdjustmentGamma20GainLut(previewLut!, 1)).toBeCloseTo(1, 12);
+    expect(sampleToneAdjustmentGamma20GainLut(finalLut!, 1)).toBeCloseTo(1, 12);
+  });
+
   test("matches the direct tone pipeline for SDR samples", () => {
     const sample = makeSample(4, 3, [
       [0.01, 0.03, 0.08],
@@ -233,8 +262,8 @@ describe("buildImageEditToneSample", () => {
       [0.5, 0.5, 0.5],
       [0.98, 0.98, 0.98],
       [0.995, 0.995, 0.995],
+      [0.997, 0.997, 0.997],
       [0.999, 0.999, 0.999],
-      [0.9999, 0.9999, 0.9999],
       [1.0, 1.0, 1.0],
       [1.0001, 1.0001, 1.0001],
       [1.01, 1.01, 1.01],
@@ -265,7 +294,7 @@ describe("buildImageEditToneSample", () => {
       sample.linearRangeMax,
     );
     expect(lut).not.toBeNull();
-    expect(lut?.values).toHaveLength(4096);
+    expect(lut?.values).toHaveLength(4097);
     expect(lut?.endStage).toBe("after-tone");
 
     const actual = buildImageEditToneSample(sample, context);
@@ -280,8 +309,8 @@ describe("buildImageEditToneSample", () => {
       [0.97, 0.97, 0.97],
       [0.99, 0.99, 0.99],
       [0.995, 0.995, 0.995],
+      [0.997, 0.997, 0.997],
       [0.999, 0.999, 0.999],
-      [0.9999, 0.9999, 0.9999],
       [1.0, 1.0, 1.0],
       [1.0001, 1.0001, 1.0001],
       [1.01, 1.01, 1.01],
@@ -312,7 +341,7 @@ describe("buildImageEditToneSample", () => {
       sample.linearRangeMax,
     );
     expect(lut).not.toBeNull();
-    expect(lut?.values).toHaveLength(4096);
+    expect(lut?.values).toHaveLength(4097);
     expect(lut?.endStage).toBe("after-tone");
 
     const actual = buildImageEditToneSample(sample, context);
@@ -360,12 +389,14 @@ describe("buildImageEditToneSample", () => {
       sample.linearRangeMax,
     );
     expect(lut).not.toBeNull();
-    expect(lut?.values).toHaveLength(4096);
+    expect(lut?.values).toHaveLength(4097);
     expect(lut?.endStage).toBe("after-tone");
 
     const actual = buildImageEditToneSample(sample, context);
     const expected = buildExactToneSample(sample, context);
-    expectSamplesClose(actual, expected, 3);
+    // A deliberately near-vertical manual knot is allowed the normal fixed-grid
+    // interpolation error; adaptive per-cell refinement is intentionally gone.
+    expectSamplesClose(actual, expected, 2);
   });
 
   test("handles a later start stage while preserving the sample range metadata", () => {
