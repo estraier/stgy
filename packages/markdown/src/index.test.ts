@@ -2641,6 +2641,55 @@ describe("mdRenderHtml basics", () => {
     );
   });
 
+  it("table separator makes the first row a header", () => {
+    const mdText = "|abc|def|\n|---|---|\n|a|b|";
+    expect(makeHtml(mdText)).toBe(
+      "<table><tr><th>abc</th><th>def</th></tr><tr><td>a</td><td>b</td></tr></table>",
+    );
+  });
+
+  it("table separator sets column alignment", () => {
+    const mdText = "|abc|def|ghi|\n|:---|---:|:---:|\n|a|b|c|";
+    expect(makeHtml(mdText)).toBe(
+      '<table><tr><th>abc</th><th class="align-right">def</th><th class="align-center">ghi</th></tr><tr><td>a</td><td class="align-right">b</td><td class="align-center">c</td></tr></table>',
+    );
+  });
+
+  it("table separator alignment can be overridden by a cell", () => {
+    const mdText = "|abc|def|\n|---|---:|\n|a|><b|";
+    expect(makeHtml(mdText)).toBe(
+      '<table><tr><th>abc</th><th class="align-right">def</th></tr><tr><td>a</td><td class="align-center">b</td></tr></table>',
+    );
+  });
+
+  it("table separator may have fewer columns than the table", () => {
+    const mdText = "|a|b|c|\n|---|\n|d|e|f|";
+    expect(makeHtml(mdText)).toBe(
+      "<table><tr><th>a</th><th>b</th><th>c</th></tr><tr><td>d</td><td>e</td><td>f</td></tr></table>",
+    );
+  });
+
+  it("table separator applies alignment only to columns it specifies", () => {
+    const mdText = "|a|b|c|\n|---|---:|\n|d|e|f|";
+    expect(makeHtml(mdText)).toBe(
+      '<table><tr><th>a</th><th class="align-right">b</th><th>c</th></tr><tr><td>d</td><td class="align-right">e</td><td>f</td></tr></table>',
+    );
+  });
+
+  it("table separator may have more columns than the table", () => {
+    const mdText = "|a|b|\n|---|---:|:---:|\n|d|e|";
+    expect(makeHtml(mdText)).toBe(
+      '<table><tr><th>a</th><th class="align-right">b</th></tr><tr><td>d</td><td class="align-right">e</td></tr></table>',
+    );
+  });
+
+  it("invalid table separator remains a data row", () => {
+    const mdText = "|abc|def|\n|---|oops|\n|a|b|";
+    expect(makeHtml(mdText)).toBe(
+      "<table><tr><td>abc</td><td>def</td></tr><tr><td>---</td><td>oops</td></tr><tr><td>a</td><td>b</td></tr></table>",
+    );
+  });
+
   it("image", () => {
     const mdText = "![tako](/data/tako.jpg)";
     expect(makeHtml(mdText)).toBe(
@@ -2979,6 +3028,20 @@ describe("mdRenderMarkdown basics", () => {
     const mdText = "|=text=|hello world|>>a|=><b=|{colspan=2}{rowspan=3}c|";
     expect(makeMarkdown(mdText)).toBe(
       "|=text=|hello world|>>a|=><b=|{colspan=2}{rowspan=3}c|\n",
+    );
+  });
+
+  it("renders a parsed table separator using the existing table syntax", () => {
+    const mdText = "|abc|def|ghi|\n|:---|---:|:---:|\n|a|b|c|";
+    expect(makeMarkdown(mdText)).toBe(
+      "|=abc=|=>>def=|=><ghi=|\n|a|>>b|><c|\n",
+    );
+  });
+
+  it("renders a short table separator using the existing table syntax", () => {
+    const mdText = "|a|b|c|\n|---|\n|d|e|f|";
+    expect(makeMarkdown(mdText)).toBe(
+      "|=a=|=b=|=c=|\n|d|e|f|\n",
     );
   });
 

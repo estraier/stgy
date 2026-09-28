@@ -903,12 +903,38 @@ export function parseMarkdown(mdText: string): MdNode[] {
   }
   function flushTable() {
     if (currTable.length) {
-      const makeCell = (cell: string): MdElementNode => {
+      const parseSeparatorRow = (
+        row: string[],
+      ): ("right" | "center" | undefined)[] | null => {
+        const aligns: ("right" | "center" | undefined)[] = [];
+        for (const cell of row) {
+          const raw = cell.trim();
+          if (!/^:?-{3,}:?$/.test(raw)) return null;
+          if (raw.startsWith(":") && raw.endsWith(":")) {
+            aligns.push("center");
+          } else if (raw.endsWith(":")) {
+            aligns.push("right");
+          } else {
+            aligns.push(undefined);
+          }
+        }
+        return aligns;
+      };
+      const separatorAligns =
+        currTable.length >= 2 ? parseSeparatorRow(currTable[1]!) : null;
+      const tableRows = separatorAligns
+        ? [currTable[0]!, ...currTable.slice(2)]
+        : currTable;
+      const makeCell = (
+        cell: string,
+        forceHeader = false,
+        defaultAlign?: "right" | "center",
+      ): MdElementNode => {
         const raw = cell.trim();
         const mHeader = raw.match(/^=\s*(.*?)\s*=$/);
-        const isHeader = !!mHeader;
-        let content = isHeader ? mHeader[1]! : raw;
-        let align: "right" | "center" | undefined;
+        const isHeader = forceHeader || !!mHeader;
+        let content = mHeader ? mHeader[1]! : raw;
+        let align: "right" | "center" | undefined = defaultAlign;
         let colspan: number | undefined;
         let rowspan: number | undefined;
         let rest = content.replace(/^\s+/, "");
@@ -948,10 +974,16 @@ export function parseMarkdown(mdText: string): MdNode[] {
       nodes.push(
         makeElement(
           "table",
-          currTable.map((row) =>
+          tableRows.map((row, rowIndex) =>
             makeElement(
               "tr",
-              row.map((cell) => makeCell(cell)),
+              row.map((cell, columnIndex) =>
+                makeCell(
+                  cell,
+                  !!separatorAligns && rowIndex === 0,
+                  separatorAligns?.[columnIndex],
+                ),
+              ),
               undefined,
               tableStartLine,
               tableStartChar,
