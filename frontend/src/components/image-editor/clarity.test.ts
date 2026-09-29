@@ -299,10 +299,14 @@ describe("buildImageEditToneSample", () => {
     const actual = buildImageEditToneSample(sample, context);
     const expected = buildExactToneSample(sample, context);
     expectSamplesClose(actual, expected, 3);
-    expect(actual.data[9 * 3]).toBeCloseTo(1, 6);
+    // Negative Highlight with M > 1 now treats input T=1 as an interior point
+    // of the extended curve. Verify that the shared LUT still hits the direct
+    // Tone result exactly at the aligned T=1 sample instead of assuming
+    // identity there.
+    expect(actual.data[9 * 3]).toBeCloseTo(expected.data[9 * 3] ?? 0, 6);
   });
 
-  test("keeps a negative Highlight shoulder inside the shared Tone LUT", () => {
+  test("keeps an extended negative Highlight curve inside the shared Tone LUT", () => {
     const sample = makeSample(4, 3, [
       [0.9, 0.9, 0.9],
       [0.97, 0.97, 0.97],
@@ -346,7 +350,10 @@ describe("buildImageEditToneSample", () => {
     const actual = buildImageEditToneSample(sample, context);
     const expected = buildExactToneSample(sample, context);
     expectSamplesClose(actual, expected, 3);
-    expect(actual.data[6 * 3]).toBeCloseTo(1, 6);
+    // T=1 is no longer the end of negative Highlight when P99.8 exceeds 1; it
+    // lies inside [0,U]. The LUT must nevertheless reproduce the direct curve
+    // at the exact T=1 sample.
+    expect(actual.data[6 * 3]).toBeCloseTo(expected.data[6 * 3] ?? 0, 6);
   });
 
   test("keeps a steep manual Tone Curve knot inside the shared Tone LUT", () => {
