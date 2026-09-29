@@ -154,6 +154,8 @@ Consecutive lines enclosed with ``|`` form a table, with columns separated by ``
 |Chiba|The prefectural government is in Chiba City. Famous for peanuts.|>>628 people|{rowspan=2}Rural|
 |Saitama|The prefectural government is in Saitama City. No particular distinguishing feature.|>>770 people|
 
+You can use a separator like ``|---|---|`` at the second line.  It makes all cells in the first line headers.  Contents like ``:---``, ``---:``, and ``:---:`` mean left alignment, right alignment, and center alignment respectively for the succeeding rows.
+
 ## Hyperlinks
 
 To write a hyperlink, enclose the anchor text in ``[`` and ``]``, then immediately write the URL enclosed in ``(`` and ``)``. You can link both to pages inside STGY and to external sites.
