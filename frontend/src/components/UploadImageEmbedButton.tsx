@@ -195,6 +195,7 @@ const UploadImageEmbedButton = forwardRef<UploadImageEmbedButtonHandle, Props>(
             "border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 " +
             "disabled:opacity-50 leading-none"
           }
+          onMouseDown={(event) => event.preventDefault()}
           onClick={pickFiles}
           disabled={disabled}
           title={title}

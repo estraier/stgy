@@ -46,6 +46,7 @@ export default function ExistingImageEmbedButton({
       <button
         type="button"
         className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
+        onMouseDown={(event) => event.preventDefault()}
         onClick={handleOpen}
         disabled={disabled}
         title={title}
