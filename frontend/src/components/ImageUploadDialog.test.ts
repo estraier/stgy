@@ -243,9 +243,25 @@ describe("image editor tone characterization", () => {
     }
     expect(imageEditor.applyHighlightLinear(0.4, 100)).toBeGreaterThan(0.4);
     expect(imageEditor.applyHighlightLinear(0.4, -100)).toBeLessThan(0.4);
-    // Extended RAW highlights are left for White/final rolloff rather than clipped here.
+    // Without measured >1 headroom, preserve the legacy display-range behavior.
     expect(imageEditor.applyHighlightLinear(1.2, -100)).toBe(1.2);
     expect(imageEditor.applyHighlightLinear(1.2, 100)).toBe(1.2);
+  });
+
+  test("negative Highlight extends toward P99.8 while preserving the x=0.8 response", () => {
+    const legacyAtAnchor = imageEditor.applyHighlightLinear(0.8, -50);
+    expect(imageEditor.applyHighlightLinear(0.8, -50, 4)).toBeCloseTo(legacyAtAnchor, 12);
+
+    // For H=-50 and M=4, U=2.5. Values below U follow the weakened extended
+    // mirror-gamma curve; U and brighter outliers remain untouched.
+    expect(imageEditor.applyHighlightLinear(1.0, -50, 4)).toBeCloseTo(0.655879754876, 11);
+    expect(imageEditor.applyHighlightLinear(1.2, -50, 4)).toBeCloseTo(0.806563189761, 11);
+    expect(imageEditor.applyHighlightLinear(2.0, -50, 4)).toBeCloseTo(1.54153150862, 11);
+    expect(imageEditor.applyHighlightLinear(2.5, -50, 4)).toBe(2.5);
+    expect(imageEditor.applyHighlightLinear(4.0, -50, 4)).toBe(4);
+
+    // Positive Highlight still leaves extended headroom unchanged.
+    expect(imageEditor.applyHighlightLinear(1.2, 50, 4)).toBe(1.2);
   });
 
   test("preserves extended-range Tone and 3:5:2 intensity-preserving Color behavior", () => {
@@ -521,6 +537,21 @@ describe("image editor RGB16 characterization", () => {
       hasVibrance: true,
       hasSaturationOrVibrance: true,
     });
+  });
+
+  test("measures Highlight P99.8 immediately before the Highlight stage", () => {
+    const pixelCount = 1000;
+    const data = new Float32Array(pixelCount * 3);
+    data.fill(1);
+
+    const context = imageEditor.buildColorAdjustmentContextFromLinearRgbSample(
+      { data, width: pixelCount, height: 1 },
+      0, 0, 1, 100, -50, 0, 0, 0, 0,
+    );
+
+    // Exposure maps 1 -> 2. Shadow +100 has gamma=0.4 and continues above 1
+    // along its tangent, so the Highlight input is uniformly 1.4.
+    expect(context.highlightInputP998).toBeCloseTo(1.4, 12);
   });
 
   test("keeps Exposure in the Tone context without an Exposure-specific rolloff", () => {

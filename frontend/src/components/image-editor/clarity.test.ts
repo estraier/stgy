@@ -2,7 +2,6 @@ import { buildImageEditPreviewSliderPrefixSample } from "./render";
 import { buildImageEditClarityMapFromToneSample, buildImageEditToneSample } from "./clarity";
 import { buildInteractiveColorAdjustmentContextFromLinearRgbSample } from "./analysis";
 import {
-  applyLuminanceGainPreservingAboveOneLinearRgb,
   applyToneAdjustmentsLinearRgbRange,
   buildToneAdjustmentGamma20GainLut,
   sampleToneAdjustmentGamma20GainLut,
@@ -485,28 +484,66 @@ describe("buildImageEditToneSample", () => {
 
 
 describe("Clarity Tone intensity", () => {
-  test("uses the shared 3:5:2 axis for negative Clarity and the >1 boundary", () => {
-    const sample = makeSample(3, 1, [
-      [0, 0, 0],
-      [0, 1.5, 0],
-      [0, 0, 0],
+  test("uses the shared 3:5:2 axis for inverse CLAHE", () => {
+    const sample = makeSample(6, 1, [
+      [2.5, 0, 0],   // 0.3 * 2.5 = 0.75
+      [0, 1.5, 0],   // 0.5 * 1.5 = 0.75
+      [0.1, 0.1, 0.1],
+      [0.25, 0.25, 0.25],
+      [0.5, 0.5, 0.5],
+      [0.95, 0.95, 0.95],
     ], 4);
 
-    // This saturated green is above display white in colorimetric ProPhoto Y,
-    // but remains below white on the shared editorial Tone axis. Clarity must
-    // therefore process it, just like the Tone controls do.
+    // The saturated green is above display white in colorimetric ProPhoto Y,
+    // but both first pixels have the same value on the shared editorial Tone
+    // axis, so inverse CLAHE must give them exactly the same gain.
     expect(proPhotoLinearLuminance(0, 1.5, 0)).toBeGreaterThan(1);
+    expect(toneLinearIntensity(2.5, 0, 0)).toBeCloseTo(0.75, 12);
     expect(toneLinearIntensity(0, 1.5, 0)).toBeCloseTo(0.75, 12);
 
     const map = buildImageEditClarityMapFromToneSample(sample, -100);
     expect(map).not.toBeNull();
-    const gain = map?.gain[1] ?? 1;
-    expect(gain).toBeCloseTo(0.35 / 0.75, 6);
+    expect(map?.gain[0] ?? 0).toBeCloseTo(map?.gain[1] ?? 0, 6);
+  });
 
-    const adjusted = applyLuminanceGainPreservingAboveOneLinearRgb(0, 1.5, 0, gain);
-    expect(adjusted[0]).toBeCloseTo(0, 12);
-    expect(adjusted[1]).toBeCloseTo(0.7, 6);
-    expect(adjusted[2]).toBeCloseTo(0, 12);
+  test("keeps Tone intensity above one unchanged in inverse CLAHE", () => {
+    const sample = makeSample(4, 1, [
+      [0.1, 0.1, 0.1],
+      [0.4, 0.4, 0.4],
+      [0, 2.2, 0], // shared Tone intensity = 1.1
+      [0.9, 0.9, 0.9],
+    ], 4);
+
+    expect(toneLinearIntensity(0, 2.2, 0)).toBeCloseTo(1.1, 12);
+    const map = buildImageEditClarityMapFromToneSample(sample, -100);
+    expect(map).not.toBeNull();
+    expect(map?.gain[2] ?? 0).toBeCloseTo(1, 12);
+  });
+
+  test("negative Clarity depends on the CLAHE histogram, not a local blur neighborhood", () => {
+    const sampleA = makeSample(5, 1, [
+      [0.4, 0.4, 0.4],
+      [0.1, 0.1, 0.1],
+      [0.2, 0.2, 0.2],
+      [0.3, 0.3, 0.3],
+      [0.9, 0.9, 0.9],
+    ], 1);
+    const sampleB = makeSample(5, 1, [
+      [0.4, 0.4, 0.4],
+      [0.9, 0.9, 0.9],
+      [0.3, 0.3, 0.3],
+      [0.2, 0.2, 0.2],
+      [0.1, 0.1, 0.1],
+    ], 1);
+
+    // Both one-tile samples have the same histogram and the same first pixel.
+    // Reordering its neighbours therefore cannot change inverse CLAHE there.
+    const mapA = buildImageEditClarityMapFromToneSample(sampleA, -100);
+    const mapB = buildImageEditClarityMapFromToneSample(sampleB, -100);
+    expect(mapA).not.toBeNull();
+    expect(mapB).not.toBeNull();
+    expect(mapA?.gain[0] ?? 0).toBeCloseTo(mapB?.gain[0] ?? 0, 12);
+    expect(mapA?.gain[0] ?? 0).not.toBeCloseTo(1, 3);
   });
 
   test("gives equal positive-CLAHE gain to colors with equal 3:5:2 intensity", () => {

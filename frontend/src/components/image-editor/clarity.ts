@@ -78,93 +78,68 @@ function computeClarityTileGrid(width: number, height: number) {
   };
 }
 
-function boxBlurToneIntensity(
-  source: Float32Array,
-  valid: Uint8Array | undefined,
-  width: number,
-  height: number,
-  radiusX: number,
-  radiusY: number,
-): Float32Array {
-  const pixelCount = width * height;
-  if (pixelCount <= 0 || source.length !== pixelCount) return source;
-  const rx = Math.max(0, Math.floor(radiusX));
-  const ry = Math.max(0, Math.floor(radiusY));
-  if (rx === 0 && ry === 0) return new Float32Array(source);
+function sampleSpatialClarityLut(
+  luts: Float32Array,
+  bins: number,
+  lutOffset00: number,
+  lutOffset10: number,
+  lutOffset01: number,
+  lutOffset11: number,
+  fx: number,
+  fy: number,
+  bin: number,
+): number {
+  const lut00 = luts[lutOffset00 + bin] ?? 0;
+  const lut10 = luts[lutOffset10 + bin] ?? 0;
+  const lut01 = luts[lutOffset01 + bin] ?? 0;
+  const lut11 = luts[lutOffset11 + bin] ?? 0;
+  const top = lut00 * (1 - fx) + lut10 * fx;
+  const bottom = lut01 * (1 - fx) + lut11 * fx;
+  return top * (1 - fy) + bottom * fy;
+}
 
-  // Keep invalid rotation-border pixels out of the local mean. The two-pass box
-  // filter carries both Tone-intensity sum and valid-pixel count.
-  const horizontalSum = new Float64Array(pixelCount);
-  const horizontalCount = new Uint32Array(pixelCount);
-  for (let y = 0; y < height; y += 1) {
-    const rowOffset = y * width;
-    let left = 0;
-    let right = Math.min(width - 1, rx);
-    let sum = 0;
-    let count = 0;
-    for (let x = left; x <= right; x += 1) {
-      const index = rowOffset + x;
-      if (!valid || valid[index]) {
-        sum += source[index] ?? 0;
-        count += 1;
-      }
-    }
-    for (let x = 0; x < width; x += 1) {
-      const index = rowOffset + x;
-      horizontalSum[index] = sum;
-      horizontalCount[index] = count;
-      const nextLeft = Math.max(0, x + 1 - rx);
-      const nextRight = Math.min(width - 1, x + 1 + rx);
-      while (left < nextLeft) {
-        const leaving = rowOffset + left;
-        if (!valid || valid[leaving]) {
-          sum -= source[leaving] ?? 0;
-          count -= 1;
-        }
-        left += 1;
-      }
-      while (right < nextRight) {
-        right += 1;
-        const entering = rowOffset + right;
-        if (!valid || valid[entering]) {
-          sum += source[entering] ?? 0;
-          count += 1;
-        }
-      }
-    }
+function invertSpatialClarityLut(
+  luts: Float32Array,
+  bins: number,
+  lutOffset00: number,
+  lutOffset10: number,
+  lutOffset01: number,
+  lutOffset11: number,
+  fx: number,
+  fy: number,
+  targetEncoded: number,
+): number {
+  const mappedAtZero = sampleSpatialClarityLut(
+    luts, bins, lutOffset00, lutOffset10, lutOffset01, lutOffset11, fx, fy, 0,
+  );
+  const mappedAtOne = sampleSpatialClarityLut(
+    luts, bins, lutOffset00, lutOffset10, lutOffset01, lutOffset11, fx, fy, bins - 1,
+  );
+  if (mappedAtOne - mappedAtZero <= 1e-8) return targetEncoded;
+  if (targetEncoded <= mappedAtZero) return 0;
+  if (targetEncoded >= mappedAtOne) return 1;
+
+  let low = 0;
+  let high = bins - 1;
+  while (high - low > 1) {
+    const middle = (low + high) >> 1;
+    const mappedMiddle = sampleSpatialClarityLut(
+      luts, bins, lutOffset00, lutOffset10, lutOffset01, lutOffset11, fx, fy, middle,
+    );
+    if (mappedMiddle >= targetEncoded) high = middle;
+    else low = middle;
   }
 
-  const blurred = new Float32Array(pixelCount);
-  for (let x = 0; x < width; x += 1) {
-    let top = 0;
-    let bottom = Math.min(height - 1, ry);
-    let sum = 0;
-    let count = 0;
-    for (let y = top; y <= bottom; y += 1) {
-      const index = y * width + x;
-      sum += horizontalSum[index] ?? 0;
-      count += horizontalCount[index] ?? 0;
-    }
-    for (let y = 0; y < height; y += 1) {
-      const index = y * width + x;
-      blurred[index] = count > 0 ? sum / count : (source[index] ?? 0);
-      const nextTop = Math.max(0, y + 1 - ry);
-      const nextBottom = Math.min(height - 1, y + 1 + ry);
-      while (top < nextTop) {
-        const leaving = top * width + x;
-        sum -= horizontalSum[leaving] ?? 0;
-        count -= horizontalCount[leaving] ?? 0;
-        top += 1;
-      }
-      while (bottom < nextBottom) {
-        bottom += 1;
-        const entering = bottom * width + x;
-        sum += horizontalSum[entering] ?? 0;
-        count += horizontalCount[entering] ?? 0;
-      }
-    }
-  }
-  return blurred;
+  const mappedLow = sampleSpatialClarityLut(
+    luts, bins, lutOffset00, lutOffset10, lutOffset01, lutOffset11, fx, fy, low,
+  );
+  const mappedHigh = sampleSpatialClarityLut(
+    luts, bins, lutOffset00, lutOffset10, lutOffset01, lutOffset11, fx, fy, high,
+  );
+  const fraction = mappedHigh > mappedLow
+    ? Math.max(0, Math.min(1, (targetEncoded - mappedLow) / (mappedHigh - mappedLow)))
+    : 0;
+  return (low + fraction) / (bins - 1);
 }
 
 /**
@@ -232,7 +207,7 @@ export function buildImageEditClarityMapFromToneSample(
 
   const valid = toneSample.valid;
   const toneIntensity = new Float32Array(pixelCount);
-  const encodedToneIntensity = normalized > 0 ? new Uint8Array(pixelCount) : null;
+  const encodedToneIntensity = new Uint8Array(pixelCount);
 
   for (let pixelIndex = 0, sourceIndex = 0; pixelIndex < pixelCount; pixelIndex += 1, sourceIndex += 3) {
     if (valid && !valid[pixelIndex]) continue;
@@ -241,52 +216,17 @@ export function buildImageEditClarityMapFromToneSample(
     const b = toneSample.data[sourceIndex + 2] ?? 0;
     const linearToneIntensity = Math.max(0, toneLinearIntensity(r, g, b));
     toneIntensity[pixelIndex] = linearToneIntensity;
-    if (encodedToneIntensity) {
-      encodedToneIntensity[pixelIndex] = Math.max(
-        0,
-        Math.min(255, Math.round(Math.sqrt(clamp01(linearToneIntensity)) * 255)),
-      );
-    }
+    encodedToneIntensity[pixelIndex] = Math.max(
+      0,
+      Math.min(255, Math.round(Math.sqrt(clamp01(linearToneIntensity)) * 255)),
+    );
   }
 
   const { tilesX, tilesY, tileWidth, tileHeight } = computeClarityTileGrid(width, height);
   const gain = new Float32Array(pixelCount);
   gain.fill(1);
 
-  if (normalized < 0) {
-    const t = Math.abs(normalized) / 100;
-    const radiusX = Math.max(1, Math.round(tileWidth / 2));
-    const radiusY = Math.max(1, Math.round(tileHeight / 2));
-    const localMean = boxBlurToneIntensity(
-      toneIntensity,
-      valid,
-      width,
-      height,
-      radiusX,
-      radiusY,
-    );
-    const detailAttenuation = 1 / (1 + 4 * t);
-    for (let pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += 1) {
-      if (valid && !valid[pixelIndex]) continue;
-      const sourceLinearToneIntensity = toneIntensity[pixelIndex] ?? 0;
-      if (sourceLinearToneIntensity > 1) {
-        gain[pixelIndex] = 1;
-        continue;
-      }
-      const meanLinearToneIntensity = localMean[pixelIndex] ?? sourceLinearToneIntensity;
-      const targetLinearToneIntensity = Math.max(
-        0,
-        meanLinearToneIntensity
-          + (sourceLinearToneIntensity - meanLinearToneIntensity) * detailAttenuation,
-      );
-      gain[pixelIndex] = sourceLinearToneIntensity > 1e-8
-        ? targetLinearToneIntensity / sourceLinearToneIntensity
-        : 0;
-    }
-    return { width, height, gain, strength: normalized };
-  }
-
-  const encoded = encodedToneIntensity!;
+  const encoded = encodedToneIntensity;
   const bins = 256;
   const tileCount = tilesX * tilesY;
   const luts = new Float32Array(tileCount * bins);
@@ -381,24 +321,49 @@ export function buildImageEditClarityMapFromToneSample(
         fx = 0;
       }
 
-      const bin = encoded[pixelIndex] ?? 0;
-      const lut00 = luts[(tileY0 * tilesX + tileX0) * bins + bin] ?? 0;
-      const lut10 = luts[(tileY0 * tilesX + tileX1) * bins + bin] ?? 0;
-      const lut01 = luts[(tileY1 * tilesX + tileX0) * bins + bin] ?? 0;
-      const lut11 = luts[(tileY1 * tilesX + tileX1) * bins + bin] ?? 0;
-      const top = lut00 * (1 - fx) + lut10 * fx;
-      const bottom = lut01 * (1 - fx) + lut11 * fx;
-      const encodedEqualized = top * (1 - fy) + bottom * fy;
-      const targetLinearToneIntensity = encodedEqualized * encodedEqualized;
+      const lutOffset00 = (tileY0 * tilesX + tileX0) * bins;
+      const lutOffset10 = (tileY0 * tilesX + tileX1) * bins;
+      const lutOffset01 = (tileY1 * tilesX + tileX0) * bins;
+      const lutOffset11 = (tileY1 * tilesX + tileX1) * bins;
       const sourceLinearToneIntensity = toneIntensity[pixelIndex] ?? 0;
       // Values above display white on the shared 3:5:2 Tone axis remain
       // extended-range data. They participate in the top histogram bin but
-      // CLAHE itself leaves their magnitude intact.
-      gain[pixelIndex] = sourceLinearToneIntensity > 1
-        ? 1
-        : sourceLinearToneIntensity > 1e-8
-          ? targetLinearToneIntensity / sourceLinearToneIntensity
-          : 0;
+      // CLAHE itself leaves their magnitude intact in either direction.
+      if (sourceLinearToneIntensity > 1) {
+        gain[pixelIndex] = 1;
+        continue;
+      }
+
+      let targetLinearToneIntensity = sourceLinearToneIntensity;
+      if (normalized > 0) {
+        const bin = encoded[pixelIndex] ?? 0;
+        const encodedEqualized = sampleSpatialClarityLut(
+          luts, bins, lutOffset00, lutOffset10, lutOffset01, lutOffset11, fx, fy, bin,
+        );
+        targetLinearToneIntensity = encodedEqualized * encodedEqualized;
+      } else {
+        // Negative Clarity is the inverse of the same spatially interpolated
+        // CLAHE mapping used by positive Clarity at the corresponding absolute
+        // strength. Invert after bilinear tile interpolation; interpolating
+        // per-tile inverse LUTs would not be the inverse of the forward map.
+        const targetEncoded = Math.sqrt(clamp01(sourceLinearToneIntensity));
+        const inverseEncoded = invertSpatialClarityLut(
+          luts,
+          bins,
+          lutOffset00,
+          lutOffset10,
+          lutOffset01,
+          lutOffset11,
+          fx,
+          fy,
+          targetEncoded,
+        );
+        targetLinearToneIntensity = inverseEncoded * inverseEncoded;
+      }
+
+      gain[pixelIndex] = sourceLinearToneIntensity > 1e-8
+        ? targetLinearToneIntensity / sourceLinearToneIntensity
+        : 0;
     }
   }
 

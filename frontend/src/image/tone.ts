@@ -660,17 +660,47 @@ export function applyShadowLinear(value: number, shadow: number): number {
   return Math.pow(snapped, gamma);
 }
 
-export function applyHighlightLinear(value: number, highlight: number): number {
+const HIGHLIGHT_EXTENDED_ANCHOR = 0.8;
+
+export function applyHighlightLinear(
+  value: number,
+  highlight: number,
+  inputP998 = 1,
+): number {
   const normalized = clampToneRangeAdjustment(highlight);
   const snapped = snapToneUnitBoundary(value);
-  if (normalized === 0 || !Number.isFinite(snapped) || snapped <= 0 || snapped >= 1) return snapped;
+  if (normalized === 0 || !Number.isFinite(snapped) || snapped <= 0) return snapped;
 
-  // White-side mirror of a gamma correction. Positive Highlight bends the
-  // curve above identity; negative Highlight bends it below identity. Keep
-  // extended RAW values above display white unchanged; >1 highlight recovery
-  // is handled separately from the display-range Highlight/White curves.
+  // White-side mirror of a gamma correction. Positive Highlight keeps the
+  // existing display-range behavior and leaves >1 headroom untouched.
   const gamma = Math.pow(HIGHLIGHT_MAX_GAMMA, normalized / 100);
-  return 1 - Math.pow(1 - snapped, gamma);
+  if (normalized > 0 || !(Number.isFinite(inputP998) && inputP998 > 1)) {
+    if (snapped >= 1) return snapped;
+    return 1 - Math.pow(1 - snapped, gamma);
+  }
+
+  // Negative Highlight extends its working range into real RAW headroom. M is
+  // P99.8 of Tone intensity immediately before the Highlight stage. Slider
+  // magnitude controls how far the upper endpoint moves from 1 toward M:
+  // -1 reaches 1% of that interval, while -100 reaches M itself.
+  const strength = -normalized / 100;
+  const upper = 1 + strength * (inputP998 - 1);
+  if (!(upper > 1) || snapped >= upper) return snapped;
+
+  // Expanding [0,1] to [0,upper] with the same gamma would make ordinary
+  // display-range highlights too dark when M is large. Weaken the gamma so
+  // x=0.8 produces exactly the same result as the legacy [0,1] curve.
+  const anchor = HIGHLIGHT_EXTENDED_ANCHOR;
+  const anchorOutput = 1 - Math.pow(1 - anchor, gamma);
+  const numerator = Math.log1p(-anchorOutput / upper);
+  const denominator = Math.log1p(-anchor / upper);
+  const extendedGamma = denominator !== 0 ? numerator / denominator : gamma;
+  if (!(Number.isFinite(extendedGamma) && extendedGamma > 0)) {
+    if (snapped >= 1) return snapped;
+    return 1 - Math.pow(1 - snapped, gamma);
+  }
+
+  return upper * (1 - Math.pow(1 - snapped / upper, extendedGamma));
 }
 
 /**
@@ -1053,6 +1083,7 @@ export function applyToneLinearToRgb(
   flags?: ToneAdjustmentFlags,
   black = 0,
   white = 0,
+  highlightInputP998 = 1,
 ): [number, number, number] {
   const hasExposure = flags?.hasExposure ?? factor !== 1;
   const hasShadow = flags?.hasShadow ?? shadow !== 0;
@@ -1072,7 +1103,7 @@ export function applyToneLinearToRgb(
   if (hasScaledLog) luminance = applyScaledLogLinearExtended(luminance, scaledLog);
   if (hasSigmoid) luminance = applySigmoidLinearExtended(luminance, sigmoid);
   if (hasShadow) luminance = applyShadowLinear(luminance, shadow);
-  if (hasHighlight) luminance = applyHighlightLinear(luminance, highlight);
+  if (hasHighlight) luminance = applyHighlightLinear(luminance, highlight, highlightInputP998);
   if (hasBlack) luminance = applyBlackLinear(luminance, black);
   if (hasWhite) luminance = applyWhiteLinear(luminance, white);
   if (hasToneCurve) luminance = sampleToneCurveSpline(flags?.toneCurve ?? null, luminance);
@@ -1097,6 +1128,7 @@ export function applyToneLinearToRgbInto(
   flags?: ToneAdjustmentFlags,
   black = 0,
   white = 0,
+  highlightInputP998 = 1,
 ): void {
   const hasExposure = flags?.hasExposure ?? factor !== 1;
   const hasShadow = flags?.hasShadow ?? shadow !== 0;
@@ -1122,7 +1154,7 @@ export function applyToneLinearToRgbInto(
   if (hasScaledLog) luminance = applyScaledLogLinearExtended(luminance, scaledLog);
   if (hasSigmoid) luminance = applySigmoidLinearExtended(luminance, sigmoid);
   if (hasShadow) luminance = applyShadowLinear(luminance, shadow);
-  if (hasHighlight) luminance = applyHighlightLinear(luminance, highlight);
+  if (hasHighlight) luminance = applyHighlightLinear(luminance, highlight, highlightInputP998);
   if (hasBlack) luminance = applyBlackLinear(luminance, black);
   if (hasWhite) luminance = applyWhiteLinear(luminance, white);
   if (hasToneCurve) luminance = sampleToneCurveSpline(flags?.toneCurve ?? null, luminance);
@@ -1155,6 +1187,10 @@ export type ColorAdjustmentContext = {
   factor: number;
   shadow: number;
   highlight: number;
+  // P99.8 of Tone intensity immediately before Highlight. Negative Highlight
+  // uses this to extend recovery above display white without depending on its
+  // own output.
+  highlightInputP998?: number;
   black: number;
   white: number;
   // Saturation and final display shoulders are percentile-derived rolloffs.
@@ -1235,7 +1271,7 @@ function applyToneLuminanceAdjustmentStages(
     adjusted = applyShadowLinear(adjusted, context.shadow);
   }
   if (startIndex <= 5 && endIndex > 5 && context.hasHighlight) {
-    adjusted = applyHighlightLinear(adjusted, context.highlight);
+    adjusted = applyHighlightLinear(adjusted, context.highlight, context.highlightInputP998 ?? 1);
   }
   if (startIndex <= 6 && endIndex > 6 && context.hasBlack) {
     adjusted = applyBlackLinear(adjusted, context.black);
@@ -1464,7 +1500,7 @@ export function applyToneAdjustmentsLinearRgbRange(
     luminance = applyShadowLinear(luminance, context.shadow);
   }
   if (start <= 5 && end > 5 && context.hasHighlight) {
-    luminance = applyHighlightLinear(luminance, context.highlight);
+    luminance = applyHighlightLinear(luminance, context.highlight, context.highlightInputP998 ?? 1);
   }
   if (start <= 6 && end > 6 && context.hasBlack) {
     luminance = applyBlackLinear(luminance, context.black);
@@ -1521,7 +1557,7 @@ export function applyToneAdjustmentsLinearRgbRangeInto(
     luminance = applyShadowLinear(luminance, context.shadow);
   }
   if (start <= 5 && end > 5 && context.hasHighlight) {
-    luminance = applyHighlightLinear(luminance, context.highlight);
+    luminance = applyHighlightLinear(luminance, context.highlight, context.highlightInputP998 ?? 1);
   }
   if (start <= 6 && end > 6 && context.hasBlack) {
     luminance = applyBlackLinear(luminance, context.black);
@@ -1563,6 +1599,7 @@ export function applyToneAdjustmentsLinearRgb(
     context,
     context.black,
     context.white,
+    context.highlightInputP998 ?? 1,
   );
 }
 
@@ -1586,6 +1623,7 @@ export function applyToneAdjustmentsLinearRgbInto(
     context,
     context.black,
     context.white,
+    context.highlightInputP998 ?? 1,
   );
 }
 

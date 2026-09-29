@@ -130,6 +130,48 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
   const count = Math.floor(data.length / 3);
   const adjusted: [number, number, number] = [0, 0, 0];
 
+  // Negative Highlight can recover real headroom above display white. Measure
+  // M=P99.8 on the fixed analysis sample immediately before the Highlight
+  // stage (WB -> Exposure -> Midtone -> Contrast -> Shadow), so Highlight's
+  // own output cannot feed back into its working range.
+  let highlightInputP998 = 1;
+  if (normalizedHighlight < 0) {
+    const highlightInputValues: number[] = [];
+    for (let pixel = 0; pixel < count; pixel += 1) {
+      if (ignoreInvalid && valid && !valid[pixel]) continue;
+      const i = pixel * 3;
+      applyToneLinearToRgbInto(
+        data[i] ?? 0,
+        data[i + 1] ?? 0,
+        data[i + 2] ?? 0,
+        gains,
+        hasWhiteBalance,
+        factor,
+        normalizedShadow,
+        normalizedHighlight,
+        normalizedScaledLog,
+        normalizedSigmoid,
+        adjusted,
+        {
+          hasExposure,
+          hasShadow,
+          hasHighlight: false,
+          hasBlack: false,
+          hasWhite: false,
+          hasToneCurve: false,
+          toneCurve: null,
+          hasScaledLog,
+          hasSigmoid,
+        },
+      );
+      const value = toneLinearIntensity(adjusted[0], adjusted[1], adjusted[2]);
+      if (Number.isFinite(value)) highlightInputValues.push(value);
+    }
+    if (highlightInputValues.length) {
+      highlightInputP998 = percentileFromValues(highlightInputValues, 99.8);
+    }
+  }
+
   const activeWhite = hasWhite;
   // Negative White rescues >1 headroom. Keep a pre-White Tone result only for
   // the final-rolloff analysis so White's own compression cannot weaken or
@@ -164,6 +206,7 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
         },
         normalizedBlack,
         normalizedWhite,
+        highlightInputP998,
       );
       preWhiteToneAdjusted[i] = adjusted[0];
       preWhiteToneAdjusted[i + 1] = adjusted[1];
@@ -208,6 +251,7 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
       },
       normalizedBlack,
       normalizedWhite,
+      highlightInputP998,
     );
     toneAdjusted[i] = adjusted[0];
     toneAdjusted[i + 1] = adjusted[1];
@@ -276,6 +320,7 @@ function buildColorAdjustmentContextFromLinearRgbSampleInternal(
     factor,
     shadow: normalizedShadow,
     highlight: normalizedHighlight,
+    highlightInputP998,
     black: normalizedBlack,
     white: normalizedWhite,
     saturationRolloff,
