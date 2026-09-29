@@ -156,6 +156,13 @@ export default function LocalTrackStudio() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<TrackResult | null>(null);
   const [downloadUrls, setDownloadUrls] = useState<ObjectUrlSet>({});
+  const [helpHref, setHelpHref] = useState("/pub/0000000000010053");
+
+  useEffect(() => {
+    if (getBrowserLocale()?.toLowerCase().startsWith("ja")) {
+      setHelpHref("/pub/0000000000020053");
+    }
+  }, []);
 
   const revokeUrls = useCallback((urls: ObjectUrlSet) => {
     if (urls.raw) URL.revokeObjectURL(urls.raw);
@@ -495,6 +502,20 @@ export default function LocalTrackStudio() {
             <span className={error ? "text-sm text-red-600" : "text-sm text-slate-500"}>
               {error || status}
             </span>
+          </div>
+
+          <div className="mt-5 rounded-xl border border-dashed border-slate-300 bg-white px-4 py-4 sm:px-5">
+            <div className="text-sm font-semibold text-slate-900">Usage</div>
+            <ol className="mt-2 grid gap-2 text-sm leading-5 text-slate-600 sm:grid-cols-3 sm:gap-4">
+              <li><span className="font-medium text-slate-900">1.</span> Choose one or more track files.</li>
+              <li><span className="font-medium text-slate-900">2.</span> Set Trim, Privacy, or Downsample options as needed.</li>
+              <li><span className="font-medium text-slate-900">3.</span> Click Convert and preview, then review or download the result.</li>
+            </ol>
+            <div className="mt-3 border-t border-slate-200 pt-3 text-sm">
+              <a href={helpHref} className="font-medium text-sky-700 hover:underline">
+                Full help
+              </a>
+            </div>
           </div>
         </section>
 

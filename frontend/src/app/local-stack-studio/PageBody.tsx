@@ -10,6 +10,7 @@ import {
 import type { DecodedRgbImage16, ImageEditOutputColorProfile } from "@/components/image-editor/types";
 import type { ImageEditClarityMap } from "@/components/image-editor/clarity";
 import type { DefringeAnalysisMap } from "@/components/image-editor/defringe";
+import { getBrowserLocale } from "@/utils/locale";
 import {
   mountLocalStackStudio,
   type LocalStackStudioEditRequest,
@@ -39,6 +40,13 @@ function dataTransferContainsFiles(dataTransfer: DataTransfer): boolean {
 
 export default function PageBody() {
   const [editRequest, setEditRequest] = useState<LocalStackStudioEditRequest | null>(null);
+  const [helpHref, setHelpHref] = useState("/pub/0000000000010052");
+
+  useEffect(() => {
+    if (getBrowserLocale()?.toLowerCase().startsWith("ja")) {
+      setHelpHref("/pub/0000000000020052");
+    }
+  }, []);
 
   const handleInputDrop = useCallback((event: DragEvent<HTMLElement>) => {
     if (!dataTransferContainsFiles(event.dataTransfer)) return;
@@ -192,6 +200,11 @@ export default function PageBody() {
               <li><span className="font-medium text-gray-900">2.</span> Choose Merge and Alignment, then click Process.</li>
               <li><span className="font-medium text-gray-900">3.</span> Fine-tune the tone, then choose a format and download.</li>
             </ol>
+            <div className="mt-3 border-t border-gray-200 pt-3 text-sm">
+              <a href={helpHref} className="font-medium text-sky-700 hover:underline">
+                Full help
+              </a>
+            </div>
           </div>
 
           <section id="progress-panel" className="mt-5 hidden min-h-28 flex-col items-center justify-center gap-3 [&:not(.hidden)]:flex rounded-xl border border-gray-200 bg-white text-gray-600" aria-live="polite">

@@ -219,9 +219,12 @@ describe("image editor tone characterization", () => {
       expect(imageEditor.applyShadowLinear(x, 100)).toBeCloseTo(Math.pow(x, 1 / 2.5), 12);
       expect(imageEditor.applyShadowLinear(x, 0)).toBeCloseTo(x, 12);
     }
-    // Shadow is confined to display-referred luminance; RAW headroom is preserved.
-    expect(imageEditor.applyShadowLinear(1.2, -100)).toBe(1.2);
-    expect(imageEditor.applyShadowLinear(1.2, 100)).toBe(1.2);
+    // Extended values continue along the tangent at x=1 rather than changing
+    // slope abruptly back to identity.
+    expect(imageEditor.applyShadowLinear(1.2, -100)).toBeCloseTo(1 + 2.5 * 0.2, 12);
+    expect(imageEditor.applyShadowLinear(1.2, 100)).toBeCloseTo(1 + (1 / 2.5) * 0.2, 12);
+    expect(imageEditor.applyShadowLinear(2, -100)).toBeCloseTo(3.5, 12);
+    expect(imageEditor.applyShadowLinear(2, 100)).toBeCloseTo(1.4, 12);
   });
 
   test("Highlight is the white-side gamma mirror with reciprocal max gamma 5", () => {

@@ -649,13 +649,14 @@ export function applySigmoidLinearAtMidpoint(
 export function applyShadowLinear(value: number, shadow: number): number {
   const normalized = clampToneRangeAdjustment(shadow);
   const snapped = snapToneUnitBoundary(value);
-  if (normalized === 0 || !Number.isFinite(snapped) || snapped <= 0 || snapped >= 1) return snapped;
+  if (normalized === 0 || !Number.isFinite(snapped) || snapped <= 0) return snapped;
 
   // Pure gamma correction over display-referred luminance [0, 1]. Positive
   // Shadow lifts dark tones with gamma < 1; negative Shadow deepens them with
-  // the reciprocal gamma. Values above display white stay untouched so RAW
-  // highlight headroom remains available to later extended-highlight handling.
+  // the reciprocal gamma. Above display white, continue along the tangent at
+  // x=1 so the curve remains C1-continuous while preserving extended values.
   const gamma = Math.pow(SHADOW_MAX_GAMMA, -normalized / 100);
+  if (snapped > 1) return 1 + gamma * (snapped - 1);
   return Math.pow(snapped, gamma);
 }
 

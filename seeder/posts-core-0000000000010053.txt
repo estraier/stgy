@@ -1,0 +1,169 @@
+id: 0000000000010053
+ownedBy: 0000000000000001
+publishedAt: 2025-01-01 00:00:53+00
+allowLikes: false
+allowReplies: false
+tags: stgy-help
+locale: en-US
+content:<<____EOF____
+# Using Local Track Studio
+
+This is the help page for Local Track Studio. It explains how to load route data such as FIT, GPX, and TrackJSON, then convert, merge, apply privacy processing, downsample, display it on a map, analyze it, and save it in several formats.
+
+<!TOC!>
+
+## Overview
+
+Local Track Studio is a tool for viewing, converting, and analyzing route data recorded by GPS devices, cycling computers, and similar equipment in a web browser. It loads FIT, GPX, TrackJSON, and compressed TrackJSON into a common route-data representation and lets you inspect a map, ride summary, graphs, and various statistics.
+
+You can optionally merge several loaded files into one route, trim time from the beginning and end, obfuscate coordinates near the start and finish to hide places such as your home, or reduce the number of route points. The processed data can be saved as TrackJSON, compressed TrackJSON, GPX, or FIT.
+
+The main route-conversion and analysis processing is performed in the browser. When adding place-name labels for representative TrackJSON points such as the start, finish, or center, Local Track Studio may use STGY's reverse-geocoding function. Results are not automatically saved to STGY's route storage, so Download any file you need.
+
+## Basic usage
+
+Open [Local Track Studio](/local-track-studio) and select one or more route files under “Track files”. Supported formats are FIT, GPX, TrackJSON, and TRJGZ. In addition to the usual ``.trj`` extension, TrackJSON can also be loaded from files ending in ``.json`` or ``.geojson``.
+
+Normally, you can simply click “Convert and preview” without changing any additional settings. After conversion, the page displays a map, Ride summary, and Download section. If “Show analysis” is on, detailed Analysis appears below them.
+
+Before converting, enable “Trim activity” if you want to remove part of the route, “Obfuscate privacy” if you want to hide the location of your home or workplace, or “Downsample” if you want to reduce the number of route points. If multiple files are selected, Local Track Studio first merges them into one Activity, then applies Trim, Privacy, and Downsample in that order.
+
+Click “Reset” to return the settings and selected files to their initial state.
+
+## Input formats
+
+Local Track Studio can read the following route formats.
+
+- FIT: A binary format widely used by Garmin and other cycling computers and sports devices. In addition to GPS coordinates, it can contain many sensor values such as heart rate, cadence, power, and temperature.
+- GPX: A common XML interchange format for GPS routes. It can contain GPS coordinates, elevation, timestamps, and related data.
+- TrackJSON: A JSON format used by STGY to display routes. Its primary extension is ``.trj``. Based on GeoJSON, it can contain time, distance, elevation, heart rate, cadence, power, and other series together with Activity metadata.
+- TRJGZ: A gzip-compressed TrackJSON format. Its extension is ``.trjgz``.
+
+Regardless of the input format, Local Track Studio first converts it into a common internal Activity representation, then performs merging, processing, statistics, display, and export. This means, for example, that you can convert FIT to GPX or GPX to TrackJSON.
+
+TRJGZ loading uses the browser's gzip decompression support. Older browsers without that capability may be unable to read TRJGZ files.
+
+## Merging multiple files
+
+“Track files” lets you select several files at once. When multiple files are selected, Local Track Studio parses each one and then merges them into a single Activity. You can mix different formats such as FIT, GPX, and TrackJSON in the same selection.
+
+During merging, route points from all files are reorganized into a common time and distance representation so they can be handled as one Activity. The resulting title is based on the first filename with ``merged`` added. Every downloadable format is then generated from this merged Activity.
+
+If you merge files spanning multiple days, or files that should really be treated as separate Activities, the map and statistics are also calculated as one Activity. If you only want to convert several independent files in bulk, process them separately instead.
+
+## Trim activity
+
+Turn on “Trim activity” to remove time from the beginning and end of an Activity in seconds. “Start seconds” is the number of seconds to remove from the beginning, and “End seconds” is the number to remove from the end.
+
+For example, set Start seconds to 120 to remove the first two minutes after recording began. If you forgot to stop recording for three minutes after finishing, set End seconds to 180. You can set both at the same time.
+
+Trim does more than simply hide part of the route on the map. It removes the route points in the specified ranges and renormalizes the remaining Activity so time and distance begin again from its new start. Total distance, elapsed time, moving time, and other statistics are recalculated from the remaining section.
+
+Trim requires timestamps in the route points. Conversion cannot proceed if the sum of Start and End exceeds the total Activity duration or if the settings would remove every point.
+
+## Obfuscate privacy
+
+Cycling and running logs often begin or end at home or work, and publishing them unchanged can reveal those locations. “Obfuscate privacy” is designed to hide such places.
+
+“Start m” is the distance to obfuscate from the beginning, and “End m” is the distance to obfuscate from the end. Both default to 1000 m. For example, if Start m is 1000, the coordinates of route points within the first 1000 m are collapsed to the coordinates of the boundary point around 1000 m. End m performs the same process from the finish side.
+
+This process does not delete the route points themselves. Instead, it replaces their latitude and longitude within the selected range with the boundary coordinates. Timestamps, heart rate, power, and other non-coordinate measurements remain. If the start-side and end-side distances you specify are larger than the whole route, much of the location data may be collapsed to a single point, so choose these values carefully.
+
+Privacy processing takes place before Downsample. The processed coordinates are used not only on the converted map but also in downloaded TrackJSON, TRJGZ, GPX, and FIT files. When making a file for publication, check the map after processing as well.
+
+If you always obfuscate exactly the same distance from exactly the same starting point, comparing several published logs may still help someone infer the original location. Consider varying the distance according to the purpose of publication and the route.
+
+## Downsample
+
+If a GPS device records once per second, a long Activity can contain tens of thousands of route points. When you do not need to preserve every point, turn on “Downsample” to reduce the number of points.
+
+“Max points” is the maximum number of points to keep after conversion. The default is 10000. If the original point count is already at or below Max points, Local Track Studio does not unnecessarily add or remove points.
+
+“Strategy” offers “Uniform” and “Aggregate”. “Uniform” selects points from the original route at roughly even intervals. Because the values of the selected samples are preserved as-is, this is an easy-to-understand method when you want to thin the original samples directly.
+
+“Aggregate” creates representative points for sections and aggregates sensor values and other measurements. It is useful when you want to reduce a large number of points while preserving the overall tendency of measurements within each section. Aggregate is the default in Local Track Studio.
+
+Turn on “Preserve endpoints” to ensure that the original first and last points are always retained even after Downsample. Normally, it is best to leave this enabled.
+
+Downsample is not merely a display setting. Downloaded TrackJSON, TRJGZ, GPX, and FIT files are also generated from the downsampled points. If you also need a file containing every original sample, keep the original input file separately before conversion.
+
+## Convert and preview
+
+After configuring the settings, click “Convert and preview”. Local Track Studio parses the input formats, merges multiple files if necessary, and applies Trim, Privacy, and Downsample in order. It then creates TrackJSON, GPX, and FIT output data and displays the map and statistics.
+
+TrackJSON can contain representative points such as the start, finish, midpoint, center, and the point farthest from the start. When available, Local Track Studio reverse-geocodes those coordinates and adds place-name labels according to the browser's language setting.
+
+After processing, the map heading shows a breakdown of the input formats and the number of displayed points. If several formats were mixed, for example, the counts of FIT, GPX, TrackJSON, and other inputs are shown together.
+
+## Map display
+
+The converted route is displayed on a map. Local Track Studio uses CyclOSM as the initial base map and STGY's route renderer to display the route, representative points, measurement graphs, and related information.
+
+Drag the map to move it and zoom in to inspect details. You can also switch to other available base maps using the layer control. If the route contains series such as elevation, heart rate, cadence, power, or speed, graphs linked to the map are also available.
+
+In the graph, you can choose distance, time, sample position, or similar values for the horizontal axis, and switch the vertical axis among measurements contained in the data. This lets you relate positions on the map to positions in the graph and see, for example, the speed, heart rate, or power at a particular place.
+
+Measurements not present in the input data are not displayed. With data such as GPX containing only GPS coordinates and elevation, sensor-based displays available in richer FIT data cannot be shown.
+
+## Ride summary
+
+A “Ride summary” appears next to the map. Only items for which the input data contains values are shown as cards.
+
+Typical items include representative route coordinates, start and end times, Elapsed time, Moving time, Total distance, Average speed, elevation gain and loss, Average HR, Average power, Normalized power, Work, Calories, and Average temperature.
+
+The available information varies with the input format and recording device. For example, a FIT file recorded without a power meter, or a typical GPX file, will not show Power-related items. The absence of an item is not itself a conversion error.
+
+## Show analysis, FTP, and LTHR
+
+When “Show analysis” is on, a more detailed “Analysis” section appears in addition to Ride summary. Turn it off if you do not need the analysis.
+
+“FTP W” specifies Functional Threshold Power in watts and is used to calculate Power zones. The default is 223 W. “LTHR bpm” specifies Lactate Threshold Heart Rate in beats per minute and is used to calculate Heart-rate zones. The default is 151 bpm.
+
+Set FTP and LTHR to values appropriate for you. These values do not rewrite the route file itself; they are reference values used to calculate Analysis and zone displays on the map.
+
+## Analysis
+
+Analysis shows several types of analysis depending on the data contained in the Activity.
+
+“Metadata” shows a summary of metadata obtained from the route, including start and end times, distance, device information, and various statistics.
+
+If speed, cadence, heart rate, or power data is available, you can inspect the distribution of each as a histogram. If power data and FTP are available, Power zones are also shown; if heart rate and LTHR are available, Heart-rate zones are shown. These displays show the time and percentage spent in each zone.
+
+If enough power data is available, a Power curve is also displayed. It shows the maximum average power that was sustained over durations ranging from short to long.
+
+## Scatter plot
+
+In Analysis, “Scatter plot” lets you choose two measurements for the X and Y axes and inspect their relationship as a scatter plot. The display uses data smoothed over 30 seconds.
+
+When present in the data, axis choices can include Speed, Cadence, Heart rate, Power, Cardio efficiency, Torque, Torque efficiency, Pedal smoothness, Grade, and Altitude. For example, you can compare Cadence with Speed, Power with Heart rate, or Grade with Power.
+
+The upper right shows Pearson's correlation coefficient ``r`` and the sample count. The correlation coefficient is a measure of the strength of the linear relationship between two values, but it does not indicate causation.
+
+Turn on “Trim outliers (2–98%)” to restrict the display range from the 2nd to the 98th percentile so extreme values do not compress the rest of the graph. This does not delete points from the original data; it only changes the visible range of the scatter plot.
+
+## Download
+
+After conversion, you can save the same processed Activity in four formats.
+
+“TrackJSON” is an uncompressed ``.trj`` file. It is suitable for STGY map display or when you want to work directly with the TrackJSON structure. “Compressed” is a gzip-compressed ``.trjgz`` version of TrackJSON that stores the same content in a smaller file.
+
+“GPX” is an XML format convenient for exchanging data with general GPS software. “FIT” regenerates the Activity as a FIT file.
+
+Even when the input is FIT and you Download FIT, Local Track Studio does not simply return the original binary file unchanged. It first converts the source into the common Activity representation and then generates a new FIT file from that Activity. Manufacturer-specific unknown messages and other information not retained by Local Track Studio's common representation may therefore differ from or be absent in the regenerated file. If you need the original, keep the source FIT separately.
+
+Likewise, if you use Trim, Privacy, Downsample, or multi-file Merge, those processed results are reflected in every Download format.
+
+## TrackJSON and STGY
+
+TrackJSON is the format STGY uses to display routes on the web. It is based on GeoJSON's ``FeatureCollection`` and can associate timestamps, distance, elevation, heart rate, cadence, power, speed, and other series with the corresponding route coordinates.
+
+The uncompressed extension is ``.trj`` and the gzip-compressed version is ``.trjgz``. TrackJSON and TRJGZ created by Local Track Studio can be used by STGY's route features. Simply Downloading them from this page does not automatically register them with STGY, however. To use them in STGY, upload them through the route-upload function when needed.
+
+## Saving and checking privacy
+
+Results displayed in Local Track Studio and converted files are not automatically saved when you close the page. Download and keep the formats you need.
+
+When creating a route for publication, do not assume that enabling Privacy is sufficient by itself. Inspect the converted map. Detours, place names, pins, timestamps, or other information may reveal your home or workplace even away from the start and finish.
+
+Keeping the original file unmodified and creating a separate public copy with Local Track Studio makes it easier to generate another version later with different Privacy distances or Downsample settings.
+____EOF____

@@ -1,0 +1,204 @@
+id: 0000000000010051
+ownedBy: 0000000000000001
+publishedAt: 2025-01-01 00:00:51+00
+allowLikes: false
+allowReplies: false
+tags: stgy-help
+locale: en-US
+content:<<____EOF____
+# Using Local Image Studio
+
+This is the help page for Local Image Studio. It explains the basic workflow from loading and adjusting an image to exporting it, along with how to use the individual editing tools.
+
+<!TOC!>
+
+## Overview
+
+Local Image Studio (LIS) is an image editor for editing photographs and other images in a web browser. In addition to basic photographic adjustments such as cropping, rotation, resizing, white balance, exposure and tone, color, noise reduction, and sharpening, it provides RAW development, tone curves, a color mixer, various filters, text, shape drawing, mosaic masking, and vignetting.
+
+LIS edits the loaded image in the browser and exports it as WebP, JPEG, or PNG. Your edits do not modify the original image file itself. Editing state and exported images are not retained if you reload or close the page, so save any image you need with “Download” before you leave.
+
+When uploading images in STGY itself, you can also open the same image editor used by LIS when you need to adjust an image. This article focuses on the standalone editing features of Local Image Studio rather than STGY's image-management functions.
+
+## Basic usage
+
+Open [Local Image Studio](/local-image-studio). The page shows “Input” and “Output” sections. Click “Choose file” and select one image to open it in the editor. You can also drag and drop an image file onto the Local Image Studio page. If your clipboard contains an image, you can paste it on the page to load it.
+
+After adjusting the image in the editor, click “Finish” at the lower right. LIS generates an image from the original with your edits applied and displays the exported result on the Local Image Studio page. Below the result, it shows the image format, color profile, file size, and pixel dimensions. Click “Download” to save the image file.
+
+Under “Output”, you can choose WebP, JPEG, or PNG as the image format. For the color profile, you can choose “best profile”, “sRGB”, or “Display P3”. “best profile” automatically selects an appropriate profile according to the input image. For general web use and broad compatibility, sRGB is usually the safest choice. Display P3 can preserve a wider color gamut than sRGB on displays and in applications that support it.
+
+Even after exporting, you can click “Re-edit” to return to the editor with your previous edits preserved. If you change the Output format or color profile while the result is displayed, LIS regenerates the image with the new settings.
+
+Click the exported image to view it at its actual pixel size. You can drag the enlarged view to move around the image, and close it by clicking the view, clicking the “×” at the upper right, or pressing Esc. Noise, sharpening, text, drawing details, and similar fine details are best checked in this view before saving.
+
+## The editing screen
+
+The editing screen has an image preview in the center. On the right, it normally shows the “White balance”, “Tone”, “Color”, and “Finishing” adjustment panels. Across the top are “Mixer”, “Filter”, “Text”, “Draw”, “Mosaic”, “Vignette”, “Crop”, “Histogram”, and “Grid”. Their positions may change depending on the available screen width.
+
+Drag a normal slider to change its value. Double-click a slider to reset only that setting to its default value. The open/close button at the upper right of a panel lets you collapse panels you are not using. To start the entire edit over from the beginning, click “Reset” at the top of the editor.
+
+While the image is in its normal view, double-click a point in the image to open a 100% view centered on that point. In the 100% view, drag the image to move around. Double-click again to close the 100% view. It is often useful to work in the full-image view for color and tone adjustments, then switch to 100% for checking noise and sharpening.
+
+Turn on “Histogram” to display a histogram for checking the distribution of brightness and color. Turn on “Grid” to overlay a grid on the image. The grid is useful when cropping or rotating while checking horizontal and vertical alignment and composition.
+
+“Mixer”, “Filter”, “Text”, “Draw”, “Mosaic”, “Vignette”, and “Crop” are dedicated modes for interacting directly with the image. Selecting one dedicated mode exits the other dedicated modes.
+
+## Input images and RAW development
+
+LIS can load common image formats such as JPEG, PNG, WebP, HEIC, HEIF, TIFF, GIF, BMP, and SVG, as well as RAW formats including DNG, CR2, CR3, NEF, ARW, RW2, ORF, RAF, PEF, SRW, and X3F. Some files may not load depending on the browser or the condition of the image itself.
+
+When you open a RAW image, LIS develops an image for display from the RAW data instead of reading an already completed RGB image as it does with ordinary image files. After you select a RAW file, LIS first creates an editing preview and prepares the original-resolution image as needed. Normally, you can leave the defaults as they are and do not need to choose RAW-development methods in detail.
+
+To display the advanced RAW-development settings, right-click “Choose file” in Local Image Studio. The RAW settings contain “RAW demosaic”, “RAW highlight”, and “RAW tone”. Change these settings before selecting a RAW image to develop it with those settings.
+
+“RAW demosaic” selects the demosaicing method used to create an RGB image from a Bayer-pattern sensor or similar RAW data. You can choose Linear, VNG, PPG, AHD, DCB, DHT, or Modified AHD. The default is DHT. The methods differ in their balance of fine detail, false color, noise, and processing time, but the default is generally appropriate unless you have a specific reason to change it.
+
+“RAW highlight” controls how very bright areas in the RAW data are handled. You can choose Clip, Unclip, Blend, or several levels of Rebuild. The default is Blend. This setting is useful to experiment with if colors look unnatural around strongly clipped highlights.
+
+“RAW tone” offers Thumbnail, Entropy, and Linear. When the camera's embedded thumbnail is available, Thumbnail uses its brightness and color tendency as a reference for the initial development. Entropy determines the initial tone from the distribution of the RAW image itself. Linear does not perform automatic tone matching and gives you a more straightforward development result as a starting point. The default Thumbnail mode is usually convenient; if an embedded thumbnail is unavailable, LIS automatically uses an alternative process.
+
+After RAW development, the rest of the editing workflow—White balance, Tone, Color, Mixer, Filter, Crop, and so on—is the same as for ordinary images.
+
+## White balance
+
+“White balance” adjusts the overall color temperature and color cast of the image.
+
+Moving “Temperature” toward the positive side makes the image warmer; moving it toward the negative side makes it cooler. “Tint” corrects color casts along the green–magenta axis. Adjust these controls when objects that should be white or gray look unnaturally blue, yellow, green, or magenta.
+
+Click the eyedropper button next to “White balance” to choose a reference color from the image. If you click an area that should be neutral, such as white, gray, or black, LIS sets Temperature and Tint so that area moves closer to neutral. In photographs where you want to preserve the color of the lighting itself, you do not necessarily need to make the reference perfectly neutral. You can also use the eyedropper to establish a rough baseline and then refine the result with the sliders.
+
+## Brightness and tone
+
+The “Tone” section adjusts image brightness and tonal distribution. Because each control serves a different purpose, a straightforward workflow is to first set the overall brightness with Exposure, then adjust Midtone, Contrast, Shadow, Highlight, Black, White, and Clarity as needed.
+
+“Exposure” changes the overall exposure in EV. Move it positive when the image is too dark and negative when it is too bright. Large changes can increase blown highlights or blocked shadows, so adjust while watching the image and the Histogram.
+
+“Midtone” changes the brightness distribution mainly around the middle tones. Use it when the overall exposure is correct but the middle of the tonal range still feels too heavy or too light.
+
+“Contrast” widens or narrows the difference between dark and bright areas. Positive values create a stronger, punchier look, while negative values produce softer tonal transitions.
+
+“Shadow” mainly adjusts darker areas, while “Highlight” mainly adjusts brighter areas. For example, move Shadow positive to reveal information in dark regions, or move Highlight negative to restrain bright regions.
+
+“Black” adjusts areas close to black, while “White” adjusts areas close to white. Use them when you want to refine the ends of the tonal range more specifically than with Shadow or Highlight. Black can control how firmly the blacks are anchored, while White can control the openness of bright areas and the appearance of highlight clipping.
+
+“Clarity” adjusts local contrast. Positive values make fine detail and texture more distinct, while negative values reduce local contrast for a softer appearance. Strong settings can make halos or graininess more visible, so check the result at 100% as well.
+
+Click “Auto” in the Tone heading to first reset Shadow, Highlight, and Clarity to their defaults, then automatically adjust Exposure, Midtone, and Contrast by analyzing the image. You can use Auto as a starting point and then refine the controls manually. Exposure, Midtone, and Contrast also each have their own “Auto” button.
+
+## Tone curve
+
+Click the graph button in the Tone heading to open the “Tone curve” panel. The tone curve lets you directly specify, as a curve, how input brightness maps to output brightness. The left side of the graph represents darker tones and the right side brighter tones. The background also shows the image's brightness distribution.
+
+Click the curve to add a control point, then drag it to adjust its position. Existing control points can also be dragged. Right-click a control point to delete it. On systems such as macOS where Ctrl+click is used instead of right-click, Ctrl+click also deletes the point. Click “Reset” to remove all added control points and return to the standard straight line.
+
+Raising the curve slightly around the midtones brightens the midtones; lowering it darkens them. An S-curve that lowers the shadow side and raises the highlight side increases contrast, while a reverse S-curve decreases contrast. Because tone curves are highly flexible, it is safest to begin with only a few control points and make small adjustments.
+
+## Color adjustments
+
+The “Color” section contains “Saturation” and “Vibrance”.
+
+“Saturation” adjusts the saturation of the entire image. Positive values make colors more vivid, while negative values make them weaker. Reducing it strongly moves the image toward grayscale.
+
+“Vibrance” also adjusts the sense of saturation, but it takes the state of individual colors into account more than Saturation does. It is useful when you want to add vividness mainly to less-saturated colors without excessively boosting colors that are already strongly saturated. You can use Saturation to establish the overall amount of color and Vibrance to fine-tune the perceived vividness.
+
+To change only a particular color range, use Mixer.
+
+## Mixer
+
+Turn on “Mixer” to display the color mixer at the upper right of the image. Mixer lets you independently adjust Hue, Saturation, and Luminance for selected color ranges.
+
+The standard palette contains 12 color buttons dividing the hue circle into 12 regions. It includes control points between red, yellow, green, cyan, blue, and magenta, with effects that blend smoothly into neighboring colors. Select a color button and move “Hue” to shift its hue, “Saturation” to change its saturation, or “Luminance” to change its brightness. Double-click any of these sliders to return it to 0.
+
+While Mixer mode is active, click a point in the image to automatically select the color range closest to the color at that point. For example, if you want to adjust only the blue of the sky, click the sky and then change the Hue or Saturation of the selected range.
+
+Click the palette button at the upper right of Mixer to switch between the 12-color “Colors” mode and RGB “Primary” mode. Primary adjusts Hue, Saturation, and Luminance using the Red, Green, and Blue primary components as the basis. It is better suited than the 12-color palette for making broader changes to the overall color relationships in an image.
+
+Click “Reset” inside Mixer to reset only the adjustments made in Mixer.
+
+## Filter
+
+Turn on “Filter” to display the filter panel at the upper right of the image. Only one filter can be active at a time. Click “Off” to disable the filter.
+
+“Monochrome” includes Rec 709, Rec 601, Average, Red, Yellow, and Blue. All produce monochrome images, but they differ in how much the original red, green, and blue channels contribute to brightness. Red, Yellow, and Blue can be used to change tonal relationships according to the original colors, similar to using colored filters in black-and-white photography.
+
+“Photochemical” includes Sepia, Cyanotype, Negative, Solarization, Cross Process, and Bleach Bypass. Sepia produces a brown-toned classic look, while Cyanotype produces a blue-toned one. Negative creates a negative-like inversion of color and brightness, and Solarization combines partial tonal inversion with the original image. Cross Process creates strong color shifts inspired by cross processing, while Bleach Bypass produces a silver-retention-like look with reduced saturation and stronger contrast.
+
+“Simulation” includes Provia, Velvia, Astia, Eterna, and C. Chrome. These are color and tone presets inspired by photographic films and film simulations. They provide quick ways to move the image toward vivid, soft, muted, and other characteristic looks.
+
+“Others” includes Swap RGB, Part Color, Dichrome, Trichrome, Duotone, Super MC, and Edge. Some of these buttons cycle through several variations each time you press the same button and eventually return to Off.
+
+“Swap RGB” rearranges RGB channels to produce unreal colors. “Part Color” preserves a selected color range while moving the rest toward monochrome. “Dichrome”, “Trichrome”, and “Duotone” reconstruct the image using limited color combinations. “Super MC” is a special monochrome effect that strongly changes the contribution of different colors to the monochrome conversion. “Edge” cycles between Canny, XDoG, and Multi-scale edge extraction to create looks closer to line art or sketching.
+
+Even after applying a filter, you can still change normal adjustments such as White balance, Tone, and Color. A filter does not have to determine the finished look in a single step; it can also be used as a starting point for the direction of the color and style.
+
+## Crop and rotation
+
+Turn on “Crop” to display handles at the four corners of the crop area. Drag the corners to resize the crop, and drag inside the frame to reposition it. The area outside the frame is darkened, and only the area inside the frame remains in the final image.
+
+For landscape images, ratio buttons for 1:1, 4:3, 3:2, and 16:9 are shown. For portrait images, the buttons are 1:1, 3:4, 2:3, and 9:16. Clicking a button adjusts the crop area to that aspect ratio while preserving its current center as much as possible. You can also ignore the ratio buttons and drag the corners directly to use any aspect ratio.
+
+Click the rotation button at the upper right in Crop mode to enter rotation mode. Drag the handles that appear at the image corners to rotate the image by fine angles. When correcting a tilted horizon or building, turning on Grid can make alignment easier.
+
+Crop and rotation determine the composition of the image. It is often easier to establish the approximate composition before examining fine sharpening and noise.
+
+## Text
+
+Turn on “Text” and click inside the image to add new text at that location. Type into the input field and the text appears on the image. Drag created text to move it.
+
+The text-editing buttons let you change text size, text color, outline color, and font. Text colors include black, gray, white, and several other colors. An outline can improve readability where the text has little contrast with the background. The fonts cycle through Noto Sans JP, Noto Serif JP, Klee One, Dela Gothic One, and Zen Old Mincho Black.
+
+Delete unwanted text with the “×” button. This is useful for placing captions, dates, locations, or short notes directly on the image.
+
+## Draw
+
+Turn on “Draw” and choose Line, Rectangle, or Ellipse. Drag on the image to create a line, rectangle, or ellipse.
+
+You can move a created shape or drag its edge and corner handles to change its size and shape. Line width cycles through Thin, Medium, Thick, and Extra thick, and you can also change the line color. Rectangle and Ellipse can also have a fill color. Delete unwanted shapes with “×”.
+
+You can use these tools to mark an area, draw a line in place of an arrow, or build a simple explanatory diagram directly on a photograph.
+
+## Mosaic
+
+Turn on “Mosaic” and drag on the image to create a rectangular mosaic region. Existing mosaic regions can be dragged to move them. Delete an unwanted region with the “×” at its upper right. You can place multiple mosaic regions on the same image.
+
+Use Mosaic to hide areas you do not want to publish, such as faces, license plates, or text visible in the image. Always check the mosaic coverage before the final export.
+
+## Vignette
+
+Turn on “Vignette” to display an elliptical region on the image. LIS adds gradual darkening from the inside of the ellipse toward the outer edges of the image.
+
+You can move and resize the ellipse to set its center and range around the subject. The strength is adjustable in EV. This can be useful for slightly darkening the area around a person or object to draw attention toward the center. Strong vignetting can quickly look unnatural, so start with a mild value.
+
+## Denoise, Defringe, Resize, and Sharpen
+
+The “Finishing” section contains Denoise, Defringe, Resize, and Sharpen for final adjustments before export.
+
+“Denoise” reduces image noise. Its effect is especially noticeable in high-ISO images or images whose shadows have been raised substantially. Excessive denoising can smooth away fine patterns and texture, so adjust it while checking the image at 100%.
+
+“Defringe” reduces purple, green, and other colored fringes around edges. Use it when colored outlines are visible along high-contrast boundaries. If the image has no such problem, leaving it at 0 is fine.
+
+“Resize” specifies the output image size as a percentage of the original. At 100%, output uses the original pixel dimensions as its basis; smaller values downscale it. Click “2MP” or “5MP” to automatically set a scale that produces approximately 2 or 5 megapixels while preserving the aspect ratio. If you do not need all of the original pixels for web publishing or similar uses, an appropriate reduction can also reduce the file size.
+
+“Sharpen” emphasizes edges and fine detail. Use it to refine the appearance after resizing or to tighten slightly soft detail. Because sharpening also emphasizes noise, it can be easier to set Denoise first when necessary and decide the final Sharpen setting afterward.
+
+## Checking the image
+
+When editing an image, it is important to check both the overall impression and fine detail. In the normal view, check composition, brightness, and color balance. At 100%, check focus, noise, sharpening, color fringing, and the edges of text and drawings.
+
+Histogram helps reveal brightness bias that can be difficult to judge from the screen alone. There is no single correct histogram shape, however. A night scene naturally contains many dark pixels, while a snow scene naturally contains many bright pixels. Use the histogram as supporting information while considering the content of the image itself.
+
+The preview shown in the editor may use a smaller image than the final output in order to keep interaction responsive. With RAW images in particular, LIS may first use a thumbnail or editing preview and prepare higher-resolution data afterward. “Finish” applies the edits to the final image, so the most reliable way to check fine detail is to click the exported result and inspect it there.
+
+## Export and saving
+
+Click “Finish” in the editor to display the result on the main Local Image Studio page. You can export as WebP, JPEG, or PNG.
+
+WebP can produce relatively small files even for photographs and is well suited to web use. JPEG is supported very broadly and is useful when compatibility with other applications is a priority. PNG uses lossless compression, making it appropriate when you want to avoid quality loss from recompression or when the image will be processed later in other software. For photographs, PNG files are generally larger than WebP or JPEG.
+
+Choose “best profile”, “sRGB”, or “Display P3” as the color profile. “best profile” selects automatically according to the input. sRGB is easy to use when consistent appearance across a wide range of environments is the priority, while Display P3 can preserve a wider gamut. Display P3 rendering still depends on support in the viewing environment.
+
+The result area shows the image format, the color profile actually used, the file size, and pixel dimensions. Click the result image to inspect fine detail, and if everything looks correct, click “Download” to save it. Click “Re-edit” if you want to make further adjustments.
+
+Local Image Studio does not automatically save the edited result as an image on STGY. Be sure to Download any result you need before ending your work.
+____EOF____

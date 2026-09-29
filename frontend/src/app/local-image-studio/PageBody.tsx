@@ -27,6 +27,7 @@ import { Config } from "@/config";
 import { isRawImageFile } from "@/image/libraw";
 import { warmupLensfunRuntime } from "@/image/lensfun";
 import { formatBytes } from "@/utils/format";
+import { getBrowserLocale } from "@/utils/locale";
 
 type SourceImage = {
   file: File;
@@ -213,6 +214,13 @@ export default function LocalImageStudio() {
   const resultZoomSuppressClickRef = useRef(false);
   const [resultZoomFocus, setResultZoomFocus] = useState<ResultZoomFocus | null>(null);
   const [resultZoomPan, setResultZoomPan] = useState<ResultZoomPan>({ x: 0, y: 0 });
+  const [helpHref, setHelpHref] = useState("/pub/0000000000010051");
+
+  useEffect(() => {
+    if (getBrowserLocale()?.toLowerCase().startsWith("ja")) {
+      setHelpHref("/pub/0000000000020051");
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -869,6 +877,11 @@ export default function LocalImageStudio() {
                 <li><span className="font-medium text-gray-900">2.</span> Adjust the image, then click Edit.</li>
                 <li><span className="font-medium text-gray-900">3.</span> Choose the output format and profile.</li>
               </ol>
+              <div className="mt-3 border-t border-gray-200 pt-3 text-sm">
+                <a href={helpHref} className="font-medium text-sky-700 hover:underline">
+                  Full help
+                </a>
+              </div>
             </div>
           )}
 

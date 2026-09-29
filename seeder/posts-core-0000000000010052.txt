@@ -1,0 +1,168 @@
+id: 0000000000010052
+ownedBy: 0000000000000001
+publishedAt: 2025-01-01 00:00:52+00
+allowLikes: false
+allowReplies: false
+tags: stgy-help
+locale: en-US
+content:<<____EOF____
+# Using Local Stack Studio
+
+This is the help page for Local Stack Studio. It explains the basic workflow for aligning and merging multiple photographs, adjusting their tone, and saving the result as an image, as well as how to choose between the available merge methods.
+
+<!TOC!>
+
+## Overview
+
+Local Stack Studio (LSS) is a web application for combining multiple photographs into a single image. You can reduce noise using several shots of the same subject, create HDR images from photographs with different exposures, or perform Focus Stacking on photographs focused at different distances. It also provides simple averaging, median merging, aperture-weighted merging, and Tile modes that arrange several images vertically or horizontally.
+
+LSS performs image loading, alignment, merging, tone adjustment, and final image generation in the browser. After merging, you can make quick Tone adjustments, or click “Edit” to open the [same image editor as Local Image Studio](/posts/0000000000010051) for cropping, white balance, more detailed tone and color adjustments, filters, text, and other editing.
+
+Results are not saved automatically when you close the page. Save any image you need with “Download” before leaving. Processing many high-resolution images can use a large amount of memory and browser temporary storage.
+
+## Basic usage
+
+Open [Local Stack Studio](/local-stack-studio). The page shows settings for “Input”, “Merge”, and “Alignment”. Click “Choose files” and select one or more images to combine. You can also select image files by dragging and dropping them onto the Local Stack Studio page.
+
+Next, choose a merge method under “Merge” and an image-alignment method under “Alignment”. In most cases, leaving Alignment at “Auto” lets LSS choose an appropriate method for the selected Merge. Click “Process” to start loading, alignment, and merging.
+
+When processing finishes, LSS displays a preview of the merged result together with Tone sliders. Adjust Exposure, Midtone, Contrast, Shadow, Highlight, Clarity, Saturation, and Vibrance as needed. For more detailed editing, click “Edit”.
+
+Finally, choose JPEG, WebP, TIFF-8, or TIFF-16 as the output format. If the source image is large enough, you can also save a reduced version at 16MP, 8MP, 4MP, 2MP, or 1MP instead of Full-size. Click “Download” to generate the final image and save it as a local file.
+
+## Input images
+
+LSS can read JPEG, PNG, WebP, TIFF, and many digital-camera RAW formats. Supported RAW formats include common formats such as DNG, CR2, CR3, NEF, ARW, RW2, ORF, RAF, PEF, SRW, and X3F. RAW images are automatically developed inside LSS, so you normally do not need to convert them to JPEG or TIFF in another application first.
+
+When you select multiple files, LSS sorts them in natural filename order before processing. For example, ``image2`` comes before ``image10``. Tile uses this order directly as the layout order, and the same ordering also makes burst sequences and Focus Stacking sets easier to follow.
+
+Images with different dimensions can still be processed, but the selected Alignment may crop, rescale, or add margins to them. Merging is most stable when the photographs were taken under similar conditions and with the same angle of view.
+
+You can also select only one image. With HDR1 and HDR2, LSS internally generates dark, medium, and bright source images and performs single-image HDR. Tile creates a framed Tile image even from a single input. For other Merge methods, a single input skips alignment and multi-image merging and passes that image directly to the later Tone adjustments.
+
+## Choosing Merge
+
+“Merge” specifies how multiple images are combined into one. The goal and result can differ greatly depending on the Merge method even when the input images are the same.
+
+### Blend (average)
+
+“Blend (average)” averages all aligned images with equal weight. When you take several photographs with nearly identical composition, such as from a tripod or a burst, random noise is averaged out and the result can be smoother than a single exposure.
+
+If the subject moves between frames, however, the moving area may appear as a translucent ghost. This mode is best suited to static landscapes, night scenes, product photography, and similar subjects.
+
+### Denoise (median)
+
+“Denoise (median)” combines the images by taking the median value at each pixel. Compared with a simple average, it is less affected by outliers that appear in only some frames, making it useful for suppressing random noise or temporary objects.
+
+Median processing must compare all inputs, so using many high-resolution images increases both the processing load and browser temporary-storage usage. If the images are not aligned well enough, fine detail can break down; use Feature match Alignment when necessary.
+
+### HDR1 (Debevec)
+
+“HDR1 (Debevec)” reconstructs HDR radiance from multiple images with different exposures using the Debevec method, then converts it into a tonal range suitable for viewing as a normal image. It is intended for scenes with a wide brightness range, using highlights preserved in darker exposures and shadows preserved in brighter exposures.
+
+When using multiple images, LSS uses EXIF exposure information if the required data is available. If sufficient exposure information is missing, it estimates the relationships needed for merging from image brightness.
+
+HDR1 can also be used with only one input image. In that case, LSS internally generates dark, medium, and bright versions of the source before performing Debevec merging. This does not contain the same amount of information as HDR made from genuinely bracketed exposures, but it can be used to create a strong tonal rendition from a single image.
+
+### HDR2 (Mertens)
+
+“HDR2 (Mertens)” combines multiple images using Mertens Exposure Fusion. Rather than first reconstructing HDR radiance itself as HDR1 does, it weights and blends the usable brightness and color regions of each input image.
+
+It is useful for producing a natural-looking wide tonal range from bracketed exposures. HDR1 and HDR2 have different rendering tendencies, so you can try both on the same material and choose the result you prefer.
+
+With a single input, LSS internally generates dark, medium, and bright material for HDR2 and performs Exposure Fusion.
+
+### STF (aperture-weighted)
+
+“STF (aperture-weighted)” determines merge weights from the aperture value of each image. If the f-number can be read from EXIF for every input, images with larger apertures receive more weight, and exposure differences are compensated before averaging. If any image lacks an available f-number, all images are treated with equal weight.
+
+This mode can be used when you want to combine several images taken at different apertures. Because the weighting differs from ordinary average blending, it can produce a different result from the same source material.
+
+### Focus (sharpness-weighted)
+
+“Focus (sharpness-weighted)” is the Focus Stacking mode. It analyzes images photographed with gradually changing focus positions, gives more weight to the sharper image in each area, and creates an image that appears in focus from foreground to background.
+
+This is useful for macro and product photography where depth of field is insufficient. If the composition shifts between input images, merge boundaries are more likely to become unnatural, so “Auto” or “Feature match (ECC)” is normally the appropriate Alignment. In Auto, Focus alignment uses a frame near the middle of the stack as the reference.
+
+### Tile (Vertical) / Tile (Horizontal)
+
+“Tile (Vertical)” and “Tile (Horizontal)” do not mix pixels from the images. Instead, they arrange several images into one larger image. Vertical arranges them vertically, while Horizontal arranges them horizontally. Borders are placed between images and around the outside.
+
+These modes are useful for placing different exposures, different processing results, burst frames, and similar images into one comparison sheet. In Tile, “Auto” Alignment becomes Center fill so that images with different dimensions can still be placed into matching frames.
+
+## Choosing Alignment
+
+“Alignment” specifies how the sizes and positions of the input images are made consistent before Merge. In most cases, starting with “Auto” is sufficient.
+
+“Auto” chooses a method according to Merge. Blend normally uses Center crop, Tile uses Center fill, and other multi-image merges generally use Feature match (ECC). Feature matching is not performed for a single input.
+
+“Center crop” uses the center of each image and crops all images to the smallest width and height common to them. It does not resize the images. This is suitable for simply stacking photographs from the same camera, with the same resolution and nearly identical composition.
+
+“Center fit” uses the dimensions of the largest image as the reference, resizes each image while preserving its aspect ratio, and crops the center so the output frame is filled. It is useful when the input images have different pixel dimensions, but it does not fully reconcile photographs taken with genuinely different fields of view.
+
+“Center fill” creates a canvas with the largest width and height and places each image at the center without rescaling it. Areas outside the image are filled with gray. “Top left fill” works similarly but aligns images to the upper-left corner.
+
+“Feature match (ECC)” and “Feature match (ORB)” analyze image content to correct differences in position, rotation, scale, and related geometry. ECC aligns images using overall intensity patterns, while ORB uses corresponding feature points. If alignment fails with the selected method, LSS automatically tries the other method as well.
+
+When using Feature match, if image sizes differ, LSS first center-crops them to a size that can be handled in common and then performs alignment. Automatic alignment can fail with very different fields of view, extreme subject movement, or images with little texture. In that case, try another Alignment method or make the compositions more consistent beforehand.
+
+## Tone adjustments after merging
+
+After Process completes, eight Tone adjustments appear below the merged result. These adjustments are applied to the final image.
+
+“Exposure” adjusts overall exposure in EV. “Midtone” mainly changes the brightness of middle tones, and “Contrast” strengthens or weakens the difference between dark and bright regions. “Shadow” mainly adjusts dark areas and “Highlight” mainly adjusts bright areas.
+
+“Clarity” changes local contrast and the appearance of detail. “Saturation” adjusts overall color saturation, while “Vibrance” mainly changes the vividness of less-saturated colors.
+
+Double-click a slider to return only that item to 0. When comparing merge results, it is easiest to first inspect the merge itself with every adjustment at 0, then add any Tone adjustments you need.
+
+These Tone controls are intended for quick finishing. If you need more editing features such as White balance, Black/White, Tone curve, Mixer, Filter, Crop, Denoise, or Sharpen, use “Edit”.
+
+## Using the image editor with Edit
+
+Click “Edit” to generate the current merged result at full size and open the same image editor used by LIS. If you changed Exposure, Midtone, Contrast, or other LSS Tone settings before clicking “Edit”, the image passed to the editor includes those Tone adjustments.
+
+In the image editor, you can use White balance, Tone, Tone curve, Color, Mixer, Filter, Crop, Text, Draw, Mosaic, Vignette, Denoise, Defringe, Resize, Sharpen, and other features. See [Using Local Image Studio](/posts/0000000000010051) for detailed instructions.
+
+When you click “Finish” in the editor, the edited image replaces the merged result in LSS. At that point, LSS's quick Tone sliders return to 0 because the Tone adjustments made before Edit have already been applied to the image. If you cancel editing, LSS returns to the original merged result.
+
+## Preview and full-size checking
+
+The merged result is first displayed as a preview that fits on the screen. Click a point in the preview to open a full-size view centered on that point. With high-resolution results, generating the full-size view may take a little time.
+
+Drag the full-size view to move to the area you want to inspect. Close it with the “×” at the upper right, by clicking the background, or by pressing Esc. Before Download, use the full-size view to check Focus Stacking boundaries, HDR halos or ghosts, fine detail in median merging, noise, sharpening, and similar issues.
+
+## Output formats
+
+LSS can save JPEG, WebP, TIFF-8, and TIFF-16.
+
+JPEG has broad compatibility and is convenient when photographs will be used in other applications. WebP can produce small files for web use. TIFF-8 is an 8-bit/channel TIFF and is better suited than JPEG or WebP when you plan further processing. TIFF-16 uses 16 bits/channel and is appropriate when you want to preserve more of LSS's internal tonal information before passing the image to another editor.
+
+LSS automatically determines the output color space from the ICC profiles and color spaces of the input images. If all inputs can be treated as sRGB, the output uses sRGB. If the inputs include other wide-gamut images, Display P3 is used for output.
+
+Under “Output size”, LSS shows Full-size and, only when smaller than the original image, 16MP, 8MP, 4MP, 2MP, and 1MP. For example, with a 12-megapixel source, 16MP is not shown and you can choose 8MP or below. When reducing the image, LSS preserves the aspect ratio, targets the selected pixel count, and applies sharpening intended to refine the reduced-size result.
+
+## Preparing source images for merging
+
+LSS merge quality depends strongly on how the source images were captured. For Blend, Median, HDR, and Focus, keep the composition as consistent as possible. A tripod is helpful when available, although Feature match can often correct small handheld shifts.
+
+HDR uses photographs with different brightness levels, but composition and subject state should remain as consistent as possible. If leaves, waves, people, cars, or other objects move substantially between exposures, ghosts or unnatural boundaries may appear.
+
+For Focus Stacking, keep exposure and composition as fixed as possible and change only the focus position in steps. In scenes where objects at different depths overlap in the same area, inspect merge boundaries at 100%.
+
+Moving subjects also affect noise reduction with Blend and Median. With averaging, moving objects tend to remain as translucent ghosts; with median merging, some moving objects may disappear. Check the final image to make sure the result matches your intention.
+
+## Processing time and browser temporary storage
+
+Because LSS handles high-resolution images at full size, processing time and memory requirements vary greatly with the number of inputs, pixel count, and Merge method. Denoise (median), Focus, HDR, and similar modes may store intermediate data in browser temporary storage.
+
+Processing may fail if the browser does not have enough free storage or if you select many extremely large images. In that case, try reducing the number or size of the inputs, closing other tabs, or freeing unneeded temporary data before trying again.
+
+The first RAW operation and some Merge methods may take longer to start than subsequent runs because LSS needs to load the required decoder or OpenCV processing modules.
+
+## Saving
+
+Local Stack Studio does not automatically upload merged images to STGY's image storage. “Download” saves an image file on your own device.
+
+Merged results, Tone adjustments, and images edited through Edit are not retained if you reload or close the page. After checking the final result, choose the format and size you need and Download it.
+____EOF____
