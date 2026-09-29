@@ -946,6 +946,9 @@ export function normalizeToneCurvePoints(
 }
 
 export type ToneCurveSpline = {
+  // These knots are stored in the same gamma-2.4 display coordinates used by
+  // the editor graph. ToneCurvePoint itself remains linear for persisted
+  // editor-state compatibility.
   knots: ToneCurvePoint[];
   tangents: Float64Array;
 };
@@ -964,9 +967,14 @@ function toneCurveEndpointTangent(
 
 /**
  * Build a shape-preserving cubic Hermite spline through the fixed endpoints
- * and user control points. The Fritsch-Carlson/PCHIP-style tangents prevent
- * each interval from overshooting the Y range of its endpoints while still
- * allowing the overall curve to rise and fall across successive intervals.
+ * and user control points in gamma-2.4 display space. The editor graph uses
+ * this same coordinate system, so the rendered curve and the mapping applied
+ * to the image are exactly the same curve. Persisted control points remain in
+ * linear coordinates and are converted only while building the spline.
+ *
+ * The Fritsch-Carlson/PCHIP-style tangents prevent each interval from
+ * overshooting the Y range of its endpoints while still allowing the overall
+ * curve to rise and fall across successive intervals.
  */
 export function buildToneCurveSpline(
   points: readonly ToneCurvePoint[] | null | undefined,
@@ -974,7 +982,14 @@ export function buildToneCurveSpline(
   const normalized = normalizeToneCurvePoints(points);
   if (!normalized.length) return null;
 
-  const knots: ToneCurvePoint[] = [{ x: 0, y: 0 }, ...normalized, { x: 1, y: 1 }];
+  const knots: ToneCurvePoint[] = [
+    { x: 0, y: 0 },
+    ...normalized.map((point) => ({
+      x: toneCurveLinearToDisplay(point.x),
+      y: toneCurveLinearToDisplay(point.y),
+    })),
+    { x: 1, y: 1 },
+  ];
   const count = knots.length;
   const h = new Float64Array(count - 1);
   const delta = new Float64Array(count - 1);
@@ -1012,7 +1027,10 @@ export function buildToneCurveSpline(
   return { knots, tangents };
 }
 
-/** Evaluate the linear-Y tone curve directly. Values outside [0, 1] are identity. */
+/**
+ * Evaluate the gamma-2.4 display-space tone curve for a linear Tone value.
+ * Values outside [0, 1] remain identity so RAW highlight headroom is preserved.
+ */
 export function sampleToneCurveSpline(
   spline: ToneCurveSpline | null,
   value: number,
@@ -1021,40 +1039,43 @@ export function sampleToneCurveSpline(
   if (!spline || !Number.isFinite(snapped) || snapped < 0 || snapped > 1) return snapped;
   if (snapped <= 0) return 0;
   if (snapped >= 1) return 1;
-  value = snapped;
 
+  const displayValue = toneCurveLinearToDisplay(snapped);
   const knots = spline.knots;
   let low = 0;
   let high = knots.length - 2;
   while (low <= high) {
     const middle = (low + high) >> 1;
-    if (value < knots[middle].x) {
+    if (displayValue < knots[middle].x) {
       high = middle - 1;
-    } else if (value > knots[middle + 1].x) {
+    } else if (displayValue > knots[middle + 1].x) {
       low = middle + 1;
     } else {
       const p0 = knots[middle];
       const p1 = knots[middle + 1];
-      if (Math.abs(value - p0.x) <= 1e-12) return p0.y;
-      if (Math.abs(value - p1.x) <= 1e-12) return p1.y;
-      const width = Math.max(1e-12, p1.x - p0.x);
-      const t = clamp01((value - p0.x) / width);
-      const t2 = t * t;
-      const t3 = t2 * t;
-      const h00 = 2 * t3 - 3 * t2 + 1;
-      const h10 = t3 - 2 * t2 + t;
-      const h01 = -2 * t3 + 3 * t2;
-      const h11 = t3 - t2;
-      const result = h00 * p0.y
-        + h10 * width * spline.tangents[middle]
-        + h01 * p1.y
-        + h11 * width * spline.tangents[middle + 1];
-      // Shape-preserving tangents keep the result inside the interval endpoints;
-      // clamp only for floating-point noise at 0/1.
-      return clamp01(result);
+      let displayResult: number;
+      if (Math.abs(displayValue - p0.x) <= 1e-12) {
+        displayResult = p0.y;
+      } else if (Math.abs(displayValue - p1.x) <= 1e-12) {
+        displayResult = p1.y;
+      } else {
+        const width = Math.max(1e-12, p1.x - p0.x);
+        const t = clamp01((displayValue - p0.x) / width);
+        const t2 = t * t;
+        const t3 = t2 * t;
+        const h00 = 2 * t3 - 3 * t2 + 1;
+        const h10 = t3 - 2 * t2 + t;
+        const h01 = -2 * t3 + 3 * t2;
+        const h11 = t3 - t2;
+        displayResult = h00 * p0.y
+          + h10 * width * spline.tangents[middle]
+          + h01 * p1.y
+          + h11 * width * spline.tangents[middle + 1];
+      }
+      return toneCurveDisplayToLinear(clamp01(displayResult));
     }
   }
-  return value;
+  return snapped;
 }
 
 export type ToneAdjustmentFlags = {

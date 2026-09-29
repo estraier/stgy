@@ -23,6 +23,28 @@ describe("tone curve", () => {
     expect(sampleToneCurveSpline(null, 1.5)).toBeCloseTo(1.5, 8);
   });
 
+  test("builds and evaluates the spline in the same gamma-2.4 space as the UI", () => {
+    const point = {
+      x: toneCurveDisplayToLinear(0.5),
+      y: toneCurveDisplayToLinear(0.75),
+    };
+    const spline = buildToneCurveSpline([point]);
+    expect(spline).not.toBeNull();
+    expect(spline?.knots[1].x).toBeCloseTo(0.5, 12);
+    expect(spline?.knots[1].y).toBeCloseTo(0.75, 12);
+
+    // The actual image mapping passes through exactly the same point shown in
+    // the graph, after converting the display-space result back to linear.
+    expect(sampleToneCurveSpline(spline, point.x)).toBeCloseTo(point.y, 12);
+    expect(toneCurveLinearToDisplay(sampleToneCurveSpline(spline, point.x))).toBeCloseTo(0.75, 12);
+
+    // A non-knot sample also follows the gamma-2.4-space Hermite curve. The
+    // previous linear-space spline produced about 0.40214 at this display X.
+    const quarterLinear = toneCurveDisplayToLinear(0.25);
+    const quarterDisplayY = toneCurveLinearToDisplay(sampleToneCurveSpline(spline, quarterLinear));
+    expect(quarterDisplayY).toBeCloseTo(0.453125, 12);
+  });
+
   test("passes exactly through fixed endpoints and user control points", () => {
     const points = normalizeToneCurvePoints([
       { x: 0.0008, y: 0.05 },
