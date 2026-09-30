@@ -10,6 +10,11 @@ import {
   type AlignmentExposureMatchSource,
 } from "./alignment-preprocess";
 import { transferableBuffer } from "./transfer-buffer";
+import {
+  AlignmentImplementationError,
+  alignmentErrorKind,
+  wrapAlignmentImplementationError,
+} from "./alignment-error";
 import type {
   AlignmentInitRequest,
   AlignmentWorkerRequest,
@@ -92,7 +97,7 @@ import type {
       }
 
       if (message.type === "align") {
-        if (!ready) throw new Error("ECC worker is not initialized.");
+        if (!ready) throw new AlignmentImplementationError("ECC worker is not initialized.");
         const result = alignTarget(
           message.grayBuffer,
           message.fileName || `image ${message.id}`,
@@ -127,6 +132,7 @@ import type {
         type: "error",
         requestId: message.requestId,
         id: message.type === "align" ? message.id : null,
+        errorKind: alignmentErrorKind(error),
         message: error instanceof Error ? error.message : String(error),
       });
     }
@@ -145,7 +151,11 @@ import type {
       throw new Error(`Invalid ECC reference grayscale buffer size: ${bytes.length} vs ${width * height}.`);
     }
 
-    cv = await loadWorkerOpenCv("ECC");
+    try {
+      cv = await loadWorkerOpenCv("ECC");
+    } catch (error) {
+      throw wrapAlignmentImplementationError(error);
+    }
     assertEccApis(cv);
     const dimensions = eccWorkingDimensions(width, height);
     workingWidth = dimensions.width;
@@ -166,7 +176,7 @@ import type {
       throw new Error(`Invalid ECC target grayscale buffer size for ${fileName}: ${bytes.length} vs ${width * height}.`);
     }
 
-    if (!referenceGrayBytes) throw new Error("ECC reference grayscale buffer is unavailable.");
+    if (!referenceGrayBytes) throw new AlignmentImplementationError("ECC reference grayscale buffer is unavailable.");
     const preprocessing = prepareEccPair(
       referenceGrayBytes,
       bytes,
@@ -668,7 +678,7 @@ import type {
     if (runtime.CV_32F === undefined) missing.push("CV_32F");
     if (runtime.INTER_AREA === undefined) missing.push("INTER_AREA");
     if (missing.length > 0) {
-      throw new Error(`This OpenCV.js build is missing ECC APIs: ${missing.join(", ")}`);
+      throw new AlignmentImplementationError(`This OpenCV.js build is missing ECC APIs: ${missing.join(", ")}`);
     }
   }
 })();

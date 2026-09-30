@@ -1,4 +1,5 @@
 import type { FocusRunningStats } from "./focus-math";
+import { AlignmentImplementationError } from "../workers/alignment-error";
 import type {
   AlignmentWorkerRequest,
   EccReadyResponse,
@@ -322,7 +323,7 @@ class AlignmentWorkerRpcClient {
     this.worker = new Worker(url);
     this.worker.onmessage = (event) => this.handleMessage(event.data);
     this.worker.onerror = (event) => {
-      const error = new Error(event.message || `${this.label} worker failed.`);
+      const error = new AlignmentImplementationError(event.message || `${this.label} worker failed.`);
       for (const pending of this.pending.values()) pending.reject(error);
       this.pending.clear();
     };
@@ -362,7 +363,12 @@ class AlignmentWorkerRpcClient {
     }
     if (!pending) return;
     if (message.type === "error") {
-      pending.reject(new Error(message.message || `${this.label} worker failed.`));
+      const detail = message.message || `${this.label} worker failed.`;
+      pending.reject(
+        message.errorKind === "implementation"
+          ? new AlignmentImplementationError(detail)
+          : new Error(detail),
+      );
       return;
     }
     if (message.type !== pending.expectedType) {

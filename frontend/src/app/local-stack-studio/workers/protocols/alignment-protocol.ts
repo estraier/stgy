@@ -1,3 +1,4 @@
+import type { AlignmentErrorKind } from "../alignment-error";
 import type { AlignmentExposureMatchSource } from "../alignment-preprocess";
 
 export type AlignmentAlgorithm = "ECC" | "ORB";
@@ -26,6 +27,7 @@ export type AlignmentErrorResponse = {
   type: "error";
   requestId: number | null;
   id: number | null;
+  errorKind: AlignmentErrorKind;
   message: string;
 };
 

@@ -12,10 +12,12 @@ import {
 } from "@/components/image-editor/clarity";
 import {
   adjustStackLinearData,
+  adjustStackStoredGamma2RowsToLinear,
   buildStackClaheMapFromToneAdjusted,
   buildStackToneAdjustedLinearData,
   clampStackScaledLog,
   computeStackFinalRolloff,
+  computeStackHighlightInputP998,
 } from "./postprocess";
 
 function makeSample(): { data: Float32Array; width: number; height: number } {
@@ -109,6 +111,159 @@ describe("Local Stack Studio shared Tone/Color pipeline", () => {
       highlight,
       midtone,
       contrast,
+    );
+    expectArraysClose(actual, expected, 6);
+  });
+
+  test("negative Highlight above one uses the same P99.8 extension as Local Image Studio", () => {
+    const width = 4;
+    const height = 4;
+    const tones = [
+      0.20, 0.28, 0.36, 0.44,
+      0.52, 0.60, 0.68, 0.76,
+      0.80, 0.84, 0.88, 0.90,
+      0.92, 0.94, 0.96, 0.98,
+    ];
+    const data = new Float32Array(width * height * 3);
+    for (let pixel = 0; pixel < tones.length; pixel += 1) {
+      const value = tones[pixel];
+      data[pixel * 3] = value;
+      data[pixel * 3 + 1] = value;
+      data[pixel * 3 + 2] = value;
+    }
+    const sample = { data, width, height };
+    const exposure = 1;
+    const shadow = 0;
+    const highlight = -50;
+    const midtone = 0;
+    const contrast = 0;
+    const context = buildColorAdjustmentContextFromLinearRgbSample(
+      sample,
+      0,
+      0,
+      exposure,
+      shadow,
+      highlight,
+      midtone,
+      contrast,
+      0,
+      0,
+    );
+    const lssP998 = computeStackHighlightInputP998(
+      data,
+      exposure,
+      shadow,
+      highlight,
+      midtone,
+      contrast,
+    );
+    expect(context.highlightInputP998).toBeGreaterThan(1);
+    expect(lssP998).toBeCloseTo(context.highlightInputP998 ?? 1, 7);
+
+    const expected = new Float32Array(data.length);
+    const adjusted: [number, number, number] = [0, 0, 0];
+    const lut = buildToneAdjustmentGamma20GainLut(
+      context,
+      "exposure",
+      "black",
+      1,
+      TONE_GAMMA20_GAIN_LUT_PREVIEW_SIZE,
+    );
+    for (let i = 0; i < data.length; i += 3) {
+      applyToneAdjustmentsLinearRgbRangeWithGamma20GainLutInto(
+        data[i],
+        data[i + 1],
+        data[i + 2],
+        context,
+        "exposure",
+        "black",
+        lut,
+        adjusted,
+      );
+      expected[i] = adjusted[0];
+      expected[i + 1] = adjusted[1];
+      expected[i + 2] = adjusted[2];
+    }
+
+    const actual = buildStackToneAdjustedLinearData(
+      data,
+      width,
+      height,
+      exposure,
+      shadow,
+      highlight,
+      midtone,
+      contrast,
+    );
+    expectArraysClose(actual, expected, 6);
+    const recoveredPixel = 5; // 0.60 * 2 = 1.20, inside U for H=-50 and this M.
+    expect(actual[recoveredPixel * 3]).toBeLessThan(tones[recoveredPixel] * 2);
+  });
+
+  test("full-size row rendering uses the shared negative-Highlight P99.8", () => {
+    const sourceValues = [0.30, 0.45, 0.60, 0.75, 0.90, 0.98];
+    const width = sourceValues.length;
+    const height = 1;
+    const stored = new Uint16Array(width * 3);
+    for (let pixel = 0; pixel < width; pixel += 1) {
+      const encoded = Math.round(Math.sqrt(sourceValues[pixel]) * 65535);
+      stored[pixel * 3] = encoded;
+      stored[pixel * 3 + 1] = encoded;
+      stored[pixel * 3 + 2] = encoded;
+    }
+    const decoded = new Float32Array(width * 3);
+    for (let i = 0; i < stored.length; i += 1) {
+      const encoded = stored[i] / 65535;
+      decoded[i] = Math.pow(encoded, 2);
+    }
+    const exposure = 1;
+    const highlight = -50;
+    const highlightInputP998 = computeStackHighlightInputP998(
+      decoded,
+      exposure,
+      0,
+      highlight,
+      0,
+      0,
+    );
+    expect(highlightInputP998).toBeGreaterThan(1);
+    const expected = buildStackToneAdjustedLinearData(
+      decoded,
+      width,
+      height,
+      exposure,
+      0,
+      highlight,
+      0,
+      0,
+      "source",
+      "highlight",
+      TONE_GAMMA20_GAIN_LUT_PREVIEW_SIZE,
+      highlightInputP998,
+    );
+    const actual = new Float32Array(decoded.length);
+    adjustStackStoredGamma2RowsToLinear(
+      stored,
+      actual,
+      width,
+      height,
+      0,
+      height,
+      {
+        exposureEv: exposure,
+        highlightInputP998,
+        shadow: 0,
+        highlight,
+        scaledLog: 0,
+        sigmoid: 0,
+        clahe: 0,
+        vibrance: 0,
+        saturation: 0,
+        claheMap: null,
+        applyFinalRolloff: false,
+        finalRolloff: undefined,
+        toneLutSize: TONE_GAMMA20_GAIN_LUT_PREVIEW_SIZE,
+      },
     );
     expectArraysClose(actual, expected, 6);
   });

@@ -26,6 +26,7 @@ import {
   buildStackClaheMapFromToneAdjusted,
   buildStackToneAdjustedLinearData,
   computeStackFinalRolloff,
+  computeStackHighlightInputP998,
   clampStackClahe,
   clampStackScaledLog,
 } from "./postprocess";
@@ -39,6 +40,7 @@ import {
   putStackScratchBuffers as putMedianScratchTiles,
   stackRgbTileKey as medianScratchTileKey,
 } from "./scratch";
+import { isAlignmentImplementationError } from "../workers/alignment-error";
 import {
   createHdrDebevecReinhardStreamWorkerClient,
   createHdrMertensStreamWorkerClient,
@@ -213,6 +215,7 @@ let previewStageCache = null;
 let previewPostToneCache = null;
 let previewPostClaheCache = null;
 let previewFinalRolloffCache = null;
+let previewHighlightInputP998Cache = null;
 let currentActivePreviewControl = null;
 let zoomRenderRequestId = 0;
 let zoomPanState = null;
@@ -764,6 +767,31 @@ function renderPreviewForCurrentTone() {
   resultPanel.classList.remove("hidden");
 }
 
+function getCurrentHighlightInputP998() {
+  if (!currentStackResult || currentPreviewHighlight >= 0) return 1;
+  const key = JSON.stringify([
+    currentStackResultRevision,
+    currentPreviewExposureEv,
+    currentPreviewShadow,
+    currentPreviewHighlight,
+    currentPreviewLogarithm,
+    currentPreviewSigmoid,
+  ]);
+  if (previewHighlightInputP998Cache && previewHighlightInputP998Cache.key === key) {
+    return previewHighlightInputP998Cache.value;
+  }
+  const value = computeStackHighlightInputP998(
+    currentStackResult.analysisLinearProPhotoRgb,
+    currentPreviewExposureEv,
+    currentPreviewShadow,
+    currentPreviewHighlight,
+    currentPreviewLogarithm,
+    currentPreviewSigmoid,
+  );
+  previewHighlightInputP998Cache = { key, value };
+  return value;
+}
+
 function getCurrentFinalRolloff() {
   if (!currentStackResult) return null;
   const key = JSON.stringify([
@@ -788,6 +816,7 @@ function getCurrentFinalRolloff() {
     currentPreviewSigmoid,
     currentPreviewVibrance,
     currentPreviewSaturation,
+    getCurrentHighlightInputP998(),
   );
   previewFinalRolloffCache = { key, rolloff };
   return rolloff;
@@ -876,6 +905,7 @@ function clearPreviewRenderCaches() {
   previewPostToneCache = null;
   previewPostClaheCache = null;
   previewFinalRolloffCache = null;
+  previewHighlightInputP998Cache = null;
   currentActivePreviewControl = null;
 }
 
@@ -916,6 +946,10 @@ function getPreviewToneAdjustedForActiveControl() {
       currentPreviewHighlight,
       currentPreviewLogarithm,
       currentPreviewSigmoid,
+      "source",
+      "highlight",
+      undefined,
+      getCurrentHighlightInputP998(),
     );
   }
   const prefixData = getCachedPreviewToneStage(config.prefixStage);
@@ -930,6 +964,8 @@ function getPreviewToneAdjustedForActiveControl() {
     currentPreviewSigmoid,
     config.prefixStage,
     "highlight",
+    undefined,
+    getCurrentHighlightInputP998(),
   );
 }
 
@@ -1003,6 +1039,8 @@ function getCachedPreviewToneStage(stage) {
     currentPreviewSigmoid,
     "source",
     stage,
+    undefined,
+    getCurrentHighlightInputP998(),
   );
   previewStageCache = { key, data };
   return data;
@@ -1094,6 +1132,7 @@ async function buildFullSizeRenderCache(stackResult, key, resultRevision) {
   const outputColorProfile = currentPreviewColorSpace;
   const options = {
     exposureEv: currentPreviewExposureEv,
+    highlightInputP998: getCurrentHighlightInputP998(),
     shadow: currentPreviewShadow,
     highlight: currentPreviewHighlight,
     scaledLog: currentPreviewLogarithm,
@@ -1142,6 +1181,7 @@ async function buildFullSizeRenderCache(stackResult, key, resultRevision) {
       outputColorProfile,
       options.finalRolloff,
       options.toneLutSize,
+      options.highlightInputP998,
     );
   }
 
@@ -1734,6 +1774,7 @@ async function initializeAlignmentReference(
       );
       return { algorithm, ready };
     } catch (error) {
+      if (isAlignmentImplementationError(error)) throw error;
       const message = error instanceof Error ? error.message : String(error);
       tried.push(`${algorithm}: ${message}`);
       console.warn(`Could not initialize ${algorithm} alignment reference: ${message}`);
@@ -1780,6 +1821,7 @@ async function alignWithFallback(
         },
       };
     } catch (error) {
+      if (isAlignmentImplementationError(error)) throw error;
       const message = error instanceof Error ? error.message : String(error);
       tried.push(`${algorithm}: ${message}`);
       console.info(`${fileName}: ${algorithm} alignment attempt failed: ${message}`);
@@ -2249,6 +2291,7 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
               mergeSource = alignedRgb;
             }
           } catch (error) {
+            if (isAlignmentImplementationError(error)) throw error;
             shouldMerge = false;
             const initialError = error instanceof Error ? error.message : String(error);
             deferredAlignments.push({
@@ -2551,6 +2594,7 @@ async function recoverDeferredAlignments(
           );
           break;
         } catch (error) {
+          if (isAlignmentImplementationError(error)) throw error;
           const message = error instanceof Error ? error.message : String(error);
           entry.attempts.push({ referenceIndex, error: message });
           console.info(

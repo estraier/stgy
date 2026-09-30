@@ -5,6 +5,7 @@ import {
   SATURATION_ROLLOFF_A,
   applyLuminanceGainPreservingAboveOneLinearRgbInto,
   applySaturationVibranceAndFinalRolloffLinearRgbInto,
+  applyToneAdjustmentsLinearRgbRangeInto,
   applyToneAdjustmentsLinearRgbRangeWithGamma20GainLutInto,
   buildToneAdjustmentGamma20GainLut,
   clampScaledLog,
@@ -13,6 +14,7 @@ import {
   colorSaturationFactor,
   rgbSaturationExtended,
   rolloffParams,
+  toneLinearIntensity,
   TONE_GAMMA20_GAIN_LUT_FINAL_SIZE,
   TONE_GAMMA20_GAIN_LUT_PREVIEW_SIZE,
   type ColorAdjustmentContext,
@@ -82,6 +84,64 @@ export function clampStackClahe(value: number): number {
   return clampClarity(value);
 }
 
+/**
+ * Match LIS negative-Highlight analysis: measure M=P99.8 on Tone intensity
+ * immediately before Highlight (Exposure -> Midtone -> Contrast -> Shadow).
+ * The fixed analysis sample should be supplied by the caller when available.
+ */
+export function computeStackHighlightInputP998(
+  sourceLinear: Float32Array | null | undefined,
+  exposureEv: number,
+  shadow: number,
+  highlight: number,
+  scaledLog: number,
+  sigmoid: number,
+  startStage: StackToneStage = "source",
+): number {
+  const normalizedHighlight = clampToneRangeAdjustment(highlight);
+  if (normalizedHighlight >= 0 || !sourceLinear || sourceLinear.length < 3) return 1;
+  if (startStage === "highlight") return 1;
+
+  const toneContext = buildStackToneContext(
+    exposureEv,
+    shadow,
+    0,
+    scaledLog,
+    sigmoid,
+    1,
+  );
+  const values: number[] = [];
+  const adjusted: [number, number, number] = [0, 0, 0];
+  for (let sourceIndex = 0; sourceIndex + 2 < sourceLinear.length; sourceIndex += 3) {
+    if (startStage === "shadow") {
+      adjusted[0] = sourceLinear[sourceIndex] ?? 0;
+      adjusted[1] = sourceLinear[sourceIndex + 1] ?? 0;
+      adjusted[2] = sourceLinear[sourceIndex + 2] ?? 0;
+    } else {
+      applyToneAdjustmentsLinearRgbRangeInto(
+        sourceLinear[sourceIndex] ?? 0,
+        sourceLinear[sourceIndex + 1] ?? 0,
+        sourceLinear[sourceIndex + 2] ?? 0,
+        toneContext,
+        STACK_TONE_STAGE_BOUNDARY[startStage],
+        STACK_TONE_STAGE_BOUNDARY.shadow,
+        adjusted,
+      );
+    }
+    const value = toneLinearIntensity(adjusted[0], adjusted[1], adjusted[2]);
+    if (Number.isFinite(value)) values.push(value);
+  }
+  if (!values.length) return 1;
+  values.sort((a, b) => a - b);
+  const rank = (values.length - 1) * STACK_FINAL_ROLLOFF_PERCENTILE;
+  const lower = Math.floor(rank);
+  const upper = Math.ceil(rank);
+  const fraction = rank - lower;
+  const lo = values[lower] ?? 1;
+  const hi = values[upper] ?? lo;
+  return lo + (hi - lo) * fraction;
+}
+
 export function computeStackFinalRolloff(
   sourceLinear: Float32Array | null | undefined,
   exposureEv: number,
@@ -91,16 +151,28 @@ export function computeStackFinalRolloff(
   sigmoid: number,
   vibrance: number,
   saturation: number,
+  highlightInputP998?: number,
 ): StackFinalRolloff {
   if (!sourceLinear || sourceLinear.length < 3) {
     return { saturationRolloff: null, finalRolloff: null };
   }
+  const resolvedHighlightInputP998 = Number.isFinite(highlightInputP998)
+    ? Math.max(0, highlightInputP998 ?? 1)
+    : computeStackHighlightInputP998(
+        sourceLinear,
+        exposureEv,
+        shadow,
+        highlight,
+        scaledLog,
+        sigmoid,
+      );
   const toneContext = buildStackToneContext(
     exposureEv,
     shadow,
     highlight,
     scaledLog,
     sigmoid,
+    resolvedHighlightInputP998,
   );
   const pixelCount = Math.floor(sourceLinear.length / 3);
   if (pixelCount <= 0) return { saturationRolloff: null, finalRolloff: null };
@@ -253,6 +325,7 @@ export function buildStackClaheMapFromToneAdjusted(
 
 export type StackFullRenderOptions = {
   exposureEv: number;
+  highlightInputP998?: number;
   shadow: number;
   highlight: number;
   scaledLog: number;
@@ -294,6 +367,7 @@ export function adjustStackStoredGamma2RowsToLinear(
     options.highlight,
     options.scaledLog,
     options.sigmoid,
+    options.highlightInputP998 ?? 1,
   );
   const toneGamma20GainLut = buildStackToneGamma20GainLut(
     toneContext,
@@ -383,6 +457,7 @@ export function adjustStackLinearData(
   outputColorProfile: ImageEditOutputColorProfile = "srgb",
   finalRolloff: StackFinalRolloff | undefined = undefined,
   toneLutSize = TONE_GAMMA20_GAIN_LUT_PREVIEW_SIZE,
+  highlightInputP998?: number,
 ): Float32Array {
   const toneAdjusted = buildStackToneAdjustedLinearData(
     sourceLinear,
@@ -396,6 +471,7 @@ export function adjustStackLinearData(
     "source",
     "highlight",
     toneLutSize,
+    highlightInputP998,
   );
   return adjustStackLinearDataPostTone(
     toneAdjusted,
@@ -423,13 +499,31 @@ export function buildStackToneAdjustedLinearData(
   startStage: StackToneStage = "source",
   endStage: StackToneStage = "highlight",
   toneLutSize = TONE_GAMMA20_GAIN_LUT_PREVIEW_SIZE,
+  highlightInputP998?: number,
 ): Float32Array {
+  const needsHighlightInputP998 = clampToneRangeAdjustment(highlight) < 0
+    && endStage === "highlight"
+    && startStage !== "highlight";
+  const resolvedHighlightInputP998 = needsHighlightInputP998
+    ? (Number.isFinite(highlightInputP998)
+        ? Math.max(0, highlightInputP998 ?? 1)
+        : computeStackHighlightInputP998(
+            sourceLinear,
+            exposureEv,
+            shadow,
+            highlight,
+            scaledLog,
+            sigmoid,
+            startStage,
+          ))
+    : 1;
   const toneContext = buildStackToneContext(
     exposureEv,
     shadow,
     highlight,
     scaledLog,
     sigmoid,
+    resolvedHighlightInputP998,
   );
   if (startStage === endStage) return sourceLinear;
   const toneGamma20GainLut = buildStackToneGamma20GainLut(
@@ -517,6 +611,7 @@ function buildStackToneContext(
   highlight: number,
   scaledLog: number,
   sigmoid: number,
+  highlightInputP998 = 1,
 ): StackToneContext {
   const factor = Math.pow(2, exposureEv);
   const normalizedShadow = clampToneRangeAdjustment(shadow);
@@ -543,6 +638,7 @@ function buildStackToneContext(
     factor,
     shadow: normalizedShadow,
     highlight: normalizedHighlight,
+    highlightInputP998: Number.isFinite(highlightInputP998) ? Math.max(0, highlightInputP998) : 1,
     black: 0,
     white: 0,
     saturationRolloff: null,

@@ -4,6 +4,7 @@ import {
   type OpenCvDynamic,
   type OpenCvRuntime,
 } from "./opencv-runtime";
+import { createConfiguredOrb } from "./orb-runtime";
 import {
   applyAlignmentExposureToGrayBytes,
   positiveExposureOrNull,
@@ -11,6 +12,11 @@ import {
   type AlignmentExposureMatchSource,
 } from "./alignment-preprocess";
 import { transferableBuffer } from "./transfer-buffer";
+import {
+  AlignmentImplementationError,
+  alignmentErrorKind,
+  wrapAlignmentImplementationError,
+} from "./alignment-error";
 import type {
   AlignmentInitRequest,
   AlignmentWorkerRequest,
@@ -70,7 +76,6 @@ import type {
     claheClipLimit: number;
   };
 
-  const ORB_MAX_FEATURES = 5000;
   const ORB_MATCH_SHIFT_LIMIT = 0.10;
   const ORB_FALLBACK_MATCH_SHIFT_LIMIT = 0.20;
   const ORB_MIN_GOOD_MATCHES = 11;
@@ -110,7 +115,7 @@ import type {
       }
 
       if (message.type === "align") {
-        if (!ready) throw new Error("ORB worker is not initialized.");
+        if (!ready) throw new AlignmentImplementationError("ORB worker is not initialized.");
         const result = alignTarget(
           message.grayBuffer,
           message.fileName || `image ${message.id}`,
@@ -144,6 +149,7 @@ import type {
         type: "error",
         requestId: message.requestId,
         id: message.type === "align" ? message.id : null,
+        errorKind: alignmentErrorKind(error),
         message: error instanceof Error ? error.message : String(error),
       });
     }
@@ -160,9 +166,13 @@ import type {
       throw new Error(`Invalid reference grayscale buffer size: ${bytes.length} vs ${width * height}.`);
     }
 
-    cv = await loadWorkerOpenCv("ORB");
+    try {
+      cv = await loadWorkerOpenCv("ORB");
+    } catch (error) {
+      throw wrapAlignmentImplementationError(error);
+    }
     assertOrbApis(cv);
-    orb = createOrb(cv);
+    orb = createConfiguredOrb(cv);
     matcher = createHammingMatcher(cv);
     emptyMask = new cv.Mat();
     referenceGrayBytes = bytes;
@@ -184,7 +194,7 @@ import type {
       throw new Error(`Invalid target grayscale buffer size: ${targetGrayBytes.length} vs ${width * height}.`);
     }
 
-    if (!referenceGrayBytes) throw new Error("ORB reference grayscale buffer is unavailable.");
+    if (!referenceGrayBytes) throw new AlignmentImplementationError("ORB reference grayscale buffer is unavailable.");
     const preprocessing = prepareAlignmentPair(
       referenceGrayBytes,
       targetGrayBytes,
@@ -718,23 +728,6 @@ import type {
     return Number.isFinite(value) ? `${value.toFixed(2)} px` : "non-finite";
   }
 
-  function createOrb(cv: OpenCvRuntime): OpenCvDynamic {
-    let instance;
-    if (cv.ORB && typeof cv.ORB.create === "function") {
-      instance = cv.ORB.create();
-    } else if (typeof cv.ORB_create === "function") {
-      instance = cv.ORB_create();
-    } else if (typeof cv.ORB === "function") {
-      instance = new cv.ORB();
-    } else {
-      throw new Error("This OpenCV.js build does not provide ORB.");
-    }
-    if (typeof instance.setMaxFeatures === "function") {
-      instance.setMaxFeatures(ORB_MAX_FEATURES);
-    }
-    return instance;
-  }
-
   function createHammingMatcher(cv: OpenCvRuntime): OpenCvDynamic {
     if (cv.BFMatcher && typeof cv.BFMatcher.create === "function") {
       return cv.BFMatcher.create(cv.NORM_HAMMING, true);
@@ -742,7 +735,7 @@ import type {
     if (typeof cv.BFMatcher === "function") {
       return new cv.BFMatcher(cv.NORM_HAMMING, true);
     }
-    throw new Error("This OpenCV.js build does not provide BFMatcher.");
+    throw new AlignmentImplementationError("This OpenCV.js build does not provide BFMatcher.");
   }
 
   function isPartialAffinePlausible(m: ArrayLike<number>): boolean {
@@ -766,7 +759,7 @@ import type {
 
   function assertOrbApis(cv: OpenCvRuntime): void {
     const missing: string[] = [];
-    if (!cv.ORB && !cv.ORB_create) missing.push("ORB");
+    if (typeof cv.ORB !== "function") missing.push("ORB constructor");
     if (!cv.BFMatcher) missing.push("BFMatcher");
     if (!cv.KeyPointVector) missing.push("KeyPointVector");
     if (!cv.DMatchVector) missing.push("DMatchVector");
@@ -776,7 +769,7 @@ import type {
     if (cv.CV_8UC1 === undefined) missing.push("CV_8UC1");
     if (cv.NORM_HAMMING === undefined) missing.push("NORM_HAMMING");
     if (missing.length > 0) {
-      throw new Error(`This OpenCV.js build is missing ORB APIs: ${missing.join(", ")}`);
+      throw new AlignmentImplementationError(`This OpenCV.js build is missing ORB APIs: ${missing.join(", ")}`);
     }
   }
 
