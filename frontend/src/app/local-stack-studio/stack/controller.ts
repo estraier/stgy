@@ -47,6 +47,9 @@ import {
   OrbWorkerClient,
 } from "./worker-clients";
 import {
+  runAlignmentPool,
+} from "./alignment-pool";
+import {
   canonicalFilesSignature,
   completeCanonicalSession,
   createCanonicalSession,
@@ -1758,14 +1761,24 @@ function secondaryAlignmentAlgorithm(primaryAlgorithm) {
   return primaryAlgorithm === "ECC" ? "ORB" : "ECC";
 }
 
+function createAlignmentWorkerClient(algorithm) {
+  if (algorithm === "ECC") {
+    return new EccWorkerClient(
+      new URL("/generated/local-stack-studio/ecc.worker.js", window.location.origin),
+    );
+  }
+  if (algorithm === "ORB") {
+    return new OrbWorkerClient(
+      new URL("/generated/local-stack-studio/orb.worker.js", window.location.origin),
+    );
+  }
+  throw new Error(`Unsupported alignment algorithm: ${algorithm}`);
+}
+
 function createAlignmentWorkers() {
   return {
-    ECC: new EccWorkerClient(
-      new URL("/generated/local-stack-studio/ecc.worker.js", window.location.origin),
-    ),
-    ORB: new OrbWorkerClient(
-      new URL("/generated/local-stack-studio/orb.worker.js", window.location.origin),
-    ),
+    ECC: createAlignmentWorkerClient("ECC"),
+    ORB: createAlignmentWorkerClient("ORB"),
   };
 }
 
@@ -2155,40 +2168,118 @@ async function alignAndMergeFilesWithOpenCv(
         for (let index = 0; index < files.length; index += 1) matrices[index] = new Float64Array(cachedMatrices[index]);
         console.info(`Reusing ${alignmentPlan.effectiveMode} alignment transforms from canonical session.`);
       } else {
-        alignmentWorkers = createAlignmentWorkers();
         const referenceFrame = alignmentFrames[alignmentReferenceIndex];
         matrices[alignmentReferenceIndex] = identityAlignmentMatrix();
-        const initialized = await initializeAlignmentReference(alignmentWorkers, alignmentAlgorithm, referenceFrame);
-        const referenceAlgorithm = initialized.algorithm;
-        logAlignmentReady(referenceAlgorithm, initialized.ready);
         const alignedIndices = new Set([alignmentReferenceIndex]);
-        const deferredAlignments = [];
+        const directJobs = [];
         for (let index = 0; index < files.length; index += 1) {
           if (index === alignmentReferenceIndex) continue;
-          setProgress(`Aligning image ${index + 1}/${files.length} with ${referenceAlgorithm} feature matching...`);
-          try {
-            const aligned = await alignWithFallback(
-              alignmentWorkers,
-              referenceAlgorithm,
-              { algorithm: referenceAlgorithm, frame: referenceFrame },
-              index,
-              files[index].name,
-              alignmentFrames[index],
-            );
-            logAlignmentResult(aligned.algorithm, files[index].name, aligned.result);
-            matrices[index] = aligned.result.matrix;
-            alignedIndices.add(index);
-          } catch (error) {
-            if (isAlignmentImplementationError(error)) throw error;
-            deferredAlignments.push({
-              index,
-              initialError: error instanceof Error ? error.message : String(error),
-              attemptedReferences: new Set([alignmentReferenceIndex]),
-              attempts: [],
-            });
-          }
+          directJobs.push({
+            id: index,
+            fileName: files[index].name,
+            frame: alignmentFrames[index],
+          });
         }
+        const hardwareConcurrency = typeof navigator === "object"
+          ? Math.max(1, Math.floor(navigator.hardwareConcurrency || 4))
+          : 4;
+
+        const runDirectBatch = async (algorithm, jobs, phaseLabel) => {
+          let started = 0;
+          let completed = 0;
+          const batch = await runAlignmentPool({
+            jobs,
+            referenceFrame,
+            createClient: () => createAlignmentWorkerClient(algorithm),
+            hardwareConcurrency,
+            onJobStart: (job) => {
+              started += 1;
+              setProgress(
+                `Aligning ${job.fileName} with ${algorithm} feature matching ` +
+                `(${phaseLabel}, ${started}/${jobs.length} started)...`,
+              );
+            },
+            onJobComplete: () => {
+              completed += 1;
+              setProgress(
+                `${algorithm} ${phaseLabel} alignment ${completed}/${jobs.length} completed...`,
+              );
+            },
+          });
+          if (batch.ready.length > 0) {
+            logAlignmentReady(algorithm, batch.ready[0]);
+          }
+          console.info(
+            `${algorithm} ${phaseLabel} alignment pool: workers=${batch.workerCount}, ` +
+            `success=${batch.successes.length}, failed=${batch.failures.length}`,
+          );
+          return batch;
+        };
+
+        const primaryBatch = await runDirectBatch(alignmentAlgorithm, directJobs, "primary");
+        for (const success of primaryBatch.successes) {
+          const result = {
+            ...success.result,
+            matrix: scaleAlignmentMatrixToFullResolution(
+              success.result.matrix,
+              referenceFrame,
+              success.job.frame,
+            ),
+          };
+          logAlignmentResult(alignmentAlgorithm, success.job.fileName, result);
+          matrices[success.job.id] = result.matrix;
+          alignedIndices.add(success.job.id);
+        }
+
+        const primaryFailures = new Map(
+          primaryBatch.failures.map((failure) => [failure.job.id, failure]),
+        );
+        let finalFailures = primaryBatch.failures.map((failure) => ({
+          job: failure.job,
+          message: `${alignmentAlgorithm}: ${failure.error.message}`,
+        }));
+
+        if (primaryBatch.failures.length > 0) {
+          const secondaryAlgorithm = secondaryAlignmentAlgorithm(alignmentAlgorithm);
+          const secondaryBatch = await runDirectBatch(
+            secondaryAlgorithm,
+            primaryBatch.failures.map((failure) => failure.job),
+            "fallback",
+          );
+          for (const success of secondaryBatch.successes) {
+            const result = {
+              ...success.result,
+              matrix: scaleAlignmentMatrixToFullResolution(
+                success.result.matrix,
+                referenceFrame,
+                success.job.frame,
+              ),
+            };
+            logAlignmentResult(secondaryAlgorithm, success.job.fileName, result);
+            matrices[success.job.id] = result.matrix;
+            alignedIndices.add(success.job.id);
+          }
+          finalFailures = secondaryBatch.failures.map((failure) => {
+            const primary = primaryFailures.get(failure.job.id);
+            const primaryMessage = primary
+              ? `${alignmentAlgorithm}: ${primary.error.message}; `
+              : "";
+            return {
+              job: failure.job,
+              message: `${primaryMessage}${secondaryAlgorithm}: ${failure.error.message}`,
+            };
+          });
+        }
+
+        const deferredAlignments = finalFailures.map((failure) => ({
+          index: failure.job.id,
+          initialError: failure.message,
+          attemptedReferences: new Set([alignmentReferenceIndex]),
+          attempts: [],
+        }));
+
         if (deferredAlignments.length > 0) {
+          alignmentWorkers = createAlignmentWorkers();
           await recoverDeferredAlignments(
             alignmentWorkers,
             files,
