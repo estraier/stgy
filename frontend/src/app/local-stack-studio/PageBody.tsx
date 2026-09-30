@@ -193,7 +193,7 @@ export default function PageBody() {
             </button>
           </div>
 
-          <div className="mt-5 rounded-xl border border-dashed border-gray-300 bg-white px-4 py-4 sm:px-5">
+          <div id="usage-panel" className="mt-5 rounded-xl border border-dashed border-gray-300 bg-white px-4 py-4 sm:px-5">
             <div className="text-sm font-semibold text-gray-900">Usage</div>
             <ol className="mt-2 grid gap-2 text-sm leading-5 text-gray-600 sm:grid-cols-3 sm:gap-4">
               <li><span className="font-medium text-gray-900">1.</span> Choose one or more images.</li>

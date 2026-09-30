@@ -167,6 +167,7 @@ const progressPanel = getElement("progress-panel");
 const progressMessage = getElement("progress-message");
 const errorPanel = getElement("error-panel");
 const resultPanel = getElement("result-panel");
+const usagePanel = getElement("usage-panel");
 const previewImage = getElement("preview-image");
 const previewExposure = getElement("preview-exposure");
 const previewExposureValue = getElement("preview-exposure-value");
@@ -430,7 +431,7 @@ ${buildInfo}` : "OpenCV.js is ready.");
     updateToneControlLabels();
     updateOutputSizeOptions();
     renderPreviewForCurrentTone();
-    resultPanel.classList.remove("hidden");
+    setResultPanelVisible(true);
     setProgress("Done.");
   } catch (error) {
     showError(error);
@@ -499,7 +500,7 @@ listen(editButton, "click", async () => {
           updateOutputSizeOptions();
           closeZoomModal();
           renderPreviewForCurrentTone();
-          resultPanel.classList.remove("hidden");
+          setResultPanelVisible(true);
         } catch (error) {
           showError(error);
         } finally {
@@ -778,7 +779,7 @@ function renderPreviewForCurrentTone() {
   previewClahe.disabled = false;
   previewVibrance.disabled = false;
   previewSaturation.disabled = false;
-  resultPanel.classList.remove("hidden");
+  setResultPanelVisible(true);
 }
 
 function getCurrentHighlightInputP998() {
@@ -5032,7 +5033,12 @@ function clearResult() {
   previewSaturation.disabled = true;
   editButton.disabled = true;
   closeZoomModal();
-  resultPanel.classList.add("hidden");
+  setResultPanelVisible(false);
+}
+
+function setResultPanelVisible(visible) {
+  resultPanel.classList.toggle("hidden", !visible);
+  usagePanel.classList.toggle("hidden", visible);
 }
 
 function clearError() {
