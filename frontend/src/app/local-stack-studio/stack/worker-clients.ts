@@ -19,11 +19,15 @@ import type {
   Hdr1StreamFinalizeRequest,
   Hdr1StreamImageRequest,
   Hdr1StreamInitRequest,
+  Hdr1StreamPass2BeginRequest,
+  Hdr1StreamPass2ImageRequest,
   Hdr2ResultResponse,
   Hdr2StreamAbortRequest,
   Hdr2StreamFinalizeRequest,
   Hdr2StreamImageRequest,
   Hdr2StreamInitRequest,
+  Hdr2StreamPass2BeginRequest,
+  Hdr2StreamPass2ImageRequest,
   HdrWorkerResponse,
 } from "../workers/protocols/hdr-protocol";
 
@@ -488,6 +492,8 @@ export class OrbWorkerClient extends AlignmentWorkerRpcClient {
 
 export type HdrStreamWorkerClient = {
   addImage(index: number, image: Float32Array, brightness: number): Promise<void>;
+  beginSecondPass(): Promise<void>;
+  addSecondPassImage(index: number, image: Float32Array): Promise<void>;
   finalize(): Promise<Float32Array>;
   terminate(): void;
 };
@@ -495,10 +501,14 @@ export type HdrStreamWorkerClient = {
 type HdrStreamRequest =
   | Hdr1StreamInitRequest
   | Hdr1StreamImageRequest
+  | Hdr1StreamPass2BeginRequest
+  | Hdr1StreamPass2ImageRequest
   | Hdr1StreamFinalizeRequest
   | Hdr1StreamAbortRequest
   | Hdr2StreamInitRequest
   | Hdr2StreamImageRequest
+  | Hdr2StreamPass2BeginRequest
+  | Hdr2StreamPass2ImageRequest
   | Hdr2StreamFinalizeRequest
   | Hdr2StreamAbortRequest;
 
@@ -694,6 +704,19 @@ export function createHdrDebevecReinhardStreamWorkerClient(
         "merge-stream-image-stored",
       );
     },
+    async beginSecondPass(): Promise<void> {
+      await ready;
+      await rpc.request({ type: "merge-stream-pass2-begin" }, [], "merge-stream-pass2-ready");
+    },
+    async addSecondPassImage(index: number, image: Float32Array): Promise<void> {
+      await ready;
+      const imageBuffer = typedArrayBuffer(image);
+      await rpc.request(
+        { type: "merge-stream-pass2-image", imageIndex: index, imageBuffer },
+        [imageBuffer],
+        "merge-stream-pass2-image-accepted",
+      );
+    },
     async finalize(): Promise<Float32Array> {
       await ready;
       onProgress("Merging HDR1 with Debevec radiance recovery...");
@@ -739,6 +762,19 @@ export function createHdrMertensStreamWorkerClient(
         { type: "mertens-stream-image", imageIndex: index, brightness, imageBuffer },
         [imageBuffer],
         "mertens-stream-image-stored",
+      );
+    },
+    async beginSecondPass(): Promise<void> {
+      await ready;
+      await rpc.request({ type: "mertens-stream-pass2-begin" }, [], "mertens-stream-pass2-ready");
+    },
+    async addSecondPassImage(index: number, image: Float32Array): Promise<void> {
+      await ready;
+      const imageBuffer = typedArrayBuffer(image);
+      await rpc.request(
+        { type: "mertens-stream-pass2-image", imageIndex: index, imageBuffer },
+        [imageBuffer],
+        "mertens-stream-pass2-image-accepted",
       );
     },
     async finalize(): Promise<Float32Array> {

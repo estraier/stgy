@@ -34,11 +34,9 @@ import {
   createStackScratchSessionId as createMedianScratchSessionId,
   deleteStackScratchBuffers as deleteScratchBuffers,
   deleteStackScratchSession as deleteMedianScratchSession,
-  getStackRgbTiles as getMedianScratchTiles,
   getStackScratchBuffers as getScratchBuffers,
   openStackScratchDb as openMedianScratchDb,
   putStackScratchBuffers as putMedianScratchTiles,
-  stackRgbTileKey as medianScratchTileKey,
 } from "./scratch";
 import { isAlignmentImplementationError } from "../workers/alignment-error";
 import {
@@ -48,6 +46,16 @@ import {
   FocusWorkerClient,
   OrbWorkerClient,
 } from "./worker-clients";
+import {
+  canonicalFilesSignature,
+  completeCanonicalSession,
+  createCanonicalSession,
+  deleteCanonicalSession,
+  estimateCanonicalCapacity,
+  materializeCanonicalLinearImage,
+  writeCanonicalLinearImage,
+} from "./canonical-source";
+import { AlignedImageReader } from "./aligned-reader";
 import {
   computeFocusFinalMaps,
   computeFocusTileScores,
@@ -139,7 +147,6 @@ const CENTER_FILL_GRAY_STORED_GAMMA2 = Math.round(
   Math.sqrt(CENTER_FILL_GRAY_LINEAR) * RESULT_BUFFER_MAX_UINT16,
 );
 const MEDIAN_TILE_SIZE = 1024;
-const FOCUS_STORAGE_TILE_SIZE = 384;
 // FocusGrid is scoring-only; processing and storage tiling remain independent.
 const FOCUS_PROCESSING_CORE_SIZE = 1024;
 // Five pyrDown operations require about 124px of source support; keep a 128px halo.
@@ -147,10 +154,6 @@ const FOCUS_HALO_SIZE = 128;
 const FOCUS_SMOOTHNESS = 0.25;
 const FOCUS_MAX_PYRAMID_DOWNSAMPLES = 5;
 const FOCUS_MERGE_MAX_WORKERS = 4;
-const SCRATCH_WRITE_BATCH_MAX_TILES = 4;
-const SCRATCH_WRITE_BATCH_MAX_BYTES = 24 * 1024 * 1024;
-const FOCUS_SCRATCH_WRITE_BATCH_MAX_TILES = 16;
-const FOCUS_SCRATCH_WRITE_BATCH_MAX_BYTES = 24 * 1024 * 1024;
 
 const inputFiles = getElement("input-files");
 const fileCount = getElement("file-count");
@@ -193,6 +196,7 @@ const zoomScrollContainer = getElement("zoom-scroll-container");
 const zoomImage = getElement("zoom-image");
 
 let currentStackResult = null;
+let currentCanonicalSession = null;
 let currentPreviewColorSpace = "srgb";
 let currentInputFiles = [];
 let currentPreviewExposureEv = 0;
@@ -239,6 +243,11 @@ editButton.disabled = true;
 outputSize.disabled = true;
 
 listen(inputFiles, "change", () => {
+  const previousCanonicalSession = currentCanonicalSession;
+  currentCanonicalSession = null;
+  if (previousCanonicalSession) {
+    deleteCanonicalSession(previousCanonicalSession).catch((error) => console.warn("Could not clear old canonical input cache:", error));
+  }
   const count = inputFiles.files ? inputFiles.files.length : 0;
   fileCount.textContent = count === 0
     ? "No files selected"
@@ -356,6 +365,7 @@ ${buildInfo}` : "OpenCV.js is ready.");
 
     setProgress("Reading metadata, ICC profiles, and image sizes...");
     const inputInfos = await readInputInfos(files);
+    currentCanonicalSession = await ensureCanonicalSession(files, inputInfos, currentCanonicalSession);
     const useSyntheticSingleInputHdr = files.length === 1 && (mergeMode.value === "hdr1" || mergeMode.value === "hdr2");
     const preserveSingleInputMerge = isTileMergeMode(mergeMode.value);
     const effectiveMergeMode = useSyntheticSingleInputHdr
@@ -392,6 +402,7 @@ ${buildInfo}` : "OpenCV.js is ready.");
       mergePlan,
       alignmentPlan,
       currentPreviewColorSpace,
+      currentCanonicalSession,
     );
     currentStackResultRevision += 1;
     clearFullSizeRenderCache();
@@ -2078,391 +2089,169 @@ function buildHdrExposureTimes(files, inputInfos) {
   return null;
 }
 
-async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, alignmentPlan, outputColorSpace) {
-  let accumulator = null;
+async function alignAndMergeFilesWithOpenCv(
+  cv,
+  files,
+  inputInfos,
+  mergePlan,
+  alignmentPlan,
+  outputColorSpace,
+  canonicalSession,
+) {
+  if (!canonicalSession || canonicalSession.images.length !== files.length) {
+    throw new Error("Canonical input session is not ready.");
+  }
+  const needsAlignment = files.length > 1 && isFeatureMatchAlignmentMode(alignmentPlan.effectiveMode);
+  const alignmentReferenceIndex = needsAlignment
+    ? chooseAlignmentReferenceIndex(inputInfos, mergePlan.mode)
+    : 0;
+  const matrices = new Array(files.length).fill(null);
+  const alignmentFrames = new Array(files.length).fill(null);
   let alignmentWorkers = null;
-  let width = 0;
-  let height = 0;
+  let focusWorker = null;
+  let focusScratchDb = null;
+  let focusScratchSessionId = null;
   let hdr1StreamWorker = null;
   let hdr2StreamWorker = null;
-  let alignmentReferenceFrame = null;
-  let alignmentReferenceAlgorithm = null;
-  const alignmentFrames = new Array(files.length).fill(null);
-  const alignmentMatrices = new Array(files.length).fill(null);
-  const alignedIndices = new Set();
-  const deferredAlignments = [];
-  let medianScratchDb = null;
-  let medianScratchSessionId = null;
-  let focusWorker = null;
-  let pendingFocusStore = null;
-  let tileLayout = null;
-  let tileStoredBuffer = null;
 
   try {
-    const needsAlignment = files.length > 1 && isFeatureMatchAlignmentMode(alignmentPlan.effectiveMode);
-    const alignmentReferenceIndex = needsAlignment
-      ? chooseAlignmentReferenceIndex(inputInfos, mergePlan.mode)
-      : 0;
-    const processingOrder = needsAlignment && alignmentReferenceIndex !== 0
-      ? [alignmentReferenceIndex, ...files.map((_, index) => index).filter((index) => index !== alignmentReferenceIndex)]
-      : files.map((_, index) => index);
+    if (files.length === 1 && (mergePlan.mode === "hdr1" || mergePlan.mode === "hdr2") && Array.isArray(mergePlan.syntheticMaterials) && mergePlan.syntheticMaterials.length > 0) {
+      const baseLinear = await materializeCanonicalLinearImage(canonicalSession, 0);
+      return await processSingleInputHdrFromCanonical(baseLinear, canonicalSession.images[0].width, canonicalSession.images[0].height, mergePlan, outputColorSpace);
+    }
+
+    // Phase C: prepare all alignment frames before any merge starts.
     if (needsAlignment) {
-      console.info(
-        `Alignment reference: ${files[alignmentReferenceIndex].name} (index ${alignmentReferenceIndex + 1}/${files.length}; ` +
-        `${describeAlignmentReferenceChoice(inputInfos, mergePlan.mode, alignmentReferenceIndex)}).`,
-      );
-    }
-    if (mergePlan.mode === "median" || mergePlan.mode === "focus") {
-      const scratchLabel = mergePlan.mode === "focus" ? "Focus" : "Denoise (median)";
-      setProgress(`Opening IndexedDB scratch space for ${scratchLabel} tiles...`);
-      medianScratchDb = await openMedianScratchDb(scratchLabel);
-      medianScratchSessionId = createMedianScratchSessionId();
-      if (mergePlan.mode === "focus") {
-        focusWorker = new FocusWorkerClient(
-          new URL("/generated/local-stack-studio/focus.worker.js", window.location.origin),
-          setProgress,
-        );
-      }
-    }
-    const syntheticSingleInputHdr = !needsAlignment && (mergePlan.mode === "hdr1" || mergePlan.mode === "hdr2") && Array.isArray(mergePlan.syntheticMaterials) && mergePlan.syntheticMaterials.length > 0;
-    if (syntheticSingleInputHdr) {
-      return await processSingleInputHdrWithOpenCv(cv, files[0], inputInfos[0], mergePlan, outputColorSpace);
-    }
-    const alignmentAlgorithm = alignmentAlgorithmFromMode(alignmentPlan.effectiveMode);
-    if (needsAlignment) {
-      if (!alignmentAlgorithm) {
-        throw new Error(`Unsupported feature matching mode: ${alignmentPlan.effectiveMode}`);
-      }
-      alignmentWorkers = createAlignmentWorkers();
-      console.info("ECC transform model=affine, coarse-to-fine pyramid");
-      console.info("ORB transform model=partial-affine");
-      console.info(
-        `Alignment fallback order: primary=${alignmentAlgorithm}, secondary=${secondaryAlignmentAlgorithm(alignmentAlgorithm)}`,
-      );
-    }
-
-    for (let processingPosition = 0; processingPosition < processingOrder.length; processingPosition += 1) {
-      const index = processingOrder[processingPosition];
-      const file = files[index];
-      const inputInfo = inputInfos[index];
-      setProgress(`${inputInfo.isRaw ? "Developing RAW" : "Reading image"} ${processingPosition + 1}/${files.length}...`);
-      const decoded = await decodeFileToDecodedImage(file, inputInfo);
-      const normalizedDecoded = normalizeDecodedImageForAlignment(
-        cv,
-        decoded,
-        alignmentPlan.normalizationMode,
-        alignmentPlan.targetWidth,
-        alignmentPlan.targetHeight,
-      );
-      let imageData = normalizedDecoded.alignmentImageData || normalizedDecoded.imageData;
-      const decodedWidth = normalizedDecoded.width || imageData.width;
-      const decodedHeight = normalizedDecoded.height || imageData.height;
-
-      if (processingPosition === 0) {
-        width = decodedWidth;
-        height = decodedHeight;
-        if (mergePlan.mode === "hdr1") {
-          hdr1StreamWorker = createHdrDebevecReinhardStreamWorker(
-            width,
-            height,
-            files.length,
-            mergePlan.hdrExposureTimes,
-            new Uint8Array(inputInfos.map((info) => info.isRaw ? 1 : 0)),
-          );
-        } else if (mergePlan.mode === "hdr2") {
-          hdr2StreamWorker = createHdrMertensStreamWorker(width, height, files.length);
-        }
-        if (isTileMergeMode(mergePlan.mode)) {
-          tileLayout = buildTileLayout(mergePlan.mode, width, height, files.length);
-          tileStoredBuffer = new Uint16Array(tileLayout.outputWidth * tileLayout.outputHeight * 3);
-          tileStoredBuffer.fill(CENTER_FILL_GRAY_STORED_GAMMA2);
-          console.info(
-            `Tile layout: ${tileLayout.outputWidth}x${tileLayout.outputHeight}, border=${tileLayout.border}px, ` +
-            `image=${width}x${height}, count=${files.length}.`,
-          );
-        } else if (mergePlan.mode !== "hdr1" && mergePlan.mode !== "hdr2" && mergePlan.mode !== "median" && mergePlan.mode !== "focus") {
-          accumulator = new Float32Array(width * height * 3);
-        }
-        if (mergePlan.mode === "median") {
-          warnIfMedianScratchMayExceedQuota(width, height, files.length);
-        } else if (mergePlan.mode === "focus") {
-          warnIfFocusScratchMayExceedQuota(width, height, files.length);
-        }
-      } else if (decodedWidth !== width || decodedHeight !== height) {
-        throw new Error(
-          `${file.name} is ${decodedWidth}x${decodedHeight}, but the alignment reference is ${width}x${height}. ` +
-          "All input images must have identical dimensions after alignment normalization."
-        );
-      }
-
-      const rgba = cv.matFromImageData(imageData);
-      if (normalizedDecoded.alignmentImageData) normalizedDecoded.alignmentImageData = null;
-      imageData = null;
-      const hasLinearProPhoto = normalizedDecoded.linearProPhotoRgb instanceof Float32Array;
-      let rgb = null;
-      let linearRgb = null;
-      let alignedRgb = null;
-      let alignedLinearRgb = null;
-      let homography = null;
-      let shouldMerge = true;
-
-      try {
-        const alignmentFrame = needsAlignment
-          ? createAlignmentFrameFromRgba(cv, rgba, width, height, inputInfo.exposureScalar)
-          : null;
-        if (alignmentFrame) alignmentFrames[index] = alignmentFrame;
-        if (hasLinearProPhoto) {
-          linearRgb = matFromLinearProPhoto(cv, normalizedDecoded.linearProPhotoRgb, width, height);
-          normalizedDecoded.linearProPhotoRgb = null;
+      setProgress("Preparing alignment frames from canonical inputs...");
+      const frameCache = canonicalSession.alignmentFrameCache || (canonicalSession.alignmentFrameCache = new Map());
+      for (let index = 0; index < files.length; index += 1) {
+        const cacheKey = `${alignmentPlan.normalizationMode}:${alignmentPlan.targetWidth}x${alignmentPlan.targetHeight}:${index}`;
+        const cachedFrame = frameCache.get(cacheKey);
+        if (cachedFrame) {
+          alignmentFrames[index] = cachedFrame;
         } else {
-          rgb = new cv.Mat();
-          cv.cvtColor(rgba, rgb, cv.COLOR_RGBA2RGB);
+          const normalized = await materializeNormalizedCanonicalLinear(cv, canonicalSession, index, alignmentPlan);
+          alignmentFrames[index] = createAlignmentFrameFromLinearProPhoto(
+            cv,
+            normalized,
+            alignmentPlan.targetWidth,
+            alignmentPlan.targetHeight,
+            inputInfos[index].exposureScalar,
+          );
+          frameCache.set(cacheKey, alignmentFrames[index]);
         }
-        let mergeSource = linearRgb || rgb;
-
-        if (index === alignmentReferenceIndex) {
-          alignmentMatrices[index] = identityAlignmentMatrix();
-          alignedIndices.add(index);
-          if (needsAlignment) {
-            if (alignmentPlan.normalizationMode !== "feature-match") {
-              setProgress(
-                `Applying ${formatAlignmentModeName(alignmentPlan.normalizationMode)} preprocessing and initializing ${alignmentAlgorithm} alignment...`,
-              );
-            } else {
-              setProgress(`Initializing ${alignmentAlgorithm} alignment worker...`);
-            }
-            const initialized = await initializeAlignmentReference(
-              alignmentWorkers,
-              alignmentAlgorithm,
-              alignmentFrame,
-            );
-            alignmentReferenceFrame = alignmentFrame;
-            alignmentReferenceAlgorithm = initialized.algorithm;
-            console.info(
-              `Alignment frame cache: ${alignmentFrame.width}x${alignmentFrame.height} ` +
-              `(${alignmentFrame.grayBytes.byteLength} bytes/image, full=${width}x${height}).`,
-            );
-            logAlignmentReady(initialized.algorithm, initialized.ready);
-          } else {
-            setProgress(`Applying ${formatAlignmentModeName(alignmentPlan.normalizationMode)} alignment...`);
-          }
-        } else if (needsAlignment) {
-          setProgress(`Aligning image ${processingPosition + 1}/${files.length} with ${alignmentAlgorithm} feature matching...`);
-          try {
-            const aligned = await alignWithFallback(
-              alignmentWorkers,
-              alignmentReferenceAlgorithm || alignmentAlgorithm,
-              {
-                algorithm: alignmentReferenceAlgorithm || alignmentAlgorithm,
-                frame: alignmentReferenceFrame,
-              },
-              index,
-              file.name,
-              alignmentFrame,
-            );
-            logAlignmentResult(aligned.algorithm, file.name, aligned.result);
-            alignmentMatrices[index] = aligned.result.matrix;
-            alignedIndices.add(index);
-
-            homography = cv.matFromArray(3, 3, cv.CV_64F, Array.from(aligned.result.matrix));
-            if (linearRgb) {
-              alignedLinearRgb = new cv.Mat();
-              cv.warpPerspective(
-                linearRgb,
-                alignedLinearRgb,
-                homography,
-                new cv.Size(width, height),
-                cv.INTER_LINEAR,
-                cv.BORDER_REPLICATE,
-                new cv.Scalar(0, 0, 0, 0),
-              );
-              mergeSource = alignedLinearRgb;
-            } else {
-              alignedRgb = new cv.Mat();
-              cv.warpPerspective(
-                rgb,
-                alignedRgb,
-                homography,
-                new cv.Size(width, height),
-                cv.INTER_LINEAR,
-                cv.BORDER_REPLICATE,
-                new cv.Scalar(0, 0, 0, 0),
-              );
-              mergeSource = alignedRgb;
-            }
-          } catch (error) {
-            if (isAlignmentImplementationError(error)) throw error;
-            shouldMerge = false;
-            const initialError = error instanceof Error ? error.message : String(error);
-            deferredAlignments.push({
-              index,
-              initialError,
-              attemptedReferences: new Set([alignmentReferenceIndex]),
-              attempts: [],
-            });
-            console.warn(
-              `${file.name}: alignment against the reference image failed; deferring until the initial pass completes: ${initialError}`,
-            );
-          }
-        }
-
-        if (shouldMerge) {
-          setProgress(describeMergeStep(index, files.length, mergePlan));
-          if (isTileMergeMode(mergePlan.mode)) {
-            placeTileMergeSource(
-              index,
-              mergeSource,
-              hasLinearProPhoto,
-              inputInfo.sourceColorSpace,
-              tileStoredBuffer,
-              tileLayout,
-              width,
-              height,
-            );
-          } else if (mergePlan.mode === "median") {
-            await storeMedianAlignedImageTiles(
-              medianScratchDb,
-              medianScratchSessionId,
-              index,
-              mergeSource,
-              hasLinearProPhoto,
-              inputInfo.sourceColorSpace,
-              width,
-              height,
-              files.length,
-            );
-          } else if (mergePlan.mode === "focus") {
-            const currentFocusStore = storeFocusAlignedImage(
-              medianScratchDb,
-              medianScratchSessionId,
-              focusWorker,
-              index,
-              mergeSource,
-              hasLinearProPhoto,
-              inputInfo.sourceColorSpace,
-              width,
-              height,
-              files.length,
-            );
-            const previousFocusStore = pendingFocusStore;
-            pendingFocusStore = currentFocusStore;
-            if (previousFocusStore) {
-              try {
-                await previousFocusStore;
-              } catch (error) {
-                await currentFocusStore.catch(() => {});
-                throw error;
-              }
-            }
-          } else {
-            await mergeStackSource(
-              index,
-              mergeSource,
-              hasLinearProPhoto,
-              inputInfo,
-              mergePlan,
-              accumulator,
-              hdr1StreamWorker,
-              hdr2StreamWorker,
-            );
-          }
-        }
-      } finally {
-        if (homography) homography.delete();
-        if (alignedLinearRgb) alignedLinearRgb.delete();
-        if (alignedRgb) alignedRgb.delete();
-        if (linearRgb) linearRgb.delete();
-        if (rgb) rgb.delete();
-        rgba.delete();
-      }
-
-      await yieldToBrowser();
-    }
-
-    if (pendingFocusStore) {
-      await pendingFocusStore;
-      pendingFocusStore = null;
-    }
-
-    if (deferredAlignments.length > 0) {
-      await recoverDeferredAlignments(
-        alignmentWorkers,
-        files,
-        alignmentFrames,
-        alignmentAlgorithm,
-        alignmentMatrices,
-        alignedIndices,
-        deferredAlignments,
-      );
-
-      const unresolved = deferredAlignments.filter((entry) => !alignmentMatrices[entry.index]);
-      if (unresolved.length > 0) {
-        const details = unresolved.map((entry) => {
-          const alternateDetails = entry.attempts.length > 0
-            ? entry.attempts.map((attempt) => `${files[attempt.referenceIndex].name}: ${attempt.error}`).join("; ")
-            : "no alternate reference could be tried";
-          return `${files[entry.index].name}: initial=${entry.initialError}; alternates=${alternateDetails}`;
-        });
-        throw new Error(
-          `Could not align ${unresolved.length} image${unresolved.length === 1 ? "" : "s"} after trying all successfully aligned references:\n` +
-          details.join("\n"),
-        );
-      }
-
-      for (const entry of deferredAlignments) {
-        await mergeDeferredAlignedImage(
-          cv,
-          entry.index,
-          files,
-          inputInfos,
-          width,
-          height,
-          alignmentMatrices[entry.index],
-          mergePlan,
-          alignmentPlan,
-          accumulator,
-          tileStoredBuffer,
-          hdr1StreamWorker,
-          hdr2StreamWorker,
-          medianScratchDb,
-          medianScratchSessionId,
-          focusWorker,
-          tileLayout,
-        );
         await yieldToBrowser();
       }
     }
 
-
-    if (isTileMergeMode(mergePlan.mode)) {
-      if (!tileStoredBuffer || !tileLayout) {
-        throw new Error("Tile output was not initialized.");
+    // Phase D: resolve all transforms. No merge/decode occurs in this phase.
+    if (needsAlignment) {
+      const alignmentAlgorithm = alignmentAlgorithmFromMode(alignmentPlan.effectiveMode);
+      if (!alignmentAlgorithm) throw new Error(`Unsupported feature matching mode: ${alignmentPlan.effectiveMode}`);
+      const transformCache = canonicalSession.alignmentTransformCache || (canonicalSession.alignmentTransformCache = new Map());
+      const transformKey = `${alignmentPlan.effectiveMode}:${alignmentPlan.normalizationMode}:${alignmentPlan.targetWidth}x${alignmentPlan.targetHeight}:ref=${alignmentReferenceIndex}`;
+      const cachedMatrices = transformCache.get(transformKey);
+      if (cachedMatrices && cachedMatrices.length === files.length) {
+        for (let index = 0; index < files.length; index += 1) matrices[index] = new Float64Array(cachedMatrices[index]);
+        console.info(`Reusing ${alignmentPlan.effectiveMode} alignment transforms from canonical session.`);
+      } else {
+        alignmentWorkers = createAlignmentWorkers();
+        const referenceFrame = alignmentFrames[alignmentReferenceIndex];
+        matrices[alignmentReferenceIndex] = identityAlignmentMatrix();
+        const initialized = await initializeAlignmentReference(alignmentWorkers, alignmentAlgorithm, referenceFrame);
+        const referenceAlgorithm = initialized.algorithm;
+        logAlignmentReady(referenceAlgorithm, initialized.ready);
+        const alignedIndices = new Set([alignmentReferenceIndex]);
+        const deferredAlignments = [];
+        for (let index = 0; index < files.length; index += 1) {
+          if (index === alignmentReferenceIndex) continue;
+          setProgress(`Aligning image ${index + 1}/${files.length} with ${referenceAlgorithm} feature matching...`);
+          try {
+            const aligned = await alignWithFallback(
+              alignmentWorkers,
+              referenceAlgorithm,
+              { algorithm: referenceAlgorithm, frame: referenceFrame },
+              index,
+              files[index].name,
+              alignmentFrames[index],
+            );
+            logAlignmentResult(aligned.algorithm, files[index].name, aligned.result);
+            matrices[index] = aligned.result.matrix;
+            alignedIndices.add(index);
+          } catch (error) {
+            if (isAlignmentImplementationError(error)) throw error;
+            deferredAlignments.push({
+              index,
+              initialError: error instanceof Error ? error.message : String(error),
+              attemptedReferences: new Set([alignmentReferenceIndex]),
+              attempts: [],
+            });
+          }
+        }
+        if (deferredAlignments.length > 0) {
+          await recoverDeferredAlignments(
+            alignmentWorkers,
+            files,
+            alignmentFrames,
+            alignmentAlgorithm,
+            matrices,
+            alignedIndices,
+            deferredAlignments,
+          );
+          const unresolved = deferredAlignments.filter((entry) => !matrices[entry.index]);
+          if (unresolved.length > 0) {
+            const details = unresolved.map((entry) => `${files[entry.index].name}: ${entry.initialError}`).join("\n");
+            throw new Error(`Could not align ${unresolved.length} image${unresolved.length === 1 ? "" : "s"}:\n${details}`);
+          }
+        }
+        transformCache.set(transformKey, matrices.map((matrix) => Array.from(matrix)));
       }
+    } else {
+      for (let index = 0; index < files.length; index += 1) matrices[index] = identityAlignmentMatrix();
+    }
+
+    const alignment = { matrices };
+    const reader = new AlignedImageReader(canonicalSession, alignmentPlan, alignment);
+    const width = reader.width;
+    const height = reader.height;
+
+    // Phase E: execute merge entirely from Canonical Source + resolved transforms.
+    if (mergePlan.mode === "median") {
       return finalizeStoredGamma2Result(
-        tileStoredBuffer,
-        tileLayout.outputWidth,
-        tileLayout.outputHeight,
+        await mergeMedianFromAlignedReader(reader, files.length, width, height),
+        width,
+        height,
         outputColorSpace,
       );
     }
 
-    if (mergePlan.mode === "median") {
-      setProgress("Computing exact median from IndexedDB tiles...");
-      const medianStored = await mergeMedianScratchTiles(
-        medianScratchDb,
-        medianScratchSessionId,
-        files.length,
-        width,
-        height,
-      );
-      return finalizeStoredGamma2Result(medianStored, width, height, outputColorSpace);
-    }
-
     if (mergePlan.mode === "focus") {
-      const focusStored = await mergeFocusScratchTiles(
-        medianScratchDb,
-        medianScratchSessionId,
+      focusScratchDb = await openMedianScratchDb("Focus features");
+      focusScratchSessionId = createMedianScratchSessionId();
+      focusWorker = new FocusWorkerClient(
+        new URL("/generated/local-stack-studio/focus.worker.js", window.location.origin),
+        setProgress,
+      );
+      for (let index = 0; index < files.length; index += 1) {
+        setProgress(`Computing Focus sharpness features ${index + 1}/${files.length}...`);
+        const stored = await reader.readGamma2Image(index, 1);
+        await storeFocusSharpnessFeatures(
+          focusScratchDb,
+          focusScratchSessionId,
+          focusWorker,
+          index,
+          stored,
+          width,
+          height,
+          files.length,
+        );
+        await yieldToBrowser();
+      }
+      const focusStored = await mergeFocusFromAlignedReader(
+        focusScratchDb,
+        focusScratchSessionId,
         focusWorker,
+        reader,
         files.length,
         width,
         height,
@@ -2470,45 +2259,232 @@ async function alignAndMergeFilesWithOpenCv(cv, files, inputInfos, mergePlan, al
       return finalizeStoredGamma2Result(focusStored, width, height, outputColorSpace);
     }
 
-    if (mergePlan.mode === "hdr1" || mergePlan.mode === "hdr2") {
-      if (mergePlan.mode === "hdr1") {
-        if (!hdr1StreamWorker) {
-          throw new Error("HDR1 stream worker was not initialized.");
-        }
-        accumulator = await hdr1StreamWorker.finalize();
-      } else {
-        if (!hdr2StreamWorker) {
-          throw new Error("HDR2 stream worker was not initialized.");
-        }
-        setProgress("Merging HDR2 with Mertens exposure fusion...");
-        accumulator = await hdr2StreamWorker.finalize();
+    if (isTileMergeMode(mergePlan.mode)) {
+      const layout = buildTileLayout(mergePlan.mode, width, height, files.length);
+      const output = new Uint16Array(layout.outputWidth * layout.outputHeight * 3);
+      output.fill(CENTER_FILL_GRAY_STORED_GAMMA2);
+      for (let index = 0; index < files.length; index += 1) {
+        setProgress(`Placing tile image ${index + 1}/${files.length}...`);
+        const stored = await reader.readGamma2Image(index, 1);
+        placeStoredTileImage(index, stored, output, layout, width, height);
       }
+      return finalizeStoredGamma2Result(output, layout.outputWidth, layout.outputHeight, outputColorSpace);
     }
 
-    if (!accumulator) {
-      throw new Error("No input images were processed.");
+    if (mergePlan.mode === "hdr1") {
+      hdr1StreamWorker = createHdrDebevecReinhardStreamWorker(
+        width,
+        height,
+        files.length,
+        mergePlan.hdrExposureTimes,
+        new Uint8Array(inputInfos.map((info) => info.isRaw ? 1 : 0)),
+      );
+      for (let index = 0; index < files.length; index += 1) {
+        setProgress(`Streaming HDR1 response pass ${index + 1}/${files.length} from canonical cache...`);
+        const linear = await reader.readLinearImage(index);
+        const prepared = linearProPhotoFloatsToHdr1AndBrightness(linear);
+        await hdr1StreamWorker.addImage(index, prepared.floats, prepared.brightness);
+        await yieldToBrowser();
+      }
+      if (inputInfos.some((info) => !info.isRaw)) {
+        await hdr1StreamWorker.beginSecondPass();
+        for (let index = 0; index < files.length; index += 1) {
+          setProgress(`Replaying HDR1 radiance pass ${index + 1}/${files.length} from canonical cache...`);
+          const linear = await reader.readLinearImage(index);
+          const prepared = linearProPhotoFloatsToHdr1AndBrightness(linear);
+          await hdr1StreamWorker.addSecondPassImage(index, prepared.floats);
+          await yieldToBrowser();
+        }
+      }
+      const result = await hdr1StreamWorker.finalize();
+      return finalizeStoredResult(result, width, height, outputColorSpace, false);
     }
 
-    return finalizeStoredResult(accumulator, width, height, outputColorSpace, mergePlan.mode === "hdr2");
+    if (mergePlan.mode === "hdr2") {
+      hdr2StreamWorker = createHdrMertensStreamWorker(width, height, files.length);
+      for (let index = 0; index < files.length; index += 1) {
+        setProgress(`Analyzing HDR2 weights ${index + 1}/${files.length} from canonical cache...`);
+        const linear = await reader.readLinearImage(index);
+        const prepared = linearProPhotoFloatsToHdr2AndBrightness(linear);
+        await hdr2StreamWorker.addImage(index, prepared.floats, prepared.brightness);
+        await yieldToBrowser();
+      }
+      await hdr2StreamWorker.beginSecondPass();
+      for (let index = 0; index < files.length; index += 1) {
+        setProgress(`Replaying HDR2 pyramid pass ${index + 1}/${files.length} from canonical cache...`);
+        const linear = await reader.readLinearImage(index);
+        const prepared = linearProPhotoFloatsToHdr2AndBrightness(linear);
+        await hdr2StreamWorker.addSecondPassImage(index, prepared.floats);
+        await yieldToBrowser();
+      }
+      const result = await hdr2StreamWorker.finalize();
+      return finalizeStoredResult(result, width, height, outputColorSpace, true);
+    }
+
+    const accumulator = new Float32Array(width * height * 3);
+    for (let index = 0; index < files.length; index += 1) {
+      setProgress(describeMergeStep(index, files.length, mergePlan));
+      const linear = await reader.readLinearImage(index);
+      mergeLinearFloatIntoAccumulator(linear, accumulator, mergePlan.gains[index], mergePlan.weights[index]);
+      await yieldToBrowser();
+    }
+    return finalizeStoredResult(accumulator, width, height, outputColorSpace, false);
   } finally {
     if (alignmentWorkers) {
       alignmentWorkers.ECC.terminate();
       alignmentWorkers.ORB.terminate();
     }
-    if (focusWorker) focusWorker.terminate();
-    if (hdr1StreamWorker) hdr1StreamWorker.terminate();
-    if (hdr2StreamWorker) hdr2StreamWorker.terminate();
-    if (medianScratchDb) {
-      if (medianScratchSessionId) {
-        try {
-          await deleteMedianScratchSession(medianScratchDb, medianScratchSessionId);
-        } catch (error) {
-          console.warn("Could not fully clear scratch tiles:", error);
-        }
+    focusWorker?.terminate();
+    hdr1StreamWorker?.terminate();
+    hdr2StreamWorker?.terminate();
+    if (focusScratchDb) {
+      if (focusScratchSessionId) {
+        try { await deleteMedianScratchSession(focusScratchDb, focusScratchSessionId); } catch (error) { console.warn("Could not clear Focus feature scratch:", error); }
       }
-      medianScratchDb.close();
+      focusScratchDb.close();
     }
   }
+}
+
+async function materializeNormalizedCanonicalLinear(cv, session, imageIndex, alignmentPlan) {
+  const meta = session.images[imageIndex];
+  const linear = await materializeCanonicalLinearImage(session, imageIndex);
+  if (
+    alignmentPlan.normalizationMode === "feature-match" ||
+    (meta.width === alignmentPlan.targetWidth && meta.height === alignmentPlan.targetHeight)
+  ) return linear;
+  return transformLinearProPhotoForAlignment(
+    cv,
+    linear,
+    meta.width,
+    meta.height,
+    alignmentPlan.targetWidth,
+    alignmentPlan.targetHeight,
+    alignmentPlan.normalizationMode,
+  );
+}
+
+function createAlignmentFrameFromLinearProPhoto(cv, linear, width, height, exposureScalar) {
+  const imageData = linearProPhotoToAlignmentImageData(linear, width, height);
+  const rgba = cv.matFromImageData(imageData);
+  try { return createAlignmentFrameFromRgba(cv, rgba, width, height, exposureScalar); }
+  finally { rgba.delete(); }
+}
+
+function mergeLinearFloatIntoAccumulator(source, accumulator, gain, weight) {
+  if (Number.isFinite(gain) && gain > 0 && Math.abs(gain - 1) > 1e-6) {
+    const adjusted = new Float32Array(source);
+    applyExposureAndRolloffInPlace(adjusted, gain);
+    addWeightedLinearToAccumulator(accumulator, adjusted, weight);
+    return;
+  }
+  addWeightedLinearToAccumulator(accumulator, source, weight);
+}
+
+function placeStoredTileImage(index, source, output, layout, width, height) {
+  const position = layout.positions[index];
+  const rowLength = width * 3;
+  for (let y = 0; y < height; y += 1) {
+    const sourceStart = y * rowLength;
+    const targetStart = ((position.y + y) * layout.outputWidth + position.x) * 3;
+    output.set(source.subarray(sourceStart, sourceStart + rowLength), targetStart);
+  }
+}
+
+async function mergeMedianFromAlignedReader(reader, imageCount, width, height) {
+  const output = new Uint16Array(width * height * 3);
+  const columns = Math.ceil(width / MEDIAN_TILE_SIZE);
+  const rows = Math.ceil(height / MEDIAN_TILE_SIZE);
+  const total = columns * rows;
+  let number = 0;
+  for (let ty = 0; ty < rows; ty += 1) {
+    const y = ty * MEDIAN_TILE_SIZE;
+    const h = Math.min(MEDIAN_TILE_SIZE, height - y);
+    for (let tx = 0; tx < columns; tx += 1) {
+      const x = tx * MEDIAN_TILE_SIZE;
+      const w = Math.min(MEDIAN_TILE_SIZE, width - x);
+      number += 1;
+      setProgress(`Computing median tile ${number}/${total} (${w}x${h})...`);
+      const tiles = [];
+      for (let imageIndex = 0; imageIndex < imageCount; imageIndex += 1) {
+        tiles.push(await reader.readGamma2Region(imageIndex, x, y, w, h, 1));
+      }
+      const median = exactMedianUint16Tile(tiles);
+      const rowLength = w * 3;
+      for (let ly = 0; ly < h; ly += 1) {
+        output.set(median.subarray(ly * rowLength, (ly + 1) * rowLength), ((y + ly) * width + x) * 3);
+      }
+      await yieldToBrowser();
+    }
+  }
+  return output;
+}
+
+async function storeFocusSharpnessFeatures(db, sessionId, focusWorker, imageIndex, stored, width, height, imageCount) {
+  const featureResult = await focusWorker.computeSharpnessFeatures(
+    stored,
+    width,
+    height,
+    `Computing Focus sharpness features ${imageIndex + 1}/${imageCount}...`,
+  );
+  const expectedWorking = focusSharpnessWorkingDimensions(width, height);
+  const workingPixels = expectedWorking.width * expectedWorking.height;
+  if (
+    featureResult.workingWidth !== expectedWorking.width ||
+    featureResult.workingHeight !== expectedWorking.height ||
+    !(featureResult.features instanceof Float32Array) ||
+    featureResult.features.length !== workingPixels * 2
+  ) throw new Error("Focus worker returned invalid sharpness features.");
+  const metadata = encodeFocusFeatureMetadata(featureResult);
+  await putMedianScratchTiles(
+    db,
+    [
+      { key: focusFeatureKey(sessionId, imageIndex), buffer: featureResult.features.buffer },
+      { key: focusFeatureMetadataKey(sessionId, imageIndex), buffer: metadata.buffer },
+    ],
+    "Focus sharpness feature buffers",
+  );
+}
+
+function linearProPhotoFloatsToHdr1AndBrightness(linear) {
+  const floats = new Float32Array(linear.length);
+  let brightnessSum = 0;
+  const pixels = linear.length / 3;
+  for (let i=0;i<linear.length;i+=3) {
+    const r=clamp01(linear[i]), g=clamp01(linear[i+1]), b=clamp01(linear[i+2]);
+    floats[i]=r; floats[i+1]=g; floats[i+2]=b;
+    brightnessSum += toneLinearIntensity(r,g,b);
+  }
+  return { floats, brightness: pixels > 0 ? brightnessSum / pixels : 0 };
+}
+
+function linearProPhotoFloatsToHdr2AndBrightness(linear) {
+  return linearProPhotoArrayToHdr2FloatsAndBrightness(linear);
+}
+
+async function processSingleInputHdrFromCanonical(baseLinear, width, height, mergePlan, outputColorSpace) {
+  const materials = mergePlan.syntheticMaterials;
+  if (!Array.isArray(materials) || materials.length !== 3) throw new Error(`Single-input ${mergePlan.mode.toUpperCase()} requires three synthetic materials.`);
+  if (mergePlan.mode === "hdr1") {
+    const hdrBase = buildSingleShotHdrBaseLinear(baseLinear, width, height, null, true);
+    const worker = createHdrDebevecReinhardStreamWorker(width, height, materials.length, mergePlan.hdrExposureTimes, new Uint8Array(materials.length).fill(1));
+    try {
+      const brightness = computeAverageBrightnessFromLinear(hdrBase.linear);
+      for (let i=0;i<materials.length;i+=1) await worker.addImage(i, buildSingleShotHdr1Material(hdrBase.linear, hdrBase.p998, materials[i]), brightness);
+      return finalizeStoredResult(await worker.finalize(), width, height, outputColorSpace, false);
+    } finally { worker.terminate(); }
+  }
+  const contrastStretch = prepareSingleShotHdrContrastStretch(baseLinear, width, height);
+  const hdrBase = buildSingleShotHdrBaseLinear(baseLinear, width, height, contrastStretch, true);
+  applyLinearGainInPlace(hdrBase.linear, SINGLE_SHOT_HDR2_BASE_HEADROOM_GAIN);
+  const brightness = computeAverageBrightnessFromLinear(hdrBase.linear);
+  const worker = createHdrMertensStreamWorker(width, height, materials.length);
+  try {
+    for (let i=0;i<materials.length;i+=1) await worker.addImage(i, buildSingleShotHdr2Material(hdrBase.linear, materials[i]), brightness);
+    await worker.beginSecondPass();
+    for (let i=0;i<materials.length;i+=1) await worker.addSecondPassImage(i, buildSingleShotHdr2Material(hdrBase.linear, materials[i]));
+    return finalizeStoredResult(await worker.finalize(), width, height, outputColorSpace, true);
+  } finally { worker.terminate(); }
 }
 
 async function recoverDeferredAlignments(
@@ -2606,381 +2582,6 @@ async function recoverDeferredAlignments(
   }
 }
 
-async function mergeDeferredAlignedImage(
-  cv,
-  index,
-  files,
-  inputInfos,
-  width,
-  height,
-  matrix,
-  mergePlan,
-  alignmentPlan,
-  accumulator,
-  tileStoredBuffer,
-  hdr1StreamWorker,
-  hdr2StreamWorker,
-  medianScratchDb,
-  medianScratchSessionId,
-  focusWorker,
-  tileLayout,
-) {
-  const file = files[index];
-  const inputInfo = inputInfos[index];
-  setProgress(`Re-reading recovered image ${index + 1}/${files.length}: ${file.name}...`);
-  const decoded = await decodeFileToDecodedImage(file, inputInfo);
-  const normalizedDecoded = normalizeDecodedImageForAlignment(
-    cv,
-    decoded,
-    alignmentPlan.normalizationMode,
-    width,
-    height,
-  );
-  let imageData = normalizedDecoded.alignmentImageData || normalizedDecoded.imageData;
-  const decodedWidth = normalizedDecoded.width || imageData.width;
-  const decodedHeight = normalizedDecoded.height || imageData.height;
-
-  if (decodedWidth !== width || decodedHeight !== height) {
-    throw new Error(
-      `${file.name} is ${decodedWidth}x${decodedHeight}, but the alignment reference is ${width}x${height}. ` +
-      "All input images must have identical dimensions after alignment normalization."
-    );
-  }
-
-  const rgba = cv.matFromImageData(imageData);
-  if (normalizedDecoded.alignmentImageData) normalizedDecoded.alignmentImageData = null;
-  imageData = null;
-  const hasLinearProPhoto = normalizedDecoded.linearProPhotoRgb instanceof Float32Array;
-  let rgb = null;
-  let linearRgb = null;
-  let alignedRgb = null;
-  let alignedLinearRgb = null;
-  let homography = null;
-
-  try {
-    if (hasLinearProPhoto) {
-      linearRgb = matFromLinearProPhoto(cv, normalizedDecoded.linearProPhotoRgb, width, height);
-      normalizedDecoded.linearProPhotoRgb = null;
-    } else {
-      rgb = new cv.Mat();
-      cv.cvtColor(rgba, rgb, cv.COLOR_RGBA2RGB);
-    }
-
-    homography = cv.matFromArray(3, 3, cv.CV_64F, Array.from(matrix));
-    let mergeSource;
-    if (linearRgb) {
-      alignedLinearRgb = new cv.Mat();
-      cv.warpPerspective(
-        linearRgb,
-        alignedLinearRgb,
-        homography,
-        new cv.Size(width, height),
-        cv.INTER_LINEAR,
-        cv.BORDER_REPLICATE,
-        new cv.Scalar(0, 0, 0, 0),
-      );
-      mergeSource = alignedLinearRgb;
-    } else {
-      alignedRgb = new cv.Mat();
-      cv.warpPerspective(
-        rgb,
-        alignedRgb,
-        homography,
-        new cv.Size(width, height),
-        cv.INTER_LINEAR,
-        cv.BORDER_REPLICATE,
-        new cv.Scalar(0, 0, 0, 0),
-      );
-      mergeSource = alignedRgb;
-    }
-
-    setProgress(describeMergeStep(index, files.length, mergePlan));
-    if (isTileMergeMode(mergePlan.mode)) {
-      placeTileMergeSource(
-        index,
-        mergeSource,
-        hasLinearProPhoto,
-        inputInfo.sourceColorSpace,
-        tileStoredBuffer,
-        tileLayout,
-        width,
-        height,
-      );
-    } else if (mergePlan.mode === "median") {
-      await storeMedianAlignedImageTiles(
-        medianScratchDb,
-        medianScratchSessionId,
-        index,
-        mergeSource,
-        hasLinearProPhoto,
-        inputInfo.sourceColorSpace,
-        width,
-        height,
-        files.length,
-      );
-    } else if (mergePlan.mode === "focus") {
-      await storeFocusAlignedImage(
-        medianScratchDb,
-        medianScratchSessionId,
-        focusWorker,
-        index,
-        mergeSource,
-        hasLinearProPhoto,
-        inputInfo.sourceColorSpace,
-        width,
-        height,
-        files.length,
-      );
-    } else {
-      await mergeStackSource(
-        index,
-        mergeSource,
-        hasLinearProPhoto,
-        inputInfo,
-        mergePlan,
-        accumulator,
-        hdr1StreamWorker,
-        hdr2StreamWorker,
-      );
-    }
-  } finally {
-    if (homography) homography.delete();
-    if (alignedLinearRgb) alignedLinearRgb.delete();
-    if (alignedRgb) alignedRgb.delete();
-    if (linearRgb) linearRgb.delete();
-    if (rgb) rgb.delete();
-    rgba.delete();
-  }
-}
-
-function linearChannelToStoredGamma2(value) {
-  return Math.round(Math.sqrt(clamp01(value)) * RESULT_BUFFER_MAX_UINT16);
-}
-
-function placeTileMergeSource(
-  index,
-  mergeSource,
-  hasLinearProPhoto,
-  sourceColorSpace,
-  tileStoredBuffer,
-  tileLayout,
-  width,
-  height,
-) {
-  if (!tileStoredBuffer || !tileLayout) {
-    throw new Error("Tile output was not initialized.");
-  }
-  const position = tileLayout.positions[index];
-  if (!position) {
-    throw new Error(`Tile position is missing for image ${index + 1}.`);
-  }
-
-  if (hasLinearProPhoto) {
-    const source = mergeSource.data32F;
-    const expectedLength = width * height * 3;
-    if (!source || source.length < expectedLength) {
-      throw new Error("Tile source has an invalid linear RGB buffer.");
-    }
-    for (let y = 0; y < height; y += 1) {
-      let sourceIndex = y * width * 3;
-      let targetIndex = ((position.y + y) * tileLayout.outputWidth + position.x) * 3;
-      for (let x = 0; x < width; x += 1) {
-        tileStoredBuffer[targetIndex] = linearChannelToStoredGamma2(source[sourceIndex]);
-        tileStoredBuffer[targetIndex + 1] = linearChannelToStoredGamma2(source[sourceIndex + 1]);
-        tileStoredBuffer[targetIndex + 2] = linearChannelToStoredGamma2(source[sourceIndex + 2]);
-        sourceIndex += 3;
-        targetIndex += 3;
-      }
-    }
-    return;
-  }
-
-  const source = mergeSource.data;
-  const expectedLength = width * height * 3;
-  if (!source || source.length < expectedLength) {
-    throw new Error("Tile source has an invalid RGB buffer.");
-  }
-  const convertRgb8 = createRgb8ToLinearProphotoConverter(sourceColorSpace);
-  const converted = new Float32Array(3);
-  for (let y = 0; y < height; y += 1) {
-    let sourceIndex = y * width * 3;
-    let targetIndex = ((position.y + y) * tileLayout.outputWidth + position.x) * 3;
-    for (let x = 0; x < width; x += 1) {
-      convertRgb8(source[sourceIndex], source[sourceIndex + 1], source[sourceIndex + 2], converted);
-      tileStoredBuffer[targetIndex] = linearChannelToStoredGamma2(converted[0]);
-      tileStoredBuffer[targetIndex + 1] = linearChannelToStoredGamma2(converted[1]);
-      tileStoredBuffer[targetIndex + 2] = linearChannelToStoredGamma2(converted[2]);
-      sourceIndex += 3;
-      targetIndex += 3;
-    }
-  }
-}
-
-async function mergeStackSource(
-  index,
-  mergeSource,
-  hasLinearProPhoto,
-  inputInfo,
-  mergePlan,
-  accumulator,
-  hdr1StreamWorker,
-  hdr2StreamWorker,
-) {
-  if (mergePlan.mode === "hdr1" || mergePlan.mode === "hdr2") {
-    const useHdr2Preparation = mergePlan.mode === "hdr2";
-    const prepared = hasLinearProPhoto
-      ? (useHdr2Preparation
-        ? linearProPhotoMatToHdr2FloatsAndBrightness(mergeSource)
-        : linearProPhotoMatToFloatsAndBrightness(mergeSource))
-      : (useHdr2Preparation
-        ? rgbMatToHdr2FloatsAndBrightness(mergeSource, inputInfo.sourceColorSpace)
-        : rgbMatToLinearProPhotoFloatsAndBrightness(mergeSource, inputInfo.sourceColorSpace));
-    if (mergePlan.mode === "hdr1") {
-      if (!hdr1StreamWorker) {
-        throw new Error("HDR1 stream worker was not initialized.");
-      }
-      await hdr1StreamWorker.addImage(index, prepared.floats, prepared.brightness);
-    } else {
-      if (!hdr2StreamWorker) {
-        throw new Error("HDR2 stream worker was not initialized.");
-      }
-      await hdr2StreamWorker.addImage(index, prepared.floats, prepared.brightness);
-    }
-  } else if (hasLinearProPhoto) {
-    mergeLinearProPhotoMatIntoAccumulator(
-      mergeSource,
-      accumulator,
-      mergePlan.gains[index],
-      mergePlan.weights[index],
-    );
-  } else {
-    mergeRgbIntoAccumulator(
-      mergeSource,
-      accumulator,
-      inputInfo.sourceColorSpace,
-      mergePlan.gains[index],
-      mergePlan.weights[index],
-    );
-  }
-}
-
-function warnIfMedianScratchMayExceedQuota(width, height, imageCount) {
-  if (!(navigator.storage && typeof navigator.storage.estimate === "function")) return;
-  const requiredBytes = width * height * 3 * Uint16Array.BYTES_PER_ELEMENT * imageCount;
-  navigator.storage.estimate().then(({ quota, usage }) => {
-    if (!(Number.isFinite(quota) && Number.isFinite(usage))) return;
-    const available = quota - usage;
-    if (available < requiredBytes * 1.1) {
-      console.warn(
-        `Denoise (median) scratch may need about ${(requiredBytes / (1024 ** 3)).toFixed(2)} GiB, ` +
-        `but the browser currently reports ${(Math.max(0, available) / (1024 ** 3)).toFixed(2)} GiB available.`,
-      );
-    }
-  }).catch(() => {});
-}
-
-async function flushScratchWriteBatch(db, batch, label, quotaErrorMessage) {
-  if (batch.length === 0) return;
-  try {
-    await putMedianScratchTiles(db, batch, label);
-  } catch (error) {
-    if (error && (error.name === "QuotaExceededError" || error.name === "UnknownError")) {
-      throw new Error(quotaErrorMessage);
-    }
-    throw error;
-  } finally {
-    batch.length = 0;
-  }
-  await yieldToBrowser();
-}
-
-function scratchWriteBatchWouldOverflow(batch, batchBytes, nextBytes) {
-  return batch.length > 0 && (
-    batch.length >= SCRATCH_WRITE_BATCH_MAX_TILES
-    || batchBytes + nextBytes > SCRATCH_WRITE_BATCH_MAX_BYTES
-  );
-}
-
-function focusScratchWriteBatchWouldOverflow(batch, batchBytes, nextBytes) {
-  return batch.length > 0 && (
-    batch.length >= FOCUS_SCRATCH_WRITE_BATCH_MAX_TILES
-    || batchBytes + nextBytes > FOCUS_SCRATCH_WRITE_BATCH_MAX_BYTES
-  );
-}
-
-async function storeMedianAlignedImageTiles(
-  db,
-  sessionId,
-  imageIndex,
-  mat,
-  hasLinearProPhoto,
-  sourceColorSpace,
-  width,
-  height,
-  imageCount,
-) {
-  if (!db || !sessionId) {
-    throw new Error("Median scratch storage is not initialized.");
-  }
-  const tileColumns = Math.ceil(width / MEDIAN_TILE_SIZE);
-  const tileRows = Math.ceil(height / MEDIAN_TILE_SIZE);
-  const tileCount = tileColumns * tileRows;
-  const source = hasLinearProPhoto ? mat.data32F : mat.data;
-  const expectedLength = width * height * 3;
-  if (!source || source.length !== expectedLength) {
-    throw new Error("Median input has an invalid aligned RGB buffer.");
-  }
-
-  const convertRgb8 = hasLinearProPhoto ? null : createRgb8ToLinearProphotoConverter(sourceColorSpace);
-  const converted = new Float32Array(3);
-  const writeBatch = [];
-  let writeBatchBytes = 0;
-  let tileNumber = 0;
-
-  for (let tileY = 0; tileY < tileRows; tileY += 1) {
-    const y0 = tileY * MEDIAN_TILE_SIZE;
-    const tileHeight = Math.min(MEDIAN_TILE_SIZE, height - y0);
-    for (let tileX = 0; tileX < tileColumns; tileX += 1) {
-      const x0 = tileX * MEDIAN_TILE_SIZE;
-      const tileWidth = Math.min(MEDIAN_TILE_SIZE, width - x0);
-      const tile = new Uint16Array(tileWidth * tileHeight * 3);
-      let targetOffset = 0;
-
-      for (let localY = 0; localY < tileHeight; localY += 1) {
-        let sourceOffset = ((y0 + localY) * width + x0) * 3;
-        for (let localX = 0; localX < tileWidth; localX += 1) {
-          if (hasLinearProPhoto) {
-            tile[targetOffset] = Math.round(Math.sqrt(clamp01(source[sourceOffset])) * RESULT_BUFFER_MAX_UINT16);
-            tile[targetOffset + 1] = Math.round(Math.sqrt(clamp01(source[sourceOffset + 1])) * RESULT_BUFFER_MAX_UINT16);
-            tile[targetOffset + 2] = Math.round(Math.sqrt(clamp01(source[sourceOffset + 2])) * RESULT_BUFFER_MAX_UINT16);
-          } else {
-            convertRgb8(source[sourceOffset], source[sourceOffset + 1], source[sourceOffset + 2], converted);
-            tile[targetOffset] = Math.round(Math.sqrt(clamp01(converted[0])) * RESULT_BUFFER_MAX_UINT16);
-            tile[targetOffset + 1] = Math.round(Math.sqrt(clamp01(converted[1])) * RESULT_BUFFER_MAX_UINT16);
-            tile[targetOffset + 2] = Math.round(Math.sqrt(clamp01(converted[2])) * RESULT_BUFFER_MAX_UINT16);
-          }
-          sourceOffset += 3;
-          targetOffset += 3;
-        }
-      }
-
-      tileNumber += 1;
-      setProgress(`Storing denoise image ${imageIndex + 1}/${imageCount}, tile ${tileNumber}/${tileCount} (${tileWidth}x${tileHeight})...`);
-      if (scratchWriteBatchWouldOverflow(writeBatch, writeBatchBytes, tile.byteLength)) {
-        await flushScratchWriteBatch(db, writeBatch, "Denoise (median) scratch tile batch", "Browser scratch storage is full while writing Denoise (median) tiles.");
-        writeBatchBytes = 0;
-      }
-      writeBatch.push({ key: medianScratchTileKey(sessionId, imageIndex, tileX, tileY), buffer: tile.buffer });
-      writeBatchBytes += tile.byteLength;
-      if (writeBatch.length >= SCRATCH_WRITE_BATCH_MAX_TILES || writeBatchBytes >= SCRATCH_WRITE_BATCH_MAX_BYTES) {
-        await flushScratchWriteBatch(db, writeBatch, "Denoise (median) scratch tile batch", "Browser scratch storage is full while writing Denoise (median) tiles.");
-        writeBatchBytes = 0;
-      }
-    }
-  }
-  await flushScratchWriteBatch(db, writeBatch, "Denoise (median) scratch tile batch", "Browser scratch storage is full while writing Denoise (median) tiles.");
-}
-
 function exactMedianUint16Tile(tiles) {
   if (!Array.isArray(tiles) || tiles.length === 0) {
     throw new Error("Median tile set is empty.");
@@ -3039,40 +2640,6 @@ function exactMedianUint16Tile(tiles) {
   return output;
 }
 
-async function mergeMedianScratchTiles(db, sessionId, imageCount, width, height) {
-  const output = new Uint16Array(width * height * 3);
-  const tileColumns = Math.ceil(width / MEDIAN_TILE_SIZE);
-  const tileRows = Math.ceil(height / MEDIAN_TILE_SIZE);
-  const tileCount = tileColumns * tileRows;
-  let tileNumber = 0;
-
-  for (let tileY = 0; tileY < tileRows; tileY += 1) {
-    const y0 = tileY * MEDIAN_TILE_SIZE;
-    const tileHeight = Math.min(MEDIAN_TILE_SIZE, height - y0);
-    for (let tileX = 0; tileX < tileColumns; tileX += 1) {
-      const x0 = tileX * MEDIAN_TILE_SIZE;
-      const tileWidth = Math.min(MEDIAN_TILE_SIZE, width - x0);
-      tileNumber += 1;
-      setProgress(`Computing median tile ${tileNumber}/${tileCount} (${tileWidth}x${tileHeight})...`);
-      const tiles = await getMedianScratchTiles(db, sessionId, imageCount, tileX, tileY);
-      const expectedLength = tileWidth * tileHeight * 3;
-      if (tiles.some((tile) => tile.length !== expectedLength)) {
-        throw new Error(`Median scratch tile ${tileX},${tileY} has an invalid size.`);
-      }
-      const medianTile = exactMedianUint16Tile(tiles);
-      const rowLength = tileWidth * 3;
-      for (let localY = 0; localY < tileHeight; localY += 1) {
-        const sourceStart = localY * rowLength;
-        const targetStart = ((y0 + localY) * width + x0) * 3;
-        output.set(medianTile.subarray(sourceStart, sourceStart + rowLength), targetStart);
-      }
-      await yieldToBrowser();
-    }
-  }
-  return output;
-}
-
-
 const FOCUS_FEATURE_METADATA_VERSION = 1;
 
 function focusFeatureKey(sessionId, imageIndex) {
@@ -3120,154 +2687,6 @@ function decodeFocusFeatureMetadata(buffer) {
     throw new Error("Focus sharpness feature metadata contains invalid statistics.");
   }
   return metadata;
-}
-
-function warnIfFocusScratchMayExceedQuota(width, height, imageCount) {
-  if (!(navigator.storage && typeof navigator.storage.estimate === "function")) return;
-  const imagePixels = width * height;
-  const working = focusSharpnessWorkingDimensions(width, height);
-  const workingPixels = working.width * working.height;
-  const rgbBytes = imagePixels * 3 * Uint16Array.BYTES_PER_ELEMENT * imageCount;
-  const featureBytesPerImage = workingPixels * 2 * Float32Array.BYTES_PER_ELEMENT;
-  const featureMetadataBytesPerImage = 9 * Float64Array.BYTES_PER_ELEMENT;
-  const temporaryBytes = (featureBytesPerImage + featureMetadataBytesPerImage) * imageCount;
-  const requiredBytes = rgbBytes + temporaryBytes;
-  navigator.storage.estimate().then(({ quota, usage }) => {
-    if (!(Number.isFinite(quota) && Number.isFinite(usage))) return;
-    const available = quota - usage;
-    if (available < requiredBytes * 1.1) {
-      console.warn(
-        `Focus scratch may need about ${(requiredBytes / (1024 ** 3)).toFixed(2)} GiB at peak, ` +
-        `but the browser currently reports ${(Math.max(0, available) / (1024 ** 3)).toFixed(2)} GiB available.`,
-      );
-    }
-  }).catch(() => {});
-}
-
-async function storeFocusAlignedImage(
-  db,
-  sessionId,
-  focusWorker,
-  imageIndex,
-  mat,
-  hasLinearProPhoto,
-  sourceColorSpace,
-  width,
-  height,
-  imageCount,
-) {
-  if (!db || !sessionId || !focusWorker) {
-    throw new Error("Focus scratch storage is not initialized.");
-  }
-
-  setProgress(`Preparing Focus RGB ${imageIndex + 1}/${imageCount}...`);
-  const stored = alignedMatToGamma2Uint16(
-    mat,
-    hasLinearProPhoto,
-    sourceColorSpace,
-    width,
-    height,
-  );
-  await storeFocusRgbTiles(db, sessionId, imageIndex, stored, width, height, imageCount);
-
-  setProgress(`Computing Focus sharpness features ${imageIndex + 1}/${imageCount}...`);
-  const featureResult = await focusWorker.computeSharpnessFeatures(
-    stored,
-    width,
-    height,
-    `Computing Focus sharpness features ${imageIndex + 1}/${imageCount}...`,
-  );
-  const expectedWorking = focusSharpnessWorkingDimensions(width, height);
-  const workingPixels = expectedWorking.width * expectedWorking.height;
-  if (
-    featureResult.workingWidth !== expectedWorking.width ||
-    featureResult.workingHeight !== expectedWorking.height ||
-    !(featureResult.features instanceof Float32Array) ||
-    featureResult.features.length !== workingPixels * 2 ||
-    featureResult.lapStats.count !== workingPixels ||
-    featureResult.sobelStats.count !== workingPixels
-  ) {
-    throw new Error("Focus worker returned invalid sharpness features.");
-  }
-  const metadata = encodeFocusFeatureMetadata(featureResult);
-  try {
-    await putMedianScratchTiles(
-      db,
-      [
-        { key: focusFeatureKey(sessionId, imageIndex), buffer: featureResult.features.buffer },
-        { key: focusFeatureMetadataKey(sessionId, imageIndex), buffer: metadata.buffer },
-      ],
-      "Focus sharpness feature buffers",
-    );
-  } catch (error) {
-    if (error && (error.name === "QuotaExceededError" || error.name === "UnknownError")) {
-      throw new Error("Browser scratch storage is full while writing Focus sharpness features.");
-    }
-    throw error;
-  }
-}
-
-function alignedMatToGamma2Uint16(mat, hasLinearProPhoto, sourceColorSpace, width, height) {
-  const source = hasLinearProPhoto ? mat.data32F : mat.data;
-  const expectedLength = width * height * 3;
-  if (!source || source.length !== expectedLength) {
-    throw new Error("Focus input has an invalid aligned RGB buffer.");
-  }
-
-  const output = new Uint16Array(expectedLength);
-  if (hasLinearProPhoto) {
-    for (let i = 0; i < source.length; i += 1) {
-      output[i] = Math.round(Math.sqrt(clamp01(source[i])) * RESULT_BUFFER_MAX_UINT16);
-    }
-    return output;
-  }
-
-  const convertRgb8 = createRgb8ToLinearProphotoConverter(sourceColorSpace);
-  const converted = new Float32Array(3);
-  for (let i = 0; i < source.length; i += 3) {
-    convertRgb8(source[i], source[i + 1], source[i + 2], converted);
-    output[i] = Math.round(Math.sqrt(clamp01(converted[0])) * RESULT_BUFFER_MAX_UINT16);
-    output[i + 1] = Math.round(Math.sqrt(clamp01(converted[1])) * RESULT_BUFFER_MAX_UINT16);
-    output[i + 2] = Math.round(Math.sqrt(clamp01(converted[2])) * RESULT_BUFFER_MAX_UINT16);
-  }
-  return output;
-}
-
-async function storeFocusRgbTiles(db, sessionId, imageIndex, stored, width, height, imageCount) {
-  const tileColumns = Math.ceil(width / FOCUS_STORAGE_TILE_SIZE);
-  const tileRows = Math.ceil(height / FOCUS_STORAGE_TILE_SIZE);
-  const tileCount = tileColumns * tileRows;
-  const writeBatch = [];
-  let writeBatchBytes = 0;
-  let tileNumber = 0;
-  for (let tileY = 0; tileY < tileRows; tileY += 1) {
-    const y0 = tileY * FOCUS_STORAGE_TILE_SIZE;
-    const tileHeight = Math.min(FOCUS_STORAGE_TILE_SIZE, height - y0);
-    for (let tileX = 0; tileX < tileColumns; tileX += 1) {
-      const x0 = tileX * FOCUS_STORAGE_TILE_SIZE;
-      const tileWidth = Math.min(FOCUS_STORAGE_TILE_SIZE, width - x0);
-      const tile = new Uint16Array(tileWidth * tileHeight * 3);
-      const rowLength = tileWidth * 3;
-      for (let localY = 0; localY < tileHeight; localY += 1) {
-        const sourceStart = ((y0 + localY) * width + x0) * 3;
-        const targetStart = localY * rowLength;
-        tile.set(stored.subarray(sourceStart, sourceStart + rowLength), targetStart);
-      }
-      tileNumber += 1;
-      setProgress(`Storing Focus RGB ${imageIndex + 1}/${imageCount}, tile ${tileNumber}/${tileCount} (${tileWidth}x${tileHeight})...`);
-      if (focusScratchWriteBatchWouldOverflow(writeBatch, writeBatchBytes, tile.byteLength)) {
-        await flushScratchWriteBatch(db, writeBatch, "Focus RGB scratch tile batch", "Browser scratch storage is full while writing Focus RGB tiles.");
-        writeBatchBytes = 0;
-      }
-      writeBatch.push({ key: medianScratchTileKey(sessionId, imageIndex, tileX, tileY), buffer: tile.buffer });
-      writeBatchBytes += tile.byteLength;
-      if (writeBatch.length >= FOCUS_SCRATCH_WRITE_BATCH_MAX_TILES || writeBatchBytes >= FOCUS_SCRATCH_WRITE_BATCH_MAX_BYTES) {
-        await flushScratchWriteBatch(db, writeBatch, "Focus RGB scratch tile batch", "Browser scratch storage is full while writing Focus RGB tiles.");
-        writeBatchBytes = 0;
-      }
-    }
-  }
-  await flushScratchWriteBatch(db, writeBatch, "Focus RGB scratch tile batch", "Browser scratch storage is full while writing Focus RGB tiles.");
 }
 
 async function prepareFocusSharpnessMaps(
@@ -3363,81 +2782,6 @@ async function prepareFocusSharpnessMaps(
   };
 }
 
-async function getFocusRgbRegionForImage(
-  db,
-  sessionId,
-  imageIndex,
-  imageWidth,
-  imageHeight,
-  regionX,
-  regionY,
-  regionWidth,
-  regionHeight,
-) {
-  if (!(regionWidth > 0 && regionHeight > 0)) {
-    throw new Error("Focus processing region has invalid dimensions.");
-  }
-  const regionRight = regionX + regionWidth;
-  const regionBottom = regionY + regionHeight;
-  if (regionX < 0 || regionY < 0 || regionRight > imageWidth || regionBottom > imageHeight) {
-    throw new Error("Focus processing region is outside the image bounds.");
-  }
-
-  const firstTileX = Math.floor(regionX / FOCUS_STORAGE_TILE_SIZE);
-  const lastTileX = Math.floor((regionRight - 1) / FOCUS_STORAGE_TILE_SIZE);
-  const firstTileY = Math.floor(regionY / FOCUS_STORAGE_TILE_SIZE);
-  const lastTileY = Math.floor((regionBottom - 1) / FOCUS_STORAGE_TILE_SIZE);
-  const tileDescriptors = [];
-  const tileKeys = [];
-  for (let tileY = firstTileY; tileY <= lastTileY; tileY += 1) {
-    const tileY0 = tileY * FOCUS_STORAGE_TILE_SIZE;
-    const tileHeight = Math.min(FOCUS_STORAGE_TILE_SIZE, imageHeight - tileY0);
-    for (let tileX = firstTileX; tileX <= lastTileX; tileX += 1) {
-      const tileX0 = tileX * FOCUS_STORAGE_TILE_SIZE;
-      const tileWidth = Math.min(FOCUS_STORAGE_TILE_SIZE, imageWidth - tileX0);
-      tileDescriptors.push({ tileX, tileY, tileX0, tileY0, tileWidth, tileHeight });
-      tileKeys.push(medianScratchTileKey(sessionId, imageIndex, tileX, tileY));
-    }
-  }
-
-  const tileBuffers = await getScratchBuffers(
-    db,
-    tileKeys,
-    `Focus RGB region for image ${imageIndex + 1}`,
-  );
-  const rgb = new Uint16Array(regionWidth * regionHeight * 3);
-  for (let tileIndex = 0; tileIndex < tileDescriptors.length; tileIndex += 1) {
-    const descriptor = tileDescriptors[tileIndex];
-    const sourceRgb = new Uint16Array(tileBuffers[tileIndex]);
-    const expectedRgbLength = descriptor.tileWidth * descriptor.tileHeight * 3;
-    if (sourceRgb.length !== expectedRgbLength) {
-      throw new Error(`Focus RGB scratch tile ${descriptor.tileX},${descriptor.tileY} has an invalid size.`);
-    }
-
-    const copyX0 = Math.max(regionX, descriptor.tileX0);
-    const copyY0 = Math.max(regionY, descriptor.tileY0);
-    const copyX1 = Math.min(regionRight, descriptor.tileX0 + descriptor.tileWidth);
-    const copyY1 = Math.min(regionBottom, descriptor.tileY0 + descriptor.tileHeight);
-    const copyWidth = copyX1 - copyX0;
-    if (!(copyWidth > 0 && copyY1 > copyY0)) continue;
-
-    const sourceX = copyX0 - descriptor.tileX0;
-    const targetX = copyX0 - regionX;
-    for (let y = copyY0; y < copyY1; y += 1) {
-      const sourceY = y - descriptor.tileY0;
-      const targetY = y - regionY;
-      const sourceRgbStart = (sourceY * descriptor.tileWidth + sourceX) * 3;
-      const targetRgbStart = (targetY * regionWidth + targetX) * 3;
-      rgb.set(
-        sourceRgb.subarray(sourceRgbStart, sourceRgbStart + copyWidth * 3),
-        targetRgbStart,
-      );
-    }
-  }
-
-  return rgb;
-}
-
 function computeFocusGlobalTau(stats) {
   if (!(stats && stats.count > 0)) throw new Error("Focus sharpness statistics are empty.");
   const mean = stats.sum / stats.count;
@@ -3445,7 +2789,7 @@ function computeFocusGlobalTau(stats) {
   return Math.max(Math.sqrt(variance) * FOCUS_SMOOTHNESS, 1e-4);
 }
 
-async function mergeFocusScratchTiles(db, sessionId, focusWorker, imageCount, width, height) {
+async function mergeFocusFromAlignedReader(db, sessionId, focusWorker, reader, imageCount, width, height) {
   if (!focusWorker) throw new Error("Focus worker is not initialized.");
   const preparedSharpness = await prepareFocusSharpnessMaps(
     db,
@@ -3579,16 +2923,13 @@ async function mergeFocusScratchTiles(db, sessionId, focusWorker, imageCount, wi
           pyramidDownsamples,
         );
         for (let imageIndex = 0; imageIndex < imageCount; imageIndex += 1) {
-          const rgb = await getFocusRgbRegionForImage(
-            db,
-            sessionId,
+          const rgb = await reader.readGamma2Region(
             imageIndex,
-            width,
-            height,
             regionX,
             regionY,
             regionWidth,
             regionHeight,
+            1,
           );
           await worker.addFocusCoreImage(imageIndex, rgb);
         }
@@ -3878,100 +3219,6 @@ function createHdrMertensStreamWorker(width, height, imageCount) {
     SINGLE_SHOT_HDR_SATURATION_WEIGHT,
     SINGLE_SHOT_HDR_EXPOSURE_WEIGHT,
   );
-}
-
-async function processSingleInputHdrWithOpenCv(cv, file, inputInfo, mergePlan, outputColorSpace) {
-  setProgress(`${inputInfo.isRaw ? "Developing RAW" : "Reading image"} 1/1...`);
-  const decoded = await decodeFileToDecodedImage(file, inputInfo);
-  const imageData = decoded.alignmentImageData || decoded.imageData;
-  const width = decoded.width || imageData.width;
-  const height = decoded.height || imageData.height;
-  let rgba = null;
-  let rgb = null;
-  let baseLinear = null;
-
-  try {
-    if (decoded.linearProPhotoRgb instanceof Float32Array) {
-      baseLinear = decoded.linearProPhotoRgb;
-      decoded.linearProPhotoRgb = null;
-    } else {
-      rgba = cv.matFromImageData(imageData);
-      rgb = new cv.Mat();
-      cv.cvtColor(rgba, rgb, cv.COLOR_RGBA2RGB);
-      baseLinear = rgbMatToLinearProPhoto(rgb, inputInfo.sourceColorSpace);
-      rgb.delete();
-      rgb = null;
-      rgba.delete();
-      rgba = null;
-    }
-
-    const materials = mergePlan.syntheticMaterials;
-    const expectedMaterialCount = 3;
-    if (!Array.isArray(materials) || materials.length !== expectedMaterialCount) {
-      throw new Error(`Single-input ${mergePlan.mode.toUpperCase()} requires ${expectedMaterialCount} synthetic materials.`);
-    }
-
-    if (mergePlan.mode === "hdr1") {
-      // For single-shot HDR1, do not pre-stretch the base image. Debevec recovers
-      // radiance from the synthetic exposure ratios themselves, so a common
-      // contrast stretch only scales/warps all materials without helping
-      // highlight recovery.
-      const hdrBase = buildSingleShotHdrBaseLinear(baseLinear, width, height, null, true);
-      const hdrBaseLinear = hdrBase.linear;
-      const hdr1StreamWorker = createHdrDebevecReinhardStreamWorker(
-        width,
-        height,
-        materials.length,
-        mergePlan.hdrExposureTimes,
-        new Uint8Array(materials.length).fill(1),
-      );
-      const brightness = computeAverageBrightnessFromLinear(hdrBaseLinear);
-      try {
-        for (let i = 0; i < materials.length; i += 1) {
-          const material = materials[i];
-          setProgress(`Preparing HDR1 synthetic material ${i + 1}/${materials.length} (${material.label})...`);
-          await hdr1StreamWorker.addImage(
-            i,
-            buildSingleShotHdr1Material(hdrBaseLinear, hdrBase.p998, material),
-            brightness,
-          );
-          await yieldToBrowser();
-        }
-        const linearResult = await hdr1StreamWorker.finalize();
-        return finalizeStoredResult(linearResult, width, height, outputColorSpace, false);
-      } finally {
-        hdr1StreamWorker.terminate();
-      }
-    }
-
-    if (mergePlan.mode !== "hdr2") {
-      throw new Error(`Unsupported single-input HDR mode: ${mergePlan.mode}`);
-    }
-
-    const contrastStretch = prepareSingleShotHdrContrastStretch(baseLinear, width, height);
-    const hdrBase = buildSingleShotHdrBaseLinear(baseLinear, width, height, contrastStretch, true);
-    const hdrBaseLinear = hdrBase.linear;
-    applyLinearGainInPlace(hdrBaseLinear, SINGLE_SHOT_HDR2_BASE_HEADROOM_GAIN);
-    baseLinear = null;
-    const brightness = computeAverageBrightnessFromLinear(hdrBaseLinear);
-    const hdr2StreamWorker = createHdrMertensStreamWorker(width, height, materials.length);
-    try {
-      for (let i = 0; i < materials.length; i += 1) {
-        const material = materials[i];
-        setProgress(`Preparing HDR2 synthetic material ${i + 1}/${materials.length} (${material.label})...`);
-        const synthetic = buildSingleShotHdr2Material(hdrBaseLinear, material);
-        await hdr2StreamWorker.addImage(i, synthetic, brightness);
-        await yieldToBrowser();
-      }
-      const linearResult = await hdr2StreamWorker.finalize();
-      return finalizeStoredResult(linearResult, width, height, outputColorSpace, true);
-    } finally {
-      hdr2StreamWorker.terminate();
-    }
-  } finally {
-    if (rgb) rgb.delete();
-    if (rgba) rgba.delete();
-  }
 }
 
 function buildSingleShotHdr1Material(sourceLinear, baseP998, material) {
@@ -5074,112 +4321,74 @@ function iccBytesToSearchText(bytes) {
   return text.toLowerCase();
 }
 
+async function ensureCanonicalSession(files, inputInfos, existingSession) {
+  const signature = canonicalFilesSignature(files);
+  if (
+    existingSession &&
+    existingSession.filesSignature === signature &&
+    existingSession.images?.length === files.length &&
+    existingSession.images.every((image) => image?.complete)
+  ) {
+    console.info(`Reusing canonical input cache for ${files.length} image${files.length === 1 ? "" : "s"}.`);
+    return existingSession;
+  }
+
+  if (existingSession) {
+    try { await deleteCanonicalSession(existingSession); } catch (error) { console.warn("Could not clear replaced canonical input cache:", error); }
+  }
+  await estimateCanonicalCapacity(files, inputInfos);
+  const session = await createCanonicalSession(files, inputInfos);
+  try {
+    for (let index = 0; index < files.length; index += 1) {
+      const file = files[index];
+      const inputInfo = inputInfos[index];
+      setProgress(`${inputInfo.isRaw ? "Developing RAW" : "Reading image"} ${index + 1}/${files.length} for canonical cache...`);
+      const decoded = await decodeFileToDecodedImage(file, inputInfo);
+      const linear = decodedImageToLinearProPhoto(decoded);
+      await writeCanonicalLinearImage(
+        session,
+        index,
+        file,
+        inputInfo,
+        decoded.width,
+        decoded.height,
+        linear,
+        (message) => setProgress(message),
+      );
+      await yieldToBrowser();
+    }
+    await completeCanonicalSession(session);
+    console.info(`Canonical input cache ready: ${files.length} image${files.length === 1 ? "" : "s"}.`);
+    return session;
+  } catch (error) {
+    try { await deleteCanonicalSession(session); } catch (cleanupError) { console.warn("Could not clear incomplete canonical input cache:", cleanupError); }
+    throw error;
+  }
+}
+
+function decodedImageToLinearProPhoto(decoded) {
+  if (decoded?.linearProPhotoRgb instanceof Float32Array) {
+    return decoded.linearProPhotoRgb;
+  }
+  const imageData = decoded?.imageData || decoded?.alignmentImageData;
+  if (!imageData?.data) throw new Error("Decoded image does not contain pixel data for canonical conversion.");
+  const pixelCount = decoded.width * decoded.height;
+  const output = new Float32Array(pixelCount * 3);
+  const convert = createRgb8ToLinearProphotoConverter(decoded.sourceColorSpace || "srgb");
+  const converted = new Float32Array(3);
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const source = pixel * 4;
+    const target = pixel * 3;
+    convert(imageData.data[source], imageData.data[source + 1], imageData.data[source + 2], converted);
+    output[target] = converted[0];
+    output[target + 1] = converted[1];
+    output[target + 2] = converted[2];
+  }
+  return output;
+}
+
 function chooseOutputColorSpace(inputInfos) {
   return inputInfos.some((info) => info.sourceColorSpace !== "srgb") ? "display-p3" : "srgb";
-}
-
-function normalizeDecodedImageForAlignment(cv, decoded, alignmentMode, targetWidth, targetHeight) {
-  if (
-    alignmentMode === "feature-match" ||
-    (decoded.width === targetWidth && decoded.height === targetHeight)
-  ) {
-    return decoded;
-  }
-
-  if (decoded.linearProPhotoRgb instanceof Float32Array) {
-    const linearProPhotoRgb = transformLinearProPhotoForAlignment(
-      cv,
-      decoded.linearProPhotoRgb,
-      decoded.width,
-      decoded.height,
-      targetWidth,
-      targetHeight,
-      alignmentMode,
-    );
-    return {
-      width: targetWidth,
-      height: targetHeight,
-      sourceColorSpace: decoded.sourceColorSpace,
-      linearProPhotoRgb,
-      alignmentImageData: linearProPhotoToAlignmentImageData(
-        linearProPhotoRgb,
-        targetWidth,
-        targetHeight,
-      ),
-    };
-  }
-
-  const sourceImageData = decoded.alignmentImageData || decoded.imageData;
-  if (!sourceImageData) {
-    throw new Error("Decoded image does not contain pixel data.");
-  }
-  return {
-    width: targetWidth,
-    height: targetHeight,
-    sourceColorSpace: decoded.sourceColorSpace,
-    imageData: transformImageDataForAlignment(
-      sourceImageData,
-      targetWidth,
-      targetHeight,
-      alignmentMode,
-    ),
-  };
-}
-
-function transformImageDataForAlignment(sourceImageData, targetWidth, targetHeight, alignmentMode) {
-  const sourceCanvas = document.createElement("canvas");
-  sourceCanvas.width = sourceImageData.width;
-  sourceCanvas.height = sourceImageData.height;
-  const sourceContext = sourceCanvas.getContext("2d", { willReadFrequently: true });
-  if (!sourceContext) throw new Error("Could not create a 2D canvas context.");
-  sourceContext.putImageData(sourceImageData, 0, 0);
-
-  const outputCanvas = document.createElement("canvas");
-  outputCanvas.width = targetWidth;
-  outputCanvas.height = targetHeight;
-  const outputContext = outputCanvas.getContext("2d", { willReadFrequently: true });
-  if (!outputContext) throw new Error("Could not create a 2D canvas context.");
-  outputContext.imageSmoothingEnabled = true;
-  outputContext.imageSmoothingQuality = "high";
-
-  if (alignmentMode === "center-crop") {
-    const sx = Math.floor((sourceImageData.width - targetWidth) / 2);
-    const sy = Math.floor((sourceImageData.height - targetHeight) / 2);
-    outputContext.drawImage(
-      sourceCanvas,
-      sx,
-      sy,
-      targetWidth,
-      targetHeight,
-      0,
-      0,
-      targetWidth,
-      targetHeight,
-    );
-  } else if (alignmentMode === "center-fill" || alignmentMode === "top-left-fill") {
-    outputContext.fillStyle = `rgb(${CENTER_FILL_GRAY_BYTE}, ${CENTER_FILL_GRAY_BYTE}, ${CENTER_FILL_GRAY_BYTE})`;
-    outputContext.fillRect(0, 0, targetWidth, targetHeight);
-    const dx = alignmentMode === "center-fill"
-      ? Math.floor((targetWidth - sourceImageData.width) / 2)
-      : 0;
-    const dy = alignmentMode === "center-fill"
-      ? Math.floor((targetHeight - sourceImageData.height) / 2)
-      : 0;
-    outputContext.drawImage(sourceCanvas, dx, dy);
-  } else if (alignmentMode === "center-fit") {
-    const scale = Math.max(
-      targetWidth / sourceImageData.width,
-      targetHeight / sourceImageData.height,
-    );
-    const drawWidth = Math.max(targetWidth, Math.round(sourceImageData.width * scale));
-    const drawHeight = Math.max(targetHeight, Math.round(sourceImageData.height * scale));
-    const dx = Math.floor((targetWidth - drawWidth) / 2);
-    const dy = Math.floor((targetHeight - drawHeight) / 2);
-    outputContext.drawImage(sourceCanvas, dx, dy, drawWidth, drawHeight);
-  } else {
-    throw new Error(`Unsupported alignment mode: ${alignmentMode}`);
-  }
-  return outputContext.getImageData(0, 0, targetWidth, targetHeight);
 }
 
 function transformLinearProPhotoForAlignment(
@@ -5884,5 +5093,10 @@ return () => {
   }
   clearZoomView();
   clearFullSizeRenderCache();
+  if (currentCanonicalSession) {
+    const session = currentCanonicalSession;
+    currentCanonicalSession = null;
+    deleteCanonicalSession(session).catch((error) => console.warn("Could not clear canonical input cache on unmount:", error));
+  }
 };
 }

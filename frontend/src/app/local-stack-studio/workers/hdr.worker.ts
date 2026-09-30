@@ -43,14 +43,14 @@ self.onmessage = (event) => {
         try {
           await cleanupDebevecStreamState();
         } catch {
-          // Best-effort scratch cleanup; report the original processing error.
+          // Best-effort state cleanup; report the original processing error.
         }
       }
       if (mertensStreamState) {
         try {
           await cleanupMertensStreamState();
         } catch {
-          // Best-effort scratch cleanup; report the original processing error.
+          // Best-effort state cleanup; report the original processing error.
         }
       }
       self.postMessage({
@@ -73,6 +73,14 @@ async function dispatchWorkerMessage(message: HdrWorkerRequest) {
     await appendDebevecStreamImage(message);
     return;
   }
+  if (message.type === "merge-stream-pass2-begin") {
+    await beginDebevecSecondPass(message);
+    return;
+  }
+  if (message.type === "merge-stream-pass2-image") {
+    await appendDebevecSecondPassImage(message);
+    return;
+  }
   if (message.type === "merge-stream-finalize") {
     await finalizeDebevecStream(message);
     return;
@@ -93,6 +101,14 @@ async function dispatchWorkerMessage(message: HdrWorkerRequest) {
   }
   if (message.type === "mertens-stream-image") {
     await appendMertensStreamImage(message);
+    return;
+  }
+  if (message.type === "mertens-stream-pass2-begin") {
+    await beginMertensSecondPass(message);
+    return;
+  }
+  if (message.type === "mertens-stream-pass2-image") {
+    await appendMertensSecondPassImage(message);
     return;
   }
   if (message.type === "mertens-stream-finalize") {
@@ -176,15 +192,6 @@ async function initializeDebevecStream(message) {
   const sampleCount = needsResponseCalibration
     ? chooseDebevecResponseSampleCount(pixelCount, imageCount)
     : 0;
-  let db = null;
-  if (needsResponseCalibration) {
-    try {
-      db = await openHdr2ScratchDb();
-    } catch (error) {
-      console.warn("HDR1 IndexedDB scratch is unavailable; using in-memory calibration fallback:", error);
-    }
-  }
-
   debevecStreamState = {
     width,
     height,
@@ -203,10 +210,12 @@ async function initializeDebevecStream(message) {
     responseSampleIndices: needsResponseCalibration ? buildDebevecResponseSampleIndices(width, height, sampleCount) : null,
     responseSamples: needsResponseCalibration ? new Float32Array(imageCount * sampleCount * 3) : null,
     responseSampleCount: sampleCount,
-    db,
-    sessionId: needsResponseCalibration ? `hdr1-${createHdr2ScratchSessionId()}` : null,
-    memoryImages: new Map(),
-    scratchWriteDisabled: needsResponseCalibration && !db,
+    calibratedExposureTimes: null,
+    calibratedResponseCurves: null,
+    calibratedResponseSums: null,
+    calibratedWeightSums: null,
+    pass2ReceivedFlags: null,
+    pass2ReceivedCount: 0,
   };
   debevecStreamState.brightnesses.fill(Number.NaN);
   self.postMessage({ type: "merge-stream-ready", requestId: message.requestId });
@@ -236,18 +245,6 @@ async function appendDebevecStreamImage(message) {
 
   if (state.needsResponseCalibration) {
     captureDebevecResponseSamples(state, imageIndex, image);
-    if (!state.scratchWriteDisabled && state.db) {
-      postProgress(`Storing HDR1 input ${imageIndex + 1}/${state.imageCount} for response calibration...`);
-      try {
-        await putHdr2ScratchImage(state.db, hdr2ScratchKey(state.sessionId, imageIndex), imageBuffer);
-      } catch (error) {
-        state.scratchWriteDisabled = true;
-        state.memoryImages.set(imageIndex, imageBuffer);
-        console.warn("HDR1 scratch write failed; keeping remaining inputs in worker memory:", error);
-      }
-    } else {
-      state.memoryImages.set(imageIndex, imageBuffer);
-    }
   } else {
     accumulateLinearDebevecImage(state, imageIndex, image, brightness);
   }
@@ -279,11 +276,11 @@ async function finalizeDebevecStream(message) {
 
   let hdr;
   if (state.needsResponseCalibration) {
-    postProgress("Calibrating HDR1 Debevec response curve...");
-    const exposureTimes = resolveExposureTimes(state.suppliedExposureTimes, brightnesses);
-    const responseCurves = estimateDebevecResponseCurves(state, exposureTimes);
-    postProgress("Merging HDR1 radiance with calibrated Debevec response...");
-    hdr = await mergeCalibratedDebevecStream(state, exposureTimes, responseCurves);
+    if (state.pass2ReceivedCount !== state.imageCount || !state.calibratedResponseSums || !state.calibratedWeightSums) {
+      throw new Error(`HDR1 calibrated second pass received ${state.pass2ReceivedCount}/${state.imageCount} input images.`);
+    }
+    postProgress("Finalizing calibrated HDR1 radiance...");
+    hdr = finalizeCalibratedDebevecAccumulation(state);
   } else {
     postProgress("Finalizing streamed HDR with linear Debevec response...");
     hdr = finalizeLinearDebevecStreamToHdr(state);
@@ -293,7 +290,7 @@ async function finalizeDebevecStream(message) {
   try {
     await cleanupDebevecStreamState();
   } catch (error) {
-    console.warn("Could not fully clear HDR1 scratch images:", error);
+    console.warn("Could not fully clear HDR1 stream state:", error);
   }
 
   postProgress("Tone mapping HDR with Reinhard...");
@@ -671,66 +668,69 @@ function evaluateDebevecResponseCurve(curve, value) {
   return curve[left] * (1 - fraction) + curve[left + 1] * fraction;
 }
 
-async function getDebevecStreamImageBuffer(state, imageIndex) {
-  const memoryBuffer = state.memoryImages.get(imageIndex);
-  if (memoryBuffer instanceof ArrayBuffer) return memoryBuffer;
-  if (!state.db) throw new Error(`HDR1 input ${imageIndex + 1} is unavailable.`);
-  return await getHdr2ScratchImage(state.db, hdr2ScratchKey(state.sessionId, imageIndex));
-}
-
-async function releaseDebevecStreamImage(state, imageIndex) {
-  if (state.memoryImages.delete(imageIndex)) return;
-  if (!state.db) return;
-  try {
-    await deleteHdr2ScratchImage(state.db, hdr2ScratchKey(state.sessionId, imageIndex));
-  } catch (error) {
-    console.warn(`Could not delete HDR1 scratch input ${imageIndex + 1}:`, error);
+async function beginDebevecSecondPass(message) {
+  const state = debevecStreamState;
+  if (!state) throw new Error("HDR1 stream worker was not initialized.");
+  if (!state.needsResponseCalibration) {
+    self.postMessage({ type: "merge-stream-pass2-ready", requestId: message.requestId });
+    return;
   }
-}
-
-async function mergeCalibratedDebevecStream(state, exposureTimes, responseCurves) {
+  if (state.receivedCount !== state.imageCount) {
+    throw new Error(`HDR1 response pass received ${state.receivedCount}/${state.imageCount} input images.`);
+  }
+  postProgress("Calibrating HDR1 Debevec response curve...");
+  state.calibratedExposureTimes = resolveExposureTimes(state.suppliedExposureTimes, state.brightnesses);
+  state.calibratedResponseCurves = estimateDebevecResponseCurves(state, state.calibratedExposureTimes);
   const pixelCount = state.width * state.height;
-  const responseSums = new Float32Array(pixelCount * 3);
-  const weightSums = new Float32Array(pixelCount);
-  const logTimes = new Float64Array(exposureTimes.length);
-  for (let i = 0; i < exposureTimes.length; i += 1) logTimes[i] = Math.log(exposureTimes[i]);
-  const expectedByteLength = pixelCount * 3 * Float32Array.BYTES_PER_ELEMENT;
-
-  // Samples are no longer needed once the response curves have been solved.
+  state.calibratedResponseSums = new Float32Array(pixelCount * 3);
+  state.calibratedWeightSums = new Float32Array(pixelCount);
+  state.pass2ReceivedFlags = new Uint8Array(state.imageCount);
+  state.pass2ReceivedCount = 0;
   state.responseSamples = null;
   state.responseSampleIndices = null;
+  self.postMessage({ type: "merge-stream-pass2-ready", requestId: message.requestId });
+}
 
-  for (let imageIndex = 0; imageIndex < state.imageCount; imageIndex += 1) {
-    postProgress(`Merging calibrated HDR1 input ${imageIndex + 1}/${state.imageCount}...`);
-    const buffer = await getDebevecStreamImageBuffer(state, imageIndex);
-    if (buffer.byteLength !== expectedByteLength) {
-      throw new Error(`HDR1 scratch input ${imageIndex + 1} has an invalid size.`);
-    }
-    const image = new Float32Array(buffer);
-    const linearResponse = state.linearResponseFlags[imageIndex] !== 0;
-    const logTime = logTimes[imageIndex];
-    for (let pixel = 0, offset = 0; pixel < pixelCount; pixel += 1, offset += 3) {
-      const r = clamp01(image[offset]);
-      const g = clamp01(image[offset + 1]);
-      const b = clamp01(image[offset + 2]);
-      const weight = debevecPixelWeight(r, g, b);
-      const responseR = linearResponse
-        ? debevecLogResponseFloat(r)
-        : evaluateDebevecResponseCurve(responseCurves[0], r);
-      const responseG = linearResponse
-        ? debevecLogResponseFloat(g)
-        : evaluateDebevecResponseCurve(responseCurves[1], g);
-      const responseB = linearResponse
-        ? debevecLogResponseFloat(b)
-        : evaluateDebevecResponseCurve(responseCurves[2], b);
-      responseSums[offset] += weight * (responseR - logTime);
-      responseSums[offset + 1] += weight * (responseG - logTime);
-      responseSums[offset + 2] += weight * (responseB - logTime);
-      weightSums[pixel] += weight;
-    }
-    await releaseDebevecStreamImage(state, imageIndex);
+async function appendDebevecSecondPassImage(message) {
+  const state = debevecStreamState;
+  if (!state || !state.needsResponseCalibration) throw new Error("HDR1 calibrated second pass is not initialized.");
+  if (!state.calibratedExposureTimes || !state.calibratedResponseCurves || !state.calibratedResponseSums || !state.calibratedWeightSums || !state.pass2ReceivedFlags) {
+    throw new Error("HDR1 calibrated second pass has not begun.");
   }
+  const imageIndex = Number(message.imageIndex);
+  if (!(Number.isInteger(imageIndex) && imageIndex >= 0 && imageIndex < state.imageCount)) throw new Error("HDR1 second pass received an invalid image index.");
+  if (state.pass2ReceivedFlags[imageIndex]) throw new Error(`HDR1 second-pass input ${imageIndex + 1} was sent more than once.`);
+  const buffer = message.imageBuffer;
+  const expected = state.width * state.height * 3 * Float32Array.BYTES_PER_ELEMENT;
+  if (!(buffer instanceof ArrayBuffer) || buffer.byteLength !== expected) throw new Error(`HDR1 second-pass input ${imageIndex + 1} has an invalid Float32 RGB buffer.`);
+  accumulateCalibratedDebevecImage(state, imageIndex, new Float32Array(buffer));
+  state.pass2ReceivedFlags[imageIndex] = 1;
+  state.pass2ReceivedCount += 1;
+  self.postMessage({ type: "merge-stream-pass2-image-accepted", requestId: message.requestId, imageIndex });
+}
 
+function accumulateCalibratedDebevecImage(state, imageIndex, image) {
+  const exposureTimes = state.calibratedExposureTimes;
+  const curves = state.calibratedResponseCurves;
+  const responseSums = state.calibratedResponseSums;
+  const weightSums = state.calibratedWeightSums;
+  const logTime = Math.log(exposureTimes[imageIndex]);
+  const linearResponse = state.linearResponseFlags[imageIndex] !== 0;
+  const pixelCount = state.width * state.height;
+  for (let pixel = 0, offset = 0; pixel < pixelCount; pixel += 1, offset += 3) {
+    const r = clamp01(image[offset]), g = clamp01(image[offset + 1]), b = clamp01(image[offset + 2]);
+    const weight = debevecPixelWeight(r, g, b);
+    responseSums[offset] += weight * ((linearResponse ? debevecLogResponseFloat(r) : evaluateDebevecResponseCurve(curves[0], r)) - logTime);
+    responseSums[offset + 1] += weight * ((linearResponse ? debevecLogResponseFloat(g) : evaluateDebevecResponseCurve(curves[1], g)) - logTime);
+    responseSums[offset + 2] += weight * ((linearResponse ? debevecLogResponseFloat(b) : evaluateDebevecResponseCurve(curves[2], b)) - logTime);
+    weightSums[pixel] += weight;
+  }
+}
+
+function finalizeCalibratedDebevecAccumulation(state) {
+  const responseSums = state.calibratedResponseSums;
+  const weightSums = state.calibratedWeightSums;
+  const pixelCount = state.width * state.height;
   for (let pixel = 0, offset = 0; pixel < pixelCount; pixel += 1, offset += 3) {
     const weightSum = weightSums[pixel];
     for (let channel = 0; channel < 3; channel += 1) {
@@ -742,16 +742,7 @@ async function mergeCalibratedDebevecStream(state, exposureTimes, responseCurves
 }
 
 async function cleanupDebevecStreamState() {
-  const state = debevecStreamState;
   debevecStreamState = null;
-  if (!state) return;
-  state.memoryImages?.clear?.();
-  if (!state.db || !state.sessionId) return;
-  try {
-    await deleteHdr2ScratchSession(state.db, state.sessionId);
-  } finally {
-    state.db.close();
-  }
 }
 
 async function processMertensMessage(message) {
@@ -791,113 +782,6 @@ async function processMertensMessage(message) {
   );
 }
 
-const HDR2_SCRATCH_DB_NAME = "local-stack-studio-hdr2-scratch";
-const HDR2_SCRATCH_DB_VERSION = 1;
-const HDR2_SCRATCH_STORE = "images";
-
-function createHdr2ScratchSessionId() {
-  if (self.crypto && typeof self.crypto.randomUUID === "function") return self.crypto.randomUUID();
-  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-function openHdr2ScratchDb() {
-  return new Promise((resolve, reject) => {
-    if (!("indexedDB" in self)) {
-      reject(new Error("HDR2 streaming requires IndexedDB support in this browser."));
-      return;
-    }
-    const request = indexedDB.open(HDR2_SCRATCH_DB_NAME, HDR2_SCRATCH_DB_VERSION);
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains(HDR2_SCRATCH_STORE)) db.createObjectStore(HDR2_SCRATCH_STORE);
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error || new Error("Could not open HDR2 scratch storage."));
-    request.onblocked = () => reject(new Error("HDR2 scratch storage is blocked by another Local Stack Studio tab."));
-  });
-}
-
-function hdr2ScratchKey(sessionId, imageIndex) {
-  return `${sessionId}:${imageIndex}`;
-}
-
-function putHdr2ScratchImage(db, key, buffer) {
-  return new Promise((resolve, reject) => {
-    let transaction;
-    try {
-      transaction = db.transaction(HDR2_SCRATCH_STORE, "readwrite");
-      transaction.objectStore(HDR2_SCRATCH_STORE).put(buffer, key);
-    } catch (error) {
-      reject(error);
-      return;
-    }
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error || new Error("Could not write HDR2 scratch image."));
-    transaction.onabort = () => reject(transaction.error || new Error("HDR2 scratch image write was aborted."));
-  });
-}
-
-function getHdr2ScratchImage(db, key) {
-  return new Promise((resolve, reject) => {
-    let transaction;
-    try {
-      transaction = db.transaction(HDR2_SCRATCH_STORE, "readonly");
-    } catch (error) {
-      reject(error);
-      return;
-    }
-    const request = transaction.objectStore(HDR2_SCRATCH_STORE).get(key);
-    request.onsuccess = () => {
-      if (!(request.result instanceof ArrayBuffer)) {
-        reject(new Error("HDR2 scratch image is missing or invalid."));
-        return;
-      }
-      resolve(request.result);
-    };
-    request.onerror = () => reject(request.error || new Error("Could not read HDR2 scratch image."));
-  });
-}
-
-function deleteHdr2ScratchImage(db, key) {
-  return new Promise((resolve, reject) => {
-    let transaction;
-    try {
-      transaction = db.transaction(HDR2_SCRATCH_STORE, "readwrite");
-      transaction.objectStore(HDR2_SCRATCH_STORE).delete(key);
-    } catch (error) {
-      reject(error);
-      return;
-    }
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error || new Error("Could not delete HDR2 scratch image."));
-    transaction.onabort = () => reject(transaction.error || new Error("HDR2 scratch image deletion was aborted."));
-  });
-}
-
-function deleteHdr2ScratchSession(db, sessionId) {
-  return new Promise((resolve, reject) => {
-    let transaction;
-    try {
-      transaction = db.transaction(HDR2_SCRATCH_STORE, "readwrite");
-    } catch (error) {
-      reject(error);
-      return;
-    }
-    const store = transaction.objectStore(HDR2_SCRATCH_STORE);
-    const prefix = `${sessionId}:`;
-    const request = store.openCursor(IDBKeyRange.bound(prefix, `${prefix}\uffff`));
-    request.onsuccess = () => {
-      const cursor = request.result;
-      if (!cursor) return;
-      cursor.delete();
-      cursor.continue();
-    };
-    request.onerror = () => reject(request.error || new Error("Could not enumerate HDR2 scratch images."));
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error || new Error("Could not clear HDR2 scratch images."));
-    transaction.onabort = () => reject(transaction.error || new Error("HDR2 scratch cleanup was aborted."));
-  });
-}
 
 async function initializeMertensStream(message) {
   if (mertensStreamState) throw new Error("HDR2 stream worker is already initialized.");
@@ -910,12 +794,8 @@ async function initializeMertensStream(message) {
   if (!(Number.isInteger(imageCount) && imageCount >= 2)) {
     throw new Error("HDR2 streaming requires at least two input images.");
   }
-  let db = null;
-  try {
-    db = await openHdr2ScratchDb();
-  } catch (error) {
-    console.warn("HDR2 IndexedDB scratch is unavailable; using in-memory streaming fallback:", error);
-  }
+  const saturationWeight = Number.isFinite(message.saturationWeight) ? Number(message.saturationWeight) : 0.1;
+  const exposureWeight = Number.isFinite(message.exposureWeight) ? Number(message.exposureWeight) : 1;
   mertensStreamState = {
     width,
     height,
@@ -923,12 +803,14 @@ async function initializeMertensStream(message) {
     receivedCount: 0,
     brightnesses: new Float32Array(imageCount),
     receivedFlags: new Uint8Array(imageCount),
-    saturationWeight: Number.isFinite(message.saturationWeight) ? Number(message.saturationWeight) : 0.1,
-    exposureWeight: Number.isFinite(message.exposureWeight) ? Number(message.exposureWeight) : 1,
-    db,
-    sessionId: createHdr2ScratchSessionId(),
-    memoryImages: new Map(),
-    scratchWriteDisabled: !db,
+    saturationWeight,
+    exposureWeight,
+    weightSums: new Float32Array(width * height),
+    cv: null,
+    dimensions: null,
+    fusedLevels: null,
+    pass2ReceivedFlags: null,
+    pass2ReceivedCount: 0,
   };
   mertensStreamState.brightnesses.fill(Number.NaN);
   self.postMessage({ type: "mertens-stream-ready", requestId: message.requestId });
@@ -951,133 +833,95 @@ async function appendMertensStreamImage(message) {
   if (!(imageBuffer instanceof ArrayBuffer) || imageBuffer.byteLength !== expectedByteLength) {
     throw new Error(`HDR2 input ${imageIndex + 1} has an invalid Float32 RGB buffer.`);
   }
-  if (!state.scratchWriteDisabled && state.db) {
-    postProgress(`Storing HDR2 input ${imageIndex + 1}/${state.imageCount} in scratch space...`);
-    try {
-      await putHdr2ScratchImage(state.db, hdr2ScratchKey(state.sessionId, imageIndex), imageBuffer);
-    } catch (error) {
-      state.scratchWriteDisabled = true;
-      state.memoryImages.set(imageIndex, imageBuffer);
-      console.warn("HDR2 scratch write failed; keeping remaining inputs in worker memory:", error);
-    }
-  } else {
-    state.memoryImages.set(imageIndex, imageBuffer);
-  }
+  accumulateOpenCvMertensWeightSums(
+    new Float32Array(imageBuffer),
+    state.width,
+    state.height,
+    state.saturationWeight,
+    state.exposureWeight,
+    state.weightSums,
+  );
   state.receivedFlags[imageIndex] = 1;
   state.brightnesses[imageIndex] = brightness;
   state.receivedCount += 1;
-  self.postMessage({
-    type: "mertens-stream-image-stored",
-    requestId: message.requestId,
-    imageIndex,
-  });
+  self.postMessage({ type: "mertens-stream-image-stored", requestId: message.requestId, imageIndex });
 }
 
-async function getMertensStreamImageBuffer(state, imageIndex) {
-  const memoryBuffer = state.memoryImages.get(imageIndex);
-  if (memoryBuffer instanceof ArrayBuffer) return memoryBuffer;
-  if (!state.db) throw new Error(`HDR2 input ${imageIndex + 1} is unavailable.`);
-  return await getHdr2ScratchImage(state.db, hdr2ScratchKey(state.sessionId, imageIndex));
-}
-
-async function releaseMertensStreamImage(state, imageIndex) {
-  if (state.memoryImages.delete(imageIndex)) return;
-  if (!state.db) return;
-  try {
-    await deleteHdr2ScratchImage(state.db, hdr2ScratchKey(state.sessionId, imageIndex));
-  } catch (error) {
-    console.warn(`Could not delete HDR2 scratch input ${imageIndex + 1}:`, error);
-  }
-}
-
-async function finalizeMertensStream(message) {
+async function beginMertensSecondPass(message) {
   const state = mertensStreamState;
   if (!state) throw new Error("HDR2 stream worker was not initialized.");
   if (state.receivedCount !== state.imageCount) {
-    throw new Error(`HDR2 stream worker received ${state.receivedCount}/${state.imageCount} input images.`);
+    throw new Error(`HDR2 weight pass received ${state.receivedCount}/${state.imageCount} input images.`);
   }
   for (let i = 0; i < state.brightnesses.length; i += 1) {
     if (!(Number.isFinite(state.brightnesses[i]) && state.brightnesses[i] >= 0)) {
       throw new Error(`HDR2 input ${i + 1} has an invalid brightness value.`);
     }
   }
-
-  postProgress("Loading OpenCV for HDR2 Mertens exposure fusion...");
+  postProgress("Loading OpenCV for HDR2 Mertens pyramid pass...");
   const cv = await loadWorkerOpenCv("HDR2");
   if (typeof cv.pyrDown !== "function" || typeof cv.pyrUp !== "function") {
     throw new Error("OpenCV.js does not provide pyrDown()/pyrUp() required for HDR2 Mertens fusion.");
   }
-  const dimensions = buildOpenCvMertensPyramidDimensions(state.width, state.height);
-  const fusedLevels = createMertensFusedLevels(dimensions);
+  state.cv = cv;
+  state.dimensions = buildOpenCvMertensPyramidDimensions(state.width, state.height);
+  state.fusedLevels = createMertensFusedLevels(state.dimensions);
+  state.pass2ReceivedFlags = new Uint8Array(state.imageCount);
+  state.pass2ReceivedCount = 0;
+  self.postMessage({ type: "mertens-stream-pass2-ready", requestId: message.requestId });
+}
+
+async function appendMertensSecondPassImage(message) {
+  const state = mertensStreamState;
+  if (!state || !state.cv || !state.dimensions || !state.fusedLevels || !state.pass2ReceivedFlags) {
+    throw new Error("HDR2 pyramid pass has not begun.");
+  }
+  const imageIndex = Number(message.imageIndex);
+  if (!(Number.isInteger(imageIndex) && imageIndex >= 0 && imageIndex < state.imageCount)) {
+    throw new Error("HDR2 pyramid pass received an invalid image index.");
+  }
+  if (state.pass2ReceivedFlags[imageIndex]) throw new Error(`HDR2 second-pass input ${imageIndex + 1} was sent more than once.`);
+  // Preserve the former all-in-memory accumulation order exactly.
+  if (imageIndex !== state.pass2ReceivedCount) {
+    throw new Error(`HDR2 pyramid pass expected input ${state.pass2ReceivedCount + 1}, received ${imageIndex + 1}.`);
+  }
+  const imageBuffer = message.imageBuffer;
   const expectedByteLength = state.width * state.height * 3 * Float32Array.BYTES_PER_ELEMENT;
-  const weightSums = new Float32Array(state.width * state.height);
-
-  // Mertens normalization is a two-pass algorithm. Read scratch inputs in
-  // image-index order for both passes so Float32 accumulation order matches
-  // the former all-in-memory implementation even when alignment recovery
-  // delivered some images out of order.
-  for (let imageIndex = 0; imageIndex < state.imageCount; imageIndex += 1) {
-    postProgress(`Analyzing HDR2 weights ${imageIndex + 1}/${state.imageCount}...`);
-    const buffer = await getMertensStreamImageBuffer(state, imageIndex);
-    if (buffer.byteLength !== expectedByteLength) {
-      throw new Error(`HDR2 scratch input ${imageIndex + 1} has an invalid size.`);
-    }
-    accumulateOpenCvMertensWeightSums(
-      new Float32Array(buffer),
-      state.width,
-      state.height,
-      state.saturationWeight,
-      state.exposureWeight,
-      weightSums,
-    );
+  if (!(imageBuffer instanceof ArrayBuffer) || imageBuffer.byteLength !== expectedByteLength) {
+    throw new Error(`HDR2 second-pass input ${imageIndex + 1} has an invalid Float32 RGB buffer.`);
   }
+  accumulateMertensImagePyramid(
+    state.cv,
+    new Float32Array(imageBuffer),
+    state.imageCount,
+    state.width,
+    state.height,
+    state.saturationWeight,
+    state.exposureWeight,
+    state.weightSums,
+    state.dimensions,
+    state.fusedLevels,
+  );
+  state.pass2ReceivedFlags[imageIndex] = 1;
+  state.pass2ReceivedCount += 1;
+  self.postMessage({ type: "mertens-stream-pass2-image-accepted", requestId: message.requestId, imageIndex });
+}
 
-  for (let imageIndex = 0; imageIndex < state.imageCount; imageIndex += 1) {
-    postProgress(`Merging HDR2 input ${imageIndex + 1}/${state.imageCount}...`);
-    const buffer = await getMertensStreamImageBuffer(state, imageIndex);
-    if (buffer.byteLength !== expectedByteLength) {
-      throw new Error(`HDR2 scratch input ${imageIndex + 1} has an invalid size.`);
-    }
-    accumulateMertensImagePyramid(
-      cv,
-      new Float32Array(buffer),
-      state.imageCount,
-      state.width,
-      state.height,
-      state.saturationWeight,
-      state.exposureWeight,
-      weightSums,
-      dimensions,
-      fusedLevels,
-    );
-    await releaseMertensStreamImage(state, imageIndex);
+async function finalizeMertensStream(message) {
+  const state = mertensStreamState;
+  if (!state) throw new Error("HDR2 stream worker was not initialized.");
+  if (state.pass2ReceivedCount !== state.imageCount || !state.cv || !state.dimensions || !state.fusedLevels) {
+    throw new Error(`HDR2 pyramid pass received ${state.pass2ReceivedCount}/${state.imageCount} input images.`);
   }
-
-  const merged = reconstructMertensFusedLevels(cv, fusedLevels, dimensions, state.width, state.height);
+  const merged = reconstructMertensFusedLevels(state.cv, state.fusedLevels, state.dimensions, state.width, state.height);
   postProgress("Restoring HDR2 brightness...");
   adjustExposureToBrightnessInPlace(merged, meanArray(state.brightnesses));
-  try {
-    await cleanupMertensStreamState();
-  } catch (error) {
-    console.warn("Could not fully clear HDR2 scratch images:", error);
-  }
-  self.postMessage(
-    { type: "mertens-result", requestId: message.requestId, gamma2Buffer: merged.buffer },
-    [merged.buffer],
-  );
+  await cleanupMertensStreamState();
+  self.postMessage({ type: "mertens-result", requestId: message.requestId, gamma2Buffer: merged.buffer }, [merged.buffer]);
 }
 
 async function cleanupMertensStreamState() {
-  const state = mertensStreamState;
   mertensStreamState = null;
-  if (!state) return;
-  state.memoryImages.clear();
-  if (!state.db) return;
-  try {
-    await deleteHdr2ScratchSession(state.db, state.sessionId);
-  } finally {
-    state.db.close();
-  }
 }
 
 const MERTENS_PROCESSING_GAMMA = 2.4;

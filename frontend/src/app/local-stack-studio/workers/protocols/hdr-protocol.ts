@@ -16,6 +16,8 @@ export type Hdr1StreamImageRequest = {
   imageBuffer: ArrayBuffer;
 };
 
+export type Hdr1StreamPass2BeginRequest = { type: "merge-stream-pass2-begin"; requestId: number; };
+export type Hdr1StreamPass2ImageRequest = { type: "merge-stream-pass2-image"; requestId: number; imageIndex: number; imageBuffer: ArrayBuffer; };
 export type Hdr1StreamFinalizeRequest = {
   type: "merge-stream-finalize";
   requestId: number;
@@ -44,6 +46,8 @@ export type Hdr2StreamImageRequest = {
   imageBuffer: ArrayBuffer;
 };
 
+export type Hdr2StreamPass2BeginRequest = { type: "mertens-stream-pass2-begin"; requestId: number; };
+export type Hdr2StreamPass2ImageRequest = { type: "mertens-stream-pass2-image"; requestId: number; imageIndex: number; imageBuffer: ArrayBuffer; };
 export type Hdr2StreamFinalizeRequest = {
   type: "mertens-stream-finalize";
   requestId: number;
@@ -78,10 +82,14 @@ export type HdrLegacyMertensRequest = {
 export type HdrWorkerRequest =
   | Hdr1StreamInitRequest
   | Hdr1StreamImageRequest
+  | Hdr1StreamPass2BeginRequest
+  | Hdr1StreamPass2ImageRequest
   | Hdr1StreamFinalizeRequest
   | Hdr1StreamAbortRequest
   | Hdr2StreamInitRequest
   | Hdr2StreamImageRequest
+  | Hdr2StreamPass2BeginRequest
+  | Hdr2StreamPass2ImageRequest
   | Hdr2StreamFinalizeRequest
   | Hdr2StreamAbortRequest
   | HdrLegacyMergeRequest
@@ -110,6 +118,8 @@ export type Hdr1StreamImageStoredResponse = {
   imageIndex: number;
 };
 
+export type Hdr1StreamPass2ReadyResponse = { type: "merge-stream-pass2-ready"; requestId: number; };
+export type Hdr1StreamPass2ImageAcceptedResponse = { type: "merge-stream-pass2-image-accepted"; requestId: number; imageIndex: number; };
 export type Hdr1StreamAbortedResponse = {
   type: "merge-stream-aborted";
   requestId: number;
@@ -132,6 +142,8 @@ export type Hdr2StreamImageStoredResponse = {
   imageIndex: number;
 };
 
+export type Hdr2StreamPass2ReadyResponse = { type: "mertens-stream-pass2-ready"; requestId: number; };
+export type Hdr2StreamPass2ImageAcceptedResponse = { type: "mertens-stream-pass2-image-accepted"; requestId: number; imageIndex: number; };
 export type Hdr2StreamAbortedResponse = {
   type: "mertens-stream-aborted";
   requestId: number;
@@ -148,10 +160,14 @@ export type HdrWorkerResponse =
   | HdrErrorResponse
   | Hdr1StreamReadyResponse
   | Hdr1StreamImageStoredResponse
+  | Hdr1StreamPass2ReadyResponse
+  | Hdr1StreamPass2ImageAcceptedResponse
   | Hdr1StreamAbortedResponse
   | Hdr1ResultResponse
   | Hdr2StreamReadyResponse
   | Hdr2StreamImageStoredResponse
+  | Hdr2StreamPass2ReadyResponse
+  | Hdr2StreamPass2ImageAcceptedResponse
   | Hdr2StreamAbortedResponse
   | Hdr2ResultResponse;
 
@@ -159,11 +175,15 @@ const HDR_REQUEST_TYPES = new Set<HdrWorkerRequest["type"]>([
   "merge",
   "merge-stream-init",
   "merge-stream-image",
+  "merge-stream-pass2-begin",
+  "merge-stream-pass2-image",
   "merge-stream-finalize",
   "merge-stream-abort",
   "mertens",
   "mertens-stream-init",
   "mertens-stream-image",
+  "mertens-stream-pass2-begin",
+  "mertens-stream-pass2-image",
   "mertens-stream-finalize",
   "mertens-stream-abort",
 ]);
