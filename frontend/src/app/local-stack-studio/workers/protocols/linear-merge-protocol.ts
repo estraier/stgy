@@ -11,6 +11,7 @@ export type LinearMergeWorkerConfig = {
   alignmentPlan: LinearMergeWorkerAlignmentPlan;
   matrices: LinearMergeWorkerMatrix[];
   gains: Float32Array;
+  scaledLogs: Float32Array;
   weights: Float32Array;
   exposureRolloffMaxP998AfterGain: Array<number | null>;
   cacheBytes?: number;

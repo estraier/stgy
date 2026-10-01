@@ -1,4 +1,6 @@
 import { decodeStoredRgb16Channel, encodeStoredRgb16Channel } from "@/image/rgb16-storage";
+import { clamp01, toneLinearIntensity } from "@/image/tone";
+import type { StfToneStatistics } from "./stf-tone-match";
 
 const DB_NAME = "local-stack-studio-canonical-source";
 const DB_VERSION = 1;
@@ -18,6 +20,8 @@ export const CANONICAL_NEGATIVE_EXCURSION_TOLERANCE = 0.003;
 // floating-point/interpolation noise at the upper storage boundary.
 export const CANONICAL_UPPER_ROUNDING_TOLERANCE = 1e-4;
 export const CANONICAL_MAIN_CACHE_BYTES = 64 * 1024 * 1024;
+export const CANONICAL_TONE_SAMPLE_TARGET_PIXELS = 65_536;
+export const CANONICAL_TONE_HISTOGRAM_BINS = 4096;
 export const CANONICAL_WORKER_CACHE_BYTES = 32 * 1024 * 1024;
 
 export function normalizeCanonicalLinearSample(value: number): number {
@@ -33,6 +37,109 @@ export function normalizeCanonicalLinearSample(value: number): number {
   if (value <= 0) return 0;
   if (value >= CANONICAL_LINEAR_RANGE_MAX) return CANONICAL_LINEAR_RANGE_MAX;
   return value;
+}
+
+function canonicalToneSampleDimensions(width: number, height: number): { width: number; height: number } {
+  const pixelCount = width * height;
+  if (pixelCount <= CANONICAL_TONE_SAMPLE_TARGET_PIXELS) return { width, height };
+  const aspect = width / height;
+  let sampleWidth = Math.max(1, Math.min(width, Math.round(Math.sqrt(CANONICAL_TONE_SAMPLE_TARGET_PIXELS * aspect))));
+  let sampleHeight = Math.max(1, Math.min(height, Math.floor(CANONICAL_TONE_SAMPLE_TARGET_PIXELS / sampleWidth)));
+  while (sampleWidth * sampleHeight > CANONICAL_TONE_SAMPLE_TARGET_PIXELS && sampleHeight > 1) sampleHeight -= 1;
+  while (sampleWidth * sampleHeight > CANONICAL_TONE_SAMPLE_TARGET_PIXELS && sampleWidth > 1) sampleWidth -= 1;
+  return { width: sampleWidth, height: sampleHeight };
+}
+
+function percentileFromCanonicalToneHistogram(
+  histogram: Uint32Array,
+  sampleCount: number,
+  percentile: number,
+): number {
+  if (sampleCount <= 0) return 0;
+  const rank = (sampleCount - 1) * Math.min(100, Math.max(0, percentile)) / 100;
+  const lowerRank = Math.floor(rank);
+  const upperRank = Math.ceil(rank);
+  const fraction = rank - lowerRank;
+  let cumulative = 0;
+  let lowerBin = histogram.length - 1;
+  let upperBin = histogram.length - 1;
+  let lowerFound = false;
+  for (let bin = 0; bin < histogram.length; bin += 1) {
+    cumulative += histogram[bin] ?? 0;
+    if (!lowerFound && cumulative > lowerRank) {
+      lowerBin = bin;
+      lowerFound = true;
+    }
+    if (cumulative > upperRank) {
+      upperBin = bin;
+      break;
+    }
+  }
+  const level = lowerBin + (upperBin - lowerBin) * fraction;
+  return level / Math.max(1, histogram.length - 1);
+}
+
+function canonicalToneStatisticsFromSampler(
+  width: number,
+  height: number,
+  sampleIntensity: (pixelIndex: number) => number,
+): StfToneStatistics {
+  const dimensions = canonicalToneSampleDimensions(width, height);
+  const histogram = new Uint32Array(CANONICAL_TONE_HISTOGRAM_BINS);
+  let sum = 0;
+  let sampleCount = 0;
+  const maxBin = histogram.length - 1;
+  for (let sy = 0; sy < dimensions.height; sy += 1) {
+    const y = Math.min(height - 1, Math.floor((sy + 0.5) * height / dimensions.height));
+    for (let sx = 0; sx < dimensions.width; sx += 1) {
+      const x = Math.min(width - 1, Math.floor((sx + 0.5) * width / dimensions.width));
+      const intensity = clamp01(sampleIntensity(y * width + x));
+      sum += intensity;
+      const bin = Math.min(maxBin, Math.max(0, Math.round(intensity * maxBin)));
+      histogram[bin] += 1;
+      sampleCount += 1;
+    }
+  }
+  if (sampleCount <= 0) throw new Error("Canonical tone statistics have no samples.");
+  return {
+    sampleCount,
+    mean: sum / sampleCount,
+    p50: percentileFromCanonicalToneHistogram(histogram, sampleCount, 50),
+    p95: percentileFromCanonicalToneHistogram(histogram, sampleCount, 95),
+  };
+}
+
+export function computeCanonicalToneStatisticsFromLinearRgb(
+  linear: Float32Array,
+  width: number,
+  height: number,
+): StfToneStatistics {
+  validateCanonicalImageShape("Tone statistics", width, height, linear.length);
+  return canonicalToneStatisticsFromSampler(width, height, (pixelIndex) => {
+    const index = pixelIndex * 3;
+    return toneLinearIntensity(
+      normalizeCanonicalLinearSample(linear[index] ?? 0),
+      normalizeCanonicalLinearSample(linear[index + 1] ?? 0),
+      normalizeCanonicalLinearSample(linear[index + 2] ?? 0),
+    );
+  });
+}
+
+export function computeCanonicalToneStatisticsFromStoredRgb16(
+  stored: Uint16Array,
+  width: number,
+  height: number,
+): StfToneStatistics {
+  validateCanonicalImageShape("Tone statistics", width, height, stored.length);
+  const lut = canonicalDecodeLut();
+  return canonicalToneStatisticsFromSampler(width, height, (pixelIndex) => {
+    const index = pixelIndex * 3;
+    return toneLinearIntensity(
+      lut[stored[index] ?? 0] ?? 0,
+      lut[stored[index + 1] ?? 0] ?? 0,
+      lut[stored[index + 2] ?? 0] ?? 0,
+    );
+  });
 }
 
 function validateCanonicalImageShape(fileName: string, width: number, height: number, sampleCount: number): void {
@@ -86,6 +193,7 @@ export type CanonicalImageRecord = {
   exposureTime: number | null;
   iso: number | null;
   exposureScalar: number | null;
+  toneStatistics: StfToneStatistics;
   complete: boolean;
 };
 
@@ -280,6 +388,7 @@ export async function writeCanonicalLinearImage(
     exposureTime: Number.isFinite(inputInfo?.exposureTime) ? Number(inputInfo.exposureTime) : null,
     iso: Number.isFinite(inputInfo?.iso) ? Number(inputInfo.iso) : null,
     exposureScalar: Number.isFinite(inputInfo?.exposureScalar) ? Number(inputInfo.exposureScalar) : null,
+    toneStatistics: computeCanonicalToneStatisticsFromLinearRgb(linear, width, height),
     complete: false,
   };
   await idbPut(session.db, IMAGE_STORE, { ...record, key: imageKey(session.id, imageIndex) });
@@ -337,6 +446,7 @@ export async function writeCanonicalStoredImage(
     exposureTime: Number.isFinite(inputInfo?.exposureTime) ? Number(inputInfo.exposureTime) : null,
     iso: Number.isFinite(inputInfo?.iso) ? Number(inputInfo.iso) : null,
     exposureScalar: Number.isFinite(inputInfo?.exposureScalar) ? Number(inputInfo.exposureScalar) : null,
+    toneStatistics: computeCanonicalToneStatisticsFromStoredRgb16(storedImage, width, height),
     complete: false,
   };
   await idbPut(session.db, IMAGE_STORE, { ...record, key: imageKey(session.id, imageIndex) });

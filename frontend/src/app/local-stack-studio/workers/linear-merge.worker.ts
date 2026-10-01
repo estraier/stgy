@@ -1,5 +1,6 @@
 // Local Stack Studio Blend/STF stripe worker. Built to public/generated/local-stack-studio.
-import { mergeLinearFloatIntoAccumulator } from "../stack/linear-merge";
+import { addWeightedLinearToAccumulator, mergeLinearFloatIntoAccumulator } from "../stack/linear-merge";
+import { applyStfToneMatchInPlace, buildStfToneMatchLut, type StfToneMatchLut } from "../stack/stf-tone-match";
 import { WorkerCanonicalReader } from "../stack/worker-canonical-reader";
 import type {
   LinearMergeWorkerRequest,
@@ -14,7 +15,9 @@ type WorkerScope = {
 const workerScope = globalThis as unknown as WorkerScope;
 let reader: WorkerCanonicalReader | null = null;
 let gains: Float32Array | null = null;
+let scaledLogs: Float32Array | null = null;
 let weights: Float32Array | null = null;
+let toneMatchLuts: Array<StfToneMatchLut | null> | null = null;
 let exposureRolloffMaxP998AfterGain: Array<number | null> | null = null;
 
 workerScope.onmessage = async (event: MessageEvent<LinearMergeWorkerRequest>) => {
@@ -30,12 +33,21 @@ workerScope.onmessage = async (event: MessageEvent<LinearMergeWorkerRequest>) =>
         cacheBytes: message.cacheBytes,
       });
       gains = new Float32Array(message.gains);
+      scaledLogs = new Float32Array(message.scaledLogs);
       weights = new Float32Array(message.weights);
+      toneMatchLuts = Array.from({ length: gains.length }, (_, index) => {
+        const gain = gains![index];
+        const scaledLog = scaledLogs![index];
+        return Math.abs(gain - 1) > 1e-8 || Math.abs(scaledLog) > 1e-8
+          ? buildStfToneMatchLut(gain, scaledLog)
+          : null;
+      });
       exposureRolloffMaxP998AfterGain = Array.from(message.exposureRolloffMaxP998AfterGain, (value) =>
         typeof value === "number" && Number.isFinite(value) ? value : null,
       );
       if (
         gains.length !== reader.imageCount ||
+        scaledLogs.length !== reader.imageCount ||
         weights.length !== reader.imageCount ||
         exposureRolloffMaxP998AfterGain.length !== reader.imageCount
       ) {
@@ -52,7 +64,7 @@ workerScope.onmessage = async (event: MessageEvent<LinearMergeWorkerRequest>) =>
     }
 
     if (message.type === "merge-stripe") {
-      if (!reader || !gains || !weights || !exposureRolloffMaxP998AfterGain) {
+      if (!reader || !gains || !scaledLogs || !weights || !exposureRolloffMaxP998AfterGain) {
         throw new Error("Linear merge worker is not initialized.");
       }
       const y = Number(message.y);
@@ -66,14 +78,25 @@ workerScope.onmessage = async (event: MessageEvent<LinearMergeWorkerRequest>) =>
       // the same image-index order as the former full-image loop.
       for (let imageIndex = 0; imageIndex < reader.imageCount; imageIndex += 1) {
         const linear = await reader.readLinearRegion(imageIndex, 0, y, reader.width, height);
-        mergeLinearFloatIntoAccumulator(
-          linear,
-          accumulator,
-          gains[imageIndex],
-          weights[imageIndex],
-          null,
-          exposureRolloffMaxP998AfterGain[imageIndex],
-        );
+        const toneMatchLut = toneMatchLuts?.[imageIndex] ?? null;
+        if (toneMatchLut) {
+          applyStfToneMatchInPlace(
+            linear,
+            gains[imageIndex],
+            scaledLogs[imageIndex],
+            toneMatchLut,
+          );
+          addWeightedLinearToAccumulator(accumulator, linear, weights[imageIndex]);
+        } else {
+          mergeLinearFloatIntoAccumulator(
+            linear,
+            accumulator,
+            gains[imageIndex],
+            weights[imageIndex],
+            null,
+            exposureRolloffMaxP998AfterGain[imageIndex],
+          );
+        }
       }
       const linearBuffer = accumulator.buffer as ArrayBuffer;
       post({ type: "merge-stripe-result", requestId, y, height, linearBuffer }, [linearBuffer]);

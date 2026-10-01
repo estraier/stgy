@@ -60,7 +60,6 @@ import {
 } from "./linear-merge-pool";
 import {
   applyExposureAndRolloffInPlace,
-  computeExposureRolloffMaxP998AfterGain,
 } from "./linear-merge";
 import {
   canonicalFilesSignature,
@@ -74,6 +73,8 @@ import {
 } from "./canonical-source";
 import { AlignedImageReader } from "./aligned-reader";
 import { runLensfunCorrectionPool } from "./lensfun-pool";
+import { buildStfApertureWeights } from "./stf-weights";
+import { buildStfToneMatchPlans } from "./stf-tone-match";
 import {
   computeFocusFinalMaps,
   computeFocusTileScores,
@@ -383,7 +384,13 @@ ${buildInfo}` : "OpenCV.js is ready.");
 
     setProgress("Reading metadata, ICC profiles, and image sizes...");
     const inputInfos = await readInputInfos(files);
-    currentCanonicalSession = await ensureCanonicalSession(files, inputInfos, currentCanonicalSession);
+    const requireStfToneStatistics = files.length > 1 && mergeMode.value === "stf";
+    currentCanonicalSession = await ensureCanonicalSession(
+      files,
+      inputInfos,
+      currentCanonicalSession,
+      requireStfToneStatistics,
+    );
     const useSyntheticSingleInputHdr = files.length === 1 && (mergeMode.value === "hdr1" || mergeMode.value === "hdr2");
     const preserveSingleInputMerge = isTileMergeMode(mergeMode.value);
     const effectiveMergeMode = useSyntheticSingleInputHdr
@@ -400,7 +407,7 @@ ${buildInfo}` : "OpenCV.js is ready.");
             : `${files[0].name}: single input; skipping feature matching and merge operation.`,
       );
     }
-    const mergePlan = buildMergePlan(files, inputInfos, effectiveMergeMode);
+    const mergePlan = buildMergePlan(files, inputInfos, effectiveMergeMode, currentCanonicalSession.images);
     const alignmentPlan = buildAlignmentPlan(files, inputInfos, alignmentMode.value, effectiveMergeMode);
     currentPreviewColorSpace = chooseOutputColorSpace(inputInfos);
     console.info(`Output color space: ${formatColorSpaceName(currentPreviewColorSpace)}`);
@@ -1961,14 +1968,16 @@ function buildAlignmentPlan(files, inputInfos, selectedMode, mergeMode) {
   throw new Error(`Unsupported effective alignment mode: ${effectiveMode}`);
 }
 
-function buildMergePlan(files, inputInfos, mode) {
+function buildMergePlan(files, inputInfos, mode, canonicalImages = []) {
   const imageCount = files.length;
   const weights = new Float32Array(imageCount);
   const gains = new Float32Array(imageCount);
+  const scaledLogs = new Float32Array(imageCount);
 
   for (let i = 0; i < imageCount; i += 1) {
     weights[i] = mode === "average" ? 1 / imageCount : 1;
     gains[i] = 1;
+    scaledLogs[i] = 0;
   }
 
   if (mode === "hdr1" || mode === "hdr2") {
@@ -1999,24 +2008,14 @@ function buildMergePlan(files, inputInfos, mode) {
   }
 
   if (mode !== "stf") {
-    return { mode, weights, gains };
+    return { mode, weights, gains, scaledLogs };
   }
 
   const fNumbers = inputInfos.map((entry) => entry.fNumber);
-  const allFNumbersValid = fNumbers.every((value) => Number.isFinite(value) && value > 0);
-  if (allFNumbersValid) {
-    const blurRadii = fNumbers.map((fNumber) => 1 / fNumber);
-    const minBlurRadius = Math.min(...blurRadii);
-    let totalWeight = 0;
+  const stfWeights = buildStfApertureWeights(fNumbers);
+  if (stfWeights) {
     for (let i = 0; i < imageCount; i += 1) {
-      const weight = blurRadii[i] + minBlurRadius / 4;
-      weights[i] = weight;
-      totalWeight += weight;
-    }
-    if (totalWeight > 0) {
-      for (let i = 0; i < imageCount; i += 1) {
-        weights[i] /= totalWeight;
-      }
+      weights[i] = stfWeights[i];
     }
   } else {
     const uniformWeight = 1 / imageCount;
@@ -2025,19 +2024,25 @@ function buildMergePlan(files, inputInfos, mode) {
     }
   }
 
-  const exposures = inputInfos.map((entry) => entry.exposureScalar);
-  const validExposures = exposures.filter((value) => Number.isFinite(value) && value > 0);
-  if (validExposures.length === imageCount) {
-    let logSum = 0;
-    for (const value of validExposures) logSum += Math.log(value);
-    const targetExposure = Math.exp(logSum / imageCount);
-    for (let i = 0; i < imageCount; i += 1) {
-      const gain = targetExposure / exposures[i];
-      gains[i] = Number.isFinite(gain) && gain > 0 ? gain : 1;
-    }
+  const toneStatistics = canonicalImages.map((entry) => entry?.toneStatistics);
+  const toneMatch = toneStatistics.length === imageCount
+    ? buildStfToneMatchPlans(toneStatistics)
+    : null;
+  if (!toneMatch) {
+    throw new Error("STF tone matching requires valid mean/P50/P95 statistics for every input image.");
   }
+  for (let i = 0; i < imageCount; i += 1) {
+    gains[i] = toneMatch.plans[i].gain;
+    scaledLogs[i] = toneMatch.plans[i].scaledLog;
+  }
+  console.info(
+    `STF tone reference: ${files[toneMatch.referenceIndex]?.name || `image ${toneMatch.referenceIndex + 1}`} ` +
+    `(median mean=${toneMatch.targetMean.toFixed(6)}, ` +
+    `P50=${toneStatistics[toneMatch.referenceIndex].p50.toFixed(6)}, ` +
+    `P95=${toneStatistics[toneMatch.referenceIndex].p95.toFixed(6)}).`,
+  );
 
-  return { mode, weights, gains };
+  return { mode, weights, gains, scaledLogs, toneReferenceIndex: toneMatch.referenceIndex };
 }
 
 function buildSingleShotHdrSyntheticMaterials(mode) {
@@ -2427,7 +2432,13 @@ async function alignAndMergeFilesWithOpenCv(
         width,
         height,
       );
-      return finalizeStoredResult(accumulator, width, height, outputColorSpace, false);
+      return finalizeStoredResult(
+        accumulator,
+        width,
+        height,
+        outputColorSpace,
+        mergePlan.mode === "stf",
+      );
     }
 
     throw new Error(`Unsupported merge mode: ${mergePlan.mode}`);
@@ -2494,20 +2505,6 @@ async function mergeLinearFromWorkerPool(
 ) {
   const imageCount = matrices.length;
   const exposureRolloffMaxP998AfterGain = new Array(imageCount).fill(null);
-  if (mergePlan.mode === "stf") {
-    for (let imageIndex = 0; imageIndex < imageCount; imageIndex += 1) {
-      const gain = Number(mergePlan.gains[imageIndex]);
-      if (!(Number.isFinite(gain) && gain > 1 && Math.abs(gain - 1) > 1e-6)) continue;
-      setProgress(`Analyzing STF exposure rolloff ${imageIndex + 1}/${imageCount}...`);
-      // Historical STF applies exposure/rolloff to the entire aligned image before
-      // accumulation. Preserve that exact global P99.8 when the output is split
-      // into independently processed stripes.
-      const linear = await reader.readLinearImage(imageIndex);
-      exposureRolloffMaxP998AfterGain[imageIndex] = computeExposureRolloffMaxP998AfterGain(linear, gain);
-      await yieldToBrowser();
-    }
-  }
-
   const jobs = buildLinearMergeStripeJobs(width, height);
   const accumulator = new Float32Array(width * height * 3);
   const hardwareConcurrency = typeof navigator === "object"
@@ -2531,6 +2528,7 @@ async function mergeLinearFromWorkerPool(
       },
       matrices,
       gains: new Float32Array(mergePlan.gains),
+      scaledLogs: new Float32Array(mergePlan.scaledLogs || imageCount),
       weights: new Float32Array(mergePlan.weights),
       exposureRolloffMaxP998AfterGain,
     },
@@ -4298,13 +4296,25 @@ function iccBytesToSearchText(bytes) {
   return text.toLowerCase();
 }
 
-async function ensureCanonicalSession(files, inputInfos, existingSession) {
+async function ensureCanonicalSession(files, inputInfos, existingSession, requireToneStatistics = false) {
   const signature = canonicalFilesSignature(files);
   if (
     existingSession &&
     existingSession.filesSignature === signature &&
     existingSession.images?.length === files.length &&
-    existingSession.images.every((image) => image?.complete)
+    existingSession.images.every((image) => (
+      image?.complete
+      && (
+        !requireToneStatistics
+        || (
+          Number.isInteger(image?.toneStatistics?.sampleCount)
+          && image.toneStatistics.sampleCount > 0
+          && Number.isFinite(image.toneStatistics.mean)
+          && Number.isFinite(image.toneStatistics.p50)
+          && Number.isFinite(image.toneStatistics.p95)
+        )
+      )
+    ))
   ) {
     console.info(`Reusing canonical input cache for ${files.length} image${files.length === 1 ? "" : "s"}.`);
     return existingSession;

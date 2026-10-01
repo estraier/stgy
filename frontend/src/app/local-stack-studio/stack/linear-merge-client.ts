@@ -62,6 +62,7 @@ export class LinearMergeWorkerClient {
         alignmentPlan: config.alignmentPlan,
         matrices: config.matrices,
         gains: config.gains,
+        scaledLogs: config.scaledLogs,
         weights: config.weights,
         exposureRolloffMaxP998AfterGain: config.exposureRolloffMaxP998AfterGain,
         cacheBytes: config.cacheBytes,
