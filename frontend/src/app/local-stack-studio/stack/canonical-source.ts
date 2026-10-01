@@ -9,9 +9,41 @@ const CHUNK_STORE = "chunks";
 export const CANONICAL_LINEAR_RANGE_MAX = 4 as const;
 export const CANONICAL_PIXEL_FORMAT = "rgb-u16-gamma20-prophoto-r4" as const;
 export const CANONICAL_TARGET_CHUNK_BYTES = 8 * 1024 * 1024;
-const CANONICAL_RANGE_EPSILON = 1e-5;
+// Canonical storage is non-negative, but supported wide-gamut -> ProPhoto
+// matrix conversions can produce a very small negative channel for fully
+// saturated boundary colors (Rec.2020 reaches about -0.00234). Treat only
+// that known gamut/numerical fringe as a storage-boundary excursion.
+export const CANONICAL_NEGATIVE_EXCURSION_TOLERANCE = 0.003;
+// There is no corresponding expected >4 gamut excursion. Only absorb small
+// floating-point/interpolation noise at the upper storage boundary.
+export const CANONICAL_UPPER_ROUNDING_TOLERANCE = 1e-4;
 export const CANONICAL_MAIN_CACHE_BYTES = 64 * 1024 * 1024;
 export const CANONICAL_WORKER_CACHE_BYTES = 32 * 1024 * 1024;
+
+export function normalizeCanonicalLinearSample(value: number): number {
+  if (!Number.isFinite(value)) {
+    throw new Error(`Canonical linear sample ${value} is not finite.`);
+  }
+  if (
+    value < -CANONICAL_NEGATIVE_EXCURSION_TOLERANCE ||
+    value > CANONICAL_LINEAR_RANGE_MAX + CANONICAL_UPPER_ROUNDING_TOLERANCE
+  ) {
+    throw new Error(`Canonical linear sample ${value} is outside the supported 0..${CANONICAL_LINEAR_RANGE_MAX} range.`);
+  }
+  if (value <= 0) return 0;
+  if (value >= CANONICAL_LINEAR_RANGE_MAX) return CANONICAL_LINEAR_RANGE_MAX;
+  return value;
+}
+
+function validateCanonicalImageShape(fileName: string, width: number, height: number, sampleCount: number): void {
+  if (!Number.isInteger(width) || width <= 0 || !Number.isInteger(height) || height <= 0) {
+    throw new Error(`${fileName}: canonical image dimensions ${width}x${height} are invalid.`);
+  }
+  const expected = width * height * 3;
+  if (!Number.isSafeInteger(expected) || sampleCount !== expected) {
+    throw new Error(`${fileName}: canonical RGB buffer length ${sampleCount} does not match ${width}x${height}.`);
+  }
+}
 
 type CanonicalSessionRecord = {
   sessionId: string;
@@ -234,7 +266,8 @@ export async function writeCanonicalLinearImage(
   linear: Float32Array,
   onProgress?: (message: string) => void,
 ): Promise<CanonicalImageRecord> {
-  if (!(linear instanceof Float32Array) || linear.length !== width * height * 3) throw new Error(`Canonical input ${file.name} has an invalid linear RGB buffer.`);
+  if (!(linear instanceof Float32Array)) throw new Error(`Canonical input ${file.name} has an invalid linear RGB buffer.`);
+  validateCanonicalImageShape(file.name, width, height, linear.length);
   const rowBytes = width * 3 * Uint16Array.BYTES_PER_ELEMENT;
   const rowsPerChunk = Math.max(1, Math.floor(CANONICAL_TARGET_CHUNK_BYTES / rowBytes));
   const chunkCount = Math.ceil(height / rowsPerChunk);
@@ -258,12 +291,72 @@ export async function writeCanonicalLinearImage(
     const sourceStart = startRow * width * 3;
     for (let i = 0; i < stored.length; i += 1) {
       const value = linear[sourceStart + i];
-      if (!Number.isFinite(value) || value < -CANONICAL_RANGE_EPSILON || value > CANONICAL_LINEAR_RANGE_MAX + CANONICAL_RANGE_EPSILON) {
-        throw new Error(`${file.name}: canonical linear sample ${value} is outside the supported 0..4 range.`);
+      let normalized: number;
+      try {
+        normalized = normalizeCanonicalLinearSample(value);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(`${file.name}: ${detail}`);
       }
-      stored[i] = encodeStoredRgb16Channel(Math.min(CANONICAL_LINEAR_RANGE_MAX, Math.max(0, value)), "gamma20", CANONICAL_LINEAR_RANGE_MAX);
+      stored[i] = encodeStoredRgb16Channel(normalized, "gamma20", CANONICAL_LINEAR_RANGE_MAX);
     }
     const chunk: CanonicalChunkRecord = { key: chunkKey(session.id, imageIndex, chunkIndex), sessionId: session.id, imageIndex, chunkIndex, startRow, rowCount, buffer: stored.buffer };
+    try { await idbPut(session.db, CHUNK_STORE, chunk); } catch (error) { throw quotaError(error); }
+    onProgress?.(`Caching input ${imageIndex + 1}, chunk ${chunkIndex + 1}/${chunkCount}...`);
+  }
+  record.complete = true;
+  await idbPut(session.db, IMAGE_STORE, { ...record, key: imageKey(session.id, imageIndex) });
+  session.images[imageIndex] = record;
+  return record;
+}
+
+
+export async function writeCanonicalStoredImage(
+  session: PreparedCanonicalSession,
+  imageIndex: number,
+  file: File,
+  inputInfo: CanonicalInputInfo,
+  width: number,
+  height: number,
+  storedImage: Uint16Array,
+  onProgress?: (message: string) => void,
+): Promise<CanonicalImageRecord> {
+  if (!(storedImage instanceof Uint16Array)) {
+    throw new Error(`Canonical input ${file.name} has an invalid stored RGB buffer.`);
+  }
+  validateCanonicalImageShape(file.name, width, height, storedImage.length);
+  const rowBytes = width * 3 * Uint16Array.BYTES_PER_ELEMENT;
+  const rowsPerChunk = Math.max(1, Math.floor(CANONICAL_TARGET_CHUNK_BYTES / rowBytes));
+  const chunkCount = Math.ceil(height / rowsPerChunk);
+  const record: CanonicalImageRecord = {
+    sessionId: session.id, imageIndex, fileName: file.name, fileSize: file.size, lastModified: file.lastModified, mimeType: file.type,
+    width, height, pixelFormat: CANONICAL_PIXEL_FORMAT, linearRangeMax: CANONICAL_LINEAR_RANGE_MAX,
+    rowBytes, rowsPerChunk, chunkCount,
+    isRaw: Boolean(inputInfo?.isRaw), sourceColorSpaceOriginal: String(inputInfo?.sourceColorSpace || "srgb"),
+    fNumber: Number.isFinite(inputInfo?.fNumber) ? Number(inputInfo.fNumber) : null,
+    exposureTime: Number.isFinite(inputInfo?.exposureTime) ? Number(inputInfo.exposureTime) : null,
+    iso: Number.isFinite(inputInfo?.iso) ? Number(inputInfo.iso) : null,
+    exposureScalar: Number.isFinite(inputInfo?.exposureScalar) ? Number(inputInfo.exposureScalar) : null,
+    complete: false,
+  };
+  await idbPut(session.db, IMAGE_STORE, { ...record, key: imageKey(session.id, imageIndex) });
+
+  for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
+    const startRow = chunkIndex * rowsPerChunk;
+    const rowCount = Math.min(rowsPerChunk, height - startRow);
+    const sourceStart = startRow * width * 3;
+    const sourceEnd = sourceStart + rowCount * width * 3;
+    const stored = new Uint16Array(sourceEnd - sourceStart);
+    stored.set(storedImage.subarray(sourceStart, sourceEnd));
+    const chunk: CanonicalChunkRecord = {
+      key: chunkKey(session.id, imageIndex, chunkIndex),
+      sessionId: session.id,
+      imageIndex,
+      chunkIndex,
+      startRow,
+      rowCount,
+      buffer: stored.buffer,
+    };
     try { await idbPut(session.db, CHUNK_STORE, chunk); } catch (error) { throw quotaError(error); }
     onProgress?.(`Caching input ${imageIndex + 1}, chunk ${chunkIndex + 1}/${chunkCount}...`);
   }

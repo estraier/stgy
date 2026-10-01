@@ -1,4 +1,10 @@
-import { CanonicalChunkCache } from "./canonical-source";
+import {
+  CANONICAL_LINEAR_RANGE_MAX,
+  CANONICAL_NEGATIVE_EXCURSION_TOLERANCE,
+  CANONICAL_UPPER_ROUNDING_TOLERANCE,
+  CanonicalChunkCache,
+  normalizeCanonicalLinearSample,
+} from "./canonical-source";
 
 describe("CanonicalChunkCache", () => {
   test("evicts least recently used chunks to stay within its byte limit", () => {
@@ -32,5 +38,26 @@ describe("CanonicalChunkCache", () => {
     cache.clearSession("a");
     expect(cache.get("a:chunk:0:0")).toBeNull();
     expect(cache.get("b:chunk:0:0")).not.toBeNull();
+  });
+});
+
+
+describe("normalizeCanonicalLinearSample", () => {
+  test("absorbs only tiny finite floating-point excursions at the storage boundaries", () => {
+    expect(normalizeCanonicalLinearSample(-0.000010203495548921637)).toBe(0);
+    expect(normalizeCanonicalLinearSample(-CANONICAL_NEGATIVE_EXCURSION_TOLERANCE)).toBe(0);
+    expect(normalizeCanonicalLinearSample(CANONICAL_LINEAR_RANGE_MAX + CANONICAL_UPPER_ROUNDING_TOLERANCE)).toBe(CANONICAL_LINEAR_RANGE_MAX);
+    expect(normalizeCanonicalLinearSample(0.18)).toBe(0.18);
+    // Supported Display P3 / Rec.2020 -> ProPhoto matrices can legitimately
+    // produce tiny negative channels at saturated gamut boundaries.
+    expect(normalizeCanonicalLinearSample(-0.00127175)).toBe(0);
+    expect(normalizeCanonicalLinearSample(-0.00233881)).toBe(0);
+  });
+
+  test("does not hide real out-of-domain or non-finite data", () => {
+    expect(() => normalizeCanonicalLinearSample(-0.01)).toThrow(/outside the supported/);
+    expect(() => normalizeCanonicalLinearSample(CANONICAL_LINEAR_RANGE_MAX + 0.001)).toThrow(/outside the supported/);
+    expect(() => normalizeCanonicalLinearSample(Number.NaN)).toThrow(/not finite/);
+    expect(() => normalizeCanonicalLinearSample(Number.POSITIVE_INFINITY)).toThrow(/not finite/);
   });
 });

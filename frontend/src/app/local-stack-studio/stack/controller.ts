@@ -9,7 +9,6 @@ import {
   encodedRgbToLinearProphotoInto,
 } from "@/image/color";
 import {
-  applyLensfunCorrectionToLinearRgbFrame,
   buildRawLensfunCorrection,
   lensfunOutputRegion,
   summarizeLensfunCorrection,
@@ -71,8 +70,10 @@ import {
   estimateCanonicalCapacity,
   materializeCanonicalLinearImage,
   writeCanonicalLinearImage,
+  writeCanonicalStoredImage,
 } from "./canonical-source";
 import { AlignedImageReader } from "./aligned-reader";
+import { runLensfunCorrectionPool } from "./lensfun-pool";
 import {
   computeFocusFinalMaps,
   computeFocusTileScores,
@@ -4320,17 +4321,30 @@ async function ensureCanonicalSession(files, inputInfos, existingSession) {
       const inputInfo = inputInfos[index];
       setProgress(`${inputInfo.isRaw ? "Developing RAW" : "Reading image"} ${index + 1}/${files.length} for canonical cache...`);
       const decoded = await decodeFileToDecodedImage(file, inputInfo);
-      const linear = decodedImageToLinearProPhoto(decoded);
-      await writeCanonicalLinearImage(
-        session,
-        index,
-        file,
-        inputInfo,
-        decoded.width,
-        decoded.height,
-        linear,
-        (message) => setProgress(message),
-      );
+      if (decoded?.canonicalStoredRgb16 instanceof Uint16Array) {
+        await writeCanonicalStoredImage(
+          session,
+          index,
+          file,
+          inputInfo,
+          decoded.width,
+          decoded.height,
+          decoded.canonicalStoredRgb16,
+          (message) => setProgress(message),
+        );
+      } else {
+        const linear = decodedImageToLinearProPhoto(decoded);
+        await writeCanonicalLinearImage(
+          session,
+          index,
+          file,
+          inputInfo,
+          decoded.width,
+          decoded.height,
+          linear,
+          (message) => setProgress(message),
+        );
+      }
       await yieldToBrowser();
     }
     await completeCanonicalSession(session);
@@ -4650,7 +4664,7 @@ async function decodeRawFileToDecodedImage(file, knownLensMetadata = null, known
     }
     const outputCrop = rawInsetOutputCropFromMetadata(metadata, image.width, image.height);
     const lensfunFrame = outputCrop ?? { left: 0, top: 0, width: image.width, height: image.height };
-    let linearProPhotoRgb = libRawImageDataToLinearProPhoto(image);
+    const sourceRgb16 = libRawImageDataToLinearRgb16(image);
     let correction = knownLensCorrection;
     if (!correction && lensMetadata) {
       try {
@@ -4660,25 +4674,25 @@ async function decodeRawFileToDecodedImage(file, knownLensMetadata = null, known
       }
     }
 
-    let correctedWidth = lensfunFrame.width;
-    let correctedHeight = lensfunFrame.height;
+    let corrected;
     try {
       setProgress(correction ? "Correcting lens with LensFun..." : "Applying RAW image crop...");
-      const corrected = await applyLensfunCorrectionToLinearRgbFrame(
-        linearProPhotoRgb,
-        image.width,
-        image.height,
+      corrected = await runLensfunCorrectionPool({
+        source: {
+          data: sourceRgb16,
+          width: image.width,
+          height: image.height,
+          linearRangeMax: 1,
+          transfer: "linear",
+        },
         correction,
-        lensfunFrame,
-        (progress) => setProgress(
+        outputCrop,
+        onProgress: (progress) => setProgress(
           correction
             ? `Correcting lens with LensFun... ${Math.round(progress * 100)}%`
             : `Applying RAW image crop... ${Math.round(progress * 100)}%`,
         ),
-      );
-      linearProPhotoRgb = corrected.data;
-      correctedWidth = corrected.width;
-      correctedHeight = corrected.height;
+      });
 
       if (correction) {
         const summary = summarizeLensfunCorrection(correction, lensfunFrame.width, lensfunFrame.height);
@@ -4691,34 +4705,30 @@ async function decodeRawFileToDecodedImage(file, knownLensMetadata = null, known
         }
         if (Number.isFinite(summary.vignettingEv)) parts.push(`vignetting=${summary.vignettingEv.toFixed(2)}EV`);
         parts.push(`frame=${lensfunFrame.width}x${lensfunFrame.height}`);
-        if (correction.autoCrop) parts.push(`output=${correctedWidth}x${correctedHeight}`);
+        if (correction.autoCrop) parts.push(`output=${corrected.width}x${corrected.height}`);
         console.info(`${file.name}: LensFun correction applied (${parts.join(", ")})`);
       }
     } catch (error) {
       console.warn(`${file.name}: LensFun correction failed; applying metadata crop only`, error);
-      const fallback = await applyLensfunCorrectionToLinearRgbFrame(
-        linearProPhotoRgb,
-        image.width,
-        image.height,
-        null,
-        lensfunFrame,
-      );
-      linearProPhotoRgb = fallback.data;
-      correctedWidth = fallback.width;
-      correctedHeight = fallback.height;
+      corrected = await runLensfunCorrectionPool({
+        source: {
+          data: sourceRgb16,
+          width: image.width,
+          height: image.height,
+          linearRangeMax: 1,
+          transfer: "linear",
+        },
+        correction: null,
+        outputCrop,
+        onProgress: (progress) => setProgress(`Applying RAW image crop... ${Math.round(progress * 100)}%`),
+      });
     }
 
-    const alignmentImageData = linearProPhotoToAlignmentImageData(
-      linearProPhotoRgb,
-      correctedWidth,
-      correctedHeight,
-    );
     return {
-      width: correctedWidth,
-      height: correctedHeight,
+      width: corrected.width,
+      height: corrected.height,
       sourceColorSpace: "prophoto-rgb",
-      linearProPhotoRgb,
-      alignmentImageData,
+      canonicalStoredRgb16: corrected.data,
     };
   } catch (error) {
     const detail = error instanceof Error ? `: ${error.message}` : "";
@@ -4729,7 +4739,7 @@ async function decodeRawFileToDecodedImage(file, knownLensMetadata = null, known
   }
 }
 
-function libRawImageDataToLinearProPhoto(image) {
+function libRawImageDataToLinearRgb16(image) {
   const width = Math.max(1, Math.round(Number(image.width) || 0));
   const height = Math.max(1, Math.round(Number(image.height) || 0));
   const colors = Math.max(1, Math.round(Number(image.colors) || 3));
@@ -4740,19 +4750,19 @@ function libRawImageDataToLinearProPhoto(image) {
     throw new Error("LibRaw returned an incomplete image buffer.");
   }
   const maxSample = bits >= 16 ? 65535 : Math.pow(2, bits) - 1;
-  const scale = maxSample > 0 ? 1 / maxSample : 1 / 65535;
-  const linear = new Float32Array(pixelCount * 3);
+  const scale = maxSample > 0 ? 65535 / maxSample : 1;
+  const stored = new Uint16Array(pixelCount * 3);
   for (let pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += 1) {
     const sourceIndex = pixelIndex * colors;
     const destinationIndex = pixelIndex * 3;
     const r = Number(source[sourceIndex] ?? 0);
     const g = Number(source[sourceIndex + (colors >= 2 ? 1 : 0)] ?? r);
     const b = Number(source[sourceIndex + (colors >= 3 ? 2 : colors >= 2 ? 1 : 0)] ?? g);
-    linear[destinationIndex] = r * scale;
-    linear[destinationIndex + 1] = g * scale;
-    linear[destinationIndex + 2] = b * scale;
+    stored[destinationIndex] = Math.min(65535, Math.max(0, Math.round(r * scale)));
+    stored[destinationIndex + 1] = Math.min(65535, Math.max(0, Math.round(g * scale)));
+    stored[destinationIndex + 2] = Math.min(65535, Math.max(0, Math.round(b * scale)));
   }
-  return linear;
+  return stored;
 }
 
 function linearProPhotoToAlignmentImageData(linear, width, height) {
