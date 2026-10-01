@@ -10,9 +10,17 @@ import type {
   OrbWorkerResponse,
 } from "../workers/protocols/alignment-protocol";
 import type {
+  FocusWorkerCanonicalConfig,
   FocusWorkerRequest,
   FocusWorkerResponse,
 } from "../workers/protocols/focus-protocol";
+import type {
+  MedianWorkerConfig,
+  MedianWorkerRequest,
+  MedianWorkerResponse,
+  MedianWorkerReadyResponse,
+  MedianWorkerTileResponse,
+} from "../workers/protocols/median-protocol";
 import type {
   Hdr1ResultResponse,
   Hdr1StreamAbortRequest,
@@ -85,6 +93,28 @@ export class FocusWorkerClient {
     };
   }
 
+  initializeCanonical(config: FocusWorkerCanonicalConfig): Promise<{
+    imageCount: number;
+    width: number;
+    height: number;
+  }> {
+    return this.request(
+      {
+        type: "canonical-init",
+        sessionId: config.sessionId,
+        alignmentPlan: config.alignmentPlan,
+        matrices: config.matrices,
+        cacheBytes: config.cacheBytes,
+      },
+      [],
+      "canonical-ready",
+    ).then((message) => ({
+      imageCount: Number(message.imageCount),
+      width: Number(message.width),
+      height: Number(message.height),
+    }));
+  }
+
   computeSharpnessFeatures(
     gamma2Rgb: Uint16Array,
     width: number,
@@ -101,6 +131,37 @@ export class FocusWorkerClient {
     return this.request(
       { type: "sharpness-features", width, height, gamma2Buffer, progressMessage },
       [gamma2Buffer],
+      "sharpness-features-result",
+    ).then((message) => ({
+      features: new Float32Array(asArrayBuffer(message.featureBuffer, "sharpness feature")),
+      workingWidth: Number(message.workingWidth),
+      workingHeight: Number(message.workingHeight),
+      lapStats: {
+        count: Number(message.lapCount),
+        mean: Number(message.lapMean),
+        m2: Number(message.lapM2),
+      },
+      sobelStats: {
+        count: Number(message.sobelCount),
+        mean: Number(message.sobelMean),
+        m2: Number(message.sobelM2),
+      },
+    }));
+  }
+
+  computeSharpnessFeaturesFromCanonical(
+    imageIndex: number,
+    progressMessage: string,
+  ): Promise<{
+    features: Float32Array;
+    workingWidth: number;
+    workingHeight: number;
+    lapStats: FocusRunningStats;
+    sobelStats: FocusRunningStats;
+  }> {
+    return this.request(
+      { type: "sharpness-features-canonical", imageIndex, progressMessage },
+      [],
       "sharpness-features-result",
     ).then((message) => ({
       features: new Float32Array(asArrayBuffer(message.featureBuffer, "sharpness feature")),
@@ -240,6 +301,37 @@ export class FocusWorkerClient {
     ).then((message) => new Uint16Array(asArrayBuffer(message.gamma2Buffer, "focus merge")));
   }
 
+  mergeFocusCoreFromCanonical(
+    regionX: number,
+    regionY: number,
+    regionWidth: number,
+    regionHeight: number,
+    coreOffsetX: number,
+    coreOffsetY: number,
+    coreWidth: number,
+    coreHeight: number,
+    tau: number,
+    pyramidDownsamples: number,
+  ): Promise<Uint16Array> {
+    return this.request(
+      {
+        type: "focus-core-run-canonical",
+        regionX,
+        regionY,
+        regionWidth,
+        regionHeight,
+        coreOffsetX,
+        coreOffsetY,
+        coreWidth,
+        coreHeight,
+        tau,
+        pyramidDownsamples,
+      },
+      [],
+      "focus-core-run-canonical-result",
+    ).then((message) => new Uint16Array(asArrayBuffer(message.gamma2Buffer, "focus merge")));
+  }
+
   private request<Type extends FocusResponseType>(
     message: FocusRequestWithoutId,
     transfer: Transferable[],
@@ -279,6 +371,116 @@ export class FocusWorkerClient {
 
   terminate(): void {
     const error = new Error("Focus worker was terminated.");
+    for (const pending of this.pending.values()) pending.reject(error);
+    this.pending.clear();
+    this.worker.terminate();
+  }
+}
+
+
+type MedianRequestWithoutId = MedianWorkerRequest extends infer Request
+  ? Request extends MedianWorkerRequest
+    ? Omit<Request, "requestId">
+    : never
+  : never;
+
+type MedianResponseType = MedianWorkerResponse["type"];
+type MedianResponseOf<Type extends MedianResponseType> = Extract<MedianWorkerResponse, { type: Type }>;
+
+type MedianPendingRequest = {
+  resolve: (value: MedianWorkerResponse) => void;
+  reject: (reason?: unknown) => void;
+  expectedType: MedianResponseType;
+};
+
+function asMedianWorkerResponse(value: unknown): MedianWorkerResponse | null {
+  if (typeof value !== "object" || value === null) return null;
+  const message = value as { type?: unknown; requestId?: unknown };
+  if (typeof message.type !== "string" || typeof message.requestId !== "number") return null;
+  return value as MedianWorkerResponse;
+}
+
+export class MedianWorkerClient {
+  private readonly worker: Worker;
+  private readonly pending = new Map<number, MedianPendingRequest>();
+  private nextRequestId = 1;
+
+  constructor(url: URL) {
+    this.worker = new Worker(url);
+    this.worker.onmessage = (event) => this.handleMessage(event.data);
+    this.worker.onerror = (event) => {
+      const error = new Error(event.message || "Median worker failed.");
+      for (const pending of this.pending.values()) pending.reject(error);
+      this.pending.clear();
+    };
+    this.worker.onmessageerror = () => {
+      const error = new Error("Median worker returned an unreadable message.");
+      for (const pending of this.pending.values()) pending.reject(error);
+      this.pending.clear();
+    };
+  }
+
+  initialize(config: MedianWorkerConfig): Promise<{ imageCount: number }> {
+    return this.request<"ready">(
+      {
+        type: "init",
+        sessionId: config.sessionId,
+        alignmentPlan: config.alignmentPlan,
+        matrices: config.matrices,
+        cacheBytes: config.cacheBytes,
+      },
+      [],
+      "ready",
+    ).then((message) => ({ imageCount: Number((message as MedianWorkerReadyResponse).imageCount) }));
+  }
+
+  mergeTile(job: { x: number; y: number; width: number; height: number }): Promise<Uint16Array> {
+    return this.request<"merge-tile-result">(
+      { type: "merge-tile", x: job.x, y: job.y, width: job.width, height: job.height },
+      [],
+      "merge-tile-result",
+    ).then((message) => {
+      const response = message as MedianWorkerTileResponse;
+      return new Uint16Array(asArrayBuffer(response.gamma2Buffer, "median tile"));
+    });
+  }
+
+  private request<Type extends MedianResponseType>(
+    message: MedianRequestWithoutId,
+    transfers: Transferable[],
+    expectedType: Type,
+  ): Promise<MedianResponseOf<Type>> {
+    const requestId = this.nextRequestId++;
+    return new Promise<MedianWorkerResponse>((resolve, reject) => {
+      this.pending.set(requestId, { resolve, reject, expectedType });
+      try {
+        this.worker.postMessage({ ...message, requestId }, transfers);
+      } catch (error) {
+        this.pending.delete(requestId);
+        reject(error);
+      }
+    }).then((response) => response as MedianResponseOf<Type>);
+  }
+
+  private handleMessage(value: unknown): void {
+    const message = asMedianWorkerResponse(value);
+    if (!message) return;
+    const pending = this.pending.get(message.requestId);
+    if (!pending) return;
+    this.pending.delete(message.requestId);
+    if (message.type === "error") {
+      pending.reject(new Error(message.message || "Median worker failed."));
+      return;
+    }
+    if (message.type !== pending.expectedType) {
+      pending.reject(new Error(`Unexpected Median worker response: ${message.type}`));
+      return;
+    }
+    pending.resolve(message);
+  }
+
+  terminate(): void {
+    const error = new Error("Median worker was terminated.");
     for (const pending of this.pending.values()) pending.reject(error);
     this.pending.clear();
     this.worker.terminate();

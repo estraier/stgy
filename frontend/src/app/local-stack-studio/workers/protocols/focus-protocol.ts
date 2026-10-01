@@ -1,9 +1,36 @@
+export type FocusWorkerAlignmentPlan = {
+  normalizationMode: "feature-match" | "center-crop" | "center-fit" | "center-fill" | "top-left-fill";
+  targetWidth: number;
+  targetHeight: number;
+};
+
+export type FocusWorkerMatrix = Float64Array | number[] | null;
+
+export type FocusWorkerCanonicalConfig = {
+  sessionId: string;
+  alignmentPlan: FocusWorkerAlignmentPlan;
+  matrices: FocusWorkerMatrix[];
+  cacheBytes?: number;
+};
+
+export type FocusCanonicalInitRequest = FocusWorkerCanonicalConfig & {
+  type: "canonical-init";
+  requestId: number;
+};
+
 export type FocusSharpnessFeaturesRequest = {
   type: "sharpness-features";
   requestId: number;
   width: number;
   height: number;
   gamma2Buffer: ArrayBuffer;
+  progressMessage: string;
+};
+
+export type FocusSharpnessFeaturesCanonicalRequest = {
+  type: "sharpness-features-canonical";
+  requestId: number;
+  imageIndex: number;
   progressMessage: string;
 };
 
@@ -65,6 +92,21 @@ export type FocusCoreFinishRequest = {
   requestId: number;
 };
 
+export type FocusCoreRunCanonicalRequest = {
+  type: "focus-core-run-canonical";
+  requestId: number;
+  regionX: number;
+  regionY: number;
+  regionWidth: number;
+  regionHeight: number;
+  coreOffsetX: number;
+  coreOffsetY: number;
+  coreWidth: number;
+  coreHeight: number;
+  tau: number;
+  pyramidDownsamples: number;
+};
+
 export type FocusMergeTileRequest = {
   type: "merge-tile";
   requestId: number;
@@ -89,13 +131,16 @@ export type FocusMergeTileWorkingRequest = {
 };
 
 export type FocusWorkerRequest =
+  | FocusCanonicalInitRequest
   | FocusSharpnessFeaturesRequest
+  | FocusSharpnessFeaturesCanonicalRequest
   | FocusSharpnessComposeRequest
   | FocusTauStatsRequest
   | FocusWorkingSharpnessInitRequest
   | FocusCoreBeginRequest
   | FocusCoreAddImageRequest
   | FocusCoreFinishRequest
+  | FocusCoreRunCanonicalRequest
   | FocusMergeTileRequest
   | FocusMergeTileWorkingRequest;
 
@@ -109,6 +154,14 @@ export type FocusErrorResponse = {
   type: "error";
   requestId: number;
   message: string;
+};
+
+export type FocusCanonicalReadyResponse = {
+  type: "canonical-ready";
+  requestId: number;
+  imageCount: number;
+  width: number;
+  height: number;
 };
 
 export type FocusSharpnessFeaturesResponse = {
@@ -160,6 +213,12 @@ export type FocusCoreFinishResponse = {
   gamma2Buffer: ArrayBuffer;
 };
 
+export type FocusCoreRunCanonicalResponse = {
+  type: "focus-core-run-canonical-result";
+  requestId: number;
+  gamma2Buffer: ArrayBuffer;
+};
+
 export type FocusMergeTileResponse = {
   type: "merge-tile-result";
   requestId: number;
@@ -175,6 +234,7 @@ export type FocusMergeTileWorkingResponse = {
 export type FocusWorkerResponse =
   | FocusProgressResponse
   | FocusErrorResponse
+  | FocusCanonicalReadyResponse
   | FocusSharpnessFeaturesResponse
   | FocusSharpnessComposeResponse
   | FocusTauStatsResponse
@@ -182,5 +242,6 @@ export type FocusWorkerResponse =
   | FocusCoreBeginResponse
   | FocusCoreAddImageResponse
   | FocusCoreFinishResponse
+  | FocusCoreRunCanonicalResponse
   | FocusMergeTileResponse
   | FocusMergeTileWorkingResponse;

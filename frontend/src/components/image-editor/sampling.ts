@@ -7,12 +7,7 @@ import type {
   LensfunVignettingGainBuffer,
 } from "@/image/lensfun";
 import type { DecodedRgbImage16, EditPoint, LinearRgbSample } from "./types";
-import { clamp01 } from "@/image/tone";
-import {
-  decodeStoredRgb16Channel,
-  encodeStoredRgb16Channel,
-  normalizeLinearRangeMax,
-} from "@/image/rgb16-storage";
+import { decodeStoredRgb16Channel } from "@/image/rgb16-storage";
 
 export { decodeStoredRgb16Channel, encodeStoredRgb16Channel, normalizeLinearRangeMax } from "@/image/rgb16-storage";
 

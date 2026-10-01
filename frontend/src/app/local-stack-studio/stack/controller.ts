@@ -44,11 +44,25 @@ import {
   createHdrMertensStreamWorkerClient,
   EccWorkerClient,
   FocusWorkerClient,
+  MedianWorkerClient,
   OrbWorkerClient,
 } from "./worker-clients";
 import {
   runAlignmentPool,
 } from "./alignment-pool";
+import { runMedianPool } from "./median-pool";
+import { MEDIAN_TILE_SIZE } from "./median";
+import { runFocusFeaturePool } from "./focus-pool";
+import { LinearMergeWorkerClient } from "./linear-merge-client";
+import {
+  buildLinearMergeStripeJobs,
+  resolveLinearMergeWorkerCount,
+  runLinearMergePool,
+} from "./linear-merge-pool";
+import {
+  applyExposureAndRolloffInPlace,
+  computeExposureRolloffMaxP998AfterGain,
+} from "./linear-merge";
 import {
   canonicalFilesSignature,
   completeCanonicalSession,
@@ -149,7 +163,6 @@ const RESULT_BUFFER_MAX_UINT16 = 65535;
 const CENTER_FILL_GRAY_STORED_GAMMA2 = Math.round(
   Math.sqrt(CENTER_FILL_GRAY_LINEAR) * RESULT_BUFFER_MAX_UINT16,
 );
-const MEDIAN_TILE_SIZE = 1024;
 // FocusGrid is scoring-only; processing and storage tiling remain independent.
 const FOCUS_PROCESSING_CORE_SIZE = 1024;
 // Five pyrDown operations require about 124px of source support; keep a 128px halo.
@@ -1662,24 +1675,6 @@ function chooseAlignmentReferenceIndex(inputInfos, mergeMode) {
   return bestIndex;
 }
 
-function describeAlignmentReferenceChoice(inputInfos, mergeMode, referenceIndex) {
-  if (mergeMode === "focus") {
-    return `Focus middle frame ${referenceIndex + 1}/${inputInfos.length}`;
-  }
-  const lightValues = inputInfos.map(computeExifLightValue);
-  if (lightValues.every((value) => Number.isFinite(value))) {
-    const minLightValue = Math.min(...lightValues);
-    const maxLightValue = Math.max(...lightValues);
-    const range = maxLightValue - minLightValue;
-    if (range >= 1) {
-      const center = (minLightValue + maxLightValue) / 2;
-      return `EXIF LV range=${range.toFixed(2)}EV, midpoint=${center.toFixed(2)}, reference LV=${lightValues[referenceIndex].toFixed(2)}`;
-    }
-    return `EXIF LV range=${range.toFixed(2)}EV (<1EV), using first frame`;
-  }
-  return "complete EXIF exposure metadata unavailable, using first frame";
-}
-
 function isTileMergeMode(mode) {
   return mode === "tile-vertical" || mode === "tile-horizontal";
 }
@@ -2310,7 +2305,13 @@ async function alignAndMergeFilesWithOpenCv(
     // Phase E: execute merge entirely from Canonical Source + resolved transforms.
     if (mergePlan.mode === "median") {
       return finalizeStoredGamma2Result(
-        await mergeMedianFromAlignedReader(reader, files.length, width, height),
+        await mergeMedianFromWorkerPool(
+          canonicalSession.id,
+          alignmentPlan,
+          matrices,
+          width,
+          height,
+        ),
         width,
         height,
         outputColorSpace,
@@ -2320,30 +2321,32 @@ async function alignAndMergeFilesWithOpenCv(
     if (mergePlan.mode === "focus") {
       focusScratchDb = await openMedianScratchDb("Focus features");
       focusScratchSessionId = createMedianScratchSessionId();
+      const focusCanonicalConfig = {
+        sessionId: canonicalSession.id,
+        alignmentPlan: {
+          normalizationMode: alignmentPlan.normalizationMode,
+          targetWidth: alignmentPlan.targetWidth,
+          targetHeight: alignmentPlan.targetHeight,
+        },
+        matrices,
+      };
+      await computeFocusSharpnessFeaturesParallel(
+        focusScratchDb,
+        focusScratchSessionId,
+        focusCanonicalConfig,
+        files.length,
+        width,
+        height,
+      );
       focusWorker = new FocusWorkerClient(
         new URL("/generated/local-stack-studio/focus.worker.js", window.location.origin),
         setProgress,
       );
-      for (let index = 0; index < files.length; index += 1) {
-        setProgress(`Computing Focus sharpness features ${index + 1}/${files.length}...`);
-        const stored = await reader.readGamma2Image(index, 1);
-        await storeFocusSharpnessFeatures(
-          focusScratchDb,
-          focusScratchSessionId,
-          focusWorker,
-          index,
-          stored,
-          width,
-          height,
-          files.length,
-        );
-        await yieldToBrowser();
-      }
-      const focusStored = await mergeFocusFromAlignedReader(
+      const focusStored = await mergeFocusFromCanonical(
         focusScratchDb,
         focusScratchSessionId,
         focusWorker,
-        reader,
+        focusCanonicalConfig,
         files.length,
         width,
         height,
@@ -2413,14 +2416,20 @@ async function alignAndMergeFilesWithOpenCv(
       return finalizeStoredResult(result, width, height, outputColorSpace, true);
     }
 
-    const accumulator = new Float32Array(width * height * 3);
-    for (let index = 0; index < files.length; index += 1) {
-      setProgress(describeMergeStep(index, files.length, mergePlan));
-      const linear = await reader.readLinearImage(index);
-      mergeLinearFloatIntoAccumulator(linear, accumulator, mergePlan.gains[index], mergePlan.weights[index]);
-      await yieldToBrowser();
+    if (mergePlan.mode === "average" || mergePlan.mode === "stf") {
+      const accumulator = await mergeLinearFromWorkerPool(
+        canonicalSession.id,
+        reader,
+        alignmentPlan,
+        matrices,
+        mergePlan,
+        width,
+        height,
+      );
+      return finalizeStoredResult(accumulator, width, height, outputColorSpace, false);
     }
-    return finalizeStoredResult(accumulator, width, height, outputColorSpace, false);
+
+    throw new Error(`Unsupported merge mode: ${mergePlan.mode}`);
   } finally {
     if (alignmentWorkers) {
       alignmentWorkers.ECC.terminate();
@@ -2463,16 +2472,6 @@ function createAlignmentFrameFromLinearProPhoto(cv, linear, width, height, expos
   finally { rgba.delete(); }
 }
 
-function mergeLinearFloatIntoAccumulator(source, accumulator, gain, weight) {
-  if (Number.isFinite(gain) && gain > 0 && Math.abs(gain - 1) > 1e-6) {
-    const adjusted = new Float32Array(source);
-    applyExposureAndRolloffInPlace(adjusted, gain);
-    addWeightedLinearToAccumulator(accumulator, adjusted, weight);
-    return;
-  }
-  addWeightedLinearToAccumulator(accumulator, source, weight);
-}
-
 function placeStoredTileImage(index, source, output, layout, width, height) {
   const position = layout.positions[index];
   const rowLength = width * 3;
@@ -2483,42 +2482,121 @@ function placeStoredTileImage(index, source, output, layout, width, height) {
   }
 }
 
-async function mergeMedianFromAlignedReader(reader, imageCount, width, height) {
+async function mergeLinearFromWorkerPool(
+  sessionId,
+  reader,
+  alignmentPlan,
+  matrices,
+  mergePlan,
+  width,
+  height,
+) {
+  const imageCount = matrices.length;
+  const exposureRolloffMaxP998AfterGain = new Array(imageCount).fill(null);
+  if (mergePlan.mode === "stf") {
+    for (let imageIndex = 0; imageIndex < imageCount; imageIndex += 1) {
+      const gain = Number(mergePlan.gains[imageIndex]);
+      if (!(Number.isFinite(gain) && gain > 1 && Math.abs(gain - 1) > 1e-6)) continue;
+      setProgress(`Analyzing STF exposure rolloff ${imageIndex + 1}/${imageCount}...`);
+      // Historical STF applies exposure/rolloff to the entire aligned image before
+      // accumulation. Preserve that exact global P99.8 when the output is split
+      // into independently processed stripes.
+      const linear = await reader.readLinearImage(imageIndex);
+      exposureRolloffMaxP998AfterGain[imageIndex] = computeExposureRolloffMaxP998AfterGain(linear, gain);
+      await yieldToBrowser();
+    }
+  }
+
+  const jobs = buildLinearMergeStripeJobs(width, height);
+  const accumulator = new Float32Array(width * height * 3);
+  const hardwareConcurrency = typeof navigator === "object"
+    ? Math.max(1, Math.floor(navigator.hardwareConcurrency || 4))
+    : 4;
+  const workerUrl = new URL("/generated/local-stack-studio/linear-merge.worker.js", window.location.origin);
+  const label = mergePlan.mode === "stf" ? "STF" : "Blend";
+  const workerCount = resolveLinearMergeWorkerCount(jobs.length, hardwareConcurrency);
+  setProgress(
+    `${label} merging stripes 0/${jobs.length} with ${workerCount} worker${workerCount === 1 ? "" : "s"}...`,
+  );
+
+  const result = await runLinearMergePool({
+    jobs,
+    config: {
+      sessionId,
+      alignmentPlan: {
+        normalizationMode: alignmentPlan.normalizationMode,
+        targetWidth: alignmentPlan.targetWidth,
+        targetHeight: alignmentPlan.targetHeight,
+      },
+      matrices,
+      gains: new Float32Array(mergePlan.gains),
+      weights: new Float32Array(mergePlan.weights),
+      exposureRolloffMaxP998AfterGain,
+    },
+    createClient: () => new LinearMergeWorkerClient(workerUrl),
+    hardwareConcurrency,
+    onJobComplete: (job, _workerIndex, stripe, completedCount, totalCount) => {
+      const targetStart = job.y * width * 3;
+      accumulator.set(stripe, targetStart);
+      setProgress(
+        `${label} merging stripes ${completedCount}/${totalCount}` +
+        `${workerCount > 0 ? ` with ${workerCount} worker${workerCount === 1 ? "" : "s"}` : ""}...`,
+      );
+    },
+  });
+  if (result.workerCount !== workerCount) {
+    throw new Error(`${label} merge worker count changed unexpectedly.`);
+  }
+  return accumulator;
+}
+
+async function mergeMedianFromWorkerPool(sessionId, alignmentPlan, matrices, width, height) {
   const output = new Uint16Array(width * height * 3);
   const columns = Math.ceil(width / MEDIAN_TILE_SIZE);
   const rows = Math.ceil(height / MEDIAN_TILE_SIZE);
-  const total = columns * rows;
-  let number = 0;
+  const jobs = [];
+  let index = 0;
   for (let ty = 0; ty < rows; ty += 1) {
     const y = ty * MEDIAN_TILE_SIZE;
     const h = Math.min(MEDIAN_TILE_SIZE, height - y);
     for (let tx = 0; tx < columns; tx += 1) {
       const x = tx * MEDIAN_TILE_SIZE;
       const w = Math.min(MEDIAN_TILE_SIZE, width - x);
-      number += 1;
-      setProgress(`Computing median tile ${number}/${total} (${w}x${h})...`);
-      const tiles = [];
-      for (let imageIndex = 0; imageIndex < imageCount; imageIndex += 1) {
-        tiles.push(await reader.readGamma2Region(imageIndex, x, y, w, h, 1));
-      }
-      const median = exactMedianUint16Tile(tiles);
-      const rowLength = w * 3;
-      for (let ly = 0; ly < h; ly += 1) {
-        output.set(median.subarray(ly * rowLength, (ly + 1) * rowLength), ((y + ly) * width + x) * 3);
-      }
-      await yieldToBrowser();
+      jobs.push({ index, x, y, width: w, height: h });
+      index += 1;
     }
   }
+
+  setProgress(`Computing median tiles 0/${jobs.length}...`);
+  const workerUrl = new URL("/generated/local-stack-studio/median.worker.js", window.location.origin);
+  await runMedianPool({
+    jobs,
+    config: {
+      sessionId,
+      alignmentPlan: {
+        normalizationMode: alignmentPlan.normalizationMode,
+        targetWidth: alignmentPlan.targetWidth,
+        targetHeight: alignmentPlan.targetHeight,
+      },
+      matrices,
+    },
+    createClient: () => new MedianWorkerClient(workerUrl),
+    hardwareConcurrency: globalThis.navigator?.hardwareConcurrency,
+    onJobComplete(job, _workerIndex, median, completed, total) {
+      const rowLength = job.width * 3;
+      for (let ly = 0; ly < job.height; ly += 1) {
+        output.set(
+          median.subarray(ly * rowLength, (ly + 1) * rowLength),
+          ((job.y + ly) * width + job.x) * 3,
+        );
+      }
+      setProgress(`Computing median tiles ${completed}/${total} (${job.width}x${job.height})...`);
+    },
+  });
   return output;
 }
 
-async function storeFocusSharpnessFeatures(db, sessionId, focusWorker, imageIndex, stored, width, height, imageCount) {
-  const featureResult = await focusWorker.computeSharpnessFeatures(
-    stored,
-    width,
-    height,
-    `Computing Focus sharpness features ${imageIndex + 1}/${imageCount}...`,
-  );
+async function storeFocusSharpnessFeatureResult(db, sessionId, imageIndex, featureResult, width, height) {
   const expectedWorking = focusSharpnessWorkingDimensions(width, height);
   const workingPixels = expectedWorking.width * expectedWorking.height;
   if (
@@ -2535,6 +2613,43 @@ async function storeFocusSharpnessFeatures(db, sessionId, focusWorker, imageInde
       { key: focusFeatureMetadataKey(sessionId, imageIndex), buffer: metadata.buffer },
     ],
     "Focus sharpness feature buffers",
+  );
+}
+
+async function computeFocusSharpnessFeaturesParallel(
+  db,
+  sessionId,
+  canonicalConfig,
+  imageCount,
+  width,
+  height,
+) {
+  const workerUrl = new URL("/generated/local-stack-studio/focus.worker.js", window.location.origin);
+  let completed = 0;
+  setProgress(`Computing Focus sharpness features 0/${imageCount}...`);
+  const pool = await runFocusFeaturePool({
+    imageCount,
+    width,
+    height,
+    config: canonicalConfig,
+    createClient: () => new FocusWorkerClient(workerUrl),
+    hardwareConcurrency: globalThis.navigator?.hardwareConcurrency,
+    async onJobComplete(imageIndex, _workerIndex, featureResult, completedCount, totalCount) {
+      await storeFocusSharpnessFeatureResult(
+        db,
+        sessionId,
+        imageIndex,
+        featureResult,
+        width,
+        height,
+      );
+      completed = completedCount;
+      setProgress(`Computing Focus sharpness features ${completed}/${totalCount}...`);
+    },
+  });
+  console.info(
+    `Focus sharpness feature workers=${pool.workerCount}, ` +
+    `hardwareConcurrency=${globalThis.navigator?.hardwareConcurrency || "unknown"}, images=${imageCount}`,
   );
 }
 
@@ -2674,63 +2789,6 @@ async function recoverDeferredAlignments(
   }
 }
 
-function exactMedianUint16Tile(tiles) {
-  if (!Array.isArray(tiles) || tiles.length === 0) {
-    throw new Error("Median tile set is empty.");
-  }
-  const length = tiles[0].length;
-  for (let index = 1; index < tiles.length; index += 1) {
-    if (!(tiles[index] instanceof Uint16Array) || tiles[index].length !== length) {
-      throw new Error("Median tile set has inconsistent dimensions.");
-    }
-  }
-
-  const output = new Uint16Array(length);
-  const count = tiles.length;
-  if (count === 1) {
-    output.set(tiles[0]);
-    return output;
-  }
-  if (count === 2) {
-    const a = tiles[0];
-    const b = tiles[1];
-    for (let i = 0; i < length; i += 1) output[i] = Math.round((a[i] + b[i]) / 2);
-    return output;
-  }
-  if (count === 3) {
-    const a = tiles[0];
-    const b = tiles[1];
-    const c = tiles[2];
-    for (let i = 0; i < length; i += 1) {
-      const av = a[i];
-      const bv = b[i];
-      const cv = c[i];
-      output[i] = av > bv
-        ? (bv > cv ? bv : Math.min(av, cv))
-        : (av > cv ? av : Math.min(bv, cv));
-    }
-    return output;
-  }
-
-  const scratch = new Uint16Array(count);
-  const upperMiddle = count >> 1;
-  const even = (count & 1) === 0;
-  for (let offset = 0; offset < length; offset += 1) {
-    for (let imageIndex = 0; imageIndex < count; imageIndex += 1) {
-      const value = tiles[imageIndex][offset];
-      let insertAt = imageIndex;
-      while (insertAt > 0 && scratch[insertAt - 1] > value) {
-        scratch[insertAt] = scratch[insertAt - 1];
-        insertAt -= 1;
-      }
-      scratch[insertAt] = value;
-    }
-    output[offset] = even
-      ? Math.round((scratch[upperMiddle - 1] + scratch[upperMiddle]) / 2)
-      : scratch[upperMiddle];
-  }
-  return output;
-}
 
 const FOCUS_FEATURE_METADATA_VERSION = 1;
 
@@ -2881,7 +2939,7 @@ function computeFocusGlobalTau(stats) {
   return Math.max(Math.sqrt(variance) * FOCUS_SMOOTHNESS, 1e-4);
 }
 
-async function mergeFocusFromAlignedReader(db, sessionId, focusWorker, reader, imageCount, width, height) {
+async function mergeFocusFromCanonical(db, sessionId, focusWorker, canonicalConfig, imageCount, width, height) {
   if (!focusWorker) throw new Error("Focus worker is not initialized.");
   const preparedSharpness = await prepareFocusSharpnessMaps(
     db,
@@ -2955,8 +3013,17 @@ async function mergeFocusFromAlignedReader(db, sessionId, focusWorker, reader, i
   );
 
   try {
+    setProgress(`Initializing ${mergeWorkerCount} Focus merge worker${mergeWorkerCount === 1 ? "" : "s"} from canonical inputs...`);
+    await Promise.all(mergeWorkers.map(async (worker) => {
+      const ready = await worker.initializeCanonical(canonicalConfig);
+      if (ready.imageCount !== imageCount || ready.width !== width || ready.height !== height) {
+        throw new Error(
+          `Focus worker canonical input ${ready.imageCount} images at ${ready.width}x${ready.height} ` +
+          `does not match expected ${imageCount} images at ${width}x${height}.`,
+        );
+      }
+    }));
     if (extraMergeWorkers.length > 0) {
-      setProgress(`Initializing ${extraMergeWorkers.length} additional Focus merge worker${extraMergeWorkers.length === 1 ? "" : "s"}...`);
       await Promise.all(extraMergeWorkers.map((worker) =>
         worker.initializeWorkingSharpness(
           finalMaps,
@@ -2966,7 +3033,6 @@ async function mergeFocusFromAlignedReader(db, sessionId, focusWorker, reader, i
           height,
         )));
     }
-    setProgress("Initializing primary Focus merge worker...");
     await focusWorker.initializeWorkingSharpness(
       finalMaps,
       preparedSharpness.workingWidth,
@@ -3002,7 +3068,7 @@ async function mergeFocusFromAlignedReader(db, sessionId, focusWorker, reader, i
         const coreOffsetX = x0 - regionX;
         const coreOffsetY = y0 - regionY;
 
-        await worker.beginFocusCore(
+        const focusCore = await worker.mergeFocusCoreFromCanonical(
           regionX,
           regionY,
           regionWidth,
@@ -3014,18 +3080,6 @@ async function mergeFocusFromAlignedReader(db, sessionId, focusWorker, reader, i
           tau,
           pyramidDownsamples,
         );
-        for (let imageIndex = 0; imageIndex < imageCount; imageIndex += 1) {
-          const rgb = await reader.readGamma2Region(
-            imageIndex,
-            regionX,
-            regionY,
-            regionWidth,
-            regionHeight,
-            1,
-          );
-          await worker.addFocusCoreImage(imageIndex, rgb);
-        }
-        const focusCore = await worker.finishFocusCore();
         if (focusCore.length !== coreWidth * coreHeight * 3) {
           throw new Error("Focus worker returned an invalid core size.");
         }
@@ -3162,26 +3216,6 @@ function logOrbAlignmentResult(fileName, result, context = "") {
   );
 }
 
-function describeMergeStep(index, total, mergePlan) {
-  if (mergePlan.mode === "hdr1" || mergePlan.mode === "hdr2") {
-    return `Preparing ${mergePlan.mode.toUpperCase()} exposure ${index + 1}/${total}...`;
-  }
-  if (mergePlan.mode === "median") {
-    return `Storing aligned denoise tiles ${index + 1}/${total}...`;
-  }
-  if (mergePlan.mode === "focus") {
-    return `Preparing focus image ${index + 1}/${total}...`;
-  }
-  if (mergePlan.mode === "stf") {
-    return `Applying STF ${index + 1}/${total}...`;
-  }
-  if (mergePlan.mode === "tile-vertical" || mergePlan.mode === "tile-horizontal") {
-    return `Placing tile ${index + 1}/${total}...`;
-  }
-  return `Blending image ${index + 1}/${total}...`;
-}
-
-
 function copyMatBytes(mat, expectedLength) {
   if (!mat.data || mat.data.length < expectedLength) {
     throw new Error("OpenCV returned an invalid grayscale image buffer.");
@@ -3212,76 +3246,7 @@ function matFromLinearProPhoto(cv, linear, width, height) {
   return mat;
 }
 
-function linearProPhotoMatToFloatsAndBrightness(mat) {
-  const linear = mat.data32F;
-  if (!linear || linear.length !== mat.rows * mat.cols * 3) {
-    throw new Error("OpenCV returned an invalid linear ProPhoto RGB matrix.");
-  }
-  const floats = new Float32Array(linear.length);
-  let brightnessSum = 0;
-  const pixelCount = linear.length / 3;
-  for (let i = 0; i < linear.length; i += 3) {
-    const r = clamp01(linear[i]);
-    const g = clamp01(linear[i + 1]);
-    const b = clamp01(linear[i + 2]);
-    brightnessSum += toneLinearIntensity(r, g, b);
-    floats[i] = r;
-    floats[i + 1] = g;
-    floats[i + 2] = b;
-  }
-  return { floats, brightness: pixelCount > 0 ? brightnessSum / pixelCount : 0 };
-}
 
-
-function linearProPhotoMatToHdr2FloatsAndBrightness(mat) {
-  const linear = mat.data32F;
-  if (!linear || linear.length !== mat.rows * mat.cols * 3) {
-    throw new Error("OpenCV returned an invalid linear ProPhoto RGB matrix.");
-  }
-  return linearProPhotoArrayToHdr2FloatsAndBrightness(linear);
-}
-
-function mergeLinearProPhotoMatIntoAccumulator(mat, accumulator, gain, weight) {
-  const source = mat.data32F;
-  if (!source || source.length !== accumulator.length) {
-    throw new Error("OpenCV returned an invalid linear ProPhoto RGB matrix.");
-  }
-  if (Number.isFinite(gain) && gain > 0 && Math.abs(gain - 1) > 1e-6) {
-    const adjusted = new Float32Array(source);
-    applyExposureAndRolloffInPlace(adjusted, gain);
-    addWeightedLinearToAccumulator(accumulator, adjusted, weight);
-    return;
-  }
-  addWeightedLinearToAccumulator(accumulator, source, weight);
-}
-
-function rgbMatToLinearProPhotoFloatsAndBrightness(rgb, sourceColorSpace) {
-  const linear = rgbMatToLinearProPhoto(rgb, sourceColorSpace);
-  const floats = new Float32Array(linear.length);
-  let brightnessSum = 0;
-  const pixelCount = linear.length / 3;
-
-  for (let i = 0; i < linear.length; i += 3) {
-    const r = clamp01(linear[i]);
-    const g = clamp01(linear[i + 1]);
-    const b = clamp01(linear[i + 2]);
-    brightnessSum += toneLinearIntensity(r, g, b);
-    floats[i] = r;
-    floats[i + 1] = g;
-    floats[i + 2] = b;
-  }
-
-  return {
-    floats,
-    brightness: pixelCount > 0 ? brightnessSum / pixelCount : 0,
-  };
-}
-
-
-function rgbMatToHdr2FloatsAndBrightness(rgb, sourceColorSpace) {
-  const linear = rgbMatToLinearProPhoto(rgb, sourceColorSpace);
-  return linearProPhotoArrayToHdr2FloatsAndBrightness(linear);
-}
 
 function createHdrDebevecReinhardStreamWorker(
   width,
@@ -3577,81 +3542,6 @@ function finalizeStoredGamma2Result(gamma2ProPhotoRgb16, width, height, outputCo
   };
 }
 
-function mergeRgbIntoAccumulator(rgb, accumulator, sourceColorSpace, gain, weight) {
-  const linear = rgbMatToLinearProPhoto(rgb, sourceColorSpace);
-  applyExposureAndRolloffInPlace(linear, gain);
-  addWeightedLinearToAccumulator(accumulator, linear, weight);
-}
-
-function rgbMatToLinearProPhoto(rgb, sourceColorSpace) {
-  if (!rgb.data || rgb.data.length !== rgb.rows * rgb.cols * 3) {
-    throw new Error("OpenCV returned an invalid RGB image buffer.");
-  }
-  const source = rgb.data;
-  const result = new Float32Array(source.length);
-  const convertRgb8 = createRgb8ToLinearProphotoConverter(sourceColorSpace);
-  const converted = new Float32Array(3);
-  for (let i = 0; i < source.length; i += 3) {
-    convertRgb8(source[i], source[i + 1], source[i + 2], converted);
-    result[i] = converted[0];
-    result[i + 1] = converted[1];
-    result[i + 2] = converted[2];
-  }
-  return result;
-}
-
-function applyExposureAndRolloffInPlace(linear, gain, exposureRolloffBaseP998 = null) {
-  if (!(Number.isFinite(gain) && gain > 0) || gain === 1) {
-    return;
-  }
-
-  if (gain <= 1) {
-    for (let i = 0; i < linear.length; i += 1) {
-      linear[i] *= gain;
-    }
-    return;
-  }
-
-  let maxVal = Number.isFinite(exposureRolloffBaseP998)
-    ? exposureRolloffBaseP998 * gain
-    : null;
-
-  if (!(Number.isFinite(maxVal) && maxVal > 0)) {
-    const pixelCount = linear.length / 3;
-    const maxima = new Float32Array(pixelCount);
-    for (let pixelIndex = 0, sourceIndex = 0; pixelIndex < pixelCount; pixelIndex += 1, sourceIndex += 3) {
-      const r = linear[sourceIndex] * gain;
-      const g = linear[sourceIndex + 1] * gain;
-      const b = linear[sourceIndex + 2] * gain;
-      linear[sourceIndex] = r;
-      linear[sourceIndex + 1] = g;
-      linear[sourceIndex + 2] = b;
-      maxima[pixelIndex] = Math.max(r, g, b);
-    }
-    maxVal = percentileFromFloatArray(maxima, 0.998);
-  } else {
-    for (let i = 0; i < linear.length; i += 1) {
-      linear[i] *= gain;
-    }
-  }
-
-  const rolloff = rolloffParams(maxVal, EXPOSURE_ROLLOFF_A, ROLLOFF_SAVING_LIMIT_FACTOR, 1);
-  if (!rolloff) return;
-  const adjusted: [number, number, number] = [0, 0, 0];
-  for (let i = 0; i + 2 < linear.length; i += 3) {
-    applyRolloffMaxChannelLinearRgbInto(
-      linear[i] ?? 0,
-      linear[i + 1] ?? 0,
-      linear[i + 2] ?? 0,
-      rolloff,
-      adjusted,
-    );
-    linear[i] = adjusted[0];
-    linear[i + 1] = adjusted[1];
-    linear[i + 2] = adjusted[2];
-  }
-}
-
 let storedGamma2LinearLookup = null;
 
 function getStoredGamma2LinearLookup() {
@@ -3756,12 +3646,6 @@ function percentileFromFloatArray(values, q) {
   copy.sort((a, b) => a - b);
   const index = Math.min(copy.length - 1, Math.max(0, Math.floor((copy.length - 1) * q)));
   return copy[index];
-}
-
-function addWeightedLinearToAccumulator(accumulator, linear, weight) {
-  for (let i = 0; i < accumulator.length; i += 1) {
-    accumulator[i] += linear[i] * weight;
-  }
 }
 
 async function linearAccumulatorToJpeg(accumulator, width, height, outputColorSpace) {

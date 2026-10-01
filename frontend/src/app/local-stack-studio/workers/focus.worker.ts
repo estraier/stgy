@@ -6,6 +6,7 @@ import {
 } from "./opencv-runtime";
 import type { FocusWorkerRequest, FocusWorkerResponse } from "./protocols/focus-protocol";
 import { transferableBuffer } from "./transfer-buffer";
+import { WorkerCanonicalReader } from "../stack/worker-canonical-reader";
 import {
   focusSharpnessWorkingDimensions,
   isUsableFocusStd,
@@ -70,11 +71,32 @@ import {
   let cvPromise: Promise<OpenCvRuntime> | null = null;
   let workingSharpnessState: WorkingSharpnessState | null = null;
   let focusCoreState: FocusCoreState | null = null;
+  let canonicalReader: WorkerCanonicalReader | null = null;
 
   workerScope.onmessage = async (event: MessageEvent<FocusWorkerRequest>) => {
     const message = event.data;
     const requestId = message.requestId;
     try {
+      if (message.type === "canonical-init") {
+        canonicalReader?.close();
+        canonicalReader = await WorkerCanonicalReader.open({
+          sessionId: message.sessionId,
+          alignmentPlan: message.alignmentPlan,
+          matrices: message.matrices,
+          cacheBytes: message.cacheBytes,
+        });
+        workingSharpnessState = null;
+        focusCoreState = null;
+        workerScope.postMessage({
+          type: "canonical-ready",
+          requestId,
+          imageCount: canonicalReader.imageCount,
+          width: canonicalReader.width,
+          height: canonicalReader.height,
+        });
+        return;
+      }
+
       if (message.type === "sharpness-features") {
         const cv = await getOpenCv();
         postProgress(requestId, message.progressMessage || "Computing focus sharpness features...");
@@ -83,6 +105,50 @@ import {
           new Uint16Array(message.gamma2Buffer),
           Number(message.width),
           Number(message.height),
+        );
+        const featureBuffer = transferableBuffer(result.features);
+        workerScope.postMessage(
+          {
+            type: "sharpness-features-result",
+            requestId,
+            featureBuffer,
+            workingWidth: result.workingWidth,
+            workingHeight: result.workingHeight,
+            lapCount: result.lapStats.count,
+            lapMean: result.lapStats.mean,
+            lapM2: result.lapStats.m2,
+            sobelCount: result.sobelStats.count,
+            sobelMean: result.sobelStats.mean,
+            sobelM2: result.sobelStats.m2,
+          },
+          [featureBuffer],
+        );
+        return;
+      }
+
+      if (message.type === "sharpness-features-canonical") {
+        const cv = await getOpenCv();
+        if (!canonicalReader) {
+          throw new Error("Focus worker canonical reader is not initialized.");
+        }
+        const imageIndex = Number(message.imageIndex);
+        if (!Number.isInteger(imageIndex) || imageIndex < 0 || imageIndex >= canonicalReader.imageCount) {
+          throw new Error("Focus worker received an invalid canonical image index.");
+        }
+        postProgress(requestId, message.progressMessage || "Computing focus sharpness features...");
+        const gamma2Rgb = await canonicalReader.readGamma2Region(
+          imageIndex,
+          0,
+          0,
+          canonicalReader.width,
+          canonicalReader.height,
+          1,
+        );
+        const result = computeSharpnessFeatures(
+          cv,
+          gamma2Rgb,
+          canonicalReader.width,
+          canonicalReader.height,
         );
         const featureBuffer = transferableBuffer(result.features);
         workerScope.postMessage(
@@ -211,6 +277,58 @@ import {
         const gamma2Buffer = transferableBuffer(merged);
         workerScope.postMessage(
           { type: "focus-core-finish-result", requestId, gamma2Buffer },
+          [gamma2Buffer],
+        );
+        return;
+      }
+
+      if (message.type === "focus-core-run-canonical") {
+        const cv = await getOpenCv();
+        if (!canonicalReader) {
+          throw new Error("Focus worker canonical reader is not initialized.");
+        }
+        if (!workingSharpnessState) {
+          throw new Error("Focus worker working sharpness cache is not initialized.");
+        }
+        if (focusCoreState) {
+          throw new Error("Focus worker already has an active core.");
+        }
+        focusCoreState = beginFocusCore(
+          workingSharpnessState,
+          Number(message.regionX),
+          Number(message.regionY),
+          Number(message.regionWidth),
+          Number(message.regionHeight),
+          Number(message.coreOffsetX),
+          Number(message.coreOffsetY),
+          Number(message.coreWidth),
+          Number(message.coreHeight),
+          Number(message.tau),
+          Number(message.pyramidDownsamples),
+        );
+        const activeState = focusCoreState;
+        for (let imageIndex = 0; imageIndex < canonicalReader.imageCount; imageIndex += 1) {
+          const rgb = await canonicalReader.readGamma2Region(
+            imageIndex,
+            activeState.regionX,
+            activeState.regionY,
+            activeState.regionWidth,
+            activeState.regionHeight,
+            1,
+          );
+          addFocusCoreImage(
+            cv,
+            workingSharpnessState,
+            activeState,
+            imageIndex,
+            rgb,
+          );
+        }
+        focusCoreState = null;
+        const merged = finishFocusCore(cv, workingSharpnessState, activeState);
+        const gamma2Buffer = transferableBuffer(merged);
+        workerScope.postMessage(
+          { type: "focus-core-run-canonical-result", requestId, gamma2Buffer },
           [gamma2Buffer],
         );
         return;

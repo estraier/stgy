@@ -10,7 +10,8 @@ export const CANONICAL_LINEAR_RANGE_MAX = 4 as const;
 export const CANONICAL_PIXEL_FORMAT = "rgb-u16-gamma20-prophoto-r4" as const;
 export const CANONICAL_TARGET_CHUNK_BYTES = 8 * 1024 * 1024;
 const CANONICAL_RANGE_EPSILON = 1e-5;
-const MAX_CACHE_BYTES = 64 * 1024 * 1024;
+export const CANONICAL_MAIN_CACHE_BYTES = 64 * 1024 * 1024;
+export const CANONICAL_WORKER_CACHE_BYTES = 32 * 1024 * 1024;
 
 type CanonicalSessionRecord = {
   sessionId: string;
@@ -19,6 +20,18 @@ type CanonicalSessionRecord = {
   lastAccessAt: number;
   imageCount: number;
   complete: boolean;
+};
+
+
+export type CanonicalInputInfo = {
+  width: number;
+  height: number;
+  isRaw?: boolean;
+  sourceColorSpace?: string | null;
+  fNumber?: number | null;
+  exposureTime?: number | null;
+  iso?: number | null;
+  exposureScalar?: number | null;
 };
 
 export type CanonicalImageRecord = {
@@ -54,17 +67,74 @@ type CanonicalChunkRecord = {
   buffer: ArrayBuffer;
 };
 
-export type PreparedCanonicalSession = {
+type CachedChunk = { key: string; data: Uint16Array; bytes: number; used: number };
+
+export class CanonicalChunkCache {
+  private readonly entries = new Map<string, CachedChunk>();
+  private bytes = 0;
+  private counter = 0;
+
+  constructor(readonly maxBytes: number) {
+    if (!Number.isFinite(maxBytes) || maxBytes <= 0) throw new Error("Canonical chunk cache size must be positive.");
+  }
+
+  get(key: string): Uint16Array | null {
+    const entry = this.entries.get(key);
+    if (!entry) return null;
+    entry.used = ++this.counter;
+    return entry.data;
+  }
+
+  put(key: string, data: Uint16Array): void {
+    const existing = this.entries.get(key);
+    if (existing) {
+      existing.used = ++this.counter;
+      return;
+    }
+    const entry = { key, data, bytes: data.byteLength, used: ++this.counter };
+    this.entries.set(key, entry);
+    this.bytes += entry.bytes;
+    while (this.bytes > this.maxBytes && this.entries.size > 1) {
+      let oldest: CachedChunk | null = null;
+      for (const item of this.entries.values()) if (!oldest || item.used < oldest.used) oldest = item;
+      if (!oldest) break;
+      this.entries.delete(oldest.key);
+      this.bytes -= oldest.bytes;
+    }
+  }
+
+  clearSession(sessionId: string): void {
+    for (const key of Array.from(this.entries.keys())) {
+      if (!key.startsWith(`${sessionId}:chunk:`)) continue;
+      const entry = this.entries.get(key);
+      if (entry) this.bytes -= entry.bytes;
+      this.entries.delete(key);
+    }
+  }
+
+  clear(): void {
+    this.entries.clear();
+    this.bytes = 0;
+  }
+
+  get sizeBytes(): number { return this.bytes; }
+  get sizeEntries(): number { return this.entries.size; }
+}
+
+export type CanonicalReadableSession = {
   id: string;
-  filesSignature: string;
   db: IDBDatabase;
   images: CanonicalImageRecord[];
+  chunkCache: CanonicalChunkCache;
 };
 
-type CachedChunk = { key: string; data: Uint16Array; bytes: number; used: number };
-const chunkCache = new Map<string, CachedChunk>();
-let cacheBytes = 0;
-let cacheCounter = 0;
+export type PreparedCanonicalSession = CanonicalReadableSession & {
+  filesSignature: string;
+};
+
+export type CanonicalReadSession = CanonicalReadableSession & {
+  close(): void;
+};
 
 function createSessionId(): string {
   if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") return globalThis.crypto.randomUUID();
@@ -131,7 +201,7 @@ function quotaError(error: unknown): Error {
 
 export async function createCanonicalSession(
   files: readonly File[],
-  inputInfos: readonly any[],
+  _inputInfos: readonly CanonicalInputInfo[],
 ): Promise<PreparedCanonicalSession> {
   const db = await openCanonicalSourceDb();
   const id = createSessionId();
@@ -139,10 +209,10 @@ export async function createCanonicalSession(
     sessionId: id, formatVersion: 1, createdAt: Date.now(), lastAccessAt: Date.now(), imageCount: files.length, complete: false,
   };
   await idbPut(db, SESSION_STORE, record);
-  return { id, filesSignature: canonicalFilesSignature(files), db, images: [] };
+  return { id, filesSignature: canonicalFilesSignature(files), db, images: [], chunkCache: new CanonicalChunkCache(CANONICAL_MAIN_CACHE_BYTES) };
 }
 
-export async function estimateCanonicalCapacity(files: readonly File[], inputInfos: readonly any[]): Promise<void> {
+export async function estimateCanonicalCapacity(_files: readonly File[], inputInfos: readonly CanonicalInputInfo[]): Promise<void> {
   if (!(navigator.storage && typeof navigator.storage.estimate === "function")) return;
   const required = inputInfos.reduce((sum, info) => sum + Math.max(0, Number(info?.width) || 0) * Math.max(0, Number(info?.height) || 0) * 6, 0) + 64 * 1024 * 1024;
   const estimate = await navigator.storage.estimate();
@@ -158,7 +228,7 @@ export async function writeCanonicalLinearImage(
   session: PreparedCanonicalSession,
   imageIndex: number,
   file: File,
-  inputInfo: any,
+  inputInfo: CanonicalInputInfo,
   width: number,
   height: number,
   linear: Float32Array,
@@ -209,31 +279,60 @@ export async function completeCanonicalSession(session: PreparedCanonicalSession
   await idbPut(session.db, SESSION_STORE, { ...(existing || {}), sessionId: session.id, formatVersion: 1, createdAt: existing?.createdAt || Date.now(), lastAccessAt: Date.now(), imageCount: session.images.length, complete: true });
 }
 
-function touchCache(key: string, data: Uint16Array): void {
-  const existing = chunkCache.get(key);
-  if (existing) { existing.used = ++cacheCounter; return; }
-  const entry = { key, data, bytes: data.byteLength, used: ++cacheCounter };
-  chunkCache.set(key, entry); cacheBytes += entry.bytes;
-  while (cacheBytes > MAX_CACHE_BYTES && chunkCache.size > 1) {
-    let oldest: CachedChunk | null = null;
-    for (const item of chunkCache.values()) if (!oldest || item.used < oldest.used) oldest = item;
-    if (!oldest) break;
-    chunkCache.delete(oldest.key); cacheBytes -= oldest.bytes;
+export async function openCanonicalReadSession(
+  sessionId: string,
+  maxCacheBytes: number = CANONICAL_WORKER_CACHE_BYTES,
+): Promise<CanonicalReadSession> {
+  if (!sessionId) throw new Error("Canonical input session id is required.");
+  const db = await openCanonicalSourceDb();
+  try {
+    const sessionRecord = await idbGet<CanonicalSessionRecord>(db, SESSION_STORE, sessionId);
+    if (!sessionRecord || sessionRecord.formatVersion !== 1 || !sessionRecord.complete) {
+      throw new Error("Canonical input session is unavailable or incomplete.");
+    }
+    if (!Number.isInteger(sessionRecord.imageCount) || sessionRecord.imageCount <= 0) {
+      throw new Error("Canonical input session has invalid image metadata.");
+    }
+    const images: CanonicalImageRecord[] = [];
+    for (let imageIndex = 0; imageIndex < sessionRecord.imageCount; imageIndex += 1) {
+      const record = await idbGet<CanonicalImageRecord & { key?: string }>(db, IMAGE_STORE, imageKey(sessionId, imageIndex));
+      if (!record?.complete || record.sessionId !== sessionId || record.imageIndex !== imageIndex || record.pixelFormat !== CANONICAL_PIXEL_FORMAT || record.linearRangeMax !== CANONICAL_LINEAR_RANGE_MAX) {
+        throw new Error(`Canonical input metadata is incomplete for image ${imageIndex + 1}.`);
+      }
+      images.push(record);
+    }
+    const chunkCache = new CanonicalChunkCache(maxCacheBytes);
+    let closed = false;
+    return {
+      id: sessionId,
+      db,
+      images,
+      chunkCache,
+      close() {
+        if (closed) return;
+        closed = true;
+        chunkCache.clear();
+        db.close();
+      },
+    };
+  } catch (error) {
+    db.close();
+    throw error;
   }
 }
 
-async function readChunk(session: PreparedCanonicalSession, imageIndex: number, chunkIndex: number): Promise<Uint16Array> {
+async function readChunk(session: CanonicalReadableSession, imageIndex: number, chunkIndex: number): Promise<Uint16Array> {
   const key = chunkKey(session.id, imageIndex, chunkIndex);
-  const cached = chunkCache.get(key);
-  if (cached) { cached.used = ++cacheCounter; return cached.data; }
+  const cached = session.chunkCache.get(key);
+  if (cached) return cached;
   const record = await idbGet<CanonicalChunkRecord>(session.db, CHUNK_STORE, key);
   if (!record || !(record.buffer instanceof ArrayBuffer)) throw new Error(`Canonical input cache is incomplete for ${session.images[imageIndex]?.fileName || `image ${imageIndex + 1}`}.`);
   const data = new Uint16Array(record.buffer);
-  touchCache(key, data);
+  session.chunkCache.put(key, data);
   return data;
 }
 
-export async function readCanonicalStoredRows(session: PreparedCanonicalSession, imageIndex: number, startRow: number, rowCount: number): Promise<Uint16Array> {
+export async function readCanonicalStoredRows(session: CanonicalReadableSession, imageIndex: number, startRow: number, rowCount: number): Promise<Uint16Array> {
   const meta = session.images[imageIndex];
   if (!meta?.complete) throw new Error(`Canonical input cache is incomplete for image ${imageIndex + 1}.`);
   if (!Number.isInteger(startRow) || !Number.isInteger(rowCount) || startRow < 0 || rowCount < 0 || startRow + rowCount > meta.height) throw new Error("Canonical row request is out of bounds.");
@@ -264,7 +363,7 @@ function canonicalDecodeLut(): Float32Array {
   return decodeLut;
 }
 
-export async function readCanonicalLinearRows(session: PreparedCanonicalSession, imageIndex: number, startRow: number, rowCount: number): Promise<Float32Array> {
+export async function readCanonicalLinearRows(session: CanonicalReadableSession, imageIndex: number, startRow: number, rowCount: number): Promise<Float32Array> {
   const stored = await readCanonicalStoredRows(session, imageIndex, startRow, rowCount);
   const lut = canonicalDecodeLut();
   const output = new Float32Array(stored.length);
@@ -272,13 +371,13 @@ export async function readCanonicalLinearRows(session: PreparedCanonicalSession,
   return output;
 }
 
-export async function materializeCanonicalLinearImage(session: PreparedCanonicalSession, imageIndex: number): Promise<Float32Array> {
+export async function materializeCanonicalLinearImage(session: CanonicalReadableSession, imageIndex: number): Promise<Float32Array> {
   const meta = session.images[imageIndex];
   if (!meta) throw new Error(`Canonical input ${imageIndex + 1} is unavailable.`);
   return readCanonicalLinearRows(session, imageIndex, 0, meta.height);
 }
 
-export async function materializeCanonicalStoredImage(session: PreparedCanonicalSession, imageIndex: number): Promise<Uint16Array> {
+export async function materializeCanonicalStoredImage(session: CanonicalReadableSession, imageIndex: number): Promise<Uint16Array> {
   const meta = session.images[imageIndex];
   if (!meta) throw new Error(`Canonical input ${imageIndex + 1} is unavailable.`);
   return readCanonicalStoredRows(session, imageIndex, 0, meta.height);
@@ -306,11 +405,6 @@ export async function deleteCanonicalSession(session: PreparedCanonicalSession |
     tx.onerror = () => reject(tx.error || new Error("Could not clear canonical input session."));
     tx.onabort = () => reject(tx.error || new Error("Canonical input cleanup was aborted."));
   });
-  for (const key of Array.from(chunkCache.keys())) {
-    if (key.startsWith(`${sessionId}:chunk:`)) {
-      const entry = chunkCache.get(key); if (entry) cacheBytes -= entry.bytes;
-      chunkCache.delete(key);
-    }
-  }
+  if (typeof session !== "string") session.chunkCache.clearSession(sessionId);
   if (!dbOverride) db.close();
 }

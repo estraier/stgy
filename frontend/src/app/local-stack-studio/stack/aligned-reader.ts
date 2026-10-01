@@ -1,14 +1,14 @@
 import { encodeStoredRgb16Channel } from "@/image/rgb16-storage";
 import {
   readCanonicalLinearRows,
-  type PreparedCanonicalSession,
+  type CanonicalReadableSession,
 } from "./canonical-source";
 
 const CENTER_FILL_GRAY_LINEAR = 0.21586050011389926; // sRGB 128 / 255 decoded to linear.
 
-type NormalizationMode = "feature-match" | "center-crop" | "center-fit" | "center-fill" | "top-left-fill";
+export type NormalizationMode = "feature-match" | "center-crop" | "center-fit" | "center-fill" | "top-left-fill";
 
-type AlignmentPlanLike = {
+export type AlignmentPlanLike = {
   normalizationMode: NormalizationMode;
   targetWidth: number;
   targetHeight: number;
@@ -112,8 +112,8 @@ export class AlignedImageReader {
   private readonly inverseMatrices: Float64Array[];
 
   constructor(
-    private readonly session: PreparedCanonicalSession,
-    private readonly plan: AlignmentPlanLike,
+    private readonly session: CanonicalReadableSession,
+    plan: AlignmentPlanLike,
     alignment: ResolvedAlignmentLike,
   ) {
     this.width = plan.targetWidth;
