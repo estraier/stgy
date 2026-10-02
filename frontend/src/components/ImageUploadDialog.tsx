@@ -25,6 +25,7 @@ import {
   type LibRawSettingsLike,
   type LibRawThumbnailDataLike,
 } from "@/image/libraw";
+import { attachWhitelistedMetadata, extractWhitelistedMetadataFromFile } from "@/image/exif-metadata";
 import {
   presignImageUpload,
   uploadToPresigned,
@@ -10993,11 +10994,14 @@ export async function buildOptimizedVariant(
     timing,
   );
   try {
-    return await measureImageEditTiming(
+    const encoded = await measureImageEditTiming(
       timing,
       outputFormat === "image/webp" ? "Encoding result WebP" : `Encoding result ${outputFormat}`,
       () => encodeEditedVariant(prepared, quality, outputFormat, resolvedOutputColorProfile),
     );
+    const metadata = await extractWhitelistedMetadataFromFile(file);
+    const metadataBlob = await attachWhitelistedMetadata(encoded.blob, metadata);
+    return { ...encoded, blob: metadataBlob };
   } finally {
     releaseCanvasIfNeeded(prepared.canvas);
   }
@@ -18670,6 +18674,8 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
                 "image/webp",
                 outputColorProfile,
               );
+              const metadata = await extractWhitelistedMetadataFromFile(f.file);
+              out = { ...out, blob: await attachWhitelistedMetadata(out.blob, metadata) };
             } finally {
               releaseCanvasIfNeeded(prepared.canvas);
             }

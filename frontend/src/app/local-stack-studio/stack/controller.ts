@@ -215,9 +215,22 @@ const zoomScrollContainer = getElement("zoom-scroll-container");
 const zoomImage = getElement("zoom-image");
 
 let currentStackResult = null;
+let exifMetadataModulePromise = null;
+
+function loadExifMetadataModule() {
+  if (!exifMetadataModulePromise) {
+    exifMetadataModulePromise = import("@/image/exif-metadata").catch((error) => {
+      exifMetadataModulePromise = null;
+      throw error;
+    });
+  }
+  return exifMetadataModulePromise;
+}
+
 let currentCanonicalSession = null;
 let currentPreviewColorSpace = "srgb";
 let currentInputFiles = [];
+let currentOutputMetadata = null;
 let currentPreviewExposureEv = 0;
 let currentPreviewShadow = 0;
 let currentPreviewHighlight = 0;
@@ -384,6 +397,8 @@ ${buildInfo}` : "OpenCV.js is ready.");
 
     setProgress("Reading metadata, ICC profiles, and image sizes...");
     const inputInfos = await readInputInfos(files);
+    const { mergeStackMetadata } = await loadExifMetadataModule();
+    currentOutputMetadata = mergeStackMetadata(inputInfos.map((info) => info.preservedMetadata ?? null));
     const requireStfToneStatistics = files.length > 1 && mergeMode.value === "stf";
     currentCanonicalSession = await ensureCanonicalSession(
       files,
@@ -586,6 +601,10 @@ listen(downloadButton, "click", async () => {
           currentStackResult.height,
           currentPreviewColorSpace,
         );
+        {
+          const { attachWhitelistedMetadata } = await loadExifMetadataModule();
+          jpegBlob = await attachWhitelistedMetadata(jpegBlob, currentOutputMetadata);
+        }
         if (fullSizeRenderCache === cache && cache.key === getFullSizeRenderCacheKey()) {
           cache.jpegBlob = jpegBlob;
         }
@@ -603,6 +622,7 @@ listen(downloadButton, "click", async () => {
         bitsPerSample: 8,
         outputColorSpace: currentPreviewColorSpace,
         preferDeflate: true,
+        metadata: currentOutputMetadata,
       });
       downloadBlob(encoded.blob, buildOutputFileName(currentInputFiles, "tiff8"));
       return;
@@ -632,6 +652,7 @@ listen(downloadButton, "click", async () => {
         bitsPerSample: 16,
         outputColorSpace: currentPreviewColorSpace,
         preferDeflate: true,
+        metadata: currentOutputMetadata,
       });
       downloadBlob(encoded.blob, buildOutputFileName(currentInputFiles, "tiff16"));
       return;
@@ -656,7 +677,9 @@ listen(downloadButton, "click", async () => {
         downloadButtonLabel.textContent = `Encoding ${format === "webp" ? "WebP" : "JPEG"}...`;
         await waitForBusyPaint();
         const blob = await canvasToImageBlob(canvas, format);
-        downloadBlob(blob, buildOutputFileName(currentInputFiles, format));
+        const { attachWhitelistedMetadata } = await loadExifMetadataModule();
+        const metadataBlob = await attachWhitelistedMetadata(blob, currentOutputMetadata);
+        downloadBlob(metadataBlob, buildOutputFileName(currentInputFiles, format));
         return;
       }
 
@@ -670,6 +693,7 @@ listen(downloadButton, "click", async () => {
         bitsPerSample: 8,
         outputColorSpace: currentPreviewColorSpace,
         preferDeflate: true,
+        metadata: currentOutputMetadata,
       });
       downloadBlob(encoded.blob, buildOutputFileName(currentInputFiles, "tiff8"));
       return;
@@ -3834,6 +3858,8 @@ async function extractInputInfo(file) {
   }
 
   const buffer = await file.arrayBuffer();
+  const { extractWhitelistedMetadataFromBuffer } = await loadExifMetadataModule();
+  const preservedMetadata = extractWhitelistedMetadataFromBuffer(buffer);
   const iccProfile = await extractEmbeddedIccProfile(lowerName, buffer);
   const sourceColorSpace = classifyIccProfile(iccProfile, lowerName);
 
@@ -3848,6 +3874,7 @@ async function extractInputInfo(file) {
       isRaw: false,
       width: tiffInfo.width,
       height: tiffInfo.height,
+      preservedMetadata,
     };
   }
 
@@ -3861,6 +3888,7 @@ async function extractInputInfo(file) {
       isRaw: false,
       width: dimensions.width,
       height: dimensions.height,
+      preservedMetadata,
     };
   }
 
@@ -3873,6 +3901,7 @@ async function extractInputInfo(file) {
     isRaw: false,
     width: dimensions.width,
     height: dimensions.height,
+    preservedMetadata,
   };
 }
 
@@ -3882,11 +3911,18 @@ async function readRawInputInfo(file) {
   try {
     raw = await createLibRawInstance();
     workerFailure = createLibRawWorkerFailure(raw);
+    const rawBuffer = await file.arrayBuffer();
+    const { extractWhitelistedMetadataFromBuffer, extractWhitelistedMetadataFromLibRaw } = await loadExifMetadataModule();
+    const embeddedMetadata = extractWhitelistedMetadataFromBuffer(rawBuffer);
     await Promise.race([
-      raw.open(new Uint8Array(await file.arrayBuffer())),
+      raw.open(new Uint8Array(rawBuffer)),
       workerFailure.promise,
     ]);
     const metadata = await Promise.race([raw.metadata(true), workerFailure.promise]);
+    const rawPreservedMetadata = extractWhitelistedMetadataFromLibRaw(metadata);
+    const preservedMetadata = embeddedMetadata
+      ? { ...rawPreservedMetadata, ...embeddedMetadata, gps: embeddedMetadata.gps ?? rawPreservedMetadata?.gps }
+      : rawPreservedMetadata;
     const exposureTime = positiveNumberOrNull(metadata?.shutter);
     const fNumber = positiveNumberOrNull(metadata?.aperture);
     const iso = positiveNumberOrNull(metadata?.iso_speed);
@@ -3927,6 +3963,7 @@ async function readRawInputInfo(file) {
       lensCorrection,
       width: dimensions.width,
       height: dimensions.height,
+      preservedMetadata,
     };
   } catch (error) {
     const detail = error instanceof Error ? `: ${error.message}` : "";
@@ -4907,6 +4944,7 @@ function clearResult() {
   clearPreviewRenderCaches();
   currentPreviewColorSpace = "srgb";
   currentInputFiles = [];
+  currentOutputMetadata = null;
   currentPreviewExposureEv = 0;
   currentPreviewShadow = 0;
   currentPreviewHighlight = 0;

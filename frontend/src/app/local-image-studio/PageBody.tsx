@@ -25,6 +25,7 @@ import type { ImageEditClarityMap } from "@/components/image-editor/clarity";
 import type { DefringeAnalysisMap } from "@/components/image-editor/defringe";
 import { Config } from "@/config";
 import { isRawImageFile } from "@/image/libraw";
+import { attachWhitelistedMetadata, extractWhitelistedMetadataFromFile, type PreservedImageMetadata } from "@/image/exif-metadata";
 import { warmupLensfunRuntime } from "@/image/lensfun";
 import { formatBytes } from "@/utils/format";
 import { getBrowserLocale } from "@/utils/locale";
@@ -35,6 +36,7 @@ type SourceImage = {
   height: number;
   edit: ImageEditParams;
   bestOutputColorProfile: ImageEditOutputColorProfile;
+  metadata: PreservedImageMetadata | null;
 };
 
 type EditResult = {
@@ -437,9 +439,10 @@ export default function LocalImageStudio() {
     clearEditedVariant();
     clearRawDevelopment();
     try {
-      const [size, bestOutputColorProfile] = await Promise.all([
+      const [size, bestOutputColorProfile, metadata] = await Promise.all([
         readImageSize(file),
         detectBestEditableImageOutputColorProfile(file),
+        extractWhitelistedMetadataFromFile(file),
       ]);
       const { width, height } = size;
       const edit = buildDefaultEditParams(width, height);
@@ -449,6 +452,7 @@ export default function LocalImageStudio() {
         height,
         edit: { ...edit, resizePercent: 100 },
         bestOutputColorProfile,
+        metadata,
       };
       setSource(nextSource);
       setEditing(true);
@@ -562,8 +566,9 @@ export default function LocalImageStudio() {
           resolvedOutputColorProfile,
         ),
       );
+      const metadataBlob = await attachWhitelistedMetadata(processed.blob, sourceImage.metadata);
       const urlStartedAt = editTiming ? performance.now() : 0;
-      const url = URL.createObjectURL(processed.blob);
+      const url = URL.createObjectURL(metadataBlob);
       if (editTiming) {
         recordImageEditTiming(
           editTiming,
@@ -598,7 +603,7 @@ export default function LocalImageStudio() {
       }
       setResult({
         url,
-        size: processed.blob.size,
+        size: metadataBlob.size,
         width: processed.width,
         height: processed.height,
         format,

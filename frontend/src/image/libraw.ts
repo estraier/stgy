@@ -45,6 +45,17 @@ export type LibRawInsetCropLike = {
   cheight?: number;
 };
 
+export type LibRawParsedGpsLike = {
+  latitude?: ArrayLike<number>;
+  longitude?: ArrayLike<number>;
+  longtitude?: ArrayLike<number>;
+  altitude?: number;
+  latref?: string | number;
+  longref?: string | number;
+  gpsparsed?: string | number | boolean;
+  [key: string]: unknown;
+};
+
 export type LibRawMetadataLike = {
   width?: number;
   height?: number;
@@ -57,6 +68,10 @@ export type LibRawMetadataLike = {
   shutter?: number;
   aperture?: number;
   focal_len?: number;
+  timestamp?: number;
+  parsed_gps?: LibRawParsedGpsLike;
+  desc?: string;
+  artist?: string;
   camera_make?: string;
   camera_model?: string;
   normalized_make?: string;

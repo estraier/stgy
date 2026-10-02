@@ -46,6 +46,7 @@ export async function encodeFromLinearProPhoto(options) {
     bitsPerSample,
     outputColorSpace,
     preferDeflate = true,
+    metadata = null,
   } = options;
 
   if (!(data instanceof Float32Array)) {
@@ -84,6 +85,7 @@ export async function encodeFromLinearProPhoto(options) {
     compression,
     stripBytes,
     iccProfile,
+    metadata,
   });
 
   return {
@@ -157,6 +159,169 @@ async function deflate(bytes) {
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
+function tiffAsciiBytes(text) {
+  const value = String(text || "").replace(/\0.*$/s, "").trim();
+  if (!value) return null;
+  const bytes = new Uint8Array(value.length + 1);
+  for (let i = 0; i < value.length; i += 1) bytes[i] = value.charCodeAt(i) & 0xff;
+  return bytes;
+}
+
+function tiffShortBytes(value) {
+  if (!Number.isFinite(value)) return null;
+  const bytes = new Uint8Array(2);
+  new DataView(bytes.buffer).setUint16(0, Math.max(0, Math.min(0xffff, Math.round(value))), true);
+  return bytes;
+}
+
+function tiffLongBytes(value) {
+  const bytes = new Uint8Array(4);
+  new DataView(bytes.buffer).setUint32(0, Math.max(0, Math.round(value)) >>> 0, true);
+  return bytes;
+}
+
+function tiffRationalBytes(values, signed = false) {
+  const list = Array.isArray(values) ? values : [values];
+  const bytes = new Uint8Array(list.length * 8);
+  const view = new DataView(bytes.buffer);
+  for (let i = 0; i < list.length; i += 1) {
+    const value = Number(list[i]);
+    const denominator = 1_000_000;
+    const numerator = Math.round(value * denominator);
+    if (signed) {
+      view.setInt32(i * 8, numerator, true);
+      view.setInt32(i * 8 + 4, denominator, true);
+    } else {
+      view.setUint32(i * 8, Math.max(0, numerator) >>> 0, true);
+      view.setUint32(i * 8 + 4, denominator, true);
+    }
+  }
+  return bytes;
+}
+
+function tiffByteBytes(values) {
+  return Uint8Array.from(values.map((value) => Math.max(0, Math.min(255, Math.round(value)))));
+}
+
+function degreesToDms(value) {
+  const abs = Math.abs(value);
+  const degrees = Math.floor(abs);
+  const minutesFloat = (abs - degrees) * 60;
+  const minutes = Math.floor(minutesFloat);
+  const seconds = (minutesFloat - minutes) * 60;
+  return [degrees, minutes, seconds];
+}
+
+function makeTiffEntry(tag, type, count, bytes) {
+  return bytes ? { tag, type, count, bytes, offset: null } : null;
+}
+
+function addTiffEntry(entries, entry) {
+  if (entry) entries.push(entry);
+}
+
+function makeAsciiTiffEntry(tag, value) {
+  const bytes = tiffAsciiBytes(value);
+  return bytes ? makeTiffEntry(tag, 2, bytes.length, bytes) : null;
+}
+
+function makeShortTiffEntry(tag, value) {
+  const bytes = tiffShortBytes(value);
+  return bytes ? makeTiffEntry(tag, 3, 1, bytes) : null;
+}
+
+function makeLongTiffEntry(tag, value) {
+  if (!Number.isFinite(value)) return null;
+  return makeTiffEntry(tag, 4, 1, tiffLongBytes(value));
+}
+
+function makeIsoTiffEntry(tag, value) {
+  if (!Number.isFinite(value) || value < 0) return null;
+  return value <= 0xffff ? makeShortTiffEntry(tag, value) : makeLongTiffEntry(tag, value);
+}
+
+function makeRationalTiffEntry(tag, value, signed = false) {
+  if (!Number.isFinite(value)) return null;
+  return makeTiffEntry(tag, signed ? 10 : 5, 1, tiffRationalBytes(value, signed));
+}
+
+function metadataTiffEntries(metadata) {
+  const ifd0 = [];
+  const exif = [];
+  const gps = [];
+  if (!metadata) return { ifd0, exif, gps };
+
+  addTiffEntry(ifd0, makeAsciiTiffEntry(270, metadata.imageDescription));
+  addTiffEntry(ifd0, makeAsciiTiffEntry(271, metadata.make));
+  addTiffEntry(ifd0, makeAsciiTiffEntry(272, metadata.model));
+  addTiffEntry(ifd0, makeAsciiTiffEntry(315, metadata.artist));
+  addTiffEntry(ifd0, makeAsciiTiffEntry(33432, metadata.copyright));
+
+  addTiffEntry(exif, makeRationalTiffEntry(33434, metadata.exposureTime));
+  addTiffEntry(exif, makeRationalTiffEntry(33437, metadata.fNumber));
+  addTiffEntry(exif, makeShortTiffEntry(34850, metadata.exposureProgram));
+  addTiffEntry(exif, makeIsoTiffEntry(34855, metadata.iso));
+  addTiffEntry(exif, makeAsciiTiffEntry(36867, metadata.dateTimeOriginal));
+  addTiffEntry(exif, makeAsciiTiffEntry(36868, metadata.dateTimeDigitized));
+  addTiffEntry(exif, makeAsciiTiffEntry(36881, metadata.offsetTimeOriginal));
+  addTiffEntry(exif, makeRationalTiffEntry(37380, metadata.exposureBiasValue, true));
+  addTiffEntry(exif, makeShortTiffEntry(37383, metadata.meteringMode));
+  addTiffEntry(exif, makeShortTiffEntry(37385, metadata.flash));
+  addTiffEntry(exif, makeRationalTiffEntry(37386, metadata.focalLength));
+  addTiffEntry(exif, makeAsciiTiffEntry(37521, metadata.subSecTimeOriginal));
+  addTiffEntry(exif, makeAsciiTiffEntry(42035, metadata.lensMake));
+  addTiffEntry(exif, makeAsciiTiffEntry(42036, metadata.lensModel));
+
+  if (metadata.gps && Number.isFinite(metadata.gps.latitude) && Number.isFinite(metadata.gps.longitude)) {
+    gps.push(makeTiffEntry(0, 1, 4, tiffByteBytes([2, 3, 0, 0])));
+    addTiffEntry(gps, makeAsciiTiffEntry(1, metadata.gps.latitude < 0 ? "S" : "N"));
+    gps.push(makeTiffEntry(2, 5, 3, tiffRationalBytes(degreesToDms(metadata.gps.latitude))));
+    addTiffEntry(gps, makeAsciiTiffEntry(3, metadata.gps.longitude < 0 ? "W" : "E"));
+    gps.push(makeTiffEntry(4, 5, 3, tiffRationalBytes(degreesToDms(metadata.gps.longitude))));
+    if (Number.isFinite(metadata.gps.altitude)) {
+      gps.push(makeTiffEntry(5, 1, 1, tiffByteBytes([metadata.gps.altitude < 0 ? 1 : 0])));
+      gps.push(makeTiffEntry(6, 5, 1, tiffRationalBytes(Math.abs(metadata.gps.altitude))));
+    }
+  }
+  return { ifd0, exif, gps };
+}
+
+function ifdTableSize(entries) {
+  return 2 + entries.length * 12 + 4;
+}
+
+function layoutExternalEntryData(entries, initialCursor) {
+  let cursor = initialCursor;
+  for (const entry of entries) {
+    if (entry.bytes.length <= 4) continue;
+    cursor = align4(cursor);
+    entry.offset = cursor;
+    cursor += entry.bytes.length;
+  }
+  return cursor;
+}
+
+function writeTiffIfd(output, offset, entries) {
+  const view = new DataView(output.buffer);
+  const sorted = entries.slice().sort((a, b) => a.tag - b.tag);
+  view.setUint16(offset, sorted.length, true);
+  let entryOffset = offset + 2;
+  for (const entry of sorted) {
+    view.setUint16(entryOffset, entry.tag, true);
+    view.setUint16(entryOffset + 2, entry.type, true);
+    view.setUint32(entryOffset + 4, entry.count, true);
+    output.fill(0, entryOffset + 8, entryOffset + 12);
+    if (entry.bytes.length <= 4) {
+      output.set(entry.bytes, entryOffset + 8);
+    } else {
+      view.setUint32(entryOffset + 8, entry.offset, true);
+      output.set(entry.bytes, entry.offset);
+    }
+    entryOffset += 12;
+  }
+  view.setUint32(entryOffset, 0, true);
+}
+
 function buildClassicTiff(options) {
   const {
     width,
@@ -165,6 +330,7 @@ function buildClassicTiff(options) {
     compression,
     stripBytes,
     iccProfile,
+    metadata = null,
   } = options;
 
   const software = asciiBytes("Local Stack Studio\0");
@@ -182,77 +348,68 @@ function buildClassicTiff(options) {
 
   const xResolution = rationalBytes(72, 1);
   const yResolution = rationalBytes(72, 1);
+  const metadataEntries = metadataTiffEntries(metadata);
 
-  const entryCount = 17;
+  const ifd0Entries = [
+    makeLongTiffEntry(256, width),
+    makeLongTiffEntry(257, height),
+    makeTiffEntry(258, 3, 3, bitsArray),
+    makeShortTiffEntry(259, compression),
+    makeShortTiffEntry(262, 2),
+    makeLongTiffEntry(273, 0), // filled after layout
+    makeShortTiffEntry(274, 1), // output pixels are already upright
+    makeShortTiffEntry(277, 3),
+    makeLongTiffEntry(278, height),
+    makeLongTiffEntry(279, stripBytes.length),
+    makeTiffEntry(282, 5, 1, xResolution),
+    makeTiffEntry(283, 5, 1, yResolution),
+    makeShortTiffEntry(284, 1),
+    makeShortTiffEntry(296, 2),
+    makeTiffEntry(305, 2, software.length, software),
+    makeTiffEntry(339, 3, 3, sampleFormat),
+    makeTiffEntry(34675, 7, iccProfile.length, iccProfile),
+    ...metadataEntries.ifd0,
+  ].filter(Boolean);
+
+  if (metadataEntries.exif.length > 0) ifd0Entries.push(makeLongTiffEntry(34665, 0));
+  if (metadataEntries.gps.length > 0) ifd0Entries.push(makeLongTiffEntry(34853, 0));
+
   const ifdOffset = 8;
-  const ifdSize = 2 + entryCount * 12 + 4;
-  let cursor = align4(ifdOffset + ifdSize);
+  let cursor = align4(ifdOffset + ifdTableSize(ifd0Entries));
+  cursor = layoutExternalEntryData(ifd0Entries, cursor);
 
-  const bitsOffset = cursor;
-  cursor = align4(cursor + bitsArray.length);
-  const sampleFormatOffset = cursor;
-  cursor = align4(cursor + sampleFormat.length);
-  const xResolutionOffset = cursor;
-  cursor = align4(cursor + xResolution.length);
-  const yResolutionOffset = cursor;
-  cursor = align4(cursor + yResolution.length);
-  const softwareOffset = cursor;
-  cursor = align4(cursor + software.length);
-  const iccOffset = cursor;
-  cursor = align4(cursor + iccProfile.length);
-  const stripOffset = cursor;
-  cursor += stripBytes.length;
+  const exifIfdOffset = metadataEntries.exif.length > 0 ? align4(cursor) : 0;
+  if (metadataEntries.exif.length > 0) {
+    cursor = exifIfdOffset + ifdTableSize(metadataEntries.exif);
+    cursor = layoutExternalEntryData(metadataEntries.exif, cursor);
+  }
+
+  const gpsIfdOffset = metadataEntries.gps.length > 0 ? align4(cursor) : 0;
+  if (metadataEntries.gps.length > 0) {
+    cursor = gpsIfdOffset + ifdTableSize(metadataEntries.gps);
+    cursor = layoutExternalEntryData(metadataEntries.gps, cursor);
+  }
+
+  const stripOffset = align4(cursor);
+  cursor = stripOffset + stripBytes.length;
+
+  for (const entry of ifd0Entries) {
+    if (entry.tag === 273) entry.bytes = tiffLongBytes(stripOffset);
+    if (entry.tag === 34665) entry.bytes = tiffLongBytes(exifIfdOffset);
+    if (entry.tag === 34853) entry.bytes = tiffLongBytes(gpsIfdOffset);
+  }
 
   const output = new Uint8Array(cursor);
   const view = new DataView(output.buffer);
-
   output[0] = 0x49;
   output[1] = 0x49;
   view.setUint16(2, 42, true);
   view.setUint32(4, ifdOffset, true);
 
-  view.setUint16(ifdOffset, entryCount, true);
-  let entryOffset = ifdOffset + 2;
-  const writeEntry = (tag, type, count, valueOrOffset, inlineShort = false) => {
-    view.setUint16(entryOffset, tag, true);
-    view.setUint16(entryOffset + 2, type, true);
-    view.setUint32(entryOffset + 4, count, true);
-    if (inlineShort) {
-      view.setUint16(entryOffset + 8, valueOrOffset, true);
-      view.setUint16(entryOffset + 10, 0, true);
-    } else {
-      view.setUint32(entryOffset + 8, valueOrOffset, true);
-    }
-    entryOffset += 12;
-  };
-
-  writeEntry(256, 4, 1, width);
-  writeEntry(257, 4, 1, height);
-  writeEntry(258, 3, 3, bitsOffset);
-  writeEntry(259, 3, 1, compression, true);
-  writeEntry(262, 3, 1, 2, true);
-  writeEntry(273, 4, 1, stripOffset);
-  writeEntry(274, 3, 1, 1, true);
-  writeEntry(277, 3, 1, 3, true);
-  writeEntry(278, 4, 1, height);
-  writeEntry(279, 4, 1, stripBytes.length);
-  writeEntry(282, 5, 1, xResolutionOffset);
-  writeEntry(283, 5, 1, yResolutionOffset);
-  writeEntry(284, 3, 1, 1, true);
-  writeEntry(296, 3, 1, 2, true);
-  writeEntry(305, 2, software.length, software.length <= 4 ? 0 : softwareOffset);
-  writeEntry(339, 3, 3, sampleFormatOffset);
-  writeEntry(34675, 7, iccProfile.length, iccOffset);
-  view.setUint32(ifdOffset + 2 + entryCount * 12, 0, true);
-
-  output.set(bitsArray, bitsOffset);
-  output.set(sampleFormat, sampleFormatOffset);
-  output.set(xResolution, xResolutionOffset);
-  output.set(yResolution, yResolutionOffset);
-  output.set(software, softwareOffset);
-  output.set(iccProfile, iccOffset);
+  writeTiffIfd(output, ifdOffset, ifd0Entries);
+  if (metadataEntries.exif.length > 0) writeTiffIfd(output, exifIfdOffset, metadataEntries.exif);
+  if (metadataEntries.gps.length > 0) writeTiffIfd(output, gpsIfdOffset, metadataEntries.gps);
   output.set(stripBytes, stripOffset);
-
   return output;
 }
 
