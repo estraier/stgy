@@ -28,7 +28,7 @@ function clarityClipLimitFromStrength(strength: number): number {
   return 8 * t * t;
 }
 
-function computeClarityTileGrid(width: number, height: number) {
+export function computeClarityTileGrid(width: number, height: number) {
   const normalizedWidth = Math.max(1, Math.round(width));
   const normalizedHeight = Math.max(1, Math.round(height));
   const targetTileCount = 80;

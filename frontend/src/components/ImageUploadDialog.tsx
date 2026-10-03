@@ -141,6 +141,7 @@ import {
   buildImageEditClarityMapFromToneSample,
   buildImageEditToneSample,
   clampClarity,
+  computeClarityTileGrid,
   isUsableImageEditClarityMap,
   sampleImageEditClarityGain,
   type ImageEditClarityMap,
@@ -329,6 +330,7 @@ export type ImageDuotonePreset =
   | "duotone-blue"
   | "duotone-magenta";
 export type ImageSuperMcPreset = "super-mc-red" | "super-mc-green" | "super-mc-blue";
+export type ImageCartoonPreset = "cartoon" | "cartoon-detail" | "cartoon-fine";
 export type ImageEdgePreset = "edge-canny" | "edge-xdog" | "edge-multiscale";
 export type ImageSimulationFilterPreset = FilmSimulationPreset;
 export type ImageOtherFilterPreset =
@@ -338,6 +340,7 @@ export type ImageOtherFilterPreset =
   | ImagePartColorPreset
   | ImageDuotonePreset
   | ImageSuperMcPreset
+  | ImageCartoonPreset
   | ImageEdgePreset
   | ImageSimulationFilterPreset;
 export type ImageNonMonochromeFilterPreset = ImagePhotochemicalFilterPreset | ImageOtherFilterPreset;
@@ -1055,6 +1058,12 @@ const SUPER_MC_PRESET_SEQUENCE: readonly ImageSuperMcPreset[] = [
   "super-mc-blue",
 ];
 
+const CARTOON_PRESET_SEQUENCE: readonly ImageCartoonPreset[] = [
+  "cartoon",
+  "cartoon-detail",
+  "cartoon-fine",
+];
+
 const MIXER_COLOR_KEYS: readonly ImageMixerColorKey[] = [
   "red",
   "orange",
@@ -1151,6 +1160,100 @@ const SUPER_MC_WEIGHTS: Record<ImageSuperMcPreset, readonly [number, number, num
   "super-mc-green": [-0.2, 1.5, -0.3],
   "super-mc-blue": [-0.5, 0.5, 1.0],
 };
+
+// Imaging Solution cartoon filter: adaptive mean threshold + median,
+// pyramid segmentation + median, then mask the segmented colors with the contour.
+// These are the full-output reference values. Preview-only spatial parameters are
+// scaled down to preserve approximately the same source-image footprint without
+// ever growing beyond the full-output kernels.
+const CARTOON_BLOCK_SIZE = 11;
+const CARTOON_CONTOUR_THRESHOLD = 5;
+const CARTOON_CONTOUR_MEDIAN_SIZE = 5;
+const CARTOON_LINK_THRESHOLD = 255;
+const CARTOON_SEGMENT_THRESHOLD = 30;
+const CARTOON_MIN_KERNEL_SIZE = 3;
+const CARTOON_MIN_PYRAMID_LEVEL = 1;
+
+type CartoonModeSettings = {
+  pyramidLevel: number;
+  colorMedianSize: number;
+  colorMedianMinSize: number;
+  linkThresholdScale: number;
+  segmentThresholdScale: number;
+};
+
+// Keep Standard unchanged. Detail and Fine deliberately diverge in more than
+// one dimension so the visual difference is obvious: progressively shallower
+// color pyramids preserve smaller structures, the merge thresholds are tightened
+// independently, and Fine disables the final color median so the smallest painted
+// regions are not smoothed back into their neighbors. The contour drawing and the
+// local-contrast field remain identical in all modes.
+const CARTOON_MODE_SETTINGS: Record<ImageCartoonPreset, CartoonModeSettings> = {
+  cartoon: {
+    pyramidLevel: 5,
+    colorMedianSize: 5,
+    colorMedianMinSize: 3,
+    linkThresholdScale: 0.85,
+    segmentThresholdScale: 0.85,
+  },
+  "cartoon-detail": {
+    pyramidLevel: 4,
+    colorMedianSize: 3,
+    colorMedianMinSize: 3,
+    linkThresholdScale: 0.65,
+    segmentThresholdScale: 0.55,
+  },
+  "cartoon-fine": {
+    pyramidLevel: 2,
+    colorMedianSize: 1,
+    colorMedianMinSize: 1,
+    linkThresholdScale: 0.40,
+    segmentThresholdScale: 0.30,
+  },
+};
+const CARTOON_LOCAL_CONTRAST_CLIP_MULTIPLE = 8;
+const CARTOON_LOCAL_CONTRAST_LOW_PERCENTILE = 0.10;
+const CARTOON_LOCAL_CONTRAST_HIGH_PERCENTILE = 0.90;
+const CARTOON_LOCAL_CONTRAST_MIN_SPAN = 4;
+const CARTOON_LOCAL_CONTRAST_MAX_GAIN = 2;
+
+type CartoonSpatialParams = {
+  blockSize: number;
+  contourMedianSize: number;
+  colorMedianSize: number;
+  pyramidLevel: number;
+};
+
+function nearestOddCartoonKernel(baseSize: number, scale: number, minSize = CARTOON_MIN_KERNEL_SIZE): number {
+  const clampedScale = Number.isFinite(scale) ? Math.max(0, Math.min(1, scale)) : 1;
+  const minimum = Math.max(1, minSize | 1);
+  const target = baseSize * clampedScale;
+  let lower = Math.floor(target);
+  if ((lower & 1) === 0) lower -= 1;
+  let upper = Math.ceil(target);
+  if ((upper & 1) === 0) upper += 1;
+  lower = Math.max(minimum, lower);
+  upper = Math.max(minimum, upper);
+  const chosen = target - lower <= upper - target ? lower : upper;
+  return Math.max(minimum, Math.min(baseSize, chosen));
+}
+
+function resolveCartoonSpatialParams(
+  spatialScale: number,
+  preset: ImageCartoonPreset,
+): CartoonSpatialParams {
+  const scale = Number.isFinite(spatialScale) ? Math.max(0, Math.min(1, spatialScale)) : 1;
+  const mode = CARTOON_MODE_SETTINGS[preset];
+  return {
+    blockSize: nearestOddCartoonKernel(CARTOON_BLOCK_SIZE, scale),
+    contourMedianSize: nearestOddCartoonKernel(CARTOON_CONTOUR_MEDIAN_SIZE, scale),
+    colorMedianSize: nearestOddCartoonKernel(mode.colorMedianSize, scale, mode.colorMedianMinSize),
+    pyramidLevel: Math.max(
+      CARTOON_MIN_PYRAMID_LEVEL,
+      Math.min(mode.pyramidLevel, Math.round(mode.pyramidLevel + Math.log2(Math.max(scale, 1e-6)))),
+    ),
+  };
+}
 
 const EDGE_PRESET_SEQUENCE: readonly ImageEdgePreset[] = [
   "edge-canny",
@@ -1644,6 +1747,10 @@ function isSuperMcPreset(value: unknown): value is ImageSuperMcPreset {
   return typeof value === "string" && (SUPER_MC_PRESET_SEQUENCE as readonly string[]).includes(value);
 }
 
+function isCartoonPreset(value: unknown): value is ImageCartoonPreset {
+  return typeof value === "string" && (CARTOON_PRESET_SEQUENCE as readonly string[]).includes(value);
+}
+
 function isEdgePreset(value: unknown): value is ImageEdgePreset {
   return typeof value === "string" && (EDGE_PRESET_SEQUENCE as readonly string[]).includes(value);
 }
@@ -1673,6 +1780,7 @@ function normalizeNonMonochromeFilterPreset(value: unknown): ImageNonMonochromeF
     || isPartColorPreset(value)
     || isDuotonePreset(value)
     || isSuperMcPreset(value)
+    || isCartoonPreset(value)
     || isEdgePreset(value)
     || isSimulationPreset(value)
   ) {
@@ -3689,6 +3797,915 @@ function applyTrichromeFilterToRgb16(
   applyFilterScaledLogToRgb16(data, width, height, recoveryScaledLog);
 }
 
+type CartoonRgbPyramidLevel = {
+  width: number;
+  height: number;
+  data: Uint8Array;
+};
+
+type CartoonLabelArray = Uint16Array | Uint32Array;
+
+type CartoonMedianState = {
+  value: number;
+  below: number;
+  at: number;
+};
+
+type CartoonLocalContrastField = {
+  width: number;
+  height: number;
+  tilesX: number;
+  tilesY: number;
+  tileWidth: number;
+  tileHeight: number;
+  thresholdScale: Float32Array;
+};
+
+function cartoonHistogramPercentileBin(
+  histogram: Uint32Array,
+  offset: number,
+  area: number,
+  percentile: number,
+): number {
+  if (area <= 0) return 0;
+  const target = Math.max(0, Math.min(area - 1, Math.floor((area - 1) * percentile)));
+  let cumulative = 0;
+  for (let bin = 0; bin < 256; bin += 1) {
+    cumulative += histogram[offset + bin] ?? 0;
+    if (cumulative > target) return bin;
+  }
+  return 255;
+}
+
+function cartoonClaheMappedBinPair(
+  histogram: Uint32Array,
+  offset: number,
+  area: number,
+  lowBin: number,
+  highBin: number,
+  scratch: Uint32Array,
+): readonly [number, number] {
+  if (area <= 0) return [lowBin, highBin];
+  const averagePerBin = area / 256;
+  const clipLimit = Math.max(1, Math.floor(averagePerBin * CARTOON_LOCAL_CONTRAST_CLIP_MULTIPLE));
+  let excess = 0;
+  for (let bin = 0; bin < 256; bin += 1) {
+    const value = histogram[offset + bin] ?? 0;
+    if (value > clipLimit) {
+      excess += value - clipLimit;
+      scratch[bin] = clipLimit;
+    } else {
+      scratch[bin] = value;
+    }
+  }
+  if (excess > 0) {
+    const redistribute = Math.floor(excess / 256);
+    const remainder = excess - redistribute * 256;
+    for (let bin = 0; bin < 256; bin += 1) scratch[bin] = (scratch[bin] ?? 0) + redistribute;
+    if (remainder > 0) {
+      const step = 256 / remainder;
+      for (let i = 0; i < remainder; i += 1) {
+        const bin = Math.min(255, Math.floor(i * step));
+        scratch[bin] = (scratch[bin] ?? 0) + 1;
+      }
+    }
+  }
+
+  let cdf = 0;
+  let cdfMin = -1;
+  let mappedLow = lowBin / 255;
+  let mappedHigh = highBin / 255;
+  for (let bin = 0; bin < 256; bin += 1) {
+    cdf += scratch[bin] ?? 0;
+    if (cdfMin < 0 && cdf > 0) cdfMin = cdf;
+    const denominator = Math.max(1, area - Math.max(0, cdfMin));
+    const mapped = cdfMin < 0 ? 0 : clamp01((cdf - cdfMin) / denominator);
+    if (bin === lowBin) mappedLow = mapped;
+    if (bin === highBin) {
+      mappedHigh = mapped;
+      break;
+    }
+  }
+  return [mappedLow * 255, mappedHigh * 255];
+}
+
+function buildCartoonLocalContrastField(
+  rgb: Uint8Array,
+  width: number,
+  height: number,
+): CartoonLocalContrastField {
+  const grid = computeClarityTileGrid(width, height);
+  const tileCount = grid.tilesX * grid.tilesY;
+  const histograms = new Uint32Array(tileCount * 256);
+  const areas = new Uint32Array(tileCount);
+
+  for (let tileY = 0; tileY < grid.tilesY; tileY += 1) {
+    const y0 = tileY * grid.tileHeight;
+    const y1 = Math.min(height, y0 + grid.tileHeight);
+    for (let tileX = 0; tileX < grid.tilesX; tileX += 1) {
+      const x0 = tileX * grid.tileWidth;
+      const x1 = Math.min(width, x0 + grid.tileWidth);
+      const tile = tileY * grid.tilesX + tileX;
+      const histogramOffset = tile * 256;
+      let area = 0;
+      for (let y = y0; y < y1; y += 1) {
+        let index = (y * width + x0) * 3;
+        for (let x = x0; x < x1; x += 1, index += 3) {
+          const r = rgb[index] ?? 0;
+          const g = rgb[index + 1] ?? 0;
+          const b = rgb[index + 2] ?? 0;
+          // rgb is gamma-2.0 ProPhoto.  Converting the shared 3:5:2 linear
+          // Tone axis back to gamma-2.0 cancels the 255 normalization:
+          // encodedY = sqrt(0.3*r^2 + 0.5*g^2 + 0.2*b^2).
+          const encodedY = Math.max(
+            0,
+            Math.min(255, Math.round(Math.sqrt(0.3 * r * r + 0.5 * g * g + 0.2 * b * b))),
+          );
+          histograms[histogramOffset + encodedY] += 1;
+          area += 1;
+        }
+      }
+      areas[tile] = area;
+    }
+  }
+
+  const thresholdScale = new Float32Array(tileCount);
+  thresholdScale.fill(1);
+  const scratch = new Uint32Array(256);
+  for (let tile = 0; tile < tileCount; tile += 1) {
+    const area = areas[tile] ?? 0;
+    if (area <= 0) continue;
+    const offset = tile * 256;
+    const lowBin = cartoonHistogramPercentileBin(
+      histograms, offset, area, CARTOON_LOCAL_CONTRAST_LOW_PERCENTILE,
+    );
+    const highBin = cartoonHistogramPercentileBin(
+      histograms, offset, area, CARTOON_LOCAL_CONTRAST_HIGH_PERCENTILE,
+    );
+    const sourceSpan = highBin - lowBin;
+    if (sourceSpan < CARTOON_LOCAL_CONTRAST_MIN_SPAN) continue;
+    const [mappedLow, mappedHigh] = cartoonClaheMappedBinPair(
+      histograms, offset, area, lowBin, highBin, scratch,
+    );
+    const mappedSpan = Math.max(0, mappedHigh - mappedLow);
+    if (!(mappedSpan > sourceSpan)) continue;
+    const gain = Math.max(
+      1,
+      Math.min(CARTOON_LOCAL_CONTRAST_MAX_GAIN, mappedSpan / Math.max(1, sourceSpan)),
+    );
+    thresholdScale[tile] = 1 / (gain * gain);
+  }
+
+  return {
+    width,
+    height,
+    tilesX: grid.tilesX,
+    tilesY: grid.tilesY,
+    tileWidth: grid.tileWidth,
+    tileHeight: grid.tileHeight,
+    thresholdScale,
+  };
+}
+
+function sampleCartoonLocalThresholdScale(
+  field: CartoonLocalContrastField,
+  x: number,
+  y: number,
+  levelWidth: number,
+  levelHeight: number,
+): number {
+  const sourceX = ((x + 0.5) * field.width / Math.max(1, levelWidth)) - 0.5;
+  const sourceY = ((y + 0.5) * field.height / Math.max(1, levelHeight)) - 0.5;
+  const gridX = sourceX / field.tileWidth - 0.5;
+  const gridY = sourceY / field.tileHeight - 0.5;
+
+  let tileX0 = Math.floor(gridX);
+  let tileY0 = Math.floor(gridY);
+  let fx = gridX - tileX0;
+  let fy = gridY - tileY0;
+  let tileX1 = tileX0 + 1;
+  let tileY1 = tileY0 + 1;
+
+  if (field.tilesX <= 1 || tileX0 < 0) {
+    tileX0 = 0;
+    tileX1 = 0;
+    fx = 0;
+  } else if (tileX1 >= field.tilesX) {
+    tileX0 = field.tilesX - 1;
+    tileX1 = field.tilesX - 1;
+    fx = 0;
+  }
+  if (field.tilesY <= 1 || tileY0 < 0) {
+    tileY0 = 0;
+    tileY1 = 0;
+    fy = 0;
+  } else if (tileY1 >= field.tilesY) {
+    tileY0 = field.tilesY - 1;
+    tileY1 = field.tilesY - 1;
+    fy = 0;
+  }
+
+  const row0 = tileY0 * field.tilesX;
+  const row1 = tileY1 * field.tilesX;
+  const scale00 = field.thresholdScale[row0 + tileX0] ?? 1;
+  const scale10 = field.thresholdScale[row0 + tileX1] ?? 1;
+  const scale01 = field.thresholdScale[row1 + tileX0] ?? 1;
+  const scale11 = field.thresholdScale[row1 + tileX1] ?? 1;
+  const top = scale00 * (1 - fx) + scale10 * fx;
+  const bottom = scale01 * (1 - fx) + scale11 * fx;
+  return top * (1 - fy) + bottom * fy;
+}
+
+function clampCartoonCoordinate(value: number, size: number): number {
+  if (size <= 1) return 0;
+  return Math.max(0, Math.min(size - 1, value));
+}
+
+function reflectCartoonCoordinate101(value: number, size: number): number {
+  if (size <= 1) return 0;
+  let resolved = value;
+  while (resolved < 0 || resolved >= size) {
+    resolved = resolved < 0 ? -resolved : 2 * size - 2 - resolved;
+  }
+  return resolved;
+}
+
+function cartoonColorDistance(
+  ar: number,
+  ag: number,
+  ab: number,
+  br: number,
+  bg: number,
+  bb: number,
+): number {
+  // cvPyrSegmentation uses a weighted squared RGB error for 3-channel input.
+  // Keeping the original metric is important: with the documented threshold1=255,
+  // an absolute-difference metric makes nearly every child link to a coarse parent
+  // and averages unrelated colors toward gray.
+  const dr = ar - br;
+  const dg = ag - bg;
+  const db = ab - bb;
+  return 0.30 * dr * dr + 0.59 * dg * dg + 0.11 * db * db;
+}
+
+function buildCartoonAdaptiveContourMask(
+  rgb: Uint8Array,
+  width: number,
+  height: number,
+  blockSize: number,
+): Uint8Array {
+  const pixelCount = width * height;
+  const gray = new Uint8Array(pixelCount);
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const index = pixel * 3;
+    gray[pixel] = Math.max(
+      0,
+      Math.min(
+        255,
+        Math.round(
+          0.299 * (rgb[index] ?? 0)
+          + 0.587 * (rgb[index + 1] ?? 0)
+          + 0.114 * (rgb[index + 2] ?? 0),
+        ),
+      ),
+    );
+  }
+
+  const radius = Math.floor(blockSize / 2);
+  const horizontal = new Uint16Array(pixelCount);
+  for (let y = 0; y < height; y += 1) {
+    const row = y * width;
+    let sum = 0;
+    for (let dx = -radius; dx <= radius; dx += 1) {
+      sum += gray[row + clampCartoonCoordinate(dx, width)] ?? 0;
+    }
+    horizontal[row] = sum;
+    for (let x = 1; x < width; x += 1) {
+      const removeX = clampCartoonCoordinate(x - radius - 1, width);
+      const addX = clampCartoonCoordinate(x + radius, width);
+      sum += (gray[row + addX] ?? 0) - (gray[row + removeX] ?? 0);
+      horizontal[row + x] = sum;
+    }
+  }
+
+  const blockArea = blockSize * blockSize;
+  const thresholdOffset = CARTOON_CONTOUR_THRESHOLD * blockArea;
+  for (let x = 0; x < width; x += 1) {
+    let sum = 0;
+    for (let dy = -radius; dy <= radius; dy += 1) {
+      const sy = clampCartoonCoordinate(dy, height);
+      sum += horizontal[sy * width + x] ?? 0;
+    }
+    let pixel = x;
+    gray[pixel] = (gray[pixel] ?? 0) * blockArea > sum - thresholdOffset ? 1 : 0;
+    for (let y = 1; y < height; y += 1) {
+      const removeY = clampCartoonCoordinate(y - radius - 1, height);
+      const addY = clampCartoonCoordinate(y + radius, height);
+      sum += (horizontal[addY * width + x] ?? 0) - (horizontal[removeY * width + x] ?? 0);
+      pixel = y * width + x;
+      gray[pixel] = (gray[pixel] ?? 0) * blockArea > sum - thresholdOffset ? 1 : 0;
+    }
+  }
+  return gray;
+}
+
+function medianFilterCartoonBinaryInPlace(
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  medianSize: number,
+): void {
+  const radius = Math.floor(medianSize / 2);
+  const horizontal = new Uint8Array(mask.length);
+  for (let y = 0; y < height; y += 1) {
+    const row = y * width;
+    let sum = 0;
+    for (let dx = -radius; dx <= radius; dx += 1) {
+      sum += mask[row + clampCartoonCoordinate(dx, width)] ?? 0;
+    }
+    horizontal[row] = sum;
+    for (let x = 1; x < width; x += 1) {
+      const removeX = clampCartoonCoordinate(x - radius - 1, width);
+      const addX = clampCartoonCoordinate(x + radius, width);
+      sum += (mask[row + addX] ?? 0) - (mask[row + removeX] ?? 0);
+      horizontal[row + x] = sum;
+    }
+  }
+
+  const medianRank = Math.floor((medianSize * medianSize) / 2) + 1;
+  for (let x = 0; x < width; x += 1) {
+    let sum = 0;
+    for (let dy = -radius; dy <= radius; dy += 1) {
+      const sy = clampCartoonCoordinate(dy, height);
+      sum += horizontal[sy * width + x] ?? 0;
+    }
+    mask[x] = sum >= medianRank ? 1 : 0;
+    for (let y = 1; y < height; y += 1) {
+      const removeY = clampCartoonCoordinate(y - radius - 1, height);
+      const addY = clampCartoonCoordinate(y + radius, height);
+      sum += (horizontal[addY * width + x] ?? 0) - (horizontal[removeY * width + x] ?? 0);
+      mask[y * width + x] = sum >= medianRank ? 1 : 0;
+    }
+  }
+}
+
+function buildCartoonContourMask(
+  rgb: Uint8Array,
+  width: number,
+  height: number,
+  spatial: CartoonSpatialParams,
+): Uint8Array {
+  const mask = buildCartoonAdaptiveContourMask(rgb, width, height, spatial.blockSize);
+  medianFilterCartoonBinaryInPlace(mask, width, height, spatial.contourMedianSize);
+  return mask;
+}
+
+function downsampleCartoonRgbPyramid2x(level: CartoonRgbPyramidLevel): CartoonRgbPyramidLevel {
+  const dstWidth = Math.max(1, Math.ceil(level.width / 2));
+  const dstHeight = Math.max(1, Math.ceil(level.height / 2));
+  if (dstWidth === level.width && dstHeight === level.height) return level;
+
+  const dst = new Uint8Array(dstWidth * dstHeight * 3);
+  const rowIds = new Int32Array(5);
+  rowIds.fill(-1);
+  const rowBuffers = Array.from({ length: 5 }, () => new Uint16Array(dstWidth * 3));
+  const gaussian = [1, 4, 6, 4, 1] as const;
+
+  const fillHorizontalRow = (sourceY: number, target: Uint16Array) => {
+    for (let x = 0; x < dstWidth; x += 1) {
+      const sourceX = x * 2;
+      const outputIndex = x * 3;
+      let sumR = 0;
+      let sumG = 0;
+      let sumB = 0;
+      for (let kx = -2; kx <= 2; kx += 1) {
+        const sx = reflectCartoonCoordinate101(sourceX + kx, level.width);
+        const sourceIndex = (sourceY * level.width + sx) * 3;
+        const weight = gaussian[kx + 2] ?? 0;
+        sumR += (level.data[sourceIndex] ?? 0) * weight;
+        sumG += (level.data[sourceIndex + 1] ?? 0) * weight;
+        sumB += (level.data[sourceIndex + 2] ?? 0) * weight;
+      }
+      target[outputIndex] = sumR;
+      target[outputIndex + 1] = sumG;
+      target[outputIndex + 2] = sumB;
+    }
+  };
+
+  for (let y = 0; y < dstHeight; y += 1) {
+    const sourceY = y * 2;
+    const neededRows = new Int32Array(5);
+    for (let ky = -2; ky <= 2; ky += 1) {
+      neededRows[ky + 2] = reflectCartoonCoordinate101(sourceY + ky, level.height);
+    }
+    const horizontalRows: Uint16Array[] = [];
+    for (let ky = 0; ky < 5; ky += 1) {
+      const rowId = neededRows[ky] ?? 0;
+      let slot = -1;
+      for (let i = 0; i < rowIds.length; i += 1) {
+        if (rowIds[i] === rowId) {
+          slot = i;
+          break;
+        }
+      }
+      if (slot < 0) {
+        for (let i = 0; i < rowIds.length; i += 1) {
+          let stillNeeded = false;
+          for (let n = 0; n < neededRows.length; n += 1) {
+            if (neededRows[n] === rowIds[i]) {
+              stillNeeded = true;
+              break;
+            }
+          }
+          if (!stillNeeded) {
+            slot = i;
+            break;
+          }
+        }
+      }
+      if (slot < 0) slot = ky;
+      if (rowIds[slot] !== rowId) {
+        fillHorizontalRow(rowId, rowBuffers[slot]!);
+        rowIds[slot] = rowId;
+      }
+      horizontalRows.push(rowBuffers[slot]!);
+    }
+
+    for (let x = 0; x < dstWidth; x += 1) {
+      const outputIndex = (y * dstWidth + x) * 3;
+      const rowIndex = x * 3;
+      for (let channel = 0; channel < 3; channel += 1) {
+        let sum = 0;
+        for (let ky = 0; ky < 5; ky += 1) {
+          sum += (horizontalRows[ky]?.[rowIndex + channel] ?? 0) * (gaussian[ky] ?? 0);
+        }
+        dst[outputIndex + channel] = Math.max(0, Math.min(255, Math.round(sum / 256)));
+      }
+    }
+  }
+
+  return { width: dstWidth, height: dstHeight, data: dst };
+}
+
+function buildCartoonRgbPyramid(
+  rgb: Uint8Array,
+  width: number,
+  height: number,
+  pyramidLevel: number,
+): CartoonRgbPyramidLevel[] {
+  const levels: CartoonRgbPyramidLevel[] = [{ width, height, data: rgb }];
+  for (let levelIndex = 0; levelIndex < pyramidLevel; levelIndex += 1) {
+    const previous = levels[levels.length - 1]!;
+    if (previous.width === 1 && previous.height === 1) break;
+    const next = downsampleCartoonRgbPyramid2x(previous);
+    if (next === previous) break;
+    levels.push(next);
+  }
+  return levels;
+}
+
+function findCartoonUnionRoot(parent: Int32Array, value: number): number {
+  let root = value;
+  while ((parent[root] ?? root) !== root) root = parent[root] ?? root;
+  let current = value;
+  while (current !== root) {
+    const next = parent[current] ?? root;
+    parent[current] = root;
+    current = next;
+  }
+  return root;
+}
+
+function unionCartoonComponents(parent: Int32Array, rank: Uint8Array, a: number, b: number): void {
+  let rootA = findCartoonUnionRoot(parent, a);
+  let rootB = findCartoonUnionRoot(parent, b);
+  if (rootA === rootB) return;
+  const rankA = rank[rootA] ?? 0;
+  const rankB = rank[rootB] ?? 0;
+  if (rankA < rankB) {
+    [rootA, rootB] = [rootB, rootA];
+  }
+  parent[rootB] = rootA;
+  if (rankA === rankB) rank[rootA] = rankA + 1;
+}
+
+function buildCartoonLabels(
+  data: Uint8Array,
+  width: number,
+  height: number,
+  localContrast: CartoonLocalContrastField,
+  segmentThresholdScale: number,
+): { labels: CartoonLabelArray; count: number } {
+  const pixelCount = width * height;
+  const parent = new Int32Array(pixelCount);
+  const rank = new Uint8Array(pixelCount);
+  for (let i = 0; i < pixelCount; i += 1) parent[i] = i;
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const pixel = y * width + x;
+      const index = pixel * 3;
+      const r = data[index] ?? 0;
+      const g = data[index + 1] ?? 0;
+      const b = data[index + 2] ?? 0;
+      const localScale = sampleCartoonLocalThresholdScale(localContrast, x, y, width, height);
+      if (x > 0) {
+        const neighbor = pixel - 1;
+        const ni = neighbor * 3;
+        const neighborScale = sampleCartoonLocalThresholdScale(
+          localContrast, x - 1, y, width, height,
+        );
+        const segmentThreshold = CARTOON_SEGMENT_THRESHOLD * segmentThresholdScale
+          * 0.5 * (localScale + neighborScale);
+        if (cartoonColorDistance(
+          r,
+          g,
+          b,
+          data[ni] ?? 0,
+          data[ni + 1] ?? 0,
+          data[ni + 2] ?? 0,
+        ) <= segmentThreshold) {
+          unionCartoonComponents(parent, rank, pixel, neighbor);
+        }
+      }
+      if (y > 0) {
+        const neighbor = pixel - width;
+        const ni = neighbor * 3;
+        const neighborScale = sampleCartoonLocalThresholdScale(
+          localContrast, x, y - 1, width, height,
+        );
+        const segmentThreshold = CARTOON_SEGMENT_THRESHOLD * segmentThresholdScale
+          * 0.5 * (localScale + neighborScale);
+        if (cartoonColorDistance(
+          r,
+          g,
+          b,
+          data[ni] ?? 0,
+          data[ni + 1] ?? 0,
+          data[ni + 2] ?? 0,
+        ) <= segmentThreshold) {
+          unionCartoonComponents(parent, rank, pixel, neighbor);
+        }
+      }
+    }
+  }
+
+  const rootToLabel = new Int32Array(pixelCount);
+  rootToLabel.fill(-1);
+  let labelCount = 0;
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const root = findCartoonUnionRoot(parent, pixel);
+    if ((rootToLabel[root] ?? -1) < 0) rootToLabel[root] = labelCount++;
+  }
+  const labels: CartoonLabelArray = labelCount <= 0xffff
+    ? new Uint16Array(pixelCount)
+    : new Uint32Array(pixelCount);
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const root = findCartoonUnionRoot(parent, pixel);
+    labels[pixel] = rootToLabel[root] ?? 0;
+  }
+  return { labels, count: labelCount };
+}
+
+function buildCartoonSegmentedRgb(
+  data: Uint8Array,
+  width: number,
+  height: number,
+  localContrast: CartoonLocalContrastField,
+  segmentThresholdScale: number,
+): Uint8Array {
+  const segmentation = buildCartoonLabels(data, width, height, localContrast, segmentThresholdScale);
+  const sumsR = new Float64Array(segmentation.count);
+  const sumsG = new Float64Array(segmentation.count);
+  const sumsB = new Float64Array(segmentation.count);
+  const counts = new Uint32Array(segmentation.count);
+  const pixelCount = width * height;
+
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const label = segmentation.labels[pixel] ?? 0;
+    const index = pixel * 3;
+    sumsR[label] = (sumsR[label] ?? 0) + (data[index] ?? 0);
+    sumsG[label] = (sumsG[label] ?? 0) + (data[index + 1] ?? 0);
+    sumsB[label] = (sumsB[label] ?? 0) + (data[index + 2] ?? 0);
+    counts[label] = (counts[label] ?? 0) + 1;
+  }
+
+  const paletteR = new Uint8Array(segmentation.count);
+  const paletteG = new Uint8Array(segmentation.count);
+  const paletteB = new Uint8Array(segmentation.count);
+  for (let label = 0; label < segmentation.count; label += 1) {
+    const count = counts[label] ?? 0;
+    if (count <= 0) continue;
+    paletteR[label] = Math.round((sumsR[label] ?? 0) / count);
+    paletteG[label] = Math.round((sumsG[label] ?? 0) / count);
+    paletteB[label] = Math.round((sumsB[label] ?? 0) / count);
+  }
+
+  const segmented = new Uint8Array(data.length);
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    const label = segmentation.labels[pixel] ?? 0;
+    const index = pixel * 3;
+    segmented[index] = paletteR[label] ?? 0;
+    segmented[index + 1] = paletteG[label] ?? 0;
+    segmented[index + 2] = paletteB[label] ?? 0;
+  }
+  return segmented;
+}
+
+function segmentCartoonWorkingRgbInPlace(
+  rgb: Uint8Array,
+  width: number,
+  height: number,
+  pyramidLevel: number,
+  localContrast: CartoonLocalContrastField,
+  linkThresholdScale: number,
+  segmentThresholdScale: number,
+): void {
+  const pyramid = buildCartoonRgbPyramid(rgb, width, height, pyramidLevel);
+  const topLevelIndex = pyramid.length - 1;
+  let segmentedParent = buildCartoonSegmentedRgb(
+    pyramid[topLevelIndex]!.data,
+    pyramid[topLevelIndex]!.width,
+    pyramid[topLevelIndex]!.height,
+    localContrast,
+    segmentThresholdScale,
+  );
+
+  // Each finer level first inherits the segmented parent color only when
+  // the cvPyrSegmentation-style threshold1 link test succeeds.  Then, unlike
+  // the previous implementation, that linked fine-level image is segmented again
+  // at the current level to form new components and a new palette.  This allows
+  // Detail/Fine modes to actually increase the number of color regions instead of
+  // merely copying coarse parent colors downward.
+  for (let levelIndex = topLevelIndex - 1; levelIndex >= 0; levelIndex -= 1) {
+    const fine = pyramid[levelIndex]!;
+    const parentLevel = pyramid[levelIndex + 1]!;
+    const linkedFine = new Uint8Array(fine.data.length);
+
+    for (let y = 0; y < fine.height; y += 1) {
+      const py0 = Math.min(parentLevel.height - 1, Math.floor(y / 2));
+      const py1 = Math.min(parentLevel.height - 1, py0 + 1);
+      for (let x = 0; x < fine.width; x += 1) {
+        const px0 = Math.min(parentLevel.width - 1, Math.floor(x / 2));
+        const px1 = Math.min(parentLevel.width - 1, px0 + 1);
+        const pixel = y * fine.width + x;
+        const index = pixel * 3;
+        const r = fine.data[index] ?? 0;
+        const g = fine.data[index + 1] ?? 0;
+        const b = fine.data[index + 2] ?? 0;
+        let bestParent = py0 * parentLevel.width + px0;
+        let bestDistance = Number.POSITIVE_INFINITY;
+
+        const parent00 = py0 * parentLevel.width + px0;
+        const parent10 = py0 * parentLevel.width + px1;
+        const parent01 = py1 * parentLevel.width + px0;
+        const parent11 = py1 * parentLevel.width + px1;
+        const candidates = [parent00, parent10, parent01, parent11] as const;
+        for (const parentPixel of candidates) {
+          const parentIndex = parentPixel * 3;
+          const distance = cartoonColorDistance(
+            r,
+            g,
+            b,
+            parentLevel.data[parentIndex] ?? 0,
+            parentLevel.data[parentIndex + 1] ?? 0,
+            parentLevel.data[parentIndex + 2] ?? 0,
+          );
+          if (distance < bestDistance) {
+            bestDistance = distance;
+            bestParent = parentPixel;
+          }
+        }
+
+        const localScale = sampleCartoonLocalThresholdScale(
+          localContrast, x, y, fine.width, fine.height,
+        );
+        if (bestDistance < CARTOON_LINK_THRESHOLD * linkThresholdScale * localScale) {
+          const parentIndex = bestParent * 3;
+          linkedFine[index] = segmentedParent[parentIndex] ?? 0;
+          linkedFine[index + 1] = segmentedParent[parentIndex + 1] ?? 0;
+          linkedFine[index + 2] = segmentedParent[parentIndex + 2] ?? 0;
+        } else {
+          linkedFine[index] = r;
+          linkedFine[index + 1] = g;
+          linkedFine[index + 2] = b;
+        }
+      }
+    }
+
+    segmentedParent = buildCartoonSegmentedRgb(
+      linkedFine,
+      fine.width,
+      fine.height,
+      localContrast,
+      segmentThresholdScale,
+    );
+  }
+
+  if (segmentedParent !== rgb) rgb.set(segmentedParent);
+}
+
+function initializeCartoonMedianState(histogram: Uint16Array, medianSize: number): CartoonMedianState {
+  const target = Math.floor((medianSize * medianSize) / 2);
+  let cumulative = 0;
+  for (let value = 0; value < histogram.length; value += 1) {
+    const count = histogram[value] ?? 0;
+    if (cumulative + count > target) {
+      return { value, below: cumulative, at: count };
+    }
+    cumulative += count;
+  }
+  return { value: 255, below: cumulative, at: 0 };
+}
+
+function updateCartoonMedianHistogram(
+  histogram: Uint16Array,
+  state: CartoonMedianState,
+  oldValue: number,
+  newValue: number,
+): void {
+  histogram[oldValue] = Math.max(0, (histogram[oldValue] ?? 0) - 1);
+  if (oldValue < state.value) state.below -= 1;
+  else if (oldValue === state.value) state.at -= 1;
+
+  histogram[newValue] = (histogram[newValue] ?? 0) + 1;
+  if (newValue < state.value) state.below += 1;
+  else if (newValue === state.value) state.at += 1;
+}
+
+function rebalanceCartoonMedianState(
+  histogram: Uint16Array,
+  state: CartoonMedianState,
+  medianSize: number,
+): void {
+  const target = Math.floor((medianSize * medianSize) / 2);
+  while (state.value > 0 && state.below > target) {
+    state.value -= 1;
+    state.at = histogram[state.value] ?? 0;
+    state.below -= state.at;
+  }
+  while (state.value < 255 && state.below + state.at <= target) {
+    state.below += state.at;
+    state.value += 1;
+    state.at = histogram[state.value] ?? 0;
+  }
+}
+
+function applyCartoonMedianToTargets(
+  segmented: Uint8Array,
+  contourMask: Uint8Array,
+  width: number,
+  height: number,
+  rgba8: Uint8ClampedArray | null,
+  rgb16: Uint16Array | null,
+  profile: ImageEditOutputColorProfile,
+  medianSize: number,
+): void {
+  const radius = Math.floor(medianSize / 2);
+  const histR = new Uint16Array(256);
+  const histG = new Uint16Array(256);
+  const histB = new Uint16Array(256);
+
+  for (let y = 0; y < height; y += 1) {
+    histR.fill(0);
+    histG.fill(0);
+    histB.fill(0);
+    for (let dy = -radius; dy <= radius; dy += 1) {
+      const sy = clampCartoonCoordinate(y + dy, height);
+      for (let dx = -radius; dx <= radius; dx += 1) {
+        const sx = clampCartoonCoordinate(dx, width);
+        const index = (sy * width + sx) * 3;
+        histR[segmented[index] ?? 0] += 1;
+        histG[segmented[index + 1] ?? 0] += 1;
+        histB[segmented[index + 2] ?? 0] += 1;
+      }
+    }
+
+    const stateR = initializeCartoonMedianState(histR, medianSize);
+    const stateG = initializeCartoonMedianState(histG, medianSize);
+    const stateB = initializeCartoonMedianState(histB, medianSize);
+    for (let x = 0; x < width; x += 1) {
+      const pixel = y * width + x;
+      const mask = contourMask[pixel] ?? 0;
+      const r8 = stateR.value * mask;
+      const g8 = stateG.value * mask;
+      const b8 = stateB.value * mask;
+      if (rgba8) {
+        const linearR = (r8 / 255) ** 2;
+        const linearG = (g8 / 255) ** 2;
+        const linearB = (b8 / 255) ** 2;
+        const [er, eg, eb] = convertLinearProPhotoToOutputRgb(linearR, linearG, linearB, profile);
+        const outputIndex = pixel * 4;
+        rgba8[outputIndex] = linearChannelToSrgb(er);
+        rgba8[outputIndex + 1] = linearChannelToSrgb(eg);
+        rgba8[outputIndex + 2] = linearChannelToSrgb(eb);
+      } else if (rgb16) {
+        const outputIndex = pixel * 3;
+        rgb16[outputIndex] = r8 * 257;
+        rgb16[outputIndex + 1] = g8 * 257;
+        rgb16[outputIndex + 2] = b8 * 257;
+      }
+
+      if (x + 1 >= width) continue;
+      const removeX = clampCartoonCoordinate(x - radius, width);
+      const addX = clampCartoonCoordinate(x + radius + 1, width);
+      for (let dy = -radius; dy <= radius; dy += 1) {
+        const sy = clampCartoonCoordinate(y + dy, height);
+        const oldIndex = (sy * width + removeX) * 3;
+        const newIndex = (sy * width + addX) * 3;
+        updateCartoonMedianHistogram(histR, stateR, segmented[oldIndex] ?? 0, segmented[newIndex] ?? 0);
+        updateCartoonMedianHistogram(histG, stateG, segmented[oldIndex + 1] ?? 0, segmented[newIndex + 1] ?? 0);
+        updateCartoonMedianHistogram(histB, stateB, segmented[oldIndex + 2] ?? 0, segmented[newIndex + 2] ?? 0);
+      }
+      rebalanceCartoonMedianState(histR, stateR, medianSize);
+      rebalanceCartoonMedianState(histG, stateG, medianSize);
+      rebalanceCartoonMedianState(histB, stateB, medianSize);
+    }
+  }
+}
+
+function applyCartoonFilterToCanvasData(
+  rgba8: Uint8ClampedArray,
+  width: number,
+  height: number,
+  profile: ImageEditOutputColorProfile,
+  spatialScale: number,
+  preset: ImageCartoonPreset,
+): void {
+  const working = new Uint8Array(width * height * 3);
+  for (let pixel = 0; pixel < width * height; pixel += 1) {
+    const inputIndex = pixel * 4;
+    const outputIndex = pixel * 3;
+    const [r, g, b] = encodedRgbToLinearProphoto(
+      (rgba8[inputIndex] ?? 0) / 255,
+      (rgba8[inputIndex + 1] ?? 0) / 255,
+      (rgba8[inputIndex + 2] ?? 0) / 255,
+      profile,
+    );
+    working[outputIndex] = Math.round(Math.sqrt(clamp01(r)) * 255);
+    working[outputIndex + 1] = Math.round(Math.sqrt(clamp01(g)) * 255);
+    working[outputIndex + 2] = Math.round(Math.sqrt(clamp01(b)) * 255);
+  }
+  const spatial = resolveCartoonSpatialParams(spatialScale, preset);
+  const mode = CARTOON_MODE_SETTINGS[preset];
+  const localContrast = buildCartoonLocalContrastField(working, width, height);
+  const contourMask = buildCartoonContourMask(working, width, height, spatial);
+  segmentCartoonWorkingRgbInPlace(
+    working,
+    width,
+    height,
+    spatial.pyramidLevel,
+    localContrast,
+    mode.linkThresholdScale,
+    mode.segmentThresholdScale,
+  );
+  applyCartoonMedianToTargets(
+    working,
+    contourMask,
+    width,
+    height,
+    rgba8,
+    null,
+    profile,
+    spatial.colorMedianSize,
+  );
+}
+
+function applyCartoonFilterToRgb16(
+  data: Uint16Array,
+  width: number,
+  height: number,
+  preset: ImageCartoonPreset,
+): void {
+  const working = new Uint8Array(width * height * 3);
+  for (let i = 0; i < working.length; i += 1) {
+    working[i] = Math.max(0, Math.min(255, Math.round((data[i] ?? 0) / 257)));
+  }
+  const spatial = resolveCartoonSpatialParams(1, preset);
+  const mode = CARTOON_MODE_SETTINGS[preset];
+  const localContrast = buildCartoonLocalContrastField(working, width, height);
+  const contourMask = buildCartoonContourMask(working, width, height, spatial);
+  segmentCartoonWorkingRgbInPlace(
+    working,
+    width,
+    height,
+    spatial.pyramidLevel,
+    localContrast,
+    mode.linkThresholdScale,
+    mode.segmentThresholdScale,
+  );
+  applyCartoonMedianToTargets(
+    working,
+    contourMask,
+    width,
+    height,
+    null,
+    data,
+    "srgb",
+    spatial.colorMedianSize,
+  );
+}
+
 function buildFilterLumaFromCanvasData(
   rgba8: Uint8ClampedArray,
   width: number,
@@ -4176,6 +5193,7 @@ function applyImageFilterToCanvas(
   canvas: HTMLCanvasElement | OffscreenCanvas,
   filter: ImageFilter | null | undefined,
   outputColorProfile: ImageEditOutputColorProfile = "srgb",
+  cartoonSpatialScale = 1,
 ): void {
   if (!filter) return;
   const ctx = getCanvas2dContext(canvas, outputColorProfile, true);
@@ -4213,6 +5231,8 @@ function applyImageFilterToCanvas(
       applyDuotoneFilterToCanvasData(rgba8, profile, filter.preset);
     } else if (isSuperMcPreset(filter.preset)) {
       applySuperMcFilterToCanvasData(rgba8, profile, filter.preset);
+    } else if (isCartoonPreset(filter.preset)) {
+      applyCartoonFilterToCanvasData(rgba8, width, height, profile, cartoonSpatialScale, filter.preset);
     } else if (isSimulationPreset(filter.preset)) {
       applyFilmSimulationFilterToCanvasData(rgba8, width, height, profile, filter.preset);
     } else {
@@ -4685,6 +5705,10 @@ function applyImageFilterToRgb16(
   }
   if (isSuperMcPreset(filter.preset)) {
     applySuperMcFilterToRgb16(data, width, height, filter.preset);
+    return;
+  }
+  if (isCartoonPreset(filter.preset)) {
+    applyCartoonFilterToRgb16(data, width, height, filter.preset);
     return;
   }
   if (isSimulationPreset(filter.preset)) {
@@ -14360,6 +15384,22 @@ export function ImageEditDialog({
       : null;
     if (previewMixer && !previewMixerLut) return;
     const previewFilter = !eyedropperMode && !rotationMode ? imageFilter : null;
+    const rawFinalCrop = decoded.rawDevelopment?.crop?.finalCrop;
+    const cartoonReferenceWidth = Math.max(1, Math.round(rawFinalCrop?.width ?? natural?.w ?? decoded.width));
+    const cartoonReferenceHeight = Math.max(1, Math.round(rawFinalCrop?.height ?? natural?.h ?? decoded.height));
+    const cartoonOutputScale = Math.min(1, Math.max(0.01, resizePercent / 100));
+    const cartoonSpatialScale = previewFilter?.kind === "other" && isCartoonPreset(previewFilter.preset)
+      ? Math.min(
+          1,
+          Math.sqrt(
+            (width * height)
+            / Math.max(
+              1,
+              cartoonReferenceWidth * cartoonReferenceHeight * cartoonOutputScale * cartoonOutputScale,
+            ),
+          ),
+        )
+      : 1;
     const renderedPreviewKey = JSON.stringify([
       width,
       height,
@@ -14381,6 +15421,7 @@ export function ImageEditDialog({
       previewVignetteOverlay,
       previewMixer,
       previewFilter,
+      cartoonSpatialScale,
       includeMosaic ? mosaicRegions : null,
     ]);
 
@@ -14563,7 +15604,7 @@ export function ImageEditDialog({
       if (previewMixer && previewMixerLut) {
         applyImageMixerToCanvas(canvas, previewMixer, previewColorProfile, previewMixerLut);
       }
-      applyImageFilterToCanvas(canvas, previewFilter, previewColorProfile);
+      applyImageFilterToCanvas(canvas, previewFilter, previewColorProfile, cartoonSpatialScale);
       if (includeMosaic) {
         const previewScale = width / Math.max(1, displayed.w);
         applyMosaicRectsToCanvas(
@@ -14658,6 +15699,7 @@ export function ImageEditDialog({
     rotationDegrees,
     rotationMode,
     natural,
+    resizePercent,
     mosaicRegions,
     vignetteOverlay,
     vignetteDraft,
@@ -17202,6 +18244,34 @@ export function ImageEditDialog({
                                     : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
                                 }`}
                                 onClick={() => setImageFilter((current) => cycleOtherFilterPreset(current, SUPER_MC_PRESET_SEQUENCE))}
+                                aria-label={label}
+                                title={title}
+                              >
+                                {label}
+                              </button>
+                            );
+                          })()}
+                          {(() => {
+                            const preset = imageFilter?.kind === "other" && isCartoonPreset(imageFilter.preset)
+                              ? imageFilter.preset
+                              : null;
+                            const label = "Cartoon";
+                            const title = preset === "cartoon"
+                              ? "Cartoon (Standard); click to cycle Standard, Detail, Fine, and Off"
+                              : preset === "cartoon-detail"
+                                ? "Cartoon (Detail); click to cycle Standard, Detail, Fine, and Off"
+                                : preset === "cartoon-fine"
+                                  ? "Cartoon (Fine); click to cycle Standard, Detail, Fine, and Off"
+                                  : "Cartoon; click to cycle Standard, Detail, Fine, and Off";
+                            return (
+                              <button
+                                type="button"
+                                className={`rounded border px-2 py-1 text-[11px] ${
+                                  preset
+                                    ? "border-blue-500 bg-blue-50 text-blue-700"
+                                    : "border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                                }`}
+                                onClick={() => setImageFilter((current) => cycleOtherFilterPreset(current, CARTOON_PRESET_SEQUENCE))}
                                 aria-label={label}
                                 title={title}
                               >
