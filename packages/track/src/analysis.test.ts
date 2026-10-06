@@ -16,6 +16,7 @@ import {
   getDerivedTrainingMetrics,
   getHistogramBarScaleMaxPercentage,
   getHeartRateZoneDisplayRows,
+  getMovingAnalysisIntervals,
   getPowerZoneDisplayRows,
   getAvailableScatterMetrics,
   getEstimatedTorqueNm,
@@ -44,6 +45,22 @@ describe("getHistogramBarScaleMaxPercentage", () => {
         { label: "A", seconds: 10, percentage: 100, color: "#000" },
       ]),
     ).toBe(100);
+  });
+});
+
+describe("getMovingAnalysisIntervals", () => {
+  test("keeps merged segment ids independent even when timestamps interleave", () => {
+    const points: TrackPoint[] = [
+      { segmentId: 0, time: 0, distanceM: 0, speedMps: 5, powerW: 100 },
+      { segmentId: 1, time: 5, distanceM: 100, speedMps: 5, powerW: 200 },
+      { segmentId: 0, time: 10, distanceM: 100, speedMps: 5, powerW: 100 },
+      { segmentId: 1, time: 15, distanceM: 200, speedMps: 5, powerW: 200 },
+    ];
+
+    const intervals = getMovingAnalysisIntervals(points);
+    expect(intervals).toHaveLength(2);
+    expect(intervals.map((interval) => interval.seconds)).toEqual([10, 10]);
+    expect(buildPowerBracketHistogram(points)?.totalSeconds).toBe(20);
   });
 });
 

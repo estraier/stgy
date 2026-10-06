@@ -919,10 +919,11 @@ export function resolveTrackAnalysisOptions(
 }
 
 export function hasTimedAnalysisPointPairs(points: TrackPoint[]): boolean {
-  const timed = getTimedAnalysisPoints(points);
-  for (let index = 0; index + 1 < timed.length; index += 1) {
-    if (timed[index + 1].time > timed[index].time) {
-      return true;
+  for (const timed of getTimedAnalysisPointSegments(points)) {
+    for (let index = 0; index + 1 < timed.length; index += 1) {
+      if (timed[index + 1].time > timed[index].time) {
+        return true;
+      }
     }
   }
   return false;
@@ -933,35 +934,36 @@ export function getMovingAnalysisIntervals(
   options: TrackAnalysisOptions = {},
 ): TrackMovingAnalysisInterval[] {
   const resolved = resolveTrackAnalysisOptions(options);
-  const timed = getTimedAnalysisPoints(points);
   const intervals: TrackMovingAnalysisInterval[] = [];
 
-  for (let index = 0; index + 1 < timed.length; index += 1) {
-    const point = timed[index];
-    const nextPoint = timed[index + 1];
-    const seconds = nextPoint.time - point.time;
-    if (seconds <= 0) {
-      continue;
-    }
+  for (const timed of getTimedAnalysisPointSegments(points)) {
+    for (let index = 0; index + 1 < timed.length; index += 1) {
+      const point = timed[index];
+      const nextPoint = timed[index + 1];
+      const seconds = nextPoint.time - point.time;
+      if (seconds <= 0) {
+        continue;
+      }
 
-    const speedKph = getMovingIntervalSpeedKph(
-      point,
-      nextPoint,
-      seconds,
-      resolved.movingSpeedThresholdKph,
-    );
-    if (!isFiniteNumber(speedKph)) {
-      continue;
-    }
+      const speedKph = getMovingIntervalSpeedKph(
+        point,
+        nextPoint,
+        seconds,
+        resolved.movingSpeedThresholdKph,
+      );
+      if (!isFiniteNumber(speedKph)) {
+        continue;
+      }
 
-    const distanceM = getAnalysisSegmentDistanceM(point, nextPoint);
-    intervals.push({
-      point,
-      nextPoint,
-      seconds,
-      speedKph,
-      ...(isFiniteNumber(distanceM) ? { distanceM } : {}),
-    });
+      const distanceM = getAnalysisSegmentDistanceM(point, nextPoint);
+      intervals.push({
+        point,
+        nextPoint,
+        seconds,
+        speedKph,
+        ...(isFiniteNumber(distanceM) ? { distanceM } : {}),
+      });
+    }
   }
 
   return intervals;
@@ -1061,22 +1063,31 @@ function computeSmoothedMetric(
     }
     const startTime = endTime - windowSeconds;
     for (let cursor = index; cursor >= 0; cursor -= 1) {
-      const time = points[cursor]?.time;
+      const point = points[cursor];
+      if (!isSameAnalysisSegment(points[index], point)) {
+        continue;
+      }
+      const time = point?.time;
       if (!isFiniteNumber(time)) {
         continue;
       }
       if (time < startTime) {
         break;
       }
-      const value = metric.getValue(points[cursor], cursor, points);
+      const value = metric.getValue(point, cursor, points);
       if (isFiniteNumber(value)) {
         samples.push(value);
       }
     }
   } else {
-    const startIndex = Math.max(0, index - windowSeconds + 1);
-    for (let cursor = startIndex; cursor <= index; cursor += 1) {
-      const value = metric.getValue(points[cursor], cursor, points);
+    let sampleCount = 0;
+    for (let cursor = index; cursor >= 0 && sampleCount < windowSeconds; cursor -= 1) {
+      const point = points[cursor];
+      if (!isSameAnalysisSegment(points[index], point)) {
+        continue;
+      }
+      sampleCount += 1;
+      const value = metric.getValue(point, cursor, points);
       if (isFiniteNumber(value)) {
         samples.push(value);
       }
@@ -1410,14 +1421,31 @@ function getMovingAnalysisIndexes(
   return indexes;
 }
 
-function getTimedAnalysisPoints(
+function getTimedAnalysisPointSegments(
   points: TrackPoint[],
-): Array<TrackPoint & { time: number }> {
-  return points
-    .filter((point): point is TrackPoint & { time: number } => {
-      return isFiniteNumber(point.time);
-    })
-    .sort((a, b) => a.time - b.time);
+): Array<Array<TrackPoint & { time: number }>> {
+  const segments = new Map<number | undefined, Array<TrackPoint & { time: number }>>();
+  points.forEach((point) => {
+    if (!isFiniteNumber(point.time)) {
+      return;
+    }
+    const segmentId = isFiniteNumber(point.segmentId) ? point.segmentId : undefined;
+    const segment = segments.get(segmentId) || [];
+    segment.push(point as TrackPoint & { time: number });
+    segments.set(segmentId, segment);
+  });
+  return Array.from(segments.values()).map((segment) => {
+    return segment.sort((a, b) => a.time - b.time);
+  });
+}
+
+function isSameAnalysisSegment(a: TrackPoint | undefined, b: TrackPoint | undefined): boolean {
+  if (!a || !b) {
+    return false;
+  }
+  const aSegment = isFiniteNumber(a.segmentId) ? a.segmentId : undefined;
+  const bSegment = isFiniteNumber(b.segmentId) ? b.segmentId : undefined;
+  return aSegment === bSegment;
 }
 
 function getMovingIntervalSpeedKph(
@@ -1475,8 +1503,13 @@ function hasTimedAnalysisPoints(points: TrackPoint[]): boolean {
 }
 
 function getPointDurationSeconds(points: TrackPoint[], index: number): number {
-  const current = points[index]?.time;
-  const next = points[index + 1]?.time;
+  const point = points[index];
+  const nextPoint = points[index + 1];
+  if (!isSameAnalysisSegment(point, nextPoint)) {
+    return 0;
+  }
+  const current = point?.time;
+  const next = nextPoint?.time;
   if (!isFiniteNumber(current) || !isFiniteNumber(next)) {
     return 0;
   }
@@ -1552,12 +1585,16 @@ function findDistanceAltitudePoint(
   startIndex: number,
   direction: -1 | 1,
 ): Required<Pick<TrackPoint, "distanceM" | "altitudeM">> | undefined {
+  const origin = points[startIndex];
   for (
     let index = startIndex + direction;
     index >= 0 && index < points.length;
     index += direction
   ) {
     const point = points[index];
+    if (!isSameAnalysisSegment(origin, point)) {
+      continue;
+    }
     if (hasDistanceAndAltitude(point)) {
       return point;
     }

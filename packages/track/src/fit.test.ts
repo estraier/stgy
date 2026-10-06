@@ -20,7 +20,7 @@ import {
   trackActivityToTrackJson,
 } from "./fit";
 import type { TrackActivity, TrackPoint } from "./fit";
-import { calculateTrackAscentDescent } from "./activity";
+import { calculateTrackAscentDescent, computeTotalWorkJ } from "./activity";
 
 jest.mock("@garmin/fitsdk", () => {
   return {
@@ -50,6 +50,15 @@ describe("calculateTrackAscentDescent", () => {
       { altitudeM: 60 },
       { altitudeM: 52 },
     ])).toEqual({ ascentM: 20, descentM: 13 });
+  });
+
+  test("does not connect elevations across merged segment ids", () => {
+    expect(calculateTrackAscentDescent([
+      { segmentId: 0, altitudeM: 100 },
+      { segmentId: 1, altitudeM: 1000 },
+      { segmentId: 0, altitudeM: 110 },
+      { segmentId: 1, altitudeM: 990 },
+    ])).toEqual({ ascentM: 10, descentM: 10 });
   });
 
   test("returns undefined without two altitude samples", () => {
@@ -1364,6 +1373,7 @@ describe("mergeTrackActivities", () => {
     first.points[1].distanceM = 100;
     first.points[0].speedMps = 5;
     first.points[1].speedMps = 5;
+    first.metadata.totalTimerTime = 10;
 
     const second = makeActivity(2);
     second.metadata.createdAt = 200;
@@ -1373,6 +1383,7 @@ describe("mergeTrackActivities", () => {
     second.points[1].distanceM = 80;
     second.points[0].speedMps = 6;
     second.points[1].speedMps = 6;
+    second.metadata.totalTimerTime = 10;
 
     const third = makeActivity(2);
     third.metadata.createdAt = 400;
@@ -1382,6 +1393,7 @@ describe("mergeTrackActivities", () => {
     third.points[1].distanceM = 50;
     third.points[0].speedMps = 7;
     third.points[1].speedMps = 7;
+    third.metadata.totalTimerTime = 10;
 
     const merged = mergeTrackActivities([first, second, third]);
 
@@ -1442,17 +1454,146 @@ describe("mergeTrackActivities", () => {
     first.points[1].time = 10;
     first.points[0].speedMps = 5;
     first.points[1].speedMps = 5;
+    first.metadata.totalTimerTime = 10;
 
     const second = makeActivity(2);
     second.points[0].time = 1000;
     second.points[1].time = 1010;
     second.points[0].speedMps = 5;
     second.points[1].speedMps = 5;
+    second.metadata.totalTimerTime = 10;
 
     const merged = mergeTrackActivities([first, second]);
 
     expect(merged.metadata.totalElapsedTime).toBe(1010);
     expect(merged.metadata.totalTimerTime).toBe(20);
+  });
+
+  test("aggregates FIT summaries without treating file gaps as activity", () => {
+    const first = makeActivity(61);
+    const second = makeActivity(61);
+
+    first.metadata.totalTimerTime = 60;
+    first.metadata.ascentM = 10;
+    first.metadata.descentM = 0;
+    first.metadata.training = {
+      totalCaloriesCal: 100000,
+      totalWorkJ: 6000,
+      source: { totalCalories: "fit", totalWork: "fit" },
+    };
+    first.metadata.pedaling = { totalSeconds: 60 };
+    first.metadata.pedalingDynamics = {
+      leftRightBalance: { leftPercentage: 48, rightPercentage: 52 },
+    };
+    first.metadata.devices = [
+      { manufacturer: "garmin", productName: "Edge" },
+    ];
+
+    second.metadata.totalTimerTime = 60;
+    second.metadata.ascentM = 0;
+    second.metadata.descentM = 10;
+    second.metadata.training = {
+      totalCaloriesCal: 200000,
+      totalWorkJ: 18000,
+      source: { totalCalories: "fit", totalWork: "fit" },
+    };
+    second.metadata.pedaling = { totalSeconds: 60 };
+    second.metadata.pedalingDynamics = {
+      leftRightBalance: { leftPercentage: 52, rightPercentage: 48 },
+    };
+    second.metadata.devices = [
+      { manufacturer: "garmin", productName: "Edge" },
+      { manufacturer: "favero", productName: "Assioma" },
+    ];
+
+    first.points.forEach((point, index) => {
+      point.time = index;
+      point.distanceM = index * 10;
+      point.speedMps = 10;
+      point.powerW = 100;
+      point.heartRateBpm = 120;
+      point.cadenceRpm = 90;
+      point.altitudeM = 100 + index / 6;
+    });
+    second.points.forEach((point, index) => {
+      point.time = 3600 + index;
+      point.distanceM = index * 10;
+      point.speedMps = 10;
+      point.powerW = 300;
+      point.heartRateBpm = 160;
+      point.cadenceRpm = 90;
+      point.altitudeM = 1000 - index / 6;
+    });
+
+    const merged = mergeTrackActivities([first, second]);
+    const powerZones = computePowerZoneSummary(merged.points, 200);
+    const heartRateZones = computeHeartRateZoneSummary(merged.points, 150);
+
+    expect(merged.metadata.totalElapsedTime).toBe(3660);
+    expect(merged.metadata.totalTimerTime).toBe(120);
+    expect(merged.metadata.training).toEqual(expect.objectContaining({
+      totalCaloriesCal: 300000,
+      totalWorkJ: 24000,
+      source: expect.objectContaining({ totalCalories: "fit", totalWork: "fit" }),
+    }));
+    expect(merged.metadata.training?.normalizedPowerW).toBeCloseTo(253.044, 3);
+    expect(computeTotalWorkJ(merged.points)).toBe(24000);
+    expect(merged.metadata.ascentM).toBe(10);
+    expect(merged.metadata.descentM).toBe(10);
+    expect(merged.metadata.statistics?.powerW?.mean).toBeCloseTo(200, 6);
+    expect(merged.metadata.histograms?.powerW?.totalSeconds).toBe(120);
+    expect(merged.metadata.bestEfforts?.powerW?.["60"]).toBe(300);
+    expect(merged.metadata.pedaling?.totalSeconds).toBe(118);
+    expect(merged.metadata.pedalingDynamics?.leftRightBalance?.leftPercentage)
+      .toBeCloseTo(50, 6);
+    expect(merged.metadata.devices).toEqual([
+      { manufacturer: "garmin", productName: "Edge" },
+      { manufacturer: "favero", productName: "Assioma" },
+    ]);
+    expect(new Set(merged.points.map((point) => point.segmentId)).size).toBe(2);
+
+    expect(powerZones.totalSeconds).toBe(120);
+    expect(powerZones.durations.z1).toBe(60);
+    expect(powerZones.durations.z6).toBe(60);
+    expect(heartRateZones.totalSeconds).toBe(120);
+    expect(heartRateZones.durations.z1).toBe(60);
+    expect(heartRateZones.durations.z5b).toBe(60);
+  });
+
+  test("does not expose partial calories or incompatible source metadata", () => {
+    const first = makeActivity(2);
+    const second = makeActivity(2);
+    first.metadata.training = {
+      totalCaloriesCal: 100000,
+      source: { totalCalories: "fit" },
+    };
+    delete second.metadata.training;
+    second.metadata.sport = "running";
+    second.metadata.subSport = "trail";
+    second.metadata.recordingDevice = {
+      manufacturer: "wahoo",
+      product: "elemnt",
+      serialNumber: 42,
+    };
+    first.metadata.devices = [
+      { manufacturer: "garmin", productName: "Edge" },
+    ];
+    second.metadata.devices = [
+      { manufacturer: "garmin", productName: "Edge" },
+      { manufacturer: "favero", productName: "Assioma" },
+    ];
+
+    const merged = mergeTrackActivities([first, second]);
+
+    expect(merged.metadata.training?.totalCaloriesCal).toBeUndefined();
+    expect(merged.metadata.training?.source?.totalCalories).toBeUndefined();
+    expect(merged.metadata.sport).toBeUndefined();
+    expect(merged.metadata.subSport).toBeUndefined();
+    expect(merged.metadata.recordingDevice).toBeUndefined();
+    expect(merged.metadata.devices).toEqual([
+      { manufacturer: "garmin", productName: "Edge" },
+      { manufacturer: "favero", productName: "Assioma" },
+    ]);
   });
 });
 

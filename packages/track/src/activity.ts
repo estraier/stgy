@@ -248,6 +248,8 @@ export type TrackDeviceInfo = {
 };
 
 export type TrackPoint = {
+  /** Internal analysis boundary. Serializers intentionally omit this field. */
+  segmentId?: number;
   time?: number;
   lat?: number;
   lon?: number;
@@ -522,6 +524,7 @@ export function mergeTrackActivities(
   const indexedPoints: IndexedTrackPoint[] = [];
   const orderedActivities = getActivityMergeOrder(activities);
   let distanceOffsetM = 0;
+  let nextSegmentId = 0;
 
   orderedActivities.forEach(({ activity, originalIndex }, orderIndex) => {
     const normalizedPoints = normalizeActivityDistances(
@@ -529,8 +532,19 @@ export function mergeTrackActivities(
       distanceOffsetM,
     );
     const distanceDeltaM = getActivityDistanceDelta(normalizedPoints);
+    const mergedSegmentIds = new Map<number | undefined, number>();
 
     normalizedPoints.forEach((point, pointIndex) => {
+      const sourceSegmentId = isFiniteNumber(point.segmentId)
+        ? point.segmentId
+        : undefined;
+      let mergedSegmentId = mergedSegmentIds.get(sourceSegmentId);
+      if (!isFiniteNumber(mergedSegmentId)) {
+        mergedSegmentId = nextSegmentId;
+        nextSegmentId += 1;
+        mergedSegmentIds.set(sourceSegmentId, mergedSegmentId);
+      }
+      point.segmentId = mergedSegmentId;
       indexedPoints.push({
         activityIndex: originalIndex,
         orderIndex,
@@ -636,6 +650,7 @@ function clearComputedMetadata(metadata: TrackActivityMetadata) {
   delete metadata.bestEfforts;
   delete metadata.histograms;
   delete metadata.pedaling;
+  delete metadata.pedalingDynamics;
 }
 
 type IndexedTrackPoint = {
@@ -793,25 +808,33 @@ function buildMergedActivityMetadata(
     delete metadata.totalElapsedTime;
   }
 
-  const movingTime = calculateMergedMovingTime(
-    indexedPoints,
-    options.movingSpeedThresholdMps ?? 0.5,
-  );
-  if (movingTime > 0) {
-    metadata.totalTimerTime = movingTime;
+  const summedTimerTime = sumCompleteMetadataNumber(activities, "totalTimerTime");
+  if (isFiniteNumber(summedTimerTime)) {
+    metadata.totalTimerTime = summedTimerTime;
   } else {
-    const summedTimerTime = sumMetadataNumber(activities, "totalTimerTime");
-    if (isFiniteNumber(summedTimerTime)) {
-      metadata.totalTimerTime = summedTimerTime;
+    const movingTime = calculateMergedMovingTime(
+      indexedPoints,
+      options.movingSpeedThresholdMps ?? 0.5,
+    );
+    if (movingTime > 0) {
+      metadata.totalTimerTime = movingTime;
+    } else {
+      delete metadata.totalTimerTime;
     }
   }
 
   const totalDistanceM = getMergedTotalDistance(points);
   if (isFiniteNumber(totalDistanceM)) {
     metadata.totalDistanceM = totalDistanceM;
+  } else {
+    delete metadata.totalDistanceM;
   }
 
+  assignMergedCategoricalMetadata(metadata, activities);
   applyComputedMetadata(metadata, points);
+  assignMergedElevationMetadata(metadata, activities, indexedPoints);
+  assignMergedTrainingMetadata(metadata, activities);
+  assignMergedPedalingDynamics(metadata, activities);
 
   return metadata;
 }
@@ -1024,6 +1047,26 @@ function applyElevationMetadata(
 export function calculateTrackAscentDescent(
   points: TrackPoint[],
 ): { ascentM: number; descentM: number } | undefined {
+  if (points.some((point) => isFiniteNumber(point.segmentId))) {
+    let ascentM = 0;
+    let descentM = 0;
+    let hasElevation = false;
+    getTrackPointAnalysisSegments(points).forEach((segment) => {
+      const elevation = calculateTrackAscentDescentSingleSegment(segment);
+      if (!elevation) return;
+      ascentM += elevation.ascentM;
+      descentM += elevation.descentM;
+      hasElevation = true;
+    });
+    return hasElevation ? { ascentM, descentM } : undefined;
+  }
+
+  return calculateTrackAscentDescentSingleSegment(points);
+}
+
+function calculateTrackAscentDescentSingleSegment(
+  points: TrackPoint[],
+): { ascentM: number; descentM: number } | undefined {
   let ascentM = 0;
   let descentM = 0;
   let previousAltitudeM: number | undefined;
@@ -1163,9 +1206,12 @@ function calculateMergedMovingTime(
 ): number {
   const groups = new Map<number, IndexedTrackPoint[]>();
   indexedPoints.forEach((item) => {
-    const group = groups.get(item.activityIndex) || [];
+    const groupKey = isFiniteNumber(item.point.segmentId)
+      ? item.point.segmentId
+      : item.activityIndex;
+    const group = groups.get(groupKey) || [];
     group.push(item);
-    groups.set(item.activityIndex, group);
+    groups.set(groupKey, group);
   });
 
   let totalSeconds = 0;
@@ -1257,22 +1303,282 @@ function degreesToRadians(value: number): number {
   return (value * Math.PI) / 180;
 }
 
-function sumMetadataNumber(
+function sumCompleteMetadataNumber(
   activities: TrackActivity[],
   key: keyof TrackActivityMetadata,
 ): number | undefined {
+  if (activities.length === 0) {
+    return undefined;
+  }
   let total = 0;
-  let hasValue = false;
-
-  activities.forEach((activity) => {
+  for (const activity of activities) {
     const value = activity.metadata[key];
-    if (isFiniteNumber(value)) {
-      total += value;
-      hasValue = true;
+    if (!isFiniteNumber(value)) {
+      return undefined;
     }
-  });
+    total += value;
+  }
+  return total;
+}
 
-  return hasValue ? total : undefined;
+function assignMergedCategoricalMetadata(
+  metadata: TrackActivityMetadata,
+  activities: TrackActivity[],
+) {
+  assignCommonStringMetadata(metadata, activities, "sport");
+  if (metadata.sport) {
+    assignCommonStringMetadata(metadata, activities, "subSport");
+  } else {
+    delete metadata.subSport;
+  }
+
+  const recordingDevices = activities.map((activity) => activity.metadata.recordingDevice);
+  const firstRecordingDevice = recordingDevices[0];
+  if (
+    firstRecordingDevice &&
+    recordingDevices.length === activities.length &&
+    recordingDevices.every((device) => device && trackDeviceInfoEquals(device, firstRecordingDevice))
+  ) {
+    metadata.recordingDevice = { ...firstRecordingDevice };
+  } else {
+    delete metadata.recordingDevice;
+  }
+
+  const devices: TrackDeviceInfo[] = [];
+  const seen = new Set<string>();
+  activities.forEach((activity) => {
+    (activity.metadata.devices || []).forEach((device) => {
+      const key = trackDeviceInfoKey(device);
+      if (!seen.has(key)) {
+        seen.add(key);
+        devices.push({ ...device });
+      }
+    });
+  });
+  if (devices.length > 0) {
+    metadata.devices = devices;
+  } else {
+    delete metadata.devices;
+  }
+}
+
+function assignCommonStringMetadata(
+  metadata: TrackActivityMetadata,
+  activities: TrackActivity[],
+  key: "sport" | "subSport",
+) {
+  const first = activities[0]?.metadata[key];
+  if (
+    typeof first === "string" &&
+    activities.every((activity) => activity.metadata[key] === first)
+  ) {
+    metadata[key] = first;
+  } else {
+    delete metadata[key];
+  }
+}
+
+function trackDeviceInfoKey(device: TrackDeviceInfo): string {
+  return [
+    device.manufacturer,
+    device.product,
+    device.productName,
+    device.serialNumber,
+    device.softwareVersion,
+    device.hardwareVersion,
+    device.deviceType,
+    device.sourceType,
+  ].map((value) => value === undefined ? "" : String(value)).join("\u001f");
+}
+
+function trackDeviceInfoEquals(a: TrackDeviceInfo, b: TrackDeviceInfo): boolean {
+  return trackDeviceInfoKey(a) === trackDeviceInfoKey(b);
+}
+
+function getIndexedPointSegments(indexedPoints: IndexedTrackPoint[]): TrackPoint[][] {
+  const groups = new Map<number, IndexedTrackPoint[]>();
+  indexedPoints.forEach((item) => {
+    const segmentId = isFiniteNumber(item.point.segmentId) ? item.point.segmentId : item.activityIndex;
+    const group = groups.get(segmentId) || [];
+    group.push(item);
+    groups.set(segmentId, group);
+  });
+  return Array.from(groups.values()).map((group) => {
+    return [...group].sort(compareIndexedTrackPoints).map((item) => item.point);
+  });
+}
+
+function assignMergedElevationMetadata(
+  metadata: TrackActivityMetadata,
+  activities: TrackActivity[],
+  indexedPoints: IndexedTrackPoint[],
+) {
+  const sourceAscent = sumCompleteMetadataNumber(activities, "ascentM");
+  const sourceDescent = sumCompleteMetadataNumber(activities, "descentM");
+  if (isFiniteNumber(sourceAscent) && isFiniteNumber(sourceDescent)) {
+    metadata.ascentM = sourceAscent;
+    metadata.descentM = sourceDescent;
+    return;
+  }
+
+  let ascentM = 0;
+  let descentM = 0;
+  let hasElevation = false;
+  for (const segment of getIndexedPointSegments(indexedPoints)) {
+    const elevation = calculateTrackAscentDescent(segment);
+    if (!elevation) {
+      continue;
+    }
+    ascentM += elevation.ascentM;
+    descentM += elevation.descentM;
+    hasElevation = true;
+  }
+  if (hasElevation) {
+    metadata.ascentM = ascentM;
+    metadata.descentM = descentM;
+  } else {
+    delete metadata.ascentM;
+    delete metadata.descentM;
+  }
+}
+
+function assignMergedTrainingMetadata(
+  metadata: TrackActivityMetadata,
+  activities: TrackActivity[],
+) {
+  const training = metadata.training ? cloneTraining(metadata.training)! : {};
+  const source: TrackActivityTrainingSource = { ...(training.source || {}) };
+
+  const totalWorkValues = activities.map((activity) => activity.metadata.training?.totalWorkJ);
+  if (totalWorkValues.every(isFiniteNumber)) {
+    training.totalWorkJ = totalWorkValues.reduce((sum, value) => sum + value, 0);
+    const totalWorkSources = activities.map((activity) => {
+      return activity.metadata.training?.source?.totalWork;
+    });
+    if (totalWorkSources.every((value) => value === "fit")) {
+      source.totalWork = "fit";
+    } else if (totalWorkSources.every((value) => value === "fit" || value === "computed")) {
+      source.totalWork = "computed";
+    } else {
+      delete source.totalWork;
+    }
+  }
+
+  const calorieValues = activities.map((activity) => activity.metadata.training?.totalCaloriesCal);
+  if (calorieValues.every(isFiniteNumber)) {
+    training.totalCaloriesCal = calorieValues.reduce((sum, value) => sum + value, 0);
+    if (activities.every((activity) => activity.metadata.training?.source?.totalCalories === "fit")) {
+      source.totalCalories = "fit";
+    } else {
+      delete source.totalCalories;
+    }
+  } else {
+    delete training.totalCaloriesCal;
+    delete source.totalCalories;
+  }
+
+  if (Object.keys(source).length > 0) {
+    training.source = source;
+  } else {
+    delete training.source;
+  }
+
+  if (hasTrainingValues(training)) {
+    metadata.training = training;
+  } else {
+    delete metadata.training;
+  }
+}
+
+function assignMergedPedalingDynamics(
+  metadata: TrackActivityMetadata,
+  activities: TrackActivity[],
+) {
+  const dynamics: TrackActivityPedalingDynamics = {};
+  const leftRightBalance = buildMergedLeftRightBalance(activities);
+  if (leftRightBalance) dynamics.leftRightBalance = leftRightBalance;
+  const torqueEffectiveness = buildMergedPedalingSidePercentages(
+    activities,
+    (activity) => activity.metadata.pedalingDynamics?.torqueEffectiveness,
+  );
+  if (torqueEffectiveness) dynamics.torqueEffectiveness = torqueEffectiveness;
+  const pedalSmoothness = buildMergedPedalingSidePercentages(
+    activities,
+    (activity) => activity.metadata.pedalingDynamics?.pedalSmoothness,
+  );
+  if (pedalSmoothness) dynamics.pedalSmoothness = pedalSmoothness;
+
+  if (Object.keys(dynamics).length > 0) {
+    metadata.pedalingDynamics = dynamics;
+  } else {
+    delete metadata.pedalingDynamics;
+  }
+}
+
+function getPedalingDynamicsWeight(activity: TrackActivity): number {
+  const pedalingSeconds = activity.metadata.pedaling?.totalSeconds;
+  if (isFiniteNumber(pedalingSeconds) && pedalingSeconds > 0) {
+    return pedalingSeconds;
+  }
+  const timerSeconds = activity.metadata.totalTimerTime;
+  return isFiniteNumber(timerSeconds) && timerSeconds > 0 ? timerSeconds : 1;
+}
+
+function weightedActivityValue(
+  activities: TrackActivity[],
+  getValue: (activity: TrackActivity) => number | undefined,
+): number | undefined {
+  let weightedSum = 0;
+  let totalWeight = 0;
+  activities.forEach((activity) => {
+    const value = getValue(activity);
+    if (!isFiniteNumber(value)) return;
+    const weight = getPedalingDynamicsWeight(activity);
+    weightedSum += value * weight;
+    totalWeight += weight;
+  });
+  return totalWeight > 0 ? weightedSum / totalWeight : undefined;
+}
+
+function buildMergedLeftRightBalance(
+  activities: TrackActivity[],
+): TrackActivityLeftRightBalance | undefined {
+  const leftPercentage = weightedActivityValue(
+    activities,
+    (activity) => activity.metadata.pedalingDynamics?.leftRightBalance?.leftPercentage,
+  );
+  const rightPercentage = weightedActivityValue(
+    activities,
+    (activity) => activity.metadata.pedalingDynamics?.leftRightBalance?.rightPercentage,
+  );
+  if (!isFiniteNumber(leftPercentage) && !isFiniteNumber(rightPercentage)) {
+    return undefined;
+  }
+  return {
+    ...(isFiniteNumber(leftPercentage) ? { leftPercentage } : {}),
+    ...(isFiniteNumber(rightPercentage) ? { rightPercentage } : {}),
+  };
+}
+
+function buildMergedPedalingSidePercentages(
+  activities: TrackActivity[],
+  getValue: (activity: TrackActivity) => TrackActivityPedalingSidePercentages | undefined,
+): TrackActivityPedalingSidePercentages | undefined {
+  const leftPercentage = weightedActivityValue(activities, (activity) => getValue(activity)?.leftPercentage);
+  const rightPercentage = weightedActivityValue(activities, (activity) => getValue(activity)?.rightPercentage);
+  const combinedPercentage = weightedActivityValue(activities, (activity) => getValue(activity)?.combinedPercentage);
+  if (
+    !isFiniteNumber(leftPercentage) &&
+    !isFiniteNumber(rightPercentage) &&
+    !isFiniteNumber(combinedPercentage)
+  ) {
+    return undefined;
+  }
+  return {
+    ...(isFiniteNumber(leftPercentage) ? { leftPercentage } : {}),
+    ...(isFiniteNumber(rightPercentage) ? { rightPercentage } : {}),
+    ...(isFiniteNumber(combinedPercentage) ? { combinedPercentage } : {}),
+  };
 }
 
 export function buildActivityAnalysisMetadata(): TrackActivityAnalysisMetadata {
@@ -1508,11 +1814,22 @@ export function buildActivityPedaling(
   points: TrackPoint[],
 ): TrackActivityPedaling | undefined {
   const accumulator = createPedalingAccumulator();
+  const powerSampleSegments: number[][] = [];
 
-  assignTimedPedalingDurations(points, accumulator);
-  if (accumulator.totalSeconds === 0) {
-    assignSamplePedalingDurations(points, accumulator);
-  }
+  getTrackPointAnalysisSegments(points).forEach((segment) => {
+    const segmentAccumulator = createPedalingAccumulator();
+    assignTimedPedalingDurations(segment, segmentAccumulator);
+    if (segmentAccumulator.totalSeconds === 0) {
+      assignSamplePedalingDurations(segment, segmentAccumulator);
+    }
+    if (segmentAccumulator.totalSeconds <= 0) {
+      return;
+    }
+    mergePedalingAccumulators(accumulator, segmentAccumulator);
+    if (segmentAccumulator.powerSamples.length > 0) {
+      powerSampleSegments.push(segmentAccumulator.powerSamples);
+    }
+  });
 
   if (accumulator.totalSeconds === 0) {
     return undefined;
@@ -1530,8 +1847,8 @@ export function buildActivityPedaling(
       accumulator.heartRateBpmSeconds / accumulator.heartRateSeconds;
   }
 
-  const normalizedPowerW = computeNormalizedPowerFromSamples(
-    accumulator.powerSamples,
+  const normalizedPowerW = computeNormalizedPowerFromSampleSegments(
+    powerSampleSegments,
   );
   if (isFiniteNumber(normalizedPowerW)) {
     pedaling.normalizedPowerW = normalizedPowerW;
@@ -1560,6 +1877,29 @@ function createPedalingAccumulator(): PedalingAccumulator {
     powerWSeconds: 0,
     powerSamples: [],
   };
+}
+
+function mergePedalingAccumulators(
+  target: PedalingAccumulator,
+  source: PedalingAccumulator,
+) {
+  target.totalSeconds += source.totalSeconds;
+  target.speedKphSeconds += source.speedKphSeconds;
+  target.cadenceRpmSeconds += source.cadenceRpmSeconds;
+  target.heartRateBpmSeconds += source.heartRateBpmSeconds;
+  target.heartRateSeconds += source.heartRateSeconds;
+  target.powerWSeconds += source.powerWSeconds;
+}
+
+function getTrackPointAnalysisSegments(points: TrackPoint[]): TrackPoint[][] {
+  const segments = new Map<number | undefined, TrackPoint[]>();
+  points.forEach((point) => {
+    const segmentId = isFiniteNumber(point.segmentId) ? point.segmentId : undefined;
+    const segment = segments.get(segmentId) || [];
+    segment.push(point);
+    segments.set(segmentId, segment);
+  });
+  return Array.from(segments.values());
 }
 
 function assignTimedPedalingDurations(
@@ -1681,11 +2021,17 @@ export function buildActivityBestEfforts(
 function computeBestPowerCurveW(
   points: TrackPoint[],
 ): TrackDurationBestEfforts | undefined {
-  const samples = buildPowerSamples(points);
+  const sampleSegments = buildPowerSampleSegments(points);
   const efforts: TrackDurationBestEfforts = {};
 
   STRAVA_POWER_CURVE_DURATIONS_SECONDS.forEach((duration) => {
-    const best = computeBestAverageValue(samples, duration);
+    let best: number | undefined;
+    sampleSegments.forEach((samples) => {
+      const segmentBest = computeBestAverageValue(samples, duration);
+      if (isFiniteNumber(segmentBest) && (!isFiniteNumber(best) || segmentBest > best)) {
+        best = segmentBest;
+      }
+    });
     if (isFiniteNumber(best)) {
       efforts[String(duration)] = best;
     }
@@ -1835,37 +2181,43 @@ function assertPositiveFiniteNumber(value: number, name: string) {
 export function computeNormalizedPowerW(
   points: TrackPoint[],
 ): number | undefined {
-  return computeNormalizedPowerFromSamples(buildPowerSamples(points));
+  return computeNormalizedPowerFromSampleSegments(buildPowerSampleSegments(points));
 }
 
-function computeNormalizedPowerFromSamples(
-  samples: number[],
+function computeNormalizedPowerFromSampleSegments(
+  sampleSegments: number[][],
 ): number | undefined {
-  if (samples.length < 30) {
-    return undefined;
-  }
-
-  let rollingSum = 0;
   let fourthPowerSum = 0;
   let count = 0;
 
-  samples.forEach((power, index) => {
-    rollingSum += power;
-    if (index >= 30) {
-      rollingSum -= samples[index - 30];
+  sampleSegments.forEach((samples) => {
+    if (samples.length < 30) {
+      return;
     }
-
-    if (index >= 29) {
-      const average = rollingSum / 30;
-      fourthPowerSum += average ** 4;
-      count += 1;
-    }
+    let rollingSum = 0;
+    samples.forEach((power, index) => {
+      rollingSum += power;
+      if (index >= 30) {
+        rollingSum -= samples[index - 30];
+      }
+      if (index >= 29) {
+        const average = rollingSum / 30;
+        fourthPowerSum += average ** 4;
+        count += 1;
+      }
+    });
   });
 
   return count > 0 ? (fourthPowerSum / count) ** 0.25 : undefined;
 }
 
-function buildPowerSamples(points: TrackPoint[]): number[] {
+function buildPowerSampleSegments(points: TrackPoint[]): number[][] {
+  return getTrackPointAnalysisSegments(points)
+    .map(buildPowerSamplesForSegment)
+    .filter((samples) => samples.length > 0);
+}
+
+function buildPowerSamplesForSegment(points: TrackPoint[]): number[] {
   const intervals = getMovingAnalysisIntervals(points);
   if (intervals.length > 0) {
     const samples: number[] = [];
