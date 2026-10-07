@@ -129,6 +129,7 @@ const coordinateToPoint = (
 
   assignSeriesValue(point, "time", coordinateProperties.times, index);
   assignSeriesValue(point, "distanceM", coordinateProperties.distances, index);
+  assignSeriesValue(point, "segmentId", coordinateProperties.segmentIds, index, Math.round);
   assignSeriesValue(point, "altitudeM", coordinateProperties.altitudes, index);
   assignSeriesValue(point, "heartRateBpm", coordinateProperties.heartRates, index);
   assignSeriesValue(point, "cadenceRpm", coordinateProperties.cadences, index);

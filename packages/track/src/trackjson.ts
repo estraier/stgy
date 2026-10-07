@@ -10,6 +10,10 @@ export type {
   TrackJsonPosition,
 } from "./activity";
 
+
+export const TRACKJSON_ACTIVITY_GRAPH_GROUP_PROPERTY = "stgyGraphGroup";
+export const TRACKJSON_ACTIVITY_GRAPH_GROUP_VALUE = "trackActivity";
+
 export type TrackJsonDownsampleStrategy = "uniform" | "aggregate";
 
 export type TrackJsonDownsampleOptions = {
@@ -640,12 +644,27 @@ function downsampleTrackJsonFeature(
     return cloneRecord(feature);
   }
 
-  const ranges = createTrackJsonDownsampleRanges(
-    sourceCoordinates.length,
-    maxPoints,
-    strategy,
-    preserveEndpoints
+  const properties = feature.properties;
+  const coordinateProperties = isRecord(properties) && isRecord(properties.coordinateProperties)
+    ? properties.coordinateProperties
+    : undefined;
+  const segmentIds = getTrackJsonSegmentIds(
+    coordinateProperties?.segmentIds,
+    sourceCoordinates.length
   );
+  const ranges = segmentIds
+    ? createSegmentAwareTrackJsonDownsampleRanges(
+        segmentIds,
+        maxPoints,
+        strategy,
+        preserveEndpoints
+      )
+    : createTrackJsonDownsampleRanges(
+        sourceCoordinates.length,
+        maxPoints,
+        strategy,
+        preserveEndpoints
+      );
   const coordinates = ranges.map((range) => {
     return cloneTrackJsonCoordinate(sourceCoordinates[range.representative]);
   });
@@ -657,12 +676,11 @@ function downsampleTrackJsonFeature(
     },
   };
 
-  const properties = feature.properties;
-  if (isRecord(properties) && isRecord(properties.coordinateProperties)) {
+  if (coordinateProperties && isRecord(properties)) {
     output.properties = {
       ...properties,
       coordinateProperties: downsampleCoordinateProperties(
-        properties.coordinateProperties,
+        coordinateProperties,
         ranges,
         sourceCoordinates.length,
         strategy
@@ -671,6 +689,125 @@ function downsampleTrackJsonFeature(
   }
 
   return output;
+}
+
+function getTrackJsonSegmentIds(
+  value: unknown,
+  sourceLength: number
+): number[] | undefined {
+  if (!Array.isArray(value) || value.length !== sourceLength) {
+    return undefined;
+  }
+
+  const segmentIds: number[] = [];
+  for (const item of value) {
+    if (typeof item !== "number" || !Number.isFinite(item)) {
+      return undefined;
+    }
+    segmentIds.push(Math.round(item));
+  }
+
+  return segmentIds.some((segmentId, index) => {
+    return index > 0 && segmentId !== segmentIds[index - 1];
+  })
+    ? segmentIds
+    : undefined;
+}
+
+type TrackJsonSegmentRun = {
+  start: number;
+  end: number;
+};
+
+function createSegmentAwareTrackJsonDownsampleRanges(
+  segmentIds: number[],
+  maxPoints: number,
+  strategy: TrackJsonDownsampleStrategy,
+  preserveEndpoints: boolean
+): TrackJsonDownsampleRange[] {
+  const runs: TrackJsonSegmentRun[] = [];
+  let start = 0;
+  for (let index = 1; index <= segmentIds.length; index += 1) {
+    if (index < segmentIds.length && segmentIds[index] === segmentIds[index - 1]) {
+      continue;
+    }
+    runs.push({ start, end: index });
+    start = index;
+  }
+
+  if (runs.length <= 1) {
+    return createTrackJsonDownsampleRanges(
+      segmentIds.length,
+      maxPoints,
+      strategy,
+      preserveEndpoints
+    );
+  }
+  if (maxPoints < runs.length) {
+    throw new RangeError(
+      `maxPoints must be at least ${runs.length} to preserve TrackJSON segments.`
+    );
+  }
+
+  const allocations = runs.map(() => 1);
+  let remaining = maxPoints - runs.length;
+
+  // Prefer two points per non-trivial segment so every segment can still draw a
+  // line.  When maxPoints is too small, preserve at least one point per segment
+  // rather than dropping a whole activity boundary.
+  for (let index = 0; index < runs.length && remaining > 0; index += 1) {
+    if (runs[index].end - runs[index].start > 1) {
+      allocations[index] += 1;
+      remaining -= 1;
+    }
+  }
+
+  while (remaining > 0) {
+    let bestIndex = -1;
+    let bestNeed = -1;
+    for (let index = 0; index < runs.length; index += 1) {
+      const length = runs[index].end - runs[index].start;
+      const capacity = length - allocations[index];
+      if (capacity <= 0) continue;
+      const need = length / allocations[index];
+      if (need > bestNeed) {
+        bestNeed = need;
+        bestIndex = index;
+      }
+    }
+    if (bestIndex < 0) break;
+    allocations[bestIndex] += 1;
+    remaining -= 1;
+  }
+
+  const ranges: TrackJsonDownsampleRange[] = [];
+  runs.forEach((run, index) => {
+    const length = run.end - run.start;
+    const count = Math.min(length, allocations[index]);
+    if (count === 1) {
+      const representative = preserveEndpoints && index === 0
+        ? run.start
+        : preserveEndpoints && index === runs.length - 1
+          ? run.end - 1
+          : Math.floor((run.start + run.end - 1) / 2);
+      ranges.push({ start: run.start, end: run.end, representative });
+      return;
+    }
+
+    createTrackJsonDownsampleRanges(
+      length,
+      count,
+      strategy,
+      preserveEndpoints
+    ).forEach((range) => {
+      ranges.push({
+        start: run.start + range.start,
+        end: run.start + range.end,
+        representative: run.start + range.representative,
+      });
+    });
+  });
+  return ranges;
 }
 
 function createTrackJsonDownsampleRanges(
@@ -771,7 +908,7 @@ function downsampleCoordinatePropertySeries(
 }
 
 function isRepresentativeCoordinateProperty(name: string): boolean {
-  return name === "times" || name === "distances";
+  return name === "times" || name === "distances" || name === "segmentIds";
 }
 
 function averageCoordinatePropertyRange(

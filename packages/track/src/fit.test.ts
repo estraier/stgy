@@ -754,6 +754,48 @@ describe("parseFitBytes", () => {
 });
 
 describe("downsampleTrackActivity", () => {
+  test("preserves merged analysis segments when downsampling", () => {
+    const activity = makeActivity(12);
+    activity.points.forEach((point, index) => {
+      point.segmentId = Math.floor(index / 4);
+      point.time = index;
+      point.lat = 35 + index * 0.001;
+      point.lon = 139 + index * 0.001;
+      point.distanceM = index * 10;
+    });
+
+    const downsampled = downsampleTrackActivity(activity, {
+      maxPoints: 6,
+      strategy: "aggregate",
+      preserveEndpoints: true,
+    });
+
+    expect(downsampled.points).toHaveLength(6);
+    expect(downsampled.points.map((point) => point.segmentId)).toEqual([
+      0, 0, 1, 1, 2, 2,
+    ]);
+  });
+
+  test("does not regroup interleaved merged segments during downsampling", () => {
+    const activity = makeActivity(8);
+    activity.points.forEach((point, index) => {
+      point.segmentId = index % 2;
+      point.time = index;
+      point.lat = 35 + index * 0.001;
+      point.lon = 139 + index * 0.001;
+      point.distanceM = index * 10;
+    });
+
+    const downsampled = downsampleTrackActivity(activity, {
+      maxPoints: 4,
+      strategy: "aggregate",
+      preserveEndpoints: true,
+    });
+
+    expect(downsampled.points.map((point) => point.time)).toEqual([0, 2, 5, 7]);
+    expect(downsampled.points.map((point) => point.segmentId)).toEqual([0, 0, 1, 1]);
+  });
+
   test("returns a cloned activity when it is already small enough", () => {
     const activity = makeActivity(3);
     const downsampled = downsampleTrackActivity(activity, {
@@ -1360,6 +1402,53 @@ describe("trackJsonDataToTrackActivity", () => {
     ]);
   });
 
+  test("treats TrackJSON LineString features without segmentIds as separate analysis segments", () => {
+    const activity = trackJsonDataToTrackActivity({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: [
+              [139.0, 35.0],
+              [139.1, 35.1],
+            ],
+          },
+          properties: {
+            coordinateProperties: {
+              times: [0, 10],
+              distances: [0, 100],
+              powers: [100, 100],
+            },
+          },
+        },
+        {
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: [
+              [140.0, 36.0],
+              [140.1, 36.1],
+            ],
+          },
+          properties: {
+            coordinateProperties: {
+              times: [1000, 1010],
+              distances: [100, 200],
+              powers: [200, 200],
+            },
+          },
+        },
+      ],
+    });
+
+    expect(
+      activity.points.filter((point) => point.lat !== undefined).map((point) => point.segmentId),
+    ).toEqual([0, 0, 1, 1]);
+    expect(activity.metadata.training?.totalWorkJ).toBe(3000);
+  });
+
 });
 
 describe("mergeTrackActivities", () => {
@@ -1446,6 +1535,33 @@ describe("mergeTrackActivities", () => {
     expect(parsed.features[0].properties.metadata.source).toEqual({
       type: "merged",
     });
+  });
+
+  test("keeps merged segment ids when a later FIT starts with a positionless record", () => {
+    const first = makeActivity(2);
+    const second = makeActivity(2);
+    const third = makeActivity(3);
+
+    [first, second, third].forEach((activity, activityIndex) => {
+      activity.points.forEach((point, pointIndex) => {
+        point.time = 1710000000 + activityIndex * 100 + pointIndex;
+        point.distanceM = pointIndex * 20;
+      });
+    });
+    delete third.points[0].lat;
+    delete third.points[0].lon;
+
+    const merged = mergeTrackActivities([first, second, third]);
+    const parsed = parseTrackJson(trackActivityToTrackJson(merged));
+
+    expect(parsed.features).toHaveLength(2);
+    expect(parsed.features[0].properties.coordinateProperties.segmentIds).toEqual([
+      0, 0, 1, 1,
+    ]);
+    expect(parsed.features[1].properties.coordinateProperties.segmentIds).toEqual([2, 2]);
+    expect(parsed.features.flatMap((feature: any) => {
+      return feature.geometry.coordinates;
+    })).toHaveLength(6);
   });
 
   test("does not count gaps between source files as moving time", () => {
@@ -1792,6 +1908,33 @@ describe("trackActivityToTrackJson", () => {
       role: "midway",
       coordinates: [140, 36],
     });
+  });
+
+  test("preserves merged segment ids in TrackJSON coordinateProperties", () => {
+    const first = makeActivity(3);
+    const second = makeActivity(3);
+    const third = makeActivity(3);
+
+    [first, second, third].forEach((activity, activityIndex) => {
+      activity.metadata.startTime = 1710000000 + activityIndex * 100;
+      activity.points.forEach((point, pointIndex) => {
+        point.time = 1710000000 + activityIndex * 100 + pointIndex;
+        point.lat = 35 + activityIndex * 0.1 + pointIndex * 0.001;
+        point.lon = 139 + activityIndex * 0.1 + pointIndex * 0.001;
+        point.distanceM = pointIndex * 10;
+      });
+    });
+
+    const merged = mergeTrackActivities([first, second, third]);
+    const parsed = parseTrackJson(trackActivityToTrackJson(merged));
+    const coordinateProperties = parsed.features[0].properties.coordinateProperties;
+
+    expect(coordinateProperties.segmentIds).toEqual([0, 0, 0, 1, 1, 1, 2, 2, 2]);
+
+    const roundTrip = trackJsonDataToTrackActivity(parsed);
+    expect(roundTrip.points.map((point) => point.segmentId)).toEqual([
+      0, 0, 0, 1, 1, 1, 2, 2, 2,
+    ]);
   });
 
   test("writes standard coordinateProperties arrays", () => {
@@ -2885,12 +3028,59 @@ describe("trackActivityToFit", () => {
     const definitions = readFitExportDefinitions(exported);
 
     expect(exported[0]).toBe(14);
+    expect(exported[1]).toBe(0x10);
     expect(String.fromCharCode(...exported.slice(8, 12))).toBe(".FIT");
     expect(exported.length).toBeGreaterThan(14 + 2);
     expect(getFitExportDefinition(definitions, 18)?.fields.map((field) => field.num))
       .toContain(11);
     expect(getFitExportDefinition(definitions, 19)?.fields.map((field) => field.num))
       .toContain(11);
+  });
+
+  test("round-trips merged segment ids through FIT developer data", () => {
+    const exported = trackActivityToFit({
+      schemaVersion: 1,
+      metadata: {
+        source: { type: "merged" },
+        startTime: 1710000000,
+        endTime: 1710000120,
+        totalElapsedTime: 120,
+        totalTimerTime: 60,
+        totalDistanceM: 300,
+      },
+      points: [
+        { segmentId: 0, time: 1710000000, lat: 35, lon: 139, distanceM: 0, powerW: 100 },
+        { segmentId: 0, time: 1710000010, lat: 35.001, lon: 139.001, distanceM: 100, powerW: 110 },
+        { segmentId: 1, time: 1710000050, lat: 36, lon: 140, distanceM: 100, powerW: 200 },
+        { segmentId: 1, time: 1710000060, lat: 36.001, lon: 140.001, distanceM: 200, powerW: 210 },
+        { segmentId: 2, time: 1710000110, lat: 37, lon: 141, distanceM: 200, powerW: 300 },
+        { segmentId: 2, time: 1710000120, lat: 37.001, lon: 141.001, distanceM: 300, powerW: 310 },
+      ],
+      warnings: [],
+    });
+    expect(exported[1]).toBe(0x20);
+    expectValidHeaderCrc(exported);
+    expectValidFileCrc(exported);
+    mockDecoder(true, {
+      messages: {
+        recordMesgs: [
+          { timestamp: 1710000000, positionLat: 35, positionLong: 139, distance: 0, power: 100 },
+          { timestamp: 1710000010, positionLat: 35.001, positionLong: 139.001, distance: 100, power: 110 },
+          { timestamp: 1710000050, positionLat: 36, positionLong: 140, distance: 100, power: 200 },
+          { timestamp: 1710000060, positionLat: 36.001, positionLong: 140.001, distance: 200, power: 210 },
+          { timestamp: 1710000110, positionLat: 37, positionLong: 141, distance: 200, power: 300 },
+          { timestamp: 1710000120, positionLat: 37.001, positionLong: 141.001, distance: 300, power: 310 },
+        ],
+      },
+    });
+    const parsed = parseFitBytes(exported);
+    const trackJson = JSON.parse(trackActivityToTrackJson(parsed));
+
+    expect(parsed.points.map((point) => point.segmentId)).toEqual([0, 0, 1, 1, 2, 2]);
+    expect(trackJson.stgyGraphGroup).toBe("trackActivity");
+    expect(trackJson.features.flatMap((feature: { properties: { coordinateProperties: { segmentIds: number[] } } }) => {
+      return feature.properties.coordinateProperties.segmentIds;
+    })).toEqual([0, 0, 1, 1, 2, 2]);
   });
 });
 

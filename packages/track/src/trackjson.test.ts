@@ -199,6 +199,21 @@ describe("downsampleTrackJsonData", () => {
     ]);
   });
 
+  test("aggregate downsampling keeps segment ids categorical", () => {
+    const data = makeFeatureCollection(10) as any;
+    data.features[0].properties.coordinateProperties.segmentIds = [
+      0, 0, 0, 0, 1, 1, 1, 2, 2, 2,
+    ];
+    const downsampled = downsampleTrackJsonData(data, {
+      maxPoints: 4,
+      strategy: "aggregate",
+      preserveEndpoints: true,
+    }) as any;
+
+    expect(downsampled.features[0].properties.coordinateProperties.segmentIds)
+      .toEqual([0, 0, 1, 2]);
+  });
+
   test("aggregate downsampling averages measured series", () => {
     const data = makeFeatureCollection(10);
     const downsampled = downsampleTrackJsonData(data, {

@@ -80,7 +80,11 @@ describe("parseGpxText", () => {
 </gpx>`);
 
     expect(activity.points).toHaveLength(5);
+    expect(activity.points[0]?.segmentId).toBe(0);
+    expect(activity.points[1]?.segmentId).toBe(0);
     expect(activity.points[2]).toEqual({});
+    expect(activity.points[3]?.segmentId).toBe(1);
+    expect(activity.points[4]?.segmentId).toBe(1);
     expect(activity.warnings[0]?.code).toBe("gpx_multiple_segments");
   });
 
@@ -141,6 +145,27 @@ describe("trackActivityToGpx", () => {
     expect(gpx).toContain('<gpxtpx:hr>100</gpxtpx:hr>');
     expect(gpx.match(/<trkseg>/gu)).toHaveLength(2);
   });
+  test("preserves analysis segment ids through GPX track segments", () => {
+    const gpx = trackActivityToGpx({
+      schemaVersion: 1,
+      metadata: {},
+      points: [
+        { segmentId: 0, time: 1, lat: 35, lon: 139, distanceM: 0, powerW: 100 },
+        { segmentId: 0, time: 2, lat: 35.001, lon: 139.001, distanceM: 100, powerW: 110 },
+        { segmentId: 1, time: 101, lat: 36, lon: 140, distanceM: 100, powerW: 200 },
+        { segmentId: 1, time: 102, lat: 36.001, lon: 140.001, distanceM: 200, powerW: 210 },
+        { segmentId: 2, time: 201, lat: 37, lon: 141, distanceM: 200, powerW: 300 },
+        { segmentId: 2, time: 202, lat: 37.001, lon: 141.001, distanceM: 300, powerW: 310 },
+      ],
+      warnings: [],
+    });
+    const parsed = parseGpxText(gpx);
+
+    expect(gpx.match(/<trkseg>/gu)).toHaveLength(3);
+    expect(parsed.points.filter((point) => point.lat !== undefined).map((point) => point.segmentId))
+      .toEqual([0, 0, 1, 1, 2, 2]);
+  });
+
   test("round-trips elapsed time, moving time, and calories through GPX extensions", () => {
     const gpx = trackActivityToGpx({
       schemaVersion: 1,

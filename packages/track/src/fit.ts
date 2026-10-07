@@ -43,6 +43,10 @@ import type {
   TrackWarning,
 } from "./activity";
 import { getFiniteNumberRange } from "./numeric";
+import {
+  TRACKJSON_ACTIVITY_GRAPH_GROUP_PROPERTY,
+  TRACKJSON_ACTIVITY_GRAPH_GROUP_VALUE,
+} from "./trackjson";
 
 export {
   STRAVA_POWER_CURVE_DURATIONS_SECONDS,
@@ -171,6 +175,7 @@ const RESERVED_METRIC_NAMES = new Set([
   "cadences",
   "powers",
   "speeds",
+  "segmentIds",
   "__proto__",
   "constructor",
   "prototype",
@@ -372,9 +377,16 @@ export function parseFitBytes(
   }
 
   const preferEnhancedFields = options.preferEnhancedFields !== false;
-  const points = records
-    .map((record) => fitRecordToTrackPoint(record, preferEnhancedFields))
-    .filter(hasAnyPointValue);
+  const exportedSegmentIds = extractStgyFitSegmentIds(new Uint8Array(arrayBuffer));
+  const decodedPoints = records.map((record, index) => {
+    const point = fitRecordToTrackPoint(record, preferEnhancedFields);
+    const segmentId = exportedSegmentIds?.[index];
+    if (isFiniteNumber(segmentId)) {
+      point.segmentId = segmentId;
+    }
+    return point;
+  });
+  const points = decodedPoints.filter(hasAnyPointValue);
 
   const warnings = createFitWarnings(readResult.errors || [], points, options);
 
@@ -393,6 +405,7 @@ export function trackJsonDataToTrackActivity(
   const features = getTrackJsonLineStringFeatures(data);
   const pins = getTrackJsonPointFeatures(data).map(trackJsonPointFeatureToPin);
   const points: TrackPoint[] = [];
+  let nextFallbackSegmentId = getNextTrackJsonFallbackSegmentId(features);
   const firstFeature = features[0];
   const firstProperties = getRecordProperty(firstFeature, "properties");
   const baseMetadata = buildTrackJsonActivityMetadata(
@@ -401,6 +414,8 @@ export function trackJsonDataToTrackActivity(
     options,
   );
   features.forEach((feature, featureIndex) => {
+    const fallbackSegmentId = nextFallbackSegmentId;
+    nextFallbackSegmentId += 1;
     const geometry = getRecordProperty(feature, "geometry");
     const coordinates = Array.isArray(geometry?.coordinates)
       ? geometry.coordinates
@@ -417,6 +432,9 @@ export function trackJsonDataToTrackActivity(
 
     coordinates.forEach((coordinate, index) => {
       const point = trackJsonCoordinateToPoint(coordinate, coordinateProperties, index);
+      if (!isFiniteNumber(point.segmentId)) {
+        point.segmentId = fallbackSegmentId;
+      }
       if (hasAnyPointValue(point)) {
         points.push(point);
       }
@@ -458,6 +476,22 @@ export function trackJsonDataToTrackActivity(
   };
 }
 
+function getNextTrackJsonFallbackSegmentId(features: Record<string, unknown>[]): number {
+  let maxSegmentId = -1;
+  features.forEach((feature) => {
+    const properties = getRecordProperty(feature, "properties");
+    const coordinateProperties = getRecordProperty(properties, "coordinateProperties");
+    const segmentIds = coordinateProperties?.segmentIds;
+    if (!Array.isArray(segmentIds)) return;
+    segmentIds.forEach((value) => {
+      if (isFiniteNumber(value)) {
+        maxSegmentId = Math.max(maxSegmentId, Math.round(value));
+      }
+    });
+  });
+  return maxSegmentId + 1;
+}
+
 export function trackActivityToTrackJson(
   activity: TrackActivity,
   options: TrackJsonOptions = {},
@@ -490,6 +524,7 @@ export function trackActivityToTrackJson(
 
   const trackJson = {
     type: "FeatureCollection",
+    [TRACKJSON_ACTIVITY_GRAPH_GROUP_PROPERTY]: TRACKJSON_ACTIVITY_GRAPH_GROUP_VALUE,
     bbox: buildTrackJsonBboxFromPoints(bboxPoints, precision.coordinates),
     poi: buildTrackJsonPoiFromPointSegments(
       routeSegments,
@@ -1703,6 +1738,7 @@ function trackJsonCoordinateToPoint(
 
   assignPointFromSeries(point, "time", coordinateProperties.times, index);
   assignPointFromSeries(point, "distanceM", coordinateProperties.distances, index);
+  assignPointFromSeries(point, "segmentId", coordinateProperties.segmentIds, index, Math.round);
   assignPointFromSeries(point, "altitudeM", coordinateProperties.altitudes, index);
   assignPointFromSeries(point, "heartRateBpm", coordinateProperties.heartRates, index);
   assignPointFromSeries(point, "cadenceRpm", coordinateProperties.cadences, index);
@@ -3341,6 +3377,13 @@ function buildCoordinateProperties(
   );
   addCompleteSeries(
     properties,
+    "segmentIds",
+    points,
+    (point) => point.segmentId,
+    (value) => Math.round(value),
+  );
+  addCompleteSeries(
+    properties,
     "altitudes",
     points,
     (point) => point.altitudeM,
@@ -3643,10 +3686,18 @@ type FitDefinitionField = {
   offset: number;
 };
 
+type FitDeveloperDefinitionField = {
+  fieldNumber: number;
+  size: number;
+  developerDataIndex: number;
+  offset: number;
+};
+
 type FitDefinition = {
   globalMessageNumber: number;
   littleEndian: boolean;
   fields: FitDefinitionField[];
+  developerFields: FitDeveloperDefinitionField[];
   dataSize: number;
 };
 
@@ -3672,6 +3723,16 @@ type FitRawMessage = {
 
 const FIT_SIGNATURE = ".FIT";
 const FIT_RECORD_GLOBAL_MESSAGE_NUMBER = 20;
+const FIT_DEVELOPER_DATA_ID_GLOBAL_MESSAGE_NUMBER = 207;
+const FIT_FIELD_DESCRIPTION_GLOBAL_MESSAGE_NUMBER = 206;
+const STGY_FIT_DEVELOPER_DATA_INDEX = 0;
+const STGY_FIT_SEGMENT_FIELD_NUMBER = 0;
+const STGY_FIT_SEGMENT_FIELD_SIZE = 2;
+const STGY_FIT_SEGMENT_FIELD_NAME = "stgy_segment_id";
+const STGY_FIT_APPLICATION_ID = new Uint8Array([
+  0x73, 0x74, 0x67, 0x79, 0x2e, 0x6a, 0x70, 0x2f,
+  0x6c, 0x74, 0x73, 0x2f, 0x73, 0x65, 0x67, 0x01,
+]);
 const RECORD_POSITION_LAT_FIELD = 0;
 const RECORD_POSITION_LONG_FIELD = 1;
 const RECORD_DISTANCE_FIELD = 5;
@@ -4154,11 +4215,20 @@ function readDefinitionMessage(
     offset += 3;
   }
 
+  const developerFields: FitDeveloperDefinitionField[] = [];
   if (hasDeveloperFields) {
     const developerFieldCount = data[offset];
     offset += 1;
     for (let i = 0; i < developerFieldCount; i += 1) {
+      const fieldNumber = data[offset];
       const size = data[offset + 1];
+      const developerDataIndex = data[offset + 2];
+      developerFields.push({
+        fieldNumber,
+        size,
+        developerDataIndex,
+        offset: dataFieldOffset,
+      });
       dataFieldOffset += size;
       offset += 3;
     }
@@ -4168,10 +4238,143 @@ function readDefinitionMessage(
     globalMessageNumber,
     littleEndian,
     fields,
+    developerFields,
     dataSize: dataFieldOffset,
   });
 
   return offset;
+}
+
+function extractStgyFitSegmentIds(data: Uint8Array): Array<number | undefined> | undefined {
+  let fileInfo: ReturnType<typeof readFitFileInfo>;
+  try {
+    fileInfo = readFitFileInfo(data);
+  } catch {
+    return undefined;
+  }
+
+  const definitions = new Map<number, FitDefinition>();
+  const segmentIds: Array<number | undefined> = [];
+  let stgyDeveloperDataIndex: number | undefined;
+  let offset = fileInfo.headerSize;
+
+  while (offset < fileInfo.dataEndOffset) {
+    const recordHeader = data[offset];
+    offset += 1;
+
+    if ((recordHeader & 0x80) !== 0) {
+      const localMessageType = (recordHeader >> 5) & 0x03;
+      const definition = definitions.get(localMessageType);
+      if (!definition) return undefined;
+      if (definition.globalMessageNumber === FIT_RECORD_GLOBAL_MESSAGE_NUMBER) {
+        segmentIds.push(readStgyFitSegmentId(
+          data, offset, definition, stgyDeveloperDataIndex, true,
+        ));
+      }
+      offset += getFitCompressedTimestampDataSize(definition);
+      continue;
+    }
+
+    if ((recordHeader & 0x40) !== 0) {
+      const localMessageType = recordHeader & 0x0f;
+      const hasDeveloperFields = (recordHeader & 0x20) !== 0;
+      try {
+        offset = readDefinitionMessage(
+          data, offset, localMessageType, hasDeveloperFields, definitions,
+        );
+      } catch {
+        return undefined;
+      }
+      continue;
+    }
+
+    const localMessageType = recordHeader & 0x0f;
+    const definition = definitions.get(localMessageType);
+    if (!definition || offset + definition.dataSize > fileInfo.dataEndOffset) {
+      return undefined;
+    }
+
+    if (definition.globalMessageNumber === FIT_DEVELOPER_DATA_ID_GLOBAL_MESSAGE_NUMBER) {
+      const developerDataIndex = readStgyFitDeveloperDataIndex(data, offset, definition);
+      if (isFiniteNumber(developerDataIndex)) {
+        stgyDeveloperDataIndex = developerDataIndex;
+      }
+    } else if (definition.globalMessageNumber === FIT_RECORD_GLOBAL_MESSAGE_NUMBER) {
+      segmentIds.push(readStgyFitSegmentId(
+        data, offset, definition, stgyDeveloperDataIndex, false,
+      ));
+    }
+
+    offset += definition.dataSize;
+  }
+
+  if (!isFiniteNumber(stgyDeveloperDataIndex)) {
+    return undefined;
+  }
+  return segmentIds.some(isFiniteNumber) ? segmentIds : undefined;
+}
+
+function readStgyFitDeveloperDataIndex(
+  data: Uint8Array,
+  dataOffset: number,
+  definition: FitDefinition,
+): number | undefined {
+  const applicationIdField = findField(definition, 1);
+  const indexField = findField(definition, 3);
+  if (
+    !applicationIdField || applicationIdField.size !== STGY_FIT_APPLICATION_ID.length
+    || !indexField || indexField.size < 1
+  ) {
+    return undefined;
+  }
+
+  if (!fitBytesEqualAt(data, dataOffset + applicationIdField.offset, STGY_FIT_APPLICATION_ID)) {
+    return undefined;
+  }
+  return data[dataOffset + indexField.offset];
+}
+
+function fitBytesEqualAt(data: Uint8Array, offset: number, expected: Uint8Array): boolean {
+  if (offset < 0 || offset + expected.length > data.length) return false;
+  for (let index = 0; index < expected.length; index += 1) {
+    if (data[offset + index] !== expected[index]) return false;
+  }
+  return true;
+}
+
+function readStgyFitSegmentId(
+  data: Uint8Array,
+  dataOffset: number,
+  definition: FitDefinition,
+  developerDataIndex: number | undefined,
+  compressedTimestamp: boolean,
+): number | undefined {
+  if (!isFiniteNumber(developerDataIndex)) return undefined;
+  const field = definition.developerFields.find((candidate) => {
+    return candidate.developerDataIndex === developerDataIndex
+      && candidate.fieldNumber === STGY_FIT_SEGMENT_FIELD_NUMBER
+      && candidate.size >= STGY_FIT_SEGMENT_FIELD_SIZE;
+  });
+  if (!field) return undefined;
+
+  const offset = dataOffset + getFitDeveloperDataFieldOffset(
+    definition, field, compressedTimestamp,
+  );
+  if (offset + STGY_FIT_SEGMENT_FIELD_SIZE > data.length) return undefined;
+  const value = readUint16(data, offset, definition.littleEndian);
+  return value === 0xffff ? undefined : value;
+}
+
+function getFitDeveloperDataFieldOffset(
+  definition: FitDefinition,
+  field: FitDeveloperDefinitionField,
+  compressedTimestamp: boolean,
+): number {
+  if (!compressedTimestamp) return field.offset;
+  const timestampField = findField(definition, RECORD_TIMESTAMP_FIELD);
+  return timestampField && field.offset > timestampField.offset
+    ? field.offset - timestampField.size
+    : field.offset;
 }
 
 function getDefinition(
@@ -4512,6 +4715,12 @@ type FitWriteFieldDefinition = {
   baseType: number;
 };
 
+type FitWriteDeveloperFieldDefinition = {
+  fieldNumber: number;
+  size: number;
+  developerDataIndex: number;
+};
+
 type FitWriteRecordField = FitWriteFieldDefinition & {
   write: (
     view: DataView,
@@ -4554,12 +4763,28 @@ export function trackActivityToFit(
 
   const chunks: number[] = [];
   const startTime = getFitExportActivityStartTime(activity, points);
+  const includeSegmentIds = points.some((point) => isFiniteNumber(point.segmentId));
 
   writeFitDefinitionMessage(chunks, 0, 0, getFitFileIdFields(options));
   writeFitFileIdMessage(chunks, startTime, options);
-  writeFitDefinitionMessage(chunks, 1, 20, getFitExportRecordFields());
+  if (includeSegmentIds) {
+    writeStgyFitDeveloperMessages(chunks);
+  }
+  writeFitDefinitionMessage(
+    chunks,
+    1,
+    20,
+    getFitExportRecordFields(),
+    includeSegmentIds
+      ? [{
+        fieldNumber: STGY_FIT_SEGMENT_FIELD_NUMBER,
+        size: STGY_FIT_SEGMENT_FIELD_SIZE,
+        developerDataIndex: STGY_FIT_DEVELOPER_DATA_INDEX,
+      }]
+      : [],
+  );
   points.forEach((point, index) => {
-    writeFitRecordMessage(chunks, point, index, startTime);
+    writeFitRecordMessage(chunks, point, index, startTime, includeSegmentIds);
   });
 
   if (options.includeSessionSummary !== false) {
@@ -4571,11 +4796,50 @@ export function trackActivityToFit(
     writeFitActivityMessage(chunks, activity, points);
   }
 
-  return buildFitFile(chunks);
+  return buildFitFile(chunks, includeSegmentIds ? 0x20 : 0x10);
 }
 
 function isFitExportablePoint(point: TrackPoint): boolean {
   return hasPosition(point) || isFiniteNumber(point.time);
+}
+
+function writeStgyFitDeveloperMessages(chunks: number[]) {
+  writeFitDefinitionMessage(chunks, 5, FIT_DEVELOPER_DATA_ID_GLOBAL_MESSAGE_NUMBER, [
+    { num: 1, size: 16, baseType: 0x0d },
+    { num: 3, size: 1, baseType: 0x02 },
+  ]);
+  chunks.push(5);
+  chunks.push(...STGY_FIT_APPLICATION_ID);
+  chunks.push(STGY_FIT_DEVELOPER_DATA_INDEX);
+
+  writeFitDefinitionMessage(chunks, 6, FIT_FIELD_DESCRIPTION_GLOBAL_MESSAGE_NUMBER, [
+    { num: 0, size: 1, baseType: 0x02 },
+    { num: 1, size: 1, baseType: 0x02 },
+    { num: 2, size: 1, baseType: 0x02 },
+    { num: 3, size: 64, baseType: 0x07 },
+  ]);
+  chunks.push(6);
+  chunks.push(STGY_FIT_DEVELOPER_DATA_INDEX);
+  chunks.push(STGY_FIT_SEGMENT_FIELD_NUMBER);
+  chunks.push(0x84);
+  fitPushFixedString(chunks, STGY_FIT_SEGMENT_FIELD_NAME, 64);
+}
+
+function fitPushFixedString(chunks: number[], value: string, size: number) {
+  // FIT field names written here are protocol identifiers and intentionally ASCII.
+  // Avoid TextEncoder so FIT export also works in Node/Jest environments where the
+  // browser TextEncoder global is not installed.
+  for (let index = 0; index < size; index += 1) {
+    if (index >= value.length) {
+      chunks.push(0);
+      continue;
+    }
+    const code = value.charCodeAt(index);
+    if (code > 0x7f) {
+      throw new Error("FIT fixed strings must contain ASCII characters only.");
+    }
+    chunks.push(code);
+  }
 }
 
 function getFitFileIdFields(options: FitExportOptions): FitWriteFieldDefinition[] {
@@ -4695,9 +4959,11 @@ function writeFitRecordMessage(
   point: TrackPoint,
   index: number,
   activityStartTime: number,
+  includeSegmentId: boolean,
 ) {
   const fields = getFitExportRecordFields();
-  const size = fields.reduce((sum, field) => sum + field.size, 0);
+  const nativeSize = fields.reduce((sum, field) => sum + field.size, 0);
+  const size = nativeSize + (includeSegmentId ? STGY_FIT_SEGMENT_FIELD_SIZE : 0);
   const record = new Uint8Array(size);
   const view = new DataView(record.buffer);
   const fallbackTime = getPointFitTimestamp(point, index, activityStartTime);
@@ -4707,6 +4973,10 @@ function writeFitRecordMessage(
     field.write(view, offset, point, fallbackTime);
     offset += field.size;
   });
+
+  if (includeSegmentId) {
+    writeFitUint16(view, offset, point.segmentId);
+  }
 
   chunks.push(1);
   chunks.push(...record);
@@ -5027,8 +5297,9 @@ function writeFitDefinitionMessage(
   localMessageType: number,
   globalMessageNumber: number,
   fields: FitWriteFieldDefinition[],
+  developerFields: FitWriteDeveloperFieldDefinition[] = [],
 ) {
-  chunks.push(0x40 | localMessageType);
+  chunks.push(0x40 | (developerFields.length > 0 ? 0x20 : 0) | localMessageType);
   chunks.push(0);
   chunks.push(0);
   fitPushUint16(chunks, globalMessageNumber);
@@ -5039,14 +5310,23 @@ function writeFitDefinitionMessage(
     chunks.push(field.size);
     chunks.push(field.baseType);
   });
+
+  if (developerFields.length > 0) {
+    chunks.push(developerFields.length);
+    developerFields.forEach((field) => {
+      chunks.push(field.fieldNumber);
+      chunks.push(field.size);
+      chunks.push(field.developerDataIndex);
+    });
+  }
 }
 
-function buildFitFile(chunks: number[]): Uint8Array {
+function buildFitFile(chunks: number[], protocolVersion = 0x10): Uint8Array {
   const data = new Uint8Array(chunks);
   const header = new Uint8Array(14);
   const headerView = new DataView(header.buffer);
   header[0] = 14;
-  header[1] = 16;
+  header[1] = protocolVersion;
   headerView.setUint16(2, 2135, true);
   headerView.setUint32(4, data.length, true);
   header[8] = 0x2e;

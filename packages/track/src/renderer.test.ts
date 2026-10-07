@@ -1859,6 +1859,278 @@ describe("StgyTrackRenderer", () => {
     )).toEqual(["Smoothing: none", "Smoothing: 3", "Smoothing: 5"]);
   });
 
+  test("renders every merged analysis segment as a separate graph polyline", async () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-src="#demo-segmented-graph">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    const track = makeTrackWithGraph();
+    const feature = track.features[0];
+    feature.geometry.coordinates = [
+      [139.70, 35.60], [139.71, 35.61],
+      [139.80, 35.70], [139.81, 35.71],
+      [139.90, 35.80], [139.91, 35.81],
+    ];
+    Object.assign(feature.properties.coordinateProperties, {
+      times: [1, 2, 101, 102, 201, 202],
+      distances: [0, 100, 100, 200, 200, 300],
+      segmentIds: [0, 0, 1, 1, 2, 2],
+      altitudes: [10, 11, 20, 21, 30, 31],
+      heartRates: [100, 101, 110, 111, 120, 121],
+      powers: [150, 151, 200, 201, 250, 251],
+    });
+
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue(track);
+    renderer.hydrate(document.body);
+    await flushPromises();
+
+    const lines = document.querySelectorAll<SVGPolylineElement>(
+      ".stgy-track-graph polyline.stgy-track-graph-line",
+    );
+    expect(lines).toHaveLength(3);
+    expect(Array.from(lines).map((line) => line.getAttribute("points")?.split(" ").length))
+      .toEqual([2, 2, 2]);
+
+    const seriesSelect = document.querySelector<HTMLSelectElement>(
+      '.stgy-track-graph select[aria-label="Graph series"]',
+    );
+    expect(Array.from(seriesSelect?.options || []).map((option) => option.value))
+      .not.toContain("segmentIds");
+  });
+
+  test("combines split features from one merged activity into one complete graph", async () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-src="#demo-merged-split-graph">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    const metadata = { source: { type: "merged" } };
+    const track = {
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: [
+              [139.70, 35.60], [139.71, 35.61],
+              [139.80, 35.70], [139.81, 35.71],
+            ],
+          },
+          properties: {
+            metadata,
+            coordinateProperties: {
+              times: [1, 2, 101, 102],
+              distances: [0, 100, 100, 200],
+              segmentIds: [0, 0, 1, 1],
+              altitudes: [10, 11, 20, 21],
+              powers: [150, 151, 200, 201],
+            },
+          },
+        },
+        {
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: [
+              [139.90, 35.80], [139.91, 35.81],
+            ],
+          },
+          properties: {
+            metadata,
+            coordinateProperties: {
+              times: [201, 202],
+              distances: [200, 300],
+              segmentIds: [2, 2],
+              altitudes: [30, 31],
+              powers: [250, 251],
+            },
+          },
+        },
+      ],
+    };
+
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue(track);
+    renderer.hydrate(document.body);
+    await flushPromises();
+
+    const lines = document.querySelectorAll<SVGPolylineElement>(
+      ".stgy-track-graph polyline.stgy-track-graph-line",
+    );
+    expect(lines).toHaveLength(3);
+    expect(Array.from(lines).map((line) => line.getAttribute("points")?.split(" ").length))
+      .toEqual([2, 2, 2]);
+
+    const allPoints = Array.from(lines).flatMap((line) => {
+      return (line.getAttribute("points") || "").split(" ").filter(Boolean);
+    });
+    expect(allPoints).toHaveLength(6);
+
+    const axisSelect = document.querySelector<HTMLSelectElement>(
+      '.stgy-track-graph select[aria-label="Graph X axis"]',
+    );
+    expect(axisSelect?.value).toBe("distance");
+  });
+
+  test("combines split features from a TrackActivity even after FIT source round-trip", async () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-src="#demo-fit-roundtrip-graph">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    const metadata = { source: { type: "fit" } };
+    const track = {
+      type: "FeatureCollection",
+      stgyGraphGroup: "trackActivity",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: [[139.70, 35.60], [139.71, 35.61], [139.80, 35.70], [139.81, 35.71]],
+          },
+          properties: {
+            metadata,
+            coordinateProperties: {
+              distances: [0, 100, 100, 200],
+              segmentIds: [0, 0, 1, 1],
+              powers: [150, 151, 200, 201],
+            },
+          },
+        },
+        {
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: [[139.90, 35.80], [139.91, 35.81]],
+          },
+          properties: {
+            metadata,
+            coordinateProperties: {
+              distances: [200, 300],
+              segmentIds: [2, 2],
+              powers: [250, 251],
+            },
+          },
+        },
+      ],
+    };
+
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue(track);
+    renderer.hydrate(document.body);
+    await flushPromises();
+
+    const lines = document.querySelectorAll<SVGPolylineElement>(
+      ".stgy-track-graph polyline.stgy-track-graph-line",
+    );
+    expect(lines).toHaveLength(3);
+    expect(Array.from(lines).map((line) => line.getAttribute("points")?.split(" ").length))
+      .toEqual([2, 2, 2]);
+  });
+
+  test("does not combine unrelated multi-route TrackJSON without a TrackActivity marker", async () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-src="#demo-independent-routes">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    const track = {
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: { type: "LineString", coordinates: [[139, 35], [139.1, 35.1]] },
+          properties: { coordinateProperties: { distances: [0, 100], powers: [100, 110] } },
+        },
+        {
+          type: "Feature",
+          geometry: { type: "LineString", coordinates: [[140, 36], [140.1, 36.1]] },
+          properties: { coordinateProperties: { distances: [0, 100], powers: [200, 210] } },
+        },
+      ],
+    };
+
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue(track);
+    renderer.hydrate(document.body);
+    await flushPromises();
+
+    const lines = document.querySelectorAll<SVGPolylineElement>(
+      ".stgy-track-graph polyline.stgy-track-graph-line",
+    );
+    expect(lines).toHaveLength(1);
+  });
+
+  test("keeps series that are unavailable in only one merged feature", async () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-src="#demo-merged-sparse-graph">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    const metadata = { source: { type: "merged" } };
+    const track = {
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: [[139.70, 35.60], [139.71, 35.61]],
+          },
+          properties: {
+            metadata,
+            coordinateProperties: {
+              distances: [0, 100],
+              segmentIds: [0, 0],
+              altitudes: [10, 11],
+              powers: [150, 151],
+            },
+          },
+        },
+        {
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: [[139.90, 35.80], [139.91, 35.81]],
+          },
+          properties: {
+            metadata,
+            coordinateProperties: {
+              distances: [100, 200],
+              segmentIds: [1, 1],
+              altitudes: [20, 21],
+            },
+          },
+        },
+      ],
+    };
+
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue(track);
+    renderer.hydrate(document.body);
+    await flushPromises();
+
+    const seriesSelect = document.querySelector<HTMLSelectElement>(
+      '.stgy-track-graph select[aria-label="Graph series"]',
+    );
+    expect(Array.from(seriesSelect?.options || []).map((option) => option.value))
+      .toEqual(["altitudes", "powers"]);
+
+    if (!seriesSelect) return;
+    seriesSelect.value = "powers";
+    seriesSelect.dispatchEvent(new Event("change", { bubbles: true }));
+
+    const lines = document.querySelectorAll<SVGPolylineElement>(
+      ".stgy-track-graph polyline.stgy-track-graph-line",
+    );
+    expect(lines).toHaveLength(1);
+    expect(lines[0]?.getAttribute("points")?.split(" ")).toHaveLength(2);
+  });
+
   test("excludes distances and times from graph series selector", async () => {
     document.body.innerHTML = `
       <figure class="stgy-track-map" data-src="#demo-geojson-hud">

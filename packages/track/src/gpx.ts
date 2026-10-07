@@ -49,18 +49,24 @@ export function parseGpxText(
   }
 
   const segments = collectGpxPointSegments(root);
-  const points = flattenGpxPointSegments(segments);
   const minPositionPoints = options.minPositionPoints ?? 2;
-  const positionedPoints = points.filter(hasPosition);
+  const positionedPointCount = segments.reduce((count, segment) => {
+    return count + segment.filter(hasPosition).length;
+  }, 0);
 
-  if (positionedPoints.length < minPositionPoints) {
+  if (positionedPointCount < minPositionPoints) {
     throw new GpxParseError(
       "no_track_points",
       `GPX data must contain at least ${minPositionPoints} positioned points.`,
     );
   }
 
+  // Compute derived point values before flattening. flattenGpxPointSegments()
+  // intentionally copies points so it can attach segmentId without mutating the
+  // parsed segment arrays; computing distances afterwards would therefore leave
+  // the flattened activity points without distanceM/speedMps.
   assignDistancesAndSpeeds(segments);
+  const points = flattenGpxPointSegments(segments);
 
   const metadata = buildGpxMetadata(root, points);
   applyComputedMetadata(metadata, points, { preserveElevation: true });
@@ -112,7 +118,8 @@ function collectGpxPointSegments(root: Element): TrackPoint[][] {
 
 function flattenGpxPointSegments(segments: TrackPoint[][]): TrackPoint[] {
   return segments.flatMap((segment, index) => {
-    return index === 0 ? segment : [{}, ...segment];
+    const points = segment.map((point) => ({ ...point, segmentId: index }));
+    return index === 0 ? points : [{}, ...points];
   });
 }
 
@@ -650,23 +657,39 @@ function splitGpxExportSegments(
 ): (TrackPoint & { lat: number; lon: number })[][] {
   const segments: (TrackPoint & { lat: number; lon: number })[][] = [];
   let current: (TrackPoint & { lat: number; lon: number })[] = [];
+  let currentSegmentId: number | undefined;
 
-  points.forEach((point) => {
-    if (hasPosition(point)) {
-      current.push(point);
-      return;
-    }
-
+  const finishCurrent = () => {
     if (current.length > 0) {
       segments.push(current);
       current = [];
     }
+    currentSegmentId = undefined;
+  };
+
+  points.forEach((point) => {
+    if (!hasPosition(point)) {
+      finishCurrent();
+      return;
+    }
+
+    const segmentId = isFiniteNumber(point.segmentId) ? point.segmentId : undefined;
+    if (
+      current.length > 0
+      && isFiniteNumber(currentSegmentId)
+      && isFiniteNumber(segmentId)
+      && currentSegmentId !== segmentId
+    ) {
+      finishCurrent();
+    }
+
+    if (current.length === 0) {
+      currentSegmentId = segmentId;
+    }
+    current.push(point);
   });
 
-  if (current.length > 0) {
-    segments.push(current);
-  }
-
+  finishCurrent();
   return segments;
 }
 

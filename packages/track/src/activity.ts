@@ -248,7 +248,7 @@ export type TrackDeviceInfo = {
 };
 
 export type TrackPoint = {
-  /** Internal analysis boundary. Serializers intentionally omit this field. */
+  /** Internal analysis boundary; supported exports preserve it across FIT/GPX/TrackJSON round-trips. */
   segmentId?: number;
   time?: number;
   lat?: number;
@@ -2269,32 +2269,60 @@ function normalizeMaxPoints(value: number): number {
   return Math.floor(value);
 }
 
+type DownsamplePositionSegment = {
+  points: TrackPoint[];
+  separatorBefore?: TrackPoint;
+};
+
 type DownsamplePositionSegments = {
-  segments: TrackPoint[][];
-  separators: TrackPoint[];
+  segments: DownsamplePositionSegment[];
 };
 
 function splitPositionSegmentsForDownsampling(
   points: TrackPoint[],
 ): DownsamplePositionSegments {
-  const segments: TrackPoint[][] = [];
-  const separators: TrackPoint[] = [];
+  const segments: DownsamplePositionSegment[] = [];
+  const splitOnSegmentId = hasNonInterleavedSegmentIds(points);
   let current: TrackPoint[] = [];
+  let currentSegmentId: number | undefined;
+  let separatorBefore: TrackPoint | undefined;
   let pendingSeparator: TrackPoint | undefined;
+
+  const finishCurrent = () => {
+    if (current.length === 0) return;
+    segments.push({
+      points: current,
+      ...(separatorBefore ? { separatorBefore } : {}),
+    });
+    current = [];
+    currentSegmentId = undefined;
+    separatorBefore = undefined;
+  };
 
   points.forEach((point) => {
     if (hasPosition(point)) {
-      if (current.length === 0 && segments.length > 0 && pendingSeparator) {
-        separators.push(pendingSeparator);
+      const pointSegmentId = isFiniteNumber(point.segmentId) ? point.segmentId : undefined;
+      if (
+        current.length > 0
+        && splitOnSegmentId
+        && isFiniteNumber(currentSegmentId)
+        && isFiniteNumber(pointSegmentId)
+        && currentSegmentId !== pointSegmentId
+      ) {
+        finishCurrent();
+      }
+
+      if (current.length === 0) {
+        separatorBefore = segments.length > 0 ? pendingSeparator : undefined;
         pendingSeparator = undefined;
+        currentSegmentId = pointSegmentId;
       }
       current.push(point);
       return;
     }
 
     if (current.length > 0) {
-      segments.push(current);
-      current = [];
+      finishCurrent();
       pendingSeparator = point;
       return;
     }
@@ -2304,11 +2332,24 @@ function splitPositionSegmentsForDownsampling(
     }
   });
 
-  if (current.length > 0) {
-    segments.push(current);
+  finishCurrent();
+  return { segments };
+}
+
+function hasNonInterleavedSegmentIds(points: TrackPoint[]): boolean {
+  const seen = new Set<number>();
+  let currentSegmentId: number | undefined;
+
+  for (const point of points) {
+    if (!hasPosition(point) || !isFiniteNumber(point.segmentId)) continue;
+    const segmentId = point.segmentId;
+    if (segmentId === currentSegmentId) continue;
+    if (seen.has(segmentId)) return false;
+    seen.add(segmentId);
+    currentSegmentId = segmentId;
   }
 
-  return { segments, separators };
+  return seen.size > 1;
 }
 
 function downsampleTrackActivitySegments(
@@ -2318,21 +2359,24 @@ function downsampleTrackActivitySegments(
   strategy: "uniform" | "aggregate",
   preserveEndpoints: boolean,
 ): TrackActivity {
-  const separatorCount = positionSegments.segments.length - 1;
+  const separatorCount = positionSegments.segments.reduce((sum, segment, index) => {
+    return sum + (index > 0 && segment.separatorBefore ? 1 : 0);
+  }, 0);
   const availableSegmentPoints = maxPoints - separatorCount;
   const segmentPointCounts = allocateSegmentPointCounts(
-    positionSegments.segments.map((segment) => segment.length),
+    positionSegments.segments.map((segment) => segment.points.length),
     availableSegmentPoints,
+    separatorCount,
   );
   const points: TrackPoint[] = [];
 
   positionSegments.segments.forEach((segment, index) => {
-    if (index > 0) {
-      points.push(cloneTrackPoint(positionSegments.separators[index - 1] || {}));
+    if (index > 0 && segment.separatorBefore) {
+      points.push(cloneTrackPoint(segment.separatorBefore));
     }
 
     downsampleTrackPoints(
-      segment,
+      segment.points,
       segmentPointCounts[index],
       strategy,
       preserveEndpoints,
@@ -2348,11 +2392,11 @@ function downsampleTrackActivitySegments(
 function allocateSegmentPointCounts(
   segmentLengths: number[],
   availablePoints: number,
+  separatorCount: number,
 ): number[] {
   const minimums = segmentLengths.map((length) => Math.min(2, length));
   const minimumTotal = minimums.reduce((sum, value) => sum + value, 0);
   if (availablePoints < minimumTotal) {
-    const separatorCount = Math.max(0, segmentLengths.length - 1);
     throw new RangeError(
       `maxPoints must be at least ${minimumTotal + separatorCount} ` +
         `to preserve ${segmentLengths.length} track segments.`,
@@ -2531,6 +2575,7 @@ function aggregateTrackPointBucket(
   const representative = points[Math.floor((start + end - 1) / 2)];
   const point: TrackPoint = {};
 
+  assignNumber(point, "segmentId", representative.segmentId);
   assignNumber(point, "time", representative.time);
   assignNumber(point, "lat", representative.lat);
   assignNumber(point, "lon", representative.lon);

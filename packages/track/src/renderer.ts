@@ -3,7 +3,11 @@ import { isJapan } from "./geo";
 import { TrackLoader } from "./loader";
 import { getTrackJsonDisplayMetadataLines } from "./metadata";
 import { getFiniteNumberRange } from "./numeric";
-import { getTrackJsonTitle } from "./trackjson";
+import {
+  getTrackJsonTitle,
+  TRACKJSON_ACTIVITY_GRAPH_GROUP_PROPERTY,
+  TRACKJSON_ACTIVITY_GRAPH_GROUP_VALUE,
+} from "./trackjson";
 import {
   getHistogramBarScaleMaxPercentage,
   type TrackPowerCurvePoint,
@@ -259,12 +263,26 @@ type TrackGraphSeries = {
   values: number[];
 };
 
+type TrackGraphSourceRange = {
+  coordinateProperties: CoordinateProperties;
+  offset: number;
+  length: number;
+};
+
 type TrackGraphDataset = {
   xAxes: Partial<Record<TrackGraphXAxisKind, number[]>>;
   defaultXAxis: TrackGraphXAxisKind;
   series: TrackGraphSeries[];
+  segmentIds?: number[];
+  sourceRanges?: TrackGraphSourceRange[];
   latLngs: L.LatLngExpression[];
   coordinateProperties: CoordinateProperties;
+};
+
+type RouteGraphEntry = {
+  feature: GeoJsonFeatureLike;
+  layer: L.Layer;
+  dataset: TrackGraphDataset;
 };
 
 type SelectedCoordinateSample = {
@@ -1702,13 +1720,14 @@ export class StgyTrackRenderer {
   private registerGraphDatasetForLayer(
     feature: GeoJsonFeatureLike,
     layer: L.Layer,
-    context: CoordinateInteractionContext
+    context: CoordinateInteractionContext,
+    datasetOverride?: TrackGraphDataset,
   ) {
     if (!context.graphPanel) {
       return;
     }
 
-    const dataset = this.buildGraphDatasetFromFeature(feature);
+    const dataset = datasetOverride || this.buildGraphDatasetFromFeature(feature);
     if (!dataset) {
       return;
     }
@@ -1719,6 +1738,145 @@ export class StgyTrackRenderer {
     if (!context.activeGraphDataset) {
       this.activateGraphDatasetForLayer(context, layer);
     }
+  }
+
+  private isMergedGraphFeature(feature: GeoJsonFeatureLike): boolean {
+    const properties = getFeatureProperties(feature);
+    const metadata = properties.metadata;
+    if (!isRecord(metadata)) {
+      return false;
+    }
+    const source = metadata.source;
+    return isRecord(source) && source.type === "merged";
+  }
+
+  private isTrackActivityGraphData(data: unknown): boolean {
+    return isRecord(data)
+      && data[TRACKJSON_ACTIVITY_GRAPH_GROUP_PROPERTY] === TRACKJSON_ACTIVITY_GRAPH_GROUP_VALUE;
+  }
+
+  private combineTrackActivityGraphDatasets(
+    entries: RouteGraphEntry[],
+    forceCombine: boolean,
+  ): TrackGraphDataset | null {
+    if (entries.length < 2) {
+      return null;
+    }
+    if (!forceCombine && !entries.every((entry) => this.isMergedGraphFeature(entry.feature))) {
+      return null;
+    }
+
+    const datasets = entries.map((entry) => entry.dataset);
+    const totalLength = datasets.reduce((sum, dataset) => sum + dataset.latLngs.length, 0);
+    if (totalLength === 0) {
+      return null;
+    }
+
+    const xAxes: Partial<Record<TrackGraphXAxisKind, number[]>> = {
+      sample: this.createSampleAxis(totalLength),
+    };
+    if (datasets.every((dataset) => Boolean(dataset.xAxes.distance))) {
+      xAxes.distance = datasets.flatMap((dataset) => dataset.xAxes.distance || []);
+    }
+    if (datasets.every((dataset) => Boolean(dataset.xAxes.time))) {
+      xAxes.time = datasets.flatMap((dataset) => dataset.xAxes.time || []);
+    }
+
+    const seriesNames: string[] = [];
+    const seenSeriesNames = new Set<string>();
+    datasets.forEach((dataset) => {
+      dataset.series.forEach((item) => {
+        if (!seenSeriesNames.has(item.name)) {
+          seenSeriesNames.add(item.name);
+          seriesNames.push(item.name);
+        }
+      });
+    });
+    const series = seriesNames
+      .map((name) => ({
+        name,
+        values: datasets.flatMap((dataset) => {
+          const item = dataset.series.find((candidate) => candidate.name === name);
+          return item
+            ? item.values
+            : Array.from({ length: dataset.latLngs.length }, () => Number.NaN);
+        }),
+      }))
+      .filter((item) => item.values.some((value) => Number.isFinite(value)));
+
+    if (series.length === 0) {
+      return null;
+    }
+
+    const coordinateKeys: string[] = [];
+    const seenCoordinateKeys = new Set<string>();
+    datasets.forEach((dataset) => {
+      Object.keys(dataset.coordinateProperties).forEach((key) => {
+        if (key === "segmentIds" || seenCoordinateKeys.has(key)) {
+          return;
+        }
+        seenCoordinateKeys.add(key);
+        coordinateKeys.push(key);
+      });
+    });
+    const coordinateProperties: CoordinateProperties = {};
+    coordinateKeys.forEach((key) => {
+      coordinateProperties[key] = datasets.flatMap((dataset) => {
+        const values = dataset.coordinateProperties[key];
+        return this.isNumberArrayWithLength(values, dataset.latLngs.length)
+          ? values
+          : Array.from({ length: dataset.latLngs.length }, () => Number.NaN);
+      });
+    });
+
+    const sourceRanges: TrackGraphSourceRange[] = [];
+    const segmentIds: number[] = [];
+    let offset = 0;
+    let nextCombinedSegmentId = 0;
+    datasets.forEach((dataset) => {
+      const length = dataset.latLngs.length;
+      sourceRanges.push({
+        coordinateProperties: dataset.coordinateProperties,
+        offset,
+        length,
+      });
+
+      if (dataset.segmentIds && dataset.segmentIds.length === length) {
+        const localToCombined = new Map<number, number>();
+        dataset.segmentIds.forEach((localSegmentId) => {
+          let combinedSegmentId = localToCombined.get(localSegmentId);
+          if (combinedSegmentId === undefined) {
+            combinedSegmentId = nextCombinedSegmentId;
+            nextCombinedSegmentId += 1;
+            localToCombined.set(localSegmentId, combinedSegmentId);
+          }
+          segmentIds.push(combinedSegmentId);
+        });
+      } else {
+        const combinedSegmentId = nextCombinedSegmentId;
+        nextCombinedSegmentId += 1;
+        for (let index = 0; index < length; index += 1) {
+          segmentIds.push(combinedSegmentId);
+        }
+      }
+      offset += length;
+    });
+
+    const defaultXAxis: TrackGraphXAxisKind = xAxes.distance
+      ? "distance"
+      : xAxes.time
+      ? "time"
+      : "sample";
+
+    return {
+      xAxes,
+      defaultXAxis,
+      series,
+      segmentIds,
+      sourceRanges,
+      latLngs: datasets.flatMap((dataset) => dataset.latLngs),
+      coordinateProperties,
+    };
   }
 
   private normalizeTimeSeconds(value: unknown): number | null {
@@ -2012,6 +2170,10 @@ export class StgyTrackRenderer {
     }
 
     const displayValue = state.displayValues[index];
+    if (!Number.isFinite(displayValue)) {
+      this.clearGraphHover(context);
+      return;
+    }
     const hoverX = state.scaledXValues[index];
     const hoverY = state.yScale(displayValue);
 
@@ -2048,8 +2210,17 @@ export class StgyTrackRenderer {
     this.showCoordinateMarker(context, latLng);
     this.updateCoordinateOverlay(context.hud, coordinateProperties, index);
 
-    if (context.activeGraphDataset?.coordinateProperties === coordinateProperties) {
+    const activeDataset = context.activeGraphDataset;
+    if (activeDataset?.coordinateProperties === coordinateProperties) {
       this.showGraphHoverAtIndex(context, index);
+      return;
+    }
+
+    const sourceRange = activeDataset?.sourceRanges?.find((range) => {
+      return range.coordinateProperties === coordinateProperties;
+    });
+    if (sourceRange && index >= 0 && index < sourceRange.length) {
+      this.showGraphHoverAtIndex(context, sourceRange.offset + index);
     }
   }
 
@@ -2195,7 +2366,10 @@ export class StgyTrackRenderer {
     return Array.from({ length }, (_, index) => index);
   }
 
-  private buildGraphDatasetFromFeature(feature: GeoJsonFeatureLike): TrackGraphDataset | null {
+  private buildGraphDatasetFromFeature(
+    feature: GeoJsonFeatureLike,
+    allowEmptySeries = false,
+  ): TrackGraphDataset | null {
     const geometry = feature.geometry;
     if (!isRecord(geometry) || geometry.type !== "LineString") {
       return null;
@@ -2252,6 +2426,10 @@ export class StgyTrackRenderer {
       xAxes.time = times;
     }
 
+    const segmentIds = this.isNumberArrayWithLength(coordinateProperties.segmentIds, length)
+      ? coordinateProperties.segmentIds.map((value) => Math.round(value))
+      : undefined;
+
     const series: TrackGraphSeries[] = [];
     TRACK_GRAPH_SERIES_ORDER.forEach((key) => {
       const values = coordinateProperties[key];
@@ -2267,6 +2445,7 @@ export class StgyTrackRenderer {
       if (
         key === "distances" ||
         key === "times" ||
+        key === "segmentIds" ||
         TRACK_GRAPH_SERIES_ORDER_SET.has(key)
       ) {
         return;
@@ -2281,7 +2460,7 @@ export class StgyTrackRenderer {
       }
     });
 
-    if (series.length === 0) {
+    if (series.length === 0 && !allowEmptySeries) {
       return null;
     }
 
@@ -2295,6 +2474,7 @@ export class StgyTrackRenderer {
       xAxes,
       defaultXAxis,
       series,
+      ...(segmentIds ? { segmentIds } : {}),
       latLngs,
       coordinateProperties,
     };
@@ -2422,6 +2602,92 @@ export class StgyTrackRenderer {
       const endSum = sums[end] ?? 0;
       return (endSum - startSum) / (end - start);
     });
+  }
+
+  private smoothGraphValuesBySegments(
+    values: number[],
+    segmentIds: number[] | undefined,
+    windowSize: TrackGraphSmoothingWindow,
+  ): number[] {
+    if (windowSize <= 1) {
+      return values;
+    }
+
+    const output = values.slice();
+    const groups = new Map<number, number[]>();
+    values.forEach((_, index) => {
+      const segmentId = segmentIds && segmentIds.length === values.length
+        ? segmentIds[index] ?? 0
+        : 0;
+      const indices = groups.get(segmentId) || [];
+      indices.push(index);
+      groups.set(segmentId, indices);
+    });
+
+    groups.forEach((indices) => {
+      let runStart = 0;
+      while (runStart < indices.length) {
+        while (
+          runStart < indices.length &&
+          !Number.isFinite(values[indices[runStart] ?? -1])
+        ) {
+          runStart += 1;
+        }
+        if (runStart >= indices.length) {
+          break;
+        }
+        let runEnd = runStart + 1;
+        while (
+          runEnd < indices.length &&
+          Number.isFinite(values[indices[runEnd] ?? -1])
+        ) {
+          runEnd += 1;
+        }
+        const runIndices = indices.slice(runStart, runEnd);
+        const source = runIndices.map((index) => values[index] ?? Number.NaN);
+        const smoothed = this.smoothCenteredMovingAverage(source, windowSize);
+        runIndices.forEach((index, localIndex) => {
+          output[index] = smoothed[localIndex] ?? values[index] ?? Number.NaN;
+        });
+        runStart = runEnd;
+      }
+    });
+
+    return output;
+  }
+
+  private getGraphSegmentIndexGroups(
+    values: number[],
+    segmentIds: number[] | undefined,
+  ): number[][] {
+    const bySegment = new Map<number, number[]>();
+    values.forEach((_, index) => {
+      const segmentId = segmentIds && segmentIds.length === values.length
+        ? segmentIds[index] ?? 0
+        : 0;
+      const indices = bySegment.get(segmentId) || [];
+      indices.push(index);
+      bySegment.set(segmentId, indices);
+    });
+
+    const groups: number[][] = [];
+    bySegment.forEach((indices) => {
+      let current: number[] = [];
+      indices.forEach((index) => {
+        if (Number.isFinite(values[index])) {
+          current.push(index);
+          return;
+        }
+        if (current.length > 0) {
+          groups.push(current);
+          current = [];
+        }
+      });
+      if (current.length > 0) {
+        groups.push(current);
+      }
+    });
+    return groups;
   }
 
   private createNiceTicks(min: number, max: number, targetCount: number): number[] {
@@ -2567,7 +2833,11 @@ export class StgyTrackRenderer {
       return;
     }
 
-    const displayValues = this.smoothCenteredMovingAverage(series.values, smoothingWindow);
+    const displayValues = this.smoothGraphValuesBySegments(
+      series.values,
+      dataset.segmentIds,
+      smoothingWindow,
+    );
 
     panel.hidden = context.graphCollapsed;
     if (context.graphRestoreButton) {
@@ -2774,15 +3044,18 @@ export class StgyTrackRenderer {
     );
     svg.appendChild(axis);
 
-    const line = document.createElementNS(svgNs, "polyline");
-    line.setAttribute("class", "stgy-track-graph-line");
-    line.setAttribute(
-      "points",
-      xValues.map((x, index) => {
-        return `${xScale(x)},${yScale(displayValues[index])}`;
-      }).join(" ")
-    );
-    svg.appendChild(line);
+    this.getGraphSegmentIndexGroups(displayValues, dataset.segmentIds).forEach((indices) => {
+      if (indices.length === 0) return;
+      const line = document.createElementNS(svgNs, "polyline");
+      line.setAttribute("class", "stgy-track-graph-line");
+      line.setAttribute(
+        "points",
+        indices.map((index) => {
+          return `${xScale(xValues[index] ?? 0)},${yScale(displayValues[index] ?? 0)}`;
+        }).join(" ")
+      );
+      svg.appendChild(line);
+    });
 
     const hoverLine = document.createElementNS(svgNs, "line");
     hoverLine.setAttribute("class", "stgy-track-graph-hover-line");
@@ -2822,12 +3095,19 @@ export class StgyTrackRenderer {
       let nearestDistance = Number.POSITIVE_INFINITY;
 
       scaledXValues.forEach((scaledX, index) => {
+        if (!Number.isFinite(displayValues[index])) {
+          return;
+        }
         const distance = Math.abs(scaledX - viewBoxX);
         if (distance < nearestDistance) {
           nearestDistance = distance;
           nearestIndex = index;
         }
       });
+
+      if (!Number.isFinite(nearestDistance)) {
+        return;
+      }
 
       this.activateCoordinateSample(
         context,
@@ -2884,7 +3164,9 @@ export class StgyTrackRenderer {
     context: CoordinateInteractionContext,
     pinScale: number,
   ): L.GeoJSON {
-    return L.geoJSON(asGeoJsonInput(geoJsonData), {
+    const graphEntries: RouteGraphEntry[] = [];
+    const combineTrackActivityFeatures = this.isTrackActivityGraphData(geoJsonData);
+    const geoJsonLayer = L.geoJSON(asGeoJsonInput(geoJsonData), {
       style: (feature) => this.getFeaturePathStyle(feature),
       pointToLayer: (feature, latlng) => {
         const props = getFeatureProperties(feature);
@@ -2927,9 +3209,33 @@ export class StgyTrackRenderer {
         }
 
         this.bindCoordinateInteractions(feature, layer, context);
-        this.registerGraphDatasetForLayer(feature, layer, context);
+        const mergedFeature = this.isMergedGraphFeature(feature);
+        const allowEmptySeries = combineTrackActivityFeatures || mergedFeature;
+        const dataset = this.buildGraphDatasetFromFeature(feature, allowEmptySeries);
+        if (dataset && (dataset.series.length > 0 || allowEmptySeries)) {
+          graphEntries.push({ feature, layer, dataset });
+        }
       }
     });
+
+    const combinedDataset = this.combineTrackActivityGraphDatasets(
+      graphEntries,
+      combineTrackActivityFeatures,
+    );
+    graphEntries.forEach((entry) => {
+      const dataset = combinedDataset || (entry.dataset.series.length > 0 ? entry.dataset : null);
+      if (!dataset) {
+        return;
+      }
+      this.registerGraphDatasetForLayer(
+        entry.feature,
+        entry.layer,
+        context,
+        dataset,
+      );
+    });
+
+    return geoJsonLayer;
   }
 
   private getGeoJsonCenter(geoJsonData: unknown): L.LatLng | null {
