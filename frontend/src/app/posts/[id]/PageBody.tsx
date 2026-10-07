@@ -16,6 +16,7 @@ import type { Post, PostDetail, User } from "@/api/models";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import PostCard from "@/components/PostCard";
+import ArticleImageLightboxBinder from "@/components/PubImageBlockBinder";
 import PostForm from "@/components/PostForm";
 import { makePostIdFromDateString, parseBodyAndTags } from "@/utils/parse";
 import { useEditingHistory } from "@/hooks/useEditingHistory";
@@ -277,18 +278,6 @@ export default function PageBody() {
       .finally(() => setReplyLoading(false));
   }, [userId, post, replyPage, replyOldestFirst]);
 
-  useEffect(() => {
-    function handler(e: MouseEvent) {
-      const target = e.target as HTMLElement;
-      const block = target.closest(".image-block");
-      if (block) {
-        block.classList.toggle("expanded");
-        e.stopPropagation();
-      }
-    }
-    document.body.addEventListener("click", handler);
-    return () => document.body.removeEventListener("click", handler);
-  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -748,6 +737,7 @@ export default function PageBody() {
 
   return (
     <main className="max-w-3xl mx-auto mt-8 p-1 sm:p-4">
+      <ArticleImageLightboxBinder />
       {localHistoryError && (
         <div className="mb-4 text-red-600">{localHistoryError}</div>
       )}

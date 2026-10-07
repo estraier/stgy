@@ -21,6 +21,7 @@ import { useRequireLogin } from "@/hooks/useRequireLogin";
 import { makePostIdFromDateString, parseBodyAndTags } from "@/utils/parse";
 import { parsePostSearchQuery, serializePostSearchQuery } from "@/utils/parse";
 import PostCard from "@/components/PostCard";
+import ArticleImageLightboxBinder from "@/components/PubImageBlockBinder";
 import KwicBody from "@/components/KwicBody";
 import PostForm from "@/components/PostForm";
 import { useEditingHistory } from "@/hooks/useEditingHistory";
@@ -459,20 +460,6 @@ export default function PageBody() {
     kwicResult.key,
   ]);
 
-  useEffect(() => {
-    function handler(e: MouseEvent) {
-      const target = e.target as HTMLElement;
-      const block = target.closest(".image-block");
-      if (block) {
-        block.classList.toggle("expanded");
-        e.stopPropagation();
-      }
-    }
-    document.body.addEventListener("click", handler);
-    return () => {
-      document.body.removeEventListener("click", handler);
-    };
-  }, []);
 
   useEffect(() => {
     try {
@@ -707,6 +694,7 @@ export default function PageBody() {
 
   return (
     <main className="max-w-3xl mx-auto mt-4 p-1 sm:p-4" onClick={clearError}>
+      <ArticleImageLightboxBinder />
       {draftId ? (
         <PostForm
           body={body}

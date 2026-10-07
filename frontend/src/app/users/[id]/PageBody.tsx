@@ -22,6 +22,7 @@ import { useRequireLogin } from "@/hooks/useRequireLogin";
 import UserCard from "@/components/UserCard";
 import UserForm from "@/components/UserForm";
 import PostCard from "@/components/PostCard";
+import ArticleImageLightboxBinder from "@/components/PubImageBlockBinder";
 import PostForm from "@/components/PostForm";
 import { makePostIdFromDateString, parseBodyAndTags } from "@/utils/parse";
 import { formatDateTime } from "@/utils/format";
@@ -377,20 +378,6 @@ export default function PageBody() {
     user,
   ]);
 
-  useEffect(() => {
-    function handler(e: MouseEvent) {
-      const target = e.target as HTMLElement;
-      const block = target.closest(".image-block");
-      if (block) {
-        block.classList.toggle("expanded");
-        e.stopPropagation();
-      }
-    }
-    document.body.addEventListener("click", handler);
-    return () => {
-      document.body.removeEventListener("click", handler);
-    };
-  }, []);
 
   useEffect(() => {
     initialAiTabScrollActiveRef.current = !!aiMode;
@@ -716,6 +703,7 @@ export default function PageBody() {
 
   return (
     <main className="max-w-3xl mx-auto mt-8 p-1 sm:p-4">
+      <ArticleImageLightboxBinder />
       <div ref={tabsPrecedingContentRef}>
         <UserCard
           user={user}

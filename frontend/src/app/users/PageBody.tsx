@@ -9,6 +9,7 @@ import type { User } from "@/api/models";
 import type { KwicData } from "stgy-markdown";
 import { parseUserSearchQuery, serializeUserSearchQuery } from "@/utils/parse";
 import UserCard from "@/components/UserCard";
+import ArticleImageLightboxBinder from "@/components/PubImageBlockBinder";
 import KwicBody, { KwicInlineNodes } from "@/components/KwicBody";
 
 const TAB_VALUES = ["followees", "followers", "all"] as const;
@@ -300,20 +301,6 @@ export default function PageBody() {
     kwicResult.key,
   ]);
 
-  useEffect(() => {
-    function handler(e: MouseEvent) {
-      const target = e.target as HTMLElement;
-      const block = target.closest(".image-block");
-      if (block) {
-        block.classList.toggle("expanded");
-        e.stopPropagation();
-      }
-    }
-    document.body.addEventListener("click", handler);
-    return () => {
-      document.body.removeEventListener("click", handler);
-    };
-  }, []);
 
   useEffect(() => {
     try {
@@ -406,6 +393,7 @@ export default function PageBody() {
 
   return (
     <main className="max-w-3xl mx-auto mt-8 p-1 sm:p-4">
+      <ArticleImageLightboxBinder />
       {!isSearchMode ? (
         <div className="flex gap-1 mb-2">
           {TAB_VALUES.map((t) => (
