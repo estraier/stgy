@@ -559,23 +559,34 @@ function splitTrackActivityPositionSegments(
 ): (TrackPoint & { lat: number; lon: number })[][] {
   const segments: (TrackPoint & { lat: number; lon: number })[][] = [];
   let current: (TrackPoint & { lat: number; lon: number })[] = [];
+  let currentSegmentId: number | undefined;
 
-  points.forEach((point) => {
-    if (hasPosition(point)) {
-      current.push(point);
-      return;
-    }
-
+  const flushCurrent = () => {
     if (current.length > 0) {
       segments.push(current);
       current = [];
     }
+    currentSegmentId = undefined;
+  };
+
+  points.forEach((point) => {
+    if (!hasPosition(point)) {
+      flushCurrent();
+      return;
+    }
+
+    const segmentId = isFiniteNumber(point.segmentId)
+      ? Math.round(point.segmentId)
+      : undefined;
+    if (current.length > 0 && segmentId !== currentSegmentId) {
+      flushCurrent();
+    }
+
+    current.push(point);
+    currentSegmentId = segmentId;
   });
 
-  if (current.length > 0) {
-    segments.push(current);
-  }
-
+  flushCurrent();
   return segments;
 }
 

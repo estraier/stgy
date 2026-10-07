@@ -1518,7 +1518,7 @@ describe("mergeTrackActivities", () => {
       .toBeUndefined();
   });
 
-  test("writes merged activities as a single LineString", () => {
+  test("splits merged activities into one LineString per source segment", () => {
     const first = makeActivity(2);
     const second = makeActivity(2);
     second.points.forEach((point, index) => {
@@ -1529,9 +1529,21 @@ describe("mergeTrackActivities", () => {
     const merged = mergeTrackActivities([first, second]);
     const parsed = parseTrackJson(trackActivityToTrackJson(merged));
 
-    expect(parsed.features).toHaveLength(1);
-    expect(parsed.features[0].geometry.type).toBe("LineString");
-    expect(parsed.features[0].geometry.coordinates).toHaveLength(4);
+    expect(parsed.features).toHaveLength(2);
+    expect(parsed.features.map((feature: any) => feature.geometry.type)).toEqual([
+      "LineString",
+      "LineString",
+    ]);
+    expect(parsed.features.map((feature: any) => {
+      return feature.geometry.coordinates.length;
+    })).toEqual([2, 2]);
+    expect(parsed.features.map((feature: any) => {
+      return feature.properties.coordinateProperties.segmentIds;
+    })).toEqual([
+      [0, 0],
+      [1, 1],
+    ]);
+    expect(parsed.stgyGraphGroup).toBe("trackActivity");
     expect(parsed.features[0].properties.metadata.source).toEqual({
       type: "merged",
     });
@@ -1554,11 +1566,10 @@ describe("mergeTrackActivities", () => {
     const merged = mergeTrackActivities([first, second, third]);
     const parsed = parseTrackJson(trackActivityToTrackJson(merged));
 
-    expect(parsed.features).toHaveLength(2);
-    expect(parsed.features[0].properties.coordinateProperties.segmentIds).toEqual([
-      0, 0, 1, 1,
-    ]);
-    expect(parsed.features[1].properties.coordinateProperties.segmentIds).toEqual([2, 2]);
+    expect(parsed.features).toHaveLength(3);
+    expect(parsed.features[0].properties.coordinateProperties.segmentIds).toEqual([0, 0]);
+    expect(parsed.features[1].properties.coordinateProperties.segmentIds).toEqual([1, 1]);
+    expect(parsed.features[2].properties.coordinateProperties.segmentIds).toEqual([2, 2]);
     expect(parsed.features.flatMap((feature: any) => {
       return feature.geometry.coordinates;
     })).toHaveLength(6);
@@ -1927,12 +1938,20 @@ describe("trackActivityToTrackJson", () => {
 
     const merged = mergeTrackActivities([first, second, third]);
     const parsed = parseTrackJson(trackActivityToTrackJson(merged));
-    const coordinateProperties = parsed.features[0].properties.coordinateProperties;
 
-    expect(coordinateProperties.segmentIds).toEqual([0, 0, 0, 1, 1, 1, 2, 2, 2]);
+    expect(parsed.features).toHaveLength(3);
+    expect(parsed.features.map((feature: any) => {
+      return feature.properties.coordinateProperties.segmentIds;
+    })).toEqual([
+      [0, 0, 0],
+      [1, 1, 1],
+      [2, 2, 2],
+    ]);
 
     const roundTrip = trackJsonDataToTrackActivity(parsed);
-    expect(roundTrip.points.map((point) => point.segmentId)).toEqual([
+    expect(roundTrip.points.filter((point) => {
+      return point.lat !== undefined && point.lon !== undefined;
+    }).map((point) => point.segmentId)).toEqual([
       0, 0, 0, 1, 1, 1, 2, 2, 2,
     ]);
   });
