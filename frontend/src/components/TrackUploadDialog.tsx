@@ -49,8 +49,8 @@ type SelectedItem = TrackDialogFileItem & {
   previewMetadata?: TrackUploadPreviewMetadata;
   pointCount?: number;
   obfuscateCoordinates: boolean;
-  obfuscateStartDistanceM: number;
-  obfuscateEndDistanceM: number;
+  obfuscateStartDistanceM: string;
+  obfuscateEndDistanceM: string;
 };
 
 type SelectedItemPatch = Partial<
@@ -89,16 +89,40 @@ function createSelectedItem(file: TrackDialogFileItem): SelectedItem {
     previewStatus: supported ? "loading" : "error",
     previewError: supported ? undefined : "Only FIT, GPX, TRJ, and TRJGZ files are supported.",
     obfuscateCoordinates: false,
-    obfuscateStartDistanceM: 1000,
-    obfuscateEndDistanceM: 1000,
+    obfuscateStartDistanceM: "1000",
+    obfuscateEndDistanceM: "1000",
   };
+}
+
+function parseTrackObfuscationDistanceInput(
+  value: string,
+  totalDistanceM: number | undefined,
+): number {
+  const trimmed = value.trim();
+  return normalizeTrackObfuscationDistance(
+    trimmed === "" ? 0 : Number(trimmed),
+    totalDistanceM,
+  );
+}
+
+function normalizeTrackObfuscationDistanceInput(
+  value: string,
+  totalDistanceM: number | undefined,
+): string {
+  return String(parseTrackObfuscationDistanceInput(value, totalDistanceM));
 }
 
 function getItemObfuscation(item: SelectedItem): TrackUploadObfuscationOptions {
   return {
     enabled: Boolean(getTrackFileKind(item.name)) && item.obfuscateCoordinates,
-    startDistanceM: item.obfuscateStartDistanceM,
-    endDistanceM: item.obfuscateEndDistanceM,
+    startDistanceM: parseTrackObfuscationDistanceInput(
+      item.obfuscateStartDistanceM,
+      item.previewMetadata?.totalDistanceM,
+    ),
+    endDistanceM: parseTrackObfuscationDistanceInput(
+      item.obfuscateEndDistanceM,
+      item.previewMetadata?.totalDistanceM,
+    ),
   };
 }
 
@@ -194,8 +218,8 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
         };
         if (initializeDefaults) {
           const defaults = createTrackObfuscationDistances(preview.metadata.totalDistanceM);
-          patch.obfuscateStartDistanceM = defaults.startDistanceM;
-          patch.obfuscateEndDistanceM = defaults.endDistanceM;
+          patch.obfuscateStartDistanceM = String(defaults.startDistanceM);
+          patch.obfuscateEndDistanceM = String(defaults.endDistanceM);
         }
         setItemState(item.id, patch);
       } catch (caught: unknown) {
@@ -497,10 +521,8 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
                           <label className="inline-flex items-center gap-1 whitespace-nowrap">
                             start:
                             <input
-                              type="number"
-                              min={0}
-                              max={maxObfuscationDistanceM}
-                              step={1}
+                              type="text"
+                              inputMode="numeric"
                               value={item.obfuscateStartDistanceM}
                               disabled={busy || !item.obfuscateCoordinates}
                               className={
@@ -509,14 +531,21 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
                               }
                               onChange={(event) => {
                                 setItemState(item.id, {
-                                  obfuscateStartDistanceM: normalizeTrackObfuscationDistance(
-                                    Number(event.target.value),
-                                    item.previewMetadata?.totalDistanceM,
-                                  ),
+                                  obfuscateStartDistanceM: event.target.value,
                                 });
                               }}
                               onBlur={() => {
-                                void refreshItemPreview(item, getItemObfuscation(item));
+                                const nextItem = {
+                                  ...item,
+                                  obfuscateStartDistanceM: normalizeTrackObfuscationDistanceInput(
+                                    item.obfuscateStartDistanceM,
+                                    item.previewMetadata?.totalDistanceM,
+                                  ),
+                                };
+                                setItemState(item.id, {
+                                  obfuscateStartDistanceM: nextItem.obfuscateStartDistanceM,
+                                });
+                                void refreshItemPreview(nextItem, getItemObfuscation(nextItem));
                               }}
                             />
                             m
@@ -524,10 +553,8 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
                           <label className="inline-flex items-center gap-1 whitespace-nowrap">
                             end:
                             <input
-                              type="number"
-                              min={0}
-                              max={maxObfuscationDistanceM}
-                              step={1}
+                              type="text"
+                              inputMode="numeric"
                               value={item.obfuscateEndDistanceM}
                               disabled={busy || !item.obfuscateCoordinates}
                               className={
@@ -536,14 +563,21 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
                               }
                               onChange={(event) => {
                                 setItemState(item.id, {
-                                  obfuscateEndDistanceM: normalizeTrackObfuscationDistance(
-                                    Number(event.target.value),
-                                    item.previewMetadata?.totalDistanceM,
-                                  ),
+                                  obfuscateEndDistanceM: event.target.value,
                                 });
                               }}
                               onBlur={() => {
-                                void refreshItemPreview(item, getItemObfuscation(item));
+                                const nextItem = {
+                                  ...item,
+                                  obfuscateEndDistanceM: normalizeTrackObfuscationDistanceInput(
+                                    item.obfuscateEndDistanceM,
+                                    item.previewMetadata?.totalDistanceM,
+                                  ),
+                                };
+                                setItemState(item.id, {
+                                  obfuscateEndDistanceM: nextItem.obfuscateEndDistanceM,
+                                });
+                                void refreshItemPreview(nextItem, getItemObfuscation(nextItem));
                               }}
                             />
                             m
