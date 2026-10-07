@@ -83,7 +83,7 @@ beforeEach(() => {
   countTrackJsonPositionedPointsMock.mockReturnValue(0);
 });
 
-test("builds a FIT preview with uniform 3000-point downsampling and metadata", async () => {
+test("builds a FIT preview by downsampling TrackJSON so activity segments are preserved", async () => {
   const bytes = new Uint8Array([1, 2, 3]).buffer;
   const activity = {
     metadata: {
@@ -95,15 +95,24 @@ test("builds a FIT preview with uniform 3000-point downsampling and metadata", a
     },
     points: Array.from({ length: 4000 }, () => ({ lat: 35, lon: 139 })),
   };
-  const preview = { points: new Array(3000) };
+  const full = {
+    type: "FeatureCollection",
+    stgyGraphGroup: "trackActivity",
+    features: [],
+  };
+  const preview = {
+    ...full,
+    sampled: true,
+  };
 
   countFitRecordMessagesMock.mockReturnValue(4000);
   parseFitBytesMock.mockReturnValue(activity as never);
-  downsampleTrackActivityMock.mockReturnValue(preview as never);
-  trackActivityToTrackJsonMock.mockReturnValue('{"type":"FeatureCollection"}');
+  trackActivityToTrackJsonMock.mockReturnValue(JSON.stringify(full));
+  parseTrackJsonDataMock.mockReturnValue(full);
+  downsampleTrackJsonDataMock.mockReturnValue(preview);
 
   await expect(makeFitPreview(bytes)).resolves.toEqual({
-    json: '{"type":"FeatureCollection"}',
+    json: JSON.stringify(preview),
     metadata: {
       startTime: 1_700_000_000,
       localTimeOffsetSeconds: 9 * 3600,
@@ -112,17 +121,56 @@ test("builds a FIT preview with uniform 3000-point downsampling and metadata", a
     },
     pointCount: 4000,
   });
-  await expect(makeFitPreviewJson(bytes)).resolves.toBe('{"type":"FeatureCollection"}');
+  await expect(makeFitPreviewJson(bytes)).resolves.toBe(JSON.stringify(preview));
   expect(parseFitBytesMock).toHaveBeenCalledWith(bytes);
-  expect(downsampleTrackActivityMock).toHaveBeenCalledWith(activity, {
+  expect(trackActivityToTrackJsonMock).toHaveBeenCalledWith(activity, {
+    pretty: false,
+  });
+  expect(parseTrackJsonDataMock).toHaveBeenCalledWith(JSON.stringify(full));
+  expect(downsampleTrackJsonDataMock).toHaveBeenCalledWith(full, {
     maxPoints: TRACK_UPLOAD_PREVIEW_MAX_POINTS,
     strategy: "uniform",
     preserveEndpoints: true,
   });
-  expect(trackActivityToTrackJsonMock).toHaveBeenCalledWith(preview, {
-    pretty: false,
-  });
+  expect(downsampleTrackActivityMock).not.toHaveBeenCalled();
 });
+
+test(
+  "falls back to activity downsampling when split TrackJSON features exceed the global preview cap",
+  async () => {
+    const bytes = new Uint8Array([1, 2, 3]).buffer;
+    const activity = { metadata: {}, points: new Array(7500) };
+    const full = { type: "FeatureCollection", stgyGraphGroup: "trackActivity", features: [] };
+    const perFeatureDownsampled = { ...full, points: 7500 };
+    const sampledActivity = { metadata: {}, points: new Array(3000) };
+    const final = { ...full, points: 3000 };
+
+    parseFitBytesMock.mockReturnValue(activity as never);
+    trackActivityToTrackJsonMock
+      .mockReturnValueOnce(JSON.stringify(full))
+      .mockReturnValueOnce(JSON.stringify(final));
+    parseTrackJsonDataMock
+      .mockReturnValueOnce(full)
+      .mockReturnValueOnce(final);
+    downsampleTrackJsonDataMock.mockReturnValue(perFeatureDownsampled);
+    countTrackJsonPositionedPointsMock.mockReturnValueOnce(7500);
+    downsampleTrackActivityMock.mockReturnValue(sampledActivity as never);
+
+    await expect(makeFitPreview(bytes, 3000)).resolves.toEqual({
+      json: JSON.stringify(final),
+      metadata: {},
+      pointCount: 0,
+    });
+    expect(downsampleTrackActivityMock).toHaveBeenCalledWith(activity, {
+      maxPoints: 3000,
+      strategy: "uniform",
+      preserveEndpoints: true,
+    });
+    expect(trackActivityToTrackJsonMock).toHaveBeenLastCalledWith(sampledActivity, {
+      pretty: false,
+    });
+  },
+);
 
 test("builds a GPX preview with uniform downsampling", async () => {
   const activity = {
@@ -273,15 +321,17 @@ test("formats short distance and duration values", () => {
   expect(formatTrackPreviewElapsedTime({ totalElapsedTime: 125 })).toBe("2:05");
 });
 
-test("obfuscates FIT bytes before building the preview when enabled", async () => {
+test("obfuscates FIT bytes before building the segment-preserving preview", async () => {
   const bytes = new Uint8Array([1, 2, 3]).buffer;
   const obfuscated = new Uint8Array([4, 5, 6]);
   const activity = { metadata: {}, points: [] };
+  const full = { type: "FeatureCollection", stgyGraphGroup: "trackActivity", features: [] };
 
   obfuscateFitPrivacyMock.mockReturnValue(obfuscated);
   parseFitBytesMock.mockReturnValue(activity as never);
-  downsampleTrackActivityMock.mockReturnValue(activity as never);
-  trackActivityToTrackJsonMock.mockReturnValue('{"type":"FeatureCollection"}');
+  trackActivityToTrackJsonMock.mockReturnValue(JSON.stringify(full));
+  parseTrackJsonDataMock.mockReturnValue(full);
+  downsampleTrackJsonDataMock.mockReturnValue(full);
 
   await makeFitPreview(bytes, TRACK_UPLOAD_PREVIEW_MAX_POINTS, {
     enabled: true,
@@ -294,6 +344,7 @@ test("obfuscates FIT bytes before building the preview when enabled", async () =
     endDistanceM: 1300,
   });
   expect(parseFitBytesMock).toHaveBeenCalledWith(obfuscated);
+  expect(downsampleTrackActivityMock).not.toHaveBeenCalled();
 });
 
 test("obfuscates GPX coordinates before building the preview when enabled", async () => {

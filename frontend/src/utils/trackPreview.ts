@@ -71,7 +71,10 @@ export async function makeFitPreview(
   maxPoints = TRACK_UPLOAD_PREVIEW_MAX_POINTS,
   obfuscation?: TrackUploadObfuscationOptions,
 ): Promise<TrackUploadPreview> {
-  const fit = await import("stgy-track/fit");
+  const [fit, trackjson] = await Promise.all([
+    import("stgy-track/fit"),
+    import("stgy-track/trackjson"),
+  ]);
   const sourceBytes = obfuscation?.enabled
     ? fit.obfuscateFitPrivacy(bytes, {
         startDistanceM: obfuscation.startDistanceM,
@@ -80,15 +83,26 @@ export async function makeFitPreview(
     : bytes;
   const activity = fit.parseFitBytes(sourceBytes);
   const pointCount = fit.countFitRecordMessages(sourceBytes);
-  const preview = fit.downsampleTrackActivity(activity, {
+  const fullTrackJson = trackjson.parseTrackJsonData(
+    fit.trackActivityToTrackJson(activity, { pretty: false }),
+  );
+  let preview = trackjson.downsampleTrackJsonData(fullTrackJson, {
     maxPoints,
     strategy: "uniform",
     preserveEndpoints: true,
   });
+  if (trackjson.countTrackJsonPositionedPoints(preview) > maxPoints) {
+    const previewActivity = fit.downsampleTrackActivity(activity, {
+      maxPoints,
+      strategy: "uniform",
+      preserveEndpoints: true,
+    });
+    preview = trackjson.parseTrackJsonData(
+      fit.trackActivityToTrackJson(previewActivity, { pretty: false }),
+    );
+  }
   return {
-    json: fit.trackActivityToTrackJson(preview, {
-      pretty: false,
-    }),
+    json: JSON.stringify(preview),
     metadata: pickPreviewMetadata(activity.metadata),
     pointCount,
   };

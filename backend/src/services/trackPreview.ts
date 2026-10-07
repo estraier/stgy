@@ -40,6 +40,7 @@ type TrackJsonModule = {
   parseTrackJsonData: (text: string) => unknown;
   downsampleTrackJsonData: (data: unknown, options: DownsampleOptions) => unknown;
   compactTrackJsonData: (data: unknown) => unknown;
+  countTrackJsonPositionedPoints: (data: unknown) => number;
   getTrackJsonPoi: (data: unknown) => TrackJsonPoi[];
   applyTrackJsonPoiLabels: <T>(
     data: T,
@@ -117,17 +118,26 @@ export async function makeFitTrackPreview(
 ): Promise<Uint8Array> {
   const [fit, trackjson] = await Promise.all([loadFitModule(), loadTrackJsonModule()]);
   const activity = fit.parseFitBytes(bytes);
-  const preview = fit.downsampleTrackActivity(activity, {
+  const fullTrackJson = trackjson.parseTrackJsonData(
+    fit.trackActivityToTrackJson(activity, { pretty: false }),
+  );
+  let preview = trackjson.downsampleTrackJsonData(fullTrackJson, {
     maxPoints,
     strategy: "uniform",
     preserveEndpoints: true,
   });
-  const text = fit.trackActivityToTrackJson(preview, {
-    pretty: false,
-  });
-  const data = trackjson.parseTrackJsonData(text);
-  const labeled = addTrackJsonPoiLabels(data, trackjson, geoCoder);
-  return gzipUtf8(labeled === data ? text : JSON.stringify(labeled));
+  if (trackjson.countTrackJsonPositionedPoints(preview) > maxPoints) {
+    const previewActivity = fit.downsampleTrackActivity(activity, {
+      maxPoints,
+      strategy: "uniform",
+      preserveEndpoints: true,
+    });
+    preview = trackjson.parseTrackJsonData(
+      fit.trackActivityToTrackJson(previewActivity, { pretty: false }),
+    );
+  }
+  const labeled = addTrackJsonPoiLabels(preview, trackjson, geoCoder);
+  return gzipUtf8(JSON.stringify(labeled));
 }
 
 export async function makeTrackJsonTrackPreview(
