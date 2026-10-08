@@ -1,12 +1,22 @@
 const STF_OUTER_EDGE_LUMINANCE_SCALE = 0.5;
+const STF_PROFILE_WEIGHT_RATIO = 2.8;
+const STF_PROFILE_EXPONENT = Math.log2(STF_PROFILE_WEIGHT_RATIO);
+
+function stfProfileLuminance(progress: number): number {
+  return (
+    STF_PROFILE_WEIGHT_RATIO
+    - (2 - progress) ** STF_PROFILE_EXPONENT
+  ) / (STF_PROFILE_WEIGHT_RATIO - 1);
+}
 
 /**
  * Builds STF blend weights from aperture-derived circle-of-confusion radii.
  *
  * Radius is proportional to 1 / F. The interior weights are the discrete
- * differences of a linear radial luminance profile. The widest-aperture edge
- * luminance is based on one extrapolated aperture step and then halved to
- * soften the remaining outer discontinuity.
+ * differences of the W=2.8 radial luminance profile; W=2 is exactly linear,
+ * while W=2.8 gives the slight outward fullness preferred by the STF model.
+ * The widest-aperture edge luminance is based on one extrapolated aperture
+ * step and then halved to soften the remaining outer discontinuity.
  *
  * Returns null when the aperture sequence cannot define that profile, so the
  * caller can preserve the historical uniform-weight fallback.
@@ -58,11 +68,23 @@ export function buildStfApertureWeights(fNumbers: readonly number[]): Float64Arr
   const sortedWeights = new Float64Array(imageCount);
   sortedWeights[0] = outerEdgeLuminance;
 
-  const interiorScale = (1 - outerEdgeLuminance) / radiusSpan;
+  let previousCumulative = outerEdgeLuminance;
   for (let i = 1; i < apertures.length; i += 1) {
     const radiusStep = apertures[i - 1].radius - apertures[i].radius;
     if (!(Number.isFinite(radiusStep) && radiusStep > 0)) return null;
-    sortedWeights[i] = radiusStep * interiorScale;
+
+    const progress = (widest.radius - apertures[i].radius) / radiusSpan;
+    const profileLuminance = stfProfileLuminance(progress);
+    if (!(Number.isFinite(profileLuminance) && profileLuminance > 0 && profileLuminance <= 1)) {
+      return null;
+    }
+
+    const cumulative = outerEdgeLuminance
+      + (1 - outerEdgeLuminance) * profileLuminance;
+    const weight = cumulative - previousCumulative;
+    if (!(Number.isFinite(weight) && weight > 0)) return null;
+    sortedWeights[i] = weight;
+    previousCumulative = cumulative;
   }
 
   let totalWeight = 0;
