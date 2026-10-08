@@ -18,6 +18,16 @@ declare global {
 
 let openCvPromise: Promise<OpenCvRuntime> | null = null;
 
+function silenceOpenCvLogging(cv: OpenCvRuntime): OpenCvRuntime {
+  const logging = (cv as OpenCvRuntime & {
+    utils?: { logging?: { setLogLevel?: (level: number) => void } };
+  }).utils?.logging;
+  try {
+    logging?.setLogLevel?.(0);
+  } catch {}
+  return cv;
+}
+
 function isPromiseLike(value: unknown): value is PromiseLike<OpenCvRuntime> {
   return Boolean(
     value &&
@@ -107,7 +117,7 @@ export function getOpenCv(): Promise<OpenCvRuntime> {
   openCvPromise = (async () => {
     if (typeof window === "undefined") throw new Error("OpenCV is only available in the browser");
     await loadOpenCvScript();
-    return initializedOpenCvFromGlobal();
+    return silenceOpenCvLogging(await initializedOpenCvFromGlobal());
   })().catch((error) => {
     openCvPromise = null;
     throw error;

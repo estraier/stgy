@@ -531,9 +531,7 @@ export async function saveEditingHistorySnapshot(params: {
 
   try {
     await cleanupEditingHistory();
-  } catch (error) {
-    console.warn("Failed to clean up editing history after saving.", error);
-  }
+  } catch {}
   return records[0];
 }
 

@@ -8,7 +8,7 @@ const LIBRAW_WASM_COMMIT = "32fd36a9883a10c1632bc20073f1ea88cc60487a";
 const SINGLE_EMSCRIPTEN_VERSION = "5.0.7";
 const THREADED_EMSCRIPTEN_VERSION = "6.0.3";
 const OPENMP_THREADS = 4;
-const STGY_LIBRAW_THREADED_BUILD_REVISION = 3;
+const STGY_LIBRAW_BUILD_REVISION = 4;
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const frontendDir = dirname(scriptDir);
@@ -24,7 +24,7 @@ const variants = [
     openmp: false,
     pthreadPool: null,
     openmpThreads: null,
-    buildRevision: null,
+    buildRevision: STGY_LIBRAW_BUILD_REVISION,
   },
   {
     mode: "threaded",
@@ -34,7 +34,7 @@ const variants = [
     openmp: true,
     pthreadPool: OPENMP_THREADS,
     openmpThreads: OPENMP_THREADS,
-    buildRevision: STGY_LIBRAW_THREADED_BUILD_REVISION,
+    buildRevision: STGY_LIBRAW_BUILD_REVISION,
   },
 ];
 

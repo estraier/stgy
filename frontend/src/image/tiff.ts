@@ -70,8 +70,7 @@ export async function encodeFromLinearProPhoto(options) {
     try {
       stripBytes = await deflate(raw);
       compression = 8;
-    } catch (error) {
-      console.warn("TIFF Deflate compression failed; falling back to uncompressed TIFF.", error);
+    } catch {
       stripBytes = raw;
       compression = 1;
     }

@@ -32,6 +32,91 @@ const sampleMetadata: PreservedImageMetadata = {
   gps: { latitude: 36.4012, longitude: 138.2498, altitude: 512.3 },
 };
 
+
+function concatTestBytes(...parts: Uint8Array[]): Uint8Array {
+  const output = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
+  let offset = 0;
+  for (const part of parts) {
+    output.set(part, offset);
+    offset += part.length;
+  }
+  return output;
+}
+
+function be16(value: number): Uint8Array {
+  return Uint8Array.from([(value >>> 8) & 0xff, value & 0xff]);
+}
+
+function be32(value: number): Uint8Array {
+  return Uint8Array.from([(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff]);
+}
+
+function ascii(text: string): Uint8Array {
+  return Uint8Array.from(text, (char) => char.charCodeAt(0));
+}
+
+function isoBox(type: string, payload: Uint8Array): Uint8Array {
+  return concatTestBytes(be32(payload.length + 8), ascii(type), payload);
+}
+
+function buildTestHeif(exifTiff: Uint8Array, constructionMethod: 0 | 1): Uint8Array {
+  const exifItem = concatTestBytes(be32(0), exifTiff);
+  const infe = isoBox("infe", concatTestBytes(
+    Uint8Array.from([2, 0, 0, 0]),
+    be16(1),
+    be16(0),
+    ascii("Exif"),
+    Uint8Array.from([0]),
+  ));
+  const iinf = isoBox("iinf", concatTestBytes(
+    Uint8Array.from([0, 0, 0, 0]),
+    be16(1),
+    infe,
+  ));
+  const ftyp = isoBox("ftyp", concatTestBytes(ascii("heic"), be32(0), ascii("mif1"), ascii("heic")));
+
+  const makeIloc = (extentOffset: number) => isoBox("iloc", concatTestBytes(
+    Uint8Array.from([1, 0, 0, 0]),
+    Uint8Array.from([0x44, 0x00]),
+    be16(1),
+    be16(1),
+    be16(constructionMethod),
+    be16(0),
+    be16(1),
+    be32(extentOffset),
+    be32(exifItem.length),
+  ));
+
+  if (constructionMethod === 1) {
+    const iloc = makeIloc(0);
+    const idat = isoBox("idat", exifItem);
+    const meta = isoBox("meta", concatTestBytes(Uint8Array.from([0, 0, 0, 0]), iinf, iloc, idat));
+    return concatTestBytes(ftyp, meta);
+  }
+
+  const placeholderIloc = makeIloc(0);
+  const placeholderMeta = isoBox("meta", concatTestBytes(Uint8Array.from([0, 0, 0, 0]), iinf, placeholderIloc));
+  const mdatDataOffset = ftyp.length + placeholderMeta.length + 8;
+  const iloc = makeIloc(mdatDataOffset);
+  const meta = isoBox("meta", concatTestBytes(Uint8Array.from([0, 0, 0, 0]), iinf, iloc));
+  return concatTestBytes(ftyp, meta, isoBox("mdat", exifItem));
+}
+
+function minimalPng(): Uint8Array {
+  const signature = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const ihdr = concatTestBytes(be32(13), ascii("IHDR"), Uint8Array.from([
+    0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0, 0, 0,
+  ]), be32(0));
+  const iend = concatTestBytes(be32(0), ascii("IEND"), be32(0));
+  return concatTestBytes(signature, ihdr, iend);
+}
+
+function minimalWebP(): Uint8Array {
+  const vp8lPayload = Uint8Array.from([0x2f, 0, 0, 0, 0]);
+  const chunk = concatTestBytes(ascii("VP8L"), Uint8Array.from([5, 0, 0, 0]), vp8lPayload, Uint8Array.from([0]));
+  return concatTestBytes(ascii("RIFF"), Uint8Array.from([18, 0, 0, 0]), ascii("WEBP"), chunk);
+}
+
 describe("EXIF metadata whitelist", () => {
   test("round-trips the whitelisted fields through a fresh EXIF TIFF payload", () => {
     const payload = buildExifTiffPayload(sampleMetadata);
@@ -68,6 +153,36 @@ describe("EXIF metadata whitelist", () => {
     const metadata = { ...sampleMetadata, iso: 102400 };
     const payload = buildExifTiffPayload(metadata);
     expect(parseExifTiffMetadata(payload!)?.iso).toBe(102400);
+  });
+
+  test("reads exposure metadata stored directly in TIFF IFD0", () => {
+    const payload = new Uint8Array(66);
+    const view = new DataView(payload.buffer);
+    payload[0] = 0x49;
+    payload[1] = 0x49;
+    view.setUint16(2, 42, true);
+    view.setUint32(4, 8, true);
+    view.setUint16(8, 3, true);
+
+    const writeEntry = (offset: number, tag: number, type: number, count: number, value: number) => {
+      view.setUint16(offset, tag, true);
+      view.setUint16(offset + 2, type, true);
+      view.setUint32(offset + 4, count, true);
+      view.setUint32(offset + 8, value, true);
+    };
+    writeEntry(10, 0x829a, 5, 1, 50);
+    writeEntry(22, 0x829d, 5, 1, 58);
+    writeEntry(34, 0x8827, 3, 1, 400);
+    view.setUint32(46, 0, true);
+    view.setUint32(50, 1, true);
+    view.setUint32(54, 250, true);
+    view.setUint32(58, 28, true);
+    view.setUint32(62, 10, true);
+
+    const parsed = parseExifTiffMetadata(payload);
+    expect(parsed?.exposureTime).toBeCloseTo(1 / 250, 6);
+    expect(parsed?.fNumber).toBeCloseTo(2.8, 6);
+    expect(parsed?.iso).toBe(400);
   });
 
   test("maps LibRaw timestamp and parsed GPS into the whitelist", () => {
@@ -136,6 +251,38 @@ describe("EXIF metadata whitelist", () => {
     expect(merged?.fNumber).toBeUndefined();
     expect(merged?.exposureTime).toBeUndefined();
     expect(merged?.gps).toEqual({ latitude: 36.4, longitude: 138.25, altitude: 500 });
+  });
+
+  test.each([0, 1] as const)("reads HEIF EXIF item using construction method %i", (constructionMethod) => {
+    const payload = buildExifTiffPayload(sampleMetadata);
+    expect(payload).not.toBeNull();
+    const heif = buildTestHeif(payload!, constructionMethod);
+    const parsed = extractWhitelistedMetadataFromBuffer(heif);
+    expect(parsed?.dateTimeOriginal).toBe(sampleMetadata.dateTimeOriginal);
+    expect(parsed?.make).toBe(sampleMetadata.make);
+    expect(parsed?.lensModel).toBe(sampleMetadata.lensModel);
+    expect(parsed?.exposureTime).toBeCloseTo(sampleMetadata.exposureTime!, 6);
+    expect(parsed?.fNumber).toBeCloseTo(sampleMetadata.fNumber!, 6);
+    expect(parsed?.iso).toBe(sampleMetadata.iso);
+    expect(parsed?.gps?.latitude).toBeCloseTo(sampleMetadata.gps!.latitude, 5);
+  });
+
+  test("round-trips the whitelist through PNG eXIf output", async () => {
+    const png = new Blob([minimalPng()], { type: "image/png" });
+    const output = await attachWhitelistedMetadata(png, sampleMetadata);
+    const parsed = extractWhitelistedMetadataFromBuffer(await output.arrayBuffer());
+    expect(parsed?.dateTimeOriginal).toBe(sampleMetadata.dateTimeOriginal);
+    expect(parsed?.make).toBe(sampleMetadata.make);
+    expect(parsed?.fNumber).toBeCloseTo(sampleMetadata.fNumber!, 6);
+  });
+
+  test("round-trips the whitelist through WebP EXIF output", async () => {
+    const webp = new Blob([minimalWebP()], { type: "image/webp" });
+    const output = await attachWhitelistedMetadata(webp, sampleMetadata);
+    const parsed = extractWhitelistedMetadataFromBuffer(await output.arrayBuffer());
+    expect(parsed?.dateTimeOriginal).toBe(sampleMetadata.dateTimeOriginal);
+    expect(parsed?.make).toBe(sampleMetadata.make);
+    expect(parsed?.fNumber).toBeCloseTo(sampleMetadata.fNumber!, 6);
   });
 
   test("injects only a newly-built EXIF block into JPEG output", async () => {

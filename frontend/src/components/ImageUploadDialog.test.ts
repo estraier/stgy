@@ -911,10 +911,6 @@ describe("image editor performance baseline", () => {
     }
     const sorted = [...elapsed].sort((a, b) => a - b);
     const medianMs = sorted[Math.floor(sorted.length / 2)] ?? 0;
-    console.info(
-      `[image-editor benchmark] ${width}x${height}, median=${medianMs.toFixed(2)}ms, ` +
-        `runs=${elapsed.map((value) => value.toFixed(2)).join(",")}`,
-    );
     expect(medianMs).toBeGreaterThan(0);
   });
 });

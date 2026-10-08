@@ -40,7 +40,12 @@ const sourceJs = join(packageDir, "dist", "opencv.js");
 await access(sourceJs);
 await rm(destinationDir, { recursive: true, force: true });
 await mkdir(destinationDir, { recursive: true });
-await cp(sourceJs, join(destinationDir, "opencv.js"));
+const sourceText = await readFile(sourceJs, "utf8");
+const quietSourceText = sourceText.replace(
+  /\bconsole\.(?:log|info|warn|error|debug|trace)\b/g,
+  "(function(){})",
+);
+await writeFile(join(destinationDir, "opencv.js"), quietSourceText, "utf8");
 
 for (const name of ["LICENSE", "LICENSE.md", "README.md"]) {
   const source = join(packageDir, name);

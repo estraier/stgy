@@ -289,9 +289,7 @@ async function finalizeDebevecStream(message) {
   const targetBrightness = meanArray(brightnesses);
   try {
     await cleanupDebevecStreamState();
-  } catch (error) {
-    console.warn("Could not fully clear HDR1 stream state:", error);
-  }
+  } catch {}
 
   postProgress("Tone mapping HDR with Reinhard...");
   tonemapReinhardInPlace(
@@ -428,12 +426,12 @@ function captureDebevecResponseSamples(state, imageIndex, image) {
 function estimateDebevecResponseCurves(state, exposureTimes) {
   const curves = new Array(3);
   for (let channel = 0; channel < 3; channel += 1) {
-    curves[channel] = estimateDebevecResponseCurve(state, exposureTimes, channel);
+    curves[channel] = estimateDebevecResponseCurve(state, exposureTimes);
   }
   return curves;
 }
 
-function estimateDebevecResponseCurve(state, exposureTimes, channel) {
+function estimateDebevecResponseCurve(state, exposureTimes) {
   // Debevec-Malik data term with the per-sample log-radiance variables
   // analytically eliminated.  The weighted-variance identity turns each
   // sample into pairwise equations between exposures; this is the same
@@ -525,7 +523,6 @@ function estimateDebevecResponseCurve(state, exposureTimes, channel) {
   }
 
   if (dataEquationCount === 0) {
-    console.warn(`HDR1 response channel ${channel}: calibration had no usable cross-exposure samples; using linear response.`);
     return buildLinearDebevecResponseCurve(knotCount);
   }
 
@@ -557,12 +554,10 @@ function estimateDebevecResponseCurve(state, exposureTimes, channel) {
   let curve;
   try {
     curve = solveDebevecSymmetricPositiveSystem(matrix, rhs, knotCount);
-  } catch (error) {
-    console.warn(`HDR1 response channel ${channel}: calibration solver failed; using linear response.`, error);
+  } catch {
     return buildLinearDebevecResponseCurve(knotCount);
   }
   if (!curve.every(Number.isFinite)) {
-    console.warn(`HDR1 response channel ${channel}: calibration produced non-finite values; using linear response.`);
     return buildLinearDebevecResponseCurve(knotCount);
   }
   return curve;

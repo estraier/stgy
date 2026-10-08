@@ -11,7 +11,6 @@ import {
 import {
   buildRawLensfunCorrection,
   lensfunOutputRegion,
-  summarizeLensfunCorrection,
 } from "@/image/lensfun";
 import { createLibRawInstance, createLibRawWorkerFailure, isRawImageFile } from "@/image/libraw";
 import { getOpenCv } from "@/image/opencv";
@@ -278,7 +277,7 @@ listen(inputFiles, "change", () => {
   const previousCanonicalSession = currentCanonicalSession;
   currentCanonicalSession = null;
   if (previousCanonicalSession) {
-    deleteCanonicalSession(previousCanonicalSession).catch((error) => console.warn("Could not clear old canonical input cache:", error));
+    deleteCanonicalSession(previousCanonicalSession).catch(() => {});
   }
   const count = inputFiles.files ? inputFiles.files.length : 0;
   fileCount.textContent = count === 0
@@ -391,10 +390,6 @@ listen(processButton, "click", async () => {
     setProgress("Loading OpenCV.js...");
     const cv = await getOpenCv();
     assertMainOpenCvApis(cv);
-    const buildInfo = typeof cv.getBuildInformation === "function" ? cv.getBuildInformation() : "";
-    console.info(buildInfo ? `OpenCV.js is ready:
-${buildInfo}` : "OpenCV.js is ready.");
-
     setProgress("Reading metadata, ICC profiles, and image sizes...");
     const inputInfos = await readInputInfos(files);
     const { mergeStackMetadata } = await loadExifMetadataModule();
@@ -413,27 +408,9 @@ ${buildInfo}` : "OpenCV.js is ready.");
       : files.length === 1 && !preserveSingleInputMerge
         ? "average"
         : mergeMode.value;
-    if (files.length === 1) {
-      console.info(
-        useSyntheticSingleInputHdr
-          ? `${files[0].name}: single input ${mergeMode.value.toUpperCase()} mode; generating three synthetic materials and skipping feature matching.`
-          : preserveSingleInputMerge
-            ? `${files[0].name}: single input ${mergeMode.value}; preserving tile layout and border.`
-            : `${files[0].name}: single input; skipping feature matching and merge operation.`,
-      );
-    }
     const mergePlan = buildMergePlan(files, inputInfos, effectiveMergeMode, currentCanonicalSession.images);
     const alignmentPlan = buildAlignmentPlan(files, inputInfos, alignmentMode.value, effectiveMergeMode);
     currentPreviewColorSpace = chooseOutputColorSpace(inputInfos);
-    console.info(`Output color space: ${formatColorSpaceName(currentPreviewColorSpace)}`);
-    console.info(
-      `Alignment: ${alignmentPlan.selectedMode}` +
-      (alignmentPlan.selectedMode === alignmentPlan.effectiveMode ? "" : ` -> ${alignmentPlan.effectiveMode}`) +
-      (alignmentPlan.normalizationMode === alignmentPlan.effectiveMode
-        ? ""
-        : ` (preprocess: ${alignmentPlan.normalizationMode})`) +
-      ` (${alignmentPlan.targetWidth}x${alignmentPlan.targetHeight})`,
-    );
 
     currentStackResult = await alignAndMergeFilesWithOpenCv(
       cv,
@@ -1218,9 +1195,7 @@ async function buildFullSizeRenderCache(stackResult, key, resultRevision) {
         resultRevision,
         options,
       );
-    } catch (error) {
-      console.warn("LSS full-size worker render failed; using main-thread fallback.", error);
-    }
+    } catch {}
   }
 
   if (!adjustedLinear) {
@@ -1829,7 +1804,6 @@ async function initializeAlignmentReference(
       if (isAlignmentImplementationError(error)) throw error;
       const message = error instanceof Error ? error.message : String(error);
       tried.push(`${algorithm}: ${message}`);
-      console.warn(`Could not initialize ${algorithm} alignment reference: ${message}`);
     }
   }
   throw new Error(`Could not initialize alignment reference. ${tried.join("; ")}`);
@@ -1847,13 +1821,12 @@ async function alignWithFallback(
   for (const algorithm of [primaryAlgorithm, secondaryAlignmentAlgorithm(primaryAlgorithm)]) {
     try {
       if (algorithm !== referenceContext.algorithm) {
-        const ready = await alignmentWorkers[algorithm].initialize(
+        await alignmentWorkers[algorithm].initialize(
           referenceContext.frame.width,
           referenceContext.frame.height,
           new Uint8Array(referenceContext.frame.grayBytes),
           referenceContext.frame.exposureScalar,
         );
-        console.info(`${algorithm} fallback reference ready: ${describeAlignmentReady(algorithm, ready)}`);
       }
       const result = await alignmentWorkers[algorithm].align(
         id,
@@ -1876,7 +1849,6 @@ async function alignWithFallback(
       if (isAlignmentImplementationError(error)) throw error;
       const message = error instanceof Error ? error.message : String(error);
       tried.push(`${algorithm}: ${message}`);
-      console.info(`${fileName}: ${algorithm} alignment attempt failed: ${message}`);
     }
   }
   throw new Error(tried.join("; "));
@@ -2019,7 +1991,7 @@ function buildMergePlan(files, inputInfos, mode, canonicalImages = []) {
       mode,
       weights,
       gains,
-      hdrExposureTimes: mode === "hdr1" ? buildHdrExposureTimes(files, inputInfos) : null,
+      hdrExposureTimes: mode === "hdr1" ? buildHdrExposureTimes(inputInfos) : null,
     };
   }
 
@@ -2059,12 +2031,6 @@ function buildMergePlan(files, inputInfos, mode, canonicalImages = []) {
     gains[i] = toneMatch.plans[i].gain;
     scaledLogs[i] = toneMatch.plans[i].scaledLog;
   }
-  console.info(
-    `STF tone reference: ${files[toneMatch.referenceIndex]?.name || `image ${toneMatch.referenceIndex + 1}`} ` +
-    `(median mean=${toneMatch.targetMean.toFixed(6)}, ` +
-    `P50=${toneStatistics[toneMatch.referenceIndex].p50.toFixed(6)}, ` +
-    `P95=${toneStatistics[toneMatch.referenceIndex].p95.toFixed(6)}).`,
-  );
 
   return { mode, weights, gains, scaledLogs, toneReferenceIndex: toneMatch.referenceIndex };
 }
@@ -2114,17 +2080,13 @@ function buildSingleShotHdrSyntheticMaterials(mode) {
   ];
 }
 
-function buildHdrExposureTimes(files, inputInfos) {
+function buildHdrExposureTimes(inputInfos) {
   const exposureScalars = inputInfos.map((entry) => entry.exposureScalar);
   if (exposureScalars.every((value) => Number.isFinite(value) && value > 0)) {
     const minExposure = Math.max(Math.min(...exposureScalars), 0.0001);
     return new Float32Array(exposureScalars.map((value) => value / minExposure));
   }
 
-  console.warn(
-    "HDR: complete light-value metadata is unavailable. " +
-    "Matching itb_stack.py, Debevec exposures will be estimated from input brightness."
-  );
   return null;
 }
 
@@ -2192,7 +2154,6 @@ async function alignAndMergeFilesWithOpenCv(
       const cachedMatrices = transformCache.get(transformKey);
       if (cachedMatrices && cachedMatrices.length === files.length) {
         for (let index = 0; index < files.length; index += 1) matrices[index] = new Float64Array(cachedMatrices[index]);
-        console.info(`Reusing ${alignmentPlan.effectiveMode} alignment transforms from canonical session.`);
       } else {
         const referenceFrame = alignmentFrames[alignmentReferenceIndex];
         matrices[alignmentReferenceIndex] = identityAlignmentMatrix();
@@ -2232,13 +2193,6 @@ async function alignAndMergeFilesWithOpenCv(
               );
             },
           });
-          if (batch.ready.length > 0) {
-            logAlignmentReady(algorithm, batch.ready[0]);
-          }
-          console.info(
-            `${algorithm} ${phaseLabel} alignment pool: workers=${batch.workerCount}, ` +
-            `success=${batch.successes.length}, failed=${batch.failures.length}`,
-          );
           return batch;
         };
 
@@ -2252,7 +2206,6 @@ async function alignAndMergeFilesWithOpenCv(
               success.job.frame,
             ),
           };
-          logAlignmentResult(alignmentAlgorithm, success.job.fileName, result);
           matrices[success.job.id] = result.matrix;
           alignedIndices.add(success.job.id);
         }
@@ -2281,7 +2234,6 @@ async function alignAndMergeFilesWithOpenCv(
                 success.job.frame,
               ),
             };
-            logAlignmentResult(secondaryAlgorithm, success.job.fileName, result);
             matrices[success.job.id] = result.matrix;
             alignedIndices.add(success.job.id);
           }
@@ -2476,7 +2428,7 @@ async function alignAndMergeFilesWithOpenCv(
     hdr2StreamWorker?.terminate();
     if (focusScratchDb) {
       if (focusScratchSessionId) {
-        try { await deleteMedianScratchSession(focusScratchDb, focusScratchSessionId); } catch (error) { console.warn("Could not clear Focus feature scratch:", error); }
+        try { await deleteMedianScratchSession(focusScratchDb, focusScratchSessionId); } catch {}
       }
       focusScratchDb.close();
     }
@@ -2650,7 +2602,7 @@ async function computeFocusSharpnessFeaturesParallel(
   const workerUrl = new URL("/generated/local-stack-studio/focus.worker.js", window.location.origin);
   let completed = 0;
   setProgress(`Computing Focus sharpness features 0/${imageCount}...`);
-  const pool = await runFocusFeaturePool({
+  await runFocusFeaturePool({
     imageCount,
     width,
     height,
@@ -2670,10 +2622,6 @@ async function computeFocusSharpnessFeaturesParallel(
       setProgress(`Computing Focus sharpness features ${completed}/${totalCount}...`);
     },
   });
-  console.info(
-    `Focus sharpness feature workers=${pool.workerCount}, ` +
-    `hardwareConcurrency=${globalThis.navigator?.hardwareConcurrency || "unknown"}, images=${imageCount}`,
-  );
 }
 
 function linearProPhotoFloatsToHdr1AndBrightness(linear) {
@@ -2785,27 +2733,11 @@ async function recoverDeferredAlignments(
           alignedIndices.add(entry.index);
           madeProgress = true;
 
-          console.info(
-            `${targetFile.name}: recovered by ${aligned.algorithm} matching against ${referenceFile.name} ` +
-            `(${describeAlignmentReady(initialized.algorithm, initialized.ready)})`,
-          );
-          logAlignmentResult(
-            aligned.algorithm,
-            targetFile.name,
-            aligned.result,
-            `local to ${referenceFile.name}`,
-          );
-          console.info(
-            `${targetFile.name}: composed transform to alignment reference, ${describeAlignmentMatrix(composedMatrix)}`,
-          );
           break;
         } catch (error) {
           if (isAlignmentImplementationError(error)) throw error;
           const message = error instanceof Error ? error.message : String(error);
           entry.attempts.push({ referenceIndex, error: message });
-          console.info(
-            `${targetFile.name}: alternate feature-match reference ${referenceFile.name} did not match: ${message}`,
-          );
         }
       }
     }
@@ -2903,11 +2835,6 @@ async function prepareFocusSharpnessMaps(
   if (!(lapStats.count > 0 && sobelStats.count > 0)) {
     throw new Error("Focus sharpness feature statistics are empty.");
   }
-  console.info(
-    `Focus stack-global sharpness statistics: ` +
-    `Laplacian mean=${lapStats.mean.toFixed(6)}, std=${globalLapStd.toFixed(6)}; ` +
-    `Sobel mean=${sobelStats.mean.toFixed(6)}, std=${globalSobelStd.toFixed(6)}`,
-  );
 
   const sharpnessMaps = [];
   for (let imageIndex = 0; imageIndex < imageCount; imageIndex += 1) {
@@ -2980,10 +2907,6 @@ async function mergeFocusFromCanonical(db, sessionId, focusWorker, canonicalConf
     preparedSharpness.workingHeight,
     focusGrid,
   );
-  console.info(
-    `Focus support grid=${focusGrid.cols}x${focusGrid.rows} ` +
-    `(${focusGrid.cols * focusGrid.rows} cells), finalScore = 2*mapScore + tileScore`,
-  );
   setProgress("Composing Focus final map and weight statistics...");
   const finalMapResult = computeFocusFinalMaps(
     preparedSharpness.sharpnessMaps,
@@ -2997,7 +2920,6 @@ async function mergeFocusFromCanonical(db, sessionId, focusWorker, canonicalConf
   tileScores.length = 0;
 
   const tau = computeFocusGlobalTau(finalMapResult.stats);
-  console.info(`Focus global tau=${tau.toFixed(6)}, smoothness=${FOCUS_SMOOTHNESS}`);
 
   const output = new Uint16Array(width * height * 3);
   const imageShortSide = Math.min(width, height);
@@ -3007,10 +2929,6 @@ async function mergeFocusFromCanonical(db, sessionId, focusWorker, canonicalConf
       FOCUS_MAX_PYRAMID_DOWNSAMPLES,
       Math.floor(Math.log2(Math.max(1, imageShortSide))) - 3,
     ),
-  );
-  console.info(
-    `Focus pyramid downsamples=${pyramidDownsamples}, image short side=${imageShortSide}, ` +
-    `core=${FOCUS_PROCESSING_CORE_SIZE}, halo=${FOCUS_HALO_SIZE}`,
   );
 
   const coreColumns = Math.ceil(width / FOCUS_PROCESSING_CORE_SIZE);
@@ -3031,9 +2949,6 @@ async function mergeFocusFromCanonical(db, sessionId, focusWorker, canonicalConf
     mergeWorkers.push(worker);
     extraMergeWorkers.push(worker);
   }
-  console.info(
-    `Focus merge workers=${mergeWorkerCount}, hardwareConcurrency=${hardwareConcurrency}, cores=${coreCount}`,
-  );
 
   try {
     setProgress(`Initializing ${mergeWorkerCount} Focus merge worker${mergeWorkerCount === 1 ? "" : "s"} from canonical inputs...`);
@@ -3163,94 +3078,11 @@ function multiplyAlignmentMatrices(left, right) {
   return result;
 }
 
-function describeAlignmentReady(algorithm, ready) {
-  if (algorithm === "ECC") {
-    const workingWidth = Number(ready?.workingWidth);
-    const workingHeight = Number(ready?.workingHeight);
-    const pyramidLevels = Number(ready?.pyramidLevels);
-    return `working=${workingWidth}x${workingHeight}, pyramid=${pyramidLevels}`;
-  }
-  return `reference features=${Number(ready?.referenceFeatureCount)}`;
-}
-
-function logAlignmentReady(algorithm, ready) {
-  console.info(`${algorithm} reference ready: ${describeAlignmentReady(algorithm, ready)}`);
-}
-
-function logAlignmentResult(algorithm, fileName, result, context = "") {
-  if (algorithm === "ECC") {
-    logEccAlignmentResult(fileName, result, context);
-    return;
-  }
-  logOrbAlignmentResult(fileName, result, context);
-}
-
-function logEccAlignmentResult(fileName, result, context = "") {
-  const contextDetail = context ? ` (${context})` : "";
-  const correlation = Number(result.correlation);
-  const initialCorrelation = Number(result.initialCorrelation);
-  const correlationImprovement = Number(result.correlationImprovement);
-  const correlationDetail = Number.isFinite(correlation) ? correlation.toFixed(6) : "n/a";
-  const confidenceDetail = Number.isFinite(initialCorrelation) && Number.isFinite(correlationImprovement)
-    ? `, correlation=${initialCorrelation.toFixed(6)}->${correlationDetail} ` +
-      `(delta=${correlationImprovement >= 0 ? "+" : ""}${correlationImprovement.toFixed(6)})`
-    : "";
-  const preprocessingDetail = Number.isFinite(result.referenceExposureGain) && Number.isFinite(result.targetExposureGain)
-    ? `, preprocess=${result.exposureMatchSource || "unknown"} midpoint ` +
-      `gains(ref=${result.referenceExposureGain.toFixed(3)}, target=${result.targetExposureGain.toFixed(3)}), ` +
-      `mask=${(Number(result.maskCoverage) * 100).toFixed(1)}%`
-    : "";
-  console.info(
-    `${fileName}${contextDetail}: ECC model=affine, ` +
-    `working=${result.workingWidth}x${result.workingHeight}, pyramid=${result.pyramidLevels}` +
-    `${confidenceDetail}, ` +
-    `scale=(${Number(result.scaleX).toFixed(4)}, ${Number(result.scaleY).toFixed(4)}), ` +
-    `shearCos=${Number(result.shearCosine).toFixed(4)}, ` +
-    `translation=${(Number(result.translationRatio) * 100).toFixed(2)}% diagonal` +
-    `${preprocessingDetail}, ${describeAlignmentMatrix(result.matrix)}`,
-  );
-}
-
-function logOrbAlignmentResult(fileName, result, context = "") {
-  const fallbackDetail = result.fallbackMode && result.fallbackMode !== "none"
-    ? `, fallback=${result.fallbackMode}`
-    : "";
-  const reprojectionDetail = Number.isFinite(result.reprojectionMedianError)
-    ? `, reprojection=inliers ${result.reprojectionInlierCount}/${result.usableMatchCount}, ` +
-      `median ${result.reprojectionMedianError.toFixed(2)}px, p95 ${result.reprojectionP95Error.toFixed(2)}px`
-    : "";
-  const shiftDetail = Number.isFinite(result.matchShiftLimit)
-    ? ` @ ${(result.matchShiftLimit * 100).toFixed(0)}% shift`
-    : "";
-  const preprocessingDetail = Number.isFinite(result.referenceExposureGain) && Number.isFinite(result.targetExposureGain)
-    ? `, preprocess=${result.exposureMatchSource || "unknown"} midpoint ` +
-      `gains(ref=${result.referenceExposureGain.toFixed(3)}, target=${result.targetExposureGain.toFixed(3)}), ` +
-      `bilateral, CLAHE=${Number(result.claheClipLimit || 0).toFixed(1)}`
-    : "";
-  const referenceFeatureDetail = Number.isFinite(result.referenceFeatureCount)
-    ? `ref=${result.referenceFeatureCount}, target=${result.targetFeatureCount}`
-    : `target=${result.targetFeatureCount}`;
-  const contextDetail = context ? ` (${context})` : "";
-  const transformDetail = ", model=partial-affine";
-  console.info(
-    `${fileName}${contextDetail}: ORB features(${referenceFeatureDetail}), matches=${result.matchCount}, ` +
-    `usable=${result.usableMatchCount}${shiftDetail}${transformDetail}` +
-    `${fallbackDetail}${reprojectionDetail}${preprocessingDetail}, ${describeAlignmentMatrix(result.matrix)}`,
-  );
-}
-
 function copyMatBytes(mat, expectedLength) {
   if (!mat.data || mat.data.length < expectedLength) {
     throw new Error("OpenCV returned an invalid grayscale image buffer.");
   }
   return new Uint8Array(mat.data.slice(0, expectedLength));
-}
-
-function describeAlignmentMatrix(m) {
-  const scaleX = Math.hypot(m[0], m[1]);
-  const scaleY = Math.hypot(m[4], m[3]);
-  const angle = Math.atan2(m[3], m[0]) * 180 / Math.PI;
-  return `translation=(${m[2].toFixed(2)}, ${m[5].toFixed(2)}), scale=(${scaleX.toFixed(4)}, ${scaleY.toFixed(4)}), rotation=${angle.toFixed(2)}deg`;
 }
 
 function matFromLinearProPhoto(cv, linear, width, height) {
@@ -3861,10 +3693,10 @@ async function extractInputInfo(file) {
   const { extractWhitelistedMetadataFromBuffer } = await loadExifMetadataModule();
   const preservedMetadata = extractWhitelistedMetadataFromBuffer(buffer);
   const iccProfile = await extractEmbeddedIccProfile(lowerName, buffer);
-  const sourceColorSpace = classifyIccProfile(iccProfile, lowerName);
+  const sourceColorSpace = classifyIccProfile(iccProfile);
 
   if (isTiffFile(lowerName, file.type)) {
-    const tiffInfo = await parseTiffInfo(buffer);
+    const tiffInfo = await parseTiffInfo(buffer, preservedMetadata);
     return {
       fNumber: tiffInfo.fNumber,
       exposureTime: tiffInfo.exposureTime,
@@ -3882,8 +3714,19 @@ async function extractInputInfo(file) {
 
   if (/^image\/jpe?g$/i.test(file.type) || /\.(jpe?g)$/i.test(lowerName)) {
     const exif = parseJpegExif(buffer);
+    const fNumber = positiveNumberOrNull(preservedMetadata?.fNumber) ?? exif.fNumber;
+    const exposureTime = positiveNumberOrNull(preservedMetadata?.exposureTime) ?? exif.exposureTime;
+    const iso = positiveNumberOrNull(preservedMetadata?.iso) ?? exif.iso;
+    const normalizedIso = Number.isFinite(iso) && iso > 0 ? iso : 100;
+    const exposureScalar =
+      Number.isFinite(exposureTime) && exposureTime > 0 && Number.isFinite(fNumber) && fNumber > 0
+        ? (exposureTime * normalizedIso) / (fNumber * fNumber * 100)
+        : exif.exposureScalar;
     return {
-      ...exif,
+      fNumber,
+      exposureTime,
+      iso,
+      exposureScalar,
       sourceColorSpace,
       isRaw: false,
       width: dimensions.width,
@@ -3892,11 +3735,17 @@ async function extractInputInfo(file) {
     };
   }
 
+  const fNumber = positiveNumberOrNull(preservedMetadata?.fNumber);
+  const exposureTime = positiveNumberOrNull(preservedMetadata?.exposureTime);
+  const iso = positiveNumberOrNull(preservedMetadata?.iso);
+  const exposureScalar = exposureTime && fNumber
+    ? (exposureTime * (iso || 100)) / (fNumber * fNumber * 100)
+    : null;
   return {
-    fNumber: null,
-    exposureTime: null,
-    iso: null,
-    exposureScalar: null,
+    fNumber,
+    exposureTime,
+    iso,
+    exposureScalar,
     sourceColorSpace,
     isRaw: false,
     width: dimensions.width,
@@ -3923,9 +3772,12 @@ async function readRawInputInfo(file) {
     const preservedMetadata = embeddedMetadata
       ? { ...rawPreservedMetadata, ...embeddedMetadata, gps: embeddedMetadata.gps ?? rawPreservedMetadata?.gps }
       : rawPreservedMetadata;
-    const exposureTime = positiveNumberOrNull(metadata?.shutter);
-    const fNumber = positiveNumberOrNull(metadata?.aperture);
-    const iso = positiveNumberOrNull(metadata?.iso_speed);
+    const exposureTime =
+      positiveNumberOrNull(metadata?.shutter) ?? positiveNumberOrNull(preservedMetadata?.exposureTime);
+    const fNumber =
+      positiveNumberOrNull(metadata?.aperture) ?? positiveNumberOrNull(preservedMetadata?.fNumber);
+    const iso =
+      positiveNumberOrNull(metadata?.iso_speed) ?? positiveNumberOrNull(preservedMetadata?.iso);
     const exposureScalar = exposureTime && fNumber
       ? (exposureTime * (iso || 100)) / (fNumber * fNumber * 100)
       : null;
@@ -4113,7 +3965,7 @@ function getTiffIfdDimensions(ifd) {
   return { width, height };
 }
 
-async function parseTiffInfo(buffer) {
+async function parseTiffInfo(buffer, preservedMetadata = null) {
   const ifds = UTIF.decode(buffer);
   if (!ifds || ifds.length === 0) {
     return {
@@ -4129,9 +3981,12 @@ async function parseTiffInfo(buffer) {
   const ifd = ifds[0];
   const dimensions = getTiffIfdDimensions(ifd);
   const iccProfile = getTiffTagBytes(ifd, 34675);
-  const exposureTime = getFirstNumericTagValue(ifd, [33434]);
-  const fNumber = getFirstNumericTagValue(ifd, [33437]);
-  const iso = getFirstNumericTagValue(ifd, [34855]);
+  const exposureTime =
+    positiveNumberOrNull(preservedMetadata?.exposureTime) ?? getFirstNumericTagValue(ifd, [33434]);
+  const fNumber =
+    positiveNumberOrNull(preservedMetadata?.fNumber) ?? getFirstNumericTagValue(ifd, [33437]);
+  const iso =
+    positiveNumberOrNull(preservedMetadata?.iso) ?? getFirstNumericTagValue(ifd, [34855]);
   const normalizedIso = Number.isFinite(iso) && iso > 0 ? iso : 100;
   const exposureScalar =
     Number.isFinite(exposureTime) && exposureTime > 0 && Number.isFinite(fNumber) && fNumber > 0
@@ -4204,7 +4059,6 @@ function parseJpegIccProfile(buffer) {
   if (view.byteLength < 4 || view.getUint16(0, false) !== 0xffd8) return null;
   let offset = 2;
   const chunks = [];
-  let expectedCount = 0;
 
   while (offset + 4 <= view.byteLength) {
     if (view.getUint8(offset) !== 0xff) break;
@@ -4221,10 +4075,8 @@ function parseJpegIccProfile(buffer) {
       const label = readAscii(view, segmentStart, 12);
       if (label === "ICC_PROFILE\u0000") {
         const sequence = view.getUint8(segmentStart + 12);
-        const total = view.getUint8(segmentStart + 13);
         const payload = new Uint8Array(buffer, segmentStart + 14, segmentDataLength - 14);
         chunks.push({ sequence, payload: new Uint8Array(payload) });
-        expectedCount = total;
       }
     }
 
@@ -4233,9 +4085,6 @@ function parseJpegIccProfile(buffer) {
 
   if (chunks.length === 0) return null;
   chunks.sort((a, b) => a.sequence - b.sequence);
-  if (expectedCount && chunks.length !== expectedCount) {
-    console.warn("Incomplete JPEG ICC profile; proceeding with available segments.");
-  }
   let totalLength = 0;
   for (const chunk of chunks) totalLength += chunk.payload.length;
   const profile = new Uint8Array(totalLength);
@@ -4289,16 +4138,13 @@ function parseWebPIccProfile(buffer) {
 }
 
 async function inflateZlibBytes(bytes) {
-  if (typeof DecompressionStream !== "function") {
-    console.warn("DecompressionStream is unavailable; PNG ICC profiles will be ignored.");
-    return null;
-  }
+  if (typeof DecompressionStream !== "function") return null;
   const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate"));
   const arrayBuffer = await new Response(stream).arrayBuffer();
   return new Uint8Array(arrayBuffer);
 }
 
-function classifyIccProfile(iccProfile, lowerName) {
+function classifyIccProfile(iccProfile) {
   if (!iccProfile || iccProfile.length === 0) {
     return "srgb";
   }
@@ -4318,7 +4164,6 @@ function classifyIccProfile(iccProfile, lowerName) {
   if (text.includes("p3")) {
     return "display-p3";
   }
-  console.warn(`Unknown ICC profile in ${lowerName}; assuming sRGB.`);
   return "srgb";
 }
 
@@ -4353,12 +4198,11 @@ async function ensureCanonicalSession(files, inputInfos, existingSession, requir
       )
     ))
   ) {
-    console.info(`Reusing canonical input cache for ${files.length} image${files.length === 1 ? "" : "s"}.`);
     return existingSession;
   }
 
   if (existingSession) {
-    try { await deleteCanonicalSession(existingSession); } catch (error) { console.warn("Could not clear replaced canonical input cache:", error); }
+    try { await deleteCanonicalSession(existingSession); } catch {}
   }
   await estimateCanonicalCapacity(files, inputInfos);
   const session = await createCanonicalSession(files, inputInfos);
@@ -4395,10 +4239,9 @@ async function ensureCanonicalSession(files, inputInfos, existingSession, requir
       await yieldToBrowser();
     }
     await completeCanonicalSession(session);
-    console.info(`Canonical input cache ready: ${files.length} image${files.length === 1 ? "" : "s"}.`);
     return session;
   } catch (error) {
-    try { await deleteCanonicalSession(session); } catch (cleanupError) { console.warn("Could not clear incomplete canonical input cache:", cleanupError); }
+    try { await deleteCanonicalSession(session); } catch {}
     throw error;
   }
 }
@@ -4531,7 +4374,6 @@ async function decodeFileToDecodedImage(file, inputInfo) {
   const lowerName = file.name.toLowerCase();
   const isRawInput = isRawImageFile(file.name, file.type);
   if (isRawInput) {
-    console.info(`${file.name}: using LibRaw decoder path`);
     return await decodeRawFileToDecodedImage(
       file,
       inputInfo?.lensMetadata || null,
@@ -4542,7 +4384,6 @@ async function decodeFileToDecodedImage(file, inputInfo) {
     // Metadata classification must never send a RAW file through the browser
     // image decoder. Keep this fallback explicit in case MIME/extension
     // handling changes later.
-    console.info(`${file.name}: using LibRaw decoder path from metadata classification`);
     return await decodeRawFileToDecodedImage(
       file,
       inputInfo?.lensMetadata || null,
@@ -4569,7 +4410,6 @@ async function decodeFileToDecodedImage(file, inputInfo) {
       inputInfo.sourceColorSpace,
     );
     if (linearProPhotoRgb) {
-      console.info(`${file.name}: preserving 16-bit TIFF samples through the linear Float32 path`);
       const alignmentImageData = linearProPhotoToAlignmentImageData(
         linearProPhotoRgb,
         dimensions.width,
@@ -4741,22 +4581,7 @@ async function decodeRawFileToDecodedImage(file, knownLensMetadata = null, known
         ),
       });
 
-      if (correction) {
-        const summary = summarizeLensfunCorrection(correction, lensfunFrame.width, lensfunFrame.height);
-        const parts = [summary.lensLabel];
-        if (Number.isFinite(summary.distortionPercent)) parts.push(`distortion=${summary.distortionPercent.toFixed(1)}%`);
-        if (Number.isFinite(summary.tcaRedPercent) || Number.isFinite(summary.tcaBluePercent)) {
-          const r = Number.isFinite(summary.tcaRedPercent) ? `${summary.tcaRedPercent.toFixed(3)}%` : "n/a";
-          const b = Number.isFinite(summary.tcaBluePercent) ? `${summary.tcaBluePercent.toFixed(3)}%` : "n/a";
-          parts.push(`TCA R=${r} B=${b}`);
-        }
-        if (Number.isFinite(summary.vignettingEv)) parts.push(`vignetting=${summary.vignettingEv.toFixed(2)}EV`);
-        parts.push(`frame=${lensfunFrame.width}x${lensfunFrame.height}`);
-        if (correction.autoCrop) parts.push(`output=${corrected.width}x${corrected.height}`);
-        console.info(`${file.name}: LensFun correction applied (${parts.join(", ")})`);
-      }
-    } catch (error) {
-      console.warn(`${file.name}: LensFun correction failed; applying metadata crop only`, error);
+    } catch {
       corrected = await runLensfunCorrectionPool({
         source: {
           data: sourceRgb16,
@@ -4990,7 +4815,6 @@ function clearError() {
 
 function showError(error) {
   const message = error instanceof Error ? error.message : String(error);
-  console.error(error);
   errorPanel.textContent = message;
   errorPanel.classList.remove("hidden");
 }
@@ -5135,7 +4959,7 @@ return () => {
   if (currentCanonicalSession) {
     const session = currentCanonicalSession;
     currentCanonicalSession = null;
-    deleteCanonicalSession(session).catch((error) => console.warn("Could not clear canonical input cache on unmount:", error));
+    deleteCanonicalSession(session).catch(() => {});
   }
 };
 }

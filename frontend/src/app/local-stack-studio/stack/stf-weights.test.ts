@@ -1,6 +1,6 @@
 import { buildStfApertureWeights } from "./stf-weights";
 
-const STF_PROFILE_WEIGHT_RATIO = 4.0;
+const STF_PROFILE_WEIGHT_RATIO = 2.8;
 
 function sum(values: ArrayLike<number>): number {
   let total = 0;
@@ -19,7 +19,7 @@ function computeProfile(progress: number): number {
 }
 
 describe("STF aperture weights", () => {
-  test("uses the W=4 profile with a minimax outer edge for a 7-shot 1/3EV bracket", () => {
+  test("uses the W=2.8 profile with a minimax outer edge for a 7-shot 1/3EV bracket", () => {
     const fNumbers = Array.from({ length: 7 }, (_, index) => 2 * 2 ** (index / 6));
     const weights = buildStfApertureWeights(fNumbers);
     expect(weights).not.toBeNull();
@@ -28,13 +28,13 @@ describe("STF aperture weights", () => {
     expect(sum(weights)).toBeCloseTo(1, 12);
 
     const expected = [
-      0.2157268508677128,
-      0.2157268508677128,
-      0.17122251500259708,
-      0.13589940021788174,
-      0.10786342543385623,
-      0.08561125750129843,
-      0.06794970010894093,
+      0.19697446472254565,
+      0.19697446472254565,
+      0.16591421263889206,
+      0.13975174901151888,
+      0.11771475777235736,
+      0.09915270682059697,
+      0.08351764431154343,
     ];
     for (let i = 0; i < expected.length; i += 1) {
       expect(weights[i]).toBeCloseTo(expected[i], 12);

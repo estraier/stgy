@@ -253,23 +253,28 @@ export function parseExifTiffMetadata(
     ? (altitudeRef === 1 ? -altitudeValue : altitudeValue)
     : undefined;
 
+  const exifOrIfd0Number = (tag: number): number | undefined =>
+    tagNumber(exif, tag) ?? tagNumber(ifd0, tag);
+  const exifOrIfd0String = (tag: number): string | undefined =>
+    tagString(exif, tag) ?? tagString(ifd0, tag);
+
   const output: PreservedImageMetadata = {
-    dateTimeOriginal: tagString(exif, 0x9003),
-    subSecTimeOriginal: tagString(exif, 0x9291),
-    offsetTimeOriginal: tagString(exif, 0x9011),
-    dateTimeDigitized: tagString(exif, 0x9004),
+    dateTimeOriginal: exifOrIfd0String(0x9003),
+    subSecTimeOriginal: exifOrIfd0String(0x9291),
+    offsetTimeOriginal: exifOrIfd0String(0x9011),
+    dateTimeDigitized: exifOrIfd0String(0x9004),
     make: tagString(ifd0, 0x010f),
     model: tagString(ifd0, 0x0110),
-    lensMake: tagString(exif, 0xa433),
-    lensModel: tagString(exif, 0xa434),
-    focalLength: positiveNumber(tagNumber(exif, 0x920a)),
-    exposureTime: positiveNumber(tagNumber(exif, 0x829a)),
-    fNumber: positiveNumber(tagNumber(exif, 0x829d)),
-    iso: positiveNumber(tagNumber(exif, 0x8827)),
-    exposureBiasValue: tagNumber(exif, 0x9204),
-    meteringMode: nonnegativeInteger(tagNumber(exif, 0x9207)),
-    flash: nonnegativeInteger(tagNumber(exif, 0x9209)),
-    exposureProgram: nonnegativeInteger(tagNumber(exif, 0x8822)),
+    lensMake: exifOrIfd0String(0xa433),
+    lensModel: exifOrIfd0String(0xa434),
+    focalLength: positiveNumber(exifOrIfd0Number(0x920a)),
+    exposureTime: positiveNumber(exifOrIfd0Number(0x829a)),
+    fNumber: positiveNumber(exifOrIfd0Number(0x829d)),
+    iso: positiveNumber(exifOrIfd0Number(0x8827)),
+    exposureBiasValue: exifOrIfd0Number(0x9204),
+    meteringMode: nonnegativeInteger(exifOrIfd0Number(0x9207)),
+    flash: nonnegativeInteger(exifOrIfd0Number(0x9209)),
+    exposureProgram: nonnegativeInteger(exifOrIfd0Number(0x8822)),
     artist: tagString(ifd0, 0x013b),
     copyright: tagString(ifd0, 0x8298),
     imageDescription: tagString(ifd0, 0x010e),
@@ -337,6 +342,235 @@ function findWebPExifRange(view: DataView): { start: number; length: number; has
   return null;
 }
 
+
+type IsoBmffBox = {
+  type: string;
+  start: number;
+  contentStart: number;
+  end: number;
+};
+
+type HeifItemExtent = {
+  constructionMethod: number;
+  dataReferenceIndex: number;
+  baseOffset: number;
+  extentOffset: number;
+  extentLength: number;
+};
+
+const HEIF_BRANDS = new Set([
+  "heic", "heix", "hevc", "hevx", "heim", "heis", "hevm", "hevs",
+  "mif1", "msf1", "avif", "avis",
+]);
+
+function readIsoBmffUnsigned(view: DataView, offset: number, byteLength: number): number | null {
+  if (byteLength === 0) return 0;
+  if (byteLength < 0 || byteLength > 8 || offset < 0 || offset + byteLength > view.byteLength) return null;
+  let value = 0;
+  for (let index = 0; index < byteLength; index += 1) {
+    value = value * 256 + view.getUint8(offset + index);
+    if (!Number.isSafeInteger(value)) return null;
+  }
+  return value;
+}
+
+function readIsoBmffBoxes(view: DataView, start: number, end: number): IsoBmffBox[] {
+  const boxes: IsoBmffBox[] = [];
+  let offset = start;
+  while (offset + 8 <= end) {
+    const size32 = view.getUint32(offset, false);
+    const type = readAscii(view, offset + 4, 4);
+    let headerSize = 8;
+    let size: number;
+    if (size32 === 1) {
+      if (offset + 16 > end) break;
+      const large = readIsoBmffUnsigned(view, offset + 8, 8);
+      if (large === null) break;
+      size = large;
+      headerSize = 16;
+    } else {
+      size = size32 === 0 ? end - offset : size32;
+    }
+    if (!Number.isSafeInteger(size) || size < headerSize || offset + size > end) break;
+    boxes.push({ type, start: offset, contentStart: offset + headerSize, end: offset + size });
+    offset += size;
+  }
+  return boxes;
+}
+
+function isHeifContainer(view: DataView): boolean {
+  const ftyp = readIsoBmffBoxes(view, 0, view.byteLength).find((box) => box.type === "ftyp");
+  if (!ftyp || ftyp.contentStart + 8 > ftyp.end) return false;
+  if (HEIF_BRANDS.has(readAscii(view, ftyp.contentStart, 4))) return true;
+  for (let offset = ftyp.contentStart + 8; offset + 4 <= ftyp.end; offset += 4) {
+    if (HEIF_BRANDS.has(readAscii(view, offset, 4))) return true;
+  }
+  return false;
+}
+
+function findHeifExifItemId(view: DataView, iinf: IsoBmffBox): number | null {
+  if (iinf.contentStart + 6 > iinf.end) return null;
+  const version = view.getUint8(iinf.contentStart);
+  let offset = iinf.contentStart + 4;
+  let entryCount: number;
+  if (version === 0) {
+    if (offset + 2 > iinf.end) return null;
+    entryCount = view.getUint16(offset, false);
+    offset += 2;
+  } else {
+    if (offset + 4 > iinf.end) return null;
+    entryCount = view.getUint32(offset, false);
+    offset += 4;
+  }
+  const entries = readIsoBmffBoxes(view, offset, iinf.end);
+  for (const entry of entries.slice(0, Math.min(entryCount, entries.length))) {
+    if (entry.type !== "infe" || entry.contentStart + 8 > entry.end) continue;
+    const infeVersion = view.getUint8(entry.contentStart);
+    let cursor = entry.contentStart + 4;
+    let itemId: number;
+    if (infeVersion === 2) {
+      if (cursor + 8 > entry.end) continue;
+      itemId = view.getUint16(cursor, false);
+      cursor += 4; // item_ID + item_protection_index
+    } else if (infeVersion >= 3) {
+      if (cursor + 10 > entry.end) continue;
+      itemId = view.getUint32(cursor, false);
+      cursor += 6; // item_ID + item_protection_index
+    } else {
+      continue;
+    }
+    if (cursor + 4 <= entry.end && readAscii(view, cursor, 4) === "Exif") return itemId;
+  }
+  return null;
+}
+
+function findHeifItemExtents(view: DataView, iloc: IsoBmffBox, targetItemId: number): HeifItemExtent[] | null {
+  if (iloc.contentStart + 8 > iloc.end) return null;
+  const version = view.getUint8(iloc.contentStart);
+  if (version > 2) return null;
+  let cursor = iloc.contentStart + 4;
+  const sizes1 = view.getUint8(cursor++);
+  const sizes2 = view.getUint8(cursor++);
+  const offsetSize = sizes1 >>> 4;
+  const lengthSize = sizes1 & 0x0f;
+  const baseOffsetSize = sizes2 >>> 4;
+  const indexSize = version === 1 || version === 2 ? sizes2 & 0x0f : 0;
+  if ([offsetSize, lengthSize, baseOffsetSize, indexSize].some((size) => size > 8)) return null;
+
+  let itemCount: number;
+  if (version < 2) {
+    if (cursor + 2 > iloc.end) return null;
+    itemCount = view.getUint16(cursor, false);
+    cursor += 2;
+  } else {
+    if (cursor + 4 > iloc.end) return null;
+    itemCount = view.getUint32(cursor, false);
+    cursor += 4;
+  }
+  if (itemCount > 65536) return null;
+
+  for (let itemIndex = 0; itemIndex < itemCount; itemIndex += 1) {
+    const itemIdBytes = version < 2 ? 2 : 4;
+    if (cursor + itemIdBytes > iloc.end) return null;
+    const itemId = itemIdBytes === 2 ? view.getUint16(cursor, false) : view.getUint32(cursor, false);
+    cursor += itemIdBytes;
+
+    let constructionMethod = 0;
+    if (version === 1 || version === 2) {
+      if (cursor + 2 > iloc.end) return null;
+      constructionMethod = view.getUint16(cursor, false) & 0x000f;
+      cursor += 2;
+    }
+    if (cursor + 2 > iloc.end) return null;
+    const dataReferenceIndex = view.getUint16(cursor, false);
+    cursor += 2;
+    const baseOffset = readIsoBmffUnsigned(view, cursor, baseOffsetSize);
+    if (baseOffset === null) return null;
+    cursor += baseOffsetSize;
+    if (cursor + 2 > iloc.end) return null;
+    const extentCount = view.getUint16(cursor, false);
+    cursor += 2;
+    if (extentCount > 65536) return null;
+
+    const extents: HeifItemExtent[] = [];
+    for (let extentIndex = 0; extentIndex < extentCount; extentIndex += 1) {
+      if ((version === 1 || version === 2) && indexSize > 0) {
+        const extentIndexValue = readIsoBmffUnsigned(view, cursor, indexSize);
+        if (extentIndexValue === null) return null;
+        cursor += indexSize;
+      }
+      const extentOffset = readIsoBmffUnsigned(view, cursor, offsetSize);
+      if (extentOffset === null) return null;
+      cursor += offsetSize;
+      const extentLength = readIsoBmffUnsigned(view, cursor, lengthSize);
+      if (extentLength === null) return null;
+      cursor += lengthSize;
+      extents.push({ constructionMethod, dataReferenceIndex, baseOffset, extentOffset, extentLength });
+    }
+    if (itemId === targetItemId) return extents;
+  }
+  return null;
+}
+
+function extractHeifExifItem(view: DataView): Uint8Array | null {
+  if (!isHeifContainer(view)) return null;
+  const topLevel = readIsoBmffBoxes(view, 0, view.byteLength);
+  const meta = topLevel.find((box) => box.type === "meta");
+  if (!meta || meta.contentStart + 4 > meta.end) return null;
+  const metaChildren = readIsoBmffBoxes(view, meta.contentStart + 4, meta.end);
+  const iinf = metaChildren.find((box) => box.type === "iinf");
+  const iloc = metaChildren.find((box) => box.type === "iloc");
+  if (!iinf || !iloc) return null;
+  const exifItemId = findHeifExifItemId(view, iinf);
+  if (exifItemId === null) return null;
+  const extents = findHeifItemExtents(view, iloc, exifItemId);
+  if (!extents?.length) return null;
+  const idat = metaChildren.find((box) => box.type === "idat");
+  const parts: Uint8Array[] = [];
+  let totalLength = 0;
+  const bytes = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+  for (const extent of extents) {
+    if (extent.dataReferenceIndex !== 0 || extent.extentLength <= 0) return null;
+    let start: number;
+    if (extent.constructionMethod === 0) {
+      start = extent.baseOffset + extent.extentOffset;
+    } else if (extent.constructionMethod === 1 && idat) {
+      start = idat.contentStart + extent.baseOffset + extent.extentOffset;
+    } else {
+      return null;
+    }
+    const end = start + extent.extentLength;
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end > view.byteLength) return null;
+    parts.push(bytes.slice(start, end));
+    totalLength += extent.extentLength;
+    if (!Number.isSafeInteger(totalLength) || totalLength > view.byteLength) return null;
+  }
+  const output = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const part of parts) {
+    output.set(part, offset);
+    offset += part.length;
+  }
+  return output;
+}
+
+function parseHeifExifMetadata(view: DataView): PreservedImageMetadata | null {
+  const item = extractHeifExifItem(view);
+  if (!item || item.byteLength < 8) return null;
+  const itemView = new DataView(item.buffer, item.byteOffset, item.byteLength);
+  const tiffOffset = itemView.getUint32(0, false);
+  const specifiedStart = 4 + tiffOffset;
+  const candidates = [specifiedStart, 4];
+  for (const candidate of candidates) {
+    if (candidate < 0 || candidate >= item.byteLength) continue;
+    let start = candidate;
+    if (item.byteLength - start >= 6 && readAscii(itemView, start, 6) === "Exif\0\0") start += 6;
+    const metadata = parseExifTiffMetadata(item, start, item.byteLength - start);
+    if (metadata) return metadata;
+  }
+  return null;
+}
+
 export function extractWhitelistedMetadataFromBuffer(
   buffer: ArrayBuffer | ArrayBufferView,
 ): PreservedImageMetadata | null {
@@ -351,6 +585,8 @@ export function extractWhitelistedMetadataFromBuffer(
   if (png) return parseExifTiffMetadata(bytes, png.start, png.length);
   const webp = findWebPExifRange(view);
   if (webp) return parseExifTiffMetadata(bytes, webp.start, webp.length);
+  const heif = parseHeifExifMetadata(view);
+  if (heif) return heif;
   return parseExifTiffMetadata(bytes, 0, bytes.byteLength);
 }
 

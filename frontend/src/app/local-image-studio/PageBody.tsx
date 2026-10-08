@@ -612,7 +612,6 @@ export default function LocalImageStudio() {
       if (previousUrl) URL.revokeObjectURL(previousUrl);
     } catch (e) {
       if (editTiming) {
-        console.error("[RAW timing] LIS Finish failed on main thread", e);
         finalizeImageEditTiming(
           editTiming,
           performance.now() - editTiming.startedAtMs,

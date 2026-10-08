@@ -10,7 +10,7 @@ SINGLE_EMSCRIPTEN_VERSION="5.0.7"
 # the isolated Studio build.
 THREADED_EMSCRIPTEN_VERSION="6.0.3"
 OPENMP_THREADS=4
-STGY_LIBRAW_THREADED_BUILD_REVISION=3
+STGY_LIBRAW_BUILD_REVISION=4
 OUTPUT_DIR="${1:?usage: build-libraw-wasm.sh OUTPUT_DIR MODE}"
 MODE="${2:?usage: build-libraw-wasm.sh OUTPUT_DIR MODE}"
 WORK_DIR="${OUTPUT_DIR}.work"
@@ -210,14 +210,6 @@ else:
         f"{body_indent}#ifdef LIBRAW_USE_OPENMP\n"
         f"{body_indent}omp_set_dynamic(0);\n"
         f"{body_indent}omp_set_num_threads(4);\n"
-        f"{body_indent}int stgy_actual_openmp_threads = 1;\n"
-        f"{body_indent}#pragma omp parallel\n"
-        f"{body_indent}{{\n"
-        f"{body_indent}    #pragma omp single\n"
-        f"{body_indent}    stgy_actual_openmp_threads = omp_get_num_threads();\n"
-        f"{body_indent}}}\n"
-        f"{body_indent}std::cout << \"[LibRaw] OpenMP max threads=\" << omp_get_max_threads()\n"
-        f"{body_indent}          << \", actual parallel threads=\" << stgy_actual_openmp_threads << std::endl;\n"
         f"{body_indent}#endif\n"
         f"{body_indent}processor_ = new LibRaw();\n"
         f"{indent}}}"
@@ -264,6 +256,15 @@ fi
 
 FORCE_LIBS=1 bash ./compileLibraw.sh
 
+python3 - <<'PY'
+from pathlib import Path
+import re
+for path in Path("dist").glob("*.js"):
+    text = path.read_text()
+    text = re.sub(r"\bconsole\.(?:log|info|warn|error|debug|trace)\b", "(function(){})", text)
+    path.write_text(text)
+PY
+
 for file in index.js worker.js libraw.js libraw.wasm index.d.ts; do
   test -s "dist/$file" || {
     echo "missing LibRaw build artifact: dist/$file" >&2
@@ -299,7 +300,7 @@ cat > "$OUTPUT_DIR/build.json" <<EOF2
   "librawWasmCommit": "$LIBRAW_WASM_COMMIT",
   "librawVersion": "0.22.1",
   "emscriptenVersion": "$EMSCRIPTEN_VERSION",
-  "stgyBuildRevision": $(if [ "$MODE" = "threaded" ]; then printf '%s' "$STGY_LIBRAW_THREADED_BUILD_REVISION"; else printf 'null'; fi),
+  "stgyBuildRevision": $STGY_LIBRAW_BUILD_REVISION,
   "mode": "$MODE",
   "pthread": $pthread,
   "openmp": $openmp,

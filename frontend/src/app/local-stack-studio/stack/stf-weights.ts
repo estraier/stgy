@@ -1,4 +1,4 @@
-const STF_PROFILE_WEIGHT_RATIO = 4.0;
+const STF_PROFILE_WEIGHT_RATIO = 2.8;
 
 /**
  * Builds STF blend weights from aperture-derived circle-of-confusion radii.
@@ -14,21 +14,13 @@ const STF_PROFILE_WEIGHT_RATIO = 4.0;
  * caller can preserve the historical uniform-weight fallback.
  */
 export function buildStfApertureWeights(fNumbers: readonly number[]): Float64Array | null {
-  console.info("STF PROFILE W", STF_PROFILE_WEIGHT_RATIO);
-  console.info("STF fNumbers", Array.from(fNumbers));
-
-  const fail = (): null => {
-    console.info("STF weights", null);
-    return null;
-  };
+  const fail = (): null => null;
 
   const imageCount = fNumbers.length;
   if (imageCount === 0) return fail();
   if (imageCount === 1) {
     if (!(Number.isFinite(fNumbers[0]) && fNumbers[0] > 0)) return fail();
-    const weights = new Float64Array([1]);
-    console.info("STF weights", Array.from(weights));
-    return weights;
+    return new Float64Array([1]);
   }
 
   const apertures = fNumbers.map((fNumber, index) => ({
@@ -111,6 +103,5 @@ export function buildStfApertureWeights(fNumbers: readonly number[]): Float64Arr
   for (let i = 0; i < apertures.length; i += 1) {
     weights[apertures[i].index] = sortedWeights[i] / totalWeight;
   }
-  console.info("STF weights", Array.from(weights));
   return weights;
 }

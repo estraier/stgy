@@ -26,6 +26,13 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
   return typeof (value as { then?: unknown }).then === "function";
 }
 
+
+function silenceOpenCvLogging(runtime: OpenCvRuntime): void {
+  const logging = runtime?.utils?.logging;
+  try {
+    logging?.setLogLevel?.(0);
+  } catch {}
+}
 function isOpenCvRuntime(value: unknown): value is OpenCvRuntime {
   if ((typeof value !== "object" && typeof value !== "function") || value === null) return false;
   return Boolean((value as { Mat?: unknown }).Mat);
@@ -52,6 +59,7 @@ export async function loadWorkerOpenCv(workerLabel: string): Promise<OpenCvRunti
   if (!isOpenCvRuntime(runtime)) {
     throw new Error(`OpenCV.js failed to initialize in the ${workerLabel} worker.`);
   }
+  silenceOpenCvLogging(runtime);
   return runtime;
 }
 

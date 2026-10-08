@@ -470,8 +470,7 @@ export default function PostCard({
                     : [];
                 setAiSummaryText(txt.length > 0 ? txt : null);
                 setAiSummaryTags(tags);
-              } catch (e) {
-                console.error(e);
+              } catch {
                 setAiSummaryText(null);
                 setAiSummaryTags([]);
               } finally {

@@ -8628,24 +8628,6 @@ function rawTimingSubtotal(
   return entries.reduce((sum, entry) => sum + (wanted.has(entry.name) ? entry.elapsedMs : 0), 0);
 }
 
-function logRawTimingSection(
-  title: "RAW Preview" | "Master" | "Denoise",
-  timing: RawDevelopmentTiming,
-  entries: readonly RawDevelopmentTimingEntry[],
-): void {
-  console.group(`[RAW timing] ${title}`);
-  console.info(
-    `LibRaw runtime=${timing.runtimeMode}, OpenMP threads=${timing.openMpThreads}${
-      timing.runtimeMode === "threaded" ? " (configured; C++ runtime prints max/actual parallel thread counts)" : ""
-    }`,
-  );
-  console.table(entries.map((entry) => ({
-    Processing: entry.name,
-    "Time (ms)": Number(entry.elapsedMs.toFixed(1)),
-  })));
-  console.groupEnd();
-}
-
 export type ImageEditTimingTrace = {
   startedAtMs: number;
   entries: RawDevelopmentTimingEntry[];
@@ -8692,15 +8674,6 @@ export async function measureImageEditTiming<T>(
   }
 }
 
-function logImageEditTiming(timing: ImageEditTimingTrace): void {
-  console.group("[RAW timing] Edit");
-  console.table(timing.entries.map((entry) => ({
-    Processing: entry.name,
-    "Time (ms)": Number(entry.elapsedMs.toFixed(1)),
-  })));
-  console.groupEnd();
-}
-
 export function finalizeImageEditTiming(
   timing: ImageEditTimingTrace,
   elapsedMs: number,
@@ -8711,7 +8684,6 @@ export function finalizeImageEditTiming(
     recordImageEditTiming(timing, terminalName, elapsedMs);
   }
   timing.logged = true;
-  logImageEditTiming(timing);
 }
 
 function scheduleImageEditTimingFinalization(
@@ -8719,7 +8691,7 @@ function scheduleImageEditTimingFinalization(
 ): void {
   // The real result <img> onLoad handler is the preferred measurement. If that
   // callback never arrives, finalize from the main thread after two seconds.
-  // Do not rely on console output or timers inside an image/RAW worker.
+  // Do not rely on timers inside an image/RAW worker.
   window.setTimeout(() => {
     if (timing.logged) return;
     finalizeImageEditTiming(
@@ -10038,7 +10010,6 @@ async function decodeRawMasterImage(
       elapsedSeconds: (performance.now() - startedAt) / 1000,
     };
     recordRawTiming(timing, "master", "Full-resolution Master ready", performance.now() - timing.startedAtMs);
-    logRawTimingSection("Master", timing, timing.master);
     return decoded;
   } finally {
     workerFailure?.cleanup();
@@ -10149,7 +10120,6 @@ async function decodeRawDenoiseImage(
       denoise: denoiseDevelopment,
     };
     recordRawTiming(timing, "denoise", "Denoise buffer ready", performance.now() - startedAt);
-    logRawTimingSection("Denoise", timing, timing.denoise);
     return { decoded, weightMap: analysis.weightMap };
   } finally {
     workerFailure?.cleanup();
@@ -10338,7 +10308,6 @@ async function decodeRawUploadFastPath(
       elapsedSeconds: (performance.now() - startedAt) / 1000,
     };
     recordRawTiming(timing, "master", "Full-resolution Master ready", performance.now() - timing.startedAtMs);
-    logRawTimingSection("Master", timing, timing.master);
     return decoded;
   } finally {
     workerFailure?.cleanup();
@@ -12436,7 +12405,6 @@ export function ImageEditDialog({
     sample: LinearRgbSample;
   } | null>(null);
   const previewRgba8Ref = useRef<Uint8ClampedArray | null>(null);
-  const previewDisplayLogKeyRef = useRef<string | null>(null);
   const defringeMapRef = useRef<{ decoded: DecodedRgbImage16; map: DefringeAnalysisMap } | null>(null);
   const defringeMapPromiseRef = useRef<{ decoded: DecodedRgbImage16; requestId: number; promise: Promise<DefringeAnalysisMap> } | null>(null);
   const defringeRequestIdRef = useRef(0);
@@ -15425,58 +15393,6 @@ export function ImageEditDialog({
       includeMosaic ? mosaicRegions : null,
     ]);
 
-    const logPreviewDisplayGeometry = () => {
-      const container = containerRef.current;
-      if (!container || typeof window === "undefined") return;
-
-      const containerRect = container.getBoundingClientRect();
-      const canvasRect = canvas.getBoundingClientRect();
-      const containerStyle = window.getComputedStyle(container);
-      const browserDpr = Number.isFinite(window.devicePixelRatio) && window.devicePixelRatio > 0
-        ? window.devicePixelRatio
-        : 1;
-      const physicalWidth = canvasRect.width * browserDpr;
-      const physicalHeight = canvasRect.height * browserDpr;
-      const backingPerPhysicalX = physicalWidth > 0 ? canvas.width / physicalWidth : 0;
-      const backingPerPhysicalY = physicalHeight > 0 ? canvas.height / physicalHeight : 0;
-      const key = JSON.stringify([
-        previewSource.width,
-        previewSource.height,
-        width,
-        height,
-        canvas.width,
-        canvas.height,
-        canvasRect.width,
-        canvasRect.height,
-        containerRect.width,
-        containerRect.height,
-        container.clientWidth,
-        container.clientHeight,
-        displayPixelRatio,
-        browserDpr,
-      ]);
-      if (previewDisplayLogKeyRef.current === key) return;
-      previewDisplayLogKeyRef.current = key;
-
-      const n = (value: number) => Number(value.toFixed(4));
-      console.group("[Image preview display]");
-      console.table([
-        { Metric: "Source raster", Width: previewSource.width, Height: previewSource.height, Unit: "px" },
-        { Metric: "Preview raster target", Width: width, Height: height, Unit: "px" },
-        { Metric: "Canvas backing raster", Width: canvas.width, Height: canvas.height, Unit: "px" },
-        { Metric: "Canvas CSS style", Width: n(displayed.w), Height: n(displayed.h), Unit: "CSS px" },
-        { Metric: "Canvas rendered box", Width: n(canvasRect.width), Height: n(canvasRect.height), Unit: "CSS px" },
-        { Metric: "Container border box", Width: n(containerRect.width), Height: n(containerRect.height), Unit: "CSS px" },
-        { Metric: "Container client box", Width: container.clientWidth, Height: container.clientHeight, Unit: "CSS px" },
-        { Metric: "Physical display target", Width: n(physicalWidth), Height: n(physicalHeight), Unit: "device px" },
-      ]);
-      console.info(
-        `DPR: state=${displayPixelRatio}, browser=${browserDpr}; `
-        + `container border L/R/T/B=${containerStyle.borderLeftWidth}/${containerStyle.borderRightWidth}/${containerStyle.borderTopWidth}/${containerStyle.borderBottomWidth}; `
-        + `backing/physical=${backingPerPhysicalX.toFixed(6)} x ${backingPerPhysicalY.toFixed(6)} (1.000000 = pixel-for-pixel)`,
-      );
-      console.groupEnd();
-    };
 
     const rendered = previewRenderedRef.current;
     if (
@@ -15487,7 +15403,6 @@ export function ImageEditDialog({
       canvas.width === width &&
       canvas.height === height
     ) {
-      logPreviewDisplayGeometry();
       return;
     }
 
@@ -15499,7 +15414,6 @@ export function ImageEditDialog({
       const isInitialPreview = !initialPreviewReadyRef.current;
       if (canvas.width !== width) canvas.width = width;
       if (canvas.height !== height) canvas.height = height;
-      logPreviewDisplayGeometry();
 
       const previewSourceRect = { x: 0, y: 0, w: previewSource.width, h: previewSource.height };
       const normalizedRotation = normalizeRotationDegrees(rotationDegrees);
@@ -15645,7 +15559,6 @@ export function ImageEditDialog({
               "RAW preview painted",
               performance.now() - rawTiming.startedAtMs,
             );
-            logRawTimingSection("RAW Preview", rawTiming, rawTiming.preview);
           }
         }
       }
@@ -19973,12 +19886,11 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
       if (editTiming) {
         // NextImage.onLoad is the preferred measurement because it observes the
         // actual preview element. A main-thread timer is the fallback; do not
-        // depend on worker console output or worker-side timers.
+        // depend on worker-side timers.
         scheduleImageEditTimingFinalization(editTiming);
       }
-    } catch (error) {
+    } catch {
       if (editTiming) {
-        console.error("[RAW timing] Finish failed on main thread", error);
         finalizeImageEditTiming(
           editTiming,
           performance.now() - editTiming.startedAtMs,
