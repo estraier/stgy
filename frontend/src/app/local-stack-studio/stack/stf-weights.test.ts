@@ -1,6 +1,6 @@
 import { buildStfApertureWeights } from "./stf-weights";
 
-const STF_PROFILE_WEIGHT_RATIO = 2.8;
+const STF_PROFILE_WEIGHT_RATIO = 4.0;
 const STF_PROFILE_EXPONENT = Math.log2(STF_PROFILE_WEIGHT_RATIO);
 
 function sum(values: ArrayLike<number>): number {
@@ -23,7 +23,7 @@ function expectedOuterEdge(fNumbers: readonly number[]): number {
 }
 
 describe("STF aperture weights", () => {
-  test("halves the extrapolated outer-edge luminance while applying the W=2.8 radial profile", () => {
+  test("halves the extrapolated outer-edge luminance while applying the W=4 radial profile", () => {
     const fNumbers = Array.from({ length: 7 }, (_, index) => 2 * 2 ** (index / 6));
     const weights = buildStfApertureWeights(fNumbers);
     expect(weights).not.toBeNull();
@@ -46,8 +46,8 @@ describe("STF aperture weights", () => {
       expect(cumulative).toBeCloseTo(expected, 12);
     }
 
-    expect(weights[1]).toBeCloseTo(0.221161418186, 12);
-    expect(weights[weights.length - 1]).toBeCloseTo(0.093772970448, 12);
+    expect(weights[1]).toBeCloseTo(0.248007977137, 12);
+    expect(weights[weights.length - 1]).toBeCloseTo(0.078117617734, 12);
   });
 
   test("keeps the minimax outer-edge correction dependent on the aperture spacing", () => {

@@ -1,5 +1,5 @@
 const STF_OUTER_EDGE_LUMINANCE_SCALE = 0.5;
-const STF_PROFILE_WEIGHT_RATIO = 2.8;
+const STF_PROFILE_WEIGHT_RATIO = 4.0;
 const STF_PROFILE_EXPONENT = Math.log2(STF_PROFILE_WEIGHT_RATIO);
 
 function stfProfileLuminance(progress: number): number {
@@ -13,8 +13,8 @@ function stfProfileLuminance(progress: number): number {
  * Builds STF blend weights from aperture-derived circle-of-confusion radii.
  *
  * Radius is proportional to 1 / F. The interior weights are the discrete
- * differences of the W=2.8 radial luminance profile; W=2 is exactly linear,
- * while W=2.8 gives the slight outward fullness preferred by the STF model.
+ * differences of the W=4 radial luminance profile; W=2 is exactly linear,
+ * while W=4 gives the fuller profile preferred by the STF model.
  * The widest-aperture edge luminance is based on one extrapolated aperture
  * step and then halved to soften the remaining outer discontinuity.
  *
