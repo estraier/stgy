@@ -2,26 +2,68 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { getPubPostMasterImage } from "@/api/posts";
 
 type LightboxImage = {
   src: string;
   alt: string;
 };
 
-export default function PubImageBlockBinder() {
+type Props = {
+  pubMasterPostId?: string;
+};
+
+function isPublishedArticleThumbnail(img: HTMLImageElement): boolean {
+  const src = img.currentSrc || img.src;
+  if (!src) return false;
+  try {
+    return /\/thumbs\/(?:[^/]+\/)*[^/]+_image\.webp$/i.test(
+      new URL(src, window.location.href).pathname,
+    );
+  } catch {
+    return false;
+  }
+}
+
+function findPublishedMediaIndex(img: HTMLImageElement): number | null {
+  const article = img.closest(".post-content");
+  if (!(article instanceof HTMLElement)) return null;
+  const media = Array.from(
+    article.querySelectorAll<HTMLImageElement | HTMLVideoElement>(
+      "figure.image-block img, figure.image-block video, figure.featured-block img, figure.featured-block video",
+    ),
+  );
+  const index = media.indexOf(img);
+  return index >= 0 ? index : null;
+}
+
+export default function PubImageBlockBinder({ pubMasterPostId }: Props = {}) {
   const [image, setImage] = useState<LightboxImage | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
+  const masterObjectUrlRef = useRef<string | null>(null);
+  const masterRequestRef = useRef(0);
+
+  const clearMasterObjectUrl = useCallback(() => {
+    if (masterObjectUrlRef.current) {
+      URL.revokeObjectURL(masterObjectUrlRef.current);
+      masterObjectUrlRef.current = null;
+    }
+  }, []);
 
   const close = useCallback(() => {
+    masterRequestRef.current += 1;
+    clearMasterObjectUrl();
     setImage(null);
-  }, []);
+  }, [clearMasterObjectUrl]);
 
   useEffect(() => {
     function handleClick(event: MouseEvent) {
       const target = event.target;
       if (!(target instanceof Element)) return;
-      const block = target.closest(".image-block");
+      const block = target.closest(
+        pubMasterPostId ? ".image-block, .featured-block" : ".image-block",
+      );
       if (!(block instanceof HTMLElement)) return;
       const img = block.querySelector("img");
       if (!(img instanceof HTMLImageElement)) return;
@@ -34,15 +76,44 @@ export default function PubImageBlockBinder() {
       restoreFocusRef.current = document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
+      const requestId = masterRequestRef.current + 1;
+      masterRequestRef.current = requestId;
+      clearMasterObjectUrl();
       setImage({ src, alt: img.alt || "" });
+
+      if (!pubMasterPostId || !isPublishedArticleThumbnail(img)) return;
+      const imageIndex = findPublishedMediaIndex(img);
+      if (imageIndex === null) return;
+      void getPubPostMasterImage(pubMasterPostId, imageIndex)
+        .then((blob) => {
+          if (masterRequestRef.current !== requestId) return;
+          const objectUrl = URL.createObjectURL(blob);
+          if (masterRequestRef.current !== requestId) {
+            URL.revokeObjectURL(objectUrl);
+            return;
+          }
+          clearMasterObjectUrl();
+          masterObjectUrlRef.current = objectUrl;
+          setImage((current) => current ? { ...current, src: objectUrl } : current);
+        })
+        .catch(() => {
+          // Keep the already-visible article thumbnail when the master cannot be loaded.
+        });
     }
 
     document.body.addEventListener("click", handleClick);
     return () => document.body.removeEventListener("click", handleClick);
-  }, []);
+  }, [clearMasterObjectUrl, pubMasterPostId]);
+
+  useEffect(() => () => {
+    masterRequestRef.current += 1;
+    clearMasterObjectUrl();
+  }, [clearMasterObjectUrl]);
+
+  const isOpen = image !== null;
 
   useEffect(() => {
-    if (!image) return;
+    if (!isOpen) return;
 
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -64,7 +135,7 @@ export default function PubImageBlockBinder() {
       restoreFocusRef.current?.focus();
       restoreFocusRef.current = null;
     };
-  }, [close, image]);
+  }, [close, isOpen]);
 
   if (!image || typeof document === "undefined") return null;
 
@@ -92,7 +163,7 @@ export default function PubImageBlockBinder() {
       >
         ×
       </button>
-      {/* The lightbox must display the exact article image URL without Next.js image rewriting. */}
+      {/* Keep the lightbox image outside Next.js image rewriting, including on-demand blob URLs. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         className="stgy-article-lightbox-image"

@@ -1,5 +1,11 @@
 import { apiFetch } from "./client";
-import { getPostsKwic, getPubPostsKwic, searchPosts, searchPubPostsByUser } from "./posts";
+import {
+  getPostsKwic,
+  getPubPostMasterImage,
+  getPubPostsKwic,
+  searchPosts,
+  searchPubPostsByUser,
+} from "./posts";
 
 jest.mock("./client", () => ({
   apiFetch: jest.fn(),
@@ -130,5 +136,26 @@ describe("public post KWIC API", () => {
         },
       },
     );
+  });
+});
+
+describe("public post master image API", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  test("requests a master image only when explicitly called", async () => {
+    const blob = {} as Blob;
+    mockApiFetch.mockResolvedValue({
+      ok: true,
+      blob: jest.fn().mockResolvedValue(blob),
+    } as unknown as Response);
+
+    await expect(getPubPostMasterImage("ABC", 2)).resolves.toBe(blob);
+    expect(mockApiFetch).toHaveBeenCalledWith("/posts/pub/ABC/image/2", {
+      method: "POST",
+      credentials: "omit",
+      headers: { Accept: "image/*" },
+    });
   });
 });

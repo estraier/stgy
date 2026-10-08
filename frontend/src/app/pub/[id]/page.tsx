@@ -428,7 +428,7 @@ export default async function PubPostPage({ params, searchParams }: Props) {
             )}
           </div>
         </main>
-        <PubImageBlockBinder />
+        <PubImageBlockBinder pubMasterPostId={String(post.id)} />
         <PubScrollAction selectors={[".pub-container"]} />
       </div>
     );

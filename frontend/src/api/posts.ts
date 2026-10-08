@@ -287,6 +287,16 @@ export async function getPubPost(
   return res.json();
 }
 
+export async function getPubPostMasterImage(postId: string, imageIndex: number): Promise<Blob> {
+  const res = await apiFetch(`/posts/pub/${postId}/image/${imageIndex}`, {
+    method: "POST",
+    credentials: "omit",
+    headers: { Accept: "image/*" },
+  });
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.blob();
+}
+
 export async function listPubPostsByUser(
   userId: string,
   params: { offset?: number; limit?: number; order?: "asc" | "desc" } = {},

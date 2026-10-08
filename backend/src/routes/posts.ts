@@ -22,6 +22,8 @@ import { KWIC_OPTIONS, parseKwicQuery } from "../utils/kwic";
 import { makeKwicCacheKey, readKwicCache, writeKwicCache } from "../utils/kwicCache";
 import { writeSearchCache } from "../utils/searchCache";
 import { mdMakeKwicData } from "stgy-markdown";
+import { MediaService } from "../services/media";
+import { getPublishedMasterImage } from "../utils/pubImage";
 import {
   normalizeOneLiner,
   normalizeMultiLines,
@@ -42,6 +44,7 @@ export default function createPostsRouter(
 ) {
   const router = Router();
   const postsService = new PostsService(pgPool, redis, eventLogService);
+  const mediaService = new MediaService(storageService, redis);
   const usersService = new UsersService(pgPool, redis, eventLogService);
   const pubViewsService = new PubViewsService(pgPool, redis);
   const authService = new AuthService(pgPool, redis);
@@ -519,6 +522,46 @@ export default function createPostsRouter(
       );
     } catch (e) {
       res.status(500).json({ error: (e as Error).message || "failed to get public posts" });
+    }
+  });
+
+  router.post("/pub/:id/image/:index", async (req, res) => {
+    try {
+      const userAgent = req.get("user-agent") ?? "";
+      if (
+        /(?:bot\b|crawler|spider|slurp|facebookexternalhit|bingpreview|google-inspection-tool|googleother)/iu.test(
+          userAgent,
+        )
+      ) {
+        return res.status(404).end();
+      }
+      const index = Number(req.params.index);
+      if (!Number.isInteger(index) || index < 0) return res.status(404).end();
+      const post = await postsService.getPubPost(req.params.id, new Date().toISOString());
+      if (!post) return res.status(404).end();
+      const ref = getPublishedMasterImage(post.content, index);
+      if (!ref || ref.userId !== post.ownedBy) return res.status(404).end();
+      const { meta, bytes } = await mediaService.getImageBytes(ref.userId, ref.key);
+      const ext = /\.([A-Za-z0-9]+)$/.exec(ref.key)?.[1]?.toLowerCase() ?? "";
+      const contentType = meta.contentType?.startsWith("image/")
+        ? meta.contentType
+        : ext === "jpg" || ext === "jpeg"
+          ? "image/jpeg"
+          : ext === "png"
+            ? "image/png"
+            : ext === "webp"
+              ? "image/webp"
+              : null;
+      if (!contentType) return res.status(404).end();
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Content-Length", String(meta.size));
+      res.setHeader("Cache-Control", "private, max-age=3600");
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      if (meta.etag) res.setHeader("ETag", meta.etag);
+      if (meta.lastModified) res.setHeader("Last-Modified", meta.lastModified);
+      return res.status(200).end(Buffer.from(bytes));
+    } catch {
+      return res.status(404).end();
     }
   });
 
