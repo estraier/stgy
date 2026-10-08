@@ -1,33 +1,34 @@
-const STF_OUTER_EDGE_LUMINANCE_SCALE = 0.5;
 const STF_PROFILE_WEIGHT_RATIO = 4.0;
-const STF_PROFILE_EXPONENT = Math.log2(STF_PROFILE_WEIGHT_RATIO);
-
-function stfProfileLuminance(progress: number): number {
-  return (
-    STF_PROFILE_WEIGHT_RATIO
-    - (2 - progress) ** STF_PROFILE_EXPONENT
-  ) / (STF_PROFILE_WEIGHT_RATIO - 1);
-}
 
 /**
  * Builds STF blend weights from aperture-derived circle-of-confusion radii.
  *
- * Radius is proportional to 1 / F. The interior weights are the discrete
- * differences of the W=4 radial luminance profile; W=2 is exactly linear,
- * while W=4 gives the fuller profile preferred by the STF model.
- * The widest-aperture edge luminance is based on one extrapolated aperture
- * step and then halved to soften the remaining outer discontinuity.
+ * Radius is proportional to 1 / F. The interior weights follow a W-shaped
+ * radial-luminance profile whose W=2 case is linear and whose larger W values
+ * become more "full" in the middle. The widest-aperture outer-edge luminance
+ * is then chosen by a minimax rule: it is set so that the final outermost drop
+ * to zero equals the largest remaining interior step. This keeps the largest
+ * discontinuity as small as possible for the chosen profile.
  *
  * Returns null when the aperture sequence cannot define that profile, so the
  * caller can preserve the historical uniform-weight fallback.
  */
 export function buildStfApertureWeights(fNumbers: readonly number[]): Float64Array | null {
+  console.info("STF PROFILE W", STF_PROFILE_WEIGHT_RATIO);
+  console.info("STF fNumbers", Array.from(fNumbers));
+
+  const fail = (): null => {
+    console.info("STF weights", null);
+    return null;
+  };
+
   const imageCount = fNumbers.length;
-  if (imageCount === 0) return null;
+  if (imageCount === 0) return fail();
   if (imageCount === 1) {
-    return Number.isFinite(fNumbers[0]) && fNumbers[0] > 0
-      ? new Float64Array([1])
-      : null;
+    if (!(Number.isFinite(fNumbers[0]) && fNumbers[0] > 0)) return fail();
+    const weights = new Float64Array([1]);
+    console.info("STF weights", Array.from(weights));
+    return weights;
   }
 
   const apertures = fNumbers.map((fNumber, index) => ({
@@ -36,64 +37,80 @@ export function buildStfApertureWeights(fNumbers: readonly number[]): Float64Arr
     radius: 1 / fNumber,
   }));
   if (apertures.some((entry) => !(Number.isFinite(entry.fNumber) && entry.fNumber > 0))) {
-    return null;
+    return fail();
   }
 
   apertures.sort((left, right) => left.fNumber - right.fNumber);
   for (let i = 1; i < apertures.length; i += 1) {
-    if (!(apertures[i].fNumber > apertures[i - 1].fNumber)) return null;
+    if (!(apertures[i].fNumber > apertures[i - 1].fNumber)) return fail();
   }
 
   const widest = apertures[0];
-  const secondWidest = apertures[1];
   const narrowest = apertures[apertures.length - 1];
   const radiusSpan = widest.radius - narrowest.radius;
-  if (!(Number.isFinite(radiusSpan) && radiusSpan > 0)) return null;
+  if (!(Number.isFinite(radiusSpan) && radiusSpan > 0)) return fail();
 
-  // Continue the first aperture ratio one step beyond the widest aperture.
-  const outerRadius = widest.radius * (secondWidest.fNumber / widest.fNumber);
-  const outerSpan = outerRadius - narrowest.radius;
-  const oldOuterEdgeLuminance = (outerRadius - widest.radius) / outerSpan;
-  if (
-    !(
-      Number.isFinite(oldOuterEdgeLuminance)
-      && oldOuterEdgeLuminance > 0
-      && oldOuterEdgeLuminance < 1
-    )
-  ) {
-    return null;
+  const profileExponent = Math.log2(STF_PROFILE_WEIGHT_RATIO);
+  if (!(Number.isFinite(profileExponent) && profileExponent > 0)) return fail();
+
+  const sortedProgresses = new Float64Array(imageCount);
+  const sortedProfile = new Float64Array(imageCount);
+  sortedProgresses[0] = 0;
+  sortedProfile[0] = 0;
+
+  const computeProfile = (progress: number): number => {
+    if (!(Number.isFinite(progress) && progress >= 0 && progress <= 1)) return Number.NaN;
+    if (Math.abs(STF_PROFILE_WEIGHT_RATIO - 1) < 1e-12) {
+      const base = 2 - progress;
+      return 1 - Math.log2(base);
+    }
+    return (
+      STF_PROFILE_WEIGHT_RATIO
+      - (2 - progress) ** profileExponent
+    ) / (STF_PROFILE_WEIGHT_RATIO - 1);
+  };
+
+  let maxInteriorStep = 0;
+  for (let i = 1; i < apertures.length; i += 1) {
+    const progress = (widest.radius - apertures[i].radius) / radiusSpan;
+    if (!(Number.isFinite(progress) && progress > sortedProgresses[i - 1] && progress <= 1)) {
+      return fail();
+    }
+    const profileValue = computeProfile(progress);
+    if (!(Number.isFinite(profileValue) && profileValue > sortedProfile[i - 1] && profileValue <= 1)) {
+      return fail();
+    }
+    const profileStep = profileValue - sortedProfile[i - 1];
+    if (!(Number.isFinite(profileStep) && profileStep > 0)) return fail();
+    if (profileStep > maxInteriorStep) maxInteriorStep = profileStep;
+    sortedProgresses[i] = progress;
+    sortedProfile[i] = profileValue;
   }
 
-  const outerEdgeLuminance = oldOuterEdgeLuminance * STF_OUTER_EDGE_LUMINANCE_SCALE;
+  if (!(Number.isFinite(maxInteriorStep) && maxInteriorStep > 0)) return fail();
+
+  const outerEdgeLuminance = maxInteriorStep / (1 + maxInteriorStep);
+  if (!(Number.isFinite(outerEdgeLuminance) && outerEdgeLuminance > 0 && outerEdgeLuminance < 1)) {
+    return fail();
+  }
+
   const sortedWeights = new Float64Array(imageCount);
   sortedWeights[0] = outerEdgeLuminance;
-
-  let previousCumulative = outerEdgeLuminance;
+  let previousProfile = 0;
   for (let i = 1; i < apertures.length; i += 1) {
-    const radiusStep = apertures[i - 1].radius - apertures[i].radius;
-    if (!(Number.isFinite(radiusStep) && radiusStep > 0)) return null;
-
-    const progress = (widest.radius - apertures[i].radius) / radiusSpan;
-    const profileLuminance = stfProfileLuminance(progress);
-    if (!(Number.isFinite(profileLuminance) && profileLuminance > 0 && profileLuminance <= 1)) {
-      return null;
-    }
-
-    const cumulative = outerEdgeLuminance
-      + (1 - outerEdgeLuminance) * profileLuminance;
-    const weight = cumulative - previousCumulative;
-    if (!(Number.isFinite(weight) && weight > 0)) return null;
-    sortedWeights[i] = weight;
-    previousCumulative = cumulative;
+    const profileStep = sortedProfile[i] - previousProfile;
+    sortedWeights[i] = (1 - outerEdgeLuminance) * profileStep;
+    previousProfile = sortedProfile[i];
   }
 
   let totalWeight = 0;
   for (const weight of sortedWeights) totalWeight += weight;
-  if (!(Number.isFinite(totalWeight) && totalWeight > 0)) return null;
+  if (!(Number.isFinite(totalWeight) && totalWeight > 0)) return fail();
 
   const weights = new Float64Array(imageCount);
   for (let i = 0; i < apertures.length; i += 1) {
     weights[apertures[i].index] = sortedWeights[i] / totalWeight;
   }
+  console.info("STF weights", Array.from(weights));
   return weights;
 }
