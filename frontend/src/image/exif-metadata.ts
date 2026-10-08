@@ -639,12 +639,26 @@ function gpsFromLibRaw(value: unknown): PreservedGpsMetadata | undefined {
   return { latitude, longitude, altitude };
 }
 
-function formatExifTimestamp(seconds: number): string | undefined {
-  if (!Number.isFinite(seconds) || seconds <= 0) return undefined;
-  const date = new Date(seconds * 1000);
+function formatLibRawTimestamp(value: unknown): string | undefined {
+  let milliseconds: number | undefined;
+  if (value instanceof Date) {
+    milliseconds = value.getTime();
+  } else {
+    const numeric = finiteNumber(value);
+    if (numeric !== undefined && numeric > 0) {
+      // libraw-wasm 1.6.0 returns a Date, while older/direct wrappers may expose
+      // LibRaw's time_t as epoch seconds. Also accept epoch milliseconds so the
+      // metadata boundary remains robust across wrapper implementations.
+      milliseconds = numeric >= 100_000_000_000 ? numeric : numeric * 1000;
+    }
+  }
+  if (milliseconds === undefined || !Number.isFinite(milliseconds)) return undefined;
+  const date = new Date(milliseconds);
   if (!Number.isFinite(date.getTime())) return undefined;
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return `${date.getUTCFullYear()}:${pad(date.getUTCMonth() + 1)}:${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`;
+  const year = date.getUTCFullYear();
+  if (year < 1 || year > 9999) return undefined;
+  const pad = (number: number) => String(number).padStart(2, "0");
+  return `${String(year).padStart(4, "0")}:${pad(date.getUTCMonth() + 1)}:${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`;
 }
 
 export function extractWhitelistedMetadataFromLibRaw(
@@ -654,9 +668,9 @@ export function extractWhitelistedMetadataFromLibRaw(
   const dynamic = metadata as LibRawMetadataLike & Record<string, unknown>;
   const lens = metadata.lens;
   const makerNotes = lens?.makernotes;
-  const timestamp = finiteNumber(dynamic.timestamp ?? dynamic.timeStamp ?? dynamic.date_time);
+  const timestamp = dynamic.timestamp ?? dynamic.timeStamp ?? dynamic.date_time;
   const output: PreservedImageMetadata = {
-    dateTimeOriginal: rawMetadataString(dynamic.datetime ?? dynamic.dateTimeOriginal) ?? (timestamp ? formatExifTimestamp(timestamp) : undefined),
+    dateTimeOriginal: rawMetadataString(dynamic.datetime ?? dynamic.dateTimeOriginal) ?? formatLibRawTimestamp(timestamp),
     make: rawMetadataString(metadata.normalized_make) ?? rawMetadataString(metadata.camera_make),
     model: rawMetadataString(metadata.normalized_model) ?? rawMetadataString(metadata.camera_model),
     lensMake: rawMetadataString(lens?.LensMake),
@@ -1220,8 +1234,9 @@ function webpWithExif(bytes: Uint8Array, exifTiff: Uint8Array): Uint8Array {
   uint24Le(vp8x, 4, dimensions.width - 1);
   uint24Le(vp8x, 7, dimensions.height - 1);
 
-  const exifPrefix = new Uint8Array([0x45, 0x78, 0x69, 0x66, 0x00, 0x00]);
-  const exifChunk = webpChunk("EXIF", concatBytes([exifPrefix, exifTiff]));
+  // WebP EXIF chunks contain the TIFF/Exif payload directly. The JPEG APP1
+  // "Exif\0\0" segment identifier is not part of a WebP EXIF chunk.
+  const exifChunk = webpChunk("EXIF", exifTiff);
   const bodyParts: Uint8Array[] = [webpChunk("VP8X", vp8x)];
   let exifInserted = false;
   for (const chunk of chunks) {

@@ -68,7 +68,7 @@ export type LibRawMetadataLike = {
   shutter?: number;
   aperture?: number;
   focal_len?: number;
-  timestamp?: number;
+  timestamp?: number | Date;
   parsed_gps?: LibRawParsedGpsLike;
   desc?: string;
   artist?: string;

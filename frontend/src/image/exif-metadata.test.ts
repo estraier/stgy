@@ -117,6 +117,20 @@ function minimalWebP(): Uint8Array {
   return concatTestBytes(ascii("RIFF"), Uint8Array.from([18, 0, 0, 0]), ascii("WEBP"), chunk);
 }
 
+function findWebPChunkPayload(bytes: Uint8Array, wantedType: string): Uint8Array | null {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let offset = 12;
+  while (offset + 8 <= bytes.length) {
+    const type = String.fromCharCode(...bytes.subarray(offset, offset + 4));
+    const length = view.getUint32(offset + 4, true);
+    const start = offset + 8;
+    if (start + length > bytes.length) return null;
+    if (type === wantedType) return bytes.subarray(start, start + length);
+    offset = start + length + (length & 1);
+  }
+  return null;
+}
+
 describe("EXIF metadata whitelist", () => {
   test("round-trips the whitelisted fields through a fresh EXIF TIFF payload", () => {
     const payload = buildExifTiffPayload(sampleMetadata);
@@ -206,6 +220,22 @@ describe("EXIF metadata whitelist", () => {
     expect(metadata?.gps?.altitude).toBeCloseTo(512.3, 3);
   });
 
+  test("maps the Date timestamp returned by libraw-wasm 1.6.0 without multiplying milliseconds twice", () => {
+    const metadata = extractWhitelistedMetadataFromLibRaw({
+      timestamp: new Date(Date.UTC(2026, 7, 26, 9, 33, 20)),
+      camera_make: "Olympus",
+      camera_model: "E-M5 Mark III",
+    });
+    expect(metadata?.dateTimeOriginal).toBe("2026:08:26 09:33:20");
+  });
+
+  test("accepts an epoch-millisecond LibRaw timestamp for wrapper compatibility", () => {
+    const metadata = extractWhitelistedMetadataFromLibRaw({
+      timestamp: Date.UTC(2026, 7, 26, 9, 33, 20),
+    });
+    expect(metadata?.dateTimeOriginal).toBe("2026:08:26 09:33:20");
+  });
+
   test("selects the earliest capture time and preserves only values shared by every LSS input", () => {
     const merged = mergeStackMetadata([
       {
@@ -276,10 +306,16 @@ describe("EXIF metadata whitelist", () => {
     expect(parsed?.fNumber).toBeCloseTo(sampleMetadata.fNumber!, 6);
   });
 
-  test("round-trips the whitelist through WebP EXIF output", async () => {
+  test("round-trips the whitelist through WebP EXIF output using a TIFF header directly", async () => {
     const webp = new Blob([minimalWebP()], { type: "image/webp" });
     const output = await attachWhitelistedMetadata(webp, sampleMetadata);
-    const parsed = extractWhitelistedMetadataFromBuffer(await output.arrayBuffer());
+    const outputBytes = new Uint8Array(await output.arrayBuffer());
+    const exifPayload = findWebPChunkPayload(outputBytes, "EXIF");
+    expect(exifPayload).not.toBeNull();
+    expect(Array.from(exifPayload!.subarray(0, 4))).toEqual([0x49, 0x49, 0x2a, 0x00]);
+    expect(String.fromCharCode(...exifPayload!.subarray(0, 6))).not.toBe("Exif\0\0");
+
+    const parsed = extractWhitelistedMetadataFromBuffer(outputBytes);
     expect(parsed?.dateTimeOriginal).toBe(sampleMetadata.dateTimeOriginal);
     expect(parsed?.make).toBe(sampleMetadata.make);
     expect(parsed?.fNumber).toBeCloseTo(sampleMetadata.fNumber!, 6);
