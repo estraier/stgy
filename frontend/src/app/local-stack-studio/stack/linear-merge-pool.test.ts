@@ -10,9 +10,12 @@ const config: LinearMergeWorkerConfig = {
   sessionId: "test-session",
   alignmentPlan: { normalizationMode: "feature-match", targetWidth: 4, targetHeight: 8 },
   matrices: [null, null],
+  mode: "average",
   gains: new Float32Array([1, 1]),
   scaledLogs: new Float32Array([0, 0]),
   weights: new Float32Array([0.5, 0.5]),
+  fNumbers: null,
+  apertureOrder: null,
   exposureRolloffMaxP998AfterGain: [null, null],
 };
 

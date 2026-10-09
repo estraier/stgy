@@ -191,6 +191,43 @@ export default function PageBody() {
             >
               Process
             </button>
+
+            <div id="stf-options-row" className="hidden w-full basis-full border-t border-gray-200 pt-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:gap-4">
+                <div className="text-xs font-medium uppercase tracking-wide text-gray-500 sm:self-center">Options</div>
+                <label className="flex flex-col items-start gap-1.5">
+                  <span className="text-xs font-medium text-gray-500">Blend weight</span>
+                  <select
+                    id="stf-blend-weight"
+                    defaultValue="2.8"
+                    className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm"
+                  >
+                    <option value="1">1 (deep DoF)</option>
+                    <option value="1.4">1.4</option>
+                    <option value="2">2.0 (linear attenuation)</option>
+                    <option value="2.8">2.8 (balanced)</option>
+                    <option value="4">4.0</option>
+                    <option value="5.6">5.6</option>
+                    <option value="8">8.0 (large bokeh)</option>
+                  </select>
+                </label>
+                <label className="flex flex-col items-start gap-1.5">
+                  <span className="text-xs font-medium text-gray-500">Additional Blur</span>
+                  <select
+                    id="stf-additional-blur"
+                    defaultValue="0"
+                    className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm disabled:opacity-50"
+                  >
+                    <option value="0">0 (none)</option>
+                    <option value="0.3">0.3</option>
+                    <option value="0.4">0.4</option>
+                    <option value="0.5">0.5</option>
+                    <option value="0.6">0.6</option>
+                    <option value="0.7">0.7</option>
+                  </select>
+                </label>
+              </div>
+            </div>
           </div>
 
           <div id="usage-panel" className="mt-5 rounded-xl border border-dashed border-gray-300 bg-white px-4 py-4 sm:px-5">

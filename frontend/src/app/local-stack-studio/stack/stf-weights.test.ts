@@ -1,4 +1,4 @@
-import { buildStfApertureWeights } from "./stf-weights";
+import { buildStfApertureWeights, DEFAULT_STF_BLEND_WEIGHT } from "./stf-weights";
 
 const STF_PROFILE_WEIGHT_RATIO = 2.8;
 
@@ -8,14 +8,14 @@ function sum(values: ArrayLike<number>): number {
   return total;
 }
 
-function computeProfile(progress: number): number {
-  if (Math.abs(STF_PROFILE_WEIGHT_RATIO - 1) < 1e-12) {
+function computeProfile(progress: number, blendWeight = STF_PROFILE_WEIGHT_RATIO): number {
+  if (Math.abs(blendWeight - 1) < 1e-12) {
     return 1 - Math.log2(2 - progress);
   }
-  const exponent = Math.log2(STF_PROFILE_WEIGHT_RATIO);
+  const exponent = Math.log2(blendWeight);
   return (
-    STF_PROFILE_WEIGHT_RATIO - (2 - progress) ** exponent
-  ) / (STF_PROFILE_WEIGHT_RATIO - 1);
+    blendWeight - (2 - progress) ** exponent
+  ) / (blendWeight - 1);
 }
 
 describe("STF aperture weights", () => {
@@ -81,6 +81,54 @@ describe("STF aperture weights", () => {
     }
 
     expect(Math.max(...weights.slice(1))).toBeCloseTo(weights[0], 12);
+  });
+
+  test("keeps the default blend weight at the historical W=2.8 result", () => {
+    const fNumbers = Array.from({ length: 7 }, (_, index) => 2 * 2 ** (index / 6));
+    const implicit = buildStfApertureWeights(fNumbers);
+    const explicit = buildStfApertureWeights(fNumbers, DEFAULT_STF_BLEND_WEIGHT);
+    expect(implicit).not.toBeNull();
+    expect(explicit).not.toBeNull();
+    if (!implicit || !explicit) return;
+    expect(Array.from(implicit)).toEqual(Array.from(explicit));
+  });
+
+  test("supports W=1 using the logarithmic limit profile", () => {
+    const fNumbers = [2, 2.8, 4, 5.6];
+    const weights = buildStfApertureWeights(fNumbers, 1);
+    expect(weights).not.toBeNull();
+    if (!weights) return;
+    expect(sum(weights)).toBeCloseTo(1, 12);
+    for (const weight of weights) expect(weight).toBeGreaterThan(0);
+  });
+
+  test("uses a linear attenuation profile at W=2", () => {
+    const fNumbers = [2, 2.8, 4, 5.6];
+    const weights = buildStfApertureWeights(fNumbers, 2);
+    expect(weights).not.toBeNull();
+    if (!weights) return;
+
+    const radii = fNumbers.map((fNumber) => 1 / fNumber);
+    const radiusSpan = radii[0] - radii[radii.length - 1];
+    const progresses = radii.map((radius) => (radii[0] - radius) / radiusSpan);
+    for (const progress of progresses) {
+      expect(computeProfile(progress, 2)).toBeCloseTo(progress, 12);
+    }
+    expect(sum(weights)).toBeCloseTo(1, 12);
+  });
+
+  test.each([1, 1.4, 2, 2.8, 4, 5.6, 8])("returns normalized positive weights for W=%s", (blendWeight) => {
+    const weights = buildStfApertureWeights([2, 2.8, 4, 5.6], blendWeight);
+    expect(weights).not.toBeNull();
+    if (!weights) return;
+    expect(sum(weights)).toBeCloseTo(1, 12);
+    for (const weight of weights) expect(weight).toBeGreaterThan(0);
+  });
+
+  test("rejects invalid blend weights", () => {
+    expect(buildStfApertureWeights([2, 2.8, 4], 0.9)).toBeNull();
+    expect(buildStfApertureWeights([2, 2.8, 4], Number.NaN)).toBeNull();
+    expect(buildStfApertureWeights([2, 2.8, 4], Number.POSITIVE_INFINITY)).toBeNull();
   });
 
   test("maps weights back to the original image order", () => {

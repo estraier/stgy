@@ -1,4 +1,4 @@
-const STF_PROFILE_WEIGHT_RATIO = 2.8;
+export const DEFAULT_STF_BLEND_WEIGHT = 2.8;
 
 /**
  * Builds STF blend weights from aperture-derived circle-of-confusion radii.
@@ -13,7 +13,10 @@ const STF_PROFILE_WEIGHT_RATIO = 2.8;
  * Returns null when the aperture sequence cannot define that profile, so the
  * caller can preserve the historical uniform-weight fallback.
  */
-export function buildStfApertureWeights(fNumbers: readonly number[]): Float64Array | null {
+export function buildStfApertureWeights(
+  fNumbers: readonly number[],
+  blendWeight = DEFAULT_STF_BLEND_WEIGHT,
+): Float64Array | null {
   const fail = (): null => null;
 
   const imageCount = fNumbers.length;
@@ -42,8 +45,9 @@ export function buildStfApertureWeights(fNumbers: readonly number[]): Float64Arr
   const radiusSpan = widest.radius - narrowest.radius;
   if (!(Number.isFinite(radiusSpan) && radiusSpan > 0)) return fail();
 
-  const profileExponent = Math.log2(STF_PROFILE_WEIGHT_RATIO);
-  if (!(Number.isFinite(profileExponent) && profileExponent > 0)) return fail();
+  if (!(Number.isFinite(blendWeight) && blendWeight >= 1)) return fail();
+  const profileExponent = Math.log2(blendWeight);
+  if (!(Number.isFinite(profileExponent) && profileExponent >= 0)) return fail();
 
   const sortedProgresses = new Float64Array(imageCount);
   const sortedProfile = new Float64Array(imageCount);
@@ -52,14 +56,14 @@ export function buildStfApertureWeights(fNumbers: readonly number[]): Float64Arr
 
   const computeProfile = (progress: number): number => {
     if (!(Number.isFinite(progress) && progress >= 0 && progress <= 1)) return Number.NaN;
-    if (Math.abs(STF_PROFILE_WEIGHT_RATIO - 1) < 1e-12) {
+    if (Math.abs(blendWeight - 1) < 1e-12) {
       const base = 2 - progress;
       return 1 - Math.log2(base);
     }
     return (
-      STF_PROFILE_WEIGHT_RATIO
+      blendWeight
       - (2 - progress) ** profileExponent
-    ) / (STF_PROFILE_WEIGHT_RATIO - 1);
+    ) / (blendWeight - 1);
   };
 
   let maxInteriorStep = 0;
