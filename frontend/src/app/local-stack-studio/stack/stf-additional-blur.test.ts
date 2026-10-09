@@ -1,8 +1,11 @@
 import {
   STF_ADDITIONAL_BLUR_HISTOGRAM_BINS,
+  applyStfAdditionalBlurEdgeProtection,
   applyStfAdditionalBlurScaledLog,
   buildStfAdditionalBlurApertureOrder,
   computeStfAdditionalBlurOriginallyUnsharpGate,
+  computeStfAdditionalBlurPersistentEdgeProtection,
+  dilateStfAdditionalBlurProtection,
   computeStfAdditionalBlurTerms,
   dequantizeStfAdditionalBlurMask,
   quantizeStfAdditionalBlurMask,
@@ -37,6 +40,27 @@ describe("STF Additional Blur helpers", () => {
     expect(strong.support).toBeGreaterThan(weak.support);
     expect(strong.rawMask).toBeGreaterThan(weak.rawMask);
     expect(computeStfAdditionalBlurTerms(0, 0.5, 0.05).rawMask).toBe(0);
+  });
+
+  test("edge protection is re-applied after mask normalization", () => {
+    expect(applyStfAdditionalBlurEdgeProtection(0.8, 0)).toBeCloseTo(0.8, 12);
+    expect(applyStfAdditionalBlurEdgeProtection(0.8, 0.75)).toBeCloseTo(0.2, 12);
+    expect(applyStfAdditionalBlurEdgeProtection(0.8, 1)).toBe(0);
+  });
+
+  test("builds persistent edge protection from fixed-scale sharpness", () => {
+    expect(computeStfAdditionalBlurPersistentEdgeProtection(0)).toBe(0);
+    const weak = computeStfAdditionalBlurPersistentEdgeProtection(0.005);
+    const strong = computeStfAdditionalBlurPersistentEdgeProtection(0.1);
+    expect(weak).toBeGreaterThan(0);
+    expect(strong).toBeGreaterThan(weak);
+    expect(strong).toBeLessThanOrEqual(1);
+  });
+
+  test("dilates sharp-edge protection by the requested blur radius", () => {
+    const source = new Float32Array([0, 0, 1, 0, 0]);
+    expect(Array.from(dilateStfAdditionalBlurProtection(source, 5, 1, 1))).toEqual([0, 1, 1, 1, 0]);
+    expect(Array.from(dilateStfAdditionalBlurProtection(source, 5, 1, 2))).toEqual([1, 1, 1, 1, 1]);
   });
 
   test("protects a region that was already sharp before the open-side rise", () => {

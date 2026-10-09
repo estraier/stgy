@@ -31,12 +31,18 @@ class MockClient implements StfAdditionalBlurPoolClient {
     MockClient.running -= 1;
     return {
       mask: new Uint16Array(4 * job.height).fill(job.index),
+      edgeProtection: new Uint16Array(4 * job.height),
       histogram: new Uint32Array(4096),
       sampleCount: 4 * job.height,
     };
   }
-  async applyBlurStripe(job: { index: number; height: number }, mask: Uint16Array) {
+  async applyBlurStripe(
+    job: { index: number; height: number },
+    mask: Uint16Array,
+    edgeProtection: Uint16Array,
+  ) {
     expect(mask.length).toBe(4 * job.height);
+    expect(edgeProtection.length).toBe(4 * job.height);
     return new Float32Array(4 * job.height * 3).fill(job.index);
   }
   terminate() {}
@@ -66,13 +72,14 @@ describe("STF Additional Blur pool", () => {
     expect(completed.sort((a, b) => a - b)).toEqual(jobs.map((job) => job.index));
   });
 
-  test("loads one saved mask per apply stripe", async () => {
+  test("loads saved mask and edge protection per apply stripe", async () => {
     const completed: number[] = [];
     await runStfAdditionalBlurApplyPool({
       jobs,
       config,
       createClient: () => new MockClient(),
       loadMask: async (job) => new Uint16Array(4 * job.height).fill(job.index),
+      loadEdgeProtection: async (job) => new Uint16Array(4 * job.height),
       scaledLogFactor: 3,
       hardwareConcurrency: 4,
       onJobComplete: (job) => { completed.push(job.index); },

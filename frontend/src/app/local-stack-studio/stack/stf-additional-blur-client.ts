@@ -25,6 +25,7 @@ type PendingRequest = {
 
 export type StfAdditionalBlurMaskStripe = {
   mask: Uint16Array;
+  edgeProtection: Uint16Array;
   histogram: Uint32Array;
   sampleCount: number;
 };
@@ -97,6 +98,7 @@ export class StfAdditionalBlurWorkerClient {
       const response = message as StfAdditionalBlurAnalyzeMaskResponse;
       return {
         mask: new Uint16Array(asArrayBuffer(response.maskBuffer, "mask")),
+        edgeProtection: new Uint16Array(asArrayBuffer(response.edgeProtectionBuffer, "edge protection")),
         histogram: new Uint32Array(asArrayBuffer(response.histogramBuffer, "histogram")),
         sampleCount: Number(response.sampleCount),
       };
@@ -106,9 +108,11 @@ export class StfAdditionalBlurWorkerClient {
   applyBlurStripe(
     job: LinearMergeStripeJob,
     mask: Uint16Array,
+    edgeProtection: Uint16Array,
     scaledLogFactor: number,
   ): Promise<Float32Array> {
     const maskBuffer = mask.buffer as ArrayBuffer;
+    const edgeProtectionBuffer = edgeProtection.buffer as ArrayBuffer;
     return this.request<"apply-blur-stripe-result">(
       {
         type: "apply-blur-stripe",
@@ -116,9 +120,10 @@ export class StfAdditionalBlurWorkerClient {
         y: job.y,
         height: job.height,
         maskBuffer,
+        edgeProtectionBuffer,
         scaledLogFactor,
       },
-      [maskBuffer],
+      [maskBuffer, edgeProtectionBuffer],
       "apply-blur-stripe-result",
     ).then((message) => {
       const response = message as StfAdditionalBlurApplyResponse;

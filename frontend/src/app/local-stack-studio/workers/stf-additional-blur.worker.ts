@@ -1,8 +1,11 @@
 import { addWeightedLinearToAccumulator, mergeLinearFloatIntoAccumulator } from "../stack/linear-merge";
 import {
   STF_ADDITIONAL_BLUR_HISTOGRAM_BINS,
+  applyStfAdditionalBlurEdgeProtection,
   applyStfAdditionalBlurScaledLog,
   computeStfAdditionalBlurOriginallyUnsharpGate,
+  computeStfAdditionalBlurPersistentEdgeProtection,
+  dilateStfAdditionalBlurProtection,
   computeStfAdditionalBlurTerms,
   dequantizeStfAdditionalBlurMask,
   quantizeStfAdditionalBlurMask,
@@ -84,8 +87,9 @@ workerScope.onmessage = async (event: MessageEvent<StfAdditionalBlurWorkerReques
     if (message.type === "analyze-mask-stripe") {
       ensureInitialized();
       const stripe = validateStripe(message.y, message.height);
-      const { mask, histogram } = await analyzeMaskStripe(stripe.y, stripe.height);
+      const { mask, edgeProtection, histogram } = await analyzeMaskStripe(stripe.y, stripe.height);
       const maskBuffer = mask.buffer as ArrayBuffer;
+      const edgeProtectionBuffer = edgeProtection.buffer as ArrayBuffer;
       const histogramBuffer = histogram.buffer as ArrayBuffer;
       post({
         type: "analyze-mask-stripe-result",
@@ -94,9 +98,10 @@ workerScope.onmessage = async (event: MessageEvent<StfAdditionalBlurWorkerReques
         y: stripe.y,
         height: stripe.height,
         maskBuffer,
+        edgeProtectionBuffer,
         histogramBuffer,
         sampleCount: mask.length,
-      }, [maskBuffer, histogramBuffer]);
+      }, [maskBuffer, edgeProtectionBuffer, histogramBuffer]);
       return;
     }
 
@@ -104,13 +109,25 @@ workerScope.onmessage = async (event: MessageEvent<StfAdditionalBlurWorkerReques
       ensureInitialized();
       const stripe = validateStripe(message.y, message.height);
       const mask = new Uint16Array(message.maskBuffer);
+      const edgeProtection = new Uint16Array(message.edgeProtectionBuffer);
       const expectedMaskLength = reader!.width * stripe.height;
       if (mask.length !== expectedMaskLength) {
         throw new Error(
           `STF Additional Blur mask length ${mask.length} does not match expected ${expectedMaskLength}.`,
         );
       }
-      const linear = await applyBlurStripe(stripe.y, stripe.height, mask, Number(message.scaledLogFactor));
+      if (edgeProtection.length !== expectedMaskLength) {
+        throw new Error(
+          `STF Additional Blur edge protection length ${edgeProtection.length} does not match expected ${expectedMaskLength}.`,
+        );
+      }
+      const linear = await applyBlurStripe(
+        stripe.y,
+        stripe.height,
+        mask,
+        edgeProtection,
+        Number(message.scaledLogFactor),
+      );
       const linearBuffer = linear.buffer as ArrayBuffer;
       post({
         type: "apply-blur-stripe-result",
@@ -163,6 +180,7 @@ async function readToneMatchedLinearRegion(
 
 async function analyzeMaskStripe(y: number, height: number): Promise<{
   mask: Uint16Array;
+  edgeProtection: Uint16Array;
   histogram: Uint32Array;
 }> {
   const width = reader!.width;
@@ -174,6 +192,7 @@ async function analyzeMaskStripe(y: number, height: number): Promise<{
   const cocPeakRise = new Float32Array(pixelCount);
   const cocPeakSharpness = new Float32Array(pixelCount);
   const cocBaselineSharpness = new Float32Array(pixelCount);
+  const persistentSharpness = new Float32Array(pixelCount);
 
   let previousSharpness: Float32Array | null = null;
   let groupCountTotal = 0;
@@ -204,6 +223,12 @@ async function analyzeMaskStripe(y: number, height: number): Promise<{
       const inverseCount = 1 / groupImageCount;
       for (let index = 0; index < pixelCount; index += 1) groupSharpness[index] *= inverseCount;
     }
+    for (let index = 0; index < pixelCount; index += 1) {
+      const sharpness = groupSharpness[index] ?? 0;
+      if (groupCountTotal === 0 || sharpness < persistentSharpness[index]) {
+        persistentSharpness[index] = sharpness;
+      }
+    }
     groupCountTotal += 1;
 
     if (previousSharpness) {
@@ -232,30 +257,45 @@ async function analyzeMaskStripe(y: number, height: number): Promise<{
     const terms = computeStfAdditionalBlurTerms(cocPeakRise[index] ?? 0, peak, baseline);
     rawMask[index] = terms.rawMask;
     protection[index] = computeStfAdditionalBlurOriginallyUnsharpGate(peak, baseline);
+    persistentSharpness[index] = computeStfAdditionalBlurPersistentEdgeProtection(
+      persistentSharpness[index] ?? 0,
+    );
   }
 
   const radius = resolveStfAdditionalBlurRadius(width, reader!.height);
   const smoothedMask = boxBlurGrayTwoPasses(rawMask, width, readHeight, radius);
+  const expandedEdgeProtection = dilateStfAdditionalBlurProtection(
+    persistentSharpness,
+    width,
+    readHeight,
+    radius,
+  );
   const coreStartRow = y - readY;
   const output = new Uint16Array(width * height);
+  const edgeProtectionOutput = new Uint16Array(width * height);
   const histogram = new Uint32Array(STF_ADDITIONAL_BLUR_HISTOGRAM_BINS);
   for (let coreY = 0; coreY < height; coreY += 1) {
     const sourceRow = (coreStartRow + coreY) * width;
     const targetRow = coreY * width;
     for (let x = 0; x < width; x += 1) {
       const sourceIndex = sourceRow + x;
-      const value = (smoothedMask[sourceIndex] ?? 0) * (protection[sourceIndex] ?? 0);
-      output[targetRow + x] = quantizeStfAdditionalBlurMask(value);
+      const targetIndex = targetRow + x;
+      const localProtection = protection[sourceIndex] ?? 0;
+      const value = (smoothedMask[sourceIndex] ?? 0) * localProtection;
+      const edgeExclusion = expandedEdgeProtection[sourceIndex] ?? 0;
+      output[targetIndex] = quantizeStfAdditionalBlurMask(value);
+      edgeProtectionOutput[targetIndex] = quantizeStfAdditionalBlurMask(edgeExclusion);
       histogram[stfAdditionalBlurHistogramBin(value)] += 1;
     }
   }
-  return { mask: output, histogram };
+  return { mask: output, edgeProtection: edgeProtectionOutput, histogram };
 }
 
 async function applyBlurStripe(
   y: number,
   height: number,
   mask: Uint16Array,
+  edgeProtection: Uint16Array,
   scaledLogFactor: number,
 ): Promise<Float32Array> {
   const width = reader!.width;
@@ -294,10 +334,14 @@ async function applyBlurStripe(
       const sourcePixel = (coreStartRow + coreY) * width + x;
       const source = sourcePixel * 3;
       const target = corePixel * 3;
-      const maskValue = applyStfAdditionalBlurScaledLog(
+      const normalizedMask = applyStfAdditionalBlurScaledLog(
         dequantizeStfAdditionalBlurMask(mask[corePixel] ?? 0),
         scaledLogFactor,
       );
+      // Re-apply the radius-expanded persistent-edge protection after global
+      // P50 normalization so scaled-log cannot lift a protected halo back up.
+      const edgeExclusion = dequantizeStfAdditionalBlurMask(edgeProtection[corePixel] ?? 0);
+      const maskValue = applyStfAdditionalBlurEdgeProtection(normalizedMask, edgeExclusion);
       const keep = 1 - maskValue;
       output[target] = accumulator[source] * keep + blurred[source] * maskValue;
       output[target + 1] = accumulator[source + 1] * keep + blurred[source + 1] * maskValue;

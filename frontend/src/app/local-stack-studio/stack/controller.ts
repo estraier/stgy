@@ -2569,7 +2569,11 @@ function placeStoredTileImage(index, source, output, layout, width, height) {
 }
 
 function stfAdditionalBlurMaskKey(sessionId, stripeIndex) {
-  return `${sessionId}:stf-additional-blur:${stripeIndex}`;
+  return `${sessionId}:stf-additional-blur:mask:${stripeIndex}`;
+}
+
+function stfAdditionalBlurEdgeProtectionKey(sessionId, stripeIndex) {
+  return `${sessionId}:stf-additional-blur:edge-protection:${stripeIndex}`;
 }
 
 async function mergeStfWithAdditionalBlurFromWorkerPool(
@@ -2641,10 +2645,17 @@ async function mergeStfWithAdditionalBlurFromWorkerPool(
         }
         sampleCount += result.sampleCount;
         const maskBuffer = result.mask.buffer as ArrayBuffer;
+        const edgeProtectionBuffer = result.edgeProtection.buffer as ArrayBuffer;
         await putMedianScratchTiles(
           scratchDb,
-          [{ key: stfAdditionalBlurMaskKey(scratchSessionId, job.index), buffer: maskBuffer }],
-          "STF Additional Blur mask stripe",
+          [
+            { key: stfAdditionalBlurMaskKey(scratchSessionId, job.index), buffer: maskBuffer },
+            {
+              key: stfAdditionalBlurEdgeProtectionKey(scratchSessionId, job.index),
+              buffer: edgeProtectionBuffer,
+            },
+          ],
+          "STF Additional Blur mask/protection stripes",
         );
         setProgress(
           `Analyzing STF Additional Blur mask ${completedCount}/${totalCount}`
@@ -2684,6 +2695,21 @@ async function mergeStfWithAdditionalBlurFromWorkerPool(
           );
         }
         return mask;
+      },
+      loadEdgeProtection: async (job) => {
+        const [buffer] = await getScratchBuffers(
+          scratchDb,
+          [stfAdditionalBlurEdgeProtectionKey(scratchSessionId, job.index)],
+          `STF Additional Blur edge protection stripe ${job.index + 1}`,
+        );
+        const edgeProtection = new Uint16Array(buffer);
+        const expectedLength = width * job.height;
+        if (edgeProtection.length !== expectedLength) {
+          throw new Error(
+            `STF Additional Blur edge protection stripe ${job.index + 1} has ${edgeProtection.length} samples; expected ${expectedLength}.`,
+          );
+        }
+        return edgeProtection;
       },
       scaledLogFactor,
       hardwareConcurrency,

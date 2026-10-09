@@ -39,6 +39,7 @@ export type StfAdditionalBlurApplyRequest = {
   y: number;
   height: number;
   maskBuffer: ArrayBuffer;
+  edgeProtectionBuffer: ArrayBuffer;
   scaledLogFactor: number;
 };
 
@@ -62,6 +63,7 @@ export type StfAdditionalBlurAnalyzeMaskResponse = {
   y: number;
   height: number;
   maskBuffer: ArrayBuffer;
+  edgeProtectionBuffer: ArrayBuffer;
   histogramBuffer: ArrayBuffer;
   sampleCount: number;
 };

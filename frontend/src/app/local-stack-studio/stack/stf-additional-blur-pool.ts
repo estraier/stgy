@@ -7,7 +7,12 @@ export const STF_ADDITIONAL_BLUR_MAX_WORKERS = 4;
 export type StfAdditionalBlurPoolClient = {
   initialize(config: StfAdditionalBlurWorkerConfig): Promise<{ imageCount: number; width: number; height: number }>;
   analyzeMaskStripe(job: LinearMergeStripeJob): Promise<StfAdditionalBlurMaskStripe>;
-  applyBlurStripe(job: LinearMergeStripeJob, mask: Uint16Array, scaledLogFactor: number): Promise<Float32Array>;
+  applyBlurStripe(
+    job: LinearMergeStripeJob,
+    mask: Uint16Array,
+    edgeProtection: Uint16Array,
+    scaledLogFactor: number,
+  ): Promise<Float32Array>;
   terminate(): void;
 };
 
@@ -111,6 +116,7 @@ export async function runStfAdditionalBlurApplyPool({
   config,
   createClient,
   loadMask,
+  loadEdgeProtection,
   scaledLogFactor,
   hardwareConcurrency,
   onJobComplete,
@@ -119,6 +125,7 @@ export async function runStfAdditionalBlurApplyPool({
   config: StfAdditionalBlurWorkerConfig;
   createClient: () => StfAdditionalBlurPoolClient;
   loadMask: (job: LinearMergeStripeJob) => Promise<Uint16Array>;
+  loadEdgeProtection: (job: LinearMergeStripeJob) => Promise<Uint16Array>;
   scaledLogFactor: number;
   hardwareConcurrency?: number | null;
   onJobComplete?: (
@@ -144,8 +151,11 @@ export async function runStfAdditionalBlurApplyPool({
         if (jobIndex >= jobs.length) return;
         const job = jobs[jobIndex];
         try {
-          const mask = await loadMask(job);
-          const result = await client.applyBlurStripe(job, mask, scaledLogFactor);
+          const [mask, edgeProtection] = await Promise.all([
+            loadMask(job),
+            loadEdgeProtection(job),
+          ]);
+          const result = await client.applyBlurStripe(job, mask, edgeProtection, scaledLogFactor);
           completedCount += 1;
           await onJobComplete?.(job, workerIndex, result, completedCount, jobs.length);
         } catch (error) {

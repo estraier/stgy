@@ -71,6 +71,89 @@ export function smoothstepStfAdditionalBlur(edge0: number, edge1: number, value:
   return t * t * (3 - 2 * t);
 }
 
+export function applyStfAdditionalBlurEdgeProtection(maskValue: number, protection: number): number {
+  const mask = clampStfAdditionalBlurUnit(maskValue);
+  const exclusion = clampStfAdditionalBlurUnit(protection);
+  return mask * (1 - exclusion);
+}
+
+export function computeStfAdditionalBlurPersistentEdgeProtection(sharpness: number): number {
+  const value = Number.isFinite(sharpness) && sharpness > 0 ? sharpness : 0;
+  if (!(value > 0)) return 0;
+  const edgeSupport = value / (value + STF_ADDITIONAL_BLUR_EDGE_SUPPORT_SOFTNESS);
+  // Persistent sharpness is the minimum sharpness across all aperture groups.
+  // Squaring the fixed-scale edge support keeps weak texture from becoming a
+  // broad exclusion zone while strongly protecting clear in-focus edges.
+  return clampStfAdditionalBlurUnit(edgeSupport * edgeSupport);
+}
+
+export function dilateStfAdditionalBlurProtection(
+  source: Float32Array,
+  width: number,
+  height: number,
+  radius: number,
+): Float32Array {
+  if (!(Number.isInteger(width) && width > 0 && Number.isInteger(height) && height > 0)) {
+    throw new Error("STF Additional Blur protection dilation received invalid dimensions.");
+  }
+  if (!(source instanceof Float32Array) || source.length !== width * height) {
+    throw new Error("STF Additional Blur protection dilation received an invalid map.");
+  }
+  const safeRadius = Math.max(0, Math.floor(Number.isFinite(radius) ? radius : 0));
+  if (safeRadius === 0) return new Float32Array(source);
+
+  const horizontal = new Float32Array(source.length);
+  const output = new Float32Array(source.length);
+  const horizontalDeque = new Int32Array(width + safeRadius * 2);
+  const verticalDeque = new Int32Array(height + safeRadius * 2);
+  const windowSpan = safeRadius * 2;
+
+  for (let y = 0; y < height; y += 1) {
+    const row = y * width;
+    let head = 0;
+    let tail = 0;
+    const sampleValue = (virtualX: number) => {
+      const x = Math.max(0, Math.min(width - 1, virtualX - safeRadius));
+      return source[row + x] ?? 0;
+    };
+    for (let virtualX = 0; virtualX < width + safeRadius * 2; virtualX += 1) {
+      const value = sampleValue(virtualX);
+      while (tail > head && sampleValue(horizontalDeque[tail - 1]) <= value) tail -= 1;
+      horizontalDeque[tail] = virtualX;
+      tail += 1;
+      const firstValid = virtualX - windowSpan;
+      while (tail > head && horizontalDeque[head] < firstValid) head += 1;
+      if (virtualX >= windowSpan) {
+        const x = virtualX - windowSpan;
+        if (x < width) horizontal[row + x] = sampleValue(horizontalDeque[head]);
+      }
+    }
+  }
+
+  for (let x = 0; x < width; x += 1) {
+    let head = 0;
+    let tail = 0;
+    const sampleValue = (virtualY: number) => {
+      const y = Math.max(0, Math.min(height - 1, virtualY - safeRadius));
+      return horizontal[y * width + x] ?? 0;
+    };
+    for (let virtualY = 0; virtualY < height + safeRadius * 2; virtualY += 1) {
+      const value = sampleValue(virtualY);
+      while (tail > head && sampleValue(verticalDeque[tail - 1]) <= value) tail -= 1;
+      verticalDeque[tail] = virtualY;
+      tail += 1;
+      const firstValid = virtualY - windowSpan;
+      while (tail > head && verticalDeque[head] < firstValid) head += 1;
+      if (virtualY >= windowSpan) {
+        const y = virtualY - windowSpan;
+        if (y < height) output[y * width + x] = sampleValue(verticalDeque[head]);
+      }
+    }
+  }
+
+  return output;
+}
+
 export function computeStfAdditionalBlurOriginallyUnsharpGate(
   peakSharpness: number,
   baselineSharpness: number,
