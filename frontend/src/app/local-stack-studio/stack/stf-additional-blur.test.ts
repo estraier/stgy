@@ -65,10 +65,14 @@ describe("STF Additional Blur helpers", () => {
     expect(Array.from(dilateStfAdditionalBlurProtection(source, 5, 1, 2))).toEqual([1, 1, 1, 1, 1]);
   });
 
-  test("protects a region that was already sharp before the open-side rise", () => {
+  test("applies the originally-unsharp gate only after mask smoothing", () => {
     expect(computeStfAdditionalBlurOriginallyUnsharpGate(0.5, 0.1)).toBe(1);
     expect(computeStfAdditionalBlurOriginallyUnsharpGate(0.5, 0.45)).toBe(0);
-    expect(computeStfAdditionalBlurTerms(0.2, 0.5, 0.45).rawMask).toBe(0);
+
+    const allowed = computeStfAdditionalBlurTerms(0.2, 0.5, 0.1);
+    const protectedRegion = computeStfAdditionalBlurTerms(0.2, 0.5, 0.45);
+    expect(protectedRegion.rawMask).toBeCloseTo(allowed.rawMask, 12);
+    expect(protectedRegion.originallyUnsharpGate).toBe(0);
   });
 
   test("scales sharpness analysis with linear image dimensions", () => {

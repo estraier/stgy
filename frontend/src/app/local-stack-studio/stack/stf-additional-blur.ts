@@ -202,7 +202,9 @@ export function computeStfAdditionalBlurTerms(
   return {
     support,
     originallyUnsharpGate,
-    rawMask: clampStfAdditionalBlurUnit(support * originallyUnsharpGate),
+    // Apply the originally-unsharp gate only after spatial mask smoothing.
+    // Applying it here as well would effectively gate soft transition values twice.
+    rawMask: support,
   };
 }
 
