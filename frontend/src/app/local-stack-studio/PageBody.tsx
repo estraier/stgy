@@ -199,16 +199,15 @@ export default function PageBody() {
                   <span className="text-xs font-medium text-gray-500">Blend weight</span>
                   <select
                     id="stf-blend-weight"
-                    defaultValue="2.8"
+                    defaultValue="4"
                     className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm"
                   >
                     <option value="1">1 (deep DoF)</option>
-                    <option value="1.4">1.4</option>
-                    <option value="2">2.0 (linear attenuation)</option>
-                    <option value="2.8">2.8 (balanced)</option>
-                    <option value="4">4.0</option>
-                    <option value="5.6">5.6</option>
-                    <option value="8">8.0 (large bokeh)</option>
+                    <option value="2">2</option>
+                    <option value="4">4 (logarithm)</option>
+                    <option value="8">8 (linear)</option>
+                    <option value="16">16</option>
+                    <option value="32">32 (large bokeh)</option>
                   </select>
                 </label>
                 <label className="flex flex-col items-start gap-1.5">

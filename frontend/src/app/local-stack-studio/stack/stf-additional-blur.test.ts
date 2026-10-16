@@ -9,7 +9,9 @@ import {
   computeStfAdditionalBlurTerms,
   dequantizeStfAdditionalBlurMask,
   quantizeStfAdditionalBlurMask,
+  resolveStfAdditionalBlurMaskHalo,
   resolveStfAdditionalBlurRadius,
+  resolveStfAdditionalBlurSharpnessScale,
   sameStfAdditionalBlurFNumber,
   shouldApplyStfAdditionalBlur,
   solveStfAdditionalBlurScaledLogFactor,
@@ -67,6 +69,20 @@ describe("STF Additional Blur helpers", () => {
     expect(computeStfAdditionalBlurOriginallyUnsharpGate(0.5, 0.1)).toBe(1);
     expect(computeStfAdditionalBlurOriginallyUnsharpGate(0.5, 0.45)).toBe(0);
     expect(computeStfAdditionalBlurTerms(0.2, 0.5, 0.45).rawMask).toBe(0);
+  });
+
+  test("scales sharpness analysis with linear image dimensions", () => {
+    expect(resolveStfAdditionalBlurSharpnessScale(1000, 1000)).toBeCloseTo(1, 12);
+    const halfResolution = resolveStfAdditionalBlurSharpnessScale(3000, 2000);
+    const fullResolution = resolveStfAdditionalBlurSharpnessScale(6000, 4000);
+    expect(fullResolution / halfResolution).toBeCloseTo(2, 12);
+    expect(resolveStfAdditionalBlurSharpnessScale(500, 500)).toBeCloseTo(0.5, 12);
+  });
+
+  test("reserves halo for scale-aware sharpness analysis and mask smoothing", () => {
+    expect(resolveStfAdditionalBlurMaskHalo(1000, 1000)).toBe(6);
+    expect(resolveStfAdditionalBlurMaskHalo(3000, 2000)).toBe(16);
+    expect(resolveStfAdditionalBlurMaskHalo(6000, 4000)).toBe(30);
   });
 
   test("scales blur radius with linear image dimensions", () => {

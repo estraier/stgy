@@ -12,6 +12,7 @@ import {
   resolveStfAdditionalBlurApplyHalo,
   resolveStfAdditionalBlurMaskHalo,
   resolveStfAdditionalBlurRadius,
+  resolveStfAdditionalBlurSharpnessScale,
   sameStfAdditionalBlurFNumber,
   stfAdditionalBlurHistogramBin,
 } from "../stack/stf-additional-blur";
@@ -189,6 +190,7 @@ async function analyzeMaskStripe(y: number, height: number): Promise<{
   const readBottom = Math.min(reader!.height, y + height + halo);
   const readHeight = readBottom - readY;
   const pixelCount = width * readHeight;
+  const sharpnessScale = resolveStfAdditionalBlurSharpnessScale(width, reader!.height);
   const cocPeakRise = new Float32Array(pixelCount);
   const cocPeakSharpness = new Float32Array(pixelCount);
   const cocBaselineSharpness = new Float32Array(pixelCount);
@@ -211,7 +213,7 @@ async function analyzeMaskStripe(y: number, height: number): Promise<{
       const currentFNumber = Number(fNumbers![imageIndex]);
       if (!sameStfAdditionalBlurFNumber(currentFNumber, groupFNumber)) break;
       const linear = await readToneMatchedLinearRegion(imageIndex, readY, readHeight);
-      const sharpness = buildSharpnessMap(linear, width, readHeight);
+      const sharpness = buildSharpnessMap(linear, width, readHeight, sharpnessScale);
       for (let index = 0; index < pixelCount; index += 1) {
         groupSharpness[index] += sharpness[index] ?? 0;
       }
@@ -351,60 +353,166 @@ async function applyBlurStripe(
   return output;
 }
 
-function buildSharpnessMap(linear: Float32Array, width: number, height: number): Float32Array {
+function buildSharpnessMap(
+  linear: Float32Array,
+  width: number,
+  height: number,
+  scale: number,
+): Float32Array {
   const luminance = new Float32Array(linear.length / 3);
   for (let source = 0, pixel = 0; source < linear.length; source += 3, pixel += 1) {
     luminance[pixel] = (linear[source] ?? 0) * 0.3
       + (linear[source + 1] ?? 0) * 0.5
       + (linear[source + 2] ?? 0) * 0.2;
   }
-  return sobelMagnitudeGray(binomialBlurGray(luminance, width, height), width, height);
+
+  // Keep the analysis footprint proportional to the image's linear
+  // resolution.  At 1MP scale=1 and this is mathematically identical to the
+  // former 3x3 binomial + 3x3 Sobel implementation.  At higher/lower
+  // resolutions the same taps are sampled farther apart/closer together,
+  // avoiding a fixed-pixel sharpness scale without growing the kernel cost.
+  const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+  const horizontal = binomialBlurHorizontalScaled(luminance, width, height, safeScale);
+  const prefiltered = binomialBlurVerticalScaled(horizontal, width, height, safeScale);
+  return sobelMagnitudeGrayScaled(prefiltered, width, height, safeScale);
 }
 
-function binomialBlurGray(source: Float32Array, width: number, height: number): Float32Array {
-  const temp = new Float32Array(source.length);
+function sampleHorizontalScaled(
+  source: Float32Array,
+  row: number,
+  width: number,
+  x: number,
+  direction: -1 | 1,
+  wholeStep: number,
+  fractionalStep: number,
+): number {
+  const nearX = Math.max(0, Math.min(width - 1, x + direction * wholeStep));
+  if (!(fractionalStep > 0)) return source[row + nearX] ?? 0;
+  const farX = Math.max(0, Math.min(width - 1, nearX + direction));
+  const near = source[row + nearX] ?? 0;
+  const far = source[row + farX] ?? 0;
+  return near + (far - near) * fractionalStep;
+}
+
+function sampleVerticalScaled(
+  source: Float32Array,
+  x: number,
+  width: number,
+  height: number,
+  y: number,
+  direction: -1 | 1,
+  wholeStep: number,
+  fractionalStep: number,
+): number {
+  const nearY = Math.max(0, Math.min(height - 1, y + direction * wholeStep));
+  if (!(fractionalStep > 0)) return source[nearY * width + x] ?? 0;
+  const farY = Math.max(0, Math.min(height - 1, nearY + direction));
+  const near = source[nearY * width + x] ?? 0;
+  const far = source[farY * width + x] ?? 0;
+  return near + (far - near) * fractionalStep;
+}
+
+function binomialBlurHorizontalScaled(
+  source: Float32Array,
+  width: number,
+  height: number,
+  scale: number,
+): Float32Array {
   const output = new Float32Array(source.length);
+  const wholeStep = Math.floor(scale);
+  const fractionalStep = scale - wholeStep;
   for (let y = 0; y < height; y += 1) {
     const row = y * width;
     for (let x = 0; x < width; x += 1) {
-      const left = source[row + Math.max(0, x - 1)] ?? 0;
+      const left = sampleHorizontalScaled(source, row, width, x, -1, wholeStep, fractionalStep);
       const center = source[row + x] ?? 0;
-      const right = source[row + Math.min(width - 1, x + 1)] ?? 0;
-      temp[row + x] = (left + center * 2 + right) * 0.25;
+      const right = sampleHorizontalScaled(source, row, width, x, 1, wholeStep, fractionalStep);
+      output[row + x] = (left + center * 2 + right) * 0.25;
     }
   }
+  return output;
+}
+
+function binomialBlurVerticalScaled(
+  source: Float32Array,
+  width: number,
+  height: number,
+  scale: number,
+): Float32Array {
+  const output = new Float32Array(source.length);
+  const wholeStep = Math.floor(scale);
+  const fractionalStep = scale - wholeStep;
   for (let y = 0; y < height; y += 1) {
-    const y0 = Math.max(0, y - 1);
-    const y1 = Math.min(height - 1, y + 1);
     for (let x = 0; x < width; x += 1) {
-      const top = temp[y0 * width + x] ?? 0;
-      const center = temp[y * width + x] ?? 0;
-      const bottom = temp[y1 * width + x] ?? 0;
+      const top = sampleVerticalScaled(source, x, width, height, y, -1, wholeStep, fractionalStep);
+      const center = source[y * width + x] ?? 0;
+      const bottom = sampleVerticalScaled(source, x, width, height, y, 1, wholeStep, fractionalStep);
       output[y * width + x] = (top + center * 2 + bottom) * 0.25;
     }
   }
   return output;
 }
 
-function sobelMagnitudeGray(source: Float32Array, width: number, height: number): Float32Array {
+function sobelMagnitudeGrayScaled(
+  source: Float32Array,
+  width: number,
+  height: number,
+  scale: number,
+): Float32Array {
+  // Sobel is separable.  Re-express the original 3x3 kernel as a binomial
+  // smoothing in the direction perpendicular to the derivative, followed by
+  // a central difference.  This exactly reproduces the old scale=1 result,
+  // while allowing the tap spacing to vary continuously with image size.
+  const verticalForGx = binomialBlurVerticalScaled(source, width, height, scale);
+  const horizontalForGy = binomialBlurHorizontalScaled(source, width, height, scale);
   const output = new Float32Array(source.length);
+  const wholeStep = Math.floor(scale);
+  const fractionalStep = scale - wholeStep;
+
   for (let y = 0; y < height; y += 1) {
-    const ym1 = Math.max(0, y - 1);
-    const yp1 = Math.min(height - 1, y + 1);
+    const row = y * width;
     for (let x = 0; x < width; x += 1) {
-      const xm1 = Math.max(0, x - 1);
-      const xp1 = Math.min(width - 1, x + 1);
-      const p00 = source[ym1 * width + xm1] ?? 0;
-      const p01 = source[ym1 * width + x] ?? 0;
-      const p02 = source[ym1 * width + xp1] ?? 0;
-      const p10 = source[y * width + xm1] ?? 0;
-      const p12 = source[y * width + xp1] ?? 0;
-      const p20 = source[yp1 * width + xm1] ?? 0;
-      const p21 = source[yp1 * width + x] ?? 0;
-      const p22 = source[yp1 * width + xp1] ?? 0;
-      const gx = -p00 + p02 - 2 * p10 + 2 * p12 - p20 + p22;
-      const gy = -p00 - 2 * p01 - p02 + p20 + 2 * p21 + p22;
-      output[y * width + x] = Math.hypot(gx, gy) * 0.125;
+      const left = sampleHorizontalScaled(
+        verticalForGx,
+        row,
+        width,
+        x,
+        -1,
+        wholeStep,
+        fractionalStep,
+      );
+      const right = sampleHorizontalScaled(
+        verticalForGx,
+        row,
+        width,
+        x,
+        1,
+        wholeStep,
+        fractionalStep,
+      );
+      const top = sampleVerticalScaled(
+        horizontalForGy,
+        x,
+        width,
+        height,
+        y,
+        -1,
+        wholeStep,
+        fractionalStep,
+      );
+      const bottom = sampleVerticalScaled(
+        horizontalForGy,
+        x,
+        width,
+        height,
+        y,
+        1,
+        wholeStep,
+        fractionalStep,
+      );
+      const gx = (right - left) * 0.5;
+      const gy = (bottom - top) * 0.5;
+      output[row + x] = Math.hypot(gx, gy);
     }
   }
   return output;

@@ -279,7 +279,7 @@ function listen(target, type, listener, options) {
   listenerCleanups.push(() => target.removeEventListener(type, listener, options));
 }
 
-const STF_BLEND_WEIGHT_VALUES = new Set([1, 1.4, 2, 2.8, 4, 5.6, 8]);
+const STF_BLEND_WEIGHT_VALUES = new Set([1, 2, 4, 8, 16, 32]);
 
 function selectedStfAdditionalBlur() {
   const value = Number.parseFloat(stfAdditionalBlur.value);

@@ -6,6 +6,7 @@ const STF_ADDITIONAL_BLUR_EDGE_SUPPORT_SOFTNESS = 0.01;
 const STF_ADDITIONAL_BLUR_BASELINE_SHARP_LOW = 0.45;
 const STF_ADDITIONAL_BLUR_BASELINE_SHARP_HIGH = 0.75;
 const STF_ADDITIONAL_BLUR_RADIUS_AT_1MP = 2;
+const STF_ADDITIONAL_BLUR_SHARPNESS_REFERENCE_PIXELS = 1_000_000;
 const STF_ADDITIONAL_BLUR_MIN_RADIUS = 2;
 const STF_ADDITIONAL_BLUR_MAX_RADIUS = 12;
 const STF_ADDITIONAL_BLUR_MASK_MAX = 65535;
@@ -45,14 +46,23 @@ export function buildStfAdditionalBlurApertureOrder(fNumbers: ArrayLike<number>)
   return Int32Array.from(entries.map((entry) => entry.index));
 }
 
+export function resolveStfAdditionalBlurSharpnessScale(width: number, height: number): number {
+  const pixelCount = Math.max(1, width * height);
+  return Math.sqrt(pixelCount / STF_ADDITIONAL_BLUR_SHARPNESS_REFERENCE_PIXELS);
+}
+
 export function resolveStfAdditionalBlurRadius(width: number, height: number): number {
-  const scale = Math.sqrt(Math.max(1, width * height) / 1_000_000);
+  const scale = resolveStfAdditionalBlurSharpnessScale(width, height);
   const radius = Math.round(STF_ADDITIONAL_BLUR_RADIUS_AT_1MP * Math.max(1, scale));
   return Math.max(STF_ADDITIONAL_BLUR_MIN_RADIUS, Math.min(STF_ADDITIONAL_BLUR_MAX_RADIUS, radius));
 }
 
 export function resolveStfAdditionalBlurMaskHalo(width: number, height: number): number {
-  return 2 + 2 * resolveStfAdditionalBlurRadius(width, height);
+  // Sharpness analysis consists of a scale-aware [1,2,1]/4 prefilter followed
+  // by a scale-aware Sobel operator.  Each stage reaches one analysis scale
+  // away, so reserve 2*scale before the two radius-r mask smoothing passes.
+  const sharpnessHalo = 2 * Math.ceil(resolveStfAdditionalBlurSharpnessScale(width, height));
+  return sharpnessHalo + 2 * resolveStfAdditionalBlurRadius(width, height);
 }
 
 export function resolveStfAdditionalBlurApplyHalo(width: number, height: number): number {

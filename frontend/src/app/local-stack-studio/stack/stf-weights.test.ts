@@ -1,6 +1,6 @@
 import { buildStfApertureWeights, DEFAULT_STF_BLEND_WEIGHT } from "./stf-weights";
 
-const STF_PROFILE_WEIGHT_RATIO = 2.8;
+const STF_PROFILE_WEIGHT_RATIO = 4;
 
 function sum(values: ArrayLike<number>): number {
   let total = 0;
@@ -19,7 +19,7 @@ function computeProfile(progress: number, blendWeight = STF_PROFILE_WEIGHT_RATIO
 }
 
 describe("STF aperture weights", () => {
-  test("uses the W=2.8 profile with a minimax outer edge for a 7-shot 1/3EV bracket", () => {
+  test("uses the default W=4 profile with a minimax outer edge for a 7-shot 1/3EV bracket", () => {
     const fNumbers = Array.from({ length: 7 }, (_, index) => 2 * 2 ** (index / 6));
     const weights = buildStfApertureWeights(fNumbers);
     expect(weights).not.toBeNull();
@@ -28,13 +28,13 @@ describe("STF aperture weights", () => {
     expect(sum(weights)).toBeCloseTo(1, 12);
 
     const expected = [
-      0.19697446472254565,
-      0.19697446472254565,
-      0.16591421263889206,
-      0.13975174901151888,
-      0.11771475777235736,
-      0.09915270682059697,
-      0.08351764431154343,
+      0.21572685086771279,
+      0.21572685086771279,
+      0.17122251500259708,
+      0.13589940021788174,
+      0.10786342543385623,
+      0.08561125750129843,
+      0.06794970010894093,
     ];
     for (let i = 0; i < expected.length; i += 1) {
       expect(weights[i]).toBeCloseTo(expected[i], 12);
@@ -83,7 +83,7 @@ describe("STF aperture weights", () => {
     expect(Math.max(...weights.slice(1))).toBeCloseTo(weights[0], 12);
   });
 
-  test("keeps the default blend weight at the historical W=2.8 result", () => {
+  test("uses W=4 as the default blend weight", () => {
     const fNumbers = Array.from({ length: 7 }, (_, index) => 2 * 2 ** (index / 6));
     const implicit = buildStfApertureWeights(fNumbers);
     const explicit = buildStfApertureWeights(fNumbers, DEFAULT_STF_BLEND_WEIGHT);
@@ -102,7 +102,7 @@ describe("STF aperture weights", () => {
     for (const weight of weights) expect(weight).toBeGreaterThan(0);
   });
 
-  test("uses a linear attenuation profile at W=2", () => {
+  test("keeps the historical internal profile linear at W=2", () => {
     const fNumbers = [2, 2.8, 4, 5.6];
     const weights = buildStfApertureWeights(fNumbers, 2);
     expect(weights).not.toBeNull();
@@ -117,7 +117,7 @@ describe("STF aperture weights", () => {
     expect(sum(weights)).toBeCloseTo(1, 12);
   });
 
-  test.each([1, 1.4, 2, 2.8, 4, 5.6, 8])("returns normalized positive weights for W=%s", (blendWeight) => {
+  test.each([1, 2, 4, 8, 16, 32])("returns normalized positive weights for W=%s", (blendWeight) => {
     const weights = buildStfApertureWeights([2, 2.8, 4, 5.6], blendWeight);
     expect(weights).not.toBeNull();
     if (!weights) return;

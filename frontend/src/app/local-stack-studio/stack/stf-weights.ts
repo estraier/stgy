@@ -1,11 +1,13 @@
-export const DEFAULT_STF_BLEND_WEIGHT = 2.8;
+export const DEFAULT_STF_BLEND_WEIGHT = 4;
 
 /**
  * Builds STF blend weights from aperture-derived circle-of-confusion radii.
  *
- * Radius is proportional to 1 / F. The interior weights follow a W-shaped
- * radial-luminance profile whose W=2 case is linear and whose larger W values
- * become more "full" in the middle. The widest-aperture outer-edge luminance
+ * Radius is proportional to 1 / F. The interior weights follow the historical
+ * W-shaped profile. Under the equal-photon circle-of-confusion model used by
+ * the UI interpretation, W=4 corresponds to equal change per logarithmic
+ * radius interval and W=8 corresponds to linear radial attenuation.
+ * The widest-aperture outer-edge luminance
  * is then chosen by a minimax rule: it is set so that the final outermost drop
  * to zero equals the largest remaining interior step. This keeps the largest
  * discontinuity as small as possible for the chosen profile.
