@@ -1,6 +1,6 @@
 import { buildStfApertureWeights, DEFAULT_STF_BLEND_WEIGHT } from "./stf-weights";
 
-const STF_PROFILE_WEIGHT_RATIO = 4;
+const STF_PROFILE_WEIGHT_RATIO = DEFAULT_STF_BLEND_WEIGHT;
 
 function sum(values: ArrayLike<number>): number {
   let total = 0;
@@ -19,7 +19,7 @@ function computeProfile(progress: number, blendWeight = STF_PROFILE_WEIGHT_RATIO
 }
 
 describe("STF aperture weights", () => {
-  test("uses the default W=4 profile with a minimax outer edge for a 7-shot 1/3EV bracket", () => {
+  test("uses the default W=8 profile with a minimax outer edge for a 7-shot 1/3EV bracket", () => {
     const fNumbers = Array.from({ length: 7 }, (_, index) => 2 * 2 ** (index / 6));
     const weights = buildStfApertureWeights(fNumbers);
     expect(weights).not.toBeNull();
@@ -28,13 +28,13 @@ describe("STF aperture weights", () => {
     expect(sum(weights)).toBeCloseTo(1, 12);
 
     const expected = [
-      0.21572685086771279,
-      0.21572685086771279,
-      0.17122251500259708,
-      0.13589940021788174,
-      0.10786342543385623,
-      0.08561125750129843,
-      0.06794970010894093,
+      0.25078766970753025,
+      0.2507876697075303,
+      0.1773336618881668,
+      0.1253938348537651,
+      0.08866683094408333,
+      0.06269691742688263,
+      0.044333415472041664,
     ];
     for (let i = 0; i < expected.length; i += 1) {
       expect(weights[i]).toBeCloseTo(expected[i], 12);
@@ -83,7 +83,7 @@ describe("STF aperture weights", () => {
     expect(Math.max(...weights.slice(1))).toBeCloseTo(weights[0], 12);
   });
 
-  test("uses W=4 as the default blend weight", () => {
+  test("uses W=8 as the default blend weight", () => {
     const fNumbers = Array.from({ length: 7 }, (_, index) => 2 * 2 ** (index / 6));
     const implicit = buildStfApertureWeights(fNumbers);
     const explicit = buildStfApertureWeights(fNumbers, DEFAULT_STF_BLEND_WEIGHT);

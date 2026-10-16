@@ -1,4 +1,4 @@
-export const DEFAULT_STF_BLEND_WEIGHT = 4;
+export const DEFAULT_STF_BLEND_WEIGHT = 8;
 
 /**
  * Builds STF blend weights from aperture-derived circle-of-confusion radii.

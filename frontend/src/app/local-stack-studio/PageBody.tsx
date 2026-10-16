@@ -199,7 +199,7 @@ export default function PageBody() {
                   <span className="text-xs font-medium text-gray-500">Blend weight</span>
                   <select
                     id="stf-blend-weight"
-                    defaultValue="4"
+                    defaultValue="8"
                     className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm"
                   >
                     <option value="1">1 (deep DoF)</option>
