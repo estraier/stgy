@@ -6,6 +6,10 @@ MARKER="/data/.inited"
 MC_DIR="/data/bin"
 MC="$MC_DIR/mc"
 
+if command -v mc >/dev/null 2>&1; then
+  MC="$(command -v mc)"
+fi
+
 if [ -f "$MARKER" ]; then
   echo "==> already initialized (skip)"
   exit 0
