@@ -4,7 +4,6 @@ import type {
   LinearMergeWorkerResponse,
   LinearMergeWorkerReadyResponse,
   LinearMergeWorkerStripeResponse,
-  LinearMergeWorkerMaskDiagnostics,
 } from "../workers/protocols/linear-merge-protocol";
 import type { LinearMergeStripeJob } from "./linear-merge-pool";
 
@@ -35,22 +34,12 @@ function asArrayBuffer(value: unknown, label: string): ArrayBuffer {
   throw new Error(`Worker response did not include a valid ${label} buffer.`);
 }
 
-export type LinearMergeMaskStats = {
-  sum: number;
-  sumSquares: number;
-  pixelCount: number;
-  diagnostics?: LinearMergeWorkerMaskDiagnostics;
-};
-
 export class LinearMergeWorkerClient {
   private readonly worker: Worker;
   private readonly pending = new Map<number, PendingRequest>();
   private nextRequestId = 1;
 
-  constructor(
-    url: URL,
-    private readonly onMaskStats?: (stats: LinearMergeMaskStats) => void,
-  ) {
+  constructor(url: URL) {
     this.worker = new Worker(url);
     this.worker.onmessage = (event) => this.handleMessage(event.data);
     this.worker.onerror = (event) => {
@@ -72,15 +61,10 @@ export class LinearMergeWorkerClient {
         sessionId: config.sessionId,
         alignmentPlan: config.alignmentPlan,
         matrices: config.matrices,
-        mode: config.mode,
         gains: config.gains,
         scaledLogs: config.scaledLogs,
         weights: config.weights,
-        fNumbers: config.fNumbers,
-        apertureOrder: config.apertureOrder,
         exposureRolloffMaxP998AfterGain: config.exposureRolloffMaxP998AfterGain,
-        stfBlurAnalysisOnly: config.stfBlurAnalysisOnly,
-        stfBlurMaskScaleK: config.stfBlurMaskScaleK,
         cacheBytes: config.cacheBytes,
       },
       [],
@@ -102,23 +86,6 @@ export class LinearMergeWorkerClient {
       "merge-stripe-result",
     ).then((message) => {
       const response = message as LinearMergeWorkerStripeResponse;
-      const maskSum = Number(response.maskSum);
-      const maskSumSquares = Number(response.maskSumSquares);
-      const maskPixelCount = Number(response.maskPixelCount);
-      if (
-        this.onMaskStats &&
-        Number.isFinite(maskSum) &&
-        Number.isFinite(maskSumSquares) &&
-        Number.isInteger(maskPixelCount) &&
-        maskPixelCount > 0
-      ) {
-        this.onMaskStats({
-          sum: maskSum,
-          sumSquares: maskSumSquares,
-          pixelCount: maskPixelCount,
-          diagnostics: response.maskDiagnostics,
-        });
-      }
       return new Float32Array(asArrayBuffer(response.linearBuffer, "linear merge stripe"));
     });
   }

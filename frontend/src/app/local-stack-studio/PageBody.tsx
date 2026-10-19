@@ -162,8 +162,7 @@ export default function PageBody() {
               <select id="merge-mode" className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm">
                 <option value="average">Blend (average)</option>
                 <option value="median">Denoise (median)</option>
-                <option value="hdr1">HDR1 (Debevec)</option>
-                <option value="hdr2">HDR2 (Mertens)</option>
+                <option value="hdr">HDR</option>
                 <option value="stf">STF (aperture-weighted)</option>
                 <option value="focus">Focus (sharpness-weighted)</option>
                 <option value="tile-vertical">Tile (Vertical)</option>
@@ -192,10 +191,21 @@ export default function PageBody() {
               Process
             </button>
 
-            <div id="stf-options-row" className="hidden w-full basis-full border-t border-gray-200 pt-4">
+            <div id="merge-options-row" className="hidden w-full basis-full border-t border-gray-200 pt-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:gap-4">
                 <div className="text-xs font-medium uppercase tracking-wide text-gray-500 sm:self-center">Options</div>
-                <label className="flex flex-col items-start gap-1.5">
+                <label id="hdr-submode-option" className="hidden flex-col items-start gap-1.5">
+                  <span className="text-xs font-medium text-gray-500">Submode</span>
+                  <select
+                    id="hdr-submode"
+                    defaultValue="debevec"
+                    className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm"
+                  >
+                    <option value="debevec">Debevec</option>
+                    <option value="mertens">Mertens</option>
+                  </select>
+                </label>
+                <label id="stf-blend-weight-option" className="hidden flex-col items-start gap-1.5">
                   <span className="text-xs font-medium text-gray-500">Blend weight</span>
                   <select
                     id="stf-blend-weight"
@@ -208,21 +218,6 @@ export default function PageBody() {
                     <option value="8">8 (linear)</option>
                     <option value="16">16</option>
                     <option value="32">32 (large bokeh)</option>
-                  </select>
-                </label>
-                <label className="flex flex-col items-start gap-1.5">
-                  <span className="text-xs font-medium text-gray-500">Additional Blur</span>
-                  <select
-                    id="stf-additional-blur"
-                    defaultValue="0"
-                    className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm disabled:opacity-50"
-                  >
-                    <option value="0">0 (none)</option>
-                    <option value="0.3">0.3</option>
-                    <option value="0.4">0.4</option>
-                    <option value="0.5">0.5</option>
-                    <option value="0.6">0.6</option>
-                    <option value="0.7">0.7</option>
                   </select>
                 </label>
               </div>

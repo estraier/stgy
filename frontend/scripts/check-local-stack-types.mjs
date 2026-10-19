@@ -9,7 +9,6 @@ const strictFiles = [
   "src/app/local-stack-studio/workers/protocols/focus-protocol.ts",
   "src/app/local-stack-studio/workers/protocols/hdr-protocol.ts",
   "src/app/local-stack-studio/workers/protocols/linear-merge-protocol.ts",
-  "src/app/local-stack-studio/stack/stf-experiments.ts",
   "src/app/local-stack-studio/workers/orb.worker.ts",
   "src/app/local-stack-studio/workers/ecc.worker.ts",
   "src/app/local-stack-studio/workers/focus.worker.ts",

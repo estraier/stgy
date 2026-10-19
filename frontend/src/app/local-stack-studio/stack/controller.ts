@@ -75,21 +75,6 @@ import { runLensfunCorrectionPool } from "./lensfun-pool";
 import { buildStfApertureWeights, DEFAULT_STF_BLEND_WEIGHT } from "./stf-weights";
 import { buildStfToneMatchPlans } from "./stf-tone-match";
 import {
-  DEFAULT_STF_ADDITIONAL_BLUR_TARGET,
-  STF_ADDITIONAL_BLUR_HISTOGRAM_BINS,
-  buildStfAdditionalBlurApertureOrder,
-  isStfAdditionalBlurTarget,
-  shouldApplyStfAdditionalBlur,
-  solveStfAdditionalBlurScaledLogFactor,
-  stfAdditionalBlurHistogramPercentile,
-} from "./stf-additional-blur";
-import { StfAdditionalBlurWorkerClient } from "./stf-additional-blur-client";
-import {
-  resolveStfAdditionalBlurWorkerCount,
-  runStfAdditionalBlurAnalysisPool,
-  runStfAdditionalBlurApplyPool,
-} from "./stf-additional-blur-pool";
-import {
   computeFocusFinalMaps,
   computeFocusTileScores,
   emptyFocusRunningStats,
@@ -190,9 +175,11 @@ const FOCUS_MERGE_MAX_WORKERS = 4;
 const inputFiles = getElement("input-files");
 const fileCount = getElement("file-count");
 const mergeMode = getElement("merge-mode");
-const stfOptionsRow = getElement("stf-options-row");
+const mergeOptionsRow = getElement("merge-options-row");
+const hdrSubmodeOption = getElement("hdr-submode-option");
+const hdrSubmode = getElement("hdr-submode");
+const stfBlendWeightOption = getElement("stf-blend-weight-option");
 const stfBlendWeight = getElement("stf-blend-weight");
-const stfAdditionalBlur = getElement("stf-additional-blur");
 const alignmentMode = getElement("alignment-mode");
 const processButton = getElement("process-button");
 const progressPanel = getElement("progress-panel");
@@ -281,13 +268,19 @@ function listen(target, type, listener, options) {
 
 const STF_BLEND_WEIGHT_VALUES = new Set([1, 2, 4, 8, 16, 32]);
 
-function selectedStfAdditionalBlur() {
-  const value = Number.parseFloat(stfAdditionalBlur.value);
-  return isStfAdditionalBlurTarget(value) ? value : DEFAULT_STF_ADDITIONAL_BLUR_TARGET;
+function updateMergeOptionsVisibility() {
+  const isHdr = mergeMode.value === "hdr";
+  const isStf = mergeMode.value === "stf";
+  mergeOptionsRow.classList.toggle("hidden", !isHdr && !isStf);
+  hdrSubmodeOption.classList.toggle("hidden", !isHdr);
+  hdrSubmodeOption.classList.toggle("flex", isHdr);
+  stfBlendWeightOption.classList.toggle("hidden", !isStf);
+  stfBlendWeightOption.classList.toggle("flex", isStf);
 }
 
-function updateStfOptionsVisibility() {
-  stfOptionsRow.classList.toggle("hidden", mergeMode.value !== "stf");
+function selectedInternalMergeMode() {
+  if (mergeMode.value !== "hdr") return mergeMode.value;
+  return hdrSubmode.value === "mertens" ? "hdr2" : "hdr1";
 }
 
 function selectedStfBlendWeight() {
@@ -295,8 +288,8 @@ function selectedStfBlendWeight() {
   return STF_BLEND_WEIGHT_VALUES.has(value) ? value : DEFAULT_STF_BLEND_WEIGHT;
 }
 
-updateStfOptionsVisibility();
-listen(mergeMode, "change", updateStfOptionsVisibility);
+updateMergeOptionsVisibility();
+listen(mergeMode, "change", updateMergeOptionsVisibility);
 
 updateToneControlLabels();
 previewExposure.disabled = true;
@@ -417,9 +410,13 @@ listen(processButton, "click", async () => {
     if (files.length < 1) {
       throw new Error("Choose at least one input image.");
     }
-    if (!["average", "median", "stf", "hdr1", "hdr2", "focus", "tile-vertical", "tile-horizontal"].includes(mergeMode.value)) {
+    if (!["average", "median", "stf", "hdr", "focus", "tile-vertical", "tile-horizontal"].includes(mergeMode.value)) {
       throw new Error(`Unsupported merge mode: ${mergeMode.value}`);
     }
+    if (mergeMode.value === "hdr" && !["debevec", "mertens"].includes(hdrSubmode.value)) {
+      throw new Error(`Unsupported HDR submode: ${hdrSubmode.value}`);
+    }
+    const selectedMergeMode = selectedInternalMergeMode();
     if (!["auto", "center-crop", "center-fit", "center-fill", "top-left-fill", "feature-match-ecc", "feature-match-orb"].includes(alignmentMode.value)) {
       throw new Error(`Unsupported alignment mode: ${alignmentMode.value}`);
     }
@@ -431,27 +428,26 @@ listen(processButton, "click", async () => {
     const inputInfos = await readInputInfos(files);
     const { mergeStackMetadata } = await loadExifMetadataModule();
     currentOutputMetadata = mergeStackMetadata(inputInfos.map((info) => info.preservedMetadata ?? null));
-    const requireStfToneStatistics = files.length > 1 && mergeMode.value === "stf";
+    const requireStfToneStatistics = files.length > 1 && selectedMergeMode === "stf";
     currentCanonicalSession = await ensureCanonicalSession(
       files,
       inputInfos,
       currentCanonicalSession,
       requireStfToneStatistics,
     );
-    const useSyntheticSingleInputHdr = files.length === 1 && (mergeMode.value === "hdr1" || mergeMode.value === "hdr2");
-    const preserveSingleInputMerge = isTileMergeMode(mergeMode.value);
+    const useSyntheticSingleInputHdr = files.length === 1 && (selectedMergeMode === "hdr1" || selectedMergeMode === "hdr2");
+    const preserveSingleInputMerge = isTileMergeMode(selectedMergeMode);
     const effectiveMergeMode = useSyntheticSingleInputHdr
-      ? mergeMode.value
+      ? selectedMergeMode
       : files.length === 1 && !preserveSingleInputMerge
         ? "average"
-        : mergeMode.value;
+        : selectedMergeMode;
     const mergePlan = buildMergePlan(
       files,
       inputInfos,
       effectiveMergeMode,
       currentCanonicalSession.images,
       selectedStfBlendWeight(),
-      selectedStfAdditionalBlur(),
     );
     const alignmentPlan = buildAlignmentPlan(files, inputInfos, alignmentMode.value, effectiveMergeMode);
     currentPreviewColorSpace = chooseOutputColorSpace(inputInfos);
@@ -2014,7 +2010,6 @@ function buildMergePlan(
   mode,
   canonicalImages = [],
   stfBlendWeightValue = DEFAULT_STF_BLEND_WEIGHT,
-  stfAdditionalBlurTarget = DEFAULT_STF_ADDITIONAL_BLUR_TARGET,
 ) {
   const imageCount = files.length;
   const weights = new Float32Array(imageCount);
@@ -2083,42 +2078,12 @@ function buildMergePlan(
     scaledLogs[i] = toneMatch.plans[i].scaledLog;
   }
 
-  const additionalBlurTarget = isStfAdditionalBlurTarget(stfAdditionalBlurTarget)
-    ? stfAdditionalBlurTarget
-    : DEFAULT_STF_ADDITIONAL_BLUR_TARGET;
-  if (!shouldApplyStfAdditionalBlur(additionalBlurTarget)) {
-    return {
-      mode,
-      weights,
-      gains,
-      scaledLogs,
-      toneReferenceIndex: toneMatch.referenceIndex,
-      additionalBlurTargetMedian: 0,
-    };
-  }
-
-  const apertureOrder = buildStfAdditionalBlurApertureOrder(fNumbers);
-  if (!apertureOrder) {
-    const details = files.map((file, index) => {
-      const value = Number(fNumbers[index]);
-      return `${file.name}: ${Number.isFinite(value) && value > 0 ? `F${value}` : "missing"}`;
-    }).join(", ");
-    const allValid = fNumbers.every((value) => Number.isFinite(value) && value > 0);
-    if (!allValid) {
-      throw new Error(`STF Additional Blur requires valid F-number metadata for every input image. ${details}`);
-    }
-    throw new Error(`STF Additional Blur requires at least two distinct F-number values. ${details}`);
-  }
-
   return {
     mode,
     weights,
     gains,
     scaledLogs,
     toneReferenceIndex: toneMatch.referenceIndex,
-    additionalBlurTargetMedian: additionalBlurTarget,
-    additionalBlurFNumbers: new Float32Array(fNumbers.map((value) => Number(value))),
-    additionalBlurApertureOrder: apertureOrder,
   };
 }
 
@@ -2486,26 +2451,15 @@ async function alignAndMergeFilesWithOpenCv(
     }
 
     if (mergePlan.mode === "average" || mergePlan.mode === "stf") {
-      const useAdditionalBlur = mergePlan.mode === "stf"
-        && shouldApplyStfAdditionalBlur(Number(mergePlan.additionalBlurTargetMedian) || 0);
-      const accumulator = useAdditionalBlur
-        ? await mergeStfWithAdditionalBlurFromWorkerPool(
-            canonicalSession.id,
-            alignmentPlan,
-            matrices,
-            mergePlan,
-            width,
-            height,
-          )
-        : await mergeLinearFromWorkerPool(
-            canonicalSession.id,
-            reader,
-            alignmentPlan,
-            matrices,
-            mergePlan,
-            width,
-            height,
-          );
+      const accumulator = await mergeLinearFromWorkerPool(
+        canonicalSession.id,
+        reader,
+        alignmentPlan,
+        matrices,
+        mergePlan,
+        width,
+        height,
+      );
       return finalizeStoredResult(
         accumulator,
         width,
@@ -2565,170 +2519,6 @@ function placeStoredTileImage(index, source, output, layout, width, height) {
     const sourceStart = y * rowLength;
     const targetStart = ((position.y + y) * layout.outputWidth + position.x) * 3;
     output.set(source.subarray(sourceStart, sourceStart + rowLength), targetStart);
-  }
-}
-
-function stfAdditionalBlurMaskKey(sessionId, stripeIndex) {
-  return `${sessionId}:stf-additional-blur:mask:${stripeIndex}`;
-}
-
-function stfAdditionalBlurEdgeProtectionKey(sessionId, stripeIndex) {
-  return `${sessionId}:stf-additional-blur:edge-protection:${stripeIndex}`;
-}
-
-async function mergeStfWithAdditionalBlurFromWorkerPool(
-  sessionId,
-  alignmentPlan,
-  matrices,
-  mergePlan,
-  width,
-  height,
-) {
-  const targetMedian = Number(mergePlan.additionalBlurTargetMedian) || 0;
-  if (!shouldApplyStfAdditionalBlur(targetMedian)) {
-    throw new Error("STF Additional Blur pipeline was called with a disabled target.");
-  }
-  if (!(mergePlan.additionalBlurFNumbers instanceof Float32Array)) {
-    throw new Error("STF Additional Blur requires prepared F-number metadata.");
-  }
-  if (!(mergePlan.additionalBlurApertureOrder instanceof Int32Array)) {
-    throw new Error("STF Additional Blur requires prepared aperture ordering.");
-  }
-
-  const jobs = buildLinearMergeStripeJobs(width, height);
-  const hardwareConcurrency = typeof navigator === "object"
-    ? Math.max(1, Math.floor(navigator.hardwareConcurrency || 4))
-    : 4;
-  const workerCount = resolveStfAdditionalBlurWorkerCount(jobs.length, hardwareConcurrency);
-  const workerUrl = new URL(
-    "/generated/local-stack-studio/stf-additional-blur.worker.js",
-    window.location.origin,
-  );
-  const imageCount = matrices.length;
-  const exposureRolloffMaxP998AfterGain = new Array(imageCount).fill(null);
-  const workerConfig = {
-    sessionId,
-    alignmentPlan: {
-      normalizationMode: alignmentPlan.normalizationMode,
-      targetWidth: alignmentPlan.targetWidth,
-      targetHeight: alignmentPlan.targetHeight,
-    },
-    matrices,
-    gains: new Float32Array(mergePlan.gains),
-    scaledLogs: new Float32Array(mergePlan.scaledLogs || imageCount),
-    weights: new Float32Array(mergePlan.weights),
-    fNumbers: new Float32Array(mergePlan.additionalBlurFNumbers),
-    apertureOrder: new Int32Array(mergePlan.additionalBlurApertureOrder),
-    exposureRolloffMaxP998AfterGain,
-  };
-
-  const scratchDb = await openMedianScratchDb("STF Additional Blur");
-  const scratchSessionId = createMedianScratchSessionId();
-  const histogram = new Float64Array(STF_ADDITIONAL_BLUR_HISTOGRAM_BINS);
-  let sampleCount = 0;
-  try {
-    setProgress(
-      `Analyzing STF Additional Blur mask 0/${jobs.length} with ${workerCount} `
-      + `worker${workerCount === 1 ? "" : "s"}...`,
-    );
-    await runStfAdditionalBlurAnalysisPool({
-      jobs,
-      config: workerConfig,
-      createClient: () => new StfAdditionalBlurWorkerClient(workerUrl),
-      hardwareConcurrency,
-      onJobComplete: async (job, _workerIndex, result, completedCount, totalCount) => {
-        if (result.histogram.length !== histogram.length) {
-          throw new Error("STF Additional Blur histogram size changed unexpectedly.");
-        }
-        for (let index = 0; index < histogram.length; index += 1) {
-          histogram[index] += result.histogram[index];
-        }
-        sampleCount += result.sampleCount;
-        const maskBuffer = result.mask.buffer as ArrayBuffer;
-        const edgeProtectionBuffer = result.edgeProtection.buffer as ArrayBuffer;
-        await putMedianScratchTiles(
-          scratchDb,
-          [
-            { key: stfAdditionalBlurMaskKey(scratchSessionId, job.index), buffer: maskBuffer },
-            {
-              key: stfAdditionalBlurEdgeProtectionKey(scratchSessionId, job.index),
-              buffer: edgeProtectionBuffer,
-            },
-          ],
-          "STF Additional Blur mask/protection stripes",
-        );
-        setProgress(
-          `Analyzing STF Additional Blur mask ${completedCount}/${totalCount}`
-          + `${workerCount > 0 ? ` with ${workerCount} worker${workerCount === 1 ? "" : "s"}` : ""}...`,
-        );
-      },
-    });
-
-    if (sampleCount !== width * height) {
-      throw new Error(
-        `STF Additional Blur mask sample count ${sampleCount} does not match image pixel count ${width * height}.`,
-      );
-    }
-    const sourceMedian = stfAdditionalBlurHistogramPercentile(histogram, sampleCount, 0.5);
-    const scaledLogFactor = solveStfAdditionalBlurScaledLogFactor(sourceMedian, targetMedian);
-
-    const accumulator = new Float32Array(width * height * 3);
-    setProgress(
-      `Applying STF Additional Blur 0/${jobs.length} with ${workerCount} `
-      + `worker${workerCount === 1 ? "" : "s"}...`,
-    );
-    await runStfAdditionalBlurApplyPool({
-      jobs,
-      config: workerConfig,
-      createClient: () => new StfAdditionalBlurWorkerClient(workerUrl),
-      loadMask: async (job) => {
-        const [buffer] = await getScratchBuffers(
-          scratchDb,
-          [stfAdditionalBlurMaskKey(scratchSessionId, job.index)],
-          `STF Additional Blur mask stripe ${job.index + 1}`,
-        );
-        const mask = new Uint16Array(buffer);
-        const expectedLength = width * job.height;
-        if (mask.length !== expectedLength) {
-          throw new Error(
-            `STF Additional Blur mask stripe ${job.index + 1} has ${mask.length} samples; expected ${expectedLength}.`,
-          );
-        }
-        return mask;
-      },
-      loadEdgeProtection: async (job) => {
-        const [buffer] = await getScratchBuffers(
-          scratchDb,
-          [stfAdditionalBlurEdgeProtectionKey(scratchSessionId, job.index)],
-          `STF Additional Blur edge protection stripe ${job.index + 1}`,
-        );
-        const edgeProtection = new Uint16Array(buffer);
-        const expectedLength = width * job.height;
-        if (edgeProtection.length !== expectedLength) {
-          throw new Error(
-            `STF Additional Blur edge protection stripe ${job.index + 1} has ${edgeProtection.length} samples; expected ${expectedLength}.`,
-          );
-        }
-        return edgeProtection;
-      },
-      scaledLogFactor,
-      hardwareConcurrency,
-      onJobComplete: (job, _workerIndex, stripe, completedCount, totalCount) => {
-        const expectedLength = width * job.height * 3;
-        if (stripe.length !== expectedLength) {
-          throw new Error(`STF Additional Blur worker returned an invalid stripe ${job.index + 1}.`);
-        }
-        accumulator.set(stripe, job.y * width * 3);
-        setProgress(
-          `Applying STF Additional Blur ${completedCount}/${totalCount}`
-          + `${workerCount > 0 ? ` with ${workerCount} worker${workerCount === 1 ? "" : "s"}` : ""}...`,
-        );
-      },
-    });
-    return accumulator;
-  } finally {
-    try { await deleteMedianScratchSession(scratchDb, scratchSessionId); } catch {}
-    scratchDb.close();
   }
 }
 
@@ -5005,8 +4795,8 @@ function formatColorSpaceName(colorSpace) {
 function setProcessing(processing) {
   inputFiles.disabled = processing;
   mergeMode.disabled = processing;
+  hdrSubmode.disabled = processing;
   stfBlendWeight.disabled = processing;
-  stfAdditionalBlur.disabled = processing;
   outputFormat.disabled = processing;
   outputSize.disabled = processing || !currentStackResult;
   previewExposure.disabled = processing || !currentStackResult;
