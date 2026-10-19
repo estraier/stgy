@@ -114,10 +114,6 @@ const DEFAULT_TRACK_JSON_PRECISION = {
   metadata: 1,
 };
 const TRACK_JSON_METRIC_METADATA_PRECISION = 3;
-const FILL_FORWARD_METRIC_NAMES = new Set([
-  "torqueEffectivenessPercentage",
-  "pedalSmoothnessPercentage",
-]);
 const FIT_EPOCH_UNIX_SECONDS = 631065600;
 const LOCAL_TIME_OFFSET_LIMIT_SECONDS = 24 * 3600;
 
@@ -3393,35 +3389,35 @@ function buildCoordinateProperties(
     (point) => point.segmentId,
     (value) => Math.round(value),
   );
-  addCompleteSeries(
+  addFilledSeries(
     properties,
     "altitudes",
     points,
     (point) => point.altitudeM,
     (value) => roundNumber(value, precision.altitudes),
   );
-  addFillForwardSeries(
+  addFilledSeries(
     properties,
     "heartRates",
     points,
     (point) => point.heartRateBpm,
     (value) => roundNumber(value, precision.heartRates),
   );
-  addFillForwardSeries(
+  addFilledSeries(
     properties,
     "cadences",
     points,
     (point) => point.cadenceRpm,
     (value) => roundNumber(value, precision.cadences),
   );
-  addFillForwardSeries(
+  addFilledSeries(
     properties,
     "powers",
     points,
     (point) => point.powerW,
     (value) => roundNumber(value, precision.powers),
   );
-  addCompleteSeries(
+  addFilledSeries(
     properties,
     "speeds",
     points,
@@ -3452,27 +3448,30 @@ function addCompleteSeries(
   output[name] = values.map((value) => convertValue(value as number));
 }
 
-function addFillForwardSeries(
+function addFilledSeries(
   output: Record<string, number[]>,
   name: string,
   points: TrackPoint[],
   getValue: (point: TrackPoint) => number | undefined,
   convertValue: (value: number) => number = (value) => value,
 ) {
-  let current = 0;
-  let hasAnyValue = false;
-  const values = points.map((point) => {
-    const value = getValue(point);
+  const rawValues = points.map(getValue);
+  const firstValidIndex = rawValues.findIndex(isFiniteNumber);
+
+  if (firstValidIndex < 0) {
+    return;
+  }
+
+  let current = rawValues[firstValidIndex] as number;
+  const values = rawValues.map((value, index) => {
+    if (index < firstValidIndex) {
+      return convertValue(current);
+    }
     if (isFiniteNumber(value)) {
       current = value;
-      hasAnyValue = true;
     }
     return convertValue(current);
   });
-
-  if (!hasAnyValue) {
-    return;
-  }
 
   output[name] = values;
 }
@@ -3495,23 +3494,13 @@ function addMetricSeries(
   Array.from(metricNames)
     .sort()
     .forEach((name) => {
-      if (FILL_FORWARD_METRIC_NAMES.has(name)) {
-        addFillForwardSeries(
-          output,
-          name,
-          points,
-          (point) => point.metrics?.[name],
-          (value) => roundNumber(value, precision.metrics),
-        );
-        return;
-      }
-
-      const values = points.map((point) => point.metrics?.[name]);
-      if (values.every(isFiniteNumber)) {
-        output[name] = (values as number[]).map((value) => {
-          return roundNumber(value, precision.metrics);
-        });
-      }
+      addFilledSeries(
+        output,
+        name,
+        points,
+        (point) => point.metrics?.[name],
+        (value) => roundNumber(value, precision.metrics),
+      );
     });
 }
 

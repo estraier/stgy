@@ -1956,6 +1956,46 @@ describe("trackActivityToTrackJson", () => {
     ]);
   });
 
+  test("fills graph series independently within each merged source segment", () => {
+    const first = makeActivity(3);
+    const second = makeActivity(3);
+    second.metadata.startTime = 1710000100;
+    second.points.forEach((point, index) => {
+      point.time = 1710000100 + index;
+    });
+
+    first.points[0].altitudeM = 100;
+    delete first.points[1].altitudeM;
+    first.points[2].altitudeM = 102;
+    first.points[0].speedMps = 5;
+    delete first.points[1].speedMps;
+    first.points[2].speedMps = 6;
+
+    delete second.points[0].altitudeM;
+    second.points[1].altitudeM = 200;
+    delete second.points[2].altitudeM;
+    delete second.points[0].speedMps;
+    second.points[1].speedMps = 10;
+    delete second.points[2].speedMps;
+
+    const merged = mergeTrackActivities([first, second]);
+    const parsed = parseTrackJson(trackActivityToTrackJson(merged));
+
+    expect(parsed.features).toHaveLength(2);
+    expect(parsed.features[0].properties.coordinateProperties.altitudes).toEqual([
+      100, 100, 102,
+    ]);
+    expect(parsed.features[0].properties.coordinateProperties.speeds).toEqual([
+      18, 18, 21.6,
+    ]);
+    expect(parsed.features[1].properties.coordinateProperties.altitudes).toEqual([
+      200, 200, 200,
+    ]);
+    expect(parsed.features[1].properties.coordinateProperties.speeds).toEqual([
+      36, 36, 36,
+    ]);
+  });
+
   test("writes standard coordinateProperties arrays", () => {
     const parsed = parseTrackJson(trackActivityToTrackJson(makeActivity(3)));
     const coordinateProperties =
@@ -2194,31 +2234,72 @@ describe("trackActivityToTrackJson", () => {
     expect(feature.properties.metadata.totalDistanceM).toBe(12346);
   });
 
-  test("fill-forwards selected standard series when some geo points are missing values", () => {
+  test("does not fill incomplete time or distance axis series", () => {
     const activity = makeActivity(3);
-    delete activity.points[1].heartRateBpm;
+    delete activity.points[1].time;
+    delete activity.points[1].distanceM;
 
     const parsed = parseTrackJson(trackActivityToTrackJson(activity));
     const coordinateProperties =
       parsed.features[0].properties.coordinateProperties;
 
-    expect(coordinateProperties.heartRates).toEqual([120, 120, 122]);
-    expect(coordinateProperties.powers).toEqual([150, 151, 152]);
+    expect(coordinateProperties.times).toBeUndefined();
+    expect(coordinateProperties.distances).toBeUndefined();
+    expect(coordinateProperties.altitudes).toEqual([100.1, 101.1, 102.1]);
   });
 
-  test("uses zero before the first available fill-forward value", () => {
-    const activity = makeActivity(3);
-    delete activity.points[0].heartRateBpm;
+  test("fills missing standard graph series values forward", () => {
+    const activity = makeActivity(4);
+    delete activity.points[1].altitudeM;
     delete activity.points[1].heartRateBpm;
+    delete activity.points[1].cadenceRpm;
+    delete activity.points[1].powerW;
+    delete activity.points[1].speedMps;
+    delete activity.points[3].altitudeM;
+    delete activity.points[3].speedMps;
 
     const parsed = parseTrackJson(trackActivityToTrackJson(activity));
     const coordinateProperties =
       parsed.features[0].properties.coordinateProperties;
 
-    expect(coordinateProperties.heartRates).toEqual([0, 0, 122]);
+    expect(coordinateProperties.altitudes).toEqual([
+      100.1, 100.1, 102.1, 102.1,
+    ]);
+    expect(coordinateProperties.heartRates).toEqual([120, 120, 122, 123]);
+    expect(coordinateProperties.cadences).toEqual([80, 80, 82, 83]);
+    expect(coordinateProperties.powers).toEqual([150, 150, 152, 153]);
+    expect(coordinateProperties.speeds).toEqual([18, 18, 18.7, 18.7]);
   });
 
-  test("fill-forwards pedaling dynamics metric series", () => {
+  test("fills backward only before the first available graph series value", () => {
+    const activity = makeActivity(4);
+    for (const point of activity.points.slice(0, 2)) {
+      delete point.altitudeM;
+      delete point.heartRateBpm;
+      delete point.cadenceRpm;
+      delete point.powerW;
+      delete point.speedMps;
+    }
+    delete activity.points[3].altitudeM;
+    delete activity.points[3].heartRateBpm;
+    delete activity.points[3].cadenceRpm;
+    delete activity.points[3].powerW;
+    delete activity.points[3].speedMps;
+
+    const parsed = parseTrackJson(trackActivityToTrackJson(activity));
+    const coordinateProperties =
+      parsed.features[0].properties.coordinateProperties;
+
+    expect(coordinateProperties.altitudes).toEqual([
+      102.1, 102.1, 102.1, 102.1,
+    ]);
+    expect(coordinateProperties.heartRates).toEqual([122, 122, 122, 122]);
+    expect(coordinateProperties.cadences).toEqual([82, 82, 82, 82]);
+    expect(coordinateProperties.powers).toEqual([152, 152, 152, 152]);
+    expect(coordinateProperties.speeds).toEqual([18.7, 18.7, 18.7, 18.7]);
+  });
+
+  test("fills pedaling dynamics metric series", () => {
     const activity = makeActivity(4);
     activity.points[0].metrics = {
       torqueEffectivenessPercentage: 80,
@@ -2250,7 +2331,7 @@ describe("trackActivityToTrackJson", () => {
     ]);
   });
 
-  test("omits a fill-forward series when it has no valid values", () => {
+  test("omits a filled series when it has no valid values", () => {
     const activity = makeActivity(3);
     activity.points.forEach((point) => {
       delete point.heartRateBpm;
@@ -2263,15 +2344,19 @@ describe("trackActivityToTrackJson", () => {
     expect(coordinateProperties.heartRates).toBeUndefined();
   });
 
-  test("omits complete standard series when some geo points are missing values", () => {
+  test("omits a standard graph series only when it has no valid values", () => {
     const activity = makeActivity(3);
-    delete activity.points[1].altitudeM;
+    activity.points.forEach((point) => {
+      delete point.altitudeM;
+      delete point.speedMps;
+    });
 
     const parsed = parseTrackJson(trackActivityToTrackJson(activity));
     const coordinateProperties =
       parsed.features[0].properties.coordinateProperties;
 
     expect(coordinateProperties.altitudes).toBeUndefined();
+    expect(coordinateProperties.speeds).toBeUndefined();
     expect(coordinateProperties.heartRates).toEqual([120, 121, 122]);
   });
 
@@ -2304,17 +2389,19 @@ describe("trackActivityToTrackJson", () => {
     expect(coordinateProperties.powers).toEqual([150, 151, 152]);
   });
 
-  test("omits incomplete custom metric series", () => {
-    const activity = makeActivity(3);
-    activity.points[0].metrics = { grade: 1 };
-    activity.points[1].metrics = {};
-    activity.points[2].metrics = { grade: 3 };
+  test("fills missing custom metric series values", () => {
+    const activity = makeActivity(5);
+    activity.points[0].metrics = {};
+    activity.points[1].metrics = { grade: 1 };
+    activity.points[2].metrics = {};
+    activity.points[3].metrics = { grade: 3 };
+    activity.points[4].metrics = {};
 
     const parsed = parseTrackJson(trackActivityToTrackJson(activity));
     const coordinateProperties =
       parsed.features[0].properties.coordinateProperties;
 
-    expect(coordinateProperties.grade).toBeUndefined();
+    expect(coordinateProperties.grade).toEqual([1, 1, 1, 3, 3]);
   });
 
   test("can omit custom metrics", () => {
