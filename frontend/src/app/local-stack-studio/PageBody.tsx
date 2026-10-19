@@ -160,11 +160,11 @@ export default function PageBody() {
             <label className="flex flex-col items-start gap-1.5">
               <span className="text-xs font-medium uppercase tracking-wide text-gray-500">Merge</span>
               <select id="merge-mode" className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm">
-                <option value="average">Blend (average)</option>
-                <option value="median">Denoise (median)</option>
+                <option value="average">Blend</option>
+                <option value="median">Denoise</option>
                 <option value="hdr">HDR</option>
-                <option value="stf">STF (aperture-weighted)</option>
-                <option value="focus">Focus (sharpness-weighted)</option>
+                <option value="stf">STF</option>
+                <option value="focus">Focus</option>
                 <option value="tile">Tile</option>
               </select>
             </label>
@@ -177,8 +177,8 @@ export default function PageBody() {
                 <option value="center-fit">Center fit</option>
                 <option value="center-fill">Center fill</option>
                 <option value="top-left-fill">Top left fill</option>
-                <option value="feature-match-ecc">Feature match (ECC)</option>
-                <option value="feature-match-orb">Feature match (ORB)</option>
+                <option value="feature-match-ecc">Content match (ECC)</option>
+                <option value="feature-match-orb">Content match (ORB)</option>
               </select>
             </label>
 

@@ -1705,9 +1705,9 @@ function formatAlignmentModeName(mode) {
   if (mode === "center-fit") return "Center fit";
   if (mode === "center-fill") return "Center fill";
   if (mode === "top-left-fill") return "Top left fill";
-  if (mode === "feature-match") return "Feature match";
-  if (mode === "feature-match-ecc") return "Feature match (ECC)";
-  if (mode === "feature-match-orb") return "Feature match (ORB)";
+  if (mode === "feature-match") return "Content match";
+  if (mode === "feature-match-ecc") return "Content match (ECC)";
+  if (mode === "feature-match-orb") return "Content match (ORB)";
   return "Auto";
 }
 

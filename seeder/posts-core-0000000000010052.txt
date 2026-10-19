@@ -54,7 +54,7 @@ If the subject moves between frames, however, the moving area may appear as a tr
 
 “Denoise (median)” combines the images by taking the median value at each pixel. Compared with a simple average, it is less affected by outliers that appear in only some frames, making it useful for suppressing random noise or temporary objects.
 
-Median processing must compare all inputs, so using many high-resolution images increases both the processing load and browser temporary-storage usage. If the images are not aligned well enough, fine detail can break down; use Feature match Alignment when necessary.
+Median processing must compare all inputs, so using many high-resolution images increases both the processing load and browser temporary-storage usage. If the images are not aligned well enough, fine detail can break down; use Content match Alignment when necessary.
 
 ### HDR1 (Debevec)
 
@@ -82,7 +82,7 @@ This mode can be used when you want to combine several images taken at different
 
 “Focus (sharpness-weighted)” is the Focus Stacking mode. It analyzes images photographed with gradually changing focus positions, gives more weight to the sharper image in each area, and creates an image that appears in focus from foreground to background.
 
-This is useful for macro and product photography where depth of field is insufficient. If the composition shifts between input images, merge boundaries are more likely to become unnatural, so “Auto” or “Feature match (ECC)” is normally the appropriate Alignment. In Auto, Focus alignment uses a frame near the middle of the stack as the reference.
+This is useful for macro and product photography where depth of field is insufficient. If the composition shifts between input images, merge boundaries are more likely to become unnatural, so “Auto” or “Content match (ECC)” is normally the appropriate Alignment. In Auto, Focus alignment uses a frame near the middle of the stack as the reference.
 
 ### Tile (Vertical) / Tile (Horizontal)
 
@@ -94,7 +94,7 @@ These modes are useful for placing different exposures, different processing res
 
 “Alignment” specifies how the sizes and positions of the input images are made consistent before Merge. In most cases, starting with “Auto” is sufficient.
 
-“Auto” chooses a method according to Merge. Blend normally uses Center crop, Tile uses Center fill, and other multi-image merges generally use Feature match (ECC). Feature matching is not performed for a single input.
+“Auto” chooses a method according to Merge. Blend normally uses Center crop, Tile uses Center fill, and other multi-image merges generally use Content match (ECC). Feature matching is not performed for a single input.
 
 “Center crop” uses the center of each image and crops all images to the smallest width and height common to them. It does not resize the images. This is suitable for simply stacking photographs from the same camera, with the same resolution and nearly identical composition.
 
@@ -102,9 +102,9 @@ These modes are useful for placing different exposures, different processing res
 
 “Center fill” creates a canvas with the largest width and height and places each image at the center without rescaling it. Areas outside the image are filled with gray. “Top left fill” works similarly but aligns images to the upper-left corner.
 
-“Feature match (ECC)” and “Feature match (ORB)” analyze image content to correct differences in position, rotation, scale, and related geometry. ECC aligns images using overall intensity patterns, while ORB uses corresponding feature points. If alignment fails with the selected method, LSS automatically tries the other method as well.
+“Content match (ECC)” and “Content match (ORB)” analyze image content to correct differences in position, rotation, scale, and related geometry. ECC aligns images using overall intensity patterns, while ORB uses corresponding feature points. If alignment fails with the selected method, LSS automatically tries the other method as well.
 
-When using Feature match, if image sizes differ, LSS first center-crops them to a size that can be handled in common and then performs alignment. Automatic alignment can fail with very different fields of view, extreme subject movement, or images with little texture. In that case, try another Alignment method or make the compositions more consistent beforehand.
+When using Content match, if image sizes differ, LSS first center-crops them to a size that can be handled in common and then performs alignment. Automatic alignment can fail with very different fields of view, extreme subject movement, or images with little texture. In that case, try another Alignment method or make the compositions more consistent beforehand.
 
 ## Tone adjustments after merging
 
@@ -144,7 +144,7 @@ Under “Output size”, LSS shows Full-size and, only when smaller than the ori
 
 ## Preparing source images for merging
 
-LSS merge quality depends strongly on how the source images were captured. For Blend, Median, HDR, and Focus, keep the composition as consistent as possible. A tripod is helpful when available, although Feature match can often correct small handheld shifts.
+LSS merge quality depends strongly on how the source images were captured. For Blend, Median, HDR, and Focus, keep the composition as consistent as possible. A tripod is helpful when available, although Content match can often correct small handheld shifts.
 
 HDR uses photographs with different brightness levels, but composition and subject state should remain as consistent as possible. If leaves, waves, people, cars, or other objects move substantially between exposures, ghosts or unnatural boundaries may appear.
 
