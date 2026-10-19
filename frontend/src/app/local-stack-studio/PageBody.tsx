@@ -165,6 +165,7 @@ export default function PageBody() {
                 <option value="hdr">HDR</option>
                 <option value="stf">STF</option>
                 <option value="focus">Focus</option>
+                <option value="panorama">Panorama</option>
                 <option value="tile">Tile</option>
               </select>
             </label>
@@ -230,6 +231,21 @@ export default function PageBody() {
                     <option value="6">6</option>
                     <option value="7">7</option>
                     <option value="8">8</option>
+                  </select>
+                </label>
+                <label id="panorama-downscale-option" className="hidden flex-col items-start gap-1.5">
+                  <span className="text-xs font-medium text-gray-500">Downscale</span>
+                  <select
+                    id="panorama-downscale"
+                    defaultValue="16"
+                    className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm"
+                  >
+                    <option value="none">none</option>
+                    <option value="4">4MP</option>
+                    <option value="8">8MP</option>
+                    <option value="16">16MP</option>
+                    <option value="32">32MP</option>
+                    <option value="64">64MP</option>
                   </select>
                 </label>
                 <label id="focus-softness-option" className="hidden flex-col items-start gap-1.5">

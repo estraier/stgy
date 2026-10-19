@@ -22,6 +22,10 @@ import type {
   MedianWorkerTileResponse,
 } from "../workers/protocols/median-protocol";
 import type {
+  PanoramaWorkerRequest,
+  PanoramaWorkerResponse,
+} from "../workers/protocols/panorama-protocol";
+import type {
   Hdr1ResultResponse,
   Hdr1StreamAbortRequest,
   Hdr1StreamFinalizeRequest,
@@ -76,6 +80,105 @@ function typedArrayBuffer(value: Uint16Array | Float32Array | Uint8Array): Array
 
 function copiedTypedArrayBuffer(value: Uint16Array | Float32Array | Uint8Array): ArrayBuffer {
   return value.slice().buffer as ArrayBuffer;
+}
+
+type PanoramaRequestWithoutId = PanoramaWorkerRequest extends infer Request
+  ? Request extends PanoramaWorkerRequest
+    ? Omit<Request, "requestId">
+    : never
+  : never;
+
+type PanoramaPendingRequest = {
+  resolve: (value: PanoramaWorkerResponse) => void;
+  reject: (reason?: unknown) => void;
+};
+
+function asPanoramaWorkerResponse(value: unknown): PanoramaWorkerResponse | null {
+  if (typeof value !== "object" || value === null) return null;
+  const message = value as { type?: unknown; requestId?: unknown };
+  if (typeof message.type !== "string" || typeof message.requestId !== "number") return null;
+  return value as PanoramaWorkerResponse;
+}
+
+export class PanoramaWorkerClient {
+  private readonly worker: Worker;
+  private readonly pending = new Map<number, PanoramaPendingRequest>();
+  private nextRequestId = 1;
+
+  constructor(url: URL, private readonly onProgress?: (message: string) => void) {
+    this.worker = new Worker(url);
+    this.worker.onmessage = (event) => this.handleMessage(event.data);
+    this.worker.onerror = (event) => {
+      const error = new Error(event.message || "Panorama worker failed.");
+      for (const pending of this.pending.values()) pending.reject(error);
+      this.pending.clear();
+    };
+    this.worker.onmessageerror = () => {
+      const error = new Error("Panorama worker returned an unreadable message.");
+      for (const pending of this.pending.values()) pending.reject(error);
+      this.pending.clear();
+    };
+  }
+
+  stitch(
+    sessionId: string,
+    maxOutputMegapixels: number | null = null,
+    cacheBytes?: number,
+  ): Promise<{
+    width: number;
+    height: number;
+    gamma2Rgb: Uint16Array;
+  }> {
+    const requestId = this.nextRequestId++;
+    const request: PanoramaRequestWithoutId = {
+      type: "stitch",
+      sessionId,
+      cacheBytes,
+      maxOutputMegapixels,
+    };
+    return new Promise<PanoramaWorkerResponse>((resolve, reject) => {
+      this.pending.set(requestId, { resolve, reject });
+      try {
+        this.worker.postMessage({ ...request, requestId });
+      } catch (error) {
+        this.pending.delete(requestId);
+        reject(error);
+      }
+    }).then((message) => {
+      if (message.type !== "result") {
+        throw new Error(`Unexpected Panorama worker response: ${message.type}`);
+      }
+      return {
+        width: Number(message.width),
+        height: Number(message.height),
+        gamma2Rgb: new Uint16Array(asArrayBuffer(message.gamma2Buffer, "panorama")),
+      };
+    });
+  }
+
+  private handleMessage(value: unknown): void {
+    const message = asPanoramaWorkerResponse(value);
+    if (!message) return;
+    const pending = this.pending.get(message.requestId);
+    if (!pending) return;
+    if (message.type === "progress") {
+      this.onProgress?.(message.message);
+      return;
+    }
+    this.pending.delete(message.requestId);
+    if (message.type === "error") {
+      pending.reject(new Error(message.message || "Panorama worker failed."));
+      return;
+    }
+    pending.resolve(message);
+  }
+
+  terminate(): void {
+    const error = new Error("Panorama worker was terminated.");
+    for (const pending of this.pending.values()) pending.reject(error);
+    this.pending.clear();
+    this.worker.terminate();
+  }
 }
 
 export class FocusWorkerClient {

@@ -14,7 +14,7 @@ This is the help page for Local Stack Studio. It explains the basic workflow for
 
 ## Overview
 
-Local Stack Studio (LSS) is a web application for combining multiple photographs into a single image. You can reduce noise using several shots of the same subject, create HDR images from photographs with different exposures, or perform Focus Stacking on photographs focused at different distances. It also provides simple averaging, median merging, aperture-weighted merging, and Tile modes that arrange several images vertically or horizontally.
+Local Stack Studio (LSS) is a web application for combining multiple photographs into a single image. You can reduce noise using several shots of the same subject, create HDR images from photographs with different exposures, or perform Focus Stacking on photographs focused at different distances. It also provides simple averaging, median merging, aperture-weighted merging, Panorama stitching for a wider field of view, and Tile modes that arrange several images vertically or horizontally.
 
 LSS performs image loading, alignment, merging, tone adjustment, and final image generation in the browser. After merging, you can make quick Tone adjustments, or click “Edit” to open the [same image editor as Local Image Studio](/posts/0000000000010051) for cropping, white balance, more detailed tone and color adjustments, filters, text, and other editing.
 
@@ -38,7 +38,7 @@ When you select multiple files, LSS sorts them in natural filename order before 
 
 Images with different dimensions can still be processed, but the selected Alignment may crop, rescale, or add margins to them. Merging is most stable when the photographs were taken under similar conditions and with the same angle of view.
 
-You can also select only one image. With HDR1 and HDR2, LSS internally generates dark, medium, and bright source images and performs single-image HDR. Tile creates a framed Tile image even from a single input. For other Merge methods, a single input skips alignment and multi-image merging and passes that image directly to the later Tone adjustments.
+You can also select only one image. With HDR1 and HDR2, LSS internally generates dark, medium, and bright source images and performs single-image HDR. Tile creates a framed Tile image even from a single input. Panorama requires at least two input images. For other Merge methods, a single input skips alignment and multi-image merging and passes that image directly to the later Tone adjustments.
 
 ## Choosing Merge
 
@@ -84,6 +84,14 @@ This mode can be used when you want to combine several images taken at different
 
 This is useful for macro and product photography where depth of field is insufficient. If the composition shifts between input images, merge boundaries are more likely to become unnatural, so “Auto” or “Content match (ECC)” is normally the appropriate Alignment. In Auto, Focus alignment uses a frame near the middle of the stack as the reference.
 
+### Panorama
+
+“Panorama” analyzes the content of two or more overlapping photographs, estimates their position, rotation, and projection relationship, and stitches them into a single wider view. Panorama performs its own alignment, so the Alignment control is disabled while this Merge mode is selected.
+
+The Panorama Options row includes “Downscale”. `none` keeps the original composition resolution when memory allows; 4MP, 8MP, 16MP, 32MP, and 64MP specify an approximate target pixel count for the cropped Panorama output. The default is 16MP. When a value is selected, LSS first makes a low-resolution probe Panorama, measures its cropped output size, and uses that result to choose the composition resolution before the final stitch. This is a memory-use target rather than a strict output limit, so LSS does not resize the final panorama again if it ends up somewhat above the selected value.
+
+After stitching, LSS determines coverage from the areas actually occupied by the input images and automatically crops to the largest rectangle that contains no uncovered margin. It does not identify margins by looking for black pixels in the photograph. Adjacent images need sufficient overlap and image detail; stitching can fail when overlap is too small or reliable correspondences cannot be found.
+
 ### Tile (Vertical) / Tile (Horizontal)
 
 “Tile (Vertical)” and “Tile (Horizontal)” do not mix pixels from the images. Instead, they arrange several images into one larger image. Vertical arranges them vertically, while Horizontal arranges them horizontally. Borders are placed between images and around the outside.
@@ -94,7 +102,7 @@ These modes are useful for placing different exposures, different processing res
 
 “Alignment” specifies how the sizes and positions of the input images are made consistent before Merge. In most cases, starting with “Auto” is sufficient.
 
-“Auto” chooses a method according to Merge. Blend normally uses Center crop, Tile uses Center fill, and other multi-image merges generally use Content match (ECC). Feature matching is not performed for a single input.
+“Auto” chooses a method according to Merge. Blend normally uses Center crop, Tile uses Center fill, and other ordinary multi-image merges generally use Content match (ECC). Panorama estimates image relationships internally and does not use the Alignment control. Content matching is not performed for a single input.
 
 “Center crop” uses the center of each image and crops all images to the smallest width and height common to them. It does not resize the images. This is suitable for simply stacking photographs from the same camera, with the same resolution and nearly identical composition.
 
@@ -150,11 +158,13 @@ HDR uses photographs with different brightness levels, but composition and subje
 
 For Focus Stacking, keep exposure and composition as fixed as possible and change only the focus position in steps. In scenes where objects at different depths overlap in the same area, inspect merge boundaries at 100%.
 
+For Panorama, give adjacent photographs sufficient overlap and, when possible, rotate the camera from nearly the same position. If the camera position moves while nearby subjects occupy much of the frame, parallax can make seams difficult to align.
+
 Moving subjects also affect noise reduction with Blend and Median. With averaging, moving objects tend to remain as translucent ghosts; with median merging, some moving objects may disappear. Check the final image to make sure the result matches your intention.
 
 ## Processing time and browser temporary storage
 
-Because LSS handles high-resolution images at full size, processing time and memory requirements vary greatly with the number of inputs, pixel count, and Merge method. Denoise (median), Focus, HDR, and similar modes may store intermediate data in browser temporary storage.
+Because LSS handles high-resolution images at full size, processing time and memory requirements vary greatly with the number of inputs, pixel count, and Merge method. Denoise (median), Focus, HDR, and similar modes may store intermediate data in browser temporary storage. Panorama also loads a dedicated OpenCV stitching module and works with multiple input images at once, so memory usage increases with image count and pixel dimensions.
 
 Processing may fail if the browser does not have enough free storage or if you select many extremely large images. In that case, try reducing the number or size of the inputs, closing other tabs, or freeing unneeded temporary data before trying again.
 

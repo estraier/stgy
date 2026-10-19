@@ -2,6 +2,8 @@ import { spawnSync } from "node:child_process";
 
 const strictFiles = [
   "src/app/local-stack-studio/stack/focus-math.ts",
+  "src/app/local-stack-studio/stack/panorama-crop.ts",
+  "src/app/local-stack-studio/stack/panorama-scale.ts",
   "src/app/local-stack-studio/workers/opencv-runtime.ts",
   "src/app/local-stack-studio/workers/alignment-preprocess.ts",
   "src/app/local-stack-studio/workers/transfer-buffer.ts",
@@ -9,6 +11,7 @@ const strictFiles = [
   "src/app/local-stack-studio/workers/protocols/focus-protocol.ts",
   "src/app/local-stack-studio/workers/protocols/hdr-protocol.ts",
   "src/app/local-stack-studio/workers/protocols/linear-merge-protocol.ts",
+  "src/app/local-stack-studio/workers/protocols/panorama-protocol.ts",
   "src/app/local-stack-studio/workers/orb.worker.ts",
   "src/app/local-stack-studio/workers/ecc.worker.ts",
   "src/app/local-stack-studio/workers/focus.worker.ts",
@@ -21,6 +24,7 @@ const syntaxFiles = [
   "src/app/local-stack-studio/stack/linear-merge-client.ts",
   "src/app/local-stack-studio/workers/hdr.worker.ts",
   "src/app/local-stack-studio/workers/linear-merge.worker.ts",
+  "src/app/local-stack-studio/workers/panorama.worker.ts",
 ];
 
 function runTsc(args, label) {

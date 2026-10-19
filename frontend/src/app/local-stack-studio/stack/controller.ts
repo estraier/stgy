@@ -44,6 +44,7 @@ import {
   FocusWorkerClient,
   MedianWorkerClient,
   OrbWorkerClient,
+  PanoramaWorkerClient,
 } from "./worker-clients";
 import {
   runAlignmentPool,
@@ -182,6 +183,8 @@ const tileDirectionOption = getElement("tile-direction-option");
 const tileDirection = getElement("tile-direction");
 const tileFoldingOption = getElement("tile-folding-option");
 const tileFolding = getElement("tile-folding");
+const panoramaDownscaleOption = getElement("panorama-downscale-option");
+const panoramaDownscale = getElement("panorama-downscale");
 const focusSoftnessOption = getElement("focus-softness-option");
 const focusSoftness = getElement("focus-softness");
 const stfBlendWeightOption = getElement("stf-blend-weight-option");
@@ -265,6 +268,7 @@ let previewHighlightInputP998Cache = null;
 let currentActivePreviewControl = null;
 let zoomRenderRequestId = 0;
 let zoomPanState = null;
+let processingActive = false;
 
 const listenerCleanups = [];
 function listen(target, type, listener, options) {
@@ -274,23 +278,32 @@ function listen(target, type, listener, options) {
 
 const STF_BLEND_WEIGHT_VALUES = new Set([1, 2, 4, 8, 16, 32]);
 const FOCUS_SOFTNESS_VALUES = new Set([0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5]);
+const PANORAMA_DOWNSCALE_VALUES = new Set([4, 8, 16, 32, 64]);
+
+function updateAlignmentAvailability() {
+  alignmentMode.disabled = processingActive || mergeMode.value === "panorama";
+}
 
 function updateMergeOptionsVisibility() {
   const isHdr = mergeMode.value === "hdr";
   const isStf = mergeMode.value === "stf";
   const isFocus = mergeMode.value === "focus";
+  const isPanorama = mergeMode.value === "panorama";
   const isTile = mergeMode.value === "tile";
-  mergeOptionsRow.classList.toggle("hidden", !isHdr && !isStf && !isFocus && !isTile);
+  mergeOptionsRow.classList.toggle("hidden", !isHdr && !isStf && !isFocus && !isPanorama && !isTile);
   hdrSubmodeOption.classList.toggle("hidden", !isHdr);
   hdrSubmodeOption.classList.toggle("flex", isHdr);
   tileDirectionOption.classList.toggle("hidden", !isTile);
   tileDirectionOption.classList.toggle("flex", isTile);
   tileFoldingOption.classList.toggle("hidden", !isTile);
   tileFoldingOption.classList.toggle("flex", isTile);
+  panoramaDownscaleOption.classList.toggle("hidden", !isPanorama);
+  panoramaDownscaleOption.classList.toggle("flex", isPanorama);
   focusSoftnessOption.classList.toggle("hidden", !isFocus);
   focusSoftnessOption.classList.toggle("flex", isFocus);
   stfBlendWeightOption.classList.toggle("hidden", !isStf);
   stfBlendWeightOption.classList.toggle("flex", isStf);
+  updateAlignmentAvailability();
 }
 
 function selectedInternalMergeMode() {
@@ -307,6 +320,12 @@ function selectedTileFolding() {
   if (tileFolding.value === "none") return null;
   const value = Number.parseInt(tileFolding.value, 10);
   return Number.isInteger(value) && value >= 2 && value <= 8 ? value : null;
+}
+
+function selectedPanoramaMaxOutputMegapixels() {
+  if (panoramaDownscale.value === "none") return null;
+  const value = Number.parseInt(panoramaDownscale.value, 10);
+  return PANORAMA_DOWNSCALE_VALUES.has(value) ? value : 16;
 }
 
 function selectedFocusSoftness() {
@@ -441,7 +460,7 @@ listen(processButton, "click", async () => {
     if (files.length < 1) {
       throw new Error("Choose at least one input image.");
     }
-    if (!["average", "median", "stf", "hdr", "focus", "tile"].includes(mergeMode.value)) {
+    if (!["average", "median", "stf", "hdr", "focus", "panorama", "tile"].includes(mergeMode.value)) {
       throw new Error(`Unsupported merge mode: ${mergeMode.value}`);
     }
     if (mergeMode.value === "hdr" && !["debevec", "mertens"].includes(hdrSubmode.value)) {
@@ -456,14 +475,26 @@ listen(processButton, "click", async () => {
         throw new Error(`Unsupported Tile folding: ${tileFolding.value}`);
       }
     }
+    if (mergeMode.value === "panorama" && panoramaDownscale.value !== "none") {
+      const downscale = Number.parseInt(panoramaDownscale.value, 10);
+      if (!PANORAMA_DOWNSCALE_VALUES.has(downscale)) {
+        throw new Error(`Unsupported Panorama downscale: ${panoramaDownscale.value}`);
+      }
+    }
     const selectedMergeMode = selectedInternalMergeMode();
+    if (selectedMergeMode === "panorama" && files.length < 2) {
+      throw new Error("Panorama requires at least two input images.");
+    }
     if (!["auto", "center-crop", "center-fit", "center-fill", "top-left-fill", "feature-match-ecc", "feature-match-orb"].includes(alignmentMode.value)) {
       throw new Error(`Unsupported alignment mode: ${alignmentMode.value}`);
     }
 
-    setProgress("Loading OpenCV.js...");
-    const cv = await getOpenCv();
-    assertMainOpenCvApis(cv);
+    let cv = null;
+    if (selectedMergeMode !== "panorama") {
+      setProgress("Loading OpenCV.js...");
+      cv = await getOpenCv();
+      assertMainOpenCvApis(cv);
+    }
     setProgress("Reading metadata, ICC profiles, and image sizes...");
     const inputInfos = await readInputInfos(files);
     const { mergeStackMetadata } = await loadExifMetadataModule();
@@ -476,7 +507,7 @@ listen(processButton, "click", async () => {
       requireStfToneStatistics,
     );
     const useSyntheticSingleInputHdr = files.length === 1 && (selectedMergeMode === "hdr1" || selectedMergeMode === "hdr2");
-    const preserveSingleInputMerge = isTileMergeMode(selectedMergeMode);
+    const preserveSingleInputMerge = isTileMergeMode(selectedMergeMode) || selectedMergeMode === "panorama";
     const effectiveMergeMode = useSyntheticSingleInputHdr
       ? selectedMergeMode
       : files.length === 1 && !preserveSingleInputMerge
@@ -490,8 +521,11 @@ listen(processButton, "click", async () => {
       selectedStfBlendWeight(),
       selectedTileFolding(),
       selectedFocusSoftness(),
+      selectedPanoramaMaxOutputMegapixels(),
     );
-    const alignmentPlan = buildAlignmentPlan(files, inputInfos, alignmentMode.value, effectiveMergeMode);
+    const alignmentPlan = effectiveMergeMode === "panorama"
+      ? null
+      : buildAlignmentPlan(files, inputInfos, alignmentMode.value, effectiveMergeMode);
     currentPreviewColorSpace = chooseOutputColorSpace(inputInfos);
 
     currentStackResult = await alignAndMergeFilesWithOpenCv(
@@ -2062,6 +2096,7 @@ function buildMergePlan(
   stfBlendWeightValue = DEFAULT_STF_BLEND_WEIGHT,
   tileFoldingValue = null,
   focusSoftnessValue = DEFAULT_FOCUS_SOFTNESS,
+  panoramaMaxOutputMegapixels = 16,
 ) {
   const imageCount = files.length;
   const weights = new Float32Array(imageCount);
@@ -2099,6 +2134,10 @@ function buildMergePlan(
 
   if (mode === "focus") {
     return { mode, weights, gains, focusSoftness: focusSoftnessValue };
+  }
+
+  if (mode === "panorama") {
+    return { mode, weights, gains, scaledLogs, panoramaMaxOutputMegapixels };
   }
 
   if (isTileMergeMode(mode)) {
@@ -2210,6 +2249,14 @@ async function alignAndMergeFilesWithOpenCv(
   if (!canonicalSession || canonicalSession.images.length !== files.length) {
     throw new Error("Canonical input session is not ready.");
   }
+  if (mergePlan.mode === "panorama") {
+    return mergePanoramaFromCanonical(
+      canonicalSession,
+      outputColorSpace,
+      mergePlan.panoramaMaxOutputMegapixels ?? null,
+    );
+  }
+  if (!alignmentPlan) throw new Error("Alignment plan is required for this merge mode.");
   const needsAlignment = files.length > 1 && isFeatureMatchAlignmentMode(alignmentPlan.effectiveMode);
   const alignmentReferenceIndex = needsAlignment
     ? chooseAlignmentReferenceIndex(inputInfos, mergePlan.mode)
@@ -2547,6 +2594,28 @@ async function alignAndMergeFilesWithOpenCv(
       }
       focusScratchDb.close();
     }
+  }
+}
+
+async function mergePanoramaFromCanonical(
+  canonicalSession,
+  outputColorSpace,
+  maxOutputMegapixels,
+) {
+  const worker = new PanoramaWorkerClient(
+    new URL("/generated/local-stack-studio/panorama.worker.js", window.location.origin),
+    (message) => setProgress(message),
+  );
+  try {
+    const result = await worker.stitch(canonicalSession.id, maxOutputMegapixels);
+    return finalizeStoredGamma2Result(
+      result.gamma2Rgb,
+      result.width,
+      result.height,
+      outputColorSpace,
+    );
+  } finally {
+    worker.terminate();
   }
 }
 
@@ -4859,11 +4928,13 @@ function formatColorSpaceName(colorSpace) {
 }
 
 function setProcessing(processing) {
+  processingActive = processing;
   inputFiles.disabled = processing;
   mergeMode.disabled = processing;
   hdrSubmode.disabled = processing;
   tileDirection.disabled = processing;
   tileFolding.disabled = processing;
+  panoramaDownscale.disabled = processing;
   stfBlendWeight.disabled = processing;
   outputFormat.disabled = processing;
   outputSize.disabled = processing || !currentStackResult;
@@ -4878,6 +4949,7 @@ function setProcessing(processing) {
   editButton.disabled = processing || !currentStackResult;
   processButton.disabled = processing;
   progressPanel.classList.toggle("hidden", !processing);
+  updateAlignmentAvailability();
 }
 
 function setProgress(message) {
