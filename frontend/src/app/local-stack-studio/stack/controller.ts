@@ -178,6 +178,10 @@ const mergeMode = getElement("merge-mode");
 const mergeOptionsRow = getElement("merge-options-row");
 const hdrSubmodeOption = getElement("hdr-submode-option");
 const hdrSubmode = getElement("hdr-submode");
+const tileDirectionOption = getElement("tile-direction-option");
+const tileDirection = getElement("tile-direction");
+const tileFoldingOption = getElement("tile-folding-option");
+const tileFolding = getElement("tile-folding");
 const stfBlendWeightOption = getElement("stf-blend-weight-option");
 const stfBlendWeight = getElement("stf-blend-weight");
 const alignmentMode = getElement("alignment-mode");
@@ -271,16 +275,32 @@ const STF_BLEND_WEIGHT_VALUES = new Set([1, 2, 4, 8, 16, 32]);
 function updateMergeOptionsVisibility() {
   const isHdr = mergeMode.value === "hdr";
   const isStf = mergeMode.value === "stf";
-  mergeOptionsRow.classList.toggle("hidden", !isHdr && !isStf);
+  const isTile = mergeMode.value === "tile";
+  mergeOptionsRow.classList.toggle("hidden", !isHdr && !isStf && !isTile);
   hdrSubmodeOption.classList.toggle("hidden", !isHdr);
   hdrSubmodeOption.classList.toggle("flex", isHdr);
+  tileDirectionOption.classList.toggle("hidden", !isTile);
+  tileDirectionOption.classList.toggle("flex", isTile);
+  tileFoldingOption.classList.toggle("hidden", !isTile);
+  tileFoldingOption.classList.toggle("flex", isTile);
   stfBlendWeightOption.classList.toggle("hidden", !isStf);
   stfBlendWeightOption.classList.toggle("flex", isStf);
 }
 
 function selectedInternalMergeMode() {
-  if (mergeMode.value !== "hdr") return mergeMode.value;
-  return hdrSubmode.value === "mertens" ? "hdr2" : "hdr1";
+  if (mergeMode.value === "hdr") {
+    return hdrSubmode.value === "mertens" ? "hdr2" : "hdr1";
+  }
+  if (mergeMode.value === "tile") {
+    return tileDirection.value === "horizontal" ? "tile-horizontal" : "tile-vertical";
+  }
+  return mergeMode.value;
+}
+
+function selectedTileFolding() {
+  if (tileFolding.value === "none") return null;
+  const value = Number.parseInt(tileFolding.value, 10);
+  return Number.isInteger(value) && value >= 2 && value <= 8 ? value : null;
 }
 
 function selectedStfBlendWeight() {
@@ -410,11 +430,20 @@ listen(processButton, "click", async () => {
     if (files.length < 1) {
       throw new Error("Choose at least one input image.");
     }
-    if (!["average", "median", "stf", "hdr", "focus", "tile-vertical", "tile-horizontal"].includes(mergeMode.value)) {
+    if (!["average", "median", "stf", "hdr", "focus", "tile"].includes(mergeMode.value)) {
       throw new Error(`Unsupported merge mode: ${mergeMode.value}`);
     }
     if (mergeMode.value === "hdr" && !["debevec", "mertens"].includes(hdrSubmode.value)) {
       throw new Error(`Unsupported HDR submode: ${hdrSubmode.value}`);
+    }
+    if (mergeMode.value === "tile" && !["vertical", "horizontal"].includes(tileDirection.value)) {
+      throw new Error(`Unsupported Tile direction: ${tileDirection.value}`);
+    }
+    if (mergeMode.value === "tile" && tileFolding.value !== "none") {
+      const folding = Number.parseInt(tileFolding.value, 10);
+      if (!Number.isInteger(folding) || folding < 2 || folding > 8) {
+        throw new Error(`Unsupported Tile folding: ${tileFolding.value}`);
+      }
     }
     const selectedMergeMode = selectedInternalMergeMode();
     if (!["auto", "center-crop", "center-fit", "center-fill", "top-left-fill", "feature-match-ecc", "feature-match-orb"].includes(alignmentMode.value)) {
@@ -448,6 +477,7 @@ listen(processButton, "click", async () => {
       effectiveMergeMode,
       currentCanonicalSession.images,
       selectedStfBlendWeight(),
+      selectedTileFolding(),
     );
     const alignmentPlan = buildAlignmentPlan(files, inputInfos, alignmentMode.value, effectiveMergeMode);
     currentPreviewColorSpace = chooseOutputColorSpace(inputInfos);
@@ -1894,7 +1924,7 @@ async function alignWithFallback(
   throw new Error(tried.join("; "));
 }
 
-function buildTileLayout(mode, imageWidth, imageHeight, imageCount) {
+function buildTileLayout(mode, imageWidth, imageHeight, imageCount, folding = null) {
   if (!isTileMergeMode(mode)) {
     throw new Error(`Unsupported tile mode: ${mode}`);
   }
@@ -1904,16 +1934,24 @@ function buildTileLayout(mode, imageWidth, imageHeight, imageCount) {
     Math.round(Math.hypot(imageWidth, imageHeight) * TILE_BORDER_DIAGONAL_RATIO),
   );
   const vertical = mode === "tile-vertical";
-  const outputWidth = vertical
-    ? imageWidth + border * 2
-    : imageWidth * count + border * (count + 1);
-  const outputHeight = vertical
-    ? imageHeight * count + border * (count + 1)
-    : imageHeight + border * 2;
-  const positions = Array.from({ length: count }, (_, index) => ({
-    x: vertical ? border : border + index * (imageWidth + border),
-    y: vertical ? border + index * (imageHeight + border) : border,
-  }));
+  const requestedFolding = Number.isInteger(folding) && folding >= 2 && folding <= 8
+    ? folding
+    : null;
+  const primaryCount = requestedFolding == null
+    ? count
+    : Math.min(count, requestedFolding);
+  const rows = vertical ? primaryCount : Math.ceil(count / primaryCount);
+  const columns = vertical ? Math.ceil(count / primaryCount) : primaryCount;
+  const outputWidth = imageWidth * columns + border * (columns + 1);
+  const outputHeight = imageHeight * rows + border * (rows + 1);
+  const positions = Array.from({ length: count }, (_, index) => {
+    const row = vertical ? index % primaryCount : Math.floor(index / primaryCount);
+    const column = vertical ? Math.floor(index / primaryCount) : index % primaryCount;
+    return {
+      x: border + column * (imageWidth + border),
+      y: border + row * (imageHeight + border),
+    };
+  });
   return { border, outputWidth, outputHeight, positions };
 }
 
@@ -2010,6 +2048,7 @@ function buildMergePlan(
   mode,
   canonicalImages = [],
   stfBlendWeightValue = DEFAULT_STF_BLEND_WEIGHT,
+  tileFoldingValue = null,
 ) {
   const imageCount = files.length;
   const weights = new Float32Array(imageCount);
@@ -2047,6 +2086,10 @@ function buildMergePlan(
 
   if (mode === "focus") {
     return { mode, weights, gains };
+  }
+
+  if (isTileMergeMode(mode)) {
+    return { mode, weights, gains, scaledLogs, tileFolding: tileFoldingValue };
   }
 
   if (mode !== "stf") {
@@ -2389,7 +2432,13 @@ async function alignAndMergeFilesWithOpenCv(
     }
 
     if (isTileMergeMode(mergePlan.mode)) {
-      const layout = buildTileLayout(mergePlan.mode, width, height, files.length);
+      const layout = buildTileLayout(
+        mergePlan.mode,
+        width,
+        height,
+        files.length,
+        mergePlan.tileFolding,
+      );
       const output = new Uint16Array(layout.outputWidth * layout.outputHeight * 3);
       output.fill(CENTER_FILL_GRAY_STORED_GAMMA2);
       for (let index = 0; index < files.length; index += 1) {
@@ -4796,6 +4845,8 @@ function setProcessing(processing) {
   inputFiles.disabled = processing;
   mergeMode.disabled = processing;
   hdrSubmode.disabled = processing;
+  tileDirection.disabled = processing;
+  tileFolding.disabled = processing;
   stfBlendWeight.disabled = processing;
   outputFormat.disabled = processing;
   outputSize.disabled = processing || !currentStackResult;

@@ -165,8 +165,7 @@ export default function PageBody() {
                 <option value="hdr">HDR</option>
                 <option value="stf">STF (aperture-weighted)</option>
                 <option value="focus">Focus (sharpness-weighted)</option>
-                <option value="tile-vertical">Tile (Vertical)</option>
-                <option value="tile-horizontal">Tile (Horizontal)</option>
+                <option value="tile">Tile</option>
               </select>
             </label>
 
@@ -203,6 +202,34 @@ export default function PageBody() {
                   >
                     <option value="debevec">Debevec</option>
                     <option value="mertens">Mertens</option>
+                  </select>
+                </label>
+                <label id="tile-direction-option" className="hidden flex-col items-start gap-1.5">
+                  <span className="text-xs font-medium text-gray-500">Direction</span>
+                  <select
+                    id="tile-direction"
+                    defaultValue="vertical"
+                    className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm"
+                  >
+                    <option value="vertical">vertical</option>
+                    <option value="horizontal">horizontal</option>
+                  </select>
+                </label>
+                <label id="tile-folding-option" className="hidden flex-col items-start gap-1.5">
+                  <span className="text-xs font-medium text-gray-500">Folding</span>
+                  <select
+                    id="tile-folding"
+                    defaultValue="none"
+                    className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm"
+                  >
+                    <option value="none">none</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                    <option value="4">4</option>
+                    <option value="5">5</option>
+                    <option value="6">6</option>
+                    <option value="7">7</option>
+                    <option value="8">8</option>
                   </select>
                 </label>
                 <label id="stf-blend-weight-option" className="hidden flex-col items-start gap-1.5">
