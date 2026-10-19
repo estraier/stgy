@@ -232,6 +232,26 @@ export default function PageBody() {
                     <option value="8">8</option>
                   </select>
                 </label>
+                <label id="focus-softness-option" className="hidden flex-col items-start gap-1.5">
+                  <span className="text-xs font-medium text-gray-500">Softness</span>
+                  <select
+                    id="focus-softness"
+                    defaultValue="0.1"
+                    className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm"
+                  >
+                    <option value="0">0</option>
+                    <option value="0.05">0.05</option>
+                    <option value="0.1">0.1</option>
+                    <option value="0.15">0.15</option>
+                    <option value="0.2">0.2</option>
+                    <option value="0.25">0.25</option>
+                    <option value="0.3">0.3</option>
+                    <option value="0.35">0.35</option>
+                    <option value="0.4">0.4</option>
+                    <option value="0.45">0.45</option>
+                    <option value="0.5">0.5</option>
+                  </select>
+                </label>
                 <label id="stf-blend-weight-option" className="hidden flex-col items-start gap-1.5">
                   <span className="text-xs font-medium text-gray-500">Blend weight</span>
                   <select

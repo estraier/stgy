@@ -168,7 +168,7 @@ const CENTER_FILL_GRAY_STORED_GAMMA2 = Math.round(
 const FOCUS_PROCESSING_CORE_SIZE = 1024;
 // Five pyrDown operations require about 124px of source support; keep a 128px halo.
 const FOCUS_HALO_SIZE = 128;
-const FOCUS_SMOOTHNESS = 0.25;
+const DEFAULT_FOCUS_SOFTNESS = 0.1;
 const FOCUS_MAX_PYRAMID_DOWNSAMPLES = 5;
 const FOCUS_MERGE_MAX_WORKERS = 4;
 
@@ -182,6 +182,8 @@ const tileDirectionOption = getElement("tile-direction-option");
 const tileDirection = getElement("tile-direction");
 const tileFoldingOption = getElement("tile-folding-option");
 const tileFolding = getElement("tile-folding");
+const focusSoftnessOption = getElement("focus-softness-option");
+const focusSoftness = getElement("focus-softness");
 const stfBlendWeightOption = getElement("stf-blend-weight-option");
 const stfBlendWeight = getElement("stf-blend-weight");
 const alignmentMode = getElement("alignment-mode");
@@ -271,18 +273,22 @@ function listen(target, type, listener, options) {
 }
 
 const STF_BLEND_WEIGHT_VALUES = new Set([1, 2, 4, 8, 16, 32]);
+const FOCUS_SOFTNESS_VALUES = new Set([0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5]);
 
 function updateMergeOptionsVisibility() {
   const isHdr = mergeMode.value === "hdr";
   const isStf = mergeMode.value === "stf";
+  const isFocus = mergeMode.value === "focus";
   const isTile = mergeMode.value === "tile";
-  mergeOptionsRow.classList.toggle("hidden", !isHdr && !isStf && !isTile);
+  mergeOptionsRow.classList.toggle("hidden", !isHdr && !isStf && !isFocus && !isTile);
   hdrSubmodeOption.classList.toggle("hidden", !isHdr);
   hdrSubmodeOption.classList.toggle("flex", isHdr);
   tileDirectionOption.classList.toggle("hidden", !isTile);
   tileDirectionOption.classList.toggle("flex", isTile);
   tileFoldingOption.classList.toggle("hidden", !isTile);
   tileFoldingOption.classList.toggle("flex", isTile);
+  focusSoftnessOption.classList.toggle("hidden", !isFocus);
+  focusSoftnessOption.classList.toggle("flex", isFocus);
   stfBlendWeightOption.classList.toggle("hidden", !isStf);
   stfBlendWeightOption.classList.toggle("flex", isStf);
 }
@@ -301,6 +307,11 @@ function selectedTileFolding() {
   if (tileFolding.value === "none") return null;
   const value = Number.parseInt(tileFolding.value, 10);
   return Number.isInteger(value) && value >= 2 && value <= 8 ? value : null;
+}
+
+function selectedFocusSoftness() {
+  const value = Number.parseFloat(focusSoftness.value);
+  return FOCUS_SOFTNESS_VALUES.has(value) ? value : DEFAULT_FOCUS_SOFTNESS;
 }
 
 function selectedStfBlendWeight() {
@@ -478,6 +489,7 @@ listen(processButton, "click", async () => {
       currentCanonicalSession.images,
       selectedStfBlendWeight(),
       selectedTileFolding(),
+      selectedFocusSoftness(),
     );
     const alignmentPlan = buildAlignmentPlan(files, inputInfos, alignmentMode.value, effectiveMergeMode);
     currentPreviewColorSpace = chooseOutputColorSpace(inputInfos);
@@ -2049,6 +2061,7 @@ function buildMergePlan(
   canonicalImages = [],
   stfBlendWeightValue = DEFAULT_STF_BLEND_WEIGHT,
   tileFoldingValue = null,
+  focusSoftnessValue = DEFAULT_FOCUS_SOFTNESS,
 ) {
   const imageCount = files.length;
   const weights = new Float32Array(imageCount);
@@ -2085,7 +2098,7 @@ function buildMergePlan(
   }
 
   if (mode === "focus") {
-    return { mode, weights, gains };
+    return { mode, weights, gains, focusSoftness: focusSoftnessValue };
   }
 
   if (isTileMergeMode(mode)) {
@@ -2427,6 +2440,7 @@ async function alignAndMergeFilesWithOpenCv(
         files.length,
         width,
         height,
+        mergePlan.focusSoftness,
       );
       return finalizeStoredGamma2Result(focusStored, width, height, outputColorSpace);
     }
@@ -2983,14 +2997,17 @@ async function prepareFocusSharpnessMaps(
   };
 }
 
-function computeFocusGlobalTau(stats) {
+function computeFocusGlobalTau(stats, softness = DEFAULT_FOCUS_SOFTNESS) {
   if (!(stats && stats.count > 0)) throw new Error("Focus sharpness statistics are empty.");
+  if (!(Number.isFinite(softness) && softness >= 0 && softness <= 0.5)) {
+    throw new Error(`Focus Softness is invalid: ${softness}`);
+  }
   const mean = stats.sum / stats.count;
   const variance = Math.max(0, stats.sumSq / stats.count - mean * mean);
-  return Math.max(Math.sqrt(variance) * FOCUS_SMOOTHNESS, 1e-4);
+  return Math.max(Math.sqrt(variance) * softness, 1e-4);
 }
 
-async function mergeFocusFromCanonical(db, sessionId, focusWorker, canonicalConfig, imageCount, width, height) {
+async function mergeFocusFromCanonical(db, sessionId, focusWorker, canonicalConfig, imageCount, width, height, softness = DEFAULT_FOCUS_SOFTNESS) {
   if (!focusWorker) throw new Error("Focus worker is not initialized.");
   const preparedSharpness = await prepareFocusSharpnessMaps(
     db,
@@ -3020,7 +3037,7 @@ async function mergeFocusFromCanonical(db, sessionId, focusWorker, canonicalConf
   preparedSharpness.sharpnessMaps.length = 0;
   tileScores.length = 0;
 
-  const tau = computeFocusGlobalTau(finalMapResult.stats);
+  const tau = computeFocusGlobalTau(finalMapResult.stats, softness);
 
   const output = new Uint16Array(width * height * 3);
   const imageShortSide = Math.min(width, height);
