@@ -16056,12 +16056,12 @@ export function ImageEditDialog({
   }, [decodedRevision, displayed, cropRect, resizePercent, outputDimensions]);
 
   const peepTargetRasterSize = useMemo(() => {
-    if (!peepOutputDimensions || displayed.w <= 0 || displayed.h <= 0) return null;
+    if (!peepOutputDimensions || containerSize.w <= 0 || containerSize.h <= 0) return null;
     return {
-      width: Math.min(peepOutputDimensions.w, Math.max(1, Math.floor(displayed.w * displayPixelRatio))),
-      height: Math.min(peepOutputDimensions.h, Math.max(1, Math.floor(displayed.h * displayPixelRatio))),
+      width: Math.min(peepOutputDimensions.w, Math.max(1, Math.floor(containerSize.w * displayPixelRatio))),
+      height: Math.min(peepOutputDimensions.h, Math.max(1, Math.floor(containerSize.h * displayPixelRatio))),
     };
-  }, [peepOutputDimensions, displayed.w, displayed.h, displayPixelRatio]);
+  }, [peepOutputDimensions, containerSize.w, containerSize.h, displayPixelRatio]);
 
   useEffect(() => {
     if (!peepMode || !peepOutputDimensions || !peepTargetRasterSize || cropRect.w <= 0 || cropRect.h <= 0) return;
@@ -17640,8 +17640,7 @@ export function ImageEditDialog({
                   )}
                   {peepExpanded && (
                     <div
-                      className="absolute z-[38] flex items-center justify-center overflow-hidden bg-black"
-                      style={{ left: displayed.x, top: displayed.y, width: displayed.w, height: displayed.h }}
+                      className="absolute inset-0 z-[38] flex items-center justify-center overflow-hidden bg-black"
                       onPointerDown={onPeepExpandedPointerDown}
                       onPointerMove={onPeepExpandedPointerMove}
                       onPointerUp={onPeepExpandedPointerUp}
@@ -17658,8 +17657,8 @@ export function ImageEditDialog({
                         className="block"
                         style={peepTargetRasterSize
                           ? {
-                              width: Math.min(displayed.w, peepTargetRasterSize.width / displayPixelRatio),
-                              height: Math.min(displayed.h, peepTargetRasterSize.height / displayPixelRatio),
+                              width: peepTargetRasterSize.width / displayPixelRatio,
+                              height: peepTargetRasterSize.height / displayPixelRatio,
                             }
                           : undefined}
                       />
