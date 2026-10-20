@@ -4,6 +4,12 @@ import {
   readCanonicalLinearRows,
 } from "../stack/canonical-source";
 import { largestValidPanoramaRectFromMask } from "../stack/panorama-crop";
+import {
+  applyPanoramaGainBgrInPlace,
+  estimatePanoramaGainMaps,
+  samplePanoramaGainBgrInto,
+  type PanoramaGainMap,
+} from "../stack/panorama-exposure";
 import { transferableBuffer } from "./transfer-buffer";
 import type {
   PanoramaWorkerRequest,
@@ -74,6 +80,10 @@ import type {
     width: number;
     height: number;
     data: Uint8Array;
+  };
+  type SeamAnalysis = {
+    seams: SeamMask[];
+    gainMaps: PanoramaGainMap[];
   };
 
   const workerScope = globalThis as unknown as WorkerScope;
@@ -801,7 +811,7 @@ import type {
     images: NativeMat[],
     cameras: CameraState[],
     workScale: number,
-  ): SeamMask[] {
+  ): SeamAnalysis {
     const api = getNativeApi();
     const seamScale = seamScaleForImages(stitcher, images[0]!.cols, images[0]!.rows);
     const seamWorkAspect = seamScale / workScale;
@@ -819,7 +829,7 @@ import type {
     let seamFinder: DynamicSeamFinder | null = null;
 
     try {
-      postProgress(requestId, "Computing OpenCV GraphCut panorama seam...");
+      postProgress(requestId, "Computing local panorama exposure/WB compensation...");
       for (let index = 0; index < images.length; index += 1) {
         const source = images[index]!;
         const camera = cameras[index]!;
@@ -872,6 +882,39 @@ import type {
         }
       }
 
+      // Estimate OpenCV BlocksChannelsCompensator-style local RGB gains from
+      // the low-resolution spherical overlaps. Keep this outside native
+      // ExposureCompensator.apply(), because that path is 8-bit; the same gain
+      // maps are later applied to canonical float32 pixels.
+      const exposureProxies = warpedFloatImages.map((image, index) => {
+        const bgr = image.data32F;
+        const mask = warpedMasks[index]!.data;
+        if (!(bgr instanceof Float32Array) || bgr.length < image.rows * image.cols * 3) {
+          throw new Error(`Panorama exposure proxy ${index + 1} has an unreadable float buffer.`);
+        }
+        if (!(mask instanceof Uint8Array) || mask.length < image.rows * image.cols) {
+          throw new Error(`Panorama exposure mask ${index + 1} has an unreadable buffer.`);
+        }
+        return {
+          cornerX: Math.round(corners[index]!.x),
+          cornerY: Math.round(corners[index]!.y),
+          width: image.cols,
+          height: image.rows,
+          bgr,
+          mask,
+        };
+      });
+      const gainMaps = estimatePanoramaGainMaps(exposureProxies);
+      for (let index = 0; index < warpedFloatImages.length; index += 1) {
+        const image = warpedFloatImages[index]!;
+        const bgr = image.data32F;
+        if (!(bgr instanceof Float32Array)) {
+          throw new Error(`Panorama exposure proxy ${index + 1} lost its float buffer.`);
+        }
+        applyPanoramaGainBgrInPlace(bgr, image.cols, image.rows, gainMaps[index]!);
+      }
+
+      postProgress(requestId, "Computing OpenCV GraphCut panorama seam...");
       // GraphCutSeamFinder operates on vector<UMat>; unlike estimateTransform(),
       // this path must remain UMatVector in this generated binding.
       const imageInputs = createUMatVectorFromMats(warpedFloatImages, api.CV_32FC3);
@@ -884,12 +927,13 @@ import type {
       seamFinder = api.createGraphCutSeamFinder();
       seamFinder.find(imageVector, cornerVector, maskVector);
       const masks = readMasksFromUMatVector(maskVector, warpedMasks.length);
-      return masks.map((data, index) => ({
+      const seams = masks.map((data, index) => ({
         corner: corners[index]!,
         width: sizes[index]!.width,
         height: sizes[index]!.height,
         data,
       }));
+      return { seams, gainMaps };
     } finally {
       deleteNative(seamFinder);
       if (!Array.isArray(cornerVector)) deleteNative(cornerVector);
@@ -992,6 +1036,7 @@ import type {
     session: Awaited<ReturnType<typeof openCanonicalReadSession>>,
     cameras: CameraState[],
     seams: SeamMask[],
+    gainMaps: PanoramaGainMap[],
     workScale: number,
     composeScale: number,
     maxOutputMegapixels: number | null,
@@ -1068,6 +1113,8 @@ import type {
           }
 
           const seam = seams[index]!;
+          const gainMap = gainMaps[index]!;
+          const gainSample = new Float32Array(3);
           const offsetX = Math.round(corner.x - union.x);
           const offsetY = Math.round(corner.y - union.y);
           for (let y = 0; y < warped.rows; y += 1) {
@@ -1092,9 +1139,12 @@ import type {
               winnerScore[canvasPixel] = score;
               const source = localPixel * 3;
               const destination = canvasPixel * 3;
-              gamma2Canvas[destination] = encodeResultGamma2(rgb[source] ?? 0);
-              gamma2Canvas[destination + 1] = encodeResultGamma2(rgb[source + 1] ?? 0);
-              gamma2Canvas[destination + 2] = encodeResultGamma2(rgb[source + 2] ?? 0);
+              // Gain maps were estimated from BGR proxies; canonical float32
+              // pixels are RGB, so apply the sampled channels in reverse order.
+              samplePanoramaGainBgrInto(gainMap, x, y, warped.cols, warped.rows, gainSample);
+              gamma2Canvas[destination] = encodeResultGamma2((rgb[source] ?? 0) * gainSample[2]!);
+              gamma2Canvas[destination + 1] = encodeResultGamma2((rgb[source + 1] ?? 0) * gainSample[1]!);
+              gamma2Canvas[destination + 2] = encodeResultGamma2((rgb[source + 2] ?? 0) * gainSample[0]!);
             }
           }
         } finally {
@@ -1168,7 +1218,9 @@ import type {
         throw new Error(`Panorama Stitcher returned ${cameras.length} cameras for ${proxyImages.length} inputs.`);
       }
 
-      const seams = buildGraphCutSeams(requestId, stitcher, proxyImages, cameras, workScale);
+      const seamAnalysis = buildGraphCutSeams(requestId, stitcher, proxyImages, cameras, workScale);
+      const seams = seamAnalysis.seams;
+      const gainMaps = seamAnalysis.gainMaps;
       const cropRatio = estimateCoverageCropRatio(seams);
       const imageSizes = session.images.map((image) => ({ width: image.width, height: image.height }));
       const composeScale = chooseComposeScale(
@@ -1196,6 +1248,7 @@ import type {
         session,
         cameras,
         seams,
+        gainMaps,
         workScale,
         composeScale,
         maxOutputMegapixels,
