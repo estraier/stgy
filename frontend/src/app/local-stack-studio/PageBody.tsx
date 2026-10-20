@@ -242,9 +242,13 @@ export default function PageBody() {
                   >
                     <option value="none">none</option>
                     <option value="4">4MP</option>
+                    <option value="6">6MP</option>
                     <option value="8">8MP</option>
+                    <option value="12">12MP</option>
                     <option value="16">16MP</option>
+                    <option value="24">24MP</option>
                     <option value="32">32MP</option>
+                    <option value="48">48MP</option>
                     <option value="64">64MP</option>
                   </select>
                 </label>

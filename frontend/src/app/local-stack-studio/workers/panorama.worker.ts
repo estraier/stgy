@@ -1,9 +1,12 @@
 // Local Stack Studio panorama worker. Built to public/generated/local-stack-studio.
 import {
   openCanonicalReadSession,
+  CANONICAL_LINEAR_RANGE_MAX,
   readCanonicalLinearRows,
+  readCanonicalStoredRows,
 } from "../stack/canonical-source";
 import { largestValidPanoramaRectFromMask } from "../stack/panorama-crop";
+import { choosePanoramaComposeScale } from "../stack/panorama-scale";
 import {
   applyPanoramaGainBgrInPlace,
   estimatePanoramaGainMaps,
@@ -62,6 +65,13 @@ import type {
       destination: NativeMat,
     ) => unknown;
     warpRoi: (size: { width: number; height: number }, camera: NativeMat, rotation: NativeMat) => unknown;
+    buildMaps: (
+      size: { width: number; height: number },
+      camera: NativeMat,
+      rotation: NativeMat,
+      xmap: NativeMat,
+      ymap: NativeMat,
+    ) => unknown;
   };
   type DynamicSeamFinder = Deletable & {
     find: (images: unknown, corners: unknown, masks: unknown) => unknown;
@@ -92,6 +102,8 @@ import type {
   const STORED_UINT16_MAX = 65535;
   const PANORAMA_DEFAULT_SEAM_MPX = 0.1;
   const PANORAMA_ROWS_PER_READ = 128;
+  const PANORAMA_SAMPLE_BAND_ROWS = 64;
+  const CANONICAL_DECODE_LUT = buildCanonicalDecodeLut();
   const PANORAMA_MODULE_URL = "/vendor/opencv-stitching/lib/index.js";
   const PANORAMA_WASM_URL = "/vendor/opencv-stitching/lib/opencv_js.wasm";
   const GRAPH_CUT_TERMINAL_COST = 10_000;
@@ -257,9 +269,9 @@ import type {
     }
     const createWarper = (scale: number): DynamicWarper => {
       const warper = new (WarperClass as new (type: string, scale: number) => DynamicWarper)("spherical", scale);
-      if (typeof warper.warp !== "function" || typeof warper.warpRoi !== "function") {
+      if (typeof warper.warp !== "function" || typeof warper.warpRoi !== "function" || typeof warper.buildMaps !== "function") {
         deleteNative(warper);
-        throw new Error("Panorama OpenCV PyRotationWarper is missing warp/warpRoi APIs.");
+        throw new Error("Panorama OpenCV PyRotationWarper is missing warp/warpRoi/buildMaps APIs.");
       }
       return warper;
     };
@@ -562,31 +574,6 @@ import type {
     return api.matFromArray(meta.height, meta.width, api.CV_8UC3, bgr);
   }
 
-  async function loadCanonicalLinearRgbMat(
-    session: Awaited<ReturnType<typeof openCanonicalReadSession>>,
-    imageIndex: number,
-  ): Promise<NativeMat> {
-    const meta = session.images[imageIndex];
-    if (!meta) throw new Error(`Canonical panorama input ${imageIndex + 1} is unavailable.`);
-    const api = getNativeApi();
-    const mat = new api.Mat(meta.height, meta.width, api.CV_32FC3);
-    const destination = mat.data32F;
-    if (!(destination instanceof Float32Array) || destination.length < meta.width * meta.height * 3) {
-      deleteNative(mat);
-      throw new Error("Panorama OpenCV could not allocate the float32 source image.");
-    }
-    try {
-      for (let startRow = 0; startRow < meta.height; startRow += PANORAMA_ROWS_PER_READ) {
-        const rowCount = Math.min(PANORAMA_ROWS_PER_READ, meta.height - startRow);
-        const linearRgb = await readCanonicalLinearRows(session, imageIndex, startRow, rowCount);
-        destination.set(linearRgb, startRow * meta.width * 3);
-      }
-      return mat;
-    } catch (error) {
-      deleteNative(mat);
-      throw error;
-    }
-  }
 
   function copyMatAsFloat32(mat: unknown, label: string): Float32Array {
     if (!mat || typeof mat !== "object") throw new Error(`Panorama ${label} matrix is unavailable.`);
@@ -979,19 +966,6 @@ import type {
     }
   }
 
-  function chooseComposeScale(
-    cameras: CameraState[],
-    imageSizes: Array<{ width: number; height: number }>,
-    workScale: number,
-    cropRatio: number,
-    maxOutputPixels: number | null,
-  ): number {
-    if (maxOutputPixels === null) return 1;
-    const fullUnion = unionRects(projectedRects(cameras, imageSizes, workScale, 1));
-    const estimatedCropPixels = fullUnion.width * fullUnion.height * cropRatio;
-    if (!Number.isFinite(estimatedCropPixels) || estimatedCropPixels <= maxOutputPixels) return 1;
-    return Math.min(1, Math.max(0.01, Math.sqrt(maxOutputPixels / estimatedCropPixels)));
-  }
 
   function seamClassAt(seam: SeamMask, x: number, y: number, width: number, height: number): number {
     const sx = Math.min(seam.width - 1, Math.max(0, Math.floor((x + 0.5) * seam.width / Math.max(1, width))));
@@ -1031,6 +1005,68 @@ import type {
     return output;
   }
 
+  function buildCanonicalDecodeLut(): Float32Array {
+    const lut = new Float32Array(STORED_UINT16_MAX + 1);
+    for (let sample = 0; sample <= STORED_UINT16_MAX; sample += 1) {
+      const encoded = sample / STORED_UINT16_MAX;
+      lut[sample] = encoded * encoded * CANONICAL_LINEAR_RANGE_MAX;
+    }
+    return lut;
+  }
+
+  function mapData32F(mat: NativeMat, label: string): Float32Array {
+    const data = mat.data32F;
+    if (!(data instanceof Float32Array) || data.length < mat.rows * mat.cols) {
+      throw new Error(`Panorama ${label} map has an unreadable float32 buffer.`);
+    }
+    return data;
+  }
+
+  function resizedCoordinateToCanonical(
+    coordinate: number,
+    resizedLength: number,
+    canonicalLength: number,
+  ): number {
+    if (resizedLength <= 0 || canonicalLength <= 0) return 0;
+    const scale = resizedLength / canonicalLength;
+    return (coordinate + 0.5) / scale - 0.5;
+  }
+
+  function sampleStoredLinearBilinear(
+    storedRows: Uint16Array,
+    storedStartRow: number,
+    sourceWidth: number,
+    sourceHeight: number,
+    sourceX: number,
+    sourceY: number,
+    channel: number,
+  ): number {
+    const x = Math.min(sourceWidth - 1, Math.max(0, sourceX));
+    const y = Math.min(sourceHeight - 1, Math.max(0, sourceY));
+    const x0 = Math.floor(x);
+    const y0 = Math.floor(y);
+    const x1 = Math.min(sourceWidth - 1, x0 + 1);
+    const y1 = Math.min(sourceHeight - 1, y0 + 1);
+    const fx = x - x0;
+    const fy = y - y0;
+    const localY0 = y0 - storedStartRow;
+    const localY1 = y1 - storedStartRow;
+    if (localY0 < 0 || localY1 < 0) return 0;
+    const rowPixels = sourceWidth * 3;
+    const i00 = localY0 * rowPixels + x0 * 3 + channel;
+    const i10 = localY0 * rowPixels + x1 * 3 + channel;
+    const i01 = localY1 * rowPixels + x0 * 3 + channel;
+    const i11 = localY1 * rowPixels + x1 * 3 + channel;
+    if (i11 >= storedRows.length) return 0;
+    const v00 = CANONICAL_DECODE_LUT[storedRows[i00] ?? 0] ?? 0;
+    const v10 = CANONICAL_DECODE_LUT[storedRows[i10] ?? 0] ?? 0;
+    const v01 = CANONICAL_DECODE_LUT[storedRows[i01] ?? 0] ?? 0;
+    const v11 = CANONICAL_DECODE_LUT[storedRows[i11] ?? 0] ?? 0;
+    const top = v00 + (v10 - v00) * fx;
+    const bottom = v01 + (v11 - v01) * fx;
+    return top + (bottom - top) * fy;
+  }
+
   async function composeHighPrecisionPanorama(
     requestId: number,
     session: Awaited<ReturnType<typeof openCanonicalReadSession>>,
@@ -1066,95 +1102,128 @@ import type {
 
     try {
       for (let index = 0; index < cameras.length; index += 1) {
-        postProgress(requestId, `Warping full-precision panorama image ${index + 1}/${cameras.length}...`);
-        const sourceFull = await loadCanonicalLinearRgbMat(session, index);
-        const targetWidth = Math.max(1, Math.round(sourceFull.cols * composeScale));
-        const targetHeight = Math.max(1, Math.round(sourceFull.rows * composeScale));
-        const resized = resizeMat(sourceFull, targetWidth, targetHeight, api.INTER_LINEAR_EXACT);
-        const resizedOwned = resized !== sourceFull;
+        postProgress(requestId, `Mapping full-precision panorama image ${index + 1}/${cameras.length}...`);
+        const meta = session.images[index];
+        if (!meta) throw new Error(`Canonical panorama input ${index + 1} is unavailable.`);
+        const targetWidth = Math.max(1, Math.round(meta.width * composeScale));
+        const targetHeight = Math.max(1, Math.round(meta.height * composeScale));
         let cameraMatrix: NativeMat | null = null;
         let rotation: NativeMat | null = null;
-        let warped: NativeMat | null = null;
-        let sourceMask: NativeMat | null = null;
-        let warpedMask: NativeMat | null = null;
+        let xmap: NativeMat | null = null;
+        let ymap: NativeMat | null = null;
         try {
           cameraMatrix = createCameraMatrix(cameras[index]!, composeWorkAspect);
           rotation = createRotationMatrix(cameras[index]!);
-          warped = new api.Mat();
-          const corner = pointFromUnknown(
-            warper.warp(
-              resized,
+          xmap = new api.Mat();
+          ymap = new api.Mat();
+          const buildMapsRect = rectFromUnknown(
+            warper.buildMaps(
+              { width: targetWidth, height: targetHeight },
               cameraMatrix,
               rotation,
-              api.INTER_LINEAR,
-              api.BORDER_REFLECT,
-              warped,
+              xmap,
+              ymap,
             ),
             `compose ${index + 1}`,
           );
-          sourceMask = fullMask(targetWidth, targetHeight);
-          warpedMask = new api.Mat();
-          warper.warp(
-            sourceMask,
-            cameraMatrix,
-            rotation,
-            api.INTER_NEAREST,
-            api.BORDER_CONSTANT,
-            warpedMask,
-          );
-
-          const rgb = warped.data32F;
-          const mask = warpedMask.data;
-          if (!(rgb instanceof Float32Array) || rgb.length < warped.rows * warped.cols * 3) {
-            throw new Error(`Panorama warped image ${index + 1} has an unreadable float32 buffer.`);
+          const projectedRect = rectangles[index]!;
+          // OpenCV's RotationWarper::buildMaps() creates maps with
+          // (dst_br - dst_tl + 1) pixels, but returns Rect(dst_tl, dst_br),
+          // whose C++ Rect width/height are one pixel smaller. warpRoi(), on
+          // the other hand, returns the actual warped image/map dimensions.
+          // Therefore use buildMaps() only for the top-left and use warpRoi()
+          // plus the actual map Mat dimensions for the extent.
+          if (xmap.rows !== ymap.rows || xmap.cols !== ymap.cols) {
+            throw new Error(`Panorama compose map ${index + 1} X/Y dimensions do not match.`);
           }
-          if (!(mask instanceof Uint8Array) || mask.length < warped.rows * warped.cols) {
-            throw new Error(`Panorama warped mask ${index + 1} has an unreadable buffer.`);
+          if (
+            buildMapsRect.x !== projectedRect.x
+            || buildMapsRect.y !== projectedRect.y
+            || xmap.rows !== projectedRect.height
+            || xmap.cols !== projectedRect.width
+          ) {
+            throw new Error(
+              `Panorama compose map ${index + 1} does not match warpRoi `
+              + `(map ${xmap.cols}×${xmap.rows} at ${buildMapsRect.x},${buildMapsRect.y}; `
+              + `ROI ${projectedRect.width}×${projectedRect.height} at ${projectedRect.x},${projectedRect.y}).`,
+            );
           }
-
+          const mapRect: Rect = projectedRect;
+          const xmapData = mapData32F(xmap, `compose ${index + 1} X`);
+          const ymapData = mapData32F(ymap, `compose ${index + 1} Y`);
           const seam = seams[index]!;
           const gainMap = gainMaps[index]!;
           const gainSample = new Float32Array(3);
-          const offsetX = Math.round(corner.x - union.x);
-          const offsetY = Math.round(corner.y - union.y);
-          for (let y = 0; y < warped.rows; y += 1) {
-            const canvasY = offsetY + y;
-            if (canvasY < 0 || canvasY >= union.height) continue;
-            let localPixel = y * warped.cols;
-            let canvasPixel = canvasY * union.width + offsetX;
-            for (let x = 0; x < warped.cols; x += 1, localPixel += 1, canvasPixel += 1) {
-              const canvasX = offsetX + x;
-              if (canvasX < 0 || canvasX >= union.width || mask[localPixel] === 0) continue;
-              coverage[canvasPixel] = 1;
-              const seamClass = seamClassAt(seam, x, y, warped.cols, warped.rows);
-              const edgeDistance = Math.min(x, y, warped.cols - 1 - x, warped.rows - 1 - y);
-              const edgeNormalization = Math.max(1, Math.min(warped.cols, warped.rows) * 0.5);
-              const interior = Math.min(0.999, Math.max(0, edgeDistance / edgeNormalization));
-              const score = (seamClass === 2
-                ? SEAM_CORE_SCORE
-                : seamClass === 1
-                  ? SEAM_NEAR_SCORE
-                  : SEAM_FALLBACK_SCORE) + interior;
-              if (score <= winnerScore[canvasPixel]!) continue;
-              winnerScore[canvasPixel] = score;
-              const source = localPixel * 3;
-              const destination = canvasPixel * 3;
-              // Gain maps were estimated from BGR proxies; canonical float32
-              // pixels are RGB, so apply the sampled channels in reverse order.
-              samplePanoramaGainBgrInto(gainMap, x, y, warped.cols, warped.rows, gainSample);
-              gamma2Canvas[destination] = encodeResultGamma2((rgb[source] ?? 0) * gainSample[2]!);
-              gamma2Canvas[destination + 1] = encodeResultGamma2((rgb[source + 1] ?? 0) * gainSample[1]!);
-              gamma2Canvas[destination + 2] = encodeResultGamma2((rgb[source + 2] ?? 0) * gainSample[0]!);
+          const offsetX = Math.round(mapRect.x - union.x);
+          const offsetY = Math.round(mapRect.y - union.y);
+
+          for (let bandStart = 0; bandStart < mapRect.height; bandStart += PANORAMA_SAMPLE_BAND_ROWS) {
+            const bandEnd = Math.min(mapRect.height, bandStart + PANORAMA_SAMPLE_BAND_ROWS);
+            let minSourceRow = meta.height;
+            let maxSourceRow = -1;
+            for (let y = bandStart; y < bandEnd; y += 1) {
+              let localPixel = y * mapRect.width;
+              for (let x = 0; x < mapRect.width; x += 1, localPixel += 1) {
+                const mapX = xmapData[localPixel]!;
+                const mapY = ymapData[localPixel]!;
+                if (!Number.isFinite(mapX) || !Number.isFinite(mapY) || mapX < 0 || mapY < 0 || mapX > targetWidth - 1 || mapY > targetHeight - 1) continue;
+                const canonicalY = resizedCoordinateToCanonical(mapY, targetHeight, meta.height);
+                if (!Number.isFinite(canonicalY)) continue;
+                const clampedY = Math.min(meta.height - 1, Math.max(0, canonicalY));
+                minSourceRow = Math.min(minSourceRow, Math.floor(clampedY));
+                maxSourceRow = Math.max(maxSourceRow, Math.min(meta.height - 1, Math.floor(clampedY) + 1));
+              }
+            }
+            if (maxSourceRow < minSourceRow) continue;
+            const storedRows = await readCanonicalStoredRows(
+              session,
+              index,
+              minSourceRow,
+              maxSourceRow - minSourceRow + 1,
+            );
+
+            for (let y = bandStart; y < bandEnd; y += 1) {
+              const canvasY = offsetY + y;
+              if (canvasY < 0 || canvasY >= union.height) continue;
+              let localPixel = y * mapRect.width;
+              let canvasPixel = canvasY * union.width + offsetX;
+              for (let x = 0; x < mapRect.width; x += 1, localPixel += 1, canvasPixel += 1) {
+                const canvasX = offsetX + x;
+                if (canvasX < 0 || canvasX >= union.width) continue;
+                const mapX = xmapData[localPixel]!;
+                const mapY = ymapData[localPixel]!;
+                if (!Number.isFinite(mapX) || !Number.isFinite(mapY) || mapX < 0 || mapY < 0 || mapX > targetWidth - 1 || mapY > targetHeight - 1) continue;
+                coverage[canvasPixel] = 1;
+                const seamClass = seamClassAt(seam, x, y, mapRect.width, mapRect.height);
+                const edgeDistance = Math.min(x, y, mapRect.width - 1 - x, mapRect.height - 1 - y);
+                const edgeNormalization = Math.max(1, Math.min(mapRect.width, mapRect.height) * 0.5);
+                const interior = Math.min(0.999, Math.max(0, edgeDistance / edgeNormalization));
+                const score = (seamClass === 2
+                  ? SEAM_CORE_SCORE
+                  : seamClass === 1
+                    ? SEAM_NEAR_SCORE
+                    : SEAM_FALLBACK_SCORE) + interior;
+                if (score <= winnerScore[canvasPixel]!) continue;
+                winnerScore[canvasPixel] = score;
+
+                const canonicalX = resizedCoordinateToCanonical(mapX, targetWidth, meta.width);
+                const canonicalY = resizedCoordinateToCanonical(mapY, targetHeight, meta.height);
+                samplePanoramaGainBgrInto(gainMap, x, y, mapRect.width, mapRect.height, gainSample);
+                const destination = canvasPixel * 3;
+                const r = sampleStoredLinearBilinear(storedRows, minSourceRow, meta.width, meta.height, canonicalX, canonicalY, 0);
+                const g = sampleStoredLinearBilinear(storedRows, minSourceRow, meta.width, meta.height, canonicalX, canonicalY, 1);
+                const b = sampleStoredLinearBilinear(storedRows, minSourceRow, meta.width, meta.height, canonicalX, canonicalY, 2);
+                gamma2Canvas[destination] = encodeResultGamma2(r * gainSample[2]!);
+                gamma2Canvas[destination + 1] = encodeResultGamma2(g * gainSample[1]!);
+                gamma2Canvas[destination + 2] = encodeResultGamma2(b * gainSample[0]!);
+              }
             }
           }
         } finally {
-          deleteNative(warpedMask);
-          deleteNative(sourceMask);
-          deleteNative(warped);
+          deleteNative(ymap);
+          deleteNative(xmap);
           deleteNative(rotation);
           deleteNative(cameraMatrix);
-          if (resizedOwned) deleteNative(resized);
-          deleteNative(sourceFull);
         }
       }
     } finally {
@@ -1223,19 +1292,19 @@ import type {
       const gainMaps = seamAnalysis.gainMaps;
       const cropRatio = estimateCoverageCropRatio(seams);
       const imageSizes = session.images.map((image) => ({ width: image.width, height: image.height }));
-      const composeScale = chooseComposeScale(
-        cameras,
-        imageSizes,
-        workScale,
+      const fullUnion = unionRects(projectedRects(cameras, imageSizes, workScale, 1));
+      const composeScale = choosePanoramaComposeScale({
+        fullUnionPixels: fullUnion.width * fullUnion.height,
         cropRatio,
         maxOutputPixels,
-      );
+      });
 
       // The high-level Stitcher is deliberately discarded here. Its native
       // composePanorama path converts the result to CV_8U. Geometry, bundle
       // adjustment, spherical camera parameters and GraphCut seam decisions
-      // have already been captured above; final pixels are composed separately
-      // from canonical float32 sources to preserve 16-bit output precision.
+      // have already been captured above. Final pixels are sampled directly
+      // from canonical gamma-2 Uint16 storage; only the four neighboring samples
+      // are decoded to linear float for bilinear interpolation and gain correction.
       deleteNative(stitcher);
       stitcher = null;
       deleteNative(proxyVector);

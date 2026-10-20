@@ -278,7 +278,7 @@ function listen(target, type, listener, options) {
 
 const STF_BLEND_WEIGHT_VALUES = new Set([1, 2, 4, 8, 16, 32]);
 const FOCUS_SOFTNESS_VALUES = new Set([0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5]);
-const PANORAMA_DOWNSCALE_VALUES = new Set([4, 8, 16, 32, 64]);
+const PANORAMA_DOWNSCALE_VALUES = new Set([4, 6, 8, 12, 16, 24, 32, 48, 64]);
 
 function updateAlignmentAvailability() {
   alignmentMode.disabled = processingActive || mergeMode.value === "panorama";
