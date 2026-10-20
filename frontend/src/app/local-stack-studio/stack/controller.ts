@@ -74,6 +74,10 @@ import {
 import { AlignedImageReader } from "./aligned-reader";
 import { runLensfunCorrectionPool } from "./lensfun-pool";
 import { buildStfApertureWeights, DEFAULT_STF_BLEND_WEIGHT } from "./stf-weights";
+import {
+  DEFAULT_PANORAMA_DOWNSCALE_MEGAPIXELS,
+  parsePanoramaDownscaleMegapixels,
+} from "./panorama-options";
 import { buildStfToneMatchPlans } from "./stf-tone-match";
 import {
   computeFocusFinalMaps,
@@ -278,7 +282,6 @@ function listen(target, type, listener, options) {
 
 const STF_BLEND_WEIGHT_VALUES = new Set([1, 2, 4, 8, 16, 32]);
 const FOCUS_SOFTNESS_VALUES = new Set([0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5]);
-const PANORAMA_DOWNSCALE_VALUES = new Set([4, 6, 8, 12, 16, 24, 32, 48, 64]);
 
 function updateAlignmentAvailability() {
   alignmentMode.disabled = processingActive || mergeMode.value === "panorama";
@@ -323,9 +326,8 @@ function selectedTileFolding() {
 }
 
 function selectedPanoramaMaxOutputMegapixels() {
-  if (panoramaDownscale.value === "none") return null;
-  const value = Number.parseInt(panoramaDownscale.value, 10);
-  return PANORAMA_DOWNSCALE_VALUES.has(value) ? value : 16;
+  const value = parsePanoramaDownscaleMegapixels(panoramaDownscale.value);
+  return value === undefined ? DEFAULT_PANORAMA_DOWNSCALE_MEGAPIXELS : value;
 }
 
 function selectedFocusSoftness() {
@@ -475,9 +477,9 @@ listen(processButton, "click", async () => {
         throw new Error(`Unsupported Tile folding: ${tileFolding.value}`);
       }
     }
-    if (mergeMode.value === "panorama" && panoramaDownscale.value !== "none") {
-      const downscale = Number.parseInt(panoramaDownscale.value, 10);
-      if (!PANORAMA_DOWNSCALE_VALUES.has(downscale)) {
+    if (mergeMode.value === "panorama") {
+      const downscale = parsePanoramaDownscaleMegapixels(panoramaDownscale.value);
+      if (downscale === undefined) {
         throw new Error(`Unsupported Panorama downscale: ${panoramaDownscale.value}`);
       }
     }

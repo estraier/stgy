@@ -11,6 +11,7 @@ import type { DecodedRgbImage16, ImageEditOutputColorProfile } from "@/component
 import type { ImageEditClarityMap } from "@/components/image-editor/clarity";
 import type { DefringeAnalysisMap } from "@/components/image-editor/defringe";
 import { getBrowserLocale } from "@/utils/locale";
+import { PANORAMA_DOWNSCALE_MEGAPIXELS } from "./stack/panorama-options";
 import {
   mountLocalStackStudio,
   type LocalStackStudioEditRequest,
@@ -241,15 +242,9 @@ export default function PageBody() {
                     className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm"
                   >
                     <option value="none">none</option>
-                    <option value="4">4MP</option>
-                    <option value="6">6MP</option>
-                    <option value="8">8MP</option>
-                    <option value="12">12MP</option>
-                    <option value="16">16MP</option>
-                    <option value="24">24MP</option>
-                    <option value="32">32MP</option>
-                    <option value="48">48MP</option>
-                    <option value="64">64MP</option>
+                    {PANORAMA_DOWNSCALE_MEGAPIXELS.map((megapixels) => (
+                      <option key={megapixels} value={String(megapixels)}>{megapixels}MP</option>
+                    ))}
                   </select>
                 </label>
                 <label id="focus-softness-option" className="hidden flex-col items-start gap-1.5">

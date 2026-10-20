@@ -7,6 +7,7 @@ import {
 } from "../stack/canonical-source";
 import { largestValidPanoramaRectFromMask } from "../stack/panorama-crop";
 import { choosePanoramaComposeScale } from "../stack/panorama-scale";
+import { isSupportedPanoramaDownscaleMegapixels } from "../stack/panorama-options";
 import {
   applyPanoramaGainBgrInPlace,
   estimatePanoramaGainMaps,
@@ -544,7 +545,7 @@ import type {
 
   function validateMaxOutputMegapixels(value: number | null): number | null {
     if (value === null) return null;
-    if (![4, 8, 16, 32, 64].includes(value)) {
+    if (!isSupportedPanoramaDownscaleMegapixels(value)) {
       throw new Error(`Unsupported Panorama downscale: ${String(value)}MP.`);
     }
     return value;
