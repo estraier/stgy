@@ -63,6 +63,7 @@ import type {
     cameras: () => unknown;
     workScale: () => number;
     seamEstimationResol?: () => number;
+    setWaveCorrection: (flag: boolean) => void;
   };
   type DynamicWarper = Deletable & {
     warp: (
@@ -152,6 +153,8 @@ import type {
       interpolation: number,
     ) => void;
     createStitcher: () => DynamicStitcher;
+    waveCorrectAuto: number;
+    waveCorrect: (rotations: DynamicVector, kind: number) => unknown;
     createWarper: (scale: number) => DynamicWarper;
     createGraphCutSeamFinder: () => DynamicSeamFinder;
   } | null = null;
@@ -250,6 +253,19 @@ import type {
     const StitcherClass = openCvModule.Stitcher as { create?: (mode?: number) => unknown } | undefined;
     const flatStitcherFactory = openCvModule.Stitcher_create;
     const panoramaMode = Number(openCvModule.Stitcher_PANORAMA ?? 0);
+    // @banou/opencv-wasm is generated from OpenCV's wrapped API.
+    // Stitcher::setWaveCorrectKind() itself is not CV_WRAP and therefore is not
+    // exported by this build. Disable Stitcher's fixed HORIZ correction and use
+    // the wrapped cv::detail::waveCorrect(..., WAVE_CORRECT_AUTO) explicitly
+    // after bundle adjustment instead. Do not substitute enum values or aliases.
+    const waveCorrectAuto = Number(openCvModule.detail_WAVE_CORRECT_AUTO);
+    const waveCorrectFunction = openCvModule.detail_waveCorrect;
+    if (!Number.isFinite(waveCorrectAuto)) {
+      throw new Error("Panorama OpenCV build does not expose detail_WAVE_CORRECT_AUTO.");
+    }
+    if (typeof waveCorrectFunction !== "function") {
+      throw new Error("Panorama OpenCV build does not expose detail_waveCorrect().");
+    }
     const createStitcher = (): DynamicStitcher => {
       let created: unknown = null;
       if (StitcherClass && typeof StitcherClass.create === "function") {
@@ -266,10 +282,15 @@ import type {
         || typeof stitcher.component !== "function"
         || typeof stitcher.cameras !== "function"
         || typeof stitcher.workScale !== "function"
+        || typeof stitcher.setWaveCorrection !== "function"
       ) {
         deleteNative(stitcher);
-        throw new Error("Panorama OpenCV Stitcher is missing estimateTransform/cameras/workScale APIs.");
+        throw new Error("Panorama OpenCV Stitcher is missing estimateTransform/component/cameras/workScale/setWaveCorrection APIs.");
       }
+      // PANORAMA defaults to WAVE_CORRECT_HORIZ. Turn that off here so the
+      // CameraParams returned by estimateTransform() are the bundle-adjusted,
+      // un-wave-corrected rotations. AUTO correction is applied explicitly below.
+      stitcher.setWaveCorrection(false);
       return stitcher;
     };
 
@@ -330,6 +351,8 @@ import type {
       matFromArray: matFromArrayFunction as NonNullable<typeof nativeApi>["matFromArray"],
       resize: resizeFunction as NonNullable<typeof nativeApi>["resize"],
       createStitcher,
+      waveCorrectAuto,
+      waveCorrect: waveCorrectFunction as (rotations: DynamicVector, kind: number) => unknown,
       createWarper,
       createGraphCutSeamFinder,
     };
@@ -641,6 +664,45 @@ import type {
       return cameras;
     } finally {
       deleteNative(cameraVector);
+    }
+  }
+
+  function applyAutoWaveCorrection(cameras: CameraState[]): CameraState[] {
+    if (cameras.length <= 1) return cameras;
+    const api = getNativeApi();
+    const rotationMats: NativeMat[] = cameras.map((camera) =>
+      api.matFromArray(3, 3, api.CV_32F, camera.rotation),
+    );
+    let rotationVector: DynamicVector | null = null;
+    try {
+      const vector = createNativeVector(rotationMats);
+      if (Array.isArray(vector)) {
+        throw new Error("Panorama OpenCV MatVector is required for automatic wave correction.");
+      }
+      rotationVector = vector;
+      api.waveCorrect(rotationVector, api.waveCorrectAuto);
+      const correctedCount = vectorLength(rotationVector);
+      if (correctedCount !== cameras.length) {
+        throw new Error(
+          `Panorama automatic wave correction returned ${correctedCount} rotations for ${cameras.length} cameras.`,
+        );
+      }
+      const corrected: CameraState[] = [];
+      for (let index = 0; index < cameras.length; index += 1) {
+        const correctedRotation = vectorItem(rotationVector, index);
+        try {
+          corrected.push({
+            ...cameras[index]!,
+            rotation: copyMatAsFloat32(correctedRotation, `wave-corrected camera ${index + 1} rotation`),
+          });
+        } finally {
+          deleteNative(correctedRotation);
+        }
+      }
+      return corrected;
+    } finally {
+      deleteNative(rotationVector);
+      for (const rotation of rotationMats) deleteNative(rotation);
     }
   }
 
@@ -1318,10 +1380,12 @@ import type {
       if (!Number.isFinite(workScale) || workScale <= 0) {
         throw new Error(`Panorama Stitcher returned invalid workScale ${String(workScale)}.`);
       }
-      const cameras = readCameraStates(stitcher);
-      if (cameras.length !== proxyImages.length) {
-        throw new Error(`Panorama Stitcher returned ${cameras.length} cameras for ${proxyImages.length} inputs.`);
+      const estimatedCameras = readCameraStates(stitcher);
+      if (estimatedCameras.length !== proxyImages.length) {
+        throw new Error(`Panorama Stitcher returned ${estimatedCameras.length} cameras for ${proxyImages.length} inputs.`);
       }
+      postProgress(requestId, "Applying OpenCV automatic horizontal/vertical wave correction...");
+      const cameras = applyAutoWaveCorrection(estimatedCameras);
 
       const seamAnalysis = buildGraphCutSeams(requestId, stitcher, proxyImages, cameras, workScale);
       const seams = seamAnalysis.seams;
