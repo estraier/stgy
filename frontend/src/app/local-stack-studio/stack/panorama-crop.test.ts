@@ -1,4 +1,5 @@
 import {
+  fillPanoramaMarginsFromMask,
   largestValidPanoramaRectFromBgrCoverage,
   largestValidPanoramaRectFromMask,
   panoramaCoverageFromExteriorBlack,
@@ -72,5 +73,44 @@ describe("panorama coverage crop", () => {
     expect(coverage[1]).toBe(0);
     expect(coverage[width]).toBe(0);
     expect(coverage[2 * width + 3]).toBe(1);
+  });
+});
+
+describe("panorama margin fill", () => {
+  test("extends the nearest covered colors across horizontal margins", () => {
+    const width = 4;
+    const height = 1;
+    const rgb = new Uint16Array([
+      10, 20, 30,
+      0, 0, 0,
+      0, 0, 0,
+      90, 100, 110,
+    ]);
+    const coverage = new Uint8Array([1, 0, 0, 1]);
+    fillPanoramaMarginsFromMask(rgb, coverage, width, height, new Uint32Array(width * height));
+    expect(Array.from(rgb)).toEqual([
+      10, 20, 30,
+      10, 20, 30,
+      90, 100, 110,
+      90, 100, 110,
+    ]);
+    expect(Array.from(coverage)).toEqual([1, 1, 1, 1]);
+  });
+
+  test("fills diagonal exterior margins without changing covered pixels", () => {
+    const width = 3;
+    const height = 3;
+    const rgb = new Uint16Array(width * height * 3);
+    const center = (1 * width + 1) * 3;
+    rgb[center] = 123;
+    rgb[center + 1] = 456;
+    rgb[center + 2] = 789;
+    const coverage = new Uint8Array(width * height);
+    coverage[4] = 1;
+    fillPanoramaMarginsFromMask(rgb, coverage, width, height, new Uint32Array(width * height));
+    for (let index = 0; index < width * height; index += 1) {
+      const offset = index * 3;
+      expect(Array.from(rgb.subarray(offset, offset + 3))).toEqual([123, 456, 789]);
+    }
   });
 });

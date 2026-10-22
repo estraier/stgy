@@ -76,7 +76,9 @@ import { runLensfunCorrectionPool } from "./lensfun-pool";
 import { buildStfApertureWeights, DEFAULT_STF_BLEND_WEIGHT } from "./stf-weights";
 import {
   DEFAULT_PANORAMA_DOWNSCALE_MEGAPIXELS,
+  DEFAULT_PANORAMA_FINISH_MODE,
   parsePanoramaDownscaleMegapixels,
+  parsePanoramaFinishMode,
 } from "./panorama-options";
 import { buildStfToneMatchPlans } from "./stf-tone-match";
 import {
@@ -189,6 +191,8 @@ const tileFoldingOption = getElement("tile-folding-option");
 const tileFolding = getElement("tile-folding");
 const panoramaDownscaleOption = getElement("panorama-downscale-option");
 const panoramaDownscale = getElement("panorama-downscale");
+const panoramaFinishOption = getElement("panorama-finish-option");
+const panoramaFinish = getElement("panorama-finish");
 const focusSoftnessOption = getElement("focus-softness-option");
 const focusSoftness = getElement("focus-softness");
 const stfBlendWeightOption = getElement("stf-blend-weight-option");
@@ -302,6 +306,8 @@ function updateMergeOptionsVisibility() {
   tileFoldingOption.classList.toggle("flex", isTile);
   panoramaDownscaleOption.classList.toggle("hidden", !isPanorama);
   panoramaDownscaleOption.classList.toggle("flex", isPanorama);
+  panoramaFinishOption.classList.toggle("hidden", !isPanorama);
+  panoramaFinishOption.classList.toggle("flex", isPanorama);
   focusSoftnessOption.classList.toggle("hidden", !isFocus);
   focusSoftnessOption.classList.toggle("flex", isFocus);
   stfBlendWeightOption.classList.toggle("hidden", !isStf);
@@ -328,6 +334,10 @@ function selectedTileFolding() {
 function selectedPanoramaMaxOutputMegapixels() {
   const value = parsePanoramaDownscaleMegapixels(panoramaDownscale.value);
   return value === undefined ? DEFAULT_PANORAMA_DOWNSCALE_MEGAPIXELS : value;
+}
+
+function selectedPanoramaFinishMode() {
+  return parsePanoramaFinishMode(panoramaFinish.value) ?? DEFAULT_PANORAMA_FINISH_MODE;
 }
 
 function selectedFocusSoftness() {
@@ -482,6 +492,10 @@ listen(processButton, "click", async () => {
       if (downscale === undefined) {
         throw new Error(`Unsupported Panorama downscale: ${panoramaDownscale.value}`);
       }
+      const finishMode = parsePanoramaFinishMode(panoramaFinish.value);
+      if (finishMode === undefined) {
+        throw new Error(`Unsupported Panorama finish: ${panoramaFinish.value}`);
+      }
     }
     const selectedMergeMode = selectedInternalMergeMode();
     if (selectedMergeMode === "panorama" && files.length < 2) {
@@ -524,6 +538,7 @@ listen(processButton, "click", async () => {
       selectedTileFolding(),
       selectedFocusSoftness(),
       selectedPanoramaMaxOutputMegapixels(),
+      selectedPanoramaFinishMode(),
     );
     const alignmentPlan = effectiveMergeMode === "panorama"
       ? null
@@ -2099,6 +2114,7 @@ function buildMergePlan(
   tileFoldingValue = null,
   focusSoftnessValue = DEFAULT_FOCUS_SOFTNESS,
   panoramaMaxOutputMegapixels = 16,
+  panoramaFinishMode = DEFAULT_PANORAMA_FINISH_MODE,
 ) {
   const imageCount = files.length;
   const weights = new Float32Array(imageCount);
@@ -2139,7 +2155,7 @@ function buildMergePlan(
   }
 
   if (mode === "panorama") {
-    return { mode, weights, gains, scaledLogs, panoramaMaxOutputMegapixels };
+    return { mode, weights, gains, scaledLogs, panoramaMaxOutputMegapixels, panoramaFinishMode };
   }
 
   if (isTileMergeMode(mode)) {
@@ -2256,6 +2272,7 @@ async function alignAndMergeFilesWithOpenCv(
       canonicalSession,
       outputColorSpace,
       mergePlan.panoramaMaxOutputMegapixels ?? null,
+      mergePlan.panoramaFinishMode ?? DEFAULT_PANORAMA_FINISH_MODE,
     );
   }
   if (!alignmentPlan) throw new Error("Alignment plan is required for this merge mode.");
@@ -2603,13 +2620,14 @@ async function mergePanoramaFromCanonical(
   canonicalSession,
   outputColorSpace,
   maxOutputMegapixels,
+  finishMode,
 ) {
   const worker = new PanoramaWorkerClient(
     new URL("/generated/local-stack-studio/panorama.worker.js", window.location.origin),
     (message) => setProgress(message),
   );
   try {
-    const result = await worker.stitch(canonicalSession.id, maxOutputMegapixels);
+    const result = await worker.stitch(canonicalSession.id, maxOutputMegapixels, finishMode);
     return finalizeStoredGamma2Result(
       result.gamma2Rgb,
       result.width,
@@ -4937,6 +4955,7 @@ function setProcessing(processing) {
   tileDirection.disabled = processing;
   tileFolding.disabled = processing;
   panoramaDownscale.disabled = processing;
+  panoramaFinish.disabled = processing;
   stfBlendWeight.disabled = processing;
   outputFormat.disabled = processing;
   outputSize.disabled = processing || !currentStackResult;

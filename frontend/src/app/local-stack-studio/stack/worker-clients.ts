@@ -123,6 +123,7 @@ export class PanoramaWorkerClient {
   stitch(
     sessionId: string,
     maxOutputMegapixels: number | null = null,
+    finishMode: "trim" | "fill" = "trim",
     cacheBytes?: number,
   ): Promise<{
     width: number;
@@ -135,6 +136,7 @@ export class PanoramaWorkerClient {
       sessionId,
       cacheBytes,
       maxOutputMegapixels,
+      finishMode,
     };
     return new Promise<PanoramaWorkerResponse>((resolve, reject) => {
       this.pending.set(requestId, { resolve, reject });

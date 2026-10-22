@@ -17,3 +17,18 @@ export function parsePanoramaDownscaleMegapixels(value: string): number | null |
   const megapixels = Number.parseInt(match[1], 10);
   return PANORAMA_DOWNSCALE_VALUE_SET.has(megapixels) ? megapixels : undefined;
 }
+
+export const PANORAMA_FINISH_MODES = ["trim", "fill"] as const;
+export type PanoramaFinishMode = (typeof PANORAMA_FINISH_MODES)[number];
+export const DEFAULT_PANORAMA_FINISH_MODE: PanoramaFinishMode = "trim";
+
+const PANORAMA_FINISH_MODE_SET = new Set<string>(PANORAMA_FINISH_MODES);
+
+export function isSupportedPanoramaFinishMode(value: string): value is PanoramaFinishMode {
+  return PANORAMA_FINISH_MODE_SET.has(value);
+}
+
+export function parsePanoramaFinishMode(value: string): PanoramaFinishMode | undefined {
+  const normalized = value.trim().toLowerCase();
+  return isSupportedPanoramaFinishMode(normalized) ? normalized : undefined;
+}

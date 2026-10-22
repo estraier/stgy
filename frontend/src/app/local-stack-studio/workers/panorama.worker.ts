@@ -5,9 +5,17 @@ import {
   readCanonicalLinearRows,
   readCanonicalStoredRows,
 } from "../stack/canonical-source";
-import { largestValidPanoramaRectFromMask } from "../stack/panorama-crop";
+import {
+  fillPanoramaMarginsFromMask,
+  largestValidPanoramaRectFromMask,
+} from "../stack/panorama-crop";
 import { choosePanoramaComposeScale } from "../stack/panorama-scale";
-import { isSupportedPanoramaDownscaleMegapixels } from "../stack/panorama-options";
+import {
+  DEFAULT_PANORAMA_FINISH_MODE,
+  isSupportedPanoramaDownscaleMegapixels,
+  isSupportedPanoramaFinishMode,
+  type PanoramaFinishMode,
+} from "../stack/panorama-options";
 import {
   applyPanoramaGainBgrInPlace,
   estimatePanoramaGainMaps,
@@ -160,6 +168,7 @@ import type {
         message.sessionId,
         message.cacheBytes,
         message.maxOutputMegapixels ?? null,
+        message.finishMode ?? DEFAULT_PANORAMA_FINISH_MODE,
       );
       const gamma2Buffer = transferableBuffer(result.gamma2Rgb);
       workerScope.postMessage(
@@ -547,6 +556,13 @@ import type {
     if (value === null) return null;
     if (!isSupportedPanoramaDownscaleMegapixels(value)) {
       throw new Error(`Unsupported Panorama downscale: ${String(value)}MP.`);
+    }
+    return value;
+  }
+
+  function validateFinishMode(value: string): PanoramaFinishMode {
+    if (!isSupportedPanoramaFinishMode(value)) {
+      throw new Error(`Unsupported Panorama finish: ${String(value)}.`);
     }
     return value;
   }
@@ -1077,6 +1093,7 @@ import type {
     workScale: number,
     composeScale: number,
     maxOutputMegapixels: number | null,
+    finishMode: PanoramaFinishMode,
   ): Promise<{ width: number; height: number; gamma2Rgb: Uint16Array }> {
     const api = getNativeApi();
     const imageSizes = session.images.map((image) => ({ width: image.width, height: image.height }));
@@ -1231,6 +1248,22 @@ import type {
       deleteNative(warper);
     }
 
+    if (finishMode === "fill") {
+      postProgress(requestId, "Filling panorama margins from adjacent image colors...");
+      fillPanoramaMarginsFromMask(
+        gamma2Canvas,
+        coverage,
+        union.width,
+        union.height,
+        new Uint32Array(winnerScore.buffer),
+      );
+      return {
+        width: union.width,
+        height: union.height,
+        gamma2Rgb: gamma2Canvas,
+      };
+    }
+
     postProgress(requestId, "Removing panorama margins...");
     const crop = largestValidPanoramaRectFromMask(coverage, union.width, union.height);
     if (!crop) throw new Error("Panorama has no covered rectangular output area.");
@@ -1246,9 +1279,11 @@ import type {
     sessionId: string,
     cacheBytes?: number,
     requestedMaxOutputMegapixels: number | null = null,
+    requestedFinishMode: string = DEFAULT_PANORAMA_FINISH_MODE,
   ): Promise<{ width: number; height: number; gamma2Rgb: Uint16Array }> {
     if (!sessionId) throw new Error("Panorama canonical session id is required.");
     const maxOutputMegapixels = validateMaxOutputMegapixels(requestedMaxOutputMegapixels);
+    const finishMode = validateFinishMode(requestedFinishMode);
     const maxOutputPixels = maxOutputMegapixels === null ? null : maxOutputMegapixels * 1_000_000;
 
     postProgress(requestId, "Loading panorama OpenCV...");
@@ -1291,7 +1326,7 @@ import type {
       const seamAnalysis = buildGraphCutSeams(requestId, stitcher, proxyImages, cameras, workScale);
       const seams = seamAnalysis.seams;
       const gainMaps = seamAnalysis.gainMaps;
-      const cropRatio = estimateCoverageCropRatio(seams);
+      const cropRatio = finishMode === "trim" ? estimateCoverageCropRatio(seams) : 1;
       const imageSizes = session.images.map((image) => ({ width: image.width, height: image.height }));
       const fullUnion = unionRects(projectedRects(cameras, imageSizes, workScale, 1));
       const composeScale = choosePanoramaComposeScale({
@@ -1322,6 +1357,7 @@ import type {
         workScale,
         composeScale,
         maxOutputMegapixels,
+        finishMode,
       );
     } finally {
       deleteNative(stitcher);

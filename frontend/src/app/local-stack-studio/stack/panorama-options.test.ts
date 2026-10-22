@@ -1,8 +1,11 @@
 import {
   DEFAULT_PANORAMA_DOWNSCALE_MEGAPIXELS,
+  DEFAULT_PANORAMA_FINISH_MODE,
+  PANORAMA_FINISH_MODES,
   PANORAMA_DOWNSCALE_MEGAPIXELS,
   isSupportedPanoramaDownscaleMegapixels,
   parsePanoramaDownscaleMegapixels,
+  parsePanoramaFinishMode,
 } from "./panorama-options";
 
 describe("Panorama Downscale options", () => {
@@ -25,5 +28,20 @@ describe("Panorama Downscale options", () => {
     expect(isSupportedPanoramaDownscaleMegapixels(10)).toBe(false);
     expect(parsePanoramaDownscaleMegapixels("10MP")).toBeUndefined();
     expect(parsePanoramaDownscaleMegapixels("24 megapixels")).toBeUndefined();
+  });
+});
+
+describe("Panorama Finish options", () => {
+  test("keeps Trim as the default", () => {
+    expect(DEFAULT_PANORAMA_FINISH_MODE).toBe("trim");
+    expect(PANORAMA_FINISH_MODES).toEqual(["trim", "fill"]);
+  });
+
+  test("accepts Trim and Fill case-insensitively", () => {
+    expect(parsePanoramaFinishMode("trim")).toBe("trim");
+    expect(parsePanoramaFinishMode("Trim")).toBe("trim");
+    expect(parsePanoramaFinishMode("fill")).toBe("fill");
+    expect(parsePanoramaFinishMode("FILL")).toBe("fill");
+    expect(parsePanoramaFinishMode("crop")).toBeUndefined();
   });
 });

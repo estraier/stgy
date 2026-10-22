@@ -91,7 +91,6 @@ export function largestValidPanoramaRectFromBgrCoverage(
   });
 }
 
-
 export function panoramaCoverageFromExteriorBlack(
   panoramaBgr: Uint8Array,
   width: number,
@@ -146,4 +145,67 @@ export function panoramaCoverageFromExteriorBlack(
     coverage[index] = exterior[index] === 0 ? 1 : 0;
   }
   return coverage;
+}
+
+export function fillPanoramaMarginsFromMask(
+  gamma2Rgb: Uint16Array,
+  coverage: Uint8Array,
+  width: number,
+  height: number,
+  workQueue: Uint32Array,
+): void {
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) {
+    throw new Error("Panorama fill dimensions are invalid.");
+  }
+  const pixelCount = width * height;
+  if (!Number.isSafeInteger(pixelCount) || pixelCount > 0xffffffff) {
+    throw new Error("Panorama fill pixel count is invalid.");
+  }
+  if (gamma2Rgb.length !== pixelCount * 3) {
+    throw new Error("Panorama fill image has an invalid size.");
+  }
+  if (coverage.length !== pixelCount) {
+    throw new Error("Panorama fill coverage mask has an invalid size.");
+  }
+  if (workQueue.length < pixelCount) {
+    throw new Error("Panorama fill work queue is too small.");
+  }
+
+  let head = 0;
+  let tail = 0;
+  for (let index = 0; index < pixelCount; index += 1) {
+    if (coverage[index] !== 0) workQueue[tail++] = index;
+  }
+  if (tail === 0) throw new Error("Panorama has no covered pixels to fill from.");
+
+  const copyPixel = (sourceIndex: number, destinationIndex: number): void => {
+    const source = sourceIndex * 3;
+    const destination = destinationIndex * 3;
+    gamma2Rgb[destination] = gamma2Rgb[source]!;
+    gamma2Rgb[destination + 1] = gamma2Rgb[source + 1]!;
+    gamma2Rgb[destination + 2] = gamma2Rgb[source + 2]!;
+    coverage[destinationIndex] = 1;
+    workQueue[tail++] = destinationIndex;
+  };
+
+  const enqueueIfEmpty = (sourceIndex: number, x: number, y: number): void => {
+    if (x < 0 || x >= width || y < 0 || y >= height) return;
+    const destinationIndex = y * width + x;
+    if (coverage[destinationIndex] !== 0) return;
+    copyPixel(sourceIndex, destinationIndex);
+  };
+
+  while (head < tail) {
+    const sourceIndex = workQueue[head++]!;
+    const x = sourceIndex % width;
+    const y = Math.floor(sourceIndex / width);
+    enqueueIfEmpty(sourceIndex, x - 1, y - 1);
+    enqueueIfEmpty(sourceIndex, x, y - 1);
+    enqueueIfEmpty(sourceIndex, x + 1, y - 1);
+    enqueueIfEmpty(sourceIndex, x - 1, y);
+    enqueueIfEmpty(sourceIndex, x + 1, y);
+    enqueueIfEmpty(sourceIndex, x - 1, y + 1);
+    enqueueIfEmpty(sourceIndex, x, y + 1);
+    enqueueIfEmpty(sourceIndex, x + 1, y + 1);
+  }
 }

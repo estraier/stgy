@@ -247,6 +247,17 @@ export default function PageBody() {
                     ))}
                   </select>
                 </label>
+                <label id="panorama-finish-option" className="hidden flex-col items-start gap-1.5">
+                  <span className="text-xs font-medium text-gray-500">Finish</span>
+                  <select
+                    id="panorama-finish"
+                    defaultValue="trim"
+                    className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm"
+                  >
+                    <option value="trim">Trim</option>
+                    <option value="fill">Fill</option>
+                  </select>
+                </label>
                 <label id="focus-softness-option" className="hidden flex-col items-start gap-1.5">
                   <span className="text-xs font-medium text-gray-500">Softness</span>
                   <select

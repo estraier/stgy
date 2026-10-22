@@ -4,6 +4,7 @@ export type PanoramaStitchRequest = {
   sessionId: string;
   cacheBytes?: number;
   maxOutputMegapixels?: number | null;
+  finishMode?: "trim" | "fill";
 };
 
 export type PanoramaWorkerRequest = PanoramaStitchRequest;
