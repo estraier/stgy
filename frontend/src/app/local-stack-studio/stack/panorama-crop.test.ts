@@ -77,40 +77,80 @@ describe("panorama coverage crop", () => {
 });
 
 describe("panorama margin fill", () => {
-  test("extends the nearest covered colors across horizontal margins", () => {
-    const width = 4;
+  test("fills horizontal gaps with a smooth color transition instead of nearest-pixel stripes", () => {
+    const width = 5;
     const height = 1;
     const rgb = new Uint16Array([
-      10, 20, 30,
+      1000, 1000, 1000,
       0, 0, 0,
       0, 0, 0,
-      90, 100, 110,
+      0, 0, 0,
+      9000, 9000, 9000,
     ]);
-    const coverage = new Uint8Array([1, 0, 0, 1]);
+    const coverage = new Uint8Array([1, 0, 0, 0, 1]);
     fillPanoramaMarginsFromMask(rgb, coverage, width, height, new Uint32Array(width * height));
-    expect(Array.from(rgb)).toEqual([
-      10, 20, 30,
-      10, 20, 30,
-      90, 100, 110,
-      90, 100, 110,
-    ]);
-    expect(Array.from(coverage)).toEqual([1, 1, 1, 1]);
+    const values = [rgb[0]!, rgb[3]!, rgb[6]!, rgb[9]!, rgb[12]!];
+    expect(values[0]).toBe(1000);
+    expect(values[4]).toBe(9000);
+    expect(values[1]).toBeGreaterThan(values[0]!);
+    expect(values[2]).toBeGreaterThan(values[1]!);
+    expect(values[3]).toBeGreaterThan(values[2]!);
+    expect(values[1]).toBeLessThan(5000);
+    expect(values[3]).toBeGreaterThan(5000);
+    expect(Array.from(coverage)).toEqual([1, 1, 1, 1, 1]);
   });
 
-  test("fills diagonal exterior margins without changing covered pixels", () => {
+
+  test("keeps the low-frequency fill alive beyond the former 128px blur limit", () => {
+    const width = 401;
+    const height = 1;
+    const rgb = new Uint16Array(width * height * 3);
+    const center = Math.floor(width / 2);
+    const offset = center * 3;
+    rgb[offset] = 12000;
+    rgb[offset + 1] = 24000;
+    rgb[offset + 2] = 36000;
+    const coverage = new Uint8Array(width * height);
+    coverage[center] = 1;
+
+    fillPanoramaMarginsFromMask(rgb, coverage, width, height, new Uint32Array(width * height));
+
+    for (let x = 0; x < width; x += 1) {
+      const pixel = x * 3;
+      expect(rgb[pixel]).toBe(12000);
+      expect(rgb[pixel + 1]).toBe(24000);
+      expect(rgb[pixel + 2]).toBe(36000);
+    }
+  });
+
+  test("keeps covered pixels unchanged while filling outward with blended colors", () => {
     const width = 3;
     const height = 3;
     const rgb = new Uint16Array(width * height * 3);
-    const center = (1 * width + 1) * 3;
-    rgb[center] = 123;
-    rgb[center + 1] = 456;
-    rgb[center + 2] = 789;
-    const coverage = new Uint8Array(width * height);
-    coverage[4] = 1;
+    const setPixel = (x: number, y: number, value: [number, number, number]) => {
+      const offset = (y * width + x) * 3;
+      rgb[offset] = value[0];
+      rgb[offset + 1] = value[1];
+      rgb[offset + 2] = value[2];
+    };
+    setPixel(0, 1, [2000, 0, 0]);
+    setPixel(1, 1, [4000, 4000, 0]);
+    setPixel(2, 1, [8000, 0, 8000]);
+    const coverage = new Uint8Array([
+      0, 0, 0,
+      1, 1, 1,
+      0, 0, 0,
+    ]);
+    const original = rgb.slice();
     fillPanoramaMarginsFromMask(rgb, coverage, width, height, new Uint32Array(width * height));
-    for (let index = 0; index < width * height; index += 1) {
-      const offset = index * 3;
-      expect(Array.from(rgb.subarray(offset, offset + 3))).toEqual([123, 456, 789]);
+    expect(Array.from(rgb.slice(9, 18))).toEqual(Array.from(original.slice(9, 18)));
+    for (let x = 0; x < width; x += 1) {
+      const top = (0 * width + x) * 3;
+      const bottom = (2 * width + x) * 3;
+      expect(rgb[top]).toBeGreaterThanOrEqual(2000);
+      expect(rgb[top]).toBeLessThanOrEqual(8000);
+      expect(rgb[bottom]).toBeGreaterThanOrEqual(2000);
+      expect(rgb[bottom]).toBeLessThanOrEqual(8000);
     }
   });
 });
