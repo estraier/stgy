@@ -10,6 +10,7 @@ import {
   largestValidPanoramaRectFromMask,
 } from "../stack/panorama-crop";
 import { choosePanoramaComposeScale } from "../stack/panorama-scale";
+import { restoreVerticalWaveCorrectionRoll } from "../stack/panorama-orientation";
 import {
   DEFAULT_PANORAMA_FINISH_MODE,
   isSupportedPanoramaDownscaleMegapixels,
@@ -699,7 +700,19 @@ import type {
           deleteNative(correctedRotation);
         }
       }
-      return corrected;
+
+      // OpenCV's vertical wave correction changes the global camera basis by
+      // roughly +/-90 degrees for a normal vertical pan. That makes upright
+      // source images compose sideways. Preserve the corrected relative camera
+      // geometry while restoring the original image-up orientation.
+      const uprightRotations = restoreVerticalWaveCorrectionRoll(
+        cameras.map((camera) => camera.rotation),
+        corrected.map((camera) => camera.rotation),
+      );
+      return corrected.map((camera, index) => ({
+        ...camera,
+        rotation: uprightRotations[index]!,
+      }));
     } finally {
       deleteNative(rotationVector);
       for (const rotation of rotationMats) deleteNative(rotation);
