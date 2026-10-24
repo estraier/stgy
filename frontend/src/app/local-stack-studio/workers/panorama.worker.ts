@@ -10,6 +10,16 @@ import {
   largestValidPanoramaRectFromMask,
 } from "../stack/panorama-crop";
 import { choosePanoramaComposeScale } from "../stack/panorama-scale";
+import {
+  PANORAMA_ALIGNMENT_CLAHE_CLIP_LIMIT,
+  PANORAMA_ALIGNMENT_CLAHE_TILE_GRID,
+  PANORAMA_ALIGNMENT_PASSES,
+  appendGamma2PanoramaAlignmentGray,
+  applyPanoramaAlignmentExposureGain,
+  boostPanoramaAlignmentDetailInPlace,
+  panoramaAlignmentExposureGain,
+  type PanoramaAlignmentPass,
+} from "../stack/panorama-alignment";
 import { restoreVerticalWaveCorrectionRoll } from "../stack/panorama-orientation";
 import {
   DEFAULT_PANORAMA_FINISH_MODE,
@@ -65,6 +75,16 @@ import type {
     workScale: () => number;
     seamEstimationResol?: () => number;
     setWaveCorrection: (flag: boolean) => void;
+    setRegistrationResol?: (megapixels: number) => void;
+    setPanoConfidenceThresh?: (threshold: number) => void;
+  };
+  type DynamicClahe = Deletable & {
+    apply: (source: NativeMat, destination: NativeMat) => void;
+    collectGarbage?: () => void;
+  };
+  type ConfiguredStitcher = {
+    stitcher: DynamicStitcher;
+    resources: Deletable[];
   };
   type DynamicWarper = Deletable & {
     warp: (
@@ -105,6 +125,14 @@ import type {
   type SeamAnalysis = {
     seams: SeamMask[];
     gainMaps: PanoramaGainMap[];
+  };
+  type PanoramaAlignmentResult = {
+    stitcher: DynamicStitcher;
+    stitcherResources: Deletable[];
+    workScale: number;
+    seamEstimationMegapixels: number;
+    estimatedCameras: CameraState[];
+    pass: PanoramaAlignmentPass;
   };
 
   const workerScope = globalThis as unknown as WorkerScope;
@@ -153,7 +181,9 @@ import type {
       fy: number,
       interpolation: number,
     ) => void;
-    createStitcher: () => DynamicStitcher;
+    createStitcher: (pass: PanoramaAlignmentPass) => ConfiguredStitcher;
+    applyClahe: (source: NativeMat) => NativeMat;
+    setRngSeed: ((seed: number) => void) | null;
     waveCorrectAuto: number;
     waveCorrect: (rotations: DynamicVector, kind: number) => unknown;
     createWarper: (scale: number) => DynamicWarper;
@@ -267,7 +297,7 @@ import type {
     if (typeof waveCorrectFunction !== "function") {
       throw new Error("Panorama OpenCV build does not expose detail_waveCorrect().");
     }
-    const createStitcher = (): DynamicStitcher => {
+    const createStitcher = (pass: PanoramaAlignmentPass): ConfiguredStitcher => {
       let created: unknown = null;
       if (StitcherClass && typeof StitcherClass.create === "function") {
         created = StitcherClass.create(panoramaMode);
@@ -278,22 +308,75 @@ import type {
         throw new Error("Panorama OpenCV build does not expose the Stitcher factory.");
       }
       const stitcher = created as DynamicStitcher;
-      if (
-        typeof stitcher.estimateTransform !== "function"
-        || typeof stitcher.component !== "function"
-        || typeof stitcher.cameras !== "function"
-        || typeof stitcher.workScale !== "function"
-        || typeof stitcher.setWaveCorrection !== "function"
-      ) {
+      try {
+        if (
+          typeof stitcher.estimateTransform !== "function"
+          || typeof stitcher.component !== "function"
+          || typeof stitcher.cameras !== "function"
+          || typeof stitcher.workScale !== "function"
+          || typeof stitcher.setWaveCorrection !== "function"
+        ) {
+          throw new Error("Panorama OpenCV Stitcher is missing required wrapped APIs.");
+        }
+
+        // OpenCV exposes these numeric tuning setters through CV_WRAP even
+        // though the feature-finder/matcher injection setters are not wrapped
+        // by @banou/opencv-wasm. Use only APIs that are actually available in
+        // the browser build; stronger passes rely on progressively enhanced
+        // proxy pixels plus higher registration resolution and lower panorama
+        // confidence thresholds while keeping Stitcher's native ORB pipeline.
+        stitcher.setRegistrationResol?.(pass.registrationMegapixels);
+        stitcher.setPanoConfidenceThresh?.(pass.panoConfidence);
+
+        // PANORAMA defaults to WAVE_CORRECT_HORIZ. Turn that off here so the
+        // CameraParams returned by estimateTransform() are the bundle-adjusted,
+        // un-wave-corrected rotations. AUTO correction is applied explicitly below.
+        stitcher.setWaveCorrection(false);
+        return { stitcher, resources: [] };
+      } catch (error) {
         deleteNative(stitcher);
-        throw new Error("Panorama OpenCV Stitcher is missing estimateTransform/component/cameras/workScale/setWaveCorrection APIs.");
+        throw error;
       }
-      // PANORAMA defaults to WAVE_CORRECT_HORIZ. Turn that off here so the
-      // CameraParams returned by estimateTransform() are the bundle-adjusted,
-      // un-wave-corrected rotations. AUTO correction is applied explicitly below.
-      stitcher.setWaveCorrection(false);
-      return stitcher;
     };
+
+    const createClaheFactory = openCvModule.createCLAHE;
+    const ClaheClass = openCvModule.CLAHE as (new (...args: unknown[]) => DynamicClahe) | undefined;
+    const applyClahe = (source: NativeMat): NativeMat => {
+      const destination = new (MatClass as NativeMatConstructor)();
+      let clahe: DynamicClahe | null = null;
+      try {
+        if (typeof createClaheFactory === "function") {
+          clahe = (createClaheFactory as (clipLimit: number, size: { width: number; height: number }) => DynamicClahe)(
+            PANORAMA_ALIGNMENT_CLAHE_CLIP_LIMIT,
+            { width: PANORAMA_ALIGNMENT_CLAHE_TILE_GRID, height: PANORAMA_ALIGNMENT_CLAHE_TILE_GRID },
+          );
+        } else if (typeof ClaheClass === "function") {
+          clahe = new ClaheClass(
+            PANORAMA_ALIGNMENT_CLAHE_CLIP_LIMIT,
+            { width: PANORAMA_ALIGNMENT_CLAHE_TILE_GRID, height: PANORAMA_ALIGNMENT_CLAHE_TILE_GRID },
+          );
+        }
+        if (!clahe || typeof clahe.apply !== "function") {
+          throw new Error("Panorama OpenCV build does not expose CLAHE.");
+        }
+        clahe.apply(source, destination);
+        return destination;
+      } catch (error) {
+        deleteNative(destination);
+        throw error;
+      } finally {
+        try { clahe?.collectGarbage?.(); } catch {}
+        deleteNative(clahe);
+      }
+    };
+
+    const setRngSeedFunction = openCvModule.setRNGSeed;
+    const setRngSeed = typeof setRngSeedFunction === "function"
+      ? (seed: number): void => {
+          (setRngSeedFunction as (value: number) => void)(seed | 0);
+        }
+      : null;
+
 
     const WarperClass = openCvModule.PyRotationWarper;
     if (typeof WarperClass !== "function") {
@@ -352,6 +435,8 @@ import type {
       matFromArray: matFromArrayFunction as NonNullable<typeof nativeApi>["matFromArray"],
       resize: resizeFunction as NonNullable<typeof nativeApi>["resize"],
       createStitcher,
+      applyClahe,
+      setRngSeed,
       waveCorrectAuto,
       waveCorrect: waveCorrectFunction as (rotations: DynamicVector, kind: number) => unknown,
       createWarper,
@@ -563,14 +648,17 @@ import type {
     }
   }
 
-  function assertAllPanoramaInputsConnected(stitcher: DynamicStitcher, expectedCount: number): void {
+  function panoramaComponentIndices(stitcher: DynamicStitcher): number[] {
     let component: unknown = null;
     try {
       component = stitcher.component();
-      const componentCount = vectorLength(component);
-      if (componentCount !== expectedCount) {
-        throw new Error(`Panorama could connect only ${componentCount} of ${expectedCount} input images.`);
+      const count = vectorLength(component);
+      const indices: number[] = [];
+      for (let index = 0; index < count; index += 1) {
+        const value = Number(vectorItem(component, index));
+        if (Number.isInteger(value) && value >= 0) indices.push(value);
       }
+      return indices;
     } finally {
       deleteNative(component);
     }
@@ -615,6 +703,57 @@ import type {
     return api.matFromArray(meta.height, meta.width, api.CV_8UC3, bgr);
   }
 
+  async function loadCanonicalAlignmentGrayMat(
+    session: Awaited<ReturnType<typeof openCanonicalReadSession>>,
+    imageIndex: number,
+  ): Promise<NativeMat> {
+    const meta = session.images[imageIndex];
+    if (!meta) throw new Error(`Canonical panorama input ${imageIndex + 1} is unavailable.`);
+    const gray = new Uint8Array(meta.width * meta.height);
+    const histogram = new Uint32Array(256);
+    for (let startRow = 0; startRow < meta.height; startRow += PANORAMA_ROWS_PER_READ) {
+      const rowCount = Math.min(PANORAMA_ROWS_PER_READ, meta.height - startRow);
+      const storedRgb = await readCanonicalStoredRows(session, imageIndex, startRow, rowCount);
+      appendGamma2PanoramaAlignmentGray(
+        storedRgb,
+        gray,
+        startRow * meta.width,
+        meta.linearRangeMax || CANONICAL_LINEAR_RANGE_MAX,
+        histogram,
+      );
+    }
+    applyPanoramaAlignmentExposureGain(gray, panoramaAlignmentExposureGain(histogram));
+    const api = getNativeApi();
+    return api.matFromArray(meta.height, meta.width, api.CV_8UC1, gray);
+  }
+
+  function buildClaheAlignmentImages(images: NativeMat[]): NativeMat[] {
+    const api = getNativeApi();
+    const output: NativeMat[] = [];
+    try {
+      for (const image of images) output.push(api.applyClahe(image));
+      return output;
+    } catch (error) {
+      for (const image of output) deleteNative(image);
+      throw error;
+    }
+  }
+
+  function buildDetailBoostAlignmentImages(images: NativeMat[]): NativeMat[] {
+    const api = getNativeApi();
+    const output: NativeMat[] = [];
+    try {
+      for (const image of images) {
+        const bytes = image.data.slice();
+        boostPanoramaAlignmentDetailInPlace(bytes, image.cols, image.rows);
+        output.push(api.matFromArray(image.rows, image.cols, api.CV_8UC1, bytes));
+      }
+      return output;
+    } catch (error) {
+      for (const image of output) deleteNative(image);
+      throw error;
+    }
+  }
 
   function copyMatAsFloat32(mat: unknown, label: string): Float32Array {
     if (!mat || typeof mat !== "object") throw new Error(`Panorama ${label} matrix is unavailable.`);
@@ -666,6 +805,133 @@ import type {
     } finally {
       deleteNative(cameraVector);
     }
+  }
+
+  function releaseConfiguredStitcher(configured: ConfiguredStitcher | null): void {
+    if (!configured) return;
+    deleteNative(configured.stitcher);
+    for (const resource of configured.resources) deleteNative(resource);
+  }
+
+  function componentLabel(indices: number[]): string {
+    if (indices.length === 0) return "none";
+    return indices.map((index) => String(index + 1)).join(",");
+  }
+
+  function runPanoramaAlignmentAttempts(
+    requestId: number,
+    baseAlignmentImages: NativeMat[],
+    getClaheAlignmentImages: () => NativeMat[],
+    getDetailAlignmentImages: () => NativeMat[],
+  ): PanoramaAlignmentResult {
+    const api = getNativeApi();
+    const expectedCount = baseAlignmentImages.length;
+    const summaries: string[] = [];
+    let bestConnected = 0;
+
+    for (let passIndex = 0; passIndex < PANORAMA_ALIGNMENT_PASSES.length; passIndex += 1) {
+      const pass = PANORAMA_ALIGNMENT_PASSES[passIndex]!;
+      const images = pass.useDetailBoost
+        ? getDetailAlignmentImages()
+        : pass.useClahe
+          ? getClaheAlignmentImages()
+          : baseAlignmentImages;
+      let vector: DynamicVector | unknown[] | null = null;
+      let configured: ConfiguredStitcher | null = null;
+      try {
+        postProgress(
+          requestId,
+          `Panorama alignment ${passIndex + 1}/${PANORAMA_ALIGNMENT_PASSES.length}: ${pass.label} `
+            + `(${pass.registrationMegapixels.toFixed(1)}MP, confidence ${pass.panoConfidence.toFixed(2)})...`,
+        );
+        api.setRngSeed?.(pass.rngSeed);
+        vector = createNativeVector(images);
+        configured = api.createStitcher(pass);
+        const status = Number(configured.stitcher.estimateTransform(vector));
+        if (status !== STITCHER_OK) {
+          const summary = `${pass.label}: ${statusMessage(status)}`;
+          summaries.push(summary);
+          postProgress(requestId, `${summary}; retrying with a stronger panorama matcher...`);
+          continue;
+        }
+
+        const component = panoramaComponentIndices(configured.stitcher);
+        bestConnected = Math.max(bestConnected, component.length);
+        const summary = `${pass.label}: connected ${component.length}/${expectedCount} [${componentLabel(component)}]`;
+        summaries.push(summary);
+        if (component.length !== expectedCount) {
+          postProgress(requestId, `${summary}; retrying with a stronger panorama matcher...`);
+          continue;
+        }
+
+        const workScale = Number(configured.stitcher.workScale());
+        if (!Number.isFinite(workScale) || workScale <= 0) {
+          throw new Error(`Panorama Stitcher returned invalid workScale ${String(workScale)}.`);
+        }
+        const estimatedCameras = readCameraStates(configured.stitcher);
+        if (estimatedCameras.length !== expectedCount) {
+          throw new Error(
+            `Panorama Stitcher returned ${estimatedCameras.length} cameras for ${expectedCount} inputs.`,
+          );
+        }
+        const seamEstimationMegapixels = typeof configured.stitcher.seamEstimationResol === "function"
+          ? Number(configured.stitcher.seamEstimationResol())
+          : PANORAMA_DEFAULT_SEAM_MPX;
+        postProgress(requestId, `${summary}; camera geometry accepted.`);
+        const result: PanoramaAlignmentResult = {
+          stitcher: configured.stitcher,
+          stitcherResources: configured.resources,
+          workScale,
+          seamEstimationMegapixels,
+          estimatedCameras,
+          pass,
+        };
+        configured = null;
+        return result;
+      } finally {
+        if (!Array.isArray(vector)) deleteNative(vector);
+        releaseConfiguredStitcher(configured);
+      }
+    }
+
+    const detail = summaries.length > 0 ? ` (${summaries.join("; ")})` : "";
+    throw new Error(
+      `Panorama could connect only ${bestConnected} of ${expectedCount} input images after gamma-2, CLAHE, and detail-enhanced ORB retries.${detail}`,
+    );
+  }
+
+  function diagnoseAdjacentPanoramaPairs(
+    requestId: number,
+    images: NativeMat[],
+  ): string {
+    if (images.length < 2) return "";
+    const api = getNativeApi();
+    const pass = PANORAMA_ALIGNMENT_PASSES[PANORAMA_ALIGNMENT_PASSES.length - 1]!;
+    const results: string[] = [];
+    for (let index = 0; index + 1 < images.length; index += 1) {
+      let vector: DynamicVector | unknown[] | null = null;
+      let configured: ConfiguredStitcher | null = null;
+      try {
+        api.setRngSeed?.((pass.rngSeed + index + 1) | 0);
+        vector = createNativeVector([images[index]!, images[index + 1]!]);
+        configured = api.createStitcher(pass);
+        const status = Number(configured.stitcher.estimateTransform(vector));
+        if (status !== STITCHER_OK) {
+          results.push(`${index + 1}-${index + 2}: ${statusMessage(status)}`);
+          continue;
+        }
+        const component = panoramaComponentIndices(configured.stitcher);
+        results.push(`${index + 1}-${index + 2}: ${component.length === 2 ? "OK" : `connected ${component.length}/2`}`);
+      } catch (error) {
+        results.push(`${index + 1}-${index + 2}: ${describeOpenCvError(error)}`);
+      } finally {
+        if (!Array.isArray(vector)) deleteNative(vector);
+        releaseConfiguredStitcher(configured);
+      }
+    }
+    const summary = results.join(", ");
+    if (summary) postProgress(requestId, `Panorama adjacent-pair diagnostics (${pass.label}): ${summary}`);
+    return summary;
   }
 
   function applyAutoWaveCorrection(cameras: CameraState[]): CameraState[] {
@@ -820,11 +1086,11 @@ import type {
     return api.matFromArray(image.rows, image.cols, api.CV_32FC3, floats);
   }
 
-  function seamScaleForImages(stitcher: DynamicStitcher, width: number, height: number): number {
-    const configured = typeof stitcher.seamEstimationResol === "function"
-      ? Number(stitcher.seamEstimationResol())
+  function seamScaleForImages(seamEstimationMegapixels: number, width: number, height: number): number {
+    const configured = Number.isFinite(seamEstimationMegapixels)
+      ? seamEstimationMegapixels
       : PANORAMA_DEFAULT_SEAM_MPX;
-    if (!Number.isFinite(configured) || configured < 0) return 1;
+    if (configured < 0) return 1;
     return Math.min(1, Math.sqrt(configured * 1_000_000 / Math.max(1, width * height)));
   }
 
@@ -886,13 +1152,13 @@ import type {
 
   function buildGraphCutSeams(
     requestId: number,
-    stitcher: DynamicStitcher,
+    seamEstimationMegapixels: number,
     images: NativeMat[],
     cameras: CameraState[],
     workScale: number,
   ): SeamAnalysis {
     const api = getNativeApi();
-    const seamScale = seamScaleForImages(stitcher, images[0]!.cols, images[0]!.rows);
+    const seamScale = seamScaleForImages(seamEstimationMegapixels, images[0]!.cols, images[0]!.rows);
     const seamWorkAspect = seamScale / workScale;
     const warperScale = medianFocal(cameras) * seamWorkAspect;
     const warper = api.createWarper(warperScale);
@@ -1364,43 +1630,95 @@ import type {
     postProgress(requestId, "Loading panorama OpenCV...");
     await ensureOpenCv();
     const session = await openCanonicalReadSession(sessionId, cacheBytes);
-    const proxyImages: NativeMat[] = [];
-    let proxyVector: DynamicVector | null = null;
+    const alignmentImages: NativeMat[] = [];
+    const seamProxyImages: NativeMat[] = [];
+    let claheAlignmentImages: NativeMat[] = [];
+    let detailAlignmentImages: NativeMat[] = [];
     let stitcher: DynamicStitcher | null = null;
+    let stitcherResources: Deletable[] = [];
 
     try {
       if (session.images.length < 2) throw new Error("Panorama requires at least two input images.");
 
       for (let index = 0; index < session.images.length; index += 1) {
-        postProgress(requestId, `Preparing 8-bit alignment proxy ${index + 1}/${session.images.length}...`);
-        proxyImages.push(await loadCanonicalBgr8Mat(session, index));
+        postProgress(
+          requestId,
+          `Preparing gamma-2 grayscale panorama alignment proxy ${index + 1}/${session.images.length}...`,
+        );
+        alignmentImages.push(await loadCanonicalAlignmentGrayMat(session, index));
       }
-      const api = getNativeApi();
-      // @banou/opencv-wasm exposes the unsuffixed Stitcher.estimateTransform()
-      // overload with MatVector. GraphCutSeamFinder.find(), however, follows
-      // OpenCV's vector<UMat> signature below, so do not unify these vector types.
-      proxyVector = createNativeVector(proxyImages) as DynamicVector;
-      stitcher = api.createStitcher();
 
-      postProgress(requestId, "Estimating OpenCV panorama cameras and bundle adjustment...");
-      const status = Number(stitcher.estimateTransform(proxyVector));
-      if (status !== STITCHER_OK) {
-        throw new Error(`Panorama alignment failed: ${statusMessage(status)}.`);
-      }
-      assertAllPanoramaInputsConnected(stitcher, proxyImages.length);
+      const getClaheAlignmentImages = (): NativeMat[] => {
+        if (claheAlignmentImages.length === 0) {
+          postProgress(requestId, "Preparing CLAHE panorama alignment fallback...");
+          claheAlignmentImages = buildClaheAlignmentImages(alignmentImages);
+        }
+        return claheAlignmentImages;
+      };
 
-      const workScale = Number(stitcher.workScale());
-      if (!Number.isFinite(workScale) || workScale <= 0) {
-        throw new Error(`Panorama Stitcher returned invalid workScale ${String(workScale)}.`);
+      const getDetailAlignmentImages = (): NativeMat[] => {
+        if (detailAlignmentImages.length === 0) {
+          postProgress(requestId, "Preparing detail-enhanced panorama alignment fallback...");
+          detailAlignmentImages = buildDetailBoostAlignmentImages(getClaheAlignmentImages());
+        }
+        return detailAlignmentImages;
+      };
+
+      let alignment: PanoramaAlignmentResult;
+      try {
+        alignment = runPanoramaAlignmentAttempts(
+          requestId,
+          alignmentImages,
+          getClaheAlignmentImages,
+          getDetailAlignmentImages,
+        );
+      } catch (error) {
+        const diagnostics = diagnoseAdjacentPanoramaPairs(
+          requestId,
+          getDetailAlignmentImages(),
+        );
+        const message = error instanceof Error ? error.message : describeOpenCvError(error);
+        throw new Error(diagnostics ? `${message} Adjacent pairs: ${diagnostics}.` : message);
       }
-      const estimatedCameras = readCameraStates(stitcher);
-      if (estimatedCameras.length !== proxyImages.length) {
-        throw new Error(`Panorama Stitcher returned ${estimatedCameras.length} cameras for ${proxyImages.length} inputs.`);
+
+      stitcher = alignment.stitcher;
+      stitcherResources = alignment.stitcherResources;
+      const workScale = alignment.workScale;
+      const seamEstimationMegapixels = alignment.seamEstimationMegapixels;
+      const estimatedCameras = alignment.estimatedCameras;
+
+      // Camera geometry is fully captured above. Release the Stitcher and
+      // grayscale alignment proxies before allocating the existing three-channel
+      // seam proxies so robust fallback matching does not raise peak memory.
+      deleteNative(stitcher);
+      stitcher = null;
+      for (const resource of stitcherResources) deleteNative(resource);
+      stitcherResources = [];
+      for (const proxy of alignmentImages) deleteNative(proxy);
+      alignmentImages.length = 0;
+      for (const proxy of claheAlignmentImages) deleteNative(proxy);
+      claheAlignmentImages.length = 0;
+      for (const proxy of detailAlignmentImages) deleteNative(proxy);
+      detailAlignmentImages.length = 0;
+
+      // Alignment uses a dedicated gamma-2 grayscale proxy. Keep the existing
+      // linear BGR proxy exclusively for seam/exposure analysis so stronger
+      // feature preprocessing cannot alter GraphCut, local gains, or final pixels.
+      for (let index = 0; index < session.images.length; index += 1) {
+        postProgress(requestId, `Preparing panorama seam proxy ${index + 1}/${session.images.length}...`);
+        seamProxyImages.push(await loadCanonicalBgr8Mat(session, index));
       }
+
       postProgress(requestId, "Applying OpenCV automatic horizontal/vertical wave correction...");
       const cameras = applyAutoWaveCorrection(estimatedCameras);
 
-      const seamAnalysis = buildGraphCutSeams(requestId, stitcher, proxyImages, cameras, workScale);
+      const seamAnalysis = buildGraphCutSeams(
+        requestId,
+        seamEstimationMegapixels,
+        seamProxyImages,
+        cameras,
+        workScale,
+      );
       const seams = seamAnalysis.seams;
       const gainMaps = seamAnalysis.gainMaps;
       const cropRatio = finishMode === "trim" ? estimateCoverageCropRatio(seams) : 1;
@@ -1412,18 +1730,15 @@ import type {
         maxOutputPixels,
       });
 
-      // The high-level Stitcher is deliberately discarded here. Its native
-      // composePanorama path converts the result to CV_8U. Geometry, bundle
-      // adjustment, spherical camera parameters and GraphCut seam decisions
-      // have already been captured above. Final pixels are sampled directly
-      // from canonical gamma-2 Uint16 storage; only the four neighboring samples
-      // are decoded to linear float for bilinear interpolation and gain correction.
-      deleteNative(stitcher);
-      stitcher = null;
-      deleteNative(proxyVector);
-      proxyVector = null;
-      for (const proxy of proxyImages) deleteNative(proxy);
-      proxyImages.length = 0;
+      // The high-level Stitcher was deliberately discarded after camera
+      // estimation. Its native composePanorama path converts the result to
+      // CV_8U. Geometry, bundle adjustment, spherical camera parameters and
+      // GraphCut seam decisions have already been captured above. Final pixels
+      // are sampled directly from canonical gamma-2 Uint16 storage; only the
+      // four neighboring samples are decoded to linear float for bilinear
+      // interpolation and gain correction.
+      for (const proxy of seamProxyImages) deleteNative(proxy);
+      seamProxyImages.length = 0;
 
       return await composeHighPrecisionPanorama(
         requestId,
@@ -1438,9 +1753,13 @@ import type {
       );
     } finally {
       deleteNative(stitcher);
-      if (!Array.isArray(proxyVector)) deleteNative(proxyVector);
-      for (const proxy of proxyImages) deleteNative(proxy);
+      for (const resource of stitcherResources) deleteNative(resource);
+      for (const proxy of seamProxyImages) deleteNative(proxy);
+      for (const proxy of alignmentImages) deleteNative(proxy);
+      for (const proxy of claheAlignmentImages) deleteNative(proxy);
+      for (const proxy of detailAlignmentImages) deleteNative(proxy);
       session.close();
     }
   }
+
 })();
