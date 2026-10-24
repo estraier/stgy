@@ -129,6 +129,7 @@ import {
 import { createCanvasImageData, getCanvas2dContext, getCanvasImageData } from "./image-editor/canvas";
 import { applySharpenToCanvas, applySharpenToRgb16 } from "./image-editor/sharpen";
 import { applyDenoiseToCanvas, applyDenoiseToRgb16, clampDenoise } from "./image-editor/denoise";
+import { resizeGamma20Rgb16Lanczos3 } from "./image-editor/resize";
 import {
   DEFRINGE_ANALYSIS_TARGET_PIXELS,
   analyzeDefringeSample,
@@ -11143,6 +11144,48 @@ function resolveImageEditClarityMap(
   return buildFallbackImageEditClarityMap(decoded, params, defringeMap);
 }
 
+function buildPreResizeImageEditParams(params: ImageEditParams): ImageEditParams {
+  return {
+    ...params,
+    resizePercent: 100,
+    sharpen: 0,
+    mosaicRegions: [],
+    textOverlays: [],
+    drawOverlays: [],
+    vignetteOverlay: null,
+    mixer: null,
+    filter: null,
+  };
+}
+
+function renderGamma20Rgb16ToCanvas(
+  canvas: HTMLCanvasElement | OffscreenCanvas,
+  data: Uint16Array,
+  width: number,
+  height: number,
+  outputColorProfile: ImageEditOutputColorProfile,
+): void {
+  const ctx = getCanvas2dContext(canvas, outputColorProfile);
+  if (!ctx) throw new Error("2D context unavailable");
+  if (data.length !== width * height * 3) {
+    throw new Error("RGB16 render dimensions do not match the buffer length.");
+  }
+  const imageData = createCanvasImageData(ctx, width, height, outputColorProfile);
+  const rgba = imageData.data;
+  const converted: [number, number, number] = [0, 0, 0];
+  for (let pixel = 0, si = 0, di = 0; pixel < width * height; pixel += 1, si += 3, di += 4) {
+    const r = decodeStoredRgb16Channel(data[si] ?? 0, "gamma20", 1);
+    const g = decodeStoredRgb16Channel(data[si + 1] ?? 0, "gamma20", 1);
+    const b = decodeStoredRgb16Channel(data[si + 2] ?? 0, "gamma20", 1);
+    convertLinearProPhotoToOutputRgbInto(r, g, b, outputColorProfile, converted);
+    rgba[di] = linearChannelToSrgb(converted[0]);
+    rgba[di + 1] = linearChannelToSrgb(converted[1]);
+    rgba[di + 2] = linearChannelToSrgb(converted[2]);
+    rgba[di + 3] = 255;
+  }
+  ctx.putImageData(imageData, 0, 0);
+}
+
 async function buildEditedVariantFromDecoded(
   decoded: DecodedRgbImage16,
   params: ImageEditParams,
@@ -11200,37 +11243,23 @@ async function buildEditedVariantFromDecoded(
     );
     applyDenoiseToCanvas(output, params.denoise, outputColorProfile);
   } else {
-    const cropped = createImageEditCanvas(sw, sh);
+    const preResizeParams = buildPreResizeImageEditParams(params);
+    const preResize = await buildEditedDecodedRgb16(
+      decoded,
+      preResizeParams,
+      outputColorProfile,
+      clarityMap,
+      defringeMap,
+    );
     try {
-      renderAdjustedRgb16ToCanvas(
-        cropped,
-        decoded,
-        { x: sx, y: sy, w: sw, h: sh },
-        params.rotationDegrees,
-        params.temperature,
-        params.tint,
-        params.exposureEv,
-        params.shadow,
-        params.highlight,
-        params.scaledLog,
-        params.sigmoid,
-        params.vibrance,
-        params.saturation,
-        outputColorProfile,
-        clarityMap,
-        defringeMap ?? null,
-        clampDefringe(params.defringe) / 100,
-        params.black,
-        params.white,
+      const resized = measureImageEditTimingSync(
+        timing,
+        "Resizing gamma2 RGB16 with Lanczos3",
+        () => resizeGamma20Rgb16Lanczos3(preResize.data, preResize.width, preResize.height, dw, dh),
       );
-      applyDenoiseToCanvas(cropped, params.denoise, outputColorProfile);
-      const outputCtx = getCanvas2dContext(output, outputColorProfile);
-      if (!outputCtx) throw new Error("2D context unavailable");
-      outputCtx.imageSmoothingEnabled = true;
-      outputCtx.imageSmoothingQuality = "high";
-      outputCtx.drawImage(cropped, 0, 0, sw, sh, 0, 0, dw, dh);
+      renderGamma20Rgb16ToCanvas(output, resized, dw, dh, outputColorProfile);
     } finally {
-      releaseCanvasIfNeeded(cropped);
+      preResize.cleanup();
     }
   }
   if (timing) {
@@ -11406,6 +11435,66 @@ async function buildRawUploadDefaultFastVariant(
   }
 }
 
+function applyPostResizeRgb16Effects(
+  data: Uint16Array,
+  outputW: number,
+  outputH: number,
+  params: ImageEditParams,
+  sourceW: number,
+  sourceH: number,
+  sx: number,
+  sy: number,
+  cropW: number,
+  cropH: number,
+  outputColorProfile: ImageEditOutputColorProfile,
+): void {
+  applySharpenToRgb16(data, outputW, outputH, params.sharpen);
+  applyVignetteToRgb16(
+    data,
+    outputW,
+    outputH,
+    params.vignetteOverlay,
+    sourceW,
+    sourceH,
+    sx,
+    sy,
+    cropW,
+    cropH,
+  );
+  if (params.mixer) applyImageMixerToRgb16(data, outputW, outputH, params.mixer);
+  applyImageFilterToRgb16(data, outputW, outputH, params.filter);
+  applyMosaicRectsToRgb16(
+    data,
+    outputW,
+    outputH,
+    mosaicRegionsToOutputRects(
+      params.mosaicRegions,
+      sourceW,
+      sourceH,
+      sx,
+      sy,
+      cropW,
+      cropH,
+      outputW,
+      outputH,
+    ),
+  );
+  applyOverlaysToRgb16(
+    data,
+    outputW,
+    outputH,
+    params,
+    sourceW,
+    sourceH,
+    sx,
+    sy,
+    cropW,
+    cropH,
+    params.rotationDegrees,
+    outputColorProfile,
+  );
+}
+
 export async function buildEditedDecodedRgb16(
   decoded: DecodedRgbImage16,
   edit: ImageEditParams,
@@ -11432,6 +11521,50 @@ export async function buildEditedDecodedRgb16(
   if (params.textOverlays.length > 0) {
     await ensureTextOverlayFontsReady(params.textOverlays);
   }
+
+  if (outputW < cropW || outputH < cropH) {
+    const preResize = await buildEditedDecodedRgb16(
+      decoded,
+      buildPreResizeImageEditParams(params),
+      outputColorProfile,
+      previewClarityMap,
+      activeDefringeMap,
+    );
+    try {
+      const result = resizeGamma20Rgb16Lanczos3(
+        preResize.data,
+        preResize.width,
+        preResize.height,
+        outputW,
+        outputH,
+      );
+      applyPostResizeRgb16Effects(
+        result,
+        outputW,
+        outputH,
+        params,
+        sourceW,
+        sourceH,
+        sx,
+        sy,
+        cropW,
+        cropH,
+        outputColorProfile,
+      );
+      return {
+        colorSpace: "prophoto",
+        transfer: "gamma20",
+        linearRangeMax: 1,
+        width: outputW,
+        height: outputH,
+        data: result,
+        cleanup: () => {},
+      };
+    } finally {
+      preResize.cleanup();
+    }
+  }
+
   const clarityMap = resolveImageEditClarityMap(decoded, params, previewClarityMap, defringeMap);
   const hasClarity = clarityMap !== null;
 
@@ -11618,38 +11751,7 @@ export async function buildEditedDecodedRgb16(
   }
 
   applyDenoiseToRgb16(result, outputW, outputH, params.denoise);
-  applySharpenToRgb16(result, outputW, outputH, params.sharpen);
-  applyVignetteToRgb16(
-    result,
-    outputW,
-    outputH,
-    params.vignetteOverlay,
-    sourceW,
-    sourceH,
-    sx,
-    sy,
-    cropW,
-    cropH,
-  );
-  if (params.mixer) applyImageMixerToRgb16(result, outputW, outputH, params.mixer);
-  applyImageFilterToRgb16(result, outputW, outputH, params.filter);
-  applyMosaicRectsToRgb16(
-    result,
-    outputW,
-    outputH,
-    mosaicRegionsToOutputRects(
-      params.mosaicRegions,
-      sourceW,
-      sourceH,
-      sx,
-      sy,
-      cropW,
-      cropH,
-      outputW,
-      outputH,
-    ),
-  );
-  applyOverlaysToRgb16(
+  applyPostResizeRgb16Effects(
     result,
     outputW,
     outputH,
@@ -11660,7 +11762,6 @@ export async function buildEditedDecodedRgb16(
     sy,
     cropW,
     cropH,
-    params.rotationDegrees,
     outputColorProfile,
   );
 
