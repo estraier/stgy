@@ -46,10 +46,32 @@ const FONT_FAMILIES = [
 
 const GOOGLE_FONTS_HREF = buildGoogleFontsHref(FONT_FAMILIES);
 
+const MOBILE_LAYOUT_WIDTH = 440;
+const MOBILE_VIEWPORT_SCRIPT = `
+(() => {
+  const layoutWidth = ${MOBILE_LAYOUT_WIDTH};
+  const applyViewport = () => {
+    const viewport = document.querySelector('meta[name="viewport"]');
+    if (!viewport) return false;
+    const screenWidth = window.screen?.width || layoutWidth;
+    const scale = Math.min(1, screenWidth / layoutWidth);
+    viewport.setAttribute('content', 'width=' + layoutWidth + ', initial-scale=' + scale);
+    return true;
+  };
+  if (!applyViewport()) {
+    const observer = new MutationObserver(() => {
+      if (applyViewport()) observer.disconnect();
+    });
+    observer.observe(document.head, { childList: true });
+  }
+})();
+`;
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="mul">
       <head>
+        <script dangerouslySetInnerHTML={{ __html: MOBILE_VIEWPORT_SCRIPT }} />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link href={GOOGLE_FONTS_HREF} rel="stylesheet" />
