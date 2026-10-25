@@ -617,7 +617,9 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
   const [renderedHtml, setRenderedHtml] = useState<string>(() => {
     let nodes = parseMarkdown(initialBody);
     nodes = mdGroupImageGrid(nodes);
-    return convertHtmlMathInline(mdRenderHtml(nodes, true));
+    return convertHtmlMathInline(
+      mdRenderHtml(nodes, { positions: "absolute" }),
+    );
   });
   const [renderedText, setRenderedText] = useState<string>(() => {
     let nodes = parseMarkdown(initialBody);
@@ -1037,7 +1039,9 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
         if (useFeatured) nodes = mdFilterForFeatured(nodes);
         if (maxLen || maxHeight) nodes = mdCutOff(nodes, { maxLen, maxHeight });
         if (signal.aborted) return;
-        const html = convertHtmlMathInline(mdRenderHtml(nodes, true));
+        const html = convertHtmlMathInline(
+          mdRenderHtml(nodes, { positions: "absolute" }),
+        );
         if (signal.aborted) return;
         setRenderedHtml(html);
       } else {

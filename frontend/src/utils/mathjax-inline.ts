@@ -27,9 +27,15 @@ export function ensureMathJaxReady(): Promise<void> {
 }
 
 function patchDomInline(container: Element, MJ: MathJaxAPI): void {
-  const codes = container.querySelectorAll<HTMLElement>(
-    "code.math-inline:not([data-mj-processed])",
+  const codes = Array.from(
+    container.querySelectorAll<HTMLElement>("code.math-inline:not([data-mj-processed])"),
   );
+  if (
+    container instanceof HTMLElement &&
+    container.matches("code.math-inline:not([data-mj-processed])")
+  ) {
+    codes.unshift(container);
+  }
   codes.forEach((codeEl) => {
     const raw = codeEl.textContent || "";
     const tex = raw.replace(/^\s*\${1,2}([\s\S]*?)\${1,2}\s*$/u, "$1").trim();
@@ -155,9 +161,9 @@ export function convertHtmlMathInline(html: string): string {
   return html;
 }
 
-export function patchMathInlineInContainer(container: Element): void {
-  if (typeof window === "undefined") return;
-  ensureMathJaxReady().then(() => {
+export function patchMathInlineInContainer(container: Element): Promise<void> {
+  if (typeof window === "undefined") return Promise.resolve();
+  return ensureMathJaxReady().then(() => {
     const MJ = window.MathJax;
     if (!MJ || typeof MJ.tex2svg !== "function") return;
     patchDomInline(container, MJ);

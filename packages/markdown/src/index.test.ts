@@ -16,6 +16,7 @@ import {
   mdConvertAsciiToFullwidth,
   mdRenderText,
   mdRenderHtml,
+  mdRenderHtmlFragments,
   mdRenderMarkdown,
   mdSeparateTitle,
   mdSeparateMetadata,
@@ -48,7 +49,9 @@ function makeText(mdText: string) {
 
 function makeHtml(mdText: string, usePosAttrs = false) {
   const nodes = parseMarkdown(mdText);
-  return mdRenderHtml(nodes, usePosAttrs);
+  return mdRenderHtml(nodes, {
+    positions: usePosAttrs ? "absolute" : "none",
+  });
 }
 
 function makeMarkdown(mdText: string) {
@@ -2852,6 +2855,112 @@ describe("mdRenderHtml basics", () => {
     expect(makeHtml(mdText)).toBe(
       '<h1 id="h-1">h1</h1><nav aria-label="table of contents" class="toc"><ul><li><a href="#h-1-1">h2</a><ul><li><a href="#h-1-1-1">h3</a></li><li><a href="#h-1-1-2">h3</a></li></ul></li><li><a href="#h-1-2">h2</a></li></ul></nav><h2 id="h-1-1">h2</h2><h3 id="h-1-1-1">h3</h3><h3 id="h-1-1-2">h3</h3><h2 id="h-1-2">h2</h2>',
     );
+  });
+});
+
+describe("mdRenderHtmlFragments", () => {
+  it("preserves top-level boundaries while sharing heading and TOC context", () => {
+    const nodes = parseMarkdown(
+      "# h1\n<!TOC!>\n## h2\nparagraph\n### h3",
+    );
+    const fragments = mdRenderHtmlFragments(nodes, { positions: "none" });
+
+    expect(fragments.map((fragment) => fragment.html)).toEqual([
+      '<h1 id="h-1">h1</h1>',
+      '<nav aria-label="table of contents" class="toc"><ul><li><a href="#h-1-1">h2</a><ul><li><a href="#h-1-1-1">h3</a></li></ul></li></ul></nav>',
+      '<h2 id="h-1-1">h2</h2>',
+      '<p>paragraph</p>',
+      '<h3 id="h-1-1-1">h3</h3>',
+    ]);
+    expect(fragments.map((fragment) => fragment.html).join("")).toBe(
+      mdRenderHtml(nodes, { positions: "none" }),
+    );
+  });
+
+  it("preserves absolute position attributes in fragments", () => {
+    const nodes = parseMarkdown("first\n\nsecond");
+    const fragments = mdRenderHtmlFragments(nodes, { positions: "absolute" });
+
+    expect(fragments).toHaveLength(nodes.length);
+    expect(fragments.map((fragment) => fragment.html).join("")).toBe(
+      mdRenderHtml(nodes, { positions: "absolute" }),
+    );
+    expect(fragments[0].html).toContain('data-char-position="0"');
+    expect(fragments[1].html).toContain('data-char-position="7"');
+  });
+
+  it("keeps renderKey stable when only absolute positions change", () => {
+    const before = mdRenderHtmlFragments(parseMarkdown("prefix\n\nsame"), {
+      positions: "absolute",
+      previewPositionIds: true,
+    });
+    const after = mdRenderHtmlFragments(
+      parseMarkdown("longer prefix\n\nsame"),
+      { positions: "absolute", previewPositionIds: true },
+    );
+
+    expect(before[1].html).not.toBe(after[1].html);
+    expect(before[1].renderKey).toBe(after[1].renderKey);
+    expect(before[1].structureKey).toBe("p");
+    expect(after[1].structureKey).toBe("p");
+    expect(before[1].positions).toEqual([
+      { id: 0, charPosition: 8, linePosition: 2 },
+    ]);
+    expect(after[1].positions).toEqual([
+      { id: 0, charPosition: 15, linePosition: 2 },
+    ]);
+  });
+
+  it("changes renderKey when rendered content changes", () => {
+    const before = mdRenderHtmlFragments(parseMarkdown("same"), {
+      positions: "absolute",
+      previewPositionIds: true,
+    });
+    const after = mdRenderHtmlFragments(parseMarkdown("different"), {
+      positions: "absolute",
+      previewPositionIds: true,
+    });
+
+    expect(before[0].renderKey).not.toBe(after[0].renderKey);
+  });
+
+  it("assigns preview position IDs locally within each fragment", () => {
+    const fragments = mdRenderHtmlFragments(
+      parseMarkdown("first\n\n- second\n- third"),
+      { positions: "absolute", previewPositionIds: true },
+    );
+
+    expect(fragments[0].html).toContain('data-preview-pos-id="0"');
+    expect(fragments[0].positions[0]).toEqual({
+      id: 0,
+      charPosition: 0,
+      linePosition: 0,
+    });
+    expect(fragments[1].html).toContain('data-preview-pos-id="0"');
+    expect(fragments[1].positions.map((position) => position.id)).toEqual([
+      0, 1, 2,
+    ]);
+    expect(fragments[1].renderKey).toBe(
+      mdRenderHtmlFragments(parseMarkdown("- second\n- third"), {
+        positions: "absolute",
+      })[0].renderKey,
+    );
+  });
+
+  it("describes image and track grid structure", () => {
+    let imageNodes = parseMarkdown(
+      "![a](/data/a.jpg){grid}\n![b](/data/b.jpg){grid}",
+    );
+    imageNodes = mdGroupImageGrid(imageNodes, { maxElements: 5 });
+    const imageFragments = mdRenderHtmlFragments(imageNodes);
+    expect(imageFragments[0].structureKey).toBe("div:image-grid:2");
+
+    let trackNodes = parseMarkdown(
+      "@[a](/maps/a.trjgz){grid}\n@[b](/maps/b.trjgz){grid}",
+    );
+    trackNodes = mdGroupMapGrid(trackNodes, { maxElements: 5 });
+    const trackFragments = mdRenderHtmlFragments(trackNodes);
+    expect(trackFragments[0].structureKey).toBe("div:track-grid:2");
   });
 });
 

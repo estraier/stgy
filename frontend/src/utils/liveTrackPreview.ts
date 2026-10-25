@@ -5,6 +5,7 @@ const TRANSIENT_FIGURE_ATTRIBUTES = new Set([
   "data-stgy-track-redraw",
   "data-char-position",
   "data-line-position",
+  "data-preview-pos-id",
 ]);
 
 export type TrackMapReusePlan = Array<number | null>;
@@ -97,15 +98,21 @@ export type TrackMapReconcileResult = {
   redraws: number;
 };
 
+function findTrackMapElements(root: HTMLElement): HTMLElement[] {
+  const maps = Array.from(root.querySelectorAll<HTMLElement>(".stgy-track-map"));
+  if (root.matches(".stgy-track-map")) maps.unshift(root);
+  return maps;
+}
+
 export function reconcileTrackMapPreviews(
   previousRoot: HTMLElement,
   nextRoot: HTMLElement,
 ): TrackMapReconcileResult {
-  const previousAllMaps = Array.from(previousRoot.querySelectorAll<HTMLElement>(".stgy-track-map"));
+  const previousAllMaps = findTrackMapElements(previousRoot);
   const previousMaps = previousAllMaps.filter((figure) => {
     return figure.dataset.stgyTrackInitialized === "true";
   });
-  const nextMaps = Array.from(nextRoot.querySelectorAll<HTMLElement>(".stgy-track-map"));
+  const nextMaps = findTrackMapElements(nextRoot);
   const previousKeys = previousMaps.map(getTrackMapRenderKey);
   const nextKeys = nextMaps.map(getTrackMapRenderKey);
   const plan = planTrackMapReuse(previousKeys, nextKeys);

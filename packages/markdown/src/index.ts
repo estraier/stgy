@@ -3792,11 +3792,39 @@ export function mdRenderText(nodes: MdNode[]): string {
     .trim();
 }
 
-export function mdRenderHtml(
+export type MdHtmlRenderOptions = {
+  idPrefix?: string;
+  positions?: "none" | "absolute";
+};
+
+export type MdHtmlFragmentRenderOptions = MdHtmlRenderOptions & {
+  previewPositionIds?: boolean;
+};
+
+export type MdHtmlPosition = {
+  id: number;
+  charPosition?: number;
+  linePosition?: number;
+};
+
+export type MdHtmlFragment = {
+  html: string;
+  structureKey: string;
+  renderKey: string;
+  positions: MdHtmlPosition[];
+};
+
+type InternalMdHtmlFragment = { html: string } | MdHtmlFragment;
+
+function renderHtmlFragmentsInternal(
   nodes: MdNode[],
-  usePosAttrs = false,
-  idPrefix?: string,
-): string {
+  options: MdHtmlFragmentRenderOptions,
+  collectFragmentMetadata: boolean,
+): InternalMdHtmlFragment[] {
+  const usePosAttrs = options.positions === "absolute";
+  const previewPositionIds =
+    collectFragmentMetadata && !!options.previewPositionIds && usePosAttrs;
+  const idPrefix = options.idPrefix;
   const sanitizeIdPrefix = (s: string) =>
     (s || "h").replace(/[^a-zA-Z0-9_-]+/g, "-") || "h";
   const pfx = sanitizeIdPrefix(idPrefix ?? "h");
@@ -3839,16 +3867,61 @@ export function mdRenderHtml(
     for (const n of ns) walk(n);
     return out.replace(/\s+/g, " ").trim();
   }
+
+  let fragmentPositions: MdHtmlPosition[] | null = null;
+  let renderHashState:
+    | { stableLength: number; hash1: number; hash2: number }
+    | null = null;
+
+  function hashStableChunk(value: string): void {
+    const state = renderHashState!;
+    state.stableLength += value.length;
+    for (let i = 0; i < value.length; i++) {
+      const code = value.charCodeAt(i);
+      state.hash1 = Math.imul(state.hash1 ^ code, 0x01000193) >>> 0;
+      state.hash2 =
+        Math.imul(state.hash2 ^ ((code + 0x9e37) & 0xffff), 0x85ebca6b) >>>
+        0;
+    }
+  }
+
+  function finishRenderKey(): string {
+    const state = renderHashState;
+    if (!state) return "";
+    const h1 = state.hash1.toString(16).padStart(8, "0");
+    const h2 = state.hash2.toString(16).padStart(8, "0");
+    return `v1:${state.stableLength}:${h1}:${h2}`;
+  }
+
   function withPos(attrs: MdAttrs | undefined, node: MdElementNode): MdAttrs {
     const out: MdAttrs = { ...(attrs || {}) };
     if (usePosAttrs) {
-      if (typeof node.charPosition === "number")
-        out["data-char-position"] = node.charPosition;
-      if (typeof node.linePosition === "number")
-        out["data-line-position"] = node.linePosition;
+      const charPosition =
+        typeof node.charPosition === "number" ? node.charPosition : undefined;
+      const linePosition =
+        typeof node.linePosition === "number" ? node.linePosition : undefined;
+      if (charPosition !== undefined)
+        out["data-char-position"] = charPosition;
+      if (linePosition !== undefined)
+        out["data-line-position"] = linePosition;
+      if (
+        fragmentPositions &&
+        (charPosition !== undefined || linePosition !== undefined)
+      ) {
+        const id = fragmentPositions.length;
+        fragmentPositions.push({ id, charPosition, linePosition });
+        if (previewPositionIds) out["data-preview-pos-id"] = id;
+      }
     }
     return out;
   }
+
+  const transientRenderAttrs = new Set([
+    "data-char-position",
+    "data-line-position",
+    "data-preview-pos-id",
+  ]);
+
   function attrsToString(attrs?: MdAttrs): string {
     if (!attrs) return "";
     const priority: Record<string, number> = { src: 0, alt: 1 };
@@ -3858,26 +3931,32 @@ export function mdRenderHtml(
     const a: Record<string, string | number | boolean | null | undefined> =
       attrs;
     let out = "";
+    let stableOut = renderHashState ? "" : null;
     for (const k of keys) {
       const v = a[k];
+      let part = "";
       if (k === "bullet") {
-        out += ` data-bullet="${escapeHTML(String(v))}"`;
+        part = ` data-bullet="${escapeHTML(String(v))}"`;
+      } else if (k === "meta") {
+        part = ` data-meta="${escapeHTML(String(v))}"`;
+      } else if (k === "mode") {
+        part = ` data-mode="${escapeHTML(String(v))}"`;
+      } else if (v === false || v === undefined || v === null) {
         continue;
+      } else if (v === true) {
+        part = ` ${k}`;
+      } else {
+        part = ` ${k}="${escapeHTML(String(v))}"`;
       }
-      if (k === "meta") {
-        out += ` data-meta="${escapeHTML(String(v))}"`;
-        continue;
+      out += part;
+      if (stableOut !== null && !transientRenderAttrs.has(k)) {
+        stableOut += part;
       }
-      if (k === "mode") {
-        out += ` data-mode="${escapeHTML(String(v))}"`;
-        continue;
-      }
-      if (v === false || v === undefined || v === null) continue;
-      if (v === true) out += ` ${k}`;
-      else out += ` ${k}="${escapeHTML(String(v))}"`;
     }
+    if (stableOut !== null) hashStableChunk(stableOut);
     return out;
   }
+
   function mediaDataAttrs(mediaAttrs: MdAttrs): MdAttrs {
     const out: MdAttrs = {};
     for (const [k, v] of Object.entries(mediaAttrs)) {
@@ -3888,9 +3967,37 @@ export function mdRenderHtml(
     }
     return out;
   }
+
   function srcSanitize(v: string | number | boolean): string {
     return typeof v === "string" ? v : String(v);
   }
+
+  function structureKeyForNode(node: MdNode): string {
+    if (node.type === "text") return "text";
+    const className = node.attrs?.class;
+    const classes =
+      typeof className === "string"
+        ? className.split(/\s+/).filter(Boolean)
+        : [];
+    if (node.tag === "div") {
+      if (classes.includes("image-grid")) {
+        const cols = node.attrs?.["data-cols"] ?? node.children?.length ?? 0;
+        return `div:image-grid:${String(cols)}`;
+      }
+      if (classes.includes("stgy-track-grid")) {
+        const cols = node.attrs?.["data-cols"] ?? node.children?.length ?? 0;
+        return `div:track-grid:${String(cols)}`;
+      }
+      if (classes.includes("stgy-link-snippet")) return "div:link-snippet";
+    }
+    if (node.tag === "figure") {
+      if (classes.includes("stgy-track-map")) return "figure:track";
+      if (classes.includes("featured-block")) return "figure:featured";
+      if (classes.includes("image-block")) return "figure:image";
+    }
+    return node.tag;
+  }
+
   function serializeMedia(n: MdMediaElement): string {
     const a = n.attrs || {};
     const src = a.src ? String(srcSanitize(a.src)) : "";
@@ -3899,13 +4006,19 @@ export function mdRenderHtml(
         { src, alt: "", loading: "lazy", decoding: "async" },
         n as MdElementNode,
       );
-      return `<img${attrsToString(base)}>`;
+      if (renderHashState) hashStableChunk("<img");
+      const attrs = attrsToString(base);
+      if (renderHashState) hashStableChunk(">");
+      return `<img${attrs}>`;
     } else {
       const base: MdAttrs = withPos(
         { src, "aria-label": "" as const, controls: true },
         n as MdElementNode,
       );
-      return `<video${attrsToString(base)}></video>`;
+      if (renderHashState) hashStableChunk("<video");
+      const attrs = attrsToString(base);
+      if (renderHashState) hashStableChunk("></video>");
+      return `<video${attrs}></video>`;
     }
   }
 
@@ -4043,7 +4156,11 @@ export function mdRenderHtml(
   }
 
   function serializeOne(n: MdNode): string {
-    if (n.type === "text") return escapeHTML(n.text);
+    if (n.type === "text") {
+      const html = escapeHTML(n.text);
+      if (renderHashState) hashStableChunk(html);
+      return html;
+    }
 
     if (n.type === "element" && n.tag === "math") {
       const el = n as MdElementNode;
@@ -4053,11 +4170,21 @@ export function mdRenderHtml(
         { class: display ? "math-display" : "math-inline" },
         el,
       );
-      return `<code${attrsToString(attrs)}>${escapeHTML(tex)}</code>`;
+      const escapedTex = escapeHTML(tex);
+      if (renderHashState) hashStableChunk("<code");
+      const attrHtml = attrsToString(attrs);
+      if (renderHashState) hashStableChunk(`>${escapedTex}</code>`);
+      return `<code${attrHtml}>${escapedTex}</code>`;
     }
-    if (n.type === "element" && n.tag === "omitted")
-      return `<span class="omitted">…</span>`;
-    if (n.type === "element" && n.tag === "br") return `<br>`;
+    if (n.type === "element" && n.tag === "omitted") {
+      const html = `<span class="omitted">…</span>`;
+      if (renderHashState) hashStableChunk(html);
+      return html;
+    }
+    if (n.type === "element" && n.tag === "br") {
+      if (renderHashState) hashStableChunk("<br>");
+      return `<br>`;
+    }
 
     if (n.type === "element" && n.tag === "hr") {
       const a = n.attrs || {};
@@ -4072,7 +4199,10 @@ export function mdRenderHtml(
         rec["data-hr-level"] = v;
       }
       attrs = withPos(attrs, n as MdElementNode);
-      return `<hr${attrsToString(attrs)}>`;
+      if (renderHashState) hashStableChunk("<hr");
+      const attrHtml = attrsToString(attrs);
+      if (renderHashState) hashStableChunk(">");
+      return `<hr${attrHtml}>`;
     }
 
     if (n.type === "element" && n.tag === "pre") {
@@ -4099,7 +4229,12 @@ export function mdRenderHtml(
         rec.style = `--pre-lines: ${vLines}`;
       }
       attrs = withPos(attrs, n as MdElementNode);
-      return `<pre${attrsToString(attrs)}>${serializeAll(n.children || [])}</pre>`;
+      if (renderHashState) hashStableChunk("<pre");
+      const attrHtml = attrsToString(attrs);
+      if (renderHashState) hashStableChunk(">");
+      const childrenHtml = serializeAll(n.children || []);
+      if (renderHashState) hashStableChunk("</pre>");
+      return `<pre${attrHtml}>${childrenHtml}</pre>`;
     }
 
     if (n.type === "element" && n.tag === "figure") {
@@ -4108,18 +4243,27 @@ export function mdRenderHtml(
       const figExtra = media ? mediaDataAttrs(media.attrs || {}) : {};
       let figAttrs: MdAttrs = { ...figBase, ...figExtra };
       figAttrs = withPos(figAttrs, n as MdElementNode);
+      if (renderHashState) hashStableChunk("<figure");
+      const figAttrHtml = attrsToString(figAttrs);
+      if (renderHashState) hashStableChunk(">");
       let inner = "";
       for (const c of n.children || []) {
-        if (c.type === "element" && isMediaElement(c))
+        if (c.type === "element" && isMediaElement(c)) {
           inner += serializeMedia(c as MdMediaElement);
-        else if (c.type === "element" && c.tag === "figcaption") {
+        } else if (c.type === "element" && c.tag === "figcaption") {
           const captionAttrs = withPos(c.attrs, c);
-          inner += `<figcaption${attrsToString(captionAttrs)}>${serializeAll(
-            c.children || [],
-          )}</figcaption>`;
-        } else inner += serializeOne(c);
+          if (renderHashState) hashStableChunk("<figcaption");
+          const captionAttrHtml = attrsToString(captionAttrs);
+          if (renderHashState) hashStableChunk(">");
+          const captionHtml = serializeAll(c.children || []);
+          if (renderHashState) hashStableChunk("</figcaption>");
+          inner += `<figcaption${captionAttrHtml}>${captionHtml}</figcaption>`;
+        } else {
+          inner += serializeOne(c);
+        }
       }
-      return `<figure${attrsToString(figAttrs)}>${inner}</figure>`;
+      if (renderHashState) hashStableChunk("</figure>");
+      return `<figure${figAttrHtml}>${inner}</figure>`;
     }
 
     if (n.type === "element" && isMediaElement(n))
@@ -4139,9 +4283,13 @@ export function mdRenderHtml(
         rec["class"] = cur ? `${cur} align-${alignRaw}` : `align-${alignRaw}`;
       }
       attrs = withPos(attrs, n as MdElementNode);
-      return `<${(n as MdElementNode).tag}${attrsToString(attrs)}>${serializeAll(
-        (n as MdElementNode).children || [],
-      )}</${(n as MdElementNode).tag}>`;
+      const tag = (n as MdElementNode).tag;
+      if (renderHashState) hashStableChunk(`<${tag}`);
+      const attrHtml = attrsToString(attrs);
+      if (renderHashState) hashStableChunk(">");
+      const childrenHtml = serializeAll((n as MdElementNode).children || []);
+      if (renderHashState) hashStableChunk(`</${tag}>`);
+      return `<${tag}${attrHtml}>${childrenHtml}</${tag}>`;
     }
 
     if (n.type === "element") {
@@ -4150,9 +4298,12 @@ export function mdRenderHtml(
         const el = n as MdElementNode;
         const id = headerIdMap.get(el)!;
         const attrs = withPos({ ...(el.attrs || {}), id }, el);
-        return `<${el.tag}${attrsToString(attrs)}>${serializeAll(
-          el.children || [],
-        )}</${el.tag}>`;
+        if (renderHashState) hashStableChunk(`<${el.tag}`);
+        const attrHtml = attrsToString(attrs);
+        if (renderHashState) hashStableChunk(">");
+        const childrenHtml = serializeAll(el.children || []);
+        if (renderHashState) hashStableChunk(`</${el.tag}>`);
+        return `<${el.tag}${attrHtml}>${childrenHtml}</${el.tag}>`;
       }
     }
 
@@ -4162,16 +4313,62 @@ export function mdRenderHtml(
         { class: "toc", "aria-label": "table of contents" },
         el,
       );
-      return `<nav${attrsToString(navAttrs)}>${tocHtml}</nav>`;
+      if (renderHashState) hashStableChunk("<nav");
+      const attrHtml = attrsToString(navAttrs);
+      if (renderHashState) hashStableChunk(`>${tocHtml}</nav>`);
+      return `<nav${attrHtml}>${tocHtml}</nav>`;
     }
 
-    const attrs = withPos((n as MdElementNode).attrs, n as MdElementNode);
-    return `<${(n as MdElementNode).tag}${attrsToString(attrs)}>${serializeAll(
-      (n as MdElementNode).children || [],
-    )}</${(n as MdElementNode).tag}>`;
+    const el = n as MdElementNode;
+    const attrs = withPos(el.attrs, el);
+    if (renderHashState) hashStableChunk(`<${el.tag}`);
+    const attrHtml = attrsToString(attrs);
+    if (renderHashState) hashStableChunk(">");
+    const childrenHtml = serializeAll(el.children || []);
+    if (renderHashState) hashStableChunk(`</${el.tag}>`);
+    return `<${el.tag}${attrHtml}>${childrenHtml}</${el.tag}>`;
   }
 
-  return serializeAll(nodes);
+  return nodes.map((node) => {
+    if (!collectFragmentMetadata) {
+      fragmentPositions = null;
+      renderHashState = null;
+      return { html: serializeOne(node) };
+    }
+    const positions: MdHtmlPosition[] = [];
+    fragmentPositions = positions;
+    renderHashState = {
+      stableLength: 0,
+      hash1: 0x811c9dc5,
+      hash2: 0x9747b28c,
+    };
+    const html = serializeOne(node);
+    const renderKey = finishRenderKey();
+    fragmentPositions = null;
+    renderHashState = null;
+    return {
+      html,
+      structureKey: structureKeyForNode(node),
+      renderKey,
+      positions,
+    };
+  });
+}
+
+export function mdRenderHtmlFragments(
+  nodes: MdNode[],
+  options: MdHtmlFragmentRenderOptions = {},
+): MdHtmlFragment[] {
+  return renderHtmlFragmentsInternal(nodes, options, true) as MdHtmlFragment[];
+}
+
+export function mdRenderHtml(
+  nodes: MdNode[],
+  options: MdHtmlRenderOptions = {},
+): string {
+  return renderHtmlFragmentsInternal(nodes, options, false)
+    .map((fragment) => fragment.html)
+    .join("");
 }
 
 export function mdRenderMarkdown(nodes: MdNode[]): string {

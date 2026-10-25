@@ -9,13 +9,21 @@ import React, {
   useCallback,
   useId,
 } from "react";
-import { makeArticleHtmlFromMarkdown } from "@/utils/article";
+import { makeArticlePreviewFragmentsFromMarkdown } from "@/utils/article";
 import { destroyTrackMaps, useTrackMapHydrator } from "@/hooks/useTrackMapHydrator";
 import { useLinkSnippetHydrator } from "@/hooks/useLinkSnippetHydrator";
 import { reconcileLinkSnippetPreviews } from "@/utils/linkSnippetHydration";
 import { reconcileTrackMapPreviews, TRACK_MAP_REDRAW_DELAY_MS } from "@/utils/liveTrackPreview";
 import { parseBodyAndTags } from "@/utils/parse";
-import { convertHtmlMathInline } from "@/utils/mathjax-inline";
+import { patchMathInlineInContainer } from "@/utils/mathjax-inline";
+import {
+  bindPreviewPositions,
+  createPreviewNode,
+  planPreviewBlockUpdate,
+  updateBoundPreviewPositions,
+  type PreviewAnchor,
+  type PreviewPositionBinding,
+} from "@/utils/postPreview";
 import UserMentionButton from "@/components/UserMentionButton";
 import ExistingImageEmbedButton from "@/components/ExistingImageEmbedButton";
 import UploadImageEmbedButton, {
@@ -46,7 +54,14 @@ import {
   ChartLine as GraphIcon,
   ArrowDownToLine as ImportImageIcon,
 } from "lucide-react";
-import { structurizeHtml, parseHtml, mdRenderMarkdown, countHtmlElements } from "stgy-markdown";
+import {
+  structurizeHtml,
+  parseHtml,
+  mdRenderMarkdown,
+  countHtmlElements,
+  type MdHtmlFragment,
+  type MdHtmlPosition,
+} from "stgy-markdown";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import ImageUploadDialog, { DialogFileItem, UploadResult } from "@/components/ImageUploadDialog";
 import { importRemoteImage } from "@/api/media";
@@ -81,6 +96,124 @@ type MdElementNode = {
   linePosition?: number;
 };
 type MdNode = MdTextNode | MdElementNode;
+
+type MountedPreviewBlock = {
+  node: ChildNode;
+  structureKey: string;
+  renderKey: string;
+  positions: MdHtmlPosition[];
+  binding: PreviewPositionBinding;
+};
+
+type PreviewAnchorGroup = {
+  anchors: PreviewAnchor[];
+};
+
+type PreviewAnchorLocation = {
+  groupIndex: number;
+  anchorIndex: number;
+  anchor: PreviewAnchor;
+};
+
+type MountedPreviewState = {
+  blocks: MountedPreviewBlock[];
+  sentinel: HTMLElement;
+  anchorGroups: PreviewAnchorGroup[];
+};
+
+type PostPreviewWorkerRequest = {
+  type: "render-preview";
+  generation: number;
+  content: string;
+};
+
+type PostPreviewWorkerResponse =
+  | {
+      type: "render-preview-complete";
+      generation: number;
+      contentLength: number;
+      fragments: MdHtmlFragment[];
+    }
+  | {
+      type: "render-preview-error";
+      generation: number;
+      message: string;
+    };
+
+type PreviewRenderResult = {
+  generation: number;
+  contentLength: number;
+  fragments: MdHtmlFragment[];
+};
+
+const POST_PREVIEW_DEBOUNCE_MS = 100;
+
+function createPostPreviewWorker(): Worker | null {
+  if (typeof Worker !== "function") return null;
+  try {
+    return new Worker(new URL("./post-preview.worker.ts", import.meta.url), { type: "module" });
+  } catch {
+    return null;
+  }
+}
+
+function rebuildPreviewAnchorGroups(state: MountedPreviewState): void {
+  const groups: PreviewAnchorGroup[] = [];
+  for (const block of state.blocks) {
+    if (block.binding.anchors.length) groups.push({ anchors: block.binding.anchors });
+  }
+  const sentinelChar = Number(state.sentinel.getAttribute("data-char-position") || "");
+  if (Number.isFinite(sentinelChar)) {
+    groups.push({
+      anchors: [{ char: sentinelChar, el: state.sentinel, positionId: Number.MAX_SAFE_INTEGER }],
+    });
+  }
+  state.anchorGroups = groups;
+}
+
+function buildMountedPreviewState(
+  root: HTMLElement,
+  fragments: MdHtmlFragment[],
+  contentLength: number,
+): MountedPreviewState | null {
+  const fragmentRoot = root.ownerDocument.createDocumentFragment();
+  const blocks: MountedPreviewBlock[] = [];
+  for (const fragment of fragments) {
+    const node = createPreviewNode(root.ownerDocument, fragment.html);
+    if (!node) return null;
+    const binding = bindPreviewPositions(node, fragment.positions);
+    if (!binding) return null;
+    fragmentRoot.appendChild(node);
+    blocks.push({
+      node,
+      structureKey: fragment.structureKey,
+      renderKey: fragment.renderKey,
+      positions: fragment.positions,
+      binding,
+    });
+  }
+  const sentinel = root.ownerDocument.createElement("span");
+  sentinel.setAttribute("data-char-position", String(contentLength));
+  sentinel.setAttribute("data-no-pin", "1");
+  sentinel.setAttribute("aria-hidden", "true");
+  sentinel.style.display = "block";
+  sentinel.style.height = "1px";
+  fragmentRoot.appendChild(sentinel);
+  root.replaceChildren(fragmentRoot);
+  const state: MountedPreviewState = { blocks, sentinel, anchorGroups: [] };
+  rebuildPreviewAnchorGroups(state);
+  return state;
+}
+
+function refreshMountedPreviewBindings(state: MountedPreviewState): boolean {
+  for (const block of state.blocks) {
+    const binding = bindPreviewPositions(block.node, block.positions);
+    if (!binding) return false;
+    block.binding = binding;
+  }
+  rebuildPreviewAnchorGroups(state);
+  return true;
+}
 
 const isElementNode = (n: MdNode): n is MdElementNode => n?.type === "element";
 
@@ -632,7 +765,6 @@ export default function PostForm({
   const editorHighlightBandRef = useRef<HTMLDivElement | null>(null);
   const previewHighlightOverlayRef = useRef<HTMLDivElement | null>(null);
   const previewHighlightBandRef = useRef<HTMLDivElement | null>(null);
-  const anchorsRef = useRef<{ char: number; el: HTMLElement }[]>([]);
   const rafRef = useRef<number | null>(null);
   const editorHighlightRafRef = useRef<number | null>(null);
   const previewHighlightRafRef = useRef<number | null>(null);
@@ -662,9 +794,13 @@ export default function PostForm({
     bodyLiveRef.current = body;
   }, [body]);
   const overlayActiveLiveRef = useRef(overlayActive);
+  const showPreviewLiveRef = useRef(showPreview);
   useEffect(() => {
     overlayActiveLiveRef.current = overlayActive;
   }, [overlayActive]);
+  useEffect(() => {
+    showPreviewLiveRef.current = showPreview;
+  }, [showPreview]);
   const formId = useId();
   const previewBodyARef = useRef<HTMLDivElement>(null);
   const previewBodyBRef = useRef<HTMLDivElement>(null);
@@ -672,7 +808,15 @@ export default function PostForm({
   const overlayBodyBRef = useRef<HTMLDivElement>(null);
   const previewFrontIsARef = useRef(true);
   const overlayFrontIsARef = useRef(true);
-  const previewRenderedHtmlRef = useRef(new WeakMap<HTMLElement, string>());
+  const previewStateByRootRef = useRef(new WeakMap<HTMLElement, MountedPreviewState>());
+  const previewWorkerRef = useRef<Worker | null>(null);
+  const previewWorkerDisabledRef = useRef(false);
+  const previewGenerationRef = useRef(0);
+  const previewDebounceTimerRef = useRef<number | null>(null);
+  const previewInFlightRequestRef = useRef<PostPreviewWorkerRequest | null>(null);
+  const previewPendingRequestRef = useRef<PostPreviewWorkerRequest | null>(null);
+  const previewHasScheduledRef = useRef(false);
+  const [previewRender, setPreviewRender] = useState<PreviewRenderResult | null>(null);
   const uploadBtnRef = useRef<UploadImageEmbedButtonHandle | null>(null);
   const toolbarBtn =
     "h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none -translate-y-[1px]";
@@ -808,13 +952,191 @@ export default function PostForm({
   const contentLength = content.length;
   const overLimit = contentLengthLimit != null ? contentLength > contentLengthLimit : false;
 
-  const previewHtml = useMemo(() => {
-    const html = convertHtmlMathInline(makeArticleHtmlFromMarkdown(content, true));
-    return (
-      html +
-      `<span data-char-position="${content.length}" data-no-pin="1" aria-hidden="true" style="display:block;height:1px;"></span>`
-    );
-  }, [content]);
+  const renderPreviewSynchronously = useCallback((request: PostPreviewWorkerRequest) => {
+    const fragments = makeArticlePreviewFragmentsFromMarkdown(request.content);
+    if (
+      request.generation !== previewGenerationRef.current ||
+      !showPreviewLiveRef.current
+    ) {
+      return;
+    }
+    setPreviewRender({
+      generation: request.generation,
+      contentLength: request.content.length,
+      fragments,
+    });
+  }, []);
+
+  const dispatchPreviewRequest = useCallback(
+    (request: PostPreviewWorkerRequest) => {
+      const fallbackSynchronously = (candidate: PostPreviewWorkerRequest | null) => {
+        if (
+          !candidate ||
+          candidate.generation !== previewGenerationRef.current ||
+          !showPreviewLiveRef.current
+        ) {
+          return;
+        }
+        renderPreviewSynchronously(candidate);
+      };
+
+      const disableWorkerAndFallback = (worker: Worker) => {
+        worker.terminate();
+        if (previewWorkerRef.current === worker) {
+          previewWorkerRef.current = null;
+        }
+        previewWorkerDisabledRef.current = true;
+
+        const inFlight = previewInFlightRequestRef.current;
+        const pending = previewPendingRequestRef.current;
+        previewInFlightRequestRef.current = null;
+        previewPendingRequestRef.current = null;
+
+        const generation = previewGenerationRef.current;
+        let latest: PostPreviewWorkerRequest | null = null;
+        if (pending?.generation === generation) {
+          latest = pending;
+        } else if (inFlight?.generation === generation) {
+          latest = inFlight;
+        }
+        fallbackSynchronously(latest);
+      };
+
+      const sendToWorker = (worker: Worker, next: PostPreviewWorkerRequest) => {
+        previewPendingRequestRef.current = null;
+        previewInFlightRequestRef.current = next;
+        try {
+          worker.postMessage(next);
+        } catch {
+          disableWorkerAndFallback(worker);
+        }
+      };
+
+      const flushPendingRequest = (worker: Worker) => {
+        if (previewInFlightRequestRef.current) return;
+        const pending = previewPendingRequestRef.current;
+        if (!pending) return;
+        if (
+          pending.generation !== previewGenerationRef.current ||
+          !showPreviewLiveRef.current
+        ) {
+          previewPendingRequestRef.current = null;
+          return;
+        }
+        sendToWorker(worker, pending);
+      };
+
+      let worker = previewWorkerRef.current;
+      if (!worker && !previewWorkerDisabledRef.current) {
+        worker = createPostPreviewWorker();
+        if (!worker) {
+          previewWorkerDisabledRef.current = true;
+        } else {
+          const activeWorker = worker;
+          worker.addEventListener(
+            "message",
+            (event: MessageEvent<PostPreviewWorkerResponse>) => {
+              const response = event.data;
+              const completed = previewInFlightRequestRef.current;
+              previewInFlightRequestRef.current = null;
+
+              if (
+                response &&
+                response.generation === previewGenerationRef.current &&
+                showPreviewLiveRef.current
+              ) {
+                if (response.type === "render-preview-error") {
+                  if (completed?.generation === response.generation) {
+                    fallbackSynchronously(completed);
+                  }
+                } else {
+                  setPreviewRender({
+                    generation: response.generation,
+                    contentLength: response.contentLength,
+                    fragments: response.fragments,
+                  });
+                }
+              }
+
+              if (previewWorkerRef.current === activeWorker) {
+                flushPendingRequest(activeWorker);
+              }
+            },
+          );
+          const handleWorkerFailure = () => {
+            if (previewWorkerRef.current !== activeWorker) return;
+            disableWorkerAndFallback(activeWorker);
+          };
+          worker.addEventListener("error", handleWorkerFailure);
+          worker.addEventListener("messageerror", handleWorkerFailure);
+          previewWorkerRef.current = worker;
+        }
+      }
+
+      if (!worker || previewWorkerDisabledRef.current) {
+        fallbackSynchronously(request);
+        return;
+      }
+
+      if (previewInFlightRequestRef.current) {
+        previewPendingRequestRef.current = request;
+        return;
+      }
+
+      sendToWorker(worker, request);
+    },
+    [renderPreviewSynchronously],
+  );
+
+  useEffect(() => {
+    const generation = ++previewGenerationRef.current;
+    if (previewDebounceTimerRef.current !== null) {
+      window.clearTimeout(previewDebounceTimerRef.current);
+      previewDebounceTimerRef.current = null;
+    }
+    // A pending request has already passed the previous debounce window. Once the
+    // content changes again it is stale, so do not let it enter the worker queue.
+    previewPendingRequestRef.current = null;
+
+    if (!showPreview) {
+      previewHasScheduledRef.current = false;
+      setPreviewRender(null);
+      return;
+    }
+
+    const request: PostPreviewWorkerRequest = {
+      type: "render-preview",
+      generation,
+      content,
+    };
+    const delay = previewHasScheduledRef.current ? POST_PREVIEW_DEBOUNCE_MS : 0;
+    previewHasScheduledRef.current = true;
+    previewDebounceTimerRef.current = window.setTimeout(() => {
+      previewDebounceTimerRef.current = null;
+      if (request.generation !== previewGenerationRef.current) return;
+      dispatchPreviewRequest(request);
+    }, delay);
+
+    return () => {
+      if (previewDebounceTimerRef.current !== null) {
+        window.clearTimeout(previewDebounceTimerRef.current);
+        previewDebounceTimerRef.current = null;
+      }
+    };
+  }, [content, showPreview, dispatchPreviewRequest]);
+
+  useEffect(() => {
+    return () => {
+      if (previewDebounceTimerRef.current !== null) {
+        window.clearTimeout(previewDebounceTimerRef.current);
+        previewDebounceTimerRef.current = null;
+      }
+      previewWorkerRef.current?.terminate();
+      previewWorkerRef.current = null;
+      previewInFlightRequestRef.current = null;
+      previewPendingRequestRef.current = null;
+    };
+  }, []);
 
   const attrLabels = useMemo(() => {
     return Object.entries(attrs || {})
@@ -1259,47 +1581,66 @@ export default function PostForm({
     });
   };
 
-  const rebuildAnchors = useCallback(() => {
+  const activePreviewState = useCallback((): MountedPreviewState | null => {
     const root = activePreviewBody();
-    if (!root) {
-      anchorsRef.current = [];
-      return;
-    }
-    const list = Array.from(root.querySelectorAll<HTMLElement>("[data-char-position]"));
-    const withIndex = list
-      .map((el, idx) => {
-        const v = Number(el.getAttribute("data-char-position") || "");
-        return Number.isFinite(v) ? { char: v, el, idx } : null;
-      })
-      .filter((x): x is { char: number; el: HTMLElement; idx: number } => !!x);
-    withIndex.sort((a, b) => a.char - b.char || a.idx - b.idx);
-    anchorsRef.current = withIndex.map(({ char, el }) => ({ char, el }));
+    return root ? previewStateByRootRef.current.get(root) ?? null : null;
   }, [activePreviewBody]);
 
-  const findAnchorIndex = useCallback((caret: number): number | null => {
-    const anchors = anchorsRef.current;
-    if (!anchors.length) return null;
-    let lo = 0;
-    let hi = anchors.length - 1;
-    let ans = 0;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      if (anchors[mid]!.char <= caret) {
-        ans = mid;
-        lo = mid + 1;
-      } else {
-        hi = mid - 1;
+  const findAnchorLocation = useCallback(
+    (caret: number): PreviewAnchorLocation | null => {
+      const state = activePreviewState();
+      if (!state || state.anchorGroups.length === 0) return null;
+      const groups = state.anchorGroups;
+      let lo = 0;
+      let hi = groups.length - 1;
+      let groupIndex = 0;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        const first = groups[mid]!.anchors[0]!.char;
+        if (first <= caret) {
+          groupIndex = mid;
+          lo = mid + 1;
+        } else {
+          hi = mid - 1;
+        }
       }
-    }
-    return ans;
-  }, []);
-  const findAnchor = useCallback(
-    (caret: number): HTMLElement | null => {
-      const idx = findAnchorIndex(caret);
-      if (idx == null) return null;
-      return anchorsRef.current[idx]!.el;
+      const anchors = groups[groupIndex]!.anchors;
+      lo = 0;
+      hi = anchors.length - 1;
+      let anchorIndex = 0;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (anchors[mid]!.char <= caret) {
+          anchorIndex = mid;
+          lo = mid + 1;
+        } else {
+          hi = mid - 1;
+        }
+      }
+      return { groupIndex, anchorIndex, anchor: anchors[anchorIndex]! };
     },
-    [findAnchorIndex],
+    [activePreviewState],
+  );
+
+  const previousAnchor = useCallback(
+    (location: PreviewAnchorLocation): PreviewAnchor | null => {
+      const state = activePreviewState();
+      if (!state) return null;
+      const group = state.anchorGroups[location.groupIndex];
+      if (!group) return null;
+      if (location.anchorIndex > 0) return group.anchors[location.anchorIndex - 1] ?? null;
+      for (let i = location.groupIndex - 1; i >= 0; i--) {
+        const anchors = state.anchorGroups[i]!.anchors;
+        if (anchors.length) return anchors[anchors.length - 1]!;
+      }
+      return null;
+    },
+    [activePreviewState],
+  );
+
+  const findAnchor = useCallback(
+    (caret: number): HTMLElement | null => findAnchorLocation(caret)?.anchor.el ?? null,
+    [findAnchorLocation],
   );
 
   const syncToCaret = useCallback((): boolean => {
@@ -1342,12 +1683,12 @@ export default function PostForm({
     overlay.style.height = "100%";
     overlay.style.zIndex = "0";
     const caret = Math.min(Math.max(0, caretRef.current), content.length);
-    const idx = findAnchorIndex(caret);
-    if (idx == null) {
+    const location = findAnchorLocation(caret);
+    if (!location) {
       band.style.display = "none";
       return;
     }
-    const target = anchorsRef.current[idx]!.el;
+    const target = location.anchor.el;
     const wrapRect = wrap.getBoundingClientRect();
     const getRect = (el: HTMLElement) => {
       const rects = el.getClientRects();
@@ -1355,10 +1696,9 @@ export default function PostForm({
     };
     let r = getRect(target);
     if (r.height < 4 || r.width === 0) {
-      const prevIdx = Math.max(0, idx - 1);
-      if (prevIdx !== idx) {
-        const prevEl = anchorsRef.current[prevIdx]!.el;
-        const pr = getRect(prevEl);
+      const prev = previousAnchor(location);
+      if (prev) {
+        const pr = getRect(prev.el);
         if (pr.height >= 4 && pr.width > 0) r = pr;
       }
     }
@@ -1375,7 +1715,14 @@ export default function PostForm({
     band.style.height = `${height}px`;
     band.style.width = `${width}px`;
     band.style.borderRadius = "4px";
-  }, [overlayActive, showPreview, activePreviewWrap, content.length, findAnchorIndex]);
+  }, [
+    overlayActive,
+    showPreview,
+    activePreviewWrap,
+    content.length,
+    findAnchorLocation,
+    previousAnchor,
+  ]);
 
   const schedulePreviewHighlight = useCallback(() => {
     if (!overlayActive) return;
@@ -1538,7 +1885,6 @@ export default function PostForm({
         ta.setSelectionRange(pos, pos);
         centerCaretAtRatio(ta, 0.4);
         caretRef.current = pos;
-        rebuildAnchors();
         const did = syncToCaret();
         if (did) requestAnimationFrame(() => schedulePreviewHighlight());
         else schedulePreviewHighlight();
@@ -1550,7 +1896,6 @@ export default function PostForm({
     },
     [
       centerCaretAtRatio,
-      rebuildAnchors,
       syncToCaret,
       scheduleEditorHighlight,
       schedulePreviewHighlight,
@@ -1609,7 +1954,6 @@ export default function PostForm({
     if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
     rafRef.current = requestAnimationFrame(() => {
       rafRef.current = null;
-      rebuildAnchors();
       const didScroll = syncToCaret();
       refreshGutterPins();
       if (didScroll) {
@@ -1623,7 +1967,6 @@ export default function PostForm({
       }
     });
   }, [
-    rebuildAnchors,
     syncToCaret,
     refreshGutterPins,
     schedulePreviewHighlight,
@@ -1647,7 +1990,8 @@ export default function PostForm({
           if (--tries > 0) requestAnimationFrame(tick);
           return;
         }
-        if (anchorsRef.current.length === 0 && bodyEl.clientHeight === 0) {
+        const previewState = previewStateByRootRef.current.get(bodyEl);
+        if ((!previewState || previewState.anchorGroups.length === 0) && bodyEl.clientHeight === 0) {
           if (--tries > 0) requestAnimationFrame(tick);
           return;
         }
@@ -1974,7 +2318,10 @@ export default function PostForm({
   }, [showPreview, overlayActive]);
 
   useLayoutEffect(() => {
-    if (!showPreview) return;
+    if (!showPreview || !previewRender) return;
+    if (previewRender.generation !== previewGenerationRef.current) return;
+    const previewFragments = previewRender.fragments;
+    const previewContentLength = previewRender.contentLength;
 
     const a = overlayActive ? overlayBodyARef.current : previewBodyARef.current;
     const b = overlayActive ? overlayBodyBRef.current : previewBodyBRef.current;
@@ -1982,63 +2329,203 @@ export default function PostForm({
     const bodyRef = overlayActive ? overlayBodyRef : previewBodyRef;
     if (!a || !b) return;
 
+    const notifyPreviewUpdated = (root: HTMLDivElement) => {
+      if (overlayActiveLiveRef.current !== overlayActive || bodyRef.current !== root) return;
+      scheduleSyncRef.current();
+      schedulePreviewHighlightRef.current();
+      attachPreviewObservers();
+    };
+
+    const patchMathAndRefreshBindings = (
+      root: HTMLDivElement,
+      target: HTMLElement,
+      blockIndex?: number,
+    ) => {
+      void patchMathInlineInContainer(target).then(() => {
+        const state = previewStateByRootRef.current.get(root);
+        if (!state) return;
+        if (blockIndex === undefined) {
+          if (!refreshMountedPreviewBindings(state)) return;
+        } else {
+          const block = state.blocks[blockIndex];
+          if (!block || block.node !== target) return;
+          const binding = bindPreviewPositions(block.node, block.positions);
+          if (!binding) return;
+          block.binding = binding;
+          rebuildPreviewAnchorGroups(state);
+        }
+        notifyPreviewUpdated(root);
+      });
+    };
+
+    const buildInto = (root: HTMLDivElement): MountedPreviewState | null => {
+      destroyTrackMaps(root);
+      const state = buildMountedPreviewState(root, previewFragments, previewContentLength);
+      if (!state) return null;
+      previewStateByRootRef.current.set(root, state);
+      return state;
+    };
+
+    const activateInitial = (front: HTMLDivElement, back: HTMLDivElement) => {
+      const state = buildInto(front);
+      if (!state) return;
+      front.style.display = "block";
+      back.style.display = "none";
+      bodyRef.current = front;
+      hydrateTrackMaps(front);
+      hydrateLinkSnippets(front);
+      patchMathAndRefreshBindings(front, front);
+      notifyPreviewUpdated(front);
+    };
+
+    const swapFullRebuild = (front: HTMLDivElement, back: HTMLDivElement): number | null => {
+      const state = buildInto(back);
+      if (!state) return null;
+      return requestAnimationFrame(() => {
+        reconcileTrackMapPreviews(front, back);
+        reconcileLinkSnippetPreviews(front, back);
+        if (!refreshMountedPreviewBindings(state)) {
+          const rebuiltState = buildInto(back);
+          if (!rebuiltState) return;
+        }
+        front.style.display = "none";
+        back.style.display = "block";
+        frontIsARef.current = back === a;
+        bodyRef.current = back;
+        destroyTrackMaps(front);
+        hydrateTrackMaps(back);
+        hydrateLinkSnippets(back);
+        patchMathAndRefreshBindings(back, back);
+        notifyPreviewUpdated(back);
+      });
+    };
+
     const currentBody = bodyRef.current;
     const hasMountedBody = currentBody === a || currentBody === b;
     if (!hasMountedBody) {
       const front = frontIsARef.current ? a : b;
       const back = frontIsARef.current ? b : a;
-      front.innerHTML = previewHtml;
-      front.style.display = "block";
-      back.style.display = "none";
-      bodyRef.current = front;
-      previewRenderedHtmlRef.current.set(front, previewHtml);
-      hydrateTrackMaps(front);
-      hydrateLinkSnippets(front);
-      rebuildAnchors();
-      scheduleSyncRef.current();
-      schedulePreviewHighlightRef.current();
-      if (overlayActive) refreshGutterPins();
-      attachPreviewObservers();
+      activateInitial(front, back);
       return;
     }
 
     const front = currentBody;
-    if (previewRenderedHtmlRef.current.get(front) === previewHtml) {
-      front.style.display = "block";
-      (front === a ? b : a).style.display = "none";
-      return;
+    const back = front === a ? b : a;
+    const state = previewStateByRootRef.current.get(front);
+    if (!state) {
+      const frame = swapFullRebuild(front, back);
+      return frame == null ? undefined : () => cancelAnimationFrame(frame);
     }
 
-    const back = front === a ? b : a;
-    back.innerHTML = previewHtml;
-    const frame = requestAnimationFrame(() => {
-      reconcileTrackMapPreviews(front, back);
-      reconcileLinkSnippetPreviews(front, back);
-      front.style.display = "none";
-      back.style.display = "block";
-      frontIsARef.current = back === a;
-      bodyRef.current = back;
-      previewRenderedHtmlRef.current.set(back, previewHtml);
-      destroyTrackMaps(front);
-      hydrateTrackMaps(back);
-      hydrateLinkSnippets(back);
-      rebuildAnchors();
-      scheduleSyncRef.current();
-      schedulePreviewHighlightRef.current();
-      if (overlayActive) refreshGutterPins();
-      attachPreviewObservers();
-    });
+    const plan = planPreviewBlockUpdate(state.blocks, previewFragments);
+    if (plan.fullRebuild) {
+      const frame = swapFullRebuild(front, back);
+      return frame == null ? undefined : () => cancelAnimationFrame(frame);
+    }
 
-    return () => cancelAnimationFrame(frame);
+    const preparedDirty = new Map<
+      number,
+      { node: ChildNode; binding: PreviewPositionBinding }
+    >();
+    for (const index of plan.dirtyIndices) {
+      const fragment = previewFragments[index];
+      if (!fragment) {
+        const frame = swapFullRebuild(front, back);
+        return frame == null ? undefined : () => cancelAnimationFrame(frame);
+      }
+      const node = createPreviewNode(front.ownerDocument, fragment.html);
+      const binding = node ? bindPreviewPositions(node, fragment.positions) : null;
+      if (!node || !binding) {
+        const frame = swapFullRebuild(front, back);
+        return frame == null ? undefined : () => cancelAnimationFrame(frame);
+      }
+      preparedDirty.set(index, { node, binding });
+    }
+
+    let positionMismatch = false;
+    for (const index of plan.positionOnlyIndices) {
+      const block = state.blocks[index];
+      const fragment = previewFragments[index];
+      if (!block || !fragment) {
+        positionMismatch = true;
+        break;
+      }
+      const anchors = updateBoundPreviewPositions(block.binding, fragment.positions);
+      if (!anchors) {
+        positionMismatch = true;
+        break;
+      }
+      block.binding.anchors = anchors;
+      block.positions = fragment.positions;
+      block.structureKey = fragment.structureKey;
+      block.renderKey = fragment.renderKey;
+    }
+    if (positionMismatch) {
+      const frame = swapFullRebuild(front, back);
+      return frame == null ? undefined : () => cancelAnimationFrame(frame);
+    }
+
+    for (const index of plan.dirtyIndices) {
+      const block = state.blocks[index]!;
+      const fragment = previewFragments[index]!;
+      const prepared = preparedDirty.get(index)!;
+      const previousNode = block.node;
+      let nextNode = prepared.node;
+      let nextBinding = prepared.binding;
+
+      if (previousNode instanceof HTMLElement && nextNode instanceof HTMLElement) {
+        reconcileTrackMapPreviews(previousNode, nextNode);
+        reconcileLinkSnippetPreviews(previousNode, nextNode);
+        const rebound = bindPreviewPositions(nextNode, fragment.positions);
+        if (rebound) {
+          nextBinding = rebound;
+        } else {
+          destroyTrackMaps(nextNode);
+          const freshNode = createPreviewNode(front.ownerDocument, fragment.html);
+          const freshBinding = freshNode
+            ? bindPreviewPositions(freshNode, fragment.positions)
+            : null;
+          if (!freshNode || !freshBinding) {
+            const frame = swapFullRebuild(front, back);
+            return frame == null ? undefined : () => cancelAnimationFrame(frame);
+          }
+          nextNode = freshNode;
+          nextBinding = freshBinding;
+        }
+      }
+      previousNode.replaceWith(nextNode);
+      if (previousNode instanceof HTMLElement) destroyTrackMaps(previousNode);
+
+      state.blocks[index] = {
+        node: nextNode,
+        structureKey: fragment.structureKey,
+        renderKey: fragment.renderKey,
+        positions: fragment.positions,
+        binding: nextBinding,
+      };
+
+      if (nextNode instanceof HTMLElement) {
+        hydrateTrackMaps(nextNode);
+        hydrateLinkSnippets(nextNode);
+        patchMathAndRefreshBindings(front, nextNode, index);
+      }
+    }
+
+    const sentinelPosition = String(previewContentLength);
+    if (state.sentinel.getAttribute("data-char-position") !== sentinelPosition) {
+      state.sentinel.setAttribute("data-char-position", sentinelPosition);
+    }
+    rebuildPreviewAnchorGroups(state);
+    front.style.display = "block";
+    back.style.display = "none";
+    notifyPreviewUpdated(front);
   }, [
-    previewHtml,
+    previewRender,
     showPreview,
     overlayActive,
     hydrateTrackMaps,
     hydrateLinkSnippets,
-    rebuildAnchors,
     attachPreviewObservers,
-    refreshGutterPins,
   ]);
 
   function handleSubmit(e: React.FormEvent) {

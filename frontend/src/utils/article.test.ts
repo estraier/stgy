@@ -11,6 +11,7 @@ jest.mock("@/config", () => ({
 
 import {
   makeArticleHtmlFromMarkdown,
+  makeArticlePreviewFragmentsFromMarkdown,
   makeArticleTextFromMarkdown,
   makeReplyDigestTextFromMarkdown,
   makePubArticleHtmlFromMarkdown,
@@ -41,6 +42,43 @@ describe("article utils (normal cases)", () => {
     expect(html).toContain('src="https://cdn.test/images-bkt/u1/masters/abc/cat.jpg"');
     expect(html).toContain("data-char-position");
     expect(html).toContain("data-line-position");
+  });
+
+  test("makeArticlePreviewFragmentsFromMarkdown adds preview metadata", () => {
+    const fragments = makeArticlePreviewFragmentsFromMarkdown(
+      ["Hello world", "![cap](/images/u1/masters/abc/cat.jpg){width=400}"].join(
+        "\n\n",
+      ),
+    );
+
+    expect(fragments).toHaveLength(2);
+    expect(fragments[0].structureKey).toBe("p");
+    expect(fragments[0].html).toContain('data-preview-pos-id="0"');
+    expect(fragments[0].positions[0]).toEqual({
+      id: 0,
+      charPosition: 0,
+      linePosition: 0,
+    });
+    expect(fragments[1].structureKey).toBe("figure:image");
+    expect(fragments[1].html).toContain(
+      'src="https://cdn.test/images-bkt/u1/masters/abc/cat.jpg"',
+    );
+  });
+
+  test("preview fragments preserve the existing positioned preview HTML", () => {
+    const md = [
+      "# Heading",
+      "<!TOC!>",
+      "## Section",
+      "Text with **bold** and $x^2$.",
+      "![cap](/images/u1/masters/abc/cat.jpg){grid}",
+      "![cap2](/images/u1/masters/abc/dog.jpg){grid}",
+    ].join("\n\n");
+    const previewHtml = makeArticlePreviewFragmentsFromMarkdown(md)
+      .map((fragment) => fragment.html)
+      .join("")
+      .replace(/ data-preview-pos-id="\d+"/gu, "");
+    expect(previewHtml).toBe(makeArticleHtmlFromMarkdown(md, true));
   });
 
   test("makeArticleHtmlFromMarkdown renders YouTube embeds", () => {

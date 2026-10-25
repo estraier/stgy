@@ -1,6 +1,7 @@
 import { Config } from "@/config";
 import {
   MdNode,
+  MdHtmlFragment,
   parseMarkdown,
   MdRewriteRule,
   MdMediaRewriteOptions,
@@ -15,11 +16,25 @@ import {
   mdCutOff,
   mdConvertAsciiToFullwidth,
   mdRenderHtml,
+  mdRenderHtmlFragments,
   mdRenderText,
   mdSeparateTitle,
   mdSeparateMetadata,
   deserializeMdNodes,
 } from "stgy-markdown";
+
+function prepareArticleNodesFromMarkdown(
+  mdText: string,
+  doRewrite: boolean,
+): MdNode[] {
+  let nodes = parseMarkdown(mdText);
+  if (doRewrite) {
+    nodes = rewriteMediaUrls(nodes, false);
+  }
+  nodes = mdGroupImageGrid(nodes, { maxElements: 5 });
+  nodes = mdGroupMapGrid(nodes, { maxElements: 5 });
+  return nodes;
+}
 
 export function makeArticleHtmlFromMarkdown(
   mdText: string,
@@ -27,13 +42,24 @@ export function makeArticleHtmlFromMarkdown(
   idPrefix?: string,
   doRewrite = true,
 ) {
-  let nodes = parseMarkdown(mdText);
-  if (doRewrite) {
-    nodes = rewriteMediaUrls(nodes, false);
-  }
-  nodes = mdGroupImageGrid(nodes, { maxElements: 5 });
-  nodes = mdGroupMapGrid(nodes, { maxElements: 5 });
-  return mdRenderHtml(nodes, usePosAttrs, idPrefix);
+  const nodes = prepareArticleNodesFromMarkdown(mdText, doRewrite);
+  return mdRenderHtml(nodes, {
+    positions: usePosAttrs ? "absolute" : "none",
+    idPrefix,
+  });
+}
+
+export function makeArticlePreviewFragmentsFromMarkdown(
+  mdText: string,
+  idPrefix?: string,
+  doRewrite = true,
+): MdHtmlFragment[] {
+  const nodes = prepareArticleNodesFromMarkdown(mdText, doRewrite);
+  return mdRenderHtmlFragments(nodes, {
+    positions: "absolute",
+    previewPositionIds: true,
+    idPrefix,
+  });
 }
 
 export function makeArticleTextFromMarkdown(mdText: string) {
@@ -77,7 +103,7 @@ export function makePubArticleHtmlFromMarkdown(
   nodes = mdGroupMapGrid(nodes, { maxElements: 5 });
   nodes = mdAnnotateElements(nodes);
   nodes = transformDisplayedText(nodes, options);
-  const html = mdRenderHtml(nodes, false, idPrefix);
+  const html = mdRenderHtml(nodes, { positions: "none", idPrefix });
   let featured: string | null = null;
   const featuredNode = mdFindFeatured(nodes);
   if (featuredNode) {
@@ -110,7 +136,7 @@ export function makeSnippetHtmlFromMarkdown(
   nodes = mdGroupImageGrid(nodes, { maxElements: 5 });
   nodes = mdGroupMapGrid(nodes, { maxElements: 5 });
   nodes = transformDisplayedText(nodes, options);
-  return mdRenderHtml(nodes, false, idPrefix);
+  return mdRenderHtml(nodes, { positions: "none", idPrefix });
 }
 
 export function makeSnippetTextFromMarkdown(mdText: string, maxLen = 50) {
@@ -174,7 +200,7 @@ export function makeHtmlFromJsonSnippet(
   nodes = mdGroupImageGrid(nodes, { maxElements: 5 });
   nodes = mdGroupMapGrid(nodes, { maxElements: 5 });
   nodes = transformDisplayedText(nodes, options);
-  return mdRenderHtml(nodes, false, idPrefix);
+  return mdRenderHtml(nodes, { positions: "none", idPrefix });
 }
 
 function transformDisplayedText(
