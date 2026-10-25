@@ -739,12 +739,36 @@ describe("image editor RGB16 characterization", () => {
     expect(rounded(intoSample)).toEqual([0.437501933383, 0.712493470342, 0.987500333031]);
 
     const point = imageEditor.renderedPixelToSourcePoint(7, 4, 400, 300, 10, 20, 2, 1.5, 33);
-    expect(point.x).toBeCloseTo(-25.371550726743678, 12);
-    expect(point.y).toBeCloseTo(144.92785814247995, 12);
+    expect(point.x).toBeCloseTo(-25.871550726743678, 12);
+    expect(point.y).toBeCloseTo(144.42785814247995, 12);
 
     const transform = imageEditor.buildRenderedPixelToSourceTransform(400, 300, 10, 20, 2, 1.5, 33);
     expect(transform.originX + 7 * transform.columnStepX + 4 * transform.rowStepX).toBeCloseTo(point.x, 12);
     expect(transform.originY + 7 * transform.columnStepY + 4 * transform.rowStepY).toBeCloseTo(point.y, 12);
+  });
+
+  test("maps a 1:1 render to the full source pixel-center range without dropping right/bottom edges", () => {
+    const width = 7;
+    const height = 5;
+    const transform = imageEditor.buildRenderedPixelToSourceTransform(
+      width,
+      height,
+      0,
+      0,
+      1,
+      1,
+      0,
+    );
+    expect(transform.originX).toBe(0);
+    expect(transform.originY).toBe(0);
+    expect(
+      transform.originX + (width - 1) * transform.columnStepX
+        + (height - 1) * transform.rowStepX,
+    ).toBe(width - 1);
+    expect(
+      transform.originY + (width - 1) * transform.columnStepY
+        + (height - 1) * transform.rowStepY,
+    ).toBe(height - 1);
   });
 
   test("freezes the TCA/vignetting integration path around Lensfun coordinates", () => {
@@ -794,7 +818,7 @@ describe("image editor render characterization", () => {
     const decoded = makeSyntheticDecodedRgb16();
     expect(
       fnv1a32(renderToBytes(decoded, { x: 0, y: 0, w: 4, h: 3 }, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)),
-    ).toBe("9d568c31");
+    ).toBe("b522cc18");
 
     expect(
       fnv1a32(
@@ -813,7 +837,7 @@ describe("image editor render characterization", () => {
           -5,
         ),
       ),
-    ).toBe("a652693f");
+    ).toBe("9d04864b");
   });
 
   test("freezes crop + arbitrary rotation render output", () => {
@@ -832,7 +856,7 @@ describe("image editor render characterization", () => {
       0,
       0,
     );
-    expect(fnv1a32(bytes)).toBe("e75269ff");
+    expect(fnv1a32(bytes)).toBe("f8211ef3");
   });
 
   test("matches direct preview rendering when using the preview-resolution linear RGB cache", () => {

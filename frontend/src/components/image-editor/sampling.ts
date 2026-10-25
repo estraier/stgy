@@ -271,12 +271,22 @@ export function renderedPixelToSourcePoint(
   scaleY: number,
   rotationDegrees: number,
 ): EditPoint {
+  // Crop/preview geometry uses image-edge coordinates (pixel centers at n + 0.5),
+  // while the RGB16 bilinear sampler uses pixel-center indices (centers at n).
+  // Convert between those conventions here so a 1:1 render maps the first/last
+  // output pixels exactly to source centers 0 and width-1 / height-1.
   const point = {
-    x: cropX + (x + 0.5) / scaleX,
-    y: cropY + (y + 0.5) / scaleY,
+    x: cropX + (x + 0.5) / scaleX - 0.5,
+    y: cropY + (y + 0.5) / scaleY - 0.5,
   };
   if (Math.abs(normalizeRotationDegrees(rotationDegrees)) < 1e-9) return point;
-  return inverseRotatePoint(point.x, point.y, sourceW / 2, sourceH / 2, rotationDegrees);
+  return inverseRotatePoint(
+    point.x,
+    point.y,
+    (sourceW - 1) / 2,
+    (sourceH - 1) / 2,
+    rotationDegrees,
+  );
 }
 
 export type RenderedPixelToSourceTransform = {
@@ -297,8 +307,12 @@ export function buildRenderedPixelToSourceTransform(
   scaleY: number,
   rotationDegrees: number,
 ): RenderedPixelToSourceTransform {
-  const px = cropX + 0.5 / scaleX;
-  const py = cropY + 0.5 / scaleY;
+  // Geometry above this layer is expressed in image-edge coordinates, but the
+  // sampler below addresses pixel centers as integer coordinates. The -0.5
+  // conversion is essential at the right/bottom edges: without it, a 1:1
+  // render asks for width-0.5 / height-0.5 and rejects the final column/row.
+  const px = cropX + 0.5 / scaleX - 0.5;
+  const py = cropY + 0.5 / scaleY - 0.5;
   const normalizedRotation = normalizeRotationDegrees(rotationDegrees);
   if (Math.abs(normalizedRotation) < 1e-9) {
     return {
@@ -314,8 +328,8 @@ export function buildRenderedPixelToSourceTransform(
   const radians = normalizedRotation * Math.PI / 180;
   const cos = Math.cos(radians);
   const sin = Math.sin(radians);
-  const centerX = sourceW / 2;
-  const centerY = sourceH / 2;
+  const centerX = (sourceW - 1) / 2;
+  const centerY = (sourceH - 1) / 2;
   const dx = px - centerX;
   const dy = py - centerY;
   return {
