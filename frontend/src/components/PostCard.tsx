@@ -62,7 +62,9 @@ export default function PostCard({
       ? convertHtmlMathInline(
           !truncated && hasContent
             ? makeArticleHtmlFromMarkdown((post as PostDetail).content)
-            : makeHtmlFromJsonSnippet(post.snippet, idPrefix),
+            : makeHtmlFromJsonSnippet(post.snippet, idPrefix, {
+                moveLeadingFeaturedAfterHeading: true,
+              }),
         )
       : "";
 
@@ -258,7 +260,11 @@ export default function PostCard({
       const plain = makeSnippetTextFromMarkdown(content, Number.MAX_SAFE_INTEGER);
       await copyHtmlRich(html, plain);
     } else {
-      const html = convertHtmlMathInline(makeHtmlFromJsonSnippet(post.snippet, idPrefix));
+      const html = convertHtmlMathInline(
+        makeHtmlFromJsonSnippet(post.snippet, idPrefix, {
+          moveLeadingFeaturedAfterHeading: true,
+        }),
+      );
       await copyHtmlRich(html);
     }
     setCopyMenuOpen(false);
@@ -269,7 +275,11 @@ export default function PostCard({
     const html =
       content !== null
         ? convertHtmlMathInline(makeArticleHtmlFromMarkdown(content, false, idPrefix))
-        : convertHtmlMathInline(makeHtmlFromJsonSnippet(post.snippet, idPrefix));
+        : convertHtmlMathInline(
+            makeHtmlFromJsonSnippet(post.snippet, idPrefix, {
+              moveLeadingFeaturedAfterHeading: true,
+            }),
+          );
 
     const doc =
       '<!doctype html><html><head><meta charset="utf-8">' +
@@ -331,10 +341,11 @@ export default function PostCard({
     if (!pubDialogOpen) return;
     const has = typeof publishedAtLocal === "string" && publishedAtLocal.trim() !== "";
     setPubChecked(has);
-    const base = has ? new Date(publishedAtLocal as string) : new Date();
+    const preferred = has ? new Date(publishedAtLocal as string) : new Date(post.createdAt);
+    const base = Number.isNaN(preferred.getTime()) ? new Date() : preferred;
     setPubInput(toLocalInputValue(base));
     setPubError("");
-  }, [publishedAtLocal, pubDialogOpen, toLocalInputValue]);
+  }, [post.createdAt, publishedAtLocal, pubDialogOpen, toLocalInputValue]);
 
   async function applyPublication() {
     setPubError("");
@@ -796,13 +807,27 @@ export default function PostCard({
               <span>Publish this post</span>
             </label>
             <label className="block text-sm text-gray-700 mb-1">Published at</label>
-            <input
-              type="datetime-local"
-              className="w-full border border-gray-600 rounded px-2 py-1 mb-2 disabled:text-gray-400"
-              value={pubInput}
-              onChange={(e) => setPubInput(e.target.value)}
-              disabled={!pubChecked}
-            />
+            <div className="flex items-center gap-2 mb-2">
+              <input
+                type="datetime-local"
+                className="min-w-0 flex-1 border border-gray-600 rounded px-2 py-1 disabled:text-gray-400"
+                value={pubInput}
+                onChange={(e) => setPubInput(e.target.value)}
+                disabled={!pubChecked}
+              />
+              <button
+                type="button"
+                className="shrink-0 px-3 py-1 rounded border bg-gray-50 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={() => {
+                  setPubInput(toLocalInputValue(new Date()));
+                  setPubError("");
+                }}
+                disabled={!pubChecked}
+                title="Set to current time"
+              >
+                now
+              </button>
+            </div>
             {pubError && <div className="text-red-600 text-sm mb-2">{pubError}</div>}
             <div className="mt-3 flex justify-end gap-2">
               <button

@@ -172,7 +172,9 @@ export default function UserCard({
 
   const hasIntro = "introduction" in user && typeof user.introduction === "string";
   const introHtml = hasIntro ? makeArticleHtmlFromMarkdown(user.introduction as string) : "";
-  const snippetHtml = makeHtmlFromJsonSnippet(user.snippet || "[]", idPrefix);
+  const snippetHtml = makeHtmlFromJsonSnippet(user.snippet || "[]", idPrefix, {
+    moveLeadingFeaturedAfterHeading: true,
+  });
   const bodyHtml = bodyOverride === undefined ? (truncated ? snippetHtml : introHtml || snippetHtml) : "";
 
   const masterSrc = (() => {

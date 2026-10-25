@@ -369,6 +369,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
                           design ? `?design=${encodeURIComponent(design)}` : ""
                         }`;
                         const snippetHtml = makeHtmlFromJsonSnippet(r.snippet, `p${idx + 1}-h`, {
+                          moveLeadingFeaturedAfterHeading: true,
                           writingMode,
                         });
                         const publishedAtDate = new Date(r.publishedAt ?? "");

@@ -212,6 +212,7 @@ export default function PubSiteSearchResults({
           items.map((r, idx) => {
             const postHref = `/pub/${r.id}${design ? `?design=${encodeURIComponent(design)}` : ""}`;
             const snippetHtml = makeHtmlFromJsonSnippet(r.snippet, `p${idx + 1}-h`, {
+              moveLeadingFeaturedAfterHeading: true,
               writingMode,
             });
             const publishedAtDate = new Date(r.publishedAt ?? "");
