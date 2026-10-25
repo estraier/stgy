@@ -530,7 +530,7 @@ export default function PageBody() {
       const locale = typeof attrs.locale === "string" ? attrs.locale : null;
       const id =
         isAdmin && typeof attrs.date === "string"
-          ? makePostIdFromDateString(attrs.date)
+          ? makePostIdFromDateString(attrs.date, userTimezone)
           : undefined;
       if (isAdmin && typeof attrs.date === "string" && !id) {
         throw new Error("Invalid date.");
@@ -622,7 +622,7 @@ export default function PageBody() {
       const locale = typeof attrs.locale === "string" ? attrs.locale : null;
       const id =
         isAdmin && typeof attrs.date === "string"
-          ? makePostIdFromDateString(attrs.date)
+          ? makePostIdFromDateString(attrs.date, userTimezone)
           : undefined;
       if (isAdmin && typeof attrs.date === "string" && !id) {
         throw new Error("Invalid date.");

@@ -227,14 +227,55 @@ describe("parseDateString", () => {
 });
 
 describe("makePostIdFromDateString", () => {
+  const idForIso = (iso: string): string =>
+    (BigInt(new Date(iso).getTime()) << BigInt(20)).toString(16).padStart(16, "0").toUpperCase();
+
   test("creates a lower-bound post ID from the specified instant", () => {
     expect(makePostIdFromDateString("2026-08-01T22:33:44+09:00")).toBe(
       "19FBD87D6C000000",
     );
   });
 
+  test("uses noon in the user's timezone for a date-only directive", () => {
+    expect(makePostIdFromDateString("2026-10-25", "Asia/Tokyo")).toBe(
+      idForIso("2026-10-25T03:00:00.000Z"),
+    );
+    expect(makePostIdFromDateString("2026年10月25日", "Asia/Tokyo")).toBe(
+      idForIso("2026-10-25T03:00:00.000Z"),
+    );
+  });
+
+  test("uses the user's timezone when a time has no explicit timezone", () => {
+    expect(makePostIdFromDateString("2026-10-25T08:30:00", "Asia/Tokyo")).toBe(
+      idForIso("2026-10-24T23:30:00.000Z"),
+    );
+  });
+
+  test("keeps an explicit timezone instead of replacing it with the user's timezone", () => {
+    expect(makePostIdFromDateString("2026-10-25T08:30:00+02:00", "Asia/Tokyo")).toBe(
+      idForIso("2026-10-25T06:30:00.000Z"),
+    );
+    expect(makePostIdFromDateString("2026-10-25T08:30:00Z", "Asia/Tokyo")).toBe(
+      idForIso("2026-10-25T08:30:00.000Z"),
+    );
+  });
+
+  test("resolves timezone daylight-saving offsets for timezone-less times", () => {
+    expect(makePostIdFromDateString("2026-07-01T12:00:00", "America/New_York")).toBe(
+      idForIso("2026-07-01T16:00:00.000Z"),
+    );
+    expect(makePostIdFromDateString("2026-01-01T12:00:00", "America/New_York")).toBe(
+      idForIso("2026-01-01T17:00:00.000Z"),
+    );
+  });
+
+  test("rejects invalid timezone names and nonexistent local times", () => {
+    expect(makePostIdFromDateString("2026-10-25", "Not/A_Timezone")).toBeUndefined();
+    expect(makePostIdFromDateString("2026-03-08T02:30:00", "America/New_York")).toBeUndefined();
+  });
+
   test("returns undefined for an invalid or negative date", () => {
-    expect(makePostIdFromDateString("invalid")).toBeUndefined();
-    expect(makePostIdFromDateString("1900-01-01T00:00:00Z")).toBeUndefined();
+    expect(makePostIdFromDateString("invalid", "Asia/Tokyo")).toBeUndefined();
+    expect(makePostIdFromDateString("1900-01-01T00:00:00Z", "Asia/Tokyo")).toBeUndefined();
   });
 });
