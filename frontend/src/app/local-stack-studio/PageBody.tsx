@@ -293,6 +293,52 @@ export default function PageBody() {
                     <option value="32">32 (large bokeh)</option>
                   </select>
                 </label>
+                <label id="stf-blur-strength-option" className="hidden flex-col items-start gap-1.5">
+                  <span className="text-xs font-medium text-gray-500">Blur strength</span>
+                  <select
+                    id="stf-blur-strength"
+                    defaultValue="none"
+                    className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm"
+                  >
+                    <option value="none">none</option>
+                    <option value="weak">weak</option>
+                    <option value="medium">medium</option>
+                    <option value="strong">strong</option>
+                    <option value="coarse-sharpness">0.5MP sharpness</option>
+                    <option value="fine-sharpness">16MP sharpness</option>
+                    <option value="raw-ratio">16MP / 0.5MP raw ratio</option>
+                    <option value="raw-ratio-p50">16MP raw ratio (P50/4)</option>
+                    <option value="raw-ratio-p50-8">16MP raw ratio (P50/8)</option>
+                    <option value="raw-ratio-relative">16MP raw ratio (relative)</option>
+                    <option value="raw-ratio-relative2">16MP raw ratio (relative2)</option>
+                    <option value="raw-ratio-relative3">16MP raw ratio (relative3)</option>
+                    <option value="raw-ratio-relative4">16MP raw ratio (relative4)</option>
+                    <option value="raw-ratio-relative5">16MP raw ratio (relative5)</option>
+                    <option value="interpolated">16MP raw ratio (area interpolated)</option>
+                    <option value="volume-interpolated">16MP raw ratio (volume interpolated)</option>
+                    <option value="volume-interpolated-2">16MP raw ratio (volume interpolated 2)</option>
+                    <option value="sigmoid">16MP / 0.5MP sigmoid</option>
+                    <option value="dilated">16MP / 0.5MP dilated</option>
+                  </select>
+                </label>
+                <label id="stf-blur-ratio-option" className="hidden flex-col items-start gap-1.5">
+                  <span className="text-xs font-medium text-gray-500">Blur ratio</span>
+                  <select
+                    id="stf-blur-ratio"
+                    defaultValue="0.5"
+                    className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm"
+                  >
+                    <option value="0.1">10%</option>
+                    <option value="0.2">20%</option>
+                    <option value="0.3">30%</option>
+                    <option value="0.4">40%</option>
+                    <option value="0.5">50%</option>
+                    <option value="0.6">60%</option>
+                    <option value="0.7">70%</option>
+                    <option value="0.8">80%</option>
+                    <option value="0.9">90%</option>
+                  </select>
+                </label>
               </div>
             </div>
           </div>

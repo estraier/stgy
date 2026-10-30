@@ -11,11 +11,15 @@ const strictFiles = [
   "src/app/local-stack-studio/workers/protocols/focus-protocol.ts",
   "src/app/local-stack-studio/workers/protocols/hdr-protocol.ts",
   "src/app/local-stack-studio/workers/protocols/linear-merge-protocol.ts",
+  "src/app/local-stack-studio/workers/protocols/stf-additional-blur-protocol.ts",
   "src/app/local-stack-studio/workers/protocols/panorama-protocol.ts",
   "src/app/local-stack-studio/workers/orb.worker.ts",
   "src/app/local-stack-studio/workers/ecc.worker.ts",
   "src/app/local-stack-studio/workers/focus.worker.ts",
   "src/app/local-stack-studio/stack/worker-clients.ts",
+  "src/app/local-stack-studio/stack/stf-additional-blur.ts",
+  "src/app/local-stack-studio/stack/stf-additional-blur-client.ts",
+  "src/app/local-stack-studio/stack/stf-additional-blur-pool.ts",
 ];
 
 const syntaxFiles = [
@@ -24,6 +28,7 @@ const syntaxFiles = [
   "src/app/local-stack-studio/stack/linear-merge-client.ts",
   "src/app/local-stack-studio/workers/hdr.worker.ts",
   "src/app/local-stack-studio/workers/linear-merge.worker.ts",
+  "src/app/local-stack-studio/workers/stf-additional-blur.worker.ts",
   "src/app/local-stack-studio/workers/panorama.worker.ts",
 ];
 
