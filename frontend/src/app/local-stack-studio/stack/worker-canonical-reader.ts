@@ -54,6 +54,12 @@ export class WorkerCanonicalReader {
     return this.aligned.readLinearRegion(imageIndex, x, y, width, height);
   }
 
+  readLinearSampleGrid(imageIndex: number, y: number, height: number,
+    stride: number, offsetX: number, offsetY: number): Promise<Float32Array> {
+    this.ensureOpen();
+    return this.aligned.readLinearSampleGrid(imageIndex, y, height, stride, offsetX, offsetY);
+  }
+
   readGamma2Region(imageIndex: number, x: number, y: number, width: number, height: number, linearRangeMax: 1 | 4 = 1): Promise<Uint16Array> {
     this.ensureOpen();
     return this.aligned.readGamma2Region(imageIndex, x, y, width, height, linearRangeMax);

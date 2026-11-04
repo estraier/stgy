@@ -566,6 +566,9 @@ function canonicalDecodeLut(): Float32Array {
   return decodeLut;
 }
 
+/** The same Float32 lookup used by full-row decoding, for sparse aligned reads. */
+export function getCanonicalLinearDecodeLut(): Float32Array { return canonicalDecodeLut(); }
+
 export async function readCanonicalLinearRows(session: CanonicalReadableSession, imageIndex: number, startRow: number, rowCount: number): Promise<Float32Array> {
   const stored = await readCanonicalStoredRows(session, imageIndex, startRow, rowCount);
   const lut = canonicalDecodeLut();

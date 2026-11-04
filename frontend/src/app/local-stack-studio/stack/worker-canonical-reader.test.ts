@@ -1,6 +1,7 @@
 const close = jest.fn();
 const readLinearRegion = jest.fn(async () => new Float32Array([1, 2, 3]));
 const readGamma2Region = jest.fn(async () => new Uint16Array([4, 5, 6]));
+const readLinearSampleGrid = jest.fn(async () => new Float32Array([7, 8, 9]));
 const openCanonicalReadSession = jest.fn();
 
 jest.mock("./canonical-source", () => ({
@@ -13,6 +14,7 @@ jest.mock("./aligned-reader", () => ({
     width: 10,
     height: 20,
     readLinearRegion,
+    readLinearSampleGrid,
     readGamma2Region,
   })),
 }));
@@ -39,6 +41,8 @@ describe("WorkerCanonicalReader", () => {
     });
     expect(openCanonicalReadSession).toHaveBeenCalledWith("session", 32 * 1024 * 1024);
     await expect(reader.readLinearRegion(0, 0, 0, 1, 1)).resolves.toEqual(new Float32Array([1, 2, 3]));
+    await expect(reader.readLinearSampleGrid(0, 3, 5, 4, 2, 1)).resolves.toEqual(new Float32Array([7, 8, 9]));
+    expect(readLinearSampleGrid).toHaveBeenCalledWith(0, 3, 5, 4, 2, 1);
     await expect(reader.readGamma2Region(1, 0, 0, 1, 1, 4)).resolves.toEqual(new Uint16Array([4, 5, 6]));
     expect(reader.cacheBytes).toBe(123);
     expect(reader.cacheEntries).toBe(2);

@@ -1,5 +1,5 @@
 /** STF production additional-blur Worker protocol. */
-export const STF_ADDITIONAL_BLUR_PROTOCOL_VERSION = "stf-gate-p3p97-preclosing-production-20261104";
+export const STF_ADDITIONAL_BLUR_PROTOCOL_VERSION = "stf-gate-optimized-sampled-p50-expansion-20261105";
 
 export type StfAdditionalBlurWorkerAlignmentPlan = {
   normalizationMode: "feature-match" | "center-crop" | "center-fit" | "center-fill" | "top-left-fill";
@@ -26,6 +26,8 @@ export type StfAdditionalBlurWorkerRequest =
       fineLogSumBuffer: ArrayBuffer; fineZeroBuffer: ArrayBuffer; coarseGroupsBuffer: ArrayBuffer }
   | { type: "volume-close"; requestId: number; width: number; height: number; unitRatioBuffer: ArrayBuffer }
   | { type: "graph-cut"; requestId: number; width: number; height: number; blurRatio: number; confidenceBuffer: ArrayBuffer }
+  | { type: "expand-gate-stripe"; requestId: number; regionHeight: number; coreOffsetY: number; coreHeight: number;
+      radius: number; gateBuffer: ArrayBuffer }
   | { type: "blur-stripe"; requestId: number; regionHeight: number; coreOffsetY: number; coreHeight: number;
       radius: number; sourceBuffer: ArrayBuffer; gateBuffer: ArrayBuffer };
 export type StfAdditionalBlurWorkerReadyResponse = {
@@ -54,6 +56,10 @@ export type StfAdditionalBlurWorkerGraphCutResponse = {
   maskBuffer: ArrayBuffer; workingWidth: number; workingHeight: number;
   targetWhiteFraction: number; achievedWhiteFraction: number; cuts: number; areaBias: number;
 };
+export type StfAdditionalBlurWorkerExpandGateStripeResponse = {
+  type: "expand-gate-stripe-result"; requestId: number; protocolVersion: string;
+  coreHeight: number; gateBuffer: ArrayBuffer;
+};
 export type StfAdditionalBlurWorkerBlurStripeResponse = {
   type: "blur-stripe-result"; requestId: number; protocolVersion: string;
   coreHeight: number; linearBuffer: ArrayBuffer;
@@ -67,4 +73,5 @@ export type StfAdditionalBlurWorkerResponse =
   | StfAdditionalBlurWorkerVolumeClosingResponse
   | StfAdditionalBlurWorkerGraphCutResponse
   | StfAdditionalBlurWorkerBlurStripeResponse
+  | StfAdditionalBlurWorkerExpandGateStripeResponse
   | { type: "error"; requestId: number; message: string };

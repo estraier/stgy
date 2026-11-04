@@ -201,3 +201,32 @@ describe("STF production sharpness and protection gate", () => {
     for (let i = 0; i < full.length; i++) expect(split[i]).toBeCloseTo(full[i], 5);
   });
 });
+
+describe("STF worker-parallel gate expansion stripe boundaries", () => {
+  test("halo-padded stripe expansion is bit-identical to whole-image expansion", () => {
+    for (const [width, height] of [[1, 1], [2, 13], [11, 3], [17, 23], [31, 27]]) {
+      const values = new Float32Array(width * height);
+      for (let i = 0; i < values.length; i++) {
+        values[i] = i % 13 === 0 ? 1 : i % 7 === 0 ? 0.701 : ((i * 17) % 31) / 100;
+      }
+      for (const blurRadius of [2, 4, 8, 12, 15]) {
+        const reference = applyStfGateExpansion(values, width, height, blurRadius);
+        const halo = Math.max(1, Math.round(blurRadius * 0.5));
+        for (const rowsPerJob of [1, 2, 3, 7, 19]) {
+          const stitched = new Float32Array(values.length);
+          for (let y = 0; y < height; y += rowsPerJob) {
+            const jobHeight = Math.min(rowsPerJob, height - y);
+            const regionY = Math.max(0, y - halo);
+            const regionEnd = Math.min(height, y + jobHeight + halo);
+            const stripe = applyStfGateExpansion(
+              values.slice(regionY * width, regionEnd * width), width, regionEnd - regionY, blurRadius,
+            );
+            const offset = y - regionY;
+            stitched.set(stripe.subarray(offset * width, (offset + jobHeight) * width), y * width);
+          }
+          expect(Array.from(stitched)).toEqual(Array.from(reference));
+        }
+      }
+    }
+  });
+});

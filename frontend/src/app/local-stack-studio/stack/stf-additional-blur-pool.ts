@@ -2,6 +2,7 @@ import type { StfAdditionalBlurWorkerConfig } from "../workers/protocols/stf-add
 import {
   StfAdditionalBlurWorkerClient, type StfAdditionalBlurAnalyzeResult,
   type StfAdditionalBlurBlurRequest, type StfAdditionalBlurRatioRequest,
+  type StfAdditionalBlurExpandGateRequest,
 } from "./stf-additional-blur-client";
 import type { LinearMergeStripeJob } from "./linear-merge-pool";
 import {
@@ -47,6 +48,11 @@ export class StfAdditionalBlurWorkerPool {
     buildRequest: (job: LinearMergeStripeJob) => Promise<StfAdditionalBlurRatioRequest>,
     onComplete: (job: LinearMergeStripeJob, result: Float32Array, completed: number, total: number) => void | Promise<void>) {
     return this.runJobs(jobs, async (client, job) => client.ratioStripe(await buildRequest(job)), onComplete);
+  }
+  runGateExpansionJobs(jobs: readonly LinearMergeStripeJob[],
+    buildRequest: (job: LinearMergeStripeJob) => StfAdditionalBlurExpandGateRequest,
+    onComplete: (job: LinearMergeStripeJob, result: Float32Array, completed: number, total: number) => void | Promise<void>) {
+    return this.runJobs(jobs, (client, job) => client.expandGateStripe(buildRequest(job)), onComplete);
   }
   runBlurJobs(jobs: readonly LinearMergeStripeJob[],
     buildRequest: (job: LinearMergeStripeJob) => StfAdditionalBlurBlurRequest,

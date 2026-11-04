@@ -9,6 +9,7 @@ import {
   type StfAdditionalBlurWorkerGraphCutResponse,
   type StfAdditionalBlurWorkerVolumeClosingResponse,
   type StfAdditionalBlurWorkerBlurStripeResponse,
+  type StfAdditionalBlurWorkerExpandGateStripeResponse,
 } from "../workers/protocols/stf-additional-blur-protocol";
 import type { LinearMergeStripeJob } from "./linear-merge-pool";
 import type { StfRelativeChannelFloors, StfSampleGrid } from "./stf-additional-blur";
@@ -20,6 +21,9 @@ export type StfAdditionalBlurAnalyzeResult = {
 export type StfAdditionalBlurRatioRequest = {
   fineLogSum: Float32Array; fineZero: Uint8Array; coarseGroups: Float32Array;
   groupCount: number; epsilon: number;
+};
+export type StfAdditionalBlurExpandGateRequest = {
+  regionHeight: number; coreOffsetY: number; coreHeight: number; radius: number; gate: Float32Array;
 };
 export type StfAdditionalBlurBlurRequest = {
   regionHeight: number; coreOffsetY: number; coreHeight: number; radius: number;
@@ -110,6 +114,16 @@ export class StfAdditionalBlurWorkerClient {
         info: { protocolVersion: r.protocolVersion, workingWidth: r.workingWidth, workingHeight: r.workingHeight,
           targetWhiteFraction: r.targetWhiteFraction, achievedWhiteFraction: r.achievedWhiteFraction,
           cuts: r.cuts, areaBias: r.areaBias } };
+    });
+  }
+  expandGateStripe(r: StfAdditionalBlurExpandGateRequest): Promise<Float32Array> {
+    const gateBuffer = r.gate.buffer as ArrayBuffer;
+    return this.request("expand-gate-stripe-result", {
+      type: "expand-gate-stripe", regionHeight: r.regionHeight, coreOffsetY: r.coreOffsetY,
+      coreHeight: r.coreHeight, radius: r.radius, gateBuffer,
+    }, [gateBuffer]).then((value: StfAdditionalBlurWorkerExpandGateStripeResponse) => {
+      checkVersion(value.protocolVersion);
+      return new Float32Array(asBuffer(value.gateBuffer, "expanded gate"));
     });
   }
   blurStripe(r: StfAdditionalBlurBlurRequest): Promise<Float32Array> {

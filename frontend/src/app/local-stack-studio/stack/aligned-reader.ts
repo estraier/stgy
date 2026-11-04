@@ -1,6 +1,8 @@
 import { encodeStoredRgb16Channel } from "@/image/rgb16-storage";
 import {
   readCanonicalLinearRows,
+  readCanonicalStoredRows,
+  getCanonicalLinearDecodeLut,
   type CanonicalReadableSession,
 } from "./canonical-source";
 
@@ -123,6 +125,21 @@ export class AlignedImageReader {
   }
 
   async readLinearRegion(imageIndex: number, x: number, y: number, width: number, height: number): Promise<Float32Array> {
+    return this.readLinearRegionInternal(imageIndex, x, y, width, height, 1, x, y);
+  }
+
+  /** Sample a regular grid without rasterizing/tone-matching every intervening pixel. */
+  async readLinearSampleGrid(imageIndex: number, y: number, height: number,
+    stride: number, offsetX: number, offsetY: number): Promise<Float32Array> {
+    if (!(Number.isInteger(stride) && stride >= 1 && Number.isInteger(offsetX) && offsetX >= 0 && offsetX < this.width &&
+      Number.isInteger(offsetY) && offsetY >= 0 && offsetY < this.height)) {
+      throw new Error("Aligned sample grid is invalid.");
+    }
+    return this.readLinearRegionInternal(imageIndex, 0, y, this.width, height, stride, offsetX, offsetY);
+  }
+
+  private async readLinearRegionInternal(imageIndex: number, x: number, y: number, width: number, height: number,
+    stride: number, offsetX: number, offsetY: number): Promise<Float32Array> {
     const g = this.geometries[imageIndex];
     const inv = this.inverseMatrices[imageIndex];
     if (!g || !inv) throw new Error(`Aligned input ${imageIndex + 1} is unavailable.`);
@@ -147,15 +164,27 @@ export class AlignedImageReader {
       rowStart = clamp(Math.floor(minY) - 2, 0, g.height - 1);
       rowEnd = clamp(Math.ceil(maxY) + 3, rowStart + 1, g.height);
     }
-    const source = await readCanonicalLinearRows(this.session, imageIndex, rowStart, rowEnd - rowStart);
+    const firstX = offsetX < x ? offsetX + Math.ceil((x - offsetX) / stride) * stride : offsetX;
+    const firstY = offsetY < y ? offsetY + Math.ceil((y - offsetY) / stride) * stride : offsetY;
+    const sampleWidth = firstX >= x + width ? 0 : Math.floor((x + width - 1 - firstX) / stride) + 1;
+    const sampleHeight = firstY >= y + height ? 0 : Math.floor((y + height - 1 - firstY) / stride) + 1;
+    if (!sampleWidth || !sampleHeight) return new Float32Array(0);
+    // Sparse P50 reads decode only the sampled bilinear taps, not every
+    // canonical source pixel in the region.  Use the same Float32 LUT as
+    // readCanonicalLinearRows so interpolated values remain bit-identical.
+    const useStored = stride > 1;
+    const source = useStored
+      ? await readCanonicalStoredRows(this.session, imageIndex, rowStart, rowEnd - rowStart)
+      : await readCanonicalLinearRows(this.session, imageIndex, rowStart, rowEnd - rowStart);
+    const lut = useStored ? getCanonicalLinearDecodeLut() : null;
     const sourceRows = rowEnd - rowStart;
-    const output = new Float32Array(width * height * 3);
+    const output = new Float32Array(sampleWidth * sampleHeight * 3);
 
     let out = 0;
-    for (let localY = 0; localY < height; localY += 1) {
-      const dy = y + localY;
-      for (let localX = 0; localX < width; localX += 1) {
-        const dx = x + localX;
+    for (let localY = 0; localY < sampleHeight; localY += 1) {
+      const dy = firstY + localY * stride;
+      for (let localX = 0; localX < sampleWidth; localX += 1) {
+        const dx = firstX + localX * stride;
         const n = mapDestinationToNormalized(inv, dx, dy);
         const p = normalizedToSource(g, n.x, n.y);
         if (p.fill || !Number.isFinite(p.x) || !Number.isFinite(p.y)) {
@@ -184,7 +213,12 @@ export class AlignedImageReader {
         const i01 = (ly1 * g.width + x0) * 3;
         const i11 = (ly1 * g.width + x1) * 3;
         const w00 = (1-fx)*(1-fy), w10 = fx*(1-fy), w01 = (1-fx)*fy, w11 = fx*fy;
-        for (let c=0;c<3;c+=1) output[out++] = source[i00+c]*w00 + source[i10+c]*w10 + source[i01+c]*w01 + source[i11+c]*w11;
+        for (let c=0;c<3;c+=1) {
+          const p00 = source[i00+c], p10 = source[i10+c], p01 = source[i01+c], p11 = source[i11+c];
+          output[out++] = lut
+            ? lut[p00]*w00 + lut[p10]*w10 + lut[p01]*w01 + lut[p11]*w11
+            : p00*w00 + p10*w10 + p01*w01 + p11*w11;
+        }
       }
     }
     return output;

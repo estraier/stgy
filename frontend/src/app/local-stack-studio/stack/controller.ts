@@ -2848,10 +2848,11 @@ async function mergeStfWithAdditionalBlur(
   const plan = mergePlan.stfBlurPlan;
   if (!plan?.enabled) throw new Error("STF Additional blur was invoked while disabled.");
   const fNumbers = inputInfos.map((info) => Number(info?.fNumber));
-  const [algorithm, poolModule, graphCutModule] = await Promise.all([
+  const [algorithm, poolModule, graphCutModule, stagingModule] = await Promise.all([
     import("./stf-additional-blur"),
     import("./stf-additional-blur-pool"),
     plan.areaExponent === null ? Promise.resolve(null) : import("./stf-graph-cut"),
+    import("./stf-derived-staging"),
   ]);
   algorithm.buildStfApertureGroups(fNumbers);
   const sourceKey = stfGateSourceKey(sessionId, alignmentPlan, matrices, inputInfos, mergePlan, width, height);
@@ -2865,12 +2866,23 @@ async function mergeStfWithAdditionalBlur(
   const hardwareConcurrency = typeof navigator === "object"
     ? Math.max(1, Math.floor(navigator.hardwareConcurrency || 4)) : 4;
   const workerUrl = new URL("/generated/local-stack-studio/stf-additional-blur.worker.js", window.location.origin);
-  workerUrl.searchParams.set("revision", "stf-gate-p3p97-preclosing-production-20261104");
+  workerUrl.searchParams.set("revision", "stf-gate-optimized-sampled-p50-expansion-20261105");
   const timings = {};
   const stamp = () => performance.now();
   let pool = null;
-  let scratchDb = null;
+  // Avoid writing temporary Sobel arrays to IndexedDB when a bounded amount
+  // of RAM is enough; large images still spill to scratch storage as before.
+  const derivedStaging = new stagingModule.StfDerivedStripeStaging(
+    plan.gateOnly ? 96 * 1024 * 1024 : 64 * 1024 * 1024,
+  );
+  let scratchDbPromise = null;
   let scratchSessionId = null;
+  let storedStripes = 0;
+  let residentStripes = 0;
+  const ensureScratchDb = () => {
+    if (!scratchDbPromise) scratchDbPromise = openStfAdditionalBlurScratchDb("STF Additional blur");
+    return scratchDbPromise;
+  };
   let source = null;
   let activeRatio = cache.ratio;
   const ensurePool = async () => {
@@ -2911,8 +2923,7 @@ async function mergeStfWithAdditionalBlur(
       timings.brightnessP50 = stamp() - t;
       console.info("STF relative RGB brightness P50/64", { floors, sampleCount: brightnessSamples[0].length });
 
-      // Preserve only derived analysis stripes in short-lived scratch storage.
-      scratchDb = await openStfAdditionalBlurScratchDb("STF Additional blur");
+      // Defer opening scratch storage until a stripe exceeds the RAM budget.
       scratchSessionId = createStfAdditionalBlurScratchSessionId();
       const groupCount = p.ready.groupCount;
       const sharpnessSamples = [];
@@ -2929,15 +2940,23 @@ async function mergeStfWithAdditionalBlur(
         if (source) source.set(result.linear, job.y * width * 3);
         algorithm.appendPersistentCoarseSamplesFromStripe(sharpnessSamples, result.coarseGroups,
           groupCount, width, job.y, job.height, sampleGrid);
-        const keys = stfAdditionalBlurScratchKeys(scratchSessionId, job.index);
-        await putStfAdditionalBlurScratchBuffers(scratchDb, [
-          { key: keys.fineLogSum, buffer: result.fineLogSum.buffer },
-          { key: keys.fineZero, buffer: result.fineZero.buffer },
-          { key: keys.coarseGroups, buffer: result.coarseGroups.buffer },
-        ], "STF Additional blur Sobel analysis");
+        if (derivedStaging.put(job.index, result)) {
+          residentStripes++;
+        } else {
+          const db = await ensureScratchDb();
+          const keys = stfAdditionalBlurScratchKeys(scratchSessionId, job.index);
+          await putStfAdditionalBlurScratchBuffers(db, [
+            { key: keys.fineLogSum, buffer: result.fineLogSum.buffer },
+            { key: keys.fineZero, buffer: result.fineZero.buffer },
+            { key: keys.coarseGroups, buffer: result.coarseGroups.buffer },
+          ], "STF Additional blur Sobel analysis");
+          storedStripes++;
+        }
         setProgress(`STF analyzing Sobel sharpness ${completed}/${total}...`);
       });
       timings.sobelAnalysis = stamp() - t;
+      timings.intermediateStripesInRam = residentStripes;
+      timings.intermediateStripesInScratch = storedStripes;
       const coarseP50 = algorithm.deriveStfMedianSharpnessC(sharpnessSamples);
       const epsilon = algorithm.deriveStfRatioEpsilon(coarseP50);
       console.info("STF coarse sharpness P50/64", { coarseP50, epsilon });
@@ -2946,9 +2965,12 @@ async function mergeStfWithAdditionalBlur(
       setProgress(`STF generating log-ratios 0/${jobs.length}...`);
       await p.runRatioJobs(jobs,
         async (job) => {
+          const resident = derivedStaging.take(job.index);
+          if (resident) return { ...resident, groupCount, epsilon };
+          const db = await ensureScratchDb();
           const keys = stfAdditionalBlurScratchKeys(scratchSessionId, job.index);
           const [fineLogSumBuffer, fineZeroBuffer, coarseGroupsBuffer] = await getStfAdditionalBlurScratchBuffers(
-            scratchDb, [keys.fineLogSum, keys.fineZero, keys.coarseGroups],
+            db, [keys.fineLogSum, keys.fineZero, keys.coarseGroups],
             `STF Additional blur stripe ${job.index + 1}`);
           return { fineLogSum: new Float32Array(fineLogSumBuffer),
             fineZero: new Uint8Array(fineZeroBuffer), coarseGroups: new Float32Array(coarseGroupsBuffer),
@@ -3036,7 +3058,24 @@ async function mergeStfWithAdditionalBlur(
     let expanded = cache.expandedKey === expandedKey ? cache.expanded : null;
     if (!expanded) {
       const t = stamp();
-      expanded = algorithm.applyStfGateExpansion(base, width, height, blurRadius);
+      const p = await ensurePool();
+      const expansionHalo = Math.max(1, Math.round(blurRadius * 0.5));
+      const completedGate = new Float32Array(width * height);
+      setProgress(`STF expanding protection gate 0/${jobs.length}...`);
+      await p.runGateExpansionJobs(jobs,
+        (job) => {
+          const regionY = Math.max(0, job.y - expansionHalo);
+          const regionEnd = Math.min(height, job.y + job.height + expansionHalo);
+          return { regionHeight: regionEnd - regionY, coreOffsetY: job.y - regionY,
+            coreHeight: job.height, radius: blurRadius,
+            gate: base.slice(regionY * width, regionEnd * width) };
+        },
+        (job, stripe, completed, total) => {
+          if (stripe.length !== width * job.height) throw new Error("STF expanded gate stripe has invalid size.");
+          completedGate.set(stripe, job.y * width);
+          setProgress(`STF expanding protection gate ${completed}/${total}...`);
+        });
+      expanded = completedGate;
       timings.expandedGate = stamp() - t;
       cache.expanded = null; cache.expandedKey = null;
       if (cache.base && canCacheStfBuffer(cache, expanded)) {
@@ -3077,10 +3116,14 @@ async function mergeStfWithAdditionalBlur(
     return finalizeStoredResult(blurred, width, height, outputColorSpace, true);
   } finally {
     pool?.terminate();
-    if (scratchDb) {
-      try { await deleteStfAdditionalBlurScratchSession(scratchDb, scratchSessionId); }
-      catch (error) { console.warn("STF Additional blur scratch cleanup failed", error); }
-      scratchDb.close();
+    derivedStaging.clear();
+    if (scratchDbPromise) {
+      try {
+        const db = await scratchDbPromise;
+        try { await deleteStfAdditionalBlurScratchSession(db, scratchSessionId); }
+        catch (error) { console.warn("STF Additional blur scratch cleanup failed", error); }
+        db.close();
+      } catch (error) { console.warn("STF Additional blur scratch cleanup unavailable", error); }
     }
   }
 }

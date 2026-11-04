@@ -2,7 +2,7 @@
 import { applyStfToneMatchInPlace, buildStfToneMatchLut, type StfToneMatchLut } from "../stack/stf-tone-match";
 import {
   STF_ADDITIONAL_BLUR_COARSE_REFERENCE_PIXELS, STF_ADDITIONAL_BLUR_FINE_REFERENCE_PIXELS,
-  applyGuardedGaussianBlurRegion, buildStfLogRatioFromDerived,
+  applyGuardedGaussianBlurRegion, applyStfGateExpansion, buildStfLogRatioFromDerived,
   buildStfApertureGroups, buildStfRelativeSharpnessMapAtScaleInto,
   type StfRelativeChannelFloors, validateStfRelativeChannelFloors,
   createStfSharpnessScratch, resolveStfSharpnessHalo, resolveStfSharpnessScale,
@@ -135,6 +135,22 @@ workerScope.onmessage = async (event: MessageEvent<StfAdditionalBlurWorkerReques
         maskBuffer: result.mask.buffer as ArrayBuffer, ...result.info }, [result.mask.buffer as ArrayBuffer]);
       return;
     }
+    if (message.type === "expand-gate-stripe") {
+      ensureInitialized();
+      const { regionHeight, coreOffsetY, coreHeight, radius } = message;
+      if (!Number.isInteger(regionHeight) || regionHeight < 1 ||
+          !Number.isInteger(coreOffsetY) || coreOffsetY < 0 ||
+          !Number.isInteger(coreHeight) || coreHeight < 1 || coreOffsetY + coreHeight > regionHeight ||
+          !Number.isInteger(radius) || radius < 2 || radius > 15 ||
+          message.gateBuffer.byteLength !== reader!.width * regionHeight * 4) {
+        throw new Error("STF gate expansion Worker geometry is invalid.");
+      }
+      const expanded = applyStfGateExpansion(new Float32Array(message.gateBuffer), reader!.width, regionHeight, radius);
+      const core = expanded.slice(coreOffsetY * reader!.width, (coreOffsetY + coreHeight) * reader!.width);
+      post({ type: "expand-gate-stripe-result", requestId, protocolVersion: STF_ADDITIONAL_BLUR_PROTOCOL_VERSION,
+        coreHeight, gateBuffer: core.buffer as ArrayBuffer }, [core.buffer as ArrayBuffer]);
+      return;
+    }
     if (message.type === "blur-stripe") {
       ensureInitialized();
       const { regionHeight, coreOffsetY, coreHeight, radius } = message;
@@ -173,27 +189,23 @@ async function sampleBrightnessStripe(
     && Number.isInteger(offsetY) && offsetY >= 0 && offsetY < reader!.height)) {
     throw new Error("STF brightness sample geometry is invalid.");
   }
-  const width = reader!.width;
-  const positions: number[] = [];
-  const startY = offsetY + Math.max(0, Math.ceil((y - offsetY) / stride)) * stride;
-  for (let globalY = startY; globalY < y + height; globalY += stride) {
-    for (let x = offsetX; x < width; x += stride) positions.push(((globalY - y) * width + x) * 3);
-  }
-  const samples = new Float32Array(positions.length * 3);
+  // The canonical reader aligns only the requested grid positions; the former
+  // implementation transformed and tone-matched the entire image stripe, then
+  // discarded almost every pixel.  Sampling coordinates and RGB accumulation
+  // order are identical, so P50 keeps its original definition.
+  let samples: Float32Array | null = null;
   for (let imageIndex = 0; imageIndex < reader!.imageCount; imageIndex += 1) {
-    const linear = await reader!.readLinearRegion(imageIndex, 0, y, width, height);
+    const linear = await reader!.readLinearSampleGrid(imageIndex, y, height, stride, offsetX, offsetY);
     const lut = toneMatchLuts![imageIndex];
     if (lut) applyStfToneMatchInPlace(linear, gains![imageIndex], scaledLogs![imageIndex], lut);
+    if (!samples) samples = new Float32Array(linear.length);
+    if (samples.length !== linear.length) throw new Error("STF RGB sampling returned inconsistent geometry.");
     const weight = weights![imageIndex];
-    for (let i = 0; i < positions.length; i += 1) {
-      const source = positions[i];
-      const target = i * 3;
-      samples[target] += (linear[source] ?? 0) * weight;
-      samples[target + 1] += (linear[source + 1] ?? 0) * weight;
-      samples[target + 2] += (linear[source + 2] ?? 0) * weight;
+    for (let index = 0; index < linear.length; index += 1) {
+      samples[index] += (linear[index] ?? 0) * weight;
     }
   }
-  return samples;
+  return samples ?? new Float32Array(0);
 }
 
 
