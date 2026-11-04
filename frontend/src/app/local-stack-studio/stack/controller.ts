@@ -79,7 +79,7 @@ import {
 import { AlignedImageReader } from "./aligned-reader";
 import { runLensfunCorrectionPool } from "./lensfun-pool";
 import { buildStfApertureWeights, DEFAULT_STF_BLEND_WEIGHT } from "./stf-weights";
-import { resolveStfRelativeBrightnessP50Divisor, resolveStfRelativeCombineMode, resolveStfGateClosingMode } from "./stf-additional-blur-mode";
+import { buildStfAdditionalBlurPlan, DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS, STF_BLUR_STRENGTH_VALUES, STF_BLUR_AREA_GUARD_VALUES, STF_BLUR_RATIO_VALUES, STF_BLUR_SIGMOID_VALUES } from "./stf-additional-blur-mode";
 import {
   DEFAULT_PANORAMA_DOWNSCALE_MEGAPIXELS,
   DEFAULT_PANORAMA_FINISH_MODE,
@@ -207,6 +207,10 @@ const stfBlurStrengthOption = getElement("stf-blur-strength-option");
 const stfBlurStrength = getElement("stf-blur-strength");
 const stfBlurRatioOption = getElement("stf-blur-ratio-option");
 const stfBlurRatio = getElement("stf-blur-ratio");
+const stfBlurAreaGuardOption = getElement("stf-blur-area-guard-option");
+const stfBlurAreaGuard = getElement("stf-blur-area-guard");
+const stfBlurSigmoidOption = getElement("stf-blur-sigmoid-option");
+const stfBlurSigmoid = getElement("stf-blur-sigmoid");
 const alignmentMode = getElement("alignment-mode");
 const processButton = getElement("process-button");
 const progressPanel = getElement("progress-panel");
@@ -295,14 +299,6 @@ function listen(target, type, listener, options) {
 }
 
 const STF_BLEND_WEIGHT_VALUES = new Set([1, 2, 4, 8, 16, 32]);
-const STF_BLUR_STRENGTH_MULTIPLIERS = new Map([
-  ["weak", 1],
-  ["medium", 2],
-  ["strong", 3],
-]);
-const STF_BLUR_VISUALIZATION_MODES = new Set(["coarse-sharpness", "fine-sharpness", "raw-ratio", "raw-ratio-p50", "raw-ratio-p50-8", "raw-ratio-relative", "raw-ratio-relative2", "raw-ratio-relative3", "raw-ratio-relative4", "raw-ratio-relative5", "interpolated", "volume-interpolated", "volume-interpolated-2", "sigmoid", "dilated"]);
-const STF_BLUR_RATIO_VALUES = new Set([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]);
-const DEFAULT_STF_BLUR_RATIO = 0.5;
 const FOCUS_SOFTNESS_VALUES = new Set([0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5]);
 
 function updateAlignmentAvailability() {
@@ -332,14 +328,21 @@ function updateMergeOptionsVisibility() {
   stfBlendWeightOption.classList.toggle("flex", isStf);
   stfBlurStrengthOption.classList.toggle("hidden", !isStf);
   stfBlurStrengthOption.classList.toggle("flex", isStf);
-  updateStfBlurRatioVisibility();
+  updateStfBlurOptionsVisibility();
   updateAlignmentAvailability();
 }
 
-function updateStfBlurRatioVisibility() {
-  const visible = mergeMode.value === "stf" && stfBlurStrength.value !== "none";
-  stfBlurRatioOption.classList.toggle("hidden", !visible);
-  stfBlurRatioOption.classList.toggle("flex", visible);
+function updateStfBlurOptionsVisibility() {
+  const active = mergeMode.value === "stf" && stfBlurStrength.value !== "none";
+  for (const element of [stfBlurRatioOption, stfBlurAreaGuardOption, stfBlurSigmoidOption]) {
+    element.classList.toggle("hidden", !active);
+    element.classList.toggle("flex", active);
+  }
+  // Without Graph Cut and without sigmoid, Blur ratio is unused.
+  stfBlurRatio.disabled = processingActive || !active ||
+    (stfBlurAreaGuard.value === "none" && stfBlurSigmoid.value === "0");
+  stfBlurRatio.title = stfBlurRatio.disabled && active && !processingActive
+    ? "This setting is not used when area guard is none and sigmoid is 0%." : "";
 }
 
 function selectedInternalMergeMode() {
@@ -377,30 +380,26 @@ function selectedStfBlendWeight() {
   return STF_BLEND_WEIGHT_VALUES.has(value) ? value : DEFAULT_STF_BLEND_WEIGHT;
 }
 
-function selectedStfBlurStrengthMultiplier() {
-  if (stfBlurStrength.value === "none" || STF_BLUR_VISUALIZATION_MODES.has(stfBlurStrength.value)) return null;
-  const value = STF_BLUR_STRENGTH_MULTIPLIERS.get(stfBlurStrength.value);
-  if (value === undefined) {
-    throw new Error(`Unsupported STF Blur strength: ${stfBlurStrength.value}`);
-  }
-  return value;
-}
-
-function selectedStfBlurVisualizationMode() {
-  return STF_BLUR_VISUALIZATION_MODES.has(stfBlurStrength.value) ? stfBlurStrength.value : null;
-}
-
-function selectedStfBlurRatio() {
-  const value = Number.parseFloat(stfBlurRatio.value);
-  if (!STF_BLUR_RATIO_VALUES.has(value)) {
-    throw new Error(`Unsupported STF Blur ratio: ${stfBlurRatio.value}`);
-  }
-  return value;
+function selectedStfBlurPlan() {
+  // Reject any stale option that is not part of the production configuration.
+  const strength = STF_BLUR_STRENGTH_VALUES.includes(stfBlurStrength.value)
+    ? stfBlurStrength.value : DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS.strength;
+  const ratio = Number(stfBlurRatio.value);
+  const areaGuard = stfBlurAreaGuard.value;
+  const sigmoid = Number(stfBlurSigmoid.value);
+  return buildStfAdditionalBlurPlan({
+    strength,
+    ratio: STF_BLUR_RATIO_VALUES.some((v) => Math.abs(v - ratio) < 1e-9) ? ratio : DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS.ratio,
+    areaGuard: STF_BLUR_AREA_GUARD_VALUES.includes(areaGuard) ? areaGuard : DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS.areaGuard,
+    sigmoid: STF_BLUR_SIGMOID_VALUES.includes(sigmoid) ? sigmoid : DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS.sigmoid,
+  });
 }
 
 updateMergeOptionsVisibility();
 listen(mergeMode, "change", updateMergeOptionsVisibility);
-listen(stfBlurStrength, "change", updateStfBlurRatioVisibility);
+listen(stfBlurStrength, "change", updateStfBlurOptionsVisibility);
+listen(stfBlurAreaGuard, "change", updateStfBlurOptionsVisibility);
+listen(stfBlurSigmoid, "change", updateStfBlurOptionsVisibility);
 
 updateToneControlLabels();
 previewExposure.disabled = true;
@@ -417,6 +416,7 @@ outputSize.disabled = true;
 listen(inputFiles, "change", () => {
   const previousCanonicalSession = currentCanonicalSession;
   currentCanonicalSession = null;
+  resetStfGateCache();
   if (previousCanonicalSession) {
     deleteCanonicalSession(previousCanonicalSession).catch(() => {});
   }
@@ -584,9 +584,7 @@ listen(processButton, "click", async () => {
       effectiveMergeMode,
       currentCanonicalSession.images,
       selectedStfBlendWeight(),
-      selectedStfBlurStrengthMultiplier(),
-      selectedStfBlurRatio(),
-      selectedStfBlurVisualizationMode(),
+      selectedStfBlurPlan(),
       selectedTileFolding(),
       selectedFocusSoftness(),
       selectedPanoramaMaxOutputMegapixels(),
@@ -2163,9 +2161,7 @@ function buildMergePlan(
   mode,
   canonicalImages = [],
   stfBlendWeightValue = DEFAULT_STF_BLEND_WEIGHT,
-  stfBlurStrengthMultiplier = null,
-  stfBlurRatioValue = DEFAULT_STF_BLUR_RATIO,
-  stfBlurVisualizationMode = null,
+  stfBlurPlan = buildStfAdditionalBlurPlan(DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS),
   tileFoldingValue = null,
   focusSoftnessValue = DEFAULT_FOCUS_SOFTNESS,
   panoramaMaxOutputMegapixels = 16,
@@ -2252,9 +2248,7 @@ function buildMergePlan(
     gains,
     scaledLogs,
     toneReferenceIndex: toneMatch.referenceIndex,
-    stfBlurStrengthMultiplier,
-    stfBlurVisualizationMode,
-    stfBlurRatio: stfBlurStrengthMultiplier == null && stfBlurVisualizationMode == null ? null : stfBlurRatioValue,
+    stfBlurPlan,
   };
 }
 
@@ -2637,9 +2631,10 @@ async function alignAndMergeFilesWithOpenCv(
       return finalizeStoredResult(result, width, height, outputColorSpace, true);
     }
 
-    if (mergePlan.mode === "stf" && (mergePlan.stfBlurStrengthMultiplier != null || mergePlan.stfBlurVisualizationMode != null)) {
+    if (mergePlan.mode === "stf" && mergePlan.stfBlurPlan?.enabled) {
       return mergeStfWithAdditionalBlur(
         canonicalSession.id,
+        reader,
         alignmentPlan,
         matrices,
         inputInfos,
@@ -2801,6 +2796,31 @@ async function mergeLinearFromWorkerPool(
 }
 
 
+// Only the current canonical/alignment/merge combination may reuse the gate.
+// Full-resolution float images are kept only under a strict cache memory budget.
+const STF_GATE_CACHE_MAX_BYTES = 192 * 1024 * 1024;
+let stfGateCache = null;
+function resetStfGateCache() { stfGateCache = null; }
+function stfGateCacheBytes(cache) {
+  const buffers = new Set();
+  for (const value of [cache?.ratio, cache?.source, cache?.base, cache?.expanded, cache?.mask]) {
+    if (value?.buffer) buffers.add(value.buffer);
+  }
+  let bytes = 0;
+  for (const buffer of buffers) bytes += buffer.byteLength;
+  return bytes;
+}
+function canCacheStfBuffer(cache, buffer) {
+  return cache && buffer && stfGateCacheBytes(cache) + buffer.byteLength <= STF_GATE_CACHE_MAX_BYTES;
+}
+function stfGateSourceKey(sessionId, alignmentPlan, matrices, inputInfos, mergePlan, width, height) {
+  return JSON.stringify(["stf-p3p97-before-closing-production-v1", sessionId, width, height,
+    alignmentPlan.normalizationMode, alignmentPlan.targetWidth, alignmentPlan.targetHeight,
+    matrices.map((m) => m === null ? null : Array.from(m)),
+    Array.from(mergePlan.gains), Array.from(mergePlan.scaledLogs), Array.from(mergePlan.weights),
+    inputInfos.map((info) => Number(info?.fNumber))]);
+}
+
 function stfAdditionalBlurScratchKeys(sessionId, jobIndex) {
   const prefix = `${sessionId}:${jobIndex}`;
   return {
@@ -2810,335 +2830,256 @@ function stfAdditionalBlurScratchKeys(sessionId, jobIndex) {
   };
 }
 
-function finalizeStfAdditionalBlurVisualization(values, width, height, outputColorSpace, algorithm, mode, c) {
-  if (values.length !== width * height) {
-    throw new Error("STF visualization map has invalid dimensions.");
-  }
+function finalizeStfBasicGate(values, width, height, outputColorSpace) {
+  if (values.length !== width * height) throw new Error("STF gate dimensions are invalid.");
   const stored = new Uint16Array(values.length * 3);
-  for (let index = 0, output = 0; index < values.length; index += 1, output += 3) {
-    let value;
-    if (mode === "coarse-sharpness" || mode === "fine-sharpness") {
-      value = algorithm.normalizeStfSharpnessForPreview(values[index], c);
-    } else if (mode === "raw-ratio" || mode === "raw-ratio-p50" || mode === "raw-ratio-p50-8" || mode === "raw-ratio-relative" || mode === "raw-ratio-relative2" || mode === "raw-ratio-relative3" || mode === "raw-ratio-relative4" || mode === "raw-ratio-relative5") {
-      value = algorithm.normalizeStfLogRatioForPreview(values[index]);
-    } else {
-      value = Number.isFinite(values[index]) ? values[index] : 0;
-    }
-    const encoded = Math.round(Math.sqrt(Math.max(0, Math.min(1, value))) * RESULT_BUFFER_MAX_UINT16);
-    stored[output] = encoded;
-    stored[output + 1] = encoded;
-    stored[output + 2] = encoded;
+  for (let i = 0, o = 0; i < values.length; i++, o += 3) {
+    const value = values[i];
+    if (!Number.isFinite(value) || value < 0 || value > 1) throw new Error("STF gate must be in [0,1].");
+    const encoded = Math.round(Math.sqrt(value) * RESULT_BUFFER_MAX_UINT16);
+    stored[o] = stored[o + 1] = stored[o + 2] = encoded;
   }
   return finalizeStoredGamma2Result(stored, width, height, outputColorSpace);
 }
 
 async function mergeStfWithAdditionalBlur(
-  sessionId,
-  alignmentPlan,
-  matrices,
-  inputInfos,
-  mergePlan,
-  width,
-  height,
-  outputColorSpace,
+  sessionId, reader, alignmentPlan, matrices, inputInfos, mergePlan, width, height, outputColorSpace,
 ) {
-  const visualizationMode = mergePlan.stfBlurVisualizationMode ?? null;
-  if (visualizationMode !== null && !STF_BLUR_VISUALIZATION_MODES.has(visualizationMode)) {
-    throw new Error("STF visualization mode is invalid.");
-  }
-  const blurStrengthMultiplier = visualizationMode === null ? Number(mergePlan.stfBlurStrengthMultiplier) : 3;
-  if (![1, 2, 3].includes(blurStrengthMultiplier)) {
-    throw new Error("STF Blur strength is invalid.");
-  }
-  const blurRatio = Number(mergePlan.stfBlurRatio);
-  if (!(Number.isFinite(blurRatio) && STF_BLUR_RATIO_VALUES.has(blurRatio))) {
-    throw new Error("STF Blur ratio is invalid.");
-  }
+  const plan = mergePlan.stfBlurPlan;
+  if (!plan?.enabled) throw new Error("STF Additional blur was invoked while disabled.");
   const fNumbers = inputInfos.map((info) => Number(info?.fNumber));
-  const [algorithm, poolModule] = await Promise.all([
+  const [algorithm, poolModule, graphCutModule] = await Promise.all([
     import("./stf-additional-blur"),
     import("./stf-additional-blur-pool"),
+    plan.areaExponent === null ? Promise.resolve(null) : import("./stf-graph-cut"),
   ]);
   algorithm.buildStfApertureGroups(fNumbers);
-  const relativeBrightnessP50Divisor = resolveStfRelativeBrightnessP50Divisor(visualizationMode);
-  const relativeCombineMode = resolveStfRelativeCombineMode(visualizationMode);
-  const useP50Relative = relativeBrightnessP50Divisor !== null;
-
+  const sourceKey = stfGateSourceKey(sessionId, alignmentPlan, matrices, inputInfos, mergePlan, width, height);
+  if (!stfGateCache || stfGateCache.key !== sourceKey) {
+    resetStfGateCache();
+    stfGateCache = { key: sourceKey, ratio: null, source: null, mask: null, maskRatio: null,
+      maskInfo: null, base: null, baseKey: null, expanded: null, expandedKey: null };
+  }
+  const cache = stfGateCache;
   const jobs = buildLinearMergeStripeJobs(width, height);
   const hardwareConcurrency = typeof navigator === "object"
-    ? Math.max(1, Math.floor(navigator.hardwareConcurrency || 4))
-    : 4;
-  const workerUrl = new URL(
-    "/generated/local-stack-studio/stf-additional-blur.worker.js",
-    window.location.origin,
-  );
-  // Avoid stale Worker bundles when switching between relative experiments.
-  workerUrl.searchParams.set("revision", "stf-volume-interpolated-2-20261030");
-  const coarsePreview = visualizationMode === "coarse-sharpness";
-  const finePreview = visualizationMode === "fine-sharpness";
-  const sharpnessPreview = coarsePreview || finePreview;
-  const scratchDb = sharpnessPreview ? null : await openStfAdditionalBlurScratchDb("STF Additional blur");
-  const scratchSessionId = scratchDb ? createStfAdditionalBlurScratchSessionId() : null;
+    ? Math.max(1, Math.floor(navigator.hardwareConcurrency || 4)) : 4;
+  const workerUrl = new URL("/generated/local-stack-studio/stf-additional-blur.worker.js", window.location.origin);
+  workerUrl.searchParams.set("revision", "stf-gate-p3p97-preclosing-production-20261104");
+  const timings = {};
+  const stamp = () => performance.now();
   let pool = null;
-  try {
+  let scratchDb = null;
+  let scratchSessionId = null;
+  let source = null;
+  let activeRatio = cache.ratio;
+  const ensurePool = async () => {
+    if (pool) return pool;
     pool = await poolModule.StfAdditionalBlurWorkerPool.create({
       jobCount: jobs.length,
       config: {
         sessionId,
-        alignmentPlan: {
-          normalizationMode: alignmentPlan.normalizationMode,
-          targetWidth: alignmentPlan.targetWidth,
-          targetHeight: alignmentPlan.targetHeight,
-        },
+        alignmentPlan: { normalizationMode: alignmentPlan.normalizationMode,
+          targetWidth: alignmentPlan.targetWidth, targetHeight: alignmentPlan.targetHeight },
         matrices,
         gains: new Float32Array(mergePlan.gains),
         scaledLogs: new Float32Array(mergePlan.scaledLogs),
-        weights: new Float32Array(mergePlan.weights),
-        fNumbers,
-        relativeSharpness: useP50Relative || visualizationMode === "raw-ratio-relative"
-          || visualizationMode === "raw-ratio-relative2",
-        relativeBrightnessFloor: visualizationMode === "raw-ratio-relative2"
-          ? algorithm.STF_RELATIVE2_CHANNEL_BRIGHTNESS_FLOOR : undefined,
-        relativeCombineMode: relativeCombineMode ?? undefined,
+        weights: new Float32Array(mergePlan.weights), fNumbers,
       },
-      workerUrl,
-      hardwareConcurrency,
+      workerUrl, hardwareConcurrency,
     });
-    const workerCount = pool.ready.workerCount;
-    const groupCount = pool.ready.groupCount;
-    const accumulator = visualizationMode === null ? new Float32Array(width * height * 3) : null;
-    const sharpnessVisualization = sharpnessPreview ? new Float32Array(width * height) : null;
-    const sharpnessSamples = [];
-    const sampleGrid = algorithm.buildStfSampleGrid(width, height);
-    if (useP50Relative) {
+    return pool;
+  };
+  try {
+    if (!cache.ratio) {
+      const p = await ensurePool();
+      const sampleGrid = algorithm.buildStfSampleGrid(width, height);
       const brightnessSamples = [[], [], []];
-      setProgress(`STF measuring relative brightness 0/${jobs.length}...`);
-      await pool.sampleBrightnessStripes(jobs, sampleGrid, (_job, samples, completed, total) => {
-        if (samples.length % 3 !== 0) throw new Error("STF relative preview returned invalid RGB brightness samples.");
+      let t = stamp();
+      setProgress(`STF sampling RGB brightness 0/${jobs.length}...`);
+      await p.sampleBrightnessStripes(jobs, sampleGrid, (_job, samples, completed, total) => {
+        if (samples.length % 3 !== 0) throw new Error("STF Worker returned invalid brightness samples.");
         for (let i = 0; i < samples.length; i += 3) {
           brightnessSamples[0].push(samples[i]);
           brightnessSamples[1].push(samples[i + 1]);
           brightnessSamples[2].push(samples[i + 2]);
         }
-        setProgress(`STF measuring relative brightness ${completed}/${total}...`);
+        setProgress(`STF sampling RGB brightness ${completed}/${total}...`);
       });
-      const floors = algorithm.deriveStfRelativeChannelFloorsFromSamples(brightnessSamples, relativeBrightnessP50Divisor);
-      await pool.configureRelativeChannelFloors(floors);
-      console.info("STF relative RGB brightness floors verified", {
-        mode: visualizationMode ?? `blur-${blurStrengthMultiplier}`,
-        p50Divisor: relativeBrightnessP50Divisor,
-        floors,
-        sampleCount: brightnessSamples[0].length,
-      });
-    }
+      const floors = algorithm.deriveStfRelativeChannelFloorsFromSamples(brightnessSamples);
+      await p.configureRelativeChannelFloors(floors);
+      timings.brightnessP50 = stamp() - t;
+      console.info("STF relative RGB brightness P50/64", { floors, sampleCount: brightnessSamples[0].length });
 
-    setProgress(
-      `STF merging and analyzing Additional blur 0/${jobs.length} with ` +
-      `${workerCount} worker${workerCount === 1 ? "" : "s"}...`,
-    );
-    await pool.runAnalysisJobs(jobs, async (job, result, completed, total) => {
-      const pixelCount = width * job.height;
-      if (
-        result.linear.length !== pixelCount * 3
-        || result.fineLogSum.length !== pixelCount
-        || result.fineZero.length !== pixelCount
-        || result.coarseGroups.length !== pixelCount * groupCount
-        || result.groupCount !== groupCount
-      ) {
-        throw new Error(`STF Additional blur worker returned an invalid analysis stripe ${job.index + 1}.`);
-      }
-      accumulator?.set(result.linear, job.y * width * 3);
-      if (sharpnessVisualization && coarsePreview) {
-        const coarseStripe = algorithm.buildStfPersistentCoarseSharpnessStripe(result.coarseGroups, groupCount);
-        sharpnessVisualization.set(coarseStripe, job.y * width);
-      } else if (sharpnessVisualization && finePreview) {
-        const fineStripe = algorithm.buildStfPersistentFineSharpnessStripe(result.fineLogSum, result.fineZero, groupCount);
-        sharpnessVisualization.set(fineStripe, job.y * width);
-      }
-      if (!finePreview) {
-        algorithm.appendPersistentCoarseSamplesFromStripe(
-          sharpnessSamples,
-          result.coarseGroups,
-          groupCount,
-          width,
-          job.y,
-          job.height,
-          sampleGrid,
-        );
-      }
-      if (scratchDb) {
+      // Preserve only derived analysis stripes in short-lived scratch storage.
+      scratchDb = await openStfAdditionalBlurScratchDb("STF Additional blur");
+      scratchSessionId = createStfAdditionalBlurScratchSessionId();
+      const groupCount = p.ready.groupCount;
+      const sharpnessSamples = [];
+      if (!plan.gateOnly) source = new Float32Array(width * height * 3);
+      t = stamp();
+      setProgress(`STF analyzing Sobel sharpness 0/${jobs.length}...`);
+      await p.runAnalysisJobs(jobs, !plan.gateOnly, async (job, result, completed, total) => {
+        const pixels = width * job.height;
+        if (result.linear.length !== (plan.gateOnly ? 0 : pixels * 3) || result.fineLogSum.length !== pixels ||
+            result.fineZero.length !== pixels || result.coarseGroups.length !== pixels * groupCount ||
+            result.groupCount !== groupCount) {
+          throw new Error("STF Additional blur Worker returned invalid analysis geometry.");
+        }
+        if (source) source.set(result.linear, job.y * width * 3);
+        algorithm.appendPersistentCoarseSamplesFromStripe(sharpnessSamples, result.coarseGroups,
+          groupCount, width, job.y, job.height, sampleGrid);
         const keys = stfAdditionalBlurScratchKeys(scratchSessionId, job.index);
         await putStfAdditionalBlurScratchBuffers(scratchDb, [
           { key: keys.fineLogSum, buffer: result.fineLogSum.buffer },
           { key: keys.fineZero, buffer: result.fineZero.buffer },
           { key: keys.coarseGroups, buffer: result.coarseGroups.buffer },
-        ], "STF Additional blur derived sharpness");
-      }
-      setProgress(
-        `STF merging and analyzing Additional blur ${completed}/${total} with ` +
-        `${workerCount} worker${workerCount === 1 ? "" : "s"}...`,
-      );
-    });
-
-    if (finePreview && sharpnessVisualization) {
-      for (let y = sampleGrid.offsetY; y < height; y += sampleGrid.stride) {
-        for (let x = sampleGrid.offsetX; x < width; x += sampleGrid.stride) {
-          sharpnessSamples.push(sharpnessVisualization[y * width + x]);
-        }
-      }
-    }
-    // Relative3 remains P50/4 + weighted mean, relative4 P50/8 + mean.
-    // Relative5 and interpolated gate/production paths use P50/16 + RMS.
-    // All P50-relative raw-ratio previews still use coarse relative-sharpness P50/4 as the ratio epsilon.
-    // The original raw-ratio preview still uses GMM; the other comparisons remain unchanged.
-    const c = useP50Relative || visualizationMode === "raw-ratio-relative"
-      || visualizationMode === "raw-ratio-relative2" || visualizationMode === "raw-ratio-p50"
-      || visualizationMode === "raw-ratio-p50-8"
-      ? algorithm.deriveStfMedianSharpnessC(sharpnessSamples)
-      : algorithm.deriveStfDynamicSharpnessC(sharpnessSamples).c;
-    if (sharpnessVisualization) {
-      return finalizeStfAdditionalBlurVisualization(
-        sharpnessVisualization, width, height, outputColorSpace, algorithm, visualizationMode, c,
-      );
-    }
-    const ratioEpsilon = algorithm.deriveStfRatioEpsilon(c, visualizationMode === "raw-ratio-p50-8" ? 8 : 4);
-    if (useP50Relative || visualizationMode === "raw-ratio-relative"
-      || visualizationMode === "raw-ratio-relative2") {
-      console.info("STF relative sharpness verified", {
-        combineMode: relativeCombineMode ?? (useP50Relative ? "mean" : undefined),
-        mode: visualizationMode ?? `blur-${blurStrengthMultiplier}`,
-        brightnessFloor: useP50Relative
-          ? pool.ready.relativeChannelFloors : pool.ready.relativeBrightnessFloor,
-        coarseP50: c,
-        ratioEpsilon,
-        sampleCount: sharpnessSamples.length,
+        ], "STF Additional blur Sobel analysis");
+        setProgress(`STF analyzing Sobel sharpness ${completed}/${total}...`);
       });
+      timings.sobelAnalysis = stamp() - t;
+      const coarseP50 = algorithm.deriveStfMedianSharpnessC(sharpnessSamples);
+      const epsilon = algorithm.deriveStfRatioEpsilon(coarseP50);
+      console.info("STF coarse sharpness P50/64", { coarseP50, epsilon });
+      let unitRatio = new Float32Array(width * height);
+      t = stamp();
+      setProgress(`STF generating log-ratios 0/${jobs.length}...`);
+      await p.runRatioJobs(jobs,
+        async (job) => {
+          const keys = stfAdditionalBlurScratchKeys(scratchSessionId, job.index);
+          const [fineLogSumBuffer, fineZeroBuffer, coarseGroupsBuffer] = await getStfAdditionalBlurScratchBuffers(
+            scratchDb, [keys.fineLogSum, keys.fineZero, keys.coarseGroups],
+            `STF Additional blur stripe ${job.index + 1}`);
+          return { fineLogSum: new Float32Array(fineLogSumBuffer),
+            fineZero: new Uint8Array(fineZeroBuffer), coarseGroups: new Float32Array(coarseGroupsBuffer),
+            groupCount, epsilon };
+        },
+        (job, result, completed, total) => {
+          if (result.length !== width * job.height) throw new Error("STF log-ratio stripe has invalid size.");
+          unitRatio.set(result, job.y * width);
+          setProgress(`STF generating log-ratios ${completed}/${total}...`);
+        });
+      timings.ratioGeneration = stamp() - t;
+      t = stamp();
+      // This is the only P3/P97 normalization; after this point all steps
+      // take the same [0,1] scale, including Volume Closing 2.
+      const norm = algorithm.normalizeStfLogRatioBufferInPlace(unitRatio);
+      timings.p3p97 = stamp() - t;
+      if (norm.degenerate) console.warn("STF P3/P97 normalization fallback: degenerate ratio distribution.", norm);
+      else console.info("STF P3/P97 normalized before Volume Closing 2", norm);
+      t = stamp();
+      setProgress("STF applying Volume Closing 2...");
+      const closed = await p.volumeClose(unitRatio, width, height);
+      unitRatio = closed.values;
+      timings.volumeClosing2 = stamp() - t;
+      console.info("STF Volume Closing 2", closed.info);
+      activeRatio = unitRatio;
+      // Store large full-resolution buffers only within the cache budget;
+      // oversized maps remain local to this Process and are released after it.
+      if (canCacheStfBuffer(cache, unitRatio)) cache.ratio = unitRatio;
+      if (source && cache.ratio && canCacheStfBuffer(cache, source)) cache.source = source;
+    } else {
+      timings.reusedRatioAnalysis = true;
+      if (!plan.gateOnly && cache.source) source = cache.source;
     }
-    const logRatio = new Float32Array(width * height);
-    setProgress(
-      `STF building Additional blur gate 0/${jobs.length} with ` +
-      `${workerCount} worker${workerCount === 1 ? "" : "s"}...`,
-    );
-    await pool.runRatioJobs(
-      jobs,
-      async (job) => {
-        const keys = stfAdditionalBlurScratchKeys(scratchSessionId, job.index);
-        const [fineLogSumBuffer, fineZeroBuffer, coarseGroupsBuffer] = await getStfAdditionalBlurScratchBuffers(
-          scratchDb,
-          [keys.fineLogSum, keys.fineZero, keys.coarseGroups],
-          `STF Additional blur stripe ${job.index + 1}`,
-        );
-        return {
-          fineLogSum: new Float32Array(fineLogSumBuffer),
-          fineZero: new Uint8Array(fineZeroBuffer),
-          coarseGroups: new Float32Array(coarseGroupsBuffer),
-          groupCount,
-          epsilon: ratioEpsilon,
-        };
-      },
-      (job, stripe, completed, total) => {
-        if (stripe.length !== width * job.height) {
-          throw new Error(`STF Additional blur worker returned an invalid ratio stripe ${job.index + 1}.`);
-        }
-        logRatio.set(stripe, job.y * width);
-        setProgress(
-          `STF building Additional blur gate ${completed}/${total} with ` +
-          `${workerCount} worker${workerCount === 1 ? "" : "s"}...`,
-        );
-      },
-    );
-    // Leave all pre-interpolation raw-ratio experiments unchanged.
-    if (visualizationMode === "raw-ratio" || visualizationMode === "raw-ratio-p50" || visualizationMode === "raw-ratio-p50-8" || visualizationMode === "raw-ratio-relative" || visualizationMode === "raw-ratio-relative2" || visualizationMode === "raw-ratio-relative3" || visualizationMode === "raw-ratio-relative4" || visualizationMode === "raw-ratio-relative5") {
-      return finalizeStfAdditionalBlurVisualization(
-        logRatio, width, height, outputColorSpace, algorithm, visualizationMode,
-      );
-    }
-    // Volume previews remain independent raw-ratio comparisons.
-    // Production sigmoid, dilation and blur now use Volume Closing 2.
-    if (visualizationMode === "volume-interpolated" || visualizationMode === "volume-interpolated-2") {
-      const closingMode = visualizationMode === "volume-interpolated-2" ? "volume2" : "volume";
-      setProgress(`STF interpolating relative5 sharpness with Volume Closing (${closingMode})...`);
-      const { values: volumeLogRatio, info: volumeInfo } = await pool.interpolateLogRatio(logRatio, width, height, closingMode);
-      console.info("STF interpolated Volume Closing", { mode: visualizationMode, ...volumeInfo });
-      return finalizeStfAdditionalBlurVisualization(
-        volumeLogRatio, width, height, outputColorSpace, algorithm, "raw-ratio-relative5",
-      );
-    }
-    const gateClosingMode = resolveStfGateClosingMode(visualizationMode);
-    if (gateClosingMode === null) {
-      throw new Error("STF interpolated gate mode is invalid.");
-    }
-    // The area-interpolated preview retains Area Closing; gate previews and
-    // production blur use Volume Closing 2 (rim-mean reconstruction).
-    // interpolateLogRatio transfers its input buffer to the Worker: use its
-    // returned map for both sigmoid percentiles/slope and subsequent stages.
-    const gateClosingLabel = gateClosingMode === "volume2" ? "Volume Closing 2" : "Area Closing";
-    setProgress(`STF interpolating relative5 sharpness with ${gateClosingLabel}...`);
-    const { values: interpolatedLogRatio, info } = await pool.interpolateLogRatio(
-      logRatio, width, height, gateClosingMode,
-    );
-    console.info(`STF interpolated ${gateClosingLabel}`, {
-      mode: visualizationMode ?? `blur-${blurStrengthMultiplier}`,
-      ...info,
-    });
-    if (visualizationMode === "interpolated") {
-      // Only a raw-ratio preview: neither sigmoid nor dilation is applied.
-      return finalizeStfAdditionalBlurVisualization(
-        interpolatedLogRatio, width, height, outputColorSpace, algorithm, "raw-ratio-relative5",
-      );
-    }
-    // In particular, Blur ratio percentiles and sigmoid slope MUST come from
-    // the filled map, otherwise the filled area is not counted in the fit.
-    algorithm.applyStfSigmoidGateInPlace(interpolatedLogRatio, width, height, blurRatio);
-    if (visualizationMode === "sigmoid") {
-      return finalizeStfAdditionalBlurVisualization(
-        interpolatedLogRatio, width, height, outputColorSpace, algorithm, visualizationMode,
-      );
-    }
-    const blurRadius = algorithm.resolveStfAdditionalBlurRadius(width, height, blurStrengthMultiplier);
-    const expandedGate = algorithm.applyStfGateExpansion(interpolatedLogRatio, width, height, blurRadius);
-    if (visualizationMode === "dilated") {
-      return finalizeStfAdditionalBlurVisualization(
-        expandedGate, width, height, outputColorSpace, algorithm, visualizationMode,
-      );
-    }
-    const blurred = new Float32Array(accumulator.length);
 
-    setProgress(
-      `STF applying Additional blur 0/${jobs.length} with ` +
-      `${workerCount} worker${workerCount === 1 ? "" : "s"}...`,
-    );
-    await pool.runBlurJobs(
-      jobs,
+    const ratio = activeRatio;
+    if (!ratio || ratio.length !== width * height) throw new Error("STF base sharpness gate is missing.");
+    const effectiveRatio = plan.effectiveRatio;
+    const baseKey = JSON.stringify([effectiveRatio, plan.areaExponent, plan.sigmoid]);
+    let base = cache.baseKey === baseKey ? cache.base : null;
+    if (!base) {
+      let gated = ratio;
+      if (plan.areaExponent !== null) {
+        let t = stamp();
+        if (!cache.mask || cache.maskRatio !== effectiveRatio) {
+          const p = await ensurePool();
+          setProgress("STF computing Graph Cut mask...");
+          const graph = await p.graphCut(ratio.slice(), width, height, effectiveRatio);
+          cache.mask = graph.mask;
+          cache.maskInfo = graph.info;
+          cache.maskRatio = effectiveRatio;
+          timings.graphCut = stamp() - t;
+          console.info("STF Graph Cut partition", graph.info);
+        } else {
+          timings.reusedCutMask = true;
+        }
+        t = stamp();
+        gated = graphCutModule.applyStfGraphCutBoost(ratio, width, height,
+          cache.mask, cache.maskInfo.workingWidth, cache.maskInfo.workingHeight, plan.areaExponent);
+        timings.areaPowerBoost = stamp() - t;
+      }
+      if (plan.sigmoid !== 0) {
+        const t = stamp();
+        if (gated === ratio) gated = ratio.slice();
+        const sigmoid = algorithm.applyStfSigmoidGateInPlace(gated, width, height, effectiveRatio, plan.sigmoid);
+        timings.sigmoid = stamp() - t;
+        console.info("STF endpoint-fixed sigmoid", { ...sigmoid, percent: plan.sigmoid });
+      }
+      base = gated;
+      // Cache always prioritizes RatioAnalysis and the latest BaseGate.
+      cache.base = null; cache.baseKey = null;
+      cache.expanded = null; cache.expandedKey = null;
+      if (cache.ratio && (base === ratio || canCacheStfBuffer(cache, base))) {
+        cache.base = base;
+        cache.baseKey = baseKey;
+      }
+    } else {
+      timings.reusedBaseGate = true;
+    }
+    if (plan.gateOnly) {
+      console.info("STF Additional blur stage timings (ms)", timings);
+      return finalizeStfBasicGate(base, width, height, outputColorSpace);
+    }
+    const blurRadius = algorithm.resolveStfAdditionalBlurRadius(width, height, plan.strengthMultiplier);
+    const expandedKey = JSON.stringify([baseKey, blurRadius, 0.5, 0.2, 0.7]);
+    let expanded = cache.expandedKey === expandedKey ? cache.expanded : null;
+    if (!expanded) {
+      const t = stamp();
+      expanded = algorithm.applyStfGateExpansion(base, width, height, blurRadius);
+      timings.expandedGate = stamp() - t;
+      cache.expanded = null; cache.expandedKey = null;
+      if (cache.base && canCacheStfBuffer(cache, expanded)) {
+        cache.expanded = expanded;
+        cache.expandedKey = expandedKey;
+      }
+    } else timings.reusedExpandedGate = true;
+    if (!source) {
+      const t = stamp();
+      setProgress("STF merging source for additional blur...");
+      // Re-merging is much cheaper than Sobel analysis and avoids persisting
+      // 240MB of linear RGB for 20MP images just to support option switching.
+      source = await mergeLinearFromWorkerPool(sessionId, reader, alignmentPlan, matrices, mergePlan, width, height);
+      timings.sourceMerge = stamp() - t;
+      if (cache.ratio && canCacheStfBuffer(cache, source)) cache.source = source;
+    }
+    const p = await ensurePool();
+    const blurred = new Float32Array(source.length);
+    const t = stamp();
+    setProgress(`STF guarded Gaussian blur 0/${jobs.length}...`);
+    await p.runBlurJobs(jobs,
       (job) => {
         const regionY = Math.max(0, job.y - blurRadius);
         const regionEnd = Math.min(height, job.y + job.height + blurRadius);
-        return {
-          regionHeight: regionEnd - regionY,
-          coreOffsetY: job.y - regionY,
-          coreHeight: job.height,
-          radius: blurRadius,
-          source: accumulator.slice(regionY * width * 3, regionEnd * width * 3),
-          gate: expandedGate.slice(regionY * width, regionEnd * width),
-        };
+        return { regionHeight: regionEnd - regionY, coreOffsetY: job.y - regionY,
+          coreHeight: job.height, radius: blurRadius,
+          source: source.slice(regionY * width * 3, regionEnd * width * 3),
+          gate: expanded.slice(regionY * width, regionEnd * width) };
       },
       (job, stripe, completed, total) => {
-        if (stripe.length !== width * job.height * 3) {
-          throw new Error(`STF Additional blur worker returned an invalid blurred stripe ${job.index + 1}.`);
-        }
+        if (stripe.length !== width * job.height * 3) throw new Error("STF Gaussian stripe has invalid size.");
         blurred.set(stripe, job.y * width * 3);
-        setProgress(
-          `STF applying Additional blur ${completed}/${total} with ` +
-          `${workerCount} worker${workerCount === 1 ? "" : "s"}...`,
-        );
-      },
-    );
-
+        setProgress(`STF guarded Gaussian blur ${completed}/${total}...`);
+      });
+    timings.guardedGaussian = stamp() - t;
+    console.info("STF Additional blur stage timings (ms)", { ...timings, blurRadius,
+      cacheBytes: stfGateCacheBytes(cache), workers: p.ready.workerCount });
     return finalizeStoredResult(blurred, width, height, outputColorSpace, true);
   } finally {
     pool?.terminate();
     if (scratchDb) {
-      try { await deleteStfAdditionalBlurScratchSession(scratchDb, scratchSessionId); } catch {}
+      try { await deleteStfAdditionalBlurScratchSession(scratchDb, scratchSessionId); }
+      catch (error) { console.warn("STF Additional blur scratch cleanup failed", error); }
       scratchDb.close();
     }
   }
@@ -5374,6 +5315,9 @@ function setProcessing(processing) {
   stfBlendWeight.disabled = processing;
   stfBlurStrength.disabled = processing;
   stfBlurRatio.disabled = processing;
+  stfBlurAreaGuard.disabled = processing;
+  stfBlurSigmoid.disabled = processing;
+  if (!processing) updateStfBlurOptionsVisibility();
   outputFormat.disabled = processing;
   outputSize.disabled = processing || !currentStackResult;
   previewExposure.disabled = processing || !currentStackResult;
@@ -5457,34 +5401,8 @@ function getElement(id) {
   return element;
 }
 
-type YieldScheduler = {
-  yield?: () => Promise<void>;
-};
-
-let browserYieldChannel: MessageChannel | null = null;
-const browserYieldResolvers: Array<() => void> = [];
-
-function getBrowserYieldChannel() {
-  if (browserYieldChannel) return browserYieldChannel;
-  const channel = new MessageChannel();
-  channel.port1.onmessage = () => {
-    const resolve = browserYieldResolvers.shift();
-    resolve?.();
-    if (browserYieldResolvers.length > 0) channel.port2.postMessage(0);
-  };
-  browserYieldChannel = channel;
-  return channel;
-}
-
 function yieldToBrowser() {
-  const scheduler = (globalThis as typeof globalThis & { scheduler?: YieldScheduler }).scheduler;
-  if (typeof scheduler?.yield === "function") return scheduler.yield();
-
-  return new Promise<void>((resolve) => {
-    const shouldSchedule = browserYieldResolvers.length === 0;
-    browserYieldResolvers.push(resolve);
-    if (shouldSchedule) getBrowserYieldChannel().port2.postMessage(0);
-  });
+  return new Promise((resolve) => window.setTimeout(resolve, 0));
 }
 
 function parseJpegExif(buffer) {
@@ -5614,6 +5532,7 @@ return () => {
   }
   clearZoomView();
   clearFullSizeRenderCache();
+  resetStfGateCache();
   if (currentCanonicalSession) {
     const session = currentCanonicalSession;
     currentCanonicalSession = null;

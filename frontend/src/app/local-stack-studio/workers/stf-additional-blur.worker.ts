@@ -1,34 +1,24 @@
-// Local Stack Studio STF Additional blur worker. Built to public/generated/local-stack-studio.
+// Local Stack Studio STF Additional blur production Worker.
 import { applyStfToneMatchInPlace, buildStfToneMatchLut, type StfToneMatchLut } from "../stack/stf-tone-match";
 import {
-  STF_ADDITIONAL_BLUR_COARSE_REFERENCE_PIXELS,
-  STF_ADDITIONAL_BLUR_FINE_REFERENCE_PIXELS,
-  applyGuardedGaussianBlurRegion,
-  buildStfLogRatioFromDerived,
-  buildStfApertureGroups,
-  buildStfSharpnessMapAtScaleInto,
-  buildStfRelativeSharpnessMapAtScaleInto,
-  STF_RELATIVE_CHANNEL_BRIGHTNESS_FLOOR,
-  type StfRelativeChannelFloors,
-  validateStfRelativeChannelFloors,
-  createStfSharpnessScratch,
-  resolveStfSharpnessHalo,
-  resolveStfSharpnessScale,
-  type StfRelativeCombineMode,
+  STF_ADDITIONAL_BLUR_COARSE_REFERENCE_PIXELS, STF_ADDITIONAL_BLUR_FINE_REFERENCE_PIXELS,
+  applyGuardedGaussianBlurRegion, buildStfLogRatioFromDerived,
+  buildStfApertureGroups, buildStfRelativeSharpnessMapAtScaleInto,
+  type StfRelativeChannelFloors, validateStfRelativeChannelFloors,
+  createStfSharpnessScratch, resolveStfSharpnessHalo, resolveStfSharpnessScale,
 } from "../stack/stf-additional-blur";
 import { WorkerCanonicalReader } from "../stack/worker-canonical-reader";
-import { interpolateStfLogRatioInPlace } from "../stack/stf-area-closing";
-import { interpolateStfVolumeLogRatioInPlace } from "../stack/stf-volume-closing";
-import type {
-  StfAdditionalBlurWorkerRequest,
-  StfAdditionalBlurWorkerResponse,
+import { interpolateStfVolumeUnitRatioInPlace } from "../stack/stf-volume-closing";
+import { buildStfGraphCutMask } from "../stack/stf-graph-cut";
+import {
+  STF_ADDITIONAL_BLUR_PROTOCOL_VERSION,
+  type StfAdditionalBlurWorkerRequest, type StfAdditionalBlurWorkerResponse,
 } from "./protocols/stf-additional-blur-protocol";
 
 type WorkerScope = {
   onmessage: ((event: MessageEvent<StfAdditionalBlurWorkerRequest>) => void | Promise<void>) | null;
   postMessage: (message: StfAdditionalBlurWorkerResponse, transfer?: Transferable[]) => void;
 };
-
 const workerScope = globalThis as unknown as WorkerScope;
 let reader: WorkerCanonicalReader | null = null;
 let gains: Float32Array | null = null;
@@ -40,10 +30,7 @@ let groupImageCounts: Int32Array | null = null;
 let fineScale = 1;
 let coarseScale = 1;
 let analysisHalo = 2;
-let relativeSharpness = false;
-let relativeBrightnessFloor = STF_RELATIVE_CHANNEL_BRIGHTNESS_FLOOR;
 let relativeChannelFloors: StfRelativeChannelFloors | null = null;
-let relativeCombineMode: StfRelativeCombineMode = "mean";
 
 workerScope.onmessage = async (event: MessageEvent<StfAdditionalBlurWorkerRequest>) => {
   const message = event.data;
@@ -52,36 +39,22 @@ workerScope.onmessage = async (event: MessageEvent<StfAdditionalBlurWorkerReques
     if (message.type === "init") {
       reader?.close();
       reader = await WorkerCanonicalReader.open({
-        sessionId: message.sessionId,
-        alignmentPlan: message.alignmentPlan,
-        matrices: message.matrices,
-        cacheBytes: message.cacheBytes,
+        sessionId: message.sessionId, alignmentPlan: message.alignmentPlan,
+        matrices: message.matrices, cacheBytes: message.cacheBytes,
       });
       gains = new Float32Array(message.gains);
       scaledLogs = new Float32Array(message.scaledLogs);
       weights = new Float32Array(message.weights);
-      relativeSharpness = message.relativeSharpness === true;
       relativeChannelFloors = null;
-      relativeBrightnessFloor = message.relativeBrightnessFloor ?? STF_RELATIVE_CHANNEL_BRIGHTNESS_FLOOR;
-      relativeCombineMode = message.relativeCombineMode === "rms" ? "rms" : "mean";
-      if (relativeSharpness && !(Number.isFinite(relativeBrightnessFloor) && relativeBrightnessFloor > 0)) {
-        throw new Error("STF relative sharpness brightness floor is invalid.");
-      }
       const fNumbers = Array.from(message.fNumbers, Number);
-      if (
-        gains.length !== reader.imageCount
-        || scaledLogs.length !== reader.imageCount
-        || weights.length !== reader.imageCount
-        || fNumbers.length !== reader.imageCount
-      ) {
+      if (gains.length !== reader.imageCount || scaledLogs.length !== reader.imageCount ||
+          weights.length !== reader.imageCount || fNumbers.length !== reader.imageCount) {
         throw new Error("STF Additional blur worker configuration length does not match image count.");
       }
       toneMatchLuts = Array.from({ length: reader.imageCount }, (_, index) => {
-        const gain = gains![index];
-        const scaledLog = scaledLogs![index];
+        const gain = gains![index], scaledLog = scaledLogs![index];
         return Math.abs(gain - 1) > 1e-8 || Math.abs(scaledLog) > 1e-8
-          ? buildStfToneMatchLut(gain, scaledLog)
-          : null;
+          ? buildStfToneMatchLut(gain, scaledLog) : null;
       });
       const groups = buildStfApertureGroups(fNumbers);
       imageGroupIndexes = groups.imageGroupIndexes;
@@ -89,175 +62,107 @@ workerScope.onmessage = async (event: MessageEvent<StfAdditionalBlurWorkerReques
       fineScale = resolveStfSharpnessScale(reader.width, reader.height, STF_ADDITIONAL_BLUR_FINE_REFERENCE_PIXELS);
       coarseScale = resolveStfSharpnessScale(reader.width, reader.height, STF_ADDITIONAL_BLUR_COARSE_REFERENCE_PIXELS);
       analysisHalo = resolveStfSharpnessHalo(Math.max(fineScale, coarseScale));
-      post({
-        type: "ready",
-        requestId,
-        imageCount: reader.imageCount,
-        width: reader.width,
-        height: reader.height,
-        analysisHalo,
-        groupCount: groupImageCounts.length,
-        relativeSharpness,
-        relativeBrightnessFloor,
-        relativeCombineMode,
-      });
+      post({ type: "ready", requestId, protocolVersion: STF_ADDITIONAL_BLUR_PROTOCOL_VERSION,
+        imageCount: reader.imageCount, width: reader.width, height: reader.height,
+        analysisHalo, groupCount: groupImageCounts.length });
       return;
     }
-
     if (message.type === "sample-brightness-stripe") {
       ensureInitialized();
-      const samples = await sampleBrightnessStripe(
-        message.y, message.height, message.stride, message.offsetX, message.offsetY,
-      );
-      post({
-        type: "sample-brightness-stripe-result",
-        requestId,
-        samplesBuffer: samples.buffer as ArrayBuffer,
-      }, [samples.buffer as ArrayBuffer]);
+      const samples = await sampleBrightnessStripe(message.y, message.height, message.stride, message.offsetX, message.offsetY);
+      post({ type: "sample-brightness-stripe-result", requestId, samplesBuffer: samples.buffer as ArrayBuffer },
+        [samples.buffer as ArrayBuffer]);
       return;
     }
-
     if (message.type === "configure-relative-floors") {
       ensureInitialized();
-      if (!relativeSharpness) throw new Error("STF relative3 floors require relative sharpness mode.");
       relativeChannelFloors = validateStfRelativeChannelFloors(message.floors);
       post({ type: "relative-floors-configured", requestId, floors: relativeChannelFloors });
       return;
     }
-
     if (message.type === "analyze-stripe") {
       ensureInitialized();
-      const y = Number(message.y);
-      const height = Number(message.height);
-      if (!(Number.isInteger(y) && y >= 0 && Number.isInteger(height) && height > 0 && y + height <= reader!.height)) {
-        throw new Error("STF Additional blur worker received an invalid analysis stripe.");
+      const y = Number(message.y), height = Number(message.height);
+      if (!Number.isInteger(y) || y < 0 || !Number.isInteger(height) || height < 1 || y + height > reader!.height) {
+        throw new Error("STF Additional blur Worker received invalid analysis stripe geometry.");
       }
-      const result = await analyzeStripe(y, height);
-      const transfers = [
-        result.linear.buffer,
-        result.fineLogSum.buffer,
-        result.fineZero.buffer,
-        result.coarseGroups.buffer,
-      ] as ArrayBuffer[];
-      post({
-        type: "analyze-stripe-result",
-        requestId,
-        y,
-        height,
-        groupCount: groupImageCounts!.length,
+      if (!relativeChannelFloors) throw new Error("STF Additional blur requires configured RGB floors.");
+      if (typeof message.includeSource !== "boolean") throw new Error("STF Worker source flag is invalid.");
+      const result = await analyzeStripe(y, height, message.includeSource);
+      post({ type: "analyze-stripe-result", requestId, y, height, groupCount: groupImageCounts!.length,
         linearBuffer: result.linear.buffer as ArrayBuffer,
         fineLogSumBuffer: result.fineLogSum.buffer as ArrayBuffer,
         fineZeroBuffer: result.fineZero.buffer as ArrayBuffer,
         coarseGroupsBuffer: result.coarseGroups.buffer as ArrayBuffer,
-      }, transfers);
+      }, [result.linear.buffer, result.fineLogSum.buffer, result.fineZero.buffer, result.coarseGroups.buffer] as ArrayBuffer[]);
       return;
     }
-
     if (message.type === "ratio-stripe") {
-      const pixelCount = Number(message.pixelCount);
-      const groupCount = Number(message.groupCount);
-      const epsilon = Number(message.epsilon);
-      if (!(Number.isInteger(pixelCount) && pixelCount > 0 && Number.isInteger(groupCount) && groupCount >= 2 && Number.isFinite(epsilon) && epsilon > 0)) {
-        throw new Error("STF Additional blur worker received invalid ratio parameters.");
-      }
+      const { pixelCount, groupCount, epsilon } = message;
+      if (!Number.isInteger(pixelCount) || pixelCount < 1 || !Number.isInteger(groupCount) || groupCount < 2 ||
+          !Number.isFinite(epsilon) || epsilon <= 0) throw new Error("STF ratio Worker parameters invalid.");
       const fineLogSum = new Float32Array(message.fineLogSumBuffer);
       const fineZero = new Uint8Array(message.fineZeroBuffer);
       const coarseGroups = new Float32Array(message.coarseGroupsBuffer);
       if (fineLogSum.length !== pixelCount || fineZero.length !== pixelCount || coarseGroups.length !== pixelCount * groupCount) {
-        throw new Error("STF Additional blur worker received invalid ratio buffers.");
+        throw new Error("STF ratio Worker buffers are invalid.");
       }
-      const logRatio = buildStfLogRatioFromDerived(
-        fineLogSum,
-        fineZero,
-        coarseGroups,
-        groupCount,
-        epsilon,
-      );
-      post({
-        type: "ratio-stripe-result",
-        requestId,
-        logRatioBuffer: logRatio.buffer as ArrayBuffer,
-      }, [logRatio.buffer as ArrayBuffer]);
+      const logRatio = buildStfLogRatioFromDerived(fineLogSum, fineZero, coarseGroups, groupCount, epsilon);
+      post({ type: "ratio-stripe-result", requestId, logRatioBuffer: logRatio.buffer as ArrayBuffer },
+        [logRatio.buffer as ArrayBuffer]);
       return;
     }
-
-    if (message.type === "area-close") {
+    if (message.type === "volume-close") {
       ensureInitialized();
       const { width, height } = message;
-      if (width !== reader!.width || height !== reader!.height || message.logRatioBuffer.byteLength !== width * height * 4) {
-        throw new Error("STF Area Closing worker received invalid dimensions.");
+      if (width !== reader!.width || height !== reader!.height || message.unitRatioBuffer.byteLength !== width * height * 4) {
+        throw new Error("STF Volume Closing Worker geometry is invalid.");
       }
-      const values = new Float32Array(message.logRatioBuffer);
-      const closingMode = message.closingMode ?? "area";
-      if (closingMode !== "area" && closingMode !== "volume" && closingMode !== "volume2") {
-        throw new Error("STF Closing worker received an unsupported closing mode.");
-      }
-      const info = closingMode === "volume2"
-        ? interpolateStfVolumeLogRatioInPlace(values, width, height, undefined, undefined, "rim-mean")
-        : closingMode === "volume"
-          ? interpolateStfVolumeLogRatioInPlace(values, width, height)
-          : interpolateStfLogRatioInPlace(values, width, height);
-      post({
-        type: "area-close-result",
-        closingMode,
-        closingImplementation: closingMode === "volume2" ? "rim-mean-v2" : undefined,
-        requestId,
-        logRatioBuffer: values.buffer as ArrayBuffer,
-        ...info,
-      }, [values.buffer as ArrayBuffer]);
+      const values = new Float32Array(message.unitRatioBuffer);
+      const info = interpolateStfVolumeUnitRatioInPlace(values, width, height);
+      post({ type: "volume-close-result", requestId, protocolVersion: STF_ADDITIONAL_BLUR_PROTOCOL_VERSION,
+        unitRatioBuffer: values.buffer as ArrayBuffer, ...info }, [values.buffer as ArrayBuffer]);
       return;
     }
-
+    if (message.type === "graph-cut") {
+      ensureInitialized();
+      const { width, height, blurRatio } = message;
+      if (width !== reader!.width || height !== reader!.height || message.confidenceBuffer.byteLength !== width * height * 4) {
+        throw new Error("STF Graph Cut Worker geometry is invalid.");
+      }
+      const result = buildStfGraphCutMask(new Float32Array(message.confidenceBuffer), width, height, blurRatio);
+      post({ type: "graph-cut-result", requestId, protocolVersion: STF_ADDITIONAL_BLUR_PROTOCOL_VERSION,
+        maskBuffer: result.mask.buffer as ArrayBuffer, ...result.info }, [result.mask.buffer as ArrayBuffer]);
+      return;
+    }
     if (message.type === "blur-stripe") {
       ensureInitialized();
-      const regionHeight = Number(message.regionHeight);
-      const coreOffsetY = Number(message.coreOffsetY);
-      const coreHeight = Number(message.coreHeight);
-      const radius = Number(message.radius);
-      if (!(Number.isInteger(regionHeight) && regionHeight > 0 && Number.isInteger(coreOffsetY) && coreOffsetY >= 0 && Number.isInteger(coreHeight) && coreHeight > 0)) {
-        throw new Error("STF Additional blur worker received invalid blur geometry.");
-      }
+      const { regionHeight, coreOffsetY, coreHeight, radius } = message;
       const source = new Float32Array(message.sourceBuffer);
       const gate = new Float32Array(message.gateBuffer);
-      if (source.length !== reader!.width * regionHeight * 3 || gate.length !== reader!.width * regionHeight) {
-        throw new Error("STF Additional blur worker received invalid blur buffers.");
+      if (!Number.isInteger(regionHeight) || regionHeight < 1 || !Number.isInteger(coreOffsetY) || coreOffsetY < 0 ||
+          !Number.isInteger(coreHeight) || coreHeight < 1 || coreOffsetY + coreHeight > regionHeight ||
+          !Number.isInteger(radius) || radius < 2 || radius > 15 ||
+          source.length !== reader!.width * regionHeight * 3 || gate.length !== reader!.width * regionHeight) {
+        throw new Error("STF Guarded Gaussian Worker geometry is invalid.");
       }
-      const output = applyGuardedGaussianBlurRegion(
-        source,
-        reader!.width,
-        regionHeight,
-        gate,
-        radius,
-        coreOffsetY,
-        coreHeight,
-      );
-      post({
-        type: "blur-stripe-result",
-        requestId,
-        coreHeight,
-        linearBuffer: output.buffer as ArrayBuffer,
-      }, [output.buffer as ArrayBuffer]);
+      const output = applyGuardedGaussianBlurRegion(source, reader!.width, regionHeight,
+        gate, radius, coreOffsetY, coreHeight);
+      post({ type: "blur-stripe-result", requestId, protocolVersion: STF_ADDITIONAL_BLUR_PROTOCOL_VERSION,
+        coreHeight, linearBuffer: output.buffer as ArrayBuffer }, [output.buffer as ArrayBuffer]);
       return;
     }
-
-    throw new Error(`Unsupported STF Additional blur worker request: ${String((message as { type?: unknown }).type)}`);
+    throw new Error(`Unsupported STF Additional blur Worker request: ${String((message as { type?: unknown }).type)}`);
   } catch (error) {
-    post({
-      type: "error",
-      requestId,
-      message: error instanceof Error ? error.message : String(error),
-    });
+    post({ type: "error", requestId, message: error instanceof Error ? error.message : String(error) });
   }
 };
-
 function ensureInitialized(): void {
   if (!reader || !gains || !scaledLogs || !weights || !toneMatchLuts || !imageGroupIndexes || !groupImageCounts) {
-    throw new Error("STF Additional blur worker is not initialized.");
+    throw new Error("STF Additional blur Worker was not initialized.");
   }
 }
 
-// Prepass for relative3 only. Sample the same tone-matched, aligned STF
-// composite as the regular analysis, without computing Sobel gradients.
 async function sampleBrightnessStripe(
   y: number, height: number, stride: number, offsetX: number, offsetY: number,
 ): Promise<Float32Array> {
@@ -266,7 +171,7 @@ async function sampleBrightnessStripe(
     && Number.isInteger(stride) && stride >= 1
     && Number.isInteger(offsetX) && offsetX >= 0 && offsetX < reader!.width
     && Number.isInteger(offsetY) && offsetY >= 0 && offsetY < reader!.height)) {
-    throw new Error("STF relative3 brightness sample geometry is invalid.");
+    throw new Error("STF brightness sample geometry is invalid.");
   }
   const width = reader!.width;
   const positions: number[] = [];
@@ -291,7 +196,8 @@ async function sampleBrightnessStripe(
   return samples;
 }
 
-async function analyzeStripe(y: number, height: number): Promise<{
+
+async function analyzeStripe(y: number, height: number, includeSource: boolean): Promise<{
   linear: Float32Array;
   fineLogSum: Float32Array;
   fineZero: Uint8Array;
@@ -307,7 +213,7 @@ async function analyzeStripe(y: number, height: number): Promise<{
   const regionPixels = width * regionHeight;
   const groupCount = groupImageCounts!.length;
 
-  const linearAccumulator = new Float32Array(corePixels * 3);
+  const linearAccumulator = new Float32Array(includeSource ? corePixels * 3 : 0);
   const fineGroups = Array.from({ length: groupCount }, () => new Float32Array(corePixels));
   const coarseGroups = new Float32Array(corePixels * groupCount);
   const fineMap = new Float32Array(regionPixels);
@@ -319,22 +225,19 @@ async function analyzeStripe(y: number, height: number): Promise<{
     const lut = toneMatchLuts![imageIndex];
     if (lut) applyStfToneMatchInPlace(linear, gains![imageIndex], scaledLogs![imageIndex], lut);
 
-    const mergeWeight = weights![imageIndex];
-    for (let localY = 0; localY < height; localY += 1) {
-      const sourceStart = (coreOffsetY + localY) * width * 3;
-      const targetStart = localY * width * 3;
-      for (let offset = 0; offset < width * 3; offset += 1) {
-        linearAccumulator[targetStart + offset] += linear[sourceStart + offset] * mergeWeight;
+    if (includeSource) {
+      const mergeWeight = weights![imageIndex];
+      for (let localY = 0; localY < height; localY += 1) {
+        const sourceStart = (coreOffsetY + localY) * width * 3;
+        const targetStart = localY * width * 3;
+        for (let offset = 0; offset < width * 3; offset += 1) {
+          linearAccumulator[targetStart + offset] += linear[sourceStart + offset] * mergeWeight;
+        }
       }
     }
 
-    if (relativeSharpness) {
-      buildStfRelativeSharpnessMapAtScaleInto(linear, width, regionHeight, fineScale, fineMap, scratch, relativeChannelFloors ?? relativeBrightnessFloor, relativeCombineMode);
-      buildStfRelativeSharpnessMapAtScaleInto(linear, width, regionHeight, coarseScale, coarseMap, scratch, relativeChannelFloors ?? relativeBrightnessFloor, relativeCombineMode);
-    } else {
-      buildStfSharpnessMapAtScaleInto(linear, width, regionHeight, fineScale, fineMap, scratch);
-      buildStfSharpnessMapAtScaleInto(linear, width, regionHeight, coarseScale, coarseMap, scratch);
-    }
+    buildStfRelativeSharpnessMapAtScaleInto(linear, width, regionHeight, fineScale, fineMap, scratch, relativeChannelFloors!);
+    buildStfRelativeSharpnessMapAtScaleInto(linear, width, regionHeight, coarseScale, coarseMap, scratch, relativeChannelFloors!);
     const group = imageGroupIndexes![imageIndex];
     const fineTarget = fineGroups[group];
     const coarseBase = group * corePixels;
@@ -368,6 +271,7 @@ async function analyzeStripe(y: number, height: number): Promise<{
 
   return { linear: linearAccumulator, fineLogSum, fineZero, coarseGroups };
 }
+
 
 function post(message: StfAdditionalBlurWorkerResponse, transfer: Transferable[] = []): void {
   workerScope.postMessage(message, transfer);

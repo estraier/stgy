@@ -1,66 +1,53 @@
 import {
-  resolveStfRelativeBrightnessP50Divisor,
-  resolveStfRelativeCombineMode,
-  resolveStfGateClosingMode,
-  usesStfRelative3Sharpness,
-  usesStfRelative5Sharpness,
-  usesStfInterpolatedGate,
+  buildStfAdditionalBlurPlan, DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS,
+  STF_BLUR_STRENGTH_VALUES, STF_BLUR_AREA_GUARD_VALUES,
+  STF_BLUR_RATIO_VALUES, STF_BLUR_SIGMOID_VALUES,
 } from "./stf-additional-blur-mode";
 
-describe("STF Additional blur sharpness selection", () => {
-  test("sigmoid, dilated, and weak/medium/strong use relative5 P50/16 and weighted RMS", () => {
-    for (const mode of [null, "sigmoid", "dilated", "raw-ratio-relative5", "interpolated", "volume-interpolated", "volume-interpolated-2"]) {
-      expect(usesStfRelative5Sharpness(mode)).toBe(true);
-      expect(usesStfRelative3Sharpness(mode)).toBe(false);
-      expect(resolveStfRelativeBrightnessP50Divisor(mode)).toBe(16);
-      expect(resolveStfRelativeCombineMode(mode)).toBe("rms");
+describe("STF Additional Blur production option specification", () => {
+  test("only the approved option values and defaults are exposed", () => {
+    expect([...STF_BLUR_STRENGTH_VALUES]).toEqual(["none", "weak", "medium", "strong", "gate"]);
+    expect([...STF_BLUR_AREA_GUARD_VALUES]).toEqual(["none", "weak", "medium", "strong"]);
+    expect(STF_BLUR_RATIO_VALUES).toHaveLength(17);
+    expect(STF_BLUR_RATIO_VALUES[0]).toBeCloseTo(0.1);
+    expect(STF_BLUR_RATIO_VALUES[16]).toBeCloseTo(0.9);
+    expect(STF_BLUR_SIGMOID_VALUES).toHaveLength(21);
+    expect(STF_BLUR_SIGMOID_VALUES[0]).toBe(0);
+    expect(STF_BLUR_SIGMOID_VALUES[20]).toBe(100);
+    expect(DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS).toEqual({ strength: "none", ratio: 0.5, areaGuard: "medium", sigmoid: 75 });
+  });
+  test("none avoids all additional processing and gate suppresses dilation/blur", () => {
+    const disabled = buildStfAdditionalBlurPlan(DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS);
+    expect(disabled.enabled).toBe(false);
+    expect(disabled.strengthMultiplier).toBeNull();
+    expect(disabled.areaExponent).toBeNull();
+    expect(disabled.effectiveRatio).toBeNull();
+    const gate = buildStfAdditionalBlurPlan({ ...DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS, strength: "gate" });
+    expect(gate.enabled).toBe(true);
+    expect(gate.gateOnly).toBe(true);
+    expect(gate.strengthMultiplier).toBeNull();
+  });
+  test("Gaussian strength and area-guard exponent are independent", () => {
+    for (const [strength, multiplier] of [["weak", 1], ["medium", 2], ["strong", 3]] as const) {
+      for (const [areaGuard, exponent] of [["none", null], ["weak", 0.95], ["medium", 0.85], ["strong", 0.75]] as const) {
+        const plan = buildStfAdditionalBlurPlan({ strength, ratio: 0.7, areaGuard, sigmoid: 75 });
+        expect(plan.strengthMultiplier).toBe(multiplier);
+        expect(plan.areaExponent).toBe(exponent);
+        expect(plan.effectiveRatio).toBe(0.7);
+      }
     }
   });
-
-  test("sigmoid, dilated and production blur use Volume Closing 2", () => {
-    for (const mode of [null, "sigmoid", "dilated"]) {
-      expect(usesStfInterpolatedGate(mode)).toBe(true);
-      expect(resolveStfGateClosingMode(mode)).toBe("volume2");
-    }
+  test("ratio is inert if Graph Cut and sigmoid are both disabled", () => {
+    const a = buildStfAdditionalBlurPlan({ strength: "medium", ratio: 0.1, areaGuard: "none", sigmoid: 0 });
+    const b = buildStfAdditionalBlurPlan({ strength: "medium", ratio: 0.9, areaGuard: "none", sigmoid: 0 });
+    expect(a.effectiveRatio).toBeNull();
+    expect(b.effectiveRatio).toBeNull();
+    expect(a.areaExponent).toBeNull();
+    expect(a.strengthMultiplier).toBe(2);
   });
-
-  test("Area and Volume comparison modes remain independent", () => {
-    expect(usesStfInterpolatedGate("interpolated")).toBe(true);
-    expect(resolveStfGateClosingMode("interpolated")).toBe("area");
-    for (const mode of [
-      "volume-interpolated", "volume-interpolated-2", "coarse-sharpness",
-      "fine-sharpness", "raw-ratio", "raw-ratio-p50", "raw-ratio-p50-8",
-      "raw-ratio-relative", "raw-ratio-relative2", "raw-ratio-relative3",
-      "raw-ratio-relative4", "raw-ratio-relative5",
-    ]) {
-      expect(usesStfInterpolatedGate(mode)).toBe(false);
-      expect(resolveStfGateClosingMode(mode)).toBeNull();
-    }
-  });
-
-  test("relative3 stays P50/4 with weighted arithmetic mean", () => {
-    expect(usesStfRelative3Sharpness("raw-ratio-relative3")).toBe(true);
-    expect(usesStfRelative5Sharpness("raw-ratio-relative3")).toBe(false);
-    expect(resolveStfRelativeBrightnessP50Divisor("raw-ratio-relative3")).toBe(4);
-    expect(resolveStfRelativeCombineMode("raw-ratio-relative3")).toBe("mean");
-  });
-
-  test("relative4 stays P50/8 with weighted arithmetic mean", () => {
-    expect(usesStfRelative5Sharpness("raw-ratio-relative4")).toBe(false);
-    expect(resolveStfRelativeBrightnessP50Divisor("raw-ratio-relative4")).toBe(8);
-    expect(resolveStfRelativeCombineMode("raw-ratio-relative4")).toBe("mean");
-  });
-
-  test("preserves fixed-floor comparisons and absolute sharpness modes", () => {
-    for (const mode of ["raw-ratio-relative", "raw-ratio-relative2"]) {
-      expect(resolveStfRelativeBrightnessP50Divisor(mode)).toBeNull();
-      expect(resolveStfRelativeCombineMode(mode)).toBe("mean");
-      expect(usesStfRelative5Sharpness(mode)).toBe(false);
-    }
-    for (const mode of ["coarse-sharpness", "fine-sharpness", "raw-ratio", "raw-ratio-p50", "raw-ratio-p50-8"]) {
-      expect(resolveStfRelativeBrightnessP50Divisor(mode)).toBeNull();
-      expect(resolveStfRelativeCombineMode(mode)).toBeNull();
-      expect(usesStfRelative5Sharpness(mode)).toBe(false);
-    }
+  test("invalid input fails rather than selecting an unsupported pipeline", () => {
+    expect(() => buildStfAdditionalBlurPlan({ ...DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS, strength: "sigma" as never })).toThrow();
+    expect(() => buildStfAdditionalBlurPlan({ ...DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS, ratio: 0.475 })).toThrow();
+    expect(() => buildStfAdditionalBlurPlan({ ...DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS, sigmoid: 74 })).toThrow();
   });
 });

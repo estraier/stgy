@@ -1,22 +1,7 @@
-/** Experimental grayscale Volume Closing in a [0, 1] sharpness-confidence map. */
+/** Rim-mean grayscale Volume Closing 2 for an already normalized [0,1] protection map. */
 export const STF_VOLUME_INTERPOLATED_COST_PER_MP = 256;
 export const STF_VOLUME_INTERPOLATED_MAX_WORK_PIXELS = 2_000_000;
 const LEVEL_COUNT = 65_536;
-const LOGIT_EPSILON = 1e-7;
-export type StfVolumeFillMode = "parent" | "rim-mean";
-
-function sigmoid(logRatio: number): number {
-  if (Number.isNaN(logRatio) || logRatio === -Infinity) return 0;
-  if (logRatio === Infinity) return 1;
-  return logRatio >= 0
-    ? 1 / (1 + Math.exp(-logRatio))
-    : Math.exp(logRatio) / (1 + Math.exp(logRatio));
-}
-
-function logit(value: number): number {
-  const clamped = Math.max(LOGIT_EPSILON, Math.min(1 - LOGIT_EPSILON, value));
-  return Math.log(clamped / (1 - clamped));
-}
 
 /**
  * Four-neighbor component-tree closing with a rim-mean volume criterion.
@@ -28,20 +13,16 @@ function logit(value: number): number {
  *
  * This is a rim-mean variant of grayscale volume closing, NOT a standard
  * volume attribute computed from a component's saddle height. Because
- * the rim mean changes after filling, it need not be idempotent; this preview
- * deliberately applies exactly one pass. The optional rim-mean fill mode
- * only changes the reconstruction height; the component tree and volume
- * decision are identical to the original parent-height mode.
+ * the rim mean changes after filling, it need not be idempotent; the
+ * production algorithm deliberately applies exactly one pass.
  */
 export function volumeCloseGrayscaleInPlace(
   values: Float32Array, width: number, height: number, volumeThreshold: number,
-  fillMode: StfVolumeFillMode = "parent",
 ): void {
   const pixels = width * height;
   if (!Number.isSafeInteger(pixels) || pixels < 1 || values.length !== pixels ||
     !Number.isInteger(width) || width < 1 || !Number.isInteger(height) || height < 1 ||
-    !Number.isFinite(volumeThreshold) || volumeThreshold < 0 ||
-    (fillMode !== "parent" && fillMode !== "rim-mean")) {
+    !Number.isFinite(volumeThreshold) || volumeThreshold < 0) {
     throw new Error("STF Volume Closing parameters are invalid.");
   }
   if (volumeThreshold === 0 || pixels <= 1) return;
@@ -130,14 +111,11 @@ export function volumeCloseGrayscaleInPlace(
   for (let i = pixels - 1; i >= 0; i--) {
     const p = sorted[i];
     if (parent[p] !== p && cost[p] < volumeThreshold) {
-      // Volume interpolated 2 uses the already measured mean of the ORIGINAL
-      // exterior rim, rather than being limited to the parent/saddle height.
-      // Parent propagation ensures descendants are not left below a filled
-      // ancestor. The original volume mode retains its exact behavior.
-      // Apply the mean only at a genuine rise to a higher tree level.
+      // Use the mean of the ORIGINAL exterior rim. Only a genuine rise to a
+      // higher tree level may apply this height; equal-level nodes are bookkeeping.
       // Equal-level nodes are intermediate union bookkeeping: applying their
       // partial rim means would hollow out protected deep flat basins.
-      const rimMean = fillMode === "rim-mean" && rimEdges[p] > 0 && levels[parent[p]] > levels[p]
+      const rimMean = rimEdges[p] > 0 && levels[parent[p]] > levels[p]
         ? rimSum[p] / rimEdges[p] : values[parent[p]];
       values[p] = Math.max(values[p], values[parent[p]], rimMean);
     }
@@ -145,18 +123,16 @@ export function volumeCloseGrayscaleInPlace(
 }
 
 /**
- * Perform Volume Closing on the display-normalized [0,1] ratio map, but
- * return an updated log-ratio map for the existing raw-ratio preview path.
- * Only closing-derived increases are propagated through down/up sampling;
- * other numeric values (including unfilled NaN pixels) remain unchanged.
+ * Apply Volume Closing directly to an already P3/P97-normalized [0,1] map.
+ * Down/up sampling propagates only positive Closing changes; the working
+ * resolution and the original map do not introduce any further normalization.
  */
-export function interpolateStfVolumeLogRatioInPlace(
+export function interpolateStfVolumeUnitRatioInPlace(
   source: Float32Array,
   width: number,
   height: number,
   maxWorkPixels = STF_VOLUME_INTERPOLATED_MAX_WORK_PIXELS,
   volumePerMP = STF_VOLUME_INTERPOLATED_COST_PER_MP,
-  fillMode: StfVolumeFillMode = "parent",
 ): { workingWidth: number; workingHeight: number; volumeThreshold: number } {
   const pixels = width * height;
   if (!Number.isSafeInteger(pixels) || pixels < 1 || !Number.isInteger(width) || width < 1 ||
@@ -165,16 +141,27 @@ export function interpolateStfVolumeLogRatioInPlace(
     !Number.isFinite(volumePerMP) || volumePerMP <= 0) {
     throw new Error("STF Volume Closing sharpness geometry is invalid.");
   }
+  for (let i = 0; i < pixels; i++) {
+    if (!Number.isFinite(source[i]) || source[i] < 0 || source[i] > 1) {
+      throw new Error("STF Volume Closing requires normalized values in [0,1].");
+    }
+  }
   const scale = Math.min(1, Math.sqrt(maxWorkPixels / pixels));
-  const workingWidth = Math.max(1, Math.round(width * scale));
-  const workingHeight = Math.max(1, Math.round(height * scale));
+  let workingWidth = Math.max(1, Math.round(width * scale));
+  let workingHeight = Math.max(1, Math.round(height * scale));
+  // Independent width/height rounding can exceed the exact working-pixel cap.
+  while (workingWidth * workingHeight > maxWorkPixels) {
+    if (workingWidth >= workingHeight && workingWidth > 1) workingWidth--;
+    else workingHeight--;
+  }
   const workingPixels = workingWidth * workingHeight;
   const volumeThreshold = volumePerMP * workingPixels / 1_000_000;
   const info = { workingWidth, workingHeight, volumeThreshold };
   if (!(volumeThreshold > 0)) return info;
+
   const reduced = new Float32Array(workingPixels);
   if (workingPixels === pixels) {
-    for (let i = 0; i < pixels; i++) reduced[i] = sigmoid(source[i]);
+    reduced.set(source);
   } else {
     const sums = new Float64Array(workingPixels);
     const counts = new Uint32Array(workingPixels);
@@ -182,18 +169,16 @@ export function interpolateStfVolumeLogRatioInPlace(
       const dy = Math.min(workingHeight - 1, Math.floor(y * workingHeight / height));
       for (let x = 0; x < width; x++) {
         const dest = dy * workingWidth + Math.min(workingWidth - 1, Math.floor(x * workingWidth / width));
-        sums[dest] += sigmoid(source[y * width + x]);
+        sums[dest] += source[y * width + x];
         counts[dest]++;
       }
     }
     for (let i = 0; i < workingPixels; i++) reduced[i] = counts[i] ? sums[i] / counts[i] : 0;
   }
   const before = workingPixels === pixels ? null : reduced.slice();
-  volumeCloseGrayscaleInPlace(reduced, workingWidth, workingHeight, volumeThreshold, fillMode);
+  volumeCloseGrayscaleInPlace(reduced, workingWidth, workingHeight, volumeThreshold);
   if (workingPixels === pixels) {
-    for (let i = 0; i < pixels; i++) {
-      if (reduced[i] > sigmoid(source[i]) + 1e-7) source[i] = logit(reduced[i]);
-    }
+    for (let i = 0; i < pixels; i++) source[i] = Math.max(source[i], reduced[i]);
     return info;
   }
   const delta = new Float32Array(workingPixels);
@@ -209,10 +194,7 @@ export function interpolateStfVolumeLogRatioInPlace(
       const uplift = top * (1 - ty) + bottom * ty;
       if (uplift <= 1e-7) continue;
       const index = y * width + x;
-      const old = sigmoid(source[index]);
-      // No geometric interpolation by itself can increase an unmodified pixel.
-      const newValue = Math.min(1, old + uplift);
-      if (newValue > old + 1e-7) source[index] = logit(newValue);
+      source[index] = Math.min(1, source[index] + uplift);
     }
   }
   return info;

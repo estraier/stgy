@@ -1,240 +1,156 @@
-import type {
-  StfAdditionalBlurWorkerAreaClosingResponse,
-  StfAdditionalBlurWorkerAnalyzeStripeResponse,
-  StfAdditionalBlurWorkerBrightnessSampleResponse,
-  StfAdditionalBlurWorkerConfigureFloorsResponse,
-  StfAdditionalBlurWorkerBlurStripeResponse,
-  StfAdditionalBlurWorkerConfig,
-  StfAdditionalBlurWorkerReadyResponse,
-  StfAdditionalBlurWorkerRequest,
-  StfAdditionalBlurWorkerResponse,
-  StfAdditionalBlurWorkerRatioStripeResponse,
+import {
+  STF_ADDITIONAL_BLUR_PROTOCOL_VERSION,
+  type StfAdditionalBlurWorkerConfig,
+  type StfAdditionalBlurWorkerRequest,
+  type StfAdditionalBlurWorkerResponse,
+  type StfAdditionalBlurWorkerReadyResponse,
+  type StfAdditionalBlurWorkerAnalyzeStripeResponse,
+  type StfAdditionalBlurWorkerRatioStripeResponse,
+  type StfAdditionalBlurWorkerGraphCutResponse,
+  type StfAdditionalBlurWorkerVolumeClosingResponse,
+  type StfAdditionalBlurWorkerBlurStripeResponse,
 } from "../workers/protocols/stf-additional-blur-protocol";
 import type { LinearMergeStripeJob } from "./linear-merge-pool";
 import type { StfRelativeChannelFloors, StfSampleGrid } from "./stf-additional-blur";
 
 export type StfAdditionalBlurAnalyzeResult = {
-  linear: Float32Array;
-  fineLogSum: Float32Array;
-  fineZero: Uint8Array;
-  coarseGroups: Float32Array;
-  groupCount: number;
+  linear: Float32Array; fineLogSum: Float32Array; fineZero: Uint8Array;
+  coarseGroups: Float32Array; groupCount: number;
 };
-
 export type StfAdditionalBlurRatioRequest = {
-  fineLogSum: Float32Array;
-  fineZero: Uint8Array;
-  coarseGroups: Float32Array;
-  groupCount: number;
-  epsilon: number;
+  fineLogSum: Float32Array; fineZero: Uint8Array; coarseGroups: Float32Array;
+  groupCount: number; epsilon: number;
 };
-
 export type StfAdditionalBlurBlurRequest = {
-  regionHeight: number;
-  coreOffsetY: number;
-  coreHeight: number;
-  radius: number;
-  source: Float32Array;
-  gate: Float32Array;
+  regionHeight: number; coreOffsetY: number; coreHeight: number; radius: number;
+  source: Float32Array; gate: Float32Array;
 };
-
 type RequestWithoutId = StfAdditionalBlurWorkerRequest extends infer Request
-  ? Request extends StfAdditionalBlurWorkerRequest ? Omit<Request, "requestId"> : never
-  : never;
-
+  ? Request extends StfAdditionalBlurWorkerRequest ? Omit<Request, "requestId"> : never : never;
 type ResponseType = StfAdditionalBlurWorkerResponse["type"];
 type ResponseOf<Type extends ResponseType> = Extract<StfAdditionalBlurWorkerResponse, { type: Type }>;
-
 type PendingRequest = {
   resolve: (value: StfAdditionalBlurWorkerResponse) => void;
   reject: (reason?: unknown) => void;
   expectedType: ResponseType;
 };
-
-function asResponse(value: unknown): StfAdditionalBlurWorkerResponse | null {
-  if (typeof value !== "object" || value === null) return null;
-  const message = value as { type?: unknown; requestId?: unknown };
-  if (typeof message.type !== "string" || typeof message.requestId !== "number") return null;
-  return value as StfAdditionalBlurWorkerResponse;
-}
-
-function asArrayBuffer(value: unknown, label: string): ArrayBuffer {
+function asBuffer(value: unknown, label: string): ArrayBuffer {
   if (value instanceof ArrayBuffer) return value;
-  throw new Error(`STF Additional blur worker response did not include a valid ${label} buffer.`);
+  throw new Error(`STF Additional blur Worker returned an invalid ${label} buffer.`);
 }
-
+function checkVersion(actual: string): void {
+  if (actual !== STF_ADDITIONAL_BLUR_PROTOCOL_VERSION) {
+    throw new Error("STF Additional blur Worker is outdated. Rebuild workers and reload the page.");
+  }
+}
 export class StfAdditionalBlurWorkerClient {
   private readonly worker: Worker;
   private readonly pending = new Map<number, PendingRequest>();
   private nextRequestId = 1;
-
   constructor(url: URL) {
     this.worker = new Worker(url);
-    this.worker.onmessage = (event) => this.handleMessage(event.data);
-    this.worker.onerror = (event) => this.rejectAll(new Error(event.message || "STF Additional blur worker failed."));
-    this.worker.onmessageerror = () => this.rejectAll(new Error("STF Additional blur worker returned an unreadable message."));
+    this.worker.onmessage = (e) => this.handleMessage(e.data);
+    this.worker.onerror = (e) => this.rejectAll(new Error(e.message || "STF Additional blur Worker failed."));
+    this.worker.onmessageerror = () => this.rejectAll(new Error("STF Additional blur Worker sent an unreadable message."));
   }
-
   initialize(config: StfAdditionalBlurWorkerConfig): Promise<StfAdditionalBlurWorkerReadyResponse> {
-    return this.request("ready", {
-      type: "init",
-      sessionId: config.sessionId,
-      alignmentPlan: config.alignmentPlan,
-      matrices: config.matrices,
-      gains: config.gains,
-      scaledLogs: config.scaledLogs,
-      weights: config.weights,
-      fNumbers: config.fNumbers,
-      relativeSharpness: config.relativeSharpness,
-      relativeBrightnessFloor: config.relativeBrightnessFloor,
-      relativeCombineMode: config.relativeCombineMode,
-      cacheBytes: config.cacheBytes,
-    }, []);
-  }
-
-  analyzeStripe(job: LinearMergeStripeJob): Promise<StfAdditionalBlurAnalyzeResult> {
-    return this.request("analyze-stripe-result", {
-      type: "analyze-stripe",
-      y: job.y,
-      height: job.height,
-    }, []).then((message) => {
-      const response = message as StfAdditionalBlurWorkerAnalyzeStripeResponse;
-      return {
-        linear: new Float32Array(asArrayBuffer(response.linearBuffer, "linear")),
-        fineLogSum: new Float32Array(asArrayBuffer(response.fineLogSumBuffer, "fine log sum")),
-        fineZero: new Uint8Array(asArrayBuffer(response.fineZeroBuffer, "fine zero mask")),
-        coarseGroups: new Float32Array(asArrayBuffer(response.coarseGroupsBuffer, "coarse groups")),
-        groupCount: Number(response.groupCount),
-      };
+    return this.request("ready", { type: "init", ...config }, []).then((response) => {
+      checkVersion(response.protocolVersion);
+      return response;
     });
   }
-
+  analyzeStripe(job: LinearMergeStripeJob, includeSource: boolean): Promise<StfAdditionalBlurAnalyzeResult> {
+    return this.request("analyze-stripe-result", { type: "analyze-stripe", y: job.y, height: job.height, includeSource }, []).then((value) => {
+      const r = value as StfAdditionalBlurWorkerAnalyzeStripeResponse;
+      return { linear: new Float32Array(asBuffer(r.linearBuffer, "linear")),
+        fineLogSum: new Float32Array(asBuffer(r.fineLogSumBuffer, "fine log sum")),
+        fineZero: new Uint8Array(asBuffer(r.fineZeroBuffer, "fine zero")),
+        coarseGroups: new Float32Array(asBuffer(r.coarseGroupsBuffer, "coarse groups")),
+        groupCount: Number(r.groupCount) };
+    });
+  }
   sampleBrightnessStripe(job: LinearMergeStripeJob, grid: StfSampleGrid): Promise<Float32Array> {
     return this.request("sample-brightness-stripe-result", {
-      type: "sample-brightness-stripe",
-      y: job.y,
-      height: job.height,
-      stride: grid.stride,
-      offsetX: grid.offsetX,
-      offsetY: grid.offsetY,
-    }, []).then((message) => {
-      const response = message as StfAdditionalBlurWorkerBrightnessSampleResponse;
-      return new Float32Array(asArrayBuffer(response.samplesBuffer, "RGB brightness samples"));
-    });
+      type: "sample-brightness-stripe", y: job.y, height: job.height,
+      stride: grid.stride, offsetX: grid.offsetX, offsetY: grid.offsetY,
+    }, []).then((r) => new Float32Array(asBuffer(r.samplesBuffer, "brightness samples")));
   }
-
   configureRelativeChannelFloors(floors: StfRelativeChannelFloors): Promise<StfRelativeChannelFloors> {
-    return this.request("relative-floors-configured", {
-      type: "configure-relative-floors",
-      floors,
-    }, []).then((message) => (message as StfAdditionalBlurWorkerConfigureFloorsResponse).floors);
+    return this.request("relative-floors-configured", { type: "configure-relative-floors", floors }, []).then((r) => r.floors);
   }
-
-  ratioStripe(request: StfAdditionalBlurRatioRequest): Promise<Float32Array> {
-    const fineLogSumBuffer = request.fineLogSum.buffer as ArrayBuffer;
-    const fineZeroBuffer = request.fineZero.buffer as ArrayBuffer;
-    const coarseGroupsBuffer = request.coarseGroups.buffer as ArrayBuffer;
+  ratioStripe(r: StfAdditionalBlurRatioRequest): Promise<Float32Array> {
+    const fineLogSumBuffer = r.fineLogSum.buffer as ArrayBuffer;
+    const fineZeroBuffer = r.fineZero.buffer as ArrayBuffer;
+    const coarseGroupsBuffer = r.coarseGroups.buffer as ArrayBuffer;
     return this.request("ratio-stripe-result", {
-      type: "ratio-stripe",
-      pixelCount: request.fineLogSum.length,
-      groupCount: request.groupCount,
-      epsilon: request.epsilon,
-      fineLogSumBuffer,
-      fineZeroBuffer,
-      coarseGroupsBuffer,
-    }, [fineLogSumBuffer, fineZeroBuffer, coarseGroupsBuffer]).then((message) => {
-      const response = message as StfAdditionalBlurWorkerRatioStripeResponse;
-      return new Float32Array(asArrayBuffer(response.logRatioBuffer, "log ratio"));
-    });
+      type: "ratio-stripe", pixelCount: r.fineLogSum.length, groupCount: r.groupCount, epsilon: r.epsilon,
+      fineLogSumBuffer, fineZeroBuffer, coarseGroupsBuffer,
+    }, [fineLogSumBuffer, fineZeroBuffer, coarseGroupsBuffer]).then((value: StfAdditionalBlurWorkerRatioStripeResponse) =>
+      new Float32Array(asBuffer(value.logRatioBuffer, "log ratio")));
   }
-
-  interpolateLogRatio(values: Float32Array, width: number, height: number, closingMode: "area" | "volume" | "volume2" = "area"): Promise<{
-    values: Float32Array;
-    info: { workingWidth: number; workingHeight: number; areaThreshold?: number; volumeThreshold?: number };
+  volumeClose(values: Float32Array, width: number, height: number): Promise<{
+    values: Float32Array; info: { workingWidth: number; workingHeight: number; volumeThreshold: number };
   }> {
-    const buffer = values.buffer as ArrayBuffer;
-    return this.request("area-close-result", {
-      type: "area-close",
-      closingMode,
-      width,
-      height,
-      logRatioBuffer: buffer,
-    }, [buffer]).then((message) => {
-      const response = message as StfAdditionalBlurWorkerAreaClosingResponse;
-      if (response.closingMode !== closingMode
-        || (closingMode === "volume2" && response.closingImplementation !== "rim-mean-v2")) {
-        throw new Error("STF Closing Worker is outdated or returned a different mode. Rebuild workers and reload.");
-      }
-      return {
-        values: new Float32Array(asArrayBuffer(response.logRatioBuffer, "interpolated ratio")),
-        info: {
-          workingWidth: response.workingWidth,
-          workingHeight: response.workingHeight,
-          areaThreshold: response.areaThreshold,
-          volumeThreshold: response.volumeThreshold,
-        },
-      };
+    const unitRatioBuffer = values.buffer as ArrayBuffer;
+    return this.request("volume-close-result", { type: "volume-close", width, height, unitRatioBuffer },
+      [unitRatioBuffer]).then((r: StfAdditionalBlurWorkerVolumeClosingResponse) => {
+      checkVersion(r.protocolVersion);
+      return { values: new Float32Array(asBuffer(r.unitRatioBuffer, "closed gate")),
+        info: { workingWidth: r.workingWidth, workingHeight: r.workingHeight, volumeThreshold: r.volumeThreshold } };
     });
   }
-
-  blurStripe(request: StfAdditionalBlurBlurRequest): Promise<Float32Array> {
-    const sourceBuffer = request.source.buffer as ArrayBuffer;
-    const gateBuffer = request.gate.buffer as ArrayBuffer;
+  graphCut(confidence: Float32Array, width: number, height: number, blurRatio: number): Promise<{
+    mask: Uint8Array; info: Omit<StfAdditionalBlurWorkerGraphCutResponse, "type" | "requestId" | "maskBuffer">;
+  }> {
+    const confidenceBuffer = confidence.buffer as ArrayBuffer;
+    return this.request("graph-cut-result", { type: "graph-cut", width, height, blurRatio, confidenceBuffer },
+      [confidenceBuffer]).then((r: StfAdditionalBlurWorkerGraphCutResponse) => {
+      checkVersion(r.protocolVersion);
+      return { mask: new Uint8Array(asBuffer(r.maskBuffer, "cut mask")),
+        info: { protocolVersion: r.protocolVersion, workingWidth: r.workingWidth, workingHeight: r.workingHeight,
+          targetWhiteFraction: r.targetWhiteFraction, achievedWhiteFraction: r.achievedWhiteFraction,
+          cuts: r.cuts, areaBias: r.areaBias } };
+    });
+  }
+  blurStripe(r: StfAdditionalBlurBlurRequest): Promise<Float32Array> {
+    const sourceBuffer = r.source.buffer as ArrayBuffer;
+    const gateBuffer = r.gate.buffer as ArrayBuffer;
     return this.request("blur-stripe-result", {
-      type: "blur-stripe",
-      regionHeight: request.regionHeight,
-      coreOffsetY: request.coreOffsetY,
-      coreHeight: request.coreHeight,
-      radius: request.radius,
-      sourceBuffer,
-      gateBuffer,
-    }, [sourceBuffer, gateBuffer]).then((message) => {
-      const response = message as StfAdditionalBlurWorkerBlurStripeResponse;
-      return new Float32Array(asArrayBuffer(response.linearBuffer, "blurred linear"));
+      type: "blur-stripe", regionHeight: r.regionHeight, coreOffsetY: r.coreOffsetY,
+      coreHeight: r.coreHeight, radius: r.radius, sourceBuffer, gateBuffer,
+    }, [sourceBuffer, gateBuffer]).then((value: StfAdditionalBlurWorkerBlurStripeResponse) => {
+      checkVersion(value.protocolVersion);
+      return new Float32Array(asBuffer(value.linearBuffer, "blurred linear"));
     });
   }
-
   terminate(): void {
-    this.rejectAll(new Error("STF Additional blur worker was terminated."));
+    this.rejectAll(new Error("STF Additional blur Worker terminated."));
     this.worker.terminate();
   }
-
-  private request<Type extends ResponseType>(
-    expectedType: Type,
-    message: RequestWithoutId,
-    transfer: Transferable[],
-  ): Promise<ResponseOf<Type>> {
+  private request<T extends ResponseType>(type: T, message: RequestWithoutId, transfer: Transferable[]): Promise<ResponseOf<T>> {
     const requestId = this.nextRequestId++;
     return new Promise<StfAdditionalBlurWorkerResponse>((resolve, reject) => {
-      this.pending.set(requestId, { resolve, reject, expectedType });
-      try {
-        this.worker.postMessage({ ...message, requestId }, transfer);
-      } catch (error) {
-        this.pending.delete(requestId);
-        reject(error);
-      }
-    }).then((response) => response as ResponseOf<Type>);
+      this.pending.set(requestId, { resolve, reject, expectedType: type });
+      try { this.worker.postMessage({ ...message, requestId }, transfer); }
+      catch (error) { this.pending.delete(requestId); reject(error); }
+    }) as Promise<ResponseOf<T>>;
   }
-
   private handleMessage(value: unknown): void {
-    const message = asResponse(value);
-    if (!message) return;
-    const pending = this.pending.get(message.requestId);
+    if (!value || typeof value !== "object" || !("requestId" in value)) {
+      this.rejectAll(new Error("STF Additional blur Worker returned an invalid response.")); return;
+    }
+    const msg = value as StfAdditionalBlurWorkerResponse;
+    const pending = this.pending.get(msg.requestId);
     if (!pending) return;
-    this.pending.delete(message.requestId);
-    if (message.type === "error") {
-      pending.reject(new Error(message.message || "STF Additional blur worker failed."));
-      return;
+    this.pending.delete(msg.requestId);
+    if (msg.type === "error") { pending.reject(new Error(msg.message)); return; }
+    if (msg.type !== pending.expectedType) {
+      pending.reject(new Error(`STF Additional blur Worker response mismatch: ${msg.type}.`)); return;
     }
-    if (message.type !== pending.expectedType) {
-      pending.reject(new Error(`Unexpected STF Additional blur worker response: ${message.type}`));
-      return;
-    }
-    pending.resolve(message);
+    pending.resolve(msg);
   }
-
   private rejectAll(error: Error): void {
-    for (const pending of this.pending.values()) pending.reject(error);
+    for (const req of this.pending.values()) req.reject(error);
     this.pending.clear();
   }
 }

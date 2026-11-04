@@ -304,21 +304,7 @@ export default function PageBody() {
                     <option value="weak">weak</option>
                     <option value="medium">medium</option>
                     <option value="strong">strong</option>
-                    <option value="coarse-sharpness">0.5MP sharpness</option>
-                    <option value="fine-sharpness">16MP sharpness</option>
-                    <option value="raw-ratio">16MP / 0.5MP raw ratio</option>
-                    <option value="raw-ratio-p50">16MP raw ratio (P50/4)</option>
-                    <option value="raw-ratio-p50-8">16MP raw ratio (P50/8)</option>
-                    <option value="raw-ratio-relative">16MP raw ratio (relative)</option>
-                    <option value="raw-ratio-relative2">16MP raw ratio (relative2)</option>
-                    <option value="raw-ratio-relative3">16MP raw ratio (relative3)</option>
-                    <option value="raw-ratio-relative4">16MP raw ratio (relative4)</option>
-                    <option value="raw-ratio-relative5">16MP raw ratio (relative5)</option>
-                    <option value="interpolated">16MP raw ratio (area interpolated)</option>
-                    <option value="volume-interpolated">16MP raw ratio (volume interpolated)</option>
-                    <option value="volume-interpolated-2">16MP raw ratio (volume interpolated 2)</option>
-                    <option value="sigmoid">16MP / 0.5MP sigmoid</option>
-                    <option value="dilated">16MP / 0.5MP dilated</option>
+                    <option value="gate">gate (before expansion)</option>
                   </select>
                 </label>
                 <label id="stf-blur-ratio-option" className="hidden flex-col items-start gap-1.5">
@@ -329,14 +315,65 @@ export default function PageBody() {
                     className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm"
                   >
                     <option value="0.1">10%</option>
+                    <option value="0.15">15%</option>
                     <option value="0.2">20%</option>
+                    <option value="0.25">25%</option>
                     <option value="0.3">30%</option>
+                    <option value="0.35">35%</option>
                     <option value="0.4">40%</option>
+                    <option value="0.45">45%</option>
                     <option value="0.5">50%</option>
+                    <option value="0.55">55%</option>
                     <option value="0.6">60%</option>
+                    <option value="0.65">65%</option>
                     <option value="0.7">70%</option>
+                    <option value="0.75">75%</option>
                     <option value="0.8">80%</option>
+                    <option value="0.85">85%</option>
                     <option value="0.9">90%</option>
+                  </select>
+                </label>
+                <label id="stf-blur-area-guard-option" className="hidden flex-col items-start gap-1.5">
+                  <span className="text-xs font-medium text-gray-500">Blur area guard</span>
+                  <select
+                    id="stf-blur-area-guard"
+                    defaultValue="medium"
+                    className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm"
+                  >
+                    <option value="none">none</option>
+                    <option value="weak">weak</option>
+                    <option value="medium">medium</option>
+                    <option value="strong">strong</option>
+                  </select>
+                </label>
+                <label id="stf-blur-sigmoid-option" className="hidden flex-col items-start gap-1.5">
+                  <span className="text-xs font-medium text-gray-500">Blur sigmoid</span>
+                  <select
+                    id="stf-blur-sigmoid"
+                    defaultValue="75"
+                    className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm"
+                  >
+                    <option value="0">0%</option>
+                    <option value="5">5%</option>
+                    <option value="10">10%</option>
+                    <option value="15">15%</option>
+                    <option value="20">20%</option>
+                    <option value="25">25%</option>
+                    <option value="30">30%</option>
+                    <option value="35">35%</option>
+                    <option value="40">40%</option>
+                    <option value="45">45%</option>
+                    <option value="50">50%</option>
+                    <option value="55">55%</option>
+                    <option value="60">60%</option>
+                    <option value="65">65%</option>
+                    <option value="70">70%</option>
+                    <option value="75">75%</option>
+                    <option value="80">80%</option>
+                    <option value="85">85%</option>
+                    <option value="90">90%</option>
+                    <option value="95">95%</option>
+                    <option value="100">100%</option>
                   </select>
                 </label>
               </div>

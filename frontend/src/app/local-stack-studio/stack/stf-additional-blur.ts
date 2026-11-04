@@ -1,48 +1,32 @@
+import { applyUnitScaledSigmoid, createUnitScaledSigmoid } from "./scaled-sigmoid";
+
+// Production STF gate: RGB-relative Sobel, 16MP / 0.5MP, P3/P97 normalized once.
 export const STF_ADDITIONAL_BLUR_FINE_REFERENCE_PIXELS = 16_000_000;
 export const STF_ADDITIONAL_BLUR_COARSE_REFERENCE_PIXELS = 500_000;
 export const STF_ADDITIONAL_BLUR_MAX_WORKERS = 4;
 export const STF_ADDITIONAL_BLUR_SAMPLE_LIMIT = 65_536;
-
+export const STF_RELATIVE_BRIGHTNESS_P50_DIVISOR = 64;
 const SHARPNESS_RGB_WEIGHTS = [0.3, 0.4, 0.3] as const;
 const LOG_FLOOR = 1e-12;
-const MIN_VARIANCE = 1e-8;
-const GMM_ITERATIONS = 32;
 const BLUR_MIN_RADIUS = 2;
 const BLUR_MAX_RADIUS = 15;
 const GATE_SEED_THRESHOLD = 0.7;
-const GATE_EXPANSION_RADIUS_FACTOR = 0.4;
+const GATE_EXPANSION_RADIUS_FACTOR = 0.5;
 const GATE_EXPANSION_SIGMA_FACTOR = 0.2;
+export const STF_LOG_RATIO_NORMALIZATION_LOWER_PERCENTILE = 0.03;
+export const STF_LOG_RATIO_NORMALIZATION_UPPER_PERCENTILE = 0.97;
 
-export type StfSharpnessScratch = {
-  a: Float32Array;
-  b: Float32Array;
-  c: Float32Array;
+export type StfSharpnessScratch = { a: Float32Array; b: Float32Array; c: Float32Array };
+export type StfRelativeChannelFloors = [number, number, number];
+export type StfSampleGrid = { stride: number; offsetX: number; offsetY: number };
+export type StfLogRatioNormalizationPlan = {
+  lowerPercentile: number; upperPercentile: number; lowerValue: number;
+  upperValue: number; range: number; finiteCount: number; degenerate: boolean;
 };
-
-export type StfDynamicSharpnessPlan = {
-  c: number;
-  method: "gmm-intersection" | "median-fallback";
-  sampleCount: number;
-};
-
 export type StfSigmoidPlan = {
-  sharpFraction: number;
-  thresholdPercentile: number;
-  lowerPercentile: number;
-  upperPercentile: number;
-  thresholdLog: number;
-  lowerLog: number;
-  upperLog: number;
-  robustScale: number;
-  strength: number;
-};
-
-export type StfRelativeCombineMode = "mean" | "rms";
-
-export type StfSampleGrid = {
-  stride: number;
-  offsetX: number;
-  offsetY: number;
+  sharpFraction: number; thresholdPercentile: number; lowerPercentile: number;
+  upperPercentile: number; threshold: number; lowerValue: number; upperValue: number;
+  robustScale: number; strength: number;
 };
 
 export function sameStfFNumber(a: number, b: number): boolean {
@@ -108,52 +92,16 @@ export function createStfSharpnessScratch(pixelCount: number): StfSharpnessScrat
   };
 }
 
-// The production sharpness remains absolute. Only the experimental relative
-// preview normalizes each channel before applying the RGB 3:4:3 weights.
-export function buildStfSharpnessMapAtScaleInto(
-  linear: Float32Array,
-  width: number,
-  height: number,
-  scale: number,
-  output: Float32Array,
-  scratch: StfSharpnessScratch,
-): void {
-  buildStfSharpnessMapAtScaleInternal(linear, width, height, scale, output, scratch, false);
-}
-
 export function buildStfRelativeSharpnessMapAtScaleInto(
-  linear: Float32Array,
-  width: number,
-  height: number,
-  scale: number,
-  output: Float32Array,
-  scratch: StfSharpnessScratch,
-  brightnessFloor: number | StfRelativeChannelFloors = STF_RELATIVE_CHANNEL_BRIGHTNESS_FLOOR,
-  combineMode: StfRelativeCombineMode = "mean",
+  linear: Float32Array, width: number, height: number, scale: number,
+  output: Float32Array, scratch: StfSharpnessScratch, floors: StfRelativeChannelFloors,
 ): void {
-  if (typeof brightnessFloor === "number") {
-    if (!(Number.isFinite(brightnessFloor) && brightnessFloor > 0)) {
-      throw new Error("STF relative sharpness brightness floor must be positive and finite.");
-    }
-  } else validateStfRelativeChannelFloors(brightnessFloor);
-  if (combineMode !== "mean" && combineMode !== "rms") {
-    throw new Error("STF relative sharpness RGB combine mode is invalid.");
-  }
-  buildStfSharpnessMapAtScaleInternal(linear, width, height, scale, output, scratch, true, brightnessFloor, combineMode);
+  validateStfRelativeChannelFloors(floors);
+  buildStfSharpnessMapAtScaleInternal(linear, width, height, scale, output, scratch, floors);
 }
 
-// Linear RGB input: use the same scale-aware low-pass samples as the Sobel
-// measurement for the local intensity. A modest fixed floor prevents very dark
-// channels from turning tiny gradients/noise into arbitrarily large ratios.
-export const STF_RELATIVE_CHANNEL_BRIGHTNESS_FLOOR = 1e-4;
-export const STF_RELATIVE2_CHANNEL_BRIGHTNESS_FLOOR = 1e-5;
-export type StfRelativeChannelFloors = [number, number, number];
-
-// Relative3 / relative4 / relative5: one global median per channel, measured from spatially sampled
-// tone-matched STF composite RGB before starting the sharpness pass.
 export function deriveStfRelativeChannelFloorsFromSamples(
   samples: readonly [ArrayLike<number>, ArrayLike<number>, ArrayLike<number>],
-  divisor: 4 | 8 | 16 = 4,
 ): StfRelativeChannelFloors {
   return samples.map((values) => {
     const sorted: number[] = [];
@@ -161,64 +109,42 @@ export function deriveStfRelativeChannelFloorsFromSamples(
       const value = Number(values[i]);
       if (Number.isFinite(value)) sorted.push(Math.max(0, value));
     }
-    if (sorted.length === 0) throw new Error("STF relative3 requires finite RGB brightness samples.");
+    if (sorted.length === 0) throw new Error("STF production requires finite RGB brightness samples.");
     sorted.sort((a, b) => a - b);
-    return Math.max(LOG_FLOOR, percentileFromSorted(sorted, 0.5) / divisor);
+    return Math.max(LOG_FLOOR, percentileFromSorted(sorted, 0.5) / STF_RELATIVE_BRIGHTNESS_P50_DIVISOR);
   }) as StfRelativeChannelFloors;
 }
 
 export function validateStfRelativeChannelFloors(floors: readonly number[]): StfRelativeChannelFloors {
   if (floors.length !== 3 || !floors.every((value) => Number.isFinite(value) && value > 0)) {
-    throw new Error("STF relative3 RGB brightness floors are invalid.");
+    throw new Error("STF production RGB brightness floors are invalid.");
   }
   return [floors[0], floors[1], floors[2]];
 }
 
 function buildStfSharpnessMapAtScaleInternal(
-  linear: Float32Array,
-  width: number,
-  height: number,
-  scale: number,
-  output: Float32Array,
-  scratch: StfSharpnessScratch,
-  relative: boolean,
-  brightnessFloor: number | StfRelativeChannelFloors = STF_RELATIVE_CHANNEL_BRIGHTNESS_FLOOR,
-  combineMode: StfRelativeCombineMode = "mean",
+  linear: Float32Array, width: number, height: number, scale: number,
+  output: Float32Array, scratch: StfSharpnessScratch, floors: StfRelativeChannelFloors,
 ): void {
-  const pixelCount = width * height;
-  if (linear.length !== pixelCount * 3 || output.length !== pixelCount) {
-    throw new Error("STF Additional blur sharpness buffer has an invalid size.");
+  const pixels = width * height;
+  if (linear.length !== pixels * 3 || output.length !== pixels ||
+      scratch.a.length !== pixels || scratch.b.length !== pixels || scratch.c.length !== pixels) {
+    throw new Error("STF sharpness buffer geometry is invalid.");
   }
-  if (scratch.a.length !== pixelCount || scratch.b.length !== pixelCount || scratch.c.length !== pixelCount) {
-    throw new Error("STF Additional blur sharpness scratch buffer has an invalid size.");
-  }
-  const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+  if (!(Number.isFinite(scale) && scale > 0)) throw new Error("STF Sobel scale is invalid.");
   output.fill(0);
-  const useRmsCombine = relative && combineMode === "rms";
-  for (let channel = 0; channel < 3; channel += 1) {
-    for (let pixel = 0, source = channel; pixel < pixelCount; pixel += 1, source += 3) {
-      scratch.a[pixel] = linear[source] ?? 0;
-    }
-    binomialBlurHorizontalScaledInto(scratch.a, width, height, safeScale, scratch.b);
-    binomialBlurVerticalScaledInto(scratch.b, width, height, safeScale, scratch.c);
-    binomialBlurVerticalScaledInto(scratch.c, width, height, safeScale, scratch.a);
-    binomialBlurHorizontalScaledInto(scratch.c, width, height, safeScale, scratch.b);
+  for (let channel = 0; channel < 3; channel++) {
+    for (let pixel = 0, i = channel; pixel < pixels; pixel++, i += 3) scratch.a[pixel] = linear[i];
+    binomialBlurHorizontalScaledInto(scratch.a, width, height, scale, scratch.b);
+    binomialBlurVerticalScaledInto(scratch.b, width, height, scale, scratch.c);
+    binomialBlurVerticalScaledInto(scratch.c, width, height, scale, scratch.a);
+    binomialBlurHorizontalScaledInto(scratch.c, width, height, scale, scratch.b);
     accumulateSobelMagnitudeScaledInto(
-      scratch.a,
-      scratch.b,
-      width,
-      height,
-      safeScale,
-      SHARPNESS_RGB_WEIGHTS[channel],
-      output,
-      relative,
-      typeof brightnessFloor === "number" ? brightnessFloor : brightnessFloor[channel],
-      useRmsCombine,
+      scratch.a, scratch.b, width, height, scale,
+      SHARPNESS_RGB_WEIGHTS[channel], output, floors[channel],
     );
   }
-  if (useRmsCombine) {
-    for (let pixel = 0; pixel < pixelCount; pixel += 1) output[pixel] = Math.fround(Math.sqrt(Math.max(0, output[pixel])));
-  }
+  for (let pixel = 0; pixel < pixels; pixel++) output[pixel] = Math.fround(Math.sqrt(Math.max(0, output[pixel])));
 }
 
 export function buildStfSampleGrid(width: number, height: number, target = STF_ADDITIONAL_BLUR_SAMPLE_LIMIT): StfSampleGrid {
@@ -266,71 +192,82 @@ export function appendPersistentCoarseSamplesFromStripe(
   }
 }
 
-// The 0.5MP preview and the ratio previews must use the very same
-// per-aperture-group values as the production Additional blur gate.
-export function buildStfPersistentCoarseSharpnessStripe(
-  packedGroups: Float32Array,
-  groupCount: number,
-): Float32Array {
-  if (!(Number.isInteger(groupCount) && groupCount >= 2 && packedGroups.length > 0
-    && packedGroups.length % groupCount === 0)) {
-    throw new Error("STF coarse sharpness preview has invalid aperture-group data.");
+export function buildStfLogRatioNormalizationPlan(
+  rawSamples: ArrayLike<number>,
+  lowerPercentile = STF_LOG_RATIO_NORMALIZATION_LOWER_PERCENTILE,
+  upperPercentile = STF_LOG_RATIO_NORMALIZATION_UPPER_PERCENTILE,
+): StfLogRatioNormalizationPlan {
+  if (!(Number.isFinite(lowerPercentile) && Number.isFinite(upperPercentile)
+    && lowerPercentile >= 0 && upperPercentile <= 1 && lowerPercentile < upperPercentile)) {
+    throw new Error("STF log-ratio normalization percentiles are invalid.");
   }
-  const pixelCount = packedGroups.length / groupCount;
-  const output = new Float32Array(pixelCount);
-  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
-    let logSum = 0;
-    let valid = true;
-    for (let group = 0; group < groupCount; group += 1) {
-      const value = packedGroups[group * pixelCount + pixel];
-      if (!(Number.isFinite(value) && value > 0)) {
-        valid = false;
-        break;
-      }
-      logSum += Math.log(value);
-    }
-    output[pixel] = valid ? Math.exp(logSum / groupCount) : 0;
+  // The input is a full-resolution spatial map.  Keep the original untouched:
+  // quickselect permutes its workspace, while the next stage still needs every
+  // log-ratio at its original pixel position.
+  // A typed workspace avoids materializing tens of millions of boxed numbers.
+  // Float32 input stays Float32 so that percentile interpolation is identical
+  // to sorting the original numbers; other inputs retain Float64 precision.
+  const finite: Float32Array | Float64Array = rawSamples instanceof Float32Array
+    ? new Float32Array(rawSamples.length)
+    : new Float64Array(rawSamples.length);
+  let finiteCount = 0;
+  for (let index = 0; index < rawSamples.length; index += 1) {
+    const value = Number(rawSamples[index]);
+    if (Number.isFinite(value)) finite[finiteCount++] = value;
+    else if (!Number.isNaN(value)) throw new Error("STF log-ratio contains an unexpected infinity.");
   }
-  return output;
+  if (finiteCount === 0) {
+    return {
+      lowerPercentile, upperPercentile,
+      lowerValue: 0, upperValue: 1, range: 1, finiteCount: 0, degenerate: true,
+    };
+  }
+  // Select the two order statistics, not a complete O(N log N) ordering.
+  // The percentile definition is unchanged: linear interpolation at q * (N-1).
+  const lowerPosition = lowerPercentile * (finiteCount - 1);
+  const upperPosition = upperPercentile * (finiteCount - 1);
+  const lowerIndex = Math.floor(lowerPosition);
+  const upperIndex = Math.floor(upperPosition);
+  const lowerBase = selectStfOrderStatistic(finite, 0, finiteCount - 1, lowerIndex);
+  const upperBase = upperIndex === lowerIndex
+    ? lowerBase
+    : selectStfOrderStatistic(finite, lowerIndex + 1, finiteCount - 1, upperIndex);
+  const lowerFraction = lowerPosition - lowerIndex;
+  const upperFraction = upperPosition - upperIndex;
+  const lowerNext = lowerIndex + 1 < finiteCount
+    ? smallestStfValueAfter(finite, lowerIndex, finiteCount) : lowerBase;
+  const upperNext = upperIndex + 1 < finiteCount
+    ? smallestStfValueAfter(finite, upperIndex, finiteCount) : upperBase;
+  const lowerValue = lowerBase + (lowerNext - lowerBase) * lowerFraction;
+  const upperValue = upperBase + (upperNext - upperBase) * upperFraction;
+  const range = upperValue - lowerValue;
+  const degenerate = !(range > 1e-12);
+
+  return {
+    lowerPercentile, upperPercentile,
+    lowerValue, upperValue, range: degenerate ? 1 : range, finiteCount, degenerate,
+  };
 }
 
-// The fine-side log sum already contains one log-sharpness per F-number group.
-// Convert it back to the same geometric-mean sharpness used for coarse previews.
-export function buildStfPersistentFineSharpnessStripe(
-  fineLogSum: Float32Array,
-  fineZero: Uint8Array,
-  groupCount: number,
-): Float32Array {
-  if (!(Number.isInteger(groupCount) && groupCount >= 2 && fineLogSum.length > 0
-    && fineZero.length === fineLogSum.length)) {
-    throw new Error("STF fine sharpness preview has invalid aperture-group data.");
+// Percentile-normalized [0,1] mapping for raw log-ratios.
+// P3 maps to 0, P97 maps to 1, and outliers are clipped.
+export function normalizeStfLogRatioValue(value: number, plan: StfLogRatioNormalizationPlan): number {
+  if (!Number.isFinite(value)) {
+    if (Number.isNaN(value)) return 0; // zero fine-sharpness: no protection evidence
+    throw new Error("STF log-ratio contains an unexpected infinity.");
   }
-  const output = new Float32Array(fineLogSum.length);
-  for (let pixel = 0; pixel < output.length; pixel += 1) {
-    const logSum = fineLogSum[pixel];
-    output[pixel] = !fineZero[pixel] && Number.isFinite(logSum)
-      ? Math.exp(logSum / groupCount)
-      : 0;
+  if (plan.degenerate) return 0.5;
+  return clampUnit((value - plan.lowerValue) / plan.range);
+}
+
+export function normalizeStfLogRatioBufferInPlace(values: Float32Array): StfLogRatioNormalizationPlan {
+  const plan = buildStfLogRatioNormalizationPlan(values);
+  for (let index = 0; index < values.length; index += 1) {
+    values[index] = normalizeStfLogRatioValue(values[index], plan);
   }
-  return output;
+  return plan;
 }
 
-export function normalizeStfSharpnessForPreview(value: number, c: number): number {
-  return Number.isFinite(value) && value > 0 && Number.isFinite(c) && c > 0
-    ? value / (value + c)
-    : 0;
-}
-
-// ratio/(ratio+1), evaluated without overflowing exp for very large log-ratios.
-export function normalizeStfLogRatioForPreview(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  return value >= 0
-    ? 1 / (1 + Math.exp(-value))
-    : Math.exp(value) / (1 + Math.exp(value));
-}
-
-// P50 of the positive, uncompressed 0.5MP sharpness samples. Use the same
-// samples as the GMM mode so the only difference in the ratio is epsilon.
 export function deriveStfMedianSharpnessC(rawSamples: ArrayLike<number>): number {
   const sorted: number[] = [];
   for (let index = 0; index < rawSamples.length; index += 1) {
@@ -342,157 +279,10 @@ export function deriveStfMedianSharpnessC(rawSamples: ArrayLike<number>): number
   return Math.max(LOG_FLOOR, percentileFromSorted(sorted, 0.5));
 }
 
-export function deriveStfRatioEpsilon(c: number, divisor = 4): number {
+export function deriveStfRatioEpsilon(c: number): number {
   const value = Number(c);
   if (!(Number.isFinite(value) && value > 0)) throw new Error("STF Additional blur dynamic c is invalid.");
-  if (!(Number.isFinite(divisor) && divisor > 0)) throw new Error("STF Additional blur epsilon divisor is invalid.");
-  return Math.max(LOG_FLOOR, value / divisor);
-}
-
-export function deriveStfDynamicSharpnessC(rawSamples: ArrayLike<number>): StfDynamicSharpnessPlan {
-  const logs: number[] = [];
-  for (let index = 0; index < rawSamples.length; index += 1) {
-    const value = Number(rawSamples[index]);
-    if (Number.isFinite(value) && value > 0) logs.push(Math.log(Math.max(value, LOG_FLOOR)));
-  }
-  logs.sort((a, b) => a - b);
-  const sampleCount = logs.length;
-  if (sampleCount === 0) return { c: LOG_FLOOR, method: "median-fallback", sampleCount: 0 };
-
-  const p30 = percentileFromSorted(logs, 0.3);
-  const p50 = percentileFromSorted(logs, 0.5);
-  const p70 = percentileFromSorted(logs, 0.7);
-
-  let mean1 = 0;
-  for (const value of logs) mean1 += value;
-  mean1 /= sampleCount;
-  let variance1 = 0;
-  for (const value of logs) {
-    const delta = value - mean1;
-    variance1 += delta * delta;
-  }
-  variance1 = Math.max(MIN_VARIANCE, variance1 / sampleCount);
-  let likelihood1 = 0;
-  for (const value of logs) likelihood1 += gaussianLogDensity(value, mean1, variance1);
-  const bic1 = 2 * Math.log(sampleCount) - 2 * likelihood1;
-
-  let lowMean = p30;
-  let highMean = p70;
-  if (!(highMean > lowMean)) lowMean = highMean = mean1;
-  let lowVariance = variance1;
-  let highVariance = variance1;
-  let lowWeight = 0.5;
-  let highWeight = 0.5;
-  let likelihood2 = Number.NEGATIVE_INFINITY;
-  const lowResponsibilities = new Float64Array(sampleCount);
-
-  for (let iteration = 0; iteration < GMM_ITERATIONS; iteration += 1) {
-    let lowMass = 0;
-    let highMass = 0;
-    let lowSum = 0;
-    let highSum = 0;
-    let nextLikelihood = 0;
-    for (let index = 0; index < sampleCount; index += 1) {
-      const value = logs[index];
-      const lowLog = Math.log(Math.max(lowWeight, Number.EPSILON)) + gaussianLogDensity(value, lowMean, lowVariance);
-      const highLog = Math.log(Math.max(highWeight, Number.EPSILON)) + gaussianLogDensity(value, highMean, highVariance);
-      const maximum = Math.max(lowLog, highLog);
-      const lowExp = Math.exp(lowLog - maximum);
-      const highExp = Math.exp(highLog - maximum);
-      const denominator = lowExp + highExp;
-      const lowResponsibility = denominator > 0 ? lowExp / denominator : 0.5;
-      lowResponsibilities[index] = lowResponsibility;
-      const highResponsibility = 1 - lowResponsibility;
-      lowMass += lowResponsibility;
-      highMass += highResponsibility;
-      lowSum += lowResponsibility * value;
-      highSum += highResponsibility * value;
-      nextLikelihood += maximum + Math.log(Math.max(denominator, Number.MIN_VALUE));
-    }
-    if (!(lowMass > 0 && highMass > 0)) break;
-    const nextLowMean = lowSum / lowMass;
-    const nextHighMean = highSum / highMass;
-    let nextLowVariance = 0;
-    let nextHighVariance = 0;
-    for (let index = 0; index < sampleCount; index += 1) {
-      const value = logs[index];
-      const lowResponsibility = lowResponsibilities[index];
-      const highResponsibility = 1 - lowResponsibility;
-      const lowDelta = value - nextLowMean;
-      const highDelta = value - nextHighMean;
-      nextLowVariance += lowResponsibility * lowDelta * lowDelta;
-      nextHighVariance += highResponsibility * highDelta * highDelta;
-    }
-    lowMean = nextLowMean;
-    highMean = nextHighMean;
-    lowVariance = Math.max(MIN_VARIANCE, nextLowVariance / lowMass);
-    highVariance = Math.max(MIN_VARIANCE, nextHighVariance / highMass);
-    lowWeight = lowMass / sampleCount;
-    highWeight = highMass / sampleCount;
-    if (Number.isFinite(likelihood2) && Math.abs(nextLikelihood - likelihood2) <= 1e-9 * (1 + Math.abs(likelihood2))) {
-      likelihood2 = nextLikelihood;
-      break;
-    }
-    likelihood2 = nextLikelihood;
-  }
-
-  if (lowMean > highMean) {
-    [lowMean, highMean] = [highMean, lowMean];
-    [lowVariance, highVariance] = [highVariance, lowVariance];
-    [lowWeight, highWeight] = [highWeight, lowWeight];
-  }
-
-  likelihood2 = 0;
-  for (const value of logs) {
-    const lowLog = Math.log(Math.max(lowWeight, Number.EPSILON)) + gaussianLogDensity(value, lowMean, lowVariance);
-    const highLog = Math.log(Math.max(highWeight, Number.EPSILON)) + gaussianLogDensity(value, highMean, highVariance);
-    const maximum = Math.max(lowLog, highLog);
-    likelihood2 += maximum + Math.log(Math.exp(lowLog - maximum) + Math.exp(highLog - maximum));
-  }
-  const bic2 = 5 * Math.log(sampleCount) - 2 * likelihood2;
-
-  const difference = (value: number): number => (
-    Math.log(Math.max(lowWeight, Number.EPSILON)) + gaussianLogDensity(value, lowMean, lowVariance)
-    - Math.log(Math.max(highWeight, Number.EPSILON)) - gaussianLogDensity(value, highMean, highVariance)
-  );
-  let intersection = Number.NaN;
-  if (highMean > lowMean) {
-    let left = lowMean;
-    let right = highMean;
-    let leftValue = difference(left);
-    let rightValue = difference(right);
-    if (Number.isFinite(leftValue) && Number.isFinite(rightValue)) {
-      if (leftValue === 0) intersection = left;
-      else if (rightValue === 0) intersection = right;
-      else if (leftValue * rightValue < 0) {
-        for (let iteration = 0; iteration < 80; iteration += 1) {
-          const middle = (left + right) * 0.5;
-          const middleValue = difference(middle);
-          if (!Number.isFinite(middleValue)) break;
-          if (Math.abs(middleValue) <= 1e-12) {
-            left = right = middle;
-            break;
-          }
-          if (leftValue * middleValue <= 0) {
-            right = middle;
-            rightValue = middleValue;
-          } else {
-            left = middle;
-            leftValue = middleValue;
-          }
-        }
-        intersection = (left + right) * 0.5;
-      }
-    }
-  }
-
-  const useMixture = bic2 < bic1 && Number.isFinite(intersection) && intersection >= lowMean && intersection <= highMean;
-  const selected = useMixture ? intersection : p50;
-  return {
-    c: Math.max(LOG_FLOOR, Math.exp(selected)),
-    method: useMixture ? "gmm-intersection" : "median-fallback",
-    sampleCount,
-  };
+  return Math.max(LOG_FLOOR, value / STF_RELATIVE_BRIGHTNESS_P50_DIVISOR);
 }
 
 export function buildStfLogRatioFromDerived(
@@ -525,38 +315,39 @@ export function buildStfLogRatioFromDerived(
   return output;
 }
 
-export function buildStfSigmoidPlan(logSamples: ArrayLike<number>, blurRatio: number): StfSigmoidPlan {
+/** Determine the adaptive quantiles and steepness from unit-interval samples. */
+export function buildStfSigmoidPlan(unitSamples: ArrayLike<number>, blurRatio: number): StfSigmoidPlan {
   const safeBokeh = Math.max(0.1, Math.min(0.9, Number.isFinite(blurRatio) ? blurRatio : 0.5));
   const sharpFraction = 1 - safeBokeh;
   const thresholdPercentile = safeBokeh;
-  const lowerPercentile = Math.max(0, thresholdPercentile - 0.1);
-  const upperPercentile = Math.min(1, thresholdPercentile + 0.1);
-  const finite = Array.from(logSamples, Number).filter(Number.isFinite);
+  // Adopted asymmetric 20-percentage-point reference interval.
+  const lowerPercentile = thresholdPercentile * 0.8;
+  const upperPercentile = thresholdPercentile + (1 - thresholdPercentile) * 0.2;
+  const finite = Array.from(unitSamples, Number);
+  for (const value of finite) {
+    if (!Number.isFinite(value) || value < 0 || value > 1) {
+      throw new Error("STF sigmoid samples must be in [0,1].");
+    }
+  }
   if (finite.length < 2) {
-    const thresholdLog = finite[0] ?? Math.log(LOG_FLOOR);
+    const threshold = finite[0] ?? 0;
     return {
-      sharpFraction,
-      thresholdPercentile,
-      lowerPercentile,
-      upperPercentile,
-      thresholdLog,
-      lowerLog: thresholdLog,
-      upperLog: thresholdLog,
-      robustScale: 1,
-      strength: 1,
+      sharpFraction, thresholdPercentile, lowerPercentile, upperPercentile,
+      threshold, lowerValue: threshold, upperValue: threshold,
+      robustScale: 1, strength: 1,
     };
   }
   finite.sort((a, b) => a - b);
-  const thresholdLog = percentileFromSorted(finite, thresholdPercentile);
-  const lowerLog = percentileFromSorted(finite, lowerPercentile);
-  const upperLog = percentileFromSorted(finite, upperPercentile);
+  const threshold = percentileFromSorted(finite, thresholdPercentile);
+  const lowerValue = percentileFromSorted(finite, lowerPercentile);
+  const upperValue = percentileFromSorted(finite, upperPercentile);
   let robustScale = percentileFromSorted(finite, 0.84) - percentileFromSorted(finite, 0.16);
   if (!(robustScale > 1e-12)) robustScale = percentileFromSorted(finite, 0.75) - percentileFromSorted(finite, 0.25);
   if (!(robustScale > 1e-12)) robustScale = (finite[finite.length - 1] ?? 0) - (finite[0] ?? 0);
   if (!(robustScale > 1e-12)) robustScale = 1;
 
-  const lowerDistance = Math.max(0, thresholdLog - lowerLog);
-  const upperDistance = Math.max(0, upperLog - thresholdLog);
+  const lowerDistance = Math.max(0, threshold - lowerValue);
+  const upperDistance = Math.max(0, upperValue - threshold);
   const logit08 = Math.log(4);
   let strength = 1;
   if (lowerDistance > 1e-12 && upperDistance > 1e-12) {
@@ -567,29 +358,34 @@ export function buildStfSigmoidPlan(logSamples: ArrayLike<number>, blurRatio: nu
     strength = (logit08 * robustScale) / upperDistance;
   }
   strength = Math.max(1, Math.min(10, Number.isFinite(strength) ? strength : 1));
-  return { sharpFraction, thresholdPercentile, lowerPercentile, upperPercentile, thresholdLog, lowerLog, upperLog, robustScale, strength };
+  return { sharpFraction, thresholdPercentile, lowerPercentile, upperPercentile,
+    threshold, lowerValue, upperValue, robustScale, strength };
 }
 
-export function applyStfSigmoidGateInPlace(logRatio: Float32Array, width: number, height: number, blurRatio: number): StfSigmoidPlan {
-  if (logRatio.length !== width * height) throw new Error("STF Additional blur ratio map has an invalid size.");
+/** Apply the same endpoint-normalized sigmoid to every unit gate, regardless of provenance. */
+export function applyStfSigmoidGateInPlace(unitGate: Float32Array, width: number, height: number, blurRatio: number, strengthPercent: number): StfSigmoidPlan {
+  if (!(Number.isFinite(strengthPercent) && strengthPercent > 0 && strengthPercent <= 100)) {
+    throw new Error("STF Blur sigmoid must be in (0,100].");
+  }
+  if (unitGate.length !== width * height) throw new Error("STF Additional blur gate has an invalid size.");
   const grid = buildStfSampleGrid(width, height);
   const samples: number[] = [];
-  const logFloor = Math.log(LOG_FLOOR);
   for (let y = grid.offsetY; y < height; y += grid.stride) {
     const row = y * width;
     for (let x = grid.offsetX; x < width; x += grid.stride) {
-      const value = logRatio[row + x];
-      samples.push(Number.isFinite(value) ? value : logFloor);
+      samples.push(unitGate[row + x]);
     }
   }
   if (samples.length < 2) {
-    samples.push(Number.isFinite(logRatio[0]) ? logRatio[0] : logFloor);
-    samples.push(Number.isFinite(logRatio[Math.max(0, logRatio.length - 1)]) ? logRatio[Math.max(0, logRatio.length - 1)] : logFloor);
+    samples.push(unitGate[0]);
+    samples.push(unitGate[Math.max(0, unitGate.length - 1)]);
   }
   const plan = buildStfSigmoidPlan(samples, blurRatio);
-  for (let index = 0; index < logRatio.length; index += 1) {
-    const value = Number.isFinite(logRatio[index]) ? logRatio[index] : logFloor;
-    logRatio[index] = applyLogSigmoid(value, plan.thresholdLog, plan.robustScale, plan.strength);
+  // Clamp automatic strength to [1,10] first, then apply the specified percentage.
+  const sigmoid = createUnitScaledSigmoid(plan.threshold, plan.robustScale,
+    plan.strength * strengthPercent / 100);
+  for (let index = 0; index < unitGate.length; index += 1) {
+    unitGate[index] = applyUnitScaledSigmoid(unitGate[index], sigmoid);
   }
   return plan;
 }
@@ -746,6 +542,61 @@ function firstGridCoordinateAtOrAfter(value: number, offset: number, stride: num
   return offset + Math.ceil((value - offset) / stride) * stride;
 }
 
+/**
+ * Select a sorted rank within [left, right], permuting only the workspace.
+ * 3-way partitioning makes large flat/quantized regions cheap.  The bounded
+ * fallback protects against unusual adversarial pivot sequences without
+ * ever sorting the entire image in the normal case.
+ */
+function selectStfOrderStatistic(
+  values: Float32Array | Float64Array, left: number, right: number, rank: number,
+): number {
+  let remainingDepth = Math.max(4, 2 * Math.ceil(Math.log2(right - left + 1)));
+  while (left < right) {
+    if (remainingDepth-- === 0) {
+      values.subarray(left, right + 1).sort();
+      return values[rank];
+    }
+    const mid = left + Math.floor((right - left) / 2);
+    const a = values[left];
+    const b = values[mid];
+    const c = values[right];
+    // Median-of-three limits poor pivots on already sorted/reverse-sorted maps.
+    const pivot = a < b ? (b < c ? b : (a < c ? c : a)) : (a < c ? a : (b < c ? c : b));
+    let lt = left;
+    let i = left;
+    let gt = right;
+    while (i <= gt) {
+      const value = values[i];
+      if (value < pivot) {
+        values[i] = values[lt];
+        values[lt++] = value;
+        i++;
+      } else if (value > pivot) {
+        values[i] = values[gt];
+        values[gt--] = value;
+      } else {
+        i++;
+      }
+    }
+    if (rank < lt) right = lt - 1;
+    else if (rank > gt) left = gt + 1;
+    else return values[rank];
+  }
+  return values[rank];
+}
+
+/** After selecting rank k, rank k+1 is the minimum of its right partition. */
+function smallestStfValueAfter(
+  values: Float32Array | Float64Array, index: number, count: number,
+): number {
+  let minimum = values[index + 1];
+  for (let i = index + 2; i < count; i++) {
+    if (values[i] < minimum) minimum = values[i];
+  }
+  return minimum;
+}
+
 function percentileFromSorted(sorted: readonly number[], q: number): number {
   if (sorted.length === 0) return 0;
   const clamped = Math.max(0, Math.min(1, Number.isFinite(q) ? q : 0));
@@ -757,19 +608,6 @@ function percentileFromSorted(sorted: readonly number[], q: number): number {
   const a = sorted[lower];
   const b = sorted[upper];
   return a + (b - a) * fraction;
-}
-
-function gaussianLogDensity(value: number, mean: number, variance: number): number {
-  const safeVariance = Math.max(MIN_VARIANCE, variance);
-  const delta = value - mean;
-  return -0.5 * (Math.log(2 * Math.PI * safeVariance) + delta * delta / safeVariance);
-}
-
-function applyLogSigmoid(value: number, threshold: number, scale: number, strength: number): number {
-  const x = strength * (value - threshold) / Math.max(1e-12, scale);
-  if (x >= 40) return 1;
-  if (x <= -40) return 0;
-  return 1 / (1 + Math.exp(-x));
 }
 
 function clampUnit(value: number): number {
@@ -873,9 +711,7 @@ function accumulateSobelMagnitudeScaledInto(
   scale: number,
   weight: number,
   output: Float32Array,
-  relative = false,
-  brightnessFloor = STF_RELATIVE_CHANNEL_BRIGHTNESS_FLOOR,
-  rmsCombine = false,
+  brightnessFloor: number,
 ): void {
   const wholeStep = Math.floor(scale);
   const fractionalStep = scale - wholeStep;
@@ -890,13 +726,9 @@ function accumulateSobelMagnitudeScaledInto(
       const gx = (right - left) * 0.5;
       const gy = (bottom - top) * 0.5;
       const magnitude = Math.fround(Math.sqrt(gx * gx + gy * gy));
-      if (relative) {
-        const localBrightness = Math.max(0, ((verticalForGx[pixel] ?? 0) + (horizontalForGy[pixel] ?? 0)) * 0.5);
-        const normalized = magnitude / Math.max(localBrightness, brightnessFloor);
-        output[pixel] += rmsCombine ? normalized * normalized * weight : normalized * weight;
-      } else {
-        output[pixel] += magnitude * weight;
-      }
+      const localBrightness = Math.max(0, ((verticalForGx[pixel] ?? 0) + (horizontalForGy[pixel] ?? 0)) * 0.5);
+      const normalized = magnitude / (localBrightness + brightnessFloor);
+      output[pixel] += normalized * normalized * weight;
     }
   }
 }

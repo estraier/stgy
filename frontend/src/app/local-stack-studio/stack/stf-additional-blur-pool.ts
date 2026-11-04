@@ -1,171 +1,94 @@
 import type { StfAdditionalBlurWorkerConfig } from "../workers/protocols/stf-additional-blur-protocol";
 import {
-  StfAdditionalBlurWorkerClient,
-  type StfAdditionalBlurAnalyzeResult,
-  type StfAdditionalBlurBlurRequest,
-  type StfAdditionalBlurRatioRequest,
+  StfAdditionalBlurWorkerClient, type StfAdditionalBlurAnalyzeResult,
+  type StfAdditionalBlurBlurRequest, type StfAdditionalBlurRatioRequest,
 } from "./stf-additional-blur-client";
 import type { LinearMergeStripeJob } from "./linear-merge-pool";
 import {
-  STF_ADDITIONAL_BLUR_MAX_WORKERS,
-  STF_RELATIVE_CHANNEL_BRIGHTNESS_FLOOR,
-  type StfRelativeChannelFloors,
-  type StfSampleGrid,
-  validateStfRelativeChannelFloors,
+  STF_ADDITIONAL_BLUR_MAX_WORKERS, type StfRelativeChannelFloors,
+  type StfSampleGrid, validateStfRelativeChannelFloors,
 } from "./stf-additional-blur";
 
 export type StfAdditionalBlurPoolReady = {
-  workerCount: number;
-  imageCount: number;
-  width: number;
-  height: number;
-  analysisHalo: number;
-  groupCount: number;
-  relativeSharpness: boolean;
-  relativeBrightnessFloor: number;
-  relativeCombineMode: "mean" | "rms";
-  relativeChannelFloors?: StfRelativeChannelFloors;
+  workerCount: number; imageCount: number; width: number; height: number;
+  analysisHalo: number; groupCount: number; relativeChannelFloors?: StfRelativeChannelFloors;
 };
-
 export class StfAdditionalBlurWorkerPool {
-  private constructor(
-    private readonly clients: StfAdditionalBlurWorkerClient[],
-    readonly ready: StfAdditionalBlurPoolReady,
-  ) {}
-
-  static async create({
-    jobCount,
-    config,
-    workerUrl,
-    hardwareConcurrency,
-  }: {
-    jobCount: number;
-    config: StfAdditionalBlurWorkerConfig;
-    workerUrl: URL;
+  private constructor(private readonly clients: StfAdditionalBlurWorkerClient[], readonly ready: StfAdditionalBlurPoolReady) {}
+  static async create({ jobCount, config, workerUrl, hardwareConcurrency }: {
+    jobCount: number; config: StfAdditionalBlurWorkerConfig; workerUrl: URL;
     hardwareConcurrency?: number | null;
   }): Promise<StfAdditionalBlurWorkerPool> {
-    const workers = Math.max(1, Math.min(
-      STF_ADDITIONAL_BLUR_MAX_WORKERS,
+    const workers = Math.max(1, Math.min(STF_ADDITIONAL_BLUR_MAX_WORKERS,
       Math.max(1, Math.floor(Number.isFinite(hardwareConcurrency) ? Number(hardwareConcurrency) : STF_ADDITIONAL_BLUR_MAX_WORKERS)),
-      Math.max(1, Math.floor(jobCount)),
-    ));
+      Math.max(1, Math.floor(jobCount))));
     const clients = Array.from({ length: workers }, () => new StfAdditionalBlurWorkerClient(workerUrl));
     try {
       const responses = await Promise.all(clients.map((client) => client.initialize(config)));
       const first = responses[0];
-      // An old generated Worker silently ignores new init options. Verify its
-      // effective configuration before accepting any relative-sharpness data.
-      if (config.relativeSharpness === true) {
-        const expectedFloor = config.relativeBrightnessFloor ?? STF_RELATIVE_CHANNEL_BRIGHTNESS_FLOOR;
-        const expectedCombineMode = config.relativeCombineMode === "rms" ? "rms" : "mean";
-        for (const response of responses) {
-          if (response.relativeSharpness !== true || response.relativeBrightnessFloor !== expectedFloor || response.relativeCombineMode !== expectedCombineMode) {
-            throw new Error(
-              "STF relative sharpness Worker is out of date or has the wrong brightness floor. " +
-              "Rebuild local stack workers and reload the page.",
-            );
-          }
+      for (const r of responses) {
+        if (r.imageCount !== first.imageCount || r.width !== first.width || r.height !== first.height ||
+            r.analysisHalo !== first.analysisHalo || r.groupCount !== first.groupCount) {
+          throw new Error("STF Additional blur Workers initialized inconsistently.");
         }
       }
-      for (const response of responses) {
-        if (
-          response.imageCount !== first.imageCount
-          || response.width !== first.width
-          || response.height !== first.height
-          || response.analysisHalo !== first.analysisHalo
-          || response.groupCount !== first.groupCount
-        ) {
-          throw new Error("STF Additional blur workers initialized inconsistently.");
-        }
-      }
-      return new StfAdditionalBlurWorkerPool(clients, {
-        workerCount: workers,
-        imageCount: first.imageCount,
-        width: first.width,
-        height: first.height,
-        analysisHalo: first.analysisHalo,
-        groupCount: first.groupCount,
-        relativeSharpness: first.relativeSharpness,
-        relativeBrightnessFloor: first.relativeBrightnessFloor,
-        relativeCombineMode: first.relativeCombineMode,
-      });
+      return new StfAdditionalBlurWorkerPool(clients, { workerCount: workers, imageCount: first.imageCount,
+        width: first.width, height: first.height, analysisHalo: first.analysisHalo, groupCount: first.groupCount });
     } catch (error) {
       for (const client of clients) client.terminate();
       throw error;
     }
   }
-
-  runAnalysisJobs(
-    jobs: readonly LinearMergeStripeJob[],
-    onComplete: (job: LinearMergeStripeJob, result: StfAdditionalBlurAnalyzeResult, completed: number, total: number) => void | Promise<void>,
-  ): Promise<void> {
-    return this.runJobs(jobs, (client, job) => client.analyzeStripe(job), onComplete);
+  runAnalysisJobs(jobs: readonly LinearMergeStripeJob[], includeSource: boolean,
+    onComplete: (job: LinearMergeStripeJob, result: StfAdditionalBlurAnalyzeResult, completed: number, total: number) => void | Promise<void>) {
+    return this.runJobs(jobs, (client, job) => client.analyzeStripe(job, includeSource), onComplete);
   }
-
-  runRatioJobs(
-    jobs: readonly LinearMergeStripeJob[],
+  runRatioJobs(jobs: readonly LinearMergeStripeJob[],
     buildRequest: (job: LinearMergeStripeJob) => Promise<StfAdditionalBlurRatioRequest>,
-    onComplete: (job: LinearMergeStripeJob, result: Float32Array, completed: number, total: number) => void | Promise<void>,
-  ): Promise<void> {
+    onComplete: (job: LinearMergeStripeJob, result: Float32Array, completed: number, total: number) => void | Promise<void>) {
     return this.runJobs(jobs, async (client, job) => client.ratioStripe(await buildRequest(job)), onComplete);
   }
-
-  interpolateLogRatio(values: Float32Array, width: number, height: number, closingMode: "area" | "volume" | "volume2" = "area"): Promise<{
-    values: Float32Array;
-    info: { workingWidth: number; workingHeight: number; areaThreshold?: number; volumeThreshold?: number };
-  }> {
-    return this.clients[0].interpolateLogRatio(values, width, height, closingMode);
-  }
-
-  runBlurJobs(
-    jobs: readonly LinearMergeStripeJob[],
+  runBlurJobs(jobs: readonly LinearMergeStripeJob[],
     buildRequest: (job: LinearMergeStripeJob) => StfAdditionalBlurBlurRequest,
-    onComplete: (job: LinearMergeStripeJob, result: Float32Array, completed: number, total: number) => void | Promise<void>,
-  ): Promise<void> {
+    onComplete: (job: LinearMergeStripeJob, result: Float32Array, completed: number, total: number) => void | Promise<void>) {
     return this.runJobs(jobs, (client, job) => client.blurStripe(buildRequest(job)), onComplete);
   }
-
-  sampleBrightnessStripes(
-    jobs: readonly LinearMergeStripeJob[],
-    grid: StfSampleGrid,
-    onComplete: (job: LinearMergeStripeJob, samples: Float32Array, completed: number, total: number) => void | Promise<void>,
-  ): Promise<void> {
+  sampleBrightnessStripes(jobs: readonly LinearMergeStripeJob[], grid: StfSampleGrid,
+    onComplete: (job: LinearMergeStripeJob, samples: Float32Array, completed: number, total: number) => void | Promise<void>) {
     return this.runJobs(jobs, (client, job) => client.sampleBrightnessStripe(job, grid), onComplete);
   }
-
+  volumeClose(values: Float32Array, width: number, height: number) {
+    return this.clients[0].volumeClose(values, width, height);
+  }
+  graphCut(values: Float32Array, width: number, height: number, ratio: number) {
+    return this.clients[0].graphCut(values, width, height, ratio);
+  }
   async configureRelativeChannelFloors(floors: StfRelativeChannelFloors): Promise<void> {
-    const expected = validateStfRelativeChannelFloors(floors);
-    if (!this.ready.relativeSharpness) throw new Error("STF relative3 requires relative sharpness mode.");
-    const responses = await Promise.all(this.clients.map((client) => client.configureRelativeChannelFloors(expected)));
+    const valid = validateStfRelativeChannelFloors(floors);
+    const responses = await Promise.all(this.clients.map((client) => client.configureRelativeChannelFloors(valid)));
     for (const response of responses) {
-      if (!Array.isArray(response) || response.length !== 3 || response.some((value, i) => value !== expected[i])) {
-        throw new Error("STF relative3 Worker did not confirm RGB brightness floors. Rebuild workers and reload.");
+      if (response.length !== 3 || response.some((v, i) => v !== valid[i])) {
+        throw new Error("STF RGB brightness Worker was not configured correctly.");
       }
     }
-    this.ready.relativeChannelFloors = expected;
+    this.ready.relativeChannelFloors = valid;
   }
-
   terminate(): void {
     for (const client of this.clients) client.terminate();
   }
-
-  private async runJobs<Result>(
-    jobs: readonly LinearMergeStripeJob[],
+  private async runJobs<Result>(jobs: readonly LinearMergeStripeJob[],
     run: (client: StfAdditionalBlurWorkerClient, job: LinearMergeStripeJob) => Promise<Result>,
-    onComplete: (job: LinearMergeStripeJob, result: Result, completed: number, total: number) => void | Promise<void>,
-  ): Promise<void> {
-    let nextJob = 0;
-    let completed = 0;
+    onComplete: (job: LinearMergeStripeJob, result: Result, completed: number, total: number) => void | Promise<void>): Promise<void> {
+    let nextJob = 0, completed = 0;
     let firstError: Error | null = null;
     const runWorker = async (client: StfAdditionalBlurWorkerClient) => {
       while (!firstError) {
         const index = nextJob++;
         if (index >= jobs.length) return;
-        const job = jobs[index];
         try {
-          const result = await run(client, job);
-          completed += 1;
-          await onComplete(job, result, completed, jobs.length);
+          const result = await run(client, jobs[index]);
+          completed++;
+          await onComplete(jobs[index], result, completed, jobs.length);
         } catch (error) {
           if (!firstError) firstError = error instanceof Error ? error : new Error(String(error));
           throw firstError;

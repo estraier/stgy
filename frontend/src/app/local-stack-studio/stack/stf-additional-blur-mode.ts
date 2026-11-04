@@ -1,50 +1,43 @@
-// Raw-ratio comparisons stay independent: relative3 uses a P50/4 brightness
-// floor and weighted arithmetic mean, while relative4 uses P50/8 and the same
-// arithmetic mean. Selecting "none" bypasses this pipeline upstream.
-export function usesStfRelative3Sharpness(visualizationMode: string | null): boolean {
-  return visualizationMode === "raw-ratio-relative3";
-}
+/** The complete public configuration of STF additional blur. */
+export const STF_BLUR_STRENGTH_VALUES = ["none", "weak", "medium", "strong", "gate"] as const;
+export const STF_BLUR_AREA_GUARD_VALUES = ["none", "weak", "medium", "strong"] as const;
+export const STF_BLUR_RATIO_VALUES = Array.from({ length: 17 }, (_, i) => (10 + i * 5) / 100);
+export const STF_BLUR_SIGMOID_VALUES = Array.from({ length: 21 }, (_, i) => i * 5);
+export type StfBlurStrength = (typeof STF_BLUR_STRENGTH_VALUES)[number];
+export type StfBlurAreaGuard = (typeof STF_BLUR_AREA_GUARD_VALUES)[number];
 
-// The sigmoid/dilated previews and all production blur strengths now use
-// relative5: channel-wise P50/16 brightness floors and weighted RGB RMS.
-export function usesStfRelative5Sharpness(visualizationMode: string | null): boolean {
-  return visualizationMode === null
-    || visualizationMode === "sigmoid"
-    || visualizationMode === "dilated"
-    || visualizationMode === "raw-ratio-relative5"
-    || visualizationMode === "interpolated"
-    || visualizationMode === "volume-interpolated"
-    || visualizationMode === "volume-interpolated-2";
-}
+export type StfAdditionalBlurOptions = {
+  strength: StfBlurStrength;
+  ratio: number;
+  areaGuard: StfBlurAreaGuard;
+  sigmoid: number;
+};
 
-// Return the divisor of each RGB channel's brightness P50. The ratio epsilon
-// remains P50/4 of the *coarse relative sharpness* for all these modes.
-export function resolveStfRelativeBrightnessP50Divisor(visualizationMode: string | null): 4 | 8 | 16 | null {
-  if (usesStfRelative5Sharpness(visualizationMode)) return 16;
-  if (visualizationMode === "raw-ratio-relative4") return 8;
-  return usesStfRelative3Sharpness(visualizationMode) ? 4 : null;
-}
+export type StfAdditionalBlurPlan = StfAdditionalBlurOptions & {
+  enabled: boolean;
+  gateOnly: boolean;
+  strengthMultiplier: 1 | 2 | 3 | null;
+  areaExponent: number | null;
+  effectiveRatio: number | null;
+};
 
-// Only relative5 and the production gate/blur paths combine the three
-// brightness-normalized Sobel magnitudes using weighted RMS.
-export function resolveStfRelativeCombineMode(visualizationMode: string | null): "mean" | "rms" | null {
-  const divisor = resolveStfRelativeBrightnessP50Divisor(visualizationMode);
-  if (divisor === null && visualizationMode !== "raw-ratio-relative" && visualizationMode !== "raw-ratio-relative2") return null;
-  return usesStfRelative5Sharpness(visualizationMode) ? "rms" : "mean";
-}
+export const DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS: StfAdditionalBlurOptions = {
+  strength: "none", ratio: 0.5, areaGuard: "medium", sigmoid: 75,
+};
 
-// The Area Closing experiment remains independent. Production sigmoid,
-// dilated, and weak/medium/strong blur use Volume Closing 2 instead.
-// All raw-ratio comparison modes, including the original Volume preview,
-// retain their own processing paths.
-export function resolveStfGateClosingMode(visualizationMode: string | null): "area" | "volume2" | null {
-  if (visualizationMode === "interpolated") return "area";
-  if (visualizationMode === null || visualizationMode === "sigmoid" || visualizationMode === "dilated") {
-    return "volume2";
+export function buildStfAdditionalBlurPlan(options: StfAdditionalBlurOptions): StfAdditionalBlurPlan {
+  if (!STF_BLUR_STRENGTH_VALUES.includes(options.strength) ||
+      !STF_BLUR_AREA_GUARD_VALUES.includes(options.areaGuard) ||
+      !STF_BLUR_RATIO_VALUES.some((v) => Math.abs(v - options.ratio) < 1e-9) ||
+      !STF_BLUR_SIGMOID_VALUES.includes(options.sigmoid)) {
+    throw new Error("STF Additional blur options are invalid.");
   }
-  return null;
-}
-
-export function usesStfInterpolatedGate(visualizationMode: string | null): boolean {
-  return resolveStfGateClosingMode(visualizationMode) !== null;
+  const enabled = options.strength !== "none";
+  const areaExponent = !enabled || options.areaGuard === "none" ? null
+    : options.areaGuard === "weak" ? 0.95 : options.areaGuard === "medium" ? 0.85 : 0.75;
+  const strengthMultiplier = !enabled || options.strength === "gate" ? null
+    : options.strength === "weak" ? 1 : options.strength === "medium" ? 2 : 3;
+  // Neither graph cut nor sigmoid reads the ratio when both are disabled.
+  const effectiveRatio = enabled && (areaExponent !== null || options.sigmoid !== 0) ? options.ratio : null;
+  return { ...options, enabled, gateOnly: options.strength === "gate", strengthMultiplier, areaExponent, effectiveRatio };
 }

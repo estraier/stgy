@@ -1,371 +1,203 @@
 import {
-  applyGuardedGaussianBlurRegion,
-  applyStfGateExpansion,
-  buildStfLogRatioFromDerived,
-  buildStfSharpnessMapAtScaleInto,
-  createStfSharpnessScratch,
-  buildStfSigmoidPlan,
-  buildStfRelativeSharpnessMapAtScaleInto,
-  STF_RELATIVE_CHANNEL_BRIGHTNESS_FLOOR,
-  STF_RELATIVE2_CHANNEL_BRIGHTNESS_FLOOR,
-  buildStfPersistentCoarseSharpnessStripe,
-  buildStfPersistentFineSharpnessStripe,
-  normalizeStfSharpnessForPreview,
-  normalizeStfLogRatioForPreview,
-  deriveStfDynamicSharpnessC,
-  deriveStfMedianSharpnessC,
-  deriveStfRelativeChannelFloorsFromSamples,
-  validateStfRelativeChannelFloors,
-  deriveStfRatioEpsilon,
-  resolveStfAdditionalBlurRadius,
+  buildStfApertureGroups, sameStfFNumber,
+  deriveStfRelativeChannelFloorsFromSamples, deriveStfMedianSharpnessC,
+  deriveStfRatioEpsilon, buildStfLogRatioFromDerived, normalizeStfLogRatioBufferInPlace,
+  normalizeStfLogRatioValue, buildStfLogRatioNormalizationPlan,
+  buildStfSigmoidPlan, applyStfSigmoidGateInPlace,
+  resolveStfAdditionalBlurRadius, applyStfGateExpansion, applyGuardedGaussianBlurRegion,
+  buildStfRelativeSharpnessMapAtScaleInto, createStfSharpnessScratch,
 } from "./stf-additional-blur";
 
-describe("STF Additional blur", () => {
-  test("weights independently detected RGB edges in a 3:4:3 ratio", () => {
-    const width = 9;
-    const height = 9;
-    const strengths = [0, 1, 2].map((channel) => {
-      const linear = new Float32Array(width * height * 3);
-      for (let y = 0; y < height; y += 1) {
-        for (let x = 0; x < width; x += 1) {
-          linear[(y * width + x) * 3 + channel] = x / (width - 1);
-        }
-      }
-      const output = new Float32Array(width * height);
-      buildStfSharpnessMapAtScaleInto(linear, width, height, 1, output, createStfSharpnessScratch(width * height));
-      return output[4 * width + 4];
-    });
-    expect(strengths[0]).toBeGreaterThan(0);
-    expect(strengths[2]).toBeCloseTo(strengths[0], 6);
-    expect(strengths[1] / strengths[0]).toBeCloseTo(4 / 3, 6);
+describe("STF production sharpness and protection gate", () => {
+  test("same F-number images share groups; invalid F numbers fail", () => {
+    expect(sameStfFNumber(2, 2.0000001)).toBe(true);
+    const groups = buildStfApertureGroups([4, 2, 2.0000001, 2.8]);
+    expect(Array.from(groups.imageGroupIndexes)).toEqual([2, 0, 0, 1]);
+    expect(Array.from(groups.groupImageCounts)).toEqual([2, 1, 1]);
+    expect(() => buildStfApertureGroups([2, 2])).toThrow();
+    expect(() => buildStfApertureGroups([2, 0])).toThrow();
   });
-
-  test("derives c from a clear two-component log-sharpness distribution", () => {
-    const samples: number[] = [];
-    for (let i = -100; i <= 100; i += 1) {
-      samples.push(Math.exp(-7 + i * 0.002));
-      samples.push(Math.exp(-3 + i * 0.002));
+  test("RGB brightness floors use independent channel P50 / 64, added to brightness", () => {
+    const floors = deriveStfRelativeChannelFloorsFromSamples([[1, 2, 3], [4, 8, 12], [0.5, 1, 1.5]]);
+    expect(floors[0]).toBeCloseTo(2 / 64);
+    expect(floors[1]).toBeCloseTo(8 / 64);
+    expect(floors[2]).toBeCloseTo(1 / 64);
+    const w = 17, h = 17, input = new Float32Array(w * h * 3);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const pixel = (y * w + x) * 3;
+      input[pixel] = x < 8 ? 0.1 : 0.8;
+      input[pixel + 1] = 0.3;
+      input[pixel + 2] = 0.3;
     }
-    const plan = deriveStfDynamicSharpnessC(samples);
-    expect(plan.method).toBe("gmm-intersection");
-    expect(Math.log(plan.c)).toBeCloseTo(-5, 1);
+    const output = new Float32Array(w * h);
+    buildStfRelativeSharpnessMapAtScaleInto(input, w, h, 1, output, createStfSharpnessScratch(w * h), floors);
+    expect(output[8 * w + 8]).toBeGreaterThan(0);
+    expect(output[3 * w + 3]).toBeCloseTo(0, 5);
+    // Raising red floor changes only red-relative Sobel, lowering its value.
+    const less = new Float32Array(w * h);
+    buildStfRelativeSharpnessMapAtScaleInto(input, w, h, 1, less, createStfSharpnessScratch(w * h), [1, floors[1], floors[2]]);
+    expect(less[8 * w + 8]).toBeLessThan(output[8 * w + 8]);
   });
-
-  test("falls back to the geometric median for a single-valued distribution", () => {
-    const plan = deriveStfDynamicSharpnessC(new Float32Array(1024).fill(0.002));
-    expect(plan.method).toBe("median-fallback");
-    expect(plan.c).toBeCloseTo(0.002, 6);
+  test("coarse P50/64 epsilon and grouped geometric log-ratios", () => {
+    expect(deriveStfMedianSharpnessC([1, 4, 2, 3])).toBeCloseTo(2.5);
+    expect(deriveStfRatioEpsilon(2.5)).toBeCloseTo(2.5 / 64);
+    const fine = Float32Array.from([Math.log(4) + Math.log(9), Math.log(4) + Math.log(9)]);
+    const zeros = Uint8Array.from([0, 1]);
+    const coarse = Float32Array.from([2, 2, 3, 3]);
+    const log = buildStfLogRatioFromDerived(fine, zeros, coarse, 2, 0.25);
+    expect(log[0]).toBeCloseTo(Math.log(Math.sqrt((4 * 9) / ((2 + 0.25) * (3 + 0.25)))));
+    expect(Number.isNaN(log[1])).toBe(true);
   });
-
-  test("uses the raw 0.5MP sharpness P50 for the alternative ratio mode", () => {
-    // Deliberately unlike the geometric median; the raw P50 is (2 + 8)/2.
-    const samples = Float32Array.from([0, 1, 2, 8, 32, Number.NaN]);
-    const c = deriveStfMedianSharpnessC(samples);
-    expect(c).toBe(5);
-    expect(deriveStfRatioEpsilon(c)).toBe(1.25);
-    expect(deriveStfMedianSharpnessC([0, 0, Number.NaN])).toBe(1e-12);
+  test("P3/P97 normalization happens once on log ratio, including stable flat fallback", () => {
+    const log = Float32Array.from(Array.from({ length: 101 }, (_, i) => i / 10));
+    log[0] = NaN;
+    const n = normalizeStfLogRatioBufferInPlace(log);
+    expect(n.degenerate).toBe(false);
+    expect(log[0]).toBe(0);
+    expect(log[1]).toBe(0);
+    expect(log[100]).toBe(1);
+    const fixed = Float32Array.from([2, 2, 2, 2]);
+    expect(normalizeStfLogRatioBufferInPlace(fixed).degenerate).toBe(true);
+    expect(Array.from(fixed)).toEqual([0.5, 0.5, 0.5, 0.5]);
+    const p = buildStfLogRatioNormalizationPlan(Float32Array.from([0, 10, 20, 30]), 0, 1);
+    expect(normalizeStfLogRatioValue(10, p)).toBeCloseTo(1 / 3);
   });
-
-  test("P50/4 uses the unchanged geometric-mean raw ratio calculation", () => {
-    const c = deriveStfMedianSharpnessC([1, 2, 8, 32]);
-    const epsilon = deriveStfRatioEpsilon(c);
-    const fineLogSum = new Float32Array([Math.log(4) + Math.log(8)]);
-    const coarseGroups = new Float32Array([1, 3]);
-    const ratio = buildStfLogRatioFromDerived(fineLogSum, new Uint8Array([0]), coarseGroups, 2, epsilon);
-    expect(ratio[0]).toBeCloseTo((Math.log(4 / (1 + epsilon)) + Math.log(8 / (3 + epsilon))) / 2, 6);
-    expect(normalizeStfLogRatioForPreview(ratio[0])).toBeCloseTo(Math.exp(ratio[0]) / (1 + Math.exp(ratio[0])), 6);
-  });
-
-  test("uses one quarter of c as the ratio epsilon", () => {
-    expect(deriveStfRatioEpsilon(0.004)).toBeCloseTo(0.001, 12);
-  });
-
-  test("P50/8 uses the same raw median but half the P50/4 denominator epsilon", () => {
-    const c = deriveStfMedianSharpnessC([1, 2, 8, 32]);
-    const epsilon4 = deriveStfRatioEpsilon(c);
-    const epsilon8 = deriveStfRatioEpsilon(c, 8);
-    expect(epsilon8).toBeCloseTo(epsilon4 / 2, 12);
-    const fineLogSum = new Float32Array([Math.log(4) + Math.log(8)]);
-    const fineZero = new Uint8Array([0]);
-    const coarseGroups = new Float32Array([1, 3]);
-    const ratio = buildStfLogRatioFromDerived(fineLogSum, fineZero, coarseGroups, 2, epsilon8);
-    expect(ratio[0]).toBeCloseTo((Math.log(4 / (1 + epsilon8)) + Math.log(8 / (3 + epsilon8))) / 2, 6);
-    expect(ratio[0]).toBeGreaterThan(buildStfLogRatioFromDerived(fineLogSum, fineZero, coarseGroups, 2, epsilon4)[0]);
-    expect(deriveStfRatioEpsilon(1e-12, 8)).toBe(1e-12);
-  });
-
-
-  test("builds the geometric-mean log ratio with epsilon=c/4 semantics", () => {
-    const fineLogSum = new Float32Array([Math.log(4) + Math.log(8)]);
-    const fineZero = new Uint8Array([0]);
-    const coarseGroups = new Float32Array([1, 3]);
-    const epsilon = 0.25;
-    const result = buildStfLogRatioFromDerived(fineLogSum, fineZero, coarseGroups, 2, epsilon);
-    const expected = 0.5 * (Math.log(4 / 1.25) + Math.log(8 / 3.25));
-    expect(result[0]).toBeCloseTo(expected, 6);
-  });
-
-  test("visualizes geometric-mean coarse sharpness using the same c as epsilon", () => {
-    const groups = new Float32Array([1, 4, 0, 9, 16, 2]);
-    const coarse = buildStfPersistentCoarseSharpnessStripe(groups, 2);
-    expect(Array.from(coarse)).toEqual([3, 8, 0]);
-    expect(normalizeStfSharpnessForPreview(0.005, 0.005)).toBeCloseTo(0.5, 10);
-    expect(normalizeStfSharpnessForPreview(0, 0.005)).toBe(0);
-  });
-
-  test("visualizes 16MP sharpness using geometric mean across F-number groups and its own c", () => {
-    const fineLogSum = new Float32Array([Math.log(2) + Math.log(8), Math.log(4) + Math.log(9), 0]);
-    const fineZero = new Uint8Array([0, 0, 1]);
-    const fine = buildStfPersistentFineSharpnessStripe(fineLogSum, fineZero, 2);
-    expect(fine[0]).toBeCloseTo(4, 6);
-    expect(fine[1]).toBeCloseTo(6, 6);
-    expect(fine[2]).toBe(0);
-    const c = deriveStfDynamicSharpnessC(fine).c;
-    expect(normalizeStfSharpnessForPreview(c, c)).toBeCloseTo(0.5, 12);
-    expect(normalizeStfSharpnessForPreview(0, c)).toBe(0);
-  });
-
-  test("rejects inconsistent 16MP sharpness buffers", () => {
-    expect(() => buildStfPersistentFineSharpnessStripe(
-      new Float32Array([1, 2]), new Uint8Array([0]), 2,
-    )).toThrow("invalid aperture-group data");
-  });
-
-  test("relative sharpness normalizes each RGB channel before 3:4:3 mixing", () => {
-    const width = 11;
-    const height = 11;
-    const atCenter = 5 * width + 5;
-    const sharpnesses = [0, 1, 2].map((channel) => {
-      const linear = new Float32Array(width * height * 3);
-      for (let y = 0; y < height; y += 1) {
-        for (let x = 0; x < width; x += 1) {
-          linear[(y * width + x) * 3 + channel] = (1 + x / 10) * 0.04;
-        }
+  test("P3/P97 selection agrees with full sorting for arbitrary percentiles and finite subsets", () => {
+    const reference = (source: ArrayLike<number>, low: number, high: number) => {
+      const sorted: number[] = [];
+      for (let i = 0; i < source.length; i++) {
+        if (Number.isFinite(source[i])) sorted.push(source[i]);
       }
-      const output = new Float32Array(width * height);
-      buildStfRelativeSharpnessMapAtScaleInto(linear, width, height, 1, output, createStfSharpnessScratch(width * height));
-      return output[atCenter];
-    });
-    expect(sharpnesses[0]).toBeGreaterThan(0);
-    expect(sharpnesses[2]).toBeCloseTo(sharpnesses[0], 6);
-    expect(sharpnesses[1] / sharpnesses[0]).toBeCloseTo(4 / 3, 6);
-  });
-
-  test("relative sharpness is invariant to uniform brightness scaling above the floor", () => {
-    const width = 11;
-    const height = 11;
-    const makeImage = (brightness: number) => {
-      const linear = new Float32Array(width * height * 3);
-      for (let y = 0; y < height; y += 1) {
-        for (let x = 0; x < width; x += 1) {
-          const pixel = (y * width + x) * 3;
-          const structure = 1 + x / 10;
-          linear[pixel] = brightness * structure;
-          linear[pixel + 1] = brightness * structure * 0.5;
-          linear[pixel + 2] = brightness * structure * 0.2;
-        }
-      }
-      return linear;
+      sorted.sort((a, b) => a - b);
+      const percentile = (q: number): number => {
+        const position = q * (sorted.length - 1);
+        const lo = Math.floor(position);
+        const hi = Math.ceil(position);
+        return sorted[lo] + (sorted[hi] - sorted[lo]) * (position - lo);
+      };
+      return sorted.length > 0 ? [percentile(low), percentile(high)] : [0, 1];
     };
-    const measure = (brightness: number, scale: number) => {
-      const output = new Float32Array(width * height);
-      buildStfRelativeSharpnessMapAtScaleInto(
-        makeImage(brightness), width, height, scale, output, createStfSharpnessScratch(width * height),
-      );
-      return output[5 * width + 5];
+    let state = 0x1234abcd;
+    const random = (): number => {
+      state = (Math.imul(1664525, state) + 1013904223) >>> 0;
+      return state / 0x1_0000_0000;
     };
-    expect(measure(0.5, 1)).toBeCloseTo(measure(0.05, 1), 5);
-    expect(measure(0.5, 3)).toBeCloseTo(measure(0.05, 3), 5);
-  });
-
-  test("relative2 only lowers the RGB channel brightness floor from 1e-4 to 1e-5", () => {
-    expect(STF_RELATIVE_CHANNEL_BRIGHTNESS_FLOOR).toBe(1e-4);
-    expect(STF_RELATIVE2_CHANNEL_BRIGHTNESS_FLOOR).toBe(1e-5);
-    const width = 11;
-    const height = 11;
-    const linear = new Float32Array(width * height * 3);
-    for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
-      const value = 2e-5 * (1 + x / 10);
-      const index = (y * width + x) * 3;
-      linear[index] = value;
-      linear[index + 1] = value * 0.5;
-      linear[index + 2] = value * 0.2;
-    }
-    const compute = (floor?: number, scale = 1) => {
-      const output = new Float32Array(width * height);
-      if (floor === undefined) {
-        buildStfRelativeSharpnessMapAtScaleInto(
-          linear, width, height, scale, output, createStfSharpnessScratch(width * height),
-        );
-      } else {
-        buildStfRelativeSharpnessMapAtScaleInto(
-          linear, width, height, scale, output, createStfSharpnessScratch(width * height), floor,
-        );
-      }
-      return output[5 * width + 5];
-    };
-    expect(compute()).toBeCloseTo(compute(STF_RELATIVE_CHANNEL_BRIGHTNESS_FLOOR), 7);
-    expect(compute(STF_RELATIVE2_CHANNEL_BRIGHTNESS_FLOOR)).toBeGreaterThan(compute());
-    expect(compute(STF_RELATIVE2_CHANNEL_BRIGHTNESS_FLOOR, 3)).toBeGreaterThan(compute(undefined, 3));
-    expect(() => compute(0)).toThrow("brightness floor");
-  });
-
-  test("relative3 uses P50/4 of each channel's brightness, including black samples", () => {
-    const floors = deriveStfRelativeChannelFloorsFromSamples([
-      [0, 2, 4, 6],
-      [1, 3, 7, 11],
-      [0, 0, 0, 0],
-    ]);
-    expect(floors[0]).toBeCloseTo(0.75, 9);
-    expect(floors[1]).toBeCloseTo(1.25, 9);
-    expect(floors[2]).toBe(1e-12);
-    expect(validateStfRelativeChannelFloors(floors)).toEqual(floors);
-    expect(() => validateStfRelativeChannelFloors([0, 1, 2])).toThrow("brightness floors are invalid");
-  });
-
-  test("relative4 uses the same per-channel brightness samples but P50/8 instead of P50/4", () => {
-    const samples: [number[], number[], number[]] = [
-      [0, 2, 4, 6], [1, 3, 7, 11], [0, 0, 0, 0],
+    const percentiles: Array<[number, number]> = [
+      [0.03, 0.97], [0, 1], [0.2, 0.8], [0.49, 0.51], [0.001, 0.999],
     ];
-    const relative3 = deriveStfRelativeChannelFloorsFromSamples(samples);
-    const relative4 = deriveStfRelativeChannelFloorsFromSamples(samples, 8);
-    expect(relative4[0]).toBeCloseTo(relative3[0] / 2, 12);
-    expect(relative4[1]).toBeCloseTo(relative3[1] / 2, 12);
-    expect(relative4[2]).toBe(1e-12); // Respect the existing absolute safety floor.
-    expect(deriveStfRatioEpsilon(0.5)).toBeCloseTo(0.125, 12); // Ratio epsilon remains P50/4.
-  });
-
-  test("relative5 uses P50/16 RGB brightness floors without changing the ratio epsilon", () => {
-    const samples: [number[], number[], number[]] = [
-      [0, 2, 4, 6], [1, 3, 7, 11], [0, 0, 0, 0],
-    ];
-    const relative4 = deriveStfRelativeChannelFloorsFromSamples(samples, 8);
-    const relative5 = deriveStfRelativeChannelFloorsFromSamples(samples, 16);
-    expect(relative5[0]).toBeCloseTo(relative4[0] / 2, 12);
-    expect(relative5[1]).toBeCloseTo(relative4[1] / 2, 12);
-    expect(relative5[2]).toBe(1e-12); // The existing absolute safety floor remains in force.
-    expect(deriveStfRatioEpsilon(0.5)).toBeCloseTo(0.125, 12);
-  });
-
-  test("relative3 channel-specific floors change the contribution of each RGB channel", () => {
-    const width = 9, height = 9;
-    const linear = new Float32Array(width * height * 3);
-    for (let y = 0; y < height; y += 1) {
-      for (let x = 0; x < width; x += 1) {
-        const p = (y * width + x) * 3;
-        linear[p] = (x + 1) / 10;
-        linear[p + 1] = (x + 1) / 100;
-        linear[p + 2] = (x + 1) / 1000;
-      }
-    }
-    const a = new Float32Array(width * height);
-    const b = new Float32Array(width * height);
-    buildStfRelativeSharpnessMapAtScaleInto(linear, width, height, 1, a, createStfSharpnessScratch(width * height), 0.1);
-    buildStfRelativeSharpnessMapAtScaleInto(linear, width, height, 1, b, createStfSharpnessScratch(width * height), [0.1, 0.01, 0.001]);
-    expect(b[4 * width + 4]).toBeGreaterThan(a[4 * width + 4]);
-  });
-
-  test("relative5 weighted RMS preserves a single-channel edge more strongly than the weighted mean", () => {
-    const width = 9, height = 9;
-    const linear = new Float32Array(width * height * 3);
-    for (let y = 0; y < height; y += 1) {
-      for (let x = 0; x < width; x += 1) {
-        const p = (y * width + x) * 3;
-        linear[p] = x < width / 2 ? 0.1 : 0.9;
-        linear[p + 1] = 0.5;
-        linear[p + 2] = 0.5;
-      }
-    }
-    const mean = new Float32Array(width * height);
-    const rms = new Float32Array(width * height);
-    const floors = [0.1, 0.1, 0.1] as const;
-    buildStfRelativeSharpnessMapAtScaleInto(linear, width, height, 1, mean, createStfSharpnessScratch(width * height), floors);
-    buildStfRelativeSharpnessMapAtScaleInto(linear, width, height, 1, rms, createStfSharpnessScratch(width * height), floors, "rms");
-    expect(rms[4 * width + 4]).toBeGreaterThan(mean[4 * width + 4]);
-  });
-
-  test("relative3 P50 floors follow exposure changes instead of a fixed brightness threshold", () => {
-    const width = 9, height = 9;
-    const make = (factor: number) => {
-      const linear = new Float32Array(width * height * 3);
-      const samples: [number[], number[], number[]] = [[], [], []];
-      for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
-        const p = (y * width + x) * 3;
-        for (let channel = 0; channel < 3; channel += 1) {
-          const value = factor * (x + 1) * [0.01, 0.005, 0.002][channel];
-          linear[p + channel] = value;
-          samples[channel].push(value);
+    for (const length of [1, 2, 3, 4, 8, 9, 31, 100, 101, 102, 257, 1001, 4096]) {
+      for (const shape of ["random", "ascending", "descending", "flat", "binary", "steps", "almost-flat"]) {
+        const data = new Float32Array(length);
+        for (let i = 0; i < length; i++) {
+          if (shape === "random") data[i] = (random() - 0.5) * 100;
+          else if (shape === "ascending") data[i] = i / 31;
+          else if (shape === "descending") data[i] = -i / 31;
+          else if (shape === "flat") data[i] = 3;
+          else if (shape === "binary") data[i] = i % 5 ? 0 : 1;
+          else if (shape === "steps") data[i] = Math.floor(i / 17);
+          else data[i] = 1 + (i % 7 === 0 ? 0.00001 : 0);
         }
+        if (length >= 8 && shape !== "flat") {
+          data[2] = NaN;
+          data[5] = NaN;
+        }
+        const unchanged = data.slice();
+        for (const [low, high] of percentiles) {
+          const plan = buildStfLogRatioNormalizationPlan(data, low, high);
+          const [expectedLow, expectedHigh] = reference(data, low, high);
+          expect(plan.lowerValue).toBe(expectedLow);
+          expect(plan.upperValue).toBe(expectedHigh);
+          expect(plan.finiteCount).toBe(length >= 8 && shape !== "flat" ? length - 2 : length);
+          expect(plan.degenerate).toBe(!(expectedHigh - expectedLow > 1e-12));
+        }
+        expect(Array.from(data, (value) => Number.isNaN(value) ? "NaN" : value))
+          .toEqual(Array.from(unchanged, (value) => Number.isNaN(value) ? "NaN" : value));
       }
-      const floors = deriveStfRelativeChannelFloorsFromSamples(samples);
-      const output = new Float32Array(width * height);
-      buildStfRelativeSharpnessMapAtScaleInto(
-        linear, width, height, 1, output, createStfSharpnessScratch(width * height), floors,
-      );
-      return { floors, center: output[4 * width + 4] };
+    }
+    const precision = [0, 0.1 + Number.EPSILON, 5, 9.123456789012345, 12, 50];
+    const [expectedLow, expectedHigh] = reference(precision, 0.03, 0.97);
+    const precisePlan = buildStfLogRatioNormalizationPlan(precision);
+    expect(precisePlan.lowerValue).toBe(expectedLow);
+    expect(precisePlan.upperValue).toBe(expectedHigh);
+    expect(buildStfLogRatioNormalizationPlan([NaN, NaN]).finiteCount).toBe(0);
+    expect(() => buildStfLogRatioNormalizationPlan([1, Infinity])).toThrow();
+    expect(() => buildStfLogRatioNormalizationPlan([1, -Infinity])).toThrow();
+    expect(() => buildStfLogRatioNormalizationPlan([1, 2], 0.97, 0.03)).toThrow();
+  });
+  test("P3/P97 optimization leaves each pixel in place and matches the original normalized image", () => {
+    const values = Float32Array.from(Array.from({ length: 1000 }, (_, i) => {
+      if (i % 71 === 0) return NaN;
+      return Math.fround(Math.sin(i * 0.23) + (i % 37) / 13 - 2);
+    }));
+    const source = values.slice();
+    const finite = Array.from(source).filter(Number.isFinite).sort((a, b) => a - b);
+    const percentile = (q: number) => {
+      const position = q * (finite.length - 1);
+      const lo = Math.floor(position), hi = Math.ceil(position);
+      return finite[lo] + (finite[hi] - finite[lo]) * (position - lo);
     };
-    const normal = make(1);
-    const dim = make(0.1);
-    for (let channel = 0; channel < 3; channel += 1) {
-      expect(dim.floors[channel]).toBeCloseTo(normal.floors[channel] / 10, 8);
+    const low = percentile(0.03), high = percentile(0.97);
+    normalizeStfLogRatioBufferInPlace(values);
+    for (let i = 0; i < source.length; i++) {
+      const expected = Number.isNaN(source[i]) ? 0 : Math.max(0, Math.min(1, (source[i] - low) / (high - low)));
+      expect(values[i]).toBe(Math.fround(expected));
     }
-    expect(dim.center).toBeCloseTo(normal.center, 5);
   });
-
-  test("relative sharpness stays finite in nearly black channels", () => {
-    const width = 9;
-    const height = 9;
-    const linear = new Float32Array(width * height * 3);
-    for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
-      linear[(y * width + x) * 3] = (x % 2) * 1e-7;
+  test("sigmoid keeps both endpoints fixed, is monotone and percentile depends on bokeh ratio", () => {
+    const values = Float32Array.from(Array.from({ length: 101 }, (_, i) => i / 100));
+    const plan = buildStfSigmoidPlan(values, 0.7);
+    expect(plan.thresholdPercentile).toBeCloseTo(0.7);
+    expect(plan.threshold).toBeCloseTo(0.7);
+    applyStfSigmoidGateInPlace(values, 101, 1, 0.7, 75);
+    expect(values[0]).toBe(0);
+    expect(values[100]).toBe(1);
+    for (let i = 1; i < values.length; i++) expect(values[i]).toBeGreaterThanOrEqual(values[i - 1]);
+  });
+  test("blur radii and 50% gate dilation depend on selected strength", () => {
+    expect(resolveStfAdditionalBlurRadius(4000, 4000, 1)).toBe(4);
+    expect(resolveStfAdditionalBlurRadius(4000, 4000, 2)).toBe(8);
+    expect(resolveStfAdditionalBlurRadius(4000, 4000, 3)).toBe(12);
+    expect(resolveStfAdditionalBlurRadius(500, 500, 3)).toBe(2);
+    const w = 31, h = 31, data = new Float32Array(w * h);
+    data[15 * w + 15] = 1;
+    data[14 * w + 15] = 0.7;
+    const weak = applyStfGateExpansion(data, w, h, 4);
+    const medium = applyStfGateExpansion(data, w, h, 8);
+    const strong = applyStfGateExpansion(data, w, h, 12);
+    expect(weak[15 * w + 18]).toBe(0);
+    expect(medium[15 * w + 19]).toBeGreaterThan(0);
+    expect(strong[15 * w + 21]).toBeGreaterThan(0);
+    expect(data[15 * w + 15]).toBe(1);
+    expect(weak[14 * w + 15]).toBeGreaterThanOrEqual(0.7 - 1e-6);
+  });
+  test("guarded Gaussian keeps protected subject and suppresses its spill onto a dark background", () => {
+    const w = 17, h = 17, rgb = new Float32Array(w * h * 3);
+    const gate = new Float32Array(w * h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const p = y * w + x;
+      if (x === 8 && y === 8) { rgb[p * 3] = 1; gate[p] = 1; }
     }
-    const output = new Float32Array(width * height);
-    buildStfRelativeSharpnessMapAtScaleInto(linear, width, height, 1, output, createStfSharpnessScratch(width * height));
-    expect(output.every(Number.isFinite)).toBe(true);
-    expect(output.every((value) => value >= 0)).toBe(true);
-    expect(STF_RELATIVE_CHANNEL_BRIGHTNESS_FLOOR).toBeGreaterThan(0);
+    const out = applyGuardedGaussianBlurRegion(rgb, w, h, gate, 4, 0, h);
+    expect(out[(8 * w + 8) * 3]).toBeCloseTo(1);
+    expect(out[(8 * w + 9) * 3]).toBeCloseTo(0);
+    const unprotected = applyGuardedGaussianBlurRegion(rgb, w, h, new Float32Array(w * h), 4, 0, h);
+    expect(unprotected[(8 * w + 9) * 3]).toBeGreaterThan(0);
   });
-
-  test("visualizes raw 16MP/0.5MP ratio without modifying the sigmoid gate", () => {
-    expect(normalizeStfLogRatioForPreview(0)).toBeCloseTo(0.5, 12);
-    expect(normalizeStfLogRatioForPreview(Math.log(3))).toBeCloseTo(0.75, 12);
-    expect(normalizeStfLogRatioForPreview(Number.NaN)).toBe(0);
-    expect(normalizeStfLogRatioForPreview(1000)).toBe(1);
-  });
-
-  test("maps Blur ratio to the bokeh-side sigmoid percentile", () => {
-    const samples = Float32Array.from({ length: 101 }, (_, index) => index / 100);
-    const plan = buildStfSigmoidPlan(samples, 0.7);
-    expect(plan.sharpFraction).toBeCloseTo(0.3, 12);
-    expect(plan.thresholdPercentile).toBeCloseTo(0.7, 12);
-    expect(plan.thresholdLog).toBeCloseTo(0.7, 2);
-  });
-
-  test("maps Blur strength to 1x/2x/3x sqrt(MP) radius with a 15px cap", () => {
-    expect(resolveStfAdditionalBlurRadius(1000, 1000, 1)).toBe(2);
-    expect(resolveStfAdditionalBlurRadius(1000, 1000, 2)).toBe(2);
-    expect(resolveStfAdditionalBlurRadius(1000, 1000, 3)).toBe(3);
-    expect(resolveStfAdditionalBlurRadius(6000, 4000, 1)).toBe(5);
-    expect(resolveStfAdditionalBlurRadius(6000, 4000, 2)).toBe(10);
-    expect(resolveStfAdditionalBlurRadius(6000, 4000, 3)).toBe(15);
-    expect(resolveStfAdditionalBlurRadius(12000, 8000, 3)).toBe(15);
-  });
-
-  test("soft dilation never weakens the original gate", () => {
-    const gate = new Float32Array([0, 0.2, 0.8, 1, 0.3, 0]);
-    const expanded = applyStfGateExpansion(gate, 3, 2, 6);
-    for (let i = 0; i < gate.length; i += 1) expect(expanded[i]).toBeGreaterThanOrEqual(gate[i]);
-  });
-
-  test("fully protected pixels survive guarded Gaussian blur unchanged", () => {
-    const source = new Float32Array([
-      0.1, 0.2, 0.3,
-      0.8, 0.7, 0.6,
-      0.4, 0.5, 0.6,
-      0.9, 0.1, 0.2,
-    ]);
-    const gate = new Float32Array([1, 1, 1, 1]);
-    const output = applyGuardedGaussianBlurRegion(source, 2, 2, gate, 2, 0, 2);
-    expect(Array.from(output)).toEqual(Array.from(source));
+  test("stripe calculations agree with full image Gaussian", () => {
+    const w = 13, h = 20, source = new Float32Array(w * h * 3);
+    const gate = new Float32Array(w * h);
+    for (let i = 0; i < source.length; i++) source[i] = (i % 101) / 101;
+    for (let i = 0; i < gate.length; i++) gate[i] = (i % 19) / 18;
+    const radius = 3;
+    const full = applyGuardedGaussianBlurRegion(source, w, h, gate, radius, 0, h);
+    const split = new Float32Array(full.length);
+    for (let start = 0; start < h; start += 5) {
+      const end = Math.min(h, start + 5);
+      const regionY = Math.max(0, start - radius), regionEnd = Math.min(h, end + radius);
+      const part = applyGuardedGaussianBlurRegion(source.slice(regionY * w * 3, regionEnd * w * 3),
+        w, regionEnd - regionY, gate.slice(regionY * w, regionEnd * w), radius, start - regionY, end - start);
+      split.set(part, start * w * 3);
+    }
+    for (let i = 0; i < full.length; i++) expect(split[i]).toBeCloseTo(full[i], 5);
   });
 });

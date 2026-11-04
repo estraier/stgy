@@ -18,6 +18,10 @@ const strictFiles = [
   "src/app/local-stack-studio/workers/focus.worker.ts",
   "src/app/local-stack-studio/stack/worker-clients.ts",
   "src/app/local-stack-studio/stack/stf-additional-blur.ts",
+  "src/app/local-stack-studio/stack/stf-additional-blur-mode.ts",
+  "src/app/local-stack-studio/stack/stf-volume-closing.ts",
+  "src/app/local-stack-studio/stack/stf-graph-cut.ts",
+  "src/app/local-stack-studio/stack/scaled-sigmoid.ts",
   "src/app/local-stack-studio/stack/stf-additional-blur-client.ts",
   "src/app/local-stack-studio/stack/stf-additional-blur-pool.ts",
 ];
