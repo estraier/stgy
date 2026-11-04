@@ -19,7 +19,7 @@ function computeProfile(progress: number, blendWeight = STF_PROFILE_WEIGHT_RATIO
 }
 
 describe("STF aperture weights", () => {
-  test("uses the default W=8 profile with a minimax outer edge for a 7-shot 1/3EV bracket", () => {
+  test("uses the default W=4 profile with a minimax outer edge for a 7-shot 1/3EV bracket", () => {
     const fNumbers = Array.from({ length: 7 }, (_, index) => 2 * 2 ** (index / 6));
     const weights = buildStfApertureWeights(fNumbers);
     expect(weights).not.toBeNull();
@@ -28,13 +28,13 @@ describe("STF aperture weights", () => {
     expect(sum(weights)).toBeCloseTo(1, 12);
 
     const expected = [
-      0.25078766970753025,
-      0.2507876697075303,
-      0.1773336618881668,
-      0.1253938348537651,
-      0.08866683094408333,
-      0.06269691742688263,
-      0.044333415472041664,
+      0.21572685086771282,
+      0.21572685086771282,
+      0.1712225150025971,
+      0.13589940021788177,
+      0.10786342543385624,
+      0.08561125750129871,
+      0.06794970010894069,
     ];
     for (let i = 0; i < expected.length; i += 1) {
       expect(weights[i]).toBeCloseTo(expected[i], 12);
@@ -83,7 +83,8 @@ describe("STF aperture weights", () => {
     expect(Math.max(...weights.slice(1))).toBeCloseTo(weights[0], 12);
   });
 
-  test("uses W=8 as the default blend weight", () => {
+  test("uses W=4 as the default blend weight", () => {
+    expect(DEFAULT_STF_BLEND_WEIGHT).toBe(4);
     const fNumbers = Array.from({ length: 7 }, (_, index) => 2 * 2 ** (index / 6));
     const implicit = buildStfApertureWeights(fNumbers);
     const explicit = buildStfApertureWeights(fNumbers, DEFAULT_STF_BLEND_WEIGHT);
@@ -91,6 +92,17 @@ describe("STF aperture weights", () => {
     expect(explicit).not.toBeNull();
     if (!implicit || !explicit) return;
     expect(Array.from(implicit)).toEqual(Array.from(explicit));
+  });
+
+  test("keeps W=8 available as an explicit selection", () => {
+    const fNumbers = Array.from({ length: 7 }, (_, index) => 2 * 2 ** (index / 6));
+    const w4 = buildStfApertureWeights(fNumbers);
+    const w8 = buildStfApertureWeights(fNumbers, 8);
+    expect(w4).not.toBeNull();
+    expect(w8).not.toBeNull();
+    if (!w4 || !w8) return;
+    expect(w8[0]).toBeCloseTo(0.25078766970753025, 12);
+    expect(w8[0]).toBeGreaterThan(w4[0]);
   });
 
   test("supports W=1 using the logarithmic limit profile", () => {
