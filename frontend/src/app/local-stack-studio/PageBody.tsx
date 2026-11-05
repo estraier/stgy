@@ -181,6 +181,7 @@ export default function PageBody() {
                 <option value="top-left-fill">Top left fill</option>
                 <option value="feature-match-ecc">Content match (ECC)</option>
                 <option value="feature-match-orb">Content match (ORB)</option>
+                <option value="feature-match-progressive-orb">Content match (progressive ORB)</option>
               </select>
             </label>
 

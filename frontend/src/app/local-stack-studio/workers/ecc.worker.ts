@@ -170,22 +170,90 @@ import type {
     };
   }
 
+  // Diagnostic wrapper. The ECC optimizer does not expose its actual iteration
+  // count through OpenCV.js, so measure each pyramid level's wall time rather
+  // than pretending that all levels run the configured maximum iterations.
   function alignTarget(grayBuffer: ArrayBuffer, fileName: string, targetExposureScalar: number | null) {
+    const startedAt = performance.now();
+    const diagnostics = {
+      preparationMs: 0,
+      referencePyramidMs: 0,
+      targetPyramidMs: 0,
+      maskPyramidMs: 0,
+      initialCorrelationMs: 0,
+      validationMs: 0,
+      maskCoverage: null as number | null,
+      initialCorrelation: null as number | null,
+      finalCorrelation: null as number | null,
+      correlationDelta: null as number | null,
+      levels: [] as Array<{ level: number; resolution: string; elapsedMs: number; correlation: number | null; error?: string }>,
+      outcome: "ok",
+      error: null as string | null,
+    };
+    try {
+      return alignTargetMeasured(grayBuffer, fileName, targetExposureScalar, diagnostics);
+    } catch (error) {
+      diagnostics.outcome = "failed";
+      diagnostics.error = error instanceof Error ? error.message : String(error);
+      throw error;
+    } finally {
+      const totalMs = performance.now() - startedAt;
+      console.info(`[ECC Diagnostic] ${fileName}: ${totalMs.toFixed(1)} ms, ` +
+        `preparation ${diagnostics.preparationMs.toFixed(1)} ms, ` +
+        `pyramids ${(diagnostics.referencePyramidMs + diagnostics.targetPyramidMs + diagnostics.maskPyramidMs).toFixed(1)} ms, ` +
+        `ECC levels ${diagnostics.levels.reduce((sum, level) => sum + level.elapsedMs, 0).toFixed(1)} ms; ` +
+        `${diagnostics.outcome}.`, {
+          ...diagnostics,
+          totalMs: Number(totalMs.toFixed(1)),
+          maxIterationsPerLevel: ECC_MAX_ITERATIONS,
+          convergenceEpsilon: ECC_EPSILON,
+        });
+      console.table(diagnostics.levels);
+    }
+  }
+
+  function alignTargetMeasured(
+    grayBuffer: ArrayBuffer,
+    fileName: string,
+    targetExposureScalar: number | null,
+    diagnostics: {
+      preparationMs: number;
+      referencePyramidMs: number;
+      targetPyramidMs: number;
+      maskPyramidMs: number;
+      initialCorrelationMs: number;
+      validationMs: number;
+      maskCoverage: number | null;
+      initialCorrelation: number | null;
+      finalCorrelation: number | null;
+      correlationDelta: number | null;
+      levels: Array<{ level: number; resolution: string; elapsedMs: number; correlation: number | null; error?: string }>;
+    },
+  ) {
     const bytes = new Uint8Array(grayBuffer);
     if (bytes.length !== width * height) {
       throw new Error(`Invalid ECC target grayscale buffer size for ${fileName}: ${bytes.length} vs ${width * height}.`);
     }
 
     if (!referenceGrayBytes) throw new AlignmentImplementationError("ECC reference grayscale buffer is unavailable.");
+    let stageStartedAt = performance.now();
     const preprocessing = prepareEccPair(
       referenceGrayBytes,
       bytes,
       referenceExposureScalar,
       targetExposureScalar,
     );
+    diagnostics.preparationMs = performance.now() - stageStartedAt;
+    diagnostics.maskCoverage = preprocessing.maskCoverage;
+    stageStartedAt = performance.now();
     const referencePyramid = buildEccPyramid(preprocessing.referenceBytes);
+    diagnostics.referencePyramidMs = performance.now() - stageStartedAt;
+    stageStartedAt = performance.now();
     const targetPyramid = buildEccPyramid(preprocessing.targetBytes);
+    diagnostics.targetPyramidMs = performance.now() - stageStartedAt;
+    stageStartedAt = performance.now();
     const maskPyramid = buildMaskPyramid(preprocessing.maskBytes);
+    diagnostics.maskPyramidMs = performance.now() - stageStartedAt;
     let warp: OpenCvDynamic | null = null;
     let lastWidth = 0;
     let lastHeight = 0;
@@ -199,11 +267,14 @@ import type {
         throw new Error("ECC reference, target, and mask pyramids do not match.");
       }
 
+      stageStartedAt = performance.now();
       initialCorrelation = computeInitialEccCorrelation(
         referencePyramid[0],
         targetPyramid[0],
         maskPyramid[0],
       );
+      diagnostics.initialCorrelationMs = performance.now() - stageStartedAt;
+      diagnostics.initialCorrelation = initialCorrelation;
       if (!Number.isFinite(initialCorrelation)) {
         throw new Error(`${fileName} ECC could not measure the initial image correlation.`);
       }
@@ -220,7 +291,23 @@ import type {
           rescaleAffineWarpInPlace(warp.data32F, scaleX, scaleY);
         }
 
-        correlation = runFindTransformEcc(reference, target, warp, mask);
+        const levelStartedAt = performance.now();
+        let levelError: string | undefined;
+        try {
+          correlation = runFindTransformEcc(reference, target, warp, mask);
+        } catch (error) {
+          levelError = error instanceof Error ? error.message : String(error);
+          throw error;
+        } finally {
+          diagnostics.levels.push({
+            level,
+            resolution: `${reference.cols}x${reference.rows}`,
+            elapsedMs: Number((performance.now() - levelStartedAt).toFixed(1)),
+            correlation: Number.isFinite(correlation) ? correlation : null,
+            ...(levelError ? { error: levelError } : {}),
+          });
+        }
+        diagnostics.finalCorrelation = Number.isFinite(correlation) ? correlation : null;
         if (!Number.isFinite(correlation)) {
           throw new Error(`ECC returned a non-finite correlation for ${fileName}.`);
         }
@@ -228,6 +315,7 @@ import type {
         lastHeight = reference.rows;
       }
 
+      stageStartedAt = performance.now();
       const workingForward = affine2x3ToMatrix3x3(warp.data32F);
       const fullForward = scaleAffineBetweenCoordinateSystems(
         workingForward,
@@ -243,6 +331,8 @@ import type {
         metrics,
         fileName,
       );
+      diagnostics.correlationDelta = correlationImprovement;
+      diagnostics.validationMs = performance.now() - stageStartedAt;
       return {
         matrix: new Float64Array(targetToReference),
         correlation,

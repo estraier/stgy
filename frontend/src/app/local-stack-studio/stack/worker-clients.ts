@@ -82,6 +82,13 @@ function copiedTypedArrayBuffer(value: Uint16Array | Float32Array | Uint8Array):
   return value.slice().buffer as ArrayBuffer;
 }
 
+function copiedGrayArrayBuffer(value: Uint8Array | ArrayBufferLike): ArrayBuffer {
+  // ArrayBufferLike and Uint8Array are both valid inputs, but their union is not
+  // a valid overload for new Uint8Array(...). Narrow it before creating a view.
+  const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
+  return copiedTypedArrayBuffer(bytes);
+}
+
 type PanoramaRequestWithoutId = PanoramaWorkerRequest extends infer Request
   ? Request extends PanoramaWorkerRequest
     ? Omit<Request, "requestId">
@@ -748,8 +755,8 @@ export class EccWorkerClient extends AlignmentWorkerRpcClient {
 }
 
 export class OrbWorkerClient extends AlignmentWorkerRpcClient {
-  constructor(url: URL) {
-    super(url, "ORB");
+  constructor(url: URL, private readonly progressive = false) {
+    super(url, progressive ? "progressive ORB" : "ORB");
   }
 
   initialize(
@@ -757,11 +764,14 @@ export class OrbWorkerClient extends AlignmentWorkerRpcClient {
     height: number,
     grayBytes: Uint8Array,
     exposureScalar: number | null = null,
+    refinement?: { width: number; height: number; grayBytes: Uint8Array | ArrayBufferLike },
   ): Promise<OrbReadyResponse> {
     const grayBuffer = typedArrayBuffer(grayBytes);
+    const fineBuffer = this.progressive && refinement ? copiedGrayArrayBuffer(refinement.grayBytes) : null;
     return this.request<OrbReadyResponse>(
-      { type: "init", width, height, grayBuffer, exposureScalar },
-      [grayBuffer],
+      { type: "init", width, height, grayBuffer, exposureScalar, progressive: this.progressive,
+        ...(fineBuffer && refinement ? { refinement: { width: refinement.width, height: refinement.height, grayBuffer: fineBuffer } } : {}) },
+      fineBuffer ? [grayBuffer, fineBuffer] : [grayBuffer],
       "ready",
     );
   }
@@ -771,11 +781,14 @@ export class OrbWorkerClient extends AlignmentWorkerRpcClient {
     fileName: string,
     grayBytes: Uint8Array,
     exposureScalar: number | null = null,
+    refinement?: { width: number; height: number; grayBytes: Uint8Array | ArrayBufferLike },
   ): Promise<OrbAlignmentResult> {
     const grayBuffer = typedArrayBuffer(grayBytes);
+    const fineBuffer = this.progressive && refinement ? copiedGrayArrayBuffer(refinement.grayBytes) : null;
     return this.request<OrbResultResponse>(
-      { type: "align", id, fileName, grayBuffer, exposureScalar },
-      [grayBuffer],
+      { type: "align", id, fileName, grayBuffer, exposureScalar,
+        ...(fineBuffer && refinement ? { refinement: { width: refinement.width, height: refinement.height, grayBuffer: fineBuffer } } : {}) },
+      fineBuffer ? [grayBuffer, fineBuffer] : [grayBuffer],
       "result",
     ).then((response) => ({
       matrix: new Float64Array(asArrayBuffer(response.matrixBuffer, "alignment matrix")),
@@ -792,6 +805,11 @@ export class OrbWorkerClient extends AlignmentWorkerRpcClient {
       targetExposureGain: Number(response.targetExposureGain),
       exposureMatchSource: response.exposureMatchSource,
       claheClipLimit: Number(response.claheClipLimit),
+      refinementStatus: response.refinementStatus,
+      refinementMatches: response.refinementMatches,
+      refinementInliers: response.refinementInliers,
+      refinementMedianError: response.refinementMedianError,
+      refinementCorrectionPx: response.refinementCorrectionPx,
     }));
   }
 }

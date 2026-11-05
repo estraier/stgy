@@ -55,6 +55,9 @@ import {
   runAlignmentPool,
 } from "./alignment-pool";
 import { runMedianPool } from "./median-pool";
+import {
+  alignmentFrameCacheBytes, alignmentFrameCacheKey, getCachedAlignmentFrame, putCachedAlignmentFrame,
+} from "./alignment-frame-cache";
 import { MEDIAN_TILE_SIZE } from "./median";
 import { runFocusFeaturePool } from "./focus-pool";
 import { LinearMergeWorkerClient } from "./linear-merge-client";
@@ -550,7 +553,7 @@ listen(processButton, "click", async () => {
     if (selectedMergeMode === "panorama" && files.length < 2) {
       throw new Error("Panorama requires at least two input images.");
     }
-    if (!["auto", "center-crop", "center-fit", "center-fill", "top-left-fill", "feature-match-ecc", "feature-match-orb"].includes(alignmentMode.value)) {
+    if (!["auto", "center-crop", "center-fit", "center-fill", "top-left-fill", "feature-match-ecc", "feature-match-orb", "feature-match-progressive-orb"].includes(alignmentMode.value)) {
       throw new Error(`Unsupported alignment mode: ${alignmentMode.value}`);
     }
 
@@ -1809,16 +1812,18 @@ function formatAlignmentModeName(mode) {
   if (mode === "feature-match") return "Content match";
   if (mode === "feature-match-ecc") return "Content match (ECC)";
   if (mode === "feature-match-orb") return "Content match (ORB)";
+  if (mode === "feature-match-progressive-orb") return "Content match (progressive ORB)";
   return "Auto";
 }
 
 function isFeatureMatchAlignmentMode(mode) {
-  return mode === "feature-match-ecc" || mode === "feature-match-orb";
+  return mode === "feature-match-ecc" || mode === "feature-match-orb" || mode === "feature-match-progressive-orb";
 }
 
 function alignmentAlgorithmFromMode(mode) {
   if (mode === "feature-match-ecc") return "ECC";
   if (mode === "feature-match-orb") return "ORB";
+  if (mode === "feature-match-progressive-orb") return "PROGRESSIVE_ORB";
   return null;
 }
 
@@ -1870,50 +1875,51 @@ function isTileMergeMode(mode) {
 }
 
 const ALIGNMENT_FRAME_BASE_AREA = 1_000_000;
+const PROGRESSIVE_ORB_FRAME_AREA = 8_000_000;
 
-function alignmentFrameDimensions(fullWidth, fullHeight) {
+function alignmentFrameDimensions(fullWidth, fullHeight, maxArea = ALIGNMENT_FRAME_BASE_AREA) {
   const area = fullWidth * fullHeight;
-  if (area <= ALIGNMENT_FRAME_BASE_AREA) {
+  if (area <= maxArea) {
     return { width: fullWidth, height: fullHeight };
   }
-  const scale = Math.sqrt(ALIGNMENT_FRAME_BASE_AREA / area);
+  const scale = Math.sqrt(maxArea / area);
   return {
     width: Math.max(1, Math.round(fullWidth * scale)),
     height: Math.max(1, Math.round(fullHeight * scale)),
   };
 }
 
-function createAlignmentFrameFromRgba(cv, rgba, fullWidth, fullHeight, exposureScalar) {
-  const dimensions = alignmentFrameDimensions(fullWidth, fullHeight);
-  const resized = dimensions.width === fullWidth && dimensions.height === fullHeight
-    ? null
-    : new cv.Mat();
-  const gray = new cv.Mat();
-  try {
-    const source = resized || rgba;
-    if (resized) {
-      cv.resize(
-        rgba,
-        resized,
-        new cv.Size(dimensions.width, dimensions.height),
-        0,
-        0,
-        cv.INTER_AREA,
-      );
+// Prepare only the resolutions missing from the per-session cache. Keep the
+// original RGBA -> resize -> grayscale order, preserving the ORB input pixels.
+function createAlignmentFramesFromRgba(cv, rgba, fullWidth, fullHeight, exposureScalar, makeBase, makeFine, timings) {
+  const createOne = (maxArea) => {
+    const fineStage = maxArea === PROGRESSIVE_ORB_FRAME_AREA;
+    const dimensions = alignmentFrameDimensions(fullWidth, fullHeight, maxArea);
+    const resized = dimensions.width === fullWidth && dimensions.height === fullHeight
+      ? null : new cv.Mat();
+    const gray = new cv.Mat();
+    try {
+      const startedAt = performance.now();
+      if (resized) {
+        cv.resize(rgba, resized, new cv.Size(dimensions.width, dimensions.height), 0, 0, cv.INTER_AREA);
+      }
+      timings[fineStage ? "resize8mpMs" : "resize1mpMs"] += performance.now() - startedAt;
+      const grayStartedAt = performance.now();
+      cv.cvtColor(resized || rgba, gray, cv.COLOR_RGBA2GRAY);
+      const grayBytes = copyMatBytes(gray, dimensions.width * dimensions.height);
+      timings[fineStage ? "gray8mpMs" : "gray1mpMs"] += performance.now() - grayStartedAt;
+      return { width: dimensions.width, height: dimensions.height, grayBytes };
+    } finally {
+      gray.delete();
+      if (resized) resized.delete();
     }
-    cv.cvtColor(source, gray, cv.COLOR_RGBA2GRAY);
-    return {
-      width: dimensions.width,
-      height: dimensions.height,
-      fullWidth,
-      fullHeight,
-      grayBytes: copyMatBytes(gray, dimensions.width * dimensions.height),
-      exposureScalar,
-    };
-  } finally {
-    gray.delete();
-    if (resized) resized.delete();
-  }
+  };
+  const base = makeBase ? {
+    ...createOne(ALIGNMENT_FRAME_BASE_AREA),
+    fullWidth, fullHeight, exposureScalar,
+  } : null;
+  const refinement = makeFine ? createOne(PROGRESSIVE_ORB_FRAME_AREA) : null;
+  return { base, refinement };
 }
 
 function scaleAlignmentMatrixToFullResolution(matrix, referenceFrame, targetFrame) {
@@ -1944,6 +1950,7 @@ function scaleAlignmentMatrixToFullResolution(matrix, referenceFrame, targetFram
 }
 
 function secondaryAlignmentAlgorithm(primaryAlgorithm) {
+  if (primaryAlgorithm === "PROGRESSIVE_ORB") return "ORB";
   return primaryAlgorithm === "ECC" ? "ORB" : "ECC";
 }
 
@@ -1953,18 +1960,20 @@ function createAlignmentWorkerClient(algorithm) {
       new URL("/generated/local-stack-studio/ecc.worker.js", window.location.origin),
     );
   }
-  if (algorithm === "ORB") {
+  if (algorithm === "ORB" || algorithm === "PROGRESSIVE_ORB") {
     return new OrbWorkerClient(
       new URL("/generated/local-stack-studio/orb.worker.js", window.location.origin),
+      algorithm === "PROGRESSIVE_ORB",
     );
   }
   throw new Error(`Unsupported alignment algorithm: ${algorithm}`);
 }
 
-function createAlignmentWorkers() {
+function createAlignmentWorkers(preferredAlgorithm) {
   return {
     ECC: createAlignmentWorkerClient("ECC"),
     ORB: createAlignmentWorkerClient("ORB"),
+    ...(preferredAlgorithm === "PROGRESSIVE_ORB" ? { PROGRESSIVE_ORB: createAlignmentWorkerClient("PROGRESSIVE_ORB") } : {}),
   };
 }
 
@@ -1981,6 +1990,7 @@ async function initializeAlignmentReference(
         referenceFrame.height,
         new Uint8Array(referenceFrame.grayBytes),
         referenceFrame.exposureScalar,
+        referenceFrame.refinement,
       );
       return { algorithm, ready };
     } catch (error) {
@@ -2009,6 +2019,7 @@ async function alignWithFallback(
           referenceContext.frame.height,
           new Uint8Array(referenceContext.frame.grayBytes),
           referenceContext.frame.exposureScalar,
+          referenceContext.frame.refinement,
         );
       }
       const result = await alignmentWorkers[algorithm].align(
@@ -2016,6 +2027,7 @@ async function alignWithFallback(
         fileName,
         new Uint8Array(targetFrame.grayBytes),
         targetFrame.exposureScalar,
+        targetFrame.refinement,
       );
       return {
         algorithm,
@@ -2069,7 +2081,7 @@ function buildTileLayout(mode, imageWidth, imageHeight, imageCount, folding = nu
 }
 
 function buildAlignmentPlan(files, inputInfos, selectedMode, mergeMode) {
-  const validModes = ["auto", "center-crop", "center-fit", "center-fill", "top-left-fill", "feature-match-ecc", "feature-match-orb"];
+  const validModes = ["auto", "center-crop", "center-fit", "center-fill", "top-left-fill", "feature-match-ecc", "feature-match-orb", "feature-match-progressive-orb"];
   if (!validModes.includes(selectedMode)) {
     throw new Error(`Unsupported alignment mode: ${selectedMode}`);
   }
@@ -2334,6 +2346,15 @@ async function alignAndMergeFilesWithOpenCv(
     : 0;
   const matrices = new Array(files.length).fill(null);
   const alignmentFrames = new Array(files.length).fill(null);
+  // Timings cover alignment frame preparation through transform estimation,
+  // excluding the later image merge. Per-target timings overlap across workers.
+  const alignmentTimingStart = needsAlignment ? performance.now() : 0;
+  let framePreparationMs = 0;
+  let frameCacheHits = 0;
+  let transformCacheHit = false;
+  let recoveryMs = 0;
+  const alignmentJobTimings = [];
+  const alignmentBatchTimings = [];
   let alignmentWorkers = null;
   let focusWorker = null;
   let focusScratchDb = null;
@@ -2349,26 +2370,93 @@ async function alignAndMergeFilesWithOpenCv(
 
     // Phase C: prepare all alignment frames before any merge starts.
     if (needsAlignment) {
+      const preparationStartedAt = performance.now();
       setProgress("Preparing alignment frames from canonical inputs...");
       const frameCache = canonicalSession.alignmentFrameCache || (canonicalSession.alignmentFrameCache = new Map());
+      const progressive = alignmentPlan.effectiveMode === "feature-match-progressive-orb";
+      const framePreparationDetails = [];
+      let coarseCacheHits = 0;
+      let fineCacheHits = 0;
+      let frameCacheEvictions = 0;
       for (let index = 0; index < files.length; index += 1) {
-        const cacheKey = `${alignmentPlan.normalizationMode}:${alignmentPlan.targetWidth}x${alignmentPlan.targetHeight}:${index}`;
-        const cachedFrame = frameCache.get(cacheKey);
-        if (cachedFrame) {
-          alignmentFrames[index] = cachedFrame;
-        } else {
-          const normalized = await materializeNormalizedCanonicalLinear(cv, canonicalSession, index, alignmentPlan);
-          alignmentFrames[index] = createAlignmentFrameFromLinearProPhoto(
+        const baseKey = alignmentFrameCacheKey(
+          alignmentPlan.normalizationMode, alignmentPlan.targetWidth, alignmentPlan.targetHeight, index,
+        );
+        // Share the 1MP frame between ECC, ORB and progressive ORB. Retain the
+        // 8MP grayscale image separately so switching modes never regenerates it.
+        const fineKey = alignmentFrameCacheKey(
+          alignmentPlan.normalizationMode, alignmentPlan.targetWidth, alignmentPlan.targetHeight, index, true,
+        );
+        let base = getCachedAlignmentFrame(frameCache, baseKey);
+        let refinement = progressive ? getCachedAlignmentFrame(frameCache, fineKey) : null;
+        const hadBase = Boolean(base);
+        const hadFine = Boolean(refinement);
+        if (hadBase) coarseCacheHits += 1;
+        if (progressive && hadFine) fineCacheHits += 1;
+        const detail = {
+          image: files[index].name,
+          cache: `${hadBase ? "1MP hit" : "1MP miss"}${progressive ? ` / ${hadFine ? "8MP hit" : "8MP miss"}` : ""}`,
+          canonicalReadMs: 0,
+          normalizationMs: 0,
+          rgbaAllocationMs: 0,
+          colorConversionMs: 0,
+          resize1mpMs: 0,
+          gray1mpMs: 0,
+          resize8mpMs: 0,
+          gray8mpMs: 0,
+          yieldMs: 0,
+          totalMs: 0,
+        };
+        const itemStartedAt = performance.now();
+        if (!base || (progressive && !refinement)) {
+          const normalized = await materializeNormalizedCanonicalLinear(cv, canonicalSession, index, alignmentPlan, detail);
+          const prepared = createAlignmentFramesFromLinearProPhoto(
             cv,
             normalized,
             alignmentPlan.targetWidth,
             alignmentPlan.targetHeight,
             inputInfos[index].exposureScalar,
+            !base,
+            progressive && !refinement,
+            detail,
           );
-          frameCache.set(cacheKey, alignmentFrames[index]);
+          if (!base) {
+            base = prepared.base;
+            frameCacheEvictions += putCachedAlignmentFrame(frameCache, baseKey, base);
+          }
+          if (progressive && !refinement) {
+            refinement = prepared.refinement;
+            frameCacheEvictions += putCachedAlignmentFrame(frameCache, fineKey, refinement);
+          }
         }
+        if (!base || (progressive && !refinement)) throw new Error(`Could not prepare alignment frames for ${files[index].name}.`);
+        // Never attach the large refinement buffer to the shared 1MP cache.
+        alignmentFrames[index] = progressive ? { ...base, refinement } : base;
+        if (hadBase && (!progressive || hadFine)) frameCacheHits += 1;
+        const yieldStartedAt = performance.now();
         await yieldToBrowser();
+        detail.yieldMs = performance.now() - yieldStartedAt;
+        detail.totalMs = performance.now() - itemStartedAt;
+        framePreparationDetails.push(detail);
       }
+      console.info(`[Alignment Frames] ${progressive ? "progressive ORB" : alignmentPlan.effectiveMode}: ` +
+        `1MP cache ${coarseCacheHits}/${files.length}, 8MP cache ${progressive ? `${fineCacheHits}/${files.length}` : "n/a"}. ` +
+        `Cache ${(alignmentFrameCacheBytes(frameCache) / (1024 * 1024)).toFixed(1)} MiB, ` +
+        `${frameCacheEvictions} eviction(s); stages: read/decode, RGB conversion, resize, grayscale and scheduling.`);
+      console.table(framePreparationDetails.map((detail) => ({
+        ...detail,
+        canonicalReadMs: Number(detail.canonicalReadMs.toFixed(1)),
+        normalizationMs: Number(detail.normalizationMs.toFixed(1)),
+        rgbaAllocationMs: Number(detail.rgbaAllocationMs.toFixed(1)),
+        colorConversionMs: Number(detail.colorConversionMs.toFixed(1)),
+        resize1mpMs: Number(detail.resize1mpMs.toFixed(1)),
+        gray1mpMs: Number(detail.gray1mpMs.toFixed(1)),
+        resize8mpMs: Number(detail.resize8mpMs.toFixed(1)),
+        gray8mpMs: Number(detail.gray8mpMs.toFixed(1)),
+        yieldMs: Number(detail.yieldMs.toFixed(1)),
+        totalMs: Number(detail.totalMs.toFixed(1)),
+      })));
+      framePreparationMs = performance.now() - preparationStartedAt;
     }
 
     // Phase D: resolve all transforms. No merge/decode occurs in this phase.
@@ -2379,6 +2467,7 @@ async function alignAndMergeFilesWithOpenCv(
       const transformKey = `${alignmentPlan.effectiveMode}:${alignmentPlan.normalizationMode}:${alignmentPlan.targetWidth}x${alignmentPlan.targetHeight}:ref=${alignmentReferenceIndex}`;
       const cachedMatrices = transformCache.get(transformKey);
       if (cachedMatrices && cachedMatrices.length === files.length) {
+        transformCacheHit = true;
         for (let index = 0; index < files.length; index += 1) matrices[index] = new Float64Array(cachedMatrices[index]);
       } else {
         const referenceFrame = alignmentFrames[alignmentReferenceIndex];
@@ -2398,6 +2487,9 @@ async function alignAndMergeFilesWithOpenCv(
           : 4;
 
         const runDirectBatch = async (algorithm, jobs, phaseLabel) => {
+          const algorithmLabel = algorithm === "PROGRESSIVE_ORB" ? "progressive ORB" : algorithm;
+          const batchStartedAt = performance.now();
+          const jobStartedAt = new Map();
           let started = 0;
           let completed = 0;
           const batch = await runAlignmentPool({
@@ -2406,18 +2498,46 @@ async function alignAndMergeFilesWithOpenCv(
             createClient: () => createAlignmentWorkerClient(algorithm),
             hardwareConcurrency,
             onJobStart: (job) => {
+              jobStartedAt.set(job.id, performance.now());
               started += 1;
               setProgress(
-                `Aligning ${job.fileName} with ${algorithm} feature matching ` +
+                `Aligning ${job.fileName} with ${algorithmLabel} feature matching ` +
                 `(${phaseLabel}, ${started}/${jobs.length} started)...`,
               );
             },
-            onJobComplete: () => {
+            onJobComplete: (job, workerIndex, outcome) => {
+              const startedAt = jobStartedAt.get(job.id);
+              const elapsedMs = startedAt === undefined ? null : performance.now() - startedAt;
+              alignmentJobTimings.push({
+                image: job.fileName,
+                method: algorithmLabel,
+                phase: phaseLabel,
+                worker: workerIndex + 1,
+                elapsedMs: elapsedMs === null ? null : Number(elapsedMs.toFixed(1)),
+                result: "error" in outcome ? `failed: ${outcome.error.message}` : "ok",
+              });
+              if (algorithm === "PROGRESSIVE_ORB" && "result" in outcome) {
+                const stats = outcome.result;
+                console.info(`[Progressive ORB] ${job.fileName}: ${stats.refinementStatus ?? "not reported"}`, {
+                  candidates: stats.refinementMatches,
+                  inliers: stats.refinementInliers,
+                  medianError: stats.refinementMedianError,
+                  correctionPx: stats.refinementCorrectionPx,
+                });
+              }
               completed += 1;
               setProgress(
-                `${algorithm} ${phaseLabel} alignment ${completed}/${jobs.length} completed...`,
+                `${algorithmLabel} ${phaseLabel} alignment ${completed}/${jobs.length} completed...`,
               );
             },
+          });
+          alignmentBatchTimings.push({
+            method: algorithmLabel,
+            phase: phaseLabel,
+            workers: batch.workerCount,
+            initializationMs: Number(batch.initializationMs.toFixed(1)),
+            jobsMs: Number(batch.jobsMs.toFixed(1)),
+            wallMs: Number((performance.now() - batchStartedAt).toFixed(1)),
           });
           return batch;
         };
@@ -2483,16 +2603,21 @@ async function alignAndMergeFilesWithOpenCv(
         }));
 
         if (deferredAlignments.length > 0) {
-          alignmentWorkers = createAlignmentWorkers();
-          await recoverDeferredAlignments(
-            alignmentWorkers,
-            files,
-            alignmentFrames,
-            alignmentAlgorithm,
-            matrices,
-            alignedIndices,
-            deferredAlignments,
-          );
+          const recoveryStartedAt = performance.now();
+          alignmentWorkers = createAlignmentWorkers(alignmentAlgorithm);
+          try {
+            await recoverDeferredAlignments(
+              alignmentWorkers,
+              files,
+              alignmentFrames,
+              alignmentAlgorithm,
+              matrices,
+              alignedIndices,
+              deferredAlignments,
+            );
+          } finally {
+            recoveryMs += performance.now() - recoveryStartedAt;
+          }
           const unresolved = deferredAlignments.filter((entry) => !matrices[entry.index]);
           if (unresolved.length > 0) {
             const details = unresolved.map((entry) => `${files[entry.index].name}: ${entry.initialError}`).join("\n");
@@ -2503,6 +2628,69 @@ async function alignAndMergeFilesWithOpenCv(
       }
     } else {
       for (let index = 0; index < files.length; index += 1) matrices[index] = identityAlignmentMatrix();
+    }
+
+    if (needsAlignment) {
+      const totalMs = performance.now() - alignmentTimingStart;
+      const transformMs = Math.max(0, totalMs - framePreparationMs);
+      const modeLabel = alignmentPlan.effectiveMode === "feature-match-ecc"
+        ? "ECC"
+        : alignmentPlan.effectiveMode === "feature-match-orb"
+          ? "ORB"
+          : "progressive ORB";
+      console.info(
+        `[Alignment Timing] ${modeLabel}: total ${totalMs.toFixed(1)} ms ` +
+        `(frames ${framePreparationMs.toFixed(1)} ms, transforms ${transformMs.toFixed(1)} ms, ` +
+        `recovery ${recoveryMs.toFixed(1)} ms). ` +
+        `Frames cached ${frameCacheHits}/${files.length}; ` +
+        `transforms ${transformCacheHit ? "CACHE HIT (not recomputed)" : "computed"}.`,
+      );
+      if (alignmentBatchTimings.length > 0) {
+        console.info("[Alignment Timing] Worker batches (wall time, parallel workers):");
+        console.table(alignmentBatchTimings);
+      }
+      if (alignmentJobTimings.length > 0) {
+        console.info("[Alignment Timing] Each target (elapsed wall time; jobs run concurrently):");
+        console.table(alignmentJobTimings.sort((a, b) => a.image.localeCompare(b.image) || a.phase.localeCompare(b.phase)));
+      }
+      // Preserve uncached estimates across mode changes within the same input
+      // session. Cached transforms must not masquerade as a fast alignment run.
+      const comparison = canonicalSession.alignmentTimingComparison ||
+        (canonicalSession.alignmentTimingComparison = new Map());
+      if (!transformCacheHit) {
+        comparison.set(alignmentPlan.effectiveMode, {
+          mode: modeLabel,
+          frameMs: Number(framePreparationMs.toFixed(1)),
+          solveMs: Number(transformMs.toFixed(1)),
+          totalMs: Number(totalMs.toFixed(1)),
+          framesCached: `${frameCacheHits}/${files.length}`,
+          primaryWorkers: alignmentBatchTimings[0]?.workers ?? 0,
+          retriesMs: Number(recoveryMs.toFixed(1)),
+        });
+      }
+      console.info("[Alignment Timing] Comparison for this input session (latest uncached run of each mode; frame caches may differ):");
+      console.table(Array.from(comparison.values()));
+      const perImageComparison = canonicalSession.alignmentTimingPerImage ||
+        (canonicalSession.alignmentTimingPerImage = new Map());
+      if (!transformCacheHit) {
+        perImageComparison.set(modeLabel, new Map(
+          alignmentJobTimings.filter((row) => row.phase === "primary" && row.method === modeLabel)
+            .map((row) => [row.image, row.result === "ok" ? row.elapsedMs : "failed"]),
+        ));
+      }
+      const comparedFiles = new Set();
+      for (const timings of perImageComparison.values()) {
+        for (const fileName of timings.keys()) comparedFiles.add(fileName);
+      }
+      if (comparedFiles.size > 0) {
+        console.info("[Alignment Timing] Primary job time per image in ms (concurrent, excludes worker startup):");
+        console.table(Array.from(comparedFiles).sort().map((image) => ({
+          image,
+          ECC: perImageComparison.get("ECC")?.get(image) ?? "—",
+          ORB: perImageComparison.get("ORB")?.get(image) ?? "—",
+          progressiveORB: perImageComparison.get("progressive ORB")?.get(image) ?? "—",
+        })));
+      }
     }
 
     const alignment = { matrices };
@@ -2669,6 +2857,7 @@ async function alignAndMergeFilesWithOpenCv(
     if (alignmentWorkers) {
       alignmentWorkers.ECC.terminate();
       alignmentWorkers.ORB.terminate();
+      alignmentWorkers.PROGRESSIVE_ORB?.terminate();
     }
     focusWorker?.terminate();
     hdr1StreamWorker?.terminate();
@@ -2705,14 +2894,17 @@ async function mergePanoramaFromCanonical(
   }
 }
 
-async function materializeNormalizedCanonicalLinear(cv, session, imageIndex, alignmentPlan) {
+async function materializeNormalizedCanonicalLinear(cv, session, imageIndex, alignmentPlan, timings = null) {
   const meta = session.images[imageIndex];
+  const readStartedAt = performance.now();
   const linear = await materializeCanonicalLinearImage(session, imageIndex);
+  if (timings) timings.canonicalReadMs += performance.now() - readStartedAt;
   if (
     alignmentPlan.normalizationMode === "feature-match" ||
     (meta.width === alignmentPlan.targetWidth && meta.height === alignmentPlan.targetHeight)
   ) return linear;
-  return transformLinearProPhotoForAlignment(
+  const normalizeStartedAt = performance.now();
+  const normalized = transformLinearProPhotoForAlignment(
     cv,
     linear,
     meta.width,
@@ -2721,13 +2913,35 @@ async function materializeNormalizedCanonicalLinear(cv, session, imageIndex, ali
     alignmentPlan.targetHeight,
     alignmentPlan.normalizationMode,
   );
+  if (timings) timings.normalizationMs += performance.now() - normalizeStartedAt;
+  return normalized;
 }
 
-function createAlignmentFrameFromLinearProPhoto(cv, linear, width, height, exposureScalar) {
-  const imageData = linearProPhotoToAlignmentImageData(linear, width, height);
-  const rgba = cv.matFromImageData(imageData);
-  try { return createAlignmentFrameFromRgba(cv, rgba, width, height, exposureScalar); }
-  finally { rgba.delete(); }
+function createAlignmentFramesFromLinearProPhoto(cv, linear, width, height, exposureScalar, makeBase, makeFine, timings) {
+  // Avoid the full-resolution Uint8ClampedArray + ImageData + matFromImageData
+  // copy: write exactly the same byte values directly to OpenCV's RGBA Mat.
+  const matStartedAt = performance.now();
+  const rgba = new cv.Mat(height, width, cv.CV_8UC4);
+  timings.rgbaAllocationMs += performance.now() - matStartedAt;
+  try {
+    const bytes = rgba.data;
+    if (!bytes || bytes.length !== width * height * 4 || linear.length !== width * height * 3) {
+      throw new Error("Could not allocate the alignment RGBA image.");
+    }
+    const converted = new Float32Array(3);
+    const startedAt = performance.now();
+    for (let dst = 0, src = 0; dst < bytes.length; dst += 4, src += 3) {
+      convertLinearProPhotoToOutputRgbInto(linear[src], linear[src + 1], linear[src + 2], "srgb", converted);
+      bytes[dst] = linearToSrgbByteFast(converted[0]);
+      bytes[dst + 1] = linearToSrgbByteFast(converted[1]);
+      bytes[dst + 2] = linearToSrgbByteFast(converted[2]);
+      bytes[dst + 3] = 255;
+    }
+    timings.colorConversionMs += performance.now() - startedAt;
+    return createAlignmentFramesFromRgba(cv, rgba, width, height, exposureScalar, makeBase, makeFine, timings);
+  } finally {
+    rgba.delete();
+  }
 }
 
 function placeStoredTileImage(index, source, output, layout, width, height) {
@@ -3688,7 +3902,8 @@ function copyMatBytes(mat, expectedLength) {
   if (!mat.data || mat.data.length < expectedLength) {
     throw new Error("OpenCV returned an invalid grayscale image buffer.");
   }
-  return new Uint8Array(mat.data.slice(0, expectedLength));
+  // Mat.data is a Uint8Array: one copy suffices (slice + constructor copied twice).
+  return new Uint8Array(mat.data.subarray(0, expectedLength));
 }
 
 function matFromLinearProPhoto(cv, linear, width, height) {

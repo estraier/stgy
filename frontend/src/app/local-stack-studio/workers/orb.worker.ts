@@ -5,6 +5,7 @@ import {
   type OpenCvRuntime,
 } from "./opencv-runtime";
 import { createConfiguredOrb } from "./orb-runtime";
+import { matchSpatialOrbDescriptors, orbCornerCorrection, scaleOrbAffine } from "./progressive-orb-matching";
 import {
   applyAlignmentExposureToGrayBytes,
   positiveExposureOrNull,
@@ -74,8 +75,17 @@ import type {
     targetExposureGain: number;
     exposureMatchSource: AlignmentExposureMatchSource;
     claheClipLimit: number;
+    refinementStatus?: string;
+    refinementMatches?: number;
+    refinementInliers?: number;
+    refinementMedianError?: number;
+    refinementCorrectionPx?: number;
   };
 
+  const PROGRESSIVE_COARSE_LIMIT = 0.05;
+  const PROGRESSIVE_FINE_RADIUS = 8;
+  const PROGRESSIVE_FINE_REPROJECTION_THRESHOLD = 2.5;
+  const PROGRESSIVE_MIN_FINE_INLIERS = 11;
   const ORB_MATCH_SHIFT_LIMIT = 0.10;
   const ORB_FALLBACK_MATCH_SHIFT_LIMIT = 0.20;
   const ORB_MIN_GOOD_MATCHES = 11;
@@ -95,6 +105,10 @@ import type {
   let matcher: OpenCvDynamic = null;
   let emptyMask: OpenCvDynamic = null;
   let referenceGrayBytes: Uint8Array | null = null;
+  let progressive = false;
+  let fineWidth = 0;
+  let fineHeight = 0;
+  let fineReferenceBytes: Uint8Array | null = null;
   let referenceExposureScalar: number | null = null;
   let width = 0;
   let height = 0;
@@ -120,6 +134,7 @@ import type {
           message.grayBuffer,
           message.fileName || `image ${message.id}`,
           message.exposureScalar,
+          message.refinement,
         );
         const matrixBuffer = transferableBuffer(result.matrix);
         const response: OrbResultResponse = {
@@ -141,6 +156,11 @@ import type {
             targetExposureGain: result.targetExposureGain,
             exposureMatchSource: result.exposureMatchSource,
             claheClipLimit: result.claheClipLimit,
+            refinementStatus: result.refinementStatus,
+            refinementMatches: result.refinementMatches,
+            refinementInliers: result.refinementInliers,
+            refinementMedianError: result.refinementMedianError,
+            refinementCorrectionPx: result.refinementCorrectionPx,
           };
         workerScope.postMessage(response, [matrixBuffer]);
       }
@@ -177,6 +197,17 @@ import type {
     emptyMask = new cv.Mat();
     referenceGrayBytes = bytes;
     referenceExposureScalar = positiveExposureOrNull(message.exposureScalar);
+    progressive = message.progressive === true;
+    if (progressive) {
+      const fine = message.refinement;
+      if (!fine || !(fine.width >= width && fine.height >= height) ||
+          new Uint8Array(fine.grayBuffer).length !== fine.width * fine.height) {
+        throw new AlignmentImplementationError("Progressive ORB requires a valid 8MP reference frame.");
+      }
+      fineWidth = fine.width;
+      fineHeight = fine.height;
+      fineReferenceBytes = new Uint8Array(fine.grayBuffer);
+    }
 
     const baselineGray = preprocessAlignmentGray(applyAlignmentExposureToGrayBytes(referenceGrayBytes, 1));
     try {
@@ -188,7 +219,12 @@ import type {
     }
   }
 
-  function alignTarget(grayBuffer: ArrayBuffer, fileName: string, targetExposureScalar: number | null): OrbAlignmentComputationResult {
+  function alignTarget(
+    grayBuffer: ArrayBuffer,
+    fileName: string,
+    targetExposureScalar: number | null,
+    fine?: { width: number; height: number; grayBuffer: ArrayBuffer },
+  ): OrbAlignmentComputationResult {
     const targetGrayBytes = new Uint8Array(grayBuffer);
     if (targetGrayBytes.length !== width * height) {
       throw new Error(`Invalid target grayscale buffer size: ${targetGrayBytes.length} vs ${width * height}.`);
@@ -230,6 +266,33 @@ import type {
         throw new Error(`${fileName} has too few ORB features (${targetKeypoints.size()}) after preprocessing.`);
       }
 
+      // The experimental mode matches only spatially plausible descriptors;
+      // the original global BFMatcher path below is retained as a fallback.
+      if (progressive) {
+        try {
+          const coarseCandidates = spatialOrbCandidates(
+            referenceKeypoints, referenceDescriptors,
+            targetKeypoints, targetDescriptors,
+            new Float64Array([1, 0, 0, 0, 1, 0, 0, 0, 1]),
+            width * PROGRESSIVE_COARSE_LIMIT,
+            height * PROGRESSIVE_COARSE_LIMIT,
+            false,
+          );
+          if (coarseCandidates.length >= ORB_MIN_GOOD_MATCHES) {
+            const coarse = buildAlignmentResult(
+              estimateAlignment(coarseCandidates, false),
+              referenceKeypoints.size(), targetKeypoints.size(),
+              coarseCandidates.length, coarseCandidates.length,
+              PROGRESSIVE_COARSE_LIMIT, "none", preprocessing,
+            );
+            return refineProgressiveAlignment(coarse, fine, targetExposureScalar, fileName);
+          }
+          console.info(`[Progressive ORB] ${fileName}: 1MP 5% search found only ${coarseCandidates.length} matches; using original ORB.`);
+        } catch (error) {
+          console.warn(`[Progressive ORB] ${fileName}: 1MP constrained matching failed, using original ORB.`, error);
+        }
+      }
+
       matcher.match(referenceDescriptors, targetDescriptors, matches);
       const strictCandidates = collectMatchCandidates(
         matches,
@@ -241,7 +304,7 @@ import type {
 
       if (strictCandidates.length >= ORB_MIN_GOOD_MATCHES) {
         try {
-          return buildAlignmentResult(
+          const result = buildAlignmentResult(
             estimateAlignment(strictCandidates, false),
             referenceKeypoints.size(),
             targetKeypoints.size(),
@@ -251,6 +314,7 @@ import type {
             "none",
             preprocessing,
           );
+          return progressive ? { ...result, refinementStatus: "1MP constrained failed; original ORB fallback" } : result;
         } catch (error) {
           lastError = error;
         }
@@ -265,7 +329,7 @@ import type {
 
       if (relaxedCandidates.length >= ORB_MIN_GOOD_MATCHES) {
         try {
-          return buildAlignmentResult(
+          const result = buildAlignmentResult(
             estimateAlignment(relaxedCandidates, false),
             referenceKeypoints.size(),
             targetKeypoints.size(),
@@ -275,6 +339,7 @@ import type {
             "relaxed-shift",
             preprocessing,
           );
+          return progressive ? { ...result, refinementStatus: "1MP constrained failed; original ORB relaxed fallback" } : result;
         } catch (error) {
           lastError = error;
         }
@@ -282,7 +347,7 @@ import type {
 
       if (relaxedCandidates.length >= ORB_MIN_FALLBACK_MATCHES) {
         try {
-          return buildAlignmentResult(
+          const result = buildAlignmentResult(
             estimateAlignment(relaxedCandidates, true),
             referenceKeypoints.size(),
             targetKeypoints.size(),
@@ -292,6 +357,7 @@ import type {
             "low-match-validated",
             preprocessing,
           );
+          return progressive ? { ...result, refinementStatus: "1MP constrained failed; original ORB low-match fallback" } : result;
         } catch (error) {
           lastError = error;
         }
@@ -323,13 +389,126 @@ import type {
     }
   }
 
-  function estimateAlignment(candidates: MatchCandidate[], validateLowMatchFallback: boolean): PartialAffineEstimate {
-    const matrix = estimatePartialAffineRansac(candidates);
-    if (!isPartialAffinePlausible(matrix)) {
+  function spatialOrbCandidates(
+    referenceKeypoints: OpenCvDynamic, referenceDescriptors: OpenCvDynamic,
+    targetKeypoints: OpenCvDynamic, targetDescriptors: OpenCvDynamic,
+    prediction: ArrayLike<number>, maxDx: number, maxDy: number, circular: boolean,
+  ): MatchCandidate[] {
+    if (referenceDescriptors.cols !== targetDescriptors.cols || referenceDescriptors.cols !== 32) {
+      throw new Error("Unexpected ORB descriptor width for spatial matching.");
+    }
+    const referencePoints = Array.from({ length: referenceKeypoints.size() }, (_, i) => {
+      const point = referenceKeypoints.get(i).pt;
+      return { x: point.x, y: point.y };
+    });
+    const targetPoints = Array.from({ length: targetKeypoints.size() }, (_, i) => {
+      const point = targetKeypoints.get(i).pt;
+      return { x: point.x, y: point.y };
+    });
+    const matched = matchSpatialOrbDescriptors({
+      referencePoints, targetPoints,
+      referenceDescriptors: referenceDescriptors.data,
+      targetDescriptors: targetDescriptors.data,
+      descriptorBytes: referenceDescriptors.cols,
+      prediction, maxDx, maxDy, circular,
+    });
+    return matched.map(({ referenceIndex, targetIndex, distance }) => ({
+      referenceX: referencePoints[referenceIndex].x,
+      referenceY: referencePoints[referenceIndex].y,
+      targetX: targetPoints[targetIndex].x,
+      targetY: targetPoints[targetIndex].y,
+      distance,
+    }));
+  }
+
+  function refineProgressiveAlignment(
+    coarse: OrbAlignmentComputationResult,
+    fine: { width: number; height: number; grayBuffer: ArrayBuffer } | undefined,
+    targetExposure: number | null,
+    fileName: string,
+  ): OrbAlignmentComputationResult {
+    const withStatus = (status: string, details: Partial<OrbAlignmentComputationResult> = {}) =>
+      ({ ...coarse, refinementStatus: status, ...details });
+    if (!fineReferenceBytes || !fine || fine.width !== fineWidth || fine.height !== fineHeight ||
+        new Uint8Array(fine.grayBuffer).length !== fineWidth * fineHeight) {
+      return withStatus("8MP frame unavailable; kept 1MP transform");
+    }
+    let preprocessing: OrbPreprocessing | null = null;
+    const refPoints = new cv.KeyPointVector();
+    const tarPoints = new cv.KeyPointVector();
+    const refDescriptors = new cv.Mat();
+    const tarDescriptors = new cv.Mat();
+    try {
+      preprocessing = prepareAlignmentPair(
+        fineReferenceBytes,
+        new Uint8Array(fine.grayBuffer),
+        referenceExposureScalar,
+        positiveExposureOrNull(targetExposure),
+        fineWidth, fineHeight,
+      );
+      orb.detectAndCompute(preprocessing.referenceGray, emptyMask, refPoints, refDescriptors);
+      orb.detectAndCompute(preprocessing.targetGray, emptyMask, tarPoints, tarDescriptors);
+      if (refPoints.size() < ORB_MIN_GOOD_MATCHES || tarPoints.size() < ORB_MIN_GOOD_MATCHES) {
+        return withStatus("Too few 8MP ORB features; kept 1MP transform");
+      }
+      const coarseHigh = scaleOrbAffine(coarse.matrix, width, height, fineWidth, fineHeight);
+      const fineCandidates = spatialOrbCandidates(
+        refPoints, refDescriptors, tarPoints, tarDescriptors,
+        coarseHigh, PROGRESSIVE_FINE_RADIUS, PROGRESSIVE_FINE_RADIUS, true,
+      );
+      const details = { refinementMatches: fineCandidates.length };
+      if (fineCandidates.length < PROGRESSIVE_MIN_FINE_INLIERS) {
+        return withStatus("Too few 8MP spatial matches; kept 1MP transform", details);
+      }
+      const fineEstimate = estimateAlignment(
+        fineCandidates, false,
+        PROGRESSIVE_FINE_REPROJECTION_THRESHOLD,
+        fineWidth, fineHeight,
+      );
+      const previous = measureReprojectionErrors(coarseHigh, fineCandidates, PROGRESSIVE_FINE_REPROJECTION_THRESHOLD);
+      const correctionPx = orbCornerCorrection(coarseHigh, fineEstimate.matrix, fineWidth, fineHeight);
+      const stats = {
+        ...details,
+        refinementInliers: fineEstimate.reprojection.inlierCount,
+        refinementMedianError: fineEstimate.reprojection.medianError,
+        refinementCorrectionPx: correctionPx,
+      };
+      if (fineEstimate.reprojection.inlierCount < PROGRESSIVE_MIN_FINE_INLIERS ||
+          fineEstimate.reprojection.medianError > PROGRESSIVE_FINE_REPROJECTION_THRESHOLD ||
+          !(correctionPx <= PROGRESSIVE_FINE_RADIUS) ||
+          !(fineEstimate.reprojection.medianError + 0.02 < previous.medianError)) {
+        return withStatus("8MP geometry did not pass validation; kept 1MP transform", stats);
+      }
+      const finalLow = scaleOrbAffine(fineEstimate.matrix, fineWidth, fineHeight, width, height);
+      console.info(`[Progressive ORB] ${fileName}: 8MP refined with ${fineCandidates.length} matches, ` +
+        `${fineEstimate.reprojection.inlierCount} inliers, correction ${correctionPx.toFixed(2)} px.`);
+      return withStatus("8MP refinement accepted", { ...stats, matrix: finalLow });
+    } catch (error) {
+      console.warn(`[Progressive ORB] ${fileName}: 8MP refinement failed; kept 1MP transform.`, error);
+      return withStatus(`8MP refinement failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      refDescriptors.delete();
+      tarDescriptors.delete();
+      refPoints.delete();
+      tarPoints.delete();
+      if (preprocessing) {
+        preprocessing.referenceGray.delete();
+        preprocessing.targetGray.delete();
+      }
+    }
+  }
+
+  function estimateAlignment(
+    candidates: MatchCandidate[], validateLowMatchFallback: boolean,
+    threshold = ORB_RANSAC_REPROJECTION_THRESHOLD,
+    frameWidth = width, frameHeight = height,
+  ): PartialAffineEstimate {
+    const matrix = estimatePartialAffineRansac(candidates, threshold);
+    if (!isPartialAffinePlausible(matrix, frameWidth, frameHeight)) {
       throw new Error("ORB produced an implausible partial affine transform.");
     }
 
-    const reprojection = measureReprojectionErrors(matrix, candidates);
+    const reprojection = measureReprojectionErrors(matrix, candidates, threshold);
     if (validateLowMatchFallback) {
       validateFallbackReprojection(reprojection);
     }
@@ -337,12 +516,12 @@ import type {
     return { matrix, reprojection };
   }
 
-  function estimatePartialAffineRansac(candidates: MatchCandidate[]): Float64Array {
+  function estimatePartialAffineRansac(candidates: MatchCandidate[], threshold = ORB_RANSAC_REPROJECTION_THRESHOLD): Float64Array {
     if (!Array.isArray(candidates) || candidates.length < 2) {
       throw new Error("ORB needs at least two matches for a partial affine transform.");
     }
 
-    const thresholdSq = ORB_RANSAC_REPROJECTION_THRESHOLD * ORB_RANSAC_REPROJECTION_THRESHOLD;
+    const thresholdSq = threshold * threshold;
     const count = candidates.length;
     const maxIterations = Math.min(
       ORB_RANSAC_MAX_ITERATIONS,
@@ -544,6 +723,8 @@ import type {
     targetBytes: Uint8Array,
     referenceExposure: number | null,
     targetExposure: number | null,
+    frameWidth = width,
+    frameHeight = height,
   ): OrbPreprocessing {
     const exposure = prepareAlignmentExposurePair(
       referenceBytes,
@@ -551,11 +732,11 @@ import type {
       referenceExposure,
       targetExposure,
     );
-    const referenceGray = preprocessAlignmentGray(exposure.referenceBytes);
+    const referenceGray = preprocessAlignmentGray(exposure.referenceBytes, frameWidth, frameHeight);
     try {
       return {
         referenceGray,
-        targetGray: preprocessAlignmentGray(exposure.targetBytes),
+        targetGray: preprocessAlignmentGray(exposure.targetBytes, frameWidth, frameHeight),
         referenceExposureGain: exposure.referenceExposureGain,
         targetExposureGain: exposure.targetExposureGain,
         exposureMatchSource: exposure.exposureMatchSource,
@@ -566,8 +747,8 @@ import type {
     }
   }
 
-  function preprocessAlignmentGray(bytes: Uint8Array): OpenCvDynamic {
-    const source = makeGrayMatFromBytes(bytes);
+  function preprocessAlignmentGray(bytes: Uint8Array, frameWidth = width, frameHeight = height): OpenCvDynamic {
+    const source = makeGrayMatFromBytes(bytes, frameWidth, frameHeight);
     const bilateral = new cv.Mat();
     const output = new cv.Mat();
     let clahe: OpenCvDynamic | null = null;
@@ -621,11 +802,11 @@ import type {
     }
   }
 
-  function makeGrayMatFromBytes(bytes: Uint8Array): OpenCvDynamic {
-    if (bytes.length !== width * height) {
-      throw new Error(`Invalid grayscale buffer size: ${bytes.length} vs ${width * height}.`);
+  function makeGrayMatFromBytes(bytes: Uint8Array, frameWidth = width, frameHeight = height): OpenCvDynamic {
+    if (bytes.length !== frameWidth * frameHeight) {
+      throw new Error(`Invalid grayscale buffer size: ${bytes.length} vs ${frameWidth * frameHeight}.`);
     }
-    const mat = new cv.Mat(height, width, cv.CV_8UC1);
+    const mat = new cv.Mat(frameHeight, frameWidth, cv.CV_8UC1);
     if (!mat.data || mat.data.length < bytes.length) {
       mat.delete();
       throw new Error("OpenCV could not allocate the grayscale alignment buffer.");
@@ -662,7 +843,9 @@ import type {
     return candidates;
   }
 
-  function measureReprojectionErrors(matrix: Float64Array, candidates: MatchCandidate[]): ReprojectionStats {
+  function measureReprojectionErrors(
+    matrix: Float64Array, candidates: MatchCandidate[], threshold = ORB_RANSAC_REPROJECTION_THRESHOLD,
+  ): ReprojectionStats {
     const errors: number[] = [];
     let inlierCount = 0;
 
@@ -683,7 +866,7 @@ import type {
         projectedY - match.referenceY,
       );
       errors.push(error);
-      if (Number.isFinite(error) && error <= ORB_RANSAC_REPROJECTION_THRESHOLD) {
+      if (Number.isFinite(error) && error <= threshold) {
         inlierCount += 1;
       }
     }
@@ -738,7 +921,7 @@ import type {
     throw new AlignmentImplementationError("This OpenCV.js build does not provide BFMatcher.");
   }
 
-  function isPartialAffinePlausible(m: ArrayLike<number>): boolean {
+  function isPartialAffinePlausible(m: ArrayLike<number>, frameWidth = width, frameHeight = height): boolean {
     const scaleAllowance = 0.05;
     const shiftAllowance = 0.05;
     const rotationAllowance = 0.05;
@@ -749,8 +932,8 @@ import type {
     const maxScale = 1 / minScale;
 
     return (
-      -shiftAllowance <= m[2] / width && m[2] / width <= shiftAllowance &&
-      -shiftAllowance <= m[5] / height && m[5] / height <= shiftAllowance &&
+      -shiftAllowance <= m[2] / frameWidth && m[2] / frameWidth <= shiftAllowance &&
+      -shiftAllowance <= m[5] / frameHeight && m[5] / frameHeight <= shiftAllowance &&
       minScale <= scaleX && scaleX <= maxScale &&
       minScale <= scaleY && scaleY <= maxScale &&
       Math.abs(rotation) <= rotationAllowance
@@ -783,6 +966,10 @@ import type {
     orb = null;
     referenceGrayBytes = null;
     referenceExposureScalar = null;
+    fineReferenceBytes = null;
+    fineWidth = 0;
+    fineHeight = 0;
+    progressive = false;
   }
 
 })();

@@ -7,6 +7,7 @@ export type AlignmentPoolFrame = {
   height: number;
   grayBytes: Uint8Array | ArrayBufferLike;
   exposureScalar: number | null;
+  refinement?: { width: number; height: number; grayBytes: Uint8Array | ArrayBufferLike };
 };
 
 export type AlignmentPoolJob = {
@@ -21,12 +22,14 @@ export type AlignmentPoolClient<Ready, Result> = {
     height: number,
     grayBytes: Uint8Array,
     exposureScalar?: number | null,
+    refinement?: AlignmentPoolFrame["refinement"],
   ): Promise<Ready>;
   align(
     id: number,
     fileName: string,
     grayBytes: Uint8Array,
     exposureScalar?: number | null,
+    refinement?: AlignmentPoolFrame["refinement"],
   ): Promise<Result>;
   terminate(): void;
 };
@@ -43,6 +46,10 @@ export type AlignmentPoolFailure = {
 
 export type AlignmentPoolResult<Ready, Result> = {
   workerCount: number;
+  /** Wall-clock time for worker startup and reference initialization (ms). */
+  initializationMs: number;
+  /** Wall-clock time for all target jobs, including parallel scheduling (ms). */
+  jobsMs: number;
   ready: Ready[];
   successes: AlignmentPoolSuccess<Result>[];
   failures: AlignmentPoolFailure[];
@@ -91,9 +98,10 @@ export async function runAlignmentPool<Ready, Result>({
   ) => void;
 }): Promise<AlignmentPoolResult<Ready, Result>> {
   if (jobs.length === 0) {
-    return { workerCount: 0, ready: [], successes: [], failures: [] };
+    return { workerCount: 0, initializationMs: 0, jobsMs: 0, ready: [], successes: [], failures: [] };
   }
 
+  const initializationStartedAt = performance.now();
   const workerCount = resolveAlignmentWorkerCount(jobs.length, hardwareConcurrency);
   const clients = Array.from({ length: workerCount }, () => createClient());
   const ready = new Array<Ready>(workerCount);
@@ -122,6 +130,7 @@ export async function runAlignmentPool<Ready, Result>({
           referenceFrame.height,
           copyGrayBytes(referenceFrame),
           referenceFrame.exposureScalar,
+          referenceFrame.refinement,
         );
         ready[workerIndex] = initialized;
         initializedClients.push({ workerIndex, client });
@@ -142,6 +151,7 @@ export async function runAlignmentPool<Ready, Result>({
     }));
 
     if (fatalError) throw fatalError;
+    const initializationMs = performance.now() - initializationStartedAt;
     if (initializedClients.length === 0) {
       const details = Array.from(new Set(initializationErrors.map((error) => error.message)))
         .filter(Boolean)
@@ -153,6 +163,8 @@ export async function runAlignmentPool<Ready, Result>({
       );
       return {
         workerCount: 0,
+        initializationMs,
+        jobsMs: 0,
         ready: [],
         successes,
         failures: jobs.map((job) => ({ job, error })),
@@ -172,6 +184,7 @@ export async function runAlignmentPool<Ready, Result>({
             job.fileName,
             copyGrayBytes(job.frame),
             job.frame.exposureScalar,
+            job.frame.refinement,
           );
           successes.push({ job, result });
           onJobComplete?.(job, workerIndex, { result });
@@ -188,10 +201,14 @@ export async function runAlignmentPool<Ready, Result>({
       }
     };
 
+    const jobsStartedAt = performance.now();
     await Promise.all(initializedClients.map(runWorker));
+    const jobsMs = performance.now() - jobsStartedAt;
     if (fatalError) throw fatalError;
     return {
       workerCount: initializedClients.length,
+      initializationMs,
+      jobsMs,
       ready: initializedClients.map(({ workerIndex }) => ready[workerIndex]),
       successes,
       failures,

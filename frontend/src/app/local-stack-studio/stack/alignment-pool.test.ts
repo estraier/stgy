@@ -79,6 +79,8 @@ describe("alignment worker pool", () => {
     });
 
     expect(result.workerCount).toBe(0);
+    expect(result.initializationMs).toBeGreaterThanOrEqual(0);
+    expect(result.jobsMs).toBe(0);
     expect(result.successes).toHaveLength(0);
     expect(result.failures).toHaveLength(2);
     expect(result.failures[0].error.message).toContain("reference has too few features");
