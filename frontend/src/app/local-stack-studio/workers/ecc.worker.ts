@@ -48,6 +48,7 @@ import type {
     translationRatio: number;
   };
 
+  // Retain the original 1MP ECC limit and three-downsample pyramid.
   const ECC_BASE_AREA = 1_000_000;
   const ECC_MAX_PYRAMID_DOWNSAMPLES = 3;
   const ECC_MIN_COARSE_SHORT_SIDE = 96;
@@ -170,9 +171,112 @@ import type {
     };
   }
 
-  // Diagnostic wrapper. The ECC optimizer does not expose its actual iteration
-  // count through OpenCV.js, so measure each pyramid level's wall time rather
-  // than pretending that all levels run the configured maximum iterations.
+
+  // OpenCV.js sometimes throws a plain object (or a numeric WASM exception
+  // pointer) instead of an Error. Do not lose its useful fields in [object Object].
+  function describeEccError(error: unknown): string {
+    if (error instanceof Error) return `${error.name}: ${error.message}`;
+    // OpenCV.js/Emscripten may throw a numeric pointer to a native cv::Exception.
+    // String(error) only prints its WASM address, not its actual error code or message.
+    if (typeof error === "number" && Number.isSafeInteger(error) && error > 0) {
+      let nativeException: OpenCvDynamic | null = null;
+      try {
+        if (typeof cv?.exceptionFromPtr === "function") {
+          nativeException = cv.exceptionFromPtr(error);
+          const message = typeof cv.getExceptionMsg === "function"
+            ? cv.getExceptionMsg(nativeException)
+            : nativeException?.msg;
+          const code = nativeException?.code;
+          const details = [
+            typeof code === "number" ? `OpenCV code=${code}` : null,
+            typeof message === "string" && message.length ? message : null,
+          ].filter((part): part is string => part !== null);
+          if (details.length) return details.join("; ");
+        }
+        if (typeof cv?.getExceptionMessage === "function") {
+          const description = cv.getExceptionMessage(error);
+          if (Array.isArray(description)) return description.join(": ");
+          if (typeof description === "string" && description.length) return description;
+        }
+      } catch (decodeError) {
+        const detail = decodeError instanceof Error ? decodeError.message : String(decodeError);
+        return `OpenCV native exception pointer ${error} (decode failed: ${detail})`;
+      } finally {
+        // exceptionFromPtr returns an Embind-managed *copy*, whose wrapper
+        // must be deleted. Never free the original pointer here.
+        if (nativeException && typeof nativeException.delete === "function") {
+          nativeException.delete();
+        }
+      }
+      return `OpenCV native exception pointer ${error} (exception decoder unavailable)`;
+    }
+    if (error && typeof error === "object") {
+      const record = error as Record<string, unknown>;
+      const descriptions: string[] = [];
+      for (const name of ["name", "message", "msg", "what", "code"]) {
+        const value = record[name];
+        if (typeof value === "string" || typeof value === "number") {
+          descriptions.push(`${name}=${String(value)}`);
+        }
+      }
+      if (descriptions.length) return descriptions.join("; ");
+      try {
+        const text = JSON.stringify(error);
+        if (text && text !== "{}") return text;
+      } catch {
+        // Some browser/OpenCV objects cannot be serialized.
+      }
+    }
+    return String(error);
+  }
+
+  // Emscripten heap byteLength measures committed WASM capacity, not live malloc
+  // usage. Also track the explicit CV_8UC1 pyramid Mat payloads separately.
+  type EccMemorySample = {
+    stage: string;
+    elapsedMs: number;
+    wasmHeapCapacityBytes: number | null;
+    retainedPyramidMatBytes: number;
+  };
+
+  function wasmHeapCapacityBytes(): number | null {
+    try {
+      const memory = cv?.HEAPU8?.buffer ?? cv?.HEAP8?.buffer ??
+        cv?.wasmMemory?.buffer ?? cv?.asm?.memory?.buffer;
+      const capacity = memory?.byteLength;
+      if (typeof capacity === "number" && Number.isFinite(capacity) && capacity > 0) {
+        return capacity;
+      }
+      if (typeof cv?._emscripten_get_heap_size === "function") {
+        const size = Number(cv._emscripten_get_heap_size());
+        return Number.isFinite(size) && size > 0 ? size : null;
+      }
+    } catch {
+      // The current OpenCV.js build might not expose its Emscripten heap.
+    }
+    return null;
+  }
+
+  function pyramidMatBytes(...pyramids: (OpenCvDynamic[] | null)[]): number {
+    let total = 0;
+    for (const pyramid of pyramids) {
+      for (const mat of pyramid ?? []) {
+        if (mat) total += mat.cols * mat.rows; // All three pyramids are CV_8UC1.
+      }
+    }
+    return total;
+  }
+
+  type EccLevelDiagnostic = {
+    level: number;
+    resolution: string;
+    elapsedMs: number;
+    correlation: number | null;
+    correctionPx: number | null;
+    error?: string;
+  };
+
+  // OpenCV.js does not expose the actual iteration count or termination cause.
   function alignTarget(grayBuffer: ArrayBuffer, fileName: string, targetExposureScalar: number | null) {
     const startedAt = performance.now();
     const diagnostics = {
@@ -186,7 +290,10 @@ import type {
       initialCorrelation: null as number | null,
       finalCorrelation: null as number | null,
       correlationDelta: null as number | null,
-      levels: [] as Array<{ level: number; resolution: string; elapsedMs: number; correlation: number | null; error?: string }>,
+      levels: [] as EccLevelDiagnostic[],
+      memorySamples: [] as EccMemorySample[],
+      stage: "not started",
+      failureStage: null as string | null,
       outcome: "ok",
       error: null as string | null,
     };
@@ -194,20 +301,55 @@ import type {
       return alignTargetMeasured(grayBuffer, fileName, targetExposureScalar, diagnostics);
     } catch (error) {
       diagnostics.outcome = "failed";
-      diagnostics.error = error instanceof Error ? error.message : String(error);
-      throw error;
+      diagnostics.failureStage = diagnostics.stage;
+      diagnostics.error = describeEccError(error);
+      const explanation = `${fileName}: ECC failed at ${diagnostics.failureStage}: ${diagnostics.error}`;
+      // Preserve implementation-vs-runtime classification in the worker RPC.
+      if (error instanceof AlignmentImplementationError) {
+        throw new AlignmentImplementationError(explanation);
+      }
+      throw new Error(explanation);
     } finally {
       const totalMs = performance.now() - startedAt;
-      console.info(`[ECC Diagnostic] ${fileName}: ${totalMs.toFixed(1)} ms, ` +
+      const summary = `[ECC Diagnostic] ${fileName}: ${totalMs.toFixed(1)} ms, ` +
         `preparation ${diagnostics.preparationMs.toFixed(1)} ms, ` +
         `pyramids ${(diagnostics.referencePyramidMs + diagnostics.targetPyramidMs + diagnostics.maskPyramidMs).toFixed(1)} ms, ` +
-        `ECC levels ${diagnostics.levels.reduce((sum, level) => sum + level.elapsedMs, 0).toFixed(1)} ms; ` +
-        `${diagnostics.outcome}.`, {
-          ...diagnostics,
-          totalMs: Number(totalMs.toFixed(1)),
-          maxIterationsPerLevel: ECC_MAX_ITERATIONS,
-          convergenceEpsilon: ECC_EPSILON,
-        });
+        `ECC levels ${diagnostics.levels.reduce((sum, level) => sum + level.elapsedMs, 0).toFixed(1)} ms; ${diagnostics.outcome}.`;
+      console.info(summary);
+      const report = {
+        schemaVersion: 1,
+        fileName,
+        ...diagnostics,
+        totalMs: Number(totalMs.toFixed(1)),
+        peakObservedWasmHeapCapacityBytes: diagnostics.memorySamples.reduce<number | null>(
+          (max, sample) => sample.wasmHeapCapacityBytes === null ? max :
+            Math.max(max ?? 0, sample.wasmHeapCapacityBytes), null,
+        ),
+        peakRetainedPyramidMatBytes: Math.max(0, ...diagnostics.memorySamples.map(
+          (sample) => sample.retainedPyramidMatBytes,
+        )),
+        wasmMemoryNote: "wasmHeapCapacityBytes is the committed WASM heap buffer capacity, not live malloc usage; retainedPyramidMatBytes counts only owned CV_8UC1 pyramid payloads and excludes OpenCV internal work buffers",
+        maxIterationsPerLevel: ECC_MAX_ITERATIONS,
+        convergenceEpsilon: ECC_EPSILON,
+        actualIterationCounts: "not exposed by OpenCV.js",
+        stopReasons: "not exposed by OpenCV.js",
+      };
+      // A single JSON string survives DevTools console copy without [object Object].
+      console.info(`[ECC Diagnostic JSON] ${JSON.stringify(report)}`);
+      if (diagnostics.memorySamples.length > 0) {
+        console.info(`[ECC Memory JSON] ${JSON.stringify({
+          schemaVersion: 1,
+          fileName,
+          outcome: diagnostics.outcome,
+          peakObservedWasmHeapCapacityBytes: report.peakObservedWasmHeapCapacityBytes,
+          peakRetainedPyramidMatBytes: report.peakRetainedPyramidMatBytes,
+          samples: diagnostics.memorySamples,
+          note: report.wasmMemoryNote,
+        })}`);
+      }
+      if (diagnostics.outcome === "failed") {
+        console.error(`[ECC Failure] ${fileName}: stage=${diagnostics.failureStage}; ${diagnostics.error}`);
+      }
       console.table(diagnostics.levels);
     }
   }
@@ -227,15 +369,19 @@ import type {
       initialCorrelation: number | null;
       finalCorrelation: number | null;
       correlationDelta: number | null;
-      levels: Array<{ level: number; resolution: string; elapsedMs: number; correlation: number | null; error?: string }>;
+      levels: EccLevelDiagnostic[];
+      memorySamples: EccMemorySample[];
+      stage: string;
     },
   ) {
+    diagnostics.stage = "validate-target-input";
     const bytes = new Uint8Array(grayBuffer);
     if (bytes.length !== width * height) {
       throw new Error(`Invalid ECC target grayscale buffer size for ${fileName}: ${bytes.length} vs ${width * height}.`);
     }
 
     if (!referenceGrayBytes) throw new AlignmentImplementationError("ECC reference grayscale buffer is unavailable.");
+    diagnostics.stage = "preprocess";
     let stageStartedAt = performance.now();
     const preprocessing = prepareEccPair(
       referenceGrayBytes,
@@ -245,21 +391,48 @@ import type {
     );
     diagnostics.preparationMs = performance.now() - stageStartedAt;
     diagnostics.maskCoverage = preprocessing.maskCoverage;
-    stageStartedAt = performance.now();
-    const referencePyramid = buildEccPyramid(preprocessing.referenceBytes);
-    diagnostics.referencePyramidMs = performance.now() - stageStartedAt;
-    stageStartedAt = performance.now();
-    const targetPyramid = buildEccPyramid(preprocessing.targetBytes);
-    diagnostics.targetPyramidMs = performance.now() - stageStartedAt;
-    stageStartedAt = performance.now();
-    const maskPyramid = buildMaskPyramid(preprocessing.maskBytes);
-    diagnostics.maskPyramidMs = performance.now() - stageStartedAt;
+    // Enter the cleanup scope BEFORE allocating any of the three pyramids.
+    // A failure in the second/third pyramid must release the earlier ones.
+    let referencePyramid: OpenCvDynamic[] | null = null;
+    let targetPyramid: OpenCvDynamic[] | null = null;
+    let maskPyramid: OpenCvDynamic[] | null = null;
     let warp: OpenCvDynamic | null = null;
     let lastWidth = 0;
     let lastHeight = 0;
     let correlation = NaN;
     let initialCorrelation = NaN;
+    const memoryStartAt = performance.now();
+    const recordMemory = (stage: string) => {
+      diagnostics.memorySamples.push({
+        stage,
+        elapsedMs: Number((performance.now() - memoryStartAt).toFixed(1)),
+        wasmHeapCapacityBytes: wasmHeapCapacityBytes(),
+        retainedPyramidMatBytes: pyramidMatBytes(referencePyramid, targetPyramid, maskPyramid),
+      });
+    };
+    recordMemory("after-preparation");
     try {
+      diagnostics.stage = "reference-pyramid";
+      stageStartedAt = performance.now();
+      referencePyramid = buildEccPyramid(preprocessing.referenceBytes);
+      preprocessing.referenceBytes = new Uint8Array(0); // Release transient exposure-adjusted bytes.
+      diagnostics.referencePyramidMs = performance.now() - stageStartedAt;
+      recordMemory("reference-pyramid-ready");
+
+      diagnostics.stage = "target-pyramid";
+      stageStartedAt = performance.now();
+      targetPyramid = buildEccPyramid(preprocessing.targetBytes);
+      preprocessing.targetBytes = new Uint8Array(0);
+      diagnostics.targetPyramidMs = performance.now() - stageStartedAt;
+      recordMemory("target-pyramid-ready");
+
+      diagnostics.stage = "mask-pyramid";
+      stageStartedAt = performance.now();
+      maskPyramid = buildMaskPyramid(preprocessing.maskBytes);
+      preprocessing.maskBytes = new Uint8Array(0);
+      diagnostics.maskPyramidMs = performance.now() - stageStartedAt;
+      recordMemory("mask-pyramid-ready");
+
       if (
         targetPyramid.length !== referencePyramid.length ||
         maskPyramid.length !== referencePyramid.length
@@ -267,6 +440,7 @@ import type {
         throw new Error("ECC reference, target, and mask pyramids do not match.");
       }
 
+      diagnostics.stage = "initial-correlation";
       stageStartedAt = performance.now();
       initialCorrelation = computeInitialEccCorrelation(
         referencePyramid[0],
@@ -275,6 +449,7 @@ import type {
       );
       diagnostics.initialCorrelationMs = performance.now() - stageStartedAt;
       diagnostics.initialCorrelation = initialCorrelation;
+      recordMemory("initial-correlation-ready");
       if (!Number.isFinite(initialCorrelation)) {
         throw new Error(`${fileName} ECC could not measure the initial image correlation.`);
       }
@@ -283,38 +458,63 @@ import type {
         const reference = referencePyramid[level];
         const target = targetPyramid[level];
         const mask = maskPyramid[level];
-        if (!warp) {
-          warp = cv.matFromArray(2, 3, cv.CV_32F, [1, 0, 0, 0, 1, 0]);
-        } else {
-          const scaleX = reference.cols / lastWidth;
-          const scaleY = reference.rows / lastHeight;
-          rescaleAffineWarpInPlace(warp.data32F, scaleX, scaleY);
-        }
-
-        const levelStartedAt = performance.now();
-        let levelError: string | undefined;
+        diagnostics.stage = `ecc-level-${level} (${reference.cols}x${reference.rows})`;
+        recordMemory(`ecc-level-${level}:before`);
         try {
-          correlation = runFindTransformEcc(reference, target, warp, mask);
-        } catch (error) {
-          levelError = error instanceof Error ? error.message : String(error);
-          throw error;
+          if (!warp) {
+            warp = cv.matFromArray(2, 3, cv.CV_32F, [1, 0, 0, 0, 1, 0]);
+          } else {
+            const scaleX = reference.cols / lastWidth;
+            const scaleY = reference.rows / lastHeight;
+            rescaleAffineWarpInPlace(warp.data32F, scaleX, scaleY);
+          }
+
+          const initialWarp = Float32Array.from(warp.data32F as Float32Array);
+          const levelStartedAt = performance.now();
+          let levelError: string | undefined;
+          try {
+            correlation = runFindTransformEcc(reference, target, warp, mask);
+          } catch (error) {
+            levelError = describeEccError(error);
+            throw error;
+          } finally {
+            // Record ECC optimizer time independently of stage cleanup and logging.
+            const elapsedMs = Number((performance.now() - levelStartedAt).toFixed(1));
+            const finalWarp = Float32Array.from(warp.data32F as Float32Array);
+            recordMemory(`ecc-level-${level}:after-optimizer`);
+            let correctionPx: number | null = null;
+            if (!levelError) {
+              correctionPx = maxEccCornerDisplacement(initialWarp, finalWarp, reference.cols, reference.rows);
+            }
+            diagnostics.levels.push({
+              level,
+              resolution: `${reference.cols}x${reference.rows}`,
+              elapsedMs,
+              correlation: Number.isFinite(correlation) ? correlation : null,
+              correctionPx,
+              ...(levelError ? { error: levelError } : {}),
+            });
+          }
+          diagnostics.finalCorrelation = Number.isFinite(correlation) ? correlation : null;
+          if (!Number.isFinite(correlation)) {
+            throw new Error(`ECC returned a non-finite correlation for ${fileName}.`);
+          }
+          lastWidth = reference.cols;
+          lastHeight = reference.rows;
         } finally {
-          diagnostics.levels.push({
-            level,
-            resolution: `${reference.cols}x${reference.rows}`,
-            elapsedMs: Number((performance.now() - levelStartedAt).toFixed(1)),
-            correlation: Number.isFinite(correlation) ? correlation : null,
-            ...(levelError ? { error: levelError } : {}),
-          });
+          // This level is never accessed again: release all three Mats before
+          // moving to the next (finer) level. Keep the array lengths unchanged.
+          referencePyramid[level] = null;
+          targetPyramid[level] = null;
+          maskPyramid[level] = null;
+          reference.delete();
+          target.delete();
+          mask.delete();
+          recordMemory(`ecc-level-${level}:after-release`);
         }
-        diagnostics.finalCorrelation = Number.isFinite(correlation) ? correlation : null;
-        if (!Number.isFinite(correlation)) {
-          throw new Error(`ECC returned a non-finite correlation for ${fileName}.`);
-        }
-        lastWidth = reference.cols;
-        lastHeight = reference.rows;
       }
 
+      diagnostics.stage = "validate-final-transform";
       stageStartedAt = performance.now();
       const workingForward = affine2x3ToMatrix3x3(warp.data32F);
       const fullForward = scaleAffineBetweenCoordinateSystems(
@@ -333,6 +533,8 @@ import type {
       );
       diagnostics.correlationDelta = correlationImprovement;
       diagnostics.validationMs = performance.now() - stageStartedAt;
+      diagnostics.stage = "completed";
+      recordMemory("validated");
       return {
         matrix: new Float64Array(targetToReference),
         correlation,
@@ -345,11 +547,18 @@ import type {
         maskCoverage: preprocessing.maskCoverage,
         ...metrics,
       };
+    } catch (error) {
+      recordMemory(`failure:${diagnostics.stage}`);
+      throw error;
     } finally {
       if (warp) warp.delete();
       deleteMatArray(referencePyramid);
       deleteMatArray(targetPyramid);
       deleteMatArray(maskPyramid);
+      referencePyramid = null;
+      targetPyramid = null;
+      maskPyramid = null;
+      recordMemory("after-cleanup");
     }
   }
 
@@ -417,17 +626,19 @@ import type {
     if (ECC_GAUSSIAN_FILTER_SIZE <= 1) {
       return computeMaskedCorrelation(reference, target, mask);
     }
-    const referenceFiltered = new cv.Mat();
-    const targetFiltered = new cv.Mat();
-    const kernel = new cv.Size(ECC_GAUSSIAN_FILTER_SIZE, ECC_GAUSSIAN_FILTER_SIZE);
-    const borderType = cv.BORDER_DEFAULT !== undefined ? cv.BORDER_DEFAULT : 4;
+    let referenceFiltered: OpenCvDynamic | null = null;
+    let targetFiltered: OpenCvDynamic | null = null;
     try {
+      referenceFiltered = new cv.Mat();
+      targetFiltered = new cv.Mat();
+      const kernel = new cv.Size(ECC_GAUSSIAN_FILTER_SIZE, ECC_GAUSSIAN_FILTER_SIZE);
+      const borderType = cv.BORDER_DEFAULT !== undefined ? cv.BORDER_DEFAULT : 4;
       cv.GaussianBlur(reference, referenceFiltered, kernel, 0, 0, borderType);
       cv.GaussianBlur(target, targetFiltered, kernel, 0, 0, borderType);
       return computeMaskedCorrelation(referenceFiltered, targetFiltered, mask);
     } finally {
-      targetFiltered.delete();
-      referenceFiltered.delete();
+      targetFiltered?.delete();
+      referenceFiltered?.delete();
     }
   }
 
@@ -506,6 +717,18 @@ import type {
     return improvement;
   }
 
+  function maxEccCornerDisplacement(before: ArrayLike<number>, after: ArrayLike<number>, widthPx: number, heightPx: number): number {
+    let maximum = 0;
+    for (const x of [0, widthPx - 1]) {
+      for (const y of [0, heightPx - 1]) {
+        const dx = (after[0] - before[0]) * x + (after[1] - before[1]) * y + after[2] - before[2];
+        const dy = (after[3] - before[3]) * x + (after[4] - before[4]) * y + after[5] - before[5];
+        maximum = Math.max(maximum, Math.hypot(dx, dy));
+      }
+    }
+    return maximum;
+  }
+
   function runFindTransformEcc(reference: OpenCvDynamic, target: OpenCvDynamic, warp: OpenCvDynamic, mask: OpenCvDynamic): number {
     const criteria = new cv.TermCriteria(
       cv.TermCriteria_COUNT | cv.TermCriteria_EPS,
@@ -528,30 +751,29 @@ import type {
   }
 
   function buildEccPyramid(grayBytes: Uint8Array): OpenCvDynamic[] {
-    const source = new cv.Mat(height, width, cv.CV_8UC1);
-    source.data.set(grayBytes);
     const pyramid: OpenCvDynamic[] = [];
-    let resized: OpenCvDynamic | null = null;
-    let smoothed: OpenCvDynamic | null = null;
+    let source: OpenCvDynamic | null = null;
     try {
-      if (workingWidth === width && workingHeight === height) {
-        resized = source.clone();
-      } else {
-        resized = new cv.Mat();
-        cv.resize(source, resized, new cv.Size(workingWidth, workingHeight), 0, 0, cv.INTER_AREA);
+      source = new cv.Mat(height, width, cv.CV_8UC1);
+      source.data.set(grayBytes);
+      if (workingWidth !== width || workingHeight !== height) {
+        const resized = new cv.Mat();
+        try {
+          cv.resize(source, resized, new cv.Size(workingWidth, workingHeight), 0, 0, cv.INTER_AREA);
+        } catch (error) {
+          resized.delete();
+          throw error;
+        }
+        source.delete();
+        source = resized;
       }
-      smoothed = new cv.Mat();
+      // GaussianBlur supports in-place processing, avoiding both the original
+      // full-size clone and a separate full-size smoothed image.
       const borderType = cv.BORDER_DEFAULT !== undefined ? cv.BORDER_DEFAULT : 4;
-      cv.GaussianBlur(
-        resized,
-        smoothed,
-        new cv.Size(ECC_PRE_BLUR_SIZE, ECC_PRE_BLUR_SIZE),
-        0,
-        0,
-        borderType,
-      );
-      pyramid.push(smoothed);
-      smoothed = null;
+      cv.GaussianBlur(source, source,
+        new cv.Size(ECC_PRE_BLUR_SIZE, ECC_PRE_BLUR_SIZE), 0, 0, borderType);
+      pyramid.push(source);
+      source = null; // Pyramid now owns this Mat.
 
       for (let downsample = 0; downsample < ECC_MAX_PYRAMID_DOWNSAMPLES; downsample += 1) {
         const previous = pyramid[pyramid.length - 1];
@@ -559,36 +781,44 @@ import type {
         const nextHeight = Math.ceil(previous.rows / 2);
         if (Math.min(nextWidth, nextHeight) < ECC_MIN_COARSE_SHORT_SIDE) break;
         const next = new cv.Mat();
-        cv.pyrDown(previous, next, new cv.Size(nextWidth, nextHeight));
-        pyramid.push(next);
+        try {
+          cv.pyrDown(previous, next, new cv.Size(nextWidth, nextHeight));
+          pyramid.push(next);
+        } catch (error) {
+          next.delete();
+          throw error;
+        }
       }
       return pyramid;
     } catch (error) {
-      if (resized) resized.delete();
-      if (smoothed) smoothed.delete();
       deleteMatArray(pyramid);
       throw error;
     } finally {
-      if (resized) resized.delete();
-      source.delete();
+      source?.delete();
     }
   }
 
   function buildMaskPyramid(maskBytes: Uint8Array): OpenCvDynamic[] {
-    const source = new cv.Mat(height, width, cv.CV_8UC1);
-    source.data.set(maskBytes);
     const pyramid: OpenCvDynamic[] = [];
-    let working: OpenCvDynamic | null = null;
+    let source: OpenCvDynamic | null = null;
     try {
-      if (workingWidth === width && workingHeight === height) {
-        working = source.clone();
-      } else {
-        working = new cv.Mat();
-        cv.resize(source, working, new cv.Size(workingWidth, workingHeight), 0, 0, cv.INTER_AREA);
-        binarizeMaskMatInPlace(working);
+      source = new cv.Mat(height, width, cv.CV_8UC1);
+      source.data.set(maskBytes);
+      if (workingWidth !== width || workingHeight !== height) {
+        const resized = new cv.Mat();
+        try {
+          cv.resize(source, resized, new cv.Size(workingWidth, workingHeight), 0, 0, cv.INTER_AREA);
+          binarizeMaskMatInPlace(resized);
+        } catch (error) {
+          resized.delete();
+          throw error;
+        }
+        source.delete();
+        source = resized;
       }
-      pyramid.push(working);
-      working = null;
+      // The mask is already binary: no need to clone it at equal dimensions.
+      pyramid.push(source);
+      source = null;
 
       for (let downsample = 0; downsample < ECC_MAX_PYRAMID_DOWNSAMPLES; downsample += 1) {
         const previous = pyramid[pyramid.length - 1];
@@ -596,17 +826,21 @@ import type {
         const nextHeight = Math.ceil(previous.rows / 2);
         if (Math.min(nextWidth, nextHeight) < ECC_MIN_COARSE_SHORT_SIDE) break;
         const next = new cv.Mat();
-        cv.pyrDown(previous, next, new cv.Size(nextWidth, nextHeight));
-        binarizeMaskMatInPlace(next);
-        pyramid.push(next);
+        try {
+          cv.pyrDown(previous, next, new cv.Size(nextWidth, nextHeight));
+          binarizeMaskMatInPlace(next);
+          pyramid.push(next);
+        } catch (error) {
+          next.delete();
+          throw error;
+        }
       }
       return pyramid;
     } catch (error) {
-      if (working) working.delete();
       deleteMatArray(pyramid);
       throw error;
     } finally {
-      source.delete();
+      source?.delete();
     }
   }
 

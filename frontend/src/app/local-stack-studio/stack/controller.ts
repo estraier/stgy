@@ -2623,8 +2623,7 @@ async function alignAndMergeFilesWithOpenCv(
           });
         }
         const hardwareConcurrency = typeof navigator === "object"
-          ? Math.max(1, Math.floor(navigator.hardwareConcurrency || 4))
-          : 4;
+          ? Math.max(1, Math.floor(navigator.hardwareConcurrency || 4)) : 4;
 
         const runDirectBatch = async (algorithm, jobs, phaseLabel) => {
           const algorithmLabel = algorithm;
