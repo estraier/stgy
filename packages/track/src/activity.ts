@@ -294,6 +294,7 @@ export type MergeTrackActivitiesOptions = {
   name?: string;
   description?: string;
   movingSpeedThresholdMps?: number;
+  sourceNames?: readonly string[];
 };
 
 export type TrimTrackActivityOptions = {
@@ -521,6 +522,8 @@ export function mergeTrackActivities(
     throw new RangeError("At least one track activity is required.");
   }
 
+  assertNonOverlappingActivityTimes(activities, options.sourceNames);
+
   const indexedPoints: IndexedTrackPoint[] = [];
   const orderedActivities = getActivityMergeOrder(activities);
   let distanceOffsetM = 0;
@@ -651,6 +654,58 @@ function clearComputedMetadata(metadata: TrackActivityMetadata) {
   delete metadata.histograms;
   delete metadata.pedaling;
   delete metadata.pedalingDynamics;
+}
+
+type IndexedTrackTimeRange = {
+  index: number;
+  startTime: number;
+  endTime: number;
+};
+
+/** Reject overlapping recordings before chronological sorting can interleave segments. */
+function assertNonOverlappingActivityTimes(
+  activities: TrackActivity[],
+  sourceNames?: readonly string[],
+): void {
+  const ranges: IndexedTrackTimeRange[] = [];
+  activities.forEach((activity, index) => {
+    const pointRange = getTrackActivityPointTimeRange(activity.points);
+    const startTime = pointRange?.startTime ?? activity.metadata.startTime;
+    const endTime = pointRange?.endTime ?? getActivityEndTime(activity);
+    if (
+      !isFiniteNumber(startTime) ||
+      !isFiniteNumber(endTime) ||
+      endTime < startTime
+    ) {
+      return;
+    }
+    ranges.push({ index, startTime, endTime });
+  });
+  ranges.sort((a, b) => a.startTime - b.startTime || a.endTime - b.endTime);
+
+  for (let index = 1; index < ranges.length; index += 1) {
+    const previous = ranges[index - 1];
+    const current = ranges[index];
+    // Shared endpoints also overlap: both files claim the same instant.
+    if (current.startTime <= previous.endTime) {
+      const describe = (inputIndex: number): string => {
+        const name = sourceNames?.[inputIndex] || activities[inputIndex].metadata.name;
+        return name ? `"${name}"` : `input ${inputIndex + 1}`;
+      };
+      const overlapEnd = Math.min(previous.endTime, current.endTime);
+      const formatTime = (seconds: number): string => {
+        const date = new Date(seconds * 1000);
+        return Number.isFinite(date.getTime())
+          ? date.toISOString()
+          : `${seconds} Unix seconds`;
+      };
+      throw new RangeError(
+        `Cannot merge tracks: ${describe(previous.index)} and ${describe(current.index)} ` +
+        `have overlapping recording times (${formatTime(current.startTime)} – ` +
+        `${formatTime(overlapEnd)}).`,
+      );
+    }
+  }
 }
 
 type IndexedTrackPoint = {

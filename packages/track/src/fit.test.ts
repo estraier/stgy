@@ -1506,6 +1506,7 @@ describe("mergeTrackActivities", () => {
   test("drops merged local time offset unless all inputs agree", () => {
     const first = makeActivity(2);
     const second = makeActivity(2);
+    second.points.forEach((point) => { point.time = (point.time as number) + 100; });
     second.metadata.localTimeOffsetSeconds = 3600;
 
     expect(mergeTrackActivities([first, second]).metadata.localTimeOffsetSeconds)
@@ -1516,6 +1517,68 @@ describe("mergeTrackActivities", () => {
 
     expect(mergeTrackActivities([first, second]).metadata.localTimeOffsetSeconds)
       .toBeUndefined();
+  });
+
+  test("rejects identical recording windows and identifies source files", () => {
+    const first = makeActivity(3);
+    const second = makeActivity(3);
+    expect(() => mergeTrackActivities([first, second], {
+      sourceNames: ["00-day08.fit", "00-day09.fit"],
+    })).toThrow(/00-day08\.fit.*00-day09\.fit.*overlapping recording times/);
+  });
+
+  test("rejects partial overlap even when no timestamps are exactly equal", () => {
+    const first = makeActivity(2);
+    const second = makeActivity(2);
+    first.points[0].time = 100;
+    first.points[1].time = 200;
+    second.points[0].time = 150;
+    second.points[1].time = 250;
+    expect(() => mergeTrackActivities([first, second])).toThrow(
+      "overlapping recording times",
+    );
+  });
+
+  test("rejects touching endpoints but permits adjacent nonoverlapping recordings", () => {
+    const first = makeActivity(2);
+    const second = makeActivity(2);
+    first.points[0].time = 100;
+    first.points[1].time = 200;
+    second.points[0].time = 200;
+    second.points[1].time = 250;
+    expect(() => mergeTrackActivities([first, second])).toThrow(
+      "overlapping recording times",
+    );
+    second.points[0].time = 201;
+    expect(mergeTrackActivities([first, second]).points).toHaveLength(4);
+  });
+
+  test("rejects nested intervals, including overlaps involving a third input", () => {
+    const first = makeActivity(2);
+    const second = makeActivity(2);
+    const third = makeActivity(2);
+    first.points[0].time = 100;
+    first.points[1].time = 500;
+    second.points[0].time = 150;
+    second.points[1].time = 160;
+    third.points[0].time = 170;
+    third.points[1].time = 180;
+    expect(() => mergeTrackActivities([first, second, third])).toThrow(
+      "overlapping recording times",
+    );
+  });
+
+  test("uses metadata times when an input has no timestamped points", () => {
+    const first = makeActivity(2);
+    const second = makeActivity(2);
+    first.points[0].time = 100;
+    first.points[1].time = 200;
+    second.points.forEach((point) => { delete point.time; });
+    second.metadata.startTime = 150;
+    second.metadata.endTime = 250;
+    expect(() => mergeTrackActivities([first, second])).toThrow(
+      "overlapping recording times",
+    );
   });
 
   test("splits merged activities into one LineString per source segment", () => {
@@ -1690,6 +1753,7 @@ describe("mergeTrackActivities", () => {
   test("does not expose partial calories or incompatible source metadata", () => {
     const first = makeActivity(2);
     const second = makeActivity(2);
+    second.points.forEach((point) => { point.time = (point.time as number) + 100; });
     first.metadata.training = {
       totalCaloriesCal: 100000,
       source: { totalCalories: "fit" },

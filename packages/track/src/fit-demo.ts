@@ -216,7 +216,7 @@ async function convertInputFiles(
   const description = `Merged from ${files.map((file) => file.name).join(", ")}`;
   const mergedActivity = mergeTrackActivities(
     parsedInputs.map((input) => input.activity),
-    { name: title, description }
+    { name: title, description, sourceNames: files.map((file) => file.name) }
   );
 
   return buildConversionResultFromActivity({

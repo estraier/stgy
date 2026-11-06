@@ -1205,6 +1205,7 @@ async function convertFiles(
   const activity = parsed.length === 1
     ? firstParsed.activity
     : mergeTrackActivities(parsed.map((item) => item.activity), {
+      sourceNames: files.map((file) => file.name),
       name: title,
       description: `Merged from ${files.map((file) => file.name).join(", ")}`,
     });
