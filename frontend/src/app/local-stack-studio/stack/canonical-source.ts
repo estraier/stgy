@@ -577,6 +577,40 @@ export async function readCanonicalLinearRows(session: CanonicalReadableSession,
   return output;
 }
 
+/** Decode canonical chunks directly into the final float buffer without
+ * first materializing a full-image Uint16Array. Intended for large alignment
+ * frames in memory-constrained workers; values are bit-identical to
+ * readCanonicalLinearRows because both use the same decode LUT.
+ */
+export async function readCanonicalLinearRowsLowMemory(
+  session: CanonicalReadableSession, imageIndex: number, startRow: number, rowCount: number,
+): Promise<Float32Array> {
+  const meta = session.images[imageIndex];
+  if (!meta?.complete) throw new Error(`Canonical input cache is incomplete for image ${imageIndex + 1}.`);
+  if (!Number.isInteger(startRow) || !Number.isInteger(rowCount) || startRow < 0 || rowCount < 0 || startRow + rowCount > meta.height) {
+    throw new Error("Canonical row request is out of bounds.");
+  }
+  const rowElements = meta.width * 3;
+  const output = new Float32Array(rowCount * rowElements);
+  if (rowCount === 0) return output;
+  const lut = canonicalDecodeLut();
+  const firstChunk = Math.floor(startRow / meta.rowsPerChunk);
+  const lastChunk = Math.floor((startRow + rowCount - 1) / meta.rowsPerChunk);
+  for (let chunkIndex = firstChunk; chunkIndex <= lastChunk; chunkIndex += 1) {
+    const chunkStart = chunkIndex * meta.rowsPerChunk;
+    const chunkRows = Math.min(meta.rowsPerChunk, meta.height - chunkStart);
+    const chunk = await readChunk(session, imageIndex, chunkIndex);
+    if (chunk.length !== chunkRows * rowElements) throw new Error(`Canonical input cache is incomplete for ${meta.fileName}.`);
+    const copyStartRow = Math.max(startRow, chunkStart);
+    const copyEndRow = Math.min(startRow + rowCount, chunkStart + chunkRows);
+    const src = (copyStartRow - chunkStart) * rowElements;
+    const dst = (copyStartRow - startRow) * rowElements;
+    const length = (copyEndRow - copyStartRow) * rowElements;
+    for (let i = 0; i < length; i += 1) output[dst + i] = lut[chunk[src + i]];
+  }
+  return output;
+}
+
 export async function materializeCanonicalLinearImage(session: CanonicalReadableSession, imageIndex: number): Promise<Float32Array> {
   const meta = session.images[imageIndex];
   if (!meta) throw new Error(`Canonical input ${imageIndex + 1} is unavailable.`);

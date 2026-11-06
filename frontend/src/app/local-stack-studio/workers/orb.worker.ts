@@ -105,7 +105,6 @@ import type {
   let matcher: OpenCvDynamic = null;
   let emptyMask: OpenCvDynamic = null;
   let referenceGrayBytes: Uint8Array | null = null;
-  let progressive = false;
   let fineWidth = 0;
   let fineHeight = 0;
   let fineReferenceBytes: Uint8Array | null = null;
@@ -113,6 +112,7 @@ import type {
   let width = 0;
   let height = 0;
   let ready = false;
+  const pendingCoarse = new Map<number, { result: OrbAlignmentComputationResult; exposure: number | null }>();
 
   workerScope.onmessage = async (event: MessageEvent<AlignmentWorkerRequest>) => {
     const message = event.data;
@@ -128,14 +128,56 @@ import type {
         return;
       }
 
-      if (message.type === "align") {
+      if (message.type === "refine") {
+        if (!ready) throw new AlignmentImplementationError("ORB worker is not initialized.");
+        const pending = pendingCoarse.get(message.id);
+        if (!pending) throw new AlignmentImplementationError(`Missing 1MP alignment for ${message.fileName}.`);
+        pendingCoarse.delete(message.id);
+        if (message.referenceRefinement) {
+          const ref = message.referenceRefinement;
+          if (!(ref.width >= width && ref.height >= height) ||
+              new Uint8Array(ref.grayBuffer).length !== ref.width * ref.height) {
+            throw new AlignmentImplementationError("Invalid 8MP reference image.");
+          }
+          fineWidth = ref.width;
+          fineHeight = ref.height;
+          fineReferenceBytes = new Uint8Array(ref.grayBuffer);
+        }
+        // A validated global 1MP fallback deliberately skips 8MP refinement.
+        const result = pending.result.refinementStatus
+          ? pending.result
+          : refineProgressiveAlignment(pending.result, message.refinement, pending.exposure, message.fileName);
+        sendAlignmentResult(message, result);
+        return;
+      }
+
+      if (message.type === "align" || message.type === "coarse") {
         if (!ready) throw new AlignmentImplementationError("ORB worker is not initialized.");
         const result = alignTarget(
           message.grayBuffer,
           message.fileName || `image ${message.id}`,
           message.exposureScalar,
-          message.refinement,
+          message.type === "coarse" ? undefined : message.refinement,
+          message.type === "coarse",
         );
+        if (message.type === "coarse") pendingCoarse.set(message.id, { result, exposure: message.exposureScalar });
+        // The transferred matrix buffer is detached. Keep the coarse matrix
+        // owned by this worker until the later refinement request arrives.
+        sendAlignmentResult(message, message.type === "coarse"
+          ? { ...result, matrix: new Float64Array(result.matrix) } : result);
+      }
+    } catch (error) {
+      workerScope.postMessage({
+        type: "error",
+        requestId: message.requestId,
+        id: "id" in message ? message.id : null,
+        errorKind: alignmentErrorKind(error),
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+
+  function sendAlignmentResult(message: { requestId: number; id: number; fileName: string }, result: OrbAlignmentComputationResult) {
         const matrixBuffer = transferableBuffer(result.matrix);
         const response: OrbResultResponse = {
             type: "result",
@@ -163,17 +205,7 @@ import type {
             refinementCorrectionPx: result.refinementCorrectionPx,
           };
         workerScope.postMessage(response, [matrixBuffer]);
-      }
-    } catch (error) {
-      workerScope.postMessage({
-        type: "error",
-        requestId: message.requestId,
-        id: message.type === "align" ? message.id : null,
-        errorKind: alignmentErrorKind(error),
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
-  };
+  }
 
   async function initialize(message: AlignmentInitRequest) {
     cleanup();
@@ -197,13 +229,12 @@ import type {
     emptyMask = new cv.Mat();
     referenceGrayBytes = bytes;
     referenceExposureScalar = positiveExposureOrNull(message.exposureScalar);
-    progressive = message.progressive === true;
-    if (progressive) {
-      const fine = message.refinement;
-      if (!fine || !(fine.width >= width && fine.height >= height) ||
-          new Uint8Array(fine.grayBuffer).length !== fine.width * fine.height) {
-        throw new AlignmentImplementationError("Progressive ORB requires a valid 8MP reference frame.");
-      }
+    const fine = message.refinement;
+    if (fine && (!(fine.width >= width && fine.height >= height) ||
+        new Uint8Array(fine.grayBuffer).length !== fine.width * fine.height)) {
+      throw new AlignmentImplementationError("Invalid 8MP reference frame.");
+    }
+    if (fine) {
       fineWidth = fine.width;
       fineHeight = fine.height;
       fineReferenceBytes = new Uint8Array(fine.grayBuffer);
@@ -224,6 +255,7 @@ import type {
     fileName: string,
     targetExposureScalar: number | null,
     fine?: { width: number; height: number; grayBuffer: ArrayBuffer },
+    coarseOnly = false,
   ): OrbAlignmentComputationResult {
     const targetGrayBytes = new Uint8Array(grayBuffer);
     if (targetGrayBytes.length !== width * height) {
@@ -266,31 +298,29 @@ import type {
         throw new Error(`${fileName} has too few ORB features (${targetKeypoints.size()}) after preprocessing.`);
       }
 
-      // The experimental mode matches only spatially plausible descriptors;
-      // the original global BFMatcher path below is retained as a fallback.
-      if (progressive) {
-        try {
-          const coarseCandidates = spatialOrbCandidates(
-            referenceKeypoints, referenceDescriptors,
-            targetKeypoints, targetDescriptors,
-            new Float64Array([1, 0, 0, 0, 1, 0, 0, 0, 1]),
-            width * PROGRESSIVE_COARSE_LIMIT,
-            height * PROGRESSIVE_COARSE_LIMIT,
-            false,
+      // Prefer spatially constrained 1MP matches. The global descriptor
+      // matcher remains a recovery path when the constrained estimate fails.
+      try {
+        const coarseCandidates = spatialOrbCandidates(
+          referenceKeypoints, referenceDescriptors,
+          targetKeypoints, targetDescriptors,
+          new Float64Array([1, 0, 0, 0, 1, 0, 0, 0, 1]),
+          width * PROGRESSIVE_COARSE_LIMIT,
+          height * PROGRESSIVE_COARSE_LIMIT,
+          false,
+        );
+        if (coarseCandidates.length >= ORB_MIN_GOOD_MATCHES) {
+          const coarse = buildAlignmentResult(
+            estimateAlignment(coarseCandidates, false),
+            referenceKeypoints.size(), targetKeypoints.size(),
+            coarseCandidates.length, coarseCandidates.length,
+            PROGRESSIVE_COARSE_LIMIT, "none", preprocessing,
           );
-          if (coarseCandidates.length >= ORB_MIN_GOOD_MATCHES) {
-            const coarse = buildAlignmentResult(
-              estimateAlignment(coarseCandidates, false),
-              referenceKeypoints.size(), targetKeypoints.size(),
-              coarseCandidates.length, coarseCandidates.length,
-              PROGRESSIVE_COARSE_LIMIT, "none", preprocessing,
-            );
-            return refineProgressiveAlignment(coarse, fine, targetExposureScalar, fileName);
-          }
-          console.info(`[Progressive ORB] ${fileName}: 1MP 5% search found only ${coarseCandidates.length} matches; using original ORB.`);
-        } catch (error) {
-          console.warn(`[Progressive ORB] ${fileName}: 1MP constrained matching failed, using original ORB.`, error);
+          return coarseOnly ? coarse : refineProgressiveAlignment(coarse, fine, targetExposureScalar, fileName);
         }
+        console.info(`[ORB] ${fileName}: 1MP 5% search found only ${coarseCandidates.length} matches; trying global fallback.`);
+      } catch (error) {
+        console.warn(`[ORB] ${fileName}: 1MP constrained matching failed; trying global fallback.`, error);
       }
 
       matcher.match(referenceDescriptors, targetDescriptors, matches);
@@ -314,7 +344,7 @@ import type {
             "none",
             preprocessing,
           );
-          return progressive ? { ...result, refinementStatus: "1MP constrained failed; original ORB fallback" } : result;
+          return { ...result, refinementStatus: "1MP constrained failed; global matching fallback" };
         } catch (error) {
           lastError = error;
         }
@@ -339,7 +369,7 @@ import type {
             "relaxed-shift",
             preprocessing,
           );
-          return progressive ? { ...result, refinementStatus: "1MP constrained failed; original ORB relaxed fallback" } : result;
+          return { ...result, refinementStatus: "1MP constrained failed; relaxed global matching fallback" };
         } catch (error) {
           lastError = error;
         }
@@ -357,7 +387,7 @@ import type {
             "low-match-validated",
             preprocessing,
           );
-          return progressive ? { ...result, refinementStatus: "1MP constrained failed; original ORB low-match fallback" } : result;
+          return { ...result, refinementStatus: "1MP constrained failed; low-match global fallback" };
         } catch (error) {
           lastError = error;
         }
@@ -480,11 +510,11 @@ import type {
         return withStatus("8MP geometry did not pass validation; kept 1MP transform", stats);
       }
       const finalLow = scaleOrbAffine(fineEstimate.matrix, fineWidth, fineHeight, width, height);
-      console.info(`[Progressive ORB] ${fileName}: 8MP refined with ${fineCandidates.length} matches, ` +
+      console.info(`[ORB] ${fileName}: 8MP refined with ${fineCandidates.length} matches, ` +
         `${fineEstimate.reprojection.inlierCount} inliers, correction ${correctionPx.toFixed(2)} px.`);
       return withStatus("8MP refinement accepted", { ...stats, matrix: finalLow });
     } catch (error) {
-      console.warn(`[Progressive ORB] ${fileName}: 8MP refinement failed; kept 1MP transform.`, error);
+      console.warn(`[ORB] ${fileName}: 8MP refinement failed; kept 1MP transform.`, error);
       return withStatus(`8MP refinement failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       refDescriptors.delete();
@@ -958,6 +988,7 @@ import type {
 
   function cleanup() {
     ready = false;
+    pendingCoarse.clear();
     if (emptyMask) emptyMask.delete();
     if (matcher) matcher.delete();
     if (orb) orb.delete();
@@ -969,7 +1000,6 @@ import type {
     fineReferenceBytes = null;
     fineWidth = 0;
     fineHeight = 0;
-    progressive = false;
   }
 
 })();

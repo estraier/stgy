@@ -755,8 +755,10 @@ export class EccWorkerClient extends AlignmentWorkerRpcClient {
 }
 
 export class OrbWorkerClient extends AlignmentWorkerRpcClient {
-  constructor(url: URL, private readonly progressive = false) {
-    super(url, progressive ? "progressive ORB" : "ORB");
+  private referenceFineLoaded = false;
+
+  constructor(url: URL) {
+    super(url, "ORB");
   }
 
   initialize(
@@ -766,14 +768,18 @@ export class OrbWorkerClient extends AlignmentWorkerRpcClient {
     exposureScalar: number | null = null,
     refinement?: { width: number; height: number; grayBytes: Uint8Array | ArrayBufferLike },
   ): Promise<OrbReadyResponse> {
+    this.referenceFineLoaded = false;
     const grayBuffer = typedArrayBuffer(grayBytes);
-    const fineBuffer = this.progressive && refinement ? copiedGrayArrayBuffer(refinement.grayBytes) : null;
+    const fineBuffer = refinement ? copiedGrayArrayBuffer(refinement.grayBytes) : null;
     return this.request<OrbReadyResponse>(
-      { type: "init", width, height, grayBuffer, exposureScalar, progressive: this.progressive,
+      { type: "init", width, height, grayBuffer, exposureScalar,
         ...(fineBuffer && refinement ? { refinement: { width: refinement.width, height: refinement.height, grayBuffer: fineBuffer } } : {}) },
       fineBuffer ? [grayBuffer, fineBuffer] : [grayBuffer],
       "ready",
-    );
+    ).then((response) => {
+      this.referenceFineLoaded = Boolean(fineBuffer);
+      return response;
+    });
   }
 
   align(
@@ -784,7 +790,7 @@ export class OrbWorkerClient extends AlignmentWorkerRpcClient {
     refinement?: { width: number; height: number; grayBytes: Uint8Array | ArrayBufferLike },
   ): Promise<OrbAlignmentResult> {
     const grayBuffer = typedArrayBuffer(grayBytes);
-    const fineBuffer = this.progressive && refinement ? copiedGrayArrayBuffer(refinement.grayBytes) : null;
+    const fineBuffer = refinement ? copiedGrayArrayBuffer(refinement.grayBytes) : null;
     return this.request<OrbResultResponse>(
       { type: "align", id, fileName, grayBuffer, exposureScalar,
         ...(fineBuffer && refinement ? { refinement: { width: refinement.width, height: refinement.height, grayBuffer: fineBuffer } } : {}) },
@@ -812,6 +818,58 @@ export class OrbWorkerClient extends AlignmentWorkerRpcClient {
       refinementCorrectionPx: response.refinementCorrectionPx,
     }));
   }
+  alignCoarse(
+    id: number, fileName: string, grayBytes: Uint8Array, exposureScalar: number | null = null,
+  ): Promise<OrbAlignmentResult> {
+    const grayBuffer = typedArrayBuffer(grayBytes);
+    return this.request<OrbResultResponse>(
+      { type: "coarse", id, fileName, grayBuffer, exposureScalar }, [grayBuffer], "result",
+    ).then((response) => this.decodeResult(response));
+  }
+
+  refine(
+    id: number, fileName: string,
+    refinement: { width: number; height: number; grayBytes: Uint8Array | ArrayBufferLike },
+    referenceRefinement: { width: number; height: number; grayBytes: Uint8Array | ArrayBufferLike },
+  ): Promise<OrbAlignmentResult> {
+    const fineBuffer = copiedGrayArrayBuffer(refinement.grayBytes);
+    const refBuffer = this.referenceFineLoaded ? null : copiedGrayArrayBuffer(referenceRefinement.grayBytes);
+    return this.request<OrbResultResponse>({
+      type: "refine", id, fileName,
+      refinement: { width: refinement.width, height: refinement.height, grayBuffer: fineBuffer },
+      ...(refBuffer ? { referenceRefinement: {
+        width: referenceRefinement.width, height: referenceRefinement.height, grayBuffer: refBuffer,
+      } } : {}),
+    }, refBuffer ? [fineBuffer, refBuffer] : [fineBuffer], "result").then((response) => {
+      this.referenceFineLoaded = true;
+      return this.decodeResult(response);
+    });
+  }
+
+  private decodeResult(response: OrbResultResponse): OrbAlignmentResult {
+    return {
+      matrix: new Float64Array(asArrayBuffer(response.matrixBuffer, "alignment matrix")),
+      referenceFeatureCount: Number(response.referenceFeatureCount),
+      targetFeatureCount: Number(response.targetFeatureCount),
+      matchCount: Number(response.matchCount),
+      usableMatchCount: Number(response.usableMatchCount),
+      matchShiftLimit: Number(response.matchShiftLimit),
+      fallbackMode: response.fallbackMode,
+      reprojectionInlierCount: Number(response.reprojectionInlierCount),
+      reprojectionMedianError: Number(response.reprojectionMedianError),
+      reprojectionP95Error: Number(response.reprojectionP95Error),
+      referenceExposureGain: Number(response.referenceExposureGain),
+      targetExposureGain: Number(response.targetExposureGain),
+      exposureMatchSource: response.exposureMatchSource,
+      claheClipLimit: Number(response.claheClipLimit),
+      refinementStatus: response.refinementStatus,
+      refinementMatches: response.refinementMatches,
+      refinementInliers: response.refinementInliers,
+      refinementMedianError: response.refinementMedianError,
+      refinementCorrectionPx: response.refinementCorrectionPx,
+    };
+  }
+
 }
 
 

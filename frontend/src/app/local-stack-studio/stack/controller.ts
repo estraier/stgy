@@ -53,10 +53,12 @@ import {
 } from "./worker-clients";
 import {
   runAlignmentPool,
+  runProgressivePipelinedPool,
 } from "./alignment-pool";
+import { startProgressiveAlignmentFrames } from "./alignment-frame-worker-pool";
 import { runMedianPool } from "./median-pool";
 import {
-  alignmentFrameCacheBytes, alignmentFrameCacheKey, getCachedAlignmentFrame, putCachedAlignmentFrame,
+  alignmentFrameCacheKey, getCachedAlignmentFrame, putCachedAlignmentFrame,
 } from "./alignment-frame-cache";
 import { MEDIAN_TILE_SIZE } from "./median";
 import { runFocusFeaturePool } from "./focus-pool";
@@ -553,7 +555,7 @@ listen(processButton, "click", async () => {
     if (selectedMergeMode === "panorama" && files.length < 2) {
       throw new Error("Panorama requires at least two input images.");
     }
-    if (!["auto", "center-crop", "center-fit", "center-fill", "top-left-fill", "feature-match-ecc", "feature-match-orb", "feature-match-progressive-orb"].includes(alignmentMode.value)) {
+    if (!["auto", "center-crop", "center-fit", "center-fill", "top-left-fill", "feature-match-ecc", "feature-match-orb"].includes(alignmentMode.value)) {
       throw new Error(`Unsupported alignment mode: ${alignmentMode.value}`);
     }
 
@@ -1812,18 +1814,16 @@ function formatAlignmentModeName(mode) {
   if (mode === "feature-match") return "Content match";
   if (mode === "feature-match-ecc") return "Content match (ECC)";
   if (mode === "feature-match-orb") return "Content match (ORB)";
-  if (mode === "feature-match-progressive-orb") return "Content match (progressive ORB)";
   return "Auto";
 }
 
 function isFeatureMatchAlignmentMode(mode) {
-  return mode === "feature-match-ecc" || mode === "feature-match-orb" || mode === "feature-match-progressive-orb";
+  return mode === "feature-match-ecc" || mode === "feature-match-orb";
 }
 
 function alignmentAlgorithmFromMode(mode) {
   if (mode === "feature-match-ecc") return "ECC";
   if (mode === "feature-match-orb") return "ORB";
-  if (mode === "feature-match-progressive-orb") return "PROGRESSIVE_ORB";
   return null;
 }
 
@@ -1889,37 +1889,63 @@ function alignmentFrameDimensions(fullWidth, fullHeight, maxArea = ALIGNMENT_FRA
   };
 }
 
-// Prepare only the resolutions missing from the per-session cache. Keep the
-// original RGBA -> resize -> grayscale order, preserving the ORB input pixels.
+// Produce both resolutions directly from the normalized source to avoid
+// changing the coarse ORB features through a second resampling stage.
 function createAlignmentFramesFromRgba(cv, rgba, fullWidth, fullHeight, exposureScalar, makeBase, makeFine, timings) {
-  const createOne = (maxArea) => {
-    const fineStage = maxArea === PROGRESSIVE_ORB_FRAME_AREA;
-    const dimensions = alignmentFrameDimensions(fullWidth, fullHeight, maxArea);
-    const resized = dimensions.width === fullWidth && dimensions.height === fullHeight
-      ? null : new cv.Mat();
+  const fineDimensions = alignmentFrameDimensions(fullWidth, fullHeight, PROGRESSIVE_ORB_FRAME_AREA);
+  const baseDimensions = alignmentFrameDimensions(fullWidth, fullHeight, ALIGNMENT_FRAME_BASE_AREA);
+  let fineRgba = null;
+  const makeGrayFrame = (input, dimensions, fineStage) => {
     const gray = new cv.Mat();
     try {
-      const startedAt = performance.now();
-      if (resized) {
-        cv.resize(rgba, resized, new cv.Size(dimensions.width, dimensions.height), 0, 0, cv.INTER_AREA);
-      }
-      timings[fineStage ? "resize8mpMs" : "resize1mpMs"] += performance.now() - startedAt;
       const grayStartedAt = performance.now();
-      cv.cvtColor(resized || rgba, gray, cv.COLOR_RGBA2GRAY);
+      cv.cvtColor(input, gray, cv.COLOR_RGBA2GRAY);
       const grayBytes = copyMatBytes(gray, dimensions.width * dimensions.height);
       timings[fineStage ? "gray8mpMs" : "gray1mpMs"] += performance.now() - grayStartedAt;
       return { width: dimensions.width, height: dimensions.height, grayBytes };
     } finally {
       gray.delete();
-      if (resized) resized.delete();
     }
   };
-  const base = makeBase ? {
-    ...createOne(ALIGNMENT_FRAME_BASE_AREA),
-    fullWidth, fullHeight, exposureScalar,
-  } : null;
-  const refinement = makeFine ? createOne(PROGRESSIVE_ORB_FRAME_AREA) : null;
-  return { base, refinement };
+  try {
+    // Build the finer pyramid level first if it is needed, including when
+    // the coarse level is already cached.
+    let refinement = null;
+    if (makeFine) {
+      const resizeStartedAt = performance.now();
+      if (fineDimensions.width !== fullWidth || fineDimensions.height !== fullHeight) {
+        fineRgba = new cv.Mat();
+        cv.resize(rgba, fineRgba, new cv.Size(fineDimensions.width, fineDimensions.height), 0, 0, cv.INTER_AREA);
+      }
+      timings.resize8mpMs += performance.now() - resizeStartedAt;
+      refinement = makeGrayFrame(fineRgba || rgba, fineDimensions, true);
+    }
+
+    let base = null;
+    if (makeBase) {
+      const source = rgba;
+      const sourceWidth = fullWidth;
+      const sourceHeight = fullHeight;
+      const resized = baseDimensions.width === sourceWidth && baseDimensions.height === sourceHeight
+        ? null : new cv.Mat();
+      try {
+        const resizeStartedAt = performance.now();
+        if (resized) {
+          cv.resize(source, resized, new cv.Size(baseDimensions.width, baseDimensions.height), 0, 0, cv.INTER_AREA);
+        }
+        timings.resize1mpMs += performance.now() - resizeStartedAt;
+        base = {
+          ...makeGrayFrame(resized || source, baseDimensions, false),
+          fullWidth, fullHeight, exposureScalar,
+        };
+      } finally {
+        if (resized) resized.delete();
+      }
+    }
+    return { base, refinement };
+  } finally {
+    if (fineRgba) fineRgba.delete();
+  }
 }
 
 function scaleAlignmentMatrixToFullResolution(matrix, referenceFrame, targetFrame) {
@@ -1950,7 +1976,6 @@ function scaleAlignmentMatrixToFullResolution(matrix, referenceFrame, targetFram
 }
 
 function secondaryAlignmentAlgorithm(primaryAlgorithm) {
-  if (primaryAlgorithm === "PROGRESSIVE_ORB") return "ORB";
   return primaryAlgorithm === "ECC" ? "ORB" : "ECC";
 }
 
@@ -1960,20 +1985,18 @@ function createAlignmentWorkerClient(algorithm) {
       new URL("/generated/local-stack-studio/ecc.worker.js", window.location.origin),
     );
   }
-  if (algorithm === "ORB" || algorithm === "PROGRESSIVE_ORB") {
+  if (algorithm === "ORB") {
     return new OrbWorkerClient(
       new URL("/generated/local-stack-studio/orb.worker.js", window.location.origin),
-      algorithm === "PROGRESSIVE_ORB",
     );
   }
   throw new Error(`Unsupported alignment algorithm: ${algorithm}`);
 }
 
-function createAlignmentWorkers(preferredAlgorithm) {
+function createAlignmentWorkers() {
   return {
     ECC: createAlignmentWorkerClient("ECC"),
     ORB: createAlignmentWorkerClient("ORB"),
-    ...(preferredAlgorithm === "PROGRESSIVE_ORB" ? { PROGRESSIVE_ORB: createAlignmentWorkerClient("PROGRESSIVE_ORB") } : {}),
   };
 }
 
@@ -2081,7 +2104,7 @@ function buildTileLayout(mode, imageWidth, imageHeight, imageCount, folding = nu
 }
 
 function buildAlignmentPlan(files, inputInfos, selectedMode, mergeMode) {
-  const validModes = ["auto", "center-crop", "center-fit", "center-fill", "top-left-fill", "feature-match-ecc", "feature-match-orb", "feature-match-progressive-orb"];
+  const validModes = ["auto", "center-crop", "center-fit", "center-fill", "top-left-fill", "feature-match-ecc", "feature-match-orb"];
   if (!validModes.includes(selectedMode)) {
     throw new Error(`Unsupported alignment mode: ${selectedMode}`);
   }
@@ -2350,6 +2373,14 @@ async function alignAndMergeFilesWithOpenCv(
   // excluding the later image merge. Per-target timings overlap across workers.
   const alignmentTimingStart = needsAlignment ? performance.now() : 0;
   let framePreparationMs = 0;
+  let prepareProgressiveFine = null;
+  let coarseReadyByIndex = null;
+  let fineReadyByIndex = null;
+  let coarsePreparation = null;
+  let finePreparation = null;
+  let progressiveFrameDiagnostics = null;
+  let progressiveFrameStartMs = 0;
+  let progressiveFineWindow = null;
   let frameCacheHits = 0;
   let transformCacheHit = false;
   let recoveryMs = 0;
@@ -2371,36 +2402,153 @@ async function alignAndMergeFilesWithOpenCv(
     // Phase C: prepare all alignment frames before any merge starts.
     if (needsAlignment) {
       const preparationStartedAt = performance.now();
+      progressiveFrameStartMs = preparationStartedAt;
       setProgress("Preparing alignment frames from canonical inputs...");
       const frameCache = canonicalSession.alignmentFrameCache || (canonicalSession.alignmentFrameCache = new Map());
-      const progressive = alignmentPlan.effectiveMode === "feature-match-progressive-orb";
+      const progressive = alignmentPlan.effectiveMode === "feature-match-orb";
       const framePreparationDetails = [];
-      let coarseCacheHits = 0;
-      let fineCacheHits = 0;
-      let frameCacheEvictions = 0;
+      const frameDiagnosticEvents = [];
+      if (progressive) {
+        progressiveFrameDiagnostics = { details: framePreparationDetails, events: frameDiagnosticEvents };
+      }
+      if (progressive) {
+        // Start two actual CPU workers. They read canonical chunks directly from
+        // IndexedDB; full-resolution RGB buffers never cross worker boundaries.
+        const resolvers = [];
+        const coarsePromises = files.map((_, index) => new Promise((resolve) => { resolvers[index] = resolve; }));
+        const missing = [];
+        for (let index = 0; index < files.length; index += 1) {
+          const baseKey = alignmentFrameCacheKey(alignmentPlan.normalizationMode,
+            alignmentPlan.targetWidth, alignmentPlan.targetHeight, index);
+          const fineKey = alignmentFrameCacheKey(alignmentPlan.normalizationMode,
+            alignmentPlan.targetWidth, alignmentPlan.targetHeight, index, true);
+          const base = getCachedAlignmentFrame(frameCache, baseKey);
+          const refinement = getCachedAlignmentFrame(frameCache, fineKey);
+          if (base && refinement) frameCacheHits++;
+          const detail = { image: files[index].name,
+            cache: `${base ? "1MP hit" : "1MP miss"} / ${refinement ? "8MP hit" : "8MP miss"}`,
+            canonicalReadMs: 0, normalizationMs: 0, rgbaAllocationMs: 0,
+            colorConversionMs: 0, resize1mpMs: 0, coarseFrom8mp: false,
+            gray1mpMs: 0, resize8mpMs: 0, gray8mpMs: 0, yieldMs: 0, totalMs: 0 };
+          if (refinement) detail.fine = { cacheHit: true, totalWallMs: 0 };
+          framePreparationDetails[index] = detail;
+          alignmentFrames[index] = base ? { ...base, refinement } : { refinement };
+          if (base) {
+            frameDiagnosticEvents.push({ image: files[index].name, stage: "1mp-cache-hit", atMs: performance.now() - preparationStartedAt });
+            resolvers[index]();
+          } else missing.push({ index, targetWidth: alignmentPlan.targetWidth,
+            targetHeight: alignmentPlan.targetHeight,
+            normalizationMode: alignmentPlan.normalizationMode,
+            exposureScalar: inputInfos[index].exposureScalar });
+        }
+        const ordered = missing.sort((a, b) =>
+          (a.index === alignmentReferenceIndex ? -1 : b.index === alignmentReferenceIndex ? 1 : a.index - b.index));
+        // The same two CPU workers produce both resolutions. 1MP jobs take
+        // priority, and independent 8MP completions unblock refinement.
+        const fineResolvers = [];
+        const finePromises = files.map((_, index) => new Promise((resolve) => { fineResolvers[index] = resolve; }));
+        const fineMissing = [];
+        for (let index = 0; index < files.length; index += 1) {
+          if (alignmentFrames[index].refinement) fineResolvers[index]();
+          else fineMissing.push({ index, targetWidth: alignmentPlan.targetWidth,
+            targetHeight: alignmentPlan.targetHeight,
+            normalizationMode: alignmentPlan.normalizationMode,
+            exposureScalar: inputInfos[index].exposureScalar });
+        }
+        fineMissing.sort((a, b) =>
+          (a.index === alignmentReferenceIndex ? -1 : b.index === alignmentReferenceIndex ? 1 : a.index - b.index));
+        let firstFineStart = null;
+        let lastFineEnd = null;
+        const producer = startProgressiveAlignmentFrames({
+          sessionId: canonicalSession.id, coarseJobs: ordered, fineJobs: fineMissing,
+          hardwareConcurrency: typeof navigator === "object" ? navigator.hardwareConcurrency || 4 : 4,
+          onCoarse: (index, base, timing) => {
+            Object.assign(alignmentFrames[index], base);
+            const key = alignmentFrameCacheKey(alignmentPlan.normalizationMode,
+              alignmentPlan.targetWidth, alignmentPlan.targetHeight, index);
+            putCachedAlignmentFrame(frameCache, key, base);
+            const detail = framePreparationDetails[index];
+            detail.canonicalReadMs = timing.readMs;
+            detail.normalizationMs = timing.normMs;
+            detail.colorConversionMs = timing.colorConversionMs;
+            detail.resize1mpMs = timing.resizeMs;
+            detail.gray1mpMs = timing.grayMs;
+            detail.totalMs = timing.totalMs;
+            detail.coarseWorker = timing.workerIndex;
+            detail.coarseQueueMs = timing.queueMs;
+            detail.coarseWallMs = timing.wallMs;
+            frameDiagnosticEvents.push({ image: files[index].name, stage: "1mp-ready", atMs: performance.now() - preparationStartedAt });
+            resolvers[index]();
+          },
+          onFineStart: (index) => {
+            const at = performance.now() - preparationStartedAt;
+            if (firstFineStart === null) {
+              firstFineStart = at;
+              progressiveFineWindow = { startMs: at, endMs: null, wallMs: null };
+            }
+            frameDiagnosticEvents.push({ image: files[index].name, stage: "8mp-start", atMs: at });
+          },
+          onFine: (index, fine, timing) => {
+            // Preserve the placeholder identity used by pending ORB jobs.
+            alignmentFrames[index].refinement = fine;
+            const fineKey = alignmentFrameCacheKey(alignmentPlan.normalizationMode,
+              alignmentPlan.targetWidth, alignmentPlan.targetHeight, index, true);
+            putCachedAlignmentFrame(frameCache, fineKey, fine);
+            const at = performance.now() - preparationStartedAt;
+            lastFineEnd = at;
+            const detail = framePreparationDetails[index];
+            detail.fine = { canonicalReadMs: timing.readMs,
+              normalizationMs: timing.normMs, rgbaAllocationMs: 0,
+              colorConversionMs: timing.colorConversionMs,
+              resize1mpMs: 0, gray1mpMs: 0, resize8mpMs: timing.resizeMs,
+              gray8mpMs: timing.grayMs, yieldMs: 0,
+              totalWallMs: timing.wallMs, startMs: at - timing.wallMs,
+              endMs: at, cacheHit: false, worker: timing.workerIndex,
+              queueMs: timing.queueMs, workerTotalMs: timing.totalMs };
+            frameDiagnosticEvents.push({ image: detail.image, stage: "8mp-ready", atMs: at });
+            fineResolvers[index]();
+          },
+        });
+        coarsePreparation = { done: producer.coarseDone, stop: producer.stop };
+        finePreparation = producer;
+        prepareProgressiveFine = async () => {
+          await producer.done;
+          if (progressiveFineWindow && lastFineEnd !== null) {
+            progressiveFineWindow.endMs = lastFineEnd;
+            progressiveFineWindow.wallMs = lastFineEnd - firstFineStart;
+          }
+        };
+        coarseReadyByIndex = (index) => Promise.race([coarsePromises[index], producer.coarseDone.then(() => {
+          if (!alignmentFrames[index].grayBytes) throw new Error(`Missing 1MP frame: ${files[index].name}`);
+        })]);
+        fineReadyByIndex = (index) => Promise.race([
+          Promise.all([finePromises[alignmentReferenceIndex], finePromises[index]]).then(() => undefined),
+          producer.done.then(() => {
+            if (!alignmentFrames[alignmentReferenceIndex].refinement || !alignmentFrames[index].refinement)
+              throw new Error(`Missing 8MP frame: ${files[index].name}`);
+          }),
+        ]);
+        // Begin coarse ORB as soon as the reference exists. Remaining 1MP
+        // images continue to arrive independently, before all frames finish.
+        await coarseReadyByIndex(alignmentReferenceIndex);
+        frameDiagnosticEvents.push({ image: files[alignmentReferenceIndex].name, stage: "reference-1mp-ready", atMs: performance.now() - preparationStartedAt });
+      } else {
       for (let index = 0; index < files.length; index += 1) {
         const baseKey = alignmentFrameCacheKey(
           alignmentPlan.normalizationMode, alignmentPlan.targetWidth, alignmentPlan.targetHeight, index,
         );
-        // Share the 1MP frame between ECC, ORB and progressive ORB. Retain the
-        // 8MP grayscale image separately so switching modes never regenerates it.
-        const fineKey = alignmentFrameCacheKey(
-          alignmentPlan.normalizationMode, alignmentPlan.targetWidth, alignmentPlan.targetHeight, index, true,
-        );
+        // ECC shares the 1MP frame cache with ORB; it does not require 8MP.
         let base = getCachedAlignmentFrame(frameCache, baseKey);
-        let refinement = progressive ? getCachedAlignmentFrame(frameCache, fineKey) : null;
         const hadBase = Boolean(base);
-        const hadFine = Boolean(refinement);
-        if (hadBase) coarseCacheHits += 1;
-        if (progressive && hadFine) fineCacheHits += 1;
         const detail = {
           image: files[index].name,
-          cache: `${hadBase ? "1MP hit" : "1MP miss"}${progressive ? ` / ${hadFine ? "8MP hit" : "8MP miss"}` : ""}`,
+          cache: hadBase ? "1MP hit" : "1MP miss",
           canonicalReadMs: 0,
           normalizationMs: 0,
           rgbaAllocationMs: 0,
           colorConversionMs: 0,
           resize1mpMs: 0,
+          coarseFrom8mp: false,
           gray1mpMs: 0,
           resize8mpMs: 0,
           gray8mpMs: 0,
@@ -2408,8 +2556,9 @@ async function alignAndMergeFilesWithOpenCv(
           totalMs: 0,
         };
         const itemStartedAt = performance.now();
-        if (!base || (progressive && !refinement)) {
+        if (!base) {
           const normalized = await materializeNormalizedCanonicalLinear(cv, canonicalSession, index, alignmentPlan, detail);
+          detail.coarseFrom8mp = false;
           const prepared = createAlignmentFramesFromLinearProPhoto(
             cv,
             normalized,
@@ -2417,45 +2566,32 @@ async function alignAndMergeFilesWithOpenCv(
             alignmentPlan.targetHeight,
             inputInfos[index].exposureScalar,
             !base,
-            progressive && !refinement,
+            false,
             detail,
           );
           if (!base) {
             base = prepared.base;
-            frameCacheEvictions += putCachedAlignmentFrame(frameCache, baseKey, base);
-          }
-          if (progressive && !refinement) {
-            refinement = prepared.refinement;
-            frameCacheEvictions += putCachedAlignmentFrame(frameCache, fineKey, refinement);
+            putCachedAlignmentFrame(frameCache, baseKey, base);
           }
         }
-        if (!base || (progressive && !refinement)) throw new Error(`Could not prepare alignment frames for ${files[index].name}.`);
-        // Never attach the large refinement buffer to the shared 1MP cache.
-        alignmentFrames[index] = progressive ? { ...base, refinement } : base;
-        if (hadBase && (!progressive || hadFine)) frameCacheHits += 1;
+        if (!base) throw new Error(`Could not prepare 1MP alignment frame for ${files[index].name}.`);
+        alignmentFrames[index] = base;
+        if (hadBase) frameCacheHits += 1;
         const yieldStartedAt = performance.now();
-        await yieldToBrowser();
+        if (index + 1 < files.length) await yieldToBrowser();
         detail.yieldMs = performance.now() - yieldStartedAt;
         detail.totalMs = performance.now() - itemStartedAt;
         framePreparationDetails.push(detail);
       }
-      console.info(`[Alignment Frames] ${progressive ? "progressive ORB" : alignmentPlan.effectiveMode}: ` +
-        `1MP cache ${coarseCacheHits}/${files.length}, 8MP cache ${progressive ? `${fineCacheHits}/${files.length}` : "n/a"}. ` +
-        `Cache ${(alignmentFrameCacheBytes(frameCache) / (1024 * 1024)).toFixed(1)} MiB, ` +
-        `${frameCacheEvictions} eviction(s); stages: read/decode, RGB conversion, resize, grayscale and scheduling.`);
-      console.table(framePreparationDetails.map((detail) => ({
-        ...detail,
-        canonicalReadMs: Number(detail.canonicalReadMs.toFixed(1)),
-        normalizationMs: Number(detail.normalizationMs.toFixed(1)),
-        rgbaAllocationMs: Number(detail.rgbaAllocationMs.toFixed(1)),
-        colorConversionMs: Number(detail.colorConversionMs.toFixed(1)),
-        resize1mpMs: Number(detail.resize1mpMs.toFixed(1)),
-        gray1mpMs: Number(detail.gray1mpMs.toFixed(1)),
-        resize8mpMs: Number(detail.resize8mpMs.toFixed(1)),
-        gray8mpMs: Number(detail.gray8mpMs.toFixed(1)),
-        yieldMs: Number(detail.yieldMs.toFixed(1)),
-        totalMs: Number(detail.totalMs.toFixed(1)),
-      })));
+      }
+      // ORB diagnostics are emitted once after both producers and
+      // transform workers settle; ECC uses the simple per-frame log.
+      const logPreparedFrames = () => {
+        console.info(`[Alignment Frames] ${alignmentPlan.effectiveMode} JSON\n` +
+          JSON.stringify({ schemaVersion: 1, mode: alignmentPlan.effectiveMode,
+            frames: framePreparationDetails }, null, 2));
+      };
+      if (!progressive) logPreparedFrames();
       framePreparationMs = performance.now() - preparationStartedAt;
     }
 
@@ -2464,7 +2600,11 @@ async function alignAndMergeFilesWithOpenCv(
       const alignmentAlgorithm = alignmentAlgorithmFromMode(alignmentPlan.effectiveMode);
       if (!alignmentAlgorithm) throw new Error(`Unsupported feature matching mode: ${alignmentPlan.effectiveMode}`);
       const transformCache = canonicalSession.alignmentTransformCache || (canonicalSession.alignmentTransformCache = new Map());
-      const transformKey = `${alignmentPlan.effectiveMode}:${alignmentPlan.normalizationMode}:${alignmentPlan.targetWidth}x${alignmentPlan.targetHeight}:ref=${alignmentReferenceIndex}`;
+      // Distinguish the new two-resolution ORB from transforms cached by the
+      // retired single-resolution ORB while this canonical session is alive.
+      const modeCacheKey = alignmentPlan.effectiveMode === "feature-match-orb"
+        ? "feature-match-orb-1mp8mp-v1" : alignmentPlan.effectiveMode;
+      const transformKey = `${modeCacheKey}:${alignmentPlan.normalizationMode}:${alignmentPlan.targetWidth}x${alignmentPlan.targetHeight}:ref=${alignmentReferenceIndex}`;
       const cachedMatrices = transformCache.get(transformKey);
       if (cachedMatrices && cachedMatrices.length === files.length) {
         transformCacheHit = true;
@@ -2487,16 +2627,23 @@ async function alignAndMergeFilesWithOpenCv(
           : 4;
 
         const runDirectBatch = async (algorithm, jobs, phaseLabel) => {
-          const algorithmLabel = algorithm === "PROGRESSIVE_ORB" ? "progressive ORB" : algorithm;
+          const algorithmLabel = algorithm;
           const batchStartedAt = performance.now();
           const jobStartedAt = new Map();
           let started = 0;
           let completed = 0;
-          const batch = await runAlignmentPool({
+          const pipeline = algorithm === "ORB" && phaseLabel === "primary" && prepareProgressiveFine;
+          const batch = await (pipeline ? runProgressivePipelinedPool : runAlignmentPool)({
             jobs,
             referenceFrame,
             createClient: () => createAlignmentWorkerClient(algorithm),
             hardwareConcurrency,
+            ...(pipeline ? { prepareRefinement: prepareProgressiveFine, coarseReady: coarseReadyByIndex,
+              refinementReady: fineReadyByIndex, coarsePreparation: coarsePreparation?.done,
+              onStageEvent: (job, workerIndex, stage) => progressiveFrameDiagnostics?.events.push({
+                image: job.fileName, worker: workerIndex + 1, stage,
+                atMs: performance.now() - progressiveFrameStartMs,
+              }) } : {}),
             onJobStart: (job) => {
               jobStartedAt.set(job.id, performance.now());
               started += 1;
@@ -2516,9 +2663,9 @@ async function alignAndMergeFilesWithOpenCv(
                 elapsedMs: elapsedMs === null ? null : Number(elapsedMs.toFixed(1)),
                 result: "error" in outcome ? `failed: ${outcome.error.message}` : "ok",
               });
-              if (algorithm === "PROGRESSIVE_ORB" && "result" in outcome) {
+              if (algorithm === "ORB" && "result" in outcome) {
                 const stats = outcome.result;
-                console.info(`[Progressive ORB] ${job.fileName}: ${stats.refinementStatus ?? "not reported"}`, {
+                console.info(`[ORB] ${job.fileName}: ${stats.refinementStatus ?? "not reported"}`, {
                   candidates: stats.refinementMatches,
                   inliers: stats.refinementInliers,
                   medianError: stats.refinementMedianError,
@@ -2604,7 +2751,7 @@ async function alignAndMergeFilesWithOpenCv(
 
         if (deferredAlignments.length > 0) {
           const recoveryStartedAt = performance.now();
-          alignmentWorkers = createAlignmentWorkers(alignmentAlgorithm);
+          alignmentWorkers = createAlignmentWorkers();
           try {
             await recoverDeferredAlignments(
               alignmentWorkers,
@@ -2632,64 +2779,69 @@ async function alignAndMergeFilesWithOpenCv(
 
     if (needsAlignment) {
       const totalMs = performance.now() - alignmentTimingStart;
+      // Overlapping 8MP preparation is included in elapsed transform-stage wall time.
       const transformMs = Math.max(0, totalMs - framePreparationMs);
-      const modeLabel = alignmentPlan.effectiveMode === "feature-match-ecc"
-        ? "ECC"
-        : alignmentPlan.effectiveMode === "feature-match-orb"
-          ? "ORB"
-          : "progressive ORB";
-      console.info(
-        `[Alignment Timing] ${modeLabel}: total ${totalMs.toFixed(1)} ms ` +
-        `(frames ${framePreparationMs.toFixed(1)} ms, transforms ${transformMs.toFixed(1)} ms, ` +
-        `recovery ${recoveryMs.toFixed(1)} ms). ` +
-        `Frames cached ${frameCacheHits}/${files.length}; ` +
-        `transforms ${transformCacheHit ? "CACHE HIT (not recomputed)" : "computed"}.`,
-      );
-      if (alignmentBatchTimings.length > 0) {
-        console.info("[Alignment Timing] Worker batches (wall time, parallel workers):");
-        console.table(alignmentBatchTimings);
+      const modeLabel = alignmentPlan.effectiveMode === "feature-match-ecc" ? "ECC" : "ORB";
+      if (modeLabel === "ECC") {
+        console.info(
+          `[Alignment Timing] ${modeLabel}: total ${totalMs.toFixed(1)} ms ` +
+          `(frames ${framePreparationMs.toFixed(1)} ms, transforms ${transformMs.toFixed(1)} ms, ` +
+          `recovery ${recoveryMs.toFixed(1)} ms). ` +
+          `Frames cached ${frameCacheHits}/${files.length}; ` +
+          `transforms ${transformCacheHit ? "CACHE HIT (not recomputed)" : "computed"}.`,
+        );
+        if (alignmentBatchTimings.length > 0) {
+          console.info("[Alignment Timing] Worker batches (wall time, parallel workers):");
+          console.table(alignmentBatchTimings);
+        }
+        if (alignmentJobTimings.length > 0) {
+          console.info("[Alignment Timing] Each target (elapsed wall time; jobs run concurrently):");
+          console.table(alignmentJobTimings.sort((a, b) => a.image.localeCompare(b.image) || a.phase.localeCompare(b.phase)));
+        }
       }
-      if (alignmentJobTimings.length > 0) {
-        console.info("[Alignment Timing] Each target (elapsed wall time; jobs run concurrently):");
-        console.table(alignmentJobTimings.sort((a, b) => a.image.localeCompare(b.image) || a.phase.localeCompare(b.phase)));
-      }
-      // Preserve uncached estimates across mode changes within the same input
-      // session. Cached transforms must not masquerade as a fast alignment run.
-      const comparison = canonicalSession.alignmentTimingComparison ||
-        (canonicalSession.alignmentTimingComparison = new Map());
-      if (!transformCacheHit) {
-        comparison.set(alignmentPlan.effectiveMode, {
-          mode: modeLabel,
-          frameMs: Number(framePreparationMs.toFixed(1)),
-          solveMs: Number(transformMs.toFixed(1)),
-          totalMs: Number(totalMs.toFixed(1)),
-          framesCached: `${frameCacheHits}/${files.length}`,
-          primaryWorkers: alignmentBatchTimings[0]?.workers ?? 0,
-          retriesMs: Number(recoveryMs.toFixed(1)),
+    }
+
+    // Do not let unfinished 1MP producers outlive the alignment phase,
+    // including when the transform cache bypasses the worker pool.
+    if (coarsePreparation) {
+      await coarsePreparation.done;
+      await finePreparation?.done;
+      if (progressiveFrameDiagnostics) {
+        const round = (n) => typeof n === "number" && Number.isFinite(n) ? Number(n.toFixed(2)) : n;
+        const perImage = progressiveFrameDiagnostics.details.map((detail) => {
+          const fine = detail.fine ?? { cacheHit: Boolean(alignmentFrames[files.findIndex((f) => f.name === detail.image)]?.refinement) };
+          return {
+            image: detail.image, cache: detail.cache,
+            coarse1mp: { worker: detail.coarseWorker ?? null,
+              queueMs: round(detail.coarseQueueMs ?? 0), wallMs: round(detail.coarseWallMs ?? 0),
+              canonicalReadMs: round(detail.canonicalReadMs), normalizationMs: round(detail.normalizationMs),
+              colorConversionMs: round(detail.colorConversionMs), resizeMs: round(detail.resize1mpMs),
+              grayscaleMs: round(detail.gray1mpMs), workerTotalMs: round(detail.totalMs) },
+            fine8mp: Object.fromEntries(Object.entries(fine).map(([key, value]) => [key, round(value)])),
+          };
         });
-      }
-      console.info("[Alignment Timing] Comparison for this input session (latest uncached run of each mode; frame caches may differ):");
-      console.table(Array.from(comparison.values()));
-      const perImageComparison = canonicalSession.alignmentTimingPerImage ||
-        (canonicalSession.alignmentTimingPerImage = new Map());
-      if (!transformCacheHit) {
-        perImageComparison.set(modeLabel, new Map(
-          alignmentJobTimings.filter((row) => row.phase === "primary" && row.method === modeLabel)
-            .map((row) => [row.image, row.result === "ok" ? row.elapsedMs : "failed"]),
-        ));
-      }
-      const comparedFiles = new Set();
-      for (const timings of perImageComparison.values()) {
-        for (const fileName of timings.keys()) comparedFiles.add(fileName);
-      }
-      if (comparedFiles.size > 0) {
-        console.info("[Alignment Timing] Primary job time per image in ms (concurrent, excludes worker startup):");
-        console.table(Array.from(comparedFiles).sort().map((image) => ({
-          image,
-          ECC: perImageComparison.get("ECC")?.get(image) ?? "—",
-          ORB: perImageComparison.get("ORB")?.get(image) ?? "—",
-          progressiveORB: perImageComparison.get("progressive ORB")?.get(image) ?? "—",
-        })));
+        const totals = { coarse1mpWorkerStageSumMs: {}, fine8mpStageSumMs: {} };
+        for (const [key, target, selector] of [
+          ["coarse1mp", totals.coarse1mpWorkerStageSumMs, ["canonicalReadMs", "normalizationMs", "colorConversionMs", "resizeMs", "grayscaleMs"]],
+          ["fine8mp", totals.fine8mpStageSumMs, ["canonicalReadMs", "normalizationMs", "rgbaAllocationMs", "colorConversionMs", "resize8mpMs", "gray8mpMs", "yieldMs"]],
+        ]) for (const name of selector) target[name] = round(perImage.reduce((sum, frame) => sum + (frame[key]?.[name] ?? 0), 0));
+        const totalMs = performance.now() - alignmentTimingStart;
+        const payload = {
+          schemaVersion: 1, mode: "ORB", algorithm: "progressive 1MP/8MP", unit: "ms",
+          notes: ["Wall times of overlapping stages must not be added together.",
+            "Worker stage sums are CPU/worker elapsed sums, not end-to-end elapsed times.",
+            "1MP and 8MP preparation share a bounded two-worker pool; 8MP frames may overlap."],
+          summary: { totalWallMs: round(totalMs), reference1mpReadyMs: round(framePreparationMs),
+            remainingWallAfterReferenceMs: round(totalMs - framePreparationMs),
+            fine8mpWindow: progressiveFineWindow && Object.fromEntries(Object.entries(progressiveFineWindow).map(([k,v]) => [k, round(v)])),
+            coarseCacheHits: perImage.filter((f) => f.cache.startsWith("1MP hit")).length,
+            fineCacheHits: perImage.filter((f) => f.cache.includes("8MP hit")).length,
+            transformCacheHit, recoveryMs: round(recoveryMs), workerBatches: alignmentBatchTimings,
+            workerJobs: alignmentJobTimings },
+          stageSums: totals, frames: perImage,
+          timeline: progressiveFrameDiagnostics.events.map((event) => ({ ...event, atMs: round(event.atMs) })),
+        };
+        console.info("[Alignment Diagnostics JSON]\n" + JSON.stringify(payload, null, 2));
       }
     }
 
@@ -2854,10 +3006,10 @@ async function alignAndMergeFilesWithOpenCv(
 
     throw new Error(`Unsupported merge mode: ${mergePlan.mode}`);
   } finally {
+    coarsePreparation?.stop();
     if (alignmentWorkers) {
       alignmentWorkers.ECC.terminate();
       alignmentWorkers.ORB.terminate();
-      alignmentWorkers.PROGRESSIVE_ORB?.terminate();
     }
     focusWorker?.terminate();
     hdr1StreamWorker?.terminate();

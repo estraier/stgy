@@ -1,5 +1,5 @@
 /** Session-local grayscale alignment frames, shared across alignment algorithms.
- * A 1MP frame is reused by ECC/ORB/progressive ORB; only progressive ORB
+ * A 1MP frame is reused by ECC/ORB; only ORB
  * requests an additional 8MP frame. The cache is LRU and memory bounded.
  */
 export const ALIGNMENT_FRAME_CACHE_MAX_BYTES = 128 * 1024 * 1024;

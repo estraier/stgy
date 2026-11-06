@@ -1,7 +1,7 @@
 import type { AlignmentErrorKind } from "../alignment-error";
 import type { AlignmentExposureMatchSource } from "../alignment-preprocess";
 
-export type AlignmentAlgorithm = "ECC" | "ORB" | "PROGRESSIVE_ORB";
+export type AlignmentAlgorithm = "ECC" | "ORB";
 
 export type AlignmentInitRequest = {
   type: "init";
@@ -10,7 +10,6 @@ export type AlignmentInitRequest = {
   height: number;
   grayBuffer: ArrayBuffer;
   exposureScalar: number | null;
-  progressive?: boolean;
   refinement?: { width: number; height: number; grayBuffer: ArrayBuffer };
 };
 
@@ -21,11 +20,21 @@ export type AlignmentAlignRequest = {
   fileName: string;
   grayBuffer: ArrayBuffer;
   exposureScalar: number | null;
-  progressive?: boolean;
   refinement?: { width: number; height: number; grayBuffer: ArrayBuffer };
 };
 
-export type AlignmentWorkerRequest = AlignmentInitRequest | AlignmentAlignRequest;
+export type ProgressiveCoarseRequest = Omit<AlignmentAlignRequest, "type" | "refinement"> & { type: "coarse" };
+export type ProgressiveRefineRequest = {
+  type: "refine";
+  requestId: number;
+  id: number;
+  fileName: string;
+  refinement: { width: number; height: number; grayBuffer: ArrayBuffer };
+  referenceRefinement?: { width: number; height: number; grayBuffer: ArrayBuffer };
+};
+
+export type AlignmentWorkerRequest = AlignmentInitRequest | AlignmentAlignRequest |
+  ProgressiveCoarseRequest | ProgressiveRefineRequest;
 
 export type AlignmentErrorResponse = {
   type: "error";
