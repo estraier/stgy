@@ -96,7 +96,7 @@ import {
 } from "./canonical-input-pool";
 import { runLensfunCorrectionPool } from "./lensfun-pool";
 import { buildStfApertureWeights, DEFAULT_STF_BLEND_WEIGHT } from "./stf-weights";
-import { buildStfAdditionalBlurPlan, DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS, STF_BLUR_STRENGTH_VALUES, STF_BLUR_AREA_GUARD_VALUES, STF_BLUR_RATIO_VALUES, STF_BLUR_SIGMOID_VALUES } from "./stf-additional-blur-mode";
+import { buildStfAdditionalBlurPlan, resolveStfGateExpansionMultiplier, DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS, STF_BLUR_STRENGTH_VALUES, STF_BLUR_AREA_GUARD_VALUES, STF_BLUR_RATIO_VALUES, STF_BLUR_SIGMOID_VALUES } from "./stf-additional-blur-mode";
 import {
   DEFAULT_PANORAMA_DOWNSCALE_MEGAPIXELS,
   DEFAULT_PANORAMA_FINISH_MODE,
@@ -3274,11 +3274,8 @@ async function mergeStfWithAdditionalBlur(
         cache.baseKey = baseKey;
       }
     }
-    if (plan.gateOnly) {
-      infoTrace?.add("STF protection gate", performance.now() - gateStartedAt, "Merge");
-      return finalizeStfBasicGate(base, width, height, outputColorSpace);
-    }
-    const blurRadius = algorithm.resolveStfAdditionalBlurRadius(width, height, plan.strengthMultiplier);
+    const blurRadius = algorithm.resolveStfAdditionalBlurRadius(
+      width, height, resolveStfGateExpansionMultiplier(plan));
     const expandedKey = JSON.stringify([baseKey, blurRadius, 0.5, 0.2, 0.7]);
     let expanded = cache.expandedKey === expandedKey ? cache.expanded : null;
     if (!expanded) {
@@ -3307,6 +3304,9 @@ async function mergeStfWithAdditionalBlur(
       }
     }
     infoTrace?.add("STF protection gate", performance.now() - gateStartedAt, "Merge");
+    // Gate-only preview shows exactly the expanded protection mask used by the blur stage.
+    // It does not compute the source merge or apply the Gaussian blur.
+    if (plan.gateOnly) return finalizeStfBasicGate(expanded, width, height, outputColorSpace);
     const blurStartedAt = performance.now();
     if (!source) {
       setProgress("STF merging source for additional blur...");

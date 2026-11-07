@@ -41,3 +41,11 @@ export function buildStfAdditionalBlurPlan(options: StfAdditionalBlurOptions): S
   const effectiveRatio = enabled && (areaExponent !== null || options.sigmoid !== 0) ? options.ratio : null;
   return { ...options, enabled, gateOnly: options.strength === "gate", strengthMultiplier, areaExponent, effectiveRatio };
 }
+
+/** Gate-only preview uses medium-strength dilation without performing Gaussian blur. */
+export function resolveStfGateExpansionMultiplier(plan: StfAdditionalBlurPlan): 1 | 2 | 3 {
+  if (!plan.enabled) throw new Error("STF gate expansion is disabled.");
+  if (plan.gateOnly) return 2;
+  if (plan.strengthMultiplier === null) throw new Error("STF blur strength multiplier is missing.");
+  return plan.strengthMultiplier;
+}

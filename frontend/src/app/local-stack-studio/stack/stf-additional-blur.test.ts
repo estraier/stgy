@@ -170,6 +170,27 @@ describe("STF production sharpness and protection gate", () => {
     expect(data[15 * w + 15]).toBe(1);
     expect(weak[14 * w + 15]).toBeGreaterThanOrEqual(0.7 - 1e-6);
   });
+  test("gate preview expansion matches the blur stage across worker stripe boundaries", () => {
+    const width = 31, height = 27;
+    const radius = resolveStfAdditionalBlurRadius(4_000, 4_000, 2);
+    const original = new Float32Array(width * height);
+    original[6 * width + 14] = 1;
+    original[14 * width + 3] = 0.95;
+    original[20 * width + 25] = 0.8;
+    const full = applyStfGateExpansion(original, width, height, radius);
+    const stripeOutput = new Float32Array(width * height);
+    const halo = Math.max(1, Math.round(radius * 0.5));
+    for (let start = 0; start < height; start += 5) {
+      const end = Math.min(height, start + 5);
+      const regionY = Math.max(0, start - halo);
+      const regionEnd = Math.min(height, end + halo);
+      const part = applyStfGateExpansion(original.slice(regionY * width, regionEnd * width),
+        width, regionEnd - regionY, radius);
+      stripeOutput.set(part.subarray((start - regionY) * width, (end - regionY) * width), start * width);
+    }
+    expect(Array.from(stripeOutput)).toEqual(Array.from(full));
+    expect(full[6 * width + 17]).toBeGreaterThan(original[6 * width + 17]);
+  });
   test("guarded Gaussian keeps protected subject and suppresses its spill onto a dark background", () => {
     const w = 17, h = 17, rgb = new Float32Array(w * h * 3);
     const gate = new Float32Array(w * h);

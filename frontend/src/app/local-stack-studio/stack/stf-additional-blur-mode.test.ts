@@ -1,5 +1,5 @@
 import {
-  buildStfAdditionalBlurPlan, DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS,
+  buildStfAdditionalBlurPlan, resolveStfGateExpansionMultiplier, DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS,
   STF_BLUR_STRENGTH_VALUES, STF_BLUR_AREA_GUARD_VALUES,
   STF_BLUR_RATIO_VALUES, STF_BLUR_SIGMOID_VALUES,
 } from "./stf-additional-blur-mode";
@@ -16,7 +16,7 @@ describe("STF Additional Blur production option specification", () => {
     expect(STF_BLUR_SIGMOID_VALUES[20]).toBe(100);
     expect(DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS).toEqual({ strength: "none", ratio: 0.5, areaGuard: "medium", sigmoid: 75 });
   });
-  test("none avoids all additional processing and gate suppresses dilation/blur", () => {
+  test("none disables processing and gate previews expanded protection without blur", () => {
     const disabled = buildStfAdditionalBlurPlan(DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS);
     expect(disabled.enabled).toBe(false);
     expect(disabled.strengthMultiplier).toBeNull();
@@ -26,12 +26,16 @@ describe("STF Additional Blur production option specification", () => {
     expect(gate.enabled).toBe(true);
     expect(gate.gateOnly).toBe(true);
     expect(gate.strengthMultiplier).toBeNull();
+    // Medium dilation is a consistent reference for gate-only preview.
+    expect(resolveStfGateExpansionMultiplier(gate)).toBe(2);
+    expect(() => resolveStfGateExpansionMultiplier(disabled)).toThrow();
   });
   test("Gaussian strength and area-guard exponent are independent", () => {
     for (const [strength, multiplier] of [["weak", 1], ["medium", 2], ["strong", 3]] as const) {
       for (const [areaGuard, exponent] of [["none", null], ["weak", 0.95], ["medium", 0.85], ["strong", 0.75]] as const) {
         const plan = buildStfAdditionalBlurPlan({ strength, ratio: 0.7, areaGuard, sigmoid: 75 });
         expect(plan.strengthMultiplier).toBe(multiplier);
+        expect(resolveStfGateExpansionMultiplier(plan)).toBe(multiplier);
         expect(plan.areaExponent).toBe(exponent);
         expect(plan.effectiveRatio).toBe(0.7);
       }

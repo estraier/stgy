@@ -311,7 +311,7 @@ export default function PageBody() {
                     <option value="weak">weak</option>
                     <option value="medium">medium</option>
                     <option value="strong">strong</option>
-                    <option value="gate">gate (before expansion)</option>
+                    <option value="gate">gate</option>
                   </select>
                 </label>
                 <label id="stf-blur-ratio-option" className="hidden flex-col items-start gap-1.5">
