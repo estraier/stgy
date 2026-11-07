@@ -495,7 +495,6 @@ export async function runProgressiveEccPool<
           copyGrayBytes(referenceFrame), referenceFrame.exposureScalar, referenceFrame.refinement);
       } catch (error) {
         initializationError = asError(error);
-        console.warn("[ECC] ORB refinement worker unavailable; ECC results will be kept.", initializationError);
       }
       // Use ready-first scheduling, so one slowly generated 8MP frame does
       // not block another target on the same worker.
@@ -534,7 +533,6 @@ export async function runProgressiveEccPool<
             onStageEvent?.(next.job, coarseWorkers + workerIndex, "orb-8mp-ready");
           } catch (error) {
             const detail = asError(error);
-            console.warn(`[ECC] ${next.job.fileName}: 8MP ORB refinement failed; kept ECC.`, detail);
             result = { ...coarse, refinementStatus: `8MP refinement failed: ${detail.message}; kept ECC` } as typeof result;
           }
         }

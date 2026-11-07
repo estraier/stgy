@@ -675,9 +675,7 @@
                   try {
                     t.sheet.insertRule(Q, 0);
                   } catch (t) {
-                    console.warn(
-                      "MathJax: can't insert css rule '".concat(Q, "': ").concat(t.message),
-                    );
+                    void 0;
                   }
                 }
               } catch (t) {
@@ -899,9 +897,7 @@
                           e.CONFIG.versionWarnings &&
                             n.isLoaded &&
                             !t.versions.has(Q.Package.resolvePath(r)) &&
-                            console.warn(
-                              "No version information available for component ".concat(r),
-                            );
+                            void 0;
                         }),
                       ));
                   };
@@ -954,12 +950,7 @@
                 return (
                   t.versions.set(Q.Package.resolvePath(n), r),
                   !(!e.CONFIG.versionWarnings || o === r) &&
-                    (console.warn(
-                      "Component "
-                        .concat(n, " uses ")
-                        .concat(o, " of MathJax; version in use is ")
-                        .concat(r),
-                    ),
+                    (void 0,
                     !0)
                 );
               }),
@@ -979,7 +970,7 @@
             load: [],
             ready: T.defaultReady.bind(T),
             failed: function (t) {
-              return console.log("MathJax(".concat(t.package || "?", "): ").concat(t.message));
+              return void 0;
             },
             require: null,
             pathFilters: [],
@@ -12018,7 +12009,7 @@
               return null;
             }),
             (t.prototype.warn = function (t) {
-              console.log("TexParser Warning: " + t);
+              void 0;
             }),
             t
           );
@@ -43392,7 +43383,7 @@
                   if (!e) return;
                   (Object.assign(this.settings, JSON.parse(e)), this.setA11y(this.settings));
                 } catch (t) {
-                  console.log("MathJax localStorage error: " + t.message);
+                  void 0;
                 }
               }),
               (t.prototype.saveUserSettings = function () {
@@ -43418,7 +43409,7 @@
                     ? localStorage.setItem(t.MENU_STORAGE, JSON.stringify(n))
                     : localStorage.removeItem(t.MENU_STORAGE);
                 } catch (t) {
-                  console.log("MathJax localStorage error: " + t.message);
+                  void 0;
                 }
               }),
               (t.prototype.setA11y = function (t) {
@@ -43543,7 +43534,7 @@
                       .catch(function (e) {
                         t._loadingPromise
                           ? ((t._loadingPromise = null), t._loadingFailed(e))
-                          : console.log(e);
+                          : void 0;
                       });
                     t.loadingPromises.set(e, o);
                   }
@@ -43958,7 +43949,7 @@
                   this.menu.isLoading &&
                     T.mathjax.retryAfter(
                       this.menu.loadingPromise.catch(function (t) {
-                        return console.log(t);
+                        return void 0;
                       }),
                     );
                   var t = this.menu.settings;
@@ -43995,7 +43986,7 @@
                   enableExplorer: !0,
                   enrichSpeech: "none",
                   enrichError: function (t, e, r) {
-                    return console.warn("Enrichment Error:", r);
+                    return void 0;
                   },
                 },
                 t.OPTIONS,
@@ -45408,7 +45399,7 @@
             invalidOption: "warn",
             optionError: function (t, r) {
               if ("fatal" === e.OPTIONS.invalidOption) throw new Error(t);
-              console.warn("MathJax: " + t);
+              void 0;
             },
           }));
         var Q = function () {};
@@ -50061,7 +50052,7 @@
                 return (e.baseMenu ? e.baseMenu : e).store.active;
               }),
               (t.error = function (t, e) {
-                console.error("ContextMenu Error: " + e);
+                void 0;
               }),
               (t.counter = function () {
                 return e++;
@@ -51264,7 +51255,7 @@
                 ? e.push("<" + t.replace(/^begin/, "") + ">")
                 : t.match(/^end/)
                   ? e.push("</" + t.replace(/^end/, "") + ">")
-                  : console.warn("Something went wrong with layout markup: " + t);
+                  : void 0;
             }
             return (e.push(this.processContent(r)), e.join(""));
           }
@@ -51774,7 +51765,7 @@
         const n = r(2315);
         class o {
           constructor() {
-            ((this.isActive_ = !1), (this.outputFunction_ = console.info), (this.stream_ = null));
+            ((this.isActive_ = !1), (this.outputFunction_ = function () {}), (this.stream_ = null));
           }
           static getInstance() {
             return ((o.instance = o.instance || new o()), o.instance);
@@ -51799,17 +51790,17 @@
               this.stream_.on(
                 "error",
                 function (t) {
-                  (console.info("Invalid log file. Debug information sent to console."),
-                    (this.outputFunction_ = console.info));
+                  (void 0,
+                    (this.outputFunction_ = function () {}));
                 }.bind(this),
               ),
               this.stream_.on("finish", function () {
-                console.info("Finalizing debug file.");
+                void 0;
               }));
           }
           output_(t) {
             this.outputFunction_.apply(
-              console.info === this.outputFunction_ ? console : this.outputFunction_,
+              this.outputFunction_,
               ["Speech Rule Engine Debugger:"].concat(t),
             );
           }
@@ -52894,7 +52885,7 @@
           static ensureLocale(t, e) {
             return r.LOCALES.get(t)
               ? t
-              : (console.error(`Locale ${t} does not exist! Using ${r.LOCALES.get(e)} instead.`),
+              : (void 0,
                 e);
           }
         }
@@ -54068,8 +54059,8 @@
         function j(t, e, r) {
           const n = o.formatXml(t.toString());
           r
-            ? console.info(e + ":\n```html\n" + l.removeAttributePrefix(n) + "\n```\n")
-            : console.info(n);
+            ? void 0
+            : void 0;
         }
         ((e.SETTINGS = { collapsed: !0, implicit: !0 }),
           (e.enrich = function (t, e) {
@@ -54140,11 +54131,11 @@
             return a;
           }),
           (e.printNodeList__ = function (t, e) {
-            (console.info(t),
+            (void 0,
               o.toArray(e).forEach(function (t) {
-                console.info(t.toString());
+                void 0;
               }),
-              console.info("<<<<<<<<<<<<<<<<<"));
+              void 0);
           }));
       },
       5105: function (t, e, r) {
@@ -55057,7 +55048,7 @@
           (e.getLocale = y),
           (e.completeLocale = function (t) {
             const r = e.locales[t.locale];
-            if (!r) return void console.error("Locale " + t.locale + " does not exist!");
+            if (!r) return void void 0;
             const n = t.kind.toUpperCase(),
               o = t.messages;
             if (!o) return;
@@ -56496,7 +56487,7 @@
             const a = this.parseAction(r),
               Q = this.parsePrecondition(n, o),
               s = this.parseCstr(e);
-            if (!(a && Q && s)) return (console.error(`Rule Error: ${n}, (${e}): ${r}`), null);
+            if (!(a && Q && s)) return (void 0, null);
             const T = new i.SpeechRule(t, s, Q, a);
             return ((T.precondition.rank = this.rank++), this.addRule(T), T);
           }
@@ -56562,7 +56553,7 @@
             } catch (e) {
               if ("RuleError" === e.name)
                 return (
-                  console.error("Rule Error ", `Illegal Dynamic Constraint: ${t}.`, e.message),
+                  void 0,
                   null
                 );
               throw e;
@@ -56578,7 +56569,7 @@
             } catch (r) {
               if ("RuleError" === r.name)
                 return (
-                  console.error("Rule Error ", `Illegal preconditions: ${t}, ${e}.`, r.message),
+                  void 0,
                   null
                 );
               throw r;
@@ -56589,7 +56580,7 @@
               return i.Action.fromString(t);
             } catch (e) {
               if ("RuleError" === e.name)
-                return (console.error("Rule Error ", `Illegal action: ${t}.`, e.message), null);
+                return (void 0, null);
               throw e;
             }
           }
@@ -56617,11 +56608,11 @@
             try {
               r = i.Action.fromString(e);
             } catch (t) {
-              if ("RuleError" === t.name) return void console.error("Action Error ", e, t.message);
+              if ("RuleError" === t.name) return void void 0;
               throw t;
             }
             const n = this.getFullPreconditions(t);
-            if (!n) return void console.error(`Action Error: No precondition for action ${t}`);
+            if (!n) return void void 0;
             this.ignoreRules(t);
             const o = new RegExp("^\\w+\\.\\w+\\." + (this.domain ? "\\w+\\." : ""));
             n.conditions.forEach(([e, n]) => {
@@ -56638,7 +56629,7 @@
               i = this.parseCstr(e);
             o && i
               ? ((o.rank = this.rank++), this.preconditions.set(t, new s(i, o)))
-              : console.error(`Precondition Error: ${r}, (${e})`);
+              : void 0;
           }
           inheritRules() {
             if (!this.inherits || !this.inherits.getSpeechRules().length) return;
@@ -57281,11 +57272,11 @@
           }
           defineAlias(t, e, ...r) {
             const n = this.parsePrecondition(e, r);
-            if (!n) return void console.error(`Precondition Error: ${e} ${r}`);
+            if (!n) return void void 0;
             const o = this.preconditions.get(t);
             o
               ? o.addFullCondition(n)
-              : console.error(`Alias Error: No precondition by the name of ${t}`);
+              : void 0;
           }
           defineRulesAlias(t, e, ...r) {
             const n = this.findAllRules(function (e) {
@@ -57314,11 +57305,11 @@
           }
           defineSpecialized(t, e, r) {
             const n = this.parseCstr(r);
-            if (!n) return void console.error(`Dynamic Constraint Error: ${r}`);
+            if (!n) return void void 0;
             const o = this.preconditions.get(t);
             o
               ? o.addConstraint(n)
-              : console.error(`Alias Error: No precondition by the name of ${t}`);
+              : void 0;
           }
           evaluateString(t) {
             const e = [];
@@ -57675,7 +57666,7 @@
                   this.customGenerators.add(t[0], t[1]);
                   break;
                 default:
-                  console.error("FunctionError: Invalid function name " + t[0]);
+                  void 0;
               }
             }
           }
@@ -57736,7 +57727,7 @@
             try {
               r = this.evaluateNode_(t);
             } catch (t) {
-              (console.error("Something went wrong computing speech."),
+              (void 0,
                 o.Debugger.getInstance().output(t));
             }
             const n = new Date().getTime();
@@ -58070,9 +58061,7 @@
             const e = new RegExp("^" + this.prefix);
             return (
               !!t.match(e) ||
-              (console.error(
-                "FunctionError: Invalid function name. Expected prefix " + this.prefix,
-              ),
+              (void 0,
               !1)
             );
           }
@@ -61955,7 +61944,7 @@
             return !0;
           }
           displayTree() {
-            console.info(this.displayTree_(0));
+            void 0;
           }
           addAnnotation(t, e) {
             e && this.addAnnotation_(t, e);
@@ -63009,7 +62998,7 @@
             return e || t;
           }
           proof(t, e, r) {
-            if ((e.inference || e.axiom || console.log("Noise"), e.axiom)) {
+            if ((e.inference || e.axiom || void 0, e.axiom)) {
               const e = T.getInstance().cleanInference(t.childNodes),
                 n = e.length
                   ? T.getInstance().factory_.makeBranchNode("inference", r(e), [])
@@ -65897,7 +65886,7 @@
                 },
                 (e) => {
                   ((i.EnginePromise.loaded[t] = [!0, !1]),
-                    console.error(`Unable to load locale: ${t}`),
+                    void 0,
                     (i.default.getInstance().locale = i.default.getInstance().defaultLocale),
                     r(t));
                 },

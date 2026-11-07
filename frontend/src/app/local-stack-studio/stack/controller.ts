@@ -57,7 +57,6 @@ import {
   runProgressiveEccPool,
 } from "./alignment-pool";
 import { startProgressiveAlignmentFrames } from "./alignment-frame-worker-pool";
-import { affineDisplacement } from "./alignment-transform-diagnostics";
 import { runMedianPool } from "./median-pool";
 import {
   alignmentFrameCacheKey, getCachedAlignmentFrame, putCachedAlignmentFrame,
@@ -1808,17 +1807,6 @@ async function readInputInfos(files) {
   return infos;
 }
 
-function formatAlignmentModeName(mode) {
-  if (mode === "center-crop") return "Center crop";
-  if (mode === "center-fit") return "Center fit";
-  if (mode === "center-fill") return "Center fill";
-  if (mode === "top-left-fill") return "Top left fill";
-  if (mode === "feature-match") return "Content match";
-  if (mode === "feature-match-ecc") return "Content match (ECC)";
-  if (mode === "feature-match-orb") return "Content match (ORB)";
-  return "Auto";
-}
-
 function isFeatureMatchAlignmentMode(mode) {
   return mode === "feature-match-ecc" || mode === "feature-match-orb";
 }
@@ -2297,27 +2285,11 @@ async function alignAndMergeFilesWithOpenCv(
     : 0;
   const matrices = new Array(files.length).fill(null);
   const alignmentFrames = new Array(files.length).fill(null);
-  // Timings cover alignment frame preparation through transform estimation,
-  // excluding the later image merge. Per-target timings overlap across workers.
-  const alignmentTimingStart = needsAlignment ? performance.now() : 0;
-  let framePreparationMs = 0;
   let prepareProgressiveFine = null;
   let coarseReadyByIndex = null;
   let fineReadyByIndex = null;
   let coarsePreparation = null;
   let finePreparation = null;
-  let progressiveFrameDiagnostics = null;
-  let progressiveFrameStartMs = 0;
-  let progressiveFineWindow = null;
-  let frameCacheHits = 0;
-  let transformCacheHit = false;
-  let recoveryMs = 0;
-  const alignmentJobTimings = [];
-  const alignmentBatchTimings = [];
-  // The ordinary transform cache keeps only final matrices. Preserve coarse
-  // matrices in this run so logging does not rerun ECC or ORB.
-  const eccTransformDetails = new Map();
-  let alignmentComparisonMatrices = null;
   let alignmentWorkers = null;
   let focusWorker = null;
   let focusScratchDb = null;
@@ -2333,13 +2305,8 @@ async function alignAndMergeFilesWithOpenCv(
 
     // Phase C: prepare all alignment frames before any merge starts.
     if (needsAlignment) {
-      const preparationStartedAt = performance.now();
-      progressiveFrameStartMs = preparationStartedAt;
       setProgress("Preparing alignment frames from canonical inputs...");
       const frameCache = canonicalSession.alignmentFrameCache || (canonicalSession.alignmentFrameCache = new Map());
-      const framePreparationDetails = [];
-      const frameDiagnosticEvents = [];
-      progressiveFrameDiagnostics = { details: framePreparationDetails, events: frameDiagnosticEvents };
       // Start two actual CPU workers. They read canonical chunks directly from
       // IndexedDB; full-resolution RGB buffers never cross worker boundaries.
       const resolvers = [];
@@ -2352,17 +2319,8 @@ async function alignAndMergeFilesWithOpenCv(
           alignmentPlan.targetWidth, alignmentPlan.targetHeight, index, true);
         const base = getCachedAlignmentFrame(frameCache, baseKey);
         const refinement = getCachedAlignmentFrame(frameCache, fineKey);
-        if (base && refinement) frameCacheHits++;
-        const detail = { image: files[index].name,
-          cache: `${base ? "1MP hit" : "1MP miss"} / ${refinement ? "8MP hit" : "8MP miss"}`,
-          canonicalReadMs: 0, normalizationMs: 0, rgbaAllocationMs: 0,
-          colorConversionMs: 0, resize1mpMs: 0, coarseFrom8mp: false,
-          gray1mpMs: 0, resize8mpMs: 0, gray8mpMs: 0, yieldMs: 0, totalMs: 0 };
-        if (refinement) detail.fine = { cacheHit: true, totalWallMs: 0 };
-        framePreparationDetails[index] = detail;
         alignmentFrames[index] = base ? { ...base, refinement } : { refinement };
         if (base) {
-          frameDiagnosticEvents.push({ image: files[index].name, stage: "1mp-cache-hit", atMs: performance.now() - preparationStartedAt });
           resolvers[index]();
         } else missing.push({ index, targetWidth: alignmentPlan.targetWidth,
           targetHeight: alignmentPlan.targetHeight,
@@ -2385,55 +2343,22 @@ async function alignAndMergeFilesWithOpenCv(
       }
       fineMissing.sort((a, b) =>
         (a.index === alignmentReferenceIndex ? -1 : b.index === alignmentReferenceIndex ? 1 : a.index - b.index));
-      let firstFineStart = null;
-      let lastFineEnd = null;
       const producer = startProgressiveAlignmentFrames({
         sessionId: canonicalSession.id, coarseJobs: ordered, fineJobs: fineMissing,
         hardwareConcurrency: typeof navigator === "object" ? navigator.hardwareConcurrency || 4 : 4,
-        onCoarse: (index, base, timing) => {
+        onCoarse: (index, base) => {
           Object.assign(alignmentFrames[index], base);
           const key = alignmentFrameCacheKey(alignmentPlan.normalizationMode,
             alignmentPlan.targetWidth, alignmentPlan.targetHeight, index);
           putCachedAlignmentFrame(frameCache, key, base);
-          const detail = framePreparationDetails[index];
-          detail.canonicalReadMs = timing.readMs;
-          detail.normalizationMs = timing.normMs;
-          detail.colorConversionMs = timing.colorConversionMs;
-          detail.resize1mpMs = timing.resizeMs;
-          detail.gray1mpMs = timing.grayMs;
-          detail.totalMs = timing.totalMs;
-          detail.coarseWorker = timing.workerIndex;
-          detail.coarseQueueMs = timing.queueMs;
-          detail.coarseWallMs = timing.wallMs;
-          frameDiagnosticEvents.push({ image: files[index].name, stage: "1mp-ready", atMs: performance.now() - preparationStartedAt });
           resolvers[index]();
         },
-        onFineStart: (index) => {
-          const at = performance.now() - preparationStartedAt;
-          if (firstFineStart === null) {
-            firstFineStart = at;
-            progressiveFineWindow = { startMs: at, endMs: null, wallMs: null };
-          }
-          frameDiagnosticEvents.push({ image: files[index].name, stage: "8mp-start", atMs: at });
-        },
-        onFine: (index, fine, timing) => {
+        onFine: (index, fine) => {
           // Preserve the placeholder identity used by pending ORB jobs.
           alignmentFrames[index].refinement = fine;
           const fineKey = alignmentFrameCacheKey(alignmentPlan.normalizationMode,
             alignmentPlan.targetWidth, alignmentPlan.targetHeight, index, true);
           putCachedAlignmentFrame(frameCache, fineKey, fine);
-          const at = performance.now() - preparationStartedAt;
-          lastFineEnd = at;
-          const detail = framePreparationDetails[index];
-          detail.fine = { canonicalReadMs: timing.readMs,
-            normalizationMs: timing.normMs, rgbaAllocationMs: 0,
-            colorConversionMs: timing.colorConversionMs,
-            resize1mpMs: 0, gray1mpMs: 0, resize8mpMs: timing.resizeMs,
-            gray8mpMs: timing.grayMs, yieldMs: 0,
-            totalWallMs: timing.wallMs, startMs: at - timing.wallMs,
-            endMs: at, cacheHit: false, worker: timing.workerIndex,
-            queueMs: timing.queueMs, workerTotalMs: timing.totalMs };
-          frameDiagnosticEvents.push({ image: detail.image, stage: "8mp-ready", atMs: at });
           fineResolvers[index]();
         },
       });
@@ -2441,10 +2366,6 @@ async function alignAndMergeFilesWithOpenCv(
       finePreparation = producer;
       prepareProgressiveFine = async () => {
         await producer.done;
-        if (progressiveFineWindow && lastFineEnd !== null) {
-          progressiveFineWindow.endMs = lastFineEnd;
-          progressiveFineWindow.wallMs = lastFineEnd - firstFineStart;
-        }
       };
       coarseReadyByIndex = (index) => Promise.race([coarsePromises[index], producer.coarseDone.then(() => {
         if (!alignmentFrames[index].grayBytes) throw new Error(`Missing 1MP frame: ${files[index].name}`);
@@ -2459,8 +2380,6 @@ async function alignAndMergeFilesWithOpenCv(
       // Begin the 1MP alignment stage as soon as the reference exists. Remaining
       // 1MP frames continue independently while 8MP frames are prepared.
       await coarseReadyByIndex(alignmentReferenceIndex);
-      frameDiagnosticEvents.push({ image: files[alignmentReferenceIndex].name, stage: "reference-1mp-ready", atMs: performance.now() - preparationStartedAt });
-      framePreparationMs = performance.now() - preparationStartedAt;
     }
 
     // Phase D: resolve all transforms. No merge/decode occurs in this phase.
@@ -2476,17 +2395,7 @@ async function alignAndMergeFilesWithOpenCv(
         ? eccCacheKey : orbCacheKey;
       const transformKey = `${modeCacheKey}:${alignmentPlan.normalizationMode}:${alignmentPlan.targetWidth}x${alignmentPlan.targetHeight}:ref=${alignmentReferenceIndex}`;
       const cachedMatrices = transformCache.get(transformKey);
-      // When the user has already run the other mode in the same canonical
-      // session, compare its cached final transforms without extra processing.
-      if (isFeatureMatchAlignmentMode(alignmentPlan.effectiveMode)) {
-        const comparisonModeKey = alignmentPlan.effectiveMode === "feature-match-orb"
-          ? eccCacheKey : orbCacheKey;
-        const comparisonKey = `${comparisonModeKey}:${alignmentPlan.normalizationMode}:${alignmentPlan.targetWidth}x${alignmentPlan.targetHeight}:ref=${alignmentReferenceIndex}`;
-        const other = transformCache.get(comparisonKey);
-        if (other && other.length === files.length) alignmentComparisonMatrices = other;
-      }
       if (cachedMatrices && cachedMatrices.length === files.length) {
-        transformCacheHit = true;
         for (let index = 0; index < files.length; index += 1) matrices[index] = new Float64Array(cachedMatrices[index]);
       } else {
         const referenceFrame = alignmentFrames[alignmentReferenceIndex];
@@ -2506,8 +2415,6 @@ async function alignAndMergeFilesWithOpenCv(
 
         const runDirectBatch = async (algorithm, jobs, phaseLabel) => {
           const algorithmLabel = algorithm;
-          const batchStartedAt = performance.now();
-          const jobStartedAt = new Map();
           let started = 0;
           let completed = 0;
           const pipeline = algorithm === "ORB" && phaseLabel === "primary" && prepareProgressiveFine;
@@ -2519,80 +2426,23 @@ async function alignAndMergeFilesWithOpenCv(
             createClient: () => createAlignmentWorkerClient(algorithm),
             ...(hybrid ? { referenceFrameIndex: alignmentReferenceIndex, createFineClient: () => new OrbWorkerClient(
               new URL("/generated/local-stack-studio/orb.worker.js", window.location.origin), true,
-            ),
-              onTransformOutcome: (job, coarse, final) => {
-                // Snapshot before the combined pool discards the intermediate
-                // ECC result. These statistics are from the actual run.
-                eccTransformDetails.set(job.id, {
-                  ecc1mpMatrix: Array.from(coarse.matrix),
-                  final1mpMatrix: Array.from(final.matrix),
-                  eccCorrelation: coarse.correlation ?? null,
-                  eccCorrelationImprovement: coarse.correlationImprovement ?? null,
-                  refinementStatus: final.refinementStatus ?? "not reported",
-                  refinementAccepted: final.refinementStatus === "8MP refinement accepted",
-                  matches: final.refinementMatches ?? null,
-                  initialInliers: final.refinementInitialInliers ?? null,
-                  initialMedianErrorPx: final.refinementInitialMedianError ?? null,
-                  initialP95ErrorPx: final.refinementInitialP95Error ?? null,
-                  finalInliers: final.refinementInliers ?? null,
-                  finalMedianErrorPx: final.refinementMedianError ?? null,
-                  finalP95ErrorPx: final.refinementP95Error ?? null,
-                  correctionMaxCorner8mpPx: final.refinementCorrectionPx ?? null,
-                });
-              }, } : {}),
+            ) } : {}),
             hardwareConcurrency,
             ...((pipeline || hybrid) ? { prepareRefinement: prepareProgressiveFine, coarseReady: coarseReadyByIndex,
-              refinementReady: fineReadyByIndex, coarsePreparation: coarsePreparation?.done,
-              onStageEvent: (job, workerIndex, stage) => progressiveFrameDiagnostics?.events.push({
-                image: job.fileName, worker: workerIndex + 1, stage,
-                atMs: performance.now() - progressiveFrameStartMs,
-              }) } : {}),
+              refinementReady: fineReadyByIndex, coarsePreparation: coarsePreparation?.done } : {}),
             onJobStart: (job) => {
-              jobStartedAt.set(job.id, performance.now());
               started += 1;
               setProgress(
                 `Aligning ${job.fileName} with ${algorithmLabel} feature matching ` +
                 `(${phaseLabel}, ${started}/${jobs.length} started)...`,
               );
             },
-            onJobComplete: (job, workerIndex, outcome) => {
-              const startedAt = jobStartedAt.get(job.id);
-              const elapsedMs = startedAt === undefined ? null : performance.now() - startedAt;
-              alignmentJobTimings.push({
-                image: job.fileName,
-                method: algorithmLabel,
-                phase: phaseLabel,
-                worker: workerIndex + 1,
-                elapsedMs: elapsedMs === null ? null : Number(elapsedMs.toFixed(1)),
-                result: "error" in outcome ? `failed: ${outcome.error.message}` : "ok",
-              });
-              if ((algorithm === "ORB" || hybrid) && "result" in outcome) {
-                const stats = outcome.result;
-                console.info(`[${hybrid ? "ECC" : "ORB"}] ${job.fileName}: ${stats.refinementStatus ?? "not reported"}`, {
-                  candidates: stats.refinementMatches,
-                  initialInliers: stats.refinementInitialInliers,
-                  initialMedianError: stats.refinementInitialMedianError,
-                  inliers: stats.refinementInliers,
-                  medianError: stats.refinementMedianError,
-                  p95Error: stats.refinementP95Error,
-                  correctionPx: stats.refinementCorrectionPx,
-                  ...(hybrid ? { eccCorrelation: stats.correlation,
-                    eccCorrelationImprovement: stats.correlationImprovement } : {}),
-                });
-              }
+            onJobComplete: () => {
               completed += 1;
               setProgress(
                 `${algorithmLabel} ${phaseLabel} alignment ${completed}/${jobs.length} completed...`,
               );
             },
-          });
-          alignmentBatchTimings.push({
-            method: algorithmLabel,
-            phase: phaseLabel,
-            workers: batch.workerCount,
-            initializationMs: Number(batch.initializationMs.toFixed(1)),
-            jobsMs: Number(batch.jobsMs.toFixed(1)),
-            wallMs: Number((performance.now() - batchStartedAt).toFixed(1)),
           });
           return batch;
         };
@@ -2622,9 +2472,6 @@ async function alignAndMergeFilesWithOpenCv(
         if (alignmentPlan.effectiveMode === "feature-match-ecc" && primaryBatch.failures.length > 0) {
           const failures = primaryBatch.failures.map((failure) => ({
             image: failure.job.fileName, message: failure.error.message,
-          }));
-          console.error("[ECC Failure JSON]", JSON.stringify({
-            mode: "ECC", fallbackAttempted: false, failures,
           }));
           throw new Error(`ECC failed for ${failures.length} image(s):\n` +
             failures.map(({ image, message }) => `${image}: ${message}`).join("\n"));
@@ -2668,21 +2515,16 @@ async function alignAndMergeFilesWithOpenCv(
         }));
 
         if (deferredAlignments.length > 0) {
-          const recoveryStartedAt = performance.now();
           alignmentWorkers = createAlignmentWorkers();
-          try {
-            await recoverDeferredAlignments(
-              alignmentWorkers,
-              files,
-              alignmentFrames,
-              alignmentAlgorithm,
-              matrices,
-              alignedIndices,
-              deferredAlignments,
-            );
-          } finally {
-            recoveryMs += performance.now() - recoveryStartedAt;
-          }
+          await recoverDeferredAlignments(
+            alignmentWorkers,
+            files,
+            alignmentFrames,
+            alignmentAlgorithm,
+            matrices,
+            alignedIndices,
+            deferredAlignments,
+          );
           const unresolved = deferredAlignments.filter((entry) => !matrices[entry.index]);
           if (unresolved.length > 0) {
             const details = unresolved.map((entry) => `${files[entry.index].name}: ${entry.initialError}`).join("\n");
@@ -2695,156 +2537,11 @@ async function alignAndMergeFilesWithOpenCv(
       for (let index = 0; index < files.length; index += 1) matrices[index] = identityAlignmentMatrix();
     }
 
-    if (needsAlignment && isFeatureMatchAlignmentMode(alignmentPlan.effectiveMode)) {
-      // Full-resolution matrices use target -> reference coordinates. The
-      // reference is included for a complete, copyable single JSON payload.
-      const mode = alignmentPlan.effectiveMode === "feature-match-ecc" ? "ECC" : "ORB";
-      const isHybrid = mode === "ECC";
-      const r = (value) => Number.isFinite(value) ? Number(value.toFixed(5)) : null;
-      const roundedDisplacement = (a, b, width, height) => {
-        const displacement = affineDisplacement(a, b, width, height);
-        return Object.fromEntries(Object.entries(displacement).map(([key, value]) => [key, r(value)]));
-      };
-      const compareMode = isHybrid ? "ORB" : "ECC";
-      const entries = files.map((file, index) => {
-        const targetFrame = alignmentFrames[index];
-        const finalFull = matrices[index];
-        const trace = eccTransformDetails.get(index);
-        const width = targetFrame?.fullWidth ?? alignmentPlan.targetWidth;
-        const height = targetFrame?.fullHeight ?? alignmentPlan.targetHeight;
-        const coarseFull = trace ? scaleAlignmentMatrixToFullResolution(
-          trace.ecc1mpMatrix, alignmentFrames[alignmentReferenceIndex], targetFrame,
-        ) : null;
-        const other = alignmentComparisonMatrices?.[index];
-        return {
-          image: file.name,
-          isReference: index === alignmentReferenceIndex,
-          targetFullResolution: { width, height },
-          finalMatrix: Array.from(finalFull),
-          ...(isHybrid ? {
-            ecc1mpMatrix: trace?.ecc1mpMatrix ?? null,
-            final1mpMatrix: trace?.final1mpMatrix ?? null,
-            eccInitialFullMatrix: coarseFull ? Array.from(coarseFull) : null,
-            eccToFinalDisplacementFullPx: coarseFull
-              ? roundedDisplacement(coarseFull, finalFull, width, height) : null,
-            ecc: trace ? { correlation: trace.eccCorrelation,
-              correlationImprovement: trace.eccCorrelationImprovement } : null,
-            orbRefinement: trace ? {
-              status: trace.refinementStatus, accepted: trace.refinementAccepted,
-              matches: trace.matches, initialInliers: trace.initialInliers,
-              initialMedianErrorPx: trace.initialMedianErrorPx,
-              initialP95ErrorPx: trace.initialP95ErrorPx,
-              finalInliers: trace.finalInliers,
-              finalMedianErrorPx: trace.finalMedianErrorPx,
-              finalP95ErrorPx: trace.finalP95ErrorPx,
-              correctionMaxCorner8mpPx: trace.correctionMaxCorner8mpPx,
-            } : null,
-          } : {}),
-          ...(other ? {
-            comparedToCachedMode: compareMode,
-            differenceFromCachedModeFullPx: roundedDisplacement(
-              other, finalFull, width, height,
-            ),
-          } : {}),
-        };
-      });
-      const acceptedCount = isHybrid ? entries.filter((entry) => entry.orbRefinement?.accepted).length : null;
-      console.info("[Alignment Transforms JSON] " + JSON.stringify({
-        schemaVersion: 1, mode, referenceImage: files[alignmentReferenceIndex].name,
-        matrixConvention: "row-major 3x3 target pixels -> reference pixels",
-        matrixCoordinates: "full resolution unless named 1mp",
-        pixelDisplacementSampling: "target image four corners and center",
-        transformCacheHit,
-        note: transformCacheHit && isHybrid
-          ? "Cached final matrices only; initial ECC matrices and ORB refinement stats are not stored in the cache."
-          : "ORB refinement errors compare the same 8MP feature pairs before/after; ECC correlation is a separate metric.",
-        summary: { targetCount: files.length - 1, acceptedRefinements: acceptedCount,
-          keptEccRefinements: isHybrid && !transformCacheHit ? files.length - 1 - acceptedCount : null,
-          cachedComparisonMode: alignmentComparisonMatrices ? compareMode : null },
-        transforms: entries,
-      }));
-      if (isHybrid && !transformCacheHit) console.table(entries.filter((entry) => !entry.isReference).map((entry) => ({
-        image: entry.image,
-        status: entry.orbRefinement?.status ?? "not reported",
-        matches: entry.orbRefinement?.matches,
-        beforeMedianPx: entry.orbRefinement?.initialMedianErrorPx,
-        afterMedianPx: entry.orbRefinement?.finalMedianErrorPx,
-        maxCorrection8mpPx: entry.orbRefinement?.correctionMaxCorner8mpPx,
-        maxCorrectionFullPx: entry.eccToFinalDisplacementFullPx?.maxCornerPx,
-        differenceVsOrbFullPx: entry.comparedToCachedMode === "ORB"
-          ? entry.differenceFromCachedModeFullPx?.maxCornerPx : null,
-      })));
-    }
-
-    if (needsAlignment) {
-      const totalMs = performance.now() - alignmentTimingStart;
-      // Overlapping 8MP preparation is included in elapsed transform-stage wall time.
-      const transformMs = Math.max(0, totalMs - framePreparationMs);
-      const modeLabel = alignmentPlan.effectiveMode === "feature-match-ecc" ? "ECC" : "ORB";
-      if (modeLabel === "ECC") {
-        console.info(
-          `[Alignment Timing] ${modeLabel}: total ${totalMs.toFixed(1)} ms ` +
-          `(frames ${framePreparationMs.toFixed(1)} ms, transforms ${transformMs.toFixed(1)} ms, ` +
-          `recovery ${recoveryMs.toFixed(1)} ms). ` +
-          `Frames cached ${frameCacheHits}/${files.length}; ` +
-          `transforms ${transformCacheHit ? "CACHE HIT (not recomputed)" : "computed"}.`,
-        );
-        if (alignmentBatchTimings.length > 0) {
-          console.info("[Alignment Timing] Worker batches (wall time, parallel workers):");
-          console.table(alignmentBatchTimings);
-        }
-        if (alignmentJobTimings.length > 0) {
-          console.info("[Alignment Timing] Each target (elapsed wall time; jobs run concurrently):");
-          console.table(alignmentJobTimings.sort((a, b) => a.image.localeCompare(b.image) || a.phase.localeCompare(b.phase)));
-        }
-      }
-    }
-
     // Do not let unfinished 1MP producers outlive the alignment phase,
     // including when the transform cache bypasses the worker pool.
     if (coarsePreparation) {
       await coarsePreparation.done;
       await finePreparation?.done;
-      if (progressiveFrameDiagnostics) {
-        const round = (n) => typeof n === "number" && Number.isFinite(n) ? Number(n.toFixed(2)) : n;
-        const perImage = progressiveFrameDiagnostics.details.map((detail) => {
-          const fine = detail.fine ?? { cacheHit: Boolean(alignmentFrames[files.findIndex((f) => f.name === detail.image)]?.refinement) };
-          return {
-            image: detail.image, cache: detail.cache,
-            coarse1mp: { worker: detail.coarseWorker ?? null,
-              queueMs: round(detail.coarseQueueMs ?? 0), wallMs: round(detail.coarseWallMs ?? 0),
-              canonicalReadMs: round(detail.canonicalReadMs), normalizationMs: round(detail.normalizationMs),
-              colorConversionMs: round(detail.colorConversionMs), resizeMs: round(detail.resize1mpMs),
-              grayscaleMs: round(detail.gray1mpMs), workerTotalMs: round(detail.totalMs) },
-            fine8mp: Object.fromEntries(Object.entries(fine).map(([key, value]) => [key, round(value)])),
-          };
-        });
-        const totals = { coarse1mpWorkerStageSumMs: {}, fine8mpStageSumMs: {} };
-        for (const [key, target, selector] of [
-          ["coarse1mp", totals.coarse1mpWorkerStageSumMs, ["canonicalReadMs", "normalizationMs", "colorConversionMs", "resizeMs", "grayscaleMs"]],
-          ["fine8mp", totals.fine8mpStageSumMs, ["canonicalReadMs", "normalizationMs", "rgbaAllocationMs", "colorConversionMs", "resize8mpMs", "gray8mpMs", "yieldMs"]],
-        ]) for (const name of selector) target[name] = round(perImage.reduce((sum, frame) => sum + (frame[key]?.[name] ?? 0), 0));
-        const totalMs = performance.now() - alignmentTimingStart;
-        const payload = {
-          schemaVersion: 1,
-          mode: alignmentPlan.effectiveMode === "feature-match-ecc" ? "ECC" : "ORB",
-          algorithm: alignmentPlan.effectiveMode === "feature-match-ecc"
-            ? "1MP ECC affine + 8MP ORB similarity residual" : "progressive 1MP/8MP", unit: "ms",
-          notes: ["Wall times of overlapping stages must not be added together.",
-            "Worker stage sums are CPU/worker elapsed sums, not end-to-end elapsed times.",
-            "1MP and 8MP preparation share a bounded two-worker pool; 8MP frames may overlap."],
-          summary: { totalWallMs: round(totalMs), reference1mpReadyMs: round(framePreparationMs),
-            remainingWallAfterReferenceMs: round(totalMs - framePreparationMs),
-            fine8mpWindow: progressiveFineWindow && Object.fromEntries(Object.entries(progressiveFineWindow).map(([k,v]) => [k, round(v)])),
-            coarseCacheHits: perImage.filter((f) => f.cache.startsWith("1MP hit")).length,
-            fineCacheHits: perImage.filter((f) => f.cache.includes("8MP hit")).length,
-            transformCacheHit, recoveryMs: round(recoveryMs), workerBatches: alignmentBatchTimings,
-            workerJobs: alignmentJobTimings },
-          stageSums: totals, frames: perImage,
-          timeline: progressiveFrameDiagnostics.events.map((event) => ({ ...event, atMs: round(event.atMs) })),
-        };
-        console.info("[Alignment Diagnostics JSON]\n" + JSON.stringify(payload, null, 2));
-      }
     }
 
     const alignment = { matrices };
@@ -3185,8 +2882,6 @@ async function mergeStfWithAdditionalBlur(
     ? Math.max(1, Math.floor(navigator.hardwareConcurrency || 4)) : 4;
   const workerUrl = new URL("/generated/local-stack-studio/stf-additional-blur.worker.js", window.location.origin);
   workerUrl.searchParams.set("revision", "stf-gate-optimized-sampled-p50-expansion-20261105");
-  const timings = {};
-  const stamp = () => performance.now();
   let pool = null;
   // Avoid writing temporary Sobel arrays to IndexedDB when a bounded amount
   // of RAM is enough; large images still spill to scratch storage as before.
@@ -3195,8 +2890,6 @@ async function mergeStfWithAdditionalBlur(
   );
   let scratchDbPromise = null;
   let scratchSessionId = null;
-  let storedStripes = 0;
-  let residentStripes = 0;
   const ensureScratchDb = () => {
     if (!scratchDbPromise) scratchDbPromise = openStfAdditionalBlurScratchDb("STF Additional blur");
     return scratchDbPromise;
@@ -3225,7 +2918,6 @@ async function mergeStfWithAdditionalBlur(
       const p = await ensurePool();
       const sampleGrid = algorithm.buildStfSampleGrid(width, height);
       const brightnessSamples = [[], [], []];
-      let t = stamp();
       setProgress(`STF sampling RGB brightness 0/${jobs.length}...`);
       await p.sampleBrightnessStripes(jobs, sampleGrid, (_job, samples, completed, total) => {
         if (samples.length % 3 !== 0) throw new Error("STF Worker returned invalid brightness samples.");
@@ -3238,15 +2930,12 @@ async function mergeStfWithAdditionalBlur(
       });
       const floors = algorithm.deriveStfRelativeChannelFloorsFromSamples(brightnessSamples);
       await p.configureRelativeChannelFloors(floors);
-      timings.brightnessP50 = stamp() - t;
-      console.info("STF relative RGB brightness P50/64", { floors, sampleCount: brightnessSamples[0].length });
 
       // Defer opening scratch storage until a stripe exceeds the RAM budget.
       scratchSessionId = createStfAdditionalBlurScratchSessionId();
       const groupCount = p.ready.groupCount;
       const sharpnessSamples = [];
       if (!plan.gateOnly) source = new Float32Array(width * height * 3);
-      t = stamp();
       setProgress(`STF analyzing Sobel sharpness 0/${jobs.length}...`);
       await p.runAnalysisJobs(jobs, !plan.gateOnly, async (job, result, completed, total) => {
         const pixels = width * job.height;
@@ -3258,9 +2947,7 @@ async function mergeStfWithAdditionalBlur(
         if (source) source.set(result.linear, job.y * width * 3);
         algorithm.appendPersistentCoarseSamplesFromStripe(sharpnessSamples, result.coarseGroups,
           groupCount, width, job.y, job.height, sampleGrid);
-        if (derivedStaging.put(job.index, result)) {
-          residentStripes++;
-        } else {
+        if (!derivedStaging.put(job.index, result)) {
           const db = await ensureScratchDb();
           const keys = stfAdditionalBlurScratchKeys(scratchSessionId, job.index);
           await putStfAdditionalBlurScratchBuffers(db, [
@@ -3268,18 +2955,12 @@ async function mergeStfWithAdditionalBlur(
             { key: keys.fineZero, buffer: result.fineZero.buffer },
             { key: keys.coarseGroups, buffer: result.coarseGroups.buffer },
           ], "STF Additional blur Sobel analysis");
-          storedStripes++;
         }
         setProgress(`STF analyzing Sobel sharpness ${completed}/${total}...`);
       });
-      timings.sobelAnalysis = stamp() - t;
-      timings.intermediateStripesInRam = residentStripes;
-      timings.intermediateStripesInScratch = storedStripes;
       const coarseP50 = algorithm.deriveStfMedianSharpnessC(sharpnessSamples);
       const epsilon = algorithm.deriveStfRatioEpsilon(coarseP50);
-      console.info("STF coarse sharpness P50/64", { coarseP50, epsilon });
       let unitRatio = new Float32Array(width * height);
-      t = stamp();
       setProgress(`STF generating log-ratios 0/${jobs.length}...`);
       await p.runRatioJobs(jobs,
         async (job) => {
@@ -3299,27 +2980,18 @@ async function mergeStfWithAdditionalBlur(
           unitRatio.set(result, job.y * width);
           setProgress(`STF generating log-ratios ${completed}/${total}...`);
         });
-      timings.ratioGeneration = stamp() - t;
-      t = stamp();
       // This is the only P3/P97 normalization; after this point all steps
       // take the same [0,1] scale, including Volume Closing 2.
-      const norm = algorithm.normalizeStfLogRatioBufferInPlace(unitRatio);
-      timings.p3p97 = stamp() - t;
-      if (norm.degenerate) console.warn("STF P3/P97 normalization fallback: degenerate ratio distribution.", norm);
-      else console.info("STF P3/P97 normalized before Volume Closing 2", norm);
-      t = stamp();
+      algorithm.normalizeStfLogRatioBufferInPlace(unitRatio);
       setProgress("STF applying Volume Closing 2...");
       const closed = await p.volumeClose(unitRatio, width, height);
       unitRatio = closed.values;
-      timings.volumeClosing2 = stamp() - t;
-      console.info("STF Volume Closing 2", closed.info);
       activeRatio = unitRatio;
       // Store large full-resolution buffers only within the cache budget;
       // oversized maps remain local to this Process and are released after it.
       if (canCacheStfBuffer(cache, unitRatio)) cache.ratio = unitRatio;
       if (source && cache.ratio && canCacheStfBuffer(cache, source)) cache.source = source;
     } else {
-      timings.reusedRatioAnalysis = true;
       if (!plan.gateOnly && cache.source) source = cache.source;
     }
 
@@ -3331,7 +3003,6 @@ async function mergeStfWithAdditionalBlur(
     if (!base) {
       let gated = ratio;
       if (plan.areaExponent !== null) {
-        let t = stamp();
         if (!cache.mask || cache.maskRatio !== effectiveRatio) {
           const p = await ensurePool();
           setProgress("STF computing Graph Cut mask...");
@@ -3339,22 +3010,13 @@ async function mergeStfWithAdditionalBlur(
           cache.mask = graph.mask;
           cache.maskInfo = graph.info;
           cache.maskRatio = effectiveRatio;
-          timings.graphCut = stamp() - t;
-          console.info("STF Graph Cut partition", graph.info);
-        } else {
-          timings.reusedCutMask = true;
         }
-        t = stamp();
         gated = graphCutModule.applyStfGraphCutBoost(ratio, width, height,
           cache.mask, cache.maskInfo.workingWidth, cache.maskInfo.workingHeight, plan.areaExponent);
-        timings.areaPowerBoost = stamp() - t;
       }
       if (plan.sigmoid !== 0) {
-        const t = stamp();
         if (gated === ratio) gated = ratio.slice();
-        const sigmoid = algorithm.applyStfSigmoidGateInPlace(gated, width, height, effectiveRatio, plan.sigmoid);
-        timings.sigmoid = stamp() - t;
-        console.info("STF endpoint-fixed sigmoid", { ...sigmoid, percent: plan.sigmoid });
+        algorithm.applyStfSigmoidGateInPlace(gated, width, height, effectiveRatio, plan.sigmoid);
       }
       base = gated;
       // Cache always prioritizes RatioAnalysis and the latest BaseGate.
@@ -3364,18 +3026,14 @@ async function mergeStfWithAdditionalBlur(
         cache.base = base;
         cache.baseKey = baseKey;
       }
-    } else {
-      timings.reusedBaseGate = true;
     }
     if (plan.gateOnly) {
-      console.info("STF Additional blur stage timings (ms)", timings);
       return finalizeStfBasicGate(base, width, height, outputColorSpace);
     }
     const blurRadius = algorithm.resolveStfAdditionalBlurRadius(width, height, plan.strengthMultiplier);
     const expandedKey = JSON.stringify([baseKey, blurRadius, 0.5, 0.2, 0.7]);
     let expanded = cache.expandedKey === expandedKey ? cache.expanded : null;
     if (!expanded) {
-      const t = stamp();
       const p = await ensurePool();
       const expansionHalo = Math.max(1, Math.round(blurRadius * 0.5));
       const completedGate = new Float32Array(width * height);
@@ -3394,25 +3052,21 @@ async function mergeStfWithAdditionalBlur(
           setProgress(`STF expanding protection gate ${completed}/${total}...`);
         });
       expanded = completedGate;
-      timings.expandedGate = stamp() - t;
       cache.expanded = null; cache.expandedKey = null;
       if (cache.base && canCacheStfBuffer(cache, expanded)) {
         cache.expanded = expanded;
         cache.expandedKey = expandedKey;
       }
-    } else timings.reusedExpandedGate = true;
+    }
     if (!source) {
-      const t = stamp();
       setProgress("STF merging source for additional blur...");
       // Re-merging is much cheaper than Sobel analysis and avoids persisting
       // 240MB of linear RGB for 20MP images just to support option switching.
       source = await mergeLinearFromWorkerPool(sessionId, reader, alignmentPlan, matrices, mergePlan, width, height);
-      timings.sourceMerge = stamp() - t;
       if (cache.ratio && canCacheStfBuffer(cache, source)) cache.source = source;
     }
     const p = await ensurePool();
     const blurred = new Float32Array(source.length);
-    const t = stamp();
     setProgress(`STF guarded Gaussian blur 0/${jobs.length}...`);
     await p.runBlurJobs(jobs,
       (job) => {
@@ -3428,9 +3082,6 @@ async function mergeStfWithAdditionalBlur(
         blurred.set(stripe, job.y * width * 3);
         setProgress(`STF guarded Gaussian blur ${completed}/${total}...`);
       });
-    timings.guardedGaussian = stamp() - t;
-    console.info("STF Additional blur stage timings (ms)", { ...timings, blurRadius,
-      cacheBytes: stfGateCacheBytes(cache), workers: p.ready.workerCount });
     return finalizeStoredResult(blurred, width, height, outputColorSpace, true);
   } finally {
     pool?.terminate();
@@ -3439,9 +3090,9 @@ async function mergeStfWithAdditionalBlur(
       try {
         const db = await scratchDbPromise;
         try { await deleteStfAdditionalBlurScratchSession(db, scratchSessionId); }
-        catch (error) { console.warn("STF Additional blur scratch cleanup failed", error); }
+        catch { /* Scratch cleanup is best-effort; the database is still closed. */ }
         db.close();
-      } catch (error) { console.warn("STF Additional blur scratch cleanup unavailable", error); }
+      } catch { /* Scratch storage was unavailable or already closed. */ }
     }
   }
 }
@@ -4000,22 +3651,6 @@ function multiplyAlignmentMatrices(left, right) {
     }
   }
   return result;
-}
-
-function matFromLinearProPhoto(cv, linear, width, height) {
-  if (cv.CV_32FC3 === undefined) {
-    throw new Error("This OpenCV.js build is missing CV_32FC3 required for 16-bit RAW stacking.");
-  }
-  if (!(linear instanceof Float32Array) || linear.length !== width * height * 3) {
-    throw new Error("RAW decoder returned an invalid linear ProPhoto RGB buffer.");
-  }
-  const mat = new cv.Mat(height, width, cv.CV_32FC3);
-  if (!mat.data32F || mat.data32F.length !== linear.length) {
-    mat.delete();
-    throw new Error("OpenCV could not allocate a Float32 RGB image for RAW stacking.");
-  }
-  mat.data32F.set(linear);
-  return mat;
 }
 
 

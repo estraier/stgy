@@ -361,9 +361,8 @@ import type {
           );
           return coarseOnly ? coarse : refineProgressiveAlignment(coarse, fine, targetExposureScalar, fileName);
         }
-        console.info(`[ORB] ${fileName}: 1MP 5% search found only ${coarseCandidates.length} matches; trying global fallback.`);
-      } catch (error) {
-        console.warn(`[ORB] ${fileName}: 1MP constrained matching failed; trying global fallback.`, error);
+      } catch {
+        // Global matching remains the fallback for constrained-match failures.
       }
 
       matcher.match(referenceDescriptors, targetDescriptors, matches);
@@ -570,11 +569,8 @@ import type {
         return withStatus("8MP geometry did not pass validation; kept 1MP transform", stats);
       }
       const finalLow = scaleOrbAffine(finalHigh, fineWidth, fineHeight, width, height);
-      console.info(`[${residualCorrection ? "ECC" : "ORB"}] ${fileName}: 8MP refined with ${fineCandidates.length} matches, ` +
-        `${finalReprojection.inlierCount} inliers, correction ${correctionPx.toFixed(2)} px.`);
       return withStatus("8MP refinement accepted", { ...stats, matrix: finalLow });
     } catch (error) {
-      console.warn(`[ORB] ${fileName}: 8MP refinement failed; kept 1MP transform.`, error);
       return withStatus(`8MP refinement failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       refDescriptors.delete();
