@@ -12,7 +12,6 @@ import {
   lensfunOutputRegion,
 } from "@/image/lensfun";
 import { createLibRawInstance, createLibRawWorkerFailure, isRawImageFile } from "@/image/libraw";
-import { getOpenCv } from "@/image/opencv";
 import { encodeFromLinearProPhoto } from "@/image/tiff";
 import type { DecodedRgbImage16, ImageEditOutputColorProfile } from "@/components/image-editor/types";
 import { applySharpenToCanvas, applySharpenToRgb16 } from "@/components/image-editor/sharpen";
@@ -667,14 +666,10 @@ listen(processButton, "click", async () => {
       throw new Error(`Unsupported alignment mode: ${alignmentMode.value}`);
     }
 
-    let cv = null;
-    const initializationStartedAt = performance.now();
-    if (selectedMergeMode !== "panorama") {
-      setProgress("Loading OpenCV.js...");
-      cv = await getOpenCv();
-      assertMainOpenCvApis(cv);
-    }
-    trace.add("Initialization", performance.now() - initializationStartedAt);
+    // OpenCV is consumed only inside the alignment, focus, HDR and panorama
+    // workers. Do not instantiate a second full native WASM heap on the main
+    // thread just to check an API that this controller never invokes.
+    trace.add("Initialization", 0);
     const metadataStartedAt = performance.now();
     setProgress("Reading metadata, ICC profiles, and image sizes...");
     const inputInfos = await readInputInfos(files);
@@ -718,7 +713,6 @@ listen(processButton, "click", async () => {
     currentPreviewColorSpace = chooseOutputColorSpace(inputInfos);
 
     currentStackResult = await alignAndMergeFilesWithOpenCv(
-      cv,
       files,
       inputInfos,
       mergePlan,
@@ -2469,7 +2463,6 @@ function buildHdrExposureTimes(inputInfos) {
 }
 
 async function alignAndMergeFilesWithOpenCv(
-  cv,
   files,
   inputInfos,
   mergePlan,
@@ -5225,18 +5218,6 @@ function readAscii(view, offset, length) {
     text += String.fromCharCode(view.getUint8(offset + i));
   }
   return text;
-}
-
-function assertMainOpenCvApis(cv) {
-  const missing = [];
-  if (!cv.warpPerspective) missing.push("warpPerspective");
-  if (!cv.matFromArray) missing.push("matFromArray");
-  if (cv.CV_64F === undefined) missing.push("CV_64F");
-  if (cv.INTER_LINEAR === undefined) missing.push("INTER_LINEAR");
-  if (cv.BORDER_REPLICATE === undefined) missing.push("BORDER_REPLICATE");
-  if (missing.length > 0) {
-    throw new Error(`This OpenCV.js build is missing required APIs: ${missing.join(", ")}`);
-  }
 }
 
 function buildLinearToSrgbByteLut(size) {

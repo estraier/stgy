@@ -4,22 +4,21 @@ import type { OpenCvDynamic, OpenCvRuntime } from "./opencv-runtime";
 export const ORB_MAX_FEATURES = 5000;
 
 export function createConfiguredOrb(cv: OpenCvRuntime): OpenCvDynamic {
-  if (typeof cv.ORB !== "function") {
+  if (typeof cv.ORB?.create !== "function") {
     throw new AlignmentImplementationError(
-      "This OpenCV.js build does not provide the cv.ORB constructor required by STGY.",
+      "The native OpenCV build does not provide cv.ORB.create().",
     );
   }
 
   let instance: OpenCvDynamic;
   try {
-    // @techstark/opencv-js@5.0.0-release.1 exposes ORB as a constructor whose
-    // first argument is nfeatures. Pass the configured limit at construction
-    // time instead of probing optional create()/setMaxFeatures() APIs.
-    instance = new cv.ORB(ORB_MAX_FEATURES);
+    // @banou/opencv-wasm exposes OpenCV's ORB factory. Keep STGY's
+    // existing normal-alignment feature count; Panorama is unchanged.
+    instance = cv.ORB.create(ORB_MAX_FEATURES);
   } catch (error) {
     const detail = error instanceof Error ? `: ${error.message}` : "";
     throw new AlignmentImplementationError(
-      `Failed to construct cv.ORB with nfeatures=${ORB_MAX_FEATURES}${detail}`,
+      `Failed to create cv.ORB with nfeatures=${ORB_MAX_FEATURES}${detail}`,
     );
   }
 
@@ -32,7 +31,7 @@ export function createConfiguredOrb(cv: OpenCvRuntime): OpenCvDynamic {
       instance?.delete?.();
     } catch {}
     throw new AlignmentImplementationError(
-      "The cv.ORB constructor returned an object without detectAndCompute()/delete().",
+      "cv.ORB.create() returned an object without detectAndCompute()/delete().",
     );
   }
   return instance;

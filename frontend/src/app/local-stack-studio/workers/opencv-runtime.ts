@@ -1,82 +1,17 @@
 // Shared OpenCV bootstrap for Local Stack Studio workers.
-const OPENCV_SCRIPT_URL = "/vendor/opencv/opencv.js";
+import { loadOpenCvNative } from "../../../image/opencv-native";
 
-// OpenCV.js is loaded dynamically rather than through the npm module at runtime.
-// Keep that external API as the one intentionally dynamic boundary; worker messages
-// and LSS-owned data structures remain statically typed.
+// The package has a generated native API; STGY worker algorithms retain their
+// previous dynamic boundary until their per-operation signatures are migrated.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type OpenCvDynamic = any;
-
-export type OpenCvRuntime = {
-  Mat: OpenCvDynamic;
-  [key: string]: OpenCvDynamic;
-};
-
-type WorkerOpenCvGlobal = typeof globalThis & {
-  cv?: unknown;
-  importScripts?: (...urls: string[]) => void;
-};
-
-function workerGlobal(): WorkerOpenCvGlobal {
-  return globalThis as WorkerOpenCvGlobal;
-}
-
-function isThenable(value: unknown): value is PromiseLike<unknown> {
-  if ((typeof value !== "object" && typeof value !== "function") || value === null) return false;
-  return typeof (value as { then?: unknown }).then === "function";
-}
-
-
-function silenceOpenCvLogging(runtime: OpenCvRuntime): void {
-  const logging = runtime?.utils?.logging;
-  try {
-    logging?.setLogLevel?.(0);
-  } catch {}
-}
-function isOpenCvRuntime(value: unknown): value is OpenCvRuntime {
-  if ((typeof value !== "object" && typeof value !== "function") || value === null) return false;
-  return Boolean((value as { Mat?: unknown }).Mat);
-}
+export type OpenCvRuntime = { Mat: OpenCvDynamic; [key: string]: OpenCvDynamic };
 
 export async function loadWorkerOpenCv(workerLabel: string): Promise<OpenCvRuntime> {
-  const scope = workerGlobal();
   try {
-    if (!scope.cv) {
-      if (typeof scope.importScripts !== "function") {
-        throw new Error("Worker importScripts API is unavailable.");
-      }
-      scope.importScripts(OPENCV_SCRIPT_URL);
-    }
+    return await loadOpenCvNative() as OpenCvRuntime;
   } catch (error) {
     const detail = error instanceof Error ? `: ${error.message}` : "";
-    throw new Error(`Failed to load OpenCV.js in the ${workerLabel} worker${detail}`);
+    throw new Error(`Failed to load native OpenCV in the ${workerLabel} worker${detail}`);
   }
-
-  const runtime = await resolveWorkerOpenCvRuntime(
-    scope,
-    `Timed out while initializing OpenCV.js in the ${workerLabel} worker.`,
-  );
-  if (!isOpenCvRuntime(runtime)) {
-    throw new Error(`OpenCV.js failed to initialize in the ${workerLabel} worker.`);
-  }
-  silenceOpenCvLogging(runtime);
-  return runtime;
-}
-
-async function resolveWorkerOpenCvRuntime(
-  scope: WorkerOpenCvGlobal,
-  timeoutMessage: string,
-): Promise<OpenCvRuntime> {
-  const deadline = Date.now() + 30000;
-  let candidate: unknown = scope.cv;
-  while (Date.now() < deadline) {
-    if (isThenable(candidate)) {
-      candidate = await candidate;
-      continue;
-    }
-    if (isOpenCvRuntime(candidate)) return candidate;
-    await new Promise<void>((resolve) => setTimeout(resolve, 20));
-    candidate = scope.cv;
-  }
-  throw new Error(timeoutMessage);
 }

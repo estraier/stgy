@@ -34,6 +34,7 @@ import {
   type PanoramaGainMap,
 } from "../stack/panorama-exposure";
 import { transferableBuffer } from "./transfer-buffer";
+import { OPENCV_MODULE_URL, OPENCV_WASM_URL } from "../../../image/opencv-native";
 import type {
   PanoramaWorkerRequest,
   PanoramaWorkerResponse,
@@ -143,8 +144,8 @@ import type {
   const PANORAMA_ROWS_PER_READ = 128;
   const PANORAMA_SAMPLE_BAND_ROWS = 64;
   const CANONICAL_DECODE_LUT = buildCanonicalDecodeLut();
-  const PANORAMA_MODULE_URL = "/vendor/opencv-stitching/lib/index.js";
-  const PANORAMA_WASM_URL = "/vendor/opencv-stitching/lib/opencv_js.wasm";
+  const PANORAMA_MODULE_URL = OPENCV_MODULE_URL;
+  const PANORAMA_WASM_URL = OPENCV_WASM_URL;
   const GRAPH_CUT_TERMINAL_COST = 10_000;
   const GRAPH_CUT_BAD_REGION_PENALTY = 1_000;
   const SEAM_CORE_SCORE = 3_000_000;

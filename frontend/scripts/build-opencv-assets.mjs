@@ -2,17 +2,18 @@ import { access, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const OPENCV_PACKAGE = "@techstark/opencv-js";
-const OPENCV_PACKAGE_VERSION = "5.0.0-release.1";
+const OPENCV_PACKAGE = "@banou/opencv-wasm";
+const OPENCV_PACKAGE_VERSION = "0.0.6";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const frontendDir = dirname(scriptDir);
 const destinationDir = join(frontendDir, "public", "vendor", "opencv");
+const formerDestinationDir = join(frontendDir, "public", "vendor", "opencv-stitching");
 
 let searchDir = frontendDir;
 let packageDir = null;
 while (true) {
-  const candidate = join(searchDir, "node_modules", "@techstark", "opencv-js");
+  const candidate = join(searchDir, "node_modules", "@banou", "opencv-wasm");
   try {
     const packageJson = JSON.parse(await readFile(join(candidate, "package.json"), "utf8"));
     if (packageJson?.name === OPENCV_PACKAGE) {
@@ -36,18 +37,19 @@ if (!packageDir) {
   throw new Error(`Could not locate ${OPENCV_PACKAGE}@${OPENCV_PACKAGE_VERSION} under node_modules`);
 }
 
-const sourceJs = join(packageDir, "dist", "opencv.js");
-await access(sourceJs);
+const sourceLib = join(packageDir, "lib");
+await access(join(sourceLib, "index.js"));
+await access(join(sourceLib, "opencv_js.wasm"));
 await rm(destinationDir, { recursive: true, force: true });
+// Remove the old second copy when an existing workspace is upgraded.
+await rm(formerDestinationDir, { recursive: true, force: true });
 await mkdir(destinationDir, { recursive: true });
-const sourceText = await readFile(sourceJs, "utf8");
-const quietSourceText = sourceText.replace(
-  /\bconsole\.(?:log|info|warn|error|debug|trace)\b/g,
-  "(function(){})",
-);
-await writeFile(join(destinationDir, "opencv.js"), quietSourceText, "utf8");
+// @banou/opencv-wasm explicitly supports unbundled browser deployment by
+// serving lib/ intact and importing lib/index.js. Keep the whole directory so
+// its relative ESM imports and colocated runtime assets remain valid.
+await cp(sourceLib, join(destinationDir, "lib"), { recursive: true });
 
-for (const name of ["LICENSE", "LICENSE.md", "README.md"]) {
+for (const name of ["LICENSE", "THIRD_PARTY_NOTICES.md", "README.md"]) {
   const source = join(packageDir, name);
   try {
     await access(source);
@@ -57,6 +59,6 @@ for (const name of ["LICENSE", "LICENSE.md", "README.md"]) {
 
 await writeFile(
   join(destinationDir, "VERSION"),
-  `${OPENCV_PACKAGE}@${OPENCV_PACKAGE_VERSION}\nOpenCV 5.0.0\n`,
+  `${OPENCV_PACKAGE}@${OPENCV_PACKAGE_VERSION}\nOpenCV 5.0.0 unified runtime (including stitching)\n`,
   "utf8",
 );

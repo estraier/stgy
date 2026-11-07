@@ -469,14 +469,10 @@ import type {
     if (referenceDescriptors.cols !== targetDescriptors.cols || referenceDescriptors.cols !== 32) {
       throw new Error("Unexpected ORB descriptor width for spatial matching.");
     }
-    const referencePoints = Array.from({ length: referenceKeypoints.size() }, (_, i) => {
-      const point = referenceKeypoints.get(i).pt;
-      return { x: point.x, y: point.y };
-    });
-    const targetPoints = Array.from({ length: targetKeypoints.size() }, (_, i) => {
-      const point = targetKeypoints.get(i).pt;
-      return { x: point.x, y: point.y };
-    });
+    // Native vector.get() returns an owned keypoint handle (unlike the old
+    // OpenCV.js wrapper). Snapshot coordinates and release each handle.
+    const referencePoints = Array.from({ length: referenceKeypoints.size() }, (_, i) => readKeypoint(referenceKeypoints, i));
+    const targetPoints = Array.from({ length: targetKeypoints.size() }, (_, i) => readKeypoint(targetKeypoints, i));
     const matched = matchSpatialOrbDescriptors({
       referencePoints, targetPoints,
       referenceDescriptors: referenceDescriptors.data,
@@ -901,27 +897,39 @@ import type {
     return mat;
   }
 
+  function readKeypoint(vector: OpenCvDynamic, index: number): { x: number; y: number } {
+    const keypoint = vector.get(index);
+    try {
+      return { x: keypoint.pt.x, y: keypoint.pt.y };
+    } finally {
+      keypoint.delete?.();
+    }
+  }
+
   function collectMatchCandidates(matches: OpenCvDynamic, referenceKeypoints: OpenCvDynamic, targetKeypoints: OpenCvDynamic, shiftLimit: number): MatchCandidate[] {
     const sidesMean = (width + height) / 2;
     const candidates: MatchCandidate[] = [];
 
     for (let i = 0; i < matches.size(); i += 1) {
       const match = matches.get(i);
-      const referencePoint = referenceKeypoints.get(match.queryIdx).pt;
-      const targetPoint = targetKeypoints.get(match.trainIdx).pt;
-      const normalizedShift = Math.hypot(
-        referencePoint.x - targetPoint.x,
-        referencePoint.y - targetPoint.y,
-      ) / sidesMean;
-
-      if (normalizedShift <= shiftLimit) {
-        candidates.push({
-          distance: match.distance,
-          referenceX: referencePoint.x,
-          referenceY: referencePoint.y,
-          targetX: targetPoint.x,
-          targetY: targetPoint.y,
-        });
+      try {
+        const referencePoint = readKeypoint(referenceKeypoints, match.queryIdx);
+        const targetPoint = readKeypoint(targetKeypoints, match.trainIdx);
+        const normalizedShift = Math.hypot(
+          referencePoint.x - targetPoint.x,
+          referencePoint.y - targetPoint.y,
+        ) / sidesMean;
+        if (normalizedShift <= shiftLimit) {
+          candidates.push({
+            distance: match.distance,
+            referenceX: referencePoint.x,
+            referenceY: referencePoint.y,
+            targetX: targetPoint.x,
+            targetY: targetPoint.y,
+          });
+        }
+      } finally {
+        match.delete?.();
       }
     }
 

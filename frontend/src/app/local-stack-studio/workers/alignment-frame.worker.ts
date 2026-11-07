@@ -51,7 +51,7 @@ function normalize(linear: Float32Array, width: number, height: number, targetWi
   }
   if (mode === "center-fit") {
     const source = new cv.Mat(height, width, cv.CV_32FC3);
-    let resized: OpenCvDynamic = null, roi: OpenCvDynamic = null, result: OpenCvDynamic = null;
+    let resized: OpenCvDynamic = null;
     try {
       source.data32F.set(linear);
       const scale = Math.max(targetWidth / width, targetHeight / height);
@@ -59,10 +59,18 @@ function normalize(linear: Float32Array, width: number, height: number, targetWi
       const resizedHeight = Math.max(targetHeight, Math.round(height * scale));
       resized = new cv.Mat();
       cv.resize(source, resized, new cv.Size(resizedWidth, resizedHeight), 0, 0, cv.INTER_LINEAR);
-      roi = resized.roi(new cv.Rect(Math.floor((resizedWidth - targetWidth) / 2), Math.floor((resizedHeight - targetHeight) / 2), targetWidth, targetHeight));
-      result = roi.clone();
-      return new Float32Array(result.data32F);
-    } finally { result?.delete(); roi?.delete(); resized?.delete(); source.delete(); }
+      // Native Mat.clone() duplicates a handle rather than the pixels. Copy
+      // the centered ROI from the typed view into a standalone array instead.
+      const left = Math.floor((resizedWidth - targetWidth) / 2);
+      const top = Math.floor((resizedHeight - targetHeight) / 2);
+      const pixels = resized.data32F as Float32Array;
+      const cropped = new Float32Array(targetWidth * targetHeight * 3);
+      for (let y = 0; y < targetHeight; y += 1) {
+        const offset = ((y + top) * resizedWidth + left) * 3;
+        cropped.set(pixels.subarray(offset, offset + targetWidth * 3), y * targetWidth * 3);
+      }
+      return cropped;
+    } finally { resized?.delete(); source.delete(); }
   }
   throw new Error(`Unsupported alignment normalization: ${mode}`);
 }

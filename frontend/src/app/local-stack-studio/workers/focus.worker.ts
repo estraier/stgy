@@ -466,7 +466,7 @@ import {
           cv.INTER_AREA,
         );
       } else {
-        working = gray.clone();
+        working = gray.mat_clone();
       }
       gray.delete();
       gray = null;
@@ -480,7 +480,7 @@ import {
         blurred = new cv.Mat();
         cv.GaussianBlur(claheWorking, blurred, new cv.Size(ksize, ksize), 0, 0, cv.BORDER_DEFAULT);
       } else {
-        blurred = claheWorking.clone();
+        blurred = claheWorking.mat_clone();
       }
 
       laplacian = new cv.Mat();

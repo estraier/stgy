@@ -3,37 +3,38 @@ import { createConfiguredOrb, ORB_MAX_FEATURES } from "./orb-runtime";
 import type { OpenCvRuntime } from "./opencv-runtime";
 
 describe("ORB runtime contract", () => {
-  test("constructs ORB with the configured nfeatures value", () => {
-    const constructorArgs: unknown[][] = [];
+  test("creates native ORB with the existing nfeatures value", () => {
+    const factoryArgs: unknown[][] = [];
     class FakeOrb {
       detectAndCompute() {}
       delete() {}
-      constructor(...args: unknown[]) {
-        constructorArgs.push(args);
+      static create(...args: unknown[]) {
+        factoryArgs.push(args);
+        return new FakeOrb();
       }
     }
     const cv = { ORB: FakeOrb } as unknown as OpenCvRuntime;
 
     const orb = createConfiguredOrb(cv);
 
-    expect(constructorArgs).toEqual([[ORB_MAX_FEATURES]]);
+    expect(factoryArgs).toEqual([[ORB_MAX_FEATURES]]);
     expect(ORB_MAX_FEATURES).toBe(5000);
     orb.delete();
   });
 
-  test("fails instead of probing alternative ORB factory APIs", () => {
+  test("fails rather than probing alternate native factories", () => {
     const cv = {
       ORB_create: jest.fn(),
     } as unknown as OpenCvRuntime;
 
-    expect(() => createConfiguredOrb(cv)).toThrow(/cv\.ORB constructor/);
+    expect(() => createConfiguredOrb(cv)).toThrow(/cv\.ORB\.create/);
     expect(cv.ORB_create).not.toHaveBeenCalled();
   });
 
-  test("marks constructor failures as implementation errors", () => {
+  test("marks factory failures as implementation errors", () => {
     class BrokenOrb {
-      constructor() {
-        throw new Error("constructor unavailable");
+      static create() {
+        throw new Error("factory unavailable");
       }
     }
     const cv = { ORB: BrokenOrb } as unknown as OpenCvRuntime;
@@ -52,6 +53,7 @@ describe("ORB runtime contract", () => {
   test("rejects malformed ORB instances", () => {
     class MalformedOrb {
       delete() {}
+      static create() { return new MalformedOrb(); }
     }
     const cv = { ORB: MalformedOrb } as unknown as OpenCvRuntime;
 

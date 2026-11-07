@@ -550,24 +550,20 @@ import type {
 
   function runFindTransformEcc(reference: OpenCvDynamic, target: OpenCvDynamic, warp: OpenCvDynamic,
     mask: OpenCvDynamic, maxIterations: number, epsilon: number): number {
-    const criteria = new cv.TermCriteria(
-      cv.TermCriteria_COUNT | cv.TermCriteria_EPS,
-      maxIterations,
-      epsilon,
+    // The unified @banou/opencv-wasm binding accepts cv::TermCriteria as a
+    // JavaScript value object, not an OpenCV.js `new cv.TermCriteria()` handle.
+    // OpenCV's COUNT=1 and EPS=2 flags are stable enum values. A value object
+    // does not allocate a WASM handle and must not be deleted.
+    const criteria = { type: 1 | 2, maxCount: maxIterations, epsilon };
+    return cv.findTransformECC(
+      reference,
+      target,
+      warp,
+      cv.MOTION_AFFINE,
+      criteria,
+      mask,
+      ECC_GAUSSIAN_FILTER_SIZE,
     );
-    try {
-      return cv.findTransformECC(
-        reference,
-        target,
-        warp,
-        cv.MOTION_AFFINE,
-        criteria,
-        mask,
-        ECC_GAUSSIAN_FILTER_SIZE,
-      );
-    } finally {
-      if (criteria && typeof criteria.delete === "function") criteria.delete();
-    }
   }
 
   function buildEccPyramid(grayBytes: Uint8Array): OpenCvDynamic[] {
@@ -810,9 +806,6 @@ import type {
   function assertEccApis(runtime: OpenCvRuntime): void {
     const missing: string[] = [];
     if (!runtime.findTransformECC) missing.push("findTransformECC");
-    if (!runtime.TermCriteria) missing.push("TermCriteria");
-    if (runtime.TermCriteria_COUNT === undefined) missing.push("TermCriteria_COUNT");
-    if (runtime.TermCriteria_EPS === undefined) missing.push("TermCriteria_EPS");
     if (runtime.MOTION_AFFINE === undefined) missing.push("MOTION_AFFINE");
     if (!runtime.resize) missing.push("resize");
     if (!runtime.pyrDown) missing.push("pyrDown");
@@ -822,7 +815,7 @@ import type {
     if (runtime.CV_32F === undefined) missing.push("CV_32F");
     if (runtime.INTER_AREA === undefined) missing.push("INTER_AREA");
     if (missing.length > 0) {
-      throw new AlignmentImplementationError(`This OpenCV.js build is missing ECC APIs: ${missing.join(", ")}`);
+      throw new AlignmentImplementationError(`The native OpenCV build is missing ECC APIs: ${missing.join(", ")}`);
     }
   }
 })();
