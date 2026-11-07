@@ -6,7 +6,6 @@ import * as UTIF from "utif";
 import {
   convertLinearProPhotoToOutputRgbInto,
   createRgb8ToLinearProphotoConverter,
-  encodedRgbToLinearProphotoInto,
 } from "@/image/color";
 import {
   buildRawLensfunCorrection,
@@ -79,10 +78,15 @@ import {
   deleteCanonicalSession,
   estimateCanonicalCapacity,
   materializeCanonicalLinearImage,
-  writeCanonicalLinearImage,
   writeCanonicalStoredImage,
 } from "./canonical-source";
 import { AlignedImageReader } from "./aligned-reader";
+import {
+  CanonicalInputWorkerClient,
+  resolveCanonicalInputMemoryBudget,
+  resolveCanonicalInputWorkerCount,
+  runCanonicalInputTaskQueue,
+} from "./canonical-input-pool";
 import { runLensfunCorrectionPool } from "./lensfun-pool";
 import { buildStfApertureWeights, DEFAULT_STF_BLEND_WEIGHT } from "./stf-weights";
 import { buildStfAdditionalBlurPlan, DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS, STF_BLUR_STRENGTH_VALUES, STF_BLUR_AREA_GUARD_VALUES, STF_BLUR_RATIO_VALUES, STF_BLUR_SIGMOID_VALUES } from "./stf-additional-blur-mode";
@@ -1798,12 +1802,36 @@ function removeFileExtension(fileName) {
 }
 
 async function readInputInfos(files) {
-  const infos = [];
-  for (let index = 0; index < files.length; index += 1) {
-    setProgress(`Reading metadata, ICC, and size ${index + 1}/${files.length}...`);
-    infos.push(await extractInputInfo(files[index]));
-    await yieldToBrowser();
+  const infos = new Array(files.length);
+  let nextIndex = 0;
+  let failure = null;
+  // RAW metadata uses a threaded LibRaw instance; do not initialize several
+  // of those concurrently. Other input metadata can overlap file reads.
+  let rawTail = Promise.resolve();
+  async function readNext() {
+    while (nextIndex < files.length && !failure) {
+      const index = nextIndex++;
+      const file = files[index];
+      setProgress(`Reading metadata, ICC, and size ${index + 1}/${files.length}...`);
+      try {
+        if (isRawImageFile(file.name, file.type)) {
+          const previous = rawTail;
+          let release;
+          rawTail = new Promise((resolve) => { release = resolve; });
+          await previous;
+          try { if (!failure) infos[index] = await extractInputInfo(file); }
+          finally { release(); }
+        } else {
+          infos[index] = await extractInputInfo(file);
+        }
+      } catch (error) {
+        if (!failure) failure = error;
+      }
+    }
   }
+  const concurrency = resolveCanonicalInputWorkerCount(files.length, navigator.hardwareConcurrency);
+  await Promise.all(Array.from({ length: concurrency }, () => readNext()));
+  if (failure) throw failure;
   return infos;
 }
 
@@ -4759,37 +4787,40 @@ async function ensureCanonicalSession(files, inputInfos, existingSession, requir
   await estimateCanonicalCapacity(files, inputInfos);
   const session = await createCanonicalSession(files, inputInfos);
   try {
-    for (let index = 0; index < files.length; index += 1) {
-      const file = files[index];
-      const inputInfo = inputInfos[index];
-      setProgress(`${inputInfo.isRaw ? "Developing RAW" : "Reading image"} ${index + 1}/${files.length} for canonical cache...`);
-      const decoded = await decodeFileToDecodedImage(file, inputInfo);
-      if (decoded?.canonicalStoredRgb16 instanceof Uint16Array) {
-        await writeCanonicalStoredImage(
+    const tasks = files.map((file, imageIndex) => ({ imageIndex, file, inputInfo: inputInfos[imageIndex] }));
+    const workerUrl = new URL("/generated/local-stack-studio/canonical-input.worker.js", window.location.origin);
+    await runCanonicalInputTaskQueue({
+      tasks,
+      sessionId: session.id,
+      workerCount: resolveCanonicalInputWorkerCount(files.length, navigator.hardwareConcurrency),
+      memoryBudgetBytes: resolveCanonicalInputMemoryBudget(navigator.deviceMemory),
+      createExecutor: () => new CanonicalInputWorkerClient(workerUrl, (message) => setProgress(message)),
+      runRaw: async (task) => {
+        // Preserve the existing RAW / LibRaw / LensFun processing exactly.
+        // LibRaw's internal threads and LensFun's worker pool already run in
+        // parallel; the input queue allows at most one RAW job at a time.
+        const decoded = await decodeRawFileToDecodedImage(
+          task.file,
+          task.inputInfo?.lensMetadata || null,
+          task.inputInfo?.lensCorrection || null,
+        );
+        return await writeCanonicalStoredImage(
           session,
-          index,
-          file,
-          inputInfo,
+          task.imageIndex,
+          task.file,
+          task.inputInfo,
           decoded.width,
           decoded.height,
           decoded.canonicalStoredRgb16,
           (message) => setProgress(message),
         );
-      } else {
-        const linear = decodedImageToLinearProPhoto(decoded);
-        await writeCanonicalLinearImage(
-          session,
-          index,
-          file,
-          inputInfo,
-          decoded.width,
-          decoded.height,
-          linear,
-          (message) => setProgress(message),
-        );
-      }
-      await yieldToBrowser();
-    }
+      },
+      onStart: (task) => setProgress(`${task.inputInfo.isRaw ? "Developing RAW" : "Reading image"} ${task.imageIndex + 1}/${files.length} for canonical cache...`),
+      onComplete: (task, record, completedCount) => {
+        session.images[task.imageIndex] = record;
+        setProgress(`Preparing input images... ${completedCount}/${files.length} complete.`);
+      },
+    });
     await completeCanonicalSession(session);
     return session;
   } catch (error) {
@@ -4798,185 +4829,8 @@ async function ensureCanonicalSession(files, inputInfos, existingSession, requir
   }
 }
 
-function decodedImageToLinearProPhoto(decoded) {
-  if (decoded?.linearProPhotoRgb instanceof Float32Array) {
-    return decoded.linearProPhotoRgb;
-  }
-  const imageData = decoded?.imageData || decoded?.alignmentImageData;
-  if (!imageData?.data) throw new Error("Decoded image does not contain pixel data for canonical conversion.");
-  const pixelCount = decoded.width * decoded.height;
-  const output = new Float32Array(pixelCount * 3);
-  const convert = createRgb8ToLinearProphotoConverter(decoded.sourceColorSpace || "srgb");
-  const converted = new Float32Array(3);
-  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
-    const source = pixel * 4;
-    const target = pixel * 3;
-    convert(imageData.data[source], imageData.data[source + 1], imageData.data[source + 2], converted);
-    output[target] = converted[0];
-    output[target + 1] = converted[1];
-    output[target + 2] = converted[2];
-  }
-  return output;
-}
-
 function chooseOutputColorSpace(inputInfos) {
   return inputInfos.some((info) => info.sourceColorSpace !== "srgb") ? "display-p3" : "srgb";
-}
-
-async function decodeFileToDecodedImage(file, inputInfo) {
-  const lowerName = file.name.toLowerCase();
-  const isRawInput = isRawImageFile(file.name, file.type);
-  if (isRawInput) {
-    return await decodeRawFileToDecodedImage(
-      file,
-      inputInfo?.lensMetadata || null,
-      inputInfo?.lensCorrection || null,
-    );
-  }
-  if (inputInfo.isRaw) {
-    // Metadata classification must never send a RAW file through the browser
-    // image decoder. Keep this fallback explicit in case MIME/extension
-    // handling changes later.
-    return await decodeRawFileToDecodedImage(
-      file,
-      inputInfo?.lensMetadata || null,
-      inputInfo?.lensCorrection || null,
-    );
-  }
-
-  if (isTiffFile(lowerName, file.type)) {
-    const buffer = await file.arrayBuffer();
-        const ifds = UTIF.decode(buffer);
-    if (!ifds || ifds.length === 0) {
-      throw new Error(`Failed to parse TIFF structure from ${file.name}.`);
-    }
-    const ifd = ifds[0];
-    UTIF.decodeImage(buffer, ifd);
-    const dimensions = getTiffIfdDimensions(ifd);
-    if (!(dimensions.width > 0 && dimensions.height > 0)) {
-      throw new Error(`Could not determine TIFF dimensions for ${file.name}.`);
-    }
-
-    const linearProPhotoRgb = decodeTiff16RgbToLinearProPhoto(
-      buffer,
-      ifd,
-      inputInfo.sourceColorSpace,
-    );
-    if (linearProPhotoRgb) {
-      const alignmentImageData = linearProPhotoToAlignmentImageData(
-        linearProPhotoRgb,
-        dimensions.width,
-        dimensions.height,
-      );
-      return {
-        width: dimensions.width,
-        height: dimensions.height,
-        sourceColorSpace: "prophoto-rgb",
-        linearProPhotoRgb,
-        alignmentImageData,
-      };
-    }
-
-    const rgbaBytes = UTIF.toRGBA8(ifd);
-    const imageData = new ImageData(
-      new Uint8ClampedArray(rgbaBytes),
-      dimensions.width,
-      dimensions.height,
-    );
-    return {
-      imageData,
-      sourceColorSpace: inputInfo.sourceColorSpace,
-      width: dimensions.width,
-      height: dimensions.height,
-    };
-  }
-
-  let bitmap;
-  try {
-    bitmap = await createImageBitmap(file, { imageOrientation: "from-image", colorSpaceConversion: "none" });
-  } catch (error) {
-    const detail = error instanceof Error ? `: ${error.message}` : "";
-    throw new Error(`Failed to decode ${file.name}${detail}`);
-  }
-
-  try {
-    const canvas = document.createElement("canvas");
-    canvas.width = bitmap.width;
-    canvas.height = bitmap.height;
-    const context = canvas.getContext("2d", { willReadFrequently: true });
-    if (!context) throw new Error("Could not create a 2D canvas context.");
-    context.drawImage(bitmap, 0, 0);
-    return {
-      imageData: context.getImageData(0, 0, bitmap.width, bitmap.height),
-      sourceColorSpace: inputInfo.sourceColorSpace,
-      width: bitmap.width,
-      height: bitmap.height,
-    };
-  } finally {
-    bitmap.close();
-  }
-}
-
-function decodeTiff16RgbToLinearProPhoto(buffer, ifd, sourceColorSpace) {
-  const bitsPerSample = Array.isArray(ifd?.t258) ? ifd.t258 : [];
-  const samplesPerPixel = Number(ifd?.t277?.[0] ?? bitsPerSample.length);
-  const photometric = Number(ifd?.t262?.[0] ?? -1);
-  const planarConfiguration = Number(ifd?.t284?.[0] ?? 1);
-  const sampleFormat = Array.isArray(ifd?.t339) && ifd.t339.length > 0 ? ifd.t339 : [1];
-
-  if (
-    photometric !== 2 ||
-    planarConfiguration !== 1 ||
-    samplesPerPixel < 3 ||
-    bitsPerSample.length < 3 ||
-    bitsPerSample[0] !== 16 ||
-    bitsPerSample[1] !== 16 ||
-    bitsPerSample[2] !== 16 ||
-    sampleFormat.some((value) => Number(value) !== 1)
-  ) {
-    return null;
-  }
-
-  const { width, height } = getTiffIfdDimensions(ifd);
-  if (!(width > 0 && height > 0)) return null;
-
-  const raw = tiffDecodedByteView(ifd.data);
-  const bytesPerPixel = samplesPerPixel * 2;
-  const expectedLength = width * height * bytesPerPixel;
-  if (!raw || raw.byteLength < expectedLength) return null;
-
-  const fileBytes = new Uint8Array(buffer, 0, Math.min(2, buffer.byteLength));
-  const littleEndian = fileBytes.length >= 2 && fileBytes[0] === 0x49 && fileBytes[1] === 0x49;
-  const bigEndian = fileBytes.length >= 2 && fileBytes[0] === 0x4d && fileBytes[1] === 0x4d;
-  if (!littleEndian && !bigEndian) return null;
-
-  const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
-  const linear = new Float32Array(width * height * 3);
-  const converted = new Float32Array(3);
-  let sourceOffset = 0;
-  let outputOffset = 0;
-  for (let pixel = 0; pixel < width * height; pixel += 1) {
-    const er = view.getUint16(sourceOffset, littleEndian) / 65535;
-    const eg = view.getUint16(sourceOffset + 2, littleEndian) / 65535;
-    const eb = view.getUint16(sourceOffset + 4, littleEndian) / 65535;
-    sourceOffset += bytesPerPixel;
-
-    encodedRgbToLinearProphotoInto(er, eg, eb, sourceColorSpace, converted);
-    linear[outputOffset] = converted[0];
-    linear[outputOffset + 1] = converted[1];
-    linear[outputOffset + 2] = converted[2];
-    outputOffset += 3;
-  }
-  return linear;
-}
-
-function tiffDecodedByteView(data) {
-  if (data instanceof Float32Array) return data;
-  if (ArrayBuffer.isView(data)) {
-    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-  }
-  if (data instanceof ArrayBuffer) return new Uint8Array(data);
-  return null;
 }
 
 async function decodeRawFileToDecodedImage(file, knownLensMetadata = null, knownLensCorrection = null) {
@@ -5088,25 +4942,6 @@ function libRawImageDataToLinearRgb16(image) {
     stored[destinationIndex + 2] = Math.min(65535, Math.max(0, Math.round(b * scale)));
   }
   return stored;
-}
-
-function linearProPhotoToAlignmentImageData(linear, width, height) {
-  const rgba = new Uint8ClampedArray(width * height * 4);
-  const converted = new Float32Array(3);
-  for (let outputIndex = 0, sourceIndex = 0; outputIndex < rgba.length; outputIndex += 4, sourceIndex += 3) {
-    convertLinearProPhotoToOutputRgbInto(
-      linear[sourceIndex],
-      linear[sourceIndex + 1],
-      linear[sourceIndex + 2],
-      "srgb",
-      converted,
-    );
-    rgba[outputIndex] = linearToSrgbByteFast(converted[0]);
-    rgba[outputIndex + 1] = linearToSrgbByteFast(converted[1]);
-    rgba[outputIndex + 2] = linearToSrgbByteFast(converted[2]);
-    rgba[outputIndex + 3] = 255;
-  }
-  return new ImageData(rgba, width, height);
 }
 
 function canvasToImageBlob(canvas, format) {

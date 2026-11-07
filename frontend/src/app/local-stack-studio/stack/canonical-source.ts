@@ -648,3 +648,27 @@ export async function deleteCanonicalSession(session: PreparedCanonicalSession |
   if (typeof session !== "string") session.chunkCache.clearSession(sessionId);
   if (!dbOverride) db.close();
 }
+
+// Each input Worker uses its own IndexedDB connection to write a different
+// image index. The main thread owns the session lifecycle and only marks it
+// complete after all Workers have returned their completed image records.
+export async function openCanonicalWorkerWriteSession(sessionId: string): Promise<PreparedCanonicalSession> {
+  if (!sessionId) throw new Error("Canonical write session id is required.");
+  const db = await openCanonicalSourceDb();
+  try {
+    const session = await idbGet<CanonicalSessionRecord>(db, SESSION_STORE, sessionId);
+    if (!session || session.formatVersion !== 1 || session.complete) {
+      throw new Error("Canonical input session is unavailable or already complete.");
+    }
+    return {
+      id: sessionId,
+      filesSignature: "",
+      db,
+      images: [],
+      chunkCache: new CanonicalChunkCache(CANONICAL_WORKER_CACHE_BYTES),
+    };
+  } catch (error) {
+    db.close();
+    throw error;
+  }
+}

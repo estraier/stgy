@@ -4,6 +4,10 @@ import {
   CANONICAL_UPPER_ROUNDING_TOLERANCE,
   CanonicalChunkCache,
   normalizeCanonicalLinearSample,
+  readCanonicalLinearRows,
+  readCanonicalLinearRowsLowMemory,
+  type CanonicalReadableSession,
+  type CanonicalImageRecord,
 } from "./canonical-source";
 
 describe("CanonicalChunkCache", () => {
@@ -59,5 +63,41 @@ describe("normalizeCanonicalLinearSample", () => {
     expect(() => normalizeCanonicalLinearSample(CANONICAL_LINEAR_RANGE_MAX + 0.001)).toThrow(/outside the supported/);
     expect(() => normalizeCanonicalLinearSample(Number.NaN)).toThrow(/not finite/);
     expect(() => normalizeCanonicalLinearSample(Number.POSITIVE_INFINITY)).toThrow(/not finite/);
+  });
+});
+
+
+describe("readCanonicalLinearRowsLowMemory", () => {
+  const sessionWithCachedChunks = (): CanonicalReadableSession => {
+    const chunkCache = new CanonicalChunkCache(128);
+    // Image: width 2, height 3, RGB 16bit; rowsPerChunk=2.
+    chunkCache.put("test:chunk:0:0", new Uint16Array([
+      0, 32768, 65535, 100, 200, 300,
+      500, 1000, 2000, 3000, 4000, 5000,
+    ]));
+    chunkCache.put("test:chunk:0:1", new Uint16Array([
+      6000, 7000, 8000, 9000, 10000, 11000,
+    ]));
+    return {
+      id: "test",
+      db: {} as IDBDatabase, // The cached chunks avoid IndexedDB access.
+      chunkCache,
+      images: [{ width: 2, height: 3, rowsPerChunk: 2, complete: true, fileName: "test.tif" } as CanonicalImageRecord],
+    };
+  };
+
+  test("decodes identical Float32 values across chunk boundaries and for partial rows", async () => {
+    const session = sessionWithCachedChunks();
+    for (const [startRow, rowCount] of [[0, 3], [1, 2], [2, 1], [0, 0]]) {
+      const oldRows = await readCanonicalLinearRows(session, 0, startRow, rowCount);
+      const newRows = await readCanonicalLinearRowsLowMemory(session, 0, startRow, rowCount);
+      expect(newRows).toEqual(oldRows);
+    }
+  });
+
+  test("rejects out-of-bounds requests instead of masking corrupt input", async () => {
+    const session = sessionWithCachedChunks();
+    await expect(readCanonicalLinearRowsLowMemory(session, 0, -1, 1)).rejects.toThrow("out of bounds");
+    await expect(readCanonicalLinearRowsLowMemory(session, 0, 2, 2)).rejects.toThrow("out of bounds");
   });
 });
