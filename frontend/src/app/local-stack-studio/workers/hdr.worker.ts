@@ -1,7 +1,5 @@
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-nocheck
 // Local Stack Studio worker source. Built to public/generated/local-stack-studio.
-import { loadWorkerOpenCv } from "./opencv-runtime";
+import { loadWorkerOpenCv, type OpenCvRuntime } from "./opencv-runtime";
 import { asHdrWorkerRequest, type HdrWorkerRequest } from "./protocols/hdr-protocol";
 const HDR_FLOAT_MIN_RESPONSE = 1e-12;
 const HDR_FLOAT_WEIGHT_EPSILON = 1e-12;
@@ -25,15 +23,69 @@ const HDR1_RESPONSE_SAMPLE_LIMIT = 4096;
 const HDR1_RESPONSE_SAMPLE_OBSERVATION_TARGET = 32768;
 const HDR1_RESPONSE_SMOOTHNESS = 10;
 const HDR1_RESPONSE_RIDGE = 1e-10;
+// Calibrating a response curve with nearly identical exposures is ill-posed:
+// the constant curve g(z) = 0 is a least-squares solution, which produces a
+// flat white HDR output. Keep the linear response if the EV span is too small.
+const HDR1_MIN_CALIBRATION_EV_SPAN = 0.25;
 
-let debevecStreamState = null;
-let mertensStreamState = null;
+
+type HdrRequestOf<T extends HdrWorkerRequest["type"]> = Extract<HdrWorkerRequest, { type: T }>;
+type PyramidDimensions = { width: number; height: number }[];
+
+type DebevecStreamState = {
+  width: number;
+  height: number;
+  imageCount: number;
+  receivedCount: number;
+  responseSums: Float32Array | null;
+  weightSums: Float32Array | null;
+  weightedLogBrightnessSums: Float32Array | null;
+  brightnesses: Float32Array;
+  receivedFlags: Uint8Array;
+  suppliedExposureTimes: Float32Array;
+  linearResponseFlags: Uint8Array;
+  needsResponseCalibration: boolean;
+  responseSampleIndices: Uint32Array | null;
+  responseSamples: Float32Array | null;
+  responseSampleCount: number;
+  calibratedExposureTimes: Float32Array | null;
+  calibratedResponseCurves: Float64Array[] | null;
+  calibratedResponseSums: Float32Array | null;
+  calibratedWeightSums: Float32Array | null;
+  pass2ReceivedFlags: Uint8Array | null;
+  pass2ReceivedCount: number;
+};
+
+type MertensStreamState = {
+  width: number;
+  height: number;
+  imageCount: number;
+  receivedCount: number;
+  brightnesses: Float32Array;
+  receivedFlags: Uint8Array;
+  saturationWeight: number;
+  exposureWeight: number;
+  weightSums: Float32Array;
+  cv: OpenCvRuntime | null;
+  dimensions: PyramidDimensions | null;
+  fusedLevels: Float32Array[] | null;
+  pass2ReceivedFlags: Uint8Array | null;
+  pass2ReceivedCount: number;
+};
+
+// The DOM type of self.postMessage does not describe transferable Worker messages.
+const workerScope = self as unknown as {
+  postMessage(message: unknown, transfer?: Transferable[]): void;
+};
+
+let debevecStreamState: DebevecStreamState | null = null;
+let mertensStreamState: MertensStreamState | null = null;
 let workerMessageQueue = Promise.resolve();
 
 self.onmessage = (event) => {
   const message = asHdrWorkerRequest(event.data);
   if (!message) {
-    self.postMessage({ type: "error", message: "HDR worker received an unsupported message." });
+    workerScope.postMessage({ type: "error", message: "HDR worker received an unsupported message." });
     return;
   }
   workerMessageQueue = workerMessageQueue
@@ -53,7 +105,7 @@ self.onmessage = (event) => {
           // Best-effort state cleanup; report the original processing error.
         }
       }
-      self.postMessage({
+      workerScope.postMessage({
         type: "error",
         message: error instanceof Error ? error.message : String(error),
       });
@@ -88,7 +140,7 @@ async function dispatchWorkerMessage(message: HdrWorkerRequest) {
   if (message.type === "merge-stream-abort") {
     const requestId = message.requestId;
     await cleanupDebevecStreamState();
-    self.postMessage({ type: "merge-stream-aborted", requestId });
+    workerScope.postMessage({ type: "merge-stream-aborted", requestId });
     return;
   }
   if (message.type === "mertens") {
@@ -118,11 +170,11 @@ async function dispatchWorkerMessage(message: HdrWorkerRequest) {
   if (message.type === "mertens-stream-abort") {
     const requestId = message.requestId;
     await cleanupMertensStreamState();
-    self.postMessage({ type: "mertens-stream-aborted", requestId });
+    workerScope.postMessage({ type: "mertens-stream-aborted", requestId });
   }
 }
 
-function processDebevecMessage(message) {
+function processDebevecMessage(message: HdrRequestOf<"merge">) {
   const width = Number(message.width);
   const height = Number(message.height);
   const imageBuffers = Array.isArray(message.imageBuffers) ? message.imageBuffers : [];
@@ -152,14 +204,14 @@ function processDebevecMessage(message) {
   postProgress("Restoring HDR brightness...");
   adjustExposureToBrightnessInPlace(hdr, targetBrightness);
 
-  self.postMessage(
+  workerScope.postMessage(
     { type: "result", linearProPhotoBuffer: hdr.buffer },
     [hdr.buffer],
   );
 }
 
 
-async function initializeDebevecStream(message) {
+async function initializeDebevecStream(message: HdrRequestOf<"merge-stream-init">) {
   if (debevecStreamState) throw new Error("HDR1 stream worker is already initialized.");
   const width = Number(message.width);
   const height = Number(message.height);
@@ -218,10 +270,10 @@ async function initializeDebevecStream(message) {
     pass2ReceivedCount: 0,
   };
   debevecStreamState.brightnesses.fill(Number.NaN);
-  self.postMessage({ type: "merge-stream-ready", requestId: message.requestId });
+  workerScope.postMessage({ type: "merge-stream-ready", requestId: message.requestId });
 }
 
-async function appendDebevecStreamImage(message) {
+async function appendDebevecStreamImage(message: HdrRequestOf<"merge-stream-image">) {
   const state = debevecStreamState;
   if (!state) throw new Error("HDR1 stream worker was not initialized.");
   const imageIndex = Number(message.imageIndex);
@@ -238,7 +290,7 @@ async function appendDebevecStreamImage(message) {
   const imageBuffer = message.imageBuffer;
   const expectedLength = state.width * state.height * 3;
   const expectedByteLength = expectedLength * Float32Array.BYTES_PER_ELEMENT;
-  if (!(imageBuffer instanceof ArrayBuffer) || imageBuffer.byteLength !== expectedByteLength) {
+  if (!isFloat32RgbBuffer(imageBuffer, expectedByteLength)) {
     throw new Error(`HDR input ${imageIndex + 1} has an invalid Float32 RGB buffer.`);
   }
   const image = new Float32Array(imageBuffer);
@@ -252,14 +304,14 @@ async function appendDebevecStreamImage(message) {
   state.receivedFlags[imageIndex] = 1;
   state.brightnesses[imageIndex] = brightness;
   state.receivedCount += 1;
-  self.postMessage({
+  workerScope.postMessage({
     type: "merge-stream-image-stored",
     requestId: message.requestId,
     imageIndex,
   });
 }
 
-async function finalizeDebevecStream(message) {
+async function finalizeDebevecStream(message: HdrRequestOf<"merge-stream-finalize">) {
   const state = debevecStreamState;
   if (!state) throw new Error("HDR1 stream worker was not initialized.");
   if (state.receivedCount !== state.imageCount) {
@@ -304,15 +356,16 @@ async function finalizeDebevecStream(message) {
   postProgress("Restoring HDR brightness...");
   adjustExposureToBrightnessInPlace(hdr, targetBrightness);
 
-  self.postMessage(
+  workerScope.postMessage(
     { type: "result", requestId: message.requestId, linearProPhotoBuffer: hdr.buffer },
     [hdr.buffer],
   );
 }
 
-function accumulateLinearDebevecImage(state, imageIndex, image, brightness) {
+function accumulateLinearDebevecImage(state: DebevecStreamState, imageIndex: number, image: Float32Array, brightness: number) {
   const responseSums = state.responseSums;
   const weightSums = state.weightSums;
+  if (!responseSums || !weightSums) throw new Error("HDR1 linear accumulation is not initialized.");
   const weightedLogBrightnessSums = state.weightedLogBrightnessSums;
   const suppliedExposureTimes = state.suppliedExposureTimes;
   const hasExposureTimes = suppliedExposureTimes.length > 0;
@@ -335,9 +388,10 @@ function accumulateLinearDebevecImage(state, imageIndex, image, brightness) {
   }
 }
 
-function finalizeLinearDebevecStreamToHdr(state) {
+function finalizeLinearDebevecStreamToHdr(state: DebevecStreamState) {
   const responseSums = state.responseSums;
   const weightSums = state.weightSums;
+  if (!responseSums || !weightSums) throw new Error("HDR1 linear accumulation is not initialized.");
   const weightedLogBrightnessSums = state.weightedLogBrightnessSums;
   let minBrightness = Infinity;
   if (weightedLogBrightnessSums) {
@@ -364,7 +418,7 @@ function finalizeLinearDebevecStreamToHdr(state) {
   return responseSums;
 }
 
-function chooseDebevecResponseSampleCount(pixelCount, imageCount) {
+function chooseDebevecResponseSampleCount(pixelCount: number, imageCount: number) {
   const observationLimited = Math.max(
     512,
     Math.floor(HDR1_RESPONSE_SAMPLE_OBSERVATION_TARGET / Math.max(2, imageCount)),
@@ -372,9 +426,9 @@ function chooseDebevecResponseSampleCount(pixelCount, imageCount) {
   return Math.max(1, Math.min(pixelCount, HDR1_RESPONSE_SAMPLE_LIMIT, observationLimited));
 }
 
-function buildDebevecResponseSampleIndices(width, height, sampleCount) {
+function buildDebevecResponseSampleIndices(width: number, height: number, sampleCount: number) {
   const indices = new Uint32Array(sampleCount);
-  const used = new Set();
+  const used = new Set<number>();
   let output = 0;
   let sequenceIndex = 1;
   while (output < sampleCount) {
@@ -398,7 +452,7 @@ function buildDebevecResponseSampleIndices(width, height, sampleCount) {
   return indices;
 }
 
-function radicalInverse(index, base) {
+function radicalInverse(index: number, base: number) {
   let value = 0;
   let denominator = 1;
   let remaining = index;
@@ -410,8 +464,9 @@ function radicalInverse(index, base) {
   return value;
 }
 
-function captureDebevecResponseSamples(state, imageIndex, image) {
+function captureDebevecResponseSamples(state: DebevecStreamState, imageIndex: number, image: Float32Array) {
   const sampleIndices = state.responseSampleIndices;
+  if (!sampleIndices || !state.responseSamples) throw new Error("HDR1 response sampling is not initialized.");
   const sampleCount = state.responseSampleCount;
   const destinationBase = imageIndex * sampleCount * 3;
   for (let sample = 0; sample < sampleCount; sample += 1) {
@@ -423,15 +478,15 @@ function captureDebevecResponseSamples(state, imageIndex, image) {
   }
 }
 
-function estimateDebevecResponseCurves(state, exposureTimes) {
-  const curves = new Array(3);
+function estimateDebevecResponseCurves(state: DebevecStreamState, exposureTimes: Float32Array) {
+  const curves: Float64Array[] = new Array(3);
   for (let channel = 0; channel < 3; channel += 1) {
-    curves[channel] = estimateDebevecResponseCurve(state, exposureTimes);
+    curves[channel] = estimateDebevecResponseCurve(state, exposureTimes, channel);
   }
   return curves;
 }
 
-function estimateDebevecResponseCurve(state, exposureTimes) {
+function estimateDebevecResponseCurve(state: DebevecStreamState, exposureTimes: Float32Array, channel: number) {
   // Debevec-Malik data term with the per-sample log-radiance variables
   // analytically eliminated.  The weighted-variance identity turns each
   // sample into pairwise equations between exposures; this is the same
@@ -447,6 +502,7 @@ function estimateDebevecResponseCurve(state, exposureTimes) {
   const sampleCount = state.responseSampleCount;
   const imageCount = state.imageCount;
   const samples = state.responseSamples;
+  if (!samples) throw new Error("HDR1 response samples are unavailable.");
   const linearFlags = state.linearResponseFlags;
   const observationWeights = new Float64Array(imageCount);
   const constants = new Float64Array(imageCount);
@@ -487,8 +543,8 @@ function estimateDebevecResponseCurve(state, exposureTimes) {
         const equationWeight = firstWeight * secondWeight / totalObservationWeight;
         if (!(equationWeight > 1e-14)) continue;
 
-        const coefficientIndices = [];
-        const coefficientValues = [];
+        const coefficientIndices: number[] = [];
+        const coefficientValues: number[] = [];
         if (!linearFlags[first]) {
           appendDebevecInterpolationCoefficients(
             coefficientIndices,
@@ -563,7 +619,7 @@ function estimateDebevecResponseCurve(state, exposureTimes) {
   return curve;
 }
 
-function appendDebevecInterpolationCoefficients(indices, coefficients, left, fraction, sign) {
+function appendDebevecInterpolationCoefficients(indices: number[], coefficients: number[], left: number, fraction: number, sign: number) {
   const entries = [
     [left, sign * (1 - fraction)],
     [left + 1, sign * fraction],
@@ -581,14 +637,13 @@ function appendDebevecInterpolationCoefficients(indices, coefficients, left, fra
 }
 
 function accumulateDebevecNormalEquation(
-  matrix,
-  rhs,
-  size,
-  indices,
-  coefficients,
-  constant,
-  equationWeight,
-) {
+  matrix: Float64Array,
+  rhs: Float64Array,
+  size: number,
+  indices: number[],
+  coefficients: number[],
+  constant: number,
+  equationWeight: number) {
   for (let a = 0; a < indices.length; a += 1) {
     const rowIndex = indices[a];
     const rowCoefficient = coefficients[a];
@@ -600,7 +655,7 @@ function accumulateDebevecNormalEquation(
   }
 }
 
-function solveDebevecSymmetricPositiveSystem(matrix, rhs, size) {
+function solveDebevecSymmetricPositiveSystem(matrix: Float64Array, rhs: Float64Array, size: number) {
   const lower = new Float64Array(matrix);
   const pivotFloor = 1e-12;
   for (let row = 0; row < size; row += 1) {
@@ -641,7 +696,7 @@ function solveDebevecSymmetricPositiveSystem(matrix, rhs, size) {
   return solution;
 }
 
-function buildLinearDebevecResponseCurve(knotCount) {
+function buildLinearDebevecResponseCurve(knotCount: number) {
   const curve = new Float64Array(knotCount);
   for (let knot = 0; knot < knotCount; knot += 1) {
     curve[knot] = debevecLogResponseFloat(knot / (knotCount - 1));
@@ -649,25 +704,25 @@ function buildLinearDebevecResponseCurve(knotCount) {
   return curve;
 }
 
-function debevecCalibrationWeight(value) {
+function debevecCalibrationWeight(value: number) {
   // Normalized triangular Debevec weight.  Squaring happens when the weighted
   // residual row is converted to the normal equations.
   const x = clamp01(value);
   return Math.max(0, 1 - Math.abs(2 * x - 1));
 }
 
-function evaluateDebevecResponseCurve(curve, value) {
+function evaluateDebevecResponseCurve(curve: Float64Array, value: number) {
   const position = clamp01(value) * (curve.length - 1);
   const left = Math.min(curve.length - 2, Math.max(0, Math.floor(position)));
   const fraction = position - left;
   return curve[left] * (1 - fraction) + curve[left + 1] * fraction;
 }
 
-async function beginDebevecSecondPass(message) {
+async function beginDebevecSecondPass(message: HdrRequestOf<"merge-stream-pass2-begin">) {
   const state = debevecStreamState;
   if (!state) throw new Error("HDR1 stream worker was not initialized.");
   if (!state.needsResponseCalibration) {
-    self.postMessage({ type: "merge-stream-pass2-ready", requestId: message.requestId });
+    workerScope.postMessage({ type: "merge-stream-pass2-ready", requestId: message.requestId });
     return;
   }
   if (state.receivedCount !== state.imageCount) {
@@ -675,7 +730,32 @@ async function beginDebevecSecondPass(message) {
   }
   postProgress("Calibrating HDR1 Debevec response curve...");
   state.calibratedExposureTimes = resolveExposureTimes(state.suppliedExposureTimes, state.brightnesses);
-  state.calibratedResponseCurves = estimateDebevecResponseCurves(state, state.calibratedExposureTimes);
+  const exposureTimes = state.calibratedExposureTimes;
+  let minExposureTime = Infinity;
+  let maxExposureTime = 0;
+  for (const exposureTime of exposureTimes) {
+    minExposureTime = Math.min(minExposureTime, exposureTime);
+    maxExposureTime = Math.max(maxExposureTime, exposureTime);
+  }
+  // Without a meaningful exposure bracket, the response cannot be recovered
+  // from image observations. Preserve scene contrast instead of fitting the
+  // degenerate constant response and turning every pixel white.
+  if (Math.log2(maxExposureTime / minExposureTime) < HDR1_MIN_CALIBRATION_EV_SPAN) {
+    const response = buildLinearDebevecResponseCurve(HDR1_RESPONSE_KNOT_COUNT);
+    state.calibratedResponseCurves = [response, response, response];
+  } else {
+    const estimated = estimateDebevecResponseCurves(state, exposureTimes);
+    // A constant fitted response is another degenerate solution when the
+    // images contain no usable exposure variation despite differing metadata.
+    // It would map every scene level to the same white value after tone mapping.
+    if (estimated.every((curve) =>
+      evaluateDebevecResponseCurve(curve, 0.8) - evaluateDebevecResponseCurve(curve, 0.2) > 0.35)) {
+      state.calibratedResponseCurves = estimated;
+    } else {
+      const response = buildLinearDebevecResponseCurve(HDR1_RESPONSE_KNOT_COUNT);
+      state.calibratedResponseCurves = [response, response, response];
+    }
+  }
   const pixelCount = state.width * state.height;
   state.calibratedResponseSums = new Float32Array(pixelCount * 3);
   state.calibratedWeightSums = new Float32Array(pixelCount);
@@ -683,10 +763,10 @@ async function beginDebevecSecondPass(message) {
   state.pass2ReceivedCount = 0;
   state.responseSamples = null;
   state.responseSampleIndices = null;
-  self.postMessage({ type: "merge-stream-pass2-ready", requestId: message.requestId });
+  workerScope.postMessage({ type: "merge-stream-pass2-ready", requestId: message.requestId });
 }
 
-async function appendDebevecSecondPassImage(message) {
+async function appendDebevecSecondPassImage(message: HdrRequestOf<"merge-stream-pass2-image">) {
   const state = debevecStreamState;
   if (!state || !state.needsResponseCalibration) throw new Error("HDR1 calibrated second pass is not initialized.");
   if (!state.calibratedExposureTimes || !state.calibratedResponseCurves || !state.calibratedResponseSums || !state.calibratedWeightSums || !state.pass2ReceivedFlags) {
@@ -697,18 +777,21 @@ async function appendDebevecSecondPassImage(message) {
   if (state.pass2ReceivedFlags[imageIndex]) throw new Error(`HDR1 second-pass input ${imageIndex + 1} was sent more than once.`);
   const buffer = message.imageBuffer;
   const expected = state.width * state.height * 3 * Float32Array.BYTES_PER_ELEMENT;
-  if (!(buffer instanceof ArrayBuffer) || buffer.byteLength !== expected) throw new Error(`HDR1 second-pass input ${imageIndex + 1} has an invalid Float32 RGB buffer.`);
+  if (!isFloat32RgbBuffer(buffer, expected)) throw new Error(`HDR1 second-pass input ${imageIndex + 1} has an invalid Float32 RGB buffer.`);
   accumulateCalibratedDebevecImage(state, imageIndex, new Float32Array(buffer));
   state.pass2ReceivedFlags[imageIndex] = 1;
   state.pass2ReceivedCount += 1;
-  self.postMessage({ type: "merge-stream-pass2-image-accepted", requestId: message.requestId, imageIndex });
+  workerScope.postMessage({ type: "merge-stream-pass2-image-accepted", requestId: message.requestId, imageIndex });
 }
 
-function accumulateCalibratedDebevecImage(state, imageIndex, image) {
+function accumulateCalibratedDebevecImage(state: DebevecStreamState, imageIndex: number, image: Float32Array) {
   const exposureTimes = state.calibratedExposureTimes;
   const curves = state.calibratedResponseCurves;
   const responseSums = state.calibratedResponseSums;
   const weightSums = state.calibratedWeightSums;
+  if (!exposureTimes || !curves || !responseSums || !weightSums) {
+    throw new Error("HDR1 calibrated accumulation is not initialized.");
+  }
   const logTime = Math.log(exposureTimes[imageIndex]);
   const linearResponse = state.linearResponseFlags[imageIndex] !== 0;
   const pixelCount = state.width * state.height;
@@ -722,9 +805,10 @@ function accumulateCalibratedDebevecImage(state, imageIndex, image) {
   }
 }
 
-function finalizeCalibratedDebevecAccumulation(state) {
+function finalizeCalibratedDebevecAccumulation(state: DebevecStreamState) {
   const responseSums = state.calibratedResponseSums;
   const weightSums = state.calibratedWeightSums;
+  if (!responseSums || !weightSums) throw new Error("HDR1 calibrated accumulation is not initialized.");
   const pixelCount = state.width * state.height;
   for (let pixel = 0, offset = 0; pixel < pixelCount; pixel += 1, offset += 3) {
     const weightSum = weightSums[pixel];
@@ -740,7 +824,7 @@ async function cleanupDebevecStreamState() {
   debevecStreamState = null;
 }
 
-async function processMertensMessage(message) {
+async function processMertensMessage(message: HdrRequestOf<"mertens">) {
   const width = Number(message.width);
   const height = Number(message.height);
   const imageBuffers = Array.isArray(message.imageBuffers) ? message.imageBuffers : [];
@@ -771,14 +855,14 @@ async function processMertensMessage(message) {
 
   // `gamma2Buffer` is retained as the transport field name for compatibility.
   // The buffer contents are linear ProPhoto RGB; no gamma-2 transform is applied here.
-  self.postMessage(
+  workerScope.postMessage(
     { type: "mertens-result", gamma2Buffer: merged.buffer },
     [merged.buffer],
   );
 }
 
 
-async function initializeMertensStream(message) {
+async function initializeMertensStream(message: HdrRequestOf<"mertens-stream-init">) {
   if (mertensStreamState) throw new Error("HDR2 stream worker is already initialized.");
   const width = Number(message.width);
   const height = Number(message.height);
@@ -808,10 +892,10 @@ async function initializeMertensStream(message) {
     pass2ReceivedCount: 0,
   };
   mertensStreamState.brightnesses.fill(Number.NaN);
-  self.postMessage({ type: "mertens-stream-ready", requestId: message.requestId });
+  workerScope.postMessage({ type: "mertens-stream-ready", requestId: message.requestId });
 }
 
-async function appendMertensStreamImage(message) {
+async function appendMertensStreamImage(message: HdrRequestOf<"mertens-stream-image">) {
   const state = mertensStreamState;
   if (!state) throw new Error("HDR2 stream worker was not initialized.");
   const imageIndex = Number(message.imageIndex);
@@ -825,7 +909,7 @@ async function appendMertensStreamImage(message) {
   }
   const imageBuffer = message.imageBuffer;
   const expectedByteLength = state.width * state.height * 3 * Float32Array.BYTES_PER_ELEMENT;
-  if (!(imageBuffer instanceof ArrayBuffer) || imageBuffer.byteLength !== expectedByteLength) {
+  if (!isFloat32RgbBuffer(imageBuffer, expectedByteLength)) {
     throw new Error(`HDR2 input ${imageIndex + 1} has an invalid Float32 RGB buffer.`);
   }
   accumulateOpenCvMertensWeightSums(
@@ -839,10 +923,10 @@ async function appendMertensStreamImage(message) {
   state.receivedFlags[imageIndex] = 1;
   state.brightnesses[imageIndex] = brightness;
   state.receivedCount += 1;
-  self.postMessage({ type: "mertens-stream-image-stored", requestId: message.requestId, imageIndex });
+  workerScope.postMessage({ type: "mertens-stream-image-stored", requestId: message.requestId, imageIndex });
 }
 
-async function beginMertensSecondPass(message) {
+async function beginMertensSecondPass(message: HdrRequestOf<"mertens-stream-pass2-begin">) {
   const state = mertensStreamState;
   if (!state) throw new Error("HDR2 stream worker was not initialized.");
   if (state.receivedCount !== state.imageCount) {
@@ -863,10 +947,10 @@ async function beginMertensSecondPass(message) {
   state.fusedLevels = createMertensFusedLevels(state.dimensions);
   state.pass2ReceivedFlags = new Uint8Array(state.imageCount);
   state.pass2ReceivedCount = 0;
-  self.postMessage({ type: "mertens-stream-pass2-ready", requestId: message.requestId });
+  workerScope.postMessage({ type: "mertens-stream-pass2-ready", requestId: message.requestId });
 }
 
-async function appendMertensSecondPassImage(message) {
+async function appendMertensSecondPassImage(message: HdrRequestOf<"mertens-stream-pass2-image">) {
   const state = mertensStreamState;
   if (!state || !state.cv || !state.dimensions || !state.fusedLevels || !state.pass2ReceivedFlags) {
     throw new Error("HDR2 pyramid pass has not begun.");
@@ -882,7 +966,7 @@ async function appendMertensSecondPassImage(message) {
   }
   const imageBuffer = message.imageBuffer;
   const expectedByteLength = state.width * state.height * 3 * Float32Array.BYTES_PER_ELEMENT;
-  if (!(imageBuffer instanceof ArrayBuffer) || imageBuffer.byteLength !== expectedByteLength) {
+  if (!isFloat32RgbBuffer(imageBuffer, expectedByteLength)) {
     throw new Error(`HDR2 second-pass input ${imageIndex + 1} has an invalid Float32 RGB buffer.`);
   }
   accumulateMertensImagePyramid(
@@ -899,10 +983,10 @@ async function appendMertensSecondPassImage(message) {
   );
   state.pass2ReceivedFlags[imageIndex] = 1;
   state.pass2ReceivedCount += 1;
-  self.postMessage({ type: "mertens-stream-pass2-image-accepted", requestId: message.requestId, imageIndex });
+  workerScope.postMessage({ type: "mertens-stream-pass2-image-accepted", requestId: message.requestId, imageIndex });
 }
 
-async function finalizeMertensStream(message) {
+async function finalizeMertensStream(message: HdrRequestOf<"mertens-stream-finalize">) {
   const state = mertensStreamState;
   if (!state) throw new Error("HDR2 stream worker was not initialized.");
   if (state.pass2ReceivedCount !== state.imageCount || !state.cv || !state.dimensions || !state.fusedLevels) {
@@ -912,7 +996,7 @@ async function finalizeMertensStream(message) {
   postProgress("Restoring HDR2 brightness...");
   adjustExposureToBrightnessInPlace(merged, meanArray(state.brightnesses));
   await cleanupMertensStreamState();
-  self.postMessage({ type: "mertens-result", requestId: message.requestId, gamma2Buffer: merged.buffer }, [merged.buffer]);
+  workerScope.postMessage({ type: "mertens-result", requestId: message.requestId, gamma2Buffer: merged.buffer }, [merged.buffer]);
 }
 
 async function cleanupMertensStreamState() {
@@ -922,15 +1006,17 @@ async function cleanupMertensStreamState() {
 const MERTENS_PROCESSING_GAMMA = 2.4;
 const MERTENS_WEIGHT_EPSILON = 1e-12;
 
-function mergeMertensWithOpenCvPyramids(cv, images, width, height, saturationWeight, exposureWeight) {
+function mergeMertensWithOpenCvPyramids(cv: OpenCvRuntime, images: (Float32Array | null)[], width: number, height: number, saturationWeight: number, exposureWeight: number) {
   const pixelCount = width * height;
   const weightSums = new Float32Array(pixelCount);
 
   // Build full-resolution Mertens weights in the gamma-2.4
   // processing domain. contrastWeight is fixed to zero for LSS HDR2.
   for (let imageIndex = 0; imageIndex < images.length; imageIndex += 1) {
+    const image = images[imageIndex];
+    if (!image) throw new Error(`HDR2 input ${imageIndex + 1} is unavailable.`);
     accumulateOpenCvMertensWeightSums(
-      images[imageIndex],
+      image,
       width,
       height,
       saturationWeight,
@@ -942,9 +1028,11 @@ function mergeMertensWithOpenCvPyramids(cv, images, width, height, saturationWei
   const dimensions = buildOpenCvMertensPyramidDimensions(width, height);
   const fusedLevels = createMertensFusedLevels(dimensions);
   for (let imageIndex = 0; imageIndex < images.length; imageIndex += 1) {
+    const image = images[imageIndex];
+    if (!image) throw new Error(`HDR2 input ${imageIndex + 1} is unavailable.`);
     accumulateMertensImagePyramid(
       cv,
-      images[imageIndex],
+      image,
       images.length,
       width,
       height,
@@ -959,23 +1047,22 @@ function mergeMertensWithOpenCvPyramids(cv, images, width, height, saturationWei
   return reconstructMertensFusedLevels(cv, fusedLevels, dimensions, width, height);
 }
 
-function createMertensFusedLevels(dimensions) {
+function createMertensFusedLevels(dimensions: PyramidDimensions) {
   return dimensions.map(({ width: levelWidth, height: levelHeight }) =>
     new Float32Array(levelWidth * levelHeight * 3));
 }
 
 function accumulateMertensImagePyramid(
-  cv,
-  source,
-  imageCount,
-  width,
-  height,
-  saturationWeight,
-  exposureWeight,
-  weightSums,
-  dimensions,
-  fusedLevels,
-) {
+  cv: OpenCvRuntime,
+  source: Float32Array,
+  imageCount: number,
+  width: number,
+  height: number,
+  saturationWeight: number,
+  exposureWeight: number,
+  weightSums: Float32Array,
+  dimensions: PyramidDimensions,
+  fusedLevels: Float32Array[]) {
   const pixelCount = width * height;
   let currentRgb = new cv.Mat(height, width, cv.CV_32FC3);
   let currentWeight = new cv.Mat(height, width, cv.CV_32FC1);
@@ -1045,7 +1132,7 @@ function accumulateMertensImagePyramid(
   }
 }
 
-function reconstructMertensFusedLevels(cv, fusedLevels, dimensions, width, height) {
+function reconstructMertensFusedLevels(cv: OpenCvRuntime, fusedLevels: Float32Array[], dimensions: PyramidDimensions, width: number, height: number) {
   let reconstructed = fusedLevels[fusedLevels.length - 1];
   for (let level = fusedLevels.length - 2; level >= 0; level -= 1) {
     const sourceDim = dimensions[level + 1];
@@ -1067,7 +1154,7 @@ function reconstructMertensFusedLevels(cv, fusedLevels, dimensions, width, heigh
   return decodeMertensGammaBuffer(reconstructed, width * height * 3);
 }
 
-function buildOpenCvMertensPyramidDimensions(width, height) {
+function buildOpenCvMertensPyramidDimensions(width: number, height: number) {
   // OpenCV MergeMertens uses floor(log2(min(width,height))) as maxlevel.
   const maxLevel = Math.max(0, Math.floor(Math.log2(Math.max(1, Math.min(width, height)))));
   const dimensions = [{ width, height }];
@@ -1082,13 +1169,12 @@ function buildOpenCvMertensPyramidDimensions(width, height) {
 }
 
 function accumulateOpenCvMertensWeightSums(
-  image,
-  width,
-  height,
-  saturationWeight,
-  exposureWeight,
-  sums,
-) {
+  image: Float32Array,
+  width: number,
+  height: number,
+  saturationWeight: number,
+  exposureWeight: number,
+  sums: Float32Array) {
   const pixelCount = width * height;
   for (let pixel = 0; pixel < pixelCount; pixel += 1) {
     const offset = pixel * 3;
@@ -1099,7 +1185,7 @@ function accumulateOpenCvMertensWeightSums(
   }
 }
 
-function openCvMertensPixelWeightEncoded(r, g, b, saturationWeight, exposureWeight) {
+function openCvMertensPixelWeightEncoded(r: number, g: number, b: number, saturationWeight: number, exposureWeight: number) {
   let weight = 1;
   if (saturationWeight !== 0) {
     const mean = (r + g + b) / 3;
@@ -1123,11 +1209,11 @@ function openCvMertensPixelWeightEncoded(r, g, b, saturationWeight, exposureWeig
   return weight + MERTENS_WEIGHT_EPSILON;
 }
 
-function mertensGammaEncode(value) {
+function mertensGammaEncode(value: number) {
   return Math.pow(clamp01(value), 1 / MERTENS_PROCESSING_GAMMA);
 }
 
-function decodeMertensGammaBuffer(encoded, expectedLength) {
+function decodeMertensGammaBuffer(encoded: Float32Array, expectedLength: number) {
   const output = new Float32Array(expectedLength);
   for (let i = 0; i < expectedLength; i += 1) {
     // Laplacian reconstruction can overshoot its nominal range. Preserve
@@ -1139,7 +1225,12 @@ function decodeMertensGammaBuffer(encoded, expectedLength) {
   return output;
 }
 
-function validateInputs(width, height, imageBuffers, exposureTimes, brightnesses) {
+function isFloat32RgbBuffer(buffer: unknown, expectedByteLength: number): buffer is ArrayBuffer {
+  return Object.prototype.toString.call(buffer) === "[object ArrayBuffer]" &&
+    (buffer as ArrayBuffer).byteLength === expectedByteLength;
+}
+
+function validateInputs(width: number, height: number, imageBuffers: ArrayBuffer[], exposureTimes: Float32Array, brightnesses: Float32Array) {
   if (!(Number.isInteger(width) && width > 0 && Number.isInteger(height) && height > 0)) {
     throw new Error("HDR worker received invalid image dimensions.");
   }
@@ -1156,7 +1247,7 @@ function validateInputs(width, height, imageBuffers, exposureTimes, brightnesses
   const expectedLength = width * height * 3;
   const expectedByteLength = expectedLength * Float32Array.BYTES_PER_ELEMENT;
   for (let i = 0; i < imageBuffers.length; i += 1) {
-    if (!(imageBuffers[i] instanceof ArrayBuffer) || imageBuffers[i].byteLength !== expectedByteLength) {
+    if (!isFloat32RgbBuffer(imageBuffers[i], expectedByteLength)) {
       throw new Error(`HDR input ${i + 1} has an invalid Float32 RGB buffer.`);
     }
     if (exposureTimes.length > 0 && !(Number.isFinite(exposureTimes[i]) && exposureTimes[i] > 0)) {
@@ -1168,17 +1259,17 @@ function validateInputs(width, height, imageBuffers, exposureTimes, brightnesses
   }
 }
 
-function postProgress(message) {
-  self.postMessage({ type: "progress", message });
+function postProgress(message: string) {
+  workerScope.postMessage({ type: "progress", message });
 }
 
-function debevecWeightFloat(value) {
+function debevecWeightFloat(value: number) {
   const x = clamp01(value);
   if (x <= 0 || x >= 1) return HDR_FLOAT_WEIGHT_EPSILON;
   return Math.min(x, 1 - x);
 }
 
-function debevecPixelWeight(r, g, b) {
+function debevecPixelWeight(r: number, g: number, b: number) {
   return (
     debevecWeightFloat(r) +
     debevecWeightFloat(g) +
@@ -1186,7 +1277,7 @@ function debevecPixelWeight(r, g, b) {
   ) / 3;
 }
 
-function debevecLogResponseFloat(value) {
+function debevecLogResponseFloat(value: number) {
   // Float32 HDR1 materials are normalized linear RGB in [0,1].
   // Keep the normalized linear Float32 value continuous.  The floor is well
   // below the smallest non-zero value produced by decoding a gamma-2 Uint16
@@ -1194,7 +1285,7 @@ function debevecLogResponseFloat(value) {
   return Math.log(Math.max(clamp01(value), HDR_FLOAT_MIN_RESPONSE));
 }
 
-function resolveExposureTimes(suppliedExposureTimes, brightnesses) {
+function resolveExposureTimes(suppliedExposureTimes: Float32Array, brightnesses: Float32Array) {
   if (suppliedExposureTimes.length > 0) {
     return suppliedExposureTimes;
   }
@@ -1211,7 +1302,7 @@ function resolveExposureTimes(suppliedExposureTimes, brightnesses) {
   return exposureTimes;
 }
 
-function mergeDebevecWithLinearResponse(images, exposureTimes, width, height) {
+function mergeDebevecWithLinearResponse(images: Float32Array[], exposureTimes: Float32Array, width: number, height: number) {
   const pixelCount = width * height;
   const result = new Float32Array(pixelCount * 3);
   const logTimes = new Float64Array(exposureTimes.length);
@@ -1244,21 +1335,21 @@ function mergeDebevecWithLinearResponse(images, exposureTimes, width, height) {
   return result;
 }
 
-function sanitizeHdrValue(value) {
+function sanitizeHdrValue(value: number) {
   if (Number.isNaN(value) || value === -Infinity || value < 0) return 0;
   if (value === Infinity) return 1;
   return value;
 }
 
-function proPhotoLinearLuminance(r, g, b) {
+function proPhotoLinearLuminance(r: number, g: number, b: number) {
   return PROPHOTO_XYZ_Y_R * r + PROPHOTO_XYZ_Y_G * g + PROPHOTO_XYZ_Y_B * b;
 }
 
-function toneLinearIntensity(r, g, b) {
+function toneLinearIntensity(r: number, g: number, b: number) {
   return TONE_INTENSITY_R * r + TONE_INTENSITY_G * g + TONE_INTENSITY_B * b;
 }
 
-function tonemapReinhardInPlace(image, gamma, intensity, lightAdapt, colorAdapt) {
+function tonemapReinhardInPlace(image: Float32Array, gamma: number, intensity: number, lightAdapt: number, colorAdapt: number) {
   // Keep HDR tone mapping chroma-preserving: derive the Reinhard mapping from
   // one ProPhoto luminance value and apply the resulting scale to R/G/B.
   // colorAdapt is intentionally ignored because channel-specific adaptation
@@ -1322,7 +1413,7 @@ function tonemapReinhardInPlace(image, gamma, intensity, lightAdapt, colorAdapt)
   }
 }
 
-function adjustExposureToBrightnessInPlace(image, targetBrightness) {
+function adjustExposureToBrightnessInPlace(image: Float32Array, targetBrightness: number) {
   const target = clamp01(targetBrightness);
   let brightness = computeBrightness(image) + 1e-6;
   let distance = Math.abs(Math.log(Math.max(target, 1e-6) / brightness));
@@ -1360,7 +1451,7 @@ function adjustExposureToBrightnessInPlace(image, targetBrightness) {
   }
 }
 
-function applyScaledLog(image, factor) {
+function applyScaledLog(image: Float32Array, factor: number) {
   const output = new Float32Array(image.length);
   for (let i = 0; i < image.length; i += 3) {
     const r = Math.max(0, image[i]);
@@ -1398,7 +1489,7 @@ function applyScaledLog(image, factor) {
   return output;
 }
 
-function computeBrightness(image) {
+function computeBrightness(image: Float32Array) {
   let sum = 0;
   const pixelCount = image.length / 3;
   for (let i = 0; i < image.length; i += 3) {
@@ -1407,14 +1498,14 @@ function computeBrightness(image) {
   return pixelCount > 0 ? sum / pixelCount : 0;
 }
 
-function meanArray(values) {
+function meanArray(values: Float32Array) {
   if (values.length === 0) return 0;
   let sum = 0;
   for (let i = 0; i < values.length; i += 1) sum += values[i];
   return sum / values.length;
 }
 
-function normalizeRgbInPlace(image) {
+function normalizeRgbInPlace(image: Float32Array) {
   let maxValue = 0;
   for (let i = 0; i < image.length; i += 1) {
     const value = image[i];
@@ -1430,13 +1521,13 @@ function normalizeRgbInPlace(image) {
   }
 }
 
-function clamp01(value) {
+function clamp01(value: number) {
   if (!Number.isFinite(value) || value <= 0) return 0;
   if (value >= 1) return 1;
   return value;
 }
 
-function validateMertensInputs(width, height, imageBuffers, brightnesses) {
+function validateMertensInputs(width: number, height: number, imageBuffers: ArrayBuffer[], brightnesses: Float32Array) {
   if (!(Number.isInteger(width) && width > 0 && Number.isInteger(height) && height > 0)) {
     throw new Error("HDR2 worker received invalid image dimensions.");
   }
@@ -1449,7 +1540,7 @@ function validateMertensInputs(width, height, imageBuffers, brightnesses) {
   const expectedLength = width * height * 3;
   const expectedByteLength = expectedLength * Float32Array.BYTES_PER_ELEMENT;
   for (let i = 0; i < imageBuffers.length; i += 1) {
-    if (!(imageBuffers[i] instanceof ArrayBuffer) || imageBuffers[i].byteLength !== expectedByteLength) {
+    if (!isFloat32RgbBuffer(imageBuffers[i], expectedByteLength)) {
       throw new Error(`HDR2 input ${i + 1} has an invalid Float32 RGB buffer.`);
     }
     if (!(Number.isFinite(brightnesses[i]) && brightnesses[i] >= 0)) {

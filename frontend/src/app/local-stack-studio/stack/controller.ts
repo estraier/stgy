@@ -58,7 +58,7 @@ import {
 import { startProgressiveAlignmentFrames } from "./alignment-frame-worker-pool";
 import { runMedianPool } from "./median-pool";
 import {
-  alignmentFrameCacheKey, getCachedAlignmentFrame, putCachedAlignmentFrame,
+  alignmentFrameCacheBytes, alignmentFrameCacheKey, getCachedAlignmentFrame, putCachedAlignmentFrame,
 } from "./alignment-frame-cache";
 import { MEDIAN_TILE_SIZE } from "./median";
 import { runFocusFeaturePool } from "./focus-pool";
@@ -81,6 +81,13 @@ import {
   writeCanonicalStoredImage,
 } from "./canonical-source";
 import { AlignedImageReader } from "./aligned-reader";
+import {
+  detectStackInputBits,
+  type LocalStackStudioInfoReport,
+  type StackInfoInput,
+  type StackInfoTiming,
+  type StackInfoSetting,
+} from "./info-report";
 import {
   CanonicalInputWorkerClient,
   resolveCanonicalInputMemoryBudget,
@@ -135,6 +142,8 @@ export type LocalStackStudioEditRequest = {
 
 type LocalStackStudioOptions = {
   onEditRequest?: (request: LocalStackStudioEditRequest) => void;
+  onInfoRequest?: (report: LocalStackStudioInfoReport) => void;
+  onInfoClear?: () => void;
 };
 
 export function mountLocalStackStudio(options: LocalStackStudioOptions = {}): () => void {
@@ -246,6 +255,7 @@ const previewVibranceValue = getElement("preview-vibrance-value");
 const previewSaturation = getElement("preview-saturation");
 const previewSaturationValue = getElement("preview-saturation-value");
 const editButton = getElement("edit-button");
+const infoButton = getElement("info-button");
 const editButtonSpinner = getElement("edit-button-spinner");
 const outputFormat = getElement("output-format");
 const outputSize = getElement("output-size");
@@ -301,6 +311,81 @@ let currentActivePreviewControl = null;
 let zoomRenderRequestId = 0;
 let zoomPanState = null;
 let processingActive = false;
+let currentInfoReport: LocalStackStudioInfoReport | null = null;
+let lastEncodedOutput: { bytes: number; format: string; width: number; height: number; toneKey: string | null } | null = null;
+let activeInfoTrace: { previewMs: number; add: (label: string, durationMs: number, includedIn?: string) => void } | null = null;
+
+function infoOutputFormat(): { name: string; bits: number } {
+  const format = outputFormat.value;
+  if (format === "tiff16") return { name: "TIFF-16", bits: 16 };
+  if (format === "tiff8") return { name: "TIFF-8", bits: 8 };
+  if (format === "webp") return { name: "WebP", bits: 8 };
+  return { name: "JPEG", bits: 8 };
+}
+
+function captureProcessingSettings(selectedMode: string): StackInfoSetting[] {
+  const settings: StackInfoSetting[] = [];
+  if (selectedMode === "hdr1" || selectedMode === "hdr2") {
+    settings.push({ label: "HDR method", value: selectedMode === "hdr1" ? "Debevec" : "Mertens" });
+  } else if (selectedMode === "tile-horizontal" || selectedMode === "tile-vertical") {
+    settings.push({ label: "Tile direction", value: tileDirection.value });
+    settings.push({ label: "Tile folding", value: tileFolding.value });
+  } else if (selectedMode === "panorama") {
+    settings.push({ label: "Panorama downscale", value: panoramaDownscale.selectedOptions[0]?.textContent || panoramaDownscale.value });
+    settings.push({ label: "Panorama finish", value: panoramaFinish.selectedOptions[0]?.textContent || panoramaFinish.value });
+  } else if (selectedMode === "focus") {
+    settings.push({ label: "Focus softness", value: String(selectedFocusSoftness()) });
+  } else if (selectedMode === "stf") {
+    settings.push({ label: "Blend weight", value: String(selectedStfBlendWeight()) });
+    settings.push({ label: "Additional blur", value: stfBlurStrength.value });
+    if (stfBlurStrength.value !== "none") {
+      settings.push({ label: "Blur ratio", value: `${Math.round(Number(stfBlurRatio.value) * 100)}%` });
+      settings.push({ label: "Area guard", value: stfBlurAreaGuard.value });
+      settings.push({ label: "Blur sigmoid", value: `${stfBlurSigmoid.value}%` });
+    }
+  }
+  return settings;
+}
+
+function formatSourceFile(file: File, info: { isRaw?: boolean }): string {
+  const ext = file.name.match(/\.([^.]+)$/)?.[1]?.toUpperCase();
+  return info.isRaw ? `${ext || "RAW"} (RAW)` : ext || file.type || "Unknown";
+}
+
+function buildCurrentInfoReport(): LocalStackStudioInfoReport | null {
+  if (!currentInfoReport || !currentStackResult) return null;
+  const output = getSelectedOutputDimensions(currentStackResult.width, currentStackResult.height);
+  const formatted = infoOutputFormat();
+  const matchingOutput = lastEncodedOutput &&
+    lastEncodedOutput.format === outputFormat.value &&
+    lastEncodedOutput.width === output.width && lastEncodedOutput.height === output.height &&
+    lastEncodedOutput.toneKey === getFullSizeRenderCacheKey();
+  const result = currentStackResult;
+  const retainedOutputBufferBytes = [
+    result.gamma2ProPhotoRgb16,
+    result.previewLinearProPhotoRgb,
+    result.analysisLinearProPhotoRgb,
+    result.previewRgba8,
+  ].reduce((total, buffer) => total + (buffer?.byteLength || 0), 0);
+  const heap = (performance as Performance & { memory?: { usedJSHeapSize?: number } }).memory?.usedJSHeapSize;
+  return {
+    ...currentInfoReport,
+    resultWidth: result.width,
+    resultHeight: result.height,
+    outputColorSpace: formatColorSpaceName(currentPreviewColorSpace),
+    outputFormat: formatted.name,
+    outputWidth: output.width,
+    outputHeight: output.height,
+    outputBitsPerChannel: formatted.bits,
+    encodedBytes: matchingOutput ? lastEncodedOutput.bytes : null,
+    retainedOutputBufferBytes,
+    alignmentFrameCacheBytes: currentCanonicalSession?.alignmentFrameCache
+      ? alignmentFrameCacheBytes(currentCanonicalSession.alignmentFrameCache) : 0,
+    canonicalChunkCacheBytes: currentCanonicalSession?.chunkCache?.sizeBytes ?? 0,
+    pageJsHeapBytes: typeof heap === "number" && Number.isFinite(heap) ? heap : null,
+  };
+}
+
 
 const listenerCleanups = [];
 function listen(target, type, listener, options) {
@@ -421,6 +506,7 @@ previewClahe.disabled = true;
 previewVibrance.disabled = true;
 previewSaturation.disabled = true;
 editButton.disabled = true;
+infoButton.disabled = true;
 outputSize.disabled = true;
 
 listen(inputFiles, "change", () => {
@@ -521,11 +607,28 @@ listen(window, "keydown", (event) => {
   }
 });
 
+listen(infoButton, "click", () => {
+  const report = buildCurrentInfoReport();
+  if (report) options.onInfoRequest?.(report);
+});
+
 listen(processButton, "click", async () => {
   const files = naturalSortFiles(Array.from(inputFiles.files || []));
   clearError();
   clearResult();
   setProcessing(true);
+  const startedAt = performance.now();
+  const timings: StackInfoTiming[] = [];
+  const trace = {
+    previewMs: 0,
+    warnings: [] as string[],
+    canonicalCacheReused: false,
+    transformCacheReused: null as boolean | null,
+    add: (label: string, durationMs: number, includedIn?: string) => {
+      if (Number.isFinite(durationMs) && durationMs >= 0) timings.push({ label, durationMs, ...(includedIn ? { includedIn } : {}) });
+    },
+  };
+  activeInfoTrace = trace;
 
   try {
     if (files.length < 1) {
@@ -565,22 +668,30 @@ listen(processButton, "click", async () => {
     }
 
     let cv = null;
+    const initializationStartedAt = performance.now();
     if (selectedMergeMode !== "panorama") {
       setProgress("Loading OpenCV.js...");
       cv = await getOpenCv();
       assertMainOpenCvApis(cv);
     }
+    trace.add("Initialization", performance.now() - initializationStartedAt);
+    const metadataStartedAt = performance.now();
     setProgress("Reading metadata, ICC profiles, and image sizes...");
     const inputInfos = await readInputInfos(files);
+    trace.add("Input metadata", performance.now() - metadataStartedAt);
+    const inputStartedAt = performance.now();
     const { mergeStackMetadata } = await loadExifMetadataModule();
     currentOutputMetadata = mergeStackMetadata(inputInfos.map((info) => info.preservedMetadata ?? null));
     const requireStfToneStatistics = files.length > 1 && selectedMergeMode === "stf";
+    const previousCanonicalSession = currentCanonicalSession;
     currentCanonicalSession = await ensureCanonicalSession(
       files,
       inputInfos,
       currentCanonicalSession,
       requireStfToneStatistics,
     );
+    trace.canonicalCacheReused = previousCanonicalSession !== null && previousCanonicalSession === currentCanonicalSession;
+    trace.add("Input preparation and canonical cache", performance.now() - inputStartedAt);
     const useSyntheticSingleInputHdr = files.length === 1 && (selectedMergeMode === "hdr1" || selectedMergeMode === "hdr2");
     const preserveSingleInputMerge = isTileMergeMode(selectedMergeMode) || selectedMergeMode === "panorama";
     const effectiveMergeMode = useSyntheticSingleInputHdr
@@ -588,6 +699,7 @@ listen(processButton, "click", async () => {
       : files.length === 1 && !preserveSingleInputMerge
         ? "average"
         : selectedMergeMode;
+    const processingSettings = captureProcessingSettings(selectedMergeMode);
     const mergePlan = buildMergePlan(
       files,
       inputInfos,
@@ -613,6 +725,7 @@ listen(processButton, "click", async () => {
       alignmentPlan,
       currentPreviewColorSpace,
       currentCanonicalSession,
+      trace,
     );
     currentStackResultRevision += 1;
     clearFullSizeRenderCache();
@@ -636,12 +749,67 @@ listen(processButton, "click", async () => {
     previewSaturation.value = "0";
     updateToneControlLabels();
     updateOutputSizeOptions();
+    const previewDisplayStartedAt = performance.now();
     renderPreviewForCurrentTone();
+    trace.add("Preview preparation and display", trace.previewMs + performance.now() - previewDisplayStartedAt);
     setResultPanelVisible(true);
+    const referenceIndex = alignmentPlan && files.length > 1 && isFeatureMatchAlignmentMode(alignmentPlan.effectiveMode)
+      ? chooseAlignmentReferenceIndex(inputInfos, effectiveMergeMode) : null;
+    const actualAlignment = files.length === 1 ? "Not required (single input)" : alignmentPlan?.effectiveMode ?? "Not applicable";
+    const alignmentNames: Record<string, string> = {
+      "feature-match-ecc": "ECC (1MP ECC + 8MP ORB)",
+      "feature-match-orb": "ORB (1MP + 8MP)",
+      "center-crop": "Center crop", "center-fit": "Center fit", "center-fill": "Center fill", "top-left-fill": "Top left fill",
+    };
+    const infoInputs: StackInfoInput[] = files.map((file, index) => ({
+      fileName: file.name,
+      bytes: file.size,
+      format: formatSourceFile(file, inputInfos[index]),
+      width: inputInfos[index].width,
+      height: inputInfos[index].height,
+      bitsPerChannel: inputInfos[index].bitsPerChannel ?? null,
+      fNumber: inputInfos[index].fNumber ?? null,
+      exposureTime: inputInfos[index].exposureTime ?? null,
+      iso: inputInfos[index].iso ?? null,
+    }));
+    const canonicalCachePayloadBytes = currentCanonicalSession.images.reduce(
+      (sum, image) => sum + (image?.rowBytes ?? 0) * (image?.height ?? 0), 0,
+    );
+    currentInfoReport = {
+      inputs: infoInputs,
+      settings: [
+        ...(effectiveMergeMode !== selectedMergeMode ? [{ label: "Actual merge", value: effectiveMergeMode === "average" ? "Blend" : effectiveMergeMode }] : []),
+        ...processingSettings,
+        { label: "Canonical input cache", value: trace.canonicalCacheReused ? "Reused" : "Created" },
+        ...(trace.transformCacheReused === null ? [] : [{ label: "Alignment transform cache", value: trace.transformCacheReused ? "Reused" : "Recomputed" }]),
+      ],
+      mergeMode: mergeMode.selectedOptions[0]?.textContent || mergeMode.value,
+      alignmentMode: alignmentMode.selectedOptions[0]?.textContent || alignmentMode.value,
+      actualAlignmentMode: alignmentNames[actualAlignment] || actualAlignment,
+      referenceFileName: referenceIndex === null ? null : files[referenceIndex].name,
+      totalMs: performance.now() - startedAt,
+      timings,
+      resultWidth: currentStackResult.width,
+      resultHeight: currentStackResult.height,
+      outputColorSpace: formatColorSpaceName(currentPreviewColorSpace),
+      outputFormat: "",
+      outputWidth: currentStackResult.width,
+      outputHeight: currentStackResult.height,
+      outputBitsPerChannel: 8,
+      encodedBytes: null,
+      retainedOutputBufferBytes: 0,
+      alignmentFrameCacheBytes: 0,
+      canonicalChunkCacheBytes: 0,
+      canonicalCachePayloadBytes,
+      pageJsHeapBytes: null,
+      warnings: trace.warnings,
+    };
+    infoButton.disabled = false;
     setProgress("Done.");
   } catch (error) {
     showError(error);
   } finally {
+    activeInfoTrace = null;
     setProcessing(false);
   }
 });
@@ -700,6 +868,10 @@ listen(editButton, "click", async () => {
             currentPreviewColorSpace,
           );
           currentStackResultRevision += 1;
+          lastEncodedOutput = null;
+          if (currentInfoReport && !currentInfoReport.warnings.includes("The output was edited after stacking; processing time refers to the original Process run.")) {
+            currentInfoReport.warnings.push("The output was edited after stacking; processing time refers to the original Process run.");
+          }
           clearFullSizeRenderCache();
           clearPreviewRenderCaches();
           resetAllToneControls();
@@ -1714,6 +1886,16 @@ function clearZoomView() {
 }
 
 function downloadBlob(blob, fileName) {
+  if (currentInfoReport && currentStackResult) {
+    const dimensions = getSelectedOutputDimensions(currentStackResult.width, currentStackResult.height);
+    lastEncodedOutput = {
+      bytes: blob.size,
+      format: outputFormat.value,
+      width: dimensions.width,
+      height: dimensions.height,
+      toneKey: getFullSizeRenderCacheKey(),
+    };
+  }
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -2294,17 +2476,24 @@ async function alignAndMergeFilesWithOpenCv(
   alignmentPlan,
   outputColorSpace,
   canonicalSession,
+  infoTrace: { previewMs: number; add: (label: string, durationMs: number, includedIn?: string) => void; warnings: string[]; transformCacheReused?: boolean | null } | null = null,
 ) {
+  const alignmentStartedAt = performance.now();
   if (!canonicalSession || canonicalSession.images.length !== files.length) {
     throw new Error("Canonical input session is not ready.");
   }
   if (mergePlan.mode === "panorama") {
-    return mergePanoramaFromCanonical(
-      canonicalSession,
-      outputColorSpace,
-      mergePlan.panoramaMaxOutputMegapixels ?? null,
-      mergePlan.panoramaFinishMode ?? DEFAULT_PANORAMA_FINISH_MODE,
-    );
+    const panoramaStartedAt = performance.now();
+    try {
+      return await mergePanoramaFromCanonical(
+        canonicalSession,
+        outputColorSpace,
+        mergePlan.panoramaMaxOutputMegapixels ?? null,
+        mergePlan.panoramaFinishMode ?? DEFAULT_PANORAMA_FINISH_MODE,
+      );
+    } finally {
+      infoTrace?.add("Panorama stitching", Math.max(0, performance.now() - panoramaStartedAt - (infoTrace?.previewMs || 0)));
+    }
   }
   if (!alignmentPlan) throw new Error("Alignment plan is required for this merge mode.");
   const needsAlignment = files.length > 1 && isFeatureMatchAlignmentMode(alignmentPlan.effectiveMode);
@@ -2324,11 +2513,17 @@ async function alignAndMergeFilesWithOpenCv(
   let focusScratchSessionId = null;
   let hdr1StreamWorker = null;
   let hdr2StreamWorker = null;
+  let mergeStartedAt: number | null = null;
 
   try {
     if (files.length === 1 && (mergePlan.mode === "hdr1" || mergePlan.mode === "hdr2") && Array.isArray(mergePlan.syntheticMaterials) && mergePlan.syntheticMaterials.length > 0) {
-      const baseLinear = await materializeCanonicalLinearImage(canonicalSession, 0);
-      return await processSingleInputHdrFromCanonical(baseLinear, canonicalSession.images[0].width, canonicalSession.images[0].height, mergePlan, outputColorSpace);
+      const hdrStartedAt = performance.now();
+      try {
+        const baseLinear = await materializeCanonicalLinearImage(canonicalSession, 0);
+        return await processSingleInputHdrFromCanonical(baseLinear, canonicalSession.images[0].width, canonicalSession.images[0].height, mergePlan, outputColorSpace);
+      } finally {
+        infoTrace?.add("HDR merge", Math.max(0, performance.now() - hdrStartedAt - (infoTrace?.previewMs || 0)));
+      }
     }
 
     // Phase C: prepare all alignment frames before any merge starts.
@@ -2423,6 +2618,7 @@ async function alignAndMergeFilesWithOpenCv(
         ? eccCacheKey : orbCacheKey;
       const transformKey = `${modeCacheKey}:${alignmentPlan.normalizationMode}:${alignmentPlan.targetWidth}x${alignmentPlan.targetHeight}:ref=${alignmentReferenceIndex}`;
       const cachedMatrices = transformCache.get(transformKey);
+      if (infoTrace) infoTrace.transformCacheReused = Boolean(cachedMatrices && cachedMatrices.length === files.length);
       if (cachedMatrices && cachedMatrices.length === files.length) {
         for (let index = 0; index < files.length; index += 1) matrices[index] = new Float64Array(cachedMatrices[index]);
       } else {
@@ -2512,6 +2708,7 @@ async function alignAndMergeFilesWithOpenCv(
             "fallback",
           );
           for (const success of secondaryBatch.successes) {
+            infoTrace?.warnings.push(`${success.job.fileName}: ${secondaryAlgorithm} fallback was used for alignment.`);
             const result = {
               ...success.result,
               matrix: scaleAlignmentMatrixToFullResolution(
@@ -2578,6 +2775,8 @@ async function alignAndMergeFilesWithOpenCv(
     const height = reader.height;
 
     // Phase E: execute merge entirely from Canonical Source + resolved transforms.
+    if (needsAlignment) infoTrace?.add("Alignment frames and transforms", performance.now() - alignmentStartedAt);
+    mergeStartedAt = performance.now();
     if (mergePlan.mode === "median") {
       return finalizeStoredGamma2Result(
         await mergeMedianFromWorkerPool(
@@ -2605,6 +2804,7 @@ async function alignAndMergeFilesWithOpenCv(
         },
         matrices,
       };
+      const focusAnalysisStartedAt = performance.now();
       await computeFocusSharpnessFeaturesParallel(
         focusScratchDb,
         focusScratchSessionId,
@@ -2613,10 +2813,12 @@ async function alignAndMergeFilesWithOpenCv(
         width,
         height,
       );
+      infoTrace?.add("Focus sharpness analysis", performance.now() - focusAnalysisStartedAt, "Merge");
       focusWorker = new FocusWorkerClient(
         new URL("/generated/local-stack-studio/focus.worker.js", window.location.origin),
         setProgress,
       );
+      const focusMergeStartedAt = performance.now();
       const focusStored = await mergeFocusFromCanonical(
         focusScratchDb,
         focusScratchSessionId,
@@ -2627,6 +2829,7 @@ async function alignAndMergeFilesWithOpenCv(
         height,
         mergePlan.focusSoftness,
       );
+      infoTrace?.add("Focus weighted merge", performance.now() - focusMergeStartedAt, "Merge");
       return finalizeStoredGamma2Result(focusStored, width, height, outputColorSpace);
     }
 
@@ -2656,6 +2859,7 @@ async function alignAndMergeFilesWithOpenCv(
         mergePlan.hdrExposureTimes,
         new Uint8Array(inputInfos.map((info) => info.isRaw ? 1 : 0)),
       );
+      const hdrResponseStartedAt = performance.now();
       for (let index = 0; index < files.length; index += 1) {
         setProgress(`Streaming HDR1 response pass ${index + 1}/${files.length} from canonical cache...`);
         const linear = await reader.readLinearImage(index);
@@ -2663,7 +2867,9 @@ async function alignAndMergeFilesWithOpenCv(
         await hdr1StreamWorker.addImage(index, prepared.floats, prepared.brightness);
         await yieldToBrowser();
       }
+      infoTrace?.add("HDR response analysis", performance.now() - hdrResponseStartedAt, "Merge");
       if (inputInfos.some((info) => !info.isRaw)) {
+        const hdrRadianceStartedAt = performance.now();
         await hdr1StreamWorker.beginSecondPass();
         for (let index = 0; index < files.length; index += 1) {
           setProgress(`Replaying HDR1 radiance pass ${index + 1}/${files.length} from canonical cache...`);
@@ -2672,6 +2878,7 @@ async function alignAndMergeFilesWithOpenCv(
           await hdr1StreamWorker.addSecondPassImage(index, prepared.floats);
           await yieldToBrowser();
         }
+        infoTrace?.add("HDR radiance pass", performance.now() - hdrRadianceStartedAt, "Merge");
       }
       const result = await hdr1StreamWorker.finalize();
       return finalizeStoredResult(result, width, height, outputColorSpace, false);
@@ -2679,6 +2886,7 @@ async function alignAndMergeFilesWithOpenCv(
 
     if (mergePlan.mode === "hdr2") {
       hdr2StreamWorker = createHdrMertensStreamWorker(width, height, files.length);
+      const hdrWeightsStartedAt = performance.now();
       for (let index = 0; index < files.length; index += 1) {
         setProgress(`Analyzing HDR2 weights ${index + 1}/${files.length} from canonical cache...`);
         const linear = await reader.readLinearImage(index);
@@ -2686,6 +2894,8 @@ async function alignAndMergeFilesWithOpenCv(
         await hdr2StreamWorker.addImage(index, prepared.floats, prepared.brightness);
         await yieldToBrowser();
       }
+      infoTrace?.add("HDR exposure weights", performance.now() - hdrWeightsStartedAt, "Merge");
+      const hdrPyramidStartedAt = performance.now();
       await hdr2StreamWorker.beginSecondPass();
       for (let index = 0; index < files.length; index += 1) {
         setProgress(`Replaying HDR2 pyramid pass ${index + 1}/${files.length} from canonical cache...`);
@@ -2694,12 +2904,13 @@ async function alignAndMergeFilesWithOpenCv(
         await hdr2StreamWorker.addSecondPassImage(index, prepared.floats);
         await yieldToBrowser();
       }
+      infoTrace?.add("HDR pyramid composition", performance.now() - hdrPyramidStartedAt, "Merge");
       const result = await hdr2StreamWorker.finalize();
       return finalizeStoredResult(result, width, height, outputColorSpace, true);
     }
 
     if (mergePlan.mode === "stf" && mergePlan.stfBlurPlan?.enabled) {
-      return mergeStfWithAdditionalBlur(
+      return await mergeStfWithAdditionalBlur(
         canonicalSession.id,
         reader,
         alignmentPlan,
@@ -2709,6 +2920,7 @@ async function alignAndMergeFilesWithOpenCv(
         width,
         height,
         outputColorSpace,
+        infoTrace,
       );
     }
 
@@ -2733,6 +2945,9 @@ async function alignAndMergeFilesWithOpenCv(
 
     throw new Error(`Unsupported merge mode: ${mergePlan.mode}`);
   } finally {
+    if (mergeStartedAt !== null) {
+      infoTrace?.add("Merge and result generation", Math.max(0, performance.now() - mergeStartedAt - (infoTrace?.previewMs || 0)));
+    }
     coarsePreparation?.stop();
     if (alignmentWorkers) {
       alignmentWorkers.ECC.terminate();
@@ -2887,6 +3102,7 @@ function finalizeStfBasicGate(values, width, height, outputColorSpace) {
 
 async function mergeStfWithAdditionalBlur(
   sessionId, reader, alignmentPlan, matrices, inputInfos, mergePlan, width, height, outputColorSpace,
+  infoTrace: { previewMs: number; add: (label: string, durationMs: number, includedIn?: string) => void; warnings: string[] } | null = null,
 ) {
   const plan = mergePlan.stfBlurPlan;
   if (!plan?.enabled) throw new Error("STF Additional blur was invoked while disabled.");
@@ -2942,6 +3158,7 @@ async function mergeStfWithAdditionalBlur(
     return pool;
   };
   try {
+    const sharpnessStartedAt = performance.now();
     if (!cache.ratio) {
       const p = await ensurePool();
       const sampleGrid = algorithm.buildStfSampleGrid(width, height);
@@ -3023,6 +3240,8 @@ async function mergeStfWithAdditionalBlur(
       if (!plan.gateOnly && cache.source) source = cache.source;
     }
 
+    infoTrace?.add("STF sharpness analysis", performance.now() - sharpnessStartedAt, "Merge");
+    const gateStartedAt = performance.now();
     const ratio = activeRatio;
     if (!ratio || ratio.length !== width * height) throw new Error("STF base sharpness gate is missing.");
     const effectiveRatio = plan.effectiveRatio;
@@ -3056,6 +3275,7 @@ async function mergeStfWithAdditionalBlur(
       }
     }
     if (plan.gateOnly) {
+      infoTrace?.add("STF protection gate", performance.now() - gateStartedAt, "Merge");
       return finalizeStfBasicGate(base, width, height, outputColorSpace);
     }
     const blurRadius = algorithm.resolveStfAdditionalBlurRadius(width, height, plan.strengthMultiplier);
@@ -3086,6 +3306,8 @@ async function mergeStfWithAdditionalBlur(
         cache.expandedKey = expandedKey;
       }
     }
+    infoTrace?.add("STF protection gate", performance.now() - gateStartedAt, "Merge");
+    const blurStartedAt = performance.now();
     if (!source) {
       setProgress("STF merging source for additional blur...");
       // Re-merging is much cheaper than Sobel analysis and avoids persisting
@@ -3110,6 +3332,7 @@ async function mergeStfWithAdditionalBlur(
         blurred.set(stripe, job.y * width * 3);
         setProgress(`STF guarded Gaussian blur ${completed}/${total}...`);
       });
+    infoTrace?.add("STF source merge and blur", performance.now() - blurStartedAt, "Merge");
     return finalizeStoredResult(blurred, width, height, outputColorSpace, true);
   } finally {
     pool?.terminate();
@@ -3945,6 +4168,7 @@ function finalizeStoredResult(source, width, height, outputColorSpace, applyFina
 }
 
 function finalizeStoredGamma2Result(gamma2ProPhotoRgb16, width, height, outputColorSpace) {
+  const previewStartedAt = activeInfoTrace ? performance.now() : 0;
   if (!(gamma2ProPhotoRgb16 instanceof Uint16Array) || gamma2ProPhotoRgb16.length !== width * height * 3) {
     throw new Error("Stored gamma-2 result has an invalid Uint16 RGB buffer.");
   }
@@ -3965,6 +4189,7 @@ function finalizeStoredGamma2Result(gamma2ProPhotoRgb16, width, height, outputCo
     height,
     TONE_ANALYSIS_TARGET_PIXELS,
   );
+  if (activeInfoTrace) activeInfoTrace.previewMs += performance.now() - previewStartedAt;
   return {
     width,
     height,
@@ -4286,6 +4511,7 @@ async function extractInputInfo(file) {
       isRaw: false,
       width: tiffInfo.width,
       height: tiffInfo.height,
+      bitsPerChannel: tiffInfo.bitsPerChannel,
       preservedMetadata,
     };
   }
@@ -4311,6 +4537,7 @@ async function extractInputInfo(file) {
       isRaw: false,
       width: dimensions.width,
       height: dimensions.height,
+      bitsPerChannel: detectStackInputBits(file.name, file.type, buffer),
       preservedMetadata,
     };
   }
@@ -4330,6 +4557,7 @@ async function extractInputInfo(file) {
     isRaw: false,
     width: dimensions.width,
     height: dimensions.height,
+    bitsPerChannel: detectStackInputBits(file.name, file.type, buffer),
     preservedMetadata,
   };
 }
@@ -4395,6 +4623,7 @@ async function readRawInputInfo(file) {
       lensCorrection,
       width: dimensions.width,
       height: dimensions.height,
+      bitsPerChannel: rawMetadataPositiveInteger(metadata?.raw_bps) ?? rawMetadataPositiveInteger(metadata?.bitsPerSample),
       preservedMetadata,
     };
   } catch (error) {
@@ -4556,6 +4785,7 @@ async function parseTiffInfo(buffer, preservedMetadata = null) {
       iccProfile: null,
       width: 0,
       height: 0,
+      bitsPerChannel: null,
     };
   }
   const ifd = ifds[0];
@@ -4580,6 +4810,7 @@ async function parseTiffInfo(buffer, preservedMetadata = null) {
     iccProfile,
     width: dimensions.width,
     height: dimensions.height,
+    bitsPerChannel: getFirstNumericTagValue(ifd, [258]),
   };
 }
 
@@ -5054,6 +5285,7 @@ function setProcessing(processing) {
   previewVibrance.disabled = processing || !currentStackResult;
   previewSaturation.disabled = processing || !currentStackResult;
   editButton.disabled = processing || !currentStackResult;
+  infoButton.disabled = processing || !currentInfoReport;
   processButton.disabled = processing;
   progressPanel.classList.toggle("hidden", !processing);
   updateAlignmentAvailability();
@@ -5064,6 +5296,10 @@ function setProgress(message) {
 }
 
 function clearResult() {
+  currentInfoReport = null;
+  lastEncodedOutput = null;
+  options.onInfoClear?.();
+  infoButton.disabled = true;
   currentStackResult = null;
   currentStackResultRevision += 1;
   clearFullSizeRenderCache();

@@ -30,7 +30,6 @@ const syntaxFiles = [
   ...strictFiles,
   "src/app/local-stack-studio/stack/controller.ts",
   "src/app/local-stack-studio/stack/linear-merge-client.ts",
-  "src/app/local-stack-studio/workers/hdr.worker.ts",
   "src/app/local-stack-studio/workers/linear-merge.worker.ts",
   "src/app/local-stack-studio/workers/stf-additional-blur.worker.ts",
   "src/app/local-stack-studio/workers/panorama.worker.ts",
@@ -64,6 +63,15 @@ runTsc([
 
 runTsc([
   ...common,
+  "--strict",
+  "--noUnusedLocals",
+  "--noUnusedParameters",
+  "--moduleResolution", "bundler",
+  "src/app/local-stack-studio/workers/hdr.worker.ts",
+], "LSS HDR Worker strict type check");
+
+runTsc([
+  ...common,
   "--noResolve",
   ...syntaxFiles,
-], "LSS controller/HDR syntax check");
+], "LSS controller and legacy syntax check");

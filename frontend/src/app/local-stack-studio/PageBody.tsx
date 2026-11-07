@@ -11,6 +11,8 @@ import type { DecodedRgbImage16, ImageEditOutputColorProfile } from "@/component
 import type { ImageEditClarityMap } from "@/components/image-editor/clarity";
 import type { DefringeAnalysisMap } from "@/components/image-editor/defringe";
 import { getBrowserLocale } from "@/utils/locale";
+import InfoDialog from "./InfoDialog";
+import type { LocalStackStudioInfoReport } from "./stack/info-report";
 import { PANORAMA_DOWNSCALE_MEGAPIXELS } from "./stack/panorama-options";
 import {
   mountLocalStackStudio,
@@ -41,6 +43,7 @@ function dataTransferContainsFiles(dataTransfer: DataTransfer): boolean {
 
 export default function PageBody() {
   const [editRequest, setEditRequest] = useState<LocalStackStudioEditRequest | null>(null);
+  const [infoReport, setInfoReport] = useState<LocalStackStudioInfoReport | null>(null);
   const [helpHref, setHelpHref] = useState("/pub/0000000000010052");
 
   useEffect(() => {
@@ -79,7 +82,11 @@ export default function PageBody() {
     setEditRequest(request);
   }, []);
 
-  useEffect(() => mountLocalStackStudio({ onEditRequest: handleEditRequest }), [handleEditRequest]);
+  useEffect(() => mountLocalStackStudio({
+    onEditRequest: handleEditRequest,
+    onInfoRequest: setInfoReport,
+    onInfoClear: () => setInfoReport(null),
+  }), [handleEditRequest]);
 
   const closeEditor = useCallback(() => {
     setEditRequest((current) => {
@@ -429,6 +436,14 @@ export default function PageBody() {
                   <span id="edit-button-spinner" className="hidden h-4 w-4 animate-spin rounded-full border-2 border-gray-300 border-t-gray-700" aria-hidden="true" />
                   <span>Edit</span>
                 </button>
+                <button
+                  id="info-button"
+                  type="button"
+                  disabled
+                  className="inline-flex items-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-900 shadow-sm hover:bg-gray-100 disabled:opacity-50"
+                >
+                  Info
+                </button>
                 <div className="ml-auto flex flex-wrap items-center gap-2.5">
                   <select id="output-format" aria-label="Output format" className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm">
                     <option value="jpeg">JPEG</option>
@@ -490,6 +505,8 @@ export default function PageBody() {
           </div>
         </div>
       </div>
+
+      {infoReport && <InfoDialog report={infoReport} onClose={() => setInfoReport(null)} />}
 
       {editRequest && editorDefaults && (
         <ImageEditDialog
