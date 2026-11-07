@@ -127,3 +127,32 @@ export function matchSpatialOrbDescriptors({
   }
   return [...bestForReference.values()].sort((a, b) => a.distance - b.distance);
 }
+
+/** Estimate a 4-DOF similarity on already ECC-warped target coordinates.
+ * This preserves the 6-DOF affine shear/anisotropic scale after composition. */
+export function orbResidualCandidates<T extends {
+  targetX: number; targetY: number; referenceX: number; referenceY: number; distance: number;
+}>(initial: ArrayLike<number>, candidates: T[]): T[] {
+  return candidates.map((candidate) => ({
+    ...candidate,
+    targetX: initial[0] * candidate.targetX + initial[1] * candidate.targetY + initial[2],
+    targetY: initial[3] * candidate.targetX + initial[4] * candidate.targetY + initial[5],
+  }));
+}
+
+/** T = S * A, in target->reference coordinates. Both are 3x3 affine matrices. */
+export function composeOrbResidual(initial: ArrayLike<number>, residual: ArrayLike<number>): Float64Array {
+  const result = new Float64Array([
+    residual[0] * initial[0] + residual[1] * initial[3],
+    residual[0] * initial[1] + residual[1] * initial[4],
+    residual[0] * initial[2] + residual[1] * initial[5] + residual[2],
+    residual[3] * initial[0] + residual[4] * initial[3],
+    residual[3] * initial[1] + residual[4] * initial[4],
+    residual[3] * initial[2] + residual[4] * initial[5] + residual[5],
+    0, 0, 1,
+  ]);
+  if (!Array.from(result).every(Number.isFinite)) {
+    throw new Error("ORB residual composition produced a non-finite transform.");
+  }
+  return result;
+}

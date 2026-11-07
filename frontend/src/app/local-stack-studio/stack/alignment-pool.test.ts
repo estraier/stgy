@@ -4,6 +4,7 @@ import {
   resolveAlignmentWorkerCount,
   runAlignmentPool,
   runProgressivePipelinedPool,
+  runProgressiveEccPool,
   type AlignmentPoolClient,
 } from "./alignment-pool";
 
@@ -330,4 +331,142 @@ describe("alignment worker pool", () => {
     expect(result.successes).toHaveLength(2);
   });
 
+});
+
+describe("ECC worker scheduling", () => {
+  const f = () => ({ width: 4, height: 4, grayBytes: new Uint8Array(16), exposureScalar: 1,
+    refinement: { width: 8, height: 8, grayBytes: new Uint8Array(64) } });
+  test("refines the first ECC result before the other ECC job is finished", async () => {
+    const events: string[] = [];
+    let releaseSecond!: () => void;
+    const second = new Promise<void>((resolve) => { releaseSecond = resolve; });
+    const jobs = [0, 1].map((id) => ({ id, fileName: `${id}.tif`, frame: f() }));
+    const result = await runProgressiveEccPool({
+      jobs, referenceFrame: f(), referenceFrameIndex: 4, hardwareConcurrency: 4,
+      createClient: () => ({
+        async initialize() { return { workerId: 1 }; },
+        async align(id: number) {
+          events.push(`ecc-start-${id}`);
+          if (id === 1) await second;
+          events.push(`ecc-finish-${id}`);
+          return { matrix: new Float64Array([1, 0.01, id, -0.02, 1, 0, 0, 0, 1]), correlation: 0.98 };
+        },
+        terminate() {},
+      }),
+      createFineClient: () => ({
+        async initialize() { events.push("orb-init"); return { referenceFeatureCount: 0 }; },
+        async refineExternal(id: number, _file: string, matrix: ArrayLike<number>) {
+          events.push(`orb-${id}`);
+          if (id === 0) releaseSecond();
+          return { matrix: new Float64Array(Array.from(matrix)), refinementStatus: "8MP refinement accepted" };
+        },
+        terminate() {},
+      }),
+      prepareRefinement: async () => {},
+      refinementReady: async () => {},
+    });
+    expect(result.failures).toHaveLength(0);
+    expect(result.successes).toHaveLength(2);
+    expect(events.indexOf("orb-0")).toBeLessThan(events.indexOf("ecc-finish-1"));
+    expect(result.successes[0].result.correlation).toBeCloseTo(0.98);
+  });
+
+  test("keeps ECC result when ORB refinement fails but reports ECC failure separately", async () => {
+    const jobs = [0, 1].map((id) => ({ id, fileName: `${id}.tif`, frame: f() }));
+    const result = await runProgressiveEccPool({
+      jobs, referenceFrame: f(), referenceFrameIndex: 3, hardwareConcurrency: 4,
+      createClient: () => ({
+        async initialize() { return {}; },
+        async align(id: number) {
+          if (id === 1) throw new Error("ECC not converged");
+          return { matrix: new Float64Array([1, 0.02, 1, -0.01, 1, 2, 0, 0, 1]) };
+        },
+        terminate() {},
+      }),
+      createFineClient: () => ({
+        async initialize() { return {}; },
+        async refineExternal() { throw new Error("ORB unavailable"); },
+        terminate() {},
+      }),
+      prepareRefinement: async () => {}, refinementReady: async () => {},
+    });
+    expect(result.successes).toHaveLength(1);
+    expect(result.successes[0].result.matrix[1]).toBeCloseTo(0.02);
+    expect(result.successes[0].result.refinementStatus).toContain("ORB unavailable");
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0].job.id).toBe(1);
+  });
+});
+
+describe("ECC diagnostic callbacks", () => {
+  test("reports unchanged ECC matrix separately from final ORB matrix and comparison stats", async () => {
+    const gray = { width: 8, height: 8, grayBytes: new Uint8Array(64) };
+    const frame = { width: 4, height: 4, grayBytes: new Uint8Array(16),
+      exposureScalar: 1, refinement: gray };
+    const observations: Array<{ coarse: number[]; final: number[]; before: number | undefined;
+      after: number | undefined }> = [];
+    const batch = await runProgressiveEccPool({
+      jobs: [{ id: 1, fileName: "1.tif", frame }],
+      referenceFrame: frame, referenceFrameIndex: 0,
+      createClient: () => ({
+        async initialize() { return {}; },
+        async align() { return { matrix: new Float64Array([1, .03, 2, -.02, 1, 3, 0, 0, 1]) }; },
+        terminate() {},
+      }),
+      createFineClient: () => ({
+        async initialize() { return {}; },
+        async refineExternal(_id: number, _file: string, matrix: ArrayLike<number>) {
+          expect(matrix[1]).toBeCloseTo(.03);
+          return { matrix: new Float64Array([1.0002, .03, 4, -.02, 1.0002, 3, 0, 0, 1]),
+            refinementStatus: "8MP refinement accepted", refinementMatches: 24,
+            refinementInitialInliers: 13, refinementInitialMedianError: 1.4,
+            refinementInliers: 19, refinementMedianError: .7 };
+        },
+        terminate() {},
+      }),
+      prepareRefinement: async () => {}, refinementReady: async () => {},
+      onTransformOutcome(_job, coarse, final) {
+        observations.push({ coarse: Array.from(coarse.matrix), final: Array.from(final.matrix),
+          before: final.refinementInitialMedianError, after: final.refinementMedianError });
+      },
+    });
+    expect(batch.failures).toHaveLength(0);
+    expect(observations).toHaveLength(1);
+    expect(observations[0].coarse[2]).toBe(2);
+    expect(observations[0].final[2]).toBe(4);
+    expect(observations[0].before).toBe(1.4);
+    expect(observations[0].after).toBe(.7);
+    expect(batch.successes[0].result.refinementMatches).toBe(24);
+  });
+});
+
+describe("ECC fine-worker coordination", () => {
+  test("never refines any target twice when many frames finish simultaneously", async () => {
+    const fine = { width: 8, height: 8, grayBytes: new Uint8Array(64) };
+    const f = () => ({ width: 4, height: 4, grayBytes: new Uint8Array(16), exposureScalar: 1, refinement: fine });
+    const jobs = Array.from({ length: 12 }, (_, id) => ({ id, fileName: `${id}.tif`, frame: f() }));
+    const visits = new Map<number, number>();
+    const result = await runProgressiveEccPool({
+      jobs, referenceFrame: f(), referenceFrameIndex: 20, hardwareConcurrency: 8,
+      createClient: () => ({
+        async initialize() { return {}; },
+        async align(id: number) { return { matrix: new Float64Array([1, 0, id, 0, 1, 0, 0, 0, 1]), correlation: 0.9 }; },
+        terminate() {},
+      }),
+      createFineClient: () => ({
+        async initialize() { return {}; },
+        async refineExternal(id: number, _file: string, initial: ArrayLike<number>) {
+          visits.set(id, (visits.get(id) ?? 0) + 1);
+          await Promise.resolve();
+          return { matrix: new Float64Array(Array.from(initial)), refinementStatus: "8MP refinement accepted" };
+        },
+        terminate() {},
+      }),
+      prepareRefinement: async () => {}, refinementReady: async () => {},
+    });
+    expect(result.failures).toHaveLength(0);
+    expect(result.successes).toHaveLength(12);
+    expect([...visits.entries()].sort((a, b) => a[0] - b[0])).toEqual(jobs.map((job) => [job.id, 1]));
+    expect(result.successes.every(({ result: r }) => r.correlation === 0.9)).toBe(true);
+  });
 });

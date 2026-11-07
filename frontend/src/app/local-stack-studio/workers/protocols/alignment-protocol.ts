@@ -10,6 +10,7 @@ export type AlignmentInitRequest = {
   height: number;
   grayBuffer: ArrayBuffer;
   exposureScalar: number | null;
+  refinementOnly?: boolean;
   refinement?: { width: number; height: number; grayBuffer: ArrayBuffer };
 };
 
@@ -33,8 +34,19 @@ export type ProgressiveRefineRequest = {
   referenceRefinement?: { width: number; height: number; grayBuffer: ArrayBuffer };
 };
 
+/** Refine an externally estimated target->reference affine (e.g. 1MP ECC). */
+export type ExternalRefineRequest = {
+  type: "refine-external";
+  requestId: number;
+  id: number;
+  fileName: string;
+  initialMatrixBuffer: ArrayBuffer;
+  exposureScalar: number | null;
+  refinement: { width: number; height: number; grayBuffer: ArrayBuffer };
+};
+
 export type AlignmentWorkerRequest = AlignmentInitRequest | AlignmentAlignRequest |
-  ProgressiveCoarseRequest | ProgressiveRefineRequest;
+  ProgressiveCoarseRequest | ProgressiveRefineRequest | ExternalRefineRequest;
 
 export type AlignmentErrorResponse = {
   type: "error";
@@ -107,6 +119,10 @@ export type OrbResultResponse = {
   refinementMatches?: number;
   refinementInliers?: number;
   refinementMedianError?: number;
+  refinementP95Error?: number;
+  refinementInitialInliers?: number;
+  refinementInitialMedianError?: number;
+  refinementInitialP95Error?: number;
   refinementCorrectionPx?: number;
 };
 

@@ -48,12 +48,17 @@ import type {
     translationRatio: number;
   };
 
-  // Retain the original 1MP ECC limit and three-downsample pyramid.
+  // 1MP affine initialization for ECC + 8MP ORB residual alignment.
   const ECC_BASE_AREA = 1_000_000;
   const ECC_MAX_PYRAMID_DOWNSAMPLES = 3;
   const ECC_MIN_COARSE_SHORT_SIDE = 96;
-  const ECC_MAX_ITERATIONS = 100;
-  const ECC_EPSILON = 1e-5;
+  // Final ECC mode favors robust coarse alignment over expensive full convergence.
+  const ECC_CONVERGENCE = {
+    coarseMaxIterations: 50,
+    intermediateMaxIterations: 25,
+    fineMaxIterations: 15,
+    epsilon: 1e-4,
+  };
   const ECC_GAUSSIAN_FILTER_SIZE = 5;
   const ECC_PRE_BLUR_SIZE = 5;
   const ECC_MAX_SCALE_DEVIATION = 0.25;
@@ -80,6 +85,7 @@ import type {
   let referenceGrayBytes: Uint8Array | null = null;
   let referenceExposureScalar: number | null = null;
   let ready = false;
+  const convergence = ECC_CONVERGENCE;
 
   workerScope.onmessage = async (event: MessageEvent<AlignmentWorkerRequest>) => {
     const message = event.data;
@@ -171,6 +177,15 @@ import type {
     };
   }
 
+
+  function convergenceForLevel(level: number, levelCount: number): { maxIterations: number; epsilon: number } {
+    // Level 0 is the finest. The coarsest level runs first. One-level
+    // pyramids have no coarse-to-fine handoff, so use the final limit.
+    const maxIterations = level === 0 ? convergence.fineMaxIterations :
+      level === levelCount - 1 ? convergence.coarseMaxIterations :
+        convergence.intermediateMaxIterations;
+    return { maxIterations, epsilon: convergence.epsilon };
+  }
 
   // OpenCV.js sometimes throws a plain object (or a numeric WASM exception
   // pointer) instead of an Error. Do not lose its useful fields in [object Object].
@@ -270,6 +285,8 @@ import type {
   type EccLevelDiagnostic = {
     level: number;
     resolution: string;
+    maxIterations: number;
+    epsilon: number;
     elapsedMs: number;
     correlation: number | null;
     correctionPx: number | null;
@@ -329,8 +346,11 @@ import type {
           (sample) => sample.retainedPyramidMatBytes,
         )),
         wasmMemoryNote: "wasmHeapCapacityBytes is the committed WASM heap buffer capacity, not live malloc usage; retainedPyramidMatBytes counts only owned CV_8UC1 pyramid payloads and excludes OpenCV internal work buffers",
-        maxIterationsPerLevel: ECC_MAX_ITERATIONS,
-        convergenceEpsilon: ECC_EPSILON,
+        maxIterationsPerLevel: convergence.coarseMaxIterations === convergence.fineMaxIterations &&
+          convergence.fineMaxIterations === convergence.intermediateMaxIterations
+          ? convergence.fineMaxIterations : null,
+        convergenceCriteria: convergence,
+        convergenceEpsilon: convergence.epsilon,
         actualIterationCounts: "not exposed by OpenCV.js",
         stopReasons: "not exposed by OpenCV.js",
       };
@@ -469,11 +489,13 @@ import type {
             rescaleAffineWarpInPlace(warp.data32F, scaleX, scaleY);
           }
 
+          const criteria = convergenceForLevel(level, referencePyramid.length);
           const initialWarp = Float32Array.from(warp.data32F as Float32Array);
           const levelStartedAt = performance.now();
           let levelError: string | undefined;
           try {
-            correlation = runFindTransformEcc(reference, target, warp, mask);
+            correlation = runFindTransformEcc(reference, target, warp, mask,
+              criteria.maxIterations, criteria.epsilon);
           } catch (error) {
             levelError = describeEccError(error);
             throw error;
@@ -489,6 +511,8 @@ import type {
             diagnostics.levels.push({
               level,
               resolution: `${reference.cols}x${reference.rows}`,
+              maxIterations: criteria.maxIterations,
+              epsilon: criteria.epsilon,
               elapsedMs,
               correlation: Number.isFinite(correlation) ? correlation : null,
               correctionPx,
@@ -729,11 +753,12 @@ import type {
     return maximum;
   }
 
-  function runFindTransformEcc(reference: OpenCvDynamic, target: OpenCvDynamic, warp: OpenCvDynamic, mask: OpenCvDynamic): number {
+  function runFindTransformEcc(reference: OpenCvDynamic, target: OpenCvDynamic, warp: OpenCvDynamic,
+    mask: OpenCvDynamic, maxIterations: number, epsilon: number): number {
     const criteria = new cv.TermCriteria(
       cv.TermCriteria_COUNT | cv.TermCriteria_EPS,
-      ECC_MAX_ITERATIONS,
-      ECC_EPSILON,
+      maxIterations,
+      epsilon,
     );
     try {
       return cv.findTransformECC(

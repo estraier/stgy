@@ -84,9 +84,11 @@ export async function runAlignmentPool<Ready, Result>({
   onReady,
   onJobStart,
   onJobComplete,
+  jobReady,
 }: {
   jobs: AlignmentPoolJob[];
   referenceFrame: AlignmentPoolFrame;
+  jobReady?: (id: number) => Promise<void>;
   createClient: () => AlignmentPoolClient<Ready, Result>;
   hardwareConcurrency?: number | null;
   onReady?: (workerIndex: number, ready: Ready) => void;
@@ -177,8 +179,10 @@ export async function runAlignmentPool<Ready, Result>({
         nextJobIndex += 1;
         if (jobIndex >= jobs.length) return;
         const job = jobs[jobIndex];
-        onJobStart?.(job, workerIndex);
         try {
+          if (jobReady) await jobReady(job.id);
+          if (fatalError) return;
+          onJobStart?.(job, workerIndex);
           const result = await client.align(
             job.id,
             job.fileName,
@@ -367,4 +371,192 @@ export async function runProgressivePipelinedPool<Ready, Result>({
     return { workerCount: initialized.length, initializationMs,
       jobsMs: performance.now() - startedAt, ready, successes, failures };
   } finally { terminateAll(); }
+}
+
+/** 1MP 6-DOF ECC followed by 8MP 4-DOF ORB residual refinement.
+ * ECC and ORB use separate worker pools; 8MP frames and each ECC result can
+ * arrive independently. Refinement never replaces a valid ECC result on error.
+ */
+export async function runProgressiveEccPool<
+  CoarseReady,
+  CoarseResult extends { matrix: Float64Array },
+  FineResult extends { matrix: Float64Array; refinementStatus?: string;
+    refinementMatches?: number; refinementInliers?: number;
+    refinementInitialInliers?: number; refinementInitialMedianError?: number;
+    refinementInitialP95Error?: number; refinementMedianError?: number;
+    refinementP95Error?: number; refinementCorrectionPx?: number },
+>({
+  jobs, referenceFrame, createClient, createFineClient, hardwareConcurrency,
+  prepareRefinement, coarseReady, refinementReady, coarsePreparation,
+  onJobStart, onJobComplete, onStageEvent, onTransformOutcome, referenceFrameIndex,
+}: {
+  jobs: AlignmentPoolJob[];
+  referenceFrame: AlignmentPoolFrame;
+  referenceFrameIndex: number;
+  createClient: () => AlignmentPoolClient<CoarseReady, CoarseResult>;
+  createFineClient: () => {
+    initialize(width: number, height: number, grayBytes: Uint8Array,
+      exposureScalar: number | null, refinement: NonNullable<AlignmentPoolFrame["refinement"]>): Promise<unknown>;
+    refineExternal(id: number, fileName: string, matrix: ArrayLike<number>, exposureScalar: number | null,
+      refinement: NonNullable<AlignmentPoolFrame["refinement"]>): Promise<FineResult>;
+    terminate(): void;
+  };
+  hardwareConcurrency?: number | null;
+  prepareRefinement: () => Promise<void>;
+  coarseReady?: (id: number) => Promise<void>;
+  refinementReady?: (id: number) => Promise<void>;
+  coarsePreparation?: Promise<void>;
+  onStageEvent?: (job: AlignmentPoolJob, workerIndex: number, stage: string) => void;
+  /** Observe both matrices before the fine result overwrites the ECC matrix.
+   * Diagnostics only: does not change transform selection or scheduling. */
+  onTransformOutcome?: (job: AlignmentPoolJob, coarse: CoarseResult,
+    final: CoarseResult & Partial<FineResult>) => void;
+  onJobStart?: (job: AlignmentPoolJob, workerIndex: number) => void;
+  onJobComplete?: (job: AlignmentPoolJob, workerIndex: number,
+    outcome: { result: CoarseResult & Partial<FineResult> } | { error: Error }) => void;
+}): Promise<AlignmentPoolResult<CoarseReady, CoarseResult & Partial<FineResult>>> {
+  if (!jobs.length) return { workerCount: 0, initializationMs: 0, jobsMs: 0, ready: [], successes: [], failures: [] };
+  // Keep two frame producers and both transform stages bounded. Limit active
+  // transform workers to the remaining CPU budget (at least one per stage).
+  const hardware = Number.isFinite(hardwareConcurrency) ? Math.max(1, Math.floor(Number(hardwareConcurrency))) : 4;
+  // At most four transform workers, split between ECC and ORB. Frame
+  // generation is independently capped at two workers and completes early.
+  const transformBudget = Math.max(2, Math.min(ALIGNMENT_MAX_WORKERS, hardware));
+  const coarseWorkers = Math.max(1, Math.min(jobs.length, Math.ceil(transformBudget / 2)));
+  const fineWorkers = Math.max(1, Math.min(jobs.length, transformBudget - coarseWorkers));
+  const fineClients = Array.from({ length: fineWorkers }, createFineClient);
+  const successes: AlignmentPoolSuccess<CoarseResult & Partial<FineResult>>[] = [];
+  const startedAt = performance.now();
+  type CoarseOutcome = { result: CoarseResult; error?: never } | { error: Error; result?: never };
+  const outcomes = new Map<number, { promise: Promise<CoarseOutcome>; resolve: (outcome: CoarseOutcome) => void }>();
+  for (const job of jobs) {
+    let resolve!: (outcome: CoarseOutcome) => void;
+    const promise = new Promise<CoarseOutcome>((done) => { resolve = done; });
+    outcomes.set(job.id, { promise, resolve });
+  }
+  const resolved = new Set<number>();
+  const completeCoarse = (job: AlignmentPoolJob, result: CoarseOutcome) => {
+    if (resolved.has(job.id)) return;
+    resolved.add(job.id);
+    outcomes.get(job.id)?.resolve(result);
+  };
+  const terminateFine = () => {
+    for (const client of fineClients) { try { client.terminate(); } catch { /* best effort */ } }
+  };
+  // Start both resolutions immediately; an ECC result does not need to wait
+  // for unrelated 8MP frames or for other ECC results.
+  const finePreparation = Promise.resolve().then(prepareRefinement);
+  finePreparation.catch(() => {});
+  const coarseBatchTask = runAlignmentPool({
+    jobs, referenceFrame, createClient, hardwareConcurrency: coarseWorkers, jobReady: coarseReady,
+    onJobStart: (job, workerIndex) => {
+      onStageEvent?.(job, workerIndex, "ecc-1mp-start");
+      onJobStart?.(job, workerIndex);
+    },
+    onJobComplete: (job, workerIndex, outcome) => {
+      onStageEvent?.(job, workerIndex, "ecc-1mp-ready");
+      completeCoarse(job, "result" in outcome ? { result: outcome.result } : { error: outcome.error });
+    },
+  }).then((batch) => {
+    // Reference initialization failure reports failures without job callbacks.
+    for (const failure of batch.failures) completeCoarse(failure.job, { error: failure.error });
+    return batch;
+  }, (error: unknown) => {
+    const failure = asError(error);
+    for (const job of jobs) completeCoarse(job, { error: failure });
+    throw failure;
+  });
+  coarseBatchTask.catch(() => {});
+  try {
+    const pending = jobs.map((job) => ({
+      job,
+      ready: outcomes.get(job.id)!.promise.then(async (coarse) => {
+        if (coarse.error) return { job, coarse, refinementError: null as Error | null };
+        try {
+          if (refinementReady) await refinementReady(job.id);
+          else await finePreparation;
+          if (!referenceFrame.refinement || !job.frame.refinement) {
+            throw new Error(`Missing 8MP frame for ${job.fileName}.`);
+          }
+          return { job, coarse, refinementError: null as Error | null };
+        } catch (error) {
+          return { job, coarse, refinementError: asError(error) };
+        }
+      }),
+    }));
+    const runFine = async (workerIndex: number) => {
+      const client = fineClients[workerIndex];
+      let initializationError: Error | null = null;
+      try {
+        if (refinementReady) await refinementReady(referenceFrameIndex);
+        else await finePreparation;
+        if (!referenceFrame.refinement) throw new Error("8MP reference frame is unavailable.");
+        await client.initialize(referenceFrame.width, referenceFrame.height,
+          copyGrayBytes(referenceFrame), referenceFrame.exposureScalar, referenceFrame.refinement);
+      } catch (error) {
+        initializationError = asError(error);
+        console.warn("[ECC] ORB refinement worker unavailable; ECC results will be kept.", initializationError);
+      }
+      // Use ready-first scheduling, so one slowly generated 8MP frame does
+      // not block another target on the same worker.
+      while (pending.length) {
+        const next = await Promise.race(pending.map((item) => item.ready));
+        const position = pending.findIndex((item) => item.job === next.job);
+        // Multiple ORB workers can wake up for the same ready item. Only the
+        // first claims it; a second wake-up must not process it twice or
+        // accidentally remove the final pending item via splice(-1, 1).
+        if (position < 0) continue;
+        pending.splice(position, 1);
+        if (!next.coarse.result) continue; // ECC failures remain hard failures.
+        const coarse = next.coarse.result;
+        let result: CoarseResult & Partial<FineResult> = { ...coarse } as CoarseResult & Partial<FineResult>;
+        if (initializationError || next.refinementError) {
+          const error = initializationError || next.refinementError;
+          result = { ...coarse, refinementStatus: `8MP refinement unavailable: ${error?.message}; kept ECC` } as typeof result;
+        } else {
+          try {
+            onStageEvent?.(next.job, coarseWorkers + workerIndex, "orb-8mp-start");
+            const fine = await client.refineExternal(next.job.id, next.job.fileName, coarse.matrix,
+              next.job.frame.exposureScalar, next.job.frame.refinement!);
+            // Keep ECC's correlation, confidence and exposure statistics.
+            // Import only the fine transform and ORB refinement diagnostics.
+            result = { ...coarse, matrix: fine.matrix,
+              refinementStatus: fine.refinementStatus,
+              refinementMatches: fine.refinementMatches,
+              refinementInliers: fine.refinementInliers,
+              refinementMedianError: fine.refinementMedianError,
+              refinementP95Error: fine.refinementP95Error,
+              refinementInitialInliers: fine.refinementInitialInliers,
+              refinementInitialMedianError: fine.refinementInitialMedianError,
+              refinementInitialP95Error: fine.refinementInitialP95Error,
+              refinementCorrectionPx: fine.refinementCorrectionPx,
+            } as CoarseResult & Partial<FineResult>;
+            onStageEvent?.(next.job, coarseWorkers + workerIndex, "orb-8mp-ready");
+          } catch (error) {
+            const detail = asError(error);
+            console.warn(`[ECC] ${next.job.fileName}: 8MP ORB refinement failed; kept ECC.`, detail);
+            result = { ...coarse, refinementStatus: `8MP refinement failed: ${detail.message}; kept ECC` } as typeof result;
+          }
+        }
+        onTransformOutcome?.(next.job, coarse, result);
+        successes.push({ job: next.job, result });
+        onJobComplete?.(next.job, coarseWorkers + workerIndex, { result });
+      }
+    };
+    const fineTasks = Promise.all(fineClients.map((_, index) => runFine(index)));
+    // All stages must settle before their workers are destroyed, including if
+    // the frame producer or ECC fails while another stage is still active.
+    const settled = await Promise.allSettled([coarseBatchTask, fineTasks, finePreparation,
+      coarsePreparation ?? Promise.resolve()]);
+    const failure = settled.find((entry) => entry.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
+    const coarseBatch = (settled[0] as PromiseFulfilledResult<
+      AlignmentPoolResult<CoarseReady, CoarseResult>>).value;
+    return { workerCount: coarseBatch.workerCount + fineClients.length,
+      initializationMs: coarseBatch.initializationMs,
+      jobsMs: performance.now() - startedAt, ready: coarseBatch.ready,
+      successes, failures: coarseBatch.failures };
+  } finally {
+    terminateFine();
+  }
 }

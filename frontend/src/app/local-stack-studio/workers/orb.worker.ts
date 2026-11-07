@@ -5,7 +5,7 @@ import {
   type OpenCvRuntime,
 } from "./opencv-runtime";
 import { createConfiguredOrb } from "./orb-runtime";
-import { matchSpatialOrbDescriptors, orbCornerCorrection, scaleOrbAffine } from "./progressive-orb-matching";
+import { matchSpatialOrbDescriptors, orbCornerCorrection, scaleOrbAffine, orbResidualCandidates, composeOrbResidual } from "./progressive-orb-matching";
 import {
   applyAlignmentExposureToGrayBytes,
   positiveExposureOrNull,
@@ -79,6 +79,10 @@ import type {
     refinementMatches?: number;
     refinementInliers?: number;
     refinementMedianError?: number;
+    refinementP95Error?: number;
+    refinementInitialInliers?: number;
+    refinementInitialMedianError?: number;
+    refinementInitialP95Error?: number;
     refinementCorrectionPx?: number;
   };
 
@@ -125,6 +129,32 @@ import type {
           referenceFeatureCount,
         };
         workerScope.postMessage(response);
+        return;
+      }
+
+      if (message.type === "refine-external") {
+        if (!ready) throw new AlignmentImplementationError("ORB refinement worker is not initialized.");
+        if (message.initialMatrixBuffer.byteLength !== 9 * Float64Array.BYTES_PER_ELEMENT) {
+          throw new AlignmentImplementationError("Invalid external 1MP affine matrix size.");
+        }
+        const initial = new Float64Array(message.initialMatrixBuffer);
+        if (!isFiniteAlignmentMatrix(initial) || initial[6] !== 0 || initial[7] !== 0 || initial[8] !== 1) {
+          throw new AlignmentImplementationError("Invalid external 1MP affine transform.");
+        }
+        // All coarse statistics belong to ECC, not ORB. These empty ORB
+        // fields are used only to reuse the existing fine-stage result shape.
+        const coarse: OrbAlignmentComputationResult = {
+          matrix: new Float64Array(initial),
+          referenceFeatureCount: 0, targetFeatureCount: 0,
+          matchCount: 0, usableMatchCount: 0, matchShiftLimit: 0,
+          fallbackMode: "none", reprojectionInlierCount: 0,
+          reprojectionMedianError: 0, reprojectionP95Error: 0,
+          referenceExposureGain: 1, targetExposureGain: 1,
+          exposureMatchSource: "none", claheClipLimit: ALIGNMENT_CLAHE_CLIP_LIMIT,
+        };
+        sendAlignmentResult(message, refineProgressiveAlignment(
+          coarse, message.refinement, message.exposureScalar, message.fileName, true,
+        ));
         return;
       }
 
@@ -202,6 +232,10 @@ import type {
             refinementMatches: result.refinementMatches,
             refinementInliers: result.refinementInliers,
             refinementMedianError: result.refinementMedianError,
+            refinementP95Error: result.refinementP95Error,
+            refinementInitialInliers: result.refinementInitialInliers,
+            refinementInitialMedianError: result.refinementInitialMedianError,
+            refinementInitialP95Error: result.refinementInitialP95Error,
             refinementCorrectionPx: result.refinementCorrectionPx,
           };
         workerScope.postMessage(response, [matrixBuffer]);
@@ -240,6 +274,15 @@ import type {
       fineReferenceBytes = new Uint8Array(fine.grayBuffer);
     }
 
+    if (message.refinementOnly) {
+      if (!fineReferenceBytes) {
+        throw new AlignmentImplementationError("8MP ORB-only refinement requires its 8MP reference frame.");
+      }
+      // Do not extract any 1MP ORB features for an external ECC initial warp.
+      referenceGrayBytes = null;
+      ready = true;
+      return 0;
+    }
     const baselineGray = preprocessAlignmentGray(applyAlignmentExposureToGrayBytes(referenceGrayBytes, 1));
     try {
       const referenceFeatureCount = countOrbFeatures(baselineGray);
@@ -456,6 +499,7 @@ import type {
     fine: { width: number; height: number; grayBuffer: ArrayBuffer } | undefined,
     targetExposure: number | null,
     fileName: string,
+    residualCorrection = false,
   ): OrbAlignmentComputationResult {
     const withStatus = (status: string, details: Partial<OrbAlignmentComputationResult> = {}) =>
       ({ ...coarse, refinementStatus: status, ...details });
@@ -490,28 +534,44 @@ import type {
       if (fineCandidates.length < PROGRESSIVE_MIN_FINE_INLIERS) {
         return withStatus("Too few 8MP spatial matches; kept 1MP transform", details);
       }
+      // The existing Progressive ORB estimates an absolute 4-DOF transform.
+      // ECC instead fits a 4-DOF residual on A * target, then
+      // composes S * A; the ECC shear and anisotropic scale are retained.
+      const estimationCandidates = residualCorrection
+        ? orbResidualCandidates(coarseHigh, fineCandidates) : fineCandidates;
       const fineEstimate = estimateAlignment(
-        fineCandidates, false,
+        estimationCandidates, false,
         PROGRESSIVE_FINE_REPROJECTION_THRESHOLD,
         fineWidth, fineHeight,
       );
+      const finalHigh = residualCorrection
+        ? composeOrbResidual(coarseHigh, fineEstimate.matrix) : fineEstimate.matrix;
+      const finalReprojection = residualCorrection
+        ? measureReprojectionErrors(finalHigh, fineCandidates, PROGRESSIVE_FINE_REPROJECTION_THRESHOLD)
+        : fineEstimate.reprojection;
       const previous = measureReprojectionErrors(coarseHigh, fineCandidates, PROGRESSIVE_FINE_REPROJECTION_THRESHOLD);
-      const correctionPx = orbCornerCorrection(coarseHigh, fineEstimate.matrix, fineWidth, fineHeight);
+      const correctionPx = orbCornerCorrection(coarseHigh, finalHigh, fineWidth, fineHeight);
+      // Both errors use the SAME 8MP feature pairs; unlike ECC correlation,
+      // they are directly comparable before and after ORB residual refinement.
       const stats = {
         ...details,
-        refinementInliers: fineEstimate.reprojection.inlierCount,
-        refinementMedianError: fineEstimate.reprojection.medianError,
+        refinementInitialInliers: previous.inlierCount,
+        refinementInitialMedianError: previous.medianError,
+        refinementInitialP95Error: previous.p95Error,
+        refinementInliers: finalReprojection.inlierCount,
+        refinementMedianError: finalReprojection.medianError,
+        refinementP95Error: finalReprojection.p95Error,
         refinementCorrectionPx: correctionPx,
       };
-      if (fineEstimate.reprojection.inlierCount < PROGRESSIVE_MIN_FINE_INLIERS ||
-          fineEstimate.reprojection.medianError > PROGRESSIVE_FINE_REPROJECTION_THRESHOLD ||
+      if (finalReprojection.inlierCount < PROGRESSIVE_MIN_FINE_INLIERS ||
+          finalReprojection.medianError > PROGRESSIVE_FINE_REPROJECTION_THRESHOLD ||
           !(correctionPx <= PROGRESSIVE_FINE_RADIUS) ||
-          !(fineEstimate.reprojection.medianError + 0.02 < previous.medianError)) {
+          !(finalReprojection.medianError + 0.02 < previous.medianError)) {
         return withStatus("8MP geometry did not pass validation; kept 1MP transform", stats);
       }
-      const finalLow = scaleOrbAffine(fineEstimate.matrix, fineWidth, fineHeight, width, height);
-      console.info(`[ORB] ${fileName}: 8MP refined with ${fineCandidates.length} matches, ` +
-        `${fineEstimate.reprojection.inlierCount} inliers, correction ${correctionPx.toFixed(2)} px.`);
+      const finalLow = scaleOrbAffine(finalHigh, fineWidth, fineHeight, width, height);
+      console.info(`[${residualCorrection ? "ECC" : "ORB"}] ${fileName}: 8MP refined with ${fineCandidates.length} matches, ` +
+        `${finalReprojection.inlierCount} inliers, correction ${correctionPx.toFixed(2)} px.`);
       return withStatus("8MP refinement accepted", { ...stats, matrix: finalLow });
     } catch (error) {
       console.warn(`[ORB] ${fileName}: 8MP refinement failed; kept 1MP transform.`, error);
