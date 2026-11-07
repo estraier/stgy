@@ -679,28 +679,52 @@ import type {
     return value;
   }
 
-  async function loadCanonicalBgr8Mat(
+  async function loadCanonicalLinearSeamMat(
     session: Awaited<ReturnType<typeof openCanonicalReadSession>>,
     imageIndex: number,
+    seamScale: number,
   ): Promise<NativeMat> {
     const meta = session.images[imageIndex];
     if (!meta) throw new Error(`Canonical panorama input ${imageIndex + 1} is unavailable.`);
-    const bgr = new Uint8Array(meta.width * meta.height * 3);
-    for (let startRow = 0; startRow < meta.height; startRow += PANORAMA_ROWS_PER_READ) {
-      const rowCount = Math.min(PANORAMA_ROWS_PER_READ, meta.height - startRow);
-      const linearRgb = await readCanonicalLinearRows(session, imageIndex, startRow, rowCount);
-      let destination = startRow * meta.width * 3;
-      for (let source = 0; source < linearRgb.length; source += 3, destination += 3) {
-        const r = Math.min(1, Math.max(0, linearRgb[source] ?? 0));
-        const g = Math.min(1, Math.max(0, linearRgb[source + 1] ?? 0));
-        const b = Math.min(1, Math.max(0, linearRgb[source + 2] ?? 0));
-        bgr[destination] = Math.floor(b * INPUT_BYTE_MAX);
-        bgr[destination + 1] = Math.floor(g * INPUT_BYTE_MAX);
-        bgr[destination + 2] = Math.floor(r * INPUT_BYTE_MAX);
+    // Read only the rows required for the low-resolution seam proxy. Unlike
+    // the former BGR8 proxy, retain unclipped linear values (including >1).
+    // Never allocate a full-resolution 32-bit RGB image for exposure analysis.
+    const width = Math.max(1, Math.round(meta.width * seamScale));
+    const height = Math.max(1, Math.round(meta.height * seamScale));
+    const bgr = new Float32Array(width * height * 3);
+    let cachedStart = 0;
+    let cachedEnd = 0;
+    let cachedRows: Float32Array = new Float32Array(0);
+    for (let y = 0; y < height; y += 1) {
+      const sourceY = Math.min(meta.height - 1, Math.max(0, (y + 0.5) * meta.height / height - 0.5));
+      const y0 = Math.floor(sourceY);
+      const y1 = Math.min(meta.height - 1, y0 + 1);
+      const fy = sourceY - y0;
+      if (y0 < cachedStart || y1 >= cachedEnd) {
+        cachedStart = y0;
+        cachedEnd = Math.min(meta.height, y0 + Math.max(PANORAMA_ROWS_PER_READ, 2));
+        cachedRows = await readCanonicalLinearRows(session, imageIndex, cachedStart, cachedEnd - cachedStart);
+      }
+      for (let x = 0; x < width; x += 1) {
+        const sourceX = Math.min(meta.width - 1, Math.max(0, (x + 0.5) * meta.width / width - 0.5));
+        const x0 = Math.floor(sourceX);
+        const x1 = Math.min(meta.width - 1, x0 + 1);
+        const fx = sourceX - x0;
+        const topLeft = ((y0 - cachedStart) * meta.width + x0) * 3;
+        const topRight = ((y0 - cachedStart) * meta.width + x1) * 3;
+        const bottomLeft = ((y1 - cachedStart) * meta.width + x0) * 3;
+        const bottomRight = ((y1 - cachedStart) * meta.width + x1) * 3;
+        const output = (y * width + x) * 3;
+        for (let channel = 0; channel < 3; channel += 1) {
+          const upper = cachedRows[topLeft + channel]! * (1 - fx) + cachedRows[topRight + channel]! * fx;
+          const lower = cachedRows[bottomLeft + channel]! * (1 - fx) + cachedRows[bottomRight + channel]! * fx;
+          // Canonical storage is RGB; OpenCV's seam proxy uses BGR.
+          bgr[output + 2 - channel] = upper * (1 - fy) + lower * fy;
+        }
       }
     }
     const api = getNativeApi();
-    return api.matFromArray(meta.height, meta.width, api.CV_8UC3, bgr);
+    return api.matFromArray(height, width, api.CV_32FC3, bgr);
   }
 
   async function loadCanonicalAlignmentGrayMat(
@@ -1076,16 +1100,6 @@ import type {
     return mask;
   }
 
-  function warpedFloatForGraphCut(image: NativeMat): NativeMat {
-    const api = getNativeApi();
-    if (!(image.data instanceof Uint8Array) || image.data.length < image.rows * image.cols * 3) {
-      throw new Error("Panorama seam image has an unreadable 8-bit buffer.");
-    }
-    const floats = new Float32Array(image.rows * image.cols * 3);
-    for (let index = 0; index < floats.length; index += 1) floats[index] = image.data[index]!;
-    return api.matFromArray(image.rows, image.cols, api.CV_32FC3, floats);
-  }
-
   function seamScaleForImages(seamEstimationMegapixels: number, width: number, height: number): number {
     const configured = Number.isFinite(seamEstimationMegapixels)
       ? seamEstimationMegapixels
@@ -1152,13 +1166,12 @@ import type {
 
   function buildGraphCutSeams(
     requestId: number,
-    seamEstimationMegapixels: number,
+    seamScale: number,
     images: NativeMat[],
     cameras: CameraState[],
     workScale: number,
   ): SeamAnalysis {
     const api = getNativeApi();
-    const seamScale = seamScaleForImages(seamEstimationMegapixels, images[0]!.cols, images[0]!.rows);
     const seamWorkAspect = seamScale / workScale;
     const warperScale = medianFocal(cameras) * seamWorkAspect;
     const warper = api.createWarper(warperScale);
@@ -1178,10 +1191,9 @@ import type {
       for (let index = 0; index < images.length; index += 1) {
         const source = images[index]!;
         const camera = cameras[index]!;
-        const seamWidth = Math.max(1, Math.round(source.cols * seamScale));
-        const seamHeight = Math.max(1, Math.round(source.rows * seamScale));
-        const seamImage = resizeMat(source, seamWidth, seamHeight, api.INTER_LINEAR_EXACT);
-        const seamImageOwned = seamImage !== source;
+        // The source is already an unclipped, low-resolution linear RGB proxy.
+        const seamWidth = source.cols;
+        const seamHeight = source.rows;
         let cameraMatrix: NativeMat | null = null;
         let rotation: NativeMat | null = null;
         let warpedImage: NativeMat | null = null;
@@ -1193,7 +1205,7 @@ import type {
           warpedImage = new api.Mat();
           const corner = pointFromUnknown(
             warper.warp(
-              seamImage,
+              source,
               cameraMatrix,
               rotation,
               api.INTER_LINEAR,
@@ -1212,25 +1224,28 @@ import type {
             api.BORDER_CONSTANT,
             warpedMask,
           );
-          warpedFloatImages.push(warpedFloatForGraphCut(warpedImage));
+          if (!(warpedImage.data32F instanceof Float32Array)
+              || warpedImage.data32F.length < warpedImage.rows * warpedImage.cols * 3) {
+            throw new Error(`Panorama seam image ${index + 1} has an unreadable linear float buffer.`);
+          }
+          warpedFloatImages.push(warpedImage);
+          warpedImage = null;
           warpedMasks.push(warpedMask);
           warpedMask = null;
           corners.push(corner);
-          sizes.push({ width: warpedImage.cols, height: warpedImage.rows });
+          sizes.push({ width: warpedFloatImages[index]!.cols, height: warpedFloatImages[index]!.rows });
         } finally {
           deleteNative(warpedMask);
           deleteNative(sourceMask);
           deleteNative(warpedImage);
           deleteNative(rotation);
           deleteNative(cameraMatrix);
-          if (seamImageOwned) deleteNative(seamImage);
         }
       }
 
-      // Estimate OpenCV BlocksChannelsCompensator-style local RGB gains from
-      // the low-resolution spherical overlaps. Keep this outside native
-      // ExposureCompensator.apply(), because that path is 8-bit; the same gain
-      // maps are later applied to canonical float32 pixels.
+      // Jointly solve local log-RGB gains across every overlap, directly from
+      // unclipped canonical linear RGB. The same gain maps are used by GraphCut
+      // and high-precision composition; no 8-bit exposure proxy is involved.
       const exposureProxies = warpedFloatImages.map((image, index) => {
         const bgr = image.data32F;
         const mask = warpedMasks[index]!.data;
@@ -1257,6 +1272,11 @@ import type {
           throw new Error(`Panorama exposure proxy ${index + 1} lost its float buffer.`);
         }
         applyPanoramaGainBgrInPlace(bgr, image.cols, image.rows, gainMaps[index]!);
+        // OpenCV GraphCut's color cost expects 0..255-scale float images.
+        // The exposure estimation above has already used unclipped linear RGB.
+        for (let sample = 0; sample < bgr.length; sample += 1) {
+          bgr[sample] = Math.max(0, Math.min(255, bgr[sample]! * INPUT_BYTE_MAX));
+        }
       }
 
       postProgress(requestId, "Computing OpenCV GraphCut panorama seam...");
@@ -1701,12 +1721,17 @@ import type {
       for (const proxy of detailAlignmentImages) deleteNative(proxy);
       detailAlignmentImages.length = 0;
 
-      // Alignment uses a dedicated gamma-2 grayscale proxy. Keep the existing
-      // linear BGR proxy exclusively for seam/exposure analysis so stronger
-      // feature preprocessing cannot alter GraphCut, local gains, or final pixels.
+      // Geometry uses the gamma-2 grayscale alignment proxies. Create only a
+      // seam-scale float32 BGR proxy for exposure/GraphCut, preserving >1 RGB
+      // values without allocating a full-resolution float32 image.
+      const seamScale = seamScaleForImages(
+        seamEstimationMegapixels,
+        session.images[0]!.width,
+        session.images[0]!.height,
+      );
       for (let index = 0; index < session.images.length; index += 1) {
         postProgress(requestId, `Preparing panorama seam proxy ${index + 1}/${session.images.length}...`);
-        seamProxyImages.push(await loadCanonicalBgr8Mat(session, index));
+        seamProxyImages.push(await loadCanonicalLinearSeamMat(session, index, seamScale));
       }
 
       postProgress(requestId, "Applying OpenCV automatic horizontal/vertical wave correction...");
@@ -1714,7 +1739,7 @@ import type {
 
       const seamAnalysis = buildGraphCutSeams(
         requestId,
-        seamEstimationMegapixels,
+        seamScale,
         seamProxyImages,
         cameras,
         workScale,
