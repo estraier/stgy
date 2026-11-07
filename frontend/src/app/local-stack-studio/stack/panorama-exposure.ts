@@ -20,7 +20,6 @@ const BLOCK_SIZE = 32;
 const SAMPLE_STEP = 2;
 // The exposure proxies are linear RGB, not an 8-bit image.
 const MIN_SAMPLE_VALUE = 10 / 255;
-const MIN_GAIN = 2 / 3;
 const MAX_GAIN = 1.5;
 const MAX_LOG_GAIN = Math.log(MAX_GAIN);
 const MIN_CELL_SAMPLES = 6;

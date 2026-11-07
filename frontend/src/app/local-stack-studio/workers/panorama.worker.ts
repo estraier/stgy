@@ -1076,19 +1076,6 @@ import type {
     };
   }
 
-  function resizeMat(source: NativeMat, width: number, height: number, interpolation: number): NativeMat {
-    if (source.cols === width && source.rows === height) return source;
-    const api = getNativeApi();
-    const destination = new api.Mat();
-    try {
-      api.resize(source, destination, { width, height }, 0, 0, interpolation);
-      return destination;
-    } catch (error) {
-      deleteNative(destination);
-      throw error;
-    }
-  }
-
   function fullMask(width: number, height: number): NativeMat {
     const api = getNativeApi();
     const mask = new api.Mat(height, width, api.CV_8UC1);

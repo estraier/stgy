@@ -13,7 +13,7 @@ import type { DefringeAnalysisMap } from "@/components/image-editor/defringe";
 import { getBrowserLocale } from "@/utils/locale";
 import InfoDialog from "./InfoDialog";
 import type { LocalStackStudioInfoReport } from "./stack/info-report";
-import { PANORAMA_DOWNSCALE_MEGAPIXELS } from "./stack/panorama-options";
+import { DEFAULT_PANORAMA_DOWNSCALE_MEGAPIXELS, PANORAMA_DOWNSCALE_MEGAPIXELS } from "./stack/panorama-options";
 import {
   mountLocalStackStudio,
   type LocalStackStudioEditRequest,
@@ -245,7 +245,7 @@ export default function PageBody() {
                   <span className="text-xs font-medium text-gray-500">Downscale</span>
                   <select
                     id="panorama-downscale"
-                    defaultValue="16"
+                    defaultValue={String(DEFAULT_PANORAMA_DOWNSCALE_MEGAPIXELS)}
                     className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm"
                   >
                     <option value="none">none</option>

@@ -9,8 +9,8 @@ import {
 } from "./panorama-options";
 
 describe("Panorama Downscale options", () => {
-  test("keeps 16MP as the default", () => {
-    expect(DEFAULT_PANORAMA_DOWNSCALE_MEGAPIXELS).toBe(16);
+  test("keeps 24MP as the default", () => {
+    expect(DEFAULT_PANORAMA_DOWNSCALE_MEGAPIXELS).toBe(24);
   });
 
   test("contains every supported megapixel target", () => {
