@@ -32,9 +32,9 @@ async function withFixture(callback) {
   await writeFile(join(vendored, "opencv_js.wasm"), custom);
   const sha256 = (b) => createHash("sha256").update(b).digest("hex");
   const manifest = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     package: "@banou/opencv-wasm", packageVersion: "0.0.6", openCvVersion: "5.0.0",
-    panoramaOrbFeatures: 5000, stitcherSourceSha256: "0".repeat(64), wasmSha256: sha256(custom),
+    panoramaOrbFeatures: 5000, panoramaMatcherConfidenceLimit: 3.5, stitcherSourceSha256: "0".repeat(64), wasmSha256: sha256(custom),
   };
   await writeFile(join(vendored, "manifest.json"), JSON.stringify(manifest));
   try { await callback({ scripts, deployed, vendored, stock, custom }); }

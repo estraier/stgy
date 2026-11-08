@@ -2,7 +2,7 @@
 import { cp, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { join, resolve } from "node:path";
-import { assetDir, OPENCV_PACKAGE, OPENCV_PACKAGE_VERSION, OPENCV_VERSION, PANORAMA_ORB_FEATURES, sha256File, verifyPanoramaOrbWasm } from "./opencv-orb5000-asset.mjs";
+import { assetDir, OPENCV_PACKAGE, OPENCV_PACKAGE_VERSION, OPENCV_VERSION, PANORAMA_ORB_FEATURES, PANORAMA_MATCHER_CONFIDENCE_LIMIT, sha256File, verifyPanoramaOrbWasm } from "./opencv-orb5000-asset.mjs";
 import { patchStitcherSource, STITCHER_SOURCE_RELATIVE_PATH } from "./patch-opencv-panorama-orb.mjs";
 
 const sourceDir = process.argv[2] && resolve(process.argv[2]);
@@ -27,11 +27,12 @@ if (wasmStats.mtimeMs < nativeStats.mtimeMs) {
 let commit = "unknown";
 try { commit = execFileSync("git", ["-C", sourceDir, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(); } catch {}
 const manifest = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   package: OPENCV_PACKAGE,
   packageVersion: OPENCV_PACKAGE_VERSION,
   openCvVersion: OPENCV_VERSION,
   panoramaOrbFeatures: PANORAMA_ORB_FEATURES,
+  panoramaMatcherConfidenceLimit: PANORAMA_MATCHER_CONFIDENCE_LIMIT,
   wasmSha256: await sha256File(compiledWasm),
   stitcherSourceSha256: await sha256File(nativeSource),
   upstreamCommit: commit,

@@ -17,8 +17,8 @@ async function fixture(fn) {
   bytes[100] = 42;
   const hash = createHash("sha256").update(bytes).digest("hex");
   const manifest = {
-    schemaVersion: 1, package: "@banou/opencv-wasm", packageVersion: "0.0.6",
-    openCvVersion: "5.0.0", panoramaOrbFeatures: 5000,
+    schemaVersion: 2, package: "@banou/opencv-wasm", packageVersion: "0.0.6",
+    openCvVersion: "5.0.0", panoramaOrbFeatures: 5000, panoramaMatcherConfidenceLimit: 3.5,
     stitcherSourceSha256: "0".repeat(64), wasmSha256: hash,
   };
   await writeFile(binary, bytes);
@@ -54,4 +54,11 @@ test("rejects byte-identical stock WASM", async () => fixture(async (f) => {
 test("reports missing committed custom binary", async () => fixture(async (f) => {
   await rm(f.binary);
   await assert.rejects(verifyPanoramaOrbWasm(f), /Missing STGY Panorama ORB 5000 WASM/);
+}));
+
+test("rejects old WASM manifest without the high-confidence matching fix", async () => fixture(async (f) => {
+  delete f.manifest.panoramaMatcherConfidenceLimit;
+  f.manifest.schemaVersion = 1;
+  await f.writeManifest();
+  await assert.rejects(verifyPanoramaOrbWasm(f), /Unexpected Panorama ORB/);
 }));

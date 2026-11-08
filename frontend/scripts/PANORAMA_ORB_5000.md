@@ -7,9 +7,18 @@ OpenCV's native `Stitcher::create(PANORAMA)` creates its feature finder as
 `ORB::create()`, which defaults to 500 features per image. The distributed
 JavaScript binding does **not** expose `Stitcher::setFeaturesFinder()`.
 
-This change replaces that one C++ constructor argument with `ORB::create(5000)`.
-Nothing in the alignment, wave correction, camera estimation, seam finding,
-exposure correction or stitching parameters is modified. STGY's ordinary ORB
+This change replaces the C++ constructor argument with `ORB::create(5000)`.
+It also sets the PANORAMA-only `BestOf2NearestMatcher` upper confidence
+cutoff to 3.5. OpenCV's default threshold of 3.0 discards geometrically
+very strongly matched pairs by setting their confidence to zero; with 5000
+ORB features, heavily overlapping images can exceed 3.0 even if they match
+well. The confidence formula is inliers / (8 + 0.3 * matches), so 3.5 is
+above its theoretical maximum (~3.333) and removes only this upper cutoff.
+The ordinary *lower* panorama graph confidence, ORB descriptor ratio check,
+RANSAC, homography estimation, bundle adjustment, wave correction, seam finding,
+exposure correction and subsequent stitching algorithms are unchanged.
+This is a plausible fix for a regression, not a verified reproduction until
+real failing images are tested. STGY's ordinary ORB
 alignment already uses 5000 features, independently of Panorama.
 
 The resulting WASM has the **same JavaScript ABI** as the stock npm package.
@@ -45,7 +54,8 @@ script retains previously built OpenCV object files and dependency caches;
 do not delete `../opencv-wasm/build` or `../opencv-wasm/vendor` merely to retry.
 
 The script ensures pinned SHA-256-checked OpenCV and contrib 5.0.0 sources,
-changes only the native Stitcher ORB initialization, builds via upstream Docker,
+changes only the native Stitcher ORB initialization and PANORAMA matcher upper confidence cutoff,
+builds via upstream Docker,
 then installs:
 
 ```text
@@ -74,6 +84,10 @@ npm run check:opencv --workspace frontend
 npm run build:opencv-assets --workspace frontend
 npm run frontend:build
 ```
+
+The manifest now uses schemaVersion 2 and requires the upper confidence limit
+field, so old ORB=5000 binaries cannot silently masquerade as the corrected
+build. A fresh native compile is required.
 
 `check:opencv` runs existing native ECC/ORB/CLAHE/pyramids/Stitcher checks
 using the **vendored** WASM bytes, not the original npm WASM. The manifest

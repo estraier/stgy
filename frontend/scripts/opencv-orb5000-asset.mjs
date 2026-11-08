@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 export const OPENCV_PACKAGE = "@banou/opencv-wasm";
 export const OPENCV_PACKAGE_VERSION = "0.0.6";
 export const PANORAMA_ORB_FEATURES = 5000;
+export const PANORAMA_MATCHER_CONFIDENCE_LIMIT = 3.5;
 export const OPENCV_VERSION = "5.0.0";
 export const assetDir = join(dirname(fileURLToPath(import.meta.url)), "..", "vendor", "opencv-orb5000");
 export const wasmPath = join(assetDir, "opencv_js.wasm");
@@ -34,10 +35,11 @@ export async function verifyPanoramaOrbWasm({ binary = wasmPath, manifestFile = 
     }
     throw error;
   }
-  if (manifest.schemaVersion !== 1 || manifest.package !== OPENCV_PACKAGE ||
+  if (manifest.schemaVersion !== 2 || manifest.package !== OPENCV_PACKAGE ||
       manifest.packageVersion !== OPENCV_PACKAGE_VERSION ||
       manifest.openCvVersion !== OPENCV_VERSION ||
       manifest.panoramaOrbFeatures !== PANORAMA_ORB_FEATURES ||
+      manifest.panoramaMatcherConfidenceLimit !== PANORAMA_MATCHER_CONFIDENCE_LIMIT ||
       !/^[0-9a-f]{64}$/.test(manifest.wasmSha256 ?? "") ||
       !/^[0-9a-f]{64}$/.test(manifest.stitcherSourceSha256 ?? "")) {
     throw new Error(`Unexpected Panorama ORB 5000 WASM manifest: ${manifestFile}`);
