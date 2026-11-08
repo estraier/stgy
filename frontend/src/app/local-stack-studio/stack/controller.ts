@@ -99,6 +99,8 @@ import { buildStfAdditionalBlurPlan, resolveStfGateExpansionMultiplier, DEFAULT_
 import {
   DEFAULT_PANORAMA_DOWNSCALE_MEGAPIXELS,
   DEFAULT_PANORAMA_FINISH_MODE,
+  DEFAULT_PANORAMA_ALIGNMENT_DIRECTION,
+  isSupportedPanoramaAlignmentDirection,
   parsePanoramaDownscaleMegapixels,
   parsePanoramaFinishMode,
 } from "./panorama-options";
@@ -395,8 +397,32 @@ function listen(target, type, listener, options) {
 const STF_BLEND_WEIGHT_VALUES = new Set([1, 2, 4, 8, 16, 32]);
 const FOCUS_SOFTNESS_VALUES = new Set([0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5]);
 
+let previousAlignmentWasPanorama = false;
+let previousNonPanoramaAlignment = alignmentMode.value;
+let previousPanoramaAlignment = DEFAULT_PANORAMA_ALIGNMENT_DIRECTION;
+
 function updateAlignmentAvailability() {
-  alignmentMode.disabled = processingActive || mergeMode.value === "panorama";
+  const isPanorama = mergeMode.value === "panorama";
+  const modeChanged = isPanorama !== previousAlignmentWasPanorama;
+  if (modeChanged) {
+    if (isPanorama) {
+      previousNonPanoramaAlignment = alignmentMode.value;
+    } else {
+      previousPanoramaAlignment = isSupportedPanoramaAlignmentDirection(alignmentMode.value)
+        ? alignmentMode.value : DEFAULT_PANORAMA_ALIGNMENT_DIRECTION;
+    }
+  }
+  for (const option of Array.from(alignmentMode.options)) {
+    if (option.value === "auto") continue;
+    const panoramaOption = option.value === "horizontal" || option.value === "vertical";
+    option.hidden = panoramaOption !== isPanorama;
+    option.disabled = panoramaOption !== isPanorama;
+  }
+  if (modeChanged) {
+    alignmentMode.value = isPanorama ? previousPanoramaAlignment : previousNonPanoramaAlignment;
+    previousAlignmentWasPanorama = isPanorama;
+  }
+  alignmentMode.disabled = processingActive;
 }
 
 function updateMergeOptionsVisibility() {
@@ -662,7 +688,8 @@ listen(processButton, "click", async () => {
     if (selectedMergeMode === "panorama" && files.length < 2) {
       throw new Error("Panorama requires at least two input images.");
     }
-    if (!["auto", "center-crop", "center-fit", "center-fill", "top-left-fill", "feature-match-ecc", "feature-match-orb"].includes(alignmentMode.value)) {
+    if (mergeMode.value === "panorama" ? !isSupportedPanoramaAlignmentDirection(alignmentMode.value)
+      : !["auto", "center-crop", "center-fit", "center-fill", "top-left-fill", "feature-match-ecc", "feature-match-orb"].includes(alignmentMode.value)) {
       throw new Error(`Unsupported alignment mode: ${alignmentMode.value}`);
     }
 
@@ -706,6 +733,7 @@ listen(processButton, "click", async () => {
       selectedFocusSoftness(),
       selectedPanoramaMaxOutputMegapixels(),
       selectedPanoramaFinishMode(),
+      mergeMode.value === "panorama" ? alignmentMode.value : DEFAULT_PANORAMA_ALIGNMENT_DIRECTION,
     );
     const alignmentPlan = effectiveMergeMode === "panorama"
       ? null
@@ -2024,6 +2052,9 @@ function alignmentAlgorithmFromMode(mode) {
 function resolveAutoAlignmentMode(mergeMode) {
   if (isTileMergeMode(mergeMode)) return "center-fill";
   if (mergeMode === "average") return "center-crop";
+  if (mergeMode === "median" || mergeMode === "hdr1" || mergeMode === "hdr2" || mergeMode === "stf") {
+    return "feature-match-orb";
+  }
   return "feature-match-ecc";
 }
 
@@ -2321,6 +2352,7 @@ function buildMergePlan(
   focusSoftnessValue = DEFAULT_FOCUS_SOFTNESS,
   panoramaMaxOutputMegapixels = 16,
   panoramaFinishMode = DEFAULT_PANORAMA_FINISH_MODE,
+  panoramaAlignmentDirection = DEFAULT_PANORAMA_ALIGNMENT_DIRECTION,
 ) {
   const imageCount = files.length;
   const weights = new Float32Array(imageCount);
@@ -2361,7 +2393,7 @@ function buildMergePlan(
   }
 
   if (mode === "panorama") {
-    return { mode, weights, gains, scaledLogs, panoramaMaxOutputMegapixels, panoramaFinishMode };
+    return { mode, weights, gains, scaledLogs, panoramaMaxOutputMegapixels, panoramaFinishMode, panoramaAlignmentDirection };
   }
 
   if (isTileMergeMode(mode)) {
@@ -2483,6 +2515,7 @@ async function alignAndMergeFilesWithOpenCv(
         outputColorSpace,
         mergePlan.panoramaMaxOutputMegapixels ?? null,
         mergePlan.panoramaFinishMode ?? DEFAULT_PANORAMA_FINISH_MODE,
+        mergePlan.panoramaAlignmentDirection ?? DEFAULT_PANORAMA_ALIGNMENT_DIRECTION,
       );
     } finally {
       infoTrace?.add("Panorama stitching", Math.max(0, performance.now() - panoramaStartedAt - (infoTrace?.previewMs || 0)));
@@ -2963,13 +2996,14 @@ async function mergePanoramaFromCanonical(
   outputColorSpace,
   maxOutputMegapixels,
   finishMode,
+  alignmentDirection,
 ) {
   const worker = new PanoramaWorkerClient(
     new URL("/generated/local-stack-studio/panorama.worker.js", window.location.origin),
     (message) => setProgress(message),
   );
   try {
-    const result = await worker.stitch(canonicalSession.id, maxOutputMegapixels, finishMode);
+    const result = await worker.stitch(canonicalSession.id, maxOutputMegapixels, finishMode, alignmentDirection);
     return finalizeStoredGamma2Result(
       result.gamma2Rgb,
       result.width,

@@ -1,3 +1,5 @@
+import type { PanoramaAlignmentDirection } from "../../stack/panorama-options";
+
 export type PanoramaStitchRequest = {
   type: "stitch";
   requestId: number;
@@ -5,6 +7,7 @@ export type PanoramaStitchRequest = {
   cacheBytes?: number;
   maxOutputMegapixels?: number | null;
   finishMode?: "trim" | "fill";
+  alignmentDirection?: PanoramaAlignmentDirection;
 };
 
 export type PanoramaWorkerRequest = PanoramaStitchRequest;

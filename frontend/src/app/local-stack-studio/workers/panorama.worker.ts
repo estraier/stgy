@@ -20,12 +20,19 @@ import {
   panoramaAlignmentExposureGain,
   type PanoramaAlignmentPass,
 } from "../stack/panorama-alignment";
-import { restoreVerticalWaveCorrectionRoll } from "../stack/panorama-orientation";
+import {
+  checkPanoramaDirection,
+  panoramaWaveCorrectionKind,
+  restoreVerticalWaveCorrectionRoll,
+} from "../stack/panorama-orientation";
 import {
   DEFAULT_PANORAMA_FINISH_MODE,
+  DEFAULT_PANORAMA_ALIGNMENT_DIRECTION,
+  isSupportedPanoramaAlignmentDirection,
   isSupportedPanoramaDownscaleMegapixels,
   isSupportedPanoramaFinishMode,
   type PanoramaFinishMode,
+  type PanoramaAlignmentDirection,
 } from "../stack/panorama-options";
 import {
   applyPanoramaGainBgrInPlace,
@@ -185,7 +192,7 @@ import type {
     createStitcher: (pass: PanoramaAlignmentPass) => ConfiguredStitcher;
     applyClahe: (source: NativeMat) => NativeMat;
     setRngSeed: ((seed: number) => void) | null;
-    waveCorrectAuto: number;
+    waveCorrectKinds: Readonly<Record<PanoramaAlignmentDirection, number>>;
     waveCorrect: (rotations: DynamicVector, kind: number) => unknown;
     createWarper: (scale: number) => DynamicWarper;
     createGraphCutSeamFinder: () => DynamicSeamFinder;
@@ -204,6 +211,7 @@ import type {
         message.cacheBytes,
         message.maxOutputMegapixels ?? null,
         message.finishMode ?? DEFAULT_PANORAMA_FINISH_MODE,
+        message.alignmentDirection ?? DEFAULT_PANORAMA_ALIGNMENT_DIRECTION,
       );
       const gamma2Buffer = transferableBuffer(result.gamma2Rgb);
       workerScope.postMessage(
@@ -287,14 +295,14 @@ import type {
     const panoramaMode = Number(openCvModule.Stitcher_PANORAMA ?? 0);
     // @banou/opencv-wasm is generated from OpenCV's wrapped API.
     // Stitcher::setWaveCorrectKind() itself is not CV_WRAP and therefore is not
-    // exported by this build. Disable Stitcher's fixed HORIZ correction and use
-    // the wrapped cv::detail::waveCorrect(..., WAVE_CORRECT_AUTO) explicitly
-    // after bundle adjustment instead. Do not substitute enum values or aliases.
-    const waveCorrectAuto = Number(openCvModule.detail_WAVE_CORRECT_AUTO);
+    // exported by this build. Apply the wrapped cv::detail::waveCorrect()
+    // explicitly after bundle adjustment, using the actual exported enum values.
+    const waveCorrectKinds = {
+      auto: numericConstant(openCvModule, "detail_WAVE_CORRECT_AUTO"),
+      horizontal: numericConstant(openCvModule, "detail_WAVE_CORRECT_HORIZ"),
+      vertical: numericConstant(openCvModule, "detail_WAVE_CORRECT_VERT"),
+    };
     const waveCorrectFunction = openCvModule.detail_waveCorrect;
-    if (!Number.isFinite(waveCorrectAuto)) {
-      throw new Error("Panorama OpenCV build does not expose detail_WAVE_CORRECT_AUTO.");
-    }
     if (typeof waveCorrectFunction !== "function") {
       throw new Error("Panorama OpenCV build does not expose detail_waveCorrect().");
     }
@@ -331,7 +339,7 @@ import type {
 
         // PANORAMA defaults to WAVE_CORRECT_HORIZ. Turn that off here so the
         // CameraParams returned by estimateTransform() are the bundle-adjusted,
-        // un-wave-corrected rotations. AUTO correction is applied explicitly below.
+        // un-wave-corrected rotations. The selected correction is applied below.
         stitcher.setWaveCorrection(false);
         return { stitcher, resources: [] };
       } catch (error) {
@@ -438,7 +446,7 @@ import type {
       createStitcher,
       applyClahe,
       setRngSeed,
-      waveCorrectAuto,
+      waveCorrectKinds,
       waveCorrect: waveCorrectFunction as (rotations: DynamicVector, kind: number) => unknown,
       createWarper,
       createGraphCutSeamFinder,
@@ -848,6 +856,8 @@ import type {
     baseAlignmentImages: NativeMat[],
     getClaheAlignmentImages: () => NativeMat[],
     getDetailAlignmentImages: () => NativeMat[],
+    direction: PanoramaAlignmentDirection,
+    imageSizes: readonly { width: number; height: number }[],
   ): PanoramaAlignmentResult {
     const api = getNativeApi();
     const expectedCount = baseAlignmentImages.length;
@@ -899,6 +909,15 @@ import type {
             `Panorama Stitcher returned ${estimatedCameras.length} cameras for ${expectedCount} inputs.`,
           );
         }
+        if (direction !== "auto") {
+          const directionCheck = checkPanoramaDirection(direction, estimatedCameras, imageSizes, workScale);
+          if (!directionCheck.accepted) {
+            const rejected = `${pass.label}: ${directionCheck.reason}`;
+            summaries.push(rejected);
+            postProgress(requestId, `${rejected}; retrying with a stronger panorama matcher...`);
+            continue;
+          }
+        }
         const seamEstimationMegapixels = typeof configured.stitcher.seamEstimationResol === "function"
           ? Number(configured.stitcher.seamEstimationResol())
           : PANORAMA_DEFAULT_SEAM_MPX;
@@ -921,7 +940,9 @@ import type {
 
     const detail = summaries.length > 0 ? ` (${summaries.join("; ")})` : "";
     throw new Error(
-      `Panorama could connect only ${bestConnected} of ${expectedCount} input images after gamma-2, CLAHE, and detail-enhanced ORB retries.${detail}`,
+      direction === "auto"
+        ? `Panorama could connect only ${bestConnected} of ${expectedCount} input images after gamma-2, CLAHE, and detail-enhanced ORB retries.${detail}`
+        : `Panorama alignment ${direction} failed: no matching pass met the direction constraints after gamma-2, CLAHE, and detail-enhanced ORB retries.${detail}`,
     );
   }
 
@@ -959,7 +980,10 @@ import type {
     return summary;
   }
 
-  function applyAutoWaveCorrection(cameras: CameraState[]): CameraState[] {
+  function applyPanoramaWaveCorrection(
+    cameras: CameraState[],
+    direction: PanoramaAlignmentDirection,
+  ): CameraState[] {
     if (cameras.length <= 1) return cameras;
     const api = getNativeApi();
     const rotationMats: NativeMat[] = cameras.map((camera) =>
@@ -969,14 +993,14 @@ import type {
     try {
       const vector = createNativeVector(rotationMats);
       if (Array.isArray(vector)) {
-        throw new Error("Panorama OpenCV MatVector is required for automatic wave correction.");
+        throw new Error("Panorama OpenCV MatVector is required for wave correction.");
       }
       rotationVector = vector;
-      api.waveCorrect(rotationVector, api.waveCorrectAuto);
+      api.waveCorrect(rotationVector, panoramaWaveCorrectionKind(direction, api.waveCorrectKinds));
       const correctedCount = vectorLength(rotationVector);
       if (correctedCount !== cameras.length) {
         throw new Error(
-          `Panorama automatic wave correction returned ${correctedCount} rotations for ${cameras.length} cameras.`,
+          `Panorama ${direction} wave correction returned ${correctedCount} rotations for ${cameras.length} cameras.`,
         );
       }
       const corrected: CameraState[] = [];
@@ -992,13 +1016,13 @@ import type {
         }
       }
 
-      // OpenCV's vertical wave correction changes the global camera basis by
-      // roughly +/-90 degrees for a normal vertical pan. That makes upright
-      // source images compose sideways. Preserve the corrected relative camera
-      // geometry while restoring the original image-up orientation.
+      // OpenCV's vertical wave correction can introduce a global +/-90 degree
+      // roll. Restore upright image orientation when Vertical is selected, or
+      // when Auto detects a vertical pan; leave Horizontal unchanged.
       const uprightRotations = restoreVerticalWaveCorrectionRoll(
         cameras.map((camera) => camera.rotation),
         corrected.map((camera) => camera.rotation),
+        direction,
       );
       return corrected.map((camera, index) => ({
         ...camera,
@@ -1629,10 +1653,14 @@ import type {
     cacheBytes?: number,
     requestedMaxOutputMegapixels: number | null = null,
     requestedFinishMode: string = DEFAULT_PANORAMA_FINISH_MODE,
+    requestedAlignmentDirection: string = DEFAULT_PANORAMA_ALIGNMENT_DIRECTION,
   ): Promise<{ width: number; height: number; gamma2Rgb: Uint16Array }> {
     if (!sessionId) throw new Error("Panorama canonical session id is required.");
     const maxOutputMegapixels = validateMaxOutputMegapixels(requestedMaxOutputMegapixels);
     const finishMode = validateFinishMode(requestedFinishMode);
+    if (!isSupportedPanoramaAlignmentDirection(requestedAlignmentDirection)) {
+      throw new Error(`Unsupported Panorama alignment: ${requestedAlignmentDirection}`);
+    }
     const maxOutputPixels = maxOutputMegapixels === null ? null : maxOutputMegapixels * 1_000_000;
 
     postProgress(requestId, "Loading panorama OpenCV...");
@@ -1679,6 +1707,8 @@ import type {
           alignmentImages,
           getClaheAlignmentImages,
           getDetailAlignmentImages,
+          requestedAlignmentDirection,
+          session.images.map((image) => ({ width: image.width, height: image.height })),
         );
       } catch (error) {
         const diagnostics = diagnoseAdjacentPanoramaPairs(
@@ -1722,8 +1752,13 @@ import type {
         seamProxyImages.push(await loadCanonicalLinearSeamMat(session, index, seamScale));
       }
 
-      postProgress(requestId, "Applying OpenCV automatic horizontal/vertical wave correction...");
-      const cameras = applyAutoWaveCorrection(estimatedCameras);
+      postProgress(
+        requestId,
+        requestedAlignmentDirection === "auto"
+          ? "Applying OpenCV automatic horizontal/vertical wave correction..."
+          : `Applying OpenCV ${requestedAlignmentDirection} wave correction...`,
+      );
+      const cameras = applyPanoramaWaveCorrection(estimatedCameras, requestedAlignmentDirection);
 
       const seamAnalysis = buildGraphCutSeams(
         requestId,

@@ -188,6 +188,8 @@ export default function PageBody() {
                 <option value="top-left-fill">Top left fill</option>
                 <option value="feature-match-ecc">Content match (ECC)</option>
                 <option value="feature-match-orb">Content match (ORB)</option>
+                <option value="horizontal" hidden disabled>Horizontal</option>
+                <option value="vertical" hidden disabled>Vertical</option>
               </select>
             </label>
 

@@ -1,4 +1,137 @@
+import type { PanoramaAlignmentDirection } from "./panorama-options";
+
 export type PanoramaCameraPathAxis = "horizontal" | "vertical";
+
+/** Match the Panorama alignment choice to OpenCV's wave correction enum. */
+export function panoramaWaveCorrectionKind(
+  direction: PanoramaAlignmentDirection,
+  kinds: Readonly<Record<PanoramaAlignmentDirection, number>>,
+): number {
+  const kind = kinds[direction];
+  if (!Number.isFinite(kind)) {
+    throw new Error(`Panorama wave correction kind for ${direction} is unavailable.`);
+  }
+  return kind;
+}
+
+/** The rotations and focal lengths are estimated at OpenCV's registration work scale. */
+export type PanoramaDirectionCamera = {
+  rotation: ArrayLike<number>;
+  focal: number;
+  aspect: number;
+};
+
+export type PanoramaDirectionImageSize = { width: number; height: number };
+
+export const PANORAMA_MIN_PRIMARY_MOVE_FRACTION = 0.05;
+export const PANORAMA_MAX_CROSS_MOVE_RATIO = 0.25;
+
+export type PanoramaDirectionResult = { accepted: true } | { accepted: false; reason: string };
+
+/**
+ * Check the estimated *upright panorama* camera trajectory, not the input
+ * aspect ratio or original file order. A camera's optical axis is column 3
+ * of OpenCV's un-wave-corrected camera-to-world rotation. Spherical angular
+ * coordinates let us compare images on the same panorama axes regardless of
+ * whether an individual upright image is landscape or portrait.
+ *
+ * The 5% threshold is translated from the upright image width/height to an
+ * angle using each camera's work-scale intrinsics. Both neighbors must clear
+ * the threshold. A 25% cross-axis allowance is measured in angular panorama
+ * coordinates. The stitcher's full connectivity check runs separately.
+ */
+export function checkPanoramaDirection(
+  direction: PanoramaAlignmentDirection,
+  cameras: readonly PanoramaDirectionCamera[],
+  imageSizes: readonly PanoramaDirectionImageSize[],
+  workScale: number,
+): PanoramaDirectionResult {
+  if (direction === "auto") return { accepted: true };
+  if (direction !== "horizontal" && direction !== "vertical") {
+    throw new Error(`Unsupported panorama alignment direction: ${String(direction)}.`);
+  }
+  if (cameras.length !== imageSizes.length || cameras.length < 2 || !(workScale > 0) || !Number.isFinite(workScale)) {
+    throw new Error("Panorama direction check requires matching cameras, image sizes and a valid work scale.");
+  }
+
+  const positions = cameras.map((camera, index) => {
+    assertRotation(camera.rotation, `Panorama camera ${index + 1} rotation`);
+    const { focal, aspect } = camera;
+    const size = imageSizes[index]!;
+    if (!(focal > 0) || !(aspect > 0) || !Number.isFinite(focal) || !Number.isFinite(aspect)
+        || !(size.width > 0) || !(size.height > 0) || !Number.isFinite(size.width) || !Number.isFinite(size.height)) {
+      throw new Error(`Panorama camera ${index + 1} has invalid intrinsics or upright image size.`);
+    }
+    const x = Number(camera.rotation[2]);
+    const y = Number(camera.rotation[5]);
+    const z = Number(camera.rotation[8]);
+    if (!(Math.hypot(x, y, z) > 0)) {
+      throw new Error(`Panorama camera ${index + 1} has an invalid optical axis.`);
+    }
+    const primaryDimension = direction === "horizontal" ? size.width : size.height;
+    const primaryFocal = direction === "horizontal" ? focal : focal * aspect;
+    return {
+      index,
+      longitude: Math.atan2(x, z),
+      latitude: Math.atan2(y, Math.hypot(x, z)),
+      minAngle: Math.atan(PANORAMA_MIN_PRIMARY_MOVE_FRACTION * primaryDimension * workScale / primaryFocal),
+    };
+  });
+
+  // For a horizontal panorama choose the shortest covering longitude arc.
+  // This also handles pans that cross the longitude wrap at +/-180 degrees.
+  const longitudes = positions.map((position) => position.longitude).sort((a, b) => a - b);
+  let largestGapIndex = 0;
+  let largestGap = -1;
+  for (let index = 0; index < longitudes.length; index += 1) {
+    const next = index + 1 < longitudes.length ? longitudes[index + 1]! : longitudes[0]! + Math.PI * 2;
+    const gap = next - longitudes[index]!;
+    if (gap > largestGap) {
+      largestGap = gap;
+      largestGapIndex = index;
+    }
+  }
+  const start = longitudes[(largestGapIndex + 1) % longitudes.length]!;
+  const ordered = positions.map((position) => ({
+    ...position,
+    unwrappedLongitude: position.longitude < start ? position.longitude + Math.PI * 2 : position.longitude,
+  })).sort((a, b) => {
+    const delta = direction === "horizontal"
+      ? a.unwrappedLongitude - b.unwrappedLongitude
+      : a.latitude - b.latitude;
+    return delta || a.index - b.index;
+  });
+
+  for (let index = 1; index < ordered.length; index += 1) {
+    const previous = ordered[index - 1]!;
+    const current = ordered[index]!;
+    const deltaLongitude = direction === "horizontal"
+      ? current.unwrappedLongitude - previous.unwrappedLongitude
+      : Math.abs(Math.atan2(
+        Math.sin(current.longitude - previous.longitude),
+        Math.cos(current.longitude - previous.longitude),
+      ));
+    const deltaLatitude = Math.abs(current.latitude - previous.latitude);
+    const primary = direction === "horizontal" ? deltaLongitude : deltaLatitude;
+    const cross = direction === "horizontal" ? deltaLatitude : deltaLongitude;
+    const minimum = Math.max(previous.minAngle, current.minAngle);
+    const pairLabel = `${previous.index + 1} and ${current.index + 1}`;
+    if (primary + 1e-12 < minimum) {
+      return {
+        accepted: false,
+        reason: `images ${pairLabel} move only ${(primary / minimum * (PANORAMA_MIN_PRIMARY_MOVE_FRACTION * 100)).toFixed(1)}% of the required image dimension (minimum ${PANORAMA_MIN_PRIMARY_MOVE_FRACTION * 100}%) along ${direction}`,
+      };
+    }
+    if (cross > primary * PANORAMA_MAX_CROSS_MOVE_RATIO + 1e-12) {
+      return {
+        accepted: false,
+        reason: `images ${pairLabel} drift ${(cross / primary * 100).toFixed(1)}% across the ${direction} path (maximum 25%)`,
+      };
+    }
+  }
+  return { accepted: true };
+}
+
 
 type RotationLike = ArrayLike<number>;
 
@@ -85,16 +218,21 @@ function orientationSimilarity(reference: readonly RotationLike[], candidate: re
  * vertical pan this introduces a global +/-90 degree roll. Keep OpenCV's wave
  * correction, but rotate the corrected camera basis back by one quarter turn.
  * The sign that best preserves the pre-correction camera orientation is used,
- * so the panorama remains upright rather than becoming upside-down.
+ * so the panorama remains upright rather than becoming upside-down. With an
+ * explicit direction, honor that choice rather than re-detecting the camera axis.
+ * Auto preserves the previous inferred-axis behavior.
  */
 export function restoreVerticalWaveCorrectionRoll(
   estimatedRotations: readonly RotationLike[],
   correctedRotations: readonly RotationLike[],
+  direction: PanoramaAlignmentDirection = "auto",
 ): Float32Array[] {
   if (estimatedRotations.length !== correctedRotations.length) {
     throw new Error("Panorama camera counts differ before and after wave correction.");
   }
-  if (estimatedRotations.length <= 1 || panoramaCameraPathAxis(estimatedRotations) !== "vertical") {
+  const shouldRestoreVertical = direction === "vertical"
+    || (direction === "auto" && panoramaCameraPathAxis(estimatedRotations) === "vertical");
+  if (estimatedRotations.length <= 1 || !shouldRestoreVertical) {
     return correctedRotations.map((rotation, index) => {
       assertRotation(rotation, `Panorama wave-corrected camera ${index + 1} rotation`);
       return new Float32Array(Array.from(rotation).slice(0, MATRIX_SIZE));

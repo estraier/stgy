@@ -18,6 +18,14 @@ export function parsePanoramaDownscaleMegapixels(value: string): number | null |
   return PANORAMA_DOWNSCALE_VALUE_SET.has(megapixels) ? megapixels : undefined;
 }
 
+export const PANORAMA_ALIGNMENT_DIRECTIONS = ["auto", "horizontal", "vertical"] as const;
+export type PanoramaAlignmentDirection = (typeof PANORAMA_ALIGNMENT_DIRECTIONS)[number];
+export const DEFAULT_PANORAMA_ALIGNMENT_DIRECTION: PanoramaAlignmentDirection = "auto";
+
+export function isSupportedPanoramaAlignmentDirection(value: string): value is PanoramaAlignmentDirection {
+  return (PANORAMA_ALIGNMENT_DIRECTIONS as readonly string[]).includes(value);
+}
+
 export const PANORAMA_FINISH_MODES = ["trim", "fill"] as const;
 export type PanoramaFinishMode = (typeof PANORAMA_FINISH_MODES)[number];
 export const DEFAULT_PANORAMA_FINISH_MODE: PanoramaFinishMode = "trim";

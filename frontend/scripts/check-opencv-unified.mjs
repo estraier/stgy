@@ -35,7 +35,7 @@ const constants = [
   "CV_8UC1", "CV_8UC4", "CV_32F", "CV_32FC1", "CV_32FC3", "CV_64F",
   "INTER_AREA", "INTER_LINEAR", "BORDER_REPLICATE", "BORDER_DEFAULT",
   "NORM_HAMMING", "MOTION_AFFINE",
-  "detail_WAVE_CORRECT_AUTO",
+  "detail_WAVE_CORRECT_AUTO", "detail_WAVE_CORRECT_HORIZ", "detail_WAVE_CORRECT_VERT",
 ];
 // Report all missing exports in one invocation, so migration failures are
 // actionable without repeatedly fixing one missing name at a time.

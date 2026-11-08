@@ -1,5 +1,6 @@
 import type { FocusRunningStats } from "./focus-math";
 import { AlignmentImplementationError } from "../workers/alignment-error";
+import type { PanoramaAlignmentDirection } from "./panorama-options";
 import type {
   AlignmentWorkerRequest,
   EccReadyResponse,
@@ -131,6 +132,7 @@ export class PanoramaWorkerClient {
     sessionId: string,
     maxOutputMegapixels: number | null = null,
     finishMode: "trim" | "fill" = "trim",
+    alignmentDirection: PanoramaAlignmentDirection = "auto",
     cacheBytes?: number,
   ): Promise<{
     width: number;
@@ -144,6 +146,7 @@ export class PanoramaWorkerClient {
       cacheBytes,
       maxOutputMegapixels,
       finishMode,
+      alignmentDirection,
     };
     return new Promise<PanoramaWorkerResponse>((resolve, reject) => {
       this.pending.set(requestId, { resolve, reject });

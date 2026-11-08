@@ -1,6 +1,9 @@
 import {
   DEFAULT_PANORAMA_DOWNSCALE_MEGAPIXELS,
   DEFAULT_PANORAMA_FINISH_MODE,
+  DEFAULT_PANORAMA_ALIGNMENT_DIRECTION,
+  PANORAMA_ALIGNMENT_DIRECTIONS,
+  isSupportedPanoramaAlignmentDirection,
   PANORAMA_FINISH_MODES,
   PANORAMA_DOWNSCALE_MEGAPIXELS,
   isSupportedPanoramaDownscaleMegapixels,
@@ -43,5 +46,16 @@ describe("Panorama Finish options", () => {
     expect(parsePanoramaFinishMode("fill")).toBe("fill");
     expect(parsePanoramaFinishMode("FILL")).toBe("fill");
     expect(parsePanoramaFinishMode("crop")).toBeUndefined();
+  });
+});
+
+describe("Panorama Alignment options", () => {
+  test("defaults to Auto and limits explicit directions to Horizontal and Vertical", () => {
+    expect(DEFAULT_PANORAMA_ALIGNMENT_DIRECTION).toBe("auto");
+    expect(PANORAMA_ALIGNMENT_DIRECTIONS).toEqual(["auto", "horizontal", "vertical"]);
+    expect(isSupportedPanoramaAlignmentDirection("auto")).toBe(true);
+    expect(isSupportedPanoramaAlignmentDirection("horizontal")).toBe(true);
+    expect(isSupportedPanoramaAlignmentDirection("vertical")).toBe(true);
+    expect(isSupportedPanoramaAlignmentDirection("feature-match-orb")).toBe(false);
   });
 });
