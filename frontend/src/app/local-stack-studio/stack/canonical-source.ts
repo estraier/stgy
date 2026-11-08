@@ -171,6 +171,9 @@ export type CanonicalInputInfo = {
   exposureTime?: number | null;
   iso?: number | null;
   exposureScalar?: number | null;
+  focalLength35mm?: number | null;
+  focalLength?: number | null;
+  sensorDiagonalMm?: number | null;
 };
 
 export type CanonicalImageRecord = {
@@ -193,6 +196,9 @@ export type CanonicalImageRecord = {
   exposureTime: number | null;
   iso: number | null;
   exposureScalar: number | null;
+  focalLength35mm?: number | null;
+  focalLength?: number | null;
+  sensorDiagonalMm?: number | null;
   toneStatistics: StfToneStatistics;
   complete: boolean;
 };
@@ -388,6 +394,9 @@ export async function writeCanonicalLinearImage(
     exposureTime: Number.isFinite(inputInfo?.exposureTime) ? Number(inputInfo.exposureTime) : null,
     iso: Number.isFinite(inputInfo?.iso) ? Number(inputInfo.iso) : null,
     exposureScalar: Number.isFinite(inputInfo?.exposureScalar) ? Number(inputInfo.exposureScalar) : null,
+    focalLength35mm: Number.isFinite(inputInfo?.focalLength35mm) && Number(inputInfo.focalLength35mm) > 0 ? Number(inputInfo.focalLength35mm) : null,
+    focalLength: Number.isFinite(inputInfo?.focalLength) && Number(inputInfo.focalLength) > 0 ? Number(inputInfo.focalLength) : null,
+    sensorDiagonalMm: Number.isFinite(inputInfo?.sensorDiagonalMm) && Number(inputInfo.sensorDiagonalMm) > 0 ? Number(inputInfo.sensorDiagonalMm) : null,
     toneStatistics: computeCanonicalToneStatisticsFromLinearRgb(linear, width, height),
     complete: false,
   };
@@ -446,6 +455,9 @@ export async function writeCanonicalStoredImage(
     exposureTime: Number.isFinite(inputInfo?.exposureTime) ? Number(inputInfo.exposureTime) : null,
     iso: Number.isFinite(inputInfo?.iso) ? Number(inputInfo.iso) : null,
     exposureScalar: Number.isFinite(inputInfo?.exposureScalar) ? Number(inputInfo.exposureScalar) : null,
+    focalLength35mm: Number.isFinite(inputInfo?.focalLength35mm) && Number(inputInfo.focalLength35mm) > 0 ? Number(inputInfo.focalLength35mm) : null,
+    focalLength: Number.isFinite(inputInfo?.focalLength) && Number(inputInfo.focalLength) > 0 ? Number(inputInfo.focalLength) : null,
+    sensorDiagonalMm: Number.isFinite(inputInfo?.sensorDiagonalMm) && Number(inputInfo.sensorDiagonalMm) > 0 ? Number(inputInfo.sensorDiagonalMm) : null,
     toneStatistics: computeCanonicalToneStatisticsFromStoredRgb16(storedImage, width, height),
     complete: false,
   };

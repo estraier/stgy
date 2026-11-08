@@ -100,6 +100,8 @@ import {
   DEFAULT_PANORAMA_DOWNSCALE_MEGAPIXELS,
   DEFAULT_PANORAMA_FINISH_MODE,
   DEFAULT_PANORAMA_ALIGNMENT_DIRECTION,
+  DEFAULT_PANORAMA_FOV,
+  parsePanoramaFoVOption,
   isSupportedPanoramaAlignmentDirection,
   parsePanoramaDownscaleMegapixels,
   parsePanoramaFinishMode,
@@ -217,6 +219,8 @@ const tileFoldingOption = getElement("tile-folding-option");
 const tileFolding = getElement("tile-folding");
 const panoramaDownscaleOption = getElement("panorama-downscale-option");
 const panoramaDownscale = getElement("panorama-downscale");
+const panoramaFovOption = getElement("panorama-fov-option");
+const panoramaFov = getElement("panorama-fov");
 const panoramaFinishOption = getElement("panorama-finish-option");
 const panoramaFinish = getElement("panorama-finish");
 const focusSoftnessOption = getElement("focus-softness-option");
@@ -332,6 +336,7 @@ function captureProcessingSettings(selectedMode: string): StackInfoSetting[] {
     settings.push({ label: "Tile direction", value: tileDirection.value });
     settings.push({ label: "Tile folding", value: tileFolding.value });
   } else if (selectedMode === "panorama") {
+    settings.push({ label: "Panorama FoV", value: panoramaFov.selectedOptions[0]?.textContent || panoramaFov.value });
     settings.push({ label: "Panorama downscale", value: panoramaDownscale.selectedOptions[0]?.textContent || panoramaDownscale.value });
     settings.push({ label: "Panorama finish", value: panoramaFinish.selectedOptions[0]?.textContent || panoramaFinish.value });
   } else if (selectedMode === "focus") {
@@ -414,7 +419,7 @@ function updateAlignmentAvailability() {
   }
   for (const option of Array.from(alignmentMode.options)) {
     if (option.value === "auto") continue;
-    const panoramaOption = option.value === "horizontal" || option.value === "vertical";
+    const panoramaOption = option.value === "horizontal" || option.value === "vertical" || option.value === "spherical";
     option.hidden = panoramaOption !== isPanorama;
     option.disabled = panoramaOption !== isPanorama;
   }
@@ -438,6 +443,8 @@ function updateMergeOptionsVisibility() {
   tileDirectionOption.classList.toggle("flex", isTile);
   tileFoldingOption.classList.toggle("hidden", !isTile);
   tileFoldingOption.classList.toggle("flex", isTile);
+  panoramaFovOption.classList.toggle("hidden", !isPanorama);
+  panoramaFovOption.classList.toggle("flex", isPanorama);
   panoramaDownscaleOption.classList.toggle("hidden", !isPanorama);
   panoramaDownscaleOption.classList.toggle("flex", isPanorama);
   panoramaFinishOption.classList.toggle("hidden", !isPanorama);
@@ -675,6 +682,9 @@ listen(processButton, "click", async () => {
       }
     }
     if (mergeMode.value === "panorama") {
+      if (parsePanoramaFoVOption(panoramaFov.value) === undefined) {
+        throw new Error(`Unsupported Panorama FoV: ${panoramaFov.value}`);
+      }
       const downscale = parsePanoramaDownscaleMegapixels(panoramaDownscale.value);
       if (downscale === undefined) {
         throw new Error(`Unsupported Panorama downscale: ${panoramaDownscale.value}`);
@@ -734,6 +744,7 @@ listen(processButton, "click", async () => {
       selectedPanoramaMaxOutputMegapixels(),
       selectedPanoramaFinishMode(),
       mergeMode.value === "panorama" ? alignmentMode.value : DEFAULT_PANORAMA_ALIGNMENT_DIRECTION,
+      parsePanoramaFoVOption(panoramaFov.value) ?? DEFAULT_PANORAMA_FOV,
     );
     const alignmentPlan = effectiveMergeMode === "panorama"
       ? null
@@ -2353,6 +2364,7 @@ function buildMergePlan(
   panoramaMaxOutputMegapixels = 16,
   panoramaFinishMode = DEFAULT_PANORAMA_FINISH_MODE,
   panoramaAlignmentDirection = DEFAULT_PANORAMA_ALIGNMENT_DIRECTION,
+  panoramaFoV = DEFAULT_PANORAMA_FOV,
 ) {
   const imageCount = files.length;
   const weights = new Float32Array(imageCount);
@@ -2393,7 +2405,7 @@ function buildMergePlan(
   }
 
   if (mode === "panorama") {
-    return { mode, weights, gains, scaledLogs, panoramaMaxOutputMegapixels, panoramaFinishMode, panoramaAlignmentDirection };
+    return { mode, weights, gains, scaledLogs, panoramaMaxOutputMegapixels, panoramaFinishMode, panoramaAlignmentDirection, panoramaFoV };
   }
 
   if (isTileMergeMode(mode)) {
@@ -2516,6 +2528,7 @@ async function alignAndMergeFilesWithOpenCv(
         mergePlan.panoramaMaxOutputMegapixels ?? null,
         mergePlan.panoramaFinishMode ?? DEFAULT_PANORAMA_FINISH_MODE,
         mergePlan.panoramaAlignmentDirection ?? DEFAULT_PANORAMA_ALIGNMENT_DIRECTION,
+        mergePlan.panoramaFoV ?? DEFAULT_PANORAMA_FOV,
       );
     } finally {
       infoTrace?.add("Panorama stitching", Math.max(0, performance.now() - panoramaStartedAt - (infoTrace?.previewMs || 0)));
@@ -2997,13 +3010,14 @@ async function mergePanoramaFromCanonical(
   maxOutputMegapixels,
   finishMode,
   alignmentDirection,
+  fov,
 ) {
   const worker = new PanoramaWorkerClient(
     new URL("/generated/local-stack-studio/panorama.worker.js", window.location.origin),
     (message) => setProgress(message),
   );
   try {
-    const result = await worker.stitch(canonicalSession.id, maxOutputMegapixels, finishMode, alignmentDirection);
+    const result = await worker.stitch(canonicalSession.id, maxOutputMegapixels, finishMode, alignmentDirection, fov);
     return finalizeStoredGamma2Result(
       result.gamma2Rgb,
       result.width,
@@ -4515,6 +4529,19 @@ function proPhotoLinearToEncodedOutput(r, g, b, outputColorSpace) {
   ];
 }
 
+function panoramaInputOptics(preservedMetadata, lensMetadata = null, rawMetadata = null) {
+  const focalLength = positiveNumberOrNull(preservedMetadata?.focalLength)
+    ?? positiveNumberOrNull(rawMetadata?.focal_len);
+  const focalLength35mm = positiveNumberOrNull(preservedMetadata?.focalLength35mm)
+    ?? (focalLength && positiveNumberOrNull(lensMetadata?.cropFactor)
+      ? focalLength * lensMetadata.cropFactor : null);
+  // LibRaw maker notes can carry a physical sensor diagonal even when the
+  // standard EXIF 35mm-equivalent field is missing.
+  const sensorDiagonalMm = positiveNumberOrNull(rawMetadata?.lens?.makernotes?.FocalPlaneDiagonal)
+    ?? (positiveNumberOrNull(lensMetadata?.cropFactor) ? Math.hypot(36, 24) / lensMetadata.cropFactor : null);
+  return { focalLength, focalLength35mm, sensorDiagonalMm };
+}
+
 async function extractInputInfo(file) {
   const lowerName = file.name.toLowerCase();
   if (isRawImageFile(file.name, file.type)) {
@@ -4540,6 +4567,7 @@ async function extractInputInfo(file) {
       height: tiffInfo.height,
       bitsPerChannel: tiffInfo.bitsPerChannel,
       preservedMetadata,
+      ...panoramaInputOptics(preservedMetadata),
     };
   }
 
@@ -4566,6 +4594,7 @@ async function extractInputInfo(file) {
       height: dimensions.height,
       bitsPerChannel: detectStackInputBits(file.name, file.type, buffer),
       preservedMetadata,
+      ...panoramaInputOptics(preservedMetadata),
     };
   }
 
@@ -4586,6 +4615,7 @@ async function extractInputInfo(file) {
     height: dimensions.height,
     bitsPerChannel: detectStackInputBits(file.name, file.type, buffer),
     preservedMetadata,
+    ...panoramaInputOptics(preservedMetadata),
   };
 }
 
@@ -4652,6 +4682,7 @@ async function readRawInputInfo(file) {
       height: dimensions.height,
       bitsPerChannel: rawMetadataPositiveInteger(metadata?.raw_bps) ?? rawMetadataPositiveInteger(metadata?.bitsPerSample),
       preservedMetadata,
+      ...panoramaInputOptics(preservedMetadata, lensMetadata, metadata),
     };
   } catch (error) {
     const detail = error instanceof Error ? `: ${error.message}` : "";
@@ -5281,6 +5312,7 @@ function setProcessing(processing) {
   hdrSubmode.disabled = processing;
   tileDirection.disabled = processing;
   tileFolding.disabled = processing;
+  panoramaFov.disabled = processing;
   panoramaDownscale.disabled = processing;
   panoramaFinish.disabled = processing;
   stfBlendWeight.disabled = processing;

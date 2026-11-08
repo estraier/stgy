@@ -11,20 +11,26 @@ async function fixture(fn) {
   const binary = join(root, "opencv_js.wasm");
   const manifestFile = join(root, "manifest.json");
   const stockBinary = join(root, "stock.wasm");
+  const customJs = join(root, "index.js");
   // Small but structurally valid mock WASM; no native execution in this test.
   const bytes = Buffer.alloc(2048);
   Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]).copy(bytes);
   bytes[100] = 42;
   const hash = createHash("sha256").update(bytes).digest("hex");
+  const jsContent = "export const customBinding = true;\n";
   const manifest = {
-    schemaVersion: 2, package: "@banou/opencv-wasm", packageVersion: "0.0.6",
+    schemaVersion: 4,
+    fixedPanoramaFovApi: "setStgyFocalLengths",
+    stitcherHeaderSha256: "0".repeat(64),
+    customJsSha256: createHash("sha256").update(jsContent).digest("hex"), package: "@banou/opencv-wasm", packageVersion: "0.0.6",
     openCvVersion: "5.0.0", panoramaOrbFeatures: 5000, panoramaMatcherConfidenceLimit: 3.5,
     stitcherSourceSha256: "0".repeat(64), wasmSha256: hash,
   };
+  await writeFile(customJs, jsContent);
   await writeFile(binary, bytes);
   await writeFile(stockBinary, Buffer.from(bytes.map((v, i) => i === 100 ? 44 : v)));
   const writeManifest = () => writeFile(manifestFile, JSON.stringify(manifest));
-  try { await writeManifest(); await fn({ binary, manifestFile, stockBinary, manifest, writeManifest }); }
+  try { await writeManifest(); await fn({ binary, manifestFile, stockBinary, customJs, manifest, writeManifest }); }
   finally { await rm(root, { recursive: true, force: true }); }
 }
 
@@ -61,4 +67,9 @@ test("rejects old WASM manifest without the high-confidence matching fix", async
   f.manifest.schemaVersion = 1;
   await f.writeManifest();
   await assert.rejects(verifyPanoramaOrbWasm(f), /Unexpected Panorama ORB/);
+}));
+
+test("rejects wrong custom ESM even if the WASM hash matches", async () => fixture(async (f) => {
+  await writeFile(f.customJs, "export const customBinding = false;\n");
+  await assert.rejects(verifyPanoramaOrbWasm(f), /ESM SHA-256 mismatch/);
 }));

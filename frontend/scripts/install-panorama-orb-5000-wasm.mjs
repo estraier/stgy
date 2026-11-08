@@ -3,7 +3,7 @@ import { cp, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promis
 import { execFileSync } from "node:child_process";
 import { join, resolve } from "node:path";
 import { assetDir, OPENCV_PACKAGE, OPENCV_PACKAGE_VERSION, OPENCV_VERSION, PANORAMA_ORB_FEATURES, PANORAMA_MATCHER_CONFIDENCE_LIMIT, sha256File, verifyPanoramaOrbWasm } from "./opencv-orb5000-asset.mjs";
-import { patchStitcherSource, STITCHER_SOURCE_RELATIVE_PATH } from "./patch-opencv-panorama-orb.mjs";
+import { patchStitcherSource, patchStitcherFovSource, patchStitcherHeader, STITCHER_SOURCE_RELATIVE_PATH, STITCHER_HEADER_RELATIVE_PATH } from "./patch-opencv-panorama-orb.mjs";
 
 const sourceDir = process.argv[2] && resolve(process.argv[2]);
 if (!sourceDir) {
@@ -16,18 +16,23 @@ if (packageJson.name !== OPENCV_PACKAGE || packageJson.version !== OPENCV_PACKAG
 }
 const nativeSource = join(sourceDir, "vendor", `opencv-${OPENCV_VERSION}`, STITCHER_SOURCE_RELATIVE_PATH);
 const source = await readFile(nativeSource, "utf8");
-if (patchStitcherSource(source).changed) {
+if (patchStitcherFovSource(patchStitcherSource(source).source).changed) {
   throw new Error("OpenCV Stitcher.cpp has not been patched to ORB::create(5000); refusing to install stock WASM.");
 }
+const nativeHeader = join(sourceDir, "vendor", `opencv-${OPENCV_VERSION}`, STITCHER_HEADER_RELATIVE_PATH);
+const header = await readFile(nativeHeader, "utf8");
+if (patchStitcherHeader(header).changed) throw new Error("OpenCV header lacks the STGY fixed-FoV API.");
 const compiledWasm = join(sourceDir, "lib", "opencv_js.wasm");
-const [nativeStats, wasmStats] = await Promise.all([stat(nativeSource), stat(compiledWasm)]);
-if (wasmStats.mtimeMs < nativeStats.mtimeMs) {
+const customJs = join(sourceDir, "lib", "index.js");
+const [nativeStats, headerStats, wasmStats, jsStats] = await Promise.all([stat(nativeSource), stat(nativeHeader), stat(compiledWasm), stat(customJs)]);
+if (wasmStats.mtimeMs < nativeStats.mtimeMs || wasmStats.mtimeMs < headerStats.mtimeMs || jsStats.mtimeMs < headerStats.mtimeMs) {
   throw new Error("Native OpenCV source was modified after the WASM output; rebuild before installing.");
 }
 let commit = "unknown";
 try { commit = execFileSync("git", ["-C", sourceDir, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(); } catch {}
 const manifest = {
-  schemaVersion: 2,
+  schemaVersion: 4,
+  fixedPanoramaFovApi: "setStgyFocalLengths",
   package: OPENCV_PACKAGE,
   packageVersion: OPENCV_PACKAGE_VERSION,
   openCvVersion: OPENCV_VERSION,
@@ -35,6 +40,8 @@ const manifest = {
   panoramaMatcherConfidenceLimit: PANORAMA_MATCHER_CONFIDENCE_LIMIT,
   wasmSha256: await sha256File(compiledWasm),
   stitcherSourceSha256: await sha256File(nativeSource),
+  stitcherHeaderSha256: await sha256File(nativeHeader),
+  customJsSha256: await sha256File(customJs),
   upstreamCommit: commit,
 };
 // Stage first, then validate the exact bytes being installed; do not replace
@@ -44,8 +51,11 @@ await rm(staging, { recursive: true, force: true });
 await mkdir(staging, { recursive: true });
 try {
   await cp(compiledWasm, join(staging, "opencv_js.wasm"));
+  await cp(join(sourceDir, "lib"), join(staging, "lib"), { recursive: true });
+  // One copy of the large binary: the assets builder places it next to ESM.
+  await rm(join(staging, "lib", "opencv_js.wasm"));
   await writeFile(join(staging, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-  await verifyPanoramaOrbWasm({ binary: join(staging, "opencv_js.wasm"), manifestFile: join(staging, "manifest.json") });
+  await verifyPanoramaOrbWasm({ binary: join(staging, "opencv_js.wasm"), manifestFile: join(staging, "manifest.json"), customJs: join(staging, "lib", "index.js") });
   // Preserve a previously installed binary until the new one is complete.
   const backup = `${assetDir}.backup-${process.pid}`;
   await rm(backup, { recursive: true, force: true });
@@ -58,4 +68,4 @@ try {
 }
 console.log(`Installed STGY Panorama ORB ${PANORAMA_ORB_FEATURES} WASM: ${assetDir}`);
 console.log(`SHA-256: ${manifest.wasmSha256}`);
-console.log("Commit frontend/vendor/opencv-orb5000/{opencv_js.wasm,manifest.json} with the other STGY sources.");
+console.log("Commit frontend/vendor/opencv-orb5000/{opencv_js.wasm,manifest.json,lib/} with the other STGY sources.");

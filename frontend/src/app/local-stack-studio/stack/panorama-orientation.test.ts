@@ -137,6 +137,7 @@ const camera = (rotation: Float32Array) => ({ rotation, focal: 1000, aspect: 1 }
 describe("Panorama explicit alignment direction", () => {
   test("preserves Auto with no direction requirements", () => {
     expect(checkPanoramaDirection("auto", [], [], 1)).toEqual({ accepted: true });
+    expect(checkPanoramaDirection("spherical", [], [], 1)).toEqual({ accepted: true });
   });
 
   test("allows portrait images joined horizontally (even in reverse input order)", () => {

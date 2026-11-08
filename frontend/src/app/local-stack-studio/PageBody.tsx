@@ -190,6 +190,7 @@ export default function PageBody() {
                 <option value="feature-match-orb">Content match (ORB)</option>
                 <option value="horizontal" hidden disabled>Horizontal</option>
                 <option value="vertical" hidden disabled>Vertical</option>
+                <option value="spherical" hidden disabled>Spherical</option>
               </select>
             </label>
 
@@ -253,6 +254,20 @@ export default function PageBody() {
                     <option value="none">none</option>
                     {PANORAMA_DOWNSCALE_MEGAPIXELS.map((megapixels) => (
                       <option key={megapixels} value={String(megapixels)}>{megapixels}MP</option>
+                    ))}
+                  </select>
+                </label>
+                <label id="panorama-fov-option" className="hidden flex-col items-start gap-1.5">
+                  <span className="text-xs font-medium text-gray-500">FoV</span>
+                  <select
+                    id="panorama-fov"
+                    defaultValue="exif"
+                    className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm"
+                  >
+                    <option value="exif">EXIF</option>
+                    <option value="estimate">Estimate</option>
+                    {Array.from({ length: 21 }, (_, index) => 20 + index * 5).map((degrees) => (
+                      <option key={degrees} value={String(degrees)}>{degrees}°</option>
                     ))}
                   </select>
                 </label>

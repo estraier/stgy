@@ -14,6 +14,7 @@ async function withFixture(callback) {
   const packageDir = join(root, "node_modules/@banou/opencv-wasm");
   const lib = join(packageDir, "lib");
   const vendored = join(root, "frontend/vendor/opencv-orb5000");
+  const customLib = join(vendored, "lib");
   const deployed = join(root, "frontend/public/vendor/opencv");
   const stock = Buffer.alloc(2048);
   const custom = Buffer.alloc(2048);
@@ -22,7 +23,7 @@ async function withFixture(callback) {
   custom[100] = 0x50;
   await mkdir(scripts, { recursive: true });
   await mkdir(lib, { recursive: true });
-  await mkdir(vendored, { recursive: true });
+  await mkdir(customLib, { recursive: true });
   await mkdir(deployed, { recursive: true });
   await cp(join(sourceScripts, "build-opencv-assets.mjs"), join(scripts, "build-opencv-assets.mjs"));
   await cp(join(sourceScripts, "opencv-orb5000-asset.mjs"), join(scripts, "opencv-orb5000-asset.mjs"));
@@ -30,9 +31,14 @@ async function withFixture(callback) {
   await writeFile(join(lib, "index.js"), "export const test = 1;\n");
   await writeFile(join(lib, "opencv_js.wasm"), stock);
   await writeFile(join(vendored, "opencv_js.wasm"), custom);
+  const customJs = "export const customBinding = true;\n";
+  await writeFile(join(customLib, "index.js"), customJs);
   const sha256 = (b) => createHash("sha256").update(b).digest("hex");
   const manifest = {
-    schemaVersion: 2,
+    schemaVersion: 4,
+    fixedPanoramaFovApi: "setStgyFocalLengths",
+    stitcherHeaderSha256: "0".repeat(64),
+    customJsSha256: sha256(Buffer.from(customJs)),
     package: "@banou/opencv-wasm", packageVersion: "0.0.6", openCvVersion: "5.0.0",
     panoramaOrbFeatures: 5000, panoramaMatcherConfidenceLimit: 3.5, stitcherSourceSha256: "0".repeat(64), wasmSha256: sha256(custom),
   };
@@ -45,7 +51,7 @@ test("copies npm JS but substitutes and identifies the custom ORB=5000 native bi
   const run = spawnSync(process.execPath, [join(f.scripts, "build-opencv-assets.mjs")], { encoding: "utf8" });
   assert.equal(run.status, 0, run.stderr);
   assert.deepEqual(await readFile(join(f.deployed, "lib/opencv_js.wasm")), f.custom);
-  assert.equal(await readFile(join(f.deployed, "lib/index.js"), "utf8"), "export const test = 1;\n");
+  assert.equal(await readFile(join(f.deployed, "lib/index.js"), "utf8"), "export const customBinding = true;\n");
   assert.match(await readFile(join(f.deployed, "VERSION"), "utf8"), /Panorama Stitcher ORB max features: 5000/);
 }));
 

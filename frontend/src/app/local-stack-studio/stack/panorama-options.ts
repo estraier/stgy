@@ -18,12 +18,23 @@ export function parsePanoramaDownscaleMegapixels(value: string): number | null |
   return PANORAMA_DOWNSCALE_VALUE_SET.has(megapixels) ? megapixels : undefined;
 }
 
-export const PANORAMA_ALIGNMENT_DIRECTIONS = ["auto", "horizontal", "vertical"] as const;
+export const PANORAMA_ALIGNMENT_DIRECTIONS = ["auto", "horizontal", "vertical", "spherical"] as const;
 export type PanoramaAlignmentDirection = (typeof PANORAMA_ALIGNMENT_DIRECTIONS)[number];
 export const DEFAULT_PANORAMA_ALIGNMENT_DIRECTION: PanoramaAlignmentDirection = "auto";
 
 export function isSupportedPanoramaAlignmentDirection(value: string): value is PanoramaAlignmentDirection {
   return (PANORAMA_ALIGNMENT_DIRECTIONS as readonly string[]).includes(value);
+}
+
+export const PANORAMA_FOV_ANGLES = Array.from({ length: 21 }, (_, index) => 20 + 5 * index);
+export type PanoramaFoVOption = "exif" | "estimate" | number;
+export const DEFAULT_PANORAMA_FOV: PanoramaFoVOption = "exif";
+
+export function parsePanoramaFoVOption(value: string): PanoramaFoVOption | undefined {
+  const option = value.trim().toLowerCase();
+  if (option === "exif" || option === "estimate") return option;
+  const numeric = Number(option);
+  return PANORAMA_FOV_ANGLES.includes(numeric) ? numeric : undefined;
 }
 
 export const PANORAMA_FINISH_MODES = ["trim", "fill"] as const;

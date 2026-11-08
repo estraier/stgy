@@ -10,8 +10,9 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { dirname } from "node:path";
-import { wasmPath, verifyPanoramaOrbWasm } from "./opencv-orb5000-asset.mjs";
+import { wasmPath, customLibDir, verifyPanoramaOrbWasm } from "./opencv-orb5000-asset.mjs";
 
 const require = createRequire(import.meta.url);
 const { version, name } = require("@banou/opencv-wasm/package.json");
@@ -22,7 +23,7 @@ assert.equal(version, "0.0.6");
 const packageLib = join(dirname(require.resolve("@banou/opencv-wasm/package.json")), "lib", "opencv_js.wasm");
 const manifest = await verifyPanoramaOrbWasm({ stockBinary: packageLib });
 assert.equal(manifest.panoramaOrbFeatures, 5000);
-const cv = await import("@banou/opencv-wasm");
+const cv = await import(pathToFileURL(join(customLibDir, "index.js")).href);
 await cv.initOpenCV({ wasmBinary: new Uint8Array(await readFile(wasmPath)) });
 
 const functions = [
@@ -111,10 +112,21 @@ try {
   const warped = owned(new cv.Mat());
   cv.warpPerspective(source, warped, perspective, { width, height }, cv.INTER_LINEAR, cv.BORDER_REPLICATE);
   assert.equal(warped.data[4], source.data[4]);
+  const cylinder = owned(new cv.PyRotationWarper("cylindrical", 500));
+  assert.equal(typeof cylinder.warpRoi, "function", "OpenCV cylindrical warper is unavailable");
+  const sphere = owned(new cv.PyRotationWarper("spherical", 500));
+  assert.equal(typeof sphere.warpRoi, "function", "OpenCV spherical warper is unavailable");
   const stitcher = owned(cv.Stitcher.create(0));
   assert.equal(typeof stitcher.estimateTransform, "function");
   assert.equal(typeof stitcher.cameras, "function");
-  console.log("OpenCV unified WASM: native matrix, blur, pyramid, CLAHE, ORB, matcher, ECC, warp and Stitcher passed.");
+  assert.equal(typeof stitcher.setStgyFocalLengths, "function", "Custom FoV setter missing from generated JS/WASM");
+  assert.equal(typeof cv.DoubleVector, "function", "DoubleVector binding missing from generated JS/WASM");
+  const focalVector = owned(new cv.DoubleVector());
+  focalVector.push_back(500);
+  focalVector.push_back(500);
+  assert.equal(focalVector.size(), 2);
+  stitcher.setStgyFocalLengths(focalVector);
+  console.log("OpenCV unified WASM: native matrix, blur, pyramid, CLAHE, ORB, matcher, ECC, warp cylindrical/spherical warpers and Stitcher passed.");
 } finally {
   for (const handle of resources.reverse()) handle.delete?.();
 }

@@ -1,11 +1,14 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 4,
+  "fixedPanoramaFovApi": "setStgyFocalLengths",
   "package": "@banou/opencv-wasm",
   "packageVersion": "0.0.6",
   "openCvVersion": "5.0.0",
   "panoramaOrbFeatures": 5000,
   "panoramaMatcherConfidenceLimit": 3.5,
-  "wasmSha256": "ed6a2a40c0c5281c5ef8bd8bcf3ab0c47baf9b9b26fbc90f5dddcbd8660c37e4",
-  "stitcherSourceSha256": "84bbd0aa6e2f27503e3336d0cbbea7cea81d76f200f621612cff70c77ad9f485",
+  "wasmSha256": "62d405c708176bd9e6b52b65079017cef7d7305f91921107a14ecbd52d736df3",
+  "stitcherSourceSha256": "848a734654f35f7809d2af8f93b7b4a3aa35771ebd86c2e29de09a4217326b3b",
+  "stitcherHeaderSha256": "39f61cd883afc114d4eb95379dc5d8ac7a76fae282813599ab3c1fe618d87803",
+  "customJsSha256": "faa6ed4229f5a4800d98c497c5b22859ec42e65e95d0f1e1fe14ac10d5402e93",
   "upstreamCommit": "91db4bfa699b283af5a7927dbf24f9b0ac024363"
 }

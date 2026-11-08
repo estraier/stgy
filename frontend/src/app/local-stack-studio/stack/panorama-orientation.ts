@@ -4,8 +4,8 @@ export type PanoramaCameraPathAxis = "horizontal" | "vertical";
 
 /** Match the Panorama alignment choice to OpenCV's wave correction enum. */
 export function panoramaWaveCorrectionKind(
-  direction: PanoramaAlignmentDirection,
-  kinds: Readonly<Record<PanoramaAlignmentDirection, number>>,
+  direction: "auto" | "horizontal" | "vertical",
+  kinds: Readonly<Record<"auto" | "horizontal" | "vertical", number>>,
 ): number {
   const kind = kinds[direction];
   if (!Number.isFinite(kind)) {
@@ -46,7 +46,7 @@ export function checkPanoramaDirection(
   imageSizes: readonly PanoramaDirectionImageSize[],
   workScale: number,
 ): PanoramaDirectionResult {
-  if (direction === "auto") return { accepted: true };
+  if (direction === "auto" || direction === "spherical") return { accepted: true };
   if (direction !== "horizontal" && direction !== "vertical") {
     throw new Error(`Unsupported panorama alignment direction: ${String(direction)}.`);
   }
@@ -231,7 +231,7 @@ export function restoreVerticalWaveCorrectionRoll(
     throw new Error("Panorama camera counts differ before and after wave correction.");
   }
   const shouldRestoreVertical = direction === "vertical"
-    || (direction === "auto" && panoramaCameraPathAxis(estimatedRotations) === "vertical");
+    || ((direction === "auto" || direction === "spherical") && panoramaCameraPathAxis(estimatedRotations) === "vertical");
   if (estimatedRotations.length <= 1 || !shouldRestoreVertical) {
     return correctedRotations.map((rotation, index) => {
       assertRotation(rotation, `Panorama wave-corrected camera ${index + 1} rotation`);

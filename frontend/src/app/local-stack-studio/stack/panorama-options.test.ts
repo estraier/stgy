@@ -50,12 +50,13 @@ describe("Panorama Finish options", () => {
 });
 
 describe("Panorama Alignment options", () => {
-  test("defaults to Auto and limits explicit directions to Horizontal and Vertical", () => {
+  test("defaults to Auto and includes explicit Spherical for the legacy projection", () => {
     expect(DEFAULT_PANORAMA_ALIGNMENT_DIRECTION).toBe("auto");
-    expect(PANORAMA_ALIGNMENT_DIRECTIONS).toEqual(["auto", "horizontal", "vertical"]);
+    expect(PANORAMA_ALIGNMENT_DIRECTIONS).toEqual(["auto", "horizontal", "vertical", "spherical"]);
     expect(isSupportedPanoramaAlignmentDirection("auto")).toBe(true);
     expect(isSupportedPanoramaAlignmentDirection("horizontal")).toBe(true);
     expect(isSupportedPanoramaAlignmentDirection("vertical")).toBe(true);
+    expect(isSupportedPanoramaAlignmentDirection("spherical")).toBe(true);
     expect(isSupportedPanoramaAlignmentDirection("feature-match-orb")).toBe(false);
   });
 });

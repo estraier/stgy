@@ -16,6 +16,7 @@ export type PreservedImageMetadata = {
   lensMake?: string;
   lensModel?: string;
   focalLength?: number;
+  focalLength35mm?: number;
   exposureTime?: number;
   fNumber?: number;
   iso?: number;
@@ -268,6 +269,7 @@ export function parseExifTiffMetadata(
     lensMake: exifOrIfd0String(0xa433),
     lensModel: exifOrIfd0String(0xa434),
     focalLength: positiveNumber(exifOrIfd0Number(0x920a)),
+    focalLength35mm: positiveNumber(exifOrIfd0Number(0xa405)),
     exposureTime: positiveNumber(exifOrIfd0Number(0x829a)),
     fNumber: positiveNumber(exifOrIfd0Number(0x829d)),
     iso: positiveNumber(exifOrIfd0Number(0x8827)),
@@ -676,6 +678,7 @@ export function extractWhitelistedMetadataFromLibRaw(
     lensMake: rawMetadataString(lens?.LensMake),
     lensModel: rawMetadataString(lens?.Lens) ?? rawMetadataString(makerNotes?.Lens),
     focalLength: positiveNumber(metadata.focal_len ?? makerNotes?.CurFocal),
+    focalLength35mm: positiveNumber(makerNotes?.FocalLengthIn35mmFormat),
     exposureTime: positiveNumber(metadata.shutter),
     fNumber: positiveNumber(metadata.aperture ?? makerNotes?.CurAp),
     iso: positiveNumber(metadata.iso_speed),
@@ -829,7 +832,7 @@ export function mergeStackMetadata(
   }
 
   const numberKeys: Array<keyof PreservedImageMetadata> = [
-    "focalLength", "exposureTime", "fNumber", "iso", "exposureBiasValue", "meteringMode", "flash", "exposureProgram",
+    "focalLength", "focalLength35mm", "exposureTime", "fNumber", "iso", "exposureBiasValue", "meteringMode", "flash", "exposureProgram",
   ];
   for (const key of numberKeys) {
     const value = allSameNumber(values, key);
@@ -1013,6 +1016,7 @@ export function buildExifTiffPayload(metadata: PreservedImageMetadata | null | u
   appendEntry(exif, makeShortEntry(0x9207, metadata.meteringMode));
   appendEntry(exif, makeShortEntry(0x9209, metadata.flash));
   appendEntry(exif, makeRationalEntry(0x920a, metadata.focalLength));
+  appendEntry(exif, makeShortEntry(0xa405, metadata.focalLength35mm));
   appendEntry(exif, makeAsciiEntry(0x9291, metadata.subSecTimeOriginal));
   appendEntry(exif, makeAsciiEntry(0xa433, metadata.lensMake));
   appendEntry(exif, makeAsciiEntry(0xa434, metadata.lensModel));

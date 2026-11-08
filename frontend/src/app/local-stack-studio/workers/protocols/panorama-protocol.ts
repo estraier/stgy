@@ -1,4 +1,4 @@
-import type { PanoramaAlignmentDirection } from "../../stack/panorama-options";
+import type { PanoramaAlignmentDirection, PanoramaFoVOption } from "../../stack/panorama-options";
 
 export type PanoramaStitchRequest = {
   type: "stitch";
@@ -8,6 +8,7 @@ export type PanoramaStitchRequest = {
   maxOutputMegapixels?: number | null;
   finishMode?: "trim" | "fill";
   alignmentDirection?: PanoramaAlignmentDirection;
+  fov?: PanoramaFoVOption;
 };
 
 export type PanoramaWorkerRequest = PanoramaStitchRequest;

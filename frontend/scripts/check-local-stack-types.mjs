@@ -4,6 +4,7 @@ const strictFiles = [
   "src/app/local-stack-studio/stack/focus-math.ts",
   "src/app/local-stack-studio/stack/panorama-crop.ts",
   "src/app/local-stack-studio/stack/panorama-scale.ts",
+  "src/app/local-stack-studio/stack/panorama-fov.ts",
   "src/app/local-stack-studio/workers/opencv-runtime.ts",
   "src/app/local-stack-studio/workers/alignment-preprocess.ts",
   "src/app/local-stack-studio/workers/transfer-buffer.ts",
