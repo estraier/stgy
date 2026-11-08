@@ -17,9 +17,11 @@ above its theoretical maximum (~3.333) and removes only this upper cutoff.
 The ordinary *lower* panorama graph confidence, ORB descriptor ratio check,
 RANSAC, homography estimation, bundle adjustment, wave correction, seam finding,
 exposure correction and subsequent stitching algorithms are unchanged.
-This is a plausible fix for a regression, not a verified reproduction until
-real failing images are tested. STGY's ordinary ORB
-alignment already uses 5000 features, independently of Panorama.
+A previously failing three-image panorama was reported to succeed after the
+confidence-limit change and WASM rebuild. The matching statistics were not
+recorded, so the confidence cutoff remains the likely cause rather than a
+proven diagnosis. STGY's ordinary ORB alignment already uses 5000 features,
+independently of Panorama.
 
 The resulting WASM has the **same JavaScript ABI** as the stock npm package.
 STGY still uses the package's ESM `lib/` for JS declarations and helpers, but
