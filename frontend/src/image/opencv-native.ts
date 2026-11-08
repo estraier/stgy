@@ -5,7 +5,8 @@
  * global object, and ES module namespaces are immutable; expose our small
  * compatibility constructors on a separate object. Every worker/main-thread
  * execution context owns one native heap; do not pass native handles between
- * contexts. The JS/WASM files are built/copied from the same npm dependency.
+ * contexts. The JS API comes from the pinned npm dependency; the deployed
+ * WASM is STGY's verified native build with Panorama Stitcher ORB=5000.
  */
 export const OPENCV_MODULE_URL = "/vendor/opencv/lib/index.js";
 export const OPENCV_WASM_URL = "/vendor/opencv/lib/opencv_js.wasm";

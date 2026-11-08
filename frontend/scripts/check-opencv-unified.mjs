@@ -8,13 +8,22 @@
  */
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { dirname } from "node:path";
+import { wasmPath, verifyPanoramaOrbWasm } from "./opencv-orb5000-asset.mjs";
 
 const require = createRequire(import.meta.url);
 const { version, name } = require("@banou/opencv-wasm/package.json");
 assert.equal(name, "@banou/opencv-wasm");
 assert.equal(version, "0.0.6");
+// Exercise the exact vendored binary that will ship to browsers, not the
+// untouched default binary in node_modules.
+const packageLib = join(dirname(require.resolve("@banou/opencv-wasm/package.json")), "lib", "opencv_js.wasm");
+const manifest = await verifyPanoramaOrbWasm({ stockBinary: packageLib });
+assert.equal(manifest.panoramaOrbFeatures, 5000);
 const cv = await import("@banou/opencv-wasm");
-await cv.initOpenCV();
+await cv.initOpenCV({ wasmBinary: new Uint8Array(await readFile(wasmPath)) });
 
 const functions = [
   "Mat", "matFromArray", "resize", "cvtColor", "GaussianBlur", "Sobel", "Laplacian",

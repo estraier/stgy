@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "package": "@banou/opencv-wasm",
+  "packageVersion": "0.0.6",
+  "openCvVersion": "5.0.0",
+  "panoramaOrbFeatures": 5000,
+  "wasmSha256": "6b00a34d4b67d1f171f4c229c1fca83ad8a945ad4e0781445273745aa761be26",
+  "stitcherSourceSha256": "c6b44efa6ef56f0afeb74aa2b7992c7279d861826d28fe57c1c22e2a139d5158",
+  "upstreamCommit": "91db4bfa699b283af5a7927dbf24f9b0ac024363"
+}

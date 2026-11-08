@@ -1,6 +1,7 @@
 import { access, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { wasmPath, verifyPanoramaOrbWasm } from "./opencv-orb5000-asset.mjs";
 
 const OPENCV_PACKAGE = "@banou/opencv-wasm";
 const OPENCV_PACKAGE_VERSION = "0.0.6";
@@ -40,6 +41,9 @@ if (!packageDir) {
 const sourceLib = join(packageDir, "lib");
 await access(join(sourceLib, "index.js"));
 await access(join(sourceLib, "opencv_js.wasm"));
+// Fail BEFORE removing deployed assets if our versioned native artifact is missing
+// or corrupt. npm ci must never silently revert Panorama to stock ORB=500.
+const manifest = await verifyPanoramaOrbWasm({ stockBinary: join(sourceLib, "opencv_js.wasm") });
 await rm(destinationDir, { recursive: true, force: true });
 // Remove the old second copy when an existing workspace is upgraded.
 await rm(formerDestinationDir, { recursive: true, force: true });
@@ -48,6 +52,9 @@ await mkdir(destinationDir, { recursive: true });
 // serving lib/ intact and importing lib/index.js. Keep the whole directory so
 // its relative ESM imports and colocated runtime assets remain valid.
 await cp(sourceLib, join(destinationDir, "lib"), { recursive: true });
+// Exactly the same ABI and JS wrapper; only Stitcher::create() ORB nfeatures
+// differs in this WASM. This affects Panorama while preserving other callers.
+await cp(wasmPath, join(destinationDir, "lib", "opencv_js.wasm"));
 
 for (const name of ["LICENSE", "THIRD_PARTY_NOTICES.md", "README.md"]) {
   const source = join(packageDir, name);
@@ -59,6 +66,6 @@ for (const name of ["LICENSE", "THIRD_PARTY_NOTICES.md", "README.md"]) {
 
 await writeFile(
   join(destinationDir, "VERSION"),
-  `${OPENCV_PACKAGE}@${OPENCV_PACKAGE_VERSION}\nOpenCV 5.0.0 unified runtime (including stitching)\n`,
+  `${OPENCV_PACKAGE}@${OPENCV_PACKAGE_VERSION}\nOpenCV 5.0.0 unified runtime (including stitching)\nPanorama Stitcher ORB max features: ${manifest.panoramaOrbFeatures}\nCustom native SHA-256: ${manifest.wasmSha256}\n`,
   "utf8",
 );
