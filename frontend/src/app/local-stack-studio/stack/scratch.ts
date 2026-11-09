@@ -2,11 +2,51 @@ const STACK_SCRATCH_DB_NAME = "local-stack-studio-median-scratch";
 const STACK_SCRATCH_DB_VERSION = 1;
 const STACK_SCRATCH_STORE = "tiles";
 
-export function createStackScratchSessionId(): string {
-  if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
-    return globalThis.crypto.randomUUID();
+// Scratch keys are sorted by session ID. New IDs start with a fixed-width
+// creation timestamp so expired tiles can be deleted via a key range, with no
+// extra metadata writes and no tile/Blob reads. Pre-existing UUID keys are
+// intentionally excluded (the user will clear those caches manually).
+const TIMED_SCRATCH_PREFIX = "s2-";
+const TIMESTAMP_WIDTH = 13;
+
+export function stackScratchSessionIdAt(createdAt: number, nonce: string): string {
+  if (!Number.isSafeInteger(createdAt) || createdAt < 0) {
+    throw new Error("Invalid scratch session creation timestamp.");
   }
-  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `${TIMED_SCRATCH_PREFIX}${String(createdAt).padStart(TIMESTAMP_WIDTH, "0")}-${nonce}`;
+}
+
+export function stackScratchExpiryUpperKey(cutoffAt: number): string {
+  if (!Number.isSafeInteger(cutoffAt) || cutoffAt < 0) {
+    throw new Error("Invalid scratch expiration timestamp.");
+  }
+  return `${TIMED_SCRATCH_PREFIX}${String(cutoffAt).padStart(TIMESTAMP_WIDTH, "0")}\uffff`;
+}
+
+export function createStackScratchSessionId(): string {
+  const nonce = globalThis.crypto && typeof globalThis.crypto.randomUUID === "function"
+    ? globalThis.crypto.randomUUID()
+    : Math.random().toString(36).slice(2);
+  return stackScratchSessionIdAt(Date.now(), nonce);
+}
+
+export async function purgeExpiredStackScratchSessions(cutoffAt: number): Promise<void> {
+  const upperKey = stackScratchExpiryUpperKey(cutoffAt);
+  const db = await openStackScratchDb("LSS scratch cache cleanup");
+  try {
+    await new Promise<void>((resolve, reject) => {
+      let tx: IDBTransaction;
+      try { tx = db.transaction(STACK_SCRATCH_STORE, "readwrite"); }
+      catch (error) { reject(error); return; }
+      // No session metadata scan and no tile buffers are materialized.
+      tx.objectStore(STACK_SCRATCH_STORE).delete(IDBKeyRange.bound(TIMED_SCRATCH_PREFIX, upperKey));
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error("Could not purge expired LSS scratch tiles."));
+      tx.onabort = () => reject(tx.error || new Error("LSS scratch expiration cleanup was aborted."));
+    });
+  } finally {
+    db.close();
+  }
 }
 
 export function openStackScratchDb(purpose = "Local Stack Studio"): Promise<IDBDatabase> {
@@ -158,14 +198,7 @@ export function deleteStackScratchSession(db: IDBDatabase, sessionId: string): P
     const store = transaction.objectStore(STACK_SCRATCH_STORE);
     const prefix = `${sessionId}:`;
     const range = IDBKeyRange.bound(prefix, `${prefix}\uffff`);
-    const request = store.openCursor(range);
-    request.onsuccess = () => {
-      const cursor = request.result;
-      if (!cursor) return;
-      cursor.delete();
-      cursor.continue();
-    };
-    request.onerror = () => reject(request.error || new Error("Could not enumerate stack scratch tiles."));
+    store.delete(range);
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error || new Error("Could not clear stack scratch tiles."));
     transaction.onabort = () => reject(transaction.error || new Error("Stack scratch cleanup was aborted."));

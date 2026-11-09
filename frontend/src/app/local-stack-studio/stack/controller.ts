@@ -26,6 +26,7 @@ import {
   clampStackClahe,
   clampStackScaledLog,
 } from "./postprocess";
+import { cleanupLssTemporaryCacheOnProcess } from "./cache-cleanup";
 import {
   createStackScratchSessionId as createMedianScratchSessionId,
   createStackScratchSessionId as createStfAdditionalBlurScratchSessionId,
@@ -344,7 +345,7 @@ function captureProcessingSettings(selectedMode: string): StackInfoSetting[] {
   } else if (selectedMode === "stf") {
     settings.push({ label: "Blend weight", value: String(selectedStfBlendWeight()) });
     settings.push({ label: "Additional blur", value: stfBlurStrength.value });
-    if (stfBlurStrength.value !== "none") {
+    if (!["none", "sharpness-16mp", "sharpness-0.5mp", "ratio-16mp-0.5mp"].includes(stfBlurStrength.value)) {
       settings.push({ label: "Blur ratio", value: `${Math.round(Number(stfBlurRatio.value) * 100)}%` });
       settings.push({ label: "Area guard", value: stfBlurAreaGuard.value });
       settings.push({ label: "Blur sigmoid", value: `${stfBlurSigmoid.value}%` });
@@ -460,7 +461,8 @@ function updateMergeOptionsVisibility() {
 }
 
 function updateStfBlurOptionsVisibility() {
-  const active = mergeMode.value === "stf" && stfBlurStrength.value !== "none";
+  // Sharpness diagnostic images do not use blur ratio, area guard, or sigmoid.
+  const active = mergeMode.value === "stf" && !["none", "sharpness-16mp", "sharpness-0.5mp", "ratio-16mp-0.5mp"].includes(stfBlurStrength.value);
   for (const element of [stfBlurRatioOption, stfBlurAreaGuardOption, stfBlurSigmoidOption]) {
     element.classList.toggle("hidden", !active);
     element.classList.toggle("flex", active);
@@ -701,6 +703,17 @@ listen(processButton, "click", async () => {
     if (mergeMode.value === "panorama" ? !isSupportedPanoramaAlignmentDirection(alignmentMode.value)
       : !["auto", "center-crop", "center-fit", "center-fill", "top-left-fill", "feature-match-ecc", "feature-match-orb"].includes(alignmentMode.value)) {
       throw new Error(`Unsupported alignment mode: ${alignmentMode.value}`);
+    }
+
+    // Reclaim only LSS-owned expired IndexedDB data, at most once per 30 min.
+    // Never update cache timestamps during a running image operation.
+    const cleanupStartedAt = performance.now();
+    try {
+      const ran = await cleanupLssTemporaryCacheOnProcess(currentCanonicalSession?.id);
+      if (ran) trace.add("Temporary cache cleanup", performance.now() - cleanupStartedAt);
+    } catch (cleanupError) {
+      console.warn("LSS expired cache cleanup failed; continuing Process.", cleanupError);
+      trace.warnings.push("Temporary cache cleanup failed; old sessions will be retried on the next Process.");
     }
 
     // OpenCV is consumed only inside the alignment, focus, HDR and panorama
@@ -3162,16 +3175,18 @@ async function mergeStfWithAdditionalBlur(
       maskInfo: null, base: null, baseKey: null, expanded: null, expandedKey: null };
   }
   const cache = stfGateCache;
+  const sharpnessVisualization = plan.sharpnessVisualization;
+  const previewOnly = plan.gateOnly || sharpnessVisualization !== null;
   const jobs = buildLinearMergeStripeJobs(width, height);
   const hardwareConcurrency = typeof navigator === "object"
     ? Math.max(1, Math.floor(navigator.hardwareConcurrency || 4)) : 4;
   const workerUrl = new URL("/generated/local-stack-studio/stf-additional-blur.worker.js", window.location.origin);
-  workerUrl.searchParams.set("revision", "stf-gate-optimized-sampled-p50-expansion-20261105");
+  workerUrl.searchParams.set("revision", "stf-sharpness-diagnostics-20261109");
   let pool = null;
   // Avoid writing temporary Sobel arrays to IndexedDB when a bounded amount
   // of RAM is enough; large images still spill to scratch storage as before.
   const derivedStaging = new stagingModule.StfDerivedStripeStaging(
-    plan.gateOnly ? 96 * 1024 * 1024 : 64 * 1024 * 1024,
+    previewOnly ? 96 * 1024 * 1024 : 64 * 1024 * 1024,
   );
   let scratchDbPromise = null;
   let scratchSessionId = null;
@@ -3200,7 +3215,7 @@ async function mergeStfWithAdditionalBlur(
   };
   try {
     const sharpnessStartedAt = performance.now();
-    if (!cache.ratio) {
+    if (!cache.ratio || sharpnessVisualization !== null) {
       const p = await ensurePool();
       const sampleGrid = algorithm.buildStfSampleGrid(width, height);
       const brightnessSamples = [[], [], []];
@@ -3221,11 +3236,11 @@ async function mergeStfWithAdditionalBlur(
       scratchSessionId = createStfAdditionalBlurScratchSessionId();
       const groupCount = p.ready.groupCount;
       const sharpnessSamples = [];
-      if (!plan.gateOnly) source = new Float32Array(width * height * 3);
+      if (!previewOnly) source = new Float32Array(width * height * 3);
       setProgress(`STF analyzing Sobel sharpness 0/${jobs.length}...`);
-      await p.runAnalysisJobs(jobs, !plan.gateOnly, async (job, result, completed, total) => {
+      await p.runAnalysisJobs(jobs, !previewOnly, async (job, result, completed, total) => {
         const pixels = width * job.height;
-        if (result.linear.length !== (plan.gateOnly ? 0 : pixels * 3) || result.fineLogSum.length !== pixels ||
+        if (result.linear.length !== (previewOnly ? 0 : pixels * 3) || result.fineLogSum.length !== pixels ||
             result.fineZero.length !== pixels || result.coarseGroups.length !== pixels * groupCount ||
             result.groupCount !== groupCount) {
           throw new Error("STF Additional blur Worker returned invalid analysis geometry.");
@@ -3247,11 +3262,11 @@ async function mergeStfWithAdditionalBlur(
       const coarseP50 = algorithm.deriveStfMedianSharpnessC(sharpnessSamples);
       const epsilon = algorithm.deriveStfRatioEpsilon(coarseP50);
       let unitRatio = new Float32Array(width * height);
-      setProgress(`STF generating log-ratios 0/${jobs.length}...`);
+      setProgress(`STF generating ${sharpnessVisualization === null ? "log-ratios" : "sharpness visualization"} 0/${jobs.length}...`);
       await p.runRatioJobs(jobs,
         async (job) => {
           const resident = derivedStaging.take(job.index);
-          if (resident) return { ...resident, groupCount, epsilon };
+          if (resident) return { ...resident, groupCount, epsilon, visualization: sharpnessVisualization ?? "ratio" };
           const db = await ensureScratchDb();
           const keys = stfAdditionalBlurScratchKeys(scratchSessionId, job.index);
           const [fineLogSumBuffer, fineZeroBuffer, coarseGroupsBuffer] = await getStfAdditionalBlurScratchBuffers(
@@ -3259,16 +3274,22 @@ async function mergeStfWithAdditionalBlur(
             `STF Additional blur stripe ${job.index + 1}`);
           return { fineLogSum: new Float32Array(fineLogSumBuffer),
             fineZero: new Uint8Array(fineZeroBuffer), coarseGroups: new Float32Array(coarseGroupsBuffer),
-            groupCount, epsilon };
+            groupCount, epsilon, visualization: sharpnessVisualization ?? "ratio" };
         },
         (job, result, completed, total) => {
           if (result.length !== width * job.height) throw new Error("STF log-ratio stripe has invalid size.");
           unitRatio.set(result, job.y * width);
-          setProgress(`STF generating log-ratios ${completed}/${total}...`);
+          setProgress(`STF generating ${sharpnessVisualization === null ? "log-ratios" : "sharpness visualization"} ${completed}/${total}...`);
         });
       // This is the only P3/P97 normalization; after this point all steps
       // take the same [0,1] scale, including Volume Closing 2.
       algorithm.normalizeStfLogRatioBufferInPlace(unitRatio);
+      if (sharpnessVisualization !== null) {
+        // Show the raw Sobel-derived log sharpness or log ratio, scaled P3/P97
+        // for display only.  No Volume Closing, Graph Cut, sigmoid or dilation.
+        infoTrace?.add("STF sharpness visualization", performance.now() - sharpnessStartedAt, "Merge");
+        return finalizeStfBasicGate(unitRatio, width, height, outputColorSpace);
+      }
       setProgress("STF applying Volume Closing 2...");
       const closed = await p.volumeClose(unitRatio, width, height);
       unitRatio = closed.values;

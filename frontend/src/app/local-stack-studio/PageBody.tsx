@@ -329,6 +329,9 @@ export default function PageBody() {
                     <option value="medium">medium</option>
                     <option value="strong">strong</option>
                     <option value="gate">gate</option>
+                    <option value="sharpness-16mp">16MP sharpness</option>
+                    <option value="sharpness-0.5mp">0.5MP sharpness</option>
+                    <option value="ratio-16mp-0.5mp">16MP / 0.5MP ratio</option>
                   </select>
                 </label>
                 <label id="stf-blur-ratio-option" className="hidden flex-col items-start gap-1.5">

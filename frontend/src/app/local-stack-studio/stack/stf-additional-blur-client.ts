@@ -20,7 +20,7 @@ export type StfAdditionalBlurAnalyzeResult = {
 };
 export type StfAdditionalBlurRatioRequest = {
   fineLogSum: Float32Array; fineZero: Uint8Array; coarseGroups: Float32Array;
-  groupCount: number; epsilon: number;
+  groupCount: number; epsilon: number; visualization?: "fine" | "coarse" | "ratio";
 };
 export type StfAdditionalBlurExpandGateRequest = {
   regionHeight: number; coreOffsetY: number; coreHeight: number; radius: number; gate: Float32Array;
@@ -88,6 +88,7 @@ export class StfAdditionalBlurWorkerClient {
     const coarseGroupsBuffer = r.coarseGroups.buffer as ArrayBuffer;
     return this.request("ratio-stripe-result", {
       type: "ratio-stripe", pixelCount: r.fineLogSum.length, groupCount: r.groupCount, epsilon: r.epsilon,
+      visualization: r.visualization,
       fineLogSumBuffer, fineZeroBuffer, coarseGroupsBuffer,
     }, [fineLogSumBuffer, fineZeroBuffer, coarseGroupsBuffer]).then((value: StfAdditionalBlurWorkerRatioStripeResponse) =>
       new Float32Array(asBuffer(value.logRatioBuffer, "log ratio")));

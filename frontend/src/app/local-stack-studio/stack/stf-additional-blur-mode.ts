@@ -1,5 +1,15 @@
 /** The complete public configuration of STF additional blur. */
-export const STF_BLUR_STRENGTH_VALUES = ["none", "weak", "medium", "strong", "gate"] as const;
+export const STF_BLUR_STRENGTH_VALUES = [
+  "none", "weak", "medium", "strong", "gate",
+  "sharpness-16mp", "sharpness-0.5mp", "ratio-16mp-0.5mp",
+] as const;
+export type StfSharpnessVisualization = "fine" | "coarse" | "ratio";
+export function stfSharpnessVisualization(strength: StfBlurStrength): StfSharpnessVisualization | null {
+  if (strength === "sharpness-16mp") return "fine";
+  if (strength === "sharpness-0.5mp") return "coarse";
+  if (strength === "ratio-16mp-0.5mp") return "ratio";
+  return null;
+}
 export const STF_BLUR_AREA_GUARD_VALUES = ["none", "weak", "medium", "strong"] as const;
 export const STF_BLUR_RATIO_VALUES = Array.from({ length: 17 }, (_, i) => (10 + i * 5) / 100);
 export const STF_BLUR_SIGMOID_VALUES = Array.from({ length: 21 }, (_, i) => i * 5);
@@ -16,6 +26,7 @@ export type StfAdditionalBlurOptions = {
 export type StfAdditionalBlurPlan = StfAdditionalBlurOptions & {
   enabled: boolean;
   gateOnly: boolean;
+  sharpnessVisualization: StfSharpnessVisualization | null;
   strengthMultiplier: 1 | 2 | 3 | null;
   areaExponent: number | null;
   effectiveRatio: number | null;
@@ -33,13 +44,14 @@ export function buildStfAdditionalBlurPlan(options: StfAdditionalBlurOptions): S
     throw new Error("STF Additional blur options are invalid.");
   }
   const enabled = options.strength !== "none";
-  const areaExponent = !enabled || options.areaGuard === "none" ? null
+  const sharpnessVisualization = stfSharpnessVisualization(options.strength);
+  const areaExponent = !enabled || sharpnessVisualization !== null || options.areaGuard === "none" ? null
     : options.areaGuard === "weak" ? 0.95 : options.areaGuard === "medium" ? 0.85 : 0.75;
-  const strengthMultiplier = !enabled || options.strength === "gate" ? null
+  const strengthMultiplier = !enabled || options.strength === "gate" || sharpnessVisualization !== null ? null
     : options.strength === "weak" ? 1 : options.strength === "medium" ? 2 : 3;
   // Neither graph cut nor sigmoid reads the ratio when both are disabled.
-  const effectiveRatio = enabled && (areaExponent !== null || options.sigmoid !== 0) ? options.ratio : null;
-  return { ...options, enabled, gateOnly: options.strength === "gate", strengthMultiplier, areaExponent, effectiveRatio };
+  const effectiveRatio = enabled && sharpnessVisualization === null && (areaExponent !== null || options.sigmoid !== 0) ? options.ratio : null;
+  return { ...options, enabled, gateOnly: options.strength === "gate", sharpnessVisualization, strengthMultiplier, areaExponent, effectiveRatio };
 }
 
 /** Gate-only preview uses medium-strength dilation without performing Gaussian blur. */

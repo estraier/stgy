@@ -6,7 +6,8 @@ import {
 
 describe("STF Additional Blur production option specification", () => {
   test("only the approved option values and defaults are exposed", () => {
-    expect([...STF_BLUR_STRENGTH_VALUES]).toEqual(["none", "weak", "medium", "strong", "gate"]);
+    expect([...STF_BLUR_STRENGTH_VALUES]).toEqual(["none", "weak", "medium", "strong", "gate",
+      "sharpness-16mp", "sharpness-0.5mp", "ratio-16mp-0.5mp"]);
     expect([...STF_BLUR_AREA_GUARD_VALUES]).toEqual(["none", "weak", "medium", "strong"]);
     expect(STF_BLUR_RATIO_VALUES).toHaveLength(17);
     expect(STF_BLUR_RATIO_VALUES[0]).toBeCloseTo(0.1);
@@ -29,6 +30,23 @@ describe("STF Additional Blur production option specification", () => {
     // Medium dilation is a consistent reference for gate-only preview.
     expect(resolveStfGateExpansionMultiplier(gate)).toBe(2);
     expect(() => resolveStfGateExpansionMultiplier(disabled)).toThrow();
+  });
+  test("sharpness diagnostics bypass all post-ratio processing and Gaussian blur", () => {
+    for (const [strength, visualization] of [
+      ["sharpness-16mp", "fine"], ["sharpness-0.5mp", "coarse"],
+      ["ratio-16mp-0.5mp", "ratio"],
+    ] as const) {
+      const plan = buildStfAdditionalBlurPlan({
+        strength, ratio: 0.75, areaGuard: "strong", sigmoid: 100,
+      });
+      expect(plan.enabled).toBe(true);
+      expect(plan.gateOnly).toBe(false);
+      expect(plan.sharpnessVisualization).toBe(visualization);
+      expect(plan.areaExponent).toBeNull();
+      expect(plan.effectiveRatio).toBeNull();
+      expect(plan.strengthMultiplier).toBeNull();
+      expect(() => resolveStfGateExpansionMultiplier(plan)).toThrow();
+    }
   });
   test("Gaussian strength and area-guard exponent are independent", () => {
     for (const [strength, multiplier] of [["weak", 1], ["medium", 2], ["strong", 3]] as const) {

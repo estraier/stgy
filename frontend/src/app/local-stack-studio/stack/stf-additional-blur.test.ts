@@ -1,7 +1,7 @@
 import {
   buildStfApertureGroups, sameStfFNumber,
   deriveStfRelativeChannelFloorsFromSamples, deriveStfMedianSharpnessC,
-  deriveStfRatioEpsilon, buildStfLogRatioFromDerived, normalizeStfLogRatioBufferInPlace,
+  deriveStfRatioEpsilon, buildStfLogRatioFromDerived, buildStfSharpnessDiagnosticLogFromDerived, normalizeStfLogRatioBufferInPlace,
   normalizeStfLogRatioValue, buildStfLogRatioNormalizationPlan,
   buildStfSigmoidPlan, applyStfSigmoidGateInPlace,
   resolveStfAdditionalBlurRadius, applyStfGateExpansion, applyGuardedGaussianBlurRegion,
@@ -47,6 +47,29 @@ describe("STF production sharpness and protection gate", () => {
     const log = buildStfLogRatioFromDerived(fine, zeros, coarse, 2, 0.25);
     expect(log[0]).toBeCloseTo(Math.log(Math.sqrt((4 * 9) / ((2 + 0.25) * (3 + 0.25)))));
     expect(Number.isNaN(log[1])).toBe(true);
+  });
+  test("diagnostic maps show the existing aperture-group geometric sharpness and raw ratio", () => {
+    // Two pixels, two aperture groups: fine values [4,9] and [16,25].
+    const fine = Float32Array.from([Math.log(4) + Math.log(9), Math.log(16) + Math.log(25)]);
+    const zero = Uint8Array.from([0, 1]);
+    const coarse = Float32Array.from([2, 4, 3, 5]);
+    const fineView = buildStfSharpnessDiagnosticLogFromDerived(fine, zero, coarse, 2, 0.25, "fine");
+    const coarseView = buildStfSharpnessDiagnosticLogFromDerived(fine, zero, coarse, 2, 0.25, "coarse");
+    const ratioView = buildStfSharpnessDiagnosticLogFromDerived(fine, zero, coarse, 2, 0.25, "ratio");
+    expect(fineView[0]).toBeCloseTo(Math.log(6));
+    expect(Number.isNaN(fineView[1])).toBe(true);
+    expect(coarseView[0]).toBeCloseTo(Math.log(Math.sqrt(6)));
+    expect(coarseView[1]).toBeCloseTo(Math.log(Math.sqrt(20)));
+    expect(Array.from(ratioView, (v) => Number.isNaN(v) ? "NaN" : v)).toEqual(
+      Array.from(buildStfLogRatioFromDerived(fine, zero, coarse, 2, 0.25),
+        (v) => Number.isNaN(v) ? "NaN" : v),
+    );
+    expect(() => buildStfSharpnessDiagnosticLogFromDerived(fine, zero, coarse, 2, 0.25, "invalid" as never)).toThrow();
+    const normalized = fineView.slice();
+    normalizeStfLogRatioBufferInPlace(normalized);
+    expect(normalized[1]).toBe(0);
+    expect(normalized[0]).toBeGreaterThanOrEqual(0);
+    expect(normalized[0]).toBeLessThanOrEqual(1);
   });
   test("P3/P97 normalization happens once on log ratio, including stable flat fallback", () => {
     const log = Float32Array.from(Array.from({ length: 101 }, (_, i) => i / 10));

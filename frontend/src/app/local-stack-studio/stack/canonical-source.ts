@@ -171,9 +171,6 @@ export type CanonicalInputInfo = {
   exposureTime?: number | null;
   iso?: number | null;
   exposureScalar?: number | null;
-  focalLength35mm?: number | null;
-  focalLength?: number | null;
-  sensorDiagonalMm?: number | null;
 };
 
 export type CanonicalImageRecord = {
@@ -196,9 +193,6 @@ export type CanonicalImageRecord = {
   exposureTime: number | null;
   iso: number | null;
   exposureScalar: number | null;
-  focalLength35mm?: number | null;
-  focalLength?: number | null;
-  sensorDiagonalMm?: number | null;
   toneStatistics: StfToneStatistics;
   complete: boolean;
 };
@@ -394,9 +388,6 @@ export async function writeCanonicalLinearImage(
     exposureTime: Number.isFinite(inputInfo?.exposureTime) ? Number(inputInfo.exposureTime) : null,
     iso: Number.isFinite(inputInfo?.iso) ? Number(inputInfo.iso) : null,
     exposureScalar: Number.isFinite(inputInfo?.exposureScalar) ? Number(inputInfo.exposureScalar) : null,
-    focalLength35mm: Number.isFinite(inputInfo?.focalLength35mm) && Number(inputInfo.focalLength35mm) > 0 ? Number(inputInfo.focalLength35mm) : null,
-    focalLength: Number.isFinite(inputInfo?.focalLength) && Number(inputInfo.focalLength) > 0 ? Number(inputInfo.focalLength) : null,
-    sensorDiagonalMm: Number.isFinite(inputInfo?.sensorDiagonalMm) && Number(inputInfo.sensorDiagonalMm) > 0 ? Number(inputInfo.sensorDiagonalMm) : null,
     toneStatistics: computeCanonicalToneStatisticsFromLinearRgb(linear, width, height),
     complete: false,
   };
@@ -455,9 +446,6 @@ export async function writeCanonicalStoredImage(
     exposureTime: Number.isFinite(inputInfo?.exposureTime) ? Number(inputInfo.exposureTime) : null,
     iso: Number.isFinite(inputInfo?.iso) ? Number(inputInfo.iso) : null,
     exposureScalar: Number.isFinite(inputInfo?.exposureScalar) ? Number(inputInfo.exposureScalar) : null,
-    focalLength35mm: Number.isFinite(inputInfo?.focalLength35mm) && Number(inputInfo.focalLength35mm) > 0 ? Number(inputInfo.focalLength35mm) : null,
-    focalLength: Number.isFinite(inputInfo?.focalLength) && Number(inputInfo.focalLength) > 0 ? Number(inputInfo.focalLength) : null,
-    sensorDiagonalMm: Number.isFinite(inputInfo?.sensorDiagonalMm) && Number(inputInfo.sensorDiagonalMm) > 0 ? Number(inputInfo.sensorDiagonalMm) : null,
     toneStatistics: computeCanonicalToneStatisticsFromStoredRgb16(storedImage, width, height),
     complete: false,
   };
@@ -635,6 +623,55 @@ export async function materializeCanonicalStoredImage(session: CanonicalReadable
   return readCanonicalStoredRows(session, imageIndex, 0, meta.height);
 }
 
+// Only the LSS-owned stores are examined. A session record is written before
+// its image chunks, so an interrupted Process still leaves a dated owner record.
+// Do not update timestamps during processing: cleanup is triggered at Process
+// start and old caches are defined by creation time, not by activity tracking.
+export async function purgeExpiredCanonicalSessions(
+  cutoffAt: number,
+  protectedSessionId?: string,
+): Promise<number> {
+  const db = await openCanonicalSourceDb();
+  try {
+    return await new Promise<number>((resolve, reject) => {
+      let tx: IDBTransaction;
+      try {
+        tx = db.transaction([SESSION_STORE, IMAGE_STORE, CHUNK_STORE], "readwrite");
+      } catch (error) { reject(error); return; }
+      const sessions = tx.objectStore(SESSION_STORE);
+      const images = tx.objectStore(IMAGE_STORE);
+      const chunks = tx.objectStore(CHUNK_STORE);
+      let removed = 0;
+      const request = sessions.openCursor();
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) return;
+        const record = cursor.value as CanonicalSessionRecord;
+        const sessionId = record?.sessionId;
+        if (
+          typeof sessionId === "string" && cursor.primaryKey === sessionId
+          && sessionId !== protectedSessionId
+          && typeof record.createdAt === "number" && Number.isFinite(record.createdAt)
+          && record.createdAt <= cutoffAt
+        ) {
+          // Delete by indexed key range without reading any image/Blob values.
+          const range = IDBKeyRange.bound(`${sessionId}:`, `${sessionId}:\uffff`);
+          images.delete(range);
+          chunks.delete(range);
+          cursor.delete();
+          removed += 1;
+        }
+        cursor.continue();
+      };
+      tx.oncomplete = () => resolve(removed);
+      tx.onerror = () => reject(tx.error || new Error("Could not purge expired canonical input sessions."));
+      tx.onabort = () => reject(tx.error || new Error("Canonical input expiration cleanup was aborted."));
+    });
+  } finally {
+    db.close();
+  }
+}
+
 export async function deleteCanonicalSession(session: PreparedCanonicalSession | string, dbOverride?: IDBDatabase): Promise<void> {
   const sessionId = typeof session === "string" ? session : session.id;
   const db = dbOverride || (typeof session === "string" ? await openCanonicalSourceDb() : session.db);
@@ -642,17 +679,9 @@ export async function deleteCanonicalSession(session: PreparedCanonicalSession |
     let tx: IDBTransaction;
     try { tx = db.transaction([SESSION_STORE, IMAGE_STORE, CHUNK_STORE], "readwrite"); } catch (error) { reject(error); return; }
     tx.objectStore(SESSION_STORE).delete(sessionId);
-    for (const storeName of [IMAGE_STORE, CHUNK_STORE]) {
-      const store = tx.objectStore(storeName);
-      const req = store.openCursor();
-      req.onsuccess = () => {
-        const cursor = req.result;
-        if (!cursor) return;
-        const value = cursor.value as { sessionId?: string };
-        if (value?.sessionId === sessionId) cursor.delete();
-        cursor.continue();
-      };
-    }
+    const range = IDBKeyRange.bound(`${sessionId}:`, `${sessionId}:\uffff`);
+    tx.objectStore(IMAGE_STORE).delete(range);
+    tx.objectStore(CHUNK_STORE).delete(range);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error || new Error("Could not clear canonical input session."));
     tx.onabort = () => reject(tx.error || new Error("Canonical input cleanup was aborted."));

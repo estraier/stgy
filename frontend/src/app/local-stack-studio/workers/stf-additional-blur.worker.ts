@@ -2,7 +2,7 @@
 import { applyStfToneMatchInPlace, buildStfToneMatchLut, type StfToneMatchLut } from "../stack/stf-tone-match";
 import {
   STF_ADDITIONAL_BLUR_COARSE_REFERENCE_PIXELS, STF_ADDITIONAL_BLUR_FINE_REFERENCE_PIXELS,
-  applyGuardedGaussianBlurRegion, applyStfGateExpansion, buildStfLogRatioFromDerived,
+  applyGuardedGaussianBlurRegion, applyStfGateExpansion, buildStfSharpnessDiagnosticLogFromDerived,
   buildStfApertureGroups, buildStfRelativeSharpnessMapAtScaleInto,
   type StfRelativeChannelFloors, validateStfRelativeChannelFloors,
   createStfSharpnessScratch, resolveStfSharpnessHalo, resolveStfSharpnessScale,
@@ -107,7 +107,8 @@ workerScope.onmessage = async (event: MessageEvent<StfAdditionalBlurWorkerReques
       if (fineLogSum.length !== pixelCount || fineZero.length !== pixelCount || coarseGroups.length !== pixelCount * groupCount) {
         throw new Error("STF ratio Worker buffers are invalid.");
       }
-      const logRatio = buildStfLogRatioFromDerived(fineLogSum, fineZero, coarseGroups, groupCount, epsilon);
+      const logRatio = buildStfSharpnessDiagnosticLogFromDerived(
+        fineLogSum, fineZero, coarseGroups, groupCount, epsilon, message.visualization ?? "ratio");
       post({ type: "ratio-stripe-result", requestId, logRatioBuffer: logRatio.buffer as ArrayBuffer },
         [logRatio.buffer as ArrayBuffer]);
       return;

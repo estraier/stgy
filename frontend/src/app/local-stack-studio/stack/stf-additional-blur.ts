@@ -315,6 +315,41 @@ export function buildStfLogRatioFromDerived(
   return output;
 }
 
+/**
+ * Diagnostic display before P3/P97 normalization and Volume Closing.
+ * Each map is the geometric mean of the per-aperture-group sharpness maps;
+ * the ratio mode remains identical to the production log-ratio calculation.
+ */
+export function buildStfSharpnessDiagnosticLogFromDerived(
+  fineLogSum: Float32Array, fineZero: Uint8Array, coarseGroups: Float32Array,
+  groupCount: number, epsilon: number, visualization: "fine" | "coarse" | "ratio",
+): Float32Array {
+  if (visualization === "ratio") {
+    return buildStfLogRatioFromDerived(fineLogSum, fineZero, coarseGroups, groupCount, epsilon);
+  }
+  const pixelCount = fineLogSum.length;
+  if ((visualization !== "fine" && visualization !== "coarse") ||
+      fineZero.length !== pixelCount || coarseGroups.length !== pixelCount * groupCount ||
+      !Number.isInteger(groupCount) || groupCount < 2) {
+    throw new Error("STF diagnostic sharpness parameters are invalid.");
+  }
+  const output = new Float32Array(pixelCount);
+  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    if (visualization === "fine") {
+      output[pixel] = fineZero[pixel] ? Number.NaN : fineLogSum[pixel] / groupCount;
+    } else {
+      let logSum = 0;
+      for (let group = 0; group < groupCount; group += 1) {
+        const value = coarseGroups[group * pixelCount + pixel];
+        if (!Number.isFinite(value) || value < 0) throw new Error("STF coarse sharpness is invalid.");
+        logSum += Math.log(Math.max(LOG_FLOOR, value));
+      }
+      output[pixel] = logSum / groupCount;
+    }
+  }
+  return output;
+}
+
 /** Determine the adaptive quantiles and steepness from unit-interval samples. */
 export function buildStfSigmoidPlan(unitSamples: ArrayLike<number>, blurRatio: number): StfSigmoidPlan {
   const safeBokeh = Math.max(0.1, Math.min(0.9, Number.isFinite(blurRatio) ? blurRatio : 0.5));
