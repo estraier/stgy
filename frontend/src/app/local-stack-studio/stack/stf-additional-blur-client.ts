@@ -20,7 +20,7 @@ export type StfAdditionalBlurAnalyzeResult = {
 };
 export type StfAdditionalBlurRatioRequest = {
   fineLogSum: Float32Array; fineZero: Uint8Array; coarseGroups: Float32Array;
-  groupCount: number; epsilon: number; visualization?: "fine" | "coarse" | "ratio";
+  groupCount: number; epsilon: number; visualization?: "fine" | "coarse" | "ratio" | "ratio-v2" | "ratio-x1.2" | "ratio-x1.4" | "ratio-x1.5" | "ratio-x1.6" | "ratio-x2.0";
 };
 export type StfAdditionalBlurExpandGateRequest = {
   regionHeight: number; coreOffsetY: number; coreHeight: number; radius: number; gate: Float32Array;

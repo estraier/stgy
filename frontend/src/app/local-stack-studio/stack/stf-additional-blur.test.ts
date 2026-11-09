@@ -1,11 +1,17 @@
 import {
   buildStfApertureGroups, sameStfFNumber,
   deriveStfRelativeChannelFloorsFromSamples, deriveStfMedianSharpnessC,
-  deriveStfRatioEpsilon, buildStfLogRatioFromDerived, buildStfSharpnessDiagnosticLogFromDerived, normalizeStfLogRatioBufferInPlace,
+  deriveStfRatioEpsilon, STF_SHARPNESS_RATIO_P50_DIVISOR, STF_SHARPNESS_RATIO_V2_P50_DIVISOR,
+  STF_SHARPNESS_RATIO_X12, STF_SHARPNESS_RATIO_X13, STF_SHARPNESS_RATIO_X14, STF_SHARPNESS_RATIO_X15,
+  STF_SHARPNESS_RATIO_X16, STF_SHARPNESS_RATIO_X20,
+  buildStfLogRatioFromDerived, buildStfSharpnessDiagnosticLogFromDerived, normalizeStfLogRatioBufferInPlace,
+  buildStfDilatedLogRatioInto,
   normalizeStfLogRatioValue, buildStfLogRatioNormalizationPlan,
   buildStfSigmoidPlan, applyStfSigmoidGateInPlace,
   resolveStfAdditionalBlurRadius, applyStfGateExpansion, applyGuardedGaussianBlurRegion,
   buildStfRelativeSharpnessMapAtScaleInto, createStfSharpnessScratch,
+  buildStfFineGeometricMeanFromDerived, buildStfCoarseGeometricMeanFromDerived,
+  dilateStfSharpnessAbovePercentile, resolveStfDilatedFineRadius,
 } from "./stf-additional-blur";
 
 describe("STF production sharpness and protection gate", () => {
@@ -40,7 +46,10 @@ describe("STF production sharpness and protection gate", () => {
   });
   test("coarse P50/64 epsilon and grouped geometric log-ratios", () => {
     expect(deriveStfMedianSharpnessC([1, 4, 2, 3])).toBeCloseTo(2.5);
+    expect(STF_SHARPNESS_RATIO_P50_DIVISOR).toBe(64);
+    expect(STF_SHARPNESS_RATIO_V2_P50_DIVISOR).toBe(32);
     expect(deriveStfRatioEpsilon(2.5)).toBeCloseTo(2.5 / 64);
+    expect(deriveStfRatioEpsilon(2.5, STF_SHARPNESS_RATIO_V2_P50_DIVISOR)).toBeCloseTo(2.5 / 32);
     const fine = Float32Array.from([Math.log(4) + Math.log(9), Math.log(4) + Math.log(9)]);
     const zeros = Uint8Array.from([0, 1]);
     const coarse = Float32Array.from([2, 2, 3, 3]);
@@ -56,6 +65,12 @@ describe("STF production sharpness and protection gate", () => {
     const fineView = buildStfSharpnessDiagnosticLogFromDerived(fine, zero, coarse, 2, 0.25, "fine");
     const coarseView = buildStfSharpnessDiagnosticLogFromDerived(fine, zero, coarse, 2, 0.25, "coarse");
     const ratioView = buildStfSharpnessDiagnosticLogFromDerived(fine, zero, coarse, 2, 0.25, "ratio");
+    const ratioViewV2 = buildStfSharpnessDiagnosticLogFromDerived(fine, zero, coarse, 2, 0.5, "ratio-v2");
+    const ratioViewX12 = buildStfSharpnessDiagnosticLogFromDerived(fine, zero, coarse, 2, 0.5, "ratio-x1.2");
+    const ratioViewX14 = buildStfSharpnessDiagnosticLogFromDerived(fine, zero, coarse, 2, 0.5, "ratio-x1.4");
+    const ratioViewX15 = buildStfSharpnessDiagnosticLogFromDerived(fine, zero, coarse, 2, 0.5, "ratio-x1.5");
+    const ratioViewX16 = buildStfSharpnessDiagnosticLogFromDerived(fine, zero, coarse, 2, 0.5, "ratio-x1.6");
+    const ratioViewX20 = buildStfSharpnessDiagnosticLogFromDerived(fine, zero, coarse, 2, 0.5, "ratio-x2.0");
     expect(fineView[0]).toBeCloseTo(Math.log(6));
     expect(Number.isNaN(fineView[1])).toBe(true);
     expect(coarseView[0]).toBeCloseTo(Math.log(Math.sqrt(6)));
@@ -64,6 +79,35 @@ describe("STF production sharpness and protection gate", () => {
       Array.from(buildStfLogRatioFromDerived(fine, zero, coarse, 2, 0.25),
         (v) => Number.isNaN(v) ? "NaN" : v),
     );
+    expect(Array.from(ratioViewV2, (v) => Number.isNaN(v) ? "NaN" : v)).toEqual(
+      Array.from(buildStfLogRatioFromDerived(fine, zero, coarse, 2, 0.5),
+        (v) => Number.isNaN(v) ? "NaN" : v),
+    );
+    expect(Array.from(ratioViewX12, (v) => Number.isNaN(v) ? "NaN" : v)).toEqual(
+      Array.from(buildStfLogRatioFromDerived(fine, zero, coarse, 2, 0.5, STF_SHARPNESS_RATIO_X12),
+        (v) => Number.isNaN(v) ? "NaN" : v),
+    );
+    expect(Array.from(ratioViewX14, (v) => Number.isNaN(v) ? "NaN" : v)).toEqual(
+      Array.from(buildStfLogRatioFromDerived(fine, zero, coarse, 2, 0.5, STF_SHARPNESS_RATIO_X14),
+        (v) => Number.isNaN(v) ? "NaN" : v),
+    );
+    expect(Array.from(ratioViewX15, (v) => Number.isNaN(v) ? "NaN" : v)).toEqual(
+      Array.from(buildStfLogRatioFromDerived(fine, zero, coarse, 2, 0.5, STF_SHARPNESS_RATIO_X15),
+        (v) => Number.isNaN(v) ? "NaN" : v),
+    );
+    expect(Array.from(ratioViewX16, (v) => Number.isNaN(v) ? "NaN" : v)).toEqual(
+      Array.from(buildStfLogRatioFromDerived(fine, zero, coarse, 2, 0.5, STF_SHARPNESS_RATIO_X16),
+        (v) => Number.isNaN(v) ? "NaN" : v),
+    );
+    expect(Array.from(ratioViewX20, (v) => Number.isNaN(v) ? "NaN" : v)).toEqual(
+      Array.from(buildStfLogRatioFromDerived(fine, zero, coarse, 2, 0.5, STF_SHARPNESS_RATIO_X20),
+        (v) => Number.isNaN(v) ? "NaN" : v),
+    );
+    expect(ratioViewX14[0]).toBeCloseTo(1.4 * Math.log(6) - Math.log(Math.sqrt((2 + 0.5) * (3 + 0.5))));
+    expect(ratioViewX16[0]).toBeCloseTo(1.6 * Math.log(6) - Math.log(Math.sqrt((2 + 0.5) * (3 + 0.5))));
+    expect(ratioViewX16[0]).toBeGreaterThan(ratioViewX14[0]);
+    expect(Number.isNaN(ratioViewX14[1])).toBe(true);
+    expect(Number.isNaN(ratioViewX16[1])).toBe(true);
     expect(() => buildStfSharpnessDiagnosticLogFromDerived(fine, zero, coarse, 2, 0.25, "invalid" as never)).toThrow();
     const normalized = fineView.slice();
     normalizeStfLogRatioBufferInPlace(normalized);
@@ -71,6 +115,29 @@ describe("STF production sharpness and protection gate", () => {
     expect(normalized[0]).toBeGreaterThanOrEqual(0);
     expect(normalized[0]).toBeLessThanOrEqual(1);
   });
+  test("dilated x1.3 uses the same D and R maps as x1.5 but changes only exponent", () => {
+    const fine = Float32Array.from([4, 8, 2, 1]);
+    const rough = Float32Array.from([2, 1, 1, 1]);
+    const epsilon = deriveStfRatioEpsilon(16, STF_SHARPNESS_RATIO_V2_P50_DIVISOR);
+    expect(epsilon).toBe(0.5);
+    expect(STF_SHARPNESS_RATIO_X13).toBe(1.3);
+    const outV2 = new Float32Array(fine.length);
+    const outV3 = new Float32Array(fine.length);
+    buildStfDilatedLogRatioInto(fine, rough, epsilon, STF_SHARPNESS_RATIO_X15, outV2);
+    buildStfDilatedLogRatioInto(fine, rough, epsilon, STF_SHARPNESS_RATIO_X13, outV3);
+    for (let i = 0; i < fine.length; i += 1) {
+      expect(outV3[i]).toBeCloseTo(1.3 * Math.log(fine[i]) - Math.log(rough[i] + epsilon), 5);
+      expect(outV2[i]).toBeCloseTo(1.5 * Math.log(fine[i]) - Math.log(rough[i] + epsilon), 5);
+      expect(outV3[i] - outV2[i]).toBeCloseTo((1.3 - 1.5) * Math.log(fine[i]), 5);
+    }
+    const zeroMap = Float32Array.from([0, 1]);
+    const zeroOut = new Float32Array(2);
+    buildStfDilatedLogRatioInto(zeroMap, Float32Array.from([0, 0]), epsilon, 1.3, zeroOut);
+    expect(Number.isNaN(zeroOut[0])).toBe(true);
+    expect(zeroOut[1]).toBeCloseTo(-Math.log(epsilon), 5);
+    expect(() => buildStfDilatedLogRatioInto(fine, rough, epsilon, 0, outV3)).toThrow();
+  });
+
   test("P3/P97 normalization happens once on log ratio, including stable flat fallback", () => {
     const log = Float32Array.from(Array.from({ length: 101 }, (_, i) => i / 10));
     log[0] = NaN;
@@ -274,3 +341,15 @@ describe("STF worker-parallel gate expansion stripe boundaries", () => {
     }
   });
 });
+
+  test("builds dilated fine sharpness map from P80 seeds", () => {
+    const fineLog = new Float32Array([Math.log(1), Math.log(8), Math.log(2), Math.log(1)]);
+    const fineZero = new Uint8Array(4);
+    const coarse = new Float32Array([1, 2, 1, 1, 1, 2, 1, 1]);
+    expect(Array.from(buildStfFineGeometricMeanFromDerived(fineLog, fineZero, 2))).toHaveLength(4);
+    expect(Array.from(buildStfCoarseGeometricMeanFromDerived(coarse, 2))).toEqual([1, 2, 1, 1]);
+    const dilated = dilateStfSharpnessAbovePercentile(new Float32Array([1, 8, 2, 1]), 2, 2, 0.8, 1);
+    expect(Array.from(dilated)).toEqual([8, 8, 8, 8]);
+    expect(resolveStfDilatedFineRadius(5184, 3888)).toBe(5);
+  });
+

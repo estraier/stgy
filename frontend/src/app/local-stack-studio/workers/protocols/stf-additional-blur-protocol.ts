@@ -1,5 +1,5 @@
 /** STF production additional-blur Worker protocol. */
-export const STF_ADDITIONAL_BLUR_PROTOCOL_VERSION = "stf-sharpness-diagnostics-20261109";
+export const STF_ADDITIONAL_BLUR_PROTOCOL_VERSION = "stf-sharpness-diagnostics-20261109c";
 
 export type StfAdditionalBlurWorkerAlignmentPlan = {
   normalizationMode: "feature-match" | "center-crop" | "center-fit" | "center-fill" | "top-left-fill";
@@ -23,7 +23,7 @@ export type StfAdditionalBlurWorkerRequest =
   | { type: "configure-relative-floors"; requestId: number; floors: [number, number, number] }
   | { type: "analyze-stripe"; requestId: number; y: number; height: number; includeSource: boolean }
   | { type: "ratio-stripe"; requestId: number; pixelCount: number; groupCount: number; epsilon: number;
-      visualization?: "fine" | "coarse" | "ratio";
+      visualization?: "fine" | "coarse" | "ratio" | "ratio-v2" | "ratio-x1.2" | "ratio-x1.4" | "ratio-x1.5" | "ratio-x1.6" | "ratio-x2.0";
       fineLogSumBuffer: ArrayBuffer; fineZeroBuffer: ArrayBuffer; coarseGroupsBuffer: ArrayBuffer }
   | { type: "volume-close"; requestId: number; width: number; height: number; unitRatioBuffer: ArrayBuffer }
   | { type: "graph-cut"; requestId: number; width: number; height: number; blurRatio: number; confidenceBuffer: ArrayBuffer }

@@ -345,7 +345,7 @@ function captureProcessingSettings(selectedMode: string): StackInfoSetting[] {
   } else if (selectedMode === "stf") {
     settings.push({ label: "Blend weight", value: String(selectedStfBlendWeight()) });
     settings.push({ label: "Additional blur", value: stfBlurStrength.value });
-    if (!["none", "sharpness-16mp", "sharpness-0.5mp", "ratio-16mp-0.5mp"].includes(stfBlurStrength.value)) {
+    if (!["none", "exp-sharpness-16mp", "exp-sharpness-16mp-dilated", "exp-sharpness-0.5mp", "exp-ratio-dilated-x1.0", "exp-ratio-dilated-x1.3"].includes(stfBlurStrength.value)) {
       settings.push({ label: "Blur ratio", value: `${Math.round(Number(stfBlurRatio.value) * 100)}%` });
       settings.push({ label: "Area guard", value: stfBlurAreaGuard.value });
       settings.push({ label: "Blur sigmoid", value: `${stfBlurSigmoid.value}%` });
@@ -462,7 +462,7 @@ function updateMergeOptionsVisibility() {
 
 function updateStfBlurOptionsVisibility() {
   // Sharpness diagnostic images do not use blur ratio, area guard, or sigmoid.
-  const active = mergeMode.value === "stf" && !["none", "sharpness-16mp", "sharpness-0.5mp", "ratio-16mp-0.5mp"].includes(stfBlurStrength.value);
+  const active = mergeMode.value === "stf" && !["none", "exp-sharpness-16mp", "exp-sharpness-16mp-dilated", "exp-sharpness-0.5mp", "exp-ratio-dilated-x1.0", "exp-ratio-dilated-x1.3"].includes(stfBlurStrength.value);
   for (const element of [stfBlurRatioOption, stfBlurAreaGuardOption, stfBlurSigmoidOption]) {
     element.classList.toggle("hidden", !active);
     element.classList.toggle("flex", active);
@@ -3168,7 +3168,8 @@ async function mergeStfWithAdditionalBlur(
     import("./stf-derived-staging"),
   ]);
   algorithm.buildStfApertureGroups(fNumbers);
-  const sourceKey = stfGateSourceKey(sessionId, alignmentPlan, matrices, inputInfos, mergePlan, width, height);
+  const sourceKey = stfGateSourceKey(sessionId, alignmentPlan, matrices, inputInfos, mergePlan, width, height) +
+    (plan.useDilatedRatio ? `:dilated-x${plan.dilatedRatioExponent}-p80-half-radius-v1` : "");
   if (!stfGateCache || stfGateCache.key !== sourceKey) {
     resetStfGateCache();
     stfGateCache = { key: sourceKey, ratio: null, source: null, mask: null, maskRatio: null,
@@ -3261,12 +3262,65 @@ async function mergeStfWithAdditionalBlur(
       });
       const coarseP50 = algorithm.deriveStfMedianSharpnessC(sharpnessSamples);
       const epsilon = algorithm.deriveStfRatioEpsilon(coarseP50);
+      const usesP50Over32RatioFloor = sharpnessVisualization === "ratio-dilated-x1.0" ||
+        sharpnessVisualization === "ratio-dilated-x1.3" ||
+        sharpnessVisualization === "after-volume-closing" ||
+        sharpnessVisualization === "after-graph-cut-boost" ||
+        sharpnessVisualization === "after-sigmoid" || plan.useDilatedRatio;
+      const diagnosticEpsilon = usesP50Over32RatioFloor
+        ? algorithm.deriveStfRatioEpsilon(coarseP50, algorithm.STF_SHARPNESS_RATIO_V2_P50_DIVISOR)
+        : epsilon;
+      const dilatedVisualization = sharpnessVisualization === "fine-dilated" ||
+        sharpnessVisualization === "ratio-dilated-x1.0" ||
+        sharpnessVisualization === "ratio-dilated-x1.3" ||
+        sharpnessVisualization === "after-volume-closing" ||
+        sharpnessVisualization === "after-graph-cut-boost" ||
+        sharpnessVisualization === "after-sigmoid";
+      const usesDilatedFineRatio = dilatedVisualization || plan.useDilatedRatio;
       let unitRatio = new Float32Array(width * height);
-      setProgress(`STF generating ${sharpnessVisualization === null ? "log-ratios" : "sharpness visualization"} 0/${jobs.length}...`);
-      await p.runRatioJobs(jobs,
+      if (usesDilatedFineRatio) {
+        const fineMap = new Float32Array(width * height);
+        const coarseMap = new Float32Array(width * height);
+        setProgress(`STF generating dilated sharpness ratio 0/${jobs.length}...`);
+        for (let completed = 0; completed < jobs.length; completed += 1) {
+          const job = jobs[completed];
+          const resident = derivedStaging.take(job.index);
+          let fineLogSum: Float32Array;
+          let fineZero: Uint8Array;
+          let coarseGroups: Float32Array;
+          if (resident) {
+            fineLogSum = resident.fineLogSum;
+            fineZero = resident.fineZero;
+            coarseGroups = resident.coarseGroups;
+          } else {
+            const db = await ensureScratchDb();
+            const keys = stfAdditionalBlurScratchKeys(scratchSessionId, job.index);
+            const [fineLogSumBuffer, fineZeroBuffer, coarseGroupsBuffer] = await getStfAdditionalBlurScratchBuffers(
+              db, [keys.fineLogSum, keys.fineZero, keys.coarseGroups], `STF Additional blur stripe ${job.index + 1}`);
+            fineLogSum = new Float32Array(fineLogSumBuffer);
+            fineZero = new Uint8Array(fineZeroBuffer);
+            coarseGroups = new Float32Array(coarseGroupsBuffer);
+          }
+          fineMap.set(algorithm.buildStfFineGeometricMeanFromDerived(fineLogSum, fineZero, groupCount), job.y * width);
+          coarseMap.set(algorithm.buildStfCoarseGeometricMeanFromDerived(coarseGroups, groupCount), job.y * width);
+          setProgress(`STF generating dilated sharpness ratio ${completed + 1}/${jobs.length}...`);
+        }
+        const dilatedFine = algorithm.dilateStfSharpnessAbovePercentile(
+          fineMap, width, height, algorithm.STF_SHARPNESS_DILATED_PERCENTILE,
+          algorithm.resolveStfDilatedFineRadius(width, height));
+        if (sharpnessVisualization === "fine-dilated") {
+          for (let i = 0; i < unitRatio.length; i += 1) unitRatio[i] = dilatedFine[i] > 0 ? Math.log(dilatedFine[i]) : Number.NaN;
+        } else {
+          const exponent = plan.dilatedRatioExponent ?? 1;
+          algorithm.buildStfDilatedLogRatioInto(dilatedFine, coarseMap, diagnosticEpsilon, exponent, unitRatio);
+        }
+      } else {
+        const stripeVisualization = (sharpnessVisualization ?? "ratio") as "fine" | "coarse" | "ratio";
+        setProgress(`STF generating ${sharpnessVisualization === null ? "log-ratios" : "sharpness visualization"} 0/${jobs.length}...`);
+        await p.runRatioJobs(jobs,
         async (job) => {
           const resident = derivedStaging.take(job.index);
-          if (resident) return { ...resident, groupCount, epsilon, visualization: sharpnessVisualization ?? "ratio" };
+          if (resident) return { ...resident, groupCount, epsilon: usesP50Over32RatioFloor ? diagnosticEpsilon : epsilon, visualization: stripeVisualization };
           const db = await ensureScratchDb();
           const keys = stfAdditionalBlurScratchKeys(scratchSessionId, job.index);
           const [fineLogSumBuffer, fineZeroBuffer, coarseGroupsBuffer] = await getStfAdditionalBlurScratchBuffers(
@@ -3274,19 +3328,24 @@ async function mergeStfWithAdditionalBlur(
             `STF Additional blur stripe ${job.index + 1}`);
           return { fineLogSum: new Float32Array(fineLogSumBuffer),
             fineZero: new Uint8Array(fineZeroBuffer), coarseGroups: new Float32Array(coarseGroupsBuffer),
-            groupCount, epsilon, visualization: sharpnessVisualization ?? "ratio" };
+            groupCount, epsilon: usesP50Over32RatioFloor ? diagnosticEpsilon : epsilon,
+            visualization: stripeVisualization };
         },
         (job, result, completed, total) => {
           if (result.length !== width * job.height) throw new Error("STF log-ratio stripe has invalid size.");
           unitRatio.set(result, job.y * width);
           setProgress(`STF generating ${sharpnessVisualization === null ? "log-ratios" : "sharpness visualization"} ${completed}/${total}...`);
         });
+      }
       // This is the only P3/P97 normalization; after this point all steps
       // take the same [0,1] scale, including Volume Closing 2.
       algorithm.normalizeStfLogRatioBufferInPlace(unitRatio);
-      if (sharpnessVisualization !== null) {
-        // Show the raw Sobel-derived log sharpness or log ratio, scaled P3/P97
-        // for display only.  No Volume Closing, Graph Cut, sigmoid or dilation.
+      const rawVisualization = sharpnessVisualization === "fine" || sharpnessVisualization === "fine-dilated" ||
+        sharpnessVisualization === "coarse" || sharpnessVisualization === "ratio-dilated-x1.0" ||
+        sharpnessVisualization === "ratio-dilated-x1.3";
+      if (rawVisualization) {
+        // Show the diagnostic sharpness or raw log-ratio map, scaled P3/P97
+        // for display only. No Volume Closing, Graph Cut, or sigmoid.
         infoTrace?.add("STF sharpness visualization", performance.now() - sharpnessStartedAt, "Merge");
         return finalizeStfBasicGate(unitRatio, width, height, outputColorSpace);
       }
@@ -3294,6 +3353,10 @@ async function mergeStfWithAdditionalBlur(
       const closed = await p.volumeClose(unitRatio, width, height);
       unitRatio = closed.values;
       activeRatio = unitRatio;
+      if (sharpnessVisualization === "after-volume-closing") {
+        infoTrace?.add("STF sharpness visualization", performance.now() - sharpnessStartedAt, "Merge");
+        return finalizeStfBasicGate(unitRatio, width, height, outputColorSpace);
+      }
       // Store large full-resolution buffers only within the cache budget;
       // oversized maps remain local to this Process and are released after it.
       if (canCacheStfBuffer(cache, unitRatio)) cache.ratio = unitRatio;
@@ -3308,9 +3371,9 @@ async function mergeStfWithAdditionalBlur(
     if (!ratio || ratio.length !== width * height) throw new Error("STF base sharpness gate is missing.");
     const effectiveRatio = plan.effectiveRatio;
     const baseKey = JSON.stringify([effectiveRatio, plan.areaExponent, plan.sigmoid]);
-    let base = cache.baseKey === baseKey ? cache.base : null;
+    let base = sharpnessVisualization === null && cache.baseKey === baseKey ? cache.base : null;
     if (!base) {
-      let gated = ratio;
+      let gatedAfterGraphCut = ratio;
       if (plan.areaExponent !== null) {
         if (!cache.mask || cache.maskRatio !== effectiveRatio) {
           const p = await ensurePool();
@@ -3320,12 +3383,21 @@ async function mergeStfWithAdditionalBlur(
           cache.maskInfo = graph.info;
           cache.maskRatio = effectiveRatio;
         }
-        gated = graphCutModule.applyStfGraphCutBoost(ratio, width, height,
+        gatedAfterGraphCut = graphCutModule.applyStfGraphCutBoost(ratio, width, height,
           cache.mask, cache.maskInfo.workingWidth, cache.maskInfo.workingHeight, plan.areaExponent);
       }
+      if (sharpnessVisualization === "after-graph-cut-boost") {
+        infoTrace?.add("STF sharpness visualization", performance.now() - sharpnessStartedAt, "Merge");
+        return finalizeStfBasicGate(gatedAfterGraphCut, width, height, outputColorSpace);
+      }
+      let gated = gatedAfterGraphCut;
       if (plan.sigmoid !== 0) {
-        if (gated === ratio) gated = ratio.slice();
+        if (gated === ratio || gated === gatedAfterGraphCut) gated = gated.slice();
         algorithm.applyStfSigmoidGateInPlace(gated, width, height, effectiveRatio, plan.sigmoid);
+      }
+      if (sharpnessVisualization === "after-sigmoid") {
+        infoTrace?.add("STF sharpness visualization", performance.now() - sharpnessStartedAt, "Merge");
+        return finalizeStfBasicGate(gated, width, height, outputColorSpace);
       }
       base = gated;
       // Cache always prioritizes RatioAnalysis and the latest BaseGate.
