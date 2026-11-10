@@ -1287,6 +1287,17 @@ function buildTrackJsonActivityMetadata(
     copyOptionalNumber(src, metadata, "netMovingDistanceM");
     copyOptionalNumber(src, metadata, "ascentM");
     copyOptionalNumber(src, metadata, "descentM");
+    const correction = getRecordProperty(src, "altitudeCorrection");
+    if (correction?.method === "terrain-drift-v1" &&
+      typeof correction.source === "string" && correction.source.length > 0 &&
+      isFiniteNumber(correction.anchorsUsed) && correction.anchorsUsed >= 1 &&
+      Number.isInteger(correction.anchorsUsed) &&
+      (correction.status === "corrected" || correction.status === "partial")) {
+      metadata.altitudeCorrection = {
+        method: "terrain-drift-v1", source: correction.source,
+        anchorsUsed: correction.anchorsUsed, status: correction.status,
+      };
+    }
 
     const recordingDevice = getRecordProperty(src, "recordingDevice");
     if (recordingDevice) {
@@ -1879,6 +1890,9 @@ function buildTrackJsonMetadata(
   );
   assignMetadataNumber(output, "ascentM", metadata.ascentM, precision.metadata);
   assignMetadataNumber(output, "descentM", metadata.descentM, precision.metadata);
+  if (metadata.altitudeCorrection) {
+    output.altitudeCorrection = { ...metadata.altitudeCorrection };
+  }
 
   const analysis = buildTrackJsonAnalysis(metadata.analysis);
   if (analysis) {

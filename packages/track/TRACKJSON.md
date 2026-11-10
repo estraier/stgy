@@ -326,6 +326,31 @@ TrackJSON metadata is stored in `Feature.properties.metadata`.
 }
 ```
 
+When the optional `altitudeCorrection` metadata is present, the activity's
+altitudes were adjusted using external terrain elevations. For example:
+
+```json
+"altitudeCorrection": {
+  "method": "terrain-drift-v1",
+  "source": "gsi-dem",
+  "anchorsUsed": 5,
+  "status": "corrected"
+}
+```
+
+The default `source` field is `gsi-mapzen`: GSI is preferred in Japan, with
+Mapzen Terrarium as fallback when a GSI reference is unavailable or unreliable.
+Outside Japan, Mapzen is used directly. The actual dataset for each reference
+(e.g. `DEM10B`, `DEM5A`, or `Mapzen Terrarium`) is recorded in the correction
+report. GSI and Mapzen tiles are cached for 24 hours in separate URL namespaces
+with independent retention limits. See the [terrain data attributions](https://github.com/tilezen/joerd/blob/master/docs/attribution.md)
+for Mapzen's underlying elevation datasets.
+
+The field is retained across TrackJSON and STGY-extended GPX round-trips.
+FIT Record altitudes contain the adjusted values, but FIT does not preserve
+this optional correction history. Missing history does not imply that the
+altitudes are uncorrected.
+
 Common metadata fields:
 
 | Field | Type | Description |

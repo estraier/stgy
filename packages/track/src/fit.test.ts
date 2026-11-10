@@ -2176,6 +2176,8 @@ describe("trackActivityToTrackJson", () => {
       totalElapsedTime: 3901,
       totalTimerTime: 3601,
       totalDistanceM: 12345.7,
+      netMovingTime: 1,
+      netMovingDistanceM: 10.2,
       ascentM: 456.8,
       descentM: 432.1,
       recordingDevice: {

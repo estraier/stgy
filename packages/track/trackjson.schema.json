@@ -331,6 +331,17 @@
         "totalTimerTime": {
           "type": "number"
         },
+        "altitudeCorrection": {
+          "type": "object",
+          "required": ["method", "source", "anchorsUsed", "status"],
+          "properties": {
+            "method": { "const": "terrain-drift-v1" },
+            "source": { "type": "string", "minLength": 1 },
+            "anchorsUsed": { "type": "integer", "minimum": 1 },
+            "status": { "enum": ["corrected", "partial"] }
+          },
+          "additionalProperties": false
+        },
         "netMovingTime": {
           "type": "number",
           "minimum": 0

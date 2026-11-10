@@ -19,6 +19,21 @@
       "require": "./dist/activity.js",
       "default": "./dist/activity.js"
     },
+    "./altitude-correction": {
+      "types": "./dist/altitude-correction.d.ts",
+      "require": "./dist/altitude-correction.js",
+      "default": "./dist/altitude-correction.js"
+    },
+    "./elevation-mapzen": {
+      "types": "./dist/elevation-mapzen.d.ts",
+      "require": "./dist/elevation-mapzen.js",
+      "default": "./dist/elevation-mapzen.js"
+    },
+    "./elevation-gsi": {
+      "types": "./dist/elevation-gsi.d.ts",
+      "require": "./dist/elevation-gsi.js",
+      "default": "./dist/elevation-gsi.js"
+    },
     "./analysis": {
       "types": "./dist/analysis.d.ts",
       "require": "./dist/analysis.js",

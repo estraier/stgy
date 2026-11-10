@@ -87,6 +87,7 @@ export type TrackActivityMetadata = {
   netMovingDistanceM?: number;
   ascentM?: number;
   descentM?: number;
+  altitudeCorrection?: TrackAltitudeCorrectionMetadata;
   analysis?: TrackActivityAnalysisMetadata;
   statistics?: TrackActivityStatistics;
   training?: TrackActivityTraining;
@@ -94,6 +95,13 @@ export type TrackActivityMetadata = {
   histograms?: TrackActivityHistograms;
   pedaling?: TrackActivityPedaling;
   pedalingDynamics?: TrackActivityPedalingDynamics;
+};
+
+export type TrackAltitudeCorrectionMetadata = {
+  method: 'terrain-drift-v1';
+  source: string;
+  anchorsUsed: number;
+  status: 'corrected' | 'partial';
 };
 
 export type TrackActivityAnalysisMetadata = {

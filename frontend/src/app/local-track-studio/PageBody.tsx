@@ -27,6 +27,8 @@ import {
   trackJsonDataToTrackActivity,
 } from "stgy-track/fit";
 import { trimTrackActivity } from "stgy-track/activity";
+import { correctTrackActivityAltitudes } from "stgy-track/altitude-correction";
+import type { AltitudeCorrectionResult, AltitudeCorrectionProgress } from "stgy-track/altitude-correction";
 import type { TrackActivity, TrackPoint } from "stgy-track/activity";
 import {
   buildScatterPlotPoints,
@@ -87,6 +89,7 @@ type ConvertOptions = {
   trimStartSeconds: number;
   trimEndSeconds: number;
   obfuscatePrivacy: boolean;
+  correctAltitudes: boolean;
   privacyStartDistanceM: number;
   privacyEndDistanceM: number;
 };
@@ -102,6 +105,7 @@ type TrackResult = {
   renderedPointCount: number;
   sourceLabel: string;
   fitBytes: Uint8Array;
+  altitudeCorrection?: AltitudeCorrectionResult;
 };
 
 type ObjectUrlSet = {
@@ -146,6 +150,7 @@ export default function LocalTrackStudio() {
   const [trimStartSeconds, setTrimStartSeconds] = useState(0);
   const [trimEndSeconds, setTrimEndSeconds] = useState(0);
   const [obfuscatePrivacy, setObfuscatePrivacy] = useState(false);
+  const [correctAltitudes, setCorrectAltitudes] = useState(false);
   const [privacyStartDistanceM, setPrivacyStartDistanceM] = useState(1000);
   const [privacyEndDistanceM, setPrivacyEndDistanceM] = useState(1000);
   const [showAnalysis, setShowAnalysis] = useState(true);
@@ -186,6 +191,7 @@ export default function LocalTrackStudio() {
     trimStartSeconds,
     trimEndSeconds,
     obfuscatePrivacy,
+    correctAltitudes,
     privacyStartDistanceM,
     privacyEndDistanceM,
   }), [
@@ -197,6 +203,7 @@ export default function LocalTrackStudio() {
     trimStartSeconds,
     trimEndSeconds,
     obfuscatePrivacy,
+    correctAltitudes,
     privacyStartDistanceM,
     privacyEndDistanceM,
   ]);
@@ -212,7 +219,9 @@ export default function LocalTrackStudio() {
     setStatus(files.length > 1 ? "Converting and merging tracks…" : "Converting track…");
 
     try {
-      const nextResult = await convertFiles(files, options, getBrowserLocale());
+      const nextResult = await convertFiles(files, options, getBrowserLocale(), (progress) => {
+        setStatus(`Correcting altitudes: ${progress.stage} (${progress.completed}/${progress.total}, ${progress.requestsMade} requests)…`);
+      });
       const rawUrl = URL.createObjectURL(new Blob([nextResult.trackJson], {
         type: "application/json",
       }));
@@ -232,7 +241,10 @@ export default function LocalTrackStudio() {
         return { raw: rawUrl, gzip: gzipUrl, gpx: gpxUrl, fit: fitUrl };
       });
       setResult(nextResult);
-      setStatus("Track is ready.");
+      const correction = nextResult.altitudeCorrection;
+      setStatus(correction
+        ? `Track is ready. Altitude correction: ${correction.status} (${correction.report.anchorsUsed} anchors, ${correction.report.tileRequests} requests, ${correction.report.tilesFromCache} cached tiles${correction.report.reason ? `; ${correction.report.reason.replaceAll('_', ' ')}` : ''}).`
+        : "Track is ready.");
     } catch (e) {
       setResult(null);
       setError(getErrorMessage(e));
@@ -437,6 +449,25 @@ export default function LocalTrackStudio() {
                     }}
                   />
                 </label>
+              </div>
+
+              <div className="mt-3 space-y-1">
+                <label className="inline-flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={correctAltitudes}
+                    disabled={busy}
+                    onChange={(e) => setCorrectAltitudes(e.currentTarget.checked)}
+                  />
+                  <span>Correct altitudes</span>
+                </label>
+                {correctAltitudes && (
+                  <p className="text-xs text-slate-500">
+                    Elevation data: GSI DEM in Japan, with Mapzen Terrain Tiles as fallback; Mapzen elsewhere.
+                    Route regions are requested from an external service; if correction fails, original altitudes are kept.
+                    {' '}<a href="https://maps.gsi.go.jp/" target="_blank" rel="noopener noreferrer" className="underline">GSI</a> / <a href="https://github.com/tilezen/joerd/blob/master/docs/attribution.md" target="_blank" rel="noopener noreferrer" className="underline">Mapzen terrain data attribution</a>.
+                  </p>
+                )}
               </div>
 
               <div className="grid gap-3 sm:grid-cols-[1fr_1fr_1fr]">
@@ -1189,6 +1220,7 @@ async function convertFiles(
   files: File[],
   options: ConvertOptions,
   locale?: string,
+  onAltitudeProgress?: (progress: AltitudeCorrectionProgress) => void,
 ): Promise<TrackResult> {
   const firstFile = files[0];
   if (!firstFile) {
@@ -1215,9 +1247,26 @@ async function convertFiles(
       trimEndSeconds: options.trimEndSeconds,
     })
     : activity;
-  const processedActivity = options.obfuscatePrivacy
+  const privacyActivity = options.obfuscatePrivacy
     ? obfuscateActivityPrivacy(trimmedActivity, options)
     : trimmedActivity;
+  // Do not accidentally re-correct a merge of already-corrected and raw activities.
+  const hasCorrectedInput = parsed.some((item) => Boolean(item.activity.metadata.altitudeCorrection));
+  const correction: AltitudeCorrectionResult | undefined = !options.correctAltitudes
+    ? undefined
+    : hasCorrectedInput
+      ? {
+        activity: privacyActivity,
+        status: "skipped",
+        report: {
+          sourceId: "gsi-dem", candidateRegions: 0, anchorsUsed: 0,
+          tileRequests: 0, uniqueTilesLoaded: 0, tilesFromCache: 0,
+          pointsCorrected: 0, pointsTotal: privacyActivity.points.length,
+          anchors: [], reason: "already_corrected",
+        },
+      }
+      : await correctTrackActivityAltitudes(privacyActivity, { onProgress: onAltitudeProgress });
+  const processedActivity = correction?.activity ?? privacyActivity;
   const renderedActivity = options.downsample
     ? downsampleTrackActivity(processedActivity, {
       maxPoints: options.maxPoints,
@@ -1256,6 +1305,7 @@ async function convertFiles(
     renderedPointCount: renderedActivity.points.length,
     sourceLabel: summarizeSources(parsed),
     fitBytes,
+    ...(correction ? { altitudeCorrection: correction } : {}),
   };
 }
 

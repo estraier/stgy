@@ -268,6 +268,18 @@ function applyGpxActivityExtensionMetadata(
   assignGpxActivityExtensionNumber(metadata, activityElement, "totalDistanceM");
   assignGpxActivityExtensionNumber(metadata, activityElement, "ascentM");
   assignGpxActivityExtensionNumber(metadata, activityElement, "descentM");
+  const correction = getDirectChild(activityElement, "altitudeCorrection");
+  if (correction && correction.getAttribute("method") === "terrain-drift-v1") {
+    const source = correction.getAttribute("source");
+    const anchors = parseOptionalNumber(correction.getAttribute("anchorsUsed"));
+    const status = correction.getAttribute("status");
+    if (source && isFiniteNumber(anchors) && Number.isInteger(anchors) && anchors >= 1 &&
+      (status === "corrected" || status === "partial")) {
+      metadata.altitudeCorrection = {
+        method: "terrain-drift-v1", source, anchorsUsed: anchors, status,
+      };
+    }
+  }
   assignGpxActivityExtensionNumber(
     metadata,
     activityElement,
@@ -631,6 +643,10 @@ function formatGpxActivityMetadataExtensions(activity: TrackActivity): string[] 
       return `<stgy:${key}>${formatGpxMetadataNumber(value)}</stgy:${key}>`;
     });
 
+  const correction = activity.metadata.altitudeCorrection;
+  if (correction) {
+    lines.push(`<stgy:altitudeCorrection method="terrain-drift-v1" source="${escapeXmlAttribute(correction.source)}" anchorsUsed="${correction.anchorsUsed}" status="${correction.status}" />`);
+  }
   if (lines.length === 0) {
     return [];
   }
