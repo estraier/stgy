@@ -2,12 +2,18 @@ import {
   cropGamma2RgbCounterClockwise,
   rotateGamma2RgbCounterClockwiseInPlace,
   selectPanoramaProjection,
+  selectPanoramaGeometry,
   turnCameraForVerticalCylindrical,
 } from "./panorama-projection";
+import { checkPanoramaCameraGeometry } from "./panorama-orientation";
 
 function rotationX(degrees: number): Float32Array {
   const theta = degrees * Math.PI / 180;
   return new Float32Array([1, 0, 0, 0, Math.cos(theta), -Math.sin(theta), 0, Math.sin(theta), Math.cos(theta)]);
+}
+function rotationZ(degrees: number): Float32Array {
+  const theta = degrees * Math.PI / 180;
+  return new Float32Array([Math.cos(theta), -Math.sin(theta), 0, Math.sin(theta), Math.cos(theta), 0, 0, 0, 1]);
 }
 function rotationY(degrees: number): Float32Array {
   const theta = degrees * Math.PI / 180;
@@ -41,6 +47,80 @@ describe("Panorama alignment projection", () => {
     expect(selectPanoramaProjection("auto", [rotationX(0), multiply(rotationX(12), rotationY(12))])).toBe("spherical");
     expect(selectPanoramaProjection("auto", [rotationY(0), rotationY(0.5)])).toBe("spherical");
   });
+  test("Auto assigns geometry constraints from the same projection used for output", () => {
+    expect(selectPanoramaGeometry("auto", principal)).toEqual({
+      projection: "cylindrical-horizontal", constraintDirection: "horizontal",
+    });
+    expect(selectPanoramaGeometry("auto", vertical)).toEqual({
+      projection: "cylindrical-vertical", constraintDirection: "vertical",
+    });
+    const grid = [
+      multiply(rotationX(-20), rotationY(-20)), multiply(rotationX(-20), rotationY(20)),
+      multiply(rotationX(20), rotationY(-20)), multiply(rotationX(20), rotationY(20)),
+    ];
+    expect(selectPanoramaGeometry("auto", grid)).toEqual({
+      projection: "spherical", constraintDirection: null,
+    });
+    expect(selectPanoramaGeometry("spherical", principal)).toEqual({
+      projection: "spherical", constraintDirection: null,
+    });
+    expect(selectPanoramaGeometry("horizontal", vertical)).toEqual({
+      projection: "cylindrical-horizontal", constraintDirection: "horizontal",
+    });
+    expect(selectPanoramaGeometry("vertical", principal)).toEqual({
+      projection: "cylindrical-vertical", constraintDirection: "vertical",
+    });
+  });
+
+  test("Auto-recommended cylinders validate direction, roll and focal length", () => {
+    const sizes = [{width: 1600, height: 1000}, {width: 1600, height: 1000}, {width: 1600, height: 1000}];
+    const toCameras = (rotations: Float32Array[], focals: number[]) => rotations.map((rotation, index) => ({
+      rotation, focal: focals[index]!, aspect: 1,
+    }));
+    const horizontalRotations = [rotationY(0), rotationY(15), rotationY(30)];
+    const horizontalSelection = selectPanoramaGeometry("auto", horizontalRotations);
+    expect(horizontalSelection.constraintDirection).toBe("horizontal");
+    const validHorizontal = checkPanoramaCameraGeometry(horizontalSelection.constraintDirection!,
+      toCameras(horizontalRotations, [1000, 1000, 1000]), sizes, 1)!;
+    expect(validHorizontal.accepted).toBe(true);
+    const focalOutlier = checkPanoramaCameraGeometry(horizontalSelection.constraintDirection!,
+      toCameras(horizontalRotations, [1000, 1000, 1100]), sizes, 1)!;
+    expect(focalOutlier.accepted).toBe(false);
+    expect(focalOutlier.reason).toMatch(/focal length/);
+
+    const shortMove = [rotationY(0), rotationY(2), rotationY(25)];
+    const shortSelection = selectPanoramaGeometry("auto", shortMove);
+    expect(shortSelection.constraintDirection).toBe("horizontal");
+    const primaryOutlier = checkPanoramaCameraGeometry(shortSelection.constraintDirection!,
+      toCameras(shortMove, [1000, 1000, 1000]), sizes, 1)!;
+    expect(primaryOutlier.accepted).toBe(false);
+    expect(primaryOutlier.reason).toMatch(/minimum 5%/);
+
+    const crossMove = [rotationY(0), multiply(rotationX(7), rotationY(22))];
+    const crossSelection = selectPanoramaGeometry("auto", crossMove);
+    expect(crossSelection.constraintDirection).toBe("horizontal");
+    const crossOutlier = checkPanoramaCameraGeometry(crossSelection.constraintDirection!,
+      toCameras(crossMove, [1000, 1000]), sizes.slice(0, 2), 1)!;
+    expect(crossOutlier.accepted).toBe(false);
+    expect(crossOutlier.reason).toMatch(/maximum 25%/);
+
+    const verticalSelection = selectPanoramaGeometry("auto", vertical);
+    expect(verticalSelection.constraintDirection).toBe("vertical");
+    const verticalRoll = [rotationX(-20), multiply(rotationX(0), rotationZ(35)), rotationX(20)];
+    expect(selectPanoramaGeometry("auto", verticalRoll).constraintDirection).toBe("vertical");
+    const validVertical = checkPanoramaCameraGeometry(verticalSelection.constraintDirection!,
+      toCameras(vertical, [1000, 1000, 1000]), sizes, 1)!;
+    expect(validVertical.accepted).toBe(true);
+    const rollOutlier = checkPanoramaCameraGeometry(verticalSelection.constraintDirection!,
+      toCameras(verticalRoll, [1000, 1000, 1000]), sizes, 1)!;
+    expect(rollOutlier.accepted).toBe(false);
+    expect(rollOutlier.reason).toMatch(/relative roll/);
+
+    const diagonal = [rotationX(0), multiply(rotationX(12), rotationY(12))];
+    const selection = selectPanoramaGeometry("auto", diagonal);
+    expect(selection.constraintDirection).toBeNull();
+  });
+
   test("handles the longitude wrap correctly", () => {
     expect(selectPanoramaProjection("auto", [rotationY(169),rotationY(179),rotationY(-171)])).toBe("cylindrical-horizontal");
   });

@@ -2,6 +2,10 @@ import {
   panoramaCameraPathAxis,
   restoreVerticalWaveCorrectionRoll,
   checkPanoramaDirection,
+  checkPanoramaCameraGeometry,
+  relativePanoramaRollDegrees,
+  PANORAMA_MAX_ADJACENT_ROLL_DEGREES,
+  PANORAMA_MAX_FOCAL_DEVIATION_FRACTION,
   panoramaWaveCorrectionKind,
 } from "./panorama-orientation";
 
@@ -25,6 +29,29 @@ function rotationY(degrees: number): Float32Array {
     0, 1, 0,
     -sine, 0, cosine,
   ]);
+}
+
+function rotationZ(degrees: number): Float32Array {
+  const radians = degrees * Math.PI / 180;
+  const cosine = Math.cos(radians);
+  const sine = Math.sin(radians);
+  return new Float32Array([
+    cosine, -sine, 0,
+    sine, cosine, 0,
+    0, 0, 1,
+  ]);
+}
+
+function multiplyRotations(left: Float32Array, right: Float32Array): Float32Array {
+  const result = new Float32Array(9);
+  for (let row = 0; row < 3; row += 1) {
+    for (let col = 0; col < 3; col += 1) {
+      for (let k = 0; k < 3; k += 1) {
+        result[row * 3 + col] += left[row * 3 + k]! * right[k * 3 + col]!;
+      }
+    }
+  }
+  return result;
 }
 
 function rotateGlobalZ90(rotation: Float32Array): Float32Array {
@@ -68,6 +95,13 @@ describe("Panorama OpenCV wave correction selection", () => {
     expect(() => panoramaWaveCorrectionKind("vertical", {
       auto: 2, horizontal: 0, vertical: Number.NaN,
     })).toThrow(/unavailable/);
+  });
+});
+
+describe("Spherical panorama compatibility", () => {
+  test("skips horizontal/vertical directional constraints for Spherical", () => {
+    expect(checkPanoramaDirection("spherical", [], [], 0)).toEqual({ accepted: true });
+    expect(checkPanoramaCameraGeometry("spherical", [], [], 0)).toBeNull();
   });
 });
 
@@ -137,7 +171,6 @@ const camera = (rotation: Float32Array) => ({ rotation, focal: 1000, aspect: 1 }
 describe("Panorama explicit alignment direction", () => {
   test("preserves Auto with no direction requirements", () => {
     expect(checkPanoramaDirection("auto", [], [], 1)).toEqual({ accepted: true });
-    expect(checkPanoramaDirection("spherical", [], [], 1)).toEqual({ accepted: true });
   });
 
   test("allows portrait images joined horizontally (even in reverse input order)", () => {
@@ -225,5 +258,85 @@ describe("Panorama explicit alignment direction", () => {
   test("rejects invalid camera data instead of hiding it behind Auto fallback", () => {
     expect(() => checkPanoramaDirection("horizontal", [camera(rotationY(0))],
       [portraitImage], 1)).toThrow(/matching cameras/);
+  });
+});
+
+
+describe("Panorama explicit-direction camera geometry limits", () => {
+  test("allows auto without restricting the optical geometry", () => {
+    expect(checkPanoramaCameraGeometry("auto", [], [], 1)).toBeNull();
+  });
+
+  test("accepts ordinary yaw and pitch without interpreting them as roll", () => {
+    const horizontal = [rotationY(0), rotationY(15), rotationY(30)];
+    const vertical = [rotationX(0), rotationX(15), rotationX(30)];
+    for (const [direction, rotations] of [["horizontal", horizontal], ["vertical", vertical]] as const) {
+      const result = checkPanoramaCameraGeometry(direction, rotations.map(camera),
+        rotations.map(() => landscapeImage), 1)!;
+      expect(result.accepted).toBe(true);
+      expect(result.metrics.maxAdjacentRollDegrees).toBeCloseTo(0, 3);
+      expect(result.metrics.maxFocalDeviationPercent).toBeCloseTo(0, 6);
+    }
+  });
+
+  test("roll comparison is independent of file order and panorama direction", () => {
+    const rotations = [
+      multiplyRotations(rotationY(30), rotationZ(20)),
+      multiplyRotations(rotationY(0), rotationZ(0)),
+      multiplyRotations(rotationY(15), rotationZ(10)),
+    ];
+    const result = checkPanoramaCameraGeometry("horizontal", rotations.map(camera),
+      rotations.map(() => landscapeImage), 1)!;
+    expect(result.accepted).toBe(true);
+    expect(result.metrics.maxAdjacentRollDegrees).toBeCloseTo(10, 2);
+    expect(relativePanoramaRollDegrees(rotationY(0), rotationY(30))).toBeCloseTo(0, 5);
+  });
+
+  test("permits a 30 degree relative roll but rejects a larger relative roll", () => {
+    expect(PANORAMA_MAX_ADJACENT_ROLL_DEGREES).toBe(30);
+    const make = (roll: number) => [rotationY(0), multiplyRotations(rotationY(16), rotationZ(roll))];
+    const accepted = checkPanoramaCameraGeometry("horizontal", make(30).map(camera),
+      [landscapeImage, landscapeImage], 1)!;
+    expect(accepted.accepted).toBe(true);
+    expect(accepted.metrics.maxAdjacentRollDegrees).toBeCloseTo(30, 3);
+
+    const rejected = checkPanoramaCameraGeometry("horizontal", make(31).map(camera),
+      [landscapeImage, landscapeImage], 1)!;
+    expect(rejected.accepted).toBe(false);
+    expect(rejected.reason).toMatch(/relative roll.*maximum.*30/);
+    expect(rejected.metrics.maxRollPair).toEqual([1, 2]);
+  });
+
+  test("accepts focal deviation within ±5% of median, rejects outliers", () => {
+    expect(PANORAMA_MAX_FOCAL_DEVIATION_FRACTION).toBe(0.05);
+    const rotations = [rotationY(0), rotationY(15), rotationY(30)];
+    const cams = rotations.map(camera);
+    cams[0]!.focal = 950;
+    cams[1]!.focal = 1000;
+    cams[2]!.focal = 1050;
+    const ok = checkPanoramaCameraGeometry("horizontal", cams, rotations.map(() => landscapeImage), 1)!;
+    expect(ok.accepted).toBe(true);
+    expect(ok.metrics.medianFocal).toBe(1000);
+    expect(ok.metrics.maxFocalDeviationPercent).toBeCloseTo(5, 5);
+
+    cams[2]!.focal = 1100;
+    const failed = checkPanoramaCameraGeometry("horizontal", cams, rotations.map(() => landscapeImage), 1)!;
+    expect(failed.accepted).toBe(false);
+    expect(failed.reason).toMatch(/image 3 focal length.*maximum.*5%/);
+  });
+
+  test("preserves existing cross-direction rejection with geometry metrics", () => {
+    const rotations = [rotationY(0), yawPitch(20, 8)];
+    const check = checkPanoramaCameraGeometry("horizontal", rotations.map(camera),
+      rotations.map(() => portraitImage), 1)!;
+    expect(check.accepted).toBe(false);
+    expect(check.reason).toContain("maximum 25%");
+    expect(check.metrics.minPrimaryMovePercent).toBeGreaterThan(5);
+  });
+
+  test("rejects invalid intrinsics rather than masking a failure", () => {
+    const bad = [camera(rotationY(0)), { ...camera(rotationY(15)), focal: 0 }];
+    expect(() => checkPanoramaCameraGeometry("horizontal", bad,
+      [landscapeImage, landscapeImage], 1)).toThrow(/intrinsics/);
   });
 });

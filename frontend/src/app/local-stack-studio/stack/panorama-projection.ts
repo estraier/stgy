@@ -61,6 +61,32 @@ export function selectPanoramaProjection(
   return "spherical";
 }
 
+/** The camera-path constraint is selected from the same projection used to compose. */
+export type PanoramaConstraintDirection = "horizontal" | "vertical" | null;
+
+export type PanoramaGeometrySelection = {
+  projection: PanoramaProjection;
+  constraintDirection: PanoramaConstraintDirection;
+};
+
+/**
+ * Auto initially estimates camera poses without restrictions. After bundle
+ * adjustment, apply horizontal/vertical geometry checks only if the projection
+ * inferred from those poses is cylindrical. Spherical stays unconstrained.
+ * Reuse the chosen projection for final composition; do not infer it twice.
+ */
+export function selectPanoramaGeometry(
+  selection: PanoramaAlignmentDirection,
+  rotations: readonly PanoramaProjectionRotation[],
+): PanoramaGeometrySelection {
+  const projection = selectPanoramaProjection(selection, rotations);
+  return {
+    projection,
+    constraintDirection: projection === "cylindrical-horizontal" ? "horizontal"
+      : projection === "cylindrical-vertical" ? "vertical" : null,
+  };
+}
+
 /**
  * Rotate the camera-to-world basis 90 degrees about the viewing (Z) axis.
  * With OpenCV's cylindrical projection this maps a vertical camera path onto

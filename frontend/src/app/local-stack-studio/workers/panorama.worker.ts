@@ -12,7 +12,7 @@ import {
 import { choosePanoramaComposeScale } from "../stack/panorama-scale";
 import { resolvePanoramaFoV } from "../stack/panorama-fov";
 import {
-  selectPanoramaProjection,
+  selectPanoramaGeometry,
   turnCameraForVerticalCylindrical,
   rotateGamma2RgbCounterClockwiseInPlace,
   cropGamma2RgbCounterClockwise,
@@ -29,7 +29,9 @@ import {
   type PanoramaAlignmentPass,
 } from "../stack/panorama-alignment";
 import {
-  checkPanoramaDirection,
+  checkPanoramaCameraGeometry,
+  PANORAMA_MAX_ADJACENT_ROLL_DEGREES,
+  PANORAMA_MAX_FOCAL_DEVIATION_FRACTION,
   panoramaWaveCorrectionKind,
   restoreVerticalWaveCorrectionRoll,
 } from "../stack/panorama-orientation";
@@ -152,6 +154,7 @@ import type {
     workScale: number;
     seamEstimationMegapixels: number;
     estimatedCameras: CameraState[];
+    projection: PanoramaProjection;
     pass: PanoramaAlignmentPass;
   };
 
@@ -945,14 +948,59 @@ import type {
             `Panorama Stitcher returned ${estimatedCameras.length} cameras for ${expectedCount} inputs.`,
           );
         }
-        if (direction === "horizontal" || direction === "vertical") {
-          const directionCheck = checkPanoramaDirection(direction, estimatedCameras, imageSizes, workScale);
-          if (!directionCheck.accepted) {
-            const rejected = `${pass.label}: ${directionCheck.reason}`;
+        // Auto matches freely, then classifies this candidate's uncorrected
+        // camera axes. The same inferred projection is used for both validation
+        // and composition. Spherical remains unconstrained, even under Auto.
+        const selected = selectPanoramaGeometry(
+          direction, estimatedCameras.map((camera) => camera.rotation),
+        );
+        if (selected.constraintDirection !== null) {
+          // Reject implausible geometry without altering bundle-adjusted cameras.
+          // Each failed candidate falls through to the next ORB matching pass.
+          const geometry = checkPanoramaCameraGeometry(
+            selected.constraintDirection, estimatedCameras, imageSizes, workScale,
+          );
+          if (!geometry) throw new Error("Panorama directional geometry check was skipped.");
+          const metrics = geometry.metrics;
+          const geometryLog = {
+            pass: pass.label,
+            requestedDirection: direction,
+            selectedProjection: selected.projection,
+            constraintDirection: selected.constraintDirection,
+            primaryMoveMinPercent: Number(metrics.minPrimaryMovePercent.toFixed(2)),
+            crossMoveMaxPercent: Number(metrics.maxCrossMovePercent.toFixed(2)),
+            adjacentRollMaxDegrees: Number(metrics.maxAdjacentRollDegrees.toFixed(2)),
+            adjacentRollImages: metrics.maxRollPair,
+            adjacentRollLimitDegrees: PANORAMA_MAX_ADJACENT_ROLL_DEGREES,
+            medianFocalAtWorkScale: Number(metrics.medianFocal.toFixed(3)),
+            focalDeviationMaxPercent: Number(metrics.maxFocalDeviationPercent.toFixed(2)),
+            focalDeviationImage: metrics.maxFocalDeviationImage,
+            focalDeviationLimitPercent: PANORAMA_MAX_FOCAL_DEVIATION_FRACTION * 100,
+            accepted: geometry.accepted,
+            reason: geometry.reason,
+          };
+          console.info("LSS Panorama geometry", geometryLog);
+          postProgress(requestId,
+            `${pass.label}: panorama geometry ${direction} → ${selected.projection} (${selected.constraintDirection}), primary ≥${metrics.minPrimaryMovePercent.toFixed(1)}%, `
+              + `cross ≤${metrics.maxCrossMovePercent.toFixed(1)}%, roll ≤${metrics.maxAdjacentRollDegrees.toFixed(1)}° (limit ${PANORAMA_MAX_ADJACENT_ROLL_DEGREES}°), `
+              + `focal deviation ≤${metrics.maxFocalDeviationPercent.toFixed(1)}% (limit ${PANORAMA_MAX_FOCAL_DEVIATION_FRACTION * 100}%): `
+              + (geometry.accepted ? "accepted" : `rejected (${geometry.reason})`));
+          if (!geometry.accepted) {
+            const rejected = `${pass.label}: ${selected.projection}: ${geometry.reason}`;
             summaries.push(rejected);
             postProgress(requestId, `${rejected}; retrying with a stronger panorama matcher...`);
             continue;
           }
+        } else {
+          console.info("LSS Panorama geometry", {
+            pass: pass.label,
+            requestedDirection: direction,
+            selectedProjection: selected.projection,
+            constraintDirection: null,
+            accepted: true,
+            reason: "Spherical projection: horizontal/vertical geometry constraints skipped",
+          });
+          postProgress(requestId, `${pass.label}: panorama geometry ${direction} → spherical; directional constraints skipped.`);
         }
         const seamEstimationMegapixels = typeof configured.stitcher.seamEstimationResol === "function"
           ? Number(configured.stitcher.seamEstimationResol())
@@ -964,6 +1012,7 @@ import type {
           workScale,
           seamEstimationMegapixels,
           estimatedCameras,
+          projection: selected.projection,
           pass,
         };
         configured = null;
@@ -976,9 +1025,9 @@ import type {
 
     const detail = summaries.length > 0 ? ` (${summaries.join("; ")})` : "";
     throw new Error(
-      direction === "auto" || direction === "spherical"
-        ? `Panorama could connect only ${bestConnected} of ${expectedCount} input images after gamma-2, CLAHE, and detail-enhanced ORB retries.${detail}`
-        : `Panorama alignment ${direction} failed: no matching pass met the direction constraints after gamma-2, CLAHE, and detail-enhanced ORB retries.${detail}`,
+      bestConnected === expectedCount && direction !== "spherical"
+        ? `Panorama alignment ${direction} failed: no matching pass met the inferred or explicit direction, roll, and focal-length constraints after gamma-2, CLAHE, and detail-enhanced ORB retries.${detail}`
+        : `Panorama could connect only ${bestConnected} of ${expectedCount} input images after gamma-2, CLAHE, and detail-enhanced ORB retries.${detail}`,
     );
   }
 
@@ -1814,14 +1863,11 @@ import type {
         seamProxyImages.push(await loadCanonicalLinearSeamMat(session, index, seamScale));
       }
 
-      // Choose the projection only after matching/BA, from the *unmodified*
-      // optical axes. Spherical keeps the exact historical projection and
-      // automatic wave correction. Explicit directions retain their 5% / 25%
-      // checks during matching, while Auto uses the axis only for projection.
-      const projection = selectPanoramaProjection(
-        requestedAlignmentDirection,
-        estimatedCameras.map((camera) => camera.rotation),
-      );
+      // Reuse the projection selected from unmodified optical axes during
+      // candidate validation. Auto cylinder candidates have already passed
+      // the corresponding direction/roll/focal checks; Spherical uses its
+      // historical unconstrained alignment and automatic wave correction.
+      const projection = alignment.projection;
       const waveDirection = projection === "spherical"
         ? "auto" : projection === "cylindrical-horizontal" ? "horizontal" : "vertical";
       postProgress(requestId, `Panorama projection: ${projection}; wave correction: ${waveDirection}.`);
