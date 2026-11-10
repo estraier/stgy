@@ -461,13 +461,6 @@ export default function LocalTrackStudio() {
                   />
                   <span>Correct altitudes</span>
                 </label>
-                {correctAltitudes && (
-                  <p className="text-xs text-slate-500">
-                    Elevation data: GSI DEM in Japan, with Mapzen Terrain Tiles as fallback; Mapzen elsewhere.
-                    Route regions are requested from an external service; if correction fails, original altitudes are kept.
-                    {' '}<a href="https://maps.gsi.go.jp/" target="_blank" rel="noopener noreferrer" className="underline">GSI</a> / <a href="https://github.com/tilezen/joerd/blob/master/docs/attribution.md" target="_blank" rel="noopener noreferrer" className="underline">Mapzen terrain data attribution</a>.
-                  </p>
-                )}
               </div>
 
               <div className="grid gap-3 sm:grid-cols-[1fr_1fr_1fr]">
