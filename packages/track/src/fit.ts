@@ -4812,12 +4812,13 @@ export function trackActivityToFit(
   });
 
   if (options.includeSessionSummary !== false) {
+    const summary = buildFitExportSummary(activity, points);
     writeFitDefinitionMessage(chunks, 2, 19, getFitLapFields());
-    writeFitLapMessage(chunks, activity, points);
+    writeFitLapMessage(chunks, activity, summary);
     writeFitDefinitionMessage(chunks, 3, 18, getFitSessionFields());
-    writeFitSessionMessage(chunks, activity, points);
+    writeFitSessionMessage(chunks, activity, summary);
     writeFitDefinitionMessage(chunks, 4, 34, getFitActivityFields());
-    writeFitActivityMessage(chunks, activity, points);
+    writeFitActivityMessage(chunks, summary);
   }
 
   return buildFitFile(chunks, includeSegmentIds ? 0x20 : 0x10);
@@ -5023,12 +5024,17 @@ function getFitLapFields(): FitWriteFieldDefinition[] {
     { num: 19, size: 2, baseType: 0x84 },
     { num: 20, size: 2, baseType: 0x84 },
     { num: 25, size: 1, baseType: 0x00 },
+    { num: 21, size: 2, baseType: 0x84 }, // total_ascent (m)
+    { num: 22, size: 2, baseType: 0x84 }, // total_descent (m)
   ];
 }
 
-function writeFitLapMessage(chunks: number[], activity: TrackActivity, points: TrackPoint[]) {
-  const summary = buildFitExportSummary(activity, points);
-  const record = new Uint8Array(35);
+function writeFitLapMessage(
+  chunks: number[],
+  activity: TrackActivity,
+  summary: FitExportSummary,
+) {
+  const record = new Uint8Array(39);
   const view = new DataView(record.buffer);
   let offset = 0;
 
@@ -5061,6 +5067,10 @@ function writeFitLapMessage(chunks: number[], activity: TrackActivity, points: T
   writeFitUint16(view, offset, summary.maxPowerW);
   offset += 2;
   view.setUint8(offset, getFitSport(activity));
+  offset += 1;
+  writeFitElevationTotal(view, offset, summary.ascentM);
+  offset += 2;
+  writeFitElevationTotal(view, offset, summary.descentM);
 
   chunks.push(2);
   chunks.push(...record);
@@ -5083,16 +5093,17 @@ function getFitSessionFields(): FitWriteFieldDefinition[] {
     { num: 20, size: 2, baseType: 0x84 },
     { num: 21, size: 2, baseType: 0x84 },
     { num: 5, size: 1, baseType: 0x00 },
+    { num: 22, size: 2, baseType: 0x84 }, // total_ascent (m)
+    { num: 23, size: 2, baseType: 0x84 }, // total_descent (m)
   ];
 }
 
 function writeFitSessionMessage(
   chunks: number[],
   activity: TrackActivity,
-  points: TrackPoint[],
+  summary: FitExportSummary,
 ) {
-  const summary = buildFitExportSummary(activity, points);
-  const record = new Uint8Array(35);
+  const record = new Uint8Array(39);
   const view = new DataView(record.buffer);
   let offset = 0;
 
@@ -5125,6 +5136,10 @@ function writeFitSessionMessage(
   writeFitUint16(view, offset, summary.maxPowerW);
   offset += 2;
   view.setUint8(offset, getFitSport(activity));
+  offset += 1;
+  writeFitElevationTotal(view, offset, summary.ascentM);
+  offset += 2;
+  writeFitElevationTotal(view, offset, summary.descentM);
 
   chunks.push(3);
   chunks.push(...record);
@@ -5143,10 +5158,8 @@ function getFitActivityFields(): FitWriteFieldDefinition[] {
 
 function writeFitActivityMessage(
   chunks: number[],
-  activity: TrackActivity,
-  points: TrackPoint[],
+  summary: FitExportSummary,
 ) {
-  const summary = buildFitExportSummary(activity, points);
   const record = new Uint8Array(13);
   const view = new DataView(record.buffer);
   let offset = 0;
@@ -5182,6 +5195,8 @@ type FitExportSummary = {
   avgPowerW?: number;
   maxPowerW?: number;
   totalCaloriesCal?: number;
+  ascentM?: number;
+  descentM?: number;
 };
 
 function buildFitExportSummary(
@@ -5199,6 +5214,12 @@ function buildFitExportSummary(
   const heartRates = points.map((point) => point.heartRateBpm).filter(isFiniteNumber);
   const cadences = points.map((point) => point.cadenceRpm).filter(isFiniteNumber);
   const powers = points.map((point) => point.powerW).filter(isFiniteNumber);
+  const ascentM = getFiniteMetadataNumber(activity.metadata.ascentM);
+  const descentM = getFiniteMetadataNumber(activity.metadata.descentM);
+  // Metadata retains full-resolution totals when the exported points were downsampled.
+  const computedElevation = ascentM === undefined || descentM === undefined
+    ? calculateTrackAscentDescent(points)
+    : undefined;
 
   return {
     startTime,
@@ -5217,6 +5238,8 @@ function buildFitExportSummary(
     totalCaloriesCal: getFiniteMetadataNumber(
       activity.metadata.training?.totalCaloriesCal,
     ),
+    ascentM: ascentM ?? computedElevation?.ascentM,
+    descentM: descentM ?? computedElevation?.descentM,
   };
 }
 
@@ -5419,6 +5442,19 @@ function writeFitScaledUint16(
     return;
   }
   view.setUint16(offset, Math.max(0, Math.round((value + offsetValue) * scale)), true);
+}
+
+function writeFitElevationTotal(
+  view: DataView,
+  offset: number,
+  meters: number | undefined,
+) {
+  // FIT uint16 reserves 0xffff as invalid. Do not wrap unrepresentable totals.
+  if (!isFiniteNumber(meters) || meters < 0 || Math.round(meters) >= 0xffff) {
+    view.setUint16(offset, 0xffff, true);
+    return;
+  }
+  view.setUint16(offset, Math.round(meters), true);
 }
 
 function writeFitUint16(view: DataView, offset: number, value: number | undefined) {

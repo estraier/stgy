@@ -3292,6 +3292,87 @@ describe("trackActivityToFit", () => {
       .toContain(11);
   });
 
+  test("writes corrected full-resolution ascent and descent to FIT Lap and Session", () => {
+    const exported = trackActivityToFit({
+      schemaVersion: 1,
+      metadata: {
+        startTime: 1710000000,
+        endTime: 1710000020,
+        ascentM: 345.6,
+        descentM: 123.4,
+      },
+      // These downsampled records intentionally do not contain the full ascent/descent.
+      points: [
+        { time: 1710000000, lat: 35, lon: 139, altitudeM: 100 },
+        { time: 1710000020, lat: 35.001, lon: 139.001, altitudeM: 101 },
+      ],
+      warnings: [],
+    });
+
+    expect(readFitExportSummaryUint16(exported, 19, 21)).toBe(346);
+    expect(readFitExportSummaryUint16(exported, 19, 22)).toBe(123);
+    expect(readFitExportSummaryUint16(exported, 18, 22)).toBe(346);
+    expect(readFitExportSummaryUint16(exported, 18, 23)).toBe(123);
+    expectValidHeaderCrc(exported);
+    expectValidFileCrc(exported);
+  });
+
+  test("derives FIT ascent/descent from points without metadata, respecting segment boundaries", () => {
+    const exported = trackActivityToFit({
+      schemaVersion: 1,
+      metadata: {},
+      points: [
+        { segmentId: 0, time: 1710000000, altitudeM: 100 },
+        { segmentId: 0, time: 1710000001, altitudeM: 120 },
+        { segmentId: 0, time: 1710000002, altitudeM: 110 },
+        { segmentId: 1, time: 1710000003, altitudeM: 1000 },
+        { segmentId: 1, time: 1710000004, altitudeM: 990 },
+        { segmentId: 1, time: 1710000005, altitudeM: 995 },
+      ],
+      warnings: [],
+    });
+
+    expect(readFitExportSummaryUint16(exported, 19, 21)).toBe(25);
+    expect(readFitExportSummaryUint16(exported, 19, 22)).toBe(20);
+    expect(readFitExportSummaryUint16(exported, 18, 22)).toBe(25);
+    expect(readFitExportSummaryUint16(exported, 18, 23)).toBe(20);
+    expectValidFileCrc(exported);
+  });
+
+  test("writes invalid FIT summary values when elevation is missing or unrepresentable", () => {
+    const missing = trackActivityToFit({
+      schemaVersion: 1,
+      metadata: {},
+      points: [{ time: 1710000000, lat: 35, lon: 139 }],
+      warnings: [],
+    });
+    expect(readFitExportSummaryUint16(missing, 19, 21)).toBe(0xffff);
+    expect(readFitExportSummaryUint16(missing, 18, 23)).toBe(0xffff);
+
+    const huge = trackActivityToFit({
+      schemaVersion: 1,
+      metadata: { ascentM: 70000, descentM: 0 },
+      points: [{ time: 1710000000, lat: 35, lon: 139 }],
+      warnings: [],
+    });
+    expect(readFitExportSummaryUint16(huge, 19, 21)).toBe(0xffff);
+    expect(readFitExportSummaryUint16(huge, 18, 22)).toBe(0xffff);
+    expect(readFitExportSummaryUint16(huge, 19, 22)).toBe(0);
+    expect(readFitExportSummaryUint16(huge, 18, 23)).toBe(0);
+  });
+
+  test("omits Lap/Session altitude totals when FIT session summaries are disabled", () => {
+    const exported = trackActivityToFit({
+      schemaVersion: 1,
+      metadata: { ascentM: 100, descentM: 75 },
+      points: [{ time: 1710000000, lat: 35, lon: 139, altitudeM: 10 }],
+      warnings: [],
+    }, { includeSessionSummary: false });
+    const definitions = readFitExportDefinitions(exported);
+    expect(getFitExportDefinition(definitions, 18)).toBeUndefined();
+    expect(getFitExportDefinition(definitions, 19)).toBeUndefined();
+  });
+
   test("round-trips merged segment ids through FIT developer data", () => {
     const exported = trackActivityToFit({
       schemaVersion: 1,
@@ -3392,6 +3473,73 @@ function readFitExportDefinitions(bytes: Uint8Array): FitExportDefinition[] {
   }
 
   return output;
+}
+
+function readFitExportSummaryUint16(
+  bytes: Uint8Array,
+  globalMessageNumber: number,
+  fieldNumber: number,
+): number | undefined {
+  const headerSize = bytes[0];
+  const dataSize = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+    .getUint32(4, true);
+  const definitions = new Map<number, FitExportDefinition>();
+  const developerFieldSizes = new Map<number, number>();
+  let offset = headerSize;
+  const end = headerSize + dataSize;
+
+  while (offset < end) {
+    const header = bytes[offset++];
+    const localMessageType = header & 0x0f;
+    if ((header & 0x40) !== 0) {
+      const architecture = bytes[offset + 1];
+      const littleEndian = architecture === 0;
+      const global = new DataView(bytes.buffer, bytes.byteOffset + offset + 2, 2)
+        .getUint16(0, littleEndian);
+      offset += 4;
+      const fieldCount = bytes[offset++];
+      const fields = Array.from({ length: fieldCount }, () => {
+        const field = {
+          num: bytes[offset],
+          size: bytes[offset + 1],
+          baseType: bytes[offset + 2],
+        };
+        offset += 3;
+        return field;
+      });
+      let developerFieldSize = 0;
+      if ((header & 0x20) !== 0) {
+        const developerCount = bytes[offset++];
+        for (let i = 0; i < developerCount; i += 1) {
+          developerFieldSize += bytes[offset + 1];
+          offset += 3;
+        }
+      }
+      definitions.set(localMessageType, { localMessageType, globalMessageNumber: global, fields });
+      developerFieldSizes.set(localMessageType, developerFieldSize);
+      continue;
+    }
+    const definition = definitions.get(localMessageType);
+    if (!definition) {
+      throw new Error(`FIT data message has no definition: ${localMessageType}`);
+    }
+    if (definition.globalMessageNumber === globalMessageNumber) {
+      let fieldOffset = offset;
+      for (const field of definition.fields) {
+        if (field.num === fieldNumber) {
+          expect(field.size).toBe(2);
+          expect(field.baseType).toBe(0x84);
+          return new DataView(bytes.buffer, bytes.byteOffset + fieldOffset, 2)
+            .getUint16(0, true);
+        }
+        fieldOffset += field.size;
+      }
+      return undefined;
+    }
+    offset += definition.fields.reduce((sum, field) => sum + field.size, 0) +
+      (developerFieldSizes.get(localMessageType) ?? 0);
+  }
+  return undefined;
 }
 
 function getFitExportDefinition(
