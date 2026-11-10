@@ -49,9 +49,12 @@ export function cleanupLssTemporaryCacheOnProcess(protectedCanonicalSessionId?: 
     return true;
   };
   const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
-  const promise = locks?.request
-    ? locks.request(CLEANUP_LOCK_NAME, perform)
-    : perform();
+  // Web Locks' request overload may type an async callback as Promise<Promise<boolean>>.
+  // Async/await unwraps it into one Promise<boolean> without changing lock behavior.
+  const promise: Promise<boolean> = (async () => {
+    if (locks?.request) return await locks.request(CLEANUP_LOCK_NAME, perform);
+    return await perform();
+  })();
   cleanupInProgress = promise.finally(() => { cleanupInProgress = null; });
   return cleanupInProgress;
 }

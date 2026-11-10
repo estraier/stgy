@@ -1,5 +1,5 @@
 /** STF production additional-blur Worker protocol. */
-export const STF_ADDITIONAL_BLUR_PROTOCOL_VERSION = "stf-sharpness-diagnostics-20261109c";
+export const STF_ADDITIONAL_BLUR_PROTOCOL_VERSION = "stf-production-gate-20261110a";
 
 export type StfAdditionalBlurWorkerAlignmentPlan = {
   normalizationMode: "feature-match" | "center-crop" | "center-fit" | "center-fill" | "top-left-fill";
@@ -22,9 +22,6 @@ export type StfAdditionalBlurWorkerRequest =
   | { type: "sample-brightness-stripe"; requestId: number; y: number; height: number; stride: number; offsetX: number; offsetY: number }
   | { type: "configure-relative-floors"; requestId: number; floors: [number, number, number] }
   | { type: "analyze-stripe"; requestId: number; y: number; height: number; includeSource: boolean }
-  | { type: "ratio-stripe"; requestId: number; pixelCount: number; groupCount: number; epsilon: number;
-      visualization?: "fine" | "coarse" | "ratio" | "ratio-v2" | "ratio-x1.2" | "ratio-x1.4" | "ratio-x1.5" | "ratio-x1.6" | "ratio-x2.0";
-      fineLogSumBuffer: ArrayBuffer; fineZeroBuffer: ArrayBuffer; coarseGroupsBuffer: ArrayBuffer }
   | { type: "volume-close"; requestId: number; width: number; height: number; unitRatioBuffer: ArrayBuffer }
   | { type: "graph-cut"; requestId: number; width: number; height: number; blurRatio: number; confidenceBuffer: ArrayBuffer }
   | { type: "expand-gate-stripe"; requestId: number; regionHeight: number; coreOffsetY: number; coreHeight: number;
@@ -44,9 +41,6 @@ export type StfAdditionalBlurWorkerBrightnessSampleResponse = {
 };
 export type StfAdditionalBlurWorkerConfigureFloorsResponse = {
   type: "relative-floors-configured"; requestId: number; floors: [number, number, number];
-};
-export type StfAdditionalBlurWorkerRatioStripeResponse = {
-  type: "ratio-stripe-result"; requestId: number; logRatioBuffer: ArrayBuffer;
 };
 export type StfAdditionalBlurWorkerVolumeClosingResponse = {
   type: "volume-close-result"; requestId: number; protocolVersion: string;
@@ -70,7 +64,6 @@ export type StfAdditionalBlurWorkerResponse =
   | StfAdditionalBlurWorkerAnalyzeStripeResponse
   | StfAdditionalBlurWorkerBrightnessSampleResponse
   | StfAdditionalBlurWorkerConfigureFloorsResponse
-  | StfAdditionalBlurWorkerRatioStripeResponse
   | StfAdditionalBlurWorkerVolumeClosingResponse
   | StfAdditionalBlurWorkerGraphCutResponse
   | StfAdditionalBlurWorkerBlurStripeResponse

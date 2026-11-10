@@ -2,7 +2,7 @@
 import { applyStfToneMatchInPlace, buildStfToneMatchLut, type StfToneMatchLut } from "../stack/stf-tone-match";
 import {
   STF_ADDITIONAL_BLUR_COARSE_REFERENCE_PIXELS, STF_ADDITIONAL_BLUR_FINE_REFERENCE_PIXELS,
-  applyGuardedGaussianBlurRegion, applyStfGateExpansion, buildStfSharpnessDiagnosticLogFromDerived,
+  applyGuardedGaussianBlurRegion, applyStfGateExpansion,
   buildStfApertureGroups, buildStfRelativeSharpnessMapAtScaleInto,
   type StfRelativeChannelFloors, validateStfRelativeChannelFloors,
   createStfSharpnessScratch, resolveStfSharpnessHalo, resolveStfSharpnessScale,
@@ -95,22 +95,6 @@ workerScope.onmessage = async (event: MessageEvent<StfAdditionalBlurWorkerReques
         fineZeroBuffer: result.fineZero.buffer as ArrayBuffer,
         coarseGroupsBuffer: result.coarseGroups.buffer as ArrayBuffer,
       }, [result.linear.buffer, result.fineLogSum.buffer, result.fineZero.buffer, result.coarseGroups.buffer] as ArrayBuffer[]);
-      return;
-    }
-    if (message.type === "ratio-stripe") {
-      const { pixelCount, groupCount, epsilon } = message;
-      if (!Number.isInteger(pixelCount) || pixelCount < 1 || !Number.isInteger(groupCount) || groupCount < 2 ||
-          !Number.isFinite(epsilon) || epsilon <= 0) throw new Error("STF ratio Worker parameters invalid.");
-      const fineLogSum = new Float32Array(message.fineLogSumBuffer);
-      const fineZero = new Uint8Array(message.fineZeroBuffer);
-      const coarseGroups = new Float32Array(message.coarseGroupsBuffer);
-      if (fineLogSum.length !== pixelCount || fineZero.length !== pixelCount || coarseGroups.length !== pixelCount * groupCount) {
-        throw new Error("STF ratio Worker buffers are invalid.");
-      }
-      const logRatio = buildStfSharpnessDiagnosticLogFromDerived(
-        fineLogSum, fineZero, coarseGroups, groupCount, epsilon, message.visualization ?? "ratio");
-      post({ type: "ratio-stripe-result", requestId, logRatioBuffer: logRatio.buffer as ArrayBuffer },
-        [logRatio.buffer as ArrayBuffer]);
       return;
     }
     if (message.type === "volume-close") {

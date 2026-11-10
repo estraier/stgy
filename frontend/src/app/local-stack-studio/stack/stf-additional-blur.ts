@@ -1,19 +1,13 @@
 import { applyUnitScaledSigmoid, createUnitScaledSigmoid } from "./scaled-sigmoid";
 
-// Production STF gate: RGB-relative Sobel, 16MP / 0.5MP, P3/P97 normalized once.
+// Official STF gate: P80-dilated 16MP Sobel^1.3 / (0.5MP Sobel + P50/32), P3/P97 normalized once.
 export const STF_ADDITIONAL_BLUR_FINE_REFERENCE_PIXELS = 16_000_000;
 export const STF_ADDITIONAL_BLUR_COARSE_REFERENCE_PIXELS = 500_000;
 export const STF_ADDITIONAL_BLUR_MAX_WORKERS = 4;
 export const STF_ADDITIONAL_BLUR_SAMPLE_LIMIT = 65_536;
 export const STF_RELATIVE_BRIGHTNESS_P50_DIVISOR = 64;
-export const STF_SHARPNESS_RATIO_P50_DIVISOR = 64;
-export const STF_SHARPNESS_RATIO_V2_P50_DIVISOR = 32;
-export const STF_SHARPNESS_RATIO_X12 = 1.2;
-export const STF_SHARPNESS_RATIO_X13 = 1.3;
-export const STF_SHARPNESS_RATIO_X14 = 1.4;
-export const STF_SHARPNESS_RATIO_X15 = 1.5;
-export const STF_SHARPNESS_RATIO_X16 = 1.6;
-export const STF_SHARPNESS_RATIO_X20 = 2.0;
+export const STF_SHARPNESS_RATIO_P50_DIVISOR = 32;
+export const STF_SHARPNESS_RATIO_FINE_EXPONENT = 1.3;
 export const STF_SHARPNESS_DILATED_PERCENTILE = 0.8;
 const SHARPNESS_RGB_WEIGHTS = [0.3, 0.4, 0.3] as const;
 const LOG_FLOOR = 1e-12;
@@ -288,31 +282,26 @@ export function deriveStfMedianSharpnessC(rawSamples: ArrayLike<number>): number
   return Math.max(LOG_FLOOR, percentileFromSorted(sorted, 0.5));
 }
 
-export function deriveStfRatioEpsilon(c: number, divisor = STF_SHARPNESS_RATIO_P50_DIVISOR): number {
+export function deriveStfRatioEpsilon(c: number): number {
   const value = Number(c);
   if (!(Number.isFinite(value) && value > 0)) throw new Error("STF Additional blur dynamic c is invalid.");
-  if (!(Number.isFinite(divisor) && divisor > 0)) throw new Error("STF Additional blur ratio epsilon divisor is invalid.");
-  return Math.max(LOG_FLOOR, value / divisor);
+  return Math.max(LOG_FLOOR, value / STF_SHARPNESS_RATIO_P50_DIVISOR);
 }
 
-/**
- * Ratio calculated from the dilated fine map and the unchanged coarse map.
- * Written directly into the caller's output buffer to avoid a full-resolution
- * allocation for diagnostic and production v2/v3 pipelines.
- */
+/** Ratio of dilated fine^1.3 to unchanged coarse; output is in log space. */
 export function buildStfDilatedLogRatioInto(
   dilatedFine: Float32Array, coarse: Float32Array,
-  epsilon: number, fineExponent: number, output: Float32Array,
+  epsilon: number, output: Float32Array,
 ): void {
   if (dilatedFine.length !== coarse.length || output.length !== dilatedFine.length ||
-      !(Number.isFinite(epsilon) && epsilon > 0 && Number.isFinite(fineExponent) && fineExponent > 0)) {
+      !(Number.isFinite(epsilon) && epsilon > 0)) {
     throw new Error("STF dilated sharpness ratio parameters are invalid.");
   }
   for (let i = 0; i < output.length; i += 1) {
     const fineValue = dilatedFine[i];
     const coarseValue = coarse[i];
     output[i] = fineValue > 0
-      ? Math.log(fineValue) * fineExponent - Math.log(Math.max(epsilon, coarseValue + epsilon))
+      ? Math.log(fineValue) * STF_SHARPNESS_RATIO_FINE_EXPONENT - Math.log(Math.max(epsilon, coarseValue + epsilon))
       : Number.NaN;
   }
 }
@@ -412,90 +401,6 @@ function dilateMaxSeparable(source: Float32Array, width: number, height: number,
       const end = Math.min(height - 1, y + radius);
       for (let yy = start; yy <= end; yy += 1) maximum = Math.max(maximum, horizontal[yy * width + x] ?? 0);
       output[y * width + x] = maximum;
-    }
-  }
-  return output;
-}
-
-export function buildStfLogRatioFromDerived(
-  fineLogSum: Float32Array,
-  fineZero: Uint8Array,
-  coarseGroups: Float32Array,
-  groupCount: number,
-  epsilon: number,
-  fineExponent = 1,
-): Float32Array {
-  const pixelCount = fineLogSum.length;
-  if (fineZero.length !== pixelCount || coarseGroups.length !== pixelCount * groupCount) {
-    throw new Error("STF Additional blur derived sharpness buffers have invalid sizes.");
-  }
-  if (!(Number.isInteger(groupCount) && groupCount >= 2 && Number.isFinite(epsilon) && epsilon > 0 &&
-      Number.isFinite(fineExponent) && fineExponent > 0)) {
-    throw new Error("STF Additional blur ratio parameters are invalid.");
-  }
-  const output = new Float32Array(pixelCount);
-  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
-    if (fineZero[pixel]) {
-      output[pixel] = Number.NaN;
-      continue;
-    }
-    let coarseLogSum = 0;
-    for (let group = 0; group < groupCount; group += 1) {
-      const coarse = coarseGroups[group * pixelCount + pixel] ?? 0;
-      coarseLogSum += Math.log(Math.max(epsilon, coarse + epsilon));
-    }
-    output[pixel] = (fineLogSum[pixel] * fineExponent) / groupCount - coarseLogSum / groupCount;
-  }
-  return output;
-}
-
-/**
- * Diagnostic display before P3/P97 normalization and Volume Closing.
- * Each map is the geometric mean of the per-aperture-group sharpness maps;
- * both ratio modes remain identical to the production log-ratio calculation
- * apart from the supplied epsilon floor.
- */
-export function buildStfSharpnessDiagnosticLogFromDerived(
-  fineLogSum: Float32Array, fineZero: Uint8Array, coarseGroups: Float32Array,
-  groupCount: number, epsilon: number,
-  visualization: "fine" | "coarse" | "ratio" | "ratio-v2" | "ratio-x1.2" | "ratio-x1.4" | "ratio-x1.5" | "ratio-x1.6" | "ratio-x2.0",
-): Float32Array {
-  if (visualization === "ratio" || visualization === "ratio-v2") {
-    return buildStfLogRatioFromDerived(fineLogSum, fineZero, coarseGroups, groupCount, epsilon);
-  }
-  if (visualization === "ratio-x1.2") {
-    return buildStfLogRatioFromDerived(fineLogSum, fineZero, coarseGroups, groupCount, epsilon, STF_SHARPNESS_RATIO_X12);
-  }
-  if (visualization === "ratio-x1.4") {
-    return buildStfLogRatioFromDerived(fineLogSum, fineZero, coarseGroups, groupCount, epsilon, STF_SHARPNESS_RATIO_X14);
-  }
-  if (visualization === "ratio-x1.5") {
-    return buildStfLogRatioFromDerived(fineLogSum, fineZero, coarseGroups, groupCount, epsilon, STF_SHARPNESS_RATIO_X15);
-  }
-  if (visualization === "ratio-x1.6") {
-    return buildStfLogRatioFromDerived(fineLogSum, fineZero, coarseGroups, groupCount, epsilon, STF_SHARPNESS_RATIO_X16);
-  }
-  if (visualization === "ratio-x2.0") {
-    return buildStfLogRatioFromDerived(fineLogSum, fineZero, coarseGroups, groupCount, epsilon, STF_SHARPNESS_RATIO_X20);
-  }
-  const pixelCount = fineLogSum.length;
-  if ((visualization !== "fine" && visualization !== "coarse") ||
-      fineZero.length !== pixelCount || coarseGroups.length !== pixelCount * groupCount ||
-      !Number.isInteger(groupCount) || groupCount < 2) {
-    throw new Error("STF diagnostic sharpness parameters are invalid.");
-  }
-  const output = new Float32Array(pixelCount);
-  for (let pixel = 0; pixel < pixelCount; pixel += 1) {
-    if (visualization === "fine") {
-      output[pixel] = fineZero[pixel] ? Number.NaN : fineLogSum[pixel] / groupCount;
-    } else {
-      let logSum = 0;
-      for (let group = 0; group < groupCount; group += 1) {
-        const value = coarseGroups[group * pixelCount + pixel];
-        if (!Number.isFinite(value) || value < 0) throw new Error("STF coarse sharpness is invalid.");
-        logSum += Math.log(Math.max(LOG_FLOOR, value));
-      }
-      output[pixel] = logSum / groupCount;
     }
   }
   return output;

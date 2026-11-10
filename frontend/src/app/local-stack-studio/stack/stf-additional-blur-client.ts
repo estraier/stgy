@@ -5,7 +5,6 @@ import {
   type StfAdditionalBlurWorkerResponse,
   type StfAdditionalBlurWorkerReadyResponse,
   type StfAdditionalBlurWorkerAnalyzeStripeResponse,
-  type StfAdditionalBlurWorkerRatioStripeResponse,
   type StfAdditionalBlurWorkerGraphCutResponse,
   type StfAdditionalBlurWorkerVolumeClosingResponse,
   type StfAdditionalBlurWorkerBlurStripeResponse,
@@ -17,10 +16,6 @@ import type { StfRelativeChannelFloors, StfSampleGrid } from "./stf-additional-b
 export type StfAdditionalBlurAnalyzeResult = {
   linear: Float32Array; fineLogSum: Float32Array; fineZero: Uint8Array;
   coarseGroups: Float32Array; groupCount: number;
-};
-export type StfAdditionalBlurRatioRequest = {
-  fineLogSum: Float32Array; fineZero: Uint8Array; coarseGroups: Float32Array;
-  groupCount: number; epsilon: number; visualization?: "fine" | "coarse" | "ratio" | "ratio-v2" | "ratio-x1.2" | "ratio-x1.4" | "ratio-x1.5" | "ratio-x1.6" | "ratio-x2.0";
 };
 export type StfAdditionalBlurExpandGateRequest = {
   regionHeight: number; coreOffsetY: number; coreHeight: number; radius: number; gate: Float32Array;
@@ -81,17 +76,6 @@ export class StfAdditionalBlurWorkerClient {
   }
   configureRelativeChannelFloors(floors: StfRelativeChannelFloors): Promise<StfRelativeChannelFloors> {
     return this.request("relative-floors-configured", { type: "configure-relative-floors", floors }, []).then((r) => r.floors);
-  }
-  ratioStripe(r: StfAdditionalBlurRatioRequest): Promise<Float32Array> {
-    const fineLogSumBuffer = r.fineLogSum.buffer as ArrayBuffer;
-    const fineZeroBuffer = r.fineZero.buffer as ArrayBuffer;
-    const coarseGroupsBuffer = r.coarseGroups.buffer as ArrayBuffer;
-    return this.request("ratio-stripe-result", {
-      type: "ratio-stripe", pixelCount: r.fineLogSum.length, groupCount: r.groupCount, epsilon: r.epsilon,
-      visualization: r.visualization,
-      fineLogSumBuffer, fineZeroBuffer, coarseGroupsBuffer,
-    }, [fineLogSumBuffer, fineZeroBuffer, coarseGroupsBuffer]).then((value: StfAdditionalBlurWorkerRatioStripeResponse) =>
-      new Float32Array(asBuffer(value.logRatioBuffer, "log ratio")));
   }
   volumeClose(values: Float32Array, width: number, height: number): Promise<{
     values: Float32Array; info: { workingWidth: number; workingHeight: number; volumeThreshold: number };

@@ -329,14 +329,6 @@ export default function PageBody() {
                     <option value="medium">medium</option>
                     <option value="strong">strong</option>
                     <option value="gate">gate</option>
-                    <option value="exp-sharpness-16mp">exp: 16MP sharpness</option>
-                    <option value="exp-sharpness-16mp-dilated">exp: 16MP sharpness (dilated)</option>
-                    <option value="exp-sharpness-0.5mp">exp: 0.5MP sharpness</option>
-                    <option value="exp-ratio-dilated-x1.0">exp: 16MP / 0.5MP raw ratio</option>
-                    <option value="exp-ratio-dilated-x1.3">exp: 16MP^1.3 / 0.5MP raw ratio</option>
-                    <option value="exp-after-volume-closing">exp: after volume closing</option>
-                    <option value="exp-after-graph-cut-boost">exp: after graph cut boost</option>
-                    <option value="exp-after-sigmoid">exp: after sigmoid</option>
                   </select>
                 </label>
                 <label id="stf-blur-ratio-option" className="hidden flex-col items-start gap-1.5">
