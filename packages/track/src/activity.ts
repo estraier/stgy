@@ -5,6 +5,7 @@ import {
   buildPowerBracketHistogram,
   buildSpeedBracketHistogram,
   getMovingAnalysisIntervals,
+  getNetMovingSummary,
   getMovingAnalysisPoints,
   hasTimedAnalysisPointPairs,
 } from "./analysis";
@@ -82,6 +83,8 @@ export type TrackActivityMetadata = {
   totalElapsedTime?: number;
   totalTimerTime?: number;
   totalDistanceM?: number;
+  netMovingTime?: number;
+  netMovingDistanceM?: number;
   ascentM?: number;
   descentM?: number;
   analysis?: TrackActivityAnalysisMetadata;
@@ -648,6 +651,8 @@ function clearComputedMetadata(metadata: TrackActivityMetadata) {
   delete metadata.ascentM;
   delete metadata.descentM;
   delete metadata.analysis;
+  delete metadata.netMovingTime;
+  delete metadata.netMovingDistanceM;
   delete metadata.statistics;
   delete metadata.training;
   delete metadata.bestEfforts;
@@ -1000,6 +1005,7 @@ export function applyComputedMetadata(
   if (!preserveExisting || !metadata.analysis) {
     metadata.analysis = buildActivityAnalysisMetadata();
   }
+  applyNetMovingMetadata(metadata, points, preserveExisting);
 
   const statistics = mergeComputedMetadata(
     metadata.statistics,
@@ -1054,6 +1060,30 @@ export function applyComputedMetadata(
     metadata.pedaling = pedaling;
   } else {
     delete metadata.pedaling;
+  }
+}
+
+/** Keep the original-point net totals when loading an already summarized TrackJSON. */
+export function applyNetMovingMetadata(
+  metadata: TrackActivityMetadata,
+  points: TrackPoint[],
+  preserveExisting = false,
+) {
+  if (
+    preserveExisting &&
+    isFiniteNumber(metadata.netMovingTime) && metadata.netMovingTime >= 0 &&
+    isFiniteNumber(metadata.netMovingDistanceM) && metadata.netMovingDistanceM >= 0
+  ) {
+    return;
+  }
+
+  const net = getNetMovingSummary(points, metadata.analysis);
+  if (net) {
+    metadata.netMovingTime = net.movingTime;
+    metadata.netMovingDistanceM = net.movingDistanceM;
+  } else {
+    delete metadata.netMovingTime;
+    delete metadata.netMovingDistanceM;
   }
 }
 

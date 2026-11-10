@@ -2,6 +2,7 @@ import {
   getActivityMetadataSummaryLines,
 } from "./analysis";
 import type { TrackMetadataSummaryLine } from "./analysis";
+import { getTrackJsonAnalysisPoints } from "./trackjson-analysis";
 import {
   getTrackJsonMetadata,
   getTrackJsonPoi,
@@ -92,7 +93,14 @@ export function getTrackJsonDisplayMetadataLines(
   const lines: TrackMetadataSummaryLine[] = [];
   appendBasicMetadataLines(lines, metadata);
   lines.push(...getTrackJsonOverviewMetadataLines(data));
-  lines.push(...getActivityMetadataSummaryLines({ metadata }));
+  // Saved totals were measured before downsampling. Legacy TrackJSON files
+  // without them can fall back to the available (possibly reduced) samples.
+  const hasStoredNet = isNonNegativeFiniteNumber(metadata.netMovingTime) &&
+    isNonNegativeFiniteNumber(metadata.netMovingDistanceM);
+  lines.push(...getActivityMetadataSummaryLines({
+    metadata,
+    ...(hasStoredNet ? {} : { points: getTrackJsonAnalysisPoints(data) }),
+  }));
 
   const propertyLines = getTrackJsonPropertyMetadataLines(data).filter((line) => {
     return line.key !== "time" && line.key !== "local-time-offset";
@@ -214,6 +222,10 @@ function getFiniteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value)
     ? value
     : undefined;
+}
+
+function isNonNegativeFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

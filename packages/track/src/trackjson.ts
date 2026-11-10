@@ -609,7 +609,7 @@ function getMetadataPrecision(
     return 0;
   }
 
-  if (key === "totalElapsedTime" || key === "totalTimerTime") {
+  if (key === "totalElapsedTime" || key === "totalTimerTime" || key === "netMovingTime") {
     return 0;
   }
 

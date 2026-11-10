@@ -261,6 +261,8 @@ TrackJSON metadata is stored in `Feature.properties.metadata`.
     "descentM": 432.1,
     "totalTimerTime": 3600,
     "totalElapsedTime": 3900,
+    "netMovingTime": 3580,
+    "netMovingDistanceM": 12120.5,
     "recordingDevice": {
       "manufacturer": "garmin",
       "product": "edge",
@@ -341,6 +343,8 @@ Common metadata fields:
 | `descentM` | number | Cumulative descent in meters |
 | `totalTimerTime` | number | Moving/timer time in seconds |
 | `totalElapsedTime` | number | Elapsed time in seconds |
+| `netMovingTime` | number | Time in moving intervals (seconds, based on the configured speed threshold) |
+| `netMovingDistanceM` | number | Distance in moving intervals (meters, based on the configured speed threshold) |
 | `recordingDevice.manufacturer` | string | Recording device manufacturer from FIT `file_id` |
 | `recordingDevice.product` | string | Recording device product from FIT `file_id` |
 | `recordingDevice.serialNumber` | number | Recording device serial number from FIT `file_id` |
@@ -370,9 +374,14 @@ Statistic objects use these fields.
 | `median` | number | Median of raw samples |
 | `max` | number | Maximum raw sample value |
 
-Activity average speed is intentionally not stored separately. Consumers can
-compute gross or timer/moving average later from `totalDistanceM`,
-`totalElapsedTime`, and `totalTimerTime`.
+Activity average speed is intentionally not stored separately. Gross average
+speed is `totalDistanceM / totalElapsedTime`; net moving average speed is
+`netMovingDistanceM / netMovingTime` (multiply by 3.6 for km/h). The net
+values are computed from full-resolution points before downsampling, using
+`analysis.movingSpeedThresholdKph` (default 3 km/h). They are distinct from
+the source-device `totalTimerTime` and can be absent if no moving interval
+was detected. Existing TrackJSON files without net values may be summarized
+from their available points, but those estimates can differ after downsampling.
 
 `bestEfforts.powerW` stores best average power over Strava-style durations:
 5s, 15s, 30s, 1m, 2m, 3m, 5m, 8m, 10m, 15m, 20m, 30m, 45m, 1h, and 2h.
@@ -415,7 +424,7 @@ Default precision:
 | metadata | 1 decimal place |
 | `createdAt` / `startTime` / `timeCreated` | integer |
 | `serialNumber` | integer |
-| `totalElapsedTime` / `totalTimerTime` | integer |
+| `totalElapsedTime` / `totalTimerTime` / `netMovingTime` | integer |
 | `training.totalWorkJ` / `training.totalCaloriesCal` | integer |
 | statistics, `training.normalizedPowerW`, and `bestEfforts` | metadata precision |
 

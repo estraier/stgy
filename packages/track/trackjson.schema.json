@@ -331,6 +331,14 @@
         "totalTimerTime": {
           "type": "number"
         },
+        "netMovingTime": {
+          "type": "number",
+          "minimum": 0
+        },
+        "netMovingDistanceM": {
+          "type": "number",
+          "minimum": 0
+        },
         "totalElapsedTime": {
           "type": "number"
         },

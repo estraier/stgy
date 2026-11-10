@@ -73,6 +73,53 @@ describe("TrackJSON metadata formatting", () => {
     expect(getTrackJsonDisplayMetadataLines(data)).toEqual([]);
   });
 
+  test("renders net moving totals directly from TrackJSON metadata", () => {
+    const data = makeTrackJson();
+    const withNet = {
+      ...data,
+      metadata: {
+        ...data.metadata,
+        netMovingTime: 24269,
+        netMovingDistanceM: 152580,
+      },
+    };
+    const lines = getTrackJsonDisplayMetadataLines(withNet);
+    expect(lines.find((line) => line.key === "net")?.text).toBe(
+      "net: moving time 6:44:29, distance 152.58 km, average speed 22.6 km/h",
+    );
+  });
+
+  test("recomputes legacy TrackJSON net without connecting separate route segments", () => {
+    const data = {
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: { type: "LineString", coordinates: [[139, 35], [139.001, 35]] },
+          properties: {
+            metadata: { analysis: { movingSpeedThresholdKph: 3 } },
+            coordinateProperties: {
+              times: [0, 10], distances: [0, 50], speeds: [18, 18],
+            },
+          },
+        },
+        {
+          type: "Feature",
+          geometry: { type: "LineString", coordinates: [[140, 36], [140.001, 36]] },
+          properties: {
+            coordinateProperties: {
+              times: [100, 110], distances: [0, 50], speeds: [18, 18],
+            },
+          },
+        },
+      ],
+    };
+    const lines = getTrackJsonDisplayMetadataLines(data);
+    expect(lines.find((line) => line.key === "net")?.text).toBe(
+      "net: moving time 0:20, distance 0.10 km, average speed 18.0 km/h",
+    );
+  });
+
   test("includes readable activity metadata for the renderer", () => {
     const lines = getTrackJsonDisplayMetadataLines(makeTrackJson());
 

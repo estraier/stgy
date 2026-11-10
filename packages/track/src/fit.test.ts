@@ -20,7 +20,9 @@ import {
   trackActivityToTrackJson,
 } from "./fit";
 import type { TrackActivity, TrackPoint } from "./fit";
-import { calculateTrackAscentDescent, computeTotalWorkJ } from "./activity";
+import { applyComputedMetadata, calculateTrackAscentDescent, computeTotalWorkJ } from "./activity";
+import { getActivityMetadataSummaryLines } from "./analysis";
+import { getTrackJsonDisplayMetadataLines } from "./metadata";
 
 jest.mock("@garmin/fitsdk", () => {
   return {
@@ -38,6 +40,87 @@ type MockFitReadResult = {
 
 const decoderMock = Decoder as unknown as jest.Mock;
 const fromArrayBufferMock = Stream.fromArrayBuffer as unknown as jest.Mock;
+
+describe("TrackJSON net metadata round trip", () => {
+  test("preserves full-resolution net totals after downsampling, across segments and reimport", () => {
+    const activity: TrackActivity = {
+      schemaVersion: 1,
+      metadata: { totalTimerTime: 999, totalElapsedTime: 120, totalDistanceM: 160 },
+      points: [
+        { time: 0, lat: 35, lon: 139, distanceM: 0, speedMps: 4, segmentId: 0 },
+        { time: 10, lat: 35.0001, lon: 139.0001, distanceM: 40, speedMps: 4, segmentId: 0 },
+        { time: 20, lat: 35.0002, lon: 139.0002, distanceM: 40, speedMps: 0, segmentId: 0 },
+        {},
+        { time: 100, lat: 36, lon: 140, distanceM: 100, speedMps: 4, segmentId: 1 },
+        { time: 110, lat: 36.0001, lon: 140.0001, distanceM: 160, speedMps: 4, segmentId: 1 },
+      ],
+      warnings: [],
+    };
+    applyComputedMetadata(activity.metadata, activity.points);
+    expect(activity.metadata.netMovingTime).toBe(20);
+    expect(activity.metadata.netMovingDistanceM).toBe(100);
+    expect(activity.metadata.totalTimerTime).toBe(999);
+
+    const downsampled = downsampleTrackActivity(activity, { maxPoints: 5 });
+    const output = JSON.parse(trackActivityToTrackJson(downsampled));
+    const routeProperties = output.features.map((feature: {
+      properties: { metadata?: Record<string, unknown> };
+    }) => feature.properties);
+    expect(routeProperties).toHaveLength(2);
+    routeProperties.forEach((properties: { metadata?: Record<string, unknown> }) => {
+      expect(properties.metadata).toMatchObject({
+        netMovingTime: 20,
+        netMovingDistanceM: 100,
+        totalTimerTime: 999,
+      });
+    });
+    const rendered = getTrackJsonDisplayMetadataLines(output);
+    const original = getActivityMetadataSummaryLines(activity);
+    expect(rendered.find((line) => line.key === "net")?.text).toBe(
+      original.find((line) => line.key === "net")?.text,
+    );
+
+    const reimported = trackJsonDataToTrackActivity(output);
+    expect(reimported.metadata.netMovingTime).toBe(20);
+    expect(reimported.metadata.netMovingDistanceM).toBe(100);
+  });
+
+  test("computes net metadata on direct TrackJSON export without mutating the input", () => {
+    const activity: TrackActivity = {
+      schemaVersion: 1,
+      metadata: { totalTimerTime: 100 },
+      points: [
+        { time: 0, lat: 35, lon: 139, distanceM: 0, speedMps: 5 },
+        { time: 10, lat: 35.001, lon: 139.001, distanceM: 50, speedMps: 5 },
+      ],
+      warnings: [],
+    };
+    const data = JSON.parse(trackActivityToTrackJson(activity));
+    expect(data.features[0].properties.metadata).toMatchObject({
+      netMovingTime: 10,
+      netMovingDistanceM: 50,
+      totalTimerTime: 100,
+    });
+    expect(activity.metadata.netMovingTime).toBeUndefined();
+    expect(activity.metadata.netMovingDistanceM).toBeUndefined();
+  });
+
+  test("recomputes net metadata after trimming, without retaining the old totals", () => {
+    const activity: TrackActivity = {
+      schemaVersion: 1,
+      metadata: { netMovingTime: 999, netMovingDistanceM: 9999 },
+      points: [
+        { time: 0, lat: 35, lon: 139, distanceM: 0, speedMps: 5 },
+        { time: 10, lat: 35.0001, lon: 139.0001, distanceM: 50, speedMps: 5 },
+        { time: 20, lat: 35.0002, lon: 139.0002, distanceM: 100, speedMps: 5 },
+      ],
+      warnings: [],
+    };
+    const trimmed = trimTrackActivity(activity, { trimStartSeconds: 10 });
+    expect(trimmed.metadata.netMovingTime).toBe(10);
+    expect(trimmed.metadata.netMovingDistanceM).toBe(50);
+  });
+});
 
 describe("calculateTrackAscentDescent", () => {
   test("sums ascent and descent and resets at segment breaks", () => {

@@ -29,6 +29,11 @@ export type ResolvedTrackAnalysisOptions = {
   movingSpeedThresholdKph: number;
 };
 
+export type TrackNetMovingSummary = {
+  movingTime: number;
+  movingDistanceM: number;
+};
+
 export type TrackMovingAnalysisInterval = {
   point: TrackPoint;
   nextPoint: TrackPoint;
@@ -969,6 +974,24 @@ export function getMovingAnalysisIntervals(
   return intervals;
 }
 
+/** Derive net totals from moving intervals, never from session timer metadata. */
+export function getNetMovingSummary(
+  points: TrackPoint[],
+  options: TrackAnalysisOptions = {},
+): TrackNetMovingSummary | undefined {
+  if (points.length < 2) {
+    return undefined;
+  }
+  const intervals = getMovingAnalysisIntervals(points, options);
+  const movingTime = intervals.reduce((sum, interval) => sum + interval.seconds, 0);
+  const movingDistanceM = intervals.reduce((sum, interval) => {
+    return sum + (isFiniteNumber(interval.distanceM) ? interval.distanceM : 0);
+  }, 0);
+  return movingTime > 0 || movingDistanceM > 0
+    ? { movingTime, movingDistanceM }
+    : undefined;
+}
+
 export function getMovingAnalysisPoints(
   points: TrackPoint[],
   options: TrackAnalysisOptions = {},
@@ -1761,30 +1784,24 @@ function getNetSummaryText(
   input: TrackActivityMetadataInput,
   metadata: Record<string, unknown>,
 ): string | undefined {
-  const points = getActivityInputPoints(input);
-  if (points.length < 2) {
-    return undefined;
-  }
-
+  const storedTime = getNumberProperty(metadata, "netMovingTime");
+  const storedDistanceM = getNumberProperty(metadata, "netMovingDistanceM");
   const analysis = getRecordProperty(metadata, "analysis");
   const movingSpeedThresholdKph = analysis
     ? getNumberProperty(analysis, "movingSpeedThresholdKph")
     : undefined;
-  const intervals = getMovingAnalysisIntervals(points, {
-    ...(isFiniteNumber(movingSpeedThresholdKph)
-      ? { movingSpeedThresholdKph }
-      : {}),
-  });
-  const movingTime = intervals.reduce((sum, interval) => {
-    return sum + interval.seconds;
-  }, 0);
-  const movingDistanceM = intervals.reduce((sum, interval) => {
-    return sum + (isFiniteNumber(interval.distanceM) ? interval.distanceM : 0);
-  }, 0);
-
-  if (movingTime <= 0 && movingDistanceM <= 0) {
+  const net = isFiniteNumber(storedTime) && storedTime >= 0 &&
+    isFiniteNumber(storedDistanceM) && storedDistanceM >= 0
+    ? { movingTime: storedTime, movingDistanceM: storedDistanceM }
+    : getNetMovingSummary(getActivityInputPoints(input), {
+      ...(isFiniteNumber(movingSpeedThresholdKph)
+        ? { movingSpeedThresholdKph }
+        : {}),
+    });
+  if (!net) {
     return undefined;
   }
+  const { movingTime, movingDistanceM } = net;
 
   const parts: string[] = [];
   if (movingTime > 0) {

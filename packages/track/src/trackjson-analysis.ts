@@ -174,6 +174,31 @@ const getTrackJsonPoints = (features: JsonRecord[]): TrackPoint[] => {
   return points;
 };
 
+/** Recover timed track points for legacy TrackJSON without cached net totals. */
+export function getTrackJsonAnalysisPoints(data: unknown): TrackPoint[] {
+  const features = getLineStringFeatures(data);
+  let lastSegmentId = -1;
+  features.forEach((feature) => {
+    const properties = getRecordProperty(feature, "properties");
+    const coordinateProperties = getRecordProperty(properties, "coordinateProperties");
+    const segmentIds = coordinateProperties?.segmentIds;
+    if (Array.isArray(segmentIds)) {
+      segmentIds.forEach((segmentId) => {
+        if (toFiniteNumber(segmentId) !== undefined) {
+          lastSegmentId = Math.max(lastSegmentId, Math.round(segmentId as number));
+        }
+      });
+    }
+  });
+  return features.flatMap((feature, index) => {
+    const fallbackSegmentId = lastSegmentId + index + 1;
+    return getTrackJsonPoints([feature]).map((point) => ({
+      ...point,
+      segmentId: point.segmentId ?? fallbackSegmentId,
+    }));
+  });
+}
+
 const getComputedHistogramDisplay = (
   histograms: TrackActivityHistograms | undefined,
   key: TrackHistogramKey,

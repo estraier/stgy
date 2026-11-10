@@ -1,6 +1,7 @@
 import { Decoder, Stream } from "@garmin/fitsdk";
 import {
   applyComputedMetadata,
+  applyNetMovingMetadata,
   buildActivityAnalysisMetadata,
   buildActivityBestEfforts,
   buildActivityHistograms,
@@ -606,7 +607,9 @@ function buildTrackJsonRouteProperties(
   }
 
   if (options.includeMetadata !== false) {
-    const metadata = buildTrackJsonMetadata(activity.metadata, precision);
+    const sourceMetadata = { ...activity.metadata };
+    applyNetMovingMetadata(sourceMetadata, activity.points, true);
+    const metadata = buildTrackJsonMetadata(sourceMetadata, precision);
     if (metadata) {
       properties.metadata = metadata;
     }
@@ -1280,6 +1283,8 @@ function buildTrackJsonActivityMetadata(
     copyOptionalNumber(src, metadata, "totalElapsedTime");
     copyOptionalNumber(src, metadata, "totalTimerTime");
     copyOptionalNumber(src, metadata, "totalDistanceM");
+    copyOptionalNumber(src, metadata, "netMovingTime");
+    copyOptionalNumber(src, metadata, "netMovingDistanceM");
     copyOptionalNumber(src, metadata, "ascentM");
     copyOptionalNumber(src, metadata, "descentM");
 
@@ -1862,6 +1867,10 @@ function buildTrackJsonMetadata(
     0,
   );
   assignMetadataNumber(output, "totalTimerTime", metadata.totalTimerTime, 0);
+  assignMetadataNumber(output, "netMovingTime", metadata.netMovingTime, 0);
+  assignMetadataNumber(
+    output, "netMovingDistanceM", metadata.netMovingDistanceM, precision.metadata,
+  );
   assignMetadataNumber(
     output,
     "totalDistanceM",
@@ -2649,6 +2658,7 @@ function fitMessagesToMetadata(
   }
 
   metadata.analysis = buildActivityAnalysisMetadata();
+  applyNetMovingMetadata(metadata, points);
 
   const statistics = buildActivityStatistics(points);
   if (statistics) {

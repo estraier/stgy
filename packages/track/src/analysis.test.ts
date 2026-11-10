@@ -48,6 +48,41 @@ describe("getHistogramBarScaleMaxPercentage", () => {
   });
 });
 
+describe("net metadata summary", () => {
+  const points: TrackPoint[] = [
+    { time: 0, distanceM: 0, speedMps: 4 },
+    { time: 10, distanceM: 40, speedMps: 4 },
+    { time: 20, distanceM: 40, speedMps: 0 },
+  ];
+
+  test("prefers stored full-resolution totals over point-based recomputation", () => {
+    const lines = getActivityMetadataSummaryLines({
+      metadata: { netMovingTime: 100, netMovingDistanceM: 1000 },
+      points,
+    });
+    expect(lines.find((line) => line.key === "net")?.text).toBe(
+      "net: moving time 1:40, distance 1.00 km, average speed 36.0 km/h",
+    );
+  });
+
+  test("recomputes net values when stored fields are incomplete", () => {
+    const lines = getActivityMetadataSummaryLines({
+      metadata: { netMovingTime: 100 },
+      points,
+    });
+    expect(lines.find((line) => line.key === "net")?.text).toBe(
+      "net: moving time 0:10, distance 0.04 km, average speed 14.4 km/h",
+    );
+  });
+
+  test("does not substitute FIT timer time for the net summary", () => {
+    const lines = getActivityMetadataSummaryLines({
+      totalTimerTime: 100,
+    });
+    expect(lines.some((line) => line.key === "net")).toBe(false);
+  });
+});
+
 describe("getMovingAnalysisIntervals", () => {
   test("keeps merged segment ids independent even when timestamps interleave", () => {
     const points: TrackPoint[] = [
