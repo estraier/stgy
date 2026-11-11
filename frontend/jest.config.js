@@ -17,7 +17,7 @@ module.exports = {
     "^stgy-markdown$": "<rootDir>/../packages/markdown/src/index.ts",
     "^stgy-geocoder$": "<rootDir>/../packages/geocoder/src/index.ts",
     "^stgy-track$": "<rootDir>/../packages/track/src/index.ts",
-    "^stgy-track/(activity|analysis|metadata|fit|gpx|trackjson)$":
+    "^stgy-track/(activity|analysis|metadata|fit|gpx|trackjson|coordinate-correction|altitude-correction)$":
       "<rootDir>/../packages/track/src/$1.ts",
   },
 };

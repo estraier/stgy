@@ -3867,6 +3867,91 @@ export function obfuscateFitPrivacy(
   return output;
 }
 
+/**
+ * Patch corrected record positions/altitudes into the original FIT bytes.
+ * The message layout, developer data, sensor samples, lap/session records, and
+ * device-specific fields stay intact. No FIT re-encoding takes place.
+ *
+ * The activity must be parsed from exactly these bytes; otherwise record
+ * indices might not align and rewriting is rejected instead of guessing.
+ */
+export function patchFitRecordMeasurements(
+  bytes: ArrayBuffer | Uint8Array,
+  original: TrackActivity,
+  corrected: TrackActivity,
+  fields: { coordinates?: boolean; altitudes?: boolean },
+): Uint8Array {
+  const output = normalizeFitObfuscationInputBytes(bytes);
+  if (!fields.coordinates && !fields.altitudes) return output;
+  const fileInfo = readFitFileInfo(output);
+  const records = collectFitRawMessages(output, fileInfo.headerSize, fileInfo.dataSize)
+    .filter((message) => message.globalMessageNumber === FIT_RECORD_GLOBAL_MESSAGE_NUMBER);
+  if (original.points.length !== records.length || corrected.points.length !== records.length) {
+    throw new Error('Cannot safely patch FIT: decoded record count differs from the original FIT messages.');
+  }
+  let updated = false;
+  records.forEach((message, index) => {
+    const definition = message.definition;
+    if (!definition) throw new Error('Cannot patch FIT record without its definition.');
+    const before = original.points[index];
+    const after = corrected.points[index];
+    const dataOffset = message.startOffset + 1;
+    const fieldOffset = (num: number, size: number): number | undefined => {
+      const field = findField(definition, num);
+      return field && field.size === size
+        ? dataOffset + getFitDataFieldOffset(definition, field, message.compressedTimestamp)
+        : undefined;
+    };
+    if (fields.coordinates && (before.lat !== after.lat || before.lon !== after.lon)) {
+      const latOffset = fieldOffset(RECORD_POSITION_LAT_FIELD, 4);
+      const lonOffset = fieldOffset(RECORD_POSITION_LONG_FIELD, 4);
+      if (latOffset === undefined || lonOffset === undefined ||
+        !isFiniteNumber(after.lat) || Math.abs(after.lat) > 90 ||
+        !isFiniteNumber(after.lon) || Math.abs(after.lon) > 180) {
+        throw new Error('Cannot safely patch FIT: corrected record has no writable coordinates.');
+      }
+      const oldLat = readInt32(output, latOffset, definition.littleEndian);
+      const oldLon = readInt32(output, lonOffset, definition.littleEndian);
+      if ((isFiniteNumber(before.lat) && oldLat !== 0x7fffffff &&
+          Math.abs(oldLat * SEMICIRCLE_TO_DEGREES - before.lat) > 0.00001) ||
+          (isFiniteNumber(before.lon) && oldLon !== 0x7fffffff &&
+          Math.abs(oldLon * SEMICIRCLE_TO_DEGREES - before.lon) > 0.00001)) {
+        throw new Error('Cannot safely patch FIT: decoded coordinates do not match their raw record.');
+      }
+      writeInt32(output, latOffset, Math.round(after.lat / SEMICIRCLE_TO_DEGREES), definition.littleEndian);
+      writeInt32(output, lonOffset, Math.round(after.lon / SEMICIRCLE_TO_DEGREES), definition.littleEndian);
+      updated = true;
+    }
+    if (fields.altitudes && before.altitudeM !== after.altitudeM) {
+      const standard = fieldOffset(2, 2);
+      const enhanced = fieldOffset(78, 4);
+      if ((!standard && !enhanced) || !isFiniteNumber(after.altitudeM)) {
+        throw new Error('Cannot safely patch FIT: corrected record has no writable altitude.');
+      }
+      const scaled = Math.round((after.altitudeM + 500) * 5);
+      if (enhanced !== undefined) {
+        if (scaled < 0 || scaled >= 0xffffffff) {
+          throw new Error('Cannot safely patch FIT: corrected enhanced altitude is out of range.');
+        }
+        writeUint32(output, enhanced, scaled, definition.littleEndian);
+      }
+      if (standard !== undefined) {
+        if (scaled < 0 || scaled >= 0xffff) {
+          if (enhanced === undefined) {
+            throw new Error('Cannot safely patch FIT: corrected altitude is out of range.');
+          }
+          writeUint16(output, standard, 0xffff, definition.littleEndian);
+        } else {
+          writeUint16(output, standard, scaled, definition.littleEndian);
+        }
+      }
+      updated = true;
+    }
+  });
+  if (updated) updateFileCrc(output, fileInfo.dataEndOffset);
+  return output;
+}
+
 export function countFitRecordMessages(
   bytes: ArrayBuffer | Uint8Array
 ): number {

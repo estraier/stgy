@@ -24,6 +24,17 @@ export type TrackUploadObfuscationOptions = {
   endDistanceM: number;
 };
 
+export type TrackUploadCorrectionOptions = {
+  coordinates: boolean;
+  altitudes: boolean;
+  /** Cancels outstanding elevation-tile requests when a preview is superseded. */
+  signal?: AbortSignal;
+};
+
+function hasCorrections(options?: TrackUploadCorrectionOptions): boolean {
+  return Boolean(options?.coordinates || options?.altitudes);
+}
+
 export type TrackObfuscationDistances = {
   startDistanceM: number;
   endDistanceM: number;
@@ -41,20 +52,21 @@ export async function makeTrackUploadPreview(
   file: TrackPreviewFile,
   maxPoints = TRACK_UPLOAD_PREVIEW_MAX_POINTS,
   obfuscation?: TrackUploadObfuscationOptions,
+  corrections?: TrackUploadCorrectionOptions,
 ): Promise<TrackUploadPreview> {
   const kind = getTrackFileKind(file.name);
   if (kind === "FIT") {
-    return makeFitPreview(await file.arrayBuffer(), maxPoints, obfuscation);
+    return makeFitPreview(await file.arrayBuffer(), maxPoints, obfuscation, corrections);
   }
   if (kind === "GPX") {
-    return makeGpxPreview(decodeUtf8(await file.arrayBuffer()), maxPoints, obfuscation);
+    return makeGpxPreview(decodeUtf8(await file.arrayBuffer()), maxPoints, obfuscation, corrections);
   }
   if (kind === "TRJ") {
-    return makeTrackJsonPreview(decodeUtf8(await file.arrayBuffer()), maxPoints, obfuscation);
+    return makeTrackJsonPreview(decodeUtf8(await file.arrayBuffer()), maxPoints, obfuscation, corrections);
   }
   if (kind === "TRJGZ") {
     const text = await decompressGzipText(await file.arrayBuffer());
-    return makeTrackJsonPreview(text, maxPoints, obfuscation);
+    return makeTrackJsonPreview(text, maxPoints, obfuscation, corrections);
   }
   throw new Error("Only FIT, GPX, TRJ, and TRJGZ files are supported.");
 }
@@ -70,17 +82,20 @@ export async function makeFitPreview(
   bytes: ArrayBuffer,
   maxPoints = TRACK_UPLOAD_PREVIEW_MAX_POINTS,
   obfuscation?: TrackUploadObfuscationOptions,
+  corrections?: TrackUploadCorrectionOptions,
 ): Promise<TrackUploadPreview> {
   const [fit, trackjson] = await Promise.all([
     import("stgy-track/fit"),
     import("stgy-track/trackjson"),
   ]);
-  const sourceBytes = obfuscation?.enabled
-    ? fit.obfuscateFitPrivacy(bytes, {
-        startDistanceM: obfuscation.startDistanceM,
-        endDistanceM: obfuscation.endDistanceM,
-      })
-    : bytes;
+  const sourceBytes = hasCorrections(corrections)
+    ? await transformFitForUpload(fit, bytes, obfuscation, corrections)
+    : obfuscation?.enabled
+      ? fit.obfuscateFitPrivacy(bytes, {
+          startDistanceM: obfuscation.startDistanceM,
+          endDistanceM: obfuscation.endDistanceM,
+        })
+      : bytes;
   const activity = fit.parseFitBytes(sourceBytes);
   const pointCount = fit.countFitRecordMessages(sourceBytes);
   const fullTrackJson = trackjson.parseTrackJsonData(
@@ -119,12 +134,15 @@ export async function makeGpxPreview(
   text: string,
   maxPoints = TRACK_UPLOAD_PREVIEW_MAX_POINTS,
   obfuscation?: TrackUploadObfuscationOptions,
+  corrections?: TrackUploadCorrectionOptions,
 ): Promise<TrackUploadPreview> {
   const [fit, gpx] = await Promise.all([import("stgy-track/fit"), import("stgy-track/gpx")]);
   const activity = gpx.parseGpxText(text);
   const pointCount = countTrackActivityPositionedPoints(activity);
   let previewActivity = activity;
-  if (obfuscation?.enabled) {
+  if (hasCorrections(corrections)) {
+    previewActivity = await transformActivityForUpload(fit, activity, obfuscation, corrections);
+  } else if (obfuscation?.enabled) {
     const trackjson = await import("stgy-track/trackjson");
     const data = trackjson.parseTrackJsonData(
       fit.trackActivityToTrackJson(activity, { pretty: false }),
@@ -155,6 +173,7 @@ export async function makeTrackJsonPreview(
   text: string,
   maxPoints = TRACK_UPLOAD_PREVIEW_MAX_POINTS,
   obfuscation?: TrackUploadObfuscationOptions,
+  corrections?: TrackUploadCorrectionOptions,
 ): Promise<TrackUploadPreview> {
   const [fit, trackjson] = await Promise.all([
     import("stgy-track/fit"),
@@ -162,21 +181,23 @@ export async function makeTrackJsonPreview(
   ]);
   const data = trackjson.parseTrackJsonData(text);
   const pointCount = trackjson.countTrackJsonPositionedPoints(data);
-  const source = obfuscation?.enabled
-    ? fit.addTrackJsonDerivedProperties(
-        trackjson.obfuscateTrackJsonPrivacy(data, {
-          startDistanceM: obfuscation.startDistanceM,
-          endDistanceM: obfuscation.endDistanceM,
-        }),
-      )
-    : data;
+  const source = hasCorrections(corrections)
+    ? await transformTrackJsonForUpload(fit, trackjson, data, obfuscation, corrections)
+    : obfuscation?.enabled
+      ? fit.addTrackJsonDerivedProperties(
+          trackjson.obfuscateTrackJsonPrivacy(data, {
+            startDistanceM: obfuscation.startDistanceM,
+            endDistanceM: obfuscation.endDistanceM,
+          }),
+        )
+      : data;
   const activity = fit.trackJsonDataToTrackActivity(source);
   const preview = trackjson.downsampleTrackJsonData(source, {
     maxPoints,
     strategy: "uniform",
     preserveEndpoints: true,
   });
-  const output = obfuscation?.enabled
+  const output = obfuscation?.enabled || hasCorrections(corrections)
     ? fit.addTrackJsonDerivedProperties(preview)
     : preview;
   return {
@@ -236,6 +257,7 @@ export function getTrackUploadDownsamplePointCount(pointCount: number): number {
 export async function prepareTrackUploadPayload(
   file: File,
   obfuscation?: TrackUploadObfuscationOptions,
+  corrections?: TrackUploadCorrectionOptions,
 ): Promise<PreparedTrackUpload> {
   const kind = getTrackFileKind(file.name);
   if (!kind) {
@@ -250,12 +272,16 @@ export async function prepareTrackUploadPayload(
     const input = await file.arrayBuffer();
     const sourcePointCount = fit.countFitRecordMessages(input);
     const uploadPointCount = getTrackUploadDownsamplePointCount(sourcePointCount);
-    if (!obfuscation?.enabled && uploadPointCount === sourcePointCount) {
+    if (!obfuscation?.enabled && !hasCorrections(corrections) &&
+        uploadPointCount === sourcePointCount) {
       return { payload: file, filename, contentType };
     }
 
     let output: Uint8Array = new Uint8Array(input);
-    if (obfuscation?.enabled) {
+    if (hasCorrections(corrections)) {
+      output = await transformFitForUpload(fit, input, obfuscation, corrections);
+    }
+    if (obfuscation?.enabled && !hasCorrections(corrections)) {
       output = fit.obfuscateFitPrivacy(output, {
         startDistanceM: obfuscation.startDistanceM,
         endDistanceM: obfuscation.endDistanceM,
@@ -280,16 +306,24 @@ export async function prepareTrackUploadPayload(
     const parsed = trackjson.parseTrackJsonData(sourceText);
     const sourcePointCount = trackjson.countTrackJsonPositionedPoints(parsed);
     const uploadPointCount = getTrackUploadDownsamplePointCount(sourcePointCount);
-    if (!obfuscation?.enabled && uploadPointCount === sourcePointCount) {
+    if (!obfuscation?.enabled && !hasCorrections(corrections) &&
+        uploadPointCount === sourcePointCount) {
       return { payload: file, filename, contentType };
     }
+    const corrected = hasCorrections(corrections)
+      ? await transformTrackJsonForUpload(fit, trackjson, parsed, obfuscation, corrections)
+      : parsed;
+    const correctedCount = hasCorrections(corrections)
+      ? trackjson.countTrackJsonPositionedPoints(corrected) : sourcePointCount;
+    const correctedLimit = hasCorrections(corrections)
+      ? getTrackUploadDownsamplePointCount(correctedCount) : uploadPointCount;
     const output = prepareTrackJsonUploadData(
       fit,
       trackjson,
-      parsed,
-      sourcePointCount,
-      uploadPointCount,
-      obfuscation,
+      corrected,
+      correctedCount,
+      correctedLimit,
+      hasCorrections(corrections) ? undefined : obfuscation,
     );
     return {
       payload: await compressGzipText(
@@ -310,7 +344,15 @@ export async function prepareTrackUploadPayload(
     const activity = gpx.parseGpxText(sourceText);
     const sourcePointCount = countTrackActivityPositionedPoints(activity);
     const uploadPointCount = getTrackUploadDownsamplePointCount(sourcePointCount);
-    if (!obfuscation?.enabled) {
+    if (hasCorrections(corrections)) {
+      const processed = await transformActivityForUpload(fit, activity, obfuscation, corrections);
+      const processedCount = countTrackActivityPositionedPoints(processed);
+      const processedLimit = getTrackUploadDownsamplePointCount(processedCount);
+      const uploadActivity = processedLimit < processedCount
+        ? downsampleTrackActivityToPositionedPoints(fit, processed, processedLimit)
+        : processed;
+      trackJson = fit.trackActivityToTrackJson(uploadActivity, { pretty: false });
+    } else if (!obfuscation?.enabled) {
       const uploadActivity =
         uploadPointCount < sourcePointCount
           ? downsampleTrackActivityToPositionedPoints(fit, activity, uploadPointCount)
@@ -339,13 +381,20 @@ export async function prepareTrackUploadPayload(
     const parsed = trackjson.parseTrackJsonData(sourceText);
     const sourcePointCount = trackjson.countTrackJsonPositionedPoints(parsed);
     const uploadPointCount = getTrackUploadDownsamplePointCount(sourcePointCount);
+    const corrected = hasCorrections(corrections)
+      ? await transformTrackJsonForUpload(fit, trackjson, parsed, obfuscation, corrections)
+      : parsed;
+    const correctedCount = hasCorrections(corrections)
+      ? trackjson.countTrackJsonPositionedPoints(corrected) : sourcePointCount;
+    const correctedLimit = hasCorrections(corrections)
+      ? getTrackUploadDownsamplePointCount(correctedCount) : uploadPointCount;
     const output = prepareTrackJsonUploadData(
       fit,
       trackjson,
-      parsed,
-      sourcePointCount,
-      uploadPointCount,
-      obfuscation,
+      corrected,
+      correctedCount,
+      correctedLimit,
+      hasCorrections(corrections) ? undefined : obfuscation,
     );
     trackJson = JSON.stringify(trackjson.compactTrackJsonData(output));
   }
@@ -355,6 +404,225 @@ export async function prepareTrackUploadPayload(
     filename,
     contentType,
   };
+}
+
+async function transformFitForUpload(
+  fit: typeof import("stgy-track/fit"),
+  bytes: ArrayBuffer | Uint8Array,
+  obfuscation?: TrackUploadObfuscationOptions,
+  corrections?: TrackUploadCorrectionOptions,
+): Promise<Uint8Array> {
+  let output: Uint8Array = bytes instanceof Uint8Array
+    ? new Uint8Array(bytes) : new Uint8Array(bytes.slice(0));
+  if (corrections?.coordinates) {
+    const { correctTrackActivityCoordinates } = await import("stgy-track/coordinate-correction");
+    const original = fit.parseFitBytes(output);
+    const result = correctTrackActivityCoordinates(original);
+    if (result.report.pointsCorrected > 0) {
+      output = fit.patchFitRecordMeasurements(output, original, result.activity, { coordinates: true });
+    }
+  }
+  if (obfuscation?.enabled) {
+    output = fit.obfuscateFitPrivacy(output, {
+      startDistanceM: obfuscation.startDistanceM,
+      endDistanceM: obfuscation.endDistanceM,
+    });
+  }
+  if (corrections?.altitudes) {
+    const { correctTrackActivityAltitudes } = await import("stgy-track/altitude-correction");
+    const original = fit.parseFitBytes(output);
+    const result = await correctTrackActivityAltitudes(original, { signal: corrections.signal });
+    if (result.report.pointsCorrected > 0) {
+      output = fit.patchFitRecordMeasurements(output, original, result.activity, { altitudes: true });
+    }
+  }
+  return output;
+}
+
+async function transformActivityForUpload(
+  fit: typeof import("stgy-track/fit"),
+  activity: TrackActivity,
+  obfuscation?: TrackUploadObfuscationOptions,
+  corrections?: TrackUploadCorrectionOptions,
+): Promise<TrackActivity> {
+  let output = activity;
+  if (corrections?.coordinates) {
+    const { correctTrackActivityCoordinates } = await import("stgy-track/coordinate-correction");
+    output = correctTrackActivityCoordinates(output).activity;
+  }
+  if (obfuscation?.enabled) {
+    const trackjson = await import("stgy-track/trackjson");
+    const data = trackjson.parseTrackJsonData(fit.trackActivityToTrackJson(output, { pretty: false }));
+    output = fit.trackJsonDataToTrackActivity(fit.addTrackJsonDerivedProperties(
+      trackjson.obfuscateTrackJsonPrivacy(data, {
+        startDistanceM: obfuscation.startDistanceM,
+        endDistanceM: obfuscation.endDistanceM,
+      }),
+    ));
+  }
+  if (corrections?.altitudes) {
+    const { correctTrackActivityAltitudes } = await import("stgy-track/altitude-correction");
+    output = (await correctTrackActivityAltitudes(output, { signal: corrections.signal })).activity;
+  }
+  return output;
+}
+
+/** Replace just corrected series, preserving custom properties and POI features. */
+function patchTrackJsonMeasurements(
+  data: unknown,
+  before: TrackActivity,
+  after: TrackActivity,
+): unknown {
+  if (!isRecord(data) || before.points.length !== after.points.length) {
+    throw new Error("Cannot safely patch corrected TrackJSON points.");
+  }
+  const features: unknown[] = data.type === "FeatureCollection" && Array.isArray(data.features)
+    ? data.features : [data];
+  let offset = 0;
+  let previousFeatureHadPoints = false;
+  const patched = features.map((feature): unknown => {
+    if (!isRecord(feature) || !isRecord(feature.geometry) ||
+        feature.geometry.type !== "LineString" || !Array.isArray(feature.geometry.coordinates)) {
+      return feature;
+    }
+    const sourceCoordinates = feature.geometry.coordinates as unknown[];
+    if (sourceCoordinates.length > 0 && previousFeatureHadPoints) offset++; // segment separator
+    if (sourceCoordinates.length > 0) previousFeatureHadPoints = true;
+    const properties = isRecord(feature.properties) ? feature.properties : {};
+    const coordinateProperties = isRecord(properties.coordinateProperties) ? properties.coordinateProperties : {};
+    const oldAltitudes = Array.isArray(coordinateProperties.altitudes)
+      ? coordinateProperties.altitudes as unknown[] : undefined;
+    let changed = false;
+    const altitudes = oldAltitudes ? [...oldAltitudes] : undefined;
+    const coordinates = sourceCoordinates.map((coord, index) => {
+      const sourcePoint = before.points[offset++];
+      const targetPoint = after.points[offset - 1];
+      if (!sourcePoint || !targetPoint || !Array.isArray(coord)) {
+        throw new Error("Cannot safely patch TrackJSON: point alignment mismatch.");
+      }
+      const positionChanged = sourcePoint.lat !== targetPoint.lat || sourcePoint.lon !== targetPoint.lon;
+      const altitudeChanged = sourcePoint.altitudeM !== targetPoint.altitudeM;
+      if (!positionChanged && !altitudeChanged) return coord;
+      const next = [...coord];
+      if (positionChanged) {
+        if (!isFiniteNumber(targetPoint.lat) || !isFiniteNumber(targetPoint.lon)) {
+          throw new Error("Cannot safely patch TrackJSON: invalid corrected coordinate.");
+        }
+        next[0] = targetPoint.lon;
+        next[1] = targetPoint.lat;
+      }
+      if (altitudeChanged && isFiniteNumber(targetPoint.altitudeM)) {
+        if (next.length > 2) next[2] = targetPoint.altitudeM;
+        if (altitudes) altitudes[index] = targetPoint.altitudeM;
+        if (next.length <= 2 && !altitudes) next[2] = targetPoint.altitudeM;
+      }
+      changed = true;
+      return next;
+    });
+    if (!changed) return feature;
+    return {
+      ...feature,
+      geometry: { ...feature.geometry, coordinates },
+      ...(altitudes ? {
+        properties: { ...properties, coordinateProperties: { ...coordinateProperties, altitudes } },
+      } : {}),
+    };
+  });
+  if (offset !== before.points.length) {
+    throw new Error("Cannot safely patch TrackJSON: decoded point count differs from its geometry.");
+  }
+  const metadataChanged = before.metadata.coordinateCorrection !== after.metadata.coordinateCorrection ||
+    before.metadata.altitudeCorrection !== after.metadata.altitudeCorrection ||
+    before.metadata.ascentM !== after.metadata.ascentM ||
+    before.metadata.descentM !== after.metadata.descentM;
+  if (metadataChanged) {
+    const applyMetadata = (value: Record<string, unknown>): Record<string, unknown> => {
+      const metadata = { ...value };
+      if (after.metadata.coordinateCorrection) {
+        metadata.coordinateCorrection = after.metadata.coordinateCorrection;
+      }
+      if (after.metadata.altitudeCorrection) {
+        metadata.altitudeCorrection = after.metadata.altitudeCorrection;
+      }
+      if (isFiniteNumber(after.metadata.ascentM)) metadata.ascentM = after.metadata.ascentM;
+      else if (before.metadata.ascentM !== after.metadata.ascentM) delete metadata.ascentM;
+      if (isFiniteNumber(after.metadata.descentM)) metadata.descentM = after.metadata.descentM;
+      else if (before.metadata.descentM !== after.metadata.descentM) delete metadata.descentM;
+      return metadata;
+    };
+    for (let i = 0; i < patched.length; i++) {
+      const feature = patched[i];
+      if (!isRecord(feature) || !isRecord(feature.geometry) ||
+          feature.geometry.type !== "LineString") continue;
+      const properties = isRecord(feature.properties) ? feature.properties : {};
+      const existing = isRecord(properties.metadata) ? properties.metadata : {};
+      patched[i] = { ...feature,
+        properties: { ...properties, metadata: applyMetadata(existing) },
+      };
+    }
+  }
+  if (data.type === "FeatureCollection") {
+    const rootMetadata = isRecord(data.metadata) && metadataChanged
+      ? applyRootMetadata(data.metadata, after) : data.metadata;
+    return { ...data, features: patched,
+      ...(rootMetadata !== undefined ? { metadata: rootMetadata } : {}),
+    };
+  }
+  return patched[0];
+}
+
+function applyRootMetadata(
+  metadata: Record<string, unknown>,
+  activity: TrackActivity,
+): Record<string, unknown> {
+  return {
+    ...metadata,
+    ...(activity.metadata.coordinateCorrection
+      ? { coordinateCorrection: activity.metadata.coordinateCorrection } : {}),
+    ...(activity.metadata.altitudeCorrection
+      ? { altitudeCorrection: activity.metadata.altitudeCorrection } : {}),
+    ...(isFiniteNumber(activity.metadata.ascentM) ? { ascentM: activity.metadata.ascentM } : {}),
+    ...(isFiniteNumber(activity.metadata.descentM) ? { descentM: activity.metadata.descentM } : {}),
+  };
+}
+
+async function transformTrackJsonForUpload(
+  fit: typeof import("stgy-track/fit"),
+  trackjson: typeof import("stgy-track/trackjson"),
+  input: unknown,
+  obfuscation?: TrackUploadObfuscationOptions,
+  corrections?: TrackUploadCorrectionOptions,
+): Promise<unknown> {
+  let output = input;
+  if (corrections?.coordinates) {
+    const { correctTrackActivityCoordinates } = await import("stgy-track/coordinate-correction");
+    const original = fit.trackJsonDataToTrackActivity(output);
+    const result = correctTrackActivityCoordinates(original);
+    if (result.report.pointsCorrected > 0) {
+      output = patchTrackJsonMeasurements(output, original, result.activity);
+      output = fit.addTrackJsonDerivedProperties(output);
+    }
+  }
+  if (obfuscation?.enabled) {
+    output = fit.addTrackJsonDerivedProperties(trackjson.obfuscateTrackJsonPrivacy(output, {
+      startDistanceM: obfuscation.startDistanceM,
+      endDistanceM: obfuscation.endDistanceM,
+    }));
+  }
+  if (corrections?.altitudes) {
+    const { correctTrackActivityAltitudes } = await import("stgy-track/altitude-correction");
+    const original = fit.trackJsonDataToTrackActivity(output);
+    const result = await correctTrackActivityAltitudes(original, { signal: corrections.signal });
+    if (result.report.pointsCorrected > 0) {
+      output = patchTrackJsonMeasurements(output, original, result.activity);
+      output = fit.addTrackJsonDerivedProperties(output);
+    }
+  }
+  return output;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 type TrackFitModule = typeof import("stgy-track/fit");

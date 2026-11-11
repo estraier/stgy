@@ -5,6 +5,7 @@ import {
   downsampleFitRecordMessages,
   downsampleTrackActivity,
   obfuscateFitPrivacy,
+  patchFitRecordMeasurements,
   parseFitBytes,
   trackActivityToTrackJson,
   trackJsonDataToTrackActivity,
@@ -36,6 +37,8 @@ import {
   prepareTrackUploadPayload,
 } from "./trackPreview";
 import { parseGpxText } from "stgy-track/gpx";
+import { correctTrackActivityCoordinates } from "stgy-track/coordinate-correction";
+import { correctTrackActivityAltitudes } from "stgy-track/altitude-correction";
 
 jest.mock("stgy-track/fit", () => ({
   addTrackJsonDerivedProperties: jest.fn(),
@@ -43,6 +46,7 @@ jest.mock("stgy-track/fit", () => ({
   downsampleFitRecordMessages: jest.fn(),
   downsampleTrackActivity: jest.fn(),
   obfuscateFitPrivacy: jest.fn(),
+  patchFitRecordMeasurements: jest.fn(),
   parseFitBytes: jest.fn(),
   trackActivityToTrackJson: jest.fn(),
   trackJsonDataToTrackActivity: jest.fn(),
@@ -60,8 +64,18 @@ jest.mock("stgy-track/gpx", () => ({
   parseGpxText: jest.fn(),
 }));
 
+jest.mock("stgy-track/coordinate-correction", () => ({
+  correctTrackActivityCoordinates: jest.fn(),
+}));
+jest.mock("stgy-track/altitude-correction", () => ({
+  correctTrackActivityAltitudes: jest.fn(),
+}));
+
 const addTrackJsonDerivedPropertiesMock = jest.mocked(addTrackJsonDerivedProperties);
 const obfuscateFitPrivacyMock = jest.mocked(obfuscateFitPrivacy);
+const patchFitRecordMeasurementsMock = jest.mocked(patchFitRecordMeasurements);
+const correctCoordinatesMock = jest.mocked(correctTrackActivityCoordinates);
+const correctAltitudesMock = jest.mocked(correctTrackActivityAltitudes);
 const countFitRecordMessagesMock = jest.mocked(countFitRecordMessages);
 const downsampleFitRecordMessagesMock = jest.mocked(downsampleFitRecordMessages);
 const parseFitBytesMock = jest.mocked(parseFitBytes);
@@ -746,4 +760,104 @@ test("converts GPX and TRJ uploads to gzipped TrackJSON", async () => {
   expect(gunzipSync(Buffer.from(await trj.payload.arrayBuffer())).toString()).toBe(
     JSON.stringify(compact),
   );
+});
+
+
+test("applies FIT corrections in coordinates, privacy, altitude order while preserving FIT format", async () => {
+  const file = new File([new Uint8Array([1, 2, 3])], "ride.fit", {
+    type: "application/octet-stream",
+  });
+  const source = { schemaVersion: 1, metadata: {}, points: [{ lat: 35, lon: 139, altitudeM: 100 }], warnings: [] };
+  const coordinates = { ...source, points: [{ ...source.points[0], lon: 139.001 }] };
+  const privacy = { ...source, points: [{ ...coordinates.points[0], lon: 139.002 }] };
+  const altitudes = { ...privacy, points: [{ ...privacy.points[0], altitudeM: 105 }] };
+  const positionBytes = new Uint8Array([4, 5, 6]);
+  const obfuscatedBytes = new Uint8Array([7, 8, 9]);
+  const altitudeBytes = new Uint8Array([10, 11, 12]);
+  countFitRecordMessagesMock.mockReturnValue(1);
+  parseFitBytesMock.mockReturnValueOnce(source as never).mockReturnValueOnce(privacy as never);
+  correctCoordinatesMock.mockReturnValue({ activity: coordinates, report: { pointsCorrected: 1 } } as never);
+  correctAltitudesMock.mockResolvedValue({ activity: altitudes, report: { pointsCorrected: 1 } } as never);
+  patchFitRecordMeasurementsMock.mockReturnValueOnce(positionBytes).mockReturnValueOnce(altitudeBytes);
+  obfuscateFitPrivacyMock.mockReturnValue(obfuscatedBytes);
+
+  const result = await prepareTrackUploadPayload(
+    file, { enabled: true, startDistanceM: 200, endDistanceM: 300 },
+    { coordinates: true, altitudes: true },
+  );
+  expect(result.filename).toBe("ride.fit");
+  expect(Array.from(new Uint8Array(await result.payload.arrayBuffer()))).toEqual([10, 11, 12]);
+  expect(patchFitRecordMeasurementsMock).toHaveBeenNthCalledWith(1, expect.any(Uint8Array), source,
+    coordinates, { coordinates: true });
+  expect(obfuscateFitPrivacyMock).toHaveBeenCalledWith(positionBytes,
+    { startDistanceM: 200, endDistanceM: 300 });
+  expect(patchFitRecordMeasurementsMock).toHaveBeenNthCalledWith(2, obfuscatedBytes, privacy,
+    altitudes, { altitudes: true });
+  expect(correctCoordinatesMock.mock.invocationCallOrder[0])
+    .toBeLessThan(obfuscateFitPrivacyMock.mock.invocationCallOrder[0]);
+  expect(obfuscateFitPrivacyMock.mock.invocationCallOrder[0])
+    .toBeLessThan(correctAltitudesMock.mock.invocationCallOrder[0]);
+  expect(downsampleFitRecordMessagesMock).not.toHaveBeenCalled();
+});
+
+test("keeps FIT original when enabled corrections find no valid changes", async () => {
+  const file = new File([new Uint8Array([1, 2, 3])], "ride.fit");
+  const source = { schemaVersion: 1, metadata: {}, points: [], warnings: [] };
+  countFitRecordMessagesMock.mockReturnValue(0);
+  parseFitBytesMock.mockReturnValue(source as never);
+  correctCoordinatesMock.mockReturnValue({ activity: source, report: { pointsCorrected: 0 } } as never);
+  correctAltitudesMock.mockResolvedValue({ activity: source, report: { pointsCorrected: 0 } } as never);
+  const result = await prepareTrackUploadPayload(file, undefined, {
+    coordinates: true, altitudes: true,
+  });
+  expect(Array.from(new Uint8Array(await result.payload.arrayBuffer()))).toEqual([1, 2, 3]);
+  expect(patchFitRecordMeasurementsMock).not.toHaveBeenCalled();
+});
+
+test("patches TrackJSON coordinates and elevations without dropping custom properties or pins", async () => {
+  const input = {
+    type: "FeatureCollection", customTopLevel: { vendor: 123 },
+    features: [
+      { type: "Feature", geometry: { type: "LineString", coordinates: [[139, 35, 100], [139.001, 35.001, 102]] },
+        properties: { custom: "keep", metadata: {}, coordinateProperties: {
+          altitudes: [100, 102], times: [1000, 1001], heartRates: [150, 152],
+        } },
+      },
+      { type: "Feature", geometry: { type: "Point", coordinates: [139.002, 35.002] },
+        properties: { title: "Keep this point" },
+      },
+    ],
+  };
+  const original = { schemaVersion: 1, metadata: {}, warnings: [], points: [
+    { lon: 139, lat: 35, altitudeM: 100, time: 1000 },
+    { lon: 139.001, lat: 35.001, altitudeM: 102, time: 1001 },
+  ] };
+  const coordinateActivity = { ...original, metadata: { coordinateCorrection: {
+    method: "linear-dead-reckoning-v2", regionsCorrected: 1, pointsCorrected: 1,
+    speedsCorrected: 0, distancesCorrected: 0,
+  } }, points: [original.points[0], { ...original.points[1], lon: 139.005 }] };
+  const altitudeActivity = { ...coordinateActivity, metadata: {
+    ...coordinateActivity.metadata, altitudeCorrection: {
+      method: "terrain-drift-v1", source: "mapzen", anchorsUsed: 2, status: "corrected",
+    }, ascentM: 6, descentM: 0,
+  }, points: [coordinateActivity.points[0], { ...coordinateActivity.points[1], altitudeM: 106 }] };
+  parseTrackJsonDataMock.mockReturnValue(input);
+  trackJsonDataToTrackActivityMock
+    .mockReturnValueOnce(original as never).mockReturnValueOnce(coordinateActivity as never);
+  correctCoordinatesMock.mockReturnValue({ activity: coordinateActivity, report: { pointsCorrected: 1 } } as never);
+  correctAltitudesMock.mockResolvedValue({ activity: altitudeActivity, report: { pointsCorrected: 1 } } as never);
+  compactTrackJsonDataMock.mockImplementation((data: unknown) => data);
+  const file = new File([JSON.stringify(input)], "ride.trj", { type: "application/json" });
+  const result = await prepareTrackUploadPayload(file, undefined, {
+    coordinates: true, altitudes: true,
+  });
+  const json = JSON.parse(gunzipSync(Buffer.from(await result.payload.arrayBuffer())).toString());
+  expect(json.features[0].geometry.coordinates[1]).toEqual([139.005, 35.001, 106]);
+  expect(json.features[0].properties.coordinateProperties.altitudes).toEqual([100, 106]);
+  expect(json.features[0].properties.coordinateProperties.heartRates).toEqual([150, 152]);
+  expect(json.features[0].properties.metadata.coordinateCorrection.regionsCorrected).toBe(1);
+  expect(json.features[0].properties.metadata.altitudeCorrection.anchorsUsed).toBe(2);
+  expect(json.features[0].properties.custom).toBe("keep");
+  expect(json.features[1]).toEqual(input.features[1]);
+  expect(json.customTopLevel).toEqual({ vendor: 123 });
 });

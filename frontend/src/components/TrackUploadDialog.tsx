@@ -19,6 +19,7 @@ import {
   makeTrackUploadPreview,
   normalizeTrackObfuscationDistance,
   prepareTrackUploadPayload,
+  type TrackUploadCorrectionOptions,
   type TrackUploadObfuscationOptions,
   type TrackUploadPreviewMetadata,
 } from "@/utils/trackPreview";
@@ -49,6 +50,8 @@ type SelectedItem = TrackDialogFileItem & {
   previewMetadata?: TrackUploadPreviewMetadata;
   pointCount?: number;
   obfuscateCoordinates: boolean;
+  correctCoordinates: boolean;
+  correctAltitudes: boolean;
   obfuscateStartDistanceM: string;
   obfuscateEndDistanceM: string;
 };
@@ -64,6 +67,8 @@ type SelectedItemPatch = Partial<
     | "previewMetadata"
     | "pointCount"
     | "obfuscateCoordinates"
+    | "correctCoordinates"
+    | "correctAltitudes"
     | "obfuscateStartDistanceM"
     | "obfuscateEndDistanceM"
   >
@@ -89,6 +94,8 @@ function createSelectedItem(file: TrackDialogFileItem): SelectedItem {
     previewStatus: supported ? "loading" : "error",
     previewError: supported ? undefined : "Only FIT, GPX, TRJ, and TRJGZ files are supported.",
     obfuscateCoordinates: false,
+    correctCoordinates: false,
+    correctAltitudes: false,
     obfuscateStartDistanceM: "1000",
     obfuscateEndDistanceM: "1000",
   };
@@ -126,6 +133,17 @@ function getItemObfuscation(item: SelectedItem): TrackUploadObfuscationOptions {
   };
 }
 
+function getItemCorrections(
+  item: SelectedItem,
+  signal?: AbortSignal,
+): TrackUploadCorrectionOptions {
+  return {
+    coordinates: Boolean(getTrackFileKind(item.name)) && item.correctCoordinates,
+    altitudes: Boolean(getTrackFileKind(item.name)) && item.correctAltitudes,
+    signal,
+  };
+}
+
 function getItemDownsamplePointCount(item: SelectedItem): number | undefined {
   if (item.pointCount === undefined || item.pointCount <= TRACK_UPLOAD_POINT_LIMIT) {
     return undefined;
@@ -137,7 +155,8 @@ function sourceFileSizeIsUploadSize(item: SelectedItem): boolean {
   const kind = getTrackFileKind(item.name);
   if (getItemDownsamplePointCount(item) !== undefined) return false;
   if (kind === "FIT") return true;
-  return kind === "TRJGZ" && !item.obfuscateCoordinates;
+  return kind === "TRJGZ" && !item.obfuscateCoordinates &&
+    !item.correctCoordinates && !item.correctAltitudes;
 }
 
 function TrackPreviewMetadata({ metadata }: { metadata: TrackUploadPreviewMetadata }) {
@@ -172,6 +191,7 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
   const [error, setError] = useState<string | null>(null);
   const previewUrlsRef = useRef<Map<string, string>>(new Map());
   const previewRequestsRef = useRef<Map<string, number>>(new Map());
+  const previewControllersRef = useRef<Map<string, AbortController>>(new Map());
 
   useEffect(() => setMounted(true), []);
 
@@ -184,11 +204,16 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
       item: Pick<SelectedItem, "id" | "file" | "name">,
       obfuscation: TrackUploadObfuscationOptions,
       initializeDefaults = false,
+      corrections?: TrackUploadCorrectionOptions,
     ) => {
+      previewControllersRef.current.get(item.id)?.abort();
+      const controller = new AbortController();
+      previewControllersRef.current.set(item.id, controller);
       const requestId = (previewRequestsRef.current.get(item.id) || 0) + 1;
       previewRequestsRef.current.set(item.id, requestId);
       setItemState(item.id, {
         previewStatus: "loading",
+        previewUrl: undefined,
         previewError: undefined,
       });
 
@@ -197,6 +222,8 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
           item.file,
           TRACK_UPLOAD_PREVIEW_MAX_POINTS,
           obfuscation,
+          { ...corrections, coordinates: Boolean(corrections?.coordinates),
+            altitudes: Boolean(corrections?.altitudes), signal: controller.signal },
         );
         if (previewRequestsRef.current.get(item.id) !== requestId) return;
 
@@ -237,6 +264,7 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
   useEffect(() => {
     const previewRequests = previewRequestsRef.current;
     const previewUrls = previewUrlsRef.current;
+    const previewControllers = previewControllersRef.current;
 
     files.forEach((file) => {
       if (!getTrackFileKind(file.name)) return;
@@ -252,6 +280,8 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
     });
 
     return () => {
+      previewControllers.forEach((controller) => controller.abort());
+      previewControllers.clear();
       previewRequests.clear();
       previewUrls.forEach((url) => URL.revokeObjectURL(url));
       previewUrls.clear();
@@ -276,7 +306,18 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
     (item: SelectedItem, patch: ObfuscationPatch) => {
       const nextItem = { ...item, ...patch };
       setItemState(item.id, patch);
-      void refreshItemPreview(nextItem, getItemObfuscation(nextItem));
+      void refreshItemPreview(nextItem, getItemObfuscation(nextItem), false,
+        getItemCorrections(nextItem));
+    },
+    [refreshItemPreview, setItemState],
+  );
+
+  const updateCorrection = useCallback(
+    (item: SelectedItem, patch: Pick<SelectedItemPatch, "correctCoordinates" | "correctAltitudes">) => {
+      const nextItem = { ...item, ...patch };
+      setItemState(item.id, patch);
+      void refreshItemPreview(nextItem, getItemObfuscation(nextItem), false,
+        getItemCorrections(nextItem));
     },
     [refreshItemPreview, setItemState],
   );
@@ -335,7 +376,9 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
 
       try {
         setItemState(item.id, { status: "uploading", error: undefined });
-        const prepared = await prepareTrackUploadPayload(item.file, getItemObfuscation(item));
+        const prepared = await prepareTrackUploadPayload(
+          item.file, getItemObfuscation(item), getItemCorrections(item),
+        );
         if (singleLimit && prepared.payload.size > singleLimit) {
           throw new Error(
             `Converted file exceeds the single-file limit (${formatBytes(singleLimit)}).`,
@@ -545,7 +588,8 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
                                 setItemState(item.id, {
                                   obfuscateStartDistanceM: nextItem.obfuscateStartDistanceM,
                                 });
-                                void refreshItemPreview(nextItem, getItemObfuscation(nextItem));
+                                void refreshItemPreview(nextItem, getItemObfuscation(nextItem), false,
+                                  getItemCorrections(nextItem));
                               }}
                             />
                             m
@@ -577,10 +621,35 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
                                 setItemState(item.id, {
                                   obfuscateEndDistanceM: nextItem.obfuscateEndDistanceM,
                                 });
-                                void refreshItemPreview(nextItem, getItemObfuscation(nextItem));
+                                void refreshItemPreview(nextItem, getItemObfuscation(nextItem), false,
+                                  getItemCorrections(nextItem));
                               }}
                             />
                             m
+                          </label>
+                        </div>
+                        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+                          <label className="inline-flex items-center gap-1 whitespace-nowrap">
+                            <input
+                              type="checkbox"
+                              checked={item.correctCoordinates}
+                              disabled={busy}
+                              onChange={(event) => {
+                                updateCorrection(item, { correctCoordinates: event.target.checked });
+                              }}
+                            />
+                            Correct coordinates
+                          </label>
+                          <label className="inline-flex items-center gap-1 whitespace-nowrap">
+                            <input
+                              type="checkbox"
+                              checked={item.correctAltitudes}
+                              disabled={busy}
+                              onChange={(event) => {
+                                updateCorrection(item, { correctAltitudes: event.target.checked });
+                              }}
+                            />
+                            Correct altitudes
                           </label>
                         </div>
                       </div>
