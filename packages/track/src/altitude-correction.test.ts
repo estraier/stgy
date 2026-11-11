@@ -40,7 +40,7 @@ describe('terrain drift correction', () => {
     const untouched = JSON.stringify(original);
     const result = await correctTrackActivityAltitudes(original, { source: fakeSource() });
     expect(result.status).toBe('corrected');
-    expect(result.report.anchorsUsed).toBe(5);
+    expect(result.report.anchorsUsed).toBe(9);
     expect(result.report.tileRequests).toBe(0);
     const middle = result.activity.points[300];
     expect(Math.abs(middle.altitudeM! - terrain(middle.lat!))).toBeLessThan(0.5);
@@ -48,7 +48,7 @@ describe('terrain drift correction', () => {
     expect(result.activity.metadata.netMovingTime).toBe(7000);
     expect(result.activity.metadata.totalTimerTime).toBe(9000);
     expect(result.activity.metadata.ascentM).not.toBe(9);
-    expect(result.activity.metadata.altitudeCorrection).toEqual({ method: 'terrain-drift-v1', source: 'fake', anchorsUsed: 5, status: 'corrected' });
+    expect(result.activity.metadata.altitudeCorrection).toEqual({ method: 'terrain-drift-v1', source: 'fake', anchorsUsed: 9, status: 'corrected' });
     expect(JSON.stringify(original)).toBe(untouched);
   });
 
@@ -82,7 +82,7 @@ describe('terrain drift correction', () => {
     });
     const result = await correctTrackActivityAltitudes(activity, { source: worldwide });
     expect(result.status).toBe('corrected');
-    expect(result.report.anchorsUsed).toBe(5);
+    expect(result.report.anchorsUsed).toBe(9);
     expect(result.activity.points[300].altitudeM).toBeCloseTo(terrain(35 + 300 * 0.0002), 0);
   });
 
@@ -123,7 +123,7 @@ describe('terrain drift correction', () => {
       expect(result.report.sourceId).toBe('gsi-mapzen');
       expect(result.report.anchorsUsed).toBeGreaterThan(0);
       expect(result.report.tileRequests).toBe(requests.length);
-      expect(result.report.tileRequests).toBeLessThanOrEqual(12);
+      expect(result.report.tileRequests).toBeLessThanOrEqual(21);
       expect(requests.every((u) => u.startsWith('https://s3.amazonaws.com/elevation-tiles-prod/terrarium/14/'))).toBe(true);
       expect(result.report.pointsCorrected).toBeGreaterThan(0);
       expect(result.activity.metadata.altitudeCorrection?.source).toBe('gsi-mapzen');
@@ -222,10 +222,10 @@ describe('terrain drift correction', () => {
         },
       });
       const result = await correctTrackActivityAltitudes(activity, { source });
-      expect(result.report.anchorsUsed).toBe(5);
+      expect(result.report.anchorsUsed).toBe(9);
       expect(result.report.tileRequests).toBe(1);
       expect(urls).toEqual(['https://example.org/one-tile']);
-      expect(result.report.anchors[0].driftM).not.toBe(result.report.anchors[4].driftM);
+      expect(result.report.anchors[0].driftM).not.toBe(result.report.anchors[8].driftM);
     } finally { globalThis.fetch = oldFetch; }
   });
 
@@ -424,7 +424,7 @@ describe('regional GSI-first fallback', () => {
     await withTerrainRequests(200, async (requests) => {
       const result = await correctTrackActivityAltitudes(makeTrack());
       expect(result.report.sourceId).toBe('gsi-mapzen');
-      expect(result.report.anchorsUsed).toBe(5);
+      expect(result.report.anchorsUsed).toBe(9);
       expect(result.report.anchors.every((a) => a.dataset.startsWith('DEM'))).toBe(true);
       expect(requests.length).toBeGreaterThan(0);
       expect(requests.every((u) => u.includes('cyberjapandata.gsi.go.jp'))).toBe(true);
@@ -434,11 +434,11 @@ describe('regional GSI-first fallback', () => {
   test('a Japanese GSI 404 falls back to Mapzen, without exceeding request budget', async () => {
     await withTerrainRequests(404, async (requests) => {
       const result = await correctTrackActivityAltitudes(makeTrack());
-      expect(result.report.anchorsUsed).toBe(5);
+      expect(result.report.anchorsUsed).toBe(9);
       expect(result.report.anchors.every((a) => a.dataset === 'Mapzen Terrarium')).toBe(true);
       expect(requests.some((u) => u.includes('cyberjapandata.gsi.go.jp'))).toBe(true);
       expect(requests.some((u) => u.includes('elevation-tiles-prod/terrarium/'))).toBe(true);
-      expect(requests.length).toBeLessThanOrEqual(12);
+      expect(requests.length).toBeLessThanOrEqual(21);
       expect(result.status).toBe('corrected');
     });
   });
@@ -446,18 +446,18 @@ describe('regional GSI-first fallback', () => {
   test('GSI returns no-data pixels: uses Mapzen terrain instead', async () => {
     await withTerrainRequests(200, async (requests) => {
       const result = await correctTrackActivityAltitudes(makeTrack());
-      expect(result.report.anchorsUsed).toBe(5);
+      expect(result.report.anchorsUsed).toBe(9);
       expect(result.report.anchors.every((a) => a.dataset === 'Mapzen Terrarium')).toBe(true);
       expect(requests.some((u) => u.includes('cyberjapandata.gsi.go.jp'))).toBe(true);
       expect(requests.some((u) => u.includes('elevation-tiles-prod/terrarium/'))).toBe(true);
-      expect(requests.length).toBeLessThanOrEqual(12);
+      expect(requests.length).toBeLessThanOrEqual(21);
     }, true);
   });
 
   test('GSI rate limiting only blocks GSI, not Mapzen fallback', async () => {
     await withTerrainRequests(429, async (requests) => {
       const result = await correctTrackActivityAltitudes(makeTrack());
-      expect(result.report.anchorsUsed).toBe(5);
+      expect(result.report.anchorsUsed).toBe(9);
       expect(result.report.anchors.every((a) => a.dataset === 'Mapzen Terrarium')).toBe(true);
       expect(requests.filter((u) => u.includes('cyberjapandata.gsi.go.jp'))).toHaveLength(1);
       expect(requests.some((u) => u.includes('elevation-tiles-prod/terrarium/'))).toBe(true);

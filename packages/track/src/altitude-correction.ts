@@ -352,8 +352,8 @@ class TileRequestManager {
 export async function correctTrackActivityAltitudes(
   activity: TrackActivity, options: AltitudeCorrectionOptions = {},
 ): Promise<AltitudeCorrectionResult> {
-  const requested = options.anchorCount ?? 5;
-  const max = options.maxTileRequests ?? 12;
+  const requested = options.anchorCount ?? 9;
+  const max = options.maxTileRequests ?? 21;
   if (!Number.isInteger(requested) || requested < 1 || requested > 50 || !Number.isInteger(max) || max < 0 || max > 1000) {
     throw new RangeError('Invalid altitude correction anchorCount or maxTileRequests.');
   }
