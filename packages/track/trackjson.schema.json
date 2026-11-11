@@ -271,10 +271,14 @@
         },
         "speeds": {
           "$ref": "#/$defs/numberSeries"
+        },
+        "gpsAccuracy": {
+          "type": "array",
+          "items": { "type": ["number", "null"], "minimum": 0 }
         }
       },
       "patternProperties": {
-        "^(?!(__proto__|constructor|prototype)$)[A-Za-z_][A-Za-z0-9_]*$": {
+        "^(?!(?:__proto__|constructor|prototype|gpsAccuracy)$)[A-Za-z_][A-Za-z0-9_]*$": {
           "$ref": "#/$defs/numberSeries"
         }
       },
@@ -339,6 +343,25 @@
             "source": { "type": "string", "minLength": 1 },
             "anchorsUsed": { "type": "integer", "minimum": 1 },
             "status": { "enum": ["corrected", "partial"] }
+          },
+          "additionalProperties": false
+        },
+        "sportSessions": {
+          "type": "array",
+          "items": {"type":"object", "properties": {
+            "sport": {"type":"string"}, "subSport": {"type":"string"},
+            "startTime": {"type":"number"}, "endTime": {"type":"number"}
+          }, "additionalProperties":false}
+        },
+        "coordinateCorrection": {
+          "type": "object",
+          "required": ["method", "regionsCorrected", "pointsCorrected", "speedsCorrected", "distancesCorrected"],
+          "properties": {
+            "method": { "enum": ["linear-dead-reckoning-v1", "linear-dead-reckoning-v2"] },
+            "regionsCorrected": { "type": "integer", "minimum": 0 },
+            "pointsCorrected": { "type": "integer", "minimum": 0 },
+            "speedsCorrected": { "type": "integer", "minimum": 0 },
+            "distancesCorrected": { "type": "integer", "minimum": 0 }
           },
           "additionalProperties": false
         },

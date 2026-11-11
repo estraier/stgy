@@ -1,6 +1,24 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": [
+        "./src/*"
+      ],
+      "stgy-markdown": [
+        "../packages/markdown/src/index.ts"
+      ],
+      "stgy-geocoder": [
+        "../packages/geocoder/src/index.ts"
+      ],
+      "stgy-track": [
+        "../packages/track/src/index.ts"
+      ],
+      "stgy-track/*": [
+        "../packages/track/src/*"
+      ]
+    }
   }
 }

@@ -200,6 +200,7 @@ Standard series:
 | `cadences` | rpm | Cadence |
 | `powers` | W | Power |
 | `speeds` | km/h | Speed |
+| `gpsAccuracy` | m | Optional FIT GPS horizontal accuracy, with `null` where absent (never forward-filled) |
 | `torqueEffectivenessPercentage` | % | Torque efficiency |
 | `pedalSmoothnessPercentage` | % | Pedal smoothness |
 
@@ -325,6 +326,25 @@ TrackJSON metadata is stored in `Feature.properties.metadata`.
   }
 }
 ```
+
+When `coordinateCorrection` is present, a GNSS position repair was
+performed before privacy obfuscation, DEM altitude correction, and downsampling.
+Only positions between stable white anchors are interpolated;
+recorded speeds and distances are preserved in both versions. v2 uses sport-aware hard/soft movement checks and expanded black masks, while older v1 histories remain readable. For example:
+
+```json
+"coordinateCorrection": {
+  "method": "linear-dead-reckoning-v2",
+  "regionsCorrected": 1,
+  "pointsCorrected": 12,
+  "speedsCorrected": 0,
+  "distancesCorrected": 0
+}
+```
+
+This compact history is preserved in STGY-extended GPX and TrackJSON, but
+not in standard FIT output. The detailed correction/skip reasons are emitted
+only as diagnostic events, not embedded in exported files.
 
 When the optional `altitudeCorrection` metadata is present, the activity's
 altitudes were adjusted using external terrain elevations. For example:

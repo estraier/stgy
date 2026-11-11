@@ -16,12 +16,13 @@
     "build:export-track-assets": "node scripts/build-export-track-assets.mjs",
     "build:libraw-assets": "node scripts/build-libraw-assets.mjs",
     "prebuild": "npm run build:export-track-assets && npm run build:libraw-assets && npm run build:lensfun-assets && npm run build:opencv-assets && npm run build:local-stack-workers",
-    "predev": "npm run build:export-track-assets && npm run build:libraw-assets && npm run build:lensfun-assets && npm run build:opencv-assets && npm run build:local-stack-workers",
+    "predev": "node ../scripts/check-workspace-builds.mjs && npm run build:export-track-assets && npm run build:libraw-assets && npm run build:lensfun-assets && npm run build:opencv-assets && npm run build:local-stack-workers",
     "build:libraw-wasm": "node scripts/build-libraw-wasm.mjs",
     "build:lensfun-assets": "node scripts/build-lensfun-assets.mjs",
     "build:opencv-assets": "node scripts/build-opencv-assets.mjs",
     "check:opencv": "node scripts/check-opencv-unified.mjs",
-    "build:local-stack-workers": "node scripts/build-local-stack-workers.mjs"
+    "build:local-stack-workers": "node scripts/build-local-stack-workers.mjs",
+    "prestart": "node ../scripts/check-workspace-builds.mjs"
   },
   "dependencies": {
     "@banou/opencv-wasm": "0.0.6",

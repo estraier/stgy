@@ -172,6 +172,7 @@ const RESERVED_METRIC_NAMES = new Set([
   "cadences",
   "powers",
   "speeds",
+  "gpsAccuracy",
   "segmentIds",
   "__proto__",
   "constructor",
@@ -1276,6 +1277,22 @@ function buildTrackJsonActivityMetadata(
     copyOptionalString(src, metadata, "description");
     copyOptionalString(src, metadata, "sport");
     copyOptionalString(src, metadata, "subSport");
+    const sportSessions = src.sportSessions;
+    if (Array.isArray(sportSessions)) {
+      const parsedSessions = sportSessions.filter(isObjectRecord).map(s => {
+        const startTime = toFiniteNumber(s.startTime);
+        const endTime = toFiniteNumber(s.endTime);
+        const sport = toOptionalString(s.sport);
+        const subSport = toOptionalString(s.subSport);
+        return {
+          ...(isFiniteNumber(startTime) ? { startTime } : {}),
+          ...(isFiniteNumber(endTime) ? { endTime } : {}),
+          ...(sport ? { sport } : {}),
+          ...(subSport ? { subSport } : {}),
+        };
+      }).filter(s => s.sport || s.subSport);
+      if (parsedSessions.length) metadata.sportSessions = parsedSessions;
+    }
     copyOptionalNumber(src, metadata, "createdAt");
     copyOptionalNumber(src, metadata, "startTime");
     copyOptionalNumber(src, metadata, "endTime");
@@ -1287,6 +1304,20 @@ function buildTrackJsonActivityMetadata(
     copyOptionalNumber(src, metadata, "netMovingDistanceM");
     copyOptionalNumber(src, metadata, "ascentM");
     copyOptionalNumber(src, metadata, "descentM");
+    const coordinateCorrection = getRecordProperty(src, "coordinateCorrection");
+    if ((coordinateCorrection?.method === 'linear-dead-reckoning-v1' ||
+         coordinateCorrection?.method === 'linear-dead-reckoning-v2') &&
+        ['regionsCorrected','pointsCorrected','speedsCorrected','distancesCorrected'].every(key =>
+          isFiniteNumber(coordinateCorrection[key]) && Number.isInteger(coordinateCorrection[key]) &&
+          (coordinateCorrection[key] as number) >= 0)) {
+      metadata.coordinateCorrection = {
+        method: coordinateCorrection.method as 'linear-dead-reckoning-v1' | 'linear-dead-reckoning-v2',
+        regionsCorrected: coordinateCorrection.regionsCorrected as number,
+        pointsCorrected: coordinateCorrection.pointsCorrected as number,
+        speedsCorrected: coordinateCorrection.speedsCorrected as number,
+        distancesCorrected: coordinateCorrection.distancesCorrected as number,
+      };
+    }
     const correction = getRecordProperty(src, "altitudeCorrection");
     if (correction?.method === "terrain-drift-v1" &&
       typeof correction.source === "string" && correction.source.length > 0 &&
@@ -1763,6 +1794,9 @@ function trackJsonCoordinateToPoint(
   assignPointFromSeries(point, "distanceM", coordinateProperties.distances, index);
   assignPointFromSeries(point, "segmentId", coordinateProperties.segmentIds, index, Math.round);
   assignPointFromSeries(point, "altitudeM", coordinateProperties.altitudes, index);
+  const accuracy = Array.isArray(coordinateProperties.gpsAccuracy)
+    ? toFiniteNumber(coordinateProperties.gpsAccuracy[index]) : undefined;
+  if (isFiniteNumber(accuracy) && accuracy >= 0) point.gpsAccuracyM = accuracy;
   assignPointFromSeries(point, "heartRateBpm", coordinateProperties.heartRates, index);
   assignPointFromSeries(point, "cadenceRpm", coordinateProperties.cadences, index);
   assignPointFromSeries(point, "powerW", coordinateProperties.powers, index);
@@ -1854,6 +1888,9 @@ function buildTrackJsonMetadata(
   if (isNonEmptyString(metadata.subSport)) {
     output.subSport = metadata.subSport.trim();
   }
+  if (metadata.sportSessions?.length) {
+    output.sportSessions = metadata.sportSessions.map(s => ({...s}));
+  }
 
   if (metadata.recordingDevice) {
     output.recordingDevice = { ...metadata.recordingDevice };
@@ -1892,6 +1929,9 @@ function buildTrackJsonMetadata(
   assignMetadataNumber(output, "descentM", metadata.descentM, precision.metadata);
   if (metadata.altitudeCorrection) {
     output.altitudeCorrection = { ...metadata.altitudeCorrection };
+  }
+  if (metadata.coordinateCorrection) {
+    output.coordinateCorrection = { ...metadata.coordinateCorrection };
   }
 
   const analysis = buildTrackJsonAnalysis(metadata.analysis);
@@ -2558,12 +2598,13 @@ function fitMessagesToMetadata(
     "sport",
   ])[0];
 
-  const session = getMessageArray(messages, [
+  const sessions = getMessageArray(messages, [
     "sessionMesgs",
     "sessionMessages",
     "sessions",
     "session",
-  ])[0];
+  ]);
+  const session = sessions[0];
 
   const activity = getMessageArray(messages, [
     "activityMesgs",
@@ -2593,6 +2634,22 @@ function fitMessagesToMetadata(
     if (subSportValue) {
       metadata.subSport = subSportValue;
     }
+  }
+
+  // Session is the primary sport source for activity FIT files; a standalone
+  // Sport message is only a fallback. Preserve multi-session ranges separately
+  // so GNSS motion limits do not cross a triathlon/sport change.
+  const sessionSports = sessions.map((item) => ({
+    startTime: toUnixSeconds(getFirstValue(item, ["startTime", "start_time"])),
+    endTime: toUnixSeconds(getFirstValue(item, ["timestamp", "endTime", "end_time"])),
+    sport: toOptionalString(getFirstValue(item, ["sport"])),
+    subSport: toOptionalString(getFirstValue(item, ["subSport", "sub_sport"])),
+  })).filter(item => item.sport || item.subSport);
+  if (sessionSports.length) {
+    const firstSport = sessionSports[0];
+    if (firstSport.sport) metadata.sport = firstSport.sport;
+    if (firstSport.subSport) metadata.subSport = firstSport.subSport;
+    metadata.sportSessions = sessionSports;
   }
 
   if (recordingDevice) {
@@ -3301,6 +3358,10 @@ function fitRecordToTrackPoint(
     toFiniteNumber(getFirstValue(record, ["power", "powerW"])),
   );
   assignNumber(point, "speedMps", selectSpeed(record, preferEnhancedFields));
+  const gpsAccuracyM = toFiniteNumber(getFirstValue(record, ["gpsAccuracy", "gps_accuracy"]));
+  if (isFiniteNumber(gpsAccuracyM) && gpsAccuracyM >= 0 && gpsAccuracyM < 255) {
+    point.gpsAccuracyM = gpsAccuracyM;
+  }
   assignNumber(
     point,
     "temperatureC",
@@ -3389,8 +3450,8 @@ function buildCoordinateProperties(
   points: TrackPoint[],
   options: TrackJsonOptions,
   precision: Required<TrackJsonPrecisionOptions>,
-): Record<string, number[]> {
-  const properties: Record<string, number[]> = {};
+): Record<string, (number | null)[]> {
+  const properties: Record<string, (number | null)[]> = {};
 
   addCompleteSeries(
     properties,
@@ -3441,6 +3502,13 @@ function buildCoordinateProperties(
     (point) => point.powerW,
     (value) => roundNumber(value, precision.powers),
   );
+  // Unlike the display metrics, GPS quality must never be forward-filled:
+  // an absent accuracy sample is unknown, not the last reported accuracy.
+  if (points.some(point => isFiniteNumber(point.gpsAccuracyM) && point.gpsAccuracyM >= 0)) {
+    properties.gpsAccuracy = points.map(point =>
+      isFiniteNumber(point.gpsAccuracyM) && point.gpsAccuracyM >= 0
+        ? roundNumber(point.gpsAccuracyM, 1) : null);
+  }
   addFilledSeries(
     properties,
     "speeds",
@@ -3457,7 +3525,7 @@ function buildCoordinateProperties(
 }
 
 function addCompleteSeries(
-  output: Record<string, number[]>,
+  output: Record<string, (number | null)[]>,
   name: string,
   points: TrackPoint[],
   getValue: (point: TrackPoint) => number | undefined,
@@ -3473,7 +3541,7 @@ function addCompleteSeries(
 }
 
 function addFilledSeries(
-  output: Record<string, number[]>,
+  output: Record<string, (number | null)[]>,
   name: string,
   points: TrackPoint[],
   getValue: (point: TrackPoint) => number | undefined,
@@ -3501,7 +3569,7 @@ function addFilledSeries(
 }
 
 function addMetricSeries(
-  output: Record<string, number[]>,
+  output: Record<string, (number | null)[]>,
   points: TrackPoint[],
   precision: Required<TrackJsonPrecisionOptions>,
 ) {
@@ -4788,6 +4856,9 @@ export function trackActivityToFit(
   const chunks: number[] = [];
   const startTime = getFitExportActivityStartTime(activity, points);
   const includeSegmentIds = points.some((point) => isFiniteNumber(point.segmentId));
+  const recordFields = getFitExportRecordFields(
+    points.some(point => isFiniteNumber(point.gpsAccuracyM) && point.gpsAccuracyM >= 0),
+  );
 
   writeFitDefinitionMessage(chunks, 0, 0, getFitFileIdFields(options));
   writeFitFileIdMessage(chunks, startTime, options);
@@ -4798,7 +4869,7 @@ export function trackActivityToFit(
     chunks,
     1,
     20,
-    getFitExportRecordFields(),
+    recordFields,
     includeSegmentIds
       ? [{
         fieldNumber: STGY_FIT_SEGMENT_FIELD_NUMBER,
@@ -4808,7 +4879,7 @@ export function trackActivityToFit(
       : [],
   );
   points.forEach((point, index) => {
-    writeFitRecordMessage(chunks, point, index, startTime, includeSegmentIds);
+    writeFitRecordMessage(chunks, point, index, startTime, includeSegmentIds, recordFields);
   });
 
   if (options.includeSessionSummary !== false) {
@@ -4906,8 +4977,8 @@ function writeFitFileIdMessage(
   }
 }
 
-function getFitExportRecordFields(): FitWriteRecordField[] {
-  return [
+function getFitExportRecordFields(includeGpsAccuracy = false): FitWriteRecordField[] {
+  const fields: FitWriteRecordField[] = [
     {
       num: 253,
       size: 4,
@@ -4971,12 +5042,19 @@ function getFitExportRecordFields(): FitWriteRecordField[] {
       write: (view, offset, point) => writeFitUint16(view, offset, point.powerW),
     },
     {
+      num: 31, // FIT Record gps_accuracy (uint8, m)
+      size: 1,
+      baseType: 0x02,
+      write: (view, offset, point) => writeFitUint8(view, offset, point.gpsAccuracyM),
+    },
+    {
       num: 13,
       size: 1,
       baseType: 0x01,
       write: (view, offset, point) => writeFitSint8(view, offset, point.temperatureC),
     },
   ];
+  return fields.filter(field => includeGpsAccuracy || field.num !== 31);
 }
 
 function writeFitRecordMessage(
@@ -4985,8 +5063,8 @@ function writeFitRecordMessage(
   index: number,
   activityStartTime: number,
   includeSegmentId: boolean,
+  fields: FitWriteRecordField[],
 ) {
-  const fields = getFitExportRecordFields();
   const nativeSize = fields.reduce((sum, field) => sum + field.size, 0);
   const size = nativeSize + (includeSegmentId ? STGY_FIT_SEGMENT_FIELD_SIZE : 0);
   const record = new Uint8Array(size);

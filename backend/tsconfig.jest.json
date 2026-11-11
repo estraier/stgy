@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "baseUrl": ".",
+    "paths": {
+      "stgy-markdown": ["../packages/markdown/src/index.ts"],
+      "stgy-geocoder": ["../packages/geocoder/src/index.ts"],
+      "stgy-track": ["../packages/track/src/index.ts"],
+      "stgy-track/*": ["../packages/track/src/*"]
+    }
+  }
+}

@@ -33,17 +33,18 @@ class FakeTransaction {
     });
   }
   objectStore(_name: string) {
-    const transaction = this;
+    const records = this.records;
+    const enqueue = (action: () => void) => this.queue(action);
     const request = <T>(operation: () => T): FakeRequest<T> => {
       const result = new FakeRequest<T>();
-      transaction.queue(() => { result.result = operation(); result.onsuccess?.(); });
+      enqueue(() => { result.result = operation(); result.onsuccess?.(); });
       return result;
     };
     return {
-      get(url: string) { return request(() => transaction.records.get(url)); },
-      put(record: Tile) { return request(() => { transaction.records.set(record.url, record); }); },
-      delete(url: string) { return request(() => { transaction.records.delete(url); }); },
-      count() { return request(() => transaction.records.size); },
+      get(url: string) { return request(() => records.get(url)); },
+      put(record: Tile) { return request(() => { records.set(record.url, record); }); },
+      delete(url: string) { return request(() => { records.delete(url); }); },
+      count() { return request(() => records.size); },
       index(_name: string) {
         return {
           openCursor() {
@@ -56,17 +57,17 @@ class FakeTransaction {
             let ordered: Tile[] | undefined;
             let i = 0;
             const next = () => {
-              if (!ordered) ordered = [...transaction.records.values()]
+              if (!ordered) ordered = [...records.values()]
                 .sort((a, b) => a.savedAt - b.savedAt);
               const record = ordered[i++];
               output.result = record ? {
                 value: record,
-                delete: () => { transaction.records.delete(record.url); },
-                continue: () => transaction.queue(next),
+                delete: () => { records.delete(record.url); },
+                continue: () => enqueue(next),
               } : null;
               output.onsuccess?.();
             };
-            transaction.queue(next);
+            enqueue(next);
             return output;
           },
         };

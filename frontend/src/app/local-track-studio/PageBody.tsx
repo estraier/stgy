@@ -28,6 +28,8 @@ import {
 } from "stgy-track/fit";
 import { trimTrackActivity } from "stgy-track/activity";
 import { correctTrackActivityAltitudes } from "stgy-track/altitude-correction";
+import { correctTrackActivityCoordinates } from "stgy-track/coordinate-correction";
+import type { CoordinateCorrectionDiagnostic } from "stgy-track/coordinate-correction";
 import type { AltitudeCorrectionResult, AltitudeCorrectionProgress } from "stgy-track/altitude-correction";
 import type { TrackActivity, TrackPoint } from "stgy-track/activity";
 import {
@@ -89,6 +91,7 @@ type ConvertOptions = {
   trimStartSeconds: number;
   trimEndSeconds: number;
   obfuscatePrivacy: boolean;
+  correctCoordinates: boolean;
   correctAltitudes: boolean;
   privacyStartDistanceM: number;
   privacyEndDistanceM: number;
@@ -150,6 +153,7 @@ export default function LocalTrackStudio() {
   const [trimStartSeconds, setTrimStartSeconds] = useState(0);
   const [trimEndSeconds, setTrimEndSeconds] = useState(0);
   const [obfuscatePrivacy, setObfuscatePrivacy] = useState(false);
+  const [correctCoordinates, setCorrectCoordinates] = useState(false);
   const [correctAltitudes, setCorrectAltitudes] = useState(false);
   const [privacyStartDistanceM, setPrivacyStartDistanceM] = useState(1000);
   const [privacyEndDistanceM, setPrivacyEndDistanceM] = useState(1000);
@@ -191,6 +195,7 @@ export default function LocalTrackStudio() {
     trimStartSeconds,
     trimEndSeconds,
     obfuscatePrivacy,
+    correctCoordinates,
     correctAltitudes,
     privacyStartDistanceM,
     privacyEndDistanceM,
@@ -203,6 +208,7 @@ export default function LocalTrackStudio() {
     trimStartSeconds,
     trimEndSeconds,
     obfuscatePrivacy,
+    correctCoordinates,
     correctAltitudes,
     privacyStartDistanceM,
     privacyEndDistanceM,
@@ -451,7 +457,16 @@ export default function LocalTrackStudio() {
                 </label>
               </div>
 
-              <div className="mt-3 space-y-1">
+              <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
+                <label className="inline-flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={correctCoordinates}
+                    disabled={busy}
+                    onChange={(e) => setCorrectCoordinates(e.currentTarget.checked)}
+                  />
+                  <span>Correct coordinates</span>
+                </label>
                 <label className="inline-flex items-center gap-2">
                   <input
                     type="checkbox"
@@ -1209,6 +1224,92 @@ function formatZoneBarLabel(label: string): string {
   return match ? `${match[1]}: ${match[2]}` : label;
 }
 
+function createCoordinateDiagnosticLogger(): (event: CoordinateCorrectionDiagnostic) => void {
+  const prefix = '[LTS][Coordinates]';
+  const regionRows: Record<string, unknown>[] = [];
+  return (event) => {
+    switch (event.type) {
+      case 'input_profile':
+        console.info(`${prefix} input`, event.data);
+        break;
+      case 'sport_inference':
+      case 'sensor_inference':
+      case 'detection_summary':
+        console.info(`${prefix} ${event.type}`, event.data);
+        break;
+      case 'mask_summary':
+        console.info(`${prefix} algorithm_revision`, event.data.algorithmRevision ?? 'unknown');
+        console.info(`${prefix} mask_summary`, event.data);
+        break;
+      case 'white_bridgeheads':
+        console.info(`${prefix} white_bridgeheads`, event.data);
+        break;
+      case 'region_decision': {
+        console.info(`${prefix} region`, event.data);
+        if (regionRows.length < 100) {
+          const region = event.data;
+          const metrics = region.diagnostics as Record<string, unknown> | undefined;
+          const rounded = (value: unknown, decimals = 1) =>
+            typeof value === 'number' && Number.isFinite(value)
+              ? Number(value.toFixed(decimals)) : null;
+          regionRows.push({
+            id: region.regionId,
+            sport: region.sportProfile ?? 'unknown',
+            initialPoints: `${region.initialStartIndex ?? region.startIndex}-${region.initialEndIndex ?? region.endIndex}`,
+            expandedPoints: `${region.startIndex}-${region.endIndex}`,
+            hardReasons: ((region.hardReasons as string[] | undefined) ?? []).join(', '),
+            softReasons: ((region.softReasons as string[] | undefined) ?? []).join(', '),
+            reasons: ((region.reasons as string[] | undefined) ?? []).join(', '),
+            anchors: `${region.leftAnchorIndex ?? '?'} / ${region.rightAnchorIndex ?? '?'}`,
+            confidence: region.confidence,
+            shortcutRatio: rounded(region.interpolationQuality, 2),
+            anchorReject: JSON.stringify(region.anchorRejectReasons ?? {}),
+            referenceTrust: region.motionReferenceTrust ?? 'unknown',
+            action: region.action,
+            skipReason: region.skipReason ?? '',
+            durationS: rounded(region.durationSeconds, 0),
+            maxSampleGapS: rounded(metrics?.maxSampleGapSeconds),
+            chordM: rounded(metrics?.chordDistanceM),
+            recordedDistanceM: rounded(metrics?.recordedDistanceDeltaM),
+            speedMedianMps: rounded(metrics?.recordedSpeedMedianMps, 2),
+            movingSpeedShare: rounded(metrics?.recordedSpeedMovingFraction, 2),
+            speedIntegratedM: rounded(metrics?.speedIntegratedDistanceM),
+            speedDistanceRatio: rounded(metrics?.speedVsDistanceRatio, 2),
+            gnssMaxSpeedMps: rounded(metrics?.gnssMaxStepSpeedMps, 2),
+            headingErrorDeg: rounded(metrics?.headingErrorDegrees),
+            frozenDurationS: rounded(metrics?.frozenDurationSeconds),
+            frozenDistanceM: rounded(metrics?.frozenRecordedDistanceDeltaM),
+            frozenMaxDriftM: rounded(metrics?.frozenMaxDeviationM, 2),
+            frozenExactShare: rounded(metrics?.frozenExactCoordinatesFraction, 2),
+            motionSource: metrics?.motionSourceInference ?? 'unknown',
+            wheelPlausible: metrics?.wheelSensorPlausible ?? false,
+            speed: region.speedAction,
+            distance: region.distanceAction,
+          });
+        }
+        break;
+      }
+      case 'motion_decision':
+        console.debug(`${prefix} motion`, event.data);
+        break;
+      case 'anchor_search':
+      case 'interpolation':
+        console.debug(`${prefix} ${event.type}`, event.data);
+        break;
+      case 'summary':
+        console.info(`${prefix} summary`, event.data);
+        if (regionRows.length) console.table(regionRows);
+        if (typeof event.data.regionsDetected === 'number' &&
+            event.data.regionsDetected > regionRows.length) {
+          console.info(`${prefix} ${event.data.regionsDetected - regionRows.length} additional regions omitted from console.table`);
+        }
+        break;
+      default:
+        console.debug(`${prefix} ${event.type}`, event.data);
+    }
+  };
+}
+
 async function convertFiles(
   files: File[],
   options: ConvertOptions,
@@ -1240,9 +1341,24 @@ async function convertFiles(
       trimEndSeconds: options.trimEndSeconds,
     })
     : activity;
+  // Repair GNSS geometry before obfuscation and DEM lookup. No external I/O.
+  // Merged inputs must not silently re-correct an already corrected recording.
+  const hasCoordinateCorrectedInput = parsed.some((item) =>
+    Boolean(item.activity.metadata.coordinateCorrection));
+  const coordinateActivity = !options.correctCoordinates || hasCoordinateCorrectedInput
+    ? trimmedActivity
+    : correctTrackActivityCoordinates(trimmedActivity, {
+      logLevel: 'summary',
+      onDiagnostic: createCoordinateDiagnosticLogger(),
+    }).activity;
+  if (options.correctCoordinates && hasCoordinateCorrectedInput) {
+    console.info('[LTS][Coordinates] summary', {
+      status: 'skipped', reason: 'already_corrected',
+    });
+  }
   const privacyActivity = options.obfuscatePrivacy
-    ? obfuscateActivityPrivacy(trimmedActivity, options)
-    : trimmedActivity;
+    ? obfuscateActivityPrivacy(coordinateActivity, options)
+    : coordinateActivity;
   // Do not accidentally re-correct a merge of already-corrected and raw activities.
   const hasCorrectedInput = parsed.some((item) => Boolean(item.activity.metadata.altitudeCorrection));
   const correction: AltitudeCorrectionResult | undefined = !options.correctAltitudes

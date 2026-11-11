@@ -19,6 +19,11 @@
       "require": "./dist/activity.js",
       "default": "./dist/activity.js"
     },
+    "./coordinate-correction": {
+      "types": "./dist/coordinate-correction.d.ts",
+      "require": "./dist/coordinate-correction.js",
+      "default": "./dist/coordinate-correction.js"
+    },
     "./altitude-correction": {
       "types": "./dist/altitude-correction.d.ts",
       "require": "./dist/altitude-correction.js",

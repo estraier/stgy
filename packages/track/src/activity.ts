@@ -48,6 +48,7 @@ const RESERVED_METRIC_NAMES = new Set([
   "cadences",
   "powers",
   "speeds",
+  "gpsAccuracy",
   "__proto__",
   "constructor",
   "prototype",
@@ -74,6 +75,7 @@ export type TrackActivityMetadata = {
   description?: string;
   sport?: string;
   subSport?: string;
+  sportSessions?: {startTime?: number; endTime?: number; sport?: string; subSport?: string}[];
   recordingDevice?: TrackDeviceInfo;
   devices?: TrackDeviceInfo[];
   createdAt?: number;
@@ -88,6 +90,7 @@ export type TrackActivityMetadata = {
   ascentM?: number;
   descentM?: number;
   altitudeCorrection?: TrackAltitudeCorrectionMetadata;
+  coordinateCorrection?: TrackCoordinateCorrectionMetadata;
   analysis?: TrackActivityAnalysisMetadata;
   statistics?: TrackActivityStatistics;
   training?: TrackActivityTraining;
@@ -95,6 +98,14 @@ export type TrackActivityMetadata = {
   histograms?: TrackActivityHistograms;
   pedaling?: TrackActivityPedaling;
   pedalingDynamics?: TrackActivityPedalingDynamics;
+};
+
+export type TrackCoordinateCorrectionMetadata = {
+  method: 'linear-dead-reckoning-v1' | 'linear-dead-reckoning-v2';
+  regionsCorrected: number;
+  pointsCorrected: number;
+  speedsCorrected: number;
+  distancesCorrected: number;
 };
 
 export type TrackAltitudeCorrectionMetadata = {
@@ -270,6 +281,8 @@ export type TrackPoint = {
   cadenceRpm?: number;
   powerW?: number;
   speedMps?: number;
+  /** Optional FIT Record gps_accuracy (metres); measurement source remains unspecified. */
+  gpsAccuracyM?: number;
   temperatureC?: number;
   metrics?: Record<string, number>;
 };
@@ -2818,6 +2831,7 @@ function cloneMetadata(metadata: TrackActivityMetadata): TrackActivityMetadata {
       ? { ...metadata.recordingDevice }
       : undefined,
     devices: metadata.devices?.map((device) => ({ ...device })),
+    coordinateCorrection: metadata.coordinateCorrection ? { ...metadata.coordinateCorrection } : undefined,
     analysis: metadata.analysis ? { ...metadata.analysis } : undefined,
     statistics: cloneStatistics(metadata.statistics),
     training: cloneTraining(metadata.training),

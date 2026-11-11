@@ -173,6 +173,7 @@ function gpxPointToTrackPoint(pointElement: Element): TrackPoint {
     "speedmps",
     "speedMps",
   ]);
+  assignExtensionNumber(point, "gpsAccuracyM", pointElement, ["gpsAccuracyM"]);
 
   return point;
 }
@@ -268,6 +269,31 @@ function applyGpxActivityExtensionMetadata(
   assignGpxActivityExtensionNumber(metadata, activityElement, "totalDistanceM");
   assignGpxActivityExtensionNumber(metadata, activityElement, "ascentM");
   assignGpxActivityExtensionNumber(metadata, activityElement, "descentM");
+  const coord = getDirectChild(activityElement, 'coordinateCorrection');
+  if (coord?.getAttribute('method') === 'linear-dead-reckoning-v1' ||
+      coord?.getAttribute('method') === 'linear-dead-reckoning-v2') {
+    const fields = ['regionsCorrected','pointsCorrected','speedsCorrected','distancesCorrected'] as const;
+    const values = fields.map(key => parseOptionalNumber(coord.getAttribute(key)));
+    if (values.every(value => isFiniteNumber(value) && Number.isInteger(value) && value >= 0)) {
+      metadata.coordinateCorrection = {
+        method: coord.getAttribute('method') as 'linear-dead-reckoning-v1' | 'linear-dead-reckoning-v2',
+        regionsCorrected: values[0]!, pointsCorrected: values[1]!,
+        speedsCorrected: values[2]!, distancesCorrected: values[3]!,
+      };
+    }
+  }
+  const sportSessions = getDirectChildren(activityElement, 'sportSession').map(el => {
+    const sport = el.getAttribute('sport')?.trim() || undefined;
+    const subSport = el.getAttribute('subSport')?.trim() || undefined;
+    const startTime = parseOptionalNumber(el.getAttribute('startTime'));
+    const endTime = parseOptionalNumber(el.getAttribute('endTime'));
+    return {
+      ...(sport ? { sport } : {}), ...(subSport ? { subSport } : {}),
+      ...(isFiniteNumber(startTime) ? { startTime } : {}),
+      ...(isFiniteNumber(endTime) ? { endTime } : {}),
+    };
+  }).filter(s => s.sport || s.subSport);
+  if (sportSessions.length) metadata.sportSessions = sportSessions;
   const correction = getDirectChild(activityElement, "altitudeCorrection");
   if (correction && correction.getAttribute("method") === "terrain-drift-v1") {
     const source = correction.getAttribute("source");
@@ -643,6 +669,19 @@ function formatGpxActivityMetadataExtensions(activity: TrackActivity): string[] 
       return `<stgy:${key}>${formatGpxMetadataNumber(value)}</stgy:${key}>`;
     });
 
+  const coord = activity.metadata.coordinateCorrection;
+  if (coord) {
+    lines.push(`<stgy:coordinateCorrection method="${coord.method}" regionsCorrected="${coord.regionsCorrected}" pointsCorrected="${coord.pointsCorrected}" speedsCorrected="${coord.speedsCorrected}" distancesCorrected="${coord.distancesCorrected}" />`);
+  }
+  for (const sportSession of activity.metadata.sportSessions ?? []) {
+    const attributes = [
+      ...(sportSession.sport ? [`sport="${escapeXmlAttribute(sportSession.sport)}"`] : []),
+      ...(sportSession.subSport ? [`subSport="${escapeXmlAttribute(sportSession.subSport)}"`] : []),
+      ...(isFiniteNumber(sportSession.startTime) ? [`startTime="${sportSession.startTime}"`] : []),
+      ...(isFiniteNumber(sportSession.endTime) ? [`endTime="${sportSession.endTime}"`] : []),
+    ];
+    if (attributes.length) lines.push(`<stgy:sportSession ${attributes.join(' ')} />`);
+  }
   const correction = activity.metadata.altitudeCorrection;
   if (correction) {
     lines.push(`<stgy:altitudeCorrection method="terrain-drift-v1" source="${escapeXmlAttribute(correction.source)}" anchorsUsed="${correction.anchorsUsed}" status="${correction.status}" />`);
@@ -743,6 +782,9 @@ function formatGpxPointExtensions(point: TrackPoint): string[] {
   }
   if (isFiniteNumber(point.speedMps)) {
     lines.push(`<speed>${formatGpxNumber(point.speedMps, 3)}</speed>`);
+  }
+  if (isFiniteNumber(point.gpsAccuracyM)) {
+    lines.push(`<stgy:gpsAccuracyM>${formatGpxNumber(point.gpsAccuracyM, 1)}</stgy:gpsAccuracyM>`);
   }
 
   const trackPointExtensions: string[] = [];

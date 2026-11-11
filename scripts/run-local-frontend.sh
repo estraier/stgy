@@ -55,6 +55,9 @@ export NEXT_PUBLIC_STORAGE_S3_PUBLIC_URL_PREFIX="http://s3.localhost:${CADDY_POR
 echo "[run-local-frontend] port=${PORT} caddy_port=${CADDY_PORT} cmd=${CMD}"
 
 if [[ "$CMD" == "start" ]]; then
+  # Verify all shared packages before rebuilding only the frontend bundle.
+  # This build is still needed to bake in the locally exported NEXT_PUBLIC_* URLs.
+  node "$PROJECT_ROOT/scripts/check-workspace-builds.mjs"
   echo "[run-local-frontend] npm run frontend:build"
   npm run frontend:build
 fi

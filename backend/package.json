@@ -20,11 +20,12 @@
     "ai-user-worker": "ts-node src/aiUserWorker.ts",
     "database-util": "ts-node src/databaseUtil.ts",
     "storage-util": "ts-node src/storageUtil.ts",
-    "pretest": "npm run packages:build --prefix ..",
     "test": "jest",
     "fmt": "prettier --write .",
     "lint": "eslint src --ext .js,.jsx,.ts,.tsx",
-    "clean": "rm -rf node_modules dist"
+    "clean": "rm -rf node_modules dist",
+    "predev": "node ../scripts/check-workspace-builds.mjs",
+    "prestart": "node ../scripts/check-workspace-builds.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.864.0",

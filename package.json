@@ -64,7 +64,6 @@
     "frontend:lint": "npm run lint --workspace frontend",
     "frontend:clean": "npm run clean --workspace frontend",
     "build": "npm run build --workspaces",
-    "pretest": "npm run packages:build",
     "test": "npm run test --workspaces",
     "fmt": "npm run fmt --workspaces",
     "lint": "npm run lint --workspaces",
@@ -103,6 +102,7 @@
     "vps:reset-data": "./scripts/reset-service-data.sh --core-only",
     "vps:reset-data-test": "./scripts/reset-service-data.sh",
     "vps:native:reset-data": "./scripts/reset-service-data.sh --mode native --core-only",
-    "vps:hybrid:reset-data": "./scripts/reset-service-data.sh --mode native --core-only"
+    "vps:hybrid:reset-data": "./scripts/reset-service-data.sh --mode native --core-only",
+    "postbuild": "node scripts/check-workspace-builds.mjs --record"
   }
 }
