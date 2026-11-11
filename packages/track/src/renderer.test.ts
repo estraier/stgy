@@ -149,6 +149,8 @@ jest.mock("leaflet", () => {
   const createFeatureLayer = () => ({
     bindPopup: jest.fn().mockReturnThis(),
     on: jest.fn().mockReturnThis(),
+    setStyle: jest.fn().mockReturnThis(),
+    bringToFront: jest.fn().mockReturnThis(),
   });
 
   const createLayersControl = () => {
@@ -1898,6 +1900,105 @@ describe("StgyTrackRenderer", () => {
     );
     expect(Array.from(seriesSelect?.options || []).map((option) => option.value))
       .not.toContain("segmentIds");
+  });
+
+  test("keeps merged routes at their normal widths until explicitly selected", async () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-src="#demo-merged-route-style">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    const first = makeTrackWithGraph().features[0];
+    const second = makeTrackWithGraph().features[0];
+    first.properties.weight = 6;
+    first.properties.opacity = 0.9;
+    second.properties.weight = 4;
+    second.properties.opacity = 0.8;
+    second.geometry.coordinates = [
+      [139.77, 35.69],
+      [139.78, 35.68],
+      [139.79, 35.67],
+    ];
+    const metadata = { source: { type: "merged" } };
+    Object.assign(first.properties, { metadata });
+    Object.assign(second.properties, { metadata });
+
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue({
+      type: "FeatureCollection",
+      features: [first, second],
+    });
+
+    renderer.hydrate(document.body);
+    await flushPromises();
+
+    const geoJsonMock = L.geoJSON as jest.Mock;
+    const routeIndex = geoJsonMock.mock.results.findIndex(
+      (result) => result.value.__featureLayers?.length === 2,
+    );
+    expect(routeIndex).toBeGreaterThanOrEqual(0);
+    const routeGeoJson = geoJsonMock.mock.results[routeIndex].value;
+    const [firstLayer, secondLayer] = routeGeoJson.__featureLayers;
+    const options = geoJsonMock.mock.calls[routeIndex][1];
+
+    expect(document.querySelector(".stgy-track-graph")).not.toBeNull();
+    expect(options.bubblingMouseEvents).toBe(false);
+    expect(options.style(first)).toMatchObject({ weight: 6, opacity: 0.9 });
+    expect(options.style(second)).toMatchObject({ weight: 4, opacity: 0.8 });
+    // The graph selects the first dataset automatically, without highlighting its route.
+    expect(firstLayer.setStyle).not.toHaveBeenCalled();
+    expect(secondLayer.setStyle).not.toHaveBeenCalled();
+    expect(firstLayer.bringToFront).not.toHaveBeenCalled();
+
+    const clickFirst = firstLayer.on.mock.calls.find(([name]: unknown[]) => name === "click")?.[1];
+    const clickSecond = secondLayer.on.mock.calls.find(([name]: unknown[]) => name === "click")?.[1];
+    expect(clickFirst).toEqual(expect.any(Function));
+    expect(clickSecond).toEqual(expect.any(Function));
+
+    clickFirst();
+    expect(firstLayer.setStyle).toHaveBeenLastCalledWith(
+      expect.objectContaining({ weight: 8, opacity: 1 }),
+    );
+    expect(firstLayer.bringToFront).toHaveBeenCalledTimes(1);
+    expect(secondLayer.setStyle).not.toHaveBeenCalled();
+
+    const originalEvent = new MouseEvent("click", { bubbles: true });
+    const stopPropagation = jest.spyOn(originalEvent, "stopPropagation");
+    clickSecond({ originalEvent });
+    expect(stopPropagation).toHaveBeenCalled();
+    expect(firstLayer.setStyle).toHaveBeenLastCalledWith(
+      expect.objectContaining({ weight: 6, opacity: 0.9 }),
+    );
+    expect(secondLayer.setStyle).toHaveBeenLastCalledWith(
+      expect.objectContaining({ weight: 6, opacity: 1 }),
+    );
+    expect(secondLayer.bringToFront).toHaveBeenCalledTimes(1);
+
+    const map = (L.map as jest.Mock).mock.results[0].value as { on: jest.Mock };
+    const clickMap = map.on.mock.calls.find(([name]) => name === "click")?.[1];
+    expect(clickMap).toEqual(expect.any(Function));
+
+    // Route clicks do not bubble to the map (as configured above). The next
+    // map click is therefore a genuine background click and must clear the
+    // selection immediately, with no timer or discarded click.
+    clickMap();
+    expect(secondLayer.setStyle).toHaveBeenLastCalledWith(
+      expect.objectContaining({ weight: 4, opacity: 0.8 }),
+    );
+    expect(document.querySelector<HTMLElement>(".stgy-track-graph")?.hidden).toBe(false);
+
+    // With no selected route, a subsequent click can highlight any route again.
+    clickFirst();
+    expect(firstLayer.setStyle).toHaveBeenLastCalledWith(
+      expect.objectContaining({ weight: 8, opacity: 1 }),
+    );
+    expect(secondLayer.setStyle).toHaveBeenLastCalledWith(
+      expect.objectContaining({ weight: 4, opacity: 0.8 }),
+    );
+    clickMap();
+    expect(firstLayer.setStyle).toHaveBeenLastCalledWith(
+      expect.objectContaining({ weight: 6, opacity: 0.9 }),
+    );
   });
 
   test("combines split features from one merged activity into one complete graph", async () => {

@@ -317,7 +317,6 @@ type CoordinateInteractionContext = {
   activeGraphDataset: TrackGraphDataset | null;
   activeGraphLayer: L.Layer | null;
   pinnedSample: SelectedCoordinateSample | null;
-  ignoreNextMapClick: boolean;
 };
 
 type StyleableLayer = L.Layer & {
@@ -1699,7 +1698,21 @@ export class StgyTrackRenderer {
     }
   }
 
-  private activateGraphDatasetForLayer(context: CoordinateInteractionContext, layer: L.Layer) {
+  private clearGraphLayerSelection(context: CoordinateInteractionContext) {
+    if (!context.activeGraphLayer) {
+      return;
+    }
+
+    this.restoreGraphLayerStyle(context, context.activeGraphLayer);
+    context.activeGraphLayer = null;
+    // Keep the graph visible; it is also shown before any route is selected.
+  }
+
+  private activateGraphDatasetForLayer(
+    context: CoordinateInteractionContext,
+    layer: L.Layer,
+    highlightRoute: boolean,
+  ) {
     const dataset = context.routeDatasetByLayer.get(layer);
     if (!dataset || !context.graphPanel) {
       return;
@@ -1713,7 +1726,11 @@ export class StgyTrackRenderer {
 
     context.activeGraphLayer = layer;
     context.activeGraphDataset = dataset;
-    this.highlightGraphLayer(context, layer);
+    // The initial graph selection must not make the first route look different.
+    // Only an explicit map click highlights the selected route.
+    if (highlightRoute) {
+      this.highlightGraphLayer(context, layer);
+    }
     this.renderGraphPanel(context.graphPanel, context, dataset);
   }
 
@@ -1736,7 +1753,7 @@ export class StgyTrackRenderer {
     context.routeStyleByLayer.set(layer, this.getFeaturePathStyle(feature));
 
     if (!context.activeGraphDataset) {
-      this.activateGraphDatasetForLayer(context, layer);
+      this.activateGraphDatasetForLayer(context, layer, false);
     }
   }
 
@@ -2270,14 +2287,6 @@ export class StgyTrackRenderer {
     }
   }
 
-  private ignoreNextMapClickOnce(context: CoordinateInteractionContext) {
-    context.ignoreNextMapClick = true;
-
-    window.setTimeout(() => {
-      context.ignoreNextMapClick = false;
-    }, 0);
-  }
-
   private activateCoordinateSampleAtLatLng(
     context: CoordinateInteractionContext,
     coordinates: unknown,
@@ -2328,14 +2337,12 @@ export class StgyTrackRenderer {
     });
 
     layer.on("click", (event?: L.LeafletMouseEvent) => {
-      this.ignoreNextMapClickOnce(context);
-
       if (event?.originalEvent) {
         L.DomEvent.stopPropagation(event.originalEvent);
       }
 
       if (context.routeDatasetByLayer.get(layer) && context.graphPanel) {
-        this.activateGraphDatasetForLayer(context, layer);
+        this.activateGraphDatasetForLayer(context, layer, true);
       }
 
       if (event?.latlng) {
@@ -3167,6 +3174,9 @@ export class StgyTrackRenderer {
     const graphEntries: RouteGraphEntry[] = [];
     const combineTrackActivityFeatures = this.isTrackActivityGraphData(geoJsonData);
     const geoJsonLayer = L.geoJSON(asGeoJsonInput(geoJsonData), {
+      // Route clicks are handled by the path itself; never bubble them to the
+      // map click handler, which clears a selected route.
+      bubblingMouseEvents: false,
       style: (feature) => this.getFeaturePathStyle(feature),
       pointToLayer: (feature, latlng) => {
         const props = getFeatureProperties(feature);
@@ -3501,7 +3511,6 @@ export class StgyTrackRenderer {
       activeGraphDataset: null,
       activeGraphLayer: null,
       pinnedSample: null,
-      ignoreNextMapClick: false,
     };
 
     if (graphRestoreButton) {
@@ -3540,12 +3549,8 @@ export class StgyTrackRenderer {
     });
 
     map.on("click", () => {
-      if (interactionContext.ignoreNextMapClick) {
-        interactionContext.ignoreNextMapClick = false;
-        return;
-      }
-
       this.clearCoordinateSample(interactionContext, true);
+      this.clearGraphLayerSelection(interactionContext);
     });
 
     const masterGroup = L.featureGroup().addTo(map);
