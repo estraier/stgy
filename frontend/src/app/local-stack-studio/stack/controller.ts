@@ -96,6 +96,7 @@ import {
 } from "./canonical-input-pool";
 import { runLensfunCorrectionPool } from "./lensfun-pool";
 import { buildStfApertureWeights, DEFAULT_STF_BLEND_WEIGHT } from "./stf-weights";
+import { chooseAlignmentReferenceIndex } from "./alignment-reference";
 import { buildStfAdditionalBlurPlan, resolveStfGateExpansionMultiplier, DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS, STF_BLUR_STRENGTH_VALUES, STF_BLUR_AREA_GUARD_VALUES, STF_BLUR_RATIO_VALUES, STF_BLUR_SIGMOID_VALUES } from "./stf-additional-blur-mode";
 import {
   DEFAULT_PANORAMA_DOWNSCALE_MEGAPIXELS,
@@ -2080,43 +2081,6 @@ function resolveAutoAlignmentMode(mergeMode) {
     return "feature-match-orb";
   }
   return "feature-match-ecc";
-}
-
-function computeExifLightValue(inputInfo) {
-  const exposureTime = Number(inputInfo?.exposureTime);
-  const fNumber = Number(inputInfo?.fNumber);
-  const iso = Number(inputInfo?.iso);
-  if (!(exposureTime > 0 && fNumber > 0 && iso > 0)) return null;
-  const lightValue = Math.log2((fNumber * fNumber) / exposureTime) - Math.log2(iso / 100);
-  return Number.isFinite(lightValue) ? lightValue : null;
-}
-
-function chooseAlignmentReferenceIndex(inputInfos, mergeMode) {
-  const count = inputInfos.length;
-  if (count <= 1) return 0;
-
-  if (mergeMode === "focus") {
-    return Math.floor(count / 2);
-  }
-
-  const lightValues = inputInfos.map(computeExifLightValue);
-  if (!lightValues.every((value) => Number.isFinite(value))) return 0;
-
-  const minLightValue = Math.min(...lightValues);
-  const maxLightValue = Math.max(...lightValues);
-  if (maxLightValue - minLightValue < 1) return 0;
-
-  const centerLightValue = (minLightValue + maxLightValue) / 2;
-  let bestIndex = 0;
-  let bestDistance = Infinity;
-  for (let index = 0; index < lightValues.length; index += 1) {
-    const distance = Math.abs(lightValues[index] - centerLightValue);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      bestIndex = index;
-    }
-  }
-  return bestIndex;
 }
 
 function isTileMergeMode(mode) {
