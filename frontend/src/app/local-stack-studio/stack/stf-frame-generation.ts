@@ -46,15 +46,17 @@ export function buildStfFrameSet(
       fNumber: Math.sqrt(sorted[i - 1].fNumber * sorted[i].fNumber),
       weight: 0, pairLabel: `${i}/${sorted.length - 1}` });
   }
-  // Extend one *real* aperture interval in log-F space on each side.
-  // The pair orientation is always from smaller to larger F-number:
-  // ext1 is extrapolated from the first real image, ext2 from the last.
+  // Extend one *generated* half-interval in log-F space on each side so the
+  // final F-number list stays on the same geometric-step lattice as the
+  // midpoint-interpolated sequence. The pair orientation is always from
+  // smaller to larger F-number: ext1 is extrapolated from the first real
+  // image, ext2 from the last.
   const outerFrames: StfOuterFrame[] = mode === "interpolation-extrapolation" ? [
     { previousIndex: sorted[0].index, nextIndex: sorted[1].index,
-      fNumber: sorted[0].fNumber ** 2 / sorted[1].fNumber,
+      fNumber: sorted[0].fNumber / Math.sqrt(sorted[1].fNumber / sorted[0].fNumber),
       weight: 0, pairLabel: "first-ext1", variant: "ext1" },
     { previousIndex: sorted[sorted.length - 2].index, nextIndex: sorted[sorted.length - 1].index,
-      fNumber: sorted[sorted.length - 1].fNumber ** 2 / sorted[sorted.length - 2].fNumber,
+      fNumber: sorted[sorted.length - 1].fNumber * Math.sqrt(sorted[sorted.length - 1].fNumber / sorted[sorted.length - 2].fNumber),
       weight: 0, pairLabel: "last-ext2", variant: "ext2" },
   ] : [];
   if (outerFrames.some((frame) => !(Number.isFinite(frame.fNumber) && frame.fNumber > 0))) {
@@ -84,7 +86,7 @@ export function stfMiddleFrameCacheKey(sessionId: string, normalizationMode: str
 /** Pair-specific cache key; separate from mid and stable across W/Blur/mode. */
 export function stfOuterFrameCacheKey(sessionId: string, normalizationMode: string,
   matrices: readonly (ArrayLike<number> | null)[], frame: StfOuterFrame, width: number, height: number): string {
-  return JSON.stringify([`stf-optical-flow-${frame.variant}-4mp-gamma20-range4-v1`, sessionId,
+  return JSON.stringify([`stf-optical-flow-${frame.variant}-4mp-gamma20-range4-v2`, sessionId,
     normalizationMode, width, height, frame.previousIndex, frame.nextIndex,
     matrices.map((m) => m == null ? null : Array.from(m))]);
 }

@@ -321,8 +321,8 @@ import type {
     const scaleY = height / flowHeight;
     const edgeX = Math.max(0, flowWidth - 1);
     const edgeY = Math.max(0, flowHeight - 1);
-    const previousFactor = variant === "ext2" ? 2 : variant === "ext1" ? -1 : 0.5;
-    const nextFactor = variant === "ext2" ? -1 : variant === "ext1" ? 2 : 0.5;
+    const previousFactor = variant === "ext2" ? 1.5 : variant === "ext1" ? -0.5 : 0.5;
+    const nextFactor = variant === "ext2" ? -0.5 : variant === "ext1" ? 1.5 : 0.5;
     const usePrevious = variant !== "ext2";
     const useNext = variant !== "ext1";
 

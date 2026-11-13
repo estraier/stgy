@@ -42,7 +42,7 @@ describe("STF Frame generation Phase 2", () => {
 });
 
 describe("STF Frame generation Phase 3", () => {
-  test("15-frame set extends each endpoint by one real-frame log-F interval", () => {
+  test("15-frame set extends each endpoint by one midpoint half-interval in log-F", () => {
     const frameSet = buildStfFrameSet(real, 4, "interpolation-extrapolation");
     expect(frameSet.mode).toBe("interpolation-extrapolation");
     expect(frameSet.middleFrames).toHaveLength(6);
@@ -51,8 +51,8 @@ describe("STF Frame generation Phase 3", () => {
     expect(frameSet.allWeights).toHaveLength(15);
     expect(frameSet.outerFrames.map((frame) => [frame.variant, frame.previousIndex, frame.nextIndex]))
       .toEqual([["ext1", 6, 5], ["ext2", 2, 1]]);
-    expect(frameSet.outerFrames[0].fNumber).toBeCloseTo(2 * 2 / 2.2, 12);
-    expect(frameSet.outerFrames[1].fNumber).toBeCloseTo(4 * 4 / 3.5, 12);
+    expect(frameSet.outerFrames[0].fNumber).toBeCloseTo(2 / Math.sqrt(2.2 / 2), 12);
+    expect(frameSet.outerFrames[1].fNumber).toBeCloseTo(4 * Math.sqrt(4 / 3.5), 12);
     expect(frameSet.outerFrames[0].fNumber).toBeLessThan(2);
     expect(frameSet.outerFrames[1].fNumber).toBeGreaterThan(4);
     expect(Array.from(frameSet.allWeights).reduce((sum, weight) => sum + weight, 0)).toBeCloseTo(1, 6);

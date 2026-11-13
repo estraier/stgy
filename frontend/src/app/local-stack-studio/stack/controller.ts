@@ -3230,7 +3230,7 @@ function stfSourceMergeKey(sessionId, alignmentPlan, matrices, mergePlan, width,
     weights: frameSet && frameSet.mode !== "off" ? frameSet.allWeights : mergePlan.weights,
   });
   if (frameSet?.mode === "interpolation") return `${baseKey}:midpoint-range4-v1`;
-  if (frameSet?.mode === "interpolation-extrapolation") return `${baseKey}:midpoint-outer-range4-v1`;
+  if (frameSet?.mode === "interpolation-extrapolation") return `${baseKey}:midpoint-outer-range4-v2`;
   return baseKey;
 }
 

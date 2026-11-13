@@ -184,9 +184,9 @@ test("STF range-4 warp preserves highlights above linear 1", async () => {
 
 describe("STF Phase 3 — reuse one bidirectional Flow for midpoint and outer warp", () => {
   test.each([
-    { extra: "ext1" as const, outputX: 0 },
-    { extra: "ext2" as const, outputX: 6 },
-  ])("mid + $extra are distinct full-resolution frames with just two direction computations", async ({extra, outputX}) => {
+    { extra: "ext1" as const, outputX: 1 },
+    { extra: "ext2" as const, outputX: 5 },
+  ])("mid + $extra are distinct half-step outer frames with just two direction computations", async ({extra, outputX}) => {
     const { messages, spawned, flowComputations } = await runMidpoint(8, 8, extra);
     expect(spawned).toBe(2);
     expect(flowComputations).toBe(2); // forward + backward, not twice per frame
