@@ -82,6 +82,8 @@ import {
 } from "./canonical-source";
 import { AlignedImageReader } from "./aligned-reader";
 import { StfPhase0Diagnostics } from "./stf-phase0-diagnostics";
+import { buildStfFrameSet } from "./stf-frame-generation";
+import { appendStfVirtualSource } from "./stf-virtual-source";
 import { StfSourceCache, buildStfSourceCacheKey, stfSourceForFinalization } from "./stf-source-cache";
 import {
   detectStackInputBits,
@@ -231,6 +233,8 @@ const focusSoftnessOption = getElement("focus-softness-option");
 const focusSoftness = getElement("focus-softness");
 const stfBlendWeightOption = getElement("stf-blend-weight-option");
 const stfBlendWeight = getElement("stf-blend-weight");
+const stfFrameGenerationOption = getElement("stf-frame-generation-option");
+const stfFrameGeneration = getElement("stf-frame-generation");
 const stfBlurStrengthOption = getElement("stf-blur-strength-option");
 const stfBlurStrength = getElement("stf-blur-strength");
 const stfBlurRatioOption = getElement("stf-blur-ratio-option");
@@ -347,6 +351,7 @@ function captureProcessingSettings(selectedMode: string): StackInfoSetting[] {
     settings.push({ label: "Focus softness", value: String(selectedFocusSoftness()) });
   } else if (selectedMode === "stf") {
     settings.push({ label: "Blend weight", value: String(selectedStfBlendWeight()) });
+    settings.push({ label: "Frame generation", value: stfFrameGeneration.value });
     settings.push({ label: "Additional blur", value: stfBlurStrength.value });
     if (stfBlurStrength.value !== "none") {
       settings.push({ label: "Blur ratio", value: `${Math.round(Number(stfBlurRatio.value) * 100)}%` });
@@ -457,6 +462,8 @@ function updateMergeOptionsVisibility() {
   focusSoftnessOption.classList.toggle("flex", isFocus);
   stfBlendWeightOption.classList.toggle("hidden", !isStf);
   stfBlendWeightOption.classList.toggle("flex", isStf);
+  stfFrameGenerationOption.classList.toggle("hidden", !isStf);
+  stfFrameGenerationOption.classList.toggle("flex", isStf);
   stfBlurStrengthOption.classList.toggle("hidden", !isStf);
   stfBlurStrengthOption.classList.toggle("flex", isStf);
   updateStfBlurOptionsVisibility();
@@ -510,6 +517,14 @@ function selectedFocusSoftness() {
 function selectedStfBlendWeight() {
   const value = Number.parseFloat(stfBlendWeight.value);
   return STF_BLEND_WEIGHT_VALUES.has(value) ? value : DEFAULT_STF_BLEND_WEIGHT;
+}
+
+function selectedStfFrameGeneration() {
+  if (stfFrameGeneration.value !== "off" && stfFrameGeneration.value !== "interpolation" &&
+      stfFrameGeneration.value !== "interpolation-extrapolation") {
+    throw new Error("Unknown STF Frame generation mode.");
+  }
+  return stfFrameGeneration.value;
 }
 
 function selectedStfBlurPlan() {
@@ -778,6 +793,10 @@ listen(processButton, "click", async () => {
       mergeMode.value === "panorama" ? alignmentMode.value : DEFAULT_PANORAMA_ALIGNMENT_DIRECTION,
       parsePanoramaFoVOption(panoramaFov.value) ?? DEFAULT_PANORAMA_FOV,
     );
+    if (effectiveMergeMode === "stf") {
+      mergePlan.stfFrameSet = buildStfFrameSet(inputInfos.map((entry) => entry.fNumber),
+        selectedStfBlendWeight(), selectedStfFrameGeneration());
+    }
     const alignmentPlan = effectiveMergeMode === "panorama"
       ? null
       : buildAlignmentPlan(files, inputInfos, alignmentMode.value, effectiveMergeMode);
@@ -786,6 +805,9 @@ listen(processButton, "click", async () => {
       const blur = mergePlan.stfBlurPlan;
       stfPhase0.setContext({
         inputCount: files.length,
+        frameGeneration: mergePlan.stfFrameSet?.mode ?? "off",
+        generatedFrameCount: (mergePlan.stfFrameSet?.middleFrames.length ?? 0) +
+          (mergePlan.stfFrameSet?.outerFrames.length ?? 0),
         width: alignmentPlan.targetWidth, height: alignmentPlan.targetHeight,
         blendWeight: selectedStfBlendWeight(), blurStrength: blur?.strength ?? "none",
         blurRatio: blur?.ratio ?? 0, blurGuard: blur?.areaGuard ?? "none",
@@ -794,7 +816,7 @@ listen(processButton, "click", async () => {
         referenceIndex: isFeatureMatchAlignmentMode(alignmentPlan.effectiveMode)
           ? chooseAlignmentReferenceIndex(inputInfos, effectiveMergeMode) : null,
         fNumbers: inputInfos.map((info) => Number(info.fNumber)),
-        weights: Array.from(mergePlan.weights),
+        weights: Array.from(mergePlan.stfFrameSet?.allWeights ?? mergePlan.weights),
         gains: Array.from(mergePlan.gains),
         scaledLogs: Array.from(mergePlan.scaledLogs),
       });
@@ -2985,6 +3007,7 @@ async function alignAndMergeFilesWithOpenCv(
         matrices,
         inputInfos,
         mergePlan,
+        canonicalSession.images,
         width,
         height,
         outputColorSpace,
@@ -3006,12 +3029,16 @@ async function alignAndMergeFilesWithOpenCv(
           reader,
           alignmentPlan,
           matrices,
-          mergePlan,
+          mergePlan.mode === "stf" ? realStfSourcePlan(mergePlan) : mergePlan,
           width,
           height,
           mergePlan.mode === "stf" ? infoTrace?.stf : null,
         );
-        if (sourceKey) retainStfSource(sourceKey, accumulator, infoTrace?.stf, "Linear merge");
+        if (mergePlan.mode === "stf") {
+          await appendMiddleFramesIfEnabled(accumulator, canonicalSession.id, reader,
+            alignmentPlan, matrices, mergePlan, canonicalSession.images, infoTrace?.stf);
+        }
+        if (sourceKey) retainStfSource(sourceKey, accumulator, infoTrace?.stf, "Linear merge and virtual frames");
       }
       if (mergePlan.mode === "stf") {
         infoTrace?.stf?.stage("STF weighted source merge", performance.now() - sourceStartedAt,
@@ -3173,10 +3200,15 @@ function canCacheStfBuffer(cache, buffer) {
 }
 /** Key only the inputs of the raw weighted source, never the Blur/Gate UI. */
 function stfSourceMergeKey(sessionId, alignmentPlan, matrices, mergePlan, width, height) {
-  return buildStfSourceCacheKey({
+  const frameSet = mergePlan.stfFrameSet;
+  const baseKey = buildStfSourceCacheKey({
     sessionId, width, height, alignmentPlan, matrices,
-    gains: mergePlan.gains, scaledLogs: mergePlan.scaledLogs, weights: mergePlan.weights,
+    gains: mergePlan.gains, scaledLogs: mergePlan.scaledLogs,
+    weights: frameSet && frameSet.mode !== "off" ? frameSet.allWeights : mergePlan.weights,
   });
+  if (frameSet?.mode === "interpolation") return `${baseKey}:midpoint-range4-v1`;
+  if (frameSet?.mode === "interpolation-extrapolation") return `${baseKey}:midpoint-outer-range4-v1`;
+  return baseKey;
 }
 
 function retainStfSource(key, source, stfDiag, origin) {
@@ -3207,8 +3239,28 @@ function finalizeStfBasicGate(values, width, height, outputColorSpace) {
   return finalizeStoredGamma2Result(stored, width, height, outputColorSpace);
 }
 
+/** Real contributions use the first N entries of the full Frame Set weights.
+ * The gate always continues to analyze N real frames and their original F-numbers.
+ */
+function realStfSourcePlan(mergePlan) {
+  return mergePlan.stfFrameSet && mergePlan.stfFrameSet.mode !== "off"
+    ? { ...mergePlan, weights: mergePlan.stfFrameSet.realWeights }
+    : mergePlan;
+}
+
+async function appendMiddleFramesIfEnabled(source, sessionId, reader, alignmentPlan, matrices,
+  mergePlan, canonicalImages, stfDiag) {
+  if (!mergePlan.stfFrameSet || mergePlan.stfFrameSet.mode === "off") return;
+  await appendStfVirtualSource(source, {
+    sessionId, frameSet: mergePlan.stfFrameSet, reader, matrices,
+    normalizationMode: alignmentPlan.normalizationMode,
+    canonicalImages, toneReferenceIndex: mergePlan.toneReferenceIndex,
+    diagnostic: stfDiag, progress: setProgress,
+  });
+}
+
 async function mergeStfWithAdditionalBlur(
-  sessionId, reader, alignmentPlan, matrices, inputInfos, mergePlan, width, height, outputColorSpace,
+  sessionId, reader, alignmentPlan, matrices, inputInfos, mergePlan, canonicalImages, width, height, outputColorSpace,
   infoTrace: { previewMs: number; add: (label: string, durationMs: number, includedIn?: string) => void; warnings: string[]; stf?: StfPhase0Diagnostics | null } | null = null,
 ) {
   const plan = mergePlan.stfBlurPlan;
@@ -3239,8 +3291,11 @@ async function mergeStfWithAdditionalBlur(
   const cache = stfGateCache;
   const previewOnly = plan.gateOnly;
   stfDiag?.cache("Gate Ratio", cache.ratio ? "hit" : "miss", "RAM", cache.ratio?.byteLength ?? 0);
-  const cachedSource = stfSourceCache.lookup(sourceKey, width * height * 3);
-  let source = previewOnly ? null : cachedSource;
+  // Gate-only must not evict an otherwise reusable Source from the one-slot
+  // cache merely because its W or Frame generation selection differs.
+  const cachedSource = previewOnly ? null : stfSourceCache.lookup(sourceKey, width * height * 3);
+  let source = cachedSource;
+  let pendingGeneratedContribution = false;
   stfDiag?.cache("STF source", previewOnly ? "bypassed" : source ? "hit" : "miss", "RAM",
     previewOnly ? undefined : (source?.byteLength ?? 0),
     previewOnly ? "Gate-only does not merge source" : "Independent of Gate and Blur settings");
@@ -3279,7 +3334,7 @@ async function mergeStfWithAdditionalBlur(
         matrices,
         gains: new Float32Array(mergePlan.gains),
         scaledLogs: new Float32Array(mergePlan.scaledLogs),
-        weights: new Float32Array(mergePlan.weights), fNumbers,
+        weights: new Float32Array(realStfSourcePlan(mergePlan).weights), fNumbers,
       },
       workerUrl, hardwareConcurrency,
     });
@@ -3395,12 +3450,19 @@ async function mergeStfWithAdditionalBlur(
       // Store large full-resolution buffers only within the cache budget;
       // oversized maps remain local to this Process and are released after it.
       if (canCacheStfBuffer(cache, activeRatio)) cache.ratio = activeRatio;
-      if (includeSource && source) retainStfSource(sourceKey, source, stfDiag, "Fused Sobel analysis");
+      if (includeSource && source) {
+        // Preserve Sobel + real Source fusion, but delay the virtual work until
+        // the fine/coarse Gate-analysis temporaries go out of scope.
+        pendingGeneratedContribution = Boolean(mergePlan.stfFrameSet && mergePlan.stfFrameSet.mode !== "off");
+        if (!pendingGeneratedContribution) retainStfSource(sourceKey, source, stfDiag, "Fused Sobel analysis");
+      }
       stfDiag?.cache("Gate Ratio retention", cache.ratio ? "stored" : "not-stored", "RAM",
         cache.ratio?.byteLength ?? 0, "192MiB combined RAM budget");
-      if (includeSource && source) stfDiag?.cache("STF source produced", stfSourceCache.holds(source) ? "stored" : "not-stored", "RAM",
+      if (includeSource && source) stfDiag?.cache("STF source produced",
+        pendingGeneratedContribution ? "pending-virtual" : stfSourceCache.holds(source) ? "stored" : "not-stored", "RAM",
         stfSourceCache.holds(source) ? source.byteLength : 0,
-        "Produced during Sobel; independent one-slot source cache");
+        pendingGeneratedContribution ? "Real contribution fused; generated contributions deferred" :
+          "Produced during Sobel; independent one-slot source cache");
     }
 
     infoTrace?.add("STF sharpness analysis", performance.now() - sharpnessStartedAt, "Merge");
@@ -3488,10 +3550,19 @@ async function mergeStfWithAdditionalBlur(
       return result;
     }
     const blurStartedAt = performance.now();
+    if (source && pendingGeneratedContribution) {
+      await appendMiddleFramesIfEnabled(source, sessionId, reader, alignmentPlan, matrices,
+        mergePlan, canonicalImages, stfDiag);
+      retainStfSource(sourceKey, source, stfDiag, "Fused Sobel analysis and generated frames");
+      pendingGeneratedContribution = false;
+    }
     if (!source) {
       setProgress("STF merging source for additional blur...");
       const sourceStartedAt = performance.now();
-      source = await mergeLinearFromWorkerPool(sessionId, reader, alignmentPlan, matrices, mergePlan, width, height, stfDiag);
+      source = await mergeLinearFromWorkerPool(sessionId, reader, alignmentPlan, matrices,
+        realStfSourcePlan(mergePlan), width, height, stfDiag);
+      await appendMiddleFramesIfEnabled(source, sessionId, reader, alignmentPlan, matrices,
+        mergePlan, canonicalImages, stfDiag);
       stfDiag?.stage("STF source remerge", performance.now() - sourceStartedAt);
       stfDiag?.cache("STF source recomputed", "computed", "RAM", source.byteLength,
         "Independent source cache miss");
@@ -5470,6 +5541,7 @@ function setProcessing(processing) {
   panoramaDownscale.disabled = processing;
   panoramaFinish.disabled = processing;
   stfBlendWeight.disabled = processing;
+  stfFrameGeneration.disabled = processing;
   stfBlurStrength.disabled = processing;
   stfBlurRatio.disabled = processing;
   stfBlurAreaGuard.disabled = processing;

@@ -317,6 +317,15 @@ export default function PageBody() {
                     <option value="32">32 (large bokeh)</option>
                   </select>
                 </label>
+                <label id="stf-frame-generation-option" className="hidden flex-col items-start gap-1.5">
+                  <span className="text-xs font-medium text-gray-500">Frame generation</span>
+                  <select id="stf-frame-generation" defaultValue="off"
+                    className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm">
+                    <option value="off">off</option>
+                    <option value="interpolation">interpolation</option>
+                    <option value="interpolation-extrapolation">+ extrapolation</option>
+                  </select>
+                </label>
                 <label id="stf-blur-strength-option" className="hidden flex-col items-start gap-1.5">
                   <span className="text-xs font-medium text-gray-500">Blur strength</span>
                   <select

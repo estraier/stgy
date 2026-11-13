@@ -52,6 +52,8 @@ export function fingerprintStfOutputSampled(
 
 export type StfBaselineContext = {
   inputCount: number;
+  frameGeneration?: "off" | "interpolation" | "interpolation-extrapolation";
+  generatedFrameCount?: number;
   width: number;
   height: number;
   blendWeight: number;
@@ -152,7 +154,7 @@ export function formatStfPhase0Report(record: StfPhase0Record): string {
   const lines = [
     `[LSS STF] Phase 0 | run=${record.runId} | ${record.status} | total=${fmtMs(record.totalWallMs)}`,
     `Settings: ${ctx ? [
-      `${ctx.inputCount} real frames`, "0 generated frames", "generation=off",
+      `${ctx.inputCount} real frames`, `${ctx.generatedFrameCount ?? 0} generated frames`, `generation=${ctx.frameGeneration ?? "off"}`,
       `${ctx.width}x${ctx.height}`, `W=${ctx.blendWeight}`,
       `blur=${ctx.blurStrength}`, `ratio=${ctx.blurRatio}`,
       `guard=${ctx.blurGuard}`, `sigmoid=${ctx.blurSigmoid}`,

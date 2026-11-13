@@ -168,6 +168,15 @@ function solvePlan(source: StfToneStatistics, target: StfToneStatistics): StfTon
   };
 }
 
+/** Tone match one generated image against the preselected REAL-frame reference. */
+export function buildStfToneMatchPlanToReference(source: StfToneStatistics,
+  reference: StfToneStatistics): StfToneMatchPlan {
+  if (!validStatistics(source) || !validStatistics(reference)) {
+    throw new Error("STF virtual frame has invalid tone statistics.");
+  }
+  return solvePlan(source, reference);
+}
+
 export function buildStfToneMatchPlans(
   statistics: readonly StfToneStatistics[],
 ): StfToneMatchResult | null {
