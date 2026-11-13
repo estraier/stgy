@@ -4,7 +4,7 @@ import {
   STF_ADDITIONAL_BLUR_COARSE_REFERENCE_PIXELS, STF_ADDITIONAL_BLUR_FINE_REFERENCE_PIXELS,
   applyGuardedGaussianBlurRegion, applyStfGateExpansion,
   buildStfApertureGroups, buildStfRelativeSharpnessMapAtScaleInto,
-  type StfRelativeChannelFloors, validateStfRelativeChannelFloors,
+  type StfPerImageChannelFloors, validateStfPerImageChannelFloors,
   createStfSharpnessScratch, resolveStfSharpnessHalo, resolveStfSharpnessScale,
 } from "../stack/stf-additional-blur";
 import { WorkerCanonicalReader } from "../stack/worker-canonical-reader";
@@ -30,7 +30,7 @@ let groupImageCounts: Int32Array | null = null;
 let fineScale = 1;
 let coarseScale = 1;
 let analysisHalo = 2;
-let relativeChannelFloors: StfRelativeChannelFloors | null = null;
+let relativeChannelFloors: StfPerImageChannelFloors | null = null;
 
 workerScope.onmessage = async (event: MessageEvent<StfAdditionalBlurWorkerRequest>) => {
   const message = event.data;
@@ -76,7 +76,7 @@ workerScope.onmessage = async (event: MessageEvent<StfAdditionalBlurWorkerReques
     }
     if (message.type === "configure-relative-floors") {
       ensureInitialized();
-      relativeChannelFloors = validateStfRelativeChannelFloors(message.floors);
+      relativeChannelFloors = validateStfPerImageChannelFloors(message.floors, reader!.imageCount);
       post({ type: "relative-floors-configured", requestId, floors: relativeChannelFloors });
       return;
     }
@@ -174,21 +174,19 @@ async function sampleBrightnessStripe(
     && Number.isInteger(offsetY) && offsetY >= 0 && offsetY < reader!.height)) {
     throw new Error("STF brightness sample geometry is invalid.");
   }
-  // The canonical reader aligns only the requested grid positions; the former
-  // implementation transformed and tone-matched the entire image stripe, then
-  // discarded almost every pixel.  Sampling coordinates and RGB accumulation
-  // order are identical, so P50 keeps its original definition.
+  // Sample only the aligned grid pixels. Preserve each real frame's RGB
+  // samples after the SAME tone matching used for the Sobel analysis.
+  // No STF blend weight enters the gate floor estimation.
   let samples: Float32Array | null = null;
   for (let imageIndex = 0; imageIndex < reader!.imageCount; imageIndex += 1) {
     const linear = await reader!.readLinearSampleGrid(imageIndex, y, height, stride, offsetX, offsetY);
     const lut = toneMatchLuts![imageIndex];
     if (lut) applyStfToneMatchInPlace(linear, gains![imageIndex], scaledLogs![imageIndex], lut);
-    if (!samples) samples = new Float32Array(linear.length);
-    if (samples.length !== linear.length) throw new Error("STF RGB sampling returned inconsistent geometry.");
-    const weight = weights![imageIndex];
-    for (let index = 0; index < linear.length; index += 1) {
-      samples[index] += (linear[index] ?? 0) * weight;
+    if (!samples) samples = new Float32Array(linear.length * reader!.imageCount);
+    if (samples.length !== linear.length * reader!.imageCount) {
+      throw new Error("STF per-image RGB sampling returned inconsistent geometry.");
     }
+    samples.set(linear, imageIndex * linear.length);
   }
   return samples ?? new Float32Array(0);
 }
@@ -233,8 +231,8 @@ async function analyzeStripe(y: number, height: number, includeSource: boolean):
       }
     }
 
-    buildStfRelativeSharpnessMapAtScaleInto(linear, width, regionHeight, fineScale, fineMap, scratch, relativeChannelFloors!);
-    buildStfRelativeSharpnessMapAtScaleInto(linear, width, regionHeight, coarseScale, coarseMap, scratch, relativeChannelFloors!);
+    buildStfRelativeSharpnessMapAtScaleInto(linear, width, regionHeight, fineScale, fineMap, scratch, relativeChannelFloors![imageIndex]);
+    buildStfRelativeSharpnessMapAtScaleInto(linear, width, regionHeight, coarseScale, coarseMap, scratch, relativeChannelFloors![imageIndex]);
     const group = imageGroupIndexes![imageIndex];
     const fineTarget = fineGroups[group];
     const coarseBase = group * corePixels;

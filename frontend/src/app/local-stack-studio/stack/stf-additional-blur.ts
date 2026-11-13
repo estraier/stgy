@@ -21,6 +21,8 @@ export const STF_LOG_RATIO_NORMALIZATION_UPPER_PERCENTILE = 0.97;
 
 export type StfSharpnessScratch = { a: Float32Array; b: Float32Array; c: Float32Array };
 export type StfRelativeChannelFloors = [number, number, number];
+export type StfPerImageChannelFloors = StfRelativeChannelFloors[];
+export type StfPerImageChannelSamples = [number[], number[], number[]][];
 export type StfSampleGrid = { stride: number; offsetX: number; offsetY: number };
 export type StfLogRatioNormalizationPlan = {
   lowerPercentile: number; upperPercentile: number; lowerValue: number;
@@ -123,6 +125,65 @@ export function validateStfRelativeChannelFloors(floors: readonly number[]): Stf
     throw new Error("STF production RGB brightness floors are invalid.");
   }
   return [floors[0], floors[1], floors[2]];
+}
+
+/** Each stripe contains image-major, interleaved RGB samples from REAL inputs.
+ * Keep them separate: the relative Sobel normalization floor of a frame must
+ * only depend on that frame's own tone-matched channel values, never STF W. */
+export function appendStfPerImageChannelSamplesFromPacked(
+  target: StfPerImageChannelSamples, packed: Float32Array,
+): void {
+  const imageCount = target.length;
+  if (imageCount < 2 || packed.length % (imageCount * 3) !== 0) {
+    throw new Error("STF image/channel brightness sample geometry is invalid.");
+  }
+  const valuesPerImage = packed.length / imageCount;
+  for (let imageIndex = 0; imageIndex < imageCount; imageIndex++) {
+    const channels = target[imageIndex];
+    if (!channels || channels.length !== 3) {
+      throw new Error("STF image/channel brightness sample target is invalid.");
+    }
+    const offset = imageIndex * valuesPerImage;
+    for (let sample = 0; sample < valuesPerImage; sample += 3) {
+      channels[0].push(packed[offset + sample]);
+      channels[1].push(packed[offset + sample + 1]);
+      channels[2].push(packed[offset + sample + 2]);
+    }
+  }
+}
+
+/** Image-specific RGB P50/64, in the same aligned, tone-matched linear domain
+ * as the Sobel inputs. The tiny LOG_FLOOR remains a numerical safety floor. */
+export function deriveStfPerImageChannelFloorsFromSamples(
+  samples: readonly (readonly [ArrayLike<number>, ArrayLike<number>, ArrayLike<number>])[],
+): StfPerImageChannelFloors {
+  if (samples.length < 2) throw new Error("STF requires at least two real images for RGB floor estimation.");
+  return samples.map((channels) => deriveStfRelativeChannelFloorsFromSamples(channels));
+}
+
+export function validateStfPerImageChannelFloors(
+  floors: readonly (readonly number[])[], imageCount: number,
+): StfPerImageChannelFloors {
+  if (!Number.isInteger(imageCount) || imageCount < 2 || floors.length !== imageCount) {
+    throw new Error("STF RGB floor count does not match real input images.");
+  }
+  return floors.map((channels) => validateStfRelativeChannelFloors(channels));
+}
+
+/** Cache only gate-analysis dependencies. STF blend weights are intentionally
+ * absent: Source still uses them, but the gate uses each real frame's P50. */
+export function buildStfRealGateCacheKey(parts: {
+  sessionId: string;
+  width: number; height: number;
+  alignmentPlan: { normalizationMode: string; targetWidth: number; targetHeight: number };
+  matrices: readonly (ArrayLike<number> | null)[];
+  gains: ArrayLike<number>; scaledLogs: ArrayLike<number>; fNumbers: ArrayLike<number>;
+}): string {
+  return JSON.stringify(["stf-real-gate-per-image-rgb-p50over64-v1",
+    parts.sessionId, parts.width, parts.height,
+    parts.alignmentPlan.normalizationMode, parts.alignmentPlan.targetWidth, parts.alignmentPlan.targetHeight,
+    parts.matrices.map((matrix) => matrix === null ? null : Array.from(matrix)),
+    Array.from(parts.gains), Array.from(parts.scaledLogs), Array.from(parts.fNumbers)]);
 }
 
 function buildStfSharpnessMapAtScaleInternal(

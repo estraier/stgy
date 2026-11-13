@@ -6,13 +6,13 @@ import {
 } from "./stf-additional-blur-client";
 import type { LinearMergeStripeJob } from "./linear-merge-pool";
 import {
-  STF_ADDITIONAL_BLUR_MAX_WORKERS, type StfRelativeChannelFloors,
-  type StfSampleGrid, validateStfRelativeChannelFloors,
+  STF_ADDITIONAL_BLUR_MAX_WORKERS, type StfPerImageChannelFloors,
+  type StfSampleGrid, validateStfPerImageChannelFloors,
 } from "./stf-additional-blur";
 
 export type StfAdditionalBlurPoolReady = {
   workerCount: number; imageCount: number; width: number; height: number;
-  analysisHalo: number; groupCount: number; relativeChannelFloors?: StfRelativeChannelFloors;
+  analysisHalo: number; groupCount: number; relativeChannelFloors?: StfPerImageChannelFloors;
 };
 export class StfAdditionalBlurWorkerPool {
   private constructor(private readonly clients: StfAdditionalBlurWorkerClient[], readonly ready: StfAdditionalBlurPoolReady) {}
@@ -64,11 +64,12 @@ export class StfAdditionalBlurWorkerPool {
   graphCut(values: Float32Array, width: number, height: number, ratio: number) {
     return this.clients[0].graphCut(values, width, height, ratio);
   }
-  async configureRelativeChannelFloors(floors: StfRelativeChannelFloors): Promise<void> {
-    const valid = validateStfRelativeChannelFloors(floors);
+  async configureRelativeChannelFloors(floors: StfPerImageChannelFloors): Promise<void> {
+    const valid = validateStfPerImageChannelFloors(floors, this.ready.imageCount);
     const responses = await Promise.all(this.clients.map((client) => client.configureRelativeChannelFloors(valid)));
     for (const response of responses) {
-      if (response.length !== 3 || response.some((v, i) => v !== valid[i])) {
+      if (response.length !== valid.length || response.some((channels, i) =>
+        channels.length !== 3 || channels.some((v, c) => v !== valid[i][c]))) {
         throw new Error("STF RGB brightness Worker was not configured correctly.");
       }
     }

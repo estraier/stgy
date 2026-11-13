@@ -1,5 +1,5 @@
 /** STF production additional-blur Worker protocol. */
-export const STF_ADDITIONAL_BLUR_PROTOCOL_VERSION = "stf-production-gate-20261110a";
+export const STF_ADDITIONAL_BLUR_PROTOCOL_VERSION = "stf-production-gate-image-p50-20261113";
 
 export type StfAdditionalBlurWorkerAlignmentPlan = {
   normalizationMode: "feature-match" | "center-crop" | "center-fit" | "center-fill" | "top-left-fill";
@@ -20,7 +20,7 @@ export type StfAdditionalBlurWorkerConfig = {
 export type StfAdditionalBlurWorkerRequest =
   | (StfAdditionalBlurWorkerConfig & { type: "init"; requestId: number })
   | { type: "sample-brightness-stripe"; requestId: number; y: number; height: number; stride: number; offsetX: number; offsetY: number }
-  | { type: "configure-relative-floors"; requestId: number; floors: [number, number, number] }
+  | { type: "configure-relative-floors"; requestId: number; floors: [number, number, number][] }
   | { type: "analyze-stripe"; requestId: number; y: number; height: number; includeSource: boolean }
   | { type: "volume-close"; requestId: number; width: number; height: number; unitRatioBuffer: ArrayBuffer }
   | { type: "graph-cut"; requestId: number; width: number; height: number; blurRatio: number; confidenceBuffer: ArrayBuffer }
@@ -37,10 +37,10 @@ export type StfAdditionalBlurWorkerAnalyzeStripeResponse = {
   linearBuffer: ArrayBuffer; fineLogSumBuffer: ArrayBuffer; fineZeroBuffer: ArrayBuffer; coarseGroupsBuffer: ArrayBuffer;
 };
 export type StfAdditionalBlurWorkerBrightnessSampleResponse = {
-  type: "sample-brightness-stripe-result"; requestId: number; samplesBuffer: ArrayBuffer;
+  type: "sample-brightness-stripe-result"; requestId: number; samplesBuffer: ArrayBuffer; // image-major, interleaved RGB (no STF-weighted mixing)
 };
 export type StfAdditionalBlurWorkerConfigureFloorsResponse = {
-  type: "relative-floors-configured"; requestId: number; floors: [number, number, number];
+  type: "relative-floors-configured"; requestId: number; floors: [number, number, number][];
 };
 export type StfAdditionalBlurWorkerVolumeClosingResponse = {
   type: "volume-close-result"; requestId: number; protocolVersion: string;

@@ -11,7 +11,7 @@ import {
   type StfAdditionalBlurWorkerExpandGateStripeResponse,
 } from "../workers/protocols/stf-additional-blur-protocol";
 import type { LinearMergeStripeJob } from "./linear-merge-pool";
-import type { StfRelativeChannelFloors, StfSampleGrid } from "./stf-additional-blur";
+import type { StfPerImageChannelFloors, StfSampleGrid } from "./stf-additional-blur";
 
 export type StfAdditionalBlurAnalyzeResult = {
   linear: Float32Array; fineLogSum: Float32Array; fineZero: Uint8Array;
@@ -74,7 +74,7 @@ export class StfAdditionalBlurWorkerClient {
       stride: grid.stride, offsetX: grid.offsetX, offsetY: grid.offsetY,
     }, []).then((r) => new Float32Array(asBuffer(r.samplesBuffer, "brightness samples")));
   }
-  configureRelativeChannelFloors(floors: StfRelativeChannelFloors): Promise<StfRelativeChannelFloors> {
+  configureRelativeChannelFloors(floors: StfPerImageChannelFloors): Promise<StfPerImageChannelFloors> {
     return this.request("relative-floors-configured", { type: "configure-relative-floors", floors }, []).then((r) => r.floors);
   }
   volumeClose(values: Float32Array, width: number, height: number): Promise<{

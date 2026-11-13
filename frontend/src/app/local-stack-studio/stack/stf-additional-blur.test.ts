@@ -1,6 +1,8 @@
 import {
   buildStfApertureGroups, sameStfFNumber,
   deriveStfRelativeChannelFloorsFromSamples, deriveStfMedianSharpnessC,
+  appendStfPerImageChannelSamplesFromPacked, deriveStfPerImageChannelFloorsFromSamples,
+  validateStfPerImageChannelFloors, buildStfRealGateCacheKey,
   deriveStfRatioEpsilon, STF_SHARPNESS_RATIO_P50_DIVISOR, STF_SHARPNESS_RATIO_FINE_EXPONENT,
   normalizeStfLogRatioBufferInPlace, buildStfDilatedLogRatioInto,
   normalizeStfLogRatioValue, buildStfLogRatioNormalizationPlan,
@@ -40,6 +42,64 @@ describe("STF production sharpness and protection gate", () => {
     const less = new Float32Array(w * h);
     buildStfRelativeSharpnessMapAtScaleInto(input, w, h, 1, less, createStfSharpnessScratch(w * h), [1, floors[1], floors[2]]);
     expect(less[8 * w + 8]).toBeLessThan(output[8 * w + 8]);
+  });
+  test("Gate RGB P50/64 uses the SAME real image/channel, not STF blend weights or other images", () => {
+    const samples: [number[], number[], number[]][] = [
+      [[], [], []], [[], [], []],
+    ];
+    // Two image-major RGB samples from two stripes. Their brightness differs
+    // greatly even though they represent the same aligned grid positions.
+    appendStfPerImageChannelSamplesFromPacked(samples, Float32Array.from([
+      1, 2, 3, 3, 6, 9,  // image 0, stripe A
+      11, 22, 33, 13, 26, 39,  // image 1, stripe A
+    ]));
+    appendStfPerImageChannelSamplesFromPacked(samples, Float32Array.from([
+      5, 10, 15, // image 0, stripe B
+      15, 30, 45, // image 1, stripe B
+    ]));
+    expect(samples).toEqual([
+      [[1, 3, 5], [2, 6, 10], [3, 9, 15]],
+      [[11, 13, 15], [22, 26, 30], [33, 39, 45]],
+    ]);
+    const floors = deriveStfPerImageChannelFloorsFromSamples(samples);
+    expect(floors[0]).toEqual([3 / 64, 6 / 64, 9 / 64]);
+    expect(floors[1]).toEqual([13 / 64, 26 / 64, 39 / 64]);
+    const changedOtherFrame = deriveStfPerImageChannelFloorsFromSamples([
+      samples[0], [[110, 130, 150], [220, 260, 300], [330, 390, 450]],
+    ]);
+    expect(changedOtherFrame[0]).toEqual(floors[0]);
+    expect(changedOtherFrame[1]).not.toEqual(floors[1]);
+    expect(validateStfPerImageChannelFloors(floors, 2)).toEqual(floors);
+    expect(() => validateStfPerImageChannelFloors(floors, 3)).toThrow();
+    expect(() => validateStfPerImageChannelFloors([[1, 1, 0], [1, 1, 1]], 2)).toThrow();
+    expect(() => appendStfPerImageChannelSamplesFromPacked(samples, Float32Array.from([1, 2, 3]))).toThrow();
+    // The original RGB Sobel normalization remains channel-wise. Swapping
+    // per-image floors changes only the corresponding frame's sharpness.
+    const w = 17, h = 17, linear = new Float32Array(w * h * 3);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 3;
+      linear[i] = x < 8 ? 0.1 : 0.8;
+      linear[i + 1] = 0.3;
+      linear[i + 2] = 0.3;
+    }
+    const a = new Float32Array(w * h), b = new Float32Array(w * h);
+    buildStfRelativeSharpnessMapAtScaleInto(linear, w, h, 1, a, createStfSharpnessScratch(w * h), floors[0]);
+    buildStfRelativeSharpnessMapAtScaleInto(linear, w, h, 1, b, createStfSharpnessScratch(w * h), floors[1]);
+    expect(a[8 * w + 8]).toBeGreaterThan(b[8 * w + 8]);
+  });
+  test("real Gate cache key excludes W but invalidates alignment, tone, and aperture inputs", () => {
+    const parts = {
+      sessionId: "session", width: 20, height: 10,
+      alignmentPlan: { normalizationMode: "feature-match", targetWidth: 20, targetHeight: 10 },
+      matrices: [null, [1, 0, 0, 0, 1, 0]],
+      gains: [1, 1.2], scaledLogs: [0, 0.1], fNumbers: [2, 2.8],
+    };
+    const key = buildStfRealGateCacheKey(parts);
+    // The key has no blend weight argument: W changes cannot invalidate Gate.
+    expect(buildStfRealGateCacheKey({ ...parts })).toBe(key);
+    expect(buildStfRealGateCacheKey({ ...parts, gains: [1, 1.1] })).not.toBe(key);
+    expect(buildStfRealGateCacheKey({ ...parts, fNumbers: [2, 4] })).not.toBe(key);
+    expect(buildStfRealGateCacheKey({ ...parts, matrices: [null, [1, 0, 2, 0, 1, 0]] })).not.toBe(key);
   });
   test("official ratio uses P50/32 epsilon and dilated fine sharpness raised to 1.3", () => {
     expect(deriveStfMedianSharpnessC([1, 4, 2, 3])).toBeCloseTo(2.5);

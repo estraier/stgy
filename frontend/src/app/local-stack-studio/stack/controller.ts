@@ -81,6 +81,8 @@ import {
   writeCanonicalStoredImage,
 } from "./canonical-source";
 import { AlignedImageReader } from "./aligned-reader";
+import { StfPhase0Diagnostics } from "./stf-phase0-diagnostics";
+import { StfSourceCache, buildStfSourceCacheKey, stfSourceForFinalization } from "./stf-source-cache";
 import {
   detectStackInputBits,
   type LocalStackStudioInfoReport,
@@ -527,6 +529,11 @@ function selectedStfBlurPlan() {
 
 updateMergeOptionsVisibility();
 listen(mergeMode, "change", updateMergeOptionsVisibility);
+// Do not keep a full-resolution STF Source resident while another merge mode
+// is active. Returning to STF can rebuild it without affecting correctness.
+listen(mergeMode, "change", () => {
+  if (mergeMode.value !== "stf") stfSourceCache.clear();
+});
 listen(stfBlurStrength, "change", updateStfBlurOptionsVisibility);
 listen(stfBlurAreaGuard, "change", updateStfBlurOptionsVisibility);
 listen(stfBlurSigmoid, "change", updateStfBlurOptionsVisibility);
@@ -548,6 +555,7 @@ listen(inputFiles, "change", () => {
   const previousCanonicalSession = currentCanonicalSession;
   currentCanonicalSession = null;
   resetStfGateCache();
+  stfSourceCache.clear();
   if (previousCanonicalSession) {
     deleteCanonicalSession(previousCanonicalSession).catch(() => {});
   }
@@ -653,12 +661,15 @@ listen(processButton, "click", async () => {
   clearResult();
   setProcessing(true);
   const startedAt = performance.now();
+  let stfPhase0: StfPhase0Diagnostics | null = null;
+  let stfRunSucceeded = false;
   const timings: StackInfoTiming[] = [];
   const trace = {
     previewMs: 0,
     warnings: [] as string[],
     canonicalCacheReused: false,
     transformCacheReused: null as boolean | null,
+    stf: null as StfPhase0Diagnostics | null,
     add: (label: string, durationMs: number, includedIn?: string) => {
       if (Number.isFinite(durationMs) && durationMs >= 0) timings.push({ label, durationMs, ...(includedIn ? { includedIn } : {}) });
     },
@@ -698,6 +709,10 @@ listen(processButton, "click", async () => {
       }
     }
     const selectedMergeMode = selectedInternalMergeMode();
+    if (selectedMergeMode === "stf" && files.length > 1) {
+      stfPhase0 = new StfPhase0Diagnostics(++stfPhase0RunCounter);
+      trace.stf = stfPhase0;
+    }
     if (selectedMergeMode === "panorama" && files.length < 2) {
       throw new Error("Panorama requires at least two input images.");
     }
@@ -738,6 +753,9 @@ listen(processButton, "click", async () => {
     );
     trace.canonicalCacheReused = previousCanonicalSession !== null && previousCanonicalSession === currentCanonicalSession;
     trace.add("Input preparation and canonical cache", performance.now() - inputStartedAt);
+    stfPhase0?.cache("Canonical", trace.canonicalCacheReused ? "hit" : "miss", "IndexedDB",
+      currentCanonicalSession.images.reduce((sum, image) => sum + (image?.rowBytes ?? 0) * (image?.height ?? 0), 0),
+      trace.canonicalCacheReused ? "Same canonical session" : "Created or rematerialized");
     const useSyntheticSingleInputHdr = files.length === 1 && (selectedMergeMode === "hdr1" || selectedMergeMode === "hdr2");
     const preserveSingleInputMerge = isTileMergeMode(selectedMergeMode) || selectedMergeMode === "panorama";
     const effectiveMergeMode = useSyntheticSingleInputHdr
@@ -764,6 +782,23 @@ listen(processButton, "click", async () => {
       ? null
       : buildAlignmentPlan(files, inputInfos, alignmentMode.value, effectiveMergeMode);
     currentPreviewColorSpace = chooseOutputColorSpace(inputInfos);
+    if (stfPhase0 && alignmentPlan) {
+      const blur = mergePlan.stfBlurPlan;
+      stfPhase0.setContext({
+        inputCount: files.length,
+        width: alignmentPlan.targetWidth, height: alignmentPlan.targetHeight,
+        blendWeight: selectedStfBlendWeight(), blurStrength: blur?.strength ?? "none",
+        blurRatio: blur?.ratio ?? 0, blurGuard: blur?.areaGuard ?? "none",
+        blurSigmoid: blur?.sigmoid ?? 0,
+        alignmentMode: alignmentPlan.effectiveMode,
+        referenceIndex: isFeatureMatchAlignmentMode(alignmentPlan.effectiveMode)
+          ? chooseAlignmentReferenceIndex(inputInfos, effectiveMergeMode) : null,
+        fNumbers: inputInfos.map((info) => Number(info.fNumber)),
+        weights: Array.from(mergePlan.weights),
+        gains: Array.from(mergePlan.gains),
+        scaledLogs: Array.from(mergePlan.scaledLogs),
+      });
+    }
 
     currentStackResult = await alignAndMergeFilesWithOpenCv(
       files,
@@ -774,6 +809,17 @@ listen(processButton, "click", async () => {
       currentCanonicalSession,
       trace,
     );
+    if (stfPhase0) {
+      stfPhase0.cache("Alignment transforms", trace.transformCacheReused === null ? "not-used" :
+        trace.transformCacheReused ? "hit" : "miss", "RAM/session",
+        undefined, trace.transformCacheReused === null ? "No feature-match transform lookup" : undefined);
+      try {
+        stfPhase0.captureOutput(currentStackResult.gamma2ProPhotoRgb16,
+          currentStackResult.width, currentStackResult.height);
+      } catch (error) {
+        console.warn("STF sampled baseline fingerprint failed; preserving the result:", error);
+      }
+    }
     currentStackResultRevision += 1;
     clearFullSizeRenderCache();
     clearPreviewRenderCaches();
@@ -853,9 +899,15 @@ listen(processButton, "click", async () => {
     };
     infoButton.disabled = false;
     setProgress("Done.");
+    stfRunSucceeded = true;
   } catch (error) {
     showError(error);
   } finally {
+    // Phase 0 telemetry is observational: logging failures never fail image processing.
+    if (stfPhase0) {
+      try { stfPhase0.print(performance.now() - startedAt, stfRunSucceeded ? "completed" : "failed", timings); }
+      catch (error) { console.warn("STF baseline logging failed:", error); }
+    }
     activeInfoTrace = null;
     setProcessing(false);
   }
@@ -2490,7 +2542,7 @@ async function alignAndMergeFilesWithOpenCv(
   alignmentPlan,
   outputColorSpace,
   canonicalSession,
-  infoTrace: { previewMs: number; add: (label: string, durationMs: number, includedIn?: string) => void; warnings: string[]; transformCacheReused?: boolean | null } | null = null,
+  infoTrace: { previewMs: number; add: (label: string, durationMs: number, includedIn?: string) => void; warnings: string[]; transformCacheReused?: boolean | null; stf?: StfPhase0Diagnostics | null } | null = null,
 ) {
   const alignmentStartedAt = performance.now();
   if (!canonicalSession || canonicalSession.images.length !== files.length) {
@@ -2941,22 +2993,48 @@ async function alignAndMergeFilesWithOpenCv(
     }
 
     if (mergePlan.mode === "average" || mergePlan.mode === "stf") {
-      const accumulator = await mergeLinearFromWorkerPool(
-        canonicalSession.id,
-        reader,
-        alignmentPlan,
-        matrices,
-        mergePlan,
-        width,
-        height,
-      );
-      return finalizeStoredResult(
-        accumulator,
+      const sourceStartedAt = mergePlan.mode === "stf" ? performance.now() : 0;
+      const sourceKey = mergePlan.mode === "stf"
+        ? stfSourceMergeKey(canonicalSession.id, alignmentPlan, matrices, mergePlan, width, height)
+        : null;
+      let accumulator = sourceKey ? stfSourceCache.lookup(sourceKey, width * height * 3) : null;
+      if (sourceKey) infoTrace?.stf?.cache("STF source", accumulator ? "hit" : "miss", "RAM",
+        accumulator?.byteLength ?? 0, "Independent of Blur settings");
+      if (!accumulator) {
+        accumulator = await mergeLinearFromWorkerPool(
+          canonicalSession.id,
+          reader,
+          alignmentPlan,
+          matrices,
+          mergePlan,
+          width,
+          height,
+          mergePlan.mode === "stf" ? infoTrace?.stf : null,
+        );
+        if (sourceKey) retainStfSource(sourceKey, accumulator, infoTrace?.stf, "Linear merge");
+      }
+      if (mergePlan.mode === "stf") {
+        infoTrace?.stf?.stage("STF weighted source merge", performance.now() - sourceStartedAt,
+          "Zero Worker merge if STF source cache hit");
+      }
+      // STF finalization applies highlight rolloff in place. Preserve the
+      // unmodified source for later Blur settings; never finalize the cache.
+      const sourceCopyStartedAt = performance.now();
+      const finalizationInput = mergePlan.mode === "stf"
+        ? stfSourceForFinalization(accumulator, stfSourceCache.holds(accumulator))
+        : accumulator;
+      if (finalizationInput !== accumulator) infoTrace?.stf?.stage("STF source finalize copy",
+        performance.now() - sourceCopyStartedAt, "Cached linear source remains unmodified");
+      const finalizeStartedAt = mergePlan.mode === "stf" ? performance.now() : 0;
+      const finalResult = finalizeStoredResult(
+        finalizationInput,
         width,
         height,
         outputColorSpace,
         mergePlan.mode === "stf",
       );
+      if (mergePlan.mode === "stf") infoTrace?.stf?.stage("STF result finalize", performance.now() - finalizeStartedAt);
+      return finalResult;
     }
 
     throw new Error(`Unsupported merge mode: ${mergePlan.mode}`);
@@ -3024,6 +3102,7 @@ async function mergeLinearFromWorkerPool(
   mergePlan,
   width,
   height,
+  stfPhase0: StfPhase0Diagnostics | null = null,
 ) {
   const imageCount = matrices.length;
   const exposureRolloffMaxP998AfterGain = new Array(imageCount).fill(null);
@@ -3068,18 +3147,21 @@ async function mergeLinearFromWorkerPool(
   if (result.workerCount !== workerCount) {
     throw new Error(`${label} merge worker count changed unexpectedly.`);
   }
+  if (mergePlan.mode === "stf") stfPhase0?.workers("STF linear merge", result.workerCount);
   return accumulator;
 }
 
 
-// Only the current canonical/alignment/merge combination may reuse the gate.
-// Full-resolution float images are kept only under a strict cache memory budget.
+// The gate cache stores only real-frame gate analysis; the large linear STF
+// source is managed independently so Blur settings cannot invalidate it.
 const STF_GATE_CACHE_MAX_BYTES = 192 * 1024 * 1024;
 let stfGateCache = null;
+const stfSourceCache = new StfSourceCache();
+let stfPhase0RunCounter = 0;
 function resetStfGateCache() { stfGateCache = null; }
 function stfGateCacheBytes(cache) {
   const buffers = new Set();
-  for (const value of [cache?.ratio, cache?.source, cache?.base, cache?.expanded, cache?.mask]) {
+  for (const value of [cache?.ratio, cache?.base, cache?.expanded, cache?.mask]) {
     if (value?.buffer) buffers.add(value.buffer);
   }
   let bytes = 0;
@@ -3089,12 +3171,19 @@ function stfGateCacheBytes(cache) {
 function canCacheStfBuffer(cache, buffer) {
   return cache && buffer && stfGateCacheBytes(cache) + buffer.byteLength <= STF_GATE_CACHE_MAX_BYTES;
 }
-function stfGateSourceKey(sessionId, alignmentPlan, matrices, inputInfos, mergePlan, width, height) {
-  return JSON.stringify(["stf-dilated-x1.3-p80-half-radius-p50over32-v1", sessionId, width, height,
-    alignmentPlan.normalizationMode, alignmentPlan.targetWidth, alignmentPlan.targetHeight,
-    matrices.map((m) => m === null ? null : Array.from(m)),
-    Array.from(mergePlan.gains), Array.from(mergePlan.scaledLogs), Array.from(mergePlan.weights),
-    inputInfos.map((info) => Number(info?.fNumber))]);
+/** Key only the inputs of the raw weighted source, never the Blur/Gate UI. */
+function stfSourceMergeKey(sessionId, alignmentPlan, matrices, mergePlan, width, height) {
+  return buildStfSourceCacheKey({
+    sessionId, width, height, alignmentPlan, matrices,
+    gains: mergePlan.gains, scaledLogs: mergePlan.scaledLogs, weights: mergePlan.weights,
+  });
+}
+
+function retainStfSource(key, source, stfDiag, origin) {
+  const deviceMemoryGiB = typeof navigator === "object" ? navigator.deviceMemory : undefined;
+  const retention = stfSourceCache.retain(key, source, deviceMemoryGiB);
+  stfDiag?.cache("STF source retention", retention.retained ? "stored" : "skipped", "RAM",
+    retention.retained ? source.byteLength : 0, `${origin}; ${retention.reason}`);
 }
 
 function stfAdditionalBlurScratchKeys(sessionId, jobIndex) {
@@ -3120,10 +3209,11 @@ function finalizeStfBasicGate(values, width, height, outputColorSpace) {
 
 async function mergeStfWithAdditionalBlur(
   sessionId, reader, alignmentPlan, matrices, inputInfos, mergePlan, width, height, outputColorSpace,
-  infoTrace: { previewMs: number; add: (label: string, durationMs: number, includedIn?: string) => void; warnings: string[] } | null = null,
+  infoTrace: { previewMs: number; add: (label: string, durationMs: number, includedIn?: string) => void; warnings: string[]; stf?: StfPhase0Diagnostics | null } | null = null,
 ) {
   const plan = mergePlan.stfBlurPlan;
   if (!plan?.enabled) throw new Error("STF Additional blur was invoked while disabled.");
+  const stfDiag = infoTrace?.stf;
   const fNumbers = inputInfos.map((info) => Number(info?.fNumber));
   const [algorithm, poolModule, graphCutModule, stagingModule] = await Promise.all([
     import("./stf-additional-blur"),
@@ -3132,19 +3222,33 @@ async function mergeStfWithAdditionalBlur(
     import("./stf-derived-staging"),
   ]);
   algorithm.buildStfApertureGroups(fNumbers);
-  const sourceKey = stfGateSourceKey(sessionId, alignmentPlan, matrices, inputInfos, mergePlan, width, height);
-  if (!stfGateCache || stfGateCache.key !== sourceKey) {
+  const gateKey = algorithm.buildStfRealGateCacheKey({
+    sessionId, width, height, alignmentPlan, matrices,
+    gains: mergePlan.gains, scaledLogs: mergePlan.scaledLogs, fNumbers,
+  });
+  const sourceKey = stfSourceMergeKey(sessionId, alignmentPlan, matrices, mergePlan, width, height);
+  const cacheKeyHit = Boolean(stfGateCache && stfGateCache.key === gateKey);
+  stfDiag?.cache("Gate key", cacheKeyHit ? "hit" : "miss", "RAM",
+    cacheKeyHit ? stfGateCacheBytes(stfGateCache) : 0,
+    cacheKeyHit ? "Same real inputs/alignment/tone/F-numbers; independent of W" : "Reset gate cache on key change");
+  if (!stfGateCache || stfGateCache.key !== gateKey) {
     resetStfGateCache();
-    stfGateCache = { key: sourceKey, ratio: null, source: null, mask: null, maskRatio: null,
+    stfGateCache = { key: gateKey, ratio: null, mask: null, maskRatio: null,
       maskInfo: null, base: null, baseKey: null, expanded: null, expandedKey: null };
   }
   const cache = stfGateCache;
   const previewOnly = plan.gateOnly;
+  stfDiag?.cache("Gate Ratio", cache.ratio ? "hit" : "miss", "RAM", cache.ratio?.byteLength ?? 0);
+  const cachedSource = stfSourceCache.lookup(sourceKey, width * height * 3);
+  let source = previewOnly ? null : cachedSource;
+  stfDiag?.cache("STF source", previewOnly ? "bypassed" : source ? "hit" : "miss", "RAM",
+    previewOnly ? undefined : (source?.byteLength ?? 0),
+    previewOnly ? "Gate-only does not merge source" : "Independent of Gate and Blur settings");
   const jobs = buildLinearMergeStripeJobs(width, height);
   const hardwareConcurrency = typeof navigator === "object"
     ? Math.max(1, Math.floor(navigator.hardwareConcurrency || 4)) : 4;
   const workerUrl = new URL("/generated/local-stack-studio/stf-additional-blur.worker.js", window.location.origin);
-  workerUrl.searchParams.set("revision", "stf-production-gate-20261110a");
+  workerUrl.searchParams.set("revision", "stf-production-gate-image-p50-20261113");
   let pool = null;
   // Avoid writing temporary Sobel arrays to IndexedDB when a bounded amount
   // of RAM is enough; large images still spill to scratch storage as before.
@@ -3153,11 +3257,16 @@ async function mergeStfWithAdditionalBlur(
   );
   let scratchDbPromise = null;
   let scratchSessionId = null;
+  let scratchWriteBytes = 0;
+  let scratchReadBytes = 0;
+  let scratchWriteMs = 0;
+  let scratchReadMs = 0;
+  let scratchWrites = 0;
+  let scratchReads = 0;
   const ensureScratchDb = () => {
     if (!scratchDbPromise) scratchDbPromise = openStfAdditionalBlurScratchDb("STF Additional blur");
     return scratchDbPromise;
   };
-  let source = null;
   let activeRatio = cache.ratio;
   const ensurePool = async () => {
     if (pool) return pool;
@@ -3174,6 +3283,7 @@ async function mergeStfWithAdditionalBlur(
       },
       workerUrl, hardwareConcurrency,
     });
+    stfDiag?.workers("STF Additional Blur", pool.ready.workerCount);
     return pool;
   };
   try {
@@ -3181,47 +3291,62 @@ async function mergeStfWithAdditionalBlur(
     if (!cache.ratio) {
       const p = await ensurePool();
       const sampleGrid = algorithm.buildStfSampleGrid(width, height);
-      const brightnessSamples = [[], [], []];
+      const brightnessSamples = Array.from({ length: inputInfos.length },
+        () => [[], [], []] as [number[], number[], number[]]);
+      const brightnessStartedAt = performance.now();
       setProgress(`STF sampling RGB brightness 0/${jobs.length}...`);
       await p.sampleBrightnessStripes(jobs, sampleGrid, (_job, samples, completed, total) => {
-        if (samples.length % 3 !== 0) throw new Error("STF Worker returned invalid brightness samples.");
-        for (let i = 0; i < samples.length; i += 3) {
-          brightnessSamples[0].push(samples[i]);
-          brightnessSamples[1].push(samples[i + 1]);
-          brightnessSamples[2].push(samples[i + 2]);
-        }
+        algorithm.appendStfPerImageChannelSamplesFromPacked(brightnessSamples, samples);
         setProgress(`STF sampling RGB brightness ${completed}/${total}...`);
       });
-      const floors = algorithm.deriveStfRelativeChannelFloorsFromSamples(brightnessSamples);
+      stfDiag?.stage("Gate brightness sampling", performance.now() - brightnessStartedAt);
+      const floorsStartedAt = performance.now();
+      const floors = algorithm.deriveStfPerImageChannelFloorsFromSamples(brightnessSamples);
+      stfDiag?.stage("Gate RGB P50/64 floors", performance.now() - floorsStartedAt,
+        `Per real image/channel, independent of W: ${JSON.stringify(floors)}`);
       await p.configureRelativeChannelFloors(floors);
 
       // Defer opening scratch storage until a stripe exceeds the RAM budget.
       scratchSessionId = createStfAdditionalBlurScratchSessionId();
       const groupCount = p.ready.groupCount;
       const sharpnessSamples = [];
-      if (!previewOnly) source = new Float32Array(width * height * 3);
+      // Do not regenerate a source already present in the independent cache.
+      // Otherwise retain the original Sobel + source fusion to avoid a second
+      // full-resolution read and merge on the first Gate analysis.
+      const includeSource = !previewOnly && !source;
+      if (includeSource) source = new Float32Array(width * height * 3);
+      const sobelStartedAt = performance.now();
       setProgress(`STF analyzing Sobel sharpness 0/${jobs.length}...`);
-      await p.runAnalysisJobs(jobs, !previewOnly, async (job, result, completed, total) => {
+      await p.runAnalysisJobs(jobs, includeSource, async (job, result, completed, total) => {
         const pixels = width * job.height;
-        if (result.linear.length !== (previewOnly ? 0 : pixels * 3) || result.fineLogSum.length !== pixels ||
+        if (result.linear.length !== (includeSource ? pixels * 3 : 0) || result.fineLogSum.length !== pixels ||
             result.fineZero.length !== pixels || result.coarseGroups.length !== pixels * groupCount ||
             result.groupCount !== groupCount) {
           throw new Error("STF Additional blur Worker returned invalid analysis geometry.");
         }
-        if (source) source.set(result.linear, job.y * width * 3);
+        if (includeSource) source.set(result.linear, job.y * width * 3);
         algorithm.appendPersistentCoarseSamplesFromStripe(sharpnessSamples, result.coarseGroups,
           groupCount, width, job.y, job.height, sampleGrid);
         if (!derivedStaging.put(job.index, result)) {
           const db = await ensureScratchDb();
           const keys = stfAdditionalBlurScratchKeys(scratchSessionId, job.index);
+          const bytes = result.fineLogSum.byteLength + result.fineZero.byteLength + result.coarseGroups.byteLength;
+          const writeStartedAt = performance.now();
           await putStfAdditionalBlurScratchBuffers(db, [
             { key: keys.fineLogSum, buffer: result.fineLogSum.buffer },
             { key: keys.fineZero, buffer: result.fineZero.buffer },
             { key: keys.coarseGroups, buffer: result.coarseGroups.buffer },
           ], "STF Additional blur Sobel analysis");
+          scratchWriteMs += performance.now() - writeStartedAt;
+          scratchWriteBytes += bytes;
+          scratchWrites++;
         }
         setProgress(`STF analyzing Sobel sharpness ${completed}/${total}...`);
       });
+      stfDiag?.stage("Gate Sobel analysis", performance.now() - sobelStartedAt,
+        previewOnly ? "Gate-only: no source contribution" :
+          includeSource ? "Sobel and real source are fused" : "Source reused; Sobel only");
+      const ratioStartedAt = performance.now();
       const coarseP50 = algorithm.deriveStfMedianSharpnessC(sharpnessSamples);
       const epsilon = algorithm.deriveStfRatioEpsilon(coarseP50);
       const fineMap = new Float32Array(width * height);
@@ -3240,8 +3365,12 @@ async function mergeStfWithAdditionalBlur(
         } else {
           const db = await ensureScratchDb();
           const keys = stfAdditionalBlurScratchKeys(scratchSessionId, job.index);
+          const readStartedAt = performance.now();
           const [fineLogSumBuffer, fineZeroBuffer, coarseGroupsBuffer] = await getStfAdditionalBlurScratchBuffers(
             db, [keys.fineLogSum, keys.fineZero, keys.coarseGroups], `STF Additional blur stripe ${job.index + 1}`);
+          scratchReadMs += performance.now() - readStartedAt;
+          scratchReadBytes += fineLogSumBuffer.byteLength + fineZeroBuffer.byteLength + coarseGroupsBuffer.byteLength;
+          scratchReads++;
           fineLogSum = new Float32Array(fineLogSumBuffer);
           fineZero = new Uint8Array(fineZeroBuffer);
           coarseGroups = new Float32Array(coarseGroupsBuffer);
@@ -3256,15 +3385,22 @@ async function mergeStfWithAdditionalBlur(
       const unitRatio = new Float32Array(width * height);
       algorithm.buildStfDilatedLogRatioInto(dilatedFine, coarseMap, epsilon, unitRatio);
       algorithm.normalizeStfLogRatioBufferInPlace(unitRatio);
+      stfDiag?.stage("Gate ratio construction", performance.now() - ratioStartedAt,
+        "Includes scratch reads and fine-map dilation");
       setProgress("STF applying Volume Closing 2...");
+      const volumeStartedAt = performance.now();
       const closed = await p.volumeClose(unitRatio, width, height);
+      stfDiag?.stage("Gate Volume Closing 2", performance.now() - volumeStartedAt);
       activeRatio = closed.values;
       // Store large full-resolution buffers only within the cache budget;
       // oversized maps remain local to this Process and are released after it.
       if (canCacheStfBuffer(cache, activeRatio)) cache.ratio = activeRatio;
-      if (source && cache.ratio && canCacheStfBuffer(cache, source)) cache.source = source;
-    } else {
-      if (!plan.gateOnly && cache.source) source = cache.source;
+      if (includeSource && source) retainStfSource(sourceKey, source, stfDiag, "Fused Sobel analysis");
+      stfDiag?.cache("Gate Ratio retention", cache.ratio ? "stored" : "not-stored", "RAM",
+        cache.ratio?.byteLength ?? 0, "192MiB combined RAM budget");
+      if (includeSource && source) stfDiag?.cache("STF source produced", stfSourceCache.holds(source) ? "stored" : "not-stored", "RAM",
+        stfSourceCache.holds(source) ? source.byteLength : 0,
+        "Produced during Sobel; independent one-slot source cache");
     }
 
     infoTrace?.add("STF sharpness analysis", performance.now() - sharpnessStartedAt, "Merge");
@@ -3274,13 +3410,20 @@ async function mergeStfWithAdditionalBlur(
     const effectiveRatio = plan.effectiveRatio;
     const baseKey = JSON.stringify([effectiveRatio, plan.areaExponent, plan.sigmoid]);
     let base = cache.baseKey === baseKey ? cache.base : null;
+    stfDiag?.cache("Gate base", base ? "hit" : "miss", "RAM", base?.byteLength ?? 0);
+    const baseStartedAt = performance.now();
     if (!base) {
       let gated = ratio;
       if (plan.areaExponent !== null) {
+        const maskHit = Boolean(cache.mask && cache.maskRatio === effectiveRatio);
+        stfDiag?.cache("Graph Cut", maskHit ? "hit" : "miss", "RAM",
+          maskHit ? cache.mask.byteLength : 0);
         if (!cache.mask || cache.maskRatio !== effectiveRatio) {
           const p = await ensurePool();
           setProgress("STF computing Graph Cut mask...");
+          const graphStartedAt = performance.now();
           const graph = await p.graphCut(ratio.slice(), width, height, effectiveRatio);
+          stfDiag?.stage("Gate Graph Cut", performance.now() - graphStartedAt);
           cache.mask = graph.mask;
           cache.maskInfo = graph.info;
           cache.maskRatio = effectiveRatio;
@@ -3301,14 +3444,18 @@ async function mergeStfWithAdditionalBlur(
         cache.baseKey = baseKey;
       }
     }
+    stfDiag?.stage("Gate base / sigmoid", performance.now() - baseStartedAt,
+      "Includes Graph Cut wall time when the mask is computed");
     const blurRadius = algorithm.resolveStfAdditionalBlurRadius(
       width, height, resolveStfGateExpansionMultiplier(plan));
     const expandedKey = JSON.stringify([baseKey, blurRadius, 0.5, 0.2, 0.7]);
     let expanded = cache.expandedKey === expandedKey ? cache.expanded : null;
+    stfDiag?.cache("Gate expanded", expanded ? "hit" : "miss", "RAM", expanded?.byteLength ?? 0);
     if (!expanded) {
       const p = await ensurePool();
       const expansionHalo = Math.max(1, Math.round(blurRadius * 0.5));
       const completedGate = new Float32Array(width * height);
+      const expansionStartedAt = performance.now();
       setProgress(`STF expanding protection gate 0/${jobs.length}...`);
       await p.runGateExpansionJobs(jobs,
         (job) => {
@@ -3324,6 +3471,7 @@ async function mergeStfWithAdditionalBlur(
           setProgress(`STF expanding protection gate ${completed}/${total}...`);
         });
       expanded = completedGate;
+      stfDiag?.stage("Gate expansion", performance.now() - expansionStartedAt);
       cache.expanded = null; cache.expandedKey = null;
       if (cache.base && canCacheStfBuffer(cache, expanded)) {
         cache.expanded = expanded;
@@ -3333,17 +3481,25 @@ async function mergeStfWithAdditionalBlur(
     infoTrace?.add("STF protection gate", performance.now() - gateStartedAt, "Merge");
     // Gate-only preview shows exactly the expanded protection mask used by the blur stage.
     // It does not compute the source merge or apply the Gaussian blur.
-    if (plan.gateOnly) return finalizeStfBasicGate(expanded, width, height, outputColorSpace);
+    if (plan.gateOnly) {
+      const finalizeStartedAt = performance.now();
+      const result = finalizeStfBasicGate(expanded, width, height, outputColorSpace);
+      stfDiag?.stage("Gate-only finalize", performance.now() - finalizeStartedAt);
+      return result;
+    }
     const blurStartedAt = performance.now();
     if (!source) {
       setProgress("STF merging source for additional blur...");
-      // Re-merging is much cheaper than Sobel analysis and avoids persisting
-      // 240MB of linear RGB for 20MP images just to support option switching.
-      source = await mergeLinearFromWorkerPool(sessionId, reader, alignmentPlan, matrices, mergePlan, width, height);
-      if (cache.ratio && canCacheStfBuffer(cache, source)) cache.source = source;
+      const sourceStartedAt = performance.now();
+      source = await mergeLinearFromWorkerPool(sessionId, reader, alignmentPlan, matrices, mergePlan, width, height, stfDiag);
+      stfDiag?.stage("STF source remerge", performance.now() - sourceStartedAt);
+      stfDiag?.cache("STF source recomputed", "computed", "RAM", source.byteLength,
+        "Independent source cache miss");
+      retainStfSource(sourceKey, source, stfDiag, "STF source remerge");
     }
     const p = await ensurePool();
     const blurred = new Float32Array(source.length);
+    const gaussianStartedAt = performance.now();
     setProgress(`STF guarded Gaussian blur 0/${jobs.length}...`);
     await p.runBlurJobs(jobs,
       (job) => {
@@ -3359,9 +3515,21 @@ async function mergeStfWithAdditionalBlur(
         blurred.set(stripe, job.y * width * 3);
         setProgress(`STF guarded Gaussian blur ${completed}/${total}...`);
       });
+    stfDiag?.stage("Guarded Gaussian blur", performance.now() - gaussianStartedAt);
     infoTrace?.add("STF source merge and blur", performance.now() - blurStartedAt, "Merge");
-    return finalizeStoredResult(blurred, width, height, outputColorSpace, true);
+    const finalizeStartedAt = performance.now();
+    const result = finalizeStoredResult(blurred, width, height, outputColorSpace, true);
+    stfDiag?.stage("STF result finalize", performance.now() - finalizeStartedAt);
+    return result;
   } finally {
+    stfDiag?.stage("Scratch IndexedDB write", scratchWriteMs,
+      `${scratchWrites} stripes, ${(scratchWriteBytes / 1048576).toFixed(1)}MiB; included in Sobel stage`);
+    stfDiag?.stage("Scratch IndexedDB read", scratchReadMs,
+      `${scratchReads} stripes, ${(scratchReadBytes / 1048576).toFixed(1)}MiB; included in Ratio stage`);
+    stfDiag?.cache("Sobel derived stripes", scratchWrites ? "RAM + spill" : "RAM only", scratchWrites ? "RAM / IndexedDB" : "RAM",
+      scratchWriteBytes, `${scratchWrites} spilled stripes; ${scratchReads} scratch reads`);
+    stfDiag?.cache("Gate RAM retention", "observed", "RAM", stfGateCacheBytes(cache),
+      "192MiB shared cap; excludes current working arrays");
     pool?.terminate();
     derivedStaging.clear();
     if (scratchDbPromise) {
@@ -5527,6 +5695,7 @@ return () => {
   clearZoomView();
   clearFullSizeRenderCache();
   resetStfGateCache();
+  stfSourceCache.clear();
   if (currentCanonicalSession) {
     const session = currentCanonicalSession;
     currentCanonicalSession = null;
