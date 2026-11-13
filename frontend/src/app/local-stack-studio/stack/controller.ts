@@ -83,6 +83,7 @@ import {
 import { AlignedImageReader } from "./aligned-reader";
 import { StfPhase0Diagnostics } from "./stf-phase0-diagnostics";
 import { buildStfFrameSet } from "./stf-frame-generation";
+import { selectStfUniqueApertures } from "./stf-input-selection";
 import { appendStfVirtualSource } from "./stf-virtual-source";
 import { StfSourceCache, buildStfSourceCacheKey, stfSourceForFinalization } from "./stf-source-cache";
 import {
@@ -671,7 +672,10 @@ listen(infoButton, "click", () => {
 });
 
 listen(processButton, "click", async () => {
-  const files = naturalSortFiles(Array.from(inputFiles.files || []));
+  // STF keeps the first selected file at each F-number before restoring the
+  // usual natural filename processing order. Other modes retain their inputs.
+  let files = Array.from(inputFiles.files || []);
+  if (mergeMode.value !== "stf") files = naturalSortFiles(files);
   clearError();
   clearResult();
   setProcessing(true);
@@ -753,8 +757,28 @@ listen(processButton, "click", async () => {
     trace.add("Initialization", 0);
     const metadataStartedAt = performance.now();
     setProgress("Reading metadata, ICC profiles, and image sizes...");
-    const inputInfos = await readInputInfos(files);
+    let inputInfos = await readInputInfos(files);
     trace.add("Input metadata", performance.now() - metadataStartedAt);
+    let skippedStfDuplicates = 0;
+    if (selectedMergeMode === "stf") {
+      const selected = selectStfUniqueApertures(inputInfos.map((info) => info.fNumber));
+      skippedStfDuplicates = selected.skipped.length;
+      if (skippedStfDuplicates > 0) {
+        const ignored = selected.skipped.map(({ index, firstIndex, fNumber }) =>
+          `${files[index].name} (F${fNumber}; kept ${files[firstIndex].name})`).join(", ");
+        stfPhase0?.stage("STF duplicate F-number inputs", 0,
+          `${skippedStfDuplicates} ignored before canonical/alignment: ${ignored}`);
+        console.info(`[LSS STF] Ignored ${skippedStfDuplicates} duplicate F-number input(s): ${ignored}`);
+      }
+      const retained = selected.keptIndexes.map((index) => ({ file: files[index], info: inputInfos[index] }));
+      retained.sort((a, b) => a.file.name.localeCompare(b.file.name, undefined,
+        { numeric: true, sensitivity: "base" }));
+      files = retained.map((entry) => entry.file);
+      inputInfos = retained.map((entry) => entry.info);
+      if (files.length < 2 && selectedStfFrameGeneration() !== "off") {
+        throw new Error("STF Frame generation requires at least two distinct EXIF F-numbers.");
+      }
+    }
     const inputStartedAt = performance.now();
     const { mergeStackMetadata } = await loadExifMetadataModule();
     currentOutputMetadata = mergeStackMetadata(inputInfos.map((info) => info.preservedMetadata ?? null));
@@ -895,6 +919,9 @@ listen(processButton, "click", async () => {
       settings: [
         ...(effectiveMergeMode !== selectedMergeMode ? [{ label: "Actual merge", value: effectiveMergeMode === "average" ? "Blend" : effectiveMergeMode }] : []),
         ...processingSettings,
+        ...(selectedMergeMode === "stf" && skippedStfDuplicates > 0
+          ? [{ label: "STF duplicate F-numbers", value: `${skippedStfDuplicates} input(s) ignored (first selected kept)` }]
+          : []),
         { label: "Canonical input cache", value: trace.canonicalCacheReused ? "Reused" : "Created" },
         ...(trace.transformCacheReused === null ? [] : [{ label: "Alignment transform cache", value: trace.transformCacheReused ? "Reused" : "Recomputed" }]),
       ],
@@ -2469,15 +2496,11 @@ function buildMergePlan(
 
   const fNumbers = inputInfos.map((entry) => entry.fNumber);
   const stfWeights = buildStfApertureWeights(fNumbers, stfBlendWeightValue);
-  if (stfWeights) {
-    for (let i = 0; i < imageCount; i += 1) {
-      weights[i] = stfWeights[i];
-    }
-  } else {
-    const uniformWeight = 1 / imageCount;
-    for (let i = 0; i < imageCount; i += 1) {
-      weights[i] = uniformWeight;
-    }
+  if (!stfWeights) {
+    throw new Error("STF cannot compute aperture weights from the selected EXIF F-numbers.");
+  }
+  for (let i = 0; i < imageCount; i += 1) {
+    weights[i] = stfWeights[i];
   }
 
   const toneStatistics = canonicalImages.map((entry) => entry?.toneStatistics);

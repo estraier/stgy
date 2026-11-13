@@ -23,10 +23,11 @@ describe("STF Frame generation Phase 2", () => {
     frameSet.middleFrames.forEach((frame, i) => expect(frame.weight).toBe(frameSet.allWeights[7 + i]));
   });
 
-  test("duplicate or missing F-numbers fail only when generation is enabled", () => {
+  test("invalid F-numbers never fall back to uniform weights", () => {
     expect(() => buildStfFrameSet([2, 2.8, 2.8], 4, "interpolation")).toThrow("distinct");
     expect(() => buildStfFrameSet([2, null], 4, "interpolation")).toThrow("valid EXIF");
-    expect(buildStfFrameSet([2, null], 4, "off").middleFrames).toEqual([]);
+    expect(() => buildStfFrameSet([2, null], 4, "off")).toThrow("aperture weights");
+    expect(() => buildStfFrameSet([2, 2.8, 2.8], 4, "off")).toThrow("aperture weights");
   });
 
   test("generated frame keys do not include W, Blur, or gate parameters", () => {

@@ -27,9 +27,9 @@ export function buildStfFrameSet(
   if (mode !== "off" && mode !== "interpolation" && mode !== "interpolation-extrapolation") throw new Error(`Unsupported STF Frame generation: ${mode}`);
   if (mode === "off") {
     const weights = buildStfApertureWeights(fNumbers as number[], blendWeight);
-    const fallback = new Float32Array(fNumbers.length).fill(1 / fNumbers.length);
-    return { mode, realWeights: weights ? Float32Array.from(weights) : fallback,
-      middleFrames: [], outerFrames: [], allWeights: weights ? Float32Array.from(weights) : fallback,
+    if (!weights) throw new Error("Could not compute STF aperture weights from EXIF F-numbers.");
+    return { mode, realWeights: Float32Array.from(weights),
+      middleFrames: [], outerFrames: [], allWeights: Float32Array.from(weights),
       allFNumbers: fNumbers.map((f) => Number(f)) };
   }
   if (fNumbers.length < 2 || fNumbers.some((f) => !(typeof f === "number" && Number.isFinite(f) && f > 0))) {

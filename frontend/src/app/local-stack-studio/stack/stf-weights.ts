@@ -12,8 +12,8 @@ export const DEFAULT_STF_BLEND_WEIGHT = 4;
  * to zero equals the largest remaining interior step. This keeps the largest
  * discontinuity as small as possible for the chosen profile.
  *
- * Returns null when the aperture sequence cannot define that profile, so the
- * caller can preserve the historical uniform-weight fallback.
+ * Returns null when the aperture sequence cannot define that profile; the
+ * caller must reject such inputs rather than silently use uniform weights.
  */
 export function buildStfApertureWeights(
   fNumbers: readonly number[],
