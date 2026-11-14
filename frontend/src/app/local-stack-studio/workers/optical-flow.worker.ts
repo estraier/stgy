@@ -178,6 +178,16 @@ import type {
     };
   }
 
+  // Only one retained pair per outer Worker. The controller processes its
+  // extra opening-side frames serially, so no additional full-size outputs
+  // or repeated native Farneback runs are needed for ext1-2/ext1-3.
+  let retainedPair: {
+    previousImageId: number; nextImageId: number;
+    previous: Uint16Array; next: Uint16Array;
+    width: number; height: number; flowWidth: number; flowHeight: number;
+    forward: Float32Array; backward: Float32Array;
+  } | null = null;
+
   workerScope.onmessage = async (event: MessageEvent<OpticalFlowWorkerRequest>) => {
     const message = event.data;
     try {
@@ -190,9 +200,29 @@ import type {
         });
         return;
       }
+      if (message.type === "release-retained") {
+        retainedPair = null;
+        return;
+      }
+      if (message.type === "warp-retained") {
+        const pair = retainedPair;
+        if (!pair || pair.previousImageId !== message.previousImageId ||
+            pair.nextImageId !== message.nextImageId) {
+          throw new Error("No retained Optical Flow pair matches this extrapolation request");
+        }
+        const started = performance.now();
+        const output = synthesizeFlowVariant(message.variant, pair.previous, pair.next,
+          pair.width, pair.height, pair.forward, pair.backward, pair.flowWidth, pair.flowHeight, message.variantScale);
+        const gamma2Buffer = transferableBuffer(output);
+        workerScope.postMessage({ type: "warp-result", requestId: message.requestId,
+          width: pair.width, height: pair.height, gamma2Buffer, warpMs: performance.now() - started },
+          [gamma2Buffer]);
+        return;
+      }
       if (message.type !== "interpolate") {
         throw new Error(`Unsupported Optical Flow worker request: ${String((message as { type?: unknown }).type)}`);
       }
+      retainedPair = null;
       const result = await interpolateMiddleFrame(message);
       const gamma2Buffer = transferableBuffer(result.gamma2Rgb);
       const additionalGamma2Buffer = result.additionalGamma2Rgb
@@ -273,6 +303,7 @@ import type {
       flows.backward,
       flowSize.width,
       flowSize.height,
+      message.variantScale,
     );
     const warpMs = performance.now() - warpStartedAt;
     // Both frames use the *same* native 4MP forward/backward fields. Never
@@ -280,9 +311,20 @@ import type {
     const additionalWarpStartedAt = performance.now();
     const additionalGamma2Rgb = message.additionalVariant
       ? synthesizeFlowVariant(message.additionalVariant, previousGamma2Rgb, nextGamma2Rgb,
-        width, height, flows.forward, flows.backward, flowSize.width, flowSize.height)
+        width, height, flows.forward, flows.backward, flowSize.width, flowSize.height, message.additionalVariantScale)
       : undefined;
     const additionalWarpMs = additionalGamma2Rgb ? performance.now() - additionalWarpStartedAt : undefined;
+    if (message.retainPair) {
+      if (message.previousImageId === undefined || message.nextImageId === undefined) {
+        throw new Error("STF retained Flow requires both real-image IDs");
+      }
+      retainedPair = {
+        previousImageId: message.previousImageId, nextImageId: message.nextImageId,
+        previous: previousGamma2Rgb, next: nextGamma2Rgb,
+        width, height, flowWidth: flowSize.width, flowHeight: flowSize.height,
+        forward: flows.forward, backward: flows.backward,
+      };
+    }
     const performanceStats: OpticalFlowPerformanceStats = {
       sourceWidth: width,
       sourceHeight: height,
@@ -315,16 +357,25 @@ import type {
     flowBackward: Float32Array,
     flowWidth: number,
     flowHeight: number,
+    variantScale?: number,
   ): Uint16Array {
     const output = new Uint16Array(width * height * 3);
     const scaleX = width / flowWidth;
     const scaleY = height / flowHeight;
     const edgeX = Math.max(0, flowWidth - 1);
     const edgeY = Math.max(0, flowHeight - 1);
-    const previousFactor = variant === "ext2" ? 1.5 : variant === "ext1" ? -0.5 : 0.5;
-    const nextFactor = variant === "ext2" ? -0.5 : variant === "ext1" ? 1.5 : 0.5;
+    // Opening-side extrapolation stays on the existing simple path, but the
+    // multiplier is now derived from the virtual F-number outside the worker.
+    const openingStep = variant === "ext1" ? 1 : variant.startsWith("ext1-") ? Number(variant.slice(5)) : 0;
+    const defaultScale = openingStep ? openingStep * 0.5 : variant === "ext2" ? 1.5 : 0.5;
+    const resolvedScale = variantScale === undefined ? defaultScale : variantScale;
+    if (!Number.isFinite(resolvedScale) || resolvedScale <= 0) {
+      throw new Error("STF Optical Flow extrapolation scale must be finite and positive.");
+    }
+    const previousFactor = openingStep ? -resolvedScale : variant === "ext2" ? resolvedScale : 0.5;
+    const nextFactor = openingStep ? 1 + resolvedScale : variant === "ext2" ? -0.5 : 0.5;
     const usePrevious = variant !== "ext2";
-    const useNext = variant !== "ext1";
+    const useNext = !openingStep;
 
     for (let y = 0; y < height; y += 1) {
       const flowY = flowHeight === 1 ? 0 : ((y + 0.5) * flowHeight / height) - 0.5;
@@ -423,7 +474,7 @@ import type {
   }
 
   function describeVariant(variant: OpticalFlowVariant): string {
-    if (variant === "ext1") return "ext1 extrapolated";
+    if (variant === "ext1" || variant === "ext1-2" || variant === "ext1-3") return `${variant} extrapolated`;
     if (variant === "ext2") return "ext2 extrapolated";
     return "midpoint";
   }

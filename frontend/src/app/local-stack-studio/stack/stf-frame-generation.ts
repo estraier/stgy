@@ -1,7 +1,7 @@
-/** Logical STF frame set. Real indexes always refer to the canonical session. */
 import { buildStfApertureWeights } from "./stf-weights";
 
-export type StfFrameGenerationMode = "off" | "interpolation" | "interpolation-extrapolation";
+export type StfFrameGenerationMode = "off" | "interpolation" | "extrapolation-1" | "extrapolation-2" | "extrapolation-3" | "extrapolation-4" | "extrapolation-5" | "extrapolation-6" | "extrapolation-7" | "extrapolation-8" | "extrapolation-9" | "extrapolation-10";
+
 export type StfMiddleFrame = {
   previousIndex: number;
   nextIndex: number;
@@ -9,7 +9,12 @@ export type StfMiddleFrame = {
   weight: number;
   pairLabel: string;
 };
-export type StfOuterFrame = StfMiddleFrame & { variant: "ext1" | "ext2" };
+
+export type StfOuterFrame = StfMiddleFrame & {
+  variant: "ext1" | "ext1-2" | "ext1-3" | "ext1-4" | "ext1-5" | "ext1-6" | "ext1-7" | "ext1-8" | "ext1-9" | "ext1-10";
+  openingFlowScale: number;
+};
+
 export type StfFrameSet = {
   mode: StfFrameGenerationMode;
   realWeights: Float32Array;
@@ -19,74 +24,155 @@ export type StfFrameSet = {
   allFNumbers: number[];
 };
 
+function validateMode(mode: string): asserts mode is StfFrameGenerationMode {
+  if (mode !== "off" && mode !== "interpolation" && !/^extrapolation-(?:[1-9]|10)$/.test(mode)) {
+    throw new Error(`Unsupported STF Frame generation: ${mode}`);
+  }
+}
+
 export function buildStfFrameSet(
   fNumbers: readonly (number | null | undefined)[],
-  blendWeight: number,
+  radialAttenuation: number,
   mode: StfFrameGenerationMode,
 ): StfFrameSet {
-  if (mode !== "off" && mode !== "interpolation" && mode !== "interpolation-extrapolation") throw new Error(`Unsupported STF Frame generation: ${mode}`);
+  validateMode(mode);
   if (mode === "off") {
-    const weights = buildStfApertureWeights(fNumbers as number[], blendWeight);
+    const weights = buildStfApertureWeights(fNumbers as number[], radialAttenuation);
     if (!weights) throw new Error("Could not compute STF aperture weights from EXIF F-numbers.");
-    return { mode, realWeights: Float32Array.from(weights),
-      middleFrames: [], outerFrames: [], allWeights: Float32Array.from(weights),
-      allFNumbers: fNumbers.map((f) => Number(f)) };
+    return {
+      mode,
+      realWeights: Float32Array.from(weights),
+      middleFrames: [],
+      outerFrames: [],
+      allWeights: Float32Array.from(weights),
+      allFNumbers: fNumbers.map((f) => Number(f)),
+    };
   }
+
   if (fNumbers.length < 2 || fNumbers.some((f) => !(typeof f === "number" && Number.isFinite(f) && f > 0))) {
     throw new Error("STF Frame generation requires at least two inputs with valid EXIF F-numbers.");
   }
-  const sorted = fNumbers.map((fNumber, index) => ({ fNumber: fNumber as number, index }))
+
+  const sorted = fNumbers
+    .map((fNumber, index) => ({ fNumber: fNumber as number, index }))
     .sort((a, b) => a.fNumber - b.fNumber);
+
   const middleFrames: StfMiddleFrame[] = [];
-  for (let i = 1; i < sorted.length; i++) {
+  for (let i = 1; i < sorted.length; i += 1) {
     if (!(sorted[i].fNumber > sorted[i - 1].fNumber)) {
       throw new Error("STF Frame generation requires distinct EXIF F-numbers for every input.");
     }
-    middleFrames.push({ previousIndex: sorted[i - 1].index, nextIndex: sorted[i].index,
+    middleFrames.push({
+      previousIndex: sorted[i - 1].index,
+      nextIndex: sorted[i].index,
       fNumber: Math.sqrt(sorted[i - 1].fNumber * sorted[i].fNumber),
-      weight: 0, pairLabel: `${i}/${sorted.length - 1}` });
+      weight: 0,
+      pairLabel: `${i}/${sorted.length - 1}`,
+    });
   }
-  // Extend one *generated* half-interval in log-F space on each side so the
-  // final F-number list stays on the same geometric-step lattice as the
-  // midpoint-interpolated sequence. The pair orientation is always from
-  // smaller to larger F-number: ext1 is extrapolated from the first real
-  // image, ext2 from the last.
-  const outerFrames: StfOuterFrame[] = mode === "interpolation-extrapolation" ? [
-    { previousIndex: sorted[0].index, nextIndex: sorted[1].index,
-      fNumber: sorted[0].fNumber / Math.sqrt(sorted[1].fNumber / sorted[0].fNumber),
-      weight: 0, pairLabel: "first-ext1", variant: "ext1" },
-    { previousIndex: sorted[sorted.length - 2].index, nextIndex: sorted[sorted.length - 1].index,
-      fNumber: sorted[sorted.length - 1].fNumber * Math.sqrt(sorted[sorted.length - 1].fNumber / sorted[sorted.length - 2].fNumber),
-      weight: 0, pairLabel: "last-ext2", variant: "ext2" },
-  ] : [];
-  if (outerFrames.some((frame) => !(Number.isFinite(frame.fNumber) && frame.fNumber > 0))) {
+
+  const openingCount = mode.startsWith("extrapolation-") ? Number.parseInt(mode.slice("extrapolation-".length), 10) : 0;
+  const outerFrames: StfOuterFrame[] = [];
+  if (openingCount > 0) {
+    const first = sorted[0].fNumber;
+    const second = sorted[1].fNumber;
+    const openingRatio = first / second;
+    const openingRadiusDelta = (1 / first) - (1 / second);
+    for (let step = 1; step <= openingCount; step += 1) {
+      const outerFNumber = step === 1 ? first / Math.sqrt(second / first) : first * openingRatio ** (step / 2);
+      const openingFlowScale = ((1 / outerFNumber) - (1 / first)) / openingRadiusDelta;
+      outerFrames.push({
+        previousIndex: sorted[0].index,
+        nextIndex: sorted[1].index,
+        fNumber: outerFNumber,
+        weight: 0,
+        pairLabel: `first-ext${step}`,
+        variant: (step === 1 ? "ext1" : `ext1-${step}`) as StfOuterFrame["variant"],
+        openingFlowScale,
+      });
+    }
+  }
+
+  if (outerFrames.some((frame) => !(Number.isFinite(frame.fNumber) && frame.fNumber > 0 && Number.isFinite(frame.openingFlowScale) && frame.openingFlowScale > 0))) {
     throw new Error("STF extrapolation produced an invalid extended EXIF F-number.");
   }
-  // The middle-frame IDs/weights are still indexed immediately after all real
-  // frames; outer contributions follow the middle frames. This leaves all
-  // Phase 2 generated midpoint cache keys stable across mode switches.
-  const allFNumbers = [...fNumbers as number[],
-    ...middleFrames.map((frame) => frame.fNumber), ...outerFrames.map((frame) => frame.fNumber)];
-  const calculated = buildStfApertureWeights(allFNumbers, blendWeight);
-  if (!calculated) throw new Error("Could not compute STF aperture weights for generated frames.");
-  const allWeights = Float32Array.from(calculated);
+
+  const allFNumbers = [
+    ...(fNumbers as number[]),
+    ...middleFrames.map((frame) => frame.fNumber),
+    ...outerFrames.map((frame) => frame.fNumber),
+  ];
+  // All real/generated images are treated as uniform defocus discs. Specify
+  // the desired *final radial luminance*, then invert the disc contributions
+  // to obtain blend weights. q=1 is exactly linear in radius; the other q
+  // values preserve the historical logarithmic/deep-DoF/large-bokeh ordering.
+  // Off mode continues to use buildStfApertureWeights without modification.
+  if (!(Number.isInteger(radialAttenuation) && radialAttenuation >= -2 && radialAttenuation <= 3)) {
+    throw new Error("STF Radial attenuation must be an integer from -2 to 3.");
+  }
+  const exponent = radialAttenuation;
+  const densityFNumbers = [
+    ...(fNumbers as number[]),
+    ...middleFrames.map((frame) =>
+      (Number(fNumbers[frame.previousIndex]) + Number(fNumbers[frame.nextIndex])) / 2),
+    ...outerFrames.map((frame) => Number(fNumbers[frame.previousIndex])),
+  ];
+  const byIncreasingRadius = allFNumbers
+    .map((fNumber, index) => ({ index, radius: 1 / fNumber }))
+    .sort((a, b) => a.radius - b.radius);
+  const minRadius = byIncreasingRadius[0].radius;
+  const maxRadius = byIncreasingRadius[byIncreasingRadius.length - 1].radius;
+  const logRadiusSpan = Math.log(maxRadius / minRadius);
+  if (!(Number.isFinite(logRadiusSpan) && logRadiusSpan > 0)) {
+    throw new Error("STF generated frames require distinct finite circle-of-confusion radii.");
+  }
+
+  // L_q(r) = (Rmax^q - r^q) / (Rmax^q - Rmin^q),
+  // with the logarithmic limit for q=0. Use dimensionless radii
+  // and expm1 to avoid subtracting nearly equal powers.
+  const radialLuminance = (radius: number): number => {
+    const logPosition = Math.log(radius / minRadius);
+    if (Math.abs(exponent) < 1e-12) return 1 - logPosition / logRadiusSpan;
+    return (Math.expm1(exponent * logRadiusSpan) - Math.expm1(exponent * logPosition)) /
+      Math.expm1(exponent * logRadiusSpan);
+  };
+
+  const rawWeights = new Float64Array(allFNumbers.length);
+  let rawTotal = 0;
+  let currentLuminance = 1;
+  for (let i = 0; i < byIncreasingRadius.length; i += 1) {
+    // Minimax constant approximation on each radial annulus: its luminance
+    // is the mean of the target at the two endpoints. The final annulus
+    // therefore fades to zero with half of the target's last radial drop.
+    const nextLuminance = i + 1 < byIncreasingRadius.length
+      ? (radialLuminance(byIncreasingRadius[i].radius) +
+          radialLuminance(byIncreasingRadius[i + 1].radius)) / 2
+      : 0;
+    const radialDrop = currentLuminance - nextLuminance;
+    const index = byIncreasingRadius[i].index;
+    // The source image's disc intensity is proportional to F_density².
+    // A virtual outer disc is warped without losing source brightness;
+    // a midpoint's source density remains the mean of its real F values.
+    const sourceDensity = densityFNumbers[index] ** 2;
+    const weight = radialDrop / sourceDensity;
+    if (!(Number.isFinite(weight) && weight > 0)) {
+      throw new Error("STF radial minimax weight is invalid.");
+    }
+    rawWeights[index] = weight;
+    rawTotal += weight;
+    currentLuminance = nextLuminance;
+  }
+  if (!(Number.isFinite(rawTotal) && rawTotal > 0)) {
+    throw new Error("STF radial minimax weight total is invalid.");
+  }
+  const allWeights = Float32Array.from(rawWeights, (weight) => weight / rawTotal);
   const realWeights = allWeights.slice(0, fNumbers.length);
-  for (let i = 0; i < middleFrames.length; i++) middleFrames[i].weight = allWeights[fNumbers.length + i];
-  for (let i = 0; i < outerFrames.length; i++) outerFrames[i].weight = allWeights[fNumbers.length + middleFrames.length + i];
+  for (let i = 0; i < middleFrames.length; i += 1) {
+    middleFrames[i].weight = allWeights[fNumbers.length + i];
+  }
+  for (let i = 0; i < outerFrames.length; i += 1) {
+    outerFrames[i].weight = allWeights[fNumbers.length + middleFrames.length + i];
+  }
+
   return { mode, realWeights, middleFrames, outerFrames, allWeights, allFNumbers };
-}
-
-export function stfMiddleFrameCacheKey(sessionId: string, normalizationMode: string,
-  matrices: readonly (ArrayLike<number> | null)[], frame: StfMiddleFrame, width: number, height: number): string {
-  return JSON.stringify(["stf-optical-flow-mid-4mp-gamma20-range4-v1", sessionId,
-    normalizationMode, width, height, frame.previousIndex, frame.nextIndex,
-    matrices.map((m) => m == null ? null : Array.from(m))]);
-}
-
-/** Pair-specific cache key; separate from mid and stable across W/Blur/mode. */
-export function stfOuterFrameCacheKey(sessionId: string, normalizationMode: string,
-  matrices: readonly (ArrayLike<number> | null)[], frame: StfOuterFrame, width: number, height: number): string {
-  return JSON.stringify([`stf-optical-flow-${frame.variant}-4mp-gamma20-range4-v2`, sessionId,
-    normalizationMode, width, height, frame.previousIndex, frame.nextIndex,
-    matrices.map((m) => m == null ? null : Array.from(m))]);
 }

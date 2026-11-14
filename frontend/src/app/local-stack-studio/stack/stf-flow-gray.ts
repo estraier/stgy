@@ -1,7 +1,3 @@
-/** Bit-identical 4MP RGB16 -> Gray8 preprocessing shared by STF pair workers.
- * Keep the pixel-center bilinear sampling and round/clamp order in sync with
- * the standalone Optical Flow implementation; changing it alters Flow quality.
- */
 export const STF_FLOW_TARGET_PIXELS = 4_000_000;
 
 export function stfFlowWorkingSize(width: number, height: number, targetPixels = STF_FLOW_TARGET_PIXELS): { width: number; height: number } {

@@ -1,4 +1,4 @@
-export type OpticalFlowVariant = "mid" | "ext1" | "ext2";
+export type OpticalFlowVariant = "mid" | "ext1" | "ext1-2" | "ext1-3" | "ext1-4" | "ext1-5" | "ext1-6" | "ext1-7" | "ext1-8" | "ext1-9" | "ext1-10" | "ext2";
 
 export type OpticalFlowWorkerInterpolateRequest = {
   type: "interpolate";
@@ -6,15 +6,15 @@ export type OpticalFlowWorkerInterpolateRequest = {
   width: number;
   height: number;
   variant: OpticalFlowVariant;
-  /** Generate a second variant from the same bidirectional Flow without recomputation. */
+  variantScale?: number;
   additionalVariant?: OpticalFlowVariant;
-  /** Canonical STF uses gamma-2 RGB16 with linear range 4; legacy standalone uses 1. */
+  additionalVariantScale?: number;
+  retainPair?: boolean;
   linearRangeMax?: 1 | 4;
   previousImageId?: number;
   nextImageId?: number;
   previousGamma2Buffer: ArrayBuffer;
   nextGamma2Buffer: ArrayBuffer;
-  /** Optional exact Gray8 proxies shared between adjacent STF pairs. Supply both or neither. */
   previousGrayBuffer?: ArrayBuffer;
   nextGrayBuffer?: ArrayBuffer;
 };
@@ -24,7 +24,18 @@ export type OpticalFlowWorkerWarmupRequest = {
   requestId: number;
 };
 
-export type OpticalFlowWorkerRequest = OpticalFlowWorkerInterpolateRequest | OpticalFlowWorkerWarmupRequest;
+export type OpticalFlowWorkerWarpRetainedRequest = {
+  type: "warp-retained";
+  requestId: number;
+  previousImageId: number;
+  nextImageId: number;
+  variant: OpticalFlowVariant;
+  variantScale?: number;
+};
+
+export type OpticalFlowWorkerReleaseRetainedRequest = { type: "release-retained"; requestId: number };
+export type OpticalFlowWorkerRequest = OpticalFlowWorkerInterpolateRequest | OpticalFlowWorkerWarmupRequest |
+  OpticalFlowWorkerWarpRetainedRequest | OpticalFlowWorkerReleaseRetainedRequest;
 
 export type OpticalFlowPerformanceStats = {
   sourceWidth: number;
@@ -34,11 +45,8 @@ export type OpticalFlowPerformanceStats = {
   prepareFlowInputsMs: number;
   forwardFlowMs: number;
   backwardFlowMs: number;
-  /** Wall-clock time for the two Flow requests, including worker transfer. */
   flowWallMs: number;
-  /** 1 = sequential, 2 = parallel; numerical algorithm is unchanged. */
   flowWorkerCount: number;
-  /** First-run native-worker initialization; excluded from warmed-up STF cost. */
   warmupMs: number;
   warpMs: number;
   additionalWarpMs?: number;
@@ -74,6 +82,15 @@ export type OpticalFlowWorkerResultResponse = {
   performance: OpticalFlowPerformanceStats;
 };
 
+export type OpticalFlowWorkerWarpRetainedResponse = {
+  type: "warp-result";
+  requestId: number;
+  width: number;
+  height: number;
+  gamma2Buffer: ArrayBuffer;
+  warpMs: number;
+};
+
 export type OpticalFlowWorkerErrorResponse = {
   type: "error";
   requestId: number;
@@ -83,5 +100,6 @@ export type OpticalFlowWorkerErrorResponse = {
 export type OpticalFlowWorkerResponse =
   | OpticalFlowWorkerReadyResponse
   | OpticalFlowWorkerProgressResponse
+  | OpticalFlowWorkerWarpRetainedResponse
   | OpticalFlowWorkerResultResponse
   | OpticalFlowWorkerErrorResponse;

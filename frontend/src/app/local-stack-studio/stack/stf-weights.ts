@@ -1,23 +1,22 @@
-export const DEFAULT_STF_BLEND_WEIGHT = 4;
+export const DEFAULT_STF_RADIAL_ATTENUATION = 0;
 
 /**
  * Builds STF blend weights from aperture-derived circle-of-confusion radii.
  *
- * Radius is proportional to 1 / F. The interior weights follow the historical
- * W-shaped profile. Under the equal-photon circle-of-confusion model used by
- * the UI interpretation, W=4 corresponds to equal change per logarithmic
- * radius interval and W=8 corresponds to linear radial attenuation.
+ * Radius is proportional to 1 / F. The interior weights retain the historical
+ * real-only profile, expressed directly using radial attenuation q.
+ * This path is used for Frame generation = off and preserves its output.
  * The widest-aperture outer-edge luminance
  * is then chosen by a minimax rule: it is set so that the final outermost drop
  * to zero equals the largest remaining interior step. This keeps the largest
  * discontinuity as small as possible for the chosen profile.
  *
- * Returns null when the aperture sequence cannot define that profile; the
- * caller must reject such inputs rather than silently use uniform weights.
+ * Returns null when the aperture sequence cannot define that profile, so the
+ * caller can preserve the historical uniform-weight fallback.
  */
 export function buildStfApertureWeights(
   fNumbers: readonly number[],
-  blendWeight = DEFAULT_STF_BLEND_WEIGHT,
+  radialAttenuation = DEFAULT_STF_RADIAL_ATTENUATION,
 ): Float64Array | null {
   const fail = (): null => null;
 
@@ -47,9 +46,9 @@ export function buildStfApertureWeights(
   const radiusSpan = widest.radius - narrowest.radius;
   if (!(Number.isFinite(radiusSpan) && radiusSpan > 0)) return fail();
 
-  if (!(Number.isFinite(blendWeight) && blendWeight >= 1)) return fail();
-  const profileExponent = Math.log2(blendWeight);
-  if (!(Number.isFinite(profileExponent) && profileExponent >= 0)) return fail();
+  if (!(Number.isInteger(radialAttenuation) && radialAttenuation >= -2 && radialAttenuation <= 3)) return fail();
+  const profileExponent = radialAttenuation + 2;
+  const profileRange = 2 ** profileExponent;
 
   const sortedProgresses = new Float64Array(imageCount);
   const sortedProfile = new Float64Array(imageCount);
@@ -58,14 +57,14 @@ export function buildStfApertureWeights(
 
   const computeProfile = (progress: number): number => {
     if (!(Number.isFinite(progress) && progress >= 0 && progress <= 1)) return Number.NaN;
-    if (Math.abs(blendWeight - 1) < 1e-12) {
+    if (Math.abs(profileExponent) < 1e-12) {
       const base = 2 - progress;
       return 1 - Math.log2(base);
     }
     return (
-      blendWeight
+      profileRange
       - (2 - progress) ** profileExponent
-    ) / (blendWeight - 1);
+    ) / (profileRange - 1);
   };
 
   let maxInteriorStep = 0;

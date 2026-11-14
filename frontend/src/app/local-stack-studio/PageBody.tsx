@@ -302,28 +302,40 @@ export default function PageBody() {
                     <option value="0.5">0.5</option>
                   </select>
                 </label>
-                <label id="stf-blend-weight-option" className="hidden flex-col items-start gap-1.5">
-                  <span className="text-xs font-medium text-gray-500">Blend weight</span>
+                <label id="stf-radial-attenuation-option" className="hidden flex-col items-start gap-1.5">
+                  <span className="text-xs font-medium text-gray-500">Radial attenuation</span>
                   <select
-                    id="stf-blend-weight"
-                    defaultValue="4"
+                    id="stf-radial-attenuation"
+                    defaultValue="0"
                     className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm"
                   >
-                    <option value="1">1 (deep DoF)</option>
-                    <option value="2">2</option>
-                    <option value="4">4 (logarithm)</option>
-                    <option value="8">8 (linear)</option>
-                    <option value="16">16</option>
-                    <option value="32">32 (large bokeh)</option>
+                    <option value="-2">-2 (strong center falloff)</option>
+                    <option value="-1">-1 (center falloff)</option>
+                    <option value="0">0 (logarithmic)</option>
+                    <option value="1">1 (linear)</option>
+                    <option value="2">2 (quadratic)</option>
+                    <option value="3">3 (cubic)</option>
                   </select>
                 </label>
                 <label id="stf-frame-generation-option" className="hidden flex-col items-start gap-1.5">
                   <span className="text-xs font-medium text-gray-500">Frame generation</span>
-                  <select id="stf-frame-generation" defaultValue="off"
-                    className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm">
+                  <select
+                    id="stf-frame-generation"
+                    defaultValue="off"
+                    className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm"
+                  >
                     <option value="off">off</option>
                     <option value="interpolation">interpolation</option>
-                    <option value="interpolation-extrapolation">+ extrapolation</option>
+                    <option value="extrapolation-1">+ extrapolation 1</option>
+                    <option value="extrapolation-2">+ extrapolation 2</option>
+                    <option value="extrapolation-3">+ extrapolation 3</option>
+                    <option value="extrapolation-4">+ extrapolation 4</option>
+                    <option value="extrapolation-5">+ extrapolation 5</option>
+                    <option value="extrapolation-6">+ extrapolation 6</option>
+                    <option value="extrapolation-7">+ extrapolation 7</option>
+                    <option value="extrapolation-8">+ extrapolation 8</option>
+                    <option value="extrapolation-9">+ extrapolation 9</option>
+                    <option value="extrapolation-10">+ extrapolation 10</option>
                   </select>
                 </label>
                 <label id="stf-blur-strength-option" className="hidden flex-col items-start gap-1.5">

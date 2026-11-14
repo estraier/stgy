@@ -1,98 +1,132 @@
-import { buildStfFrameSet, stfMiddleFrameCacheKey, stfOuterFrameCacheKey } from "./stf-frame-generation";
+import { buildStfFrameSet, type StfFrameGenerationMode, type StfFrameSet } from "./stf-frame-generation";
 import { buildStfApertureWeights } from "./stf-weights";
 
-const real = [2.8, 4, 3.5, 3.2, 2.5, 2.2, 2];
+const fNumbers = [2.8, 4, 3.5, 3.2, 2.5, 2.2, 2];
+const radialAttenuationOptions = [-2, -1, 0, 1, 2, 3];
 
-describe("STF Frame generation Phase 2", () => {
-  test("off retains the seven input weights in their original order", () => {
-    const frameSet = buildStfFrameSet(real, 4, "off");
-    expect(frameSet.middleFrames).toHaveLength(0);
-    expect(Array.from(frameSet.realWeights)).toEqual(Array.from(Float32Array.from(buildStfApertureWeights(real, 4)!)));
+function radialDiscContributions(frames: StfFrameSet, realFNumbers: number[]) {
+  const densityFNumbers = [
+    ...realFNumbers,
+    ...frames.middleFrames.map((frame) =>
+      (realFNumbers[frame.previousIndex] + realFNumbers[frame.nextIndex]) / 2),
+    ...frames.outerFrames.map((frame) => realFNumbers[frame.previousIndex]),
+  ];
+  const ordered = frames.allFNumbers
+    .map((fNumber, index) => ({ index, radius: 1 / fNumber, densityF: densityFNumbers[index] }))
+    .sort((a, b) => a.radius - b.radius);
+  const rawDrops = ordered.map((frame) => frames.allWeights[frame.index] * frame.densityF ** 2);
+  const total = rawDrops.reduce((sum, value) => sum + value, 0);
+  return {
+    ordered,
+    drops: rawDrops.map((value) => value / total),
+    levels: ordered.map((_, i) => rawDrops.slice(i).reduce((sum, value) => sum + value, 0) / total),
+  };
+}
+
+function targetRadialLuminance(radius: number, minRadius: number, maxRadius: number, radialAttenuation: number) {
+  const power = radialAttenuation;
+  return Math.abs(power) < 1e-12
+    ? Math.log(maxRadius / radius) / Math.log(maxRadius / minRadius)
+    : (maxRadius ** power - radius ** power) / (maxRadius ** power - minRadius ** power);
+}
+
+describe("STF generated-frame radial minimax luminance weights", () => {
+  test.each(radialAttenuationOptions)("off preserves historical real-only weights for q=%i", (radialAttenuation) => {
+    const frames = buildStfFrameSet(fNumbers, radialAttenuation, "off");
+    const original = Float32Array.from(buildStfApertureWeights(fNumbers, radialAttenuation)!);
+    expect(Array.from(frames.realWeights)).toEqual(Array.from(original));
+    expect(Array.from(frames.allWeights)).toEqual(Array.from(original));
+    expect(frames.middleFrames).toHaveLength(0);
+    expect(frames.outerFrames).toHaveLength(0);
   });
 
-  test("seven real frames produce exactly six logarithmic aperture midpoints", () => {
-    const frameSet = buildStfFrameSet(real, 4, "interpolation");
-    expect(frameSet.middleFrames).toHaveLength(6);
-    expect(frameSet.allFNumbers).toHaveLength(13);
-    expect(frameSet.allWeights).toHaveLength(13);
-    expect(frameSet.middleFrames.map((frame) => [frame.previousIndex, frame.nextIndex]))
-      .toEqual([[6, 5], [5, 4], [4, 0], [0, 3], [3, 2], [2, 1]]);
-    expect(frameSet.middleFrames[0].fNumber).toBeCloseTo(Math.sqrt(2 * 2.2), 12);
-    expect(frameSet.middleFrames[5].fNumber).toBeCloseTo(Math.sqrt(3.5 * 4), 12);
-    expect(Array.from(frameSet.allWeights).reduce((sum, weight) => sum + weight, 0)).toBeCloseTo(1, 6);
-    frameSet.middleFrames.forEach((frame, i) => expect(frame.weight).toBe(frameSet.allWeights[7 + i]));
-  });
+  test.each(["interpolation", "extrapolation-1", "extrapolation-3", "extrapolation-10"] as const)(
+    "%s includes real and synthetic frames, preserving their index mapping", (mode: StfFrameGenerationMode) => {
+      const frames = buildStfFrameSet(fNumbers, 1, mode);
+      const expectedOuterCount = mode.startsWith("extrapolation-")
+        ? Number(mode.slice("extrapolation-".length)) : 0;
+      expect(frames.middleFrames).toHaveLength(fNumbers.length - 1);
+      expect(frames.outerFrames).toHaveLength(expectedOuterCount);
+      expect(frames.allWeights).toHaveLength(fNumbers.length * 2 - 1 + expectedOuterCount);
+      expect(Array.from(frames.allWeights).reduce((sum, value) => sum + value, 0)).toBeCloseTo(1, 6);
+      frames.allWeights.forEach((value) => expect(value).toBeGreaterThan(0));
+      frames.realWeights.forEach((value, index) => expect(value).toBe(frames.allWeights[index]));
+      frames.middleFrames.forEach((frame, i) => {
+        expect(frame.weight).toBe(frames.allWeights[fNumbers.length + i]);
+        expect(frame.fNumber).toBeCloseTo(
+          Math.sqrt(fNumbers[frame.previousIndex] * fNumbers[frame.nextIndex]), 12);
+      });
+      frames.outerFrames.forEach((frame, i) => {
+        expect(frame.weight).toBe(frames.allWeights[fNumbers.length + frames.middleFrames.length + i]);
+        expect(frame.openingFlowScale).toBeGreaterThan(0);
+      });
+    },
+  );
 
-  test("invalid F-numbers never fall back to uniform weights", () => {
-    expect(() => buildStfFrameSet([2, 2.8, 2.8], 4, "interpolation")).toThrow("distinct");
-    expect(() => buildStfFrameSet([2, null], 4, "interpolation")).toThrow("valid EXIF");
-    expect(() => buildStfFrameSet([2, null], 4, "off")).toThrow("aperture weights");
-    expect(() => buildStfFrameSet([2, 2.8, 2.8], 4, "off")).toThrow("aperture weights");
-  });
+  test.each(["interpolation", "extrapolation-3", "extrapolation-10"] as const)(
+    "q=1 has exactly linear target luminance at every annulus midpoint for %s", (mode) => {
+      const frames = buildStfFrameSet(fNumbers, 1, mode);
+      const { ordered, levels, drops } = radialDiscContributions(frames, fNumbers);
+      const minR = ordered[0].radius;
+      const maxR = ordered[ordered.length - 1].radius;
+      expect(levels[0]).toBeCloseTo(1, 6);
+      for (let i = 1; i < ordered.length; i += 1) {
+        const midpointRadius = (ordered[i - 1].radius + ordered[i].radius) / 2;
+        const expectedLinearLuminance = (maxR - midpointRadius) / (maxR - minR);
+        expect(levels[i]).toBeCloseTo(expectedLinearLuminance, 6);
+      }
+      // The outer discontinuity equals one half of the last linear radial decrement.
+      expect(drops[drops.length - 1]).toBeCloseTo(
+        (maxR - ordered[ordered.length - 2].radius) / (2 * (maxR - minR)), 6);
+    },
+  );
 
-  test("generated frame keys do not include W, Blur, or gate parameters", () => {
-    const mid4 = buildStfFrameSet(real, 4, "interpolation").middleFrames[0];
-    const mid8 = buildStfFrameSet(real, 8, "interpolation").middleFrames[0];
-    const matrices = [new Float64Array([1,0,0,0,1,0,0,0,1])];
-    expect(stfMiddleFrameCacheKey("session", "feature-match", matrices, mid4, 10, 10))
-      .toBe(stfMiddleFrameCacheKey("session", "feature-match", matrices, mid8, 10, 10));
-    expect(stfMiddleFrameCacheKey("another", "feature-match", matrices, mid4, 10, 10))
-      .not.toBe(stfMiddleFrameCacheKey("session", "feature-match", matrices, mid4, 10, 10));
-  });
-});
-
-describe("STF Frame generation Phase 3", () => {
-  test("15-frame set extends each endpoint by one midpoint half-interval in log-F", () => {
-    const frameSet = buildStfFrameSet(real, 4, "interpolation-extrapolation");
-    expect(frameSet.mode).toBe("interpolation-extrapolation");
-    expect(frameSet.middleFrames).toHaveLength(6);
-    expect(frameSet.outerFrames).toHaveLength(2);
-    expect(frameSet.allFNumbers).toHaveLength(15);
-    expect(frameSet.allWeights).toHaveLength(15);
-    expect(frameSet.outerFrames.map((frame) => [frame.variant, frame.previousIndex, frame.nextIndex]))
-      .toEqual([["ext1", 6, 5], ["ext2", 2, 1]]);
-    expect(frameSet.outerFrames[0].fNumber).toBeCloseTo(2 / Math.sqrt(2.2 / 2), 12);
-    expect(frameSet.outerFrames[1].fNumber).toBeCloseTo(4 * Math.sqrt(4 / 3.5), 12);
-    expect(frameSet.outerFrames[0].fNumber).toBeLessThan(2);
-    expect(frameSet.outerFrames[1].fNumber).toBeGreaterThan(4);
-    expect(Array.from(frameSet.allWeights).reduce((sum, weight) => sum + weight, 0)).toBeCloseTo(1, 6);
-    expect(frameSet.outerFrames.map((frame) => frame.weight)).toEqual(Array.from(frameSet.allWeights.slice(13)));
-  });
-
-  test("Phase 2 midpoint IDs and cache keys survive interpolation -> extrapolation", () => {
-    const frame13 = buildStfFrameSet(real, 4, "interpolation");
-    const frame15 = buildStfFrameSet(real, 8, "interpolation-extrapolation");
-    const matrices = [new Float64Array([1,0,0,0,1,0,0,0,1])];
-    expect(frame15.middleFrames.map((mid) => [mid.previousIndex, mid.nextIndex, mid.fNumber]))
-      .toEqual(frame13.middleFrames.map((mid) => [mid.previousIndex, mid.nextIndex, mid.fNumber]));
-    for (let i = 0; i < frame13.middleFrames.length; i++) {
-      expect(stfMiddleFrameCacheKey("session", "orb", matrices, frame13.middleFrames[i], 23, 17))
-        .toBe(stfMiddleFrameCacheKey("session", "orb", matrices, frame15.middleFrames[i], 23, 17));
+  test.each(radialAttenuationOptions)("q=%i follows its normalized target radial luminance profile", (radialAttenuation) => {
+    const frames = buildStfFrameSet(fNumbers, radialAttenuation, "extrapolation-10");
+    const { ordered, levels } = radialDiscContributions(frames, fNumbers);
+    const minR = ordered[0].radius;
+    const maxR = ordered[ordered.length - 1].radius;
+    expect(levels[0]).toBeCloseTo(1, 6);
+    for (let i = 1; i < ordered.length; i += 1) {
+      const expected = (
+        targetRadialLuminance(ordered[i - 1].radius, minR, maxR, radialAttenuation) +
+        targetRadialLuminance(ordered[i].radius, minR, maxR, radialAttenuation)
+      ) / 2;
+      expect(levels[i]).toBeCloseTo(expected, 6);
     }
   });
 
-  test("outer cache keys are separate from mid, W and Blur, but distinguish ext1/ext2", () => {
-    const outer4 = buildStfFrameSet(real, 4, "interpolation-extrapolation").outerFrames;
-    const outer8 = buildStfFrameSet(real, 8, "interpolation-extrapolation").outerFrames;
-    const matrices = [new Float64Array([1,0,0,0,1,0,0,0,1])];
-    const key = stfOuterFrameCacheKey("session", "orb", matrices, outer4[0], 23, 17);
-    expect(key).toBe(stfOuterFrameCacheKey("session", "orb", matrices, outer8[0], 23, 17));
-    expect(key).not.toBe(stfMiddleFrameCacheKey("session", "orb", matrices, outer4[0], 23, 17));
-    expect(key).not.toBe(stfOuterFrameCacheKey("session", "orb", matrices, outer4[1], 23, 17));
+  test("q=1 radial drops follow half-neighbor intervals at irregular radii", () => {
+    // Three real inputs produce five discs (two midpoint frames); the F values
+    // are intentionally not evenly spaced, so test the discrete radial shape.
+    const inputs = [2, 2.5, 4];
+    const frames = buildStfFrameSet(inputs, 1, "interpolation");
+    const { ordered, drops } = radialDiscContributions(frames, inputs);
+    const span = ordered[ordered.length - 1].radius - ordered[0].radius;
+    expect(drops[0]).toBeCloseTo((ordered[1].radius - ordered[0].radius) / (2 * span), 6);
+    expect(drops[drops.length - 1]).toBeCloseTo(
+      (ordered[ordered.length - 1].radius - ordered[ordered.length - 2].radius) / (2 * span), 6);
+    for (let i = 1; i < ordered.length - 1; i += 1) {
+      expect(drops[i]).toBeCloseTo(
+        (ordered[i + 1].radius - ordered[i - 1].radius) / (2 * span), 6);
+    }
   });
 
-  test("both outer variants share the single pair when only two real inputs exist", () => {
-    const frameSet = buildStfFrameSet([2, 2.8], 4, "interpolation-extrapolation");
-    expect(frameSet.middleFrames).toHaveLength(1);
-    expect(frameSet.outerFrames).toHaveLength(2);
-    expect(frameSet.allFNumbers).toHaveLength(5);
-    expect(frameSet.outerFrames.map((frame) => frame.variant)).toEqual(["ext1", "ext2"]);
-    expect(frameSet.outerFrames.every((frame) => frame.previousIndex === 0 && frame.nextIndex === 1)).toBe(true);
+  test("extrapolation 10 retains the previously specified virtual F-numbers and scales", () => {
+    const inputs = Array.from({ length: 7 }, (_, i) => 2 * 2 ** (i / 6));
+    const frames = buildStfFrameSet(inputs, 1, "extrapolation-10");
+    const ext10 = frames.outerFrames[9];
+    expect(ext10.variant).toBe("ext1-10");
+    expect(ext10.fNumber).toBeCloseTo(2 * 2 ** (-10 / 12), 12);
+    expect(ext10.openingFlowScale).toBeCloseTo(
+      ((1 / ext10.fNumber) - (1 / inputs[0])) / ((1 / inputs[0]) - (1 / inputs[1])), 12);
+    expect(frames.allWeights).toHaveLength(23);
   });
 
-  test("invalid or duplicated F-numbers also fail in extrapolation mode", () => {
-    expect(() => buildStfFrameSet([2, 2], 4, "interpolation-extrapolation")).toThrow("distinct");
-    expect(() => buildStfFrameSet([null, 2], 4, "interpolation-extrapolation")).toThrow("valid EXIF");
-    expect(() => buildStfFrameSet([1e-220, 2], 4, "interpolation-extrapolation")).toThrow("invalid extended");
+  test("invalid or duplicate apertures and unsupported q are rejected", () => {
+    expect(() => buildStfFrameSet([2, 2, 4], 0, "extrapolation-10")).toThrow("distinct");
+    expect(() => buildStfFrameSet([2, null, 4], 0, "extrapolation-10")).toThrow("valid EXIF");
+    expect(() => buildStfFrameSet([2, 4], -3, "extrapolation-10")).toThrow("Radial attenuation");
+    expect(() => buildStfFrameSet([2, 4], Number.NaN, "interpolation")).toThrow("Radial attenuation");
   });
 });

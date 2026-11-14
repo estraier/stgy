@@ -1,4 +1,3 @@
-/** Internal RPC between the Optical Flow compositor and its native Flow workers. */
 export type OpticalFlowDirectionRequest =
   | { type: "init"; requestId: number }
   | {
