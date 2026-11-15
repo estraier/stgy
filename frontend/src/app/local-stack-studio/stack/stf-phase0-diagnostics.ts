@@ -52,7 +52,8 @@ export function fingerprintStfOutputSampled(
 
 export type StfBaselineContext = {
   inputCount: number;
-  frameGeneration?: "off" | "interpolation" | "interpolation-extrapolation";
+  frameGeneration?: "off" | "interpolation" | "interpolation-extrapolation" |
+    "interpolation-extrapolation-2" | "interpolation-extrapolation-3";
   generatedFrameCount?: number;
   width: number;
   height: number;

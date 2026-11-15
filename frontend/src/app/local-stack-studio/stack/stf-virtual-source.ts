@@ -76,7 +76,7 @@ export async function appendStfVirtualSource(
       const previous = await getImage(middle.previousIndex);
       const next = await getImage(middle.nextIndex);
       const firstOuterVariant = outerFrames[0]?.variant as OpticalFlowVariant | undefined;
-      const firstOuterScale = outerFrames[0]?.openingFlowScale;
+      const firstOuterScale = outerFrames[0]?.openingInverseWarpScale;
       const retainPair = outerFrames.length > 1;
       options.progress?.(`Generating STF virtual frame ${middle.pairLabel}...`);
       const generated = await client.generate(
@@ -105,11 +105,14 @@ export async function appendStfVirtualSource(
           middle.previousIndex,
           middle.nextIndex,
           outer.variant,
-          outer.openingFlowScale,
+          outer.openingInverseWarpScale,
         );
         await mergeGeneratedFrame(accumulator, warped.pixels, outer.weight, reader.width, reader.height, reference);
       }
       if (retainPair) client.releaseRetained();
+      // Neighboring aperture pairs reuse only the next real image. Evict the
+      // completed image to avoid retaining every full-size RGB16 input in RAM.
+      imageCache.delete(middle.previousIndex);
     }
   } finally {
     client.terminate();

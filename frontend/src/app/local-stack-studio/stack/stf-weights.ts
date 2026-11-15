@@ -1,4 +1,4 @@
-export const DEFAULT_STF_RADIAL_ATTENUATION = 0;
+export const DEFAULT_STF_RADIAL_ATTENUATION = 1;
 
 /**
  * Builds STF blend weights from aperture-derived circle-of-confusion radii.

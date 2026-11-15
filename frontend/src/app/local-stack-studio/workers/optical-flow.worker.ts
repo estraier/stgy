@@ -180,7 +180,7 @@ import type {
 
   // Only one retained pair per outer Worker. The controller processes its
   // extra opening-side frames serially, so no additional full-size outputs
-  // or repeated native Farneback runs are needed for ext1-2/ext1-3.
+  // or repeated native Farneback runs are needed for ext1-2 through ext1-10.
   let retainedPair: {
     previousImageId: number; nextImageId: number;
     previous: Uint16Array; next: Uint16Array;
@@ -367,6 +367,9 @@ import type {
     // Opening-side extrapolation stays on the existing simple path, but the
     // multiplier is now derived from the virtual F-number outside the worker.
     const openingStep = variant === "ext1" ? 1 : variant.startsWith("ext1-") ? Number(variant.slice(5)) : 0;
+    if (openingStep && (!Number.isInteger(openingStep) || openingStep < 1 || openingStep > 10)) {
+      throw new Error("STF Optical Flow received an unsupported opening extrapolation step.");
+    }
     const defaultScale = openingStep ? openingStep * 0.5 : variant === "ext2" ? 1.5 : 0.5;
     const resolvedScale = variantScale === undefined ? defaultScale : variantScale;
     if (!Number.isFinite(resolvedScale) || resolvedScale <= 0) {
@@ -474,7 +477,7 @@ import type {
   }
 
   function describeVariant(variant: OpticalFlowVariant): string {
-    if (variant === "ext1" || variant === "ext1-2" || variant === "ext1-3") return `${variant} extrapolated`;
+    if (variant === "ext1" || variant.startsWith("ext1-")) return `${variant} extrapolated`;
     if (variant === "ext2") return "ext2 extrapolated";
     return "midpoint";
   }

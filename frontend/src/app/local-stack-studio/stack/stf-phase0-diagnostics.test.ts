@@ -72,9 +72,9 @@ describe("STF Phase 0 reference invariants (before Frame generation)", () => {
     }
   });
 
-  test("pins W=4 7-shot real-frame weights and minimal-F-number reference", () => {
+  test("pins the historical W=4 (current q=0) 7-shot real-frame weights and minimal-F-number reference", () => {
     const fNumbers = Array.from({ length: 7 }, (_, i) => 2 * 2 ** (i / 6));
-    const weights = buildStfApertureWeights(fNumbers, 4);
+    const weights = buildStfApertureWeights(fNumbers, 0);
     expect(weights).not.toBeNull();
     const expected = [
       0.21572685086771282, 0.21572685086771282, 0.1712225150025971,

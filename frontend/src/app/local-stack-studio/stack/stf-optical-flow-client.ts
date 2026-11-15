@@ -16,7 +16,9 @@ export class StfOpticalFlowClient {
   private nextRequestId = 1;
 
   constructor(onProgress?: (message: string) => void) {
-    this.worker = new Worker(new URL("/generated/local-stack-studio/optical-flow.worker.js?stf-extrap10-v1", window.location.origin));
+    const workerUrl = new URL("/generated/local-stack-studio/optical-flow.worker.js", window.location.origin);
+    workerUrl.searchParams.set("revision", "stf-opening-radius-flow-20261115-r1");
+    this.worker = new Worker(workerUrl);
     this.worker.onmessage = (event: MessageEvent<OpticalFlowWorkerResponse>) => {
       const message = event.data;
       if (!message || typeof message.requestId !== "number") return;
@@ -88,9 +90,9 @@ export class StfOpticalFlowClient {
     const result = await this.request({
       type: "interpolate",
       variant,
-      ...(Number.isFinite(variantScale) ? { variantScale } : {}),
+      ...(variantScale !== undefined ? { variantScale } : {}),
       ...(additionalVariant ? { additionalVariant } : {}),
-      ...(Number.isFinite(additionalVariantScale) ? { additionalVariantScale } : {}),
+      ...(additionalVariantScale !== undefined ? { additionalVariantScale } : {}),
       ...(retainPair ? { retainPair: true } : {}),
       width,
       height,
@@ -120,13 +122,8 @@ export class StfOpticalFlowClient {
     variant: OpticalFlowVariant,
     variantScale?: number,
   ): Promise<{ pixels: Uint16Array; warpMs: number }> {
-    const result = await this.request({
-      type: "warp-retained",
-      previousImageId,
-      nextImageId,
-      variant,
-      ...(Number.isFinite(variantScale) ? { variantScale } : {}),
-    });
+    const result = await this.request({ type: "warp-retained", previousImageId, nextImageId, variant,
+      ...(variantScale !== undefined ? { variantScale } : {}) });
     if (result.type !== "warp-result" || result.width !== width || result.height !== height) {
       throw new Error("Invalid STF retained Flow warp result");
     }

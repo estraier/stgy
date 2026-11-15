@@ -98,6 +98,7 @@ import { runLensfunCorrectionPool } from "./lensfun-pool";
 import { buildStfApertureWeights, DEFAULT_STF_RADIAL_ATTENUATION } from "./stf-weights";
 import { buildStfFrameSet } from "./stf-frame-generation";
 import { appendStfVirtualSource } from "./stf-virtual-source";
+import { selectUniqueStfInputs } from "./stf-input-selection";
 import { chooseAlignmentReferenceIndex } from "./alignment-reference";
 import { buildStfAdditionalBlurPlan, resolveStfGateExpansionMultiplier, DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS, STF_BLUR_STRENGTH_VALUES, STF_BLUR_AREA_GUARD_VALUES, STF_BLUR_RATIO_VALUES, STF_BLUR_SIGMOID_VALUES } from "./stf-additional-blur-mode";
 import {
@@ -663,7 +664,8 @@ listen(infoButton, "click", () => {
 });
 
 listen(processButton, "click", async () => {
-  const files = naturalSortFiles(Array.from(inputFiles.files || []));
+  const selectedFiles = Array.from(inputFiles.files || []);
+  let files = naturalSortFiles(selectedFiles);
   clearError();
   clearResult();
   setProcessing(true);
@@ -738,7 +740,20 @@ listen(processButton, "click", async () => {
     trace.add("Initialization", 0);
     const metadataStartedAt = performance.now();
     setProgress("Reading metadata, ICC profiles, and image sizes...");
-    const inputInfos = await readInputInfos(files);
+    // Deduplicate STF apertures in the original selection order, before
+    // Canonical conversion, alignment or filename-based processing order.
+    const metadataFiles = selectedMergeMode === "stf" && selectedFiles.length > 1
+      ? selectedFiles : files;
+    let inputInfos = await readInputInfos(metadataFiles);
+    if (selectedMergeMode === "stf" && selectedFiles.length > 1) {
+      const filtered = selectUniqueStfInputs(metadataFiles, inputInfos);
+      for (const skipped of filtered.skipped) {
+        console.info(`STF skipped duplicate EXIF F${skipped.fNumber}: ${metadataFiles[skipped.index].name}; keeping ${metadataFiles[skipped.firstIndex].name}.`);
+      }
+      const infoByFile = new Map(filtered.files.map((file, index) => [file, filtered.inputInfos[index]]));
+      files = naturalSortFiles(filtered.files);
+      inputInfos = files.map((file) => infoByFile.get(file));
+    }
     trace.add("Input metadata", performance.now() - metadataStartedAt);
     const inputStartedAt = performance.now();
     const { mergeStackMetadata } = await loadExifMetadataModule();
@@ -3141,13 +3156,6 @@ function stfGateCacheBytes(cache) {
 function canCacheStfBuffer(cache, buffer) {
   return cache && buffer && stfGateCacheBytes(cache) + buffer.byteLength <= STF_GATE_CACHE_MAX_BYTES;
 }
-function stfGateSourceKey(sessionId, alignmentPlan, matrices, inputInfos, mergePlan, width, height) {
-  return JSON.stringify(["stf-dilated-x1.3-p80-half-radius-p50over32-v1", sessionId, width, height,
-    alignmentPlan.normalizationMode, alignmentPlan.targetWidth, alignmentPlan.targetHeight,
-    matrices.map((m) => m === null ? null : Array.from(m)),
-    Array.from(mergePlan.gains), Array.from(mergePlan.scaledLogs), Array.from(mergePlan.weights),
-    inputInfos.map((info) => Number(info?.fNumber))]);
-}
 
 function stfAdditionalBlurScratchKeys(sessionId, jobIndex) {
   const prefix = `${sessionId}:${jobIndex}`;
@@ -3185,19 +3193,32 @@ async function mergeStfWithAdditionalBlur(
     import("./stf-derived-staging"),
   ]);
   algorithm.buildStfApertureGroups(fNumbers);
-  const sourceKey = stfGateSourceKey(sessionId, alignmentPlan, matrices, inputInfos, mergePlan, width, height);
-  if (!stfGateCache || stfGateCache.key !== sourceKey) {
+  // Only real-image pixels and their tone matching determine the Sobel gate.
+  // STF radial attenuation and generated frame count must not invalidate it.
+  const gateKey = algorithm.buildStfRealGateCacheKey({
+    sessionId, width, height, alignmentPlan, matrices,
+    gains: mergePlan.gains, scaledLogs: mergePlan.scaledLogs, fNumbers,
+  });
+  if (!stfGateCache || stfGateCache.key !== gateKey) {
     resetStfGateCache();
-    stfGateCache = { key: sourceKey, ratio: null, source: null, mask: null, maskRatio: null,
-      maskInfo: null, base: null, baseKey: null, expanded: null, expandedKey: null };
+    stfGateCache = { key: gateKey, ratio: null, source: null, sourceWeightsKey: null,
+      mask: null, maskRatio: null, maskInfo: null, base: null, baseKey: null,
+      expanded: null, expandedKey: null };
   }
   const cache = stfGateCache;
+  // Unlike the Sobel gate, the real-image source explicitly depends on STF weights.
+  // A generated-frame sourceOverride is complete and must always win.
+  const sourceWeightsKey = JSON.stringify(Array.from(mergePlan.weights));
+  if (cache.source && cache.sourceWeightsKey !== sourceWeightsKey) {
+    cache.source = null;
+    cache.sourceWeightsKey = null;
+  }
   const previewOnly = plan.gateOnly;
   const jobs = buildLinearMergeStripeJobs(width, height);
   const hardwareConcurrency = typeof navigator === "object"
     ? Math.max(1, Math.floor(navigator.hardwareConcurrency || 4)) : 4;
   const workerUrl = new URL("/generated/local-stack-studio/stf-additional-blur.worker.js", window.location.origin);
-  workerUrl.searchParams.set("revision", "stf-production-gate-20261110a");
+  workerUrl.searchParams.set("revision", "stf-per-image-rgb-floor-audit-20261115");
   let pool = null;
   // Avoid writing temporary Sobel arrays to IndexedDB when a bounded amount
   // of RAM is enough; large images still spill to scratch storage as before.
@@ -3234,29 +3255,30 @@ async function mergeStfWithAdditionalBlur(
     if (!cache.ratio) {
       const p = await ensurePool();
       const sampleGrid = algorithm.buildStfSampleGrid(width, height);
-      const brightnessSamples = [[], [], []];
+      // Gate normalization uses independent RGB P50/64 floors for each REAL input.
+      // The Worker returns image-major RGB samples, not a single interleaved image.
+      const brightnessSamples = Array.from({ length: inputInfos.length },
+        () => [[], [], []] as [number[], number[], number[]]);
       setProgress(`STF sampling RGB brightness 0/${jobs.length}...`);
       await p.sampleBrightnessStripes(jobs, sampleGrid, (_job, samples, completed, total) => {
-        if (samples.length % 3 !== 0) throw new Error("STF Worker returned invalid brightness samples.");
-        for (let i = 0; i < samples.length; i += 3) {
-          brightnessSamples[0].push(samples[i]);
-          brightnessSamples[1].push(samples[i + 1]);
-          brightnessSamples[2].push(samples[i + 2]);
-        }
+        algorithm.appendStfPerImageChannelSamplesFromPacked(brightnessSamples, samples);
         setProgress(`STF sampling RGB brightness ${completed}/${total}...`);
       });
-      const floors = algorithm.deriveStfRelativeChannelFloorsFromSamples(brightnessSamples);
+      const floors = algorithm.deriveStfPerImageChannelFloorsFromSamples(brightnessSamples);
       await p.configureRelativeChannelFloors(floors);
 
       // Defer opening scratch storage until a stripe exceeds the RAM budget.
       scratchSessionId = createStfAdditionalBlurScratchSessionId();
       const groupCount = p.ready.groupCount;
       const sharpnessSamples = [];
-      if (!previewOnly) source = new Float32Array(width * height * 3);
+      // Never synthesize a second real-only source when virtual frames have
+      // already been merged into the complete sourceOverride.
+      const includeSource = !previewOnly && !sourceOverride;
+      if (includeSource) source = new Float32Array(width * height * 3);
       setProgress(`STF analyzing Sobel sharpness 0/${jobs.length}...`);
-      await p.runAnalysisJobs(jobs, !previewOnly, async (job, result, completed, total) => {
+      await p.runAnalysisJobs(jobs, includeSource, async (job, result, completed, total) => {
         const pixels = width * job.height;
-        if (result.linear.length !== (previewOnly ? 0 : pixels * 3) || result.fineLogSum.length !== pixels ||
+        if (result.linear.length !== (includeSource ? pixels * 3 : 0) || result.fineLogSum.length !== pixels ||
             result.fineZero.length !== pixels || result.coarseGroups.length !== pixels * groupCount ||
             result.groupCount !== groupCount) {
           throw new Error("STF Additional blur Worker returned invalid analysis geometry.");
@@ -3315,9 +3337,14 @@ async function mergeStfWithAdditionalBlur(
       // Store large full-resolution buffers only within the cache budget;
       // oversized maps remain local to this Process and are released after it.
       if (canCacheStfBuffer(cache, activeRatio)) cache.ratio = activeRatio;
-      if (source && cache.ratio && canCacheStfBuffer(cache, source)) cache.source = source;
+      if (source && cache.ratio && canCacheStfBuffer(cache, source)) {
+        cache.source = source;
+        cache.sourceWeightsKey = sourceWeightsKey;
+      }
     } else {
-      if (!plan.gateOnly && cache.source) source = cache.source;
+      if (!plan.gateOnly && !sourceOverride && cache.sourceWeightsKey === sourceWeightsKey && cache.source) {
+        source = cache.source;
+      }
     }
 
     infoTrace?.add("STF sharpness analysis", performance.now() - sharpnessStartedAt, "Merge");
@@ -3388,7 +3415,12 @@ async function mergeStfWithAdditionalBlur(
     // It does not compute the source merge or apply the Gaussian blur.
     if (plan.gateOnly) return finalizeStfBasicGate(expanded, width, height, outputColorSpace);
     const blurStartedAt = performance.now();
-    if (!source && sourceOverride) {
+    if (sourceOverride) {
+      if (sourceOverride.length !== width * height * 3) {
+        throw new Error("STF virtual blur source dimensions are invalid.");
+      }
+      // Generated frames contribute to the final merge. This must take priority
+      // over both the real-only analysis output and any cached source.
       source = sourceOverride;
     }
     if (!source) {
@@ -3396,7 +3428,10 @@ async function mergeStfWithAdditionalBlur(
       // Re-merging is much cheaper than Sobel analysis and avoids persisting
       // 240MB of linear RGB for 20MP images just to support option switching.
       source = await mergeLinearFromWorkerPool(sessionId, reader, alignmentPlan, matrices, mergePlan, width, height);
-      if (cache.ratio && canCacheStfBuffer(cache, source)) cache.source = source;
+      if (cache.ratio && canCacheStfBuffer(cache, source)) {
+        cache.source = source;
+        cache.sourceWeightsKey = sourceWeightsKey;
+      }
     }
     const p = await ensurePool();
     const blurred = new Float32Array(source.length);

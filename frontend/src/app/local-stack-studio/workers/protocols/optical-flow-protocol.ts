@@ -1,4 +1,5 @@
-export type OpticalFlowVariant = "mid" | "ext1" | "ext1-2" | "ext1-3" | "ext1-4" | "ext1-5" | "ext1-6" | "ext1-7" | "ext1-8" | "ext1-9" | "ext1-10" | "ext2";
+export type OpticalFlowOpeningVariant = "ext1" | `ext1-${2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10}`;
+export type OpticalFlowVariant = "mid" | OpticalFlowOpeningVariant | "ext2";
 
 export type OpticalFlowWorkerInterpolateRequest = {
   type: "interpolate";

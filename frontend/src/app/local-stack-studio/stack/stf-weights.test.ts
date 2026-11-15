@@ -14,9 +14,9 @@ function computeProfile(progress: number, radialAttenuation = DEFAULT_STF_RADIAL
 }
 
 describe("STF aperture weights", () => {
-  test("uses the default q=0 profile with a minimax outer edge for a 7-shot 1/3EV bracket", () => {
+  test("keeps the q=0 profile with a minimax outer edge for a 7-shot 1/3EV bracket", () => {
     const fNumbers = Array.from({ length: 7 }, (_, index) => 2 * 2 ** (index / 6));
-    const weights = buildStfApertureWeights(fNumbers);
+    const weights = buildStfApertureWeights(fNumbers, 0);
     expect(weights).not.toBeNull();
     if (!weights) return;
 
@@ -38,7 +38,7 @@ describe("STF aperture weights", () => {
     const radii = fNumbers.map((fNumber) => 1 / fNumber);
     const radiusSpan = radii[0] - radii[radii.length - 1];
     const profileValues = radii.map((radius) =>
-      computeProfile((radii[0] - radius) / radiusSpan),
+      computeProfile((radii[0] - radius) / radiusSpan, 0),
     );
     const profileSteps = profileValues.slice(1).map((value, index) => value - profileValues[index]);
     const maxInteriorStep = Math.max(...profileSteps);
@@ -78,8 +78,8 @@ describe("STF aperture weights", () => {
     expect(Math.max(...weights.slice(1))).toBeCloseTo(weights[0], 12);
   });
 
-  test("uses q=0 as the default radial attenuation", () => {
-    expect(DEFAULT_STF_RADIAL_ATTENUATION).toBe(0);
+  test("uses q=1 (linear) as the default radial attenuation", () => {
+    expect(DEFAULT_STF_RADIAL_ATTENUATION).toBe(1);
     const fNumbers = Array.from({ length: 7 }, (_, index) => 2 * 2 ** (index / 6));
     const implicit = buildStfApertureWeights(fNumbers);
     const explicit = buildStfApertureWeights(fNumbers, DEFAULT_STF_RADIAL_ATTENUATION);
@@ -91,7 +91,7 @@ describe("STF aperture weights", () => {
 
   test("keeps q=1 available as an explicit selection", () => {
     const fNumbers = Array.from({ length: 7 }, (_, index) => 2 * 2 ** (index / 6));
-    const q0 = buildStfApertureWeights(fNumbers);
+    const q0 = buildStfApertureWeights(fNumbers, 0);
     const q1 = buildStfApertureWeights(fNumbers, 1);
     expect(q0).not.toBeNull();
     expect(q1).not.toBeNull();

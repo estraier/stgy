@@ -112,6 +112,23 @@ describe("STF generated-frame radial minimax luminance weights", () => {
     }
   });
 
+  test("forward radius expansion and inverse sampling use distinct geometrical multipliers", () => {
+    const f0 = 2;
+    const f1 = 2 * 2 ** (1 / 6);
+    const frames = buildStfFrameSet([f0, f1], 1, "extrapolation-10");
+    expect(frames.outerFrames).toHaveLength(10);
+    for (const outer of frames.outerFrames) {
+      const radiusExpansion = f0 / outer.fNumber;
+      // Radius-domain extrapolation preserves the original output geometry.
+      expect(outer.openingFlowScale).toBeCloseTo(
+        (radiusExpansion - 1) / (1 - f0 / f1), 12);
+      // The Worker samples the source (inverse warp), which must scale by F_ext/F0.
+      const inverseSamplingRatio = 1 - outer.openingInverseWarpScale * (1 - f0 / f1);
+      expect(inverseSamplingRatio).toBeCloseTo(1 / radiusExpansion, 12);
+      expect(outer.openingInverseWarpScale).toBeGreaterThan(0);
+    }
+  });
+
   test("extrapolation 10 retains the previously specified virtual F-numbers and scales", () => {
     const inputs = Array.from({ length: 7 }, (_, i) => 2 * 2 ** (i / 6));
     const frames = buildStfFrameSet(inputs, 1, "extrapolation-10");

@@ -12,7 +12,12 @@ export type StfMiddleFrame = {
 
 export type StfOuterFrame = StfMiddleFrame & {
   variant: "ext1" | "ext1-2" | "ext1-3" | "ext1-4" | "ext1-5" | "ext1-6" | "ext1-7" | "ext1-8" | "ext1-9" | "ext1-10";
+  // Outward radial displacement multiplier (for diagnostics/profile geometry).
   openingFlowScale: number;
+  // Inverse image sampling uses a different scale: for a radial Flow field,
+  // x_source = x_target * F_virtual/F_real. Never pass openingFlowScale as
+  // a backward-sampling multiplier (it over-expands large extrapolations).
+  openingInverseWarpScale: number;
 };
 
 export type StfFrameSet = {
@@ -81,6 +86,7 @@ export function buildStfFrameSet(
     for (let step = 1; step <= openingCount; step += 1) {
       const outerFNumber = step === 1 ? first / Math.sqrt(second / first) : first * openingRatio ** (step / 2);
       const openingFlowScale = ((1 / outerFNumber) - (1 / first)) / openingRadiusDelta;
+      const openingInverseWarpScale = (1 - outerFNumber / first) / (1 - first / second);
       outerFrames.push({
         previousIndex: sorted[0].index,
         nextIndex: sorted[1].index,
@@ -89,11 +95,13 @@ export function buildStfFrameSet(
         pairLabel: `first-ext${step}`,
         variant: (step === 1 ? "ext1" : `ext1-${step}`) as StfOuterFrame["variant"],
         openingFlowScale,
+        openingInverseWarpScale,
       });
     }
   }
 
-  if (outerFrames.some((frame) => !(Number.isFinite(frame.fNumber) && frame.fNumber > 0 && Number.isFinite(frame.openingFlowScale) && frame.openingFlowScale > 0))) {
+  if (outerFrames.some((frame) => !(Number.isFinite(frame.fNumber) && frame.fNumber > 0 && Number.isFinite(frame.openingFlowScale) && frame.openingFlowScale > 0 &&
+      Number.isFinite(frame.openingInverseWarpScale) && frame.openingInverseWarpScale > 0))) {
     throw new Error("STF extrapolation produced an invalid extended EXIF F-number.");
   }
 
