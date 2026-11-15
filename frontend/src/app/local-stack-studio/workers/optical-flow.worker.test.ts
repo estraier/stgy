@@ -374,6 +374,24 @@ test("STF inverse-warp extrapolation expands a synthetic CoC at the geometricall
       results.push(measured);
     }
     expect(results).toEqual([42, 45, 48, 72]);
+    // The closing half-step uses the *last* real RGB16 frame with the
+    // backward (last -> previous) Flow; its radius must shrink, not expand.
+    const closingF = nextF * Math.sqrt(nextF / firstF);
+    const closingInverseScale = (closingF / nextF - 1) / (nextF / firstF - 1);
+    await scope.onmessage({ data: { type: "warp-retained", requestId: 340,
+      previousImageId: 8, nextImageId: 9, variant: "ext2",
+      variantScale: closingInverseScale,
+    } } as MessageEvent<OpticalFlowWorkerRequest>);
+    const closingResult = responseMessages.find((entry) =>
+      entry.type === "warp-result" && entry.requestId === 340);
+    expect(closingResult?.type).toBe("warp-result");
+    if (closingResult?.type === "warp-result") {
+      const actualClosingRadius = measuredRadius(new Uint16Array(closingResult.gamma2Buffer));
+      const expectedClosingRadius = radius * firstF / closingF;
+      expect(Math.abs(actualClosingRadius - expectedClosingRadius)).toBeLessThanOrEqual(1.5);
+      expect(actualClosingRadius).toBeLessThan(radius * firstF / nextF);
+    }
+    // All opening and closing warps reuse the one already computed real pair.
     expect(directionComputations).toBe(2);
   } finally {
     for (const [key, descriptor] of [

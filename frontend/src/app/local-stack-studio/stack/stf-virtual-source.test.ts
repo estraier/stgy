@@ -14,16 +14,21 @@ describe("STF virtual gamma-2 RGB16 numerical domain", () => {
   });
 });
 
-test("extrapolation attaches opening frames only to the first real aperture pair", () => {
+test("extrapolation attaches opening frames to first pair and one closing to last", () => {
   const real = [2.8, 4, 3.5, 3.2, 2.5, 2.2, 2];
   const frameSet = buildStfFrameSet(real, 1, "extrapolation-2");
   expect(frameSet.middleFrames).toHaveLength(6);
-  expect(frameSet.outerFrames.map((frame) => frame.variant)).toEqual(["ext1", "ext1-2"]);
+  expect(frameSet.outerFrames.map((frame) => frame.variant)).toEqual(["ext1", "ext1-2", "ext2"]);
   const firstPair = frameSet.middleFrames[0];
-  expect(frameSet.outerFrames.every((outer) =>
+  expect(frameSet.outerFrames.filter((outer) => outer.variant !== "ext2").every((outer) =>
     outer.previousIndex === firstPair.previousIndex && outer.nextIndex === firstPair.nextIndex,
   )).toBe(true);
-  for (const otherPair of frameSet.middleFrames.slice(1)) {
+  const lastPair = frameSet.middleFrames[frameSet.middleFrames.length - 1];
+  const closing = frameSet.outerFrames.filter((outer) => outer.variant === "ext2");
+  expect(closing).toHaveLength(1);
+  expect(closing[0].previousIndex).toBe(lastPair.previousIndex);
+  expect(closing[0].nextIndex).toBe(lastPair.nextIndex);
+  for (const otherPair of frameSet.middleFrames.slice(1, -1)) {
     expect(frameSet.outerFrames.filter((outer) =>
       outer.previousIndex === otherPair.previousIndex && outer.nextIndex === otherPair.nextIndex,
     )).toHaveLength(0);
@@ -32,19 +37,23 @@ test("extrapolation attaches opening frames only to the first real aperture pair
   expect(interpolation.outerFrames).toHaveLength(0);
 });
 
-test.each([1, 3, 10])("extrapolation-%i generates only opening-side frames on the first pair", (count) => {
+test.each([1, 3, 10])("extrapolation-%i generates N opening and one closing frame", (count) => {
   const frameSet = buildStfFrameSet([2, 2.2, 2.5, 2.8, 3.2, 3.5, 4], 1,
     `extrapolation-${count}` as "extrapolation-1" | "extrapolation-3" | "extrapolation-10");
   expect(frameSet.middleFrames).toHaveLength(6);
-  expect(frameSet.outerFrames).toHaveLength(count);
-  expect(frameSet.outerFrames.map((frame) => frame.variant)).toEqual(
-    Array.from({ length: count }, (_, i) => i === 0 ? "ext1" : `ext1-${i + 1}`),
-  );
+  expect(frameSet.outerFrames).toHaveLength(count + 1);
+  expect(frameSet.outerFrames.map((frame) => frame.variant)).toEqual([
+    ...Array.from({ length: count }, (_, i) => i === 0 ? "ext1" : `ext1-${i + 1}`), "ext2",
+  ]);
   const firstPair = frameSet.middleFrames[0];
-  expect(frameSet.outerFrames.every((outer) =>
+  const lastPair = frameSet.middleFrames.at(-1)!;
+  expect(frameSet.outerFrames.slice(0, -1).every((outer) =>
     outer.previousIndex === firstPair.previousIndex && outer.nextIndex === firstPair.nextIndex,
   )).toBe(true);
-  expect(frameSet.allWeights).toHaveLength(7 + 6 + count);
+  expect(frameSet.outerFrames.at(-1)).toMatchObject({
+    variant: "ext2", previousIndex: lastPair.previousIndex, nextIndex: lastPair.nextIndex,
+  });
+  expect(frameSet.allWeights).toHaveLength(7 + 6 + count + 1);
   expect(Array.from(frameSet.allWeights).reduce((sum, weight) => sum + weight, 0)).toBeCloseTo(1, 6);
 });
 
@@ -82,7 +91,7 @@ function virtualHarness(persist = true) {
         const hit = Boolean(persist && persistFlow && persistedFlowKeys.has(key));
         if (!hit) flowComputations++;
         if (persist && persistFlow) persistedFlowKeys.add(key);
-        const pixelsForVariant = (v: string) => testPixels(v === "mid" ? 24000 : v === "ext1" ? 22500 : 22000);
+        const pixelsForVariant = (v: string) => testPixels(v === "mid" ? 24000 : v === "ext1" ? 22500 : v === "ext2" ? 26000 : 22000);
         return {
           pixels: pixelsForVariant(variant),
           ...(additionalVariant ? { additionalPixels: pixelsForVariant(additionalVariant) } : {}),
@@ -91,7 +100,7 @@ function virtualHarness(persist = true) {
       },
       warpRetained: async (_width: number, _height: number, _previous: number, _next: number, variant: string) => {
         warps++;
-        return { pixels: testPixels(variant === "ext1" ? 22500 : 22000), warpMs: 0 };
+        return { pixels: testPixels(variant === "ext1" ? 22500 : variant === "ext2" ? 26000 : 22000), warpMs: 0 };
       },
       releaseRetained: () => {}, terminate: () => { active--; },
     };
@@ -123,10 +132,10 @@ function virtualHarness(persist = true) {
 test("cached Flow skips Farneback across q changes, but still warps and accumulates RGB16", async () => {
   const h = virtualHarness();
   const first = await h.run(1, "extrapolation-2");
-  expect(h.counts).toEqual({ reads: 2, flowComputations: 1, generations: 1, warps: 1, active: 0 });
+  expect(h.counts).toEqual({ reads: 2, flowComputations: 1, generations: 1, warps: 2, active: 0 });
   const again = await h.run(1, "extrapolation-2");
   expect(Array.from(again)).toEqual(Array.from(first));
-  expect(h.counts).toEqual({ reads: 4, flowComputations: 1, generations: 2, warps: 2, active: 0 });
+  expect(h.counts).toEqual({ reads: 4, flowComputations: 1, generations: 2, warps: 4, active: 0 });
   const changedQ = await h.run(0, "extrapolation-2");
   expect(h.counts.flowComputations).toBe(1);
   expect(h.counts.generations).toBe(3);
@@ -139,7 +148,7 @@ test("extension 2 to 10 reuses the same real-pair Flow; all generated RGB16 are 
   const larger = await h.run(1, "extrapolation-10");
   expect(h.counts.flowComputations).toBe(1);
   expect(h.counts.generations).toBe(2);
-  expect(h.counts.warps).toBe(1 + 9);
+  expect(h.counts.warps).toBe(2 + 10);
   const uncached = virtualHarness(false);
   const comparison = await uncached.run(1, "extrapolation-10");
   expect(Array.from(larger)).toEqual(Array.from(comparison));
@@ -152,4 +161,57 @@ test("without IndexedDB a miss recomputes only once per real pair and preserves 
   const again = await h.run(1, "extrapolation-2");
   expect(h.counts.flowComputations).toBe(2);
   expect(Array.from(again)).toEqual(Array.from(first));
+});
+
+
+test("closing extrapolation uses last real pair once while opening ext1..N reuse the first", async () => {
+  const values = [23000, 25000, 27000];
+  const actual = values.map(testPixels);
+  const seen: string[] = [];
+  const loaded: number[] = [];
+  const reference = computeCanonicalToneStatisticsFromStoredRgb16(actual[0], 2, 2);
+  const fake = () => ({
+    warmup: async () => { throw new Error("Unexpected eager Flow warmup"); },
+    generate: async (_w: number, _h: number, previousId: number, nextId: number,
+      _a: Uint16Array, _b: Uint16Array, variant: string, _scale: number | undefined,
+      additionalVariant?: string, _extraScale?: number, retainPair?: boolean) => {
+      seen.push(`generate:${previousId}-${nextId}:${variant}:${additionalVariant}:${Boolean(retainPair)}`);
+      return { pixels: testPixels(24000),
+        ...(additionalVariant ? { additionalPixels: testPixels(additionalVariant === "ext2" ? 26000 : 22000) } : {}),
+        performance: { flowCacheHit: false, flowCacheSaved: true, flowCacheReadMs: 0, flowWallMs: 0 },
+      };
+    },
+    warpRetained: async (_w: number, _h: number, previousId: number, nextId: number, variant: string) => {
+      seen.push(`warp:${previousId}-${nextId}:${variant}`);
+      return { pixels: testPixels(21000), warpMs: 0 };
+    },
+    releaseRetained: () => { seen.push("release"); },
+    terminate: () => { seen.push("terminate"); },
+  });
+  const originalInfo = console.info;
+  const infoSpy = jest.spyOn(console, "info").mockImplementation((...args: unknown[]) => {
+    if (typeof args[0] === "string" && args[0].startsWith("[LSS STF] Flow cache:")) return;
+    originalInfo.apply(console, args);
+  });
+  try {
+    const accumulator = new Float32Array(12);
+    await appendStfVirtualSource(accumulator, {
+      frameSet: buildStfFrameSet([2, 2.5, 4], 1, "extrapolation-3"),
+      sessionId: "session-a", sessionCreatedAt: 1_700_000_000_000, alignmentKey: "align-1",
+      reader: { width: 2, height: 2,
+        readGamma2Image: async (index: number) => { loaded.push(index); return actual[index]; },
+      } as never,
+      canonicalImages: [{ toneStatistics: reference }] as never,
+      toneReferenceIndex: 0,
+      createFlowClient: fake as never,
+    });
+    expect(loaded).toEqual([0, 1, 2]);
+    expect(seen).toEqual([
+      "generate:0-1:mid:ext1:true", "warp:0-1:ext1-2", "warp:0-1:ext1-3", "release",
+      "generate:1-2:mid:ext2:false", "terminate",
+    ]);
+    expect(accumulator[0]).toBeGreaterThan(0);
+  } finally {
+    infoSpy.mockRestore();
+  }
 });

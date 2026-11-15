@@ -180,8 +180,8 @@ import type {
   }
 
   // Only one retained pair per outer Worker. The controller processes its
-  // extra opening-side frames serially, so no additional full-size outputs
-  // or repeated native Farneback runs are needed for ext1-2 through ext1-10.
+  // extra opening-side frames serially, reusing the same bidirectional Flow.
+  // For a two-real-input session, the closing-side ext2 also uses this pair.
   let retainedPair: {
     previousImageId: number; nextImageId: number;
     previous: Uint16Array; next: Uint16Array;
@@ -392,19 +392,19 @@ import type {
     const scaleY = height / flowHeight;
     const edgeX = Math.max(0, flowWidth - 1);
     const edgeY = Math.max(0, flowHeight - 1);
-    // Opening-side extrapolation stays on the existing simple path, but the
-    // multiplier is now derived from the virtual F-number outside the worker.
+    // Opening-side and closing-side variants each use an inverse-warp
+    // multiplier derived from the virtual F-number outside the Worker.
     const openingStep = variant === "ext1" ? 1 : variant.startsWith("ext1-") ? Number(variant.slice(5)) : 0;
     if (openingStep && (!Number.isInteger(openingStep) || openingStep < 1 || openingStep > 10)) {
       throw new Error("STF Optical Flow received an unsupported opening extrapolation step.");
     }
-    const defaultScale = openingStep ? openingStep * 0.5 : variant === "ext2" ? 1.5 : 0.5;
+    const defaultScale = openingStep ? openingStep * 0.5 : 0.5;
     const resolvedScale = variantScale === undefined ? defaultScale : variantScale;
     if (!Number.isFinite(resolvedScale) || resolvedScale <= 0) {
       throw new Error("STF Optical Flow extrapolation scale must be finite and positive.");
     }
-    const previousFactor = openingStep ? -resolvedScale : variant === "ext2" ? resolvedScale : 0.5;
-    const nextFactor = openingStep ? 1 + resolvedScale : variant === "ext2" ? -0.5 : 0.5;
+    const previousFactor = openingStep ? -resolvedScale : 0.5;
+    const nextFactor = openingStep ? 1 + resolvedScale : variant === "ext2" ? -resolvedScale : 0.5;
     const usePrevious = variant !== "ext2";
     const useNext = !openingStep;
 

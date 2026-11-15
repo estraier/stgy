@@ -10,15 +10,22 @@ export type StfMiddleFrame = {
   pairLabel: string;
 };
 
-export type StfOuterFrame = StfMiddleFrame & {
-  variant: "ext1" | "ext1-2" | "ext1-3" | "ext1-4" | "ext1-5" | "ext1-6" | "ext1-7" | "ext1-8" | "ext1-9" | "ext1-10";
-  // Outward radial displacement multiplier (for diagnostics/profile geometry).
-  openingFlowScale: number;
-  // Inverse image sampling uses a different scale: for a radial Flow field,
-  // x_source = x_target * F_virtual/F_real. Never pass openingFlowScale as
-  // a backward-sampling multiplier (it over-expands large extrapolations).
-  openingInverseWarpScale: number;
-};
+export type StfOuterFrame = StfMiddleFrame & (
+  | {
+      variant: "ext1" | "ext1-2" | "ext1-3" | "ext1-4" | "ext1-5" | "ext1-6" |
+        "ext1-7" | "ext1-8" | "ext1-9" | "ext1-10";
+      // Outward radius-domain displacement, used only for geometry/diagnostics.
+      openingFlowScale: number;
+      // Reverse sampling scale, not the forward radius-domain displacement.
+      inverseWarpScale: number;
+    }
+  | {
+      // One half-step beyond the smallest CoC on the maximum-F side.
+      variant: "ext2";
+      // Reverse sampling of the max-F real frame along backward (last->prev) Flow.
+      inverseWarpScale: number;
+    }
+);
 
 export type StfFrameSet = {
   mode: StfFrameGenerationMode;
@@ -95,13 +102,33 @@ export function buildStfFrameSet(
         pairLabel: `first-ext${step}`,
         variant: (step === 1 ? "ext1" : `ext1-${step}`) as StfOuterFrame["variant"],
         openingFlowScale,
-        openingInverseWarpScale,
+        inverseWarpScale: openingInverseWarpScale,
       });
     }
+    // Retain the original single closing-side half-step for every extrapolation
+    // mode, even when openingCount > 1. Its Flow comes from the last real pair.
+    const previous = sorted[sorted.length - 2].fNumber;
+    const last = sorted[sorted.length - 1].fNumber;
+    const closingFNumber = last * Math.sqrt(last / previous);
+    // The backward Flow (last -> previous) is an outward displacement. To
+    // synthesize a smaller disc from the last real frame, inverse-sample at
+    // x_source / x_target = F_closing/F_last, rather than treating a forward
+    // radius multiplier as the sampling scale.
+    const closingInverseWarpScale = (closingFNumber / last - 1) / (last / previous - 1);
+    outerFrames.push({
+      previousIndex: sorted[sorted.length - 2].index,
+      nextIndex: sorted[sorted.length - 1].index,
+      fNumber: closingFNumber,
+      weight: 0,
+      pairLabel: "last-ext2",
+      variant: "ext2",
+      inverseWarpScale: closingInverseWarpScale,
+    });
   }
 
-  if (outerFrames.some((frame) => !(Number.isFinite(frame.fNumber) && frame.fNumber > 0 && Number.isFinite(frame.openingFlowScale) && frame.openingFlowScale > 0 &&
-      Number.isFinite(frame.openingInverseWarpScale) && frame.openingInverseWarpScale > 0))) {
+  if (outerFrames.some((frame) => !(Number.isFinite(frame.fNumber) && frame.fNumber > 0 &&
+      Number.isFinite(frame.inverseWarpScale) && frame.inverseWarpScale > 0 &&
+      (frame.variant === "ext2" || (Number.isFinite(frame.openingFlowScale) && frame.openingFlowScale > 0))))) {
     throw new Error("STF extrapolation produced an invalid extended EXIF F-number.");
   }
 
@@ -123,7 +150,8 @@ export function buildStfFrameSet(
     ...(fNumbers as number[]),
     ...middleFrames.map((frame) =>
       (Number(fNumbers[frame.previousIndex]) + Number(fNumbers[frame.nextIndex])) / 2),
-    ...outerFrames.map((frame) => Number(fNumbers[frame.previousIndex])),
+    ...outerFrames.map((frame) => Number(fNumbers[
+      frame.variant === "ext2" ? frame.nextIndex : frame.previousIndex])),
   ];
   const byIncreasingRadius = allFNumbers
     .map((fNumber, index) => ({ index, radius: 1 / fNumber }))

@@ -100,7 +100,7 @@ export async function appendStfVirtualSource(
         const generated = await client.generate(
           reader.width, reader.height, middle.previousIndex, middle.nextIndex,
           previous, next, "mid", undefined,
-          firstOuter?.variant, firstOuter?.openingInverseWarpScale,
+          firstOuter?.variant, firstOuter?.inverseWarpScale,
           outerFrames.length > 1, true,
           options.sessionId, options.sessionCreatedAt, options.alignmentKey,
         );
@@ -109,11 +109,12 @@ export async function appendStfVirtualSource(
         if (generated.performance.flowCacheSaved) flowCacheWrites++;
         cacheReadMs += generated.performance.flowCacheReadMs ?? 0;
         flowComputeMs += generated.performance.flowWallMs ?? 0;
-        // Keep the original mid -> opening-1 -> opening-N summation order.
+        // Keep the original midpoint -> opening-1 -> opening-N order; on
+      // the final real pair also append its single closing-side frame.
         await mergeGeneratedFrame(accumulator, generated.pixels, middle.weight,
           reader.width, reader.height, reference);
         if (firstOuter) {
-          if (!generated.additionalPixels) throw new Error("STF Flow did not return the requested opening frame.");
+          if (!generated.additionalPixels) throw new Error("STF Flow did not return the requested outer frame.");
           await mergeGeneratedFrame(accumulator, generated.additionalPixels, firstOuter.weight,
             reader.width, reader.height, reference);
         }
@@ -123,7 +124,7 @@ export async function appendStfVirtualSource(
           options.progress?.(`Generating STF virtual frame ${outer.pairLabel}...`);
           const warped = await client.warpRetained(
             reader.width, reader.height, middle.previousIndex, middle.nextIndex,
-            outer.variant, outer.openingInverseWarpScale,
+            outer.variant, outer.inverseWarpScale,
           );
           await mergeGeneratedFrame(accumulator, warped.pixels, outer.weight,
             reader.width, reader.height, reference);
