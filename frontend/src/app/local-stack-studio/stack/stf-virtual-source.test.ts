@@ -1,6 +1,7 @@
 import { decodeStfGeneratedStripe } from "./stf-virtual-source";
 import { buildStfFrameSet, STF_EXTRAPOLATION_COUNTS, type StfFrameGenerationMode } from "./stf-frame-generation";
 import { encodeStoredRgb16Channel } from "@/image/rgb16-storage";
+import { prepareStfFrameSetForTone } from "./stf-frame-density";
 
 describe("STF virtual gamma-2 RGB16 numerical domain", () => {
   test("preserves extended highlights through linear 4", () => {
@@ -69,6 +70,9 @@ function virtualHarness(persist = true) {
   const actual = [testPixels(23000), testPixels(25000)];
   const persistedFlowKeys = new Set<string>();
   const stats = computeCanonicalToneStatisticsFromStoredRgb16(actual[0], 2, 2);
+  const prepare = (q: number, mode: StfFrameGenerationMode) =>
+    prepareStfFrameSetForTone(buildStfFrameSet([2, 3], q, mode), [2, 3],
+      [{ gain: 1, scaledLog: 0 }, { gain: 1, scaledLog: 0 }], stats.p95, q);
   let reads = 0;
   let flowComputations = 0;
   let generations = 0;
@@ -114,11 +118,9 @@ function virtualHarness(persist = true) {
     });
     try {
       await appendStfVirtualSource(accumulator, {
-        frameSet: buildStfFrameSet([2, 3], q, mode),
+        frameSet: prepare(q, mode),
         sessionId: "session-a", sessionCreatedAt: 1_700_000_000_000, alignmentKey: "align-1",
         reader: reader as never,
-        canonicalImages: [{ toneStatistics: stats }] as never,
-        toneReferenceIndex: 0,
         createFlowClient: factory as never,
       });
     } finally {
@@ -196,13 +198,12 @@ test("closing extrapolation uses last real pair once while opening ext1..N reuse
   try {
     const accumulator = new Float32Array(12);
     await appendStfVirtualSource(accumulator, {
-      frameSet: buildStfFrameSet([2, 2.5, 4], 1, "extrapolation-4"),
+      frameSet: prepareStfFrameSetForTone(buildStfFrameSet([2, 2.5, 4], 1, "extrapolation-4"),
+        [2, 2.5, 4], [{gain:1, scaledLog:0}, {gain:1, scaledLog:0}, {gain:1, scaledLog:0}], reference.p95, 1),
       sessionId: "session-a", sessionCreatedAt: 1_700_000_000_000, alignmentKey: "align-1",
       reader: { width: 2, height: 2,
         readGamma2Image: async (index: number) => { loaded.push(index); return actual[index]; },
       } as never,
-      canonicalImages: [{ toneStatistics: reference }] as never,
-      toneReferenceIndex: 0,
       createFlowClient: fake as never,
     });
     expect(loaded).toEqual([0, 1, 2]);
@@ -214,4 +215,52 @@ test("closing extrapolation uses last real pair once while opening ext1..N reuse
   } finally {
     infoSpy.mockRestore();
   }
+});
+
+// Pixel-level contract: a constant disc warped without radiometric adjustment
+// must have precisely the same tone-corrected density assumed by the weights.
+test("prepared synthetic weights use the exact tone curves applied to gamma2 midpoint and extrapolation pixels", async () => {
+  const realF = [2, 4];
+  const realTonePlans = [{ gain: 0.9, scaledLog: -0.3 }, { gain: 1.3, scaledLog: 0.5 }];
+  const referenceP95 = 0.8;
+  const prepared = prepareStfFrameSetForTone(buildStfFrameSet(realF, 1, "extrapolation-1"),
+    realF, realTonePlans, referenceP95, 1);
+  const raw = [referenceP95 * (realF[0] / realF[1]) ** 2, referenceP95];
+  const realPixels = raw.map((v) => new Uint16Array(12).fill(encodeStoredRgb16Channel(v, "gamma20", 4)));
+  const gammaMid = new Uint16Array(12).fill(Math.round((realPixels[0][0] + realPixels[1][0]) / 2));
+  const fake = () => ({
+    warmup: async () => {},
+    generate: async (_w: number, _h: number, _prev: number, _next: number,
+      _a: Uint16Array, _b: Uint16Array, _variant: string, _scale: number | undefined,
+      additionalVariant?: string) => ({ pixels: gammaMid,
+      ...(additionalVariant ? { additionalPixels: realPixels[0] } : {}),
+      performance: { flowCacheHit: true, flowCacheSaved: false, flowCacheReadMs: 0, flowWallMs: 0 },
+    }),
+    warpRetained: async () => ({ pixels: realPixels[1], warpMs: 0 }),
+    releaseRetained: () => {}, terminate: () => {},
+  });
+  const output = new Float32Array(12);
+  const originalInfo = console.info;
+  console.info = () => {};
+  try {
+    await appendStfVirtualSource(output, {
+      frameSet: prepared,
+      sessionId: "tone-test", sessionCreatedAt: 1_700_000_000_000,
+      alignmentKey: "constant-test", reader: {
+        width: 2, height: 2, readGamma2Image: async (i: number) => realPixels[i],
+      } as never,
+      createFlowClient: fake as never,
+    });
+  } finally {
+    console.info = originalInfo;
+  }
+  const realCount = realF.length;
+  const expectedVirtualContribution = prepared.edgeDensities.slice(realCount)
+    .reduce((sum, density, i) => sum + density * prepared.allWeights[realCount + i], 0);
+  for (const sample of output) expect(sample).toBeCloseTo(expectedVirtualContribution, 3);
+  // A tone-adjusted virtual image must NOT revert to the raw/source F² density.
+  const uncorrectedVirtualContribution =
+    prepared.middleFrames[0].weight * ((Math.sqrt(raw[0]) + Math.sqrt(raw[1])) / 2) ** 2 +
+    prepared.outerFrames[0].weight * raw[0] + prepared.outerFrames[1].weight * raw[1];
+  expect(Math.abs(expectedVirtualContribution - uncorrectedVirtualContribution)).toBeGreaterThan(0.0001);
 });

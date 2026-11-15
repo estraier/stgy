@@ -1,3 +1,4 @@
+import { calculateStfWeights } from "./stf-radial-weights";
 import type { OpticalFlowOpeningVariant } from "../workers/protocols/optical-flow-protocol";
 
 export const STF_EXTRAPOLATION_COUNTS = [1, 2, 4, 8, 16, 32] as const;
@@ -182,11 +183,8 @@ export function buildStfFrameSet(
     ...middleFrames.map((frame) => frame.fNumber),
     ...outerFrames.map((frame) => frame.fNumber),
   ];
-  // All real/generated images are treated as uniform defocus discs. Specify
-  // the desired *final radial luminance*, then invert the disc contributions
-  // to obtain blend weights. q=1 is exactly linear in radius; the other q
-  // values preserve the historical logarithmic/deep-DoF/large-bokeh ordering.
-  const exponent = radialAttenuation;
+  // Initial ideal-disc model. The runtime recalculates final weights from
+  // the SAME radii and the independently propagated, tone-matched densities.
   const densityFNumbers = [
     ...realFNumbers,
     ...middleFrames.map((frame) =>
@@ -194,62 +192,17 @@ export function buildStfFrameSet(
     ...outerFrames.map((frame) => realFNumbers[
       frame.variant === "ext2" ? frame.nextIndex : frame.previousIndex]),
   ];
-
-  const byIncreasingRadius = allFNumbers
-    .map((fNumber, index) => ({ index, radius: 1 / fNumber }))
-    .sort((a, b) => a.radius - b.radius);
-  const minRadius = byIncreasingRadius[0].radius;
-  const maxRadius = byIncreasingRadius[byIncreasingRadius.length - 1].radius;
-  const logRadiusSpan = Math.log(maxRadius / minRadius);
-  if (!(Number.isFinite(logRadiusSpan) && logRadiusSpan > 0)) {
-    throw new Error("STF generated frames require distinct finite circle-of-confusion radii.");
-  }
-
-  // L_q(r) = (Rmax^q - r^q) / (Rmax^q - Rmin^q),
-  // with the logarithmic limit for q=0. Use dimensionless radii
-  // and expm1 to avoid subtracting nearly equal powers.
-  const radialLuminance = (radius: number): number => {
-    const logPosition = Math.log(radius / minRadius);
-    if (Math.abs(exponent) < 1e-12) return 1 - logPosition / logRadiusSpan;
-    return (Math.expm1(exponent * logRadiusSpan) - Math.expm1(exponent * logPosition)) /
-      Math.expm1(exponent * logRadiusSpan);
-  };
-
-  const rawWeights = new Float64Array(allFNumbers.length);
-  let rawTotal = 0;
-  let currentLuminance = 1;
-  for (let i = 0; i < byIncreasingRadius.length; i += 1) {
-    // Minimax constant approximation on each radial annulus: its luminance
-    // is the mean of the target at the two endpoints. The final annulus
-    // therefore fades to zero with half of the target's last radial drop.
-    const nextLuminance = i + 1 < byIncreasingRadius.length
-      ? (radialLuminance(byIncreasingRadius[i].radius) +
-          radialLuminance(byIncreasingRadius[i + 1].radius)) / 2
-      : 0;
-    const radialDrop = currentLuminance - nextLuminance;
-    const index = byIncreasingRadius[i].index;
-    // The source image's disc intensity is proportional to F_density².
-    // A virtual outer disc is warped without losing source brightness;
-    // a midpoint's source density remains the mean of its real F values.
-    const sourceDensity = densityFNumbers[index] ** 2;
-    const weight = radialDrop / sourceDensity;
-    if (!(Number.isFinite(weight) && weight > 0)) {
-      throw new Error("STF radial minimax weight is invalid.");
-    }
-    rawWeights[index] = weight;
-    rawTotal += weight;
-    currentLuminance = nextLuminance;
-  }
-  if (!(Number.isFinite(rawTotal) && rawTotal > 0)) {
-    throw new Error("STF radial minimax weight total is invalid.");
-  }
-  const allWeights = Float32Array.from(rawWeights, (weight) => weight / rawTotal);
-  const realWeights = allWeights.slice(0, fNumbers.length);
+  const allWeights = calculateStfWeights(allFNumbers.map((radiusFNumber, image) => ({
+    image,
+    radiusFNumber,
+    edgeDensity: densityFNumbers[image] ** 2,
+  })), radialAttenuation).weights;
+  const realWeights = allWeights.slice(0, realFNumbers.length);
   for (let i = 0; i < middleFrames.length; i += 1) {
-    middleFrames[i].weight = allWeights[fNumbers.length + i];
+    middleFrames[i].weight = allWeights[realFNumbers.length + i];
   }
   for (let i = 0; i < outerFrames.length; i += 1) {
-    outerFrames[i].weight = allWeights[fNumbers.length + middleFrames.length + i];
+    outerFrames[i].weight = allWeights[realFNumbers.length + middleFrames.length + i];
   }
 
   return { mode, realWeights, middleFrames, outerFrames, allWeights, allFNumbers };

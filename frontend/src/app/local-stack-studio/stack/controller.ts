@@ -96,8 +96,9 @@ import {
   runCanonicalInputTaskQueue,
 } from "./canonical-input-pool";
 import { runLensfunCorrectionPool } from "./lensfun-pool";
-import { buildStfApertureWeights, DEFAULT_STF_RADIAL_ATTENUATION } from "./stf-weights";
+import { DEFAULT_STF_RADIAL_ATTENUATION } from "./stf-weights";
 import { buildStfFrameSet, isStfFrameGenerationMode } from "./stf-frame-generation";
+import { prepareStfFrameSetForTone, createStfSourceTonePlans } from "./stf-frame-density";
 import { appendStfVirtualSource } from "./stf-virtual-source";
 import { buildStfSourceCacheKey, buildStfAlignmentCacheKey, prepareStfSourceForFinalRolloff,
   StfSourceCache } from "./stf-process-cache";
@@ -825,7 +826,6 @@ listen(processButton, "click", async () => {
       inputInfos,
       effectiveMergeMode,
       currentCanonicalSession.images,
-      selectedStfRadialAttenuation(),
       effectiveBlurPlan,
       selectedTileFolding(),
       selectedFocusSoftness(),
@@ -835,9 +835,15 @@ listen(processButton, "click", async () => {
       parsePanoramaFoVOption(panoramaFov.value) ?? DEFAULT_PANORAMA_FOV,
     );
     if (effectiveMergeMode === "stf") {
-      const frameSet = buildStfFrameSet(inputInfos.map((entry) => entry.fNumber), selectedStfRadialAttenuation(), selectedStfFrameGeneration());
-      mergePlan.stfFrameSet = frameSet;
-      mergePlan.weights = frameSet.realWeights;
+      const radialAttenuation = selectedStfRadialAttenuation();
+      const fNumbers = inputInfos.map((entry) => entry.fNumber);
+      const frameSet = buildStfFrameSet(fNumbers, radialAttenuation, selectedStfFrameGeneration());
+      const referenceP95 = currentCanonicalSession.images[mergePlan.toneReferenceIndex]?.toneStatistics?.p95;
+      const preparedFrameSet = prepareStfFrameSetForTone(frameSet, fNumbers,
+        createStfSourceTonePlans(mergePlan.gains, mergePlan.scaledLogs),
+        referenceP95, radialAttenuation);
+      mergePlan.stfFrameSet = preparedFrameSet;
+      mergePlan.weights = preparedFrameSet.realWeights;
     }
     const alignmentPlan = effectiveMergeMode === "panorama"
       ? null
@@ -2413,7 +2419,6 @@ function buildMergePlan(
   inputInfos,
   mode,
   canonicalImages = [],
-  stfRadialAttenuationValue = DEFAULT_STF_RADIAL_ATTENUATION,
   stfBlurPlan = buildStfAdditionalBlurPlan(DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS),
   tileFoldingValue = null,
   focusSoftnessValue = DEFAULT_FOCUS_SOFTNESS,
@@ -2472,18 +2477,10 @@ function buildMergePlan(
     return { mode, weights, gains, scaledLogs };
   }
 
-  const fNumbers = inputInfos.map((entry) => entry.fNumber);
-  const stfWeights = buildStfApertureWeights(fNumbers, stfRadialAttenuationValue);
-  if (stfWeights) {
-    for (let i = 0; i < imageCount; i += 1) {
-      weights[i] = stfWeights[i];
-    }
-  } else {
-    const uniformWeight = 1 / imageCount;
-    for (let i = 0; i < imageCount; i += 1) {
-      weights[i] = uniformWeight;
-    }
-  }
+  // STF frame weights are finalized after the real tone plans have been
+  // determined, using each frame's independently propagated edge density.
+  // Placeholder values must never reach a Source merge.
+  weights.fill(1 / imageCount);
 
   const toneStatistics = canonicalImages.map((entry) => entry?.toneStatistics);
   const toneMatch = toneStatistics.length === imageCount
@@ -3029,8 +3026,6 @@ async function alignAndMergeFilesWithOpenCv(
           sessionCreatedAt: canonicalSession.createdAt,
           alignmentKey: buildStfAlignmentCacheKey(stfAlignedInputs!),
           reader,
-          canonicalImages: canonicalSession.images,
-          toneReferenceIndex: mergePlan.toneReferenceIndex,
           progress: setProgress,
         });
       }

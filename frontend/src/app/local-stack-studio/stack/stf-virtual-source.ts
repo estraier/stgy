@@ -1,10 +1,10 @@
-import { computeCanonicalToneStatisticsFromStoredRgb16, type CanonicalImageRecord } from "./canonical-source";
 import { addWeightedLinearToAccumulator } from "./linear-merge";
 import { buildLinearMergeStripeJobs } from "./linear-merge-pool";
-import { applyStfToneMatchInPlace, buildStfToneMatchLut, buildStfToneMatchPlanToReference } from "./stf-tone-match";
+import { applyStfToneMatchInPlace, buildStfToneMatchLut, type StfToneMatchPlan, type StfToneMatchLut } from "./stf-tone-match";
 import { StfOpticalFlowClient } from "./stf-optical-flow-client";
 import type { AlignedImageReader } from "./aligned-reader";
 import type { StfFrameSet, StfMiddleFrame, StfOuterFrame } from "./stf-frame-generation";
+import type { StfTonePreparedFrameSet } from "./stf-frame-density";
 
 export function decodeStfGeneratedStripe(pixels: Uint16Array, offset: number, length: number): Float32Array {
   if (offset < 0 || length < 0 || offset + length > pixels.length) throw new Error("Invalid generated STF stripe");
@@ -26,11 +26,9 @@ async function mergeGeneratedFrame(
   weight: number,
   width: number,
   height: number,
-  reference: NonNullable<CanonicalImageRecord["toneStatistics"]>,
+  tone: StfToneMatchPlan,
+  toneLut: StfToneMatchLut,
 ): Promise<void> {
-  const stats = computeCanonicalToneStatisticsFromStoredRgb16(pixels, width, height);
-  const tone = buildStfToneMatchPlanToReference(stats, reference);
-  const toneLut = buildStfToneMatchLut(tone.gain, tone.scaledLog);
   for (const stripe of buildLinearMergeStripeJobs(width, height)) {
     const start = stripe.y * width * 3;
     const length = stripe.height * width * 3;
@@ -43,13 +41,11 @@ async function mergeGeneratedFrame(
 export async function appendStfVirtualSource(
   accumulator: Float32Array,
   options: {
-    frameSet: StfFrameSet;
+    frameSet: StfTonePreparedFrameSet;
     sessionId: string;
     sessionCreatedAt: number;
     alignmentKey: string;
     reader: AlignedImageReader;
-    canonicalImages: readonly CanonicalImageRecord[];
-    toneReferenceIndex: number;
     progress?: (message: string) => void;
     // Injectable for deterministic cache/Flow integration tests.
     createFlowClient?: (onProgress?: (message: string) => void) => Pick<StfOpticalFlowClient,
@@ -61,8 +57,27 @@ export async function appendStfVirtualSource(
   if (accumulator.length !== reader.width * reader.height * 3) {
     throw new Error("STF virtual accumulator dimensions are invalid");
   }
-  const reference = options.canonicalImages[options.toneReferenceIndex]?.toneStatistics;
-  if (!reference) throw new Error("STF virtual frames require a real-image tone reference");
+  if (frameSet.virtualTonePlans.middle.length !== frameSet.middleFrames.length ||
+      frameSet.virtualTonePlans.outer.length !== frameSet.outerFrames.length) {
+    throw new Error("STF virtual frame tone plans are missing or inconsistent with the weights.");
+  }
+  // Tone plans are derived from the real sources before weighting, not
+  // reestimated per virtual frame after the weights have been finalized.
+  const lutCache = new Map<string, StfToneMatchLut>();
+  const toneLut = (plan: StfToneMatchPlan): StfToneMatchLut => {
+    const key = `${plan.gain}:${plan.scaledLog}`;
+    const cached = lutCache.get(key);
+    if (cached) return cached;
+    const lut = buildStfToneMatchLut(plan.gain, plan.scaledLog);
+    lutCache.set(key, lut);
+    return lut;
+  };
+  const toneForMiddle = (index: number) => frameSet.virtualTonePlans.middle[index];
+  const toneForOuter = (frame: StfOuterFrame) => {
+    const index = frameSet.outerFrames.indexOf(frame);
+    if (index < 0) throw new Error("STF outer frame is absent from the prepared frame set.");
+    return frameSet.virtualTonePlans.outer[index];
+  };
 
   const imageCache = new Map<number, Uint16Array>();
   const getImage = async (imageIndex: number): Promise<Uint16Array> => {
@@ -81,7 +96,7 @@ export async function appendStfVirtualSource(
   let client: Pick<StfOpticalFlowClient,
     "warmup" | "generate" | "warpRetained" | "releaseRetained" | "terminate"> | null = null;
   try {
-    for (const middle of frameSet.middleFrames) {
+    for (const [middleIndex, middle] of frameSet.middleFrames.entries()) {
       const outerFrames = outerFramesForPair(frameSet, middle);
       if (!client) {
         client = options.createFlowClient
@@ -111,12 +126,14 @@ export async function appendStfVirtualSource(
         flowComputeMs += generated.performance.flowWallMs ?? 0;
         // Keep the original midpoint -> opening-1 -> opening-N order; on
       // the final real pair also append its single closing-side frame.
+        const middleTone = toneForMiddle(middleIndex);
         await mergeGeneratedFrame(accumulator, generated.pixels, middle.weight,
-          reader.width, reader.height, reference);
+          reader.width, reader.height, middleTone, toneLut(middleTone));
         if (firstOuter) {
           if (!generated.additionalPixels) throw new Error("STF Flow did not return the requested outer frame.");
+          const outerTone = toneForOuter(firstOuter);
           await mergeGeneratedFrame(accumulator, generated.additionalPixels, firstOuter.weight,
-            reader.width, reader.height, reference);
+            reader.width, reader.height, outerTone, toneLut(outerTone));
         }
       }
       try {
@@ -126,8 +143,9 @@ export async function appendStfVirtualSource(
             reader.width, reader.height, middle.previousIndex, middle.nextIndex,
             outer.variant, outer.inverseWarpScale,
           );
+          const outerTone = toneForOuter(outer);
           await mergeGeneratedFrame(accumulator, warped.pixels, outer.weight,
-            reader.width, reader.height, reference);
+            reader.width, reader.height, outerTone, toneLut(outerTone));
         }
       } finally {
         if (outerFrames.length > 1) client.releaseRetained();
