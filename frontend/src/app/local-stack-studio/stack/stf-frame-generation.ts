@@ -1,5 +1,3 @@
-import { buildStfApertureWeights } from "./stf-weights";
-
 export type StfFrameGenerationMode = "off" | "interpolation" | "extrapolation-1" | "extrapolation-2" | "extrapolation-3" | "extrapolation-4" | "extrapolation-5" | "extrapolation-6" | "extrapolation-7" | "extrapolation-8" | "extrapolation-9" | "extrapolation-10";
 
 export type StfMiddleFrame = {
@@ -48,95 +46,129 @@ export function buildStfFrameSet(
   mode: StfFrameGenerationMode,
 ): StfFrameSet {
   validateMode(mode);
-  if (mode === "off") {
-    if (fNumbers.length === 0) throw new Error("STF requires at least one input image.");
-    // Preserve the original real-only STF behavior: missing/incomplete EXIF
-    // does not prevent merging, and every selected real image gets equal weight.
-    const apertureWeights = buildStfApertureWeights(fNumbers as number[], radialAttenuation);
-    const weights = apertureWeights ?? Float64Array.from(fNumbers, () => 1 / fNumbers.length);
+  if (!(Number.isInteger(radialAttenuation) && radialAttenuation >= -2 && radialAttenuation <= 3)) {
+    throw new Error("STF Radial attenuation must be an integer from -2 to 3.");
+  }
+  if (fNumbers.length === 0) throw new Error("STF requires at least one input image.");
+
+  const realFNumbers = fNumbers.map((f) => Number(f));
+  const hasOnlyValidPositiveFNumbers = realFNumbers.every((f) => Number.isFinite(f) && f > 0);
+  if (mode === "off" && !hasOnlyValidPositiveFNumbers) {
+    // Historical fallback: when any real image lacks a usable F-number,
+    // retain every selected image and merge them uniformly.
+    const weights = Float32Array.from(realFNumbers, () => 1 / realFNumbers.length);
     return {
       mode,
-      realWeights: Float32Array.from(weights),
+      realWeights: weights,
       middleFrames: [],
       outerFrames: [],
-      allWeights: Float32Array.from(weights),
-      allFNumbers: fNumbers.map((f) => Number(f)),
+      allWeights: weights,
+      allFNumbers: realFNumbers,
     };
   }
 
-  if (fNumbers.length < 2 || fNumbers.some((f) => !(typeof f === "number" && Number.isFinite(f) && f > 0))) {
+  if (mode !== "off" && (realFNumbers.length < 2 || !hasOnlyValidPositiveFNumbers)) {
     throw new Error("STF Frame generation requires at least two inputs with valid EXIF F-numbers.");
   }
 
-  const sorted = fNumbers
-    .map((fNumber, index) => ({ fNumber: fNumber as number, index }))
+  const sorted = realFNumbers
+    .map((fNumber, index) => ({ fNumber, index }))
     .sort((a, b) => a.fNumber - b.fNumber);
 
-  const middleFrames: StfMiddleFrame[] = [];
-  for (let i = 1; i < sorted.length; i += 1) {
-    if (!(sorted[i].fNumber > sorted[i - 1].fNumber)) {
-      throw new Error("STF Frame generation requires distinct EXIF F-numbers for every input.");
+  if (mode === "off") {
+    if (realFNumbers.length === 1) {
+      const weights = new Float32Array([1]);
+      return {
+        mode,
+        realWeights: weights,
+        middleFrames: [],
+        outerFrames: [],
+        allWeights: weights,
+        allFNumbers: realFNumbers,
+      };
     }
-    middleFrames.push({
-      previousIndex: sorted[i - 1].index,
-      nextIndex: sorted[i].index,
-      fNumber: Math.sqrt(sorted[i - 1].fNumber * sorted[i].fNumber),
-      weight: 0,
-      pairLabel: `${i}/${sorted.length - 1}`,
-    });
+    for (let i = 1; i < sorted.length; i += 1) {
+      if (!(sorted[i].fNumber > sorted[i - 1].fNumber)) {
+        const weights = Float32Array.from(realFNumbers, () => 1 / realFNumbers.length);
+        return {
+          mode,
+          realWeights: weights,
+          middleFrames: [],
+          outerFrames: [],
+          allWeights: weights,
+          allFNumbers: realFNumbers,
+        };
+      }
+    }
   }
 
-  const openingCount = mode.startsWith("extrapolation-") ? Number.parseInt(mode.slice("extrapolation-".length), 10) : 0;
+  const middleFrames: StfMiddleFrame[] = [];
   const outerFrames: StfOuterFrame[] = [];
-  if (openingCount > 0) {
-    const first = sorted[0].fNumber;
-    const second = sorted[1].fNumber;
-    const openingRatio = first / second;
-    const openingRadiusDelta = (1 / first) - (1 / second);
-    for (let step = 1; step <= openingCount; step += 1) {
-      const outerFNumber = step === 1 ? first / Math.sqrt(second / first) : first * openingRatio ** (step / 2);
-      const openingFlowScale = ((1 / outerFNumber) - (1 / first)) / openingRadiusDelta;
-      const openingInverseWarpScale = (1 - outerFNumber / first) / (1 - first / second);
-      outerFrames.push({
-        previousIndex: sorted[0].index,
-        nextIndex: sorted[1].index,
-        fNumber: outerFNumber,
+  if (mode !== "off") {
+    for (let i = 1; i < sorted.length; i += 1) {
+      if (!(sorted[i].fNumber > sorted[i - 1].fNumber)) {
+        throw new Error("STF Frame generation requires distinct EXIF F-numbers for every input.");
+      }
+      middleFrames.push({
+        previousIndex: sorted[i - 1].index,
+        nextIndex: sorted[i].index,
+        fNumber: Math.sqrt(sorted[i - 1].fNumber * sorted[i].fNumber),
         weight: 0,
-        pairLabel: `first-ext${step}`,
-        variant: (step === 1 ? "ext1" : `ext1-${step}`) as StfOuterFrame["variant"],
-        openingFlowScale,
-        inverseWarpScale: openingInverseWarpScale,
+        pairLabel: `${i}/${sorted.length - 1}`,
       });
     }
-    // Retain the original single closing-side half-step for every extrapolation
-    // mode, even when openingCount > 1. Its Flow comes from the last real pair.
-    const previous = sorted[sorted.length - 2].fNumber;
-    const last = sorted[sorted.length - 1].fNumber;
-    const closingFNumber = last * Math.sqrt(last / previous);
-    // The backward Flow (last -> previous) is an outward displacement. To
-    // synthesize a smaller disc from the last real frame, inverse-sample at
-    // x_source / x_target = F_closing/F_last, rather than treating a forward
-    // radius multiplier as the sampling scale.
-    const closingInverseWarpScale = (closingFNumber / last - 1) / (last / previous - 1);
-    outerFrames.push({
-      previousIndex: sorted[sorted.length - 2].index,
-      nextIndex: sorted[sorted.length - 1].index,
-      fNumber: closingFNumber,
-      weight: 0,
-      pairLabel: "last-ext2",
-      variant: "ext2",
-      inverseWarpScale: closingInverseWarpScale,
-    });
-  }
 
-  if (outerFrames.some((frame) => !(Number.isFinite(frame.fNumber) && frame.fNumber > 0 &&
-      Number.isFinite(frame.inverseWarpScale) && frame.inverseWarpScale > 0 &&
-      (frame.variant === "ext2" || (Number.isFinite(frame.openingFlowScale) && frame.openingFlowScale > 0))))) {
-    throw new Error("STF extrapolation produced an invalid extended EXIF F-number.");
+    const openingCount = mode.startsWith("extrapolation-") ? Number.parseInt(mode.slice("extrapolation-".length), 10) : 0;
+    if (openingCount > 0) {
+      const first = sorted[0].fNumber;
+      const second = sorted[1].fNumber;
+      const openingRatio = first / second;
+      const openingRadiusDelta = (1 / first) - (1 / second);
+      for (let step = 1; step <= openingCount; step += 1) {
+        const outerFNumber = step === 1 ? first / Math.sqrt(second / first) : first * openingRatio ** (step / 2);
+        const openingFlowScale = ((1 / outerFNumber) - (1 / first)) / openingRadiusDelta;
+        const openingInverseWarpScale = (1 - outerFNumber / first) / (1 - first / second);
+        outerFrames.push({
+          previousIndex: sorted[0].index,
+          nextIndex: sorted[1].index,
+          fNumber: outerFNumber,
+          weight: 0,
+          pairLabel: `first-ext${step}`,
+          variant: (step === 1 ? "ext1" : `ext1-${step}`) as StfOuterFrame["variant"],
+          openingFlowScale,
+          inverseWarpScale: openingInverseWarpScale,
+        });
+      }
+      // Retain the original single closing-side half-step for every extrapolation
+      // mode, even when openingCount > 1. Its Flow comes from the last real pair.
+      const previous = sorted[sorted.length - 2].fNumber;
+      const last = sorted[sorted.length - 1].fNumber;
+      const closingFNumber = last * Math.sqrt(last / previous);
+      // The backward Flow (last -> previous) is an outward displacement. To
+      // synthesize a smaller disc from the last real frame, inverse-sample at
+      // x_source / x_target = F_closing/F_last, rather than treating a forward
+      // radius multiplier as the sampling scale.
+      const closingInverseWarpScale = (closingFNumber / last - 1) / (last / previous - 1);
+      outerFrames.push({
+        previousIndex: sorted[sorted.length - 2].index,
+        nextIndex: sorted[sorted.length - 1].index,
+        fNumber: closingFNumber,
+        weight: 0,
+        pairLabel: "last-ext2",
+        variant: "ext2",
+        inverseWarpScale: closingInverseWarpScale,
+      });
+    }
+
+    if (outerFrames.some((frame) => !(Number.isFinite(frame.fNumber) && frame.fNumber > 0 &&
+        Number.isFinite(frame.inverseWarpScale) && frame.inverseWarpScale > 0 &&
+        (frame.variant === "ext2" || (Number.isFinite(frame.openingFlowScale) && frame.openingFlowScale > 0))))) {
+      throw new Error("STF extrapolation produced an invalid extended EXIF F-number.");
+    }
   }
 
   const allFNumbers = [
-    ...(fNumbers as number[]),
+    ...realFNumbers,
     ...middleFrames.map((frame) => frame.fNumber),
     ...outerFrames.map((frame) => frame.fNumber),
   ];
@@ -144,18 +176,15 @@ export function buildStfFrameSet(
   // the desired *final radial luminance*, then invert the disc contributions
   // to obtain blend weights. q=1 is exactly linear in radius; the other q
   // values preserve the historical logarithmic/deep-DoF/large-bokeh ordering.
-  // Off mode continues to use buildStfApertureWeights without modification.
-  if (!(Number.isInteger(radialAttenuation) && radialAttenuation >= -2 && radialAttenuation <= 3)) {
-    throw new Error("STF Radial attenuation must be an integer from -2 to 3.");
-  }
   const exponent = radialAttenuation;
   const densityFNumbers = [
-    ...(fNumbers as number[]),
+    ...realFNumbers,
     ...middleFrames.map((frame) =>
-      (Number(fNumbers[frame.previousIndex]) + Number(fNumbers[frame.nextIndex])) / 2),
-    ...outerFrames.map((frame) => Number(fNumbers[
-      frame.variant === "ext2" ? frame.nextIndex : frame.previousIndex])),
+      (realFNumbers[frame.previousIndex] + realFNumbers[frame.nextIndex]) / 2),
+    ...outerFrames.map((frame) => realFNumbers[
+      frame.variant === "ext2" ? frame.nextIndex : frame.previousIndex]),
   ];
+
   const byIncreasingRadius = allFNumbers
     .map((fNumber, index) => ({ index, radius: 1 / fNumber }))
     .sort((a, b) => a.radius - b.radius);

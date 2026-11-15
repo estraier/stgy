@@ -5,7 +5,7 @@ export const DEFAULT_STF_RADIAL_ATTENUATION = 1;
  *
  * Radius is proportional to 1 / F. The interior weights retain the historical
  * real-only profile, expressed directly using radial attenuation q.
- * This path is used for Frame generation = off and preserves its output.
+ * Legacy real-only STF weight builder kept for diagnostics/tests.
  * The widest-aperture outer-edge luminance
  * is then chosen by a minimax rule: it is set so that the final outermost drop
  * to zero equals the largest remaining interior step. This keeps the largest

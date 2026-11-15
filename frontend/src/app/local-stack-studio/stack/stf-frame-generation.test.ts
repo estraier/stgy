@@ -1,5 +1,4 @@
 import { buildStfFrameSet, type StfFrameGenerationMode, type StfFrameSet } from "./stf-frame-generation";
-import { buildStfApertureWeights } from "./stf-weights";
 
 const fNumbers = [2.8, 4, 3.5, 3.2, 2.5, 2.2, 2];
 const radialAttenuationOptions = [-2, -1, 0, 1, 2, 3];
@@ -32,13 +31,23 @@ function targetRadialLuminance(radius: number, minRadius: number, maxRadius: num
 }
 
 describe("STF generated-frame radial minimax luminance weights", () => {
-  test.each(radialAttenuationOptions)("off preserves historical real-only weights for q=%i", (radialAttenuation) => {
+  test.each(radialAttenuationOptions)("off follows the same radial minimax profile as the generated-frame path for q=%i", (radialAttenuation) => {
     const frames = buildStfFrameSet(fNumbers, radialAttenuation, "off");
-    const original = Float32Array.from(buildStfApertureWeights(fNumbers, radialAttenuation)!);
-    expect(Array.from(frames.realWeights)).toEqual(Array.from(original));
-    expect(Array.from(frames.allWeights)).toEqual(Array.from(original));
     expect(frames.middleFrames).toHaveLength(0);
     expect(frames.outerFrames).toHaveLength(0);
+    expect(frames.allWeights).toHaveLength(fNumbers.length);
+    expect(Array.from(frames.allWeights).reduce((sum, value) => sum + value, 0)).toBeCloseTo(1, 6);
+    const { ordered, levels } = radialDiscContributions(frames, fNumbers);
+    const minR = ordered[0].radius;
+    const maxR = ordered[ordered.length - 1].radius;
+    expect(levels[0]).toBeCloseTo(1, 6);
+    for (let i = 1; i < ordered.length; i += 1) {
+      const expected = (
+        targetRadialLuminance(ordered[i - 1].radius, minR, maxR, radialAttenuation) +
+        targetRadialLuminance(ordered[i].radius, minR, maxR, radialAttenuation)
+      ) / 2;
+      expect(levels[i]).toBeCloseTo(expected, 6);
+    }
   });
 
   test.each([null, undefined, 0, -1, NaN, Infinity, -Infinity])(
@@ -51,10 +60,23 @@ describe("STF generated-frame radial minimax luminance weights", () => {
     },
   );
 
-  test("off retains normal nonuniform weights with complete F-numbers", () => {
+  test("off uses nonuniform radial-profile weights when complete F-numbers are available", () => {
     const frames = buildStfFrameSet([2, 2.8, 4], 1, "off");
-    expect(Array.from(frames.realWeights)).toEqual(
-      Array.from(Float32Array.from(buildStfApertureWeights([2, 2.8, 4], 1)!)));
+    expect(Array.from(frames.realWeights)).not.toEqual([1 / 3, 1 / 3, 1 / 3]);
+    expect(Array.from(frames.allWeights)).toEqual(Array.from(frames.realWeights));
+  });
+
+  test("off falls back to uniform weights when duplicate real F-numbers remain", () => {
+    const frames = buildStfFrameSet([2, 2, 4], 1, "off");
+    expect(Array.from(frames.realWeights)).toEqual(Array.from(new Float32Array([1 / 3, 1 / 3, 1 / 3])));
+    expect(frames.middleFrames).toHaveLength(0);
+    expect(frames.outerFrames).toHaveLength(0);
+  });
+
+  test("off assigns full weight to a single valid real image", () => {
+    const frames = buildStfFrameSet([2.8], 1, "off");
+    expect(Array.from(frames.realWeights)).toEqual([1]);
+    expect(frames.allFNumbers).toEqual([2.8]);
   });
 
   test.each(["interpolation", "extrapolation-1", "extrapolation-3", "extrapolation-10"] as const)(
