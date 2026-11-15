@@ -26,7 +26,8 @@ import {
   clampStackClahe,
   clampStackScaledLog,
 } from "./postprocess";
-import { cleanupLssTemporaryCacheOnProcess } from "./cache-cleanup";
+import { cleanupLssTemporaryCacheOnNewSession } from "./cache-cleanup";
+import { deleteStfFlowSession } from "./stf-flow-cache";
 import {
   createStackScratchSessionId as createMedianScratchSessionId,
   createStackScratchSessionId as createStfAdditionalBlurScratchSessionId,
@@ -98,8 +99,8 @@ import { runLensfunCorrectionPool } from "./lensfun-pool";
 import { buildStfApertureWeights, DEFAULT_STF_RADIAL_ATTENUATION } from "./stf-weights";
 import { buildStfFrameSet } from "./stf-frame-generation";
 import { appendStfVirtualSource } from "./stf-virtual-source";
-import { buildStfSourceCacheKey, buildStfVirtualFrameContextKey, prepareStfSourceForFinalRolloff,
-  StfSourceCache, StfVirtualFrameCache } from "./stf-process-cache";
+import { buildStfSourceCacheKey, buildStfAlignmentCacheKey, prepareStfSourceForFinalRolloff,
+  StfSourceCache } from "./stf-process-cache";
 import { selectUniqueStfInputs } from "./stf-input-selection";
 import { chooseAlignmentReferenceIndex } from "./alignment-reference";
 import { buildStfAdditionalBlurPlan, resolveStfGateExpansionMultiplier, DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS, STF_BLUR_STRENGTH_VALUES, STF_BLUR_AREA_GUARD_VALUES, STF_BLUR_RATIO_VALUES, STF_BLUR_SIGMOID_VALUES } from "./stf-additional-blur-mode";
@@ -297,13 +298,11 @@ function loadExifMetadataModule() {
 }
 
 let currentCanonicalSession = null;
+let pendingOldSessionDeletion: Promise<void> = Promise.resolve();
 // Keep only one complete STF Source, separate from the real-only Sobel/Gate.
-// A bounded virtual RGB16 LRU survives Process but never leaves this session.
 const stfSourceCache = new StfSourceCache();
-const stfVirtualFrameCache = new StfVirtualFrameCache();
 function resetStfProcessCaches() {
   stfSourceCache.clear();
-  stfVirtualFrameCache.clear();
 }
 let currentPreviewColorSpace = "srgb";
 let currentInputFiles = [];
@@ -570,13 +569,18 @@ editButton.disabled = true;
 infoButton.disabled = true;
 outputSize.disabled = true;
 
-listen(inputFiles, "change", () => {
+function onInputFileSelection() {
   const previousCanonicalSession = currentCanonicalSession;
   currentCanonicalSession = null;
   resetStfGateCache();
   resetStfProcessCaches();
   if (previousCanonicalSession) {
-    deleteCanonicalSession(previousCanonicalSession).catch(() => {});
+    // Only this tab's prior session is deleted immediately. No other tab IDs
+    // are needed; abandoned sessions are reclaimed by 1800s creation age.
+    pendingOldSessionDeletion = Promise.all([
+      deleteCanonicalSession(previousCanonicalSession).catch(() => {}),
+      deleteStfFlowSession(previousCanonicalSession.id).catch(() => {}),
+    ]).then(() => undefined);
   }
   const count = inputFiles.files ? inputFiles.files.length : 0;
   fileCount.textContent = count === 0
@@ -585,6 +589,12 @@ listen(inputFiles, "change", () => {
       ? "1 file selected"
       : `${count} files selected`;
   mergeMode.disabled = false;
+}
+listen(inputFiles, "change", onInputFileSelection);
+// Selecting the exact same files emits `cancel` in modern file inputs. It is
+// nevertheless a new selection operation for session ownership purposes.
+listen(inputFiles, "cancel", () => {
+  if (inputFiles.files?.length) onInputFileSelection();
 });
 
 function bindPreviewSlider(control, name, clampValue, assignValue) {
@@ -734,16 +744,6 @@ listen(processButton, "click", async () => {
       throw new Error(`Unsupported alignment mode: ${alignmentMode.value}`);
     }
 
-    // Reclaim only LSS-owned expired IndexedDB data, at most once per 30 min.
-    // Never update cache timestamps during a running image operation.
-    const cleanupStartedAt = performance.now();
-    try {
-      const ran = await cleanupLssTemporaryCacheOnProcess(currentCanonicalSession?.id);
-      if (ran) trace.add("Temporary cache cleanup", performance.now() - cleanupStartedAt);
-    } catch (cleanupError) {
-      console.warn("LSS expired cache cleanup failed; continuing Process.", cleanupError);
-      trace.warnings.push("Temporary cache cleanup failed; old sessions will be retried on the next Process.");
-    }
 
     // OpenCV is consumed only inside the alignment, focus, HDR and panorama
     // workers. Do not instantiate a second full native WASM heap on the main
@@ -770,6 +770,19 @@ listen(processButton, "click", async () => {
     const { mergeStackMetadata } = await loadExifMetadataModule();
     currentOutputMetadata = mergeStackMetadata(inputInfos.map((info) => info.preservedMetadata ?? null));
     const requireStfToneStatistics = files.length > 1 && selectedMergeMode === "stf";
+    // New file selection clears currentCanonicalSession. Repeated Process with
+    // no new selection keeps it, regardless of q, Blur, or frame generation.
+    if (!currentCanonicalSession) {
+      await pendingOldSessionDeletion;
+      const cleanupStartedAt = performance.now();
+      try {
+        await cleanupLssTemporaryCacheOnNewSession();
+        trace.add("Temporary cache cleanup", performance.now() - cleanupStartedAt);
+      } catch (cleanupError) {
+        console.warn("LSS expired session cleanup failed; continuing Process.", cleanupError);
+        trace.warnings.push("Expired session cleanup failed; retry at next new session.");
+      }
+    }
     const previousCanonicalSession = currentCanonicalSession;
     currentCanonicalSession = await ensureCanonicalSession(
       files,
@@ -2978,14 +2991,14 @@ async function alignAndMergeFilesWithOpenCv(
     const stfFrameSet = mergePlan.mode === "stf" ? mergePlan.stfFrameSet : null;
     const needsStfVirtualFrames = Boolean(stfFrameSet && stfFrameSet.mode !== "off");
     const stfAlignedInputs = mergePlan.mode === "stf" ? {
-      sessionId: canonicalSession.id, width, height, alignmentPlan, matrices,
+      sessionId: canonicalSession.id, dataRevision: canonicalSession.dataRevision,
+      width, height, alignmentPlan, matrices,
     } : null;
     const stfSourceKey = stfAlignedInputs ? buildStfSourceCacheKey({
       ...stfAlignedInputs,
       gains: mergePlan.gains, scaledLogs: mergePlan.scaledLogs, weights: mergePlan.weights,
       toneReferenceIndex: mergePlan.toneReferenceIndex, frameSet: stfFrameSet,
     }) : null;
-    const stfVirtualContextKey = stfAlignedInputs ? buildStfVirtualFrameContextKey(stfAlignedInputs) : null;
     const sourceLength = width * height * 3;
     // No Flow and no source merge for a cache hit, irrespective of Blur settings.
     const getStfSource = () => stfSourceKey ? stfSourceCache.get(stfSourceKey, sourceLength) : null;
@@ -2996,12 +3009,13 @@ async function alignAndMergeFilesWithOpenCv(
       if (needsStfVirtualFrames) {
         await appendStfVirtualSource(source, {
           frameSet: stfFrameSet,
+          sessionId: canonicalSession.id,
+          sessionCreatedAt: canonicalSession.createdAt,
+          alignmentKey: buildStfAlignmentCacheKey(stfAlignedInputs!),
           reader,
           canonicalImages: canonicalSession.images,
           toneReferenceIndex: mergePlan.toneReferenceIndex,
           progress: setProgress,
-          frameCache: stfVirtualFrameCache,
-          frameContextKey: stfVirtualContextKey,
         });
       }
       if (stfSourceKey) stfSourceCache.put(stfSourceKey, source);
@@ -5174,10 +5188,15 @@ async function ensureCanonicalSession(files, inputInfos, existingSession, requir
   }
 
   if (existingSession) {
-    try { await deleteCanonicalSession(existingSession); } catch {}
+    // Rebuild the Canonical layout but keep the file-selection session ID.
+    // Old Flow vectors cannot survive a Canonical layout change.
+    await deleteCanonicalSession(existingSession);
+    await deleteStfFlowSession(existingSession.id).catch(() => {});
   }
   await estimateCanonicalCapacity(files, inputInfos);
-  const session = await createCanonicalSession(files, inputInfos);
+  const session = await createCanonicalSession(files, inputInfos,
+    existingSession ? { id: existingSession.id, createdAt: existingSession.createdAt,
+      dataRevision: existingSession.dataRevision + 1 } : undefined);
   try {
     const tasks = files.map((file, imageIndex) => ({ imageIndex, file, inputInfo: inputInfos[imageIndex] }));
     const workerUrl = new URL("/generated/local-stack-studio/canonical-input.worker.js", window.location.origin);
@@ -5650,6 +5669,7 @@ return () => {
     const session = currentCanonicalSession;
     currentCanonicalSession = null;
     deleteCanonicalSession(session).catch(() => {});
+    deleteStfFlowSession(session.id).catch(() => {});
   }
 };
 }

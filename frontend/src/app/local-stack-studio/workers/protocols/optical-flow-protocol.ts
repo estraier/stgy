@@ -11,6 +11,11 @@ export type OpticalFlowWorkerInterpolateRequest = {
   additionalVariant?: OpticalFlowVariant;
   additionalVariantScale?: number;
   retainPair?: boolean;
+  // STF-only: Flow persistence is strictly scoped to one Canonical session.
+  persistFlow?: boolean;
+  sessionId?: string;
+  sessionCreatedAt?: number;
+  alignmentKey?: string;
   linearRangeMax?: 1 | 4;
   previousImageId?: number;
   nextImageId?: number;
@@ -55,6 +60,10 @@ export type OpticalFlowPerformanceStats = {
   estimatedPeakBytes: number;
   inputGamma2Bytes: number;
   flowFieldBytes: number;
+  flowCacheHit?: boolean;
+  flowCacheSaved?: boolean;
+  flowCacheReadMs?: number;
+  flowCacheWriteMs?: number;
   outputBytes: number;
 };
 

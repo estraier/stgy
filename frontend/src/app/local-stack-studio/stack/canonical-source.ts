@@ -156,6 +156,7 @@ type CanonicalSessionRecord = {
   sessionId: string;
   formatVersion: 1;
   createdAt: number;
+  dataRevision: number;
   lastAccessAt: number;
   imageCount: number;
   complete: boolean;
@@ -269,6 +270,8 @@ export type CanonicalReadableSession = {
 };
 
 export type PreparedCanonicalSession = CanonicalReadableSession & {
+  createdAt: number;
+  dataRevision: number;
   filesSignature: string;
 };
 
@@ -342,14 +345,20 @@ function quotaError(error: unknown): Error {
 export async function createCanonicalSession(
   files: readonly File[],
   _inputInfos: readonly CanonicalInputInfo[],
+  reuseIdentity?: { id: string; createdAt: number; dataRevision: number },
 ): Promise<PreparedCanonicalSession> {
   const db = await openCanonicalSourceDb();
-  const id = createSessionId();
+  // Rebuilding a changed Canonical image layout within one file-selection
+  // session does not create a new logical session. New selection still mints
+  // a unique ID because controller passes no reuseIdentity in that case.
+  const id = reuseIdentity?.id || createSessionId();
+  const createdAt = reuseIdentity?.createdAt ?? Date.now();
+  const dataRevision = reuseIdentity?.dataRevision ?? 0;
   const record: CanonicalSessionRecord = {
-    sessionId: id, formatVersion: 1, createdAt: Date.now(), lastAccessAt: Date.now(), imageCount: files.length, complete: false,
+    sessionId: id, formatVersion: 1, createdAt, dataRevision, lastAccessAt: createdAt, imageCount: files.length, complete: false,
   };
   await idbPut(db, SESSION_STORE, record);
-  return { id, filesSignature: canonicalFilesSignature(files), db, images: [], chunkCache: new CanonicalChunkCache(CANONICAL_MAIN_CACHE_BYTES) };
+  return { id, createdAt, dataRevision, filesSignature: canonicalFilesSignature(files), db, images: [], chunkCache: new CanonicalChunkCache(CANONICAL_MAIN_CACHE_BYTES) };
 }
 
 export async function estimateCanonicalCapacity(_files: readonly File[], inputInfos: readonly CanonicalInputInfo[]): Promise<void> {
@@ -629,7 +638,6 @@ export async function materializeCanonicalStoredImage(session: CanonicalReadable
 // start and old caches are defined by creation time, not by activity tracking.
 export async function purgeExpiredCanonicalSessions(
   cutoffAt: number,
-  protectedSessionId?: string,
 ): Promise<number> {
   const db = await openCanonicalSourceDb();
   try {
@@ -650,7 +658,6 @@ export async function purgeExpiredCanonicalSessions(
         const sessionId = record?.sessionId;
         if (
           typeof sessionId === "string" && cursor.primaryKey === sessionId
-          && sessionId !== protectedSessionId
           && typeof record.createdAt === "number" && Number.isFinite(record.createdAt)
           && record.createdAt <= cutoffAt
         ) {
@@ -703,6 +710,8 @@ export async function openCanonicalWorkerWriteSession(sessionId: string): Promis
     }
     return {
       id: sessionId,
+      createdAt: session.createdAt,
+      dataRevision: session.dataRevision,
       filesSignature: "",
       db,
       images: [],

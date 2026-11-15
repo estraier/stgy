@@ -5,8 +5,6 @@ import { applyStfToneMatchInPlace, buildStfToneMatchLut, buildStfToneMatchPlanTo
 import { StfOpticalFlowClient } from "./stf-optical-flow-client";
 import type { AlignedImageReader } from "./aligned-reader";
 import type { StfFrameSet, StfMiddleFrame, StfOuterFrame } from "./stf-frame-generation";
-import type { OpticalFlowVariant } from "../workers/protocols/optical-flow-protocol";
-import { buildStfVirtualFrameKey, type StfVirtualFrameCache } from "./stf-process-cache";
 
 export function decodeStfGeneratedStripe(pixels: Uint16Array, offset: number, length: number): Float32Array {
   if (offset < 0 || length < 0 || offset + length > pixels.length) throw new Error("Invalid generated STF stripe");
@@ -46,12 +44,13 @@ export async function appendStfVirtualSource(
   accumulator: Float32Array,
   options: {
     frameSet: StfFrameSet;
+    sessionId: string;
+    sessionCreatedAt: number;
+    alignmentKey: string;
     reader: AlignedImageReader;
     canonicalImages: readonly CanonicalImageRecord[];
     toneReferenceIndex: number;
     progress?: (message: string) => void;
-    frameCache?: StfVirtualFrameCache;
-    frameContextKey?: string;
     // Injectable for deterministic cache/Flow integration tests.
     createFlowClient?: (onProgress?: (message: string) => void) => Pick<StfOpticalFlowClient,
       "warmup" | "generate" | "warpRetained" | "releaseRetained" | "terminate">;
@@ -74,101 +73,71 @@ export async function appendStfVirtualSource(
     return image;
   };
 
-  let cacheHits = 0;
-  let cacheMisses = 0;
-  let flowPairs = 0;
+  let flowCacheHits = 0;
+  let flowCacheMisses = 0;
+  let flowCacheWrites = 0;
+  let cacheReadMs = 0;
+  let flowComputeMs = 0;
   let client: Pick<StfOpticalFlowClient,
     "warmup" | "generate" | "warpRetained" | "releaseRetained" | "terminate"> | null = null;
-  const expectedPixels = reader.width * reader.height * 3;
   try {
     for (const middle of frameSet.middleFrames) {
       const outerFrames = outerFramesForPair(frameSet, middle);
-      const variants: Array<{
-        variant: OpticalFlowVariant;
-        scale?: number;
-        weight: number;
-        label: string;
-      }> = [
-        { variant: "mid", weight: middle.weight, label: middle.pairLabel },
-        ...outerFrames.map((frame) => ({ variant: frame.variant,
-          scale: frame.openingInverseWarpScale, weight: frame.weight, label: frame.pairLabel })),
-      ];
-      // Snapshot hits before insertion into a bounded LRU: a new frame must
-      // never evict a later hit and accidentally trigger a second Flow pass.
-      const entries = variants.map((variant) => {
-        const key = options.frameContextKey
-          ? buildStfVirtualFrameKey(options.frameContextKey,
-            middle.previousIndex, middle.nextIndex, variant.variant, variant.scale)
-          : null;
-        const pixels = key && options.frameCache
-          ? options.frameCache.get(key, expectedPixels) : null;
-        return { ...variant, key, pixels };
-      });
-      const missed = entries.filter((entry) => !entry.pixels).length;
-      cacheHits += entries.length - missed;
-      cacheMisses += missed;
-      let flowReady = false;
-      let additional: { index: number; pixels: Uint16Array } | null = null;
-      for (let entryIndex = 0; entryIndex < entries.length; entryIndex += 1) {
-        const entry = entries[entryIndex];
-        let pixels = entry.pixels ?? (additional?.index === entryIndex ? additional.pixels : null);
-        if (!pixels) {
-          if (!client) {
-            client = options.createFlowClient
-              ? options.createFlowClient(options.progress)
-              : new StfOpticalFlowClient(options.progress);
-            await client.warmup();
-          }
-          options.progress?.(`Generating STF virtual frame ${entry.label}...`);
-          if (!flowReady) {
-            const previous = await getImage(middle.previousIndex);
-            const next = await getImage(middle.nextIndex);
-            // Preserve the original dual-warp request (mid + first outer)
-            // when the next frame also misses. No extra Flow or roundtrip.
-            const nextEntry = entries[entryIndex + 1];
-            const batchNext = nextEntry && !nextEntry.pixels;
-            flowPairs++;
-            const generated = await client.generate(
-              reader.width, reader.height,
-              middle.previousIndex, middle.nextIndex,
-              previous, next,
-              entry.variant, entry.scale,
-              batchNext ? nextEntry.variant : undefined,
-              batchNext ? nextEntry.scale : undefined,
-              missed > (batchNext ? 2 : 1),
-            );
-            pixels = generated.pixels;
-            if (batchNext) {
-              if (!generated.additionalPixels) throw new Error("STF Flow did not return the requested second virtual frame.");
-              additional = { index: entryIndex + 1, pixels: generated.additionalPixels };
-            }
-            flowReady = true;
-          } else {
-            const warped = await client.warpRetained(
-              reader.width, reader.height,
-              middle.previousIndex, middle.nextIndex,
-              entry.variant, entry.scale,
-            );
-            pixels = warped.pixels;
-          }
-        }
-        // Preserve the original mid -> opening-1 -> opening-N summation order
-        // for numerical identity between cached and uncached execution.
-        await mergeGeneratedFrame(accumulator, pixels, entry.weight,
-          reader.width, reader.height, reference);
-        // Cache only successfully tone-processed frames. A corrupt buffer
-        // that fails this merge must never poison later Process attempts.
-        if (!entry.pixels && entry.key) options.frameCache?.put(entry.key, pixels);
+      if (!client) {
+        client = options.createFlowClient
+          ? options.createFlowClient(options.progress)
+          : new StfOpticalFlowClient(options.progress);
       }
-      if (flowReady && missed > 1) client?.releaseRetained();
-      // Keep only the next real RGB16 for the adjacent pair; never retain the
-      // entire original bracket in memory.
+      // No unconditional warmup: an IndexedDB hit must not start native WASM
+      // workers. The Flow worker initializes them lazily on a miss.
+      const previous = await getImage(middle.previousIndex);
+      const next = await getImage(middle.nextIndex);
+      const firstOuter = outerFrames[0];
+      options.progress?.(`Generating STF virtual frame ${middle.pairLabel}...`);
+      // Limit the lifetime of both full-resolution result buffers: do not
+      // hold the midpoint/first-outer arrays during the remaining 2..10 warps.
+      {
+        const generated = await client.generate(
+          reader.width, reader.height, middle.previousIndex, middle.nextIndex,
+          previous, next, "mid", undefined,
+          firstOuter?.variant, firstOuter?.openingInverseWarpScale,
+          outerFrames.length > 1, true,
+          options.sessionId, options.sessionCreatedAt, options.alignmentKey,
+        );
+        if (generated.performance.flowCacheHit) flowCacheHits++;
+        else flowCacheMisses++;
+        if (generated.performance.flowCacheSaved) flowCacheWrites++;
+        cacheReadMs += generated.performance.flowCacheReadMs ?? 0;
+        flowComputeMs += generated.performance.flowWallMs ?? 0;
+        // Keep the original mid -> opening-1 -> opening-N summation order.
+        await mergeGeneratedFrame(accumulator, generated.pixels, middle.weight,
+          reader.width, reader.height, reference);
+        if (firstOuter) {
+          if (!generated.additionalPixels) throw new Error("STF Flow did not return the requested opening frame.");
+          await mergeGeneratedFrame(accumulator, generated.additionalPixels, firstOuter.weight,
+            reader.width, reader.height, reference);
+        }
+      }
+      try {
+        for (const outer of outerFrames.slice(1)) {
+          options.progress?.(`Generating STF virtual frame ${outer.pairLabel}...`);
+          const warped = await client.warpRetained(
+            reader.width, reader.height, middle.previousIndex, middle.nextIndex,
+            outer.variant, outer.openingInverseWarpScale,
+          );
+          await mergeGeneratedFrame(accumulator, warped.pixels, outer.weight,
+            reader.width, reader.height, reference);
+        }
+      } finally {
+        if (outerFrames.length > 1) client.releaseRetained();
+      }
+      // Keep only the next real RGB16 for the adjacent pair. Never retain
+      // generated RGB16 after its weighted contribution has been accumulated.
       imageCache.delete(middle.previousIndex);
     }
-    if (options.frameCache && options.frameContextKey) {
-      console.info(`[LSS STF] Virtual cache: ${cacheHits} hit, ${cacheMisses} generated, ` +
-        `${flowPairs} real pair(s) required Optical Flow.`);
-    }
+    console.info(`[LSS STF] Flow cache: ${flowCacheHits} hit, ${flowCacheMisses} miss, ` +
+      `${flowCacheWrites} saved bidirectional real pair(s); ` +
+      `session cache read ${cacheReadMs.toFixed(1)}ms, native Flow ${flowComputeMs.toFixed(1)}ms.`);
   } finally {
     client?.terminate();
   }

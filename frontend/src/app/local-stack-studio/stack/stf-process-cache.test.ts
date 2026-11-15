@@ -1,6 +1,6 @@
 import {
-  buildStfSourceCacheKey, buildStfVirtualFrameKey, buildStfVirtualFrameContextKey,
-  prepareStfSourceForFinalRolloff, StfSourceCache, StfVirtualFrameCache,
+  buildStfSourceCacheKey,
+  prepareStfSourceForFinalRolloff, StfSourceCache,
 } from "./stf-process-cache";
 import { buildStfFrameSet } from "./stf-frame-generation";
 
@@ -43,6 +43,9 @@ describe("STF Source cache isolation", () => {
       weights: [0.2, 0.3, 0.5], toneReferenceIndex: 0 };
     const key = buildStfSourceCacheKey(baseInputs);
     expect(buildStfSourceCacheKey({ ...baseInputs, sessionId: "session-B" })).not.toBe(key);
+    // A different Canonical layout in the same file-selection session also
+    // invalidates pixel-dependent caches without changing the session ID.
+    expect(buildStfSourceCacheKey({ ...baseInputs, dataRevision: 1 })).not.toBe(key);
     expect(buildStfSourceCacheKey({ ...baseInputs, gains: [2, 1, 1] })).not.toBe(key);
     expect(buildStfSourceCacheKey({ ...baseInputs, weights: [0.1, 0.4, 0.5] })).not.toBe(key);
     expect(buildStfSourceCacheKey({ ...baseInputs, toneReferenceIndex: 1 })).not.toBe(key);
@@ -60,34 +63,3 @@ describe("STF Source cache isolation", () => {
   });
 });
 
-describe("STF generated-frame cache isolation and budget", () => {
-  test("q/tone do not change raw virtual pixels but alignment or warp scale does", () => {
-    const key = buildStfVirtualFrameContextKey(aligned());
-    const pixels = buildStfVirtualFrameKey(key, 0, 1, "mid");
-    expect(buildStfVirtualFrameKey(key, 0, 1, "mid")).toBe(pixels);
-    expect(buildStfVirtualFrameKey(key, 0, 1, "ext1", 0.5)).not.toBe(pixels);
-    expect(buildStfVirtualFrameKey(key, 0, 1, "ext1", 0.7)).not.toBe(
-      buildStfVirtualFrameKey(key, 0, 1, "ext1", 0.5));
-    expect(buildStfVirtualFrameContextKey({ ...aligned(), sessionId: "new-session" })).not.toBe(key);
-    expect(buildStfVirtualFrameContextKey({ ...aligned(), matrices: [[1, 0, 1, 0, 1, 0]] })).not.toBe(key);
-  });
-
-  test("LRU capacity evicts old images and never retains oversized images", () => {
-    const cache = new StfVirtualFrameCache(24);
-    const a = new Uint16Array(6);
-    const b = new Uint16Array(6);
-    const c = new Uint16Array(6);
-    expect(cache.put("a", a)).toBe(true);
-    expect(cache.put("b", b)).toBe(true);
-    expect(cache.get("a", 6)).toBe(a);
-    expect(cache.put("c", c)).toBe(true);
-    expect(cache.get("b", 6)).toBeNull();
-    expect(cache.get("a", 6)).toBe(a);
-    expect(cache.get("c", 6)).toBe(c);
-    expect(cache.sizeBytes).toBe(24);
-    expect(cache.put("oversize", new Uint16Array(30))).toBe(false);
-    expect(cache.sizeBytes).toBe(24);
-    cache.clear();
-    expect(cache.sizeBytes).toBe(0);
-  });
-});

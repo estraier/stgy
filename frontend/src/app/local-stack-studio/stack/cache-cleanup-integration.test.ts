@@ -1,53 +1,44 @@
-const mockCanonicalCleanup = jest.fn<Promise<number>, [number, string | undefined]>();
+const mockCanonicalCleanup = jest.fn<Promise<number>, [number]>();
 const mockScratchCleanup = jest.fn<Promise<void>, [number]>();
+const mockFlowCleanup = jest.fn<Promise<number>, [number]>();
 
 jest.mock("./canonical-source", () => ({
-  purgeExpiredCanonicalSessions: (cutoff: number, protectedId?: string) => mockCanonicalCleanup(cutoff, protectedId),
+  purgeExpiredCanonicalSessions: (cutoff: number) => mockCanonicalCleanup(cutoff),
 }));
 jest.mock("./scratch", () => ({
   purgeExpiredStackScratchSessions: (cutoff: number) => mockScratchCleanup(cutoff),
 }));
+jest.mock("./stf-flow-cache", () => ({
+  purgeExpiredStfFlowSessions: (cutoff: number) => mockFlowCleanup(cutoff),
+}));
 
-describe("LSS Process cleanup scheduling", () => {
+describe("LSS new-session cleanup", () => {
   let now = 10_000_000;
-  let values: Map<string, string>;
-
   beforeEach(() => {
     jest.resetModules();
+    now += 5_000_000;
     mockCanonicalCleanup.mockReset().mockResolvedValue(0);
     mockScratchCleanup.mockReset().mockResolvedValue(undefined);
-    now += 5_000_000;
-    values = new Map();
-    Object.defineProperty(globalThis, "window", { configurable: true, value: {
-      localStorage: {
-        getItem: (key: string) => values.get(key) ?? null,
-        setItem: (key: string, value: string) => { values.set(key, value); },
-      },
-    }});
+    mockFlowCleanup.mockReset().mockResolvedValue(0);
     jest.spyOn(Date, "now").mockImplementation(() => now);
   });
-
   afterEach(() => { jest.restoreAllMocks(); });
 
-  test("cleans each LSS store only on first Process, then skips for 1800 seconds", async () => {
-    const { cleanupLssTemporaryCacheOnProcess } = await import("./cache-cleanup");
-    expect(await cleanupLssTemporaryCacheOnProcess("active-session")).toBe(true);
-    expect(mockCanonicalCleanup).toHaveBeenCalledWith(now - 3_600_000, "active-session");
-    expect(mockScratchCleanup).toHaveBeenCalledWith(now - 3_600_000);
-    now += 1_799_999;
-    expect(await cleanupLssTemporaryCacheOnProcess()).toBe(false);
-    expect(mockCanonicalCleanup).toHaveBeenCalledTimes(1);
+  test("every new session cleans all three stores at a strict 1800 second cutoff", async () => {
+    const { cleanupLssTemporaryCacheOnNewSession } = await import("./cache-cleanup");
+    await cleanupLssTemporaryCacheOnNewSession();
+    expect(mockCanonicalCleanup).toHaveBeenCalledWith(now - 1_800_000);
+    expect(mockScratchCleanup).toHaveBeenCalledWith(now - 1_800_000);
+    expect(mockFlowCleanup).toHaveBeenCalledWith(now - 1_800_000);
     now += 1;
-    expect(await cleanupLssTemporaryCacheOnProcess()).toBe(true);
+    await cleanupLssTemporaryCacheOnNewSession();
     expect(mockCanonicalCleanup).toHaveBeenCalledTimes(2);
   });
-
-  test("does not advance last successful time after failed scratch cleanup", async () => {
-    const { cleanupLssTemporaryCacheOnProcess } = await import("./cache-cleanup");
+  test("failed cleanup does not block a retry at the next new session", async () => {
+    const { cleanupLssTemporaryCacheOnNewSession } = await import("./cache-cleanup");
     mockScratchCleanup.mockRejectedValueOnce(new Error("scratch failed"));
-    await expect(cleanupLssTemporaryCacheOnProcess()).rejects.toThrow("scratch failed");
-    expect(values.size).toBe(0);
-    await expect(cleanupLssTemporaryCacheOnProcess()).resolves.toBe(true);
+    await expect(cleanupLssTemporaryCacheOnNewSession()).rejects.toThrow("scratch failed");
+    await cleanupLssTemporaryCacheOnNewSession();
     expect(mockCanonicalCleanup).toHaveBeenCalledTimes(2);
   });
 });

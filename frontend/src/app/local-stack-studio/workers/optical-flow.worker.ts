@@ -4,6 +4,7 @@ import type {
   OpticalFlowDirectionResponse,
 } from "./protocols/optical-flow-direction-protocol";
 import { transferableBuffer } from "./transfer-buffer";
+import { readStfCachedFlow, writeStfCachedFlow, stfFlowSessionKey } from "../stack/stf-flow-cache";
 import { stfFlowWorkingSize, stfGamma2RgbToGray8Resampled } from "../stack/stf-flow-gray";
 import type {
   OpticalFlowPerformanceStats,
@@ -262,6 +263,8 @@ import type {
 
     const workerStartedAt = performance.now();
     const flowSize = stfFlowWorkingSize(width, height);
+    // Grayscale is only for Farneback; the persistent cache identity is the
+    // Canonical session plus image pair and alignment parameters, never pixels.
     postProgress(message.requestId, "Preparing Optical Flow grayscale proxies...");
     const prepareStartedAt = performance.now();
     const grayScale = message.linearRangeMax === 4 ? 2 : 1;
@@ -284,12 +287,34 @@ import type {
     if (!externalGray && message.nextImageId !== undefined && !nextGray) grayCache.set(message.nextImageId, gray1);
     const prepareFlowInputsMs = performance.now() - prepareStartedAt;
 
-    postProgress(message.requestId, `Computing bidirectional Optical Flow (${flowSize.width}×${flowSize.height})...`);
-    const flows = await computeBidirectionalFlow(gray0, gray1, flowSize.width, flowSize.height);
+    const cacheReadStarted = performance.now();
+    if (message.persistFlow && (!message.sessionId || !message.alignmentKey ||
+        !Number.isSafeInteger(message.sessionCreatedAt) || message.sessionCreatedAt! < 0)) {
+      throw new Error("STF persistent Flow requires a Canonical session identity");
+    }
+    const flowCacheKey = message.persistFlow
+      ? stfFlowSessionKey(message.sessionId!, message.previousImageId!, message.nextImageId!,
+          message.alignmentKey!, flowSize.width, flowSize.height) : null;
+    const cached = flowCacheKey
+      ? await readStfCachedFlow(message.sessionId!, flowCacheKey, flowSize.width, flowSize.height) : null;
+    const flowCacheReadMs = performance.now() - cacheReadStarted;
+    if (!cached) postProgress(message.requestId,
+      `Computing bidirectional Optical Flow (${flowSize.width}×${flowSize.height})...`);
+    const flows = cached ? {
+      ...cached, forwardMs: 0, backwardMs: 0, wallMs: 0, workerCount: 0, warmupMs: 0,
+    } : await computeBidirectionalFlow(gray0, gray1, flowSize.width, flowSize.height);
     if (flows.forward.length !== flowSize.width * flowSize.height * 2 ||
         flows.backward.length !== flowSize.width * flowSize.height * 2) {
       throw new Error("Optical Flow direction worker returned an invalid vector field.");
     }
+    // Begin best-effort persistence while the CPU is busy warping. Await its
+    // completion before returning so that terminating this Worker cannot lose
+    // a pending IndexedDB transaction.
+    const cacheWriteStarted = performance.now();
+    const cacheWrite = flowCacheKey && !cached
+      ? writeStfCachedFlow(message.sessionId!, flowCacheKey, message.sessionCreatedAt!,
+          flowSize.width, flowSize.height, flows.forward, flows.backward)
+      : Promise.resolve(false);
 
     postProgress(message.requestId, `Warping Optical Flow ${describeVariant(message.variant)} image...`);
     const warpStartedAt = performance.now();
@@ -325,6 +350,8 @@ import type {
         forward: flows.forward, backward: flows.backward,
       };
     }
+    const flowCacheSaved = await cacheWrite;
+    const flowCacheWriteMs = flowCacheSaved ? performance.now() - cacheWriteStarted : 0;
     const performanceStats: OpticalFlowPerformanceStats = {
       sourceWidth: width,
       sourceHeight: height,
@@ -342,6 +369,7 @@ import type {
       estimatedPeakBytes: estimatePeakBytes(width, height, flowSize.width, flowSize.height, flows.workerCount),
       inputGamma2Bytes: previousGamma2Rgb.byteLength + nextGamma2Rgb.byteLength,
       flowFieldBytes: flows.forward.byteLength + flows.backward.byteLength,
+      flowCacheHit: Boolean(cached), flowCacheSaved, flowCacheReadMs, flowCacheWriteMs,
       outputBytes: output.byteLength + (additionalGamma2Rgb?.byteLength ?? 0),
     };
     return { width, height, gamma2Rgb: output, additionalGamma2Rgb, flowWidth: flowSize.width, flowHeight: flowSize.height, performance: performanceStats };

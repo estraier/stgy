@@ -17,7 +17,7 @@ export class StfOpticalFlowClient {
 
   constructor(onProgress?: (message: string) => void) {
     const workerUrl = new URL("/generated/local-stack-studio/optical-flow.worker.js", window.location.origin);
-    workerUrl.searchParams.set("revision", "stf-opening-radius-flow-20261115-r1");
+    workerUrl.searchParams.set("revision", "stf-session-flow-20261115-r2");
     this.worker = new Worker(workerUrl);
     this.worker.onmessage = (event: MessageEvent<OpticalFlowWorkerResponse>) => {
       const message = event.data;
@@ -77,6 +77,10 @@ export class StfOpticalFlowClient {
     additionalVariant?: OpticalFlowVariant,
     additionalVariantScale?: number,
     retainPair = false,
+    persistFlow = false,
+    sessionId?: string,
+    sessionCreatedAt?: number,
+    alignmentKey?: string,
   ): Promise<{ pixels: Uint16Array; additionalPixels?: Uint16Array; performance: OpticalFlowPerformanceStats }> {
     const previousGamma2Buffer = previousGamma2.buffer.slice(
       previousGamma2.byteOffset,
@@ -94,6 +98,7 @@ export class StfOpticalFlowClient {
       ...(additionalVariant ? { additionalVariant } : {}),
       ...(additionalVariantScale !== undefined ? { additionalVariantScale } : {}),
       ...(retainPair ? { retainPair: true } : {}),
+      ...(persistFlow ? { persistFlow: true, sessionId, sessionCreatedAt, alignmentKey } : {}),
       width,
       height,
       previousImageId,
