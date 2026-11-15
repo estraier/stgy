@@ -757,7 +757,9 @@ listen(processButton, "click", async () => {
       ? selectedFiles : files;
     let inputInfos = await readInputInfos(metadataFiles);
     if (selectedMergeMode === "stf" && selectedFiles.length > 1) {
-      const filtered = selectUniqueStfInputs(metadataFiles, inputInfos);
+      const filtered = selectUniqueStfInputs(metadataFiles, inputInfos, {
+        allowMissingFNumbers: selectedStfFrameGeneration() === "off",
+      });
       for (const skipped of filtered.skipped) {
         console.info(`STF skipped duplicate EXIF F${skipped.fNumber}: ${metadataFiles[skipped.index].name}; keeping ${metadataFiles[skipped.firstIndex].name}.`);
       }
@@ -804,13 +806,28 @@ listen(processButton, "click", async () => {
         ? "average"
         : selectedMergeMode;
     const processingSettings = captureProcessingSettings(selectedMergeMode);
+    const missingStfFNumber = effectiveMergeMode === "stf" && inputInfos.some((info) =>
+      typeof info.fNumber !== "number" || !Number.isFinite(info.fNumber) || info.fNumber <= 0);
+    const selectedBlurPlan = selectedStfBlurPlan();
+    if (missingStfFNumber) {
+      // Frame generation is validated separately and still requires real F values.
+      // The aperture-dependent Additional Blur gate cannot be computed without
+      // those values. Keep the real-only uniform merge and report the omission.
+      const warning = selectedBlurPlan.enabled
+        ? "STF missing EXIF F-number: uniform real-image weights were used; Additional Blur was skipped because its gate requires F-numbers."
+        : "STF missing EXIF F-number: uniform real-image weights were used.";
+      console.warn(warning);
+      trace.warnings.push(warning);
+    }
+    const effectiveBlurPlan = missingStfFNumber && selectedBlurPlan.enabled
+      ? buildStfAdditionalBlurPlan({ ...selectedBlurPlan, strength: "none" }) : selectedBlurPlan;
     const mergePlan = buildMergePlan(
       files,
       inputInfos,
       effectiveMergeMode,
       currentCanonicalSession.images,
       selectedStfRadialAttenuation(),
-      selectedStfBlurPlan(),
+      effectiveBlurPlan,
       selectedTileFolding(),
       selectedFocusSoftness(),
       selectedPanoramaMaxOutputMegapixels(),

@@ -49,8 +49,11 @@ export function buildStfFrameSet(
 ): StfFrameSet {
   validateMode(mode);
   if (mode === "off") {
-    const weights = buildStfApertureWeights(fNumbers as number[], radialAttenuation);
-    if (!weights) throw new Error("Could not compute STF aperture weights from EXIF F-numbers.");
+    if (fNumbers.length === 0) throw new Error("STF requires at least one input image.");
+    // Preserve the original real-only STF behavior: missing/incomplete EXIF
+    // does not prevent merging, and every selected real image gets equal weight.
+    const apertureWeights = buildStfApertureWeights(fNumbers as number[], radialAttenuation);
+    const weights = apertureWeights ?? Float64Array.from(fNumbers, () => 1 / fNumbers.length);
     return {
       mode,
       realWeights: Float32Array.from(weights),

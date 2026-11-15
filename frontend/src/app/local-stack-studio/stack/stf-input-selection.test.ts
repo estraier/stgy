@@ -32,6 +32,20 @@ describe("STF real input selection", () => {
     },
   );
 
+  test.each([null, undefined, 0, -1, NaN, Infinity, -Infinity])(
+    "off preserves missing F-number %s for uniform blending", (missing) => {
+      const files = ["first", "missing", "duplicate", "second-missing", "last"];
+      const infos = [
+        { fNumber: 2 }, { fNumber: missing }, { fNumber: 2 },
+        { fNumber: null }, { fNumber: 4 },
+      ];
+      const selected = selectUniqueStfInputs(files, infos, { allowMissingFNumbers: true });
+      expect(selected.files).toEqual(["first", "missing", "second-missing", "last"]);
+      expect(selected.inputInfos).toEqual([infos[0], infos[1], infos[3], infos[4]]);
+      expect(selected.skipped).toEqual([{ index: 2, firstIndex: 0, fNumber: 2 }]);
+    },
+  );
+
   test("rejects misaligned metadata arrays", () => {
     expect(() => selectUniqueStfInputs(["a", "b"], [{ fNumber: 2 }])).toThrow(/counts do not match/);
   });

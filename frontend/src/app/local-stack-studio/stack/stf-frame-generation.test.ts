@@ -41,6 +41,22 @@ describe("STF generated-frame radial minimax luminance weights", () => {
     expect(frames.outerFrames).toHaveLength(0);
   });
 
+  test.each([null, undefined, 0, -1, NaN, Infinity, -Infinity])(
+    "off uniformly weights all real inputs when one EXIF F-number is %s", (missing) => {
+      const frames = buildStfFrameSet([2, missing, 4], 1, "off");
+      expect(Array.from(frames.realWeights)).toEqual(Array.from(new Float32Array([1 / 3, 1 / 3, 1 / 3])));
+      expect(Array.from(frames.allWeights)).toEqual(Array.from(frames.realWeights));
+      expect(frames.middleFrames).toHaveLength(0);
+      expect(frames.outerFrames).toHaveLength(0);
+    },
+  );
+
+  test("off retains normal nonuniform weights with complete F-numbers", () => {
+    const frames = buildStfFrameSet([2, 2.8, 4], 1, "off");
+    expect(Array.from(frames.realWeights)).toEqual(
+      Array.from(Float32Array.from(buildStfApertureWeights([2, 2.8, 4], 1)!)));
+  });
+
   test.each(["interpolation", "extrapolation-1", "extrapolation-3", "extrapolation-10"] as const)(
     "%s includes real and synthetic frames, preserving their index mapping", (mode: StfFrameGenerationMode) => {
       const frames = buildStfFrameSet(fNumbers, 1, mode);
