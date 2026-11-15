@@ -1,4 +1,15 @@
-export type StfFrameGenerationMode = "off" | "interpolation" | "extrapolation-1" | "extrapolation-2" | "extrapolation-3" | "extrapolation-4" | "extrapolation-5" | "extrapolation-6" | "extrapolation-7" | "extrapolation-8" | "extrapolation-9" | "extrapolation-10";
+import type { OpticalFlowOpeningVariant } from "../workers/protocols/optical-flow-protocol";
+
+export const STF_EXTRAPOLATION_COUNTS = [1, 2, 4, 8, 16, 32] as const;
+export type StfExtrapolationCount = typeof STF_EXTRAPOLATION_COUNTS[number];
+export type StfFrameGenerationMode = "off" | "interpolation" | `extrapolation-${StfExtrapolationCount}`;
+const STF_EXTRAPOLATION_MODE_SET: ReadonlySet<string> = new Set(
+  STF_EXTRAPOLATION_COUNTS.map((count) => `extrapolation-${count}`),
+);
+
+export function isStfFrameGenerationMode(value: string): value is StfFrameGenerationMode {
+  return value === "off" || value === "interpolation" || STF_EXTRAPOLATION_MODE_SET.has(value);
+}
 
 export type StfMiddleFrame = {
   previousIndex: number;
@@ -10,8 +21,7 @@ export type StfMiddleFrame = {
 
 export type StfOuterFrame = StfMiddleFrame & (
   | {
-      variant: "ext1" | "ext1-2" | "ext1-3" | "ext1-4" | "ext1-5" | "ext1-6" |
-        "ext1-7" | "ext1-8" | "ext1-9" | "ext1-10";
+      variant: OpticalFlowOpeningVariant;
       // Outward radius-domain displacement, used only for geometry/diagnostics.
       openingFlowScale: number;
       // Reverse sampling scale, not the forward radius-domain displacement.
@@ -35,7 +45,7 @@ export type StfFrameSet = {
 };
 
 function validateMode(mode: string): asserts mode is StfFrameGenerationMode {
-  if (mode !== "off" && mode !== "interpolation" && !/^extrapolation-(?:[1-9]|10)$/.test(mode)) {
+  if (!isStfFrameGenerationMode(mode)) {
     throw new Error(`Unsupported STF Frame generation: ${mode}`);
   }
 }
@@ -134,7 +144,7 @@ export function buildStfFrameSet(
           fNumber: outerFNumber,
           weight: 0,
           pairLabel: `first-ext${step}`,
-          variant: (step === 1 ? "ext1" : `ext1-${step}`) as StfOuterFrame["variant"],
+          variant: (step === 1 ? "ext1" : `ext1-${step}`) as OpticalFlowOpeningVariant,
           openingFlowScale,
           inverseWarpScale: openingInverseWarpScale,
         });

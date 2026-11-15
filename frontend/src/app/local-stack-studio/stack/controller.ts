@@ -97,7 +97,7 @@ import {
 } from "./canonical-input-pool";
 import { runLensfunCorrectionPool } from "./lensfun-pool";
 import { buildStfApertureWeights, DEFAULT_STF_RADIAL_ATTENUATION } from "./stf-weights";
-import { buildStfFrameSet } from "./stf-frame-generation";
+import { buildStfFrameSet, isStfFrameGenerationMode } from "./stf-frame-generation";
 import { appendStfVirtualSource } from "./stf-virtual-source";
 import { buildStfSourceCacheKey, buildStfAlignmentCacheKey, prepareStfSourceForFinalRolloff,
   StfSourceCache } from "./stf-process-cache";
@@ -528,8 +528,7 @@ function selectedStfRadialAttenuation() {
 }
 
 function selectedStfFrameGeneration() {
-  if (stfFrameGeneration.value !== "off" && stfFrameGeneration.value !== "interpolation" &&
-      !/^extrapolation-(?:[1-9]|10)$/.test(stfFrameGeneration.value)) {
+  if (!isStfFrameGenerationMode(stfFrameGeneration.value)) {
     throw new Error("Unknown STF Frame generation mode.");
   }
   return stfFrameGeneration.value;

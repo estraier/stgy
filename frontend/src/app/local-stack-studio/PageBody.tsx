@@ -328,14 +328,10 @@ export default function PageBody() {
                     <option value="interpolation">interpolation</option>
                     <option value="extrapolation-1">extrapolation 1</option>
                     <option value="extrapolation-2">extrapolation 2</option>
-                    <option value="extrapolation-3">extrapolation 3</option>
                     <option value="extrapolation-4">extrapolation 4</option>
-                    <option value="extrapolation-5">extrapolation 5</option>
-                    <option value="extrapolation-6">extrapolation 6</option>
-                    <option value="extrapolation-7">extrapolation 7</option>
                     <option value="extrapolation-8">extrapolation 8</option>
-                    <option value="extrapolation-9">extrapolation 9</option>
-                    <option value="extrapolation-10">extrapolation 10</option>
+                    <option value="extrapolation-16">extrapolation 16</option>
+                    <option value="extrapolation-32">extrapolation 32</option>
                   </select>
                 </label>
                 <label id="stf-blur-strength-option" className="hidden flex-col items-start gap-1.5">

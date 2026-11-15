@@ -1,4 +1,5 @@
 import type {
+  OpticalFlowOpeningVariant,
   OpticalFlowWorkerRequest,
   OpticalFlowWorkerResponse,
 } from "./protocols/optical-flow-protocol";
@@ -19,7 +20,7 @@ function syntheticField(width: number, height: number, dx: number): ArrayBuffer 
 }
 
 async function runMidpoint(cores: number, memoryGiB: number, additionalVariant?: "ext1" | "ext2", sharedGray = false,
-  retainedVariants: Array<"ext1" | "ext1-2" | "ext1-3" | "ext1-10"> = [],
+  retainedVariants: OpticalFlowOpeningVariant[] = [],
   scales?: { main?: number; additional?: number; retained?: number[] }) {
   jest.resetModules();
   const originalWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
@@ -151,6 +152,20 @@ describe("Optical Flow quality-preserving native Flow parallelization", () => {
     for (let c = 0; c < 3; c += 1) expected[(7 + 3) * 3 + c] = 8000;
     expect(Array.from(pixels)).toEqual(Array.from(expected));
   });
+});
+
+test("STF Worker accepts retained extrapolation steps 16 and 32 without recomputing Flow", async () => {
+  const { messages, flowComputations } = await runMidpoint(8, 8, undefined, true,
+    ["ext1-16", "ext1-32"], { retained: [5.5, 7.2] });
+  expect(flowComputations).toBe(2);
+  for (const id of [3, 4]) {
+    const result = messages.find((message) => message.requestId === id);
+    expect(result?.type).toBe("warp-result");
+    if (result?.type === "warp-result") {
+      expect(new Uint16Array(result.gamma2Buffer).length).toBe(11 * 3 * 3);
+    }
+  }
+  expect(messages.find((message) => message.requestId === 100)?.type).toBe("error");
 });
 
 // The per-frame interpolation uses canonical gamma-2 RGB16 with extended
@@ -400,6 +415,115 @@ test("STF inverse-warp extrapolation expands a synthetic CoC at the geometricall
     ] as const) {
       if (descriptor) Object.defineProperty(globalThis, key, descriptor);
       else Reflect.deleteProperty(globalThis, key);
+    }
+  }
+});
+
+test("STF opening extrapolation 32 expands a synthetic disc to its 1/F target radius", async () => {
+  // Keep the target disc entirely in frame: for a 1/3-stop real pair, the
+  // 32nd virtual half-step increases radius by roughly 6.35x.
+  jest.resetModules();
+  const oldWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  const oldNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  const oldOnmessage = Object.getOwnPropertyDescriptor(globalThis, "onmessage");
+  const oldPostMessage = Object.getOwnPropertyDescriptor(globalThis, "postMessage");
+  const width = 161;
+  const height = 161;
+  const center = 80;
+  const radius = 10;
+  const firstF = 2;
+  const nextF = 2 * 2 ** (1 / 6);
+  const realRadiusRatio = firstF / nextF;
+  const gamma2Value = 10000;
+  const responses: OpticalFlowWorkerResponse[] = [];
+  let bidirectionalComputations = 0;
+  const radialField = (scale: number): ArrayBuffer => {
+    const vectors = new Float32Array(width * height * 2);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const offset = (y * width + x) * 2;
+        vectors[offset] = (x - center) * (scale - 1);
+        vectors[offset + 1] = (y - center) * (scale - 1);
+      }
+    }
+    return vectors.buffer;
+  };
+  const disc = (r: number): Uint16Array => {
+    const pixels = new Uint16Array(width * height * 3);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        if (Math.hypot(x - center, y - center) <= r) {
+          const offset = (y * width + x) * 3;
+          pixels[offset] = pixels[offset + 1] = pixels[offset + 2] = gamma2Value;
+        }
+      }
+    }
+    return pixels;
+  };
+  class RadialDirectionWorker {
+    onmessage: ((event: MessageEvent<OpticalFlowDirectionResponse>) => void) | null = null;
+    onerror = null;
+    onmessageerror = null;
+    postMessage(message: OpticalFlowDirectionRequest) {
+      const respond = (result: OpticalFlowDirectionResponse) =>
+        queueMicrotask(() => this.onmessage?.({ data: result } as MessageEvent<OpticalFlowDirectionResponse>));
+      if (message.type === "init") {
+        respond({ type: "ready", requestId: message.requestId });
+      } else if (message.type === "compute-pair") {
+        bidirectionalComputations += 2;
+        respond({ type: "pair-result", requestId: message.requestId,
+          forwardBuffer: radialField(realRadiusRatio), backwardBuffer: radialField(1 / realRadiusRatio),
+          forwardMs: 0, backwardMs: 0 });
+      } else {
+        throw new Error(`Unexpected radial Flow operation ${message.type}`);
+      }
+    }
+    terminate() {}
+  }
+  Object.defineProperty(globalThis, "Worker", { configurable: true, value: RadialDirectionWorker });
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true, value: { hardwareConcurrency: 2, deviceMemory: 4 },
+  });
+  Object.defineProperty(globalThis, "postMessage", {
+    configurable: true, value: (message: OpticalFlowWorkerResponse) => responses.push(message),
+  });
+  try {
+    jest.requireActual("./optical-flow.worker");
+    const scope = globalThis as unknown as ParentScope;
+    if (!scope.onmessage) throw new Error("Optical Flow worker request handler missing");
+    await scope.onmessage({ data: {
+      type: "interpolate", requestId: 500, width, height, variant: "mid",
+      retainPair: true, previousImageId: 9, nextImageId: 10,
+      previousGamma2Buffer: disc(radius).buffer,
+      nextGamma2Buffer: disc(radius * realRadiusRatio).buffer,
+    } } as MessageEvent<OpticalFlowWorkerRequest>);
+    for (const step of [4, 16, 32]) {
+      const virtualF = firstF * 2 ** (-step / 12);
+      const inverseWarpScale = (1 - virtualF / firstF) / (1 - firstF / nextF);
+      await scope.onmessage({ data: {
+        type: "warp-retained", requestId: 500 + step, previousImageId: 9, nextImageId: 10,
+        variant: `ext1-${step}` as OpticalFlowOpeningVariant, variantScale: inverseWarpScale,
+      } } as MessageEvent<OpticalFlowWorkerRequest>);
+      const response = responses.find((item) => item.requestId === 500 + step);
+      expect(response?.type).toBe("warp-result");
+      if (response?.type !== "warp-result") continue;
+      const pixels = new Uint16Array(response.gamma2Buffer);
+      let measuredRadius = 0;
+      for (let x = center; x < width; x++) {
+        if (pixels[(center * width + x) * 3] > gamma2Value / 2) measuredRadius = x - center;
+      }
+      // A 10-pixel discrete source disc has a quantized threshold edge; the
+      // expanded edge may deviate by a few pixels after bilinear sampling.
+      expect(Math.abs(measuredRadius - radius * firstF / virtualF)).toBeLessThanOrEqual(3);
+    }
+    expect(bidirectionalComputations).toBe(2);
+  } finally {
+    for (const [name, descriptor] of [
+      ["Worker", oldWorker], ["navigator", oldNavigator],
+      ["onmessage", oldOnmessage], ["postMessage", oldPostMessage],
+    ] as const) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else Reflect.deleteProperty(globalThis, name);
     }
   }
 });

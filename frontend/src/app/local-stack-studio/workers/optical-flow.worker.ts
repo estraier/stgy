@@ -395,7 +395,7 @@ import type {
     // Opening-side and closing-side variants each use an inverse-warp
     // multiplier derived from the virtual F-number outside the Worker.
     const openingStep = variant === "ext1" ? 1 : variant.startsWith("ext1-") ? Number(variant.slice(5)) : 0;
-    if (openingStep && (!Number.isInteger(openingStep) || openingStep < 1 || openingStep > 10)) {
+    if (openingStep && (!Number.isInteger(openingStep) || openingStep < 1 || openingStep > 32)) {
       throw new Error("STF Optical Flow received an unsupported opening extrapolation step.");
     }
     const defaultScale = openingStep ? openingStep * 0.5 : 0.5;

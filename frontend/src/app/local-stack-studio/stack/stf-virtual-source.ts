@@ -95,7 +95,7 @@ export async function appendStfVirtualSource(
       const firstOuter = outerFrames[0];
       options.progress?.(`Generating STF virtual frame ${middle.pairLabel}...`);
       // Limit the lifetime of both full-resolution result buffers: do not
-      // hold the midpoint/first-outer arrays during the remaining 2..10 warps.
+      // hold the midpoint/first-outer arrays during the remaining 2..32 warps.
       {
         const generated = await client.generate(
           reader.width, reader.height, middle.previousIndex, middle.nextIndex,
