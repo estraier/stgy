@@ -98,6 +98,8 @@ import { runLensfunCorrectionPool } from "./lensfun-pool";
 import { buildStfApertureWeights, DEFAULT_STF_RADIAL_ATTENUATION } from "./stf-weights";
 import { buildStfFrameSet } from "./stf-frame-generation";
 import { appendStfVirtualSource } from "./stf-virtual-source";
+import { buildStfSourceCacheKey, buildStfVirtualFrameContextKey, prepareStfSourceForFinalRolloff,
+  StfSourceCache, StfVirtualFrameCache } from "./stf-process-cache";
 import { selectUniqueStfInputs } from "./stf-input-selection";
 import { chooseAlignmentReferenceIndex } from "./alignment-reference";
 import { buildStfAdditionalBlurPlan, resolveStfGateExpansionMultiplier, DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS, STF_BLUR_STRENGTH_VALUES, STF_BLUR_AREA_GUARD_VALUES, STF_BLUR_RATIO_VALUES, STF_BLUR_SIGMOID_VALUES } from "./stf-additional-blur-mode";
@@ -295,6 +297,14 @@ function loadExifMetadataModule() {
 }
 
 let currentCanonicalSession = null;
+// Keep only one complete STF Source, separate from the real-only Sobel/Gate.
+// A bounded virtual RGB16 LRU survives Process but never leaves this session.
+const stfSourceCache = new StfSourceCache();
+const stfVirtualFrameCache = new StfVirtualFrameCache();
+function resetStfProcessCaches() {
+  stfSourceCache.clear();
+  stfVirtualFrameCache.clear();
+}
 let currentPreviewColorSpace = "srgb";
 let currentInputFiles = [];
 let currentOutputMetadata = null;
@@ -564,6 +574,7 @@ listen(inputFiles, "change", () => {
   const previousCanonicalSession = currentCanonicalSession;
   currentCanonicalSession = null;
   resetStfGateCache();
+  resetStfProcessCaches();
   if (previousCanonicalSession) {
     deleteCanonicalSession(previousCanonicalSession).catch(() => {});
   }
@@ -767,6 +778,10 @@ listen(processButton, "click", async () => {
       requireStfToneStatistics,
     );
     trace.canonicalCacheReused = previousCanonicalSession !== null && previousCanonicalSession === currentCanonicalSession;
+    if (previousCanonicalSession !== currentCanonicalSession) {
+      resetStfGateCache();
+      resetStfProcessCaches();
+    }
     trace.add("Input preparation and canonical cache", performance.now() - inputStartedAt);
     const useSyntheticSingleInputHdr = files.length === 1 && (selectedMergeMode === "hdr1" || selectedMergeMode === "hdr2");
     const preserveSingleInputMerge = isTileMergeMode(selectedMergeMode) || selectedMergeMode === "panorama";
@@ -2962,26 +2977,44 @@ async function alignAndMergeFilesWithOpenCv(
 
     const stfFrameSet = mergePlan.mode === "stf" ? mergePlan.stfFrameSet : null;
     const needsStfVirtualFrames = Boolean(stfFrameSet && stfFrameSet.mode !== "off");
-
-    if (mergePlan.mode === "stf" && mergePlan.stfBlurPlan?.enabled) {
-      let sourceOverride = null;
-      if (needsStfVirtualFrames && !mergePlan.stfBlurPlan.gateOnly) {
-        sourceOverride = await mergeLinearFromWorkerPool(
-          canonicalSession.id,
-          reader,
-          alignmentPlan,
-          matrices,
-          mergePlan,
-          width,
-          height,
-        );
-        await appendStfVirtualSource(sourceOverride, {
+    const stfAlignedInputs = mergePlan.mode === "stf" ? {
+      sessionId: canonicalSession.id, width, height, alignmentPlan, matrices,
+    } : null;
+    const stfSourceKey = stfAlignedInputs ? buildStfSourceCacheKey({
+      ...stfAlignedInputs,
+      gains: mergePlan.gains, scaledLogs: mergePlan.scaledLogs, weights: mergePlan.weights,
+      toneReferenceIndex: mergePlan.toneReferenceIndex, frameSet: stfFrameSet,
+    }) : null;
+    const stfVirtualContextKey = stfAlignedInputs ? buildStfVirtualFrameContextKey(stfAlignedInputs) : null;
+    const sourceLength = width * height * 3;
+    // No Flow and no source merge for a cache hit, irrespective of Blur settings.
+    const getStfSource = () => stfSourceKey ? stfSourceCache.get(stfSourceKey, sourceLength) : null;
+    const buildStfSource = async () => {
+      const source = await mergeLinearFromWorkerPool(
+        canonicalSession.id, reader, alignmentPlan, matrices, mergePlan, width, height,
+      );
+      if (needsStfVirtualFrames) {
+        await appendStfVirtualSource(source, {
           frameSet: stfFrameSet,
           reader,
           canonicalImages: canonicalSession.images,
           toneReferenceIndex: mergePlan.toneReferenceIndex,
           progress: setProgress,
+          frameCache: stfVirtualFrameCache,
+          frameContextKey: stfVirtualContextKey,
         });
+      }
+      if (stfSourceKey) stfSourceCache.put(stfSourceKey, source);
+      return source;
+    };
+
+    if (mergePlan.mode === "stf" && mergePlan.stfBlurPlan?.enabled) {
+      // Gate-only must never start Flow or construct a full Source.
+      let sourceOverride = mergePlan.stfBlurPlan.gateOnly ? null : getStfSource();
+      if (sourceOverride) console.info("STF complete Source cache hit; skipping merge and Optical Flow.");
+      // Generated frames must be part of Source before Additional Blur.
+      if (!sourceOverride && needsStfVirtualFrames && !mergePlan.stfBlurPlan.gateOnly) {
+        sourceOverride = await buildStfSource();
       }
       return await mergeStfWithAdditionalBlur(
         canonicalSession.id,
@@ -2995,30 +3028,19 @@ async function alignAndMergeFilesWithOpenCv(
         outputColorSpace,
         infoTrace,
         sourceOverride,
+        stfSourceKey,
       );
     }
 
     if (mergePlan.mode === "average" || mergePlan.mode === "stf") {
-      const accumulator = await mergeLinearFromWorkerPool(
-        canonicalSession.id,
-        reader,
-        alignmentPlan,
-        matrices,
-        mergePlan,
-        width,
-        height,
-      );
-      if (needsStfVirtualFrames) {
-        await appendStfVirtualSource(accumulator, {
-          frameSet: stfFrameSet,
-          reader,
-          canonicalImages: canonicalSession.images,
-          toneReferenceIndex: mergePlan.toneReferenceIndex,
-          progress: setProgress,
-        });
-      }
+      const cached = mergePlan.mode === "stf" ? getStfSource() : null;
+      if (cached) console.info("STF complete Source cache hit; skipping merge and Optical Flow.");
+      const accumulator = cached || await buildStfSource();
+      // STF final rolloff is in-place. Never alter a cached pre-rolloff
+      // Source: the next Process must see exactly the original linear merge.
+      const retainedSource = stfSourceKey && stfSourceCache.get(stfSourceKey, sourceLength) === accumulator;
       return finalizeStoredResult(
-        accumulator,
+        prepareStfSourceForFinalRolloff(accumulator, retainedSource ? accumulator : null),
         width,
         height,
         outputColorSpace,
@@ -3182,6 +3204,7 @@ async function mergeStfWithAdditionalBlur(
   sessionId, reader, alignmentPlan, matrices, inputInfos, mergePlan, width, height, outputColorSpace,
   infoTrace: { previewMs: number; add: (label: string, durationMs: number, includedIn?: string) => void; warnings: string[] } | null = null,
   sourceOverride = null,
+  sourceCacheKey = null,
 ) {
   const plan = mergePlan.stfBlurPlan;
   if (!plan?.enabled) throw new Error("STF Additional blur was invoked while disabled.");
@@ -3433,6 +3456,9 @@ async function mergeStfWithAdditionalBlur(
         cache.sourceWeightsKey = sourceWeightsKey;
       }
     }
+    // Store complete real+generated Source independently of the 192MiB Gate
+    // budget. Reuse on Blur strength/guard/ratio/sigmoid changes and Blur off.
+    if (sourceCacheKey) stfSourceCache.put(sourceCacheKey, source);
     const p = await ensurePool();
     const blurred = new Float32Array(source.length);
     setProgress(`STF guarded Gaussian blur 0/${jobs.length}...`);
@@ -5619,6 +5645,7 @@ return () => {
   clearZoomView();
   clearFullSizeRenderCache();
   resetStfGateCache();
+  resetStfProcessCaches();
   if (currentCanonicalSession) {
     const session = currentCanonicalSession;
     currentCanonicalSession = null;
