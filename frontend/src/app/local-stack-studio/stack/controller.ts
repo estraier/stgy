@@ -97,6 +97,7 @@ import {
 } from "./canonical-input-pool";
 import { runLensfunCorrectionPool } from "./lensfun-pool";
 import { DEFAULT_STF_RADIAL_ATTENUATION } from "./stf-weights";
+import { parseStfRadialAttenuation } from "./stf-radial-weights";
 import { buildStfFrameSet, isStfFrameGenerationMode } from "./stf-frame-generation";
 import { prepareStfFrameSetForTone, createStfSourceTonePlans } from "./stf-frame-density";
 import { appendStfVirtualSource } from "./stf-virtual-source";
@@ -417,7 +418,6 @@ function listen(target, type, listener, options) {
   listenerCleanups.push(() => target.removeEventListener(type, listener, options));
 }
 
-const STF_RADIAL_ATTENUATION_VALUES = new Set([-2, -1, 0, 1, 2, 3]);
 const FOCUS_SOFTNESS_VALUES = new Set([0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5]);
 
 let previousAlignmentWasPanorama = false;
@@ -524,8 +524,7 @@ function selectedFocusSoftness() {
 }
 
 function selectedStfRadialAttenuation() {
-  const value = Number.parseFloat(stfRadialAttenuation.value);
-  return STF_RADIAL_ATTENUATION_VALUES.has(value) ? value : DEFAULT_STF_RADIAL_ATTENUATION;
+  return parseStfRadialAttenuation(stfRadialAttenuation.value) ?? DEFAULT_STF_RADIAL_ATTENUATION;
 }
 
 function selectedStfFrameGeneration() {

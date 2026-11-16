@@ -127,18 +127,23 @@ describe("STF independent edge-density preparation", () => {
     expect(() => calculateStfWeights([{ image: 0, radiusFNumber: 2, edgeDensity: 1 },
       { image: 1, radiusFNumber: 4, edgeDensity: 0 }], 1)).toThrow("edge density");
   });
-  test("stage 2 minimizes q=3 maximum error after the radius-and-density prior", () => {
+  test("outer-shell apodization preserves the first two drops' sum", () => {
     const f = [2, 2.5, 4, 5.6];
     const plan = calculateStfWeights(f.map((radiusFNumber, image) => ({
       image, radiusFNumber, edgeDensity: 1 + image * 0.2,
     })), 3);
-    expect(plan.minimaxMaximumError).toBeLessThanOrEqual(plan.priorMaximumError);
+    expect(plan.outerShellApodizationApplied).toBe(true);
+    const firstTwo = [0, 1]; // Lowest F values are the outermost discs.
+    expect(plan.adjustedDrops[0]).toBeCloseTo(plan.adjustedDrops[1], 12);
+    expect(firstTwo.reduce((sum, i) => sum + plan.adjustedDrops[i], 0))
+      .toBeCloseTo(firstTwo.reduce((sum, i) => sum + plan.idealDrops[i], 0), 12);
     expect(plan.rawWeights.every((value) => Number.isFinite(value) && value > 0)).toBe(true);
   });
+
 });
 
-test.each([-2, -1, 0, 1, 2, 3])(
-  "neutral tone matching preserves all pre-existing ideal-disc frame weights at q=%i", (q) => {
+test.each([-2, -1, 0, 1, 2, 3, "smoothstep-weak", "smoothstep-medium", "smoothstep-strong"] as const)(
+  "neutral tone matching preserves all pre-existing ideal-disc frame weights at %s", (q) => {
     for (const mode of ["off", "interpolation", "extrapolation-1", "extrapolation-4", "extrapolation-32"] as const) {
       const original = buildStfFrameSet(realF, q, mode);
       const prepared = prepareStfFrameSetForTone(original, realF, identity, 0.6, q);

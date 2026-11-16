@@ -309,12 +309,15 @@ export default function PageBody() {
                     defaultValue="1"
                     className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm"
                   >
-                    <option value="-2">-2 (strong center falloff)</option>
-                    <option value="-1">-1 (center falloff)</option>
-                    <option value="0">0 (logarithmic)</option>
-                    <option value="1">1 (linear)</option>
-                    <option value="2">2 (quadratic)</option>
-                    <option value="3">3 (cubic)</option>
+                    <option value="-2">-2 (inverse-square, dark rim)</option>
+                    <option value="-1">-1 (inverse, dark rim)</option>
+                    <option value="0">0 (logarithmic, balanced)</option>
+                    <option value="1">1 (linear, default)</option>
+                    <option value="2">2 (quadratic, bright rim)</option>
+                    <option value="3">3 (cubic, brighter rim)</option>
+                    <option value="smoothstep-weak">Smoothstep weak (3rd-order S-curve)</option>
+                    <option value="smoothstep-medium">Smoothstep medium (5th-order S-curve)</option>
+                    <option value="smoothstep-strong">Smoothstep strong (7th-order S-curve)</option>
                   </select>
                 </label>
                 <label id="stf-frame-generation-option" className="hidden flex-col items-start gap-1.5">

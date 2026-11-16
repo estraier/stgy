@@ -1,4 +1,4 @@
-import { calculateStfWeights } from "./stf-radial-weights";
+import { calculateStfWeights, type StfRadialAttenuation } from "./stf-radial-weights";
 import type { StfFrameSet } from "./stf-frame-generation";
 import { transformStfToneIntensity, type StfToneMatchPlan } from "./stf-tone-match";
 
@@ -71,7 +71,7 @@ export function prepareStfFrameSetForTone(
   realFNumbers: readonly (number | null | undefined)[],
   realTonePlans: readonly StfToneMatchPlan[],
   referenceP95: number,
-  radialAttenuation: number,
+  radialAttenuation: StfRadialAttenuation,
 ): StfTonePreparedFrameSet {
   if (frameSet.allFNumbers.length < realFNumbers.length ||
       realTonePlans.length !== realFNumbers.length) {

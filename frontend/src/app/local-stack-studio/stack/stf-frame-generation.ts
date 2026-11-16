@@ -1,4 +1,4 @@
-import { calculateStfWeights } from "./stf-radial-weights";
+import { calculateStfWeights, isStfRadialAttenuation, type StfRadialAttenuation } from "./stf-radial-weights";
 import type { OpticalFlowOpeningVariant } from "../workers/protocols/optical-flow-protocol";
 
 export const STF_EXTRAPOLATION_COUNTS = [1, 2, 4, 8, 16, 32] as const;
@@ -53,12 +53,12 @@ function validateMode(mode: string): asserts mode is StfFrameGenerationMode {
 
 export function buildStfFrameSet(
   fNumbers: readonly (number | null | undefined)[],
-  radialAttenuation: number,
+  radialAttenuation: StfRadialAttenuation,
   mode: StfFrameGenerationMode,
 ): StfFrameSet {
   validateMode(mode);
-  if (!(Number.isInteger(radialAttenuation) && radialAttenuation >= -2 && radialAttenuation <= 3)) {
-    throw new Error("STF Radial attenuation must be an integer from -2 to 3.");
+  if (!isStfRadialAttenuation(radialAttenuation)) {
+    throw new Error("STF Radial attenuation is unsupported.");
   }
   if (fNumbers.length === 0) throw new Error("STF requires at least one input image.");
 

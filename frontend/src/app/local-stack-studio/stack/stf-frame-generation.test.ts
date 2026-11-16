@@ -1,7 +1,8 @@
 import { buildStfFrameSet, isStfFrameGenerationMode, STF_EXTRAPOLATION_COUNTS, type StfFrameGenerationMode, type StfFrameSet } from "./stf-frame-generation";
 
 const fNumbers = [2.8, 4, 3.5, 3.2, 2.5, 2.2, 2];
-const radialAttenuationOptions = [-2, -1, 0, 1, 2, 3];
+const radialAttenuationOptions = [-2, -1, 0, 1, 2, 3,
+  "smoothstep-weak", "smoothstep-medium", "smoothstep-strong"] as const;
 
 function radialDiscContributions(frames: StfFrameSet, realFNumbers: number[]) {
   const densityFNumbers = [
@@ -23,30 +24,51 @@ function radialDiscContributions(frames: StfFrameSet, realFNumbers: number[]) {
   };
 }
 
-function targetRadialLuminance(radius: number, minRadius: number, maxRadius: number, radialAttenuation: number) {
-  const power = radialAttenuation;
-  return Math.abs(power) < 1e-12
-    ? Math.log(maxRadius / radius) / Math.log(maxRadius / minRadius)
-    : (maxRadius ** power - radius ** power) / (maxRadius ** power - minRadius ** power);
+function targetRadialLuminance(
+  radius: number, minRadius: number, zeroRadius: number,
+  radialAttenuation: typeof radialAttenuationOptions[number],
+): number {
+  if (radius <= minRadius) return 1;
+  if (radius >= zeroRadius) return 0;
+  if (typeof radialAttenuation === "number") {
+    if (radialAttenuation === 0) return Math.log(zeroRadius / radius) / Math.log(zeroRadius / minRadius);
+    return (zeroRadius ** radialAttenuation - radius ** radialAttenuation) /
+      (zeroRadius ** radialAttenuation - minRadius ** radialAttenuation);
+  }
+  const t = (zeroRadius - radius) / (zeroRadius - minRadius);
+  if (radialAttenuation === "smoothstep-weak") return t * t * (3 - 2 * t);
+  if (radialAttenuation === "smoothstep-medium") return t ** 3 * (10 - 15 * t + 6 * t * t);
+  return t ** 4 * (35 - 84 * t + 70 * t * t - 20 * t ** 3);
 }
 
-describe("STF generated-frame radial minimax luminance weights", () => {
-  test.each(radialAttenuationOptions)("off follows the same radial minimax profile as the generated-frame path for q=%i", (radialAttenuation) => {
+function expectedDrops(
+  ordered: ReturnType<typeof radialDiscContributions>["ordered"],
+  attenuation: typeof radialAttenuationOptions[number],
+): number[] {
+  const minR = ordered[0].radius;
+  const maxR = ordered[ordered.length - 1].radius;
+  const zeroR = maxR * (maxR / minR) ** (1 / (ordered.length - 1));
+  const target = ordered.map((frame) => targetRadialLuminance(frame.radius, minR, zeroR, attenuation));
+  const drops = target.map((level, i) => level - (i + 1 < target.length ? target[i + 1] : 0));
+  const last = drops.length - 1;
+  if (drops[last] > drops[last - 1] + 1e-12) {
+    drops[last] = drops[last - 1] = (drops[last] + drops[last - 1]) / 2;
+  }
+  return drops;
+}
+
+describe("STF generated-frame radial attenuation and outer-shell apodization", () => {
+  test.each(radialAttenuationOptions)("off follows the new radial profile for %s", (radialAttenuation) => {
     const frames = buildStfFrameSet(fNumbers, radialAttenuation, "off");
     expect(frames.middleFrames).toHaveLength(0);
     expect(frames.outerFrames).toHaveLength(0);
     expect(frames.allWeights).toHaveLength(fNumbers.length);
     expect(Array.from(frames.allWeights).reduce((sum, value) => sum + value, 0)).toBeCloseTo(1, 6);
-    const { ordered, levels } = radialDiscContributions(frames, fNumbers);
-    const minR = ordered[0].radius;
-    const maxR = ordered[ordered.length - 1].radius;
-    expect(levels[0]).toBeCloseTo(1, 6);
-    for (let i = 1; i < ordered.length; i += 1) {
-      const expected = (
-        targetRadialLuminance(ordered[i - 1].radius, minR, maxR, radialAttenuation) +
-        targetRadialLuminance(ordered[i].radius, minR, maxR, radialAttenuation)
-      ) / 2;
-      expect(levels[i]).toBeCloseTo(expected, 6);
+    const { ordered, drops, levels } = radialDiscContributions(frames, fNumbers);
+    const expected = expectedDrops(ordered, radialAttenuation);
+    for (let i = 0; i < expected.length; i++) {
+      expect(drops[i]).toBeCloseTo(expected[i], 6);
+      expect(levels[i]).toBeCloseTo(expected.slice(i).reduce((a, b) => a + b, 0), 6);
     }
   });
 
@@ -104,52 +126,28 @@ describe("STF generated-frame radial minimax luminance weights", () => {
   );
 
   test.each(["interpolation", "extrapolation-4", "extrapolation-32"] as const)(
-    "q=1 has exactly linear target luminance at every annulus midpoint for %s", (mode) => {
+    "linear profile follows the virtual zero boundary for %s", (mode) => {
       const frames = buildStfFrameSet(fNumbers, 1, mode);
-      const { ordered, levels, drops } = radialDiscContributions(frames, fNumbers);
-      const minR = ordered[0].radius;
-      const maxR = ordered[ordered.length - 1].radius;
-      expect(levels[0]).toBeCloseTo(1, 6);
-      for (let i = 1; i < ordered.length; i += 1) {
-        const midpointRadius = (ordered[i - 1].radius + ordered[i].radius) / 2;
-        const expectedLinearLuminance = (maxR - midpointRadius) / (maxR - minR);
-        expect(levels[i]).toBeCloseTo(expectedLinearLuminance, 6);
-      }
-      // The outer discontinuity equals one half of the last linear radial decrement.
-      expect(drops[drops.length - 1]).toBeCloseTo(
-        (maxR - ordered[ordered.length - 2].radius) / (2 * (maxR - minR)), 6);
+      const { ordered, drops } = radialDiscContributions(frames, fNumbers);
+      const expected = expectedDrops(ordered, 1);
+      expected.forEach((drop, i) => expect(drops[i]).toBeCloseTo(drop, 6));
     },
   );
 
-  test.each(radialAttenuationOptions)("q=%i follows its normalized target radial luminance profile", (radialAttenuation) => {
+  test.each(radialAttenuationOptions)("%s follows its profile with extrapolation 32", (radialAttenuation) => {
     const frames = buildStfFrameSet(fNumbers, radialAttenuation, "extrapolation-32");
-    const { ordered, levels } = radialDiscContributions(frames, fNumbers);
-    const minR = ordered[0].radius;
-    const maxR = ordered[ordered.length - 1].radius;
-    expect(levels[0]).toBeCloseTo(1, 6);
-    for (let i = 1; i < ordered.length; i += 1) {
-      const expected = (
-        targetRadialLuminance(ordered[i - 1].radius, minR, maxR, radialAttenuation) +
-        targetRadialLuminance(ordered[i].radius, minR, maxR, radialAttenuation)
-      ) / 2;
-      expect(levels[i]).toBeCloseTo(expected, 6);
-    }
+    const { ordered, drops } = radialDiscContributions(frames, fNumbers);
+    const expected = expectedDrops(ordered, radialAttenuation);
+    expected.forEach((drop, i) => expect(drops[i]).toBeCloseTo(drop, 6));
   });
 
-  test("q=1 radial drops follow half-neighbor intervals at irregular radii", () => {
-    // Three real inputs produce five discs (two midpoint frames); the F values
-    // are intentionally not evenly spaced, so test the discrete radial shape.
-    const inputs = [2, 2.5, 4];
-    const frames = buildStfFrameSet(inputs, 1, "interpolation");
+  test("irregular F spacing uses actual radius intervals, with no pair-local ratio assumption", () => {
+    const inputs = [2, 2.02, 2.1, 2.2, 2.4, 3.4, 4];
+    const frames = buildStfFrameSet(inputs, 1, "off");
     const { ordered, drops } = radialDiscContributions(frames, inputs);
-    const span = ordered[ordered.length - 1].radius - ordered[0].radius;
-    expect(drops[0]).toBeCloseTo((ordered[1].radius - ordered[0].radius) / (2 * span), 6);
-    expect(drops[drops.length - 1]).toBeCloseTo(
-      (ordered[ordered.length - 1].radius - ordered[ordered.length - 2].radius) / (2 * span), 6);
-    for (let i = 1; i < ordered.length - 1; i += 1) {
-      expect(drops[i]).toBeCloseTo(
-        (ordered[i + 1].radius - ordered[i - 1].radius) / (2 * span), 6);
-    }
+    const expected = expectedDrops(ordered, 1);
+    expected.forEach((drop, i) => expect(drops[i]).toBeCloseTo(drop, 6));
+    expect(drops[drops.length - 1]).toBeCloseTo(drops[drops.length - 2], 6);
   });
 
   test("forward radius expansion and inverse sampling use distinct geometrical multipliers", () => {
@@ -215,8 +213,7 @@ describe("STF generated-frame radial minimax luminance weights", () => {
     if (!closing) throw new Error("Missing closing frame");
     const { ordered, drops } = radialDiscContributions(frames, f);
     expect(ordered[0].index).toBe(frames.allWeights.length - 1);
-    const targetDrop = (ordered[1].radius - ordered[0].radius) /
-      (2 * (ordered[ordered.length - 1].radius - ordered[0].radius));
+    const targetDrop = expectedDrops(ordered, 1)[0];
     expect(drops[0]).toBeCloseTo(targetDrop, 6);
     // If source density were computed from the hypothetical closing F, the
     // recovered radial profile above would be wrong.
@@ -243,7 +240,7 @@ describe("STF generated-frame radial minimax luminance weights", () => {
     }
   });
 
-  test.each([-2, -1, 0, 1, 2, 3])("32 opening frames produce finite positive weights for q=%i", (q) => {
+  test.each(radialAttenuationOptions)("32 opening frames produce finite positive weights for %s", (q) => {
     const inputs = Array.from({ length: 7 }, (_, i) => 2 * 2 ** (i / 6));
     const frames = buildStfFrameSet(inputs, q, "extrapolation-32");
     expect(frames.allWeights).toHaveLength(46);
