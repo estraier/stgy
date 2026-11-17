@@ -1,4 +1,5 @@
 import type {
+  OpticalFlowOpeningVariant,
   OpticalFlowPerformanceStats,
   OpticalFlowVariant,
   OpticalFlowWorkerRequest,
@@ -17,7 +18,7 @@ export class StfOpticalFlowClient {
 
   constructor(onProgress?: (message: string) => void) {
     const workerUrl = new URL("/generated/local-stack-studio/optical-flow.worker.js", window.location.origin);
-    workerUrl.searchParams.set("revision", "stf-session-flow-20261117-r5-p5-p10");
+    workerUrl.searchParams.set("revision", "stf-session-flow-20261117-r8-opening-average");
     this.worker = new Worker(workerUrl);
     this.worker.onmessage = (event: MessageEvent<OpticalFlowWorkerResponse>) => {
       const message = event.data;
@@ -44,7 +45,8 @@ export class StfOpticalFlowClient {
   private request(
     message: Omit<Extract<OpticalFlowWorkerRequest, { type: "interpolate" }>, "requestId"> |
       Omit<Extract<OpticalFlowWorkerRequest, { type: "warmup" }>, "requestId"> |
-      Omit<Extract<OpticalFlowWorkerRequest, { type: "warp-retained" }>, "requestId">,
+      Omit<Extract<OpticalFlowWorkerRequest, { type: "warp-retained" }>, "requestId"> |
+      Omit<Extract<OpticalFlowWorkerRequest, { type: "warp-opening-average" }>, "requestId">,
     transfer: Transferable[] = [],
   ): Promise<OpticalFlowWorkerResponse> {
     const requestId = this.nextRequestId++;
@@ -81,6 +83,7 @@ export class StfOpticalFlowClient {
     sessionId?: string,
     sessionCreatedAt?: number,
     alignmentKey?: string,
+    openingAverageRadiusSpan?: number,
   ): Promise<{ pixels: Uint16Array; additionalPixels?: Uint16Array; performance: OpticalFlowPerformanceStats }> {
     const previousGamma2Buffer = previousGamma2.buffer.slice(
       previousGamma2.byteOffset,
@@ -98,6 +101,7 @@ export class StfOpticalFlowClient {
       ...(additionalVariant ? { additionalVariant } : {}),
       ...(additionalVariantScale !== undefined ? { additionalVariantScale } : {}),
       ...(retainPair ? { retainPair: true } : {}),
+      ...(openingAverageRadiusSpan !== undefined ? { openingAverageRadiusSpan } : {}),
       ...(persistFlow ? { persistFlow: true, sessionId, sessionCreatedAt, alignmentKey } : {}),
       width,
       height,
@@ -134,6 +138,25 @@ export class StfOpticalFlowClient {
     }
     const pixels = new Uint16Array(result.gamma2Buffer);
     if (pixels.length !== width * height * 3) throw new Error("Invalid STF retained Flow RGB16 buffer");
+    return { pixels, warpMs: result.warpMs };
+  }
+
+  async warpOpeningAverage(
+    width: number, height: number, sourceImageId: number,
+    variant: OpticalFlowOpeningVariant, variantScale: number,
+    sourceGamma2?: Uint16Array,
+  ): Promise<{ pixels: Uint16Array; warpMs: number }> {
+    const buffer = sourceGamma2?.buffer.slice(sourceGamma2.byteOffset,
+      sourceGamma2.byteOffset + sourceGamma2.byteLength) as ArrayBuffer | undefined;
+    const result = await this.request({
+      type: "warp-opening-average", sourceImageId, variant, variantScale,
+      ...(buffer ? { sourceGamma2Buffer: buffer } : {}),
+    }, buffer ? [buffer] : []);
+    if (result.type !== "warp-result" || result.width !== width || result.height !== height) {
+      throw new Error("Invalid STF opening Average Flow warp result");
+    }
+    const pixels = new Uint16Array(result.gamma2Buffer);
+    if (pixels.length !== width * height * 3) throw new Error("Invalid STF opening Average Flow RGB16 buffer");
     return { pixels, warpMs: result.warpMs };
   }
 

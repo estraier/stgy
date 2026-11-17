@@ -256,6 +256,14 @@ describe("STF generated-frame radial attenuation and outer-shell apodization", (
     }
   });
 
+  test("discarded experimental Flow mode names are no longer accepted", () => {
+    for (const name of ["consensus-flow-1", "consensus-flow-32", "average-flow-1", "average-flow-32"]) {
+      expect(isStfFrameGenerationMode(name)).toBe(false);
+      expect(() => buildStfFrameSet([2, 3, 4], 1, name as StfFrameGenerationMode))
+        .toThrow("Unsupported STF Frame generation");
+    }
+  });
+
   test.each(radialAttenuationOptions)("32 opening frames produce finite positive weights for %s", (q) => {
     const inputs = Array.from({ length: 7 }, (_, i) => 2 * 2 ** (i / 6));
     const frames = buildStfFrameSet(inputs, q, "extrapolation-32");
@@ -273,3 +281,4 @@ describe("STF generated-frame radial attenuation and outer-shell apodization", (
     expect(() => buildStfFrameSet([2, 4], Number.NaN, "interpolation")).toThrow("Radial attenuation");
   });
 });
+

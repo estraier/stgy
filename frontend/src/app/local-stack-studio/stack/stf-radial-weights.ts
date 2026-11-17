@@ -149,7 +149,8 @@ export function calculateStfWeights<T>(
   for (let i = 0; i < n; i++) {
     rawWeights[i] = idealDrops[i] / samples[i].edgeDensity;
   }
-  let adjustedDrops = idealDrops.slice();
+  // Widen the TypedArray buffer type so normalize() can return ArrayBufferLike.
+  let adjustedDrops: Float64Array = idealDrops.slice();
   if (outerShellApodizationApplied) {
     const outerDensity = ordered[n - 1].density;
     const secondDensity = ordered[n - 2].density;

@@ -3,7 +3,7 @@ import { buildLinearMergeStripeJobs } from "./linear-merge-pool";
 import { applyStfToneMatchInPlace, buildStfToneMatchLut, type StfToneMatchPlan, type StfToneMatchLut } from "./stf-tone-match";
 import { StfOpticalFlowClient } from "./stf-optical-flow-client";
 import type { AlignedImageReader } from "./aligned-reader";
-import type { StfFrameSet, StfMiddleFrame, StfOuterFrame } from "./stf-frame-generation";
+import type { StfOuterFrame } from "./stf-frame-generation";
 import type { StfTonePreparedFrameSet } from "./stf-frame-density";
 
 export function decodeStfGeneratedStripe(pixels: Uint16Array, offset: number, length: number): Float32Array {
@@ -14,10 +14,6 @@ export function decodeStfGeneratedStripe(pixels: Uint16Array, offset: number, le
     linear[j] = 4 * encoded * encoded;
   }
   return linear;
-}
-
-function outerFramesForPair(frameSet: StfFrameSet, frame: StfMiddleFrame): StfOuterFrame[] {
-  return frameSet.outerFrames.filter((outer) => outer.previousIndex === frame.previousIndex && outer.nextIndex === frame.nextIndex);
 }
 
 async function mergeGeneratedFrame(
@@ -49,7 +45,7 @@ export async function appendStfVirtualSource(
     progress?: (message: string) => void;
     // Injectable for deterministic cache/Flow integration tests.
     createFlowClient?: (onProgress?: (message: string) => void) => Pick<StfOpticalFlowClient,
-      "warmup" | "generate" | "warpRetained" | "releaseRetained" | "terminate">;
+      "warmup" | "generate" | "warpRetained" | "warpOpeningAverage" | "releaseRetained" | "terminate">;
   },
 ): Promise<void> {
   const { frameSet, reader } = options;
@@ -61,8 +57,6 @@ export async function appendStfVirtualSource(
       frameSet.virtualTonePlans.outer.length !== frameSet.outerFrames.length) {
     throw new Error("STF virtual frame tone plans are missing or inconsistent with the weights.");
   }
-  // Tone plans are derived from the real sources before weighting, not
-  // reestimated per virtual frame after the weights have been finalized.
   const lutCache = new Map<string, StfToneMatchLut>();
   const toneLut = (plan: StfToneMatchPlan): StfToneMatchLut => {
     const key = `${plan.gain}:${plan.scaledLog}`;
@@ -88,72 +82,75 @@ export async function appendStfVirtualSource(
     return image;
   };
 
+  const openingOuterFrames = frameSet.outerFrames.filter((outer) => outer.variant !== "ext2");
+  const closingOuterFrame = frameSet.outerFrames.find((outer) => outer.variant === "ext2") ?? null;
+  const openingAveragePairCount = Math.min(frameSet.middleFrames.length, 3);
+
   let flowCacheHits = 0;
   let flowCacheMisses = 0;
   let flowCacheWrites = 0;
   let cacheReadMs = 0;
   let flowComputeMs = 0;
   let client: Pick<StfOpticalFlowClient,
-    "warmup" | "generate" | "warpRetained" | "releaseRetained" | "terminate"> | null = null;
+    "warmup" | "generate" | "warpRetained" | "warpOpeningAverage" | "releaseRetained" | "terminate"> | null = null;
   try {
     for (const [middleIndex, middle] of frameSet.middleFrames.entries()) {
-      const outerFrames = outerFramesForPair(frameSet, middle);
       if (!client) {
         client = options.createFlowClient
           ? options.createFlowClient(options.progress)
           : new StfOpticalFlowClient(options.progress);
       }
-      // No unconditional warmup: an IndexedDB hit must not start native WASM
-      // workers. The Flow worker initializes them lazily on a miss.
       const previous = await getImage(middle.previousIndex);
       const next = await getImage(middle.nextIndex);
-      const firstOuter = outerFrames[0];
+      const isLastPair = middleIndex === frameSet.middleFrames.length - 1;
+      const openingAverageRadiusSpan = openingOuterFrames.length > 0 && middleIndex < openingAveragePairCount
+        ? 1 / frameSet.allFNumbers[middle.previousIndex] - 1 / frameSet.allFNumbers[middle.nextIndex]
+        : undefined;
       options.progress?.(`Generating STF virtual frame ${middle.pairLabel}...`);
-      // Limit the lifetime of both full-resolution result buffers: do not
-      // hold the midpoint/first-outer arrays during the remaining 2..32 warps.
-      {
-        const generated = await client.generate(
-          reader.width, reader.height, middle.previousIndex, middle.nextIndex,
-          previous, next, "mid", undefined,
-          firstOuter?.variant, firstOuter?.inverseWarpScale,
-          outerFrames.length > 1, true,
-          options.sessionId, options.sessionCreatedAt, options.alignmentKey,
-        );
-        if (generated.performance.flowCacheHit) flowCacheHits++;
-        else flowCacheMisses++;
-        if (generated.performance.flowCacheSaved) flowCacheWrites++;
-        cacheReadMs += generated.performance.flowCacheReadMs ?? 0;
-        flowComputeMs += generated.performance.flowWallMs ?? 0;
-        // Keep the original midpoint -> opening-1 -> opening-N order; on
-      // the final real pair also append its single closing-side frame.
-        const middleTone = toneForMiddle(middleIndex);
-        await mergeGeneratedFrame(accumulator, generated.pixels, middle.weight,
-          reader.width, reader.height, middleTone, toneLut(middleTone));
-        if (firstOuter) {
-          if (!generated.additionalPixels) throw new Error("STF Flow did not return the requested outer frame.");
-          const outerTone = toneForOuter(firstOuter);
-          await mergeGeneratedFrame(accumulator, generated.additionalPixels, firstOuter.weight,
-            reader.width, reader.height, outerTone, toneLut(outerTone));
-        }
+      const generated = await client.generate(
+        reader.width, reader.height, middle.previousIndex, middle.nextIndex,
+        previous, next, "mid", undefined,
+        isLastPair && closingOuterFrame ? closingOuterFrame.variant : undefined,
+        isLastPair && closingOuterFrame ? closingOuterFrame.inverseWarpScale : undefined,
+        false, true,
+        options.sessionId, options.sessionCreatedAt, options.alignmentKey,
+        openingAverageRadiusSpan,
+      );
+      if (generated.performance.flowCacheHit) flowCacheHits++;
+      else flowCacheMisses++;
+      if (generated.performance.flowCacheSaved) flowCacheWrites++;
+      cacheReadMs += generated.performance.flowCacheReadMs ?? 0;
+      flowComputeMs += generated.performance.flowWallMs ?? 0;
+
+      const middleTone = toneForMiddle(middleIndex);
+      await mergeGeneratedFrame(accumulator, generated.pixels, middle.weight,
+        reader.width, reader.height, middleTone, toneLut(middleTone));
+      if (isLastPair && closingOuterFrame) {
+        if (!generated.additionalPixels) throw new Error("STF Flow did not return the requested closing outer frame.");
+        const outerTone = toneForOuter(closingOuterFrame);
+        await mergeGeneratedFrame(accumulator, generated.additionalPixels, closingOuterFrame.weight,
+          reader.width, reader.height, outerTone, toneLut(outerTone));
       }
-      try {
-        for (const outer of outerFrames.slice(1)) {
-          options.progress?.(`Generating STF virtual frame ${outer.pairLabel}...`);
-          const warped = await client.warpRetained(
-            reader.width, reader.height, middle.previousIndex, middle.nextIndex,
-            outer.variant, outer.inverseWarpScale,
-          );
-          const outerTone = toneForOuter(outer);
-          await mergeGeneratedFrame(accumulator, warped.pixels, outer.weight,
-            reader.width, reader.height, outerTone, toneLut(outerTone));
-        }
-      } finally {
-        if (outerFrames.length > 1) client.releaseRetained();
-      }
-      // Keep only the next real RGB16 for the adjacent pair. Never retain
-      // generated RGB16 after its weighted contribution has been accumulated.
       imageCache.delete(middle.previousIndex);
     }
+
+    if (openingOuterFrames.length > 0) {
+      if (!client) throw new Error("STF opening Average Flow has no client.");
+      let firstWarp = true;
+      for (const outer of openingOuterFrames) {
+        options.progress?.(`Generating STF Average Flow frame ${outer.pairLabel}...`);
+        const source = firstWarp ? await getImage(outer.previousIndex) : undefined;
+        const warped = await client.warpOpeningAverage(reader.width, reader.height,
+          outer.previousIndex, outer.variant, outer.inverseWarpScale, source);
+        const tone = toneForOuter(outer);
+        await mergeGeneratedFrame(accumulator, warped.pixels, outer.weight,
+          reader.width, reader.height, tone, toneLut(tone));
+        if (firstWarp) imageCache.delete(outer.previousIndex);
+        firstWarp = false;
+      }
+      client.releaseRetained();
+    }
+
     console.info(`[LSS STF] Flow cache: ${flowCacheHits} hit, ${flowCacheMisses} miss, ` +
       `${flowCacheWrites} saved bidirectional real pair(s); ` +
       `session cache read ${cacheReadMs.toFixed(1)}ms, native Flow ${flowComputeMs.toFixed(1)}ms.`);

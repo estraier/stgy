@@ -129,7 +129,8 @@ export function buildStfFrameSet(
       });
     }
 
-    const openingCount = mode.startsWith("extrapolation-") ? Number.parseInt(mode.slice("extrapolation-".length), 10) : 0;
+    const openingCount = mode.startsWith("extrapolation-")
+      ? Number.parseInt(mode.slice("extrapolation-".length), 10) : 0;
     if (openingCount > 0) {
       const first = sorted[0].fNumber;
       const second = sorted[1].fNumber;

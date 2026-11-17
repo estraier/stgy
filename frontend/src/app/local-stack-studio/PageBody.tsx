@@ -335,6 +335,7 @@ export default function PageBody() {
                     <option value="extrapolation-8">Extrapolation 8</option>
                     <option value="extrapolation-16">Extrapolation 16</option>
                     <option value="extrapolation-32">Extrapolation 32</option>
+
                   </select>
                 </label>
                 <label id="stf-blur-strength-option" className="hidden flex-col items-start gap-1.5">

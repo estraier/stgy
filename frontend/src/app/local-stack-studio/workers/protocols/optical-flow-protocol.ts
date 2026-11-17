@@ -11,6 +11,9 @@ export type OpticalFlowWorkerInterpolateRequest = {
   additionalVariant?: OpticalFlowVariant;
   additionalVariantScale?: number;
   retainPair?: boolean;
+  // Average opening-side extrapolation reuses up to the first three adjacent
+  // real-pair forward fields, normalized by the positive 1/F interval.
+  openingAverageRadiusSpan?: number;
   // STF-only: Flow persistence is strictly scoped to one Canonical session.
   persistFlow?: boolean;
   sessionId?: string;
@@ -39,9 +42,20 @@ export type OpticalFlowWorkerWarpRetainedRequest = {
   variantScale?: number;
 };
 
+export type OpticalFlowWorkerWarpOpeningAverageRequest = {
+  type: "warp-opening-average";
+  requestId: number;
+  sourceImageId: number;
+  // The first request provides the opening-side source RGB16; subsequent
+  // ext1-2..32 requests reuse the retained buffer.
+  sourceGamma2Buffer?: ArrayBuffer;
+  variant: OpticalFlowOpeningVariant;
+  variantScale: number;
+};
+
 export type OpticalFlowWorkerReleaseRetainedRequest = { type: "release-retained"; requestId: number };
 export type OpticalFlowWorkerRequest = OpticalFlowWorkerInterpolateRequest | OpticalFlowWorkerWarmupRequest |
-  OpticalFlowWorkerWarpRetainedRequest | OpticalFlowWorkerReleaseRetainedRequest;
+  OpticalFlowWorkerWarpRetainedRequest | OpticalFlowWorkerWarpOpeningAverageRequest | OpticalFlowWorkerReleaseRetainedRequest;
 
 export type OpticalFlowPerformanceStats = {
   sourceWidth: number;

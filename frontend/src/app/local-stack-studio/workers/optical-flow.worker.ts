@@ -6,6 +6,7 @@ import type {
 import { transferableBuffer } from "./transfer-buffer";
 import { readStfCachedFlow, writeStfCachedFlow, stfFlowSessionKey } from "../stack/stf-flow-cache";
 import { stfFlowWorkingSize, stfGamma2RgbToGray8Resampled } from "../stack/stf-flow-gray";
+import { buildStfAverageFlow, type StfAverageFlowSample } from "../stack/stf-average-flow";
 import { buildStfFlowNormGate, stfFlowNormGateFactor, type StfFlowNormGate } from "../stack/stf-flow-norm-gate";
 import type {
   OpticalFlowPerformanceStats,
@@ -209,6 +210,15 @@ import type {
     forward: Float32Array; backward: Float32Array; normGates: NormGateCache;
   } | null = null;
 
+  // Opening-side average extrapolation keeps up to the first three native
+  // forward Flow fields. IndexedDB persistence remains per real adjacent pair.
+  const openingSamples: StfAverageFlowSample[] = [];
+  let openingAverage: Float32Array | null = null;
+  let openingAverageGeometry: { width: number; height: number; imageWidth: number; imageHeight: number;
+    sourceImageId: number; nextPreviousImageId: number } | null = null;
+  let openingAverageWarp: { sourceImageId: number; source: Uint16Array;
+    flow: Float32Array; gate: StfFlowNormGate | null } | null = null;
+
   workerScope.onmessage = async (event: MessageEvent<OpticalFlowWorkerRequest>) => {
     const message = event.data;
     try {
@@ -223,6 +233,7 @@ import type {
       }
       if (message.type === "release-retained") {
         retainedPair = null;
+        openingAverageWarp = null;
         return;
       }
       if (message.type === "warp-retained") {
@@ -239,6 +250,40 @@ import type {
         workerScope.postMessage({ type: "warp-result", requestId: message.requestId,
           width: pair.width, height: pair.height, gamma2Buffer, warpMs: performance.now() - started },
           [gamma2Buffer]);
+        return;
+      }
+      if (message.type === "warp-opening-average") {
+        const geometry = openingAverageGeometry;
+        if (!geometry) throw new Error("STF opening Average Flow has no real-pair fields.");
+        if (message.sourceImageId !== geometry.sourceImageId) {
+          throw new Error("STF opening Average Flow source ID mismatch.");
+        }
+        const started = performance.now();
+        if (message.sourceGamma2Buffer) {
+          const source = new Uint16Array(message.sourceGamma2Buffer);
+          if (source.length !== geometry.imageWidth * geometry.imageHeight * 3) {
+            throw new Error("STF opening Average Flow source image size mismatch.");
+          }
+          if (!openingAverage && !openingSamples.length) {
+            throw new Error("STF opening Average Flow lacks a source Flow field.");
+          }
+          const flow = openingAverage ?? buildStfAverageFlow(openingSamples, geometry.width, geometry.height);
+          openingAverageWarp = { sourceImageId: geometry.sourceImageId, source, flow,
+            gate: buildStfFlowNormGate(flow) };
+          openingSamples.length = 0;
+          openingAverage = null;
+        }
+        const current = openingAverageWarp;
+        if (!current || current.sourceImageId !== message.sourceImageId) {
+          throw new Error("STF opening Average Flow needs an initialized real source image.");
+        }
+        const output = synthesizeFlowVariant(message.variant, current.source, current.source,
+          geometry.imageWidth, geometry.imageHeight, current.flow, current.flow,
+          geometry.width, geometry.height, message.variantScale, current.gate);
+        const gamma2Buffer = transferableBuffer(output);
+        workerScope.postMessage({ type: "warp-result", requestId: message.requestId,
+          width: geometry.imageWidth, height: geometry.imageHeight,
+          gamma2Buffer, warpMs: performance.now() - started }, [gamma2Buffer]);
         return;
       }
       if (message.type !== "interpolate") {
@@ -327,6 +372,34 @@ import type {
     if (flows.forward.length !== flowSize.width * flowSize.height * 2 ||
         flows.backward.length !== flowSize.width * flowSize.height * 2) {
       throw new Error("Optical Flow direction worker returned an invalid vector field.");
+    }
+    if (message.openingAverageRadiusSpan !== undefined) {
+      if (!(message.openingAverageRadiusSpan > 0) || !Number.isFinite(message.openingAverageRadiusSpan) ||
+          message.previousImageId === undefined || message.nextImageId === undefined) {
+        throw new Error("STF opening Average Flow received an invalid aperture interval or image IDs.");
+      }
+      if (openingAverageGeometry && (openingAverageGeometry.width !== flowSize.width ||
+          openingAverageGeometry.height !== flowSize.height ||
+          openingAverageGeometry.imageWidth !== width || openingAverageGeometry.imageHeight !== height ||
+          openingAverageGeometry.nextPreviousImageId !== message.previousImageId)) {
+        throw new Error("STF opening Average Flow received a nonconsecutive real-image pair or changed dimensions.");
+      }
+      if (!openingAverageGeometry) {
+        openingAverageGeometry = { width: flowSize.width, height: flowSize.height,
+          imageWidth: width, imageHeight: height, sourceImageId: message.previousImageId,
+          nextPreviousImageId: message.nextImageId };
+      } else {
+        openingAverageGeometry.nextPreviousImageId = message.nextImageId;
+      }
+      if (!openingAverage && openingSamples.length < 3) {
+        openingSamples.push({ flow: flows.forward, radiusSpan: message.openingAverageRadiusSpan });
+        if (openingSamples.length === 3) {
+          // Collapse three 32 MiB fields into one before the remaining pairs
+          // are processed.
+          openingAverage = buildStfAverageFlow(openingSamples, flowSize.width, flowSize.height);
+          openingSamples.length = 0;
+        }
+      }
     }
     // Begin best-effort persistence while the CPU is busy warping. Await its
     // completion before returning so that terminating this Worker cannot lose
