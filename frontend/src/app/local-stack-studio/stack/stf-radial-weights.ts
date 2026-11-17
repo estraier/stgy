@@ -1,7 +1,8 @@
 /**
  * STF frame weights depend only on (CoC radius, linear-light edge density).
  * Each target profile specifies the ideal cumulative luminance at the sampled
- * disc radii; outer-shell apodization affects only the first two disc drops.
+ * disc radii; outer-shell apodization reduces the outermost image weight
+ * and redistributes that weight equally over all input images.
  */
 export type StfWeightedImage<T = number> = {
   image: T;
@@ -12,6 +13,8 @@ export type StfWeightedImage<T = number> = {
 export const STF_SMOOTHSTEP_ATTENUATIONS = [
   "smoothstep-weak", "smoothstep-medium", "smoothstep-strong",
 ] as const;
+// Post-redistribution luminance of the outer shell relative to the next shell.
+export const STF_OUTER_SHELL_APODIZATION_RATIO = 0.8;
 export type StfRadialAttenuation = -2 | -1 | 0 | 1 | 2 | 3 |
   typeof STF_SMOOTHSTEP_ATTENUATIONS[number];
 
@@ -35,7 +38,7 @@ export type StfRadialWeightPlan = {
   rawWeights: Float64Array;
   // In original input order; differences between consecutive target levels.
   idealDrops: Float64Array;
-  // Drops after optional outer-shell apodization; always sum to one.
+  // Actual relative luminance contributions after apodization; always sum to one.
   adjustedDrops: Float64Array;
   virtualZeroRadius: number;
   outerShellApodizationApplied: boolean;
@@ -91,8 +94,11 @@ function normalize(raw: Float64Array): Float64Array {
 /**
  * Choose the virtual zero from all available radii (real and generated).
  * Match the target exactly at each disc radius, starting outside-in.
- * If the outermost luminance drop exceeds the next, equalize those two drops
- * while retaining their sum and hence all more interior target levels.
+ * If the outermost ideal luminance drop exceeds 80% of the second drop,
+ * analytically determine the amount of outer IMAGE WEIGHT to redistribute
+ * equally across all n images (including the outermost), so that the two
+ * resulting luminance contributions have a ratio of 0.8. This is a
+ * deliberate departure from the ideal luminance target, not minimax.
  */
 export function calculateStfWeights<T>(
   samples: readonly StfWeightedImage<T>[], attenuation: StfRadialAttenuation,
@@ -130,21 +136,42 @@ export function calculateStfWeights<T>(
     previous = level;
   }
 
-  const adjustedDrops = idealDrops.slice();
   const outerIndex = ordered[n - 1].index;
   const secondIndex = ordered[n - 2].index;
-  // Avoid a spurious correction at q=0 when mathematically equal drops differ
-  // only by floating point roundoff.
-  const outerShellApodizationApplied = adjustedDrops[outerIndex] > adjustedDrops[secondIndex] + 1e-12;
-  if (outerShellApodizationApplied) {
-    const average = (adjustedDrops[outerIndex] + adjustedDrops[secondIndex]) / 2;
-    adjustedDrops[outerIndex] = average;
-    adjustedDrops[secondIndex] = average;
-  }
+  // Compare luminance contributions, not image weights. The trigger and the
+  // desired post-redistribution ratio must use the same threshold.
+  const alpha = STF_OUTER_SHELL_APODIZATION_RATIO;
+  const threshold = alpha * idealDrops[secondIndex];
+  const outerShellApodizationApplied =
+    idealDrops[outerIndex] > threshold + 1e-12 * Math.max(idealDrops[outerIndex], threshold);
 
   const rawWeights = new Float64Array(n);
   for (let i = 0; i < n; i++) {
-    rawWeights[i] = adjustedDrops[i] / samples[i].edgeDensity;
+    rawWeights[i] = idealDrops[i] / samples[i].edgeDensity;
+  }
+  let adjustedDrops = idealDrops.slice();
+  if (outerShellApodizationApplied) {
+    const outerDensity = ordered[n - 1].density;
+    const secondDensity = ordered[n - 2].density;
+    // Solve (wOuter - x + x/n)*DOuter = alpha*(wSecond + x/n)*DSecond.
+    // Equal redistribution is in IMAGE WEIGHTS, not luminance. Restrict x
+    // to the available outer weight if arbitrary densities reverse the usual
+    // physical ordering and exact equality becomes impossible.
+    const denominator = (n - 1) * outerDensity + alpha * secondDensity;
+    const requiredRemoval = n * (idealDrops[outerIndex] - alpha * idealDrops[secondIndex]) / denominator;
+    if (!(Number.isFinite(requiredRemoval) && requiredRemoval > 0)) {
+      throw new Error("STF outer-shell apodization removal is invalid.");
+    }
+    const removed = Math.min(requiredRemoval, rawWeights[outerIndex]);
+    const share = removed / n;
+    rawWeights[outerIndex] -= removed;
+    for (let i = 0; i < n; i++) rawWeights[i] += share;
+
+    // Weight redistribution is uniform, but the *luminance* contributions
+    // are not: each source has its own edge density. Report the real profile.
+    const contributions = Float64Array.from(rawWeights, (weight, i) =>
+      weight * samples[i].edgeDensity);
+    adjustedDrops = normalize(contributions);
   }
   const weights = Float32Array.from(normalize(rawWeights));
   return { weights, rawWeights, idealDrops, adjustedDrops,

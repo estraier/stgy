@@ -2,7 +2,7 @@ import type { StfFrameSet } from "./stf-frame-generation";
 
 // Version both keys whenever the aligned input, virtual warp or tone algorithm
 // changes. These keys describe actual pixel dependencies, not UI controls.
-const STF_SOURCE_CACHE_VERSION = "stf-source-v4-virtual-radius-apodization";
+const STF_SOURCE_CACHE_VERSION = "stf-source-v6-outer-shell-ratio-08";
 
 export const STF_SOURCE_CACHE_MAX_BYTES = 256 * 1024 * 1024;
 

@@ -51,8 +51,20 @@ function expectedDrops(
   const target = ordered.map((frame) => targetRadialLuminance(frame.radius, minR, zeroR, attenuation));
   const drops = target.map((level, i) => level - (i + 1 < target.length ? target[i + 1] : 0));
   const last = drops.length - 1;
-  if (drops[last] > drops[last - 1] + 1e-12) {
-    drops[last] = drops[last - 1] = (drops[last] + drops[last - 1]) / 2;
+  if (drops[last] > 0.8 * drops[last - 1] + 1e-12 * Math.max(drops[last], 0.8 * drops[last - 1])) {
+    // Independently solve the alpha=0.8 constraint in the forward luminance
+    // contributions after redistributing IMAGE weights to all frames.
+    const rawWeights = drops.map((drop, i) => drop / (ordered[i].densityF ** 2));
+    const outerDensity = ordered[last].densityF ** 2;
+    const secondDensity = ordered[last - 1].densityF ** 2;
+    const n = rawWeights.length;
+    const removal = Math.min(rawWeights[last],
+      n * (drops[last] - 0.8 * drops[last - 1]) / ((n - 1) * outerDensity + 0.8 * secondDensity));
+    rawWeights[last] -= removal;
+    for (let i = 0; i < n; i++) rawWeights[i] += removal / n;
+    const brightness = rawWeights.map((weight, i) => weight * ordered[i].densityF ** 2);
+    const total = brightness.reduce((sum, value) => sum + value, 0);
+    return brightness.map((value) => value / total);
   }
   return drops;
 }
@@ -147,7 +159,11 @@ describe("STF generated-frame radial attenuation and outer-shell apodization", (
     const { ordered, drops } = radialDiscContributions(frames, inputs);
     const expected = expectedDrops(ordered, 1);
     expected.forEach((drop, i) => expect(drops[i]).toBeCloseTo(drop, 6));
-    expect(drops[drops.length - 1]).toBeCloseTo(drops[drops.length - 2], 6);
+    const minR = ordered[0].radius;
+    const maxR = ordered[ordered.length - 1].radius;
+    const zeroR = maxR * (maxR / minR) ** (1 / (ordered.length - 1));
+    const idealOuter = targetRadialLuminance(maxR, minR, zeroR, 1);
+    expect(drops[drops.length - 1]).toBeLessThan(idealOuter);
   });
 
   test("forward radius expansion and inverse sampling use distinct geometrical multipliers", () => {

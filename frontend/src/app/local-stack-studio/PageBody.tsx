@@ -182,12 +182,12 @@ export default function PageBody() {
               <span className="text-xs font-medium uppercase tracking-wide text-gray-500">Alignment</span>
               <select id="alignment-mode" defaultValue="auto" className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm">
                 <option value="auto">Auto</option>
-                <option value="center-crop">Center crop</option>
-                <option value="center-fit">Center fit</option>
-                <option value="center-fill">Center fill</option>
-                <option value="top-left-fill">Top left fill</option>
-                <option value="feature-match-ecc">Content match (ECC)</option>
-                <option value="feature-match-orb">Content match (ORB)</option>
+                <option value="center-crop">Center Crop</option>
+                <option value="center-fit">Center Fit</option>
+                <option value="center-fill">Center Fill</option>
+                <option value="top-left-fill">Top Left Fill</option>
+                <option value="feature-match-ecc">Content Match (ECC)</option>
+                <option value="feature-match-orb">Content Match (ORB)</option>
                 <option value="horizontal" hidden disabled>Horizontal</option>
                 <option value="vertical" hidden disabled>Vertical</option>
                 <option value="spherical" hidden disabled>Spherical</option>
@@ -223,8 +223,8 @@ export default function PageBody() {
                     defaultValue="vertical"
                     className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm"
                   >
-                    <option value="vertical">vertical</option>
-                    <option value="horizontal">horizontal</option>
+                    <option value="vertical">Vertical</option>
+                    <option value="horizontal">Horizontal</option>
                   </select>
                 </label>
                 <label id="tile-folding-option" className="hidden flex-col items-start gap-1.5">
@@ -234,7 +234,7 @@ export default function PageBody() {
                     defaultValue="none"
                     className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm"
                   >
-                    <option value="none">none</option>
+                    <option value="none">None</option>
                     <option value="2">2</option>
                     <option value="3">3</option>
                     <option value="4">4</option>
@@ -251,7 +251,7 @@ export default function PageBody() {
                     defaultValue={String(DEFAULT_PANORAMA_DOWNSCALE_MEGAPIXELS)}
                     className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm"
                   >
-                    <option value="none">none</option>
+                    <option value="none">None</option>
                     {PANORAMA_DOWNSCALE_MEGAPIXELS.map((megapixels) => (
                       <option key={megapixels} value={String(megapixels)}>{megapixels}MP</option>
                     ))}
@@ -309,15 +309,15 @@ export default function PageBody() {
                     defaultValue="1"
                     className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm"
                   >
-                    <option value="-2">-2 (inverse-square, dark rim)</option>
-                    <option value="-1">-1 (inverse, dark rim)</option>
-                    <option value="0">0 (logarithmic, balanced)</option>
-                    <option value="1">1 (linear, default)</option>
-                    <option value="2">2 (quadratic, bright rim)</option>
-                    <option value="3">3 (cubic, brighter rim)</option>
-                    <option value="smoothstep-weak">Smoothstep weak (3rd-order S-curve)</option>
-                    <option value="smoothstep-medium">Smoothstep medium (5th-order S-curve)</option>
-                    <option value="smoothstep-strong">Smoothstep strong (7th-order S-curve)</option>
+                    <option value="-2">Power Curve (Inverse-Square)</option>
+                    <option value="-1">Power Curve (Inverse)</option>
+                    <option value="0">Power Curve (Logarithmic)</option>
+                    <option value="1">Power Curve (Linear)</option>
+                    <option value="2">Power Curve (Quadratic)</option>
+                    <option value="3">Power Curve (Cubic)</option>
+                    <option value="smoothstep-weak">Smoothstep (3rd-Order)</option>
+                    <option value="smoothstep-medium">Smoothstep (5th-Order)</option>
+                    <option value="smoothstep-strong">Smoothstep (7th-Order)</option>
                   </select>
                 </label>
                 <label id="stf-frame-generation-option" className="hidden flex-col items-start gap-1.5">
@@ -327,14 +327,14 @@ export default function PageBody() {
                     defaultValue="off"
                     className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm"
                   >
-                    <option value="off">off</option>
-                    <option value="interpolation">interpolation</option>
-                    <option value="extrapolation-1">extrapolation 1</option>
-                    <option value="extrapolation-2">extrapolation 2</option>
-                    <option value="extrapolation-4">extrapolation 4</option>
-                    <option value="extrapolation-8">extrapolation 8</option>
-                    <option value="extrapolation-16">extrapolation 16</option>
-                    <option value="extrapolation-32">extrapolation 32</option>
+                    <option value="off">Off</option>
+                    <option value="interpolation">Interpolation</option>
+                    <option value="extrapolation-1">Extrapolation 1</option>
+                    <option value="extrapolation-2">Extrapolation 2</option>
+                    <option value="extrapolation-4">Extrapolation 4</option>
+                    <option value="extrapolation-8">Extrapolation 8</option>
+                    <option value="extrapolation-16">Extrapolation 16</option>
+                    <option value="extrapolation-32">Extrapolation 32</option>
                   </select>
                 </label>
                 <label id="stf-blur-strength-option" className="hidden flex-col items-start gap-1.5">
@@ -344,11 +344,11 @@ export default function PageBody() {
                     defaultValue="none"
                     className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm"
                   >
-                    <option value="none">none</option>
-                    <option value="weak">weak</option>
-                    <option value="medium">medium</option>
-                    <option value="strong">strong</option>
-                    <option value="gate">gate</option>
+                    <option value="none">None</option>
+                    <option value="weak">Weak</option>
+                    <option value="medium">Medium</option>
+                    <option value="strong">Strong</option>
+                    <option value="gate">Gate</option>
                   </select>
                 </label>
                 <label id="stf-blur-ratio-option" className="hidden flex-col items-start gap-1.5">
@@ -384,10 +384,10 @@ export default function PageBody() {
                     defaultValue="medium"
                     className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm"
                   >
-                    <option value="none">none</option>
-                    <option value="weak">weak</option>
-                    <option value="medium">medium</option>
-                    <option value="strong">strong</option>
+                    <option value="none">None</option>
+                    <option value="weak">Weak</option>
+                    <option value="medium">Medium</option>
+                    <option value="strong">Strong</option>
                   </select>
                 </label>
                 <label id="stf-blur-sigmoid-option" className="hidden flex-col items-start gap-1.5">
@@ -489,7 +489,7 @@ export default function PageBody() {
                     <option value="tiff16">TIFF-16</option>
                   </select>
                   <select id="output-size" aria-label="Output size" className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm">
-                    <option value="full">Full-size</option>
+                    <option value="full">Full-Size</option>
                   </select>
                   <button
                     id="download-button"

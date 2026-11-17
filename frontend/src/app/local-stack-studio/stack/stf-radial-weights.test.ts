@@ -1,4 +1,4 @@
-import { calculateStfWeights, parseStfRadialAttenuation, type StfRadialAttenuation } from "./stf-radial-weights";
+import { calculateStfWeights, parseStfRadialAttenuation, STF_OUTER_SHELL_APODIZATION_RATIO, type StfRadialAttenuation } from "./stf-radial-weights";
 
 const allProfiles: StfRadialAttenuation[] = [
   -2, -1, 0, 1, 2, 3, "smoothstep-weak", "smoothstep-medium", "smoothstep-strong",
@@ -26,14 +26,41 @@ describe("STF radial attenuation profiles", () => {
     expect(plan.outerShellApodizationApplied).toBe(false);
   });
 
-  test("linear and quadratic/cubic profiles apodize only the first two contributions", () => {
-    for (const q of [1, 2, 3] as const) {
+  test("the 0.8 trigger covers q=-1, 0, 1, 2, 3, but not q=-2 or smoothstep", () => {
+    expect(STF_OUTER_SHELL_APODIZATION_RATIO).toBe(0.8);
+    for (const profile of allProfiles) {
+      const plan = calculateStfWeights(inputs, profile);
+      const expected = plan.idealDrops[0] > 0.8 * plan.idealDrops[1] + 1e-12;
+      expect(plan.outerShellApodizationApplied).toBe(expected);
+      if (!expected) {
+        plan.adjustedDrops.forEach((drop, i) => expect(drop).toBeCloseTo(plan.idealDrops[i], 12));
+      }
+    }
+  });
+
+  test("apodization solves the post-redistribution 0.8 luminance ratio analytically", () => {
+    for (const q of [-1, 0, 1, 2, 3] as const) {
       const plan = calculateStfWeights(inputs, q);
       expect(plan.outerShellApodizationApplied).toBe(true);
-      expect(plan.adjustedDrops[0]).toBeCloseTo(plan.adjustedDrops[1], 12);
-      expect(plan.adjustedDrops[0] + plan.adjustedDrops[1])
-        .toBeCloseTo(plan.idealDrops[0] + plan.idealDrops[1], 12);
-      for (let i = 2; i < 7; i++) expect(plan.adjustedDrops[i]).toBeCloseTo(plan.idealDrops[i], 12);
+      const idealRaw = inputs.map((sample, i) => plan.idealDrops[i] / sample.edgeDensity);
+      const d0 = inputs[0].edgeDensity;
+      const d1 = inputs[1].edgeDensity;
+      const n = inputs.length;
+      const removal = n * (plan.idealDrops[0] - 0.8 * plan.idealDrops[1]) /
+        ((n - 1) * d0 + 0.8 * d1);
+      expect(removal).toBeGreaterThan(0);
+      expect(removal).toBeLessThan(idealRaw[0]);
+      const share = removal / n;
+      const expectedRaw = idealRaw.map((value, i) => value + share - (i === 0 ? removal : 0));
+      const sum = expectedRaw.reduce((total, value) => total + value, 0);
+      expectedRaw.forEach((value, i) => {
+        expect(plan.rawWeights[i]).toBeCloseTo(value, 12);
+        expect(plan.weights[i]).toBeCloseTo(value / sum, 6);
+      });
+      expect(plan.adjustedDrops[0] / plan.adjustedDrops[1]).toBeCloseTo(0.8, 12);
+      // Uniformly distributed IMAGE weights also change the inner shells.
+      expect(plan.rawWeights[6]).toBeGreaterThan(idealRaw[6]);
+      expect(plan.adjustedDrops.reduce((total, value) => total + value, 0)).toBeCloseTo(1, 12);
     }
   });
 
@@ -48,15 +75,47 @@ describe("STF radial attenuation profiles", () => {
     expect(plan.weights[0]).toBeCloseTo(expectedWeight, 4);
   });
 
-  test("unusually close first F-values cannot cause an excessive outer drop reduction", () => {
+  test("irregular F spacing meets the 0.8 target without blindly halving the outer weight", () => {
     const irregular = [2, 2.02, 2.10, 2.20, 2.40, 3.4, 4];
-    const plan = calculateStfWeights(irregular.map((radiusFNumber, image) => ({
+    const samples = irregular.map((radiusFNumber, image) => ({
       image, radiusFNumber, edgeDensity: radiusFNumber ** 2,
-    })), 1);
+    }));
+    const plan = calculateStfWeights(samples, 1);
     expect(plan.outerShellApodizationApplied).toBe(true);
-    expect(plan.adjustedDrops[0]).toBeCloseTo(plan.adjustedDrops[1], 12);
-    expect(plan.adjustedDrops[0]).toBeCloseTo(
-      (plan.idealDrops[0] + plan.idealDrops[1]) / 2, 12);
+    expect(plan.adjustedDrops[0] / plan.adjustedDrops[1]).toBeCloseTo(0.8, 12);
+    const idealRaw = Array.from(plan.idealDrops, (drop, i) => drop / samples[i].edgeDensity);
+    const removal = (idealRaw[0] - plan.rawWeights[0]) * samples.length / (samples.length - 1);
+    expect(removal).toBeGreaterThan(0);
+    expect(plan.rawWeights[1]).toBeCloseTo(idealRaw[1] + removal / samples.length, 12);
+    expect(plan.rawWeights[6]).toBeCloseTo(idealRaw[6] + removal / samples.length, 12);
+  });
+
+  test("if densities are reversed, removal cannot exceed the available outer weight", () => {
+    const samples = [
+      { image: 0, radiusFNumber: 2, edgeDensity: 100 },
+      { image: 1, radiusFNumber: 2.0001, edgeDensity: 0.001 },
+      { image: 2, radiusFNumber: 4, edgeDensity: 0.01 },
+    ];
+    const plan = calculateStfWeights(samples, 1);
+    expect(plan.outerShellApodizationApplied).toBe(true);
+    const idealOuterWeight = plan.idealDrops[0] / samples[0].edgeDensity;
+    expect(plan.rawWeights[0]).toBeCloseTo(idealOuterWeight / samples.length, 12);
+    expect(plan.rawWeights.every((value) => Number.isFinite(value) && value > 0)).toBe(true);
+    expect(plan.adjustedDrops.reduce((sum, value) => sum + value, 0)).toBeCloseTo(1, 12);
+  });
+
+  test("exactly 0.8 and lower leave the ideal drops unchanged", () => {
+    // q=-2 geometric series has dropOuter/dropSecond = 1/g².
+    const g = Math.sqrt(1 / 0.8);
+    const thresholdSeries = Array.from({ length: 7 }, (_, i) => {
+      const radiusFNumber = 2 * g ** i;
+      return { image: i, radiusFNumber, edgeDensity: radiusFNumber ** 2 };
+    });
+    const boundary = calculateStfWeights(thresholdSeries, -2);
+    expect(boundary.outerShellApodizationApplied).toBe(false);
+    expect(boundary.adjustedDrops[0] / boundary.adjustedDrops[1]).toBeCloseTo(0.8, 12);
+    const lower = calculateStfWeights(inputs, -2);
+    expect(lower.outerShellApodizationApplied).toBe(false);
   });
 
   test("frame order, edge densities, and profile selection remain independent", () => {
@@ -73,7 +132,14 @@ describe("STF radial attenuation profiles", () => {
         ...sample, edgeDensity: sample.edgeDensity * (i === 2 ? 2 : 1),
       }));
       const changed = calculateStfWeights(differentDensity, profile);
-      second.adjustedDrops.forEach((drop, j) => expect(changed.adjustedDrops[j]).toBeCloseTo(drop, 12));
+      // With an active apodization, equally redistributed image weights
+      // become different luminance contributions when their densities change.
+      expect(changed.adjustedDrops.every((drop) => Number.isFinite(drop) && drop > 0)).toBe(true);
+      if (first.outerShellApodizationApplied) {
+        expect(Array.from(changed.adjustedDrops)).not.toEqual(Array.from(second.adjustedDrops));
+      } else {
+        second.adjustedDrops.forEach((drop, j) => expect(changed.adjustedDrops[j]).toBeCloseTo(drop, 12));
+      }
     }
   });
 

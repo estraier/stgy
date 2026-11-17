@@ -103,7 +103,7 @@ describe("STF independent edge-density preparation", () => {
     expect(prepared.edgeDensities[1]).toBeCloseTo(transformStfToneIntensity(d1, plans[1].gain, plans[1].scaledLog), 12);
   });
 
-  test("density changes alter weights but not the normalized q-defined radial profile", () => {
+  test("density changes affect redistributed luminance when apodization is active", () => {
     const f = [2, 2.5, 4];
     const frames = buildStfFrameSet(f, 1, "extrapolation-32");
     const base = prepareStfFrameSetForTone(frames, f, [{ gain: 1, scaledLog: 0 },
@@ -113,7 +113,9 @@ describe("STF independent edge-density preparation", () => {
     expect(Array.from(base.allWeights)).not.toEqual(Array.from(altered.allWeights));
     const first = actualDrops(base.allFNumbers, base.edgeDensities, base.allWeights);
     const second = actualDrops(altered.allFNumbers, altered.edgeDensities, altered.allWeights);
-    first.forEach((drop, i) => expect(second[i]).toBeCloseTo(drop, 6));
+    expect(first).not.toEqual(second);
+    expect(first.reduce((sum, x) => sum + x, 0)).toBeCloseTo(1, 6);
+    expect(second.reduce((sum, x) => sum + x, 0)).toBeCloseTo(1, 6);
   });
 
   test("off with missing F preserves uniform weights without fabricating a density", () => {
@@ -127,16 +129,24 @@ describe("STF independent edge-density preparation", () => {
     expect(() => calculateStfWeights([{ image: 0, radiusFNumber: 2, edgeDensity: 1 },
       { image: 1, radiusFNumber: 4, edgeDensity: 0 }], 1)).toThrow("edge density");
   });
-  test("outer-shell apodization preserves the first two drops' sum", () => {
+  test("outer-shell apodization solves alpha=0.8 after global weight redistribution", () => {
     const f = [2, 2.5, 4, 5.6];
-    const plan = calculateStfWeights(f.map((radiusFNumber, image) => ({
+    const samples = f.map((radiusFNumber, image) => ({
       image, radiusFNumber, edgeDensity: 1 + image * 0.2,
-    })), 3);
+    }));
+    const plan = calculateStfWeights(samples, 3);
     expect(plan.outerShellApodizationApplied).toBe(true);
-    const firstTwo = [0, 1]; // Lowest F values are the outermost discs.
-    expect(plan.adjustedDrops[0]).toBeCloseTo(plan.adjustedDrops[1], 12);
-    expect(firstTwo.reduce((sum, i) => sum + plan.adjustedDrops[i], 0))
-      .toBeCloseTo(firstTwo.reduce((sum, i) => sum + plan.idealDrops[i], 0), 12);
+    const idealRaw = samples.map((sample, i) => plan.idealDrops[i] / sample.edgeDensity);
+    const n = samples.length;
+    const d0 = samples[0].edgeDensity;
+    const d1 = samples[1].edgeDensity;
+    const removal = n * (plan.idealDrops[0] - 0.8 * plan.idealDrops[1]) /
+      ((n - 1) * d0 + 0.8 * d1);
+    const share = removal / n;
+    idealRaw.forEach((weight, i) => expect(plan.rawWeights[i])
+      .toBeCloseTo(weight + share - (i === 0 ? removal : 0), 12));
+    expect(plan.adjustedDrops[0] / plan.adjustedDrops[1]).toBeCloseTo(0.8, 12);
+    expect(plan.adjustedDrops.reduce((sum, value) => sum + value, 0)).toBeCloseTo(1, 12);
     expect(plan.rawWeights.every((value) => Number.isFinite(value) && value > 0)).toBe(true);
   });
 

@@ -351,7 +351,7 @@ function captureProcessingSettings(selectedMode: string): StackInfoSetting[] {
   if (selectedMode === "hdr1" || selectedMode === "hdr2") {
     settings.push({ label: "HDR method", value: selectedMode === "hdr1" ? "Debevec" : "Mertens" });
   } else if (selectedMode === "tile-horizontal" || selectedMode === "tile-vertical") {
-    settings.push({ label: "Tile direction", value: tileDirection.value });
+    settings.push({ label: "Tile direction", value: tileDirection.selectedOptions[0]?.textContent || tileDirection.value });
     settings.push({ label: "Tile folding", value: tileFolding.value });
   } else if (selectedMode === "panorama") {
     settings.push({ label: "Panorama FoV", value: panoramaFov.selectedOptions[0]?.textContent || panoramaFov.value });
@@ -362,10 +362,10 @@ function captureProcessingSettings(selectedMode: string): StackInfoSetting[] {
   } else if (selectedMode === "stf") {
     settings.push({ label: "Radial attenuation", value: stfRadialAttenuation.selectedOptions[0]?.textContent || stfRadialAttenuation.value });
     settings.push({ label: "Frame generation", value: stfFrameGeneration.selectedOptions[0]?.textContent || stfFrameGeneration.value });
-    settings.push({ label: "Additional blur", value: stfBlurStrength.value });
+    settings.push({ label: "Additional blur", value: stfBlurStrength.selectedOptions[0]?.textContent || stfBlurStrength.value });
     if (stfBlurStrength.value !== "none") {
       settings.push({ label: "Blur ratio", value: `${Math.round(Number(stfBlurRatio.value) * 100)}%` });
-      settings.push({ label: "Area guard", value: stfBlurAreaGuard.value });
+      settings.push({ label: "Area guard", value: stfBlurAreaGuard.selectedOptions[0]?.textContent || stfBlurAreaGuard.value });
       settings.push({ label: "Blur sigmoid", value: `${stfBlurSigmoid.value}%` });
     }
   }
@@ -890,7 +890,7 @@ listen(processButton, "click", async () => {
     const alignmentNames: Record<string, string> = {
       "feature-match-ecc": "ECC (1MP ECC + 8MP ORB)",
       "feature-match-orb": "ORB (1MP + 8MP)",
-      "center-crop": "Center crop", "center-fit": "Center fit", "center-fill": "Center fill", "top-left-fill": "Top left fill",
+      "center-crop": "Center Crop", "center-fit": "Center Fit", "center-fill": "Center Fill", "top-left-fill": "Top Left Fill",
     };
     const infoInputs: StackInfoInput[] = files.map((file, index) => ({
       fileName: file.name,
@@ -2046,7 +2046,7 @@ function updateOutputSizeOptions() {
 
   const fullOption = document.createElement("option");
   fullOption.value = "full";
-  fullOption.textContent = "Full-size";
+  fullOption.textContent = "Full-Size";
   outputSize.appendChild(fullOption);
 
   if (currentStackResult) {
