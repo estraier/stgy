@@ -1,5 +1,6 @@
 import {
   applyStfToneMatchInPlace,
+  buildStfToneMatchPlanToReference,
   buildStfToneMatchLut,
   buildStfToneMatchPlans,
   chooseStfToneReferenceIndex,
@@ -48,6 +49,50 @@ describe("STF tone matching", () => {
         transformStfToneIntensity(input[index].p95, plan.gain, plan.scaledLog) - target.p95,
       )).toBeLessThan(0.002);
     }
+  });
+
+  test("identical black-background image statistics always use exact identity", () => {
+    const same = stats(0.086, 0, 0.5);
+    const plans = buildStfToneMatchPlans(Array.from({ length: 7 }, () => ({ ...same })));
+    expect(plans).not.toBeNull();
+    expect(plans!.plans).toEqual(Array.from({ length: 7 }, () => ({ gain: 1, scaledLog: 0 })));
+    expect(buildStfToneMatchPlanToReference(same, same)).toEqual({ gain: 1, scaledLog: 0 });
+
+    const pixels = new Float32Array([0, 0, 0, 0.25, 0.25, 0.25, 0.5, 0.5, 0.5]);
+    const before = Array.from(pixels);
+    for (const plan of plans!.plans) {
+      const copy = pixels.slice();
+      applyStfToneMatchInPlace(copy, plan.gain, plan.scaledLog);
+      expect(Array.from(copy)).toEqual(before);
+    }
+  });
+
+  test("zero P50 cannot constrain Scaled Log; different P95 adjusts gain only", () => {
+    const source = stats(0.08, 0, 0.4);
+    const reference = stats(0.10, 0, 0.5);
+    const plan = buildStfToneMatchPlanToReference(source, reference);
+    expect(plan.scaledLog).toBe(0);
+    expect(plan.gain).toBeGreaterThan(1);
+    expect(Math.abs(transformStfToneIntensity(source.p95, plan.gain, plan.scaledLog) - reference.p95))
+      .toBeLessThan(0.002);
+    expect(transformStfToneIntensity(0, plan.gain, plan.scaledLog)).toBe(0);
+  });
+
+  test("one-sided zero P50 does not drive the Scaled Log search to either bound", () => {
+    for (const [sourceP50, targetP50] of [[0, 0.2], [0.2, 0]] as const) {
+      const source = stats(0.20, sourceP50, 0.6);
+      const reference = stats(0.20, targetP50, 0.8);
+      const plan = buildStfToneMatchPlanToReference(source, reference);
+      expect(plan.scaledLog).toBe(0);
+      expect(Math.abs(transformStfToneIntensity(source.p95, plan.gain, plan.scaledLog) - reference.p95))
+        .toBeLessThan(0.002);
+    }
+  });
+
+  test("matching nonzero percentiles return identity without numerical drift", () => {
+    const source = stats(0.10, 0.12, 0.7);
+    const reference = stats(0.11, 0.12, 0.7);
+    expect(buildStfToneMatchPlanToReference(source, reference)).toEqual({ gain: 1, scaledLog: 0 });
   });
 
   test("gamma-2 LUT closely matches the analytic tone mapping", () => {

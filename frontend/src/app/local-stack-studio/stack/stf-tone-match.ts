@@ -127,6 +127,10 @@ function solveGain(sourceP95: number, scaledLog: number, targetP95: number): num
 }
 
 function solveScaledLog(sourceP50: number, gain: number, targetP50: number): number {
+  // A zero percentile stays zero under every valid tone curve. It cannot
+  // constrain Scaled Log, so keep the neutral curve instead of forcing the
+  // search to its lower (or upper) bound.
+  if (sourceP50 <= STF_TONE_EPSILON || targetP50 <= STF_TONE_EPSILON) return 0;
   const target = clamp01(targetP50);
   const lowerValue = transformStfToneIntensity(sourceP50, gain, STF_TONE_MATCH_LOG_MIN);
   if (target <= lowerValue) return STF_TONE_MATCH_LOG_MIN;
@@ -145,6 +149,11 @@ function solveScaledLog(sourceP50: number, gain: number, targetP50: number): num
 }
 
 function solvePlan(source: StfToneStatistics, target: StfToneStatistics): StfToneMatchPlan {
+  // Equal calibration percentiles require no correction, even when P50=0.
+  // Return exact identity rather than accumulating solver rounding errors.
+  if (source.p50 === target.p50 && source.p95 === target.p95) {
+    return { gain: 1, scaledLog: 0 };
+  }
   let gain = 1;
   let scaledLog = 0;
   for (let i = 0; i < STF_TONE_MATCH_ITERATIONS; i += 1) {
