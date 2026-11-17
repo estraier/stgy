@@ -6,6 +6,7 @@ import type {
 import { transferableBuffer } from "./transfer-buffer";
 import { readStfCachedFlow, writeStfCachedFlow, stfFlowSessionKey } from "../stack/stf-flow-cache";
 import { stfFlowWorkingSize, stfGamma2RgbToGray8Resampled } from "../stack/stf-flow-gray";
+import { buildStfFlowNormGate, stfFlowNormGateFactor, type StfFlowNormGate } from "../stack/stf-flow-norm-gate";
 import type {
   OpticalFlowPerformanceStats,
   OpticalFlowVariant,
@@ -179,6 +180,25 @@ import type {
     };
   }
 
+  // A pair can be used for multiple opening-side variants. Derive each
+  // direction's native Flow percentiles once, never from scaled extrapolation.
+  type NormGateCache = { forward?: StfFlowNormGate | null; backward?: StfFlowNormGate | null };
+
+  function gateForVariant(
+    variant: OpticalFlowVariant,
+    forward: Float32Array,
+    backward: Float32Array,
+    cache: NormGateCache,
+  ): StfFlowNormGate | null {
+    if (variant === "mid") return null; // Interpolation must remain unchanged.
+    if (variant === "ext2") {
+      if (cache.backward === undefined) cache.backward = buildStfFlowNormGate(backward);
+      return cache.backward;
+    }
+    if (cache.forward === undefined) cache.forward = buildStfFlowNormGate(forward);
+    return cache.forward;
+  }
+
   // Only one retained pair per outer Worker. The controller processes its
   // extra opening-side frames serially, reusing the same bidirectional Flow.
   // For a two-real-input session, the closing-side ext2 also uses this pair.
@@ -186,7 +206,7 @@ import type {
     previousImageId: number; nextImageId: number;
     previous: Uint16Array; next: Uint16Array;
     width: number; height: number; flowWidth: number; flowHeight: number;
-    forward: Float32Array; backward: Float32Array;
+    forward: Float32Array; backward: Float32Array; normGates: NormGateCache;
   } | null = null;
 
   workerScope.onmessage = async (event: MessageEvent<OpticalFlowWorkerRequest>) => {
@@ -212,8 +232,9 @@ import type {
           throw new Error("No retained Optical Flow pair matches this extrapolation request");
         }
         const started = performance.now();
+        const gate = gateForVariant(message.variant, pair.forward, pair.backward, pair.normGates);
         const output = synthesizeFlowVariant(message.variant, pair.previous, pair.next,
-          pair.width, pair.height, pair.forward, pair.backward, pair.flowWidth, pair.flowHeight, message.variantScale);
+          pair.width, pair.height, pair.forward, pair.backward, pair.flowWidth, pair.flowHeight, message.variantScale, gate);
         const gamma2Buffer = transferableBuffer(output);
         workerScope.postMessage({ type: "warp-result", requestId: message.requestId,
           width: pair.width, height: pair.height, gamma2Buffer, warpMs: performance.now() - started },
@@ -316,6 +337,7 @@ import type {
           flowSize.width, flowSize.height, flows.forward, flows.backward)
       : Promise.resolve(false);
 
+    const normGates: NormGateCache = {};
     postProgress(message.requestId, `Warping Optical Flow ${describeVariant(message.variant)} image...`);
     const warpStartedAt = performance.now();
     const output = synthesizeFlowVariant(
@@ -329,6 +351,7 @@ import type {
       flowSize.width,
       flowSize.height,
       message.variantScale,
+      gateForVariant(message.variant, flows.forward, flows.backward, normGates),
     );
     const warpMs = performance.now() - warpStartedAt;
     // Both frames use the *same* native 4MP forward/backward fields. Never
@@ -336,7 +359,8 @@ import type {
     const additionalWarpStartedAt = performance.now();
     const additionalGamma2Rgb = message.additionalVariant
       ? synthesizeFlowVariant(message.additionalVariant, previousGamma2Rgb, nextGamma2Rgb,
-        width, height, flows.forward, flows.backward, flowSize.width, flowSize.height, message.additionalVariantScale)
+        width, height, flows.forward, flows.backward, flowSize.width, flowSize.height, message.additionalVariantScale,
+        gateForVariant(message.additionalVariant, flows.forward, flows.backward, normGates))
       : undefined;
     const additionalWarpMs = additionalGamma2Rgb ? performance.now() - additionalWarpStartedAt : undefined;
     if (message.retainPair) {
@@ -347,7 +371,7 @@ import type {
         previousImageId: message.previousImageId, nextImageId: message.nextImageId,
         previous: previousGamma2Rgb, next: nextGamma2Rgb,
         width, height, flowWidth: flowSize.width, flowHeight: flowSize.height,
-        forward: flows.forward, backward: flows.backward,
+        forward: flows.forward, backward: flows.backward, normGates,
       };
     }
     const flowCacheSaved = await cacheWrite;
@@ -386,6 +410,7 @@ import type {
     flowWidth: number,
     flowHeight: number,
     variantScale?: number,
+    normGate: StfFlowNormGate | null = null,
   ): Uint16Array {
     const output = new Uint16Array(width * height * 3);
     const scaleX = width / flowWidth;
@@ -434,13 +459,19 @@ import type {
         const forwardY = flowForward[ff00 + 1] * flowW00 + flowForward[ff10 + 1] * flowW10 + flowForward[ff01 + 1] * flowW01 + flowForward[ff11 + 1] * flowW11;
         const backwardX = flowBackward[ff00] * flowW00 + flowBackward[ff10] * flowW10 + flowBackward[ff01] * flowW01 + flowBackward[ff11] * flowW11;
         const backwardY = flowBackward[ff00 + 1] * flowW00 + flowBackward[ff10 + 1] * flowW10 + flowBackward[ff01 + 1] * flowW01 + flowBackward[ff11 + 1] * flowW11;
+        // Gate only the direction used by extrapolation. The percentile
+        // thresholds were derived in native Flow pixels *before* applying the
+        // virtual-F scaling, so ext1..32 share one stable cutoff.
+        const flowGateFactor = !normGate ? 1 : openingStep
+          ? stfFlowNormGateFactor(forwardX, forwardY, normGate)
+          : stfFlowNormGateFactor(backwardX, backwardY, normGate);
 
         let previousR = 0;
         let previousG = 0;
         let previousB = 0;
         if (usePrevious) {
-          const previousX = clamp(x - previousFactor * forwardX * scaleX, 0, width - 1);
-          const previousY = clamp(y - previousFactor * forwardY * scaleY, 0, height - 1);
+          const previousX = clamp(x - previousFactor * forwardX * flowGateFactor * scaleX, 0, width - 1);
+          const previousY = clamp(y - previousFactor * forwardY * flowGateFactor * scaleY, 0, height - 1);
           const previousX0 = Math.floor(previousX);
           const previousY0 = Math.floor(previousY);
           const previousX1 = Math.min(width - 1, previousX0 + 1);
@@ -464,8 +495,8 @@ import type {
         let nextG = 0;
         let nextB = 0;
         if (useNext) {
-          const nextX = clamp(x - nextFactor * backwardX * scaleX, 0, width - 1);
-          const nextY = clamp(y - nextFactor * backwardY * scaleY, 0, height - 1);
+          const nextX = clamp(x - nextFactor * backwardX * flowGateFactor * scaleX, 0, width - 1);
+          const nextY = clamp(y - nextFactor * backwardY * flowGateFactor * scaleY, 0, height - 1);
           const nextX0 = Math.floor(nextX);
           const nextY0 = Math.floor(nextY);
           const nextX1 = Math.min(width - 1, nextX0 + 1);

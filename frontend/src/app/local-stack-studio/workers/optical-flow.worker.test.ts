@@ -13,15 +13,16 @@ type ParentScope = {
   postMessage: (message: OpticalFlowWorkerResponse, transfer?: Transferable[]) => void;
 };
 
-function syntheticField(width: number, height: number, dx: number): ArrayBuffer {
+function syntheticField(width: number, height: number, dx: number, norms?: readonly number[]): ArrayBuffer {
   const values = new Float32Array(width * height * 2);
-  for (let i = 0; i < values.length; i += 2) values[i] = dx;
+  for (let i = 0; i < values.length; i += 2) values[i] = norms ? Math.sign(dx) * norms[i / 2] : dx;
   return values.buffer;
 }
 
 async function runMidpoint(cores: number, memoryGiB: number, additionalVariant?: "ext1" | "ext2", sharedGray = false,
   retainedVariants: OpticalFlowOpeningVariant[] = [],
-  scales?: { main?: number; additional?: number; retained?: number[] }) {
+  scales?: { main?: number; additional?: number; retained?: number[] },
+  norms?: readonly number[]) {
   jest.resetModules();
   const originalWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
   const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
@@ -50,7 +51,7 @@ async function runMidpoint(cores: number, memoryGiB: number, additionalVariant?:
         flowComputations++;
         respond({
           type: "result", requestId: message.requestId,
-          flowBuffer: syntheticField(message.width, message.height, this.index === 0 ? 2 : -2),
+          flowBuffer: syntheticField(message.width, message.height, this.index === 0 ? 2 : -2, norms),
           computeMs: 1,
         });
       } else if (message.type === "compute-pair") {
@@ -58,8 +59,8 @@ async function runMidpoint(cores: number, memoryGiB: number, additionalVariant?:
         flowComputations += 2;
         respond({
           type: "pair-result", requestId: message.requestId,
-          forwardBuffer: syntheticField(message.width, message.height, 2),
-          backwardBuffer: syntheticField(message.width, message.height, -2),
+          forwardBuffer: syntheticField(message.width, message.height, 2, norms),
+          backwardBuffer: syntheticField(message.width, message.height, -2, norms),
           forwardMs: 1, backwardMs: 1,
         });
       }
@@ -166,6 +167,54 @@ test("STF Worker accepts retained extrapolation steps 16 and 32 without recomput
     }
   }
   expect(messages.find((message) => message.requestId === 100)?.type).toBe("error");
+});
+
+test("P5-P10 gate protects small-flow pixels in opening and closing extrapolation but not interpolation", async () => {
+  // 11x3 Flow; the smallest vectors occupy both highlighted locations. P5
+  // falls on 0.08, P10 on 0.2, so the 0.08px warp is suppressed.
+  const norms = new Array(33).fill(2);
+  norms[0] = 0.05;
+  norms[1] = 0.1;
+  norms[2] = 0.2;
+  norms[16] = 0.08; // previous image peak (x=5, y=1)
+  norms[18] = 0.08; // next image peak (x=7, y=1)
+  // A uniform field has P5==P10, so it takes the old warp path.
+  const controlNorms = new Array(33).fill(0.08);
+  for (const variant of ["ext1", "ext2"] as const) {
+    const gated = await runMidpoint(8, 8, variant, false, ["ext1-2"],
+      { additional: 1, retained: [2] }, norms);
+    const control = await runMidpoint(8, 8, variant, false, ["ext1-2"],
+      { additional: 1, retained: [2] }, controlNorms);
+    const generated = gated.messages.find((message) => message.requestId === 2 && message.type === "result");
+    const oldWarp = control.messages.find((message) => message.requestId === 2 && message.type === "result");
+    expect(generated?.type).toBe("result");
+    expect(oldWarp?.type).toBe("result");
+    if (generated?.type !== "result" || oldWarp?.type !== "result") continue;
+    const pixelIndex = ((11 + (variant === "ext1" ? 5 : 7)) * 3);
+    const pixels = new Uint16Array(generated.additionalGamma2Buffer!);
+    const oldPixels = new Uint16Array(oldWarp.additionalGamma2Buffer!);
+    expect(pixels[pixelIndex]).toBe(8000);
+    expect(oldPixels[pixelIndex]).toBeLessThan(8000);
+    if (variant === "ext1") {
+      const retained = gated.messages.find((message) => message.requestId === 3 && message.type === "warp-result");
+      expect(retained?.type).toBe("warp-result");
+      if (retained?.type === "warp-result") {
+        // Reusing the same P5/P10 gate at a larger virtual-F scale must not
+        // resurrect the suppressed sub-threshold displacement.
+        expect(new Uint16Array(retained.gamma2Buffer)[pixelIndex]).toBe(8000);
+      }
+    }
+    // The interpolation output uses the same raw Flow regardless of whether
+    // an additional extrapolated frame is also requested.
+    const onlyMiddle = await runMidpoint(8, 8, undefined, false, ["ext1-2"],
+      { retained: [2] }, norms);
+    const midpoint = onlyMiddle.messages.find((message) => message.requestId === 2 && message.type === "result");
+    expect(midpoint?.type).toBe("result");
+    if (midpoint?.type === "result") {
+      expect(Array.from(new Uint16Array(generated.gamma2Buffer)))
+        .toEqual(Array.from(new Uint16Array(midpoint.gamma2Buffer)));
+    }
+  }
 });
 
 // The per-frame interpolation uses canonical gamma-2 RGB16 with extended
@@ -307,6 +356,10 @@ test("STF inverse-warp extrapolation expands a synthetic CoC at the geometricall
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const offset = (y * width + x) * 2;
+        // An out-of-focus object need not occupy the whole image. Keep a
+        // static strip away from the test disc, so P5==P10==0 and this test
+        // continues to cover unmodified inverse-warp geometry.
+        if (y < 30) continue;
         vectors[offset] = (x - center) * (scale - 1);
         vectors[offset + 1] = (y - center) * (scale - 1);
       }
@@ -442,6 +495,10 @@ test("STF opening extrapolation 32 expands a synthetic disc to its 1/F target ra
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const offset = (y * width + x) * 2;
+        // An out-of-focus object need not occupy the whole image. Keep a
+        // static strip away from the test disc, so P5==P10==0 and this test
+        // continues to cover unmodified inverse-warp geometry.
+        if (y < 30) continue;
         vectors[offset] = (x - center) * (scale - 1);
         vectors[offset + 1] = (y - center) * (scale - 1);
       }
