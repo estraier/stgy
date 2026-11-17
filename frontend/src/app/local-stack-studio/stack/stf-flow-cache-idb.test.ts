@@ -2,7 +2,7 @@ import { deleteStfFlowSession, purgeExpiredStfFlowSessions, stfFlowSessionKey,
   readStfCachedFlow, writeStfCachedFlow } from "./stf-flow-cache";
 
 /** Minimal async IndexedDB simulation of the two stores this cache uses.
- * Tests actual read/put/eviction transactions without a browser or WASM.
+ * Tests actual read/admission/explicit-deletion transactions without a browser or WASM.
  */
 /** Clone values in the Jest test realm. Jest's host-provided structuredClone
  * can create Float32Arrays from a different VM realm; unlike real IndexedDB,
@@ -116,7 +116,7 @@ function useMemoryIndexedDb(legacy = false) {
   };
 }
 
-test("IndexedDB stores only flow vectors, reuses exact Float32 values, and evicts LRU", async () => {
+test("IndexedDB retains cached pairs, skips over-budget writes, and frees space on session deletion", async () => {
   const fake = useMemoryIndexedDb();
   const forward = Float32Array.from([1.25, -0.5, 0, 0, 2.5, 3, 0, 0]);
   const backward = Float32Array.from([-1.25, 0.5, 0, 0, -2.5, -3, 0, 0]);
@@ -132,21 +132,77 @@ test("IndexedDB stores only flow vectors, reuses exact Float32 values, and evict
     expect(Array.from(recovered?.backward || [])).toEqual(Array.from(backward));
     expect(recovered?.forward).not.toBe(forward);
     expect(fake.tables.get("pairs")?.size).toBe(1);
-    // Two pairs fit, but a third causes one pair to be evicted.
     expect(await writeStfCachedFlow("session-1", b, createdAt, 2, 2, forward, backward, 128)).toBe(true);
-    expect(await writeStfCachedFlow("session-2", c, createdAt, 2, 2, forward, backward, 128)).toBe(true);
+    // The cache is now full. The third pair must not evict either of the two
+    // first pairs, even if the first pair was accessed long ago.
+    expect(await writeStfCachedFlow("session-2", c, createdAt, 2, 2, forward, backward, 128)).toBe(false);
     expect(fake.tables.get("pairs")?.size).toBe(2);
-    expect(await readStfCachedFlow("session-1", a, 2, 2)).toBeNull();
-    expect(await readStfCachedFlow("session-2", c, 2, 2)).not.toBeNull();
+    expect(await readStfCachedFlow("session-1", a, 2, 2)).not.toBeNull();
+    expect(await readStfCachedFlow("session-1", b, 2, 2)).not.toBeNull();
+    expect(await readStfCachedFlow("session-2", c, 2, 2)).toBeNull();
     expect(await readStfCachedFlow("session-1", c, 2, 2)).toBeNull();
+    // Updating an existing key only accounts for its replacement size.
+    const replacement = Float32Array.from([0, 0, 0, 0, 0, 0, 0, 0]);
+    expect(await writeStfCachedFlow("session-1", a, createdAt, 2, 2,
+      replacement, backward, 128)).toBe(true);
+    expect(Array.from((await readStfCachedFlow("session-1", a, 2, 2))!.forward)).toEqual(Array.from(replacement));
     expect(await writeStfCachedFlow("session-1", a, createdAt, 2, 2, forward, backward, 32)).toBe(false);
-    expect(await deleteStfFlowSession("session-1")).toBe(1);
-    expect(fake.tables.get("pairs")?.size).toBe(1);
+    expect(await deleteStfFlowSession("session-1")).toBe(2);
+    expect(fake.tables.get("pairs")?.size).toBe(0);
+    // Explicit deletion creates space: new pairs may be admitted again.
+    expect(await writeStfCachedFlow("session-2", c, createdAt, 2, 2, forward, backward, 128)).toBe(true);
     expect(await purgeExpiredStfFlowSessions(createdAt)).toBe(1);
     expect(fake.tables.get("pairs")?.size).toBe(0);
   } finally {
     fake.restore();
   }
+});
+
+test("sequential re-merges have stable Flow hits, not cyclic LRU cache misses", async () => {
+  const fake = useMemoryIndexedDb();
+  const flow = new Float32Array(8); // Each bidirectional pair is 64 bytes.
+  const now = Date.now();
+  const keys = Array.from({ length: 5 }, (_, i) =>
+    stfFlowSessionKey("same-session", i, i + 1, "align", 2, 2)!);
+  try {
+    for (let pass = 0; pass < 3; pass++) {
+      let hits = 0;
+      let admissions = 0;
+      for (const key of keys) {
+        if (await readStfCachedFlow("same-session", key, 2, 2)) {
+          hits++;
+        } else if (await writeStfCachedFlow("same-session", key,
+          now, 2, 2, flow, flow, 192)) {
+          admissions++;
+        }
+      }
+      expect({ hits, admissions }).toEqual(pass === 0
+        ? { hits: 0, admissions: 3 }
+        : { hits: 3, admissions: 0 });
+      expect(fake.tables.get("pairs")?.size).toBe(3);
+      expect([...fake.tables.get("pairs")!.keys()]).toEqual(keys.slice(0, 3));
+    }
+  } finally { fake.restore(); }
+});
+
+test("reads are read-only, including legacy v2 metadata containing accessedAt", async () => {
+  const fake = useMemoryIndexedDb();
+  const now = Date.now();
+  const flow = new Float32Array(8);
+  const key = stfFlowSessionKey("same-session", 0, 1, "align", 2, 2)!;
+  try {
+    expect(await writeStfCachedFlow("same-session", key, now, 2, 2, flow, flow, 128)).toBe(true);
+    const metadata = fake.tables.get("metadata")!;
+    expect(metadata.get(key)).toEqual({ key, sessionId: "same-session", bytes: 64, createdAt: now });
+    // A real v2 cache can already contain LRU timestamps; never rewrite them.
+    metadata.set(key, { ...(metadata.get(key) as object), accessedAt: now - 60_000 });
+    const before = cloneStoredValue(metadata.get(key));
+    for (let i = 0; i < 3; i++) {
+      expect(await readStfCachedFlow("same-session", key, 2, 2)).not.toBeNull();
+      expect(metadata.get(key)).toEqual(before);
+    }
+    expect(fake.tables.get("pairs")?.size).toBe(1);
+  } finally { fake.restore(); }
 });
 
 

@@ -96,7 +96,7 @@ test("opening Average Flow uses equal weights from three radius-scaled pairs wit
     expect(openingPixel).toBeGreaterThan(2950);
     expect(openingPixel).toBeLessThan(3300);
     const later = await send({ type: "warp-opening-average", requestId: 11,
-      sourceImageId: 0, variant: "ext1-32", variantScale: 2 });
+      sourceImageId: 0, variant: "ext1-12", variantScale: 2 });
     expect(later.type).toBe("warp-result");
     if (later.type === "warp-result") {
       expect(new Uint16Array(later.gamma2Buffer)[(4 * width + 10) * 3]).toBeGreaterThan(3500);

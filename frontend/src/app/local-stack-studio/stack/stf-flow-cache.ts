@@ -1,4 +1,8 @@
 /** Best-effort persistent bidirectional 4MP Farneback Flow cache.
+ * Cache hits never rewrite metadata. Once admitted, valid pairs stay cached
+ * until explicit session deletion, 30-minute expiration, or corruption. When
+ * the 512MiB budget fills, skip new admissions instead of evicting pairs that
+ * the next sequential merge will need again.
  * Every record belongs to a Canonical input session. Re-selecting files starts
  * a new session, even when the files contain identical pixels. No file hash,
  * WebCrypto, or cross-session content-based reuse is involved.
@@ -35,7 +39,7 @@ type FlowRecord = {
   backward: Float32Array;
   createdAt: number; // Session creation timestamp, not the insertion timestamp.
 };
-type FlowMetadata = { key: string; sessionId: string; bytes: number; createdAt: number; accessedAt: number };
+type FlowMetadata = { key: string; sessionId: string; bytes: number; createdAt: number };
 export type StfCachedBidirectionalFlow = { forward: Float32Array; backward: Float32Array };
 
 export function validateStfCachedFlow(
@@ -100,20 +104,6 @@ function discardRecord(db: IDBDatabase, key: string): Promise<void> {
   });
 }
 
-function touchRecord(db: IDBDatabase, record: FlowRecord): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(META_STORE, "readwrite");
-    tx.objectStore(META_STORE).put({
-      key: record.key, sessionId: record.sessionId,
-      bytes: record.forward.byteLength + record.backward.byteLength,
-      createdAt: record.createdAt, accessedAt: Date.now(),
-    } satisfies FlowMetadata);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error);
-  });
-}
-
 export async function readStfCachedFlow(
   sessionId: string, key: string, width: number, height: number,
 ): Promise<StfCachedBidirectionalFlow | null> {
@@ -129,7 +119,6 @@ export async function readStfCachedFlow(
       await discardRecord(db, key).catch(() => {});
       return null;
     }
-    await touchRecord(db, record).catch(() => {});
     return { forward: record.forward, backward: record.backward };
   } catch {
     return null;
@@ -139,42 +128,43 @@ export async function readStfCachedFlow(
 }
 
 // Metadata cursor only: never deserialize all the large Flow buffers.
-function storeWithEviction(db: IDBDatabase, record: FlowRecord, maxBytes: number): Promise<void> {
+// This is an admission policy, not an eviction policy: a full cache retains
+// its existing pairs so repeated left-to-right merges do not continually
+// recompute every pair after replacing the previously cached pair.
+function storeIfSpace(db: IDBDatabase, record: FlowRecord, maxBytes: number): Promise<boolean> {
   return new Promise((resolve, reject) => {
     const tx = db.transaction([FLOW_STORE, META_STORE], "readwrite");
     const flows = tx.objectStore(FLOW_STORE);
     const metadata = tx.objectStore(META_STORE);
-    const entries: FlowMetadata[] = [];
+    let admitted = false;
+    let retainedBytes = 0;
     const request = metadata.openCursor();
     request.onsuccess = () => {
       const cursor = request.result;
-      if (cursor) { entries.push(cursor.value as FlowMetadata); cursor.continue(); return; }
-      const now = Date.now();
-      const incomingBytes = record.forward.byteLength + record.backward.byteLength;
-      let total = incomingBytes;
-      const retained = entries.filter((entry) => {
-        const invalid = !entry.sessionId || !Number.isFinite(entry.createdAt) ||
-          entry.createdAt > now || !Number.isFinite(entry.bytes) || entry.bytes <= 0;
-        if (invalid || entry.key === record.key) {
+      if (cursor) {
+        const entry = cursor.value as FlowMetadata;
+        const now = Date.now();
+        const invalid = !entry.key || !entry.sessionId ||
+          !Number.isSafeInteger(entry.createdAt) || entry.createdAt < 0 || entry.createdAt > now ||
+          !Number.isSafeInteger(entry.bytes) || entry.bytes <= 0;
+        if (invalid) {
           flows.delete(entry.key);
-          metadata.delete(entry.key);
-          return false;
+          cursor.delete();
+        } else if (entry.key !== record.key) {
+          // The old size of a key being replaced is not part of its new cost.
+          retainedBytes += entry.bytes;
         }
-        total += entry.bytes;
-        return true;
-      });
-      retained.sort((a, b) => a.accessedAt - b.accessedAt);
-      for (const entry of retained) {
-        if (total <= maxBytes) break;
-        flows.delete(entry.key);
-        metadata.delete(entry.key);
-        total -= entry.bytes;
+        cursor.continue();
+        return;
       }
+      const incomingBytes = record.forward.byteLength + record.backward.byteLength;
+      if (retainedBytes + incomingBytes > maxBytes) return;
       flows.put(record);
       metadata.put({ key: record.key, sessionId: record.sessionId,
-        bytes: incomingBytes, createdAt: record.createdAt, accessedAt: now } satisfies FlowMetadata);
+        bytes: incomingBytes, createdAt: record.createdAt } satisfies FlowMetadata);
+      admitted = true;
     };
-    tx.oncomplete = () => resolve();
+    tx.oncomplete = () => resolve(admitted);
     request.onerror = () => reject(request.error);
     tx.onerror = () => reject(tx.error);
     tx.onabort = () => reject(tx.error);
@@ -199,8 +189,7 @@ export async function writeStfCachedFlow(
     if (estimate && typeof estimate.quota === "number" && typeof estimate.usage === "number" &&
         estimate.quota - estimate.usage < bytes * 1.25) return false;
     db = await openDb();
-    await storeWithEviction(db, record, maxBytes);
-    return true;
+    return await storeIfSpace(db, record, maxBytes);
   } catch {
     return false;
   } finally {

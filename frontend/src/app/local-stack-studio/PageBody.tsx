@@ -309,15 +309,15 @@ export default function PageBody() {
                     defaultValue="1"
                     className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm"
                   >
-                    <option value="-2">Power Curve (Inverse-Square)</option>
-                    <option value="-1">Power Curve (Inverse)</option>
-                    <option value="0">Power Curve (Logarithmic)</option>
-                    <option value="1">Power Curve (Linear)</option>
-                    <option value="2">Power Curve (Quadratic)</option>
-                    <option value="3">Power Curve (Cubic)</option>
-                    <option value="smoothstep-weak">Smoothstep (3rd-Order)</option>
-                    <option value="smoothstep-medium">Smoothstep (5th-Order)</option>
-                    <option value="smoothstep-strong">Smoothstep (7th-Order)</option>
+                    <option value="-2">Power (inverse-sq)</option>
+                    <option value="-1">Power (inverse)</option>
+                    <option value="0">Power (logarithmic)</option>
+                    <option value="1">Power (linear)</option>
+                    <option value="2">Power (quadratic)</option>
+                    <option value="3">Power (cubic)</option>
+                    <option value="smoothstep-weak">S-curve (gentle)</option>
+                    <option value="smoothstep-medium">S-curve (medium)</option>
+                    <option value="smoothstep-strong">S-curve (steep)</option>
                   </select>
                 </label>
                 <label id="stf-frame-generation-option" className="hidden flex-col items-start gap-1.5">
@@ -331,10 +331,12 @@ export default function PageBody() {
                     <option value="interpolation">Interpolation</option>
                     <option value="extrapolation-1">Extrapolation 1</option>
                     <option value="extrapolation-2">Extrapolation 2</option>
+                    <option value="extrapolation-3">Extrapolation 3</option>
                     <option value="extrapolation-4">Extrapolation 4</option>
-                    <option value="extrapolation-8">Extrapolation 8</option>
-                    <option value="extrapolation-16">Extrapolation 16</option>
-                    <option value="extrapolation-32">Extrapolation 32</option>
+                    <option value="extrapolation-5">Extrapolation 5</option>
+                    <option value="extrapolation-6">Extrapolation 6</option>
+                    <option value="extrapolation-9">Extrapolation 9</option>
+                    <option value="extrapolation-12">Extrapolation 12</option>
 
                   </select>
                 </label>

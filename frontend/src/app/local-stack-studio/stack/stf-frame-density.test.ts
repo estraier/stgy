@@ -53,7 +53,7 @@ describe("STF MergePlan typed-array tone conversion regression", () => {
 });
 
 describe("STF independent edge-density preparation", () => {
-  test.each(["off", "interpolation", "extrapolation-1", "extrapolation-4", "extrapolation-32"] as const)(
+  test.each(["off", "interpolation", "extrapolation-1", "extrapolation-4", "extrapolation-12"] as const)(
     "%s propagates gamma2 midpoint and source-preserving extrapolation densities", (mode) => {
       const frames = buildStfFrameSet(realF, 1, mode);
       const prepared = prepareStfFrameSetForTone(frames, realF, identity, 0.8, 1);
@@ -79,7 +79,7 @@ describe("STF independent edge-density preparation", () => {
   test("real-source tone plan is inherited exactly by opening and closing extrapolations", () => {
     const plans = realF.map((_, i) => ({ gain: 1 + i * 0.12, scaledLog: (i - 3) * 0.05 }));
     const prepared = prepareStfFrameSetForTone(
-      buildStfFrameSet(realF, 1, "extrapolation-32"), realF, plans, 0.8, 1);
+      buildStfFrameSet(realF, 1, "extrapolation-12"), realF, plans, 0.8, 1);
     for (const [i, frame] of prepared.outerFrames.entries()) {
       const parent = frame.variant === "ext2" ? frame.nextIndex : frame.previousIndex;
       expect(prepared.virtualTonePlans.outer[i]).toEqual(plans[parent]);
@@ -105,7 +105,7 @@ describe("STF independent edge-density preparation", () => {
 
   test("density changes affect redistributed luminance when apodization is active", () => {
     const f = [2, 2.5, 4];
-    const frames = buildStfFrameSet(f, 1, "extrapolation-32");
+    const frames = buildStfFrameSet(f, 1, "extrapolation-12");
     const base = prepareStfFrameSetForTone(frames, f, [{ gain: 1, scaledLog: 0 },
       { gain: 1, scaledLog: 0 }, { gain: 1, scaledLog: 0 }], 0.8, 1);
     const altered = prepareStfFrameSetForTone(frames, f, [{ gain: 2, scaledLog: 0 },
@@ -154,7 +154,7 @@ describe("STF independent edge-density preparation", () => {
 
 test.each([-2, -1, 0, 1, 2, 3, "smoothstep-weak", "smoothstep-medium", "smoothstep-strong"] as const)(
   "neutral tone matching preserves all pre-existing ideal-disc frame weights at %s", (q) => {
-    for (const mode of ["off", "interpolation", "extrapolation-1", "extrapolation-4", "extrapolation-32"] as const) {
+    for (const mode of ["off", "interpolation", "extrapolation-1", "extrapolation-4", "extrapolation-12"] as const) {
       const original = buildStfFrameSet(realF, q, mode);
       const prepared = prepareStfFrameSetForTone(original, realF, identity, 0.6, q);
       expect(prepared.allWeights).toHaveLength(original.allWeights.length);

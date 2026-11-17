@@ -111,7 +111,7 @@ function virtualHarness(persist = true) {
       releaseRetained: () => {}, terminate: () => { active--; },
     };
   };
-  const run = async (q: number, mode: "interpolation" | "extrapolation-2" | "extrapolation-32") => {
+  const run = async (q: number, mode: "interpolation" | "extrapolation-2" | "extrapolation-12") => {
     const accumulator = new Float32Array(12);
     const originalInfo = console.info;
     const infoSpy = jest.spyOn(console, "info").mockImplementation((...args: unknown[]) => {
@@ -146,15 +146,15 @@ test("cached Flow skips Farneback across q changes, but still warps and accumula
   expect(Array.from(changedQ)).not.toEqual(Array.from(first));
 });
 
-test("extension 2 to 32 reuses the same real-pair Flow; all generated RGB16 are transient", async () => {
+test("extension 2 to 12 reuses the same real-pair Flow; all generated RGB16 are transient", async () => {
   const h = virtualHarness();
   await h.run(1, "extrapolation-2");
-  const larger = await h.run(1, "extrapolation-32");
+  const larger = await h.run(1, "extrapolation-12");
   expect(h.counts.flowComputations).toBe(1);
   expect(h.counts.generations).toBe(2);
-  expect(h.counts.warps).toBe(2 + 32);
+  expect(h.counts.warps).toBe(2 + 12);
   const uncached = virtualHarness(false);
-  const comparison = await uncached.run(1, "extrapolation-32");
+  const comparison = await uncached.run(1, "extrapolation-12");
   expect(Array.from(larger)).toEqual(Array.from(comparison));
   expect(h.counts.active).toBe(0);
 });

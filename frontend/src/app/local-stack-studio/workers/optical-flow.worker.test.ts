@@ -155,9 +155,9 @@ describe("Optical Flow quality-preserving native Flow parallelization", () => {
   });
 });
 
-test("STF Worker accepts retained extrapolation steps 16 and 32 without recomputing Flow", async () => {
+test("STF Worker accepts retained extrapolation steps 9 and 12 without recomputing Flow", async () => {
   const { messages, flowComputations } = await runMidpoint(8, 8, undefined, true,
-    ["ext1-16", "ext1-32"], { retained: [5.5, 7.2] });
+    ["ext1-9", "ext1-12"], { retained: [5.5, 7.2] });
   expect(flowComputations).toBe(2);
   for (const id of [3, 4]) {
     const result = messages.find((message) => message.requestId === id);
@@ -472,9 +472,9 @@ test("STF inverse-warp extrapolation expands a synthetic CoC at the geometricall
   }
 });
 
-test("STF opening extrapolation 32 expands a synthetic disc to its 1/F target radius", async () => {
+test("STF opening extrapolation 12 expands a synthetic disc to its 1/F target radius", async () => {
   // Keep the target disc entirely in frame: for a 1/3-stop real pair, the
-  // 32nd virtual half-step increases radius by roughly 6.35x.
+  // 12th virtual half-step doubles the source disc radius.
   jest.resetModules();
   const oldWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
   const oldNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
@@ -554,7 +554,7 @@ test("STF opening extrapolation 32 expands a synthetic disc to its 1/F target ra
       previousGamma2Buffer: disc(radius).buffer,
       nextGamma2Buffer: disc(radius * realRadiusRatio).buffer,
     } } as MessageEvent<OpticalFlowWorkerRequest>);
-    for (const step of [4, 16, 32]) {
+    for (const step of [4, 9, 12]) {
       const virtualF = firstF * 2 ** (-step / 12);
       const inverseWarpScale = (1 - virtualF / firstF) / (1 - firstF / nextF);
       await scope.onmessage({ data: {

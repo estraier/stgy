@@ -113,7 +113,7 @@ describe("STF generated-frame radial attenuation and outer-shell apodization", (
     expect(frames.allFNumbers).toEqual([2.8]);
   });
 
-  test.each(["interpolation", "extrapolation-1", "extrapolation-2", "extrapolation-4", "extrapolation-8", "extrapolation-16", "extrapolation-32"] as const)(
+  test.each(["interpolation", "extrapolation-1", "extrapolation-2", "extrapolation-3", "extrapolation-4", "extrapolation-5", "extrapolation-6", "extrapolation-9", "extrapolation-12"] as const)(
     "%s includes real and synthetic frames, preserving their index mapping", (mode: StfFrameGenerationMode) => {
       const frames = buildStfFrameSet(fNumbers, 1, mode);
       const expectedOuterCount = mode.startsWith("extrapolation-")
@@ -137,7 +137,7 @@ describe("STF generated-frame radial attenuation and outer-shell apodization", (
     },
   );
 
-  test.each(["interpolation", "extrapolation-4", "extrapolation-32"] as const)(
+  test.each(["interpolation", "extrapolation-4", "extrapolation-12"] as const)(
     "linear profile follows the virtual zero boundary for %s", (mode) => {
       const frames = buildStfFrameSet(fNumbers, 1, mode);
       const { ordered, drops } = radialDiscContributions(frames, fNumbers);
@@ -146,8 +146,8 @@ describe("STF generated-frame radial attenuation and outer-shell apodization", (
     },
   );
 
-  test.each(radialAttenuationOptions)("%s follows its profile with extrapolation 32", (radialAttenuation) => {
-    const frames = buildStfFrameSet(fNumbers, radialAttenuation, "extrapolation-32");
+  test.each(radialAttenuationOptions)("%s follows its profile with extrapolation 12", (radialAttenuation) => {
+    const frames = buildStfFrameSet(fNumbers, radialAttenuation, "extrapolation-12");
     const { ordered, drops } = radialDiscContributions(frames, fNumbers);
     const expected = expectedDrops(ordered, radialAttenuation);
     expected.forEach((drop, i) => expect(drops[i]).toBeCloseTo(drop, 6));
@@ -169,8 +169,8 @@ describe("STF generated-frame radial attenuation and outer-shell apodization", (
   test("forward radius expansion and inverse sampling use distinct geometrical multipliers", () => {
     const f0 = 2;
     const f1 = 2 * 2 ** (1 / 6);
-    const frames = buildStfFrameSet([f0, f1], 1, "extrapolation-32");
-    expect(frames.outerFrames).toHaveLength(33);
+    const frames = buildStfFrameSet([f0, f1], 1, "extrapolation-12");
+    expect(frames.outerFrames).toHaveLength(13);
     for (const outer of frames.outerFrames.filter((frame) => frame.variant !== "ext2")) {
       const radiusExpansion = f0 / outer.fNumber;
       // Radius-domain extrapolation preserves the original output geometry.
@@ -183,26 +183,26 @@ describe("STF generated-frame radial attenuation and outer-shell apodization", (
     }
   });
 
-  test("extrapolation 32 retains the prior ext10 geometry and adds ext32", () => {
+  test("extrapolation 12 retains ext9 geometry and finishes with ext12", () => {
     const inputs = Array.from({ length: 7 }, (_, i) => 2 * 2 ** (i / 6));
-    const frames = buildStfFrameSet(inputs, 1, "extrapolation-32");
-    const ext10 = frames.outerFrames[9];
-    expect(ext10.variant).toBe("ext1-10");
-    if (ext10.variant === "ext2") throw new Error("Opening variant index is wrong");
-    expect(ext10.fNumber).toBeCloseTo(2 * 2 ** (-10 / 12), 12);
-    expect(ext10.openingFlowScale).toBeCloseTo(
-      ((1 / ext10.fNumber) - (1 / inputs[0])) / ((1 / inputs[0]) - (1 / inputs[1])), 12);
-    const ext32 = frames.outerFrames[31];
-    expect(ext32.variant).toBe("ext1-32");
-    expect(ext32.fNumber).toBeCloseTo(2 * 2 ** (-32 / 12), 12);
-    expect(ext32.inverseWarpScale).toBeCloseTo(
-      (1 - ext32.fNumber / inputs[0]) / (1 - inputs[0] / inputs[1]), 12);
-    const closing = frames.outerFrames[32];
+    const frames = buildStfFrameSet(inputs, 1, "extrapolation-12");
+    const ext9 = frames.outerFrames[8];
+    expect(ext9.variant).toBe("ext1-9");
+    if (ext9.variant === "ext2") throw new Error("Opening variant index is wrong");
+    expect(ext9.fNumber).toBeCloseTo(2 * 2 ** (-9 / 12), 12);
+    expect(ext9.openingFlowScale).toBeCloseTo(
+      ((1 / ext9.fNumber) - (1 / inputs[0])) / ((1 / inputs[0]) - (1 / inputs[1])), 12);
+    const ext12 = frames.outerFrames[11];
+    expect(ext12.variant).toBe("ext1-12");
+    expect(ext12.fNumber).toBeCloseTo(2 * 2 ** (-12 / 12), 12);
+    expect(ext12.inverseWarpScale).toBeCloseTo(
+      (1 - ext12.fNumber / inputs[0]) / (1 - inputs[0] / inputs[1]), 12);
+    const closing = frames.outerFrames[12];
     expect(closing.variant).toBe("ext2");
     expect(closing.fNumber).toBeCloseTo(inputs[6] * Math.sqrt(inputs[6] / inputs[5]), 12);
     expect(closing.inverseWarpScale).toBeCloseTo(
       (closing.fNumber / inputs[6] - 1) / (inputs[6] / inputs[5] - 1), 12);
-    expect(frames.allWeights).toHaveLength(46);
+    expect(frames.allWeights).toHaveLength(26);
   });
 
   test.each(STF_EXTRAPOLATION_COUNTS)("extrapolation %i includes exactly one closing-side half-step", (count) => {
@@ -237,20 +237,21 @@ describe("STF generated-frame radial attenuation and outer-shell apodization", (
   });
 
   test("two real frames share the sole pair for opening and closing extra warps", () => {
-    const frames = buildStfFrameSet([2, 4], 1, "extrapolation-32");
+    const frames = buildStfFrameSet([2, 4], 1, "extrapolation-12");
     expect(frames.middleFrames).toHaveLength(1);
-    expect(frames.outerFrames).toHaveLength(33);
+    expect(frames.outerFrames).toHaveLength(13);
     expect(frames.outerFrames.every((frame) => frame.previousIndex === 0 && frame.nextIndex === 1)).toBe(true);
     expect(frames.outerFrames.at(-1)?.variant).toBe("ext2");
   });
 
-  test("only the six published extrapolation modes are supported", () => {
-    expect(STF_EXTRAPOLATION_COUNTS).toEqual([1, 2, 4, 8, 16, 32]);
+  test("only the eight published extrapolation modes are supported", () => {
+    expect(STF_EXTRAPOLATION_COUNTS).toEqual([1, 2, 3, 4, 5, 6, 9, 12]);
     for (const count of STF_EXTRAPOLATION_COUNTS) {
       expect(isStfFrameGenerationMode(`extrapolation-${count}`)).toBe(true);
     }
-    for (const invalid of ["extrapolation-0", "extrapolation-3", "extrapolation-5", "extrapolation-10",
-      "extrapolation-12", "extrapolation-33", "extrapolation-64", "extrapolation-01"]) {
+    for (const invalid of ["extrapolation-0", "extrapolation-7", "extrapolation-8", "extrapolation-10",
+      "extrapolation-11", "extrapolation-13", "extrapolation-16", "extrapolation-32",
+      "extrapolation-33", "extrapolation-64", "extrapolation-01"]) {
       expect(isStfFrameGenerationMode(invalid)).toBe(false);
       expect(() => buildStfFrameSet([2, 4], 1, invalid as StfFrameGenerationMode)).toThrow("Unsupported STF Frame generation");
     }
@@ -264,20 +265,20 @@ describe("STF generated-frame radial attenuation and outer-shell apodization", (
     }
   });
 
-  test.each(radialAttenuationOptions)("32 opening frames produce finite positive weights for %s", (q) => {
+  test.each(radialAttenuationOptions)("12 opening frames produce finite positive weights for %s", (q) => {
     const inputs = Array.from({ length: 7 }, (_, i) => 2 * 2 ** (i / 6));
-    const frames = buildStfFrameSet(inputs, q, "extrapolation-32");
-    expect(frames.allWeights).toHaveLength(46);
-    expect(frames.outerFrames.at(-2)?.variant).toBe("ext1-32");
+    const frames = buildStfFrameSet(inputs, q, "extrapolation-12");
+    expect(frames.allWeights).toHaveLength(26);
+    expect(frames.outerFrames.at(-2)?.variant).toBe("ext1-12");
     expect(frames.outerFrames.at(-1)?.variant).toBe("ext2");
     expect(Array.from(frames.allWeights).every((w) => Number.isFinite(w) && w > 0)).toBe(true);
     expect(Array.from(frames.allWeights).reduce((a, b) => a + b, 0)).toBeCloseTo(1, 6);
   });
 
   test("invalid or duplicate apertures and unsupported q are rejected", () => {
-    expect(() => buildStfFrameSet([2, 2, 4], 0, "extrapolation-32")).toThrow("distinct");
-    expect(() => buildStfFrameSet([2, null, 4], 0, "extrapolation-32")).toThrow("valid EXIF");
-    expect(() => buildStfFrameSet([2, 4], -3, "extrapolation-32")).toThrow("Radial attenuation");
+    expect(() => buildStfFrameSet([2, 2, 4], 0, "extrapolation-12")).toThrow("distinct");
+    expect(() => buildStfFrameSet([2, null, 4], 0, "extrapolation-12")).toThrow("valid EXIF");
+    expect(() => buildStfFrameSet([2, 4], -3, "extrapolation-12")).toThrow("Radial attenuation");
     expect(() => buildStfFrameSet([2, 4], Number.NaN, "interpolation")).toThrow("Radial attenuation");
   });
 });

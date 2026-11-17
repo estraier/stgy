@@ -1,7 +1,7 @@
 import { calculateStfWeights, isStfRadialAttenuation, type StfRadialAttenuation } from "./stf-radial-weights";
 import type { OpticalFlowOpeningVariant } from "../workers/protocols/optical-flow-protocol";
 
-export const STF_EXTRAPOLATION_COUNTS = [1, 2, 4, 8, 16, 32] as const;
+export const STF_EXTRAPOLATION_COUNTS = [1, 2, 3, 4, 5, 6, 9, 12] as const;
 export type StfExtrapolationCount = typeof STF_EXTRAPOLATION_COUNTS[number];
 export type StfFrameGenerationMode = "off" | "interpolation" | `extrapolation-${StfExtrapolationCount}`;
 const STF_EXTRAPOLATION_MODE_SET: ReadonlySet<string> = new Set(

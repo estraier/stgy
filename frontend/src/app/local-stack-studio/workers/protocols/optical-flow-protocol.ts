@@ -1,4 +1,4 @@
-export type OpticalFlowOpeningVariant = "ext1" | `ext1-${2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23 | 24 | 25 | 26 | 27 | 28 | 29 | 30 | 31 | 32}`;
+export type OpticalFlowOpeningVariant = "ext1" | `ext1-${2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12}`;
 export type OpticalFlowVariant = "mid" | OpticalFlowOpeningVariant | "ext2";
 
 export type OpticalFlowWorkerInterpolateRequest = {
@@ -47,7 +47,7 @@ export type OpticalFlowWorkerWarpOpeningAverageRequest = {
   requestId: number;
   sourceImageId: number;
   // The first request provides the opening-side source RGB16; subsequent
-  // ext1-2..32 requests reuse the retained buffer.
+  // ext1-2..12 requests reuse the retained buffer.
   sourceGamma2Buffer?: ArrayBuffer;
   variant: OpticalFlowOpeningVariant;
   variantScale: number;
