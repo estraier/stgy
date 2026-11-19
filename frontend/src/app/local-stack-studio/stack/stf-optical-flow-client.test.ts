@@ -78,3 +78,79 @@ test("STF Flow client passes geometric inverse-warp scales through active Worker
     else Reflect.deleteProperty(globalThis, "window");
   }
 });
+
+test("STF Flow transfers only explicitly owned full RGB16 buffers", async () => {
+  const oldWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  const oldWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const messages: Array<{ request: OpticalFlowWorkerRequest; transfer: Transferable[] }> = [];
+  class FakeWorker {
+    onmessage: ((event: MessageEvent<OpticalFlowWorkerResponse>) => void) | null = null;
+    onerror = null;
+    onmessageerror = null;
+    postMessage(request: OpticalFlowWorkerRequest, transfer: Transferable[] = []) {
+      messages.push({ request, transfer });
+      queueMicrotask(() => {
+        if (request.type === "interpolate") {
+          this.onmessage?.({ data: {
+            type: "result", requestId: request.requestId, width: 2, height: 2,
+            gamma2Buffer: new Uint16Array(12).buffer,
+            flowWidth: 2, flowHeight: 2, performance: { flowWorkerCount: 1 },
+          } } as MessageEvent<OpticalFlowWorkerResponse>);
+        } else if (request.type === "warp-opening-average") {
+          this.onmessage?.({ data: {
+            type: "warp-result", requestId: request.requestId, width: 2, height: 2,
+            gamma2Buffer: new Uint16Array(12).buffer, warpMs: 1,
+          } } as MessageEvent<OpticalFlowWorkerResponse>);
+        }
+      });
+    }
+    terminate() {}
+  }
+  Object.defineProperty(globalThis, "Worker", { configurable: true, value: FakeWorker });
+  Object.defineProperty(globalThis, "window", {
+    configurable: true, value: { location: { origin: "https://stgy.example" } },
+  });
+  try {
+    const client = new StfOpticalFlowClient();
+    try {
+      const previous = Uint16Array.from({ length: 12 }, (_, i) => i + 1);
+      const next = Uint16Array.from({ length: 12 }, (_, i) => i + 101);
+      await client.generate(2, 2, 0, 1, previous, next, "mid", undefined,
+        undefined, undefined, false, undefined, undefined, undefined, undefined, 31,
+        { previous: true });
+      const request = messages[0].request;
+      if (request.type !== "interpolate") throw new Error("Expected interpolate request");
+      expect(request.previousGamma2Buffer).toBe(previous.buffer);
+      expect(request.nextGamma2Buffer).not.toBe(next.buffer);
+      expect(Array.from(new Uint16Array(request.nextGamma2Buffer))).toEqual(Array.from(next));
+      expect(messages[0].transfer).toEqual([previous.buffer, request.nextGamma2Buffer]);
+
+      // A view onto part of an owned allocation must still copy, otherwise the
+      // Worker would receive extra pixels outside that view.
+      const backing = new Uint16Array(16);
+      const sliced = backing.subarray(2, 14);
+      await client.generate(2, 2, 0, 1, sliced, next, "mid", undefined,
+        undefined, undefined, false, undefined, undefined, undefined, undefined, 31,
+        { previous: true, next: true });
+      const slicedRequest = messages[1].request;
+      if (slicedRequest.type !== "interpolate") throw new Error("Expected interpolate request");
+      expect(slicedRequest.previousGamma2Buffer).not.toBe(backing.buffer);
+      expect(slicedRequest.previousGamma2Buffer.byteLength).toBe(sliced.byteLength);
+      expect(slicedRequest.nextGamma2Buffer).toBe(next.buffer);
+
+      const source = new Uint16Array(12).fill(123);
+      await client.warpOpeningAverage(2, 2, 0, "ext1", 1, source, true);
+      const opening = messages[2].request;
+      if (opening.type !== "warp-opening-average") throw new Error("Expected warp request");
+      expect(opening.sourceGamma2Buffer).toBe(source.buffer);
+      expect(messages[2].transfer).toEqual([source.buffer]);
+    } finally {
+      client.terminate();
+    }
+  } finally {
+    if (oldWorker) Object.defineProperty(globalThis, "Worker", oldWorker);
+    else Reflect.deleteProperty(globalThis, "Worker");
+    if (oldWindow) Object.defineProperty(globalThis, "window", oldWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  }
+});

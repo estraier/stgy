@@ -122,6 +122,10 @@ export async function appendStfVirtualSource(
         true,
         options.sessionId, options.sessionCreatedAt, options.alignmentKey,
         openingAverageRadiusSpan, pairWinsize,
+        // The previous frame is never used by a later middle pair. The last
+        // next frame is also no longer needed. Transfer these owned RGB16
+        // buffers instead of allocating another full-resolution copy.
+        { previous: true, next: isLastPair },
       );
       if (generated.performance.flowCacheHit) flowCacheHits++;
       else flowCacheMisses++;
@@ -148,7 +152,7 @@ export async function appendStfVirtualSource(
         options.progress?.(`Generating STF Average Flow frame ${outer.pairLabel}...`);
         const source = firstWarp ? await getImage(outer.previousIndex) : undefined;
         const warped = await client.warpOpeningAverage(reader.width, reader.height,
-          outer.previousIndex, outer.variant, outer.inverseWarpScale, source);
+          outer.previousIndex, outer.variant, outer.inverseWarpScale, source, firstWarp);
         const tone = toneForOuter(outer);
         await mergeGeneratedFrame(accumulator, warped.pixels, outer.weight,
           reader.width, reader.height, tone, toneLut(tone));

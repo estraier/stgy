@@ -7,6 +7,31 @@ import type {
   OpticalFlowWorkerResponse,
 } from "../workers/protocols/optical-flow-protocol";
 
+// Ownership transfer is opt-in: borrowed or sliced buffers must remain intact.
+// A transferred input is detached from the caller after postMessage succeeds.
+type InputOwnership = { previous?: boolean; next?: boolean };
+
+// Cross-realm ArrayBuffers do not necessarily pass `instanceof ArrayBuffer`.
+// This type predicate also lets TypeScript distinguish ArrayBuffer from SharedArrayBuffer.
+function isTransferableArrayBuffer(buffer: ArrayBufferLike): buffer is ArrayBuffer {
+  return Object.prototype.toString.call(buffer) === "[object ArrayBuffer]";
+}
+
+function workerInputBuffer(pixels: Uint16Array, transferOwnership: boolean): ArrayBuffer {
+  const buffer = pixels.buffer;
+  if (isTransferableArrayBuffer(buffer)) {
+    // Only full, explicitly owned ArrayBuffers may be detached by postMessage.
+    if (transferOwnership && pixels.byteOffset === 0 && pixels.byteLength === buffer.byteLength) {
+      return buffer;
+    }
+    return buffer.slice(pixels.byteOffset, pixels.byteOffset + pixels.byteLength);
+  }
+  // SharedArrayBuffer is not transferable: copy the view into a new ArrayBuffer.
+  const copy = new ArrayBuffer(pixels.byteLength);
+  new Uint16Array(copy).set(pixels);
+  return copy;
+}
+
 type Pending = {
   resolve: (response: OpticalFlowWorkerResponse) => void;
   reject: (error: Error) => void;
@@ -84,15 +109,10 @@ export class StfOpticalFlowClient {
     alignmentKey?: string,
     openingAverageRadiusSpan?: number,
     winsize = STF_FARNEBACK_BASE_WINSIZE,
+    inputOwnership: InputOwnership = {},
   ): Promise<{ pixels: Uint16Array; additionalPixels?: Uint16Array; performance: OpticalFlowPerformanceStats }> {
-    const previousGamma2Buffer = previousGamma2.buffer.slice(
-      previousGamma2.byteOffset,
-      previousGamma2.byteOffset + previousGamma2.byteLength,
-    ) as ArrayBuffer;
-    const nextGamma2Buffer = nextGamma2.buffer.slice(
-      nextGamma2.byteOffset,
-      nextGamma2.byteOffset + nextGamma2.byteLength,
-    ) as ArrayBuffer;
+    const previousGamma2Buffer = workerInputBuffer(previousGamma2, inputOwnership.previous === true);
+    const nextGamma2Buffer = workerInputBuffer(nextGamma2, inputOwnership.next === true);
     const transfer: Transferable[] = [previousGamma2Buffer, nextGamma2Buffer];
     const result = await this.request({
       type: "interpolate",
@@ -127,9 +147,9 @@ export class StfOpticalFlowClient {
     width: number, height: number, sourceImageId: number,
     variant: OpticalFlowOpeningVariant, variantScale: number,
     sourceGamma2?: Uint16Array,
+    transferSourceOwnership = false,
   ): Promise<{ pixels: Uint16Array; warpMs: number }> {
-    const buffer = sourceGamma2?.buffer.slice(sourceGamma2.byteOffset,
-      sourceGamma2.byteOffset + sourceGamma2.byteLength) as ArrayBuffer | undefined;
+    const buffer = sourceGamma2 ? workerInputBuffer(sourceGamma2, transferSourceOwnership) : undefined;
     const result = await this.request({
       type: "warp-opening-average", sourceImageId, variant, variantScale,
       ...(buffer ? { sourceGamma2Buffer: buffer } : {}),
