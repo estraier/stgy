@@ -611,3 +611,137 @@ test("streamed midpoint, closing and opening RGB16 match full-image Warp exactly
       .toEqual(new Uint16Array(whole.gamma2Buffer));
   }
 });
+
+
+test("STF Flow releases past Gray8 proxies while retaining the next adjacent image", async () => {
+  jest.resetModules();
+  const gray = jest.requireActual<typeof import("../stack/stf-flow-gray")>("../stack/stf-flow-gray");
+  const graySpy = jest.spyOn(gray, "stfGamma2RgbToGray8Resampled");
+  const oldWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  const oldNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  const oldOnmessage = Object.getOwnPropertyDescriptor(globalThis, "onmessage");
+  const oldPostMessage = Object.getOwnPropertyDescriptor(globalThis, "postMessage");
+  class ZeroDirectionWorker {
+    onmessage: ((event: MessageEvent<OpticalFlowDirectionResponse>) => void) | null = null;
+    onerror = null;
+    onmessageerror = null;
+    postMessage(message: OpticalFlowDirectionRequest): void {
+      const response: OpticalFlowDirectionResponse = message.type === "init"
+        ? { type: "ready", requestId: message.requestId }
+        : message.type === "compute-pair"
+          ? { type: "pair-result", requestId: message.requestId,
+              forwardBuffer: new Float32Array(message.width * message.height * 2).buffer,
+              backwardBuffer: new Float32Array(message.width * message.height * 2).buffer,
+              forwardMs: 0, backwardMs: 0 }
+          : { type: "result", requestId: message.requestId,
+              flowBuffer: new Float32Array(message.width * message.height * 2).buffer, computeMs: 0 };
+      queueMicrotask(() => this.onmessage?.({ data: response } as MessageEvent<OpticalFlowDirectionResponse>));
+    }
+    terminate(): void {}
+  }
+  Object.defineProperty(globalThis, "Worker", { configurable: true, value: ZeroDirectionWorker });
+  Object.defineProperty(globalThis, "navigator", { configurable: true,
+    value: { hardwareConcurrency: 2, deviceMemory: 4 } });
+  Object.defineProperty(globalThis, "postMessage", { configurable: true, value: () => {} });
+  try {
+    jest.requireActual("./optical-flow.worker");
+    const scope = globalThis as unknown as ParentScope;
+    if (!scope.onmessage) throw new Error("STF Flow Worker did not initialize");
+    const source = (id: number) => new Uint16Array(4 * 3 * 3).fill(5000 + 1000 * id).buffer;
+    const pairs = [[0, 1], [1, 2], [2, 0], [0, 1]];
+    const expectedConversions = [2, 3, 4, 5];
+    for (let i = 0; i < pairs.length; i++) {
+      const [previousImageId, nextImageId] = pairs[i];
+      await scope.onmessage({ data: {
+        type: "interpolate", requestId: 100 + i, variant: "mid", width: 4, height: 3,
+        previousImageId, nextImageId,
+        previousGamma2Buffer: source(previousImageId), nextGamma2Buffer: source(nextImageId),
+      } } as MessageEvent<OpticalFlowWorkerRequest>);
+      // The last image is reused in the next pair; older IDs are recomputed.
+      expect(graySpy).toHaveBeenCalledTimes(expectedConversions[i]);
+    }
+  } finally {
+    graySpy.mockRestore();
+    for (const [key, descriptor] of [
+      ["Worker", oldWorker], ["navigator", oldNavigator],
+      ["onmessage", oldOnmessage], ["postMessage", oldPostMessage],
+    ] as const) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+  }
+});
+
+test("STF Flow cache write duration excludes subsequent stripe acknowledgement delay", async () => {
+  jest.resetModules();
+  const cache = jest.requireActual<typeof import("../stack/stf-flow-cache")>("../stack/stf-flow-cache");
+  const readSpy = jest.spyOn(cache, "readStfCachedFlow").mockResolvedValue(null);
+  const writeSpy = jest.spyOn(cache, "writeStfCachedFlow").mockResolvedValue(true);
+  const originals = (["Worker", "navigator", "onmessage", "postMessage", "performance"] as const)
+    .map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
+  let clock = 10;
+  const messages: OpticalFlowWorkerResponse[] = [];
+  class ZeroDirectionWorker {
+    onmessage: ((event: MessageEvent<OpticalFlowDirectionResponse>) => void) | null = null;
+    onerror = null;
+    onmessageerror = null;
+    postMessage(message: OpticalFlowDirectionRequest): void {
+      const response: OpticalFlowDirectionResponse = message.type === "init"
+        ? { type: "ready", requestId: message.requestId }
+        : message.type === "compute-pair"
+          ? { type: "pair-result", requestId: message.requestId,
+              forwardBuffer: new Float32Array(message.width * message.height * 2).buffer,
+              backwardBuffer: new Float32Array(message.width * message.height * 2).buffer,
+              forwardMs: 0, backwardMs: 0 }
+          : { type: "result", requestId: message.requestId,
+              flowBuffer: new Float32Array(message.width * message.height * 2).buffer, computeMs: 0 };
+      queueMicrotask(() => this.onmessage?.({ data: response } as MessageEvent<OpticalFlowDirectionResponse>));
+    }
+    terminate(): void {}
+  }
+  Object.defineProperty(globalThis, "Worker", { configurable: true, value: ZeroDirectionWorker });
+  Object.defineProperty(globalThis, "navigator", { configurable: true,
+    value: { hardwareConcurrency: 2, deviceMemory: 4 } });
+  Object.defineProperty(globalThis, "performance", { configurable: true, value: { now: () => clock } });
+  Object.defineProperty(globalThis, "postMessage", { configurable: true,
+    value: (message: OpticalFlowWorkerResponse) => {
+      messages.push(message);
+      if (message.type === "stripe") {
+        // Let the IndexedDB promise settle before the simulated 1,000ms wait.
+        queueMicrotask(() => {
+          clock += 1000;
+          void (globalThis as unknown as ParentScope).onmessage?.({ data: {
+            type: "stripe-ack", requestId: message.requestId,
+            kind: message.kind, y: message.y,
+          } } as MessageEvent<OpticalFlowWorkerRequest>);
+        });
+      }
+    },
+  });
+  try {
+    jest.requireActual("./optical-flow.worker");
+    const scope = globalThis as unknown as ParentScope;
+    if (!scope.onmessage) throw new Error("STF Flow Worker did not initialize");
+    const source = new Uint16Array(4 * 3 * 3).fill(10000);
+    await scope.onmessage({ data: {
+      type: "interpolate", requestId: 330, variant: "mid", width: 4, height: 3,
+      previousImageId: 0, nextImageId: 1, previousGamma2Buffer: source.slice().buffer,
+      nextGamma2Buffer: source.slice().buffer, streamStripes: true, persistFlow: true,
+      sessionId: "session-a", sessionCreatedAt: Date.now() - 1000, alignmentKey: "alignment-a",
+    } } as MessageEvent<OpticalFlowWorkerRequest>);
+    const result = messages.find((entry) => entry.type === "stream-result" && entry.requestId === 330);
+    expect(result?.type).toBe("stream-result");
+    if (result?.type !== "stream-result" || !result.performance) throw new Error("Missing Flow performance");
+    expect(writeSpy).toHaveBeenCalledTimes(1);
+    expect(result.performance.flowCacheSaved).toBe(true);
+    expect(result.performance.flowCacheWriteMs).toBeLessThan(100);
+    expect(clock).toBe(1010); // The main-thread acknowledgement was delayed.
+  } finally {
+    readSpy.mockRestore();
+    writeSpy.mockRestore();
+    for (const [key, descriptor] of originals) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+  }
+});

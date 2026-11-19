@@ -423,6 +423,14 @@ import type {
         flows.backward.length !== flowSize.width * flowSize.height * 2) {
       throw new Error("Optical Flow direction worker returned an invalid vector field.");
     }
+    // The Flow fields no longer need either grayscale proxy. In the ordered
+    // real-pair pipeline, only the current pair's second image can be reused
+    // by the next pair. Release all older proxies instead of retaining one
+    // 4MP Gray8 buffer per real image for the entire Process.
+    grayCache.clear();
+    if (!externalGray && message.nextImageId !== undefined) {
+      grayCache.set(message.nextImageId, gray1);
+    }
     if (message.openingAverageRadiusSpan !== undefined) {
       if (!(message.openingAverageRadiusSpan > 0) || !Number.isFinite(message.openingAverageRadiusSpan) ||
           message.previousImageId === undefined || message.nextImageId === undefined) {
@@ -457,8 +465,10 @@ import type {
     const cacheWriteStarted = performance.now();
     const cacheWrite = flowCacheKey && !cached
       ? writeStfCachedFlow(message.sessionId!, flowCacheKey, message.sessionCreatedAt!,
-          flowSize.width, flowSize.height, flows.forward, flows.backward)
-      : Promise.resolve(false);
+          flowSize.width, flowSize.height, flows.forward, flows.backward).then((saved) => ({
+            saved, durationMs: saved ? performance.now() - cacheWriteStarted : 0,
+          }))
+      : Promise.resolve({ saved: false, durationMs: 0 });
 
     const normGates: NormGateCache = {};
     postProgress(message.requestId, `Warping Optical Flow ${describeVariant(message.variant)} image...`);
@@ -491,8 +501,9 @@ import type {
     const additionalWarpMs = message.additionalVariant
       ? additionalStream?.warpMs ?? (performance.now() - additionalWarpStartedAt)
       : undefined;
-    const flowCacheSaved = await cacheWrite;
-    const flowCacheWriteMs = flowCacheSaved ? performance.now() - cacheWriteStarted : 0;
+    // Capture completion when IndexedDB resolves, not after all subsequent
+    // Warp stripes have been acknowledged by the main thread.
+    const { saved: flowCacheSaved, durationMs: flowCacheWriteMs } = await cacheWrite;
     const performanceStats: OpticalFlowPerformanceStats = {
       sourceWidth: width,
       sourceHeight: height,
