@@ -101,6 +101,16 @@ test("opening Average Flow uses equal weights from three radius-scaled pairs wit
     if (later.type === "warp-result") {
       expect(new Uint16Array(later.gamma2Buffer)[(4 * width + 10) * 3]).toBeGreaterThan(3500);
     }
+    // Repeated opening variants reuse the retained Average Flow without
+    // starting another Farneback calculation.
+    const repeated = await send({ type: "warp-opening-average", requestId: 20,
+      sourceImageId: 0, variant: "ext1", variantScale: 1 });
+    expect(repeated.type).toBe("warp-result");
+    if (repeated.type === "warp-result") {
+      const pixel = new Uint16Array(repeated.gamma2Buffer)[(4 * width + 10) * 3];
+      expect(pixel).toBeGreaterThan(2900);
+      expect(pixel).toBeLessThan(3400);
+    }
     expect(flowCalculations).toBe(3);
   } finally {
     for (const [key, descriptor] of Object.entries(originals)) {

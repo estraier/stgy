@@ -18,10 +18,10 @@ function cloneStoredValue<T>(value: T): T {
   ) as T;
 }
 
-function useMemoryIndexedDb(legacy = false) {
+function useMemoryIndexedDb(legacyVersion: 0 | 1 | 2 = 0) {
   const original = Object.getOwnPropertyDescriptor(globalThis, "indexedDB");
   const tables = new Map<string, Map<string, unknown>>();
-  if (legacy) {
+  if (legacyVersion) {
     tables.set("pairs", new Map([["old-content-address", { key: "old-content-address" }]]));
     tables.set("metadata", new Map([["old-content-address", { key: "old-content-address" }]]));
   }
@@ -98,7 +98,7 @@ function useMemoryIndexedDb(legacy = false) {
           onblocked: null as null | (() => void), error: null };
         queueMicrotask(() => {
           if (!upgraded) {
-            request.onupgradeneeded?.({ oldVersion: legacy ? 1 : 0 } as IDBVersionChangeEvent);
+            request.onupgradeneeded?.({ oldVersion: legacyVersion } as IDBVersionChangeEvent);
             upgraded = true;
           }
           request.onsuccess?.();
@@ -115,6 +115,19 @@ function useMemoryIndexedDb(legacy = false) {
     },
   };
 }
+
+test("Farneback winsize separates session Flow cache keys", () => {
+  const base = ["session-1", 0, 1, "align", 2, 2] as const;
+  const oldWindow = stfFlowSessionKey(...base, 21);
+  const openingWindow = stfFlowSessionKey(...base, 31);
+  const nextWindow = stfFlowSessionKey(...base, 29);
+  expect(oldWindow).not.toBeNull();
+  expect(new Set([oldWindow, openingWindow, nextWindow]).size).toBe(3);
+  expect(stfFlowSessionKey(...base, 101)).toBeNull();
+  expect(stfFlowSessionKey(...base, 201)).toBeNull();
+  expect(stfFlowSessionKey(...base, 203)).toBeNull();
+  expect(stfFlowSessionKey(...base, 22)).toBeNull();
+});
 
 test("IndexedDB retains cached pairs, skips over-budget writes, and frees space on session deletion", async () => {
   const fake = useMemoryIndexedDb();
@@ -222,9 +235,19 @@ test("new-session expiration removes only Flow records at least 1800 seconds old
 });
 
 test("v1 content-addressed IndexedDB records are dropped, never reused", async () => {
-  const fake = useMemoryIndexedDb(true);
+  const fake = useMemoryIndexedDb(1);
   try {
     const key = stfFlowSessionKey("session", 0, 1, "align", 2, 2)!;
+    expect(await readStfCachedFlow("session", key, 2, 2)).toBeNull();
+    expect(fake.tables.get("pairs")?.size).toBe(0);
+    expect(fake.tables.get("metadata")?.size).toBe(0);
+  } finally { fake.restore(); }
+});
+
+test("v2 cached 21px fields are discarded on adaptive-window upgrade", async () => {
+  const fake = useMemoryIndexedDb(2);
+  try {
+    const key = stfFlowSessionKey("session", 0, 1, "align", 2, 2, 31)!;
     expect(await readStfCachedFlow("session", key, 2, 2)).toBeNull();
     expect(fake.tables.get("pairs")?.size).toBe(0);
     expect(fake.tables.get("metadata")?.size).toBe(0);

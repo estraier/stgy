@@ -6,6 +6,7 @@ import type {
 import { transferableBuffer } from "./transfer-buffer";
 import { readStfCachedFlow, writeStfCachedFlow, stfFlowSessionKey } from "../stack/stf-flow-cache";
 import { stfFlowWorkingSize, stfGamma2RgbToGray8Resampled } from "../stack/stf-flow-gray";
+import { isStfFarnebackWinsize, STF_FARNEBACK_BASE_WINSIZE } from "../stack/stf-farneback-winsize";
 import { buildStfAverageFlow, type StfAverageFlowSample } from "../stack/stf-average-flow";
 import { buildStfFlowNormGate, stfFlowNormGateFactor, type StfFlowNormGate } from "../stack/stf-flow-norm-gate";
 import type {
@@ -35,7 +36,7 @@ import type {
     : never;
 
   class DirectionClient {
-    private readonly worker = new Worker("/generated/local-stack-studio/optical-flow-direction.worker.js");
+    private readonly worker = new Worker("/generated/local-stack-studio/optical-flow-direction.worker.js?revision=stf-fixed31-f-dependent-r1");
     private readonly pending = new Map<number, {
       resolve: (value: OpticalFlowDirectionResponse) => void;
       reject: (reason: Error) => void;
@@ -123,6 +124,7 @@ import type {
     nextGray: Uint8Array,
     width: number,
     height: number,
+    winsize: number,
   ): Promise<{
     forward: Float32Array;
     backward: Float32Array;
@@ -138,7 +140,7 @@ import type {
       const previousGrayBuffer = grayCopyBuffer(previousGray);
       const nextGrayBuffer = grayCopyBuffer(nextGray);
       const result = await pool.clients[0].request({
-        type: "compute-pair", width, height,
+        type: "compute-pair", width, height, winsize,
         previousGrayBuffer, nextGrayBuffer,
       }, [previousGrayBuffer, nextGrayBuffer]);
       if (result.type !== "pair-result") throw new Error("Unexpected Optical Flow pair response.");
@@ -159,11 +161,11 @@ import type {
     const backwardNext = grayCopyBuffer(previousGray);
     const [forwardResult, backwardResult] = await Promise.all([
       pool.clients[0].request({
-        type: "compute", width, height,
+        type: "compute", width, height, winsize,
         previousGrayBuffer: forwardPrevious, nextGrayBuffer: forwardNext,
       }, [forwardPrevious, forwardNext]),
       pool.clients[1].request({
-        type: "compute", width, height,
+        type: "compute", width, height, winsize,
         previousGrayBuffer: backwardPrevious, nextGrayBuffer: backwardNext,
       }, [backwardPrevious, backwardNext]),
     ]);
@@ -328,6 +330,10 @@ import type {
     }
 
     const workerStartedAt = performance.now();
+    const winsize = message.winsize ?? STF_FARNEBACK_BASE_WINSIZE;
+    if (!isStfFarnebackWinsize(winsize)) {
+      throw new Error("STF Optical Flow requires a valid odd Farneback window.");
+    }
     const flowSize = stfFlowWorkingSize(width, height);
     // Grayscale is only for Farneback; the persistent cache identity is the
     // Canonical session plus image pair and alignment parameters, never pixels.
@@ -360,15 +366,15 @@ import type {
     }
     const flowCacheKey = message.persistFlow
       ? stfFlowSessionKey(message.sessionId!, message.previousImageId!, message.nextImageId!,
-          message.alignmentKey!, flowSize.width, flowSize.height) : null;
+          message.alignmentKey!, flowSize.width, flowSize.height, winsize) : null;
     const cached = flowCacheKey
       ? await readStfCachedFlow(message.sessionId!, flowCacheKey, flowSize.width, flowSize.height) : null;
     const flowCacheReadMs = performance.now() - cacheReadStarted;
     if (!cached) postProgress(message.requestId,
-      `Computing bidirectional Optical Flow (${flowSize.width}×${flowSize.height})...`);
+      `Computing bidirectional Optical Flow (${flowSize.width}×${flowSize.height}, winsize=${winsize})...`);
     const flows = cached ? {
       ...cached, forwardMs: 0, backwardMs: 0, wallMs: 0, workerCount: 0, warmupMs: 0,
-    } : await computeBidirectionalFlow(gray0, gray1, flowSize.width, flowSize.height);
+    } : await computeBidirectionalFlow(gray0, gray1, flowSize.width, flowSize.height, winsize);
     if (flows.forward.length !== flowSize.width * flowSize.height * 2 ||
         flows.backward.length !== flowSize.width * flowSize.height * 2) {
       throw new Error("Optical Flow direction worker returned an invalid vector field.");

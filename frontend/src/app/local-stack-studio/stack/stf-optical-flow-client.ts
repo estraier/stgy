@@ -1,3 +1,4 @@
+import { STF_FARNEBACK_BASE_WINSIZE } from "./stf-farneback-winsize";
 import type {
   OpticalFlowOpeningVariant,
   OpticalFlowPerformanceStats,
@@ -18,7 +19,7 @@ export class StfOpticalFlowClient {
 
   constructor(onProgress?: (message: string) => void) {
     const workerUrl = new URL("/generated/local-stack-studio/optical-flow.worker.js", window.location.origin);
-    workerUrl.searchParams.set("revision", "stf-session-flow-20261117-r8-opening-average");
+    workerUrl.searchParams.set("revision", "stf-session-flow-20261119-r13-fixed31-f-dependent");
     this.worker = new Worker(workerUrl);
     this.worker.onmessage = (event: MessageEvent<OpticalFlowWorkerResponse>) => {
       const message = event.data;
@@ -84,6 +85,7 @@ export class StfOpticalFlowClient {
     sessionCreatedAt?: number,
     alignmentKey?: string,
     openingAverageRadiusSpan?: number,
+    winsize = STF_FARNEBACK_BASE_WINSIZE,
   ): Promise<{ pixels: Uint16Array; additionalPixels?: Uint16Array; performance: OpticalFlowPerformanceStats }> {
     const previousGamma2Buffer = previousGamma2.buffer.slice(
       previousGamma2.byteOffset,
@@ -102,6 +104,7 @@ export class StfOpticalFlowClient {
       ...(additionalVariantScale !== undefined ? { additionalVariantScale } : {}),
       ...(retainPair ? { retainPair: true } : {}),
       ...(openingAverageRadiusSpan !== undefined ? { openingAverageRadiusSpan } : {}),
+      winsize,
       ...(persistFlow ? { persistFlow: true, sessionId, sessionCreatedAt, alignmentKey } : {}),
       width,
       height,

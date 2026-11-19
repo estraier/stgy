@@ -63,6 +63,11 @@ export function interpolateStfTonePlan(
  * The reference P95 is a *calibration scale*, not a measured CoC rim.
  * Choosing C = P95_ref / max(F_real)^2 keeps all unmodified model densities
  * inside the canonical 0..1 tone calibration range; no artificial clipping.
+ * A sparse image can have P95=0 despite real nonzero signal. In that case,
+ * use its positive sample mean as a fallback scale. This is not a physical
+ * measurement of the CoC edge: the available global statistics do not
+ * identify that intensity. It does preserve a valid positive density model,
+ * and equal tone plans retain the same normalized blend weights.
  * The model assumes real D_i=C*F_i^2 before the actual real tone plan.
  * The same transform applied to constant discs is used by the compositor.
  */
@@ -70,8 +75,9 @@ export function prepareStfFrameSetForTone(
   frameSet: StfFrameSet,
   realFNumbers: readonly (number | null | undefined)[],
   realTonePlans: readonly StfToneMatchPlan[],
-  referenceP95: number,
+  referenceP95: number | null | undefined,
   radialAttenuation: StfRadialAttenuation,
+  referenceMean?: number,
 ): StfTonePreparedFrameSet {
   if (frameSet.allFNumbers.length < realFNumbers.length ||
       realTonePlans.length !== realFNumbers.length) {
@@ -84,12 +90,16 @@ export function prepareStfFrameSetForTone(
     // Explicit historical fallback; missing F must not be invented.
     return { ...frameSet, virtualTonePlans: { middle: [], outer: [] }, edgeDensities: [] };
   }
-  if (hasInvalid || hasDuplicates ||
-      !(Number.isFinite(referenceP95) && referenceP95 > 0 && referenceP95 <= 1)) {
-    throw new Error("STF radius/density calibration requires distinct valid F-numbers and reference P95.");
+  const validP95 = typeof referenceP95 === "number" && Number.isFinite(referenceP95) &&
+    referenceP95 > 0 && referenceP95 <= 1;
+  const validSparseMean = referenceP95 === 0 && typeof referenceMean === "number" &&
+    Number.isFinite(referenceMean) && referenceMean > 1e-12 && referenceMean <= 1;
+  if (hasInvalid || hasDuplicates || !(validP95 || validSparseMean)) {
+    throw new Error("STF radius/density calibration requires distinct valid F-numbers and a positive reference P95 or sparse-image mean.");
   }
   const maxRealF = Math.max(...f);
-  const densityScale = referenceP95 / (maxRealF * maxRealF);
+  const referenceScale = validP95 ? referenceP95 as number : referenceMean!;
+  const densityScale = referenceScale / (maxRealF * maxRealF);
   const rawRealDensities = f.map((fNumber) => densityScale * fNumber * fNumber);
   const edgeDensities = rawRealDensities.map((density, i) =>
     transformStfToneIntensity(density, realTonePlans[i].gain, realTonePlans[i].scaledLog));

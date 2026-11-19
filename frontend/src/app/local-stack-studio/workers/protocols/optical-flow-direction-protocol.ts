@@ -5,6 +5,7 @@ export type OpticalFlowDirectionRequest =
       requestId: number;
       width: number;
       height: number;
+      winsize: number;
       previousGrayBuffer: ArrayBuffer;
       nextGrayBuffer: ArrayBuffer;
     };

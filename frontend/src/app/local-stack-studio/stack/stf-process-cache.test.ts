@@ -52,6 +52,18 @@ describe("STF Source cache isolation", () => {
     expect(buildStfSourceCacheKey({ ...baseInputs, matrices: [[1, 0, 2, 0, 1, 0]] })).not.toBe(key);
   });
 
+  test("fixed F-dependent window has no per-run tuning in the Source cache key", () => {
+    const baseInputs = { ...aligned(), gains: [1, 1, 1], scaledLogs: [0, 0, 0],
+      weights: [0.2, 0.3, 0.5], toneReferenceIndex: 0 };
+    const off = buildStfFrameSet([2, 2.5, 4], 1, "off");
+    const interpolation = buildStfFrameSet([2, 2.5, 4], 1, "interpolation");
+    const extrapolation = buildStfFrameSet([2, 2.5, 4], 1, "extrapolation-2");
+    const key = buildStfSourceCacheKey({ ...baseInputs, frameSet: interpolation });
+    expect(buildStfSourceCacheKey({ ...baseInputs, frameSet: interpolation })).toBe(key);
+    expect(buildStfSourceCacheKey({ ...baseInputs, frameSet: extrapolation })).not.toBe(key);
+    expect(buildStfSourceCacheKey({ ...baseInputs, frameSet: off })).not.toBe(key);
+  });
+
   test("oversized Source is not cached, old Source can be cleared", () => {
     const cache = new StfSourceCache(32);
     const key = source();

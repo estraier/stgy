@@ -2,6 +2,7 @@ import { addWeightedLinearToAccumulator } from "./linear-merge";
 import { buildLinearMergeStripeJobs } from "./linear-merge-pool";
 import { applyStfToneMatchInPlace, buildStfToneMatchLut, type StfToneMatchPlan, type StfToneMatchLut } from "./stf-tone-match";
 import { StfOpticalFlowClient } from "./stf-optical-flow-client";
+import { stfPairFarnebackWinsize } from "./stf-farneback-winsize";
 import type { AlignedImageReader } from "./aligned-reader";
 import type { StfOuterFrame } from "./stf-frame-generation";
 import type { StfTonePreparedFrameSet } from "./stf-frame-density";
@@ -106,6 +107,12 @@ export async function appendStfVirtualSource(
       const openingAverageRadiusSpan = openingOuterFrames.length > 0 && middleIndex < openingAveragePairCount
         ? 1 / frameSet.allFNumbers[middle.previousIndex] - 1 / frameSet.allFNumbers[middle.nextIndex]
         : undefined;
+      const pairWinsize = stfPairFarnebackWinsize(
+        frameSet.allFNumbers[frameSet.middleFrames[0].previousIndex],
+        frameSet.allFNumbers[frameSet.middleFrames[0].nextIndex],
+        frameSet.allFNumbers[middle.previousIndex],
+        frameSet.allFNumbers[middle.nextIndex],
+      );
       options.progress?.(`Generating STF virtual frame ${middle.pairLabel}...`);
       const generated = await client.generate(
         reader.width, reader.height, middle.previousIndex, middle.nextIndex,
@@ -114,7 +121,7 @@ export async function appendStfVirtualSource(
         isLastPair && closingOuterFrame ? closingOuterFrame.inverseWarpScale : undefined,
         false, true,
         options.sessionId, options.sessionCreatedAt, options.alignmentKey,
-        openingAverageRadiusSpan,
+        openingAverageRadiusSpan, pairWinsize,
       );
       if (generated.performance.flowCacheHit) flowCacheHits++;
       else flowCacheMisses++;

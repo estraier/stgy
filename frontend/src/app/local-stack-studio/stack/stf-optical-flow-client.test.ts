@@ -47,12 +47,12 @@ test("STF Flow client passes geometric inverse-warp scales through both Worker r
       const prev = new Uint16Array(width * height * 3);
       const next = new Uint16Array(width * height * 3);
       await client.generate(width, height, 0, 1, prev, next,
-        "mid", undefined, "ext1-12", inverseScale, true, true, "session-a", 1700000000000, "align-1");
+        "mid", undefined, "ext1-12", inverseScale, true, true, "session-a", 1700000000000, "align-1", undefined, 31);
       await client.warpRetained(width, height, 0, 1, "ext1-12", inverseScale);
       expect(sent).toHaveLength(2);
       expect(sent[0]).toMatchObject({
         type: "interpolate", variant: "mid", additionalVariant: "ext1-12",
-        additionalVariantScale: inverseScale, retainPair: true, persistFlow: true,
+        additionalVariantScale: inverseScale, retainPair: true, persistFlow: true, winsize: 31,
         sessionId: "session-a", sessionCreatedAt: 1700000000000, alignmentKey: "align-1",
       });
       expect(sent[1]).toMatchObject({

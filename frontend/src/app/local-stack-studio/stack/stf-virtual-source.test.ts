@@ -180,15 +180,16 @@ test("closing extrapolation uses last real pair once while opening ext1..N reuse
       _a: Uint16Array, _b: Uint16Array, variant: string, _scale: number | undefined,
       additionalVariant?: string, _extraScale?: number, _retainPair?: boolean,
       _persist?: boolean, _session?: string, _created?: number, _alignment?: string,
-      span?: number) => {
-      seen.push(`generate:${previousId}-${nextId}:${variant}:${additionalVariant}:${span ?? "none"}`);
+      span?: number, winsize?: number) => {
+      seen.push(`generate:${previousId}-${nextId}:${variant}:${additionalVariant}:${span ?? "none"}:${winsize}`);
       return { pixels: testPixels(24000),
         ...(additionalVariant ? { additionalPixels: testPixels(additionalVariant === "ext2" ? 26000 : 22000) } : {}),
         performance: { flowCacheHit: false, flowCacheSaved: true, flowCacheReadMs: 0, flowWallMs: 0 },
       };
     },
     warpRetained: async () => { throw new Error("Unexpected retained-pair warp"); },
-    warpOpeningAverage: async (_w: number, _h: number, sourceId: number, variant: string, _scale: number, source?: Uint16Array) => {
+    warpOpeningAverage: async (_w: number, _h: number, sourceId: number, variant: string, _scale: number,
+      source?: Uint16Array) => {
       seen.push(`average:${sourceId}:${variant}:${Boolean(source)}`);
       return { pixels: testPixels(21000), warpMs: 0 };
     },
@@ -203,8 +204,8 @@ test("closing extrapolation uses last real pair once while opening ext1..N reuse
   try {
     const accumulator = new Float32Array(12);
     await appendStfVirtualSource(accumulator, {
-      frameSet: prepareStfFrameSetForTone(buildStfFrameSet([2, 2.5, 4], 1, "extrapolation-4"),
-        [2, 2.5, 4], [{gain:1, scaledLog:0}, {gain:1, scaledLog:0}, {gain:1, scaledLog:0}], reference.p95, 1),
+      frameSet: prepareStfFrameSetForTone(buildStfFrameSet([2, 2.5, 3], 1, "extrapolation-4"),
+        [2, 2.5, 3], [{gain:1, scaledLog:0}, {gain:1, scaledLog:0}, {gain:1, scaledLog:0}], reference.p95, 1),
       sessionId: "session-a", sessionCreatedAt: 1_700_000_000_000, alignmentKey: "align-1",
       reader: { width: 2, height: 2,
         readGamma2Image: async (index: number) => { loaded.push(index); return actual[index]; },
@@ -213,9 +214,10 @@ test("closing extrapolation uses last real pair once while opening ext1..N reuse
     });
     expect(loaded).toEqual([0, 1, 2, 0]);
     expect(seen).toEqual([
-      `generate:0-1:mid:undefined:${1 / 2 - 1 / 2.5}`,
-      `generate:1-2:mid:ext2:${1 / 2.5 - 1 / 4}`,
-      "average:0:ext1:true", "average:0:ext1-2:false", "average:0:ext1-3:false", "average:0:ext1-4:false",
+      `generate:0-1:mid:undefined:${1 / 2 - 1 / 2.5}:31`,
+      `generate:1-2:mid:ext2:${1 / 2.5 - 1 / 3}:21`,
+      "average:0:ext1:true", "average:0:ext1-2:false",
+      "average:0:ext1-3:false", "average:0:ext1-4:false",
       "release", "terminate",
     ]);
     expect(accumulator[0]).toBeGreaterThan(0);
@@ -367,4 +369,40 @@ test("three real images average the first two opening-side pairs", async () => {
       "release", "terminate",
     ]);
   } finally { log.mockRestore(); }
+});
+
+
+test("STF generated pairs always use fixed 31 + F-dependent windows", async () => {
+  const f = Array.from({ length: 7 }, (_, i) => 2 * 2 ** (i / 6));
+  const actual = f.map(() => testPixels(24000));
+  const reference = computeCanonicalToneStatisticsFromStoredRgb16(actual[0], 2, 2);
+  const frameSet = prepareStfFrameSetForTone(buildStfFrameSet(f, 1, "interpolation"), f,
+    f.map(() => ({ gain: 1, scaledLog: 0 })), reference.p95, 1);
+  const passed: number[] = [];
+  const infoSpy = jest.spyOn(console, "info").mockImplementation(() => {});
+  try {
+    await appendStfVirtualSource(new Float32Array(12), {
+      frameSet,
+      sessionId: "test-session", sessionCreatedAt: 1_700_000_000_000,
+      alignmentKey: "test-alignment",
+      reader: { width: 2, height: 2,
+        readGamma2Image: async (index: number) => actual[index],
+      } as never,
+      createFlowClient: (() => ({
+        warmup: async () => { throw new Error("Unexpected warmup"); },
+        generate: async (...args: unknown[]) => {
+          passed.push(args[16] as number);
+          return { pixels: testPixels(24000), performance: {
+            flowCacheHit: false, flowCacheSaved: true, flowCacheReadMs: 0, flowWallMs: 0,
+          } };
+        },
+        warpRetained: async () => { throw new Error("Unexpected retained warp"); },
+        warpOpeningAverage: async () => { throw new Error("Unexpected average warp"); },
+        releaseRetained: () => {}, terminate: () => {},
+      })) as never,
+    });
+  } finally {
+    infoSpy.mockRestore();
+  }
+  expect(passed).toEqual([31, 29, 25, 23, 19, 17]);
 });

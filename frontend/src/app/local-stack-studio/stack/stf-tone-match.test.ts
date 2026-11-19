@@ -95,6 +95,32 @@ describe("STF tone matching", () => {
     expect(buildStfToneMatchPlanToReference(source, reference)).toEqual({ gain: 1, scaledLog: 0 });
   });
 
+  test("sparse non-black images with P95=0 are valid and need no invented correction", () => {
+    const sparse = [
+      stats(0.00011, 0, 0),
+      stats(0.00014, 0, 0),
+      stats(0.00012, 0, 0),
+    ];
+    const result = buildStfToneMatchPlans(sparse);
+    expect(result).not.toBeNull();
+    expect(result!.plans).toEqual(sparse.map(() => ({ gain: 1, scaledLog: 0 })));
+  });
+
+  test("a zero P95 matched against nonzero P95 falls back to the mean without a nonlinear curve", () => {
+    const sparse = stats(0.01, 0, 0);
+    const lessSparse = stats(0.04, 0, 0.3);
+    const plan = buildStfToneMatchPlanToReference(sparse, lessSparse);
+    expect(plan.gain).toBeCloseTo(4, 8);
+    expect(plan.scaledLog).toBe(0);
+    const reverse = buildStfToneMatchPlanToReference(lessSparse, sparse);
+    expect(reverse.gain).toBeCloseTo(0.25, 8);
+    expect(reverse.scaledLog).toBe(0);
+  });
+
+  test("a completely black image remains invalid for tone matching", () => {
+    expect(buildStfToneMatchPlans([stats(0, 0, 0)])).toBeNull();
+  });
+
   test("gamma-2 LUT closely matches the analytic tone mapping", () => {
     const gain = 1.12;
     const scaledLog = 1.3;

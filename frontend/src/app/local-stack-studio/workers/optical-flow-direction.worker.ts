@@ -3,6 +3,7 @@
 // parameters match the original single-worker implementation exactly.
 import { loadWorkerOpenCv, type OpenCvDynamic, type OpenCvRuntime } from "./opencv-runtime";
 import { transferableBuffer } from "./transfer-buffer";
+import { isStfFarnebackWinsize } from "../stack/stf-farneback-winsize";
 import type {
   OpticalFlowDirectionRequest,
   OpticalFlowDirectionResponse,
@@ -17,10 +18,9 @@ import type {
   };
   const scope = globalThis as unknown as WorkerScope;
 
-  // Do not modify these values without a separate image-quality evaluation.
+  // Preserve other Farneback settings; the real-pair window is F-dependent.
   const FARNEBACK_PYR_SCALE = 0.5;
   const FARNEBACK_LEVELS = 5;
-  const FARNEBACK_WINDOW_SIZE = 21;
   const FARNEBACK_ITERATIONS = 3;
   const FARNEBACK_POLY_N = 7;
   const FARNEBACK_POLY_SIGMA = 1.5;
@@ -45,7 +45,7 @@ import type {
     return nativePromise;
   }
 
-  function computeFlow(cv: OpenCvRuntime, source: OpenCvDynamic, target: OpenCvDynamic): {
+  function computeFlow(cv: OpenCvRuntime, source: OpenCvDynamic, target: OpenCvDynamic, winsize: number): {
     flow: Float32Array;
     elapsedMs: number;
   } {
@@ -58,7 +58,7 @@ import type {
         mat,
         FARNEBACK_PYR_SCALE,
         FARNEBACK_LEVELS,
-        FARNEBACK_WINDOW_SIZE,
+        winsize,
         FARNEBACK_ITERATIONS,
         FARNEBACK_POLY_N,
         FARNEBACK_POLY_SIGMA,
@@ -84,7 +84,10 @@ import type {
       if (message.type !== "compute" && message.type !== "compute-pair") {
         throw new Error("Unsupported Optical Flow direction request.");
       }
-      const { width, height } = message;
+      const { width, height, winsize } = message;
+      if (!isStfFarnebackWinsize(winsize)) {
+        throw new Error("Invalid STF Farneback window size.");
+      }
       if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1) {
         throw new Error("Invalid Optical Flow working image size.");
       }
@@ -98,7 +101,7 @@ import type {
       try {
         previousMat.data.set(previousGray);
         nextMat.data.set(nextGray);
-        const forward = computeFlow(cv, previousMat, nextMat);
+        const forward = computeFlow(cv, previousMat, nextMat, winsize);
         const forwardBuffer = transferableBuffer(forward.flow);
         if (message.type === "compute") {
           scope.postMessage({
@@ -106,7 +109,7 @@ import type {
             flowBuffer: forwardBuffer, computeMs: forward.elapsedMs,
           }, [forwardBuffer]);
         } else {
-          const backward = computeFlow(cv, nextMat, previousMat);
+          const backward = computeFlow(cv, nextMat, previousMat, winsize);
           const backwardBuffer = transferableBuffer(backward.flow);
           scope.postMessage({
             type: "pair-result", requestId: message.requestId,

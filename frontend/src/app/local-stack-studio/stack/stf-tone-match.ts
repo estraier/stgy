@@ -41,8 +41,11 @@ function validStatistics(value: StfToneStatistics): boolean {
     && value.p50 <= 1
     && Number.isFinite(value.p95)
     && value.p95 >= value.p50
-    && value.p95 > STF_TONE_EPSILON
     && value.p95 <= 1
+    // A sparse but non-black image can legitimately have P95=0 when at
+    // least 95% of the pixels are black. Its positive mean proves that
+    // the input contains signal even though P95 cannot calibrate it.
+    && (value.p95 > STF_TONE_EPSILON || value.mean > STF_TONE_EPSILON)
   );
 }
 
@@ -153,6 +156,16 @@ function solvePlan(source: StfToneStatistics, target: StfToneStatistics): StfTon
   // Return exact identity rather than accumulating solver rounding errors.
   if (source.p50 === target.p50 && source.p95 === target.p95) {
     return { gain: 1, scaledLog: 0 };
+  }
+  // Zero P95 gives no usable percentile-based exposure constraint. When
+  // only one image has zero P95, use the positive sample means for a
+  // neutral, linear exposure correction rather than silently doing nothing.
+  // The normal P50/P95 solver below remains untouched for other images.
+  if (source.p95 <= STF_TONE_EPSILON || target.p95 <= STF_TONE_EPSILON) {
+    const meanRatio = target.mean / source.mean;
+    const gain = Math.max(1 / STF_TONE_MATCH_GAIN_MAX,
+      Math.min(STF_TONE_MATCH_GAIN_MAX, meanRatio));
+    return { gain, scaledLog: 0 };
   }
   let gain = 1;
   let scaledLog = 0;

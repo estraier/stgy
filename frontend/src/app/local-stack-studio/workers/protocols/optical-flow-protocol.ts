@@ -1,3 +1,4 @@
+
 export type OpticalFlowOpeningVariant = "ext1" | `ext1-${2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12}`;
 export type OpticalFlowVariant = "mid" | OpticalFlowOpeningVariant | "ext2";
 
@@ -14,6 +15,8 @@ export type OpticalFlowWorkerInterpolateRequest = {
   // Average opening-side extrapolation reuses up to the first three adjacent
   // real-pair forward fields, normalized by the positive 1/F interval.
   openingAverageRadiusSpan?: number;
+  // Fixed aperture-dependent Farneback window for this real-image pair.
+  winsize?: number;
   // STF-only: Flow persistence is strictly scoped to one Canonical session.
   persistFlow?: boolean;
   sessionId?: string;

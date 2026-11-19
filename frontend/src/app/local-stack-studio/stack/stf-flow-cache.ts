@@ -8,25 +8,28 @@
  * WebCrypto, or cross-session content-based reuse is involved.
  */
 export const STF_FLOW_CACHE_MAX_BYTES = 512 * 1024 * 1024;
-const FLOW_ALGORITHM_VERSION = "stf-gray4mp-farneback-fixed-session-v2";
+const FLOW_ALGORITHM_VERSION = "stf-gray4mp-farneback-f-adaptive-winsize-v3";
 
 /** The alignment identifier describes processing parameters, never image content. */
 export function stfFlowSessionKey(
   sessionId: string, previousImageId: number, nextImageId: number,
-  alignmentKey: string, width: number, height: number,
+  alignmentKey: string, width: number, height: number, winsize = 31,
 ): string | null {
   if (!sessionId || !alignmentKey ||
       !Number.isSafeInteger(previousImageId) || previousImageId < 0 ||
       !Number.isSafeInteger(nextImageId) || nextImageId < 0 ||
       previousImageId === nextImageId ||
-      !Number.isSafeInteger(width * height) || width <= 0 || height <= 0) return null;
+      !Number.isSafeInteger(width * height) || width <= 0 || height <= 0 ||
+      !Number.isSafeInteger(winsize) || winsize < 11 || winsize > 31 || winsize % 2 === 0) return null;
   return JSON.stringify([sessionId, FLOW_ALGORITHM_VERSION,
-    previousImageId, nextImageId, alignmentKey, width, height]);
+    previousImageId, nextImageId, alignmentKey, width, height, winsize]);
 }
 
 const DB_NAME = "local-stack-studio-stf-flow";
-// Old v1 content-addressed records are discarded on upgrade, not migrated.
-const DB_VERSION = 2;
+// The session key contains the actual winsize, allowing reuse of valid
+// prior Flow fields with the same window. Old v1/v2 fields are incompatible;
+// clear them once on upgrade rather than occupying the no-LRU budget.
+const DB_VERSION = 3;
 const FLOW_STORE = "pairs";
 const META_STORE = "metadata";
 

@@ -152,6 +152,45 @@ describe("STF independent edge-density preparation", () => {
 
 });
 
+describe("STF sparse reference density calibration", () => {
+  test.each(["off", "interpolation", "extrapolation-1", "extrapolation-12"] as const)(
+    "%s accepts P95=0 with a positive sample mean and preserves neutral relative weights", (mode) => {
+      const frames = buildStfFrameSet(realF, 1, mode);
+      const sparse = prepareStfFrameSetForTone(frames, realF, identity, 0, 1, 0.00012);
+      const normal = prepareStfFrameSetForTone(frames, realF, identity, 0.6, 1);
+      expect(sparse.edgeDensities).toHaveLength(frames.allFNumbers.length);
+      sparse.edgeDensities.forEach((density) => expect(density).toBeGreaterThan(0));
+      sparse.allWeights.forEach((weight, i) => expect(weight).toBeCloseTo(normal.allWeights[i], 6));
+      expect(Array.from(sparse.allWeights).reduce((sum, weight) => sum + weight, 0)).toBeCloseTo(1, 6);
+    },
+  );
+
+  test("sparse mean supplies only an absolute scale; real density ratios remain F squared", () => {
+    const prepared = prepareStfFrameSetForTone(
+      buildStfFrameSet([2, 3, 4], 1, "off"), [2, 3, 4], identity.slice(0, 3), 0, 1, 0.002);
+    expect(prepared.edgeDensities[0]).toBeCloseTo(0.002 * 4 / 16, 12);
+    expect(prepared.edgeDensities[1]).toBeCloseTo(0.002 * 9 / 16, 12);
+    expect(prepared.edgeDensities[2]).toBeCloseTo(0.002, 12);
+  });
+
+  test("positive P95 uses the existing calibration even if the mean is unavailable", () => {
+    const frameSet = buildStfFrameSet(realF, 1, "interpolation");
+    const old = prepareStfFrameSetForTone(frameSet, realF, identity, 0.5, 1);
+    const changed = prepareStfFrameSetForTone(frameSet, realF, identity, 0.5, 1, NaN);
+    expect(changed.edgeDensities).toEqual(old.edgeDensities);
+    expect(changed.allWeights).toEqual(old.allWeights);
+  });
+
+  test("rejects empty-signal, missing, and nonfinite calibration instead of hiding bad data", () => {
+    const frameSet = buildStfFrameSet(realF, 1, "off");
+    for (const [p95, mean] of [[0, 0], [0, undefined], [0, NaN], [NaN, 0.002],
+      [-0.1, 0.002], [1.1, 0.002], [0, Infinity], [0, -0.1]]) {
+      expect(() => prepareStfFrameSetForTone(frameSet, realF, identity, p95, 1, mean))
+        .toThrow("positive reference P95 or sparse-image mean");
+    }
+  });
+});
+
 test.each([-2, -1, 0, 1, 2, 3, "smoothstep-weak", "smoothstep-medium", "smoothstep-strong"] as const)(
   "neutral tone matching preserves all pre-existing ideal-disc frame weights at %s", (q) => {
     for (const mode of ["off", "interpolation", "extrapolation-1", "extrapolation-4", "extrapolation-12"] as const) {

@@ -836,11 +836,12 @@ listen(processButton, "click", async () => {
     if (effectiveMergeMode === "stf") {
       const radialAttenuation = selectedStfRadialAttenuation();
       const fNumbers = inputInfos.map((entry) => entry.fNumber);
-      const frameSet = buildStfFrameSet(fNumbers, radialAttenuation, selectedStfFrameGeneration());
-      const referenceP95 = currentCanonicalSession.images[mergePlan.toneReferenceIndex]?.toneStatistics?.p95;
+      const frameMode = selectedStfFrameGeneration();
+      const frameSet = buildStfFrameSet(fNumbers, radialAttenuation, frameMode);
+      const referenceToneStatistics = currentCanonicalSession.images[mergePlan.toneReferenceIndex]?.toneStatistics;
       const preparedFrameSet = prepareStfFrameSetForTone(frameSet, fNumbers,
         createStfSourceTonePlans(mergePlan.gains, mergePlan.scaledLogs),
-        referenceP95, radialAttenuation);
+        referenceToneStatistics?.p95, radialAttenuation, referenceToneStatistics?.mean);
       mergePlan.stfFrameSet = preparedFrameSet;
       mergePlan.weights = preparedFrameSet.realWeights;
     }
