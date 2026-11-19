@@ -3375,12 +3375,14 @@ async function mergeStfWithAdditionalBlur(
       }
       const dilatedFine = algorithm.dilateStfSharpnessAbovePercentile(
         fineMap, width, height, algorithm.STF_SHARPNESS_DILATED_PERCENTILE,
-        algorithm.resolveStfDilatedFineRadius(width, height));
-      const unitRatio = new Float32Array(width * height);
-      algorithm.buildStfDilatedLogRatioInto(dilatedFine, coarseMap, epsilon, unitRatio);
-      algorithm.normalizeStfLogRatioBufferInPlace(unitRatio);
+        algorithm.resolveStfDilatedFineRadius(width, height), fineMap);
+      // The coarse map is no longer needed after computing the ratio.  Each
+      // output pixel reads its own coarse value before overwriting it, so the
+      // ratio can reuse this full-resolution Float32 allocation in place.
+      algorithm.buildStfDilatedLogRatioInto(dilatedFine, coarseMap, epsilon, coarseMap);
+      algorithm.normalizeStfLogRatioBufferInPlace(coarseMap);
       setProgress("STF applying Volume Closing 2...");
-      const closed = await p.volumeClose(unitRatio, width, height);
+      const closed = await p.volumeClose(coarseMap, width, height);
       activeRatio = closed.values;
       // Store large full-resolution buffers only within the cache budget;
       // oversized maps remain local to this Process and are released after it.

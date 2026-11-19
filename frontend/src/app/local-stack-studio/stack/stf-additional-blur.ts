@@ -420,29 +420,52 @@ export function dilateStfSharpnessAbovePercentile(
   height: number,
   thresholdPercentile = STF_SHARPNESS_DILATED_PERCENTILE,
   radius = 1,
+  output?: Float32Array,
 ): Float32Array {
   const pixels = width * height;
-  if (source.length !== pixels) throw new Error("STF Additional blur dilated sharpness source has invalid size.");
-  if (!(Number.isFinite(radius) && radius >= 1)) return source.slice();
-  const finite: number[] = [];
-  for (let i = 0; i < pixels; i += 1) {
-    const value = source[i] ?? 0;
-    if (Number.isFinite(value) && value > 0) finite.push(value);
+  if (source.length !== pixels || (output && output.length !== pixels)) {
+    throw new Error("STF Additional blur dilated sharpness source has invalid size.");
   }
-  if (finite.length === 0) return source.slice();
-  finite.sort((a, b) => a - b);
-  const threshold = percentileFromSorted(finite, thresholdPercentile);
-  const seeded = new Float32Array(pixels);
+  // The normal API still returns a separate array. Callers that own the input
+  // may pass the same array as output: horizontal dilation finishes reading
+  // the entire source before vertical dilation starts overwriting pixels.
+  const copyOrReuse = () => {
+    if (!output) return source.slice();
+    output.set(source);
+    return output;
+  };
+  if (!(Number.isFinite(radius) && radius >= 1)) return copyOrReuse();
+  // Keep just the finite positive samples in a Float32 workspace.  Selecting
+  // the percentile avoids an array of boxed numbers and a full O(N log N) sort.
+  // The input map must keep its original pixel order for the final max merge.
+  let finiteCount = 0;
   for (let i = 0; i < pixels; i += 1) {
-    const value = source[i] ?? 0;
-    seeded[i] = value >= threshold ? value : 0;
+    const value = source[i];
+    if (Number.isFinite(value) && value > 0) finiteCount++;
   }
-  const expanded = dilateMaxSeparable(seeded, width, height, Math.floor(radius));
-  for (let i = 0; i < pixels; i += 1) expanded[i] = Math.max(source[i] ?? 0, expanded[i] ?? 0);
-  return expanded;
+  if (finiteCount === 0) return copyOrReuse();
+  const finite = new Float32Array(finiteCount);
+  for (let i = 0, index = 0; i < pixels; i += 1) {
+    const value = source[i];
+    if (Number.isFinite(value) && value > 0) finite[index++] = value;
+  }
+  const percentile = Math.max(0, Math.min(1,
+    Number.isFinite(thresholdPercentile) ? thresholdPercentile : 0));
+  const position = percentile * (finiteCount - 1);
+  const lowerIndex = Math.floor(position);
+  const lowerValue = selectStfOrderStatistic(finite, 0, finiteCount - 1, lowerIndex);
+  const upperValue = lowerIndex + 1 < finiteCount
+    ? smallestStfValueAfter(finite, lowerIndex, finiteCount) : lowerValue;
+  const threshold = lowerValue + (upperValue - lowerValue) * (position - lowerIndex);
+
+  // Apply the threshold while computing the horizontal max. This removes the
+  // separate full-resolution seeded map without changing the dilation result.
+  return dilateMaxSeparable(source, width, height, Math.floor(radius), threshold,
+    output ?? new Float32Array(pixels));
 }
 
-function dilateMaxSeparable(source: Float32Array, width: number, height: number, radius: number): Float32Array {
+function dilateMaxSeparable(source: Float32Array, width: number, height: number, radius: number,
+  threshold: number, output: Float32Array): Float32Array {
   const horizontal = new Float32Array(source.length);
   for (let y = 0; y < height; y += 1) {
     const row = y * width;
@@ -450,18 +473,21 @@ function dilateMaxSeparable(source: Float32Array, width: number, height: number,
       let maximum = 0;
       const start = Math.max(0, x - radius);
       const end = Math.min(width - 1, x + radius);
-      for (let xx = start; xx <= end; xx += 1) maximum = Math.max(maximum, source[row + xx] ?? 0);
+      for (let xx = start; xx <= end; xx += 1) {
+        const value = source[row + xx] ?? 0;
+        if (value >= threshold) maximum = Math.max(maximum, value);
+      }
       horizontal[row + x] = maximum;
     }
   }
-  const output = new Float32Array(source.length);
   for (let x = 0; x < width; x += 1) {
     for (let y = 0; y < height; y += 1) {
       let maximum = 0;
       const start = Math.max(0, y - radius);
       const end = Math.min(height - 1, y + radius);
       for (let yy = start; yy <= end; yy += 1) maximum = Math.max(maximum, horizontal[yy * width + x] ?? 0);
-      output[y * width + x] = maximum;
+      const index = y * width + x;
+      output[index] = Math.max(source[index] ?? 0, maximum);
     }
   }
   return output;

@@ -327,6 +327,94 @@ describe("STF worker-parallel gate expansion stripe boundaries", () => {
   });
 });
 
+describe("STF Additional Blur memory optimizations", () => {
+  // The previous implementation sorted a number[] and allocated a complete
+  // binary-threshold seed image. Keep the reference independent of quickselect
+  // and fused horizontal dilation to catch any changed threshold or pixel.
+  const legacyDilate = (source: Float32Array, width: number, height: number, q: number, radius: number) => {
+    const finite = Array.from(source).filter((v) => Number.isFinite(v) && v > 0).sort((a, b) => a - b);
+    if (!(Number.isFinite(radius) && radius >= 1) || finite.length === 0) return source.slice();
+    const p = Math.max(0, Math.min(1, Number.isFinite(q) ? q : 0)) * (finite.length - 1);
+    const lo = Math.floor(p), hi = Math.ceil(p);
+    const threshold = finite[lo] + (finite[hi] - finite[lo]) * (p - lo);
+    const seed = new Float32Array(source.length);
+    for (let i = 0; i < seed.length; i++) {
+      const value = source[i] ?? 0;
+      seed[i] = value >= threshold ? value : 0;
+    }
+    const horizontal = new Float32Array(source.length);
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+      let max = 0;
+      for (let dx = -Math.floor(radius); dx <= Math.floor(radius); dx++) {
+        const xx = x + dx;
+        if (xx >= 0 && xx < width) max = Math.max(max, seed[y * width + xx]);
+      }
+      horizontal[y * width + x] = max;
+    }
+    const output = new Float32Array(source.length);
+    for (let x = 0; x < width; x++) for (let y = 0; y < height; y++) {
+      let max = 0;
+      for (let dy = -Math.floor(radius); dy <= Math.floor(radius); dy++) {
+        const yy = y + dy;
+        if (yy >= 0 && yy < height) max = Math.max(max, horizontal[yy * width + x]);
+      }
+      const i = y * width + x;
+      output[i] = Math.max(source[i] ?? 0, max);
+    }
+    return output;
+  };
+
+  test("P80 sharpness dilation is pixel-identical to full-sort + seeded-map implementation", () => {
+    let state = 0x9e3779b9;
+    const random = () => {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+      return state / 0x100000000;
+    };
+    for (const [width, height] of [[1, 1], [2, 9], [17, 13], [50, 31]] as const) {
+      for (const shape of ["random", "binary", "flat", "zero", "sparse", "special", "ordered"]) {
+        const values = new Float32Array(width * height);
+        for (let i = 0; i < values.length; i++) {
+          if (shape === "random") values[i] = random() * 17 - 1;
+          else if (shape === "binary") values[i] = i % 7 ? 0.25 : 3.25;
+          else if (shape === "flat") values[i] = 2;
+          else if (shape === "zero") values[i] = 0;
+          else if (shape === "sparse") values[i] = i % 101 ? 0 : 5;
+          else if (shape === "special") values[i] = i % 31 === 0 ? NaN : i % 37 === 0 ? Infinity : i % 41 === 0 ? -Infinity : random() * 5;
+          else values[i] = i / 100;
+        }
+        for (const q of [0, 0.03, 0.5, 0.8, 0.97, 1, NaN]) {
+          for (const radius of [0, 1, 2, 4]) {
+            const copy = values.slice();
+            const expected = legacyDilate(values, width, height, q, radius);
+            const actual = dilateStfSharpnessAbovePercentile(values, width, height, q, radius);
+            expect(Array.from(actual, (v) => Number.isNaN(v) ? "NaN" : v))
+              .toEqual(Array.from(expected, (v) => Number.isNaN(v) ? "NaN" : v));
+            const reused = values.slice();
+            expect(dilateStfSharpnessAbovePercentile(reused, width, height, q, radius, reused)).toBe(reused);
+            expect(Array.from(reused, (v) => Number.isNaN(v) ? "NaN" : v))
+              .toEqual(Array.from(expected, (v) => Number.isNaN(v) ? "NaN" : v));
+            expect(Array.from(values, (v) => Number.isNaN(v) ? "NaN" : v))
+              .toEqual(Array.from(copy, (v) => Number.isNaN(v) ? "NaN" : v));
+          }
+        }
+      }
+    }
+  });
+
+  test("reusing the coarse Float32 map for the ratio leaves normalized gate identical", () => {
+    const length = 4096;
+    const fine = Float32Array.from({ length }, (_, i) => i % 43 === 0 ? 0 : 0.01 + (i % 79) / 30);
+    const coarse = Float32Array.from({ length }, (_, i) => i % 17 === 0 ? 0 : (i % 103) / 60);
+    const expected = new Float32Array(length);
+    buildStfDilatedLogRatioInto(fine, coarse, 0.08, expected);
+    normalizeStfLogRatioBufferInPlace(expected);
+    const reused = coarse.slice();
+    buildStfDilatedLogRatioInto(fine, reused, 0.08, reused);
+    normalizeStfLogRatioBufferInPlace(reused);
+    expect(Array.from(reused)).toEqual(Array.from(expected));
+  });
+});
+
 describe("STF official dilated fine sharpness", () => {
   test("geometric means and P80 max dilation retain fine sharpness and scaled radius", () => {
     const fineLog = new Float32Array([Math.log(1) * 2, Math.log(8) * 2, Math.log(2) * 2, Math.log(1) * 2]);
