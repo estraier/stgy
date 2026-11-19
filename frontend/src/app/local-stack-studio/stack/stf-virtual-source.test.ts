@@ -88,7 +88,7 @@ function virtualHarness(persist = true) {
       warmup: async () => { throw new Error("Warmup must be lazy on Flow cache hits"); },
       generate: async (_width: number, _height: number, _previous: number, _next: number,
         _a: Uint16Array, _b: Uint16Array, variant: string, _scale: number | undefined,
-        additionalVariant?: string, _additionalScale?: number, _retainPair?: boolean,
+        additionalVariant?: string, _additionalScale?: number,
         persistFlow?: boolean, sessionId?: string, _sessionCreatedAt?: number, alignmentKey?: string,
         _openingAverageRadiusSpan?: number) => {
         generations++;
@@ -103,7 +103,7 @@ function virtualHarness(persist = true) {
           performance: { flowCacheHit: hit, flowCacheSaved: Boolean(persist && persistFlow && !hit) },
         };
       },
-      warpRetained: async () => { throw new Error("Unexpected retained-pair warp in opening Average Flow path"); },
+
       warpOpeningAverage: async (_width: number, _height: number, _source: number, variant: string) => {
         warps++;
         return { pixels: testPixels(variant === "ext1" ? 22500 : 22000), warpMs: 0 };
@@ -178,7 +178,7 @@ test("closing extrapolation uses last real pair once while opening ext1..N reuse
     warmup: async () => { throw new Error("Unexpected eager Flow warmup"); },
     generate: async (_w: number, _h: number, previousId: number, nextId: number,
       _a: Uint16Array, _b: Uint16Array, variant: string, _scale: number | undefined,
-      additionalVariant?: string, _extraScale?: number, _retainPair?: boolean,
+      additionalVariant?: string, _extraScale?: number,
       _persist?: boolean, _session?: string, _created?: number, _alignment?: string,
       span?: number, winsize?: number) => {
       seen.push(`generate:${previousId}-${nextId}:${variant}:${additionalVariant}:${span ?? "none"}:${winsize}`);
@@ -187,7 +187,7 @@ test("closing extrapolation uses last real pair once while opening ext1..N reuse
         performance: { flowCacheHit: false, flowCacheSaved: true, flowCacheReadMs: 0, flowWallMs: 0 },
       };
     },
-    warpRetained: async () => { throw new Error("Unexpected retained-pair warp"); },
+
     warpOpeningAverage: async (_w: number, _h: number, sourceId: number, variant: string, _scale: number,
       source?: Uint16Array) => {
       seen.push(`average:${sourceId}:${variant}:${Boolean(source)}`);
@@ -245,7 +245,7 @@ test("prepared synthetic weights use the exact tone curves applied to gamma2 mid
       ...(additionalVariant ? { additionalPixels: realPixels[1] } : {}),
       performance: { flowCacheHit: true, flowCacheSaved: false, flowCacheReadMs: 0, flowWallMs: 0 },
     }),
-    warpRetained: async () => { throw new Error("Unexpected retained-pair warp"); },
+
     warpOpeningAverage: async () => ({ pixels: realPixels[0], warpMs: 0 }),
     releaseRetained: () => {}, terminate: () => {},
   });
@@ -288,7 +288,7 @@ test("extrapolation reuses up to the first three real pairs for opening Average 
     warmup: async () => { throw new Error("No eager warmup"); },
     generate: async (_w: number, _h: number, previous: number, next: number,
       _a: Uint16Array, _b: Uint16Array, _v: string, _scale?: number,
-      additionalVariant?: string, _extra?: number, _retainPair?: boolean,
+      additionalVariant?: string, _extra?: number,
       _persist?: boolean, _session?: string, _created?: number, _alignment?: string,
       span?: number) => {
       requests.push(`pair:${previous}-${next}:${additionalVariant ?? "none"}`);
@@ -297,7 +297,7 @@ test("extrapolation reuses up to the first three real pairs for opening Average 
         ...(additionalVariant ? { additionalPixels: testPixels(26000) } : {}),
         performance: { flowCacheHit: true } };
     },
-    warpRetained: async () => { throw new Error("Unexpected conventional retained warp"); },
+
     warpOpeningAverage: async (_w: number, _h: number, index: number,
       variant: string, _scale: number, source?: Uint16Array) => {
       requests.push(`opening:${variant}:${index}:${Boolean(source)}`);
@@ -339,7 +339,7 @@ test("three real images average the first two opening-side pairs", async () => {
     warmup: async () => { throw new Error("Unexpected warmup"); },
     generate: async (_w: number, _h: number, prev: number, next: number,
       _a: Uint16Array, _b: Uint16Array, _v: string, _scale?: number,
-      additionalVariant?: string, _exscale?: number, _retainPair?: boolean, _persist?: boolean,
+      additionalVariant?: string, _exscale?: number, _persist?: boolean,
       _session?: string, _created?: number, _align?: string, span?: number) => {
       events.push(`pair:${prev}-${next}:${additionalVariant ?? "none"}`);
       if (span !== undefined) spans.push(span);
@@ -347,7 +347,7 @@ test("three real images average the first two opening-side pairs", async () => {
         ...(additionalVariant ? { additionalPixels: testPixels(26000) } : {}),
         performance: { flowCacheHit: true } };
     },
-    warpRetained: async () => { throw new Error("Unexpected retained warp"); },
+
     warpOpeningAverage: async (_w: number, _h: number, sourceId: number, variant: string, _scale: number, source?: Uint16Array) => {
       events.push(`opening:${sourceId}:${variant}:${Boolean(source)}`);
       return { pixels: testPixels(23000), warpMs: 0 };
@@ -391,12 +391,12 @@ test("STF generated pairs always use fixed 31 + F-dependent windows", async () =
       createFlowClient: (() => ({
         warmup: async () => { throw new Error("Unexpected warmup"); },
         generate: async (...args: unknown[]) => {
-          passed.push(args[16] as number);
+          passed.push(args[15] as number);
           return { pixels: testPixels(24000), performance: {
             flowCacheHit: false, flowCacheSaved: true, flowCacheReadMs: 0, flowWallMs: 0,
           } };
         },
-        warpRetained: async () => { throw new Error("Unexpected retained warp"); },
+
         warpOpeningAverage: async () => { throw new Error("Unexpected average warp"); },
         releaseRetained: () => {}, terminate: () => {},
       })) as never,

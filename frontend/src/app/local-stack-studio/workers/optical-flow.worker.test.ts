@@ -20,9 +20,9 @@ function syntheticField(width: number, height: number, dx: number, norms?: reado
 }
 
 async function runMidpoint(cores: number, memoryGiB: number, additionalVariant?: "ext1" | "ext2", sharedGray = false,
-  retainedVariants: OpticalFlowOpeningVariant[] = [],
-  scales?: { main?: number; additional?: number; retained?: number[] },
-  norms?: readonly number[]) {
+  wideImage = false,
+  scales?: { main?: number; additional?: number; opening?: number[] },
+  norms?: readonly number[], openingVariants: OpticalFlowOpeningVariant[] = []) {
   jest.resetModules();
   const originalWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
   const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
@@ -83,9 +83,9 @@ async function runMidpoint(cores: number, memoryGiB: number, additionalVariant?:
     if (!scope.onmessage) throw new Error("Optical Flow worker did not install onmessage.");
     await scope.onmessage({ data: { type: "warmup", requestId: 1 } } as MessageEvent<OpticalFlowWorkerRequest>);
 
-    const width = retainedVariants.length ? 11 : 7;
+    const width = wideImage || openingVariants.length ? 11 : 7;
     const height = 3;
-    const startPeak = retainedVariants.length ? 5 : 2;
+    const startPeak = wideImage || openingVariants.length ? 5 : 2;
     const previous = new Uint16Array(width * height * 3);
     const next = new Uint16Array(width * height * 3);
     for (let c = 0; c < 3; c += 1) {
@@ -95,10 +95,10 @@ async function runMidpoint(cores: number, memoryGiB: number, additionalVariant?:
     await scope.onmessage({
       data: {
         type: "interpolate", requestId: 2, width, height,
+        ...(openingVariants.length ? { openingAverageRadiusSpan: 1, previousImageId: 12, nextImageId: 13 } : {}),
         variant: "mid", ...(additionalVariant ? { additionalVariant } : {}),
         ...(scales?.main !== undefined ? { variantScale: scales.main } : {}),
         ...(scales?.additional !== undefined ? { additionalVariantScale: scales.additional } : {}),
-        ...(retainedVariants.length ? { retainPair: true, previousImageId: 12, nextImageId: 13 } : {}),
         previousGamma2Buffer: previous.buffer, nextGamma2Buffer: next.buffer,
         ...(sharedGray ? {
           previousGrayBuffer: new Uint8Array(width * height).fill(41).buffer,
@@ -106,17 +106,12 @@ async function runMidpoint(cores: number, memoryGiB: number, additionalVariant?:
         } : {}),
       },
     } as MessageEvent<OpticalFlowWorkerRequest>);
-    for (let i = 0; i < retainedVariants.length; i++) {
-      await scope.onmessage({ data: { type: "warp-retained", requestId: 3 + i,
-        previousImageId: 12, nextImageId: 13, variant: retainedVariants[i],
-        ...(scales?.retained?.[i] !== undefined ? { variantScale: scales.retained[i] } : {}) },
-      } as MessageEvent<OpticalFlowWorkerRequest>);
-    }
-    if (retainedVariants.length) {
-      await scope.onmessage({ data: { type: "release-retained", requestId: 99 } } as MessageEvent<OpticalFlowWorkerRequest>);
-      await scope.onmessage({ data: { type: "warp-retained", requestId: 100,
-        previousImageId: 12, nextImageId: 13, variant: "ext1" },
-      } as MessageEvent<OpticalFlowWorkerRequest>);
+    for (let i = 0; i < openingVariants.length; i++) {
+      await scope.onmessage({ data: {
+        type: "warp-opening-average", requestId: 3 + i,
+        sourceImageId: 12, variant: openingVariants[i], variantScale: scales?.opening?.[i] ?? (i + 1) * 0.5,
+        ...(i === 0 ? { sourceGamma2Buffer: previous.slice().buffer } : {}),
+      } } as MessageEvent<OpticalFlowWorkerRequest>);
     }
     return { messages, spawned, flowComputations, seenGrays };
   } finally {
@@ -155,20 +150,6 @@ describe("Optical Flow quality-preserving native Flow parallelization", () => {
   });
 });
 
-test("STF Worker accepts retained extrapolation steps 9 and 12 without recomputing Flow", async () => {
-  const { messages, flowComputations } = await runMidpoint(8, 8, undefined, true,
-    ["ext1-9", "ext1-12"], { retained: [5.5, 7.2] });
-  expect(flowComputations).toBe(2);
-  for (const id of [3, 4]) {
-    const result = messages.find((message) => message.requestId === id);
-    expect(result?.type).toBe("warp-result");
-    if (result?.type === "warp-result") {
-      expect(new Uint16Array(result.gamma2Buffer).length).toBe(11 * 3 * 3);
-    }
-  }
-  expect(messages.find((message) => message.requestId === 100)?.type).toBe("error");
-});
-
 test("P5-P10 gate protects small-flow pixels in opening and closing extrapolation but not interpolation", async () => {
   // 11x3 Flow; the smallest vectors occupy both highlighted locations. P5
   // falls on 0.08, P10 on 0.2, so the 0.08px warp is suppressed.
@@ -181,10 +162,10 @@ test("P5-P10 gate protects small-flow pixels in opening and closing extrapolatio
   // A uniform field has P5==P10, so it takes the old warp path.
   const controlNorms = new Array(33).fill(0.08);
   for (const variant of ["ext1", "ext2"] as const) {
-    const gated = await runMidpoint(8, 8, variant, false, ["ext1-2"],
-      { additional: 1, retained: [2] }, norms);
-    const control = await runMidpoint(8, 8, variant, false, ["ext1-2"],
-      { additional: 1, retained: [2] }, controlNorms);
+    const gated = await runMidpoint(8, 8, variant, false, true,
+      { additional: 1 }, norms);
+    const control = await runMidpoint(8, 8, variant, false, true,
+      { additional: 1 }, controlNorms);
     const generated = gated.messages.find((message) => message.requestId === 2 && message.type === "result");
     const oldWarp = control.messages.find((message) => message.requestId === 2 && message.type === "result");
     expect(generated?.type).toBe("result");
@@ -195,19 +176,10 @@ test("P5-P10 gate protects small-flow pixels in opening and closing extrapolatio
     const oldPixels = new Uint16Array(oldWarp.additionalGamma2Buffer!);
     expect(pixels[pixelIndex]).toBe(8000);
     expect(oldPixels[pixelIndex]).toBeLessThan(8000);
-    if (variant === "ext1") {
-      const retained = gated.messages.find((message) => message.requestId === 3 && message.type === "warp-result");
-      expect(retained?.type).toBe("warp-result");
-      if (retained?.type === "warp-result") {
-        // Reusing the same P5/P10 gate at a larger virtual-F scale must not
-        // resurrect the suppressed sub-threshold displacement.
-        expect(new Uint16Array(retained.gamma2Buffer)[pixelIndex]).toBe(8000);
-      }
-    }
     // The interpolation output uses the same raw Flow regardless of whether
     // an additional extrapolated frame is also requested.
-    const onlyMiddle = await runMidpoint(8, 8, undefined, false, ["ext1-2"],
-      { retained: [2] }, norms);
+    const onlyMiddle = await runMidpoint(8, 8, undefined, false, true,
+      undefined, norms);
     const midpoint = onlyMiddle.messages.find((message) => message.requestId === 2 && message.type === "result");
     expect(midpoint?.type).toBe("result");
     if (midpoint?.type === "result") {
@@ -265,12 +237,12 @@ test("STF range-4 warp preserves highlights above linear 1", async () => {
 
 
 describe("STF Phase 3 — reuse one bidirectional Flow for midpoint and outer warp", () => {
-  test("correct inverse-geometry factors are honored for retained opening warps", async () => {
+  test("correct inverse-geometry factors are honored for opening Average Flow warps", async () => {
     const ratio = 2 ** (1 / 6);
     const scales = [1, 2, 3].map((step) =>
       (1 - 2 ** (-step / 12)) / (1 - 1 / ratio));
     const { messages, flowComputations } = await runMidpoint(8, 8, undefined, false,
-      ["ext1", "ext1-2", "ext1-3"], { retained: scales });
+      false, { opening: scales }, undefined, ["ext1", "ext1-2", "ext1-3"]);
     expect(flowComputations).toBe(2);
     const warpResults = messages.filter((message) => message.type === "warp-result");
     expect(warpResults).toHaveLength(3);
@@ -313,7 +285,7 @@ test("STF Phase 4 supplies shared Gray8 proxies to both native Flow directions",
 
 test("STF expanded extrapolation reuses one Flow for 0.5 / 1 / 1.5 opening half-steps", async () => {
   const variants = ["ext1", "ext1-2", "ext1-3"] as const;
-  const { messages, flowComputations } = await runMidpoint(8, 8, undefined, true, [...variants]);
+  const { messages, flowComputations } = await runMidpoint(8, 8, undefined, true, false, undefined, undefined, [...variants]);
   expect(flowComputations).toBe(2); // once each direction, not once per output
   const videoWidth = 11;
   for (let i = 0; i < variants.length; i++) {
@@ -326,15 +298,13 @@ test("STF expanded extrapolation reuses one Flow for 0.5 / 1 / 1.5 opening half-
     expect(image[(videoWidth + expectedX) * 3]).toBe(8000);
     expect(image[(videoWidth + sourcePeak) * 3]).toBe(0);
   }
-  const released = messages.find((message) => message.requestId === 100);
-  expect(released?.type).toBe("error");
 });
 
 
 test("STF inverse-warp extrapolation expands a synthetic CoC at the geometrically requested radius", async () => {
   // Regression: the previous geometrical patch passed a *forward* displacement
   // multiplier into this *backward* sampler. Test the actual Worker response,
-  // including its retained-pair path, instead of asserting factors alone.
+  // using the active opening Average Flow path, instead of asserting factors alone.
   jest.resetModules();
   const oldWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
   const oldNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
@@ -417,7 +387,10 @@ test("STF inverse-warp extrapolation expands a synthetic CoC at the geometricall
     const scope = globalThis as unknown as ParentScope;
     if (!scope.onmessage) throw new Error("STF Optical Flow Worker onmessage is missing");
     await scope.onmessage({ data: { type: "interpolate", requestId: 300,
-      width, height, variant: "mid", retainPair: true,
+      width, height, variant: "mid",
+      openingAverageRadiusSpan: 1 / firstF - 1 / nextF,
+      additionalVariant: "ext2",
+      additionalVariantScale: ((nextF * Math.sqrt(nextF / firstF)) / nextF - 1) / (nextF / firstF - 1),
       previousImageId: 8, nextImageId: 9,
       previousGamma2Buffer: disc(radius).buffer,
       nextGamma2Buffer: disc(radius * ratio).buffer,
@@ -427,8 +400,9 @@ test("STF inverse-warp extrapolation expands a synthetic CoC at the geometricall
     for (const step of [1, 2, 3, 10]) {
       const virtualF = firstF * 2 ** (-step / 12);
       const inverseScale = (virtualF / firstF - 1) / (firstF / nextF - 1);
-      await scope.onmessage({ data: { type: "warp-retained", requestId: 300 + step,
-        previousImageId: 8, nextImageId: 9,
+      await scope.onmessage({ data: { type: "warp-opening-average", requestId: 300 + step,
+        sourceImageId: 8,
+        ...(step === 1 ? { sourceGamma2Buffer: disc(radius).buffer } : {}),
         variant: step === 1 ? "ext1" : `ext1-${step}` as "ext1-2" | "ext1-3" | "ext1-10",
         variantScale: inverseScale,
       } } as MessageEvent<OpticalFlowWorkerRequest>);
@@ -445,16 +419,10 @@ test("STF inverse-warp extrapolation expands a synthetic CoC at the geometricall
     // The closing half-step uses the *last* real RGB16 frame with the
     // backward (last -> previous) Flow; its radius must shrink, not expand.
     const closingF = nextF * Math.sqrt(nextF / firstF);
-    const closingInverseScale = (closingF / nextF - 1) / (nextF / firstF - 1);
-    await scope.onmessage({ data: { type: "warp-retained", requestId: 340,
-      previousImageId: 8, nextImageId: 9, variant: "ext2",
-      variantScale: closingInverseScale,
-    } } as MessageEvent<OpticalFlowWorkerRequest>);
-    const closingResult = responseMessages.find((entry) =>
-      entry.type === "warp-result" && entry.requestId === 340);
-    expect(closingResult?.type).toBe("warp-result");
-    if (closingResult?.type === "warp-result") {
-      const actualClosingRadius = measuredRadius(new Uint16Array(closingResult.gamma2Buffer));
+    const closingResult = responseMessages.find((entry) => entry.type === "result" && entry.requestId === 300);
+    expect(closingResult?.type).toBe("result");
+    if (closingResult?.type === "result" && closingResult.additionalGamma2Buffer) {
+      const actualClosingRadius = measuredRadius(new Uint16Array(closingResult.additionalGamma2Buffer));
       const expectedClosingRadius = radius * firstF / closingF;
       expect(Math.abs(actualClosingRadius - expectedClosingRadius)).toBeLessThanOrEqual(1.5);
       expect(actualClosingRadius).toBeLessThan(radius * firstF / nextF);
@@ -550,7 +518,7 @@ test("STF opening extrapolation 12 expands a synthetic disc to its 1/F target ra
     if (!scope.onmessage) throw new Error("Optical Flow worker request handler missing");
     await scope.onmessage({ data: {
       type: "interpolate", requestId: 500, width, height, variant: "mid",
-      retainPair: true, previousImageId: 9, nextImageId: 10,
+      openingAverageRadiusSpan: 1 / firstF - 1 / nextF, previousImageId: 9, nextImageId: 10,
       previousGamma2Buffer: disc(radius).buffer,
       nextGamma2Buffer: disc(radius * realRadiusRatio).buffer,
     } } as MessageEvent<OpticalFlowWorkerRequest>);
@@ -558,7 +526,8 @@ test("STF opening extrapolation 12 expands a synthetic disc to its 1/F target ra
       const virtualF = firstF * 2 ** (-step / 12);
       const inverseWarpScale = (1 - virtualF / firstF) / (1 - firstF / nextF);
       await scope.onmessage({ data: {
-        type: "warp-retained", requestId: 500 + step, previousImageId: 9, nextImageId: 10,
+        type: "warp-opening-average", requestId: 500 + step, sourceImageId: 9,
+        ...(step === 4 ? { sourceGamma2Buffer: disc(radius).buffer } : {}),
         variant: `ext1-${step}` as OpticalFlowOpeningVariant, variantScale: inverseWarpScale,
       } } as MessageEvent<OpticalFlowWorkerRequest>);
       const response = responses.find((item) => item.requestId === 500 + step);

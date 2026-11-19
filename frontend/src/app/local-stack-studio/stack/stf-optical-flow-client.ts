@@ -46,7 +46,6 @@ export class StfOpticalFlowClient {
   private request(
     message: Omit<Extract<OpticalFlowWorkerRequest, { type: "interpolate" }>, "requestId"> |
       Omit<Extract<OpticalFlowWorkerRequest, { type: "warmup" }>, "requestId"> |
-      Omit<Extract<OpticalFlowWorkerRequest, { type: "warp-retained" }>, "requestId"> |
       Omit<Extract<OpticalFlowWorkerRequest, { type: "warp-opening-average" }>, "requestId">,
     transfer: Transferable[] = [],
   ): Promise<OpticalFlowWorkerResponse> {
@@ -79,7 +78,6 @@ export class StfOpticalFlowClient {
     variantScale?: number,
     additionalVariant?: OpticalFlowVariant,
     additionalVariantScale?: number,
-    retainPair = false,
     persistFlow = false,
     sessionId?: string,
     sessionCreatedAt?: number,
@@ -102,7 +100,6 @@ export class StfOpticalFlowClient {
       ...(variantScale !== undefined ? { variantScale } : {}),
       ...(additionalVariant ? { additionalVariant } : {}),
       ...(additionalVariantScale !== undefined ? { additionalVariantScale } : {}),
-      ...(retainPair ? { retainPair: true } : {}),
       ...(openingAverageRadiusSpan !== undefined ? { openingAverageRadiusSpan } : {}),
       winsize,
       ...(persistFlow ? { persistFlow: true, sessionId, sessionCreatedAt, alignmentKey } : {}),
@@ -124,24 +121,6 @@ export class StfOpticalFlowClient {
       throw new Error("STF Flow returned an invalid additional RGB16 buffer");
     }
     return { pixels, ...(additionalPixels ? { additionalPixels } : {}), performance: result.performance };
-  }
-
-  async warpRetained(
-    width: number,
-    height: number,
-    previousImageId: number,
-    nextImageId: number,
-    variant: OpticalFlowVariant,
-    variantScale?: number,
-  ): Promise<{ pixels: Uint16Array; warpMs: number }> {
-    const result = await this.request({ type: "warp-retained", previousImageId, nextImageId, variant,
-      ...(variantScale !== undefined ? { variantScale } : {}) });
-    if (result.type !== "warp-result" || result.width !== width || result.height !== height) {
-      throw new Error("Invalid STF retained Flow warp result");
-    }
-    const pixels = new Uint16Array(result.gamma2Buffer);
-    if (pixels.length !== width * height * 3) throw new Error("Invalid STF retained Flow RGB16 buffer");
-    return { pixels, warpMs: result.warpMs };
   }
 
   async warpOpeningAverage(

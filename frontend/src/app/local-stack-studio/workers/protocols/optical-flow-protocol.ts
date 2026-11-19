@@ -11,7 +11,6 @@ export type OpticalFlowWorkerInterpolateRequest = {
   variantScale?: number;
   additionalVariant?: OpticalFlowVariant;
   additionalVariantScale?: number;
-  retainPair?: boolean;
   // Average opening-side extrapolation reuses up to the first three adjacent
   // real-pair forward fields, normalized by the positive 1/F interval.
   openingAverageRadiusSpan?: number;
@@ -36,15 +35,6 @@ export type OpticalFlowWorkerWarmupRequest = {
   requestId: number;
 };
 
-export type OpticalFlowWorkerWarpRetainedRequest = {
-  type: "warp-retained";
-  requestId: number;
-  previousImageId: number;
-  nextImageId: number;
-  variant: OpticalFlowVariant;
-  variantScale?: number;
-};
-
 export type OpticalFlowWorkerWarpOpeningAverageRequest = {
   type: "warp-opening-average";
   requestId: number;
@@ -58,7 +48,7 @@ export type OpticalFlowWorkerWarpOpeningAverageRequest = {
 
 export type OpticalFlowWorkerReleaseRetainedRequest = { type: "release-retained"; requestId: number };
 export type OpticalFlowWorkerRequest = OpticalFlowWorkerInterpolateRequest | OpticalFlowWorkerWarmupRequest |
-  OpticalFlowWorkerWarpRetainedRequest | OpticalFlowWorkerWarpOpeningAverageRequest | OpticalFlowWorkerReleaseRetainedRequest;
+  OpticalFlowWorkerWarpOpeningAverageRequest | OpticalFlowWorkerReleaseRetainedRequest;
 
 export type OpticalFlowPerformanceStats = {
   sourceWidth: number;

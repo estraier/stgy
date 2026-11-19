@@ -202,16 +202,6 @@ import type {
     return cache.forward;
   }
 
-  // Only one retained pair per outer Worker. The controller processes its
-  // extra opening-side frames serially, reusing the same bidirectional Flow.
-  // For a two-real-input session, the closing-side ext2 also uses this pair.
-  let retainedPair: {
-    previousImageId: number; nextImageId: number;
-    previous: Uint16Array; next: Uint16Array;
-    width: number; height: number; flowWidth: number; flowHeight: number;
-    forward: Float32Array; backward: Float32Array; normGates: NormGateCache;
-  } | null = null;
-
   // Opening-side average extrapolation keeps up to the first three native
   // forward Flow fields. IndexedDB persistence remains per real adjacent pair.
   const openingSamples: StfAverageFlowSample[] = [];
@@ -234,24 +224,7 @@ import type {
         return;
       }
       if (message.type === "release-retained") {
-        retainedPair = null;
         openingAverageWarp = null;
-        return;
-      }
-      if (message.type === "warp-retained") {
-        const pair = retainedPair;
-        if (!pair || pair.previousImageId !== message.previousImageId ||
-            pair.nextImageId !== message.nextImageId) {
-          throw new Error("No retained Optical Flow pair matches this extrapolation request");
-        }
-        const started = performance.now();
-        const gate = gateForVariant(message.variant, pair.forward, pair.backward, pair.normGates);
-        const output = synthesizeFlowVariant(message.variant, pair.previous, pair.next,
-          pair.width, pair.height, pair.forward, pair.backward, pair.flowWidth, pair.flowHeight, message.variantScale, gate);
-        const gamma2Buffer = transferableBuffer(output);
-        workerScope.postMessage({ type: "warp-result", requestId: message.requestId,
-          width: pair.width, height: pair.height, gamma2Buffer, warpMs: performance.now() - started },
-          [gamma2Buffer]);
         return;
       }
       if (message.type === "warp-opening-average") {
@@ -291,7 +264,6 @@ import type {
       if (message.type !== "interpolate") {
         throw new Error(`Unsupported Optical Flow worker request: ${String((message as { type?: unknown }).type)}`);
       }
-      retainedPair = null;
       const result = await interpolateMiddleFrame(message);
       const gamma2Buffer = transferableBuffer(result.gamma2Rgb);
       const additionalGamma2Buffer = result.additionalGamma2Rgb
@@ -442,17 +414,6 @@ import type {
         gateForVariant(message.additionalVariant, flows.forward, flows.backward, normGates))
       : undefined;
     const additionalWarpMs = additionalGamma2Rgb ? performance.now() - additionalWarpStartedAt : undefined;
-    if (message.retainPair) {
-      if (message.previousImageId === undefined || message.nextImageId === undefined) {
-        throw new Error("STF retained Flow requires both real-image IDs");
-      }
-      retainedPair = {
-        previousImageId: message.previousImageId, nextImageId: message.nextImageId,
-        previous: previousGamma2Rgb, next: nextGamma2Rgb,
-        width, height, flowWidth: flowSize.width, flowHeight: flowSize.height,
-        forward: flows.forward, backward: flows.backward, normGates,
-      };
-    }
     const flowCacheSaved = await cacheWrite;
     const flowCacheWriteMs = flowCacheSaved ? performance.now() - cacheWriteStarted : 0;
     const performanceStats: OpticalFlowPerformanceStats = {

@@ -1,7 +1,7 @@
 import { StfOpticalFlowClient } from "./stf-optical-flow-client";
 import type { OpticalFlowWorkerRequest, OpticalFlowWorkerResponse } from "../workers/protocols/optical-flow-protocol";
 
-test("STF Flow client passes geometric inverse-warp scales through both Worker request paths", async () => {
+test("STF Flow client passes geometric inverse-warp scales through active Worker request paths", async () => {
   const oldWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
   const oldWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
   const sent: OpticalFlowWorkerRequest[] = [];
@@ -26,7 +26,7 @@ test("STF Flow client passes geometric inverse-warp scales through both Worker r
             flowWidth: width, flowHeight: height,
             performance: { flowWorkerCount: 2 },
           } } as MessageEvent<OpticalFlowWorkerResponse>);
-        } else if (request.type === "warp-retained") {
+        } else if (request.type === "warp-opening-average") {
           this.onmessage?.({ data: {
             type: "warp-result", requestId: request.requestId, width, height,
             gamma2Buffer: new Uint16Array(width * height * 3).buffer, warpMs: 1,
@@ -47,18 +47,27 @@ test("STF Flow client passes geometric inverse-warp scales through both Worker r
       const prev = new Uint16Array(width * height * 3);
       const next = new Uint16Array(width * height * 3);
       await client.generate(width, height, 0, 1, prev, next,
-        "mid", undefined, "ext1-12", inverseScale, true, true, "session-a", 1700000000000, "align-1", undefined, 31);
-      await client.warpRetained(width, height, 0, 1, "ext1-12", inverseScale);
+        "mid", undefined, "ext2", inverseScale, true, "session-a", 1700000000000, "align-1", undefined, 31);
+      await client.warpOpeningAverage(width, height, 0, "ext1-12", inverseScale, prev);
       expect(sent).toHaveLength(2);
       expect(sent[0]).toMatchObject({
-        type: "interpolate", variant: "mid", additionalVariant: "ext1-12",
-        additionalVariantScale: inverseScale, retainPair: true, persistFlow: true, winsize: 31,
+        type: "interpolate", variant: "mid", additionalVariant: "ext2",
+        additionalVariantScale: inverseScale, persistFlow: true, winsize: 31,
         sessionId: "session-a", sessionCreatedAt: 1700000000000, alignmentKey: "align-1",
       });
       expect(sent[1]).toMatchObject({
-        type: "warp-retained", variant: "ext1-12", variantScale: inverseScale,
-        previousImageId: 0, nextImageId: 1,
+        type: "warp-opening-average", variant: "ext1-12", variantScale: inverseScale,
+        sourceImageId: 0,
       });
+      const openingRequest = sent[1];
+      if (openingRequest.type !== "warp-opening-average") {
+        throw new Error("Expected opening Average Flow request");
+      }
+      const sourceBuffer = openingRequest.sourceGamma2Buffer;
+      expect(Object.prototype.toString.call(sourceBuffer)).toBe("[object ArrayBuffer]");
+      expect(sourceBuffer?.byteLength).toBe(prev.byteLength);
+      expect(sourceBuffer).not.toBe(prev.buffer);
+      expect(new Uint16Array(sourceBuffer)).toEqual(prev);
     } finally {
       client.terminate();
     }

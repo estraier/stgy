@@ -46,7 +46,7 @@ export async function appendStfVirtualSource(
     progress?: (message: string) => void;
     // Injectable for deterministic cache/Flow integration tests.
     createFlowClient?: (onProgress?: (message: string) => void) => Pick<StfOpticalFlowClient,
-      "warmup" | "generate" | "warpRetained" | "warpOpeningAverage" | "releaseRetained" | "terminate">;
+      "warmup" | "generate" | "warpOpeningAverage" | "releaseRetained" | "terminate">;
   },
 ): Promise<void> {
   const { frameSet, reader } = options;
@@ -93,7 +93,7 @@ export async function appendStfVirtualSource(
   let cacheReadMs = 0;
   let flowComputeMs = 0;
   let client: Pick<StfOpticalFlowClient,
-    "warmup" | "generate" | "warpRetained" | "warpOpeningAverage" | "releaseRetained" | "terminate"> | null = null;
+    "warmup" | "generate" | "warpOpeningAverage" | "releaseRetained" | "terminate"> | null = null;
   try {
     for (const [middleIndex, middle] of frameSet.middleFrames.entries()) {
       if (!client) {
@@ -119,7 +119,7 @@ export async function appendStfVirtualSource(
         previous, next, "mid", undefined,
         isLastPair && closingOuterFrame ? closingOuterFrame.variant : undefined,
         isLastPair && closingOuterFrame ? closingOuterFrame.inverseWarpScale : undefined,
-        false, true,
+        true,
         options.sessionId, options.sessionCreatedAt, options.alignmentKey,
         openingAverageRadiusSpan, pairWinsize,
       );
