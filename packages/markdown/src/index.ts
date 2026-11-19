@@ -5058,111 +5058,111 @@ export function deserializeMdNodes(data: string): MdNode[] {
   return arr.map(decodeNode);
 }
 
+// Only unparsed spans are visited by later syntax rules. Existing MdNodes are
+// intentionally not reconsidered, preserving the original rule precedence.
+type PendingInline = { type: "pending"; text: string };
+
 function parseInline(text: string): MdNode[] {
-  const esc = /\\([\\~`*_\[\](){}#+:%$\|\-\.!@])/;
-  const bold = /\*\*([^\*]+)\*\*/;
-  const italic = /::([^:]+?)::/;
-  const ruby = /\{\{([^|{}]+?)\|([^{}]+?)\}\}/;
-  const small = /%%([^%]+?)%%/;
-  const mark = /@@([^@]+?)@@/;
-  const underline = /__([^_]+)__/;
-  const strike = /~~([^~]+)~~/;
-  const code = /``([^`]+)``/;
-  const math = /\$\$([^\n]*?)\$\$/;
-  const comment = /<\[[^\]]*?\]>/;
-  let m: RegExpExecArray | null;
-  if ((m = esc.exec(text))) {
-    return [
-      ...parseInline(text.slice(0, m.index)),
-      { type: "text", text: m[1]! },
-      ...parseInline(text.slice(m.index + 2)),
-    ];
+  // Keep these in the original precedence order. Applying one rule at a time
+  // reproduces recursive prefix/suffix splitting without rescanning the entire
+  // remaining suffix for each successive inline token.
+  const rules = [
+    /\\([\\~`*_\[\](){}#+:%$\|\-\.!@])/g,
+    /\{\{([^|{}]+?)\|([^{}]+?)\}\}/g,
+    /\*\*([^\*]+)\*\*/g,
+    /::([^:]+?)::/g,
+    /%%([^%]+?)%%/g,
+    /@@([^@]+?)@@/g,
+    /__([^_]+)__/g,
+    /~~([^~]+)~~/g,
+    /``([^`]+)``/g,
+    /\$\$([^\n]*?)\$\$/g,
+    /<\[[^\]]*?\]>/g,
+  ];
+  const decorationTags = ["strong", "em", "small", "mark", "u", "s"] as const;
+  let segments: (PendingInline | MdNode)[] = [{ type: "pending", text }];
+  for (let ruleIndex = 0; ruleIndex < rules.length; ruleIndex++) {
+    const rule = rules[ruleIndex]!;
+    const next: (PendingInline | MdNode)[] = [];
+    for (const segment of segments) {
+      if (segment.type !== "pending") {
+        next.push(segment);
+        continue;
+      }
+      rule.lastIndex = 0;
+      let last = 0;
+      let match: RegExpExecArray | null;
+      while ((match = rule.exec(segment.text))) {
+        if (match.index > last) {
+          next.push({
+            type: "pending",
+            text: segment.text.slice(last, match.index),
+          });
+        }
+        const inner = match[1]!;
+        switch (ruleIndex) {
+          case 0:
+            next.push({ type: "text", text: inner });
+            break;
+          case 1:
+            next.push({
+              type: "element",
+              tag: "ruby",
+              children: [
+                { type: "element", tag: "rb", children: parseInline(inner) },
+                { type: "element", tag: "rt", children: parseInline(match[2]!) },
+              ],
+            });
+            break;
+          case 2:
+          case 3:
+          case 4:
+          case 5:
+          case 6:
+          case 7:
+            next.push({
+              type: "element",
+              tag: decorationTags[ruleIndex - 2]!,
+              children: parseInline(inner),
+            });
+            break;
+          case 8:
+            next.push({
+              type: "element",
+              tag: "code",
+              children: [{ type: "text", text: inner }],
+            });
+            break;
+          case 9:
+            next.push({
+              type: "element",
+              tag: "math",
+              attrs: { tex: inner, "math-mode": "inline" },
+              children: [],
+            });
+            break;
+          // Case 10 is a comment: discard the complete match.
+        }
+        last = rule.lastIndex;
+      }
+      if (last < segment.text.length) {
+        next.push({ type: "pending", text: segment.text.slice(last) });
+      }
+    }
+    segments = next;
   }
-  if ((m = ruby.exec(text))) {
-    return [
-      ...parseInline(text.slice(0, m.index)),
-      {
-        type: "element",
-        tag: "ruby",
-        children: [
-          { type: "element", tag: "rb", children: parseInline(m[1]!) },
-          { type: "element", tag: "rt", children: parseInline(m[2]!) },
-        ],
-      },
-      ...parseInline(text.slice(m.index + m[0]!.length)),
-    ];
+  const nodes: MdNode[] = [];
+  for (const segment of segments) {
+    if (segment.type === "pending") {
+      nodes.push(...parseInlineLinks(segment.text));
+    } else {
+      nodes.push(segment);
+    }
   }
-  if ((m = bold.exec(text))) {
-    return [
-      ...parseInline(text.slice(0, m.index)),
-      { type: "element", tag: "strong", children: parseInline(m[1]!) },
-      ...parseInline(text.slice(m.index + m[0]!.length)),
-    ];
-  }
-  if ((m = italic.exec(text))) {
-    return [
-      ...parseInline(text.slice(0, m.index)),
-      { type: "element", tag: "em", children: parseInline(m[1]!) },
-      ...parseInline(text.slice(m.index + m[0]!.length)),
-    ];
-  }
-  if ((m = small.exec(text))) {
-    return [
-      ...parseInline(text.slice(0, m.index)),
-      { type: "element", tag: "small", children: parseInline(m[1]!) },
-      ...parseInline(text.slice(m.index + m[0]!.length)),
-    ];
-  }
-  if ((m = mark.exec(text))) {
-    return [
-      ...parseInline(text.slice(0, m.index)),
-      { type: "element", tag: "mark", children: parseInline(m[1]!) },
-      ...parseInline(text.slice(m.index + m[0]!.length)),
-    ];
-  }
-  if ((m = underline.exec(text))) {
-    return [
-      ...parseInline(text.slice(0, m.index)),
-      { type: "element", tag: "u", children: parseInline(m[1]!) },
-      ...parseInline(text.slice(m.index + m[0]!.length)),
-    ];
-  }
-  if ((m = strike.exec(text))) {
-    return [
-      ...parseInline(text.slice(0, m.index)),
-      { type: "element", tag: "s", children: parseInline(m[1]!) },
-      ...parseInline(text.slice(m.index + m[0]!.length)),
-    ];
-  }
-  if ((m = code.exec(text))) {
-    return [
-      ...parseInline(text.slice(0, m.index)),
-      {
-        type: "element",
-        tag: "code",
-        children: [{ type: "text", text: m[1]! }],
-      },
-      ...parseInline(text.slice(m.index + m[0]!.length)),
-    ];
-  }
-  if ((m = math.exec(text))) {
-    return [
-      ...parseInline(text.slice(0, m.index)),
-      {
-        type: "element",
-        tag: "math",
-        attrs: { tex: m[1]!, "math-mode": "inline" },
-        children: [],
-      },
-      ...parseInline(text.slice(m.index + m[0]!.length)),
-    ];
-  }
-  if ((m = comment.exec(text))) {
-    return [
-      ...parseInline(text.slice(0, m.index)),
-      ...parseInline(text.slice(m.index + m[0]!.length)),
-    ];
-  }
+  return nodes;
+}
+
+function parseInlineLinks(text: string): MdNode[] {
   const linkRe =
     /\[([^\]]+)\]\(((?:https?:\/\/[^\s)]+|\/[^\s)]+|[-_a-z0-9]+))\)/gi;
   const nodes: MdNode[] = [];

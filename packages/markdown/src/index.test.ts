@@ -180,6 +180,57 @@ describe("mdConvertAsciiToFullwidth", () => {
 });
 
 describe("parseMarkdown", () => {
+  it("handles thousands of adjacent inline spans without recursive suffix parsing", () => {
+    const count = 5000;
+    const result = parseMarkdown("**item** ".repeat(count));
+    expect(result).toHaveLength(1);
+    const paragraph = result[0];
+    expect(paragraph?.type).toBe("element");
+    if (paragraph?.type !== "element") return;
+    expect(paragraph.children).toHaveLength(count * 2);
+    expect(paragraph.children[0]).toStrictEqual({
+      type: "element",
+      tag: "strong",
+      children: [{ type: "text", text: "item" }],
+    });
+    expect(paragraph.children[count * 2 - 2]).toStrictEqual({
+      type: "element",
+      tag: "strong",
+      children: [{ type: "text", text: "item" }],
+    });
+    expect(paragraph.children[count * 2 - 1]).toStrictEqual({
+      type: "text",
+      text: " ",
+    });
+  });
+
+  it("preserves inline precedence, nesting, and escaped delimiters", () => {
+    const source =
+      "**before\\*after** \\::literal:: {{base **strong**|read ::em::}}";
+    expect(mdRenderHtml(parseMarkdown(source))).toBe(
+      "<p>**before*after** ::literal:: " +
+        "<ruby><rb>base <strong>strong</strong></rb>" +
+        "<rt>read <em>em</em></rt></ruby></p>",
+    );
+  });
+
+  it("preserves inline comment boundaries and existing link parsing", () => {
+    expect(stripPos(parseMarkdown("a<[ignored]>b"))).toStrictEqual([
+      {
+        type: "element",
+        tag: "p",
+        children: [
+          { type: "text", text: "a" },
+          { type: "text", text: "b" },
+        ],
+      },
+    ]);
+    expect(makeHtml("[first](/x) https://example.com/ [second](wiki-en)")).toBe(
+      '<p><a href="/x">first</a> https://example.com/ ' +
+        '<a href="https://en.wikipedia.org/wiki/second">second</a></p>',
+    );
+  });
+
   it("empty body", () => {
     const mdText = "";
     expect(parseMarkdown(mdText)).toStrictEqual([]);
