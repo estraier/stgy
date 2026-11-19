@@ -171,6 +171,49 @@ test("IndexedDB retains cached pairs, skips over-budget writes, and frees space 
   }
 });
 
+test("full-cache admission rejects without reading either Flow vector", async () => {
+  const fake = useMemoryIndexedDb();
+  const now = Date.now();
+  const first = stfFlowSessionKey("full", 0, 1, "align", 2, 2)!;
+  const second = stfFlowSessionKey("full", 1, 2, "align", 2, 2)!;
+  const vector = new Float32Array(8);
+  let indexedReads = 0;
+  // A proxy remains instanceof Float32Array but counts element accesses.
+  const watched = new Proxy(vector, {
+    get(target, property) {
+      if (typeof property === "string" && /^(0|[1-9]\d*)$/.test(property)) indexedReads++;
+      return Reflect.get(target, property, target);
+    },
+  }) as Float32Array;
+  try {
+    expect(await writeStfCachedFlow("full", first, now, 2, 2, vector, vector, 64)).toBe(true);
+    expect(await writeStfCachedFlow("full", second, now, 2, 2, watched, watched, 64)).toBe(false);
+    expect(indexedReads).toBe(0);
+    expect(fake.tables.get("pairs")?.size).toBe(1);
+    // Existing cached data is still validated on reads.
+    expect(await readStfCachedFlow("full", first, 2, 2)).not.toBeNull();
+  } finally { fake.restore(); }
+});
+
+test("invalid Flow vectors are rejected before persistence and corrupt reads are discarded", async () => {
+  const fake = useMemoryIndexedDb();
+  const now = Date.now();
+  const key = stfFlowSessionKey("s", 0, 1, "align", 2, 2)!;
+  const good = new Float32Array(8);
+  const bad = new Float32Array(8);
+  bad[7] = Infinity;
+  try {
+    expect(await writeStfCachedFlow("s", key, now, 2, 2, bad, good, 128)).toBe(false);
+    expect(fake.tables.get("pairs")?.size).toBe(0);
+    expect(await writeStfCachedFlow("s", key, now, 2, 2, good, good, 128)).toBe(true);
+    const pair = fake.tables.get("pairs")!.get(key) as { forward: Float32Array };
+    pair.forward[7] = NaN;
+    expect(await readStfCachedFlow("s", key, 2, 2)).toBeNull();
+    expect(fake.tables.get("pairs")?.size).toBe(0);
+    expect(fake.tables.get("metadata")?.size).toBe(0);
+  } finally { fake.restore(); }
+});
+
 test("sequential re-merges have stable Flow hits, not cyclic LRU cache misses", async () => {
   const fake = useMemoryIndexedDb();
   const flow = new Float32Array(8); // Each bidirectional pair is 64 bytes.

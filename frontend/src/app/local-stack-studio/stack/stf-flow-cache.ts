@@ -45,7 +45,7 @@ type FlowRecord = {
 type FlowMetadata = { key: string; sessionId: string; bytes: number; createdAt: number };
 export type StfCachedBidirectionalFlow = { forward: Float32Array; backward: Float32Array };
 
-export function validateStfCachedFlow(
+function validateStfCachedFlowShape(
   value: unknown, sessionId: string, width: number, height: number, now = Date.now(),
 ): value is FlowRecord {
   if (!value || typeof value !== "object" || !sessionId) return false;
@@ -56,9 +56,17 @@ export function validateStfCachedFlow(
   const expected = width * height * 2;
   if (!Number.isSafeInteger(expected) || expected <= 0 ||
       item.forward.length !== expected || item.backward.length !== expected) return false;
-  // Corrupt or nonfinite vectors cannot enter a source blend.
+  return true;
+}
+
+/** Read hits must check every vector: IndexedDB contents are not trusted. */
+export function validateStfCachedFlow(
+  value: unknown, sessionId: string, width: number, height: number, now = Date.now(),
+): value is FlowRecord {
+  if (!validateStfCachedFlowShape(value, sessionId, width, height, now)) return false;
+  const expected = width * height * 2;
   for (let i = 0; i < expected; i++) {
-    if (!Number.isFinite(item.forward[i]) || !Number.isFinite(item.backward[i])) return false;
+    if (!Number.isFinite(value.forward[i]) || !Number.isFinite(value.backward[i])) return false;
   }
   return true;
 }
@@ -162,6 +170,10 @@ function storeIfSpace(db: IDBDatabase, record: FlowRecord, maxBytes: number): Pr
       }
       const incomingBytes = record.forward.byteLength + record.backward.byteLength;
       if (retainedBytes + incomingBytes > maxBytes) return;
+      // Scan the large vector arrays only once admission is possible. This
+      // avoids an O(pixels) pass for every rejected write to a full cache.
+      // Keep this within the live transaction callback before enqueueing put().
+      if (!validateStfCachedFlow(record, record.sessionId, record.width, record.height)) return;
       flows.put(record);
       metadata.put({ key: record.key, sessionId: record.sessionId,
         bytes: incomingBytes, createdAt: record.createdAt } satisfies FlowMetadata);
@@ -183,7 +195,7 @@ export async function writeStfCachedFlow(
   if (!sessionId || !key || !Number.isFinite(maxBytes) || maxBytes <= 0) return false;
   const record: FlowRecord = { key, sessionId, width, height,
     forward, backward, createdAt: sessionCreatedAt };
-  if (!validateStfCachedFlow(record, sessionId, width, height)) return false;
+  if (!validateStfCachedFlowShape(record, sessionId, width, height)) return false;
   const bytes = forward.byteLength + backward.byteLength;
   if (bytes > maxBytes) return false;
   let db: IDBDatabase | null = null;
