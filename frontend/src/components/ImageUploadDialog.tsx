@@ -24,7 +24,9 @@ import {
   type LibRawMetadataLike,
   type LibRawSettingsLike,
   type LibRawThumbnailDataLike,
+  createRawLinearProPhotoSettings,
 } from "@/image/libraw";
+import { readRawInputBytes, releaseRawInputBytes } from "@/image/raw-input-bytes";
 import { attachWhitelistedMetadata, extractWhitelistedMetadataFromFile } from "@/image/exif-metadata";
 import {
   presignImageUpload,
@@ -507,19 +509,7 @@ type EditableImageMeta = {
   previewUrl?: string;
 };
 
-const RAW_DECODE_SETTINGS: LibRawSettingsLike = {
-  outputColor: 4,
-  outputBps: 16,
-  gamm: [1, 1, 0, 0, 0, 0],
-  useCameraWb: true,
-  useCameraMatrix: 1,
-  noAutoBright: true,
-  adjustMaximumThr: 0,
-  threshold: 0,
-  fbddNoiserd: 0,
-  highlight: 2,
-  userQual: 11,
-};
+const RAW_DECODE_SETTINGS: LibRawSettingsLike = createRawLinearProPhotoSettings();
 
 type ImageLoadEmbeddedPreview = {
   blob: Blob;
@@ -757,7 +747,7 @@ async function readRawMeta(file: File): Promise<EditableImageMeta> {
       );
     });
     await Promise.race([
-      raw.open(new Uint8Array(await file.arrayBuffer())),
+      raw.open(await readRawInputBytes(file)),
       workerFailure.promise,
       timeout,
     ]);
@@ -8420,7 +8410,7 @@ async function readRawThumbnailDebugStatisticsUncached(
     raw = await createLibRawInstance();
     workerFailure = createLibRawWorkerFailure(raw);
     await Promise.race([
-      raw.open(new Uint8Array(await file.arrayBuffer())),
+      raw.open(await readRawInputBytes(file)),
       workerFailure.promise,
     ]);
     if (!raw.thumbnailData) return undefined;
@@ -9745,9 +9735,7 @@ async function decodeRawPreviewImage(
   try {
     raw = await runStage("Loading RAW preview decoder…", () => createLibRawInstance());
     workerFailure = createLibRawWorkerFailure(raw);
-    const rawBytes = await runStage("Reading RAW for preview…", async () =>
-      new Uint8Array(await file.arrayBuffer()),
-    );
+    const rawBytes = await runStage("Reading RAW for preview…", () => readRawInputBytes(file));
     const settings: LibRawSettingsLike = {
       ...RAW_DECODE_SETTINGS,
       userQual: RAW_PREVIEW_DEMOSAIC_QUALITY,
@@ -9913,8 +9901,8 @@ async function decodeRawMasterImage(
   try {
     raw = await measureRawTiming(timing, "master", "Loading RAW master decoder", () => createLibRawInstance());
     workerFailure = createLibRawWorkerFailure(raw);
-    const rawBytes = await measureRawTiming(timing, "master", "Reading RAW for master", async () =>
-      new Uint8Array(await file.arrayBuffer()),
+    const rawBytes = await measureRawTiming(timing, "master", "Reading RAW for master", () =>
+      readRawInputBytes(file),
     );
     const plannedMedPasses = rawMedianDenoisePassesForIso(plan.previewIso ?? Number.NaN);
     const settings: LibRawSettingsLike = {
@@ -9939,12 +9927,12 @@ async function decodeRawMasterImage(
       // when the LibRaw adapter has not transferred/detached them.
       const reopenBytes = rawBytes.byteLength > 0
         ? rawBytes
-        : new Uint8Array(await measureRawTiming(
+        : await measureRawTiming(
             timing,
             "master",
             "Rereading RAW for master median denoise",
-            () => file.arrayBuffer(),
-          ));
+            () => readRawInputBytes(file),
+          );
       await measureRawTiming(timing, "master", "Reopening RAW master for median denoise", () =>
         Promise.race([
           raw!.open(reopenBytes, {
@@ -10043,8 +10031,8 @@ async function decodeRawDenoiseImage(
     const denoiseSettings = rawDenoiseDecodeSettingsForIso(isoValue);
     raw = await measureRawTiming(timing, "denoise", "Loading RAW denoise decoder", () => createLibRawInstance());
     workerFailure = createLibRawWorkerFailure(raw);
-    const rawBytes = await measureRawTiming(timing, "denoise", "Reading RAW for denoise", async () =>
-      new Uint8Array(await file.arrayBuffer()),
+    const rawBytes = await measureRawTiming(timing, "denoise", "Reading RAW for denoise", () =>
+      readRawInputBytes(file),
     );
     const settings: LibRawSettingsLike = {
       ...RAW_DECODE_SETTINGS,
@@ -10156,7 +10144,7 @@ async function decodeRawImage(
       rawDemosaicQuality,
       rawHighlightMode,
     );
-  });
+  }).finally(() => releaseRawInputBytes(file));
   // Preview is the foreground result. Master starts only after Preview has
   // completed, and Denoise starts only after Master has completed. Background
   // failures do not invalidate Preview/Master editing.
@@ -10179,8 +10167,8 @@ async function decodeRawUploadFastPath(
   try {
     raw = await measureRawTiming(timing, "master", "Loading RAW master decoder", () => createLibRawInstance());
     workerFailure = createLibRawWorkerFailure(raw);
-    const rawBytes = await measureRawTiming(timing, "master", "Reading RAW for master", async () =>
-      new Uint8Array(await file.arrayBuffer()),
+    const rawBytes = await measureRawTiming(timing, "master", "Reading RAW for master", () =>
+      readRawInputBytes(file),
     );
     const settings: LibRawSettingsLike = {
       ...RAW_DECODE_SETTINGS,
@@ -10212,7 +10200,7 @@ async function decodeRawUploadFastPath(
     if (medPasses > 0) {
       const reopenBytes = rawBytes.byteLength > 0
         ? rawBytes
-        : new Uint8Array(await file.arrayBuffer());
+        : await readRawInputBytes(file);
       await measureRawTiming(timing, "master", "Reopening RAW master for median denoise", () =>
         Promise.race([
           raw!.open(reopenBytes, { ...settings, medPasses }),
@@ -10314,6 +10302,7 @@ async function decodeRawUploadFastPath(
     workerFailure?.cleanup();
     if (raw?.dispose) raw.dispose();
     else raw?.worker?.terminate();
+    releaseRawInputBytes(file);
   }
 }
 

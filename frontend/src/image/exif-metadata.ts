@@ -1,4 +1,5 @@
 import { createLibRawInstance, createLibRawWorkerFailure, isRawImageFile, type LibRawMetadataLike } from "./libraw";
+import { readRawInputBytes } from "./raw-input-bytes";
 
 export type PreservedGpsMetadata = {
   latitude: number;
@@ -703,17 +704,76 @@ function preferEmbeddedMetadata(
   return compactMetadata({ ...fallback, ...embedded, gps: embedded.gps ?? fallback.gps });
 }
 
+/**
+ * LIS RAW selection probe. Read and open the RAW file only once while preserving
+ * the two LibRaw metadata modes: metadata(false) for dimensions and
+ * metadata(true) for the EXIF fallback. Embedded EXIF always takes precedence.
+ * Other callers of probeEditableImage/extractWhitelistedMetadataFromFile keep
+ * their existing behavior.
+ */
+export async function probeRawImageSizeAndMetadata(file: File): Promise<{
+  width: number;
+  height: number;
+  metadata: PreservedImageMetadata | null;
+}> {
+  let raw: Awaited<ReturnType<typeof createLibRawInstance>> | null = null;
+  let workerFailure: ReturnType<typeof createLibRawWorkerFailure> | null = null;
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let dimensions: { width: number; height: number };
+  let embedded: PreservedImageMetadata | null;
+  try {
+    const bytes = await readRawInputBytes(file);
+    embedded = extractWhitelistedMetadataFromBuffer(bytes.buffer as ArrayBuffer);
+    raw = await createLibRawInstance();
+    workerFailure = createLibRawWorkerFailure(raw);
+    const timeout = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(
+        () => reject(new Error("RAW decoder did not respond while reading metadata.")),
+        30_000,
+      );
+    });
+    await Promise.race([raw.open(bytes), workerFailure.promise, timeout]);
+    const basic = await Promise.race([raw.metadata(false), workerFailure.promise, timeout]);
+    dimensions = { width: Number(basic?.width || 0), height: Number(basic?.height || 0) };
+    // Keep the existing 30-second timeout for the dimensions probe only.
+    // The previous full-metadata extraction had no timeout.
+    if (timeoutId !== null) clearTimeout(timeoutId);
+    timeoutId = null;
+
+    // Full metadata is best-effort in the existing EXIF extraction API.
+    let fallback: PreservedImageMetadata | null = null;
+    if (dimensions.width > 0 && dimensions.height > 0) {
+      try {
+        const full = await Promise.race([raw.metadata(true), workerFailure.promise]);
+        fallback = extractWhitelistedMetadataFromLibRaw(full);
+      } catch {
+        // Preserve embedded EXIF when the optional full metadata read fails.
+      }
+    }
+    return { ...dimensions, metadata: preferEmbeddedMetadata(embedded, fallback) };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`RAW metadata probe failed: ${message}`);
+  } finally {
+    if (timeoutId !== null) clearTimeout(timeoutId);
+    workerFailure?.cleanup();
+    raw?.dispose?.();
+  }
+}
+
 export async function extractWhitelistedMetadataFromFile(file: File): Promise<PreservedImageMetadata | null> {
-  const buffer = await file.arrayBuffer();
+  const rawFile = isRawImageFile(file.name, file.type);
+  const rawBytes = rawFile ? await readRawInputBytes(file) : null;
+  const buffer = rawBytes ? (rawBytes.buffer as ArrayBuffer) : await file.arrayBuffer();
   const embedded = extractWhitelistedMetadataFromBuffer(buffer);
-  if (!isRawImageFile(file.name, file.type)) return embedded;
+  if (!rawFile) return embedded;
 
   let raw = null;
   let workerFailure = null;
   try {
     raw = await createLibRawInstance();
     workerFailure = createLibRawWorkerFailure(raw);
-    await Promise.race([raw.open(new Uint8Array(buffer)), workerFailure.promise]);
+    await Promise.race([raw.open(rawBytes!), workerFailure.promise]);
     const metadata = await Promise.race([raw.metadata(true), workerFailure.promise]);
     return preferEmbeddedMetadata(embedded, extractWhitelistedMetadataFromLibRaw(metadata));
   } catch {

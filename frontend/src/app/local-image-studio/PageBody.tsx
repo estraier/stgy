@@ -25,10 +25,11 @@ import type { ImageEditClarityMap } from "@/components/image-editor/clarity";
 import type { DefringeAnalysisMap } from "@/components/image-editor/defringe";
 import { Config } from "@/config";
 import { isRawImageFile } from "@/image/libraw";
-import { attachWhitelistedMetadata, extractWhitelistedMetadataFromFile, type PreservedImageMetadata } from "@/image/exif-metadata";
+import { attachWhitelistedMetadata, extractWhitelistedMetadataFromFile, probeRawImageSizeAndMetadata, type PreservedImageMetadata } from "@/image/exif-metadata";
 import { warmupLensfunRuntime } from "@/image/lensfun";
 import { formatBytes } from "@/utils/format";
 import { getBrowserLocale } from "@/utils/locale";
+import { LatestFileSelection } from "./file-selection";
 
 type SourceImage = {
   file: File;
@@ -190,6 +191,7 @@ async function readImageSize(file: File): Promise<{ width: number; height: numbe
 
 export default function LocalImageStudio() {
   const inputRef = useRef<HTMLInputElement>(null);
+  const fileSelectionRef = useRef(new LatestFileSelection());
   const resultUrlRef = useRef<string | null>(null);
   const resultTimingRef = useRef<{
     url: string;
@@ -277,6 +279,7 @@ export default function LocalImageStudio() {
     setResult(null);
   }, []);
 
+  useEffect(() => () => fileSelectionRef.current.invalidate(), []);
   useEffect(() => clearResult, [clearResult]);
   useEffect(() => clearEditedVariant, [clearEditedVariant]);
   useEffect(() => clearRawDevelopment, [clearRawDevelopment]);
@@ -434,17 +437,24 @@ export default function LocalImageStudio() {
 
   const onChooseFile = useCallback(async (file: File | undefined) => {
     if (!file) return;
+    const selection = fileSelectionRef.current.start();
     setError(null);
     clearResult();
     clearEditedVariant();
     clearRawDevelopment();
+    setSource(null);
+    setEditing(false);
     try {
-      const [size, bestOutputColorProfile, metadata] = await Promise.all([
-        readImageSize(file),
+      const [info, bestOutputColorProfile] = await Promise.all([
+        isRawImageFile(file.name, file.type)
+          ? probeRawImageSizeAndMetadata(file)
+          : Promise.all([readImageSize(file), extractWhitelistedMetadataFromFile(file)])
+            .then(([size, metadata]) => ({ ...size, metadata })),
         detectBestEditableImageOutputColorProfile(file),
-        extractWhitelistedMetadataFromFile(file),
       ]);
-      const { width, height } = size;
+      if (!fileSelectionRef.current.isCurrent(selection)) return;
+      const { width, height, metadata } = info;
+      if (!(width > 0 && height > 0)) throw new Error("Could not determine the image dimensions.");
       const edit = buildDefaultEditParams(width, height);
       const nextSource: SourceImage = {
         file,
@@ -457,11 +467,14 @@ export default function LocalImageStudio() {
       setSource(nextSource);
       setEditing(true);
     } catch (e) {
+      if (!fileSelectionRef.current.isCurrent(selection)) return;
       setSource(null);
       setEditing(false);
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      if (inputRef.current) inputRef.current.value = "";
+      if (fileSelectionRef.current.isCurrent(selection) && inputRef.current) {
+        inputRef.current.value = "";
+      }
     }
   }, [clearEditedVariant, clearRawDevelopment, clearResult]);
 

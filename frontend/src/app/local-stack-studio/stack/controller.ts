@@ -11,7 +11,8 @@ import {
   buildRawLensfunCorrection,
   lensfunOutputRegion,
 } from "@/image/lensfun";
-import { createLibRawInstance, createLibRawWorkerFailure, isRawImageFile } from "@/image/libraw";
+import { createLibRawInstance, createLibRawWorkerFailure, isRawImageFile, createRawLinearProPhotoSettings } from "@/image/libraw";
+import { readRawInputBytes, releaseRawInputBytes } from "@/image/raw-input-bytes";
 import { encodeFromLinearProPhoto } from "@/image/tiff";
 import type { DecodedRgbImage16, ImageEditOutputColorProfile } from "@/components/image-editor/types";
 import { applySharpenToCanvas, applySharpenToRgb16 } from "@/components/image-editor/sharpen";
@@ -82,6 +83,7 @@ import {
   writeCanonicalStoredImage,
 } from "./canonical-source";
 import { AlignedImageReader } from "./aligned-reader";
+import { linearProPhotoFloatsToHdr1AndBrightness, linearProPhotoFloatsToHdr2AndBrightness } from "./hdr-input";
 import {
   detectStackInputBits,
   type LocalStackStudioInfoReport,
@@ -131,7 +133,6 @@ import {
   ROLLOFF_SAVING_LIMIT_FACTOR,
   applyRolloffMaxChannelLinearRgbInto,
   applyScaledLogLinear,
-  applySigmoidLinear,
   applySigmoidLinearAtMidpoint,
   clamp01,
   srgbChannelToLinear,
@@ -161,18 +162,9 @@ type LocalStackStudioOptions = {
 
 export function mountLocalStackStudio(options: LocalStackStudioOptions = {}): () => void {
 const RAW_DECODE_SETTINGS = {
-  outputColor: 4,
-  outputBps: 16,
-  gamm: [1, 1, 0, 0, 0, 0],
-  useCameraWb: true,
-  useCameraMatrix: 1,
-  noAutoBright: true,
-  adjustMaximumThr: 0,
+  ...createRawLinearProPhotoSettings(),
   threshold: 0,
   medPasses: 0,
-  fbddNoiserd: 0,
-  highlight: 2,
-  userQual: 11,
 };
 const PREVIEW_TARGET_PIXELS = 1_000_000;
 const CENTER_FILL_GRAY_BYTE = 128;
@@ -200,7 +192,6 @@ const SINGLE_SHOT_HDR1_EXPOSURE_TIMES = new Float32Array([1, 4, 16]);
 // c=4 matches the previous ±2 EV material strength while avoiding linear exposure scaling.
 const SINGLE_SHOT_HDR2_SCALED_LOGS = new Float32Array([-4, 0, 4]);
 const SINGLE_SHOT_HDR2_SIGMOID_GAINS = new Float32Array([4, 2, 4]);
-const MULTI_SHOT_HDR2_SIGMOID_GAIN = 4;
 const SINGLE_SHOT_HDR2_BASE_HEADROOM_GAIN = 0.95;
 const SINGLE_SHOT_HDR_SATURATION_WEIGHT = 0.1;
 const SINGLE_SHOT_HDR_EXPOSURE_WEIGHT = 1.0;
@@ -785,12 +776,21 @@ listen(processButton, "click", async () => {
       }
     }
     const previousCanonicalSession = currentCanonicalSession;
-    currentCanonicalSession = await ensureCanonicalSession(
-      files,
-      inputInfos,
-      currentCanonicalSession,
-      requireStfToneStatistics,
-    );
+    try {
+      currentCanonicalSession = await ensureCanonicalSession(
+        files,
+        inputInfos,
+        currentCanonicalSession,
+        requireStfToneStatistics,
+      );
+    } finally {
+      // Metadata and canonical RAW development are complete (or aborted).
+      // Skipped STF duplicates and already-complete canonical sessions also
+      // release any temporarily retained compressed RAW bytes.
+      for (const file of metadataFiles) {
+        if (isRawImageFile(file.name, file.type)) releaseRawInputBytes(file);
+      }
+    }
     trace.canonicalCacheReused = previousCanonicalSession !== null && previousCanonicalSession === currentCanonicalSession;
     if (previousCanonicalSession !== currentCanonicalSession) {
       resetStfGateCache();
@@ -3616,22 +3616,6 @@ async function computeFocusSharpnessFeaturesParallel(
   });
 }
 
-function linearProPhotoFloatsToHdr1AndBrightness(linear) {
-  const floats = new Float32Array(linear.length);
-  let brightnessSum = 0;
-  const pixels = linear.length / 3;
-  for (let i=0;i<linear.length;i+=3) {
-    const r=clamp01(linear[i]), g=clamp01(linear[i+1]), b=clamp01(linear[i+2]);
-    floats[i]=r; floats[i+1]=g; floats[i+2]=b;
-    brightnessSum += toneLinearIntensity(r,g,b);
-  }
-  return { floats, brightness: pixels > 0 ? brightnessSum / pixels : 0 };
-}
-
-function linearProPhotoFloatsToHdr2AndBrightness(linear) {
-  return linearProPhotoArrayToHdr2FloatsAndBrightness(linear);
-}
-
 async function processSingleInputHdrFromCanonical(baseLinear, width, height, mergePlan, outputColorSpace) {
   const materials = mergePlan.syntheticMaterials;
   if (!Array.isArray(materials) || materials.length !== 3) throw new Error(`Single-input ${mergePlan.mode.toUpperCase()} requires three synthetic materials.`);
@@ -4244,43 +4228,6 @@ function applyLinearGainInPlace(linear, gain) {
   }
 }
 
-function linearProPhotoArrayToHdr2FloatsAndBrightness(linear) {
-  if (!(linear instanceof Float32Array)) {
-    throw new Error("Expected a linear ProPhoto RGB Float32Array.");
-  }
-  const floats = new Float32Array(linear.length);
-  let brightnessSum = 0;
-  const pixelCount = linear.length / 3;
-  for (let i = 0; i < linear.length; i += 3) {
-    let r = linear[i];
-    let g = linear[i + 1];
-    let b = linear[i + 2];
-    const sourceLuminance = toneLinearIntensity(r, g, b);
-    if (sourceLuminance > 1e-12) {
-      const targetLuminance = applySigmoidLinear(sourceLuminance, MULTI_SHOT_HDR2_SIGMOID_GAIN);
-      const scale = targetLuminance / sourceLuminance;
-      r *= scale;
-      g *= scale;
-      b *= scale;
-    }
-    r = Math.max(0, r);
-    g = Math.max(0, g);
-    b = Math.max(0, b);
-    const maxChannel = Math.max(r, g, b);
-    if (maxChannel > 1) {
-      const fitScale = 1 / maxChannel;
-      r *= fitScale;
-      g *= fitScale;
-      b *= fitScale;
-    }
-    brightnessSum += toneLinearIntensity(r, g, b);
-    floats[i] = r;
-    floats[i + 1] = g;
-    floats[i + 2] = b;
-  }
-  return { floats, brightness: pixelCount > 0 ? brightnessSum / pixelCount : 0 };
-}
-
 function applyFinalStorageRolloffInPlace(linear, width, height) {
   if (!(linear instanceof Float32Array) || linear.length !== width * height * 3) return;
   let actualMax = 0;
@@ -4753,11 +4700,12 @@ async function readRawInputInfo(file) {
   try {
     raw = await createLibRawInstance();
     workerFailure = createLibRawWorkerFailure(raw);
-    const rawBuffer = await file.arrayBuffer();
+    const rawBytes = await readRawInputBytes(file);
+    const rawBuffer = rawBytes.buffer;
     const { extractWhitelistedMetadataFromBuffer, extractWhitelistedMetadataFromLibRaw } = await loadExifMetadataModule();
     const embeddedMetadata = extractWhitelistedMetadataFromBuffer(rawBuffer);
     await Promise.race([
-      raw.open(new Uint8Array(rawBuffer)),
+      raw.open(rawBytes),
       workerFailure.promise,
     ]);
     const metadata = await Promise.race([raw.metadata(true), workerFailure.promise]);
@@ -5262,7 +5210,7 @@ async function decodeRawFileToDecodedImage(file, knownLensMetadata = null, known
     raw = await createLibRawInstance();
     workerFailure = createLibRawWorkerFailure(raw);
     await Promise.race([
-      raw.open(new Uint8Array(await file.arrayBuffer()), RAW_DECODE_SETTINGS),
+      raw.open(await readRawInputBytes(file), RAW_DECODE_SETTINGS),
       workerFailure.promise,
     ]);
 
@@ -5337,6 +5285,7 @@ async function decodeRawFileToDecodedImage(file, knownLensMetadata = null, known
   } finally {
     workerFailure?.cleanup?.();
     raw?.dispose?.();
+    releaseRawInputBytes(file);
   }
 }
 

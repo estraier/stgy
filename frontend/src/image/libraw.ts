@@ -23,6 +23,22 @@ export type LibRawSettingsLike = {
   userQual?: number;
 };
 
+/** Standard scene-linear ProPhoto RAW development defaults for both studios. */
+export function createRawLinearProPhotoSettings(): LibRawSettingsLike {
+  return {
+    outputColor: 4,
+    outputBps: 16,
+    gamm: [1, 1, 0, 0, 0, 0],
+    useCameraWb: true,
+    useCameraMatrix: 1,
+    noAutoBright: true,
+    adjustMaximumThr: 0,
+    fbddNoiserd: 0,
+    highlight: 2,
+    userQual: 11,
+  };
+}
+
 export type LibRawLensMakerNotesLike = {
   Lens?: string;
   CurFocal?: number;
