@@ -495,10 +495,20 @@ import type {
         const ff10 = (flowRow00 + flowX1) * 2;
         const ff01 = (flowRow10 + flowX0) * 2;
         const ff11 = (flowRow10 + flowX1) * 2;
-        const forwardX = flowForward[ff00] * flowW00 + flowForward[ff10] * flowW10 + flowForward[ff01] * flowW01 + flowForward[ff11] * flowW11;
-        const forwardY = flowForward[ff00 + 1] * flowW00 + flowForward[ff10 + 1] * flowW10 + flowForward[ff01 + 1] * flowW01 + flowForward[ff11 + 1] * flowW11;
-        const backwardX = flowBackward[ff00] * flowW00 + flowBackward[ff10] * flowW10 + flowBackward[ff01] * flowW01 + flowBackward[ff11] * flowW11;
-        const backwardY = flowBackward[ff00 + 1] * flowW00 + flowBackward[ff10 + 1] * flowW10 + flowBackward[ff01 + 1] * flowW01 + flowBackward[ff11 + 1] * flowW11;
+        // Extrapolation samples only its source direction. Avoid interpolating
+        // the unused Flow field for every output pixel; midpoint still needs both.
+        const forwardX = usePrevious
+          ? flowForward[ff00] * flowW00 + flowForward[ff10] * flowW10 + flowForward[ff01] * flowW01 + flowForward[ff11] * flowW11
+          : 0;
+        const forwardY = usePrevious
+          ? flowForward[ff00 + 1] * flowW00 + flowForward[ff10 + 1] * flowW10 + flowForward[ff01 + 1] * flowW01 + flowForward[ff11 + 1] * flowW11
+          : 0;
+        const backwardX = useNext
+          ? flowBackward[ff00] * flowW00 + flowBackward[ff10] * flowW10 + flowBackward[ff01] * flowW01 + flowBackward[ff11] * flowW11
+          : 0;
+        const backwardY = useNext
+          ? flowBackward[ff00 + 1] * flowW00 + flowBackward[ff10 + 1] * flowW10 + flowBackward[ff01 + 1] * flowW01 + flowBackward[ff11 + 1] * flowW11
+          : 0;
         // Gate only the direction used by extrapolation. The percentile
         // thresholds were derived in native Flow pixels *before* applying the
         // virtual-F scaling, so ext1..32 share one stable cutoff.
