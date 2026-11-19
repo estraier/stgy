@@ -7,6 +7,9 @@ import {
 } from "./canonical-source";
 
 const CENTER_FILL_GRAY_LINEAR = 0.21586050011389926; // sRGB 128 / 255 decoded to linear.
+// Limit the aligned Float32 scratch image to ~6 MiB for typical full-width reads.
+const GAMMA2_IMAGE_STRIPE_PIXELS = 512 * 1024;
+const GAMMA2_IMAGE_MAX_STRIPE_ROWS = 128;
 
 export type NormalizationMode = "feature-match" | "center-crop" | "center-fit" | "center-fill" | "top-left-fill";
 
@@ -235,7 +238,39 @@ export class AlignedImageReader {
     return this.readLinearRegion(imageIndex, 0, 0, this.width, this.height);
   }
 
-  readGamma2Image(imageIndex: number, linearRangeMax: 1 | 4 = 1): Promise<Uint16Array> {
-    return this.readGamma2Region(imageIndex, 0, 0, this.width, this.height, linearRangeMax);
+  async readGamma2Image(imageIndex: number, linearRangeMax: 1 | 4 = 1): Promise<Uint16Array> {
+    const inv = this.inverseMatrices[imageIndex];
+    const geometry = this.geometries[imageIndex];
+    const mode = geometry?.mode;
+    // Perspective transforms require all source rows for each region. Fill modes
+    // may also change sampled source-row bounds across stripe boundaries.
+    // Preserve their existing single-read behavior to avoid changing pixels.
+    if (!inv || !geometry || !Number.isInteger(this.width) || this.width <= 0 ||
+        !Number.isInteger(this.height) || this.height <= 0 ||
+        mode === "center-fill" || mode === "top-left-fill" ||
+        Math.abs(inv[6]) >= 1e-12 || Math.abs(inv[7]) >= 1e-12) {
+      return this.readGamma2Region(imageIndex, 0, 0, this.width, this.height, linearRangeMax);
+    }
+    const rowsPerStripe = Math.max(1, Math.min(GAMMA2_IMAGE_MAX_STRIPE_ROWS,
+      Math.floor(GAMMA2_IMAGE_STRIPE_PIXELS / this.width)));
+    // A steep rotation/shear would repeatedly decode most source rows for
+    // every stripe; keep the one-pass path in that case.
+    const left = mapDestinationToNormalized(inv, 0, 0);
+    const right = mapDestinationToNormalized(inv, this.width - 1, 0);
+    const sourceRowSpan = Math.abs(
+      normalizedToSource(geometry, left.x, left.y).y - normalizedToSource(geometry, right.x, right.y).y);
+    if (!Number.isFinite(sourceRowSpan) || sourceRowSpan > rowsPerStripe * 2) {
+      return this.readGamma2Region(imageIndex, 0, 0, this.width, this.height, linearRangeMax);
+    }
+    const output = new Uint16Array(this.width * this.height * 3);
+    for (let y = 0; y < this.height; y += rowsPerStripe) {
+      const rows = Math.min(rowsPerStripe, this.height - y);
+      const linear = await this.readLinearRegion(imageIndex, 0, y, this.width, rows);
+      const offset = y * this.width * 3;
+      for (let i = 0; i < linear.length; i += 1) {
+        output[offset + i] = encodeStoredRgb16Channel(linear[i], "gamma20", linearRangeMax);
+      }
+    }
+    return output;
   }
 }

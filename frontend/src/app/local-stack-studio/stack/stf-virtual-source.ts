@@ -1,7 +1,6 @@
 import { addWeightedLinearToAccumulator } from "./linear-merge";
-import { buildLinearMergeStripeJobs } from "./linear-merge-pool";
 import { applyStfToneMatchInPlace, buildStfToneMatchLut, type StfToneMatchPlan, type StfToneMatchLut } from "./stf-tone-match";
-import { StfOpticalFlowClient } from "./stf-optical-flow-client";
+import { StfOpticalFlowClient, type StfFlowStripe } from "./stf-optical-flow-client";
 import { stfPairFarnebackWinsize } from "./stf-farneback-winsize";
 import type { AlignedImageReader } from "./aligned-reader";
 import type { StfOuterFrame } from "./stf-frame-generation";
@@ -17,22 +16,20 @@ export function decodeStfGeneratedStripe(pixels: Uint16Array, offset: number, le
   return linear;
 }
 
-async function mergeGeneratedFrame(
+function mergeGeneratedStripe(
   accumulator: Float32Array,
-  pixels: Uint16Array,
+  stripe: StfFlowStripe,
   weight: number,
   width: number,
-  height: number,
   tone: StfToneMatchPlan,
   toneLut: StfToneMatchLut,
-): Promise<void> {
-  for (const stripe of buildLinearMergeStripeJobs(width, height)) {
-    const start = stripe.y * width * 3;
-    const length = stripe.height * width * 3;
-    const linear = decodeStfGeneratedStripe(pixels, start, length);
-    applyStfToneMatchInPlace(linear, tone.gain, tone.scaledLog, toneLut);
-    addWeightedLinearToAccumulator(accumulator.subarray(start, start + length), linear, weight);
-  }
+): void {
+  const start = stripe.y * width * 3;
+  const length = stripe.height * width * 3;
+  // The client validates size, ordering, and completeness before acking.
+  const linear = decodeStfGeneratedStripe(stripe.pixels, 0, length);
+  applyStfToneMatchInPlace(linear, tone.gain, tone.scaledLog, toneLut);
+  addWeightedLinearToAccumulator(accumulator.subarray(start, start + length), linear, weight);
 }
 
 export async function appendStfVirtualSource(
@@ -46,7 +43,7 @@ export async function appendStfVirtualSource(
     progress?: (message: string) => void;
     // Injectable for deterministic cache/Flow integration tests.
     createFlowClient?: (onProgress?: (message: string) => void) => Pick<StfOpticalFlowClient,
-      "warmup" | "generate" | "warpOpeningAverage" | "releaseRetained" | "terminate">;
+      "generateStripes" | "warpOpeningAverageStripes" | "releaseRetained" | "terminate">;
   },
 ): Promise<void> {
   const { frameSet, reader } = options;
@@ -93,7 +90,7 @@ export async function appendStfVirtualSource(
   let cacheReadMs = 0;
   let flowComputeMs = 0;
   let client: Pick<StfOpticalFlowClient,
-    "warmup" | "generate" | "warpOpeningAverage" | "releaseRetained" | "terminate"> | null = null;
+    "generateStripes" | "warpOpeningAverageStripes" | "releaseRetained" | "terminate"> | null = null;
   try {
     for (const [middleIndex, middle] of frameSet.middleFrames.entries()) {
       if (!client) {
@@ -114,34 +111,36 @@ export async function appendStfVirtualSource(
         frameSet.allFNumbers[middle.nextIndex],
       );
       options.progress?.(`Generating STF virtual frame ${middle.pairLabel}...`);
-      const generated = await client.generate(
-        reader.width, reader.height, middle.previousIndex, middle.nextIndex,
-        previous, next, "mid", undefined,
-        isLastPair && closingOuterFrame ? closingOuterFrame.variant : undefined,
-        isLastPair && closingOuterFrame ? closingOuterFrame.inverseWarpScale : undefined,
-        true,
-        options.sessionId, options.sessionCreatedAt, options.alignmentKey,
-        openingAverageRadiusSpan, pairWinsize,
-        // The previous frame is never used by a later middle pair. The last
-        // next frame is also no longer needed. Transfer these owned RGB16
-        // buffers instead of allocating another full-resolution copy.
-        { previous: true, next: isLastPair },
-      );
-      if (generated.performance.flowCacheHit) flowCacheHits++;
-      else flowCacheMisses++;
-      if (generated.performance.flowCacheSaved) flowCacheWrites++;
-      cacheReadMs += generated.performance.flowCacheReadMs ?? 0;
-      flowComputeMs += generated.performance.flowWallMs ?? 0;
-
       const middleTone = toneForMiddle(middleIndex);
-      await mergeGeneratedFrame(accumulator, generated.pixels, middle.weight,
-        reader.width, reader.height, middleTone, toneLut(middleTone));
-      if (isLastPair && closingOuterFrame) {
-        if (!generated.additionalPixels) throw new Error("STF Flow did not return the requested closing outer frame.");
-        const outerTone = toneForOuter(closingOuterFrame);
-        await mergeGeneratedFrame(accumulator, generated.additionalPixels, closingOuterFrame.weight,
-          reader.width, reader.height, outerTone, toneLut(outerTone));
-      }
+      const closingTone = isLastPair && closingOuterFrame ? toneForOuter(closingOuterFrame) : null;
+      const performance = await client.generateStripes({
+        width: reader.width, height: reader.height,
+        previousImageId: middle.previousIndex, nextImageId: middle.nextIndex,
+        previousGamma2: previous, nextGamma2: next, variant: "mid",
+        ...(closingTone && closingOuterFrame ? {
+          additionalVariant: closingOuterFrame.variant,
+          additionalVariantScale: closingOuterFrame.inverseWarpScale,
+        } : {}),
+        sessionId: options.sessionId, sessionCreatedAt: options.sessionCreatedAt,
+        alignmentKey: options.alignmentKey, openingAverageRadiusSpan,
+        winsize: pairWinsize,
+        inputOwnership: { previous: true, next: isLastPair },
+      }, (stripe) => {
+        if (stripe.kind === "additional") {
+          if (!closingTone || !closingOuterFrame) throw new Error("Unexpected STF closing outer frame stripe");
+          mergeGeneratedStripe(accumulator, stripe, closingOuterFrame.weight,
+            reader.width, closingTone, toneLut(closingTone));
+        } else {
+          mergeGeneratedStripe(accumulator, stripe, middle.weight,
+            reader.width, middleTone, toneLut(middleTone));
+        }
+      });
+      if (performance.flowCacheHit) flowCacheHits++;
+      else flowCacheMisses++;
+      if (performance.flowCacheSaved) flowCacheWrites++;
+      cacheReadMs += performance.flowCacheReadMs ?? 0;
+      flowComputeMs += performance.flowWallMs ?? 0;
+
       imageCache.delete(middle.previousIndex);
     }
 
@@ -151,11 +150,17 @@ export async function appendStfVirtualSource(
       for (const outer of openingOuterFrames) {
         options.progress?.(`Generating STF Average Flow frame ${outer.pairLabel}...`);
         const source = firstWarp ? await getImage(outer.previousIndex) : undefined;
-        const warped = await client.warpOpeningAverage(reader.width, reader.height,
-          outer.previousIndex, outer.variant, outer.inverseWarpScale, source, firstWarp);
         const tone = toneForOuter(outer);
-        await mergeGeneratedFrame(accumulator, warped.pixels, outer.weight,
-          reader.width, reader.height, tone, toneLut(tone));
+        await client.warpOpeningAverageStripes({
+          width: reader.width, height: reader.height,
+          sourceImageId: outer.previousIndex, variant: outer.variant,
+          variantScale: outer.inverseWarpScale,
+          sourceGamma2: source, transferSourceOwnership: firstWarp,
+        }, (stripe) => {
+          if (stripe.kind !== "primary") throw new Error("Unexpected STF Average Flow stripe kind");
+          mergeGeneratedStripe(accumulator, stripe, outer.weight,
+            reader.width, tone, toneLut(tone));
+        });
         if (firstWarp) imageCache.delete(outer.previousIndex);
         firstWarp = false;
       }

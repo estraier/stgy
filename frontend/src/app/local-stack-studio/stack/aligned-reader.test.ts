@@ -21,6 +21,7 @@ jest.mock("./canonical-source", () => ({
 }));
 
 import { AlignedImageReader } from "./aligned-reader";
+import { readCanonicalLinearRows } from "./canonical-source";
 
 function rgb(values: number[]): Float32Array {
   const out = new Float32Array(values.length * 3);
@@ -129,5 +130,76 @@ describe("AlignedImageReader sampled RGB brightness", () => {
       { matrices: [identity] });
     await expect(reader.readLinearSampleGrid(0, 0, 2, 0, 0, 0)).rejects.toThrow();
     await expect(reader.readLinearSampleGrid(0, 0, 2, 1, 2, 0)).rejects.toThrow();
+  });
+});
+
+describe("AlignedImageReader full RGB16 reads", () => {
+  test("striped RGB16 output matches full-region encoding for all normalization modes and alignments", async () => {
+    const sourceWidth = 19, sourceHeight = 281;
+    sources[0] = new Float32Array(sourceWidth * sourceHeight * 3);
+    for (let i = 0; i < sources[0].length; i += 1) {
+      sources[0][i] = Math.fround(1.3 + Math.sin(i * 0.071) * 2.8);
+    }
+    const variants = [
+      { mode: "feature-match" as const, width: 19, height: 281, matrix: identity },
+      { mode: "feature-match" as const, width: 19, height: 281,
+        matrix: new Float64Array([1, 0.07, 0.6, -0.02, 1, 0.4, 0, 0, 1]) },
+      { mode: "center-crop" as const, width: 15, height: 273, matrix: identity },
+      { mode: "center-fit" as const, width: 21, height: 287, matrix: identity },
+      { mode: "center-fill" as const, width: 25, height: 291, matrix: identity },
+      { mode: "top-left-fill" as const, width: 25, height: 291, matrix: identity },
+      { mode: "feature-match" as const, width: 19, height: 281,
+        matrix: new Float64Array([1, 0, 0, 0, 1, 0, 0.0001, 0.0002, 1]) },
+    ];
+    for (const variant of variants) {
+      const reader = new AlignedImageReader(session(sourceWidth, sourceHeight),
+        { normalizationMode: variant.mode, targetWidth: variant.width, targetHeight: variant.height },
+        { matrices: [variant.matrix] });
+      for (const range of [1, 4] as const) {
+        const expected = await reader.readGamma2Region(0, 0, 0, variant.width, variant.height, range);
+        const actual = await reader.readGamma2Image(0, range);
+        expect(actual).toEqual(expected);
+      }
+    }
+  });
+
+  test("affine image reads allocate bounded source stripes, not the full Float32 image", async () => {
+    const width = 13, height = 290;
+    sources[0] = rgb(Array.from({ length: width * height }, (_, i) => (i % 17) / 16));
+    const reader = new AlignedImageReader(session(width, height),
+      { normalizationMode: "feature-match", targetWidth: width, targetHeight: height },
+      { matrices: [identity] });
+    const rows = jest.mocked(readCanonicalLinearRows);
+    rows.mockClear();
+    const result = await reader.readGamma2Image(0, 4);
+    expect(result).toHaveLength(width * height * 3);
+    expect(rows.mock.calls.length).toBeGreaterThan(1);
+    expect(rows.mock.calls.every((call) => call[3] < height)).toBe(true);
+  });
+
+  test("steep affine shear keeps the single-read path to avoid repeated full-source decodes", async () => {
+    const width = 800, height = 270;
+    sources[0] = rgb(Array.from({ length: width * height }, (_, i) => (i % 37) / 36));
+    const reader = new AlignedImageReader(session(width, height),
+      { normalizationMode: "feature-match", targetWidth: width, targetHeight: height },
+      { matrices: [new Float64Array([1, 0, 0, 0.6, 1, 0, 0, 0, 1])] });
+    const rows = jest.mocked(readCanonicalLinearRows);
+    rows.mockClear();
+    const result = await reader.readGamma2Image(0);
+    expect(result).toHaveLength(width * height * 3);
+    expect(rows.mock.calls).toHaveLength(1);
+  });
+
+  test("wide images use the pixel budget as well as the row limit", async () => {
+    const width = 5000, height = 129;
+    sources[0] = rgb(Array.from({ length: width * height }, (_, i) => (i % 29) / 28));
+    const reader = new AlignedImageReader(session(width, height),
+      { normalizationMode: "feature-match", targetWidth: width, targetHeight: height },
+      { matrices: [identity] });
+    const rows = jest.mocked(readCanonicalLinearRows);
+    rows.mockClear();
+    await reader.readGamma2Image(0);
+    expect(rows.mock.calls.length).toBeGreaterThan(1);
+    expect(rows.mock.calls.every((call) => call[3] < height)).toBe(true);
   });
 });

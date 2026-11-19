@@ -211,8 +211,70 @@ import type {
   let openingAverageWarp: { sourceImageId: number; source: Uint16Array;
     flow: Float32Array; gate: StfFlowNormGate | null } | null = null;
 
+  // One outstanding stripe per request: the main thread acknowledges a stripe
+  // only after applying its tone curve and accumulation. Never queue a whole
+  // image worth of messages or detached allocations in either thread.
+  const awaitingStripe = new Map<number, {
+    y: number; kind: "primary" | "additional";
+    resolve: () => void; reject: (error: Error) => void;
+  }>();
+
+  async function sendStripe(
+    requestId: number, kind: "primary" | "additional", y: number, height: number,
+    width: number, rgb: Uint16Array,
+  ): Promise<void> {
+    const gamma2Buffer = transferableBuffer(rgb);
+    await new Promise<void>((resolve, reject) => {
+      awaitingStripe.set(requestId, { y, kind, resolve, reject });
+      try {
+        workerScope.postMessage({ type: "stripe", requestId, kind, y, height, width, gamma2Buffer }, [gamma2Buffer]);
+      } catch (error) {
+        awaitingStripe.delete(requestId);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+  }
+
+  // Cap each transferred RGB16 stripe at approximately 4 MiB and 128 rows.
+  function stripeRows(width: number): number {
+    return Math.max(1, Math.min(128, Math.floor((4 * 1024 * 1024) / (width * 6))));
+  }
+
+  // Calculate the exact old warp pixels, but only for a stripe's y-range.
+  async function streamVariant(
+    requestId: number, kind: "primary" | "additional", variant: OpticalFlowVariant,
+    previous: Uint16Array, next: Uint16Array, width: number, height: number,
+    forward: Float32Array, backward: Float32Array, flowWidth: number, flowHeight: number,
+    variantScale: number | undefined, normGate: StfFlowNormGate | null,
+  ): Promise<{ warpMs: number; waitMs: number }> {
+    let warpMs = 0;
+    let waitMs = 0;
+    const rows = stripeRows(width);
+    for (let y = 0; y < height; y += rows) {
+      const chunkHeight = Math.min(rows, height - y);
+      const started = performance.now();
+      const pixels = synthesizeFlowVariant(variant, previous, next, width, height,
+        forward, backward, flowWidth, flowHeight, variantScale, normGate, y, chunkHeight);
+      warpMs += performance.now() - started;
+      const waitStarted = performance.now();
+      await sendStripe(requestId, kind, y, chunkHeight, width, pixels);
+      waitMs += performance.now() - waitStarted;
+    }
+    return { warpMs, waitMs };
+  }
+
   workerScope.onmessage = async (event: MessageEvent<OpticalFlowWorkerRequest>) => {
     const message = event.data;
+    if (message.type === "stripe-ack" || message.type === "stripe-abort") {
+      const waiter = awaitingStripe.get(message.requestId);
+      if (waiter) {
+        awaitingStripe.delete(message.requestId);
+        if (message.type === "stripe-abort") waiter.reject(new Error(message.message));
+        else if (message.y === waiter.y && message.kind === waiter.kind) waiter.resolve();
+        else waiter.reject(new Error("STF Flow stripe acknowledgement mismatch"));
+      }
+      return;
+    }
     try {
       if (message.type === "warmup") {
         const pool = await ensureDirectionPool();
@@ -252,33 +314,43 @@ import type {
         if (!current || current.sourceImageId !== message.sourceImageId) {
           throw new Error("STF opening Average Flow needs an initialized real source image.");
         }
-        const output = synthesizeFlowVariant(message.variant, current.source, current.source,
-          geometry.imageWidth, geometry.imageHeight, current.flow, current.flow,
-          geometry.width, geometry.height, message.variantScale, current.gate);
-        const gamma2Buffer = transferableBuffer(output);
-        workerScope.postMessage({ type: "warp-result", requestId: message.requestId,
-          width: geometry.imageWidth, height: geometry.imageHeight,
-          gamma2Buffer, warpMs: performance.now() - started }, [gamma2Buffer]);
+        if (message.streamStripes) {
+          const { warpMs } = await streamVariant(message.requestId, "primary", message.variant,
+            current.source, current.source, geometry.imageWidth, geometry.imageHeight,
+            current.flow, current.flow, geometry.width, geometry.height, message.variantScale, current.gate);
+          workerScope.postMessage({ type: "stream-result", requestId: message.requestId,
+            width: geometry.imageWidth, height: geometry.imageHeight, warpMs });
+        } else {
+          const output = synthesizeFlowVariant(message.variant, current.source, current.source,
+            geometry.imageWidth, geometry.imageHeight, current.flow, current.flow,
+            geometry.width, geometry.height, message.variantScale, current.gate);
+          const gamma2Buffer = transferableBuffer(output);
+          workerScope.postMessage({ type: "warp-result", requestId: message.requestId,
+            width: geometry.imageWidth, height: geometry.imageHeight,
+            gamma2Buffer, warpMs: performance.now() - started }, [gamma2Buffer]);
+        }
         return;
       }
       if (message.type !== "interpolate") {
         throw new Error(`Unsupported Optical Flow worker request: ${String((message as { type?: unknown }).type)}`);
       }
       const result = await interpolateMiddleFrame(message);
-      const gamma2Buffer = transferableBuffer(result.gamma2Rgb);
-      const additionalGamma2Buffer = result.additionalGamma2Rgb
-        ? transferableBuffer(result.additionalGamma2Rgb) : undefined;
-      workerScope.postMessage({
-        type: "result",
-        requestId: message.requestId,
-        width: result.width,
-        height: result.height,
-        gamma2Buffer,
-        ...(additionalGamma2Buffer ? { additionalGamma2Buffer } : {}),
-        flowWidth: result.flowWidth,
-        flowHeight: result.flowHeight,
-        performance: result.performance,
-      }, additionalGamma2Buffer ? [gamma2Buffer, additionalGamma2Buffer] : [gamma2Buffer]);
+      if (message.streamStripes) {
+        workerScope.postMessage({ type: "stream-result", requestId: message.requestId,
+          width: result.width, height: result.height, performance: result.performance });
+      } else {
+        if (!result.gamma2Rgb) throw new Error("STF Flow did not generate an RGB16 midpoint");
+        const gamma2Buffer = transferableBuffer(result.gamma2Rgb);
+        const additionalGamma2Buffer = result.additionalGamma2Rgb
+          ? transferableBuffer(result.additionalGamma2Rgb) : undefined;
+        workerScope.postMessage({
+          type: "result", requestId: message.requestId,
+          width: result.width, height: result.height, gamma2Buffer,
+          ...(additionalGamma2Buffer ? { additionalGamma2Buffer } : {}),
+          flowWidth: result.flowWidth, flowHeight: result.flowHeight,
+          performance: result.performance,
+        }, additionalGamma2Buffer ? [gamma2Buffer, additionalGamma2Buffer] : [gamma2Buffer]);
+      }
     } catch (error) {
       workerScope.postMessage({
         type: "error",
@@ -391,29 +463,34 @@ import type {
     const normGates: NormGateCache = {};
     postProgress(message.requestId, `Warping Optical Flow ${describeVariant(message.variant)} image...`);
     const warpStartedAt = performance.now();
-    const output = synthesizeFlowVariant(
-      message.variant,
-      previousGamma2Rgb,
-      nextGamma2Rgb,
-      width,
-      height,
-      flows.forward,
-      flows.backward,
-      flowSize.width,
-      flowSize.height,
-      message.variantScale,
-      gateForVariant(message.variant, flows.forward, flows.backward, normGates),
-    );
-    const warpMs = performance.now() - warpStartedAt;
+    const primaryGate = gateForVariant(message.variant, flows.forward, flows.backward, normGates);
+    const output = message.streamStripes ? undefined : synthesizeFlowVariant(
+      message.variant, previousGamma2Rgb, nextGamma2Rgb, width, height,
+      flows.forward, flows.backward, flowSize.width, flowSize.height, message.variantScale, primaryGate);
+    const primaryStream = message.streamStripes
+      ? await streamVariant(message.requestId, "primary", message.variant,
+          previousGamma2Rgb, nextGamma2Rgb, width, height, flows.forward, flows.backward,
+          flowSize.width, flowSize.height, message.variantScale, primaryGate)
+      : null;
+    const warpMs = primaryStream?.warpMs ?? (performance.now() - warpStartedAt);
     // Both frames use the *same* native 4MP forward/backward fields. Never
     // start an extra Farneback computation just to synthesize the outer image.
     const additionalWarpStartedAt = performance.now();
-    const additionalGamma2Rgb = message.additionalVariant
+    const extraGate = message.additionalVariant
+      ? gateForVariant(message.additionalVariant, flows.forward, flows.backward, normGates) : null;
+    const additionalGamma2Rgb = message.additionalVariant && !message.streamStripes
       ? synthesizeFlowVariant(message.additionalVariant, previousGamma2Rgb, nextGamma2Rgb,
-        width, height, flows.forward, flows.backward, flowSize.width, flowSize.height, message.additionalVariantScale,
-        gateForVariant(message.additionalVariant, flows.forward, flows.backward, normGates))
+          width, height, flows.forward, flows.backward, flowSize.width, flowSize.height, message.additionalVariantScale,
+          extraGate)
       : undefined;
-    const additionalWarpMs = additionalGamma2Rgb ? performance.now() - additionalWarpStartedAt : undefined;
+    const additionalStream = message.additionalVariant && message.streamStripes
+      ? await streamVariant(message.requestId, "additional", message.additionalVariant,
+          previousGamma2Rgb, nextGamma2Rgb, width, height, flows.forward, flows.backward,
+          flowSize.width, flowSize.height, message.additionalVariantScale, extraGate)
+      : null;
+    const additionalWarpMs = message.additionalVariant
+      ? additionalStream?.warpMs ?? (performance.now() - additionalWarpStartedAt)
+      : undefined;
     const flowCacheSaved = await cacheWrite;
     const flowCacheWriteMs = flowCacheSaved ? performance.now() - cacheWriteStarted : 0;
     const performanceStats: OpticalFlowPerformanceStats = {
@@ -429,12 +506,15 @@ import type {
       warmupMs: flows.warmupMs,
       warpMs,
       ...(additionalWarpMs !== undefined ? { additionalWarpMs } : {}),
-      totalWorkerMs: performance.now() - workerStartedAt,
-      estimatedPeakBytes: estimatePeakBytes(width, height, flowSize.width, flowSize.height, flows.workerCount),
+      // Exclude main-thread acknowledgement waits from Worker execution time.
+      totalWorkerMs: performance.now() - workerStartedAt -
+        (primaryStream?.waitMs ?? 0) - (additionalStream?.waitMs ?? 0),
+      estimatedPeakBytes: estimatePeakBytes(width, height, flowSize.width, flowSize.height, flows.workerCount,
+        message.streamStripes ? Math.min(height, stripeRows(width)) * width * 6 : undefined),
       inputGamma2Bytes: previousGamma2Rgb.byteLength + nextGamma2Rgb.byteLength,
       flowFieldBytes: flows.forward.byteLength + flows.backward.byteLength,
       flowCacheHit: Boolean(cached), flowCacheSaved, flowCacheReadMs, flowCacheWriteMs,
-      outputBytes: output.byteLength + (additionalGamma2Rgb?.byteLength ?? 0),
+      outputBytes: width * height * 6 * (message.additionalVariant ? 2 : 1),
     };
     return { width, height, gamma2Rgb: output, additionalGamma2Rgb, flowWidth: flowSize.width, flowHeight: flowSize.height, performance: performanceStats };
   }
@@ -451,8 +531,14 @@ import type {
     flowHeight: number,
     variantScale?: number,
     normGate: StfFlowNormGate | null = null,
+    startY = 0,
+    stripeHeight = height,
   ): Uint16Array {
-    const output = new Uint16Array(width * height * 3);
+    if (!Number.isInteger(startY) || !Number.isInteger(stripeHeight) ||
+        startY < 0 || stripeHeight <= 0 || startY + stripeHeight > height) {
+      throw new Error("Invalid STF Flow stripe bounds");
+    }
+    const output = new Uint16Array(width * stripeHeight * 3);
     const scaleX = width / flowWidth;
     const scaleY = height / flowHeight;
     const edgeX = Math.max(0, flowWidth - 1);
@@ -473,7 +559,7 @@ import type {
     const usePrevious = variant !== "ext2";
     const useNext = !openingStep;
 
-    for (let y = 0; y < height; y += 1) {
+    for (let y = startY; y < startY + stripeHeight; y += 1) {
       const flowY = flowHeight === 1 ? 0 : ((y + 0.5) * flowHeight / height) - 0.5;
       const clampedFlowY = clamp(flowY, 0, edgeY);
       const flowY0 = Math.floor(clampedFlowY);
@@ -566,7 +652,7 @@ import type {
           nextB = nextGamma2Rgb[nextI00 + 2] * nextW00 + nextGamma2Rgb[nextI10 + 2] * nextW10 + nextGamma2Rgb[nextI01 + 2] * nextW01 + nextGamma2Rgb[nextI11 + 2] * nextW11;
         }
 
-        const out = (y * width + x) * 3;
+        const out = ((y - startY) * width + x) * 3;
         if (usePrevious && useNext) {
           output[out] = clampUint16((previousR + nextR) * 0.5);
           output[out + 1] = clampUint16((previousG + nextG) * 0.5);
@@ -601,14 +687,15 @@ import type {
     return Math.round(value);
   }
 
-  function estimatePeakBytes(sourceWidth: number, sourceHeight: number, flowWidth: number, flowHeight: number, workerCount: number): number {
+  function estimatePeakBytes(sourceWidth: number, sourceHeight: number, flowWidth: number, flowHeight: number,
+    workerCount: number, streamingOutputBytes?: number): number {
     const gamma2Bytes = sourceWidth * sourceHeight * 3 * 2 * 2;
     const flowGrayBytes = flowWidth * flowHeight * 2;
     const transferredGrayBytes = flowGrayBytes * workerCount;
     const nativeGrayBytes = flowGrayBytes * workerCount;
     const nativeFlowBytes = flowWidth * flowHeight * 2 * 4 * 2;
     const returnedFlowBytes = nativeFlowBytes;
-    const outputBytes = sourceWidth * sourceHeight * 3 * 2;
+    const outputBytes = streamingOutputBytes ?? sourceWidth * sourceHeight * 3 * 2;
     // Known buffer sizes only; excludes OpenCV temporary pyramids and WASM
     // heap capacity. Not an actual browser peak-memory measurement.
     return gamma2Bytes + flowGrayBytes + transferredGrayBytes + nativeGrayBytes + nativeFlowBytes + returnedFlowBytes + outputBytes;

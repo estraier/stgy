@@ -32,7 +32,24 @@ function workerInputBuffer(pixels: Uint16Array, transferOwnership: boolean): Arr
   return copy;
 }
 
+export type StfFlowStripe = {
+  kind: "primary" | "additional";
+  y: number;
+  height: number;
+  pixels: Uint16Array;
+};
+
+type StripeHandler = {
+  width: number;
+  height: number;
+  additional: boolean;
+  nextPrimaryY: number;
+  nextAdditionalY: number;
+  onStripe: (stripe: StfFlowStripe) => void | Promise<void>;
+};
+
 type Pending = {
+  stripes?: StripeHandler;
   resolve: (response: OpticalFlowWorkerResponse) => void;
   reject: (error: Error) => void;
 };
@@ -44,7 +61,7 @@ export class StfOpticalFlowClient {
 
   constructor(onProgress?: (message: string) => void) {
     const workerUrl = new URL("/generated/local-stack-studio/optical-flow.worker.js", window.location.origin);
-    workerUrl.searchParams.set("revision", "stf-session-flow-20261119-r13-fixed31-f-dependent");
+    workerUrl.searchParams.set("revision", "stf-session-flow-20261119-r14-striped-output");
     this.worker = new Worker(workerUrl);
     this.worker.onmessage = (event: MessageEvent<OpticalFlowWorkerResponse>) => {
       const message = event.data;
@@ -55,12 +72,56 @@ export class StfOpticalFlowClient {
         onProgress?.(message.message);
         return;
       }
+      if (message.type === "stripe") {
+        void this.receiveStripe(message, pending);
+        return;
+      }
       this.requests.delete(message.requestId);
       if (message.type === "error") pending.reject(new Error(message.message));
-      else pending.resolve(message);
+      else if (pending.stripes && (message.type !== "stream-result" ||
+          pending.stripes.nextPrimaryY !== pending.stripes.height ||
+          (pending.stripes.additional && pending.stripes.nextAdditionalY !== pending.stripes.height))) {
+        pending.reject(new Error("STF Flow stream finished without all stripes"));
+      } else pending.resolve(message);
     };
     this.worker.onerror = (event) => this.failAll(new Error(event.message || "STF Optical Flow worker error"));
     this.worker.onmessageerror = () => this.failAll(new Error("STF Optical Flow worker message error"));
+  }
+
+  private async receiveStripe(
+    message: Extract<OpticalFlowWorkerResponse, { type: "stripe" }>, pending: Pending,
+  ): Promise<void> {
+    const state = pending.stripes;
+    try {
+      if (!state || message.width !== state.width || !Number.isInteger(message.height) || message.height <= 0 ||
+          (message.kind !== "primary" && message.kind !== "additional")) {
+        throw new Error("Invalid STF Flow stream stripe metadata");
+      }
+      const expectedY = message.kind === "primary" ? state.nextPrimaryY : state.nextAdditionalY;
+      if (message.y !== expectedY || message.y + message.height > state.height ||
+          (message.kind === "additional" && (!state.additional || state.nextPrimaryY !== state.height)) ||
+          (message.kind === "primary" && state.nextAdditionalY !== 0)) {
+        throw new Error("STF Flow stream stripe order is invalid");
+      }
+      const pixels = new Uint16Array(message.gamma2Buffer);
+      if (pixels.length !== state.width * message.height * 3) {
+        throw new Error("STF Flow stream stripe length is invalid");
+      }
+      await state.onStripe({ kind: message.kind, y: message.y, height: message.height, pixels });
+      if (message.kind === "primary") state.nextPrimaryY += message.height;
+      else state.nextAdditionalY += message.height;
+      // Backpressure: the worker may synthesize the next stripe only after
+      // tone matching and accumulator writes for this stripe are complete.
+      this.worker.postMessage({ type: "stripe-ack", requestId: message.requestId,
+        kind: message.kind, y: message.y });
+    } catch (error) {
+      const problem = error instanceof Error ? error : new Error(String(error));
+      if (this.requests.get(message.requestId) !== pending) return;
+      this.requests.delete(message.requestId);
+      try { this.worker.postMessage({ type: "stripe-abort", requestId: message.requestId, message: problem.message }); }
+      catch { /* Worker may have been terminated; preserve original error. */ }
+      pending.reject(problem);
+    }
   }
 
   private failAll(error: Error): void {
@@ -73,10 +134,13 @@ export class StfOpticalFlowClient {
       Omit<Extract<OpticalFlowWorkerRequest, { type: "warmup" }>, "requestId"> |
       Omit<Extract<OpticalFlowWorkerRequest, { type: "warp-opening-average" }>, "requestId">,
     transfer: Transferable[] = [],
+    stripes?: Omit<StripeHandler, "nextPrimaryY" | "nextAdditionalY">,
   ): Promise<OpticalFlowWorkerResponse> {
     const requestId = this.nextRequestId++;
     return new Promise((resolve, reject) => {
-      this.requests.set(requestId, { resolve, reject });
+      this.requests.set(requestId, { resolve, reject, ...(stripes ? { stripes: {
+        ...stripes, nextPrimaryY: 0, nextAdditionalY: 0,
+      } } : {}) });
       try {
         this.worker.postMessage({ ...message, requestId }, transfer);
       } catch (error) {
@@ -141,6 +205,67 @@ export class StfOpticalFlowClient {
       throw new Error("STF Flow returned an invalid additional RGB16 buffer");
     }
     return { pixels, ...(additionalPixels ? { additionalPixels } : {}), performance: result.performance };
+  }
+
+  // STF hot path: stream bounded RGB16 stripes. Unlike generate(), this
+  // never materializes a full-resolution virtual image on either side.
+  async generateStripes(
+    args: {
+      width: number; height: number; previousImageId: number; nextImageId: number;
+      previousGamma2: Uint16Array; nextGamma2: Uint16Array;
+      variant: OpticalFlowVariant; variantScale?: number;
+      additionalVariant?: OpticalFlowVariant; additionalVariantScale?: number;
+      sessionId: string; sessionCreatedAt: number; alignmentKey: string;
+      openingAverageRadiusSpan?: number; winsize: number; inputOwnership: InputOwnership;
+    },
+    onStripe: (stripe: StfFlowStripe) => void | Promise<void>,
+  ): Promise<OpticalFlowPerformanceStats> {
+    const previousGamma2Buffer = workerInputBuffer(args.previousGamma2, args.inputOwnership.previous === true);
+    const nextGamma2Buffer = workerInputBuffer(args.nextGamma2, args.inputOwnership.next === true);
+    const response = await this.request({
+      type: "interpolate", streamStripes: true,
+      width: args.width, height: args.height,
+      previousImageId: args.previousImageId, nextImageId: args.nextImageId,
+      previousGamma2Buffer, nextGamma2Buffer, variant: args.variant,
+      ...(args.variantScale !== undefined ? { variantScale: args.variantScale } : {}),
+      ...(args.additionalVariant ? { additionalVariant: args.additionalVariant } : {}),
+      ...(args.additionalVariantScale !== undefined ? { additionalVariantScale: args.additionalVariantScale } : {}),
+      ...(args.openingAverageRadiusSpan !== undefined ? { openingAverageRadiusSpan: args.openingAverageRadiusSpan } : {}),
+      winsize: args.winsize, persistFlow: true,
+      sessionId: args.sessionId, sessionCreatedAt: args.sessionCreatedAt, alignmentKey: args.alignmentKey,
+      linearRangeMax: 4,
+    }, [previousGamma2Buffer, nextGamma2Buffer], {
+      width: args.width, height: args.height, additional: Boolean(args.additionalVariant), onStripe,
+    });
+    if (response.type !== "stream-result" || response.width !== args.width ||
+        response.height !== args.height || !response.performance) {
+      throw new Error("Invalid STF streamed midpoint result");
+    }
+    return response.performance;
+  }
+
+  async warpOpeningAverageStripes(
+    args: {
+      width: number; height: number; sourceImageId: number;
+      variant: OpticalFlowOpeningVariant; variantScale: number;
+      sourceGamma2?: Uint16Array; transferSourceOwnership?: boolean;
+    },
+    onStripe: (stripe: StfFlowStripe) => void | Promise<void>,
+  ): Promise<{ warpMs: number }> {
+    const buffer = args.sourceGamma2
+      ? workerInputBuffer(args.sourceGamma2, args.transferSourceOwnership === true) : undefined;
+    const response = await this.request({
+      type: "warp-opening-average", streamStripes: true,
+      sourceImageId: args.sourceImageId, variant: args.variant, variantScale: args.variantScale,
+      ...(buffer ? { sourceGamma2Buffer: buffer } : {}),
+    }, buffer ? [buffer] : [], {
+      width: args.width, height: args.height, additional: false, onStripe,
+    });
+    if (response.type !== "stream-result" || response.width !== args.width ||
+        response.height !== args.height || typeof response.warpMs !== "number") {
+      throw new Error("Invalid STF streamed opening Average Flow result");
+    }
+    return { warpMs: response.warpMs };
   }
 
   async warpOpeningAverage(

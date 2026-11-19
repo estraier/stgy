@@ -1,4 +1,5 @@
 import { decodeStfGeneratedStripe } from "./stf-virtual-source";
+import type { StfOpticalFlowClient } from "./stf-optical-flow-client";
 import { buildStfFrameSet, STF_EXTRAPOLATION_COUNTS, type StfFrameGenerationMode } from "./stf-frame-generation";
 import { encodeStoredRgb16Channel } from "@/image/rgb16-storage";
 import { prepareStfFrameSetForTone } from "./stf-frame-density";
@@ -66,6 +67,45 @@ import { computeCanonicalToneStatisticsFromStoredRgb16 } from "./canonical-sourc
 
 const testPixels = (value: number) => new Uint16Array(12).fill(value);
 
+// Existing numerical fixtures return full RGB16 arrays. Adapt them to the
+// new stripe callbacks so the historical tone/weight expectations still run.
+// Real-worker streaming is tested independently below.
+function adaptLegacyClientFactory<T extends object>(factory: () => T) {
+  return () => {
+    const old = factory() as unknown as Pick<StfOpticalFlowClient,
+      "generate" | "warpOpeningAverage" | "releaseRetained" | "terminate">;
+    return {
+      generateStripes: async (
+        args: Parameters<StfOpticalFlowClient["generateStripes"]>[0],
+        onStripe: Parameters<StfOpticalFlowClient["generateStripes"]>[1],
+      ) => {
+        const result = await old.generate(args.width, args.height,
+          args.previousImageId, args.nextImageId, args.previousGamma2, args.nextGamma2,
+          args.variant, args.variantScale, args.additionalVariant, args.additionalVariantScale,
+          true, args.sessionId, args.sessionCreatedAt, args.alignmentKey,
+          args.openingAverageRadiusSpan, args.winsize, args.inputOwnership);
+        await onStripe({ kind: "primary", y: 0, height: args.height, pixels: result.pixels });
+        if (args.additionalVariant && result.additionalPixels) {
+          await onStripe({ kind: "additional", y: 0, height: args.height, pixels: result.additionalPixels });
+        }
+        return result.performance;
+      },
+      warpOpeningAverageStripes: async (
+        args: Parameters<StfOpticalFlowClient["warpOpeningAverageStripes"]>[0],
+        onStripe: Parameters<StfOpticalFlowClient["warpOpeningAverageStripes"]>[1],
+      ) => {
+        const result = await old.warpOpeningAverage(args.width, args.height,
+          args.sourceImageId, args.variant, args.variantScale, args.sourceGamma2,
+          args.transferSourceOwnership);
+        await onStripe({ kind: "primary", y: 0, height: args.height, pixels: result.pixels });
+        return { warpMs: result.warpMs };
+      },
+      releaseRetained: () => old.releaseRetained(),
+      terminate: () => old.terminate(),
+    };
+  };
+}
+
 function virtualHarness(persist = true) {
   const actual = [testPixels(23000), testPixels(25000)];
   const persistedFlowKeys = new Set<string>();
@@ -123,7 +163,7 @@ function virtualHarness(persist = true) {
         frameSet: prepare(q, mode),
         sessionId: "session-a", sessionCreatedAt: 1_700_000_000_000, alignmentKey: "align-1",
         reader: reader as never,
-        createFlowClient: factory as never,
+        createFlowClient: adaptLegacyClientFactory(factory) as never,
       });
     } finally {
       infoSpy.mockRestore();
@@ -210,7 +250,7 @@ test("closing extrapolation uses last real pair once while opening ext1..N reuse
       reader: { width: 2, height: 2,
         readGamma2Image: async (index: number) => { loaded.push(index); return actual[index]; },
       } as never,
-      createFlowClient: fake as never,
+      createFlowClient: adaptLegacyClientFactory(fake) as never,
     });
     expect(loaded).toEqual([0, 1, 2, 0]);
     expect(seen).toEqual([
@@ -259,7 +299,7 @@ test("prepared synthetic weights use the exact tone curves applied to gamma2 mid
       alignmentKey: "constant-test", reader: {
         width: 2, height: 2, readGamma2Image: async (i: number) => realPixels[i],
       } as never,
-      createFlowClient: fake as never,
+      createFlowClient: adaptLegacyClientFactory(fake) as never,
     });
   } finally {
     console.info = originalInfo;
@@ -312,7 +352,7 @@ test("extrapolation reuses up to the first three real pairs for opening Average 
     await appendStfVirtualSource(accumulator, {
       frameSet, sessionId: "average", sessionCreatedAt: 1, alignmentKey: "align",
       reader: { width: 2, height: 2, readGamma2Image: async (index: number) => actual[index] } as never,
-      createFlowClient: mock as never,
+      createFlowClient: adaptLegacyClientFactory(mock) as never,
     });
     expect(seenSpans).toHaveLength(3);
     expect(seenSpans[0]).toBeCloseTo(1 / f[0] - 1 / f[1]);
@@ -360,7 +400,7 @@ test("three real images average the first two opening-side pairs", async () => {
     await appendStfVirtualSource(new Float32Array(12), {
       frameSet, sessionId: "average", sessionCreatedAt: 1, alignmentKey: "align",
       reader: { width: 2, height: 2, readGamma2Image: async (index: number) => actual[index] } as never,
-      createFlowClient: mock as never,
+      createFlowClient: adaptLegacyClientFactory(mock) as never,
     });
     expect(spans).toEqual([1 / f[0] - 1 / f[1], 1 / f[1] - 1 / f[2]]);
     expect(events).toEqual([
@@ -388,7 +428,7 @@ test("STF generated pairs always use fixed 31 + F-dependent windows", async () =
       reader: { width: 2, height: 2,
         readGamma2Image: async (index: number) => actual[index],
       } as never,
-      createFlowClient: (() => ({
+      createFlowClient: adaptLegacyClientFactory(() => ({
         warmup: async () => { throw new Error("Unexpected warmup"); },
         generate: async (...args: unknown[]) => {
           passed.push(args[15] as number);
@@ -405,4 +445,77 @@ test("STF generated pairs always use fixed 31 + F-dependent windows", async () =
     infoSpy.mockRestore();
   }
   expect(passed).toEqual([31, 29, 25, 23, 19, 17]);
+});
+
+test("streaming STF virtual merge exactly matches full-frame tone matching and accumulation", async () => {
+  const width = 5, height = 260, samples = width * height * 3;
+  const f = [2, 3];
+  const actual = [new Uint16Array(samples).fill(23000), new Uint16Array(samples).fill(28000)];
+  const stats = computeCanonicalToneStatisticsFromStoredRgb16(actual[0], width, height);
+  const frameSet = prepareStfFrameSetForTone(buildStfFrameSet(f, 1, "extrapolation-2"), f,
+    [{ gain: 0.91, scaledLog: -0.2 }, { gain: 1.11, scaledLog: 0.13 }], stats.p95, 1);
+  const generatedPixels = (variant: string): Uint16Array => Uint16Array.from({ length: samples }, (_, i) =>
+    Math.min(65535, (variant === "mid" ? 20000 : variant === "ext2" ? 26000 : 24000) + (i * 17) % 17000));
+  const make = (stream: boolean) => {
+    const seen: number[] = [];
+    const streamedFactory = () => ({
+      generateStripes: async (
+        args: Parameters<StfOpticalFlowClient["generateStripes"]>[0],
+        consume: Parameters<StfOpticalFlowClient["generateStripes"]>[1],
+      ) => {
+        for (const variant of ["mid", ...(args.additionalVariant ? ["ext2"] : [])]) {
+          const pixels = generatedPixels(variant);
+          for (let y = 0; y < height; y += 128) {
+            const rows = Math.min(128, height - y);
+            const part = pixels.subarray(y * width * 3, (y + rows) * width * 3);
+            seen.push(part.length);
+            await consume({ kind: variant === "ext2" ? "additional" : "primary",
+              y, height: rows, pixels: part });
+          }
+        }
+        return { flowCacheHit: true, flowCacheSaved: false, flowCacheReadMs: 0, flowWallMs: 0 } as never;
+      },
+      warpOpeningAverageStripes: async (
+        args: Parameters<StfOpticalFlowClient["warpOpeningAverageStripes"]>[0],
+        consume: Parameters<StfOpticalFlowClient["warpOpeningAverageStripes"]>[1],
+      ) => {
+        const pixels = generatedPixels(args.variant);
+        for (let y = 0; y < height; y += 128) {
+          const rows = Math.min(128, height - y);
+          const part = pixels.subarray(y * width * 3, (y + rows) * width * 3);
+          seen.push(part.length);
+          await consume({ kind: "primary", y, height: rows, pixels: part });
+        }
+        return { warpMs: 0 };
+      },
+      releaseRetained: () => {}, terminate: () => {},
+    });
+    const fullFactory = adaptLegacyClientFactory(() => ({
+      generate: async () => ({ pixels: generatedPixels("mid"), additionalPixels: generatedPixels("ext2"),
+        performance: { flowCacheHit: true, flowCacheSaved: false, flowCacheReadMs: 0, flowWallMs: 0 } }),
+      warpOpeningAverage: async (_w: number, _h: number, _index: number, variant: string) =>
+        ({ pixels: generatedPixels(variant), warpMs: 0 }),
+      releaseRetained: () => {}, terminate: () => {},
+    }));
+    const run = async () => {
+      const accumulator = new Float32Array(samples);
+      await appendStfVirtualSource(accumulator, {
+        frameSet, sessionId: "stream-test", sessionCreatedAt: 1, alignmentKey: "align",
+        reader: { width, height, readGamma2Image: async (i: number) => actual[i] } as never,
+        createFlowClient: (stream ? streamedFactory : fullFactory) as never,
+      });
+      return accumulator;
+    };
+    return { run, seen };
+  };
+  const info = jest.spyOn(console, "info").mockImplementation(() => {});
+  try {
+    const old = make(false);
+    const streamed = make(true);
+    const full = await old.run();
+    const chunks = await streamed.run();
+    expect(chunks).toEqual(full);
+    expect(streamed.seen).toHaveLength(12); // 4 generated frames × 3 stripes
+    expect(Math.max(...streamed.seen)).toBe(128 * width * 3);
+  } finally { info.mockRestore(); }
 });

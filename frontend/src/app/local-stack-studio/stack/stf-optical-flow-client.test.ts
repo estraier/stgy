@@ -154,3 +154,106 @@ test("STF Flow transfers only explicitly owned full RGB16 buffers", async () => 
     else Reflect.deleteProperty(globalThis, "window");
   }
 });
+
+test("STF streamed RGB16 stripes are acknowledged after consumption, in order", async () => {
+  const oldWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  const oldWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const seen: string[] = [];
+  class FakeWorker {
+    onmessage: ((event: MessageEvent<OpticalFlowWorkerResponse>) => void) | null = null;
+    onerror = null;
+    onmessageerror = null;
+    private currentId = 0;
+    private stage = 0;
+    postMessage(request: OpticalFlowWorkerRequest) {
+      const send = (response: OpticalFlowWorkerResponse) => queueMicrotask(() =>
+        this.onmessage?.({ data: response } as MessageEvent<OpticalFlowWorkerResponse>));
+      if (request.type === "interpolate") {
+        expect(request.streamStripes).toBe(true);
+        this.currentId = request.requestId;
+        this.stage = 0;
+        seen.push("request");
+        send({ type: "stripe", requestId: request.requestId, kind: "primary",
+          width: 2, height: 1, y: 0, gamma2Buffer: new Uint16Array(6).fill(123).buffer });
+      } else if (request.type === "stripe-ack") {
+        seen.push(`ack:${request.kind}:${request.y}`);
+        expect(request.requestId).toBe(this.currentId);
+        if (this.stage++ === 0) {
+          send({ type: "stripe", requestId: request.requestId, kind: "primary",
+            width: 2, height: 1, y: 1, gamma2Buffer: new Uint16Array(6).fill(456).buffer });
+        } else if (this.stage === 2) {
+          send({ type: "stripe", requestId: request.requestId, kind: "additional",
+            width: 2, height: 2, y: 0, gamma2Buffer: new Uint16Array(12).fill(789).buffer });
+        } else {
+          send({ type: "stream-result", requestId: request.requestId, width: 2, height: 2,
+            performance: { flowWorkerCount: 1 } as never });
+        }
+      }
+    }
+    terminate() {}
+  }
+  Object.defineProperty(globalThis, "Worker", { configurable: true, value: FakeWorker });
+  Object.defineProperty(globalThis, "window", {
+    configurable: true, value: { location: { origin: "https://stgy.example" } },
+  });
+  try {
+    const client = new StfOpticalFlowClient();
+    try {
+      const result = await client.generateStripes({
+        width: 2, height: 2, previousImageId: 0, nextImageId: 1,
+        previousGamma2: new Uint16Array(12), nextGamma2: new Uint16Array(12),
+        variant: "mid", additionalVariant: "ext2", additionalVariantScale: 1,
+        sessionId: "s", sessionCreatedAt: 1, alignmentKey: "a", winsize: 31,
+        inputOwnership: { previous: true, next: true },
+      }, async (stripe) => {
+        seen.push(`consume:${stripe.kind}:${stripe.y}:${stripe.pixels[0]}`);
+        await Promise.resolve(); // Do not ack until the consumer finishes.
+      });
+      expect(result.flowWorkerCount).toBe(1);
+      expect(seen).toEqual([
+        "request", "consume:primary:0:123", "ack:primary:0",
+        "consume:primary:1:456", "ack:primary:1",
+        "consume:additional:0:789", "ack:additional:0",
+      ]);
+    } finally { client.terminate(); }
+  } finally {
+    if (oldWorker) Object.defineProperty(globalThis, "Worker", oldWorker);
+    else Reflect.deleteProperty(globalThis, "Worker");
+    if (oldWindow) Object.defineProperty(globalThis, "window", oldWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  }
+});
+
+test("STF streaming rejects incomplete output rather than silently returning partial accumulation", async () => {
+  const oldWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  const oldWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  class FakeWorker {
+    onmessage: ((event: MessageEvent<OpticalFlowWorkerResponse>) => void) | null = null;
+    onerror = null;
+    onmessageerror = null;
+    postMessage(request: OpticalFlowWorkerRequest) {
+      if (request.type !== "warp-opening-average") return;
+      queueMicrotask(() => this.onmessage?.({ data: {
+        type: "stream-result", requestId: request.requestId, width: 2, height: 2, warpMs: 0,
+      } } as MessageEvent<OpticalFlowWorkerResponse>));
+    }
+    terminate() {}
+  }
+  Object.defineProperty(globalThis, "Worker", { configurable: true, value: FakeWorker });
+  Object.defineProperty(globalThis, "window", {
+    configurable: true, value: { location: { origin: "https://stgy.example" } },
+  });
+  try {
+    const client = new StfOpticalFlowClient();
+    try {
+      await expect(client.warpOpeningAverageStripes({
+        width: 2, height: 2, sourceImageId: 0, variant: "ext1", variantScale: 1,
+      }, () => {})).rejects.toThrow("without all stripes");
+    } finally { client.terminate(); }
+  } finally {
+    if (oldWorker) Object.defineProperty(globalThis, "Worker", oldWorker);
+    else Reflect.deleteProperty(globalThis, "Worker");
+    if (oldWindow) Object.defineProperty(globalThis, "window", oldWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  }
+});

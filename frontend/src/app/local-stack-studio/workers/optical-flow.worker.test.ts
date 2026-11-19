@@ -22,7 +22,8 @@ function syntheticField(width: number, height: number, dx: number, norms?: reado
 async function runMidpoint(cores: number, memoryGiB: number, additionalVariant?: "ext1" | "ext2", sharedGray = false,
   wideImage = false,
   scales?: { main?: number; additional?: number; opening?: number[] },
-  norms?: readonly number[], openingVariants: OpticalFlowOpeningVariant[] = []) {
+  norms?: readonly number[], openingVariants: OpticalFlowOpeningVariant[] = [],
+  streaming?: { height?: number; enabled?: boolean }) {
   jest.resetModules();
   const originalWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
   const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
@@ -73,7 +74,15 @@ async function runMidpoint(cores: number, memoryGiB: number, additionalVariant?:
     configurable: true, value: { hardwareConcurrency: cores, deviceMemory: memoryGiB },
   });
   Object.defineProperty(globalThis, "postMessage", {
-    configurable: true, value: (message: OpticalFlowWorkerResponse) => messages.push(message),
+    configurable: true, value: (message: OpticalFlowWorkerResponse) => {
+      messages.push(message);
+      if (streaming?.enabled && message.type === "stripe") {
+        // Emulate the main thread: acknowledge only after each stripe arrives.
+        queueMicrotask(() => void (globalThis as unknown as ParentScope).onmessage?.({ data: {
+          type: "stripe-ack", requestId: message.requestId, kind: message.kind, y: message.y,
+        } } as MessageEvent<OpticalFlowWorkerRequest>));
+      }
+    },
   });
 
   try {
@@ -84,7 +93,7 @@ async function runMidpoint(cores: number, memoryGiB: number, additionalVariant?:
     await scope.onmessage({ data: { type: "warmup", requestId: 1 } } as MessageEvent<OpticalFlowWorkerRequest>);
 
     const width = wideImage || openingVariants.length ? 11 : 7;
-    const height = 3;
+    const height = streaming?.height ?? 3;
     const startPeak = wideImage || openingVariants.length ? 5 : 2;
     const previous = new Uint16Array(width * height * 3);
     const next = new Uint16Array(width * height * 3);
@@ -95,6 +104,7 @@ async function runMidpoint(cores: number, memoryGiB: number, additionalVariant?:
     await scope.onmessage({
       data: {
         type: "interpolate", requestId: 2, width, height,
+        ...(streaming?.enabled ? { streamStripes: true } : {}),
         ...(openingVariants.length ? { openingAverageRadiusSpan: 1, previousImageId: 12, nextImageId: 13 } : {}),
         variant: "mid", ...(additionalVariant ? { additionalVariant } : {}),
         ...(scales?.main !== undefined ? { variantScale: scales.main } : {}),
@@ -109,7 +119,7 @@ async function runMidpoint(cores: number, memoryGiB: number, additionalVariant?:
     for (let i = 0; i < openingVariants.length; i++) {
       await scope.onmessage({ data: {
         type: "warp-opening-average", requestId: 3 + i,
-        sourceImageId: 12, variant: openingVariants[i], variantScale: scales?.opening?.[i] ?? (i + 1) * 0.5,
+        ...(streaming?.enabled ? { streamStripes: true } : {}),        sourceImageId: 12, variant: openingVariants[i], variantScale: scales?.opening?.[i] ?? (i + 1) * 0.5,
         ...(i === 0 ? { sourceGamma2Buffer: previous.slice().buffer } : {}),
       } } as MessageEvent<OpticalFlowWorkerRequest>);
     }
@@ -551,5 +561,53 @@ test("STF opening extrapolation 12 expands a synthetic disc to its 1/F target ra
       if (descriptor) Object.defineProperty(globalThis, name, descriptor);
       else Reflect.deleteProperty(globalThis, name);
     }
+  }
+});
+
+function restoredStreamPixels(messages: OpticalFlowWorkerResponse[], requestId: number,
+  kind: "primary" | "additional", width: number, height: number): Uint16Array {
+  const output = new Uint16Array(width * height * 3);
+  const chunks = messages.filter((item) => item.type === "stripe" && item.requestId === requestId && item.kind === kind);
+  let nextY = 0;
+  for (const item of chunks) {
+    if (item.type !== "stripe") throw new Error("Expected stripe");
+    expect(item.y).toBe(nextY);
+    expect(item.gamma2Buffer.byteLength).toBe(width * item.height * 6);
+    output.set(new Uint16Array(item.gamma2Buffer), item.y * width * 3);
+    nextY += item.height;
+  }
+  expect(nextY).toBe(height);
+  return output;
+}
+
+test("streamed midpoint, closing and opening RGB16 match full-image Warp exactly", async () => {
+  // A >256-row image forces several stripe messages with no full RGB16 result.
+  const variants = ["ext1", "ext1-2"] as OpticalFlowOpeningVariant[];
+  const streamed = await runMidpoint(2, 8, "ext2", false, false,
+    { main: 0.5, additional: 1.7, opening: [0.8, 2.1] }, undefined, variants,
+    { height: 257, enabled: true });
+  const tallFull = await runMidpoint(2, 8, "ext2", false, false,
+    { main: 0.5, additional: 1.7, opening: [0.8, 2.1] }, undefined, variants,
+    { height: 257, enabled: false });
+  const fullHeight = 257;
+  const width = 11;
+  const primaryChunks = streamed.messages.filter((item) => item.type === "stripe" && item.requestId === 2 && item.kind === "primary");
+  expect(primaryChunks.length).toBeGreaterThan(1);
+  expect(primaryChunks.every((item) => item.type === "stripe" && item.gamma2Buffer.byteLength < width * fullHeight * 6)).toBe(true);
+  expect(streamed.messages.some((item) => item.type === "result" || item.type === "warp-result")).toBe(false);
+  expect(streamed.messages.find((item) => item.type === "stream-result" && item.requestId === 2)).toMatchObject({
+    type: "stream-result", requestId: 2, width, height: fullHeight,
+  });
+  for (const kind of ["primary", "additional"] as const) {
+    const pixels = restoredStreamPixels(streamed.messages, 2, kind, width, fullHeight);
+    const whole = tallFull.messages.find((item) => item.type === "result" && item.requestId === 2);
+    if (!whole || whole.type !== "result") throw new Error("Expected whole-image result");
+    expect(pixels).toEqual(new Uint16Array(kind === "primary" ? whole.gamma2Buffer : whole.additionalGamma2Buffer!));
+  }
+  for (const requestId of [3, 4]) {
+    const whole = tallFull.messages.find((item) => item.type === "warp-result" && item.requestId === requestId);
+    if (!whole || whole.type !== "warp-result") throw new Error("Expected whole-image warp");
+    expect(restoredStreamPixels(streamed.messages, requestId, "primary", width, fullHeight))
+      .toEqual(new Uint16Array(whole.gamma2Buffer));
   }
 });

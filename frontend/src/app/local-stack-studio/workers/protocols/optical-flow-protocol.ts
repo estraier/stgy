@@ -4,6 +4,8 @@ export type OpticalFlowVariant = "mid" | OpticalFlowOpeningVariant | "ext2";
 
 export type OpticalFlowWorkerInterpolateRequest = {
   type: "interpolate";
+  // Request stripes instead of full-resolution RGB16 output images.
+  streamStripes?: boolean;
   requestId: number;
   width: number;
   height: number;
@@ -37,6 +39,7 @@ export type OpticalFlowWorkerWarmupRequest = {
 
 export type OpticalFlowWorkerWarpOpeningAverageRequest = {
   type: "warp-opening-average";
+  streamStripes?: boolean;
   requestId: number;
   sourceImageId: number;
   // The first request provides the opening-side source RGB16; subsequent
@@ -46,9 +49,22 @@ export type OpticalFlowWorkerWarpOpeningAverageRequest = {
   variantScale: number;
 };
 
+export type OpticalFlowWorkerStripeAckRequest = {
+  type: "stripe-ack";
+  requestId: number;
+  y: number;
+  kind: "primary" | "additional";
+};
+export type OpticalFlowWorkerStripeAbortRequest = {
+  type: "stripe-abort";
+  requestId: number;
+  message: string;
+};
+
 export type OpticalFlowWorkerReleaseRetainedRequest = { type: "release-retained"; requestId: number };
 export type OpticalFlowWorkerRequest = OpticalFlowWorkerInterpolateRequest | OpticalFlowWorkerWarmupRequest |
-  OpticalFlowWorkerWarpOpeningAverageRequest | OpticalFlowWorkerReleaseRetainedRequest;
+  OpticalFlowWorkerWarpOpeningAverageRequest | OpticalFlowWorkerReleaseRetainedRequest |
+  OpticalFlowWorkerStripeAckRequest | OpticalFlowWorkerStripeAbortRequest;
 
 export type OpticalFlowPerformanceStats = {
   sourceWidth: number;
@@ -108,6 +124,25 @@ export type OpticalFlowWorkerWarpRetainedResponse = {
   warpMs: number;
 };
 
+export type OpticalFlowWorkerStripeResponse = {
+  type: "stripe";
+  requestId: number;
+  kind: "primary" | "additional";
+  y: number;
+  height: number;
+  width: number;
+  gamma2Buffer: ArrayBuffer;
+};
+
+export type OpticalFlowWorkerStreamResultResponse = {
+  type: "stream-result";
+  requestId: number;
+  width: number;
+  height: number;
+  performance?: OpticalFlowPerformanceStats;
+  warpMs?: number;
+};
+
 export type OpticalFlowWorkerErrorResponse = {
   type: "error";
   requestId: number;
@@ -118,5 +153,7 @@ export type OpticalFlowWorkerResponse =
   | OpticalFlowWorkerReadyResponse
   | OpticalFlowWorkerProgressResponse
   | OpticalFlowWorkerWarpRetainedResponse
+  | OpticalFlowWorkerStripeResponse
+  | OpticalFlowWorkerStreamResultResponse
   | OpticalFlowWorkerResultResponse
   | OpticalFlowWorkerErrorResponse;
