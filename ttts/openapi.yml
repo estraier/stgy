@@ -391,13 +391,19 @@ paths:
             default: en
         - name: limit
           in: query
+          description: Maximum number of results returned; invalid or out-of-range values return HTTP 400
           schema:
             type: integer
+            minimum: 1
+            maximum: 2000
             default: 100
         - name: offset
           in: query
+          description: Number of matching results to skip; invalid or out-of-range values return HTTP 400
           schema:
             type: integer
+            minimum: 0
+            maximum: 10000
             default: 0
         - name: timeout
           in: query
@@ -426,6 +432,8 @@ paths:
           schema:
             type: number
       responses:
+        "400":
+          description: Invalid pagination or filter parameters
         "200":
           description: Search tokens, phrase units, and matching document IDs
           content:
@@ -462,13 +470,19 @@ paths:
             default: en
         - name: limit
           in: query
+          description: Maximum number of results returned; invalid or out-of-range values return HTTP 400
           schema:
             type: integer
+            minimum: 1
+            maximum: 2000
             default: 100
         - name: offset
           in: query
+          description: Number of matching results to skip; invalid or out-of-range values return HTTP 400
           schema:
             type: integer
+            minimum: 0
+            maximum: 10000
             default: 0
         - name: timeout
           in: query
@@ -505,6 +519,8 @@ paths:
           schema:
             type: boolean
       responses:
+        "400":
+          description: Invalid pagination or filter parameters
         "200":
           description: Search tokens, phrase units, and fetched documents
           content:

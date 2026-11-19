@@ -7,6 +7,7 @@ import {
 } from "../services/search";
 import { Tokenizer } from "../utils/tokenizer";
 import { parsePositiveSecondsOrDefault, waitForTaskOutcome } from "../utils/taskWait";
+import { parseSearchPagination, SearchPaginationError } from "../utils/searchPagination";
 
 type ResourceInstance = {
   searchService: SearchService;
@@ -223,14 +224,14 @@ export default function createResourceRouter(instance: ResourceInstance) {
       const query = req.query.query as string;
       if (!query) return res.status(400).json({ error: "query is required" });
       const locale = (req.query.locale as string) || "en";
-      const limit = parseInt(req.query.limit as string, 10) || 100;
-      const offset = parseInt(req.query.offset as string, 10) || 0;
+      const { limit, offset } = parseSearchPagination(req.query.limit, req.query.offset);
       const timeout = parsePositiveSecondsOrDefault(req.query.timeout, 1);
       const filters = getSearchFilters(req);
       const result = await searchService.search(query, locale, limit, offset, timeout, filters);
       res.json(result);
     } catch (e) {
-      if (e instanceof Error && /^(labels|numeric|invalid numericOp)/.test(e.message)) {
+      if (e instanceof SearchPaginationError ||
+          (e instanceof Error && /^(labels|numeric|invalid numericOp)/.test(e.message))) {
         return res.status(400).json({ error: e.message });
       }
       logger.error(e);
@@ -243,8 +244,7 @@ export default function createResourceRouter(instance: ResourceInstance) {
       const query = req.query.query as string;
       if (!query) return res.status(400).json({ error: "query is required" });
       const locale = (req.query.locale as string) || "en";
-      const limit = parseInt(req.query.limit as string, 10) || 100;
-      const offset = parseInt(req.query.offset as string, 10) || 0;
+      const { limit, offset } = parseSearchPagination(req.query.limit, req.query.offset);
       const timeout = parsePositiveSecondsOrDefault(req.query.timeout, 1);
       const omitBodyText = req.query.omitBodyText === "true";
       const omitAttrs = req.query.omitAttrs === "true";
@@ -279,7 +279,8 @@ export default function createResourceRouter(instance: ResourceInstance) {
         result: orderedDocs,
       });
     } catch (e) {
-      if (e instanceof Error && /^(labels|numeric|invalid numericOp)/.test(e.message)) {
+      if (e instanceof SearchPaginationError ||
+          (e instanceof Error && /^(labels|numeric|invalid numericOp)/.test(e.message))) {
         return res.status(400).json({ error: e.message });
       }
       logger.error(e);

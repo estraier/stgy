@@ -140,6 +140,35 @@ def test_tokenize():
   assert res.status_code == 200
   assert res.json() == ["ポール", "ド", "ヴィヴィ"]
 
+def test_search_pagination_validation():
+  base_url = f"{BASE_URL}/posts"
+  bad_params = [
+    {"limit": "0"},
+    {"limit": "-1"},
+    {"limit": "2001"},
+    {"limit": "2junk"},
+    {"limit": "1e9"},
+    {"limit": ""},
+    {"offset": "-1"},
+    {"offset": "10001"},
+    {"offset": "5garbage"},
+    {"offset": "1.5"},
+  ]
+  for endpoint in ("search", "search-fetch"):
+    for bad in bad_params:
+      res = requests.get(f"{base_url}/{endpoint}", params={"query": "paginationprobe", **bad})
+      assert res.status_code == 400, (endpoint, bad, res.status_code, res.text)
+      assert "error" in res.json(), (endpoint, bad, res.json())
+    # Repeated query parameters must not silently fall back to the first value.
+    res = requests.get(
+      f"{base_url}/{endpoint}",
+      params=[("query", "paginationprobe"), ("limit", "2"), ("limit", "3")],
+    )
+    assert res.status_code == 400, (endpoint, res.status_code, res.text)
+    # The accepted range still includes Backend's 1001-result search requests.
+    res = requests.get(f"{base_url}/{endpoint}", params={"query": "paginationprobe", "limit": "1001", "offset": "0"})
+    assert res.status_code == 200, (endpoint, res.status_code, res.text)
+
 def test_reservation():
   resource = "posts"
   base_url = f"{BASE_URL}/{resource}"
