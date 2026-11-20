@@ -5,7 +5,7 @@ import type {
 } from "./protocols/optical-flow-direction-protocol";
 import { transferableBuffer } from "./transfer-buffer";
 import {
-  fillStfSplatHole, STF_SPLAT_HOLE_NEIGHBOR_BUCKET_COUNT, STF_SPLAT_HOLE_SEARCH_BUCKET_COUNT,
+  fillStfSplatHole, STF_SPLAT_HOLE_MAX_RADIUS, STF_SPLAT_HOLE_NEIGHBOR_BUCKET_COUNT, STF_SPLAT_HOLE_SEARCH_BUCKET_COUNT,
 } from "./stf-splat-hole-fill";
 import { readStfCachedFlow, writeStfCachedFlow, stfFlowSessionKey } from "../stack/stf-flow-cache";
 import { stfFlowWorkingSize, stfGamma2RgbToGray8Resampled } from "../stack/stf-flow-gray";
@@ -262,10 +262,9 @@ import type {
     const stripeBytes = streaming ? Math.min(2, Math.ceil(height / stripeRows(width))) *
       Math.min(height, stripeRows(width)) * width * 6 : 0;
     if (method === "inverse-warp") return streaming ? stripeBytes : width * height * 6;
-    // Forward-splat RGB accumulators (Float32 x3) and arrival weights
-    // (Float32) remain full-frame. Streaming holds at most two RGB16 stripes;
-    // non-streaming callers still receive one full RGB16 image.
-    // Lookup tables: x/y flow indices (2 x Int32) + interpolation fractions (Float64).
+    // Full-frame fallback/non-streaming geometry estimate. Normal streamed
+    // FS reports its actual destination-band buffer size from streamVariant.
+    // Lookup tables: x/y Flow indices (2 x Int32) + fractions (Float64).
     const lookupBytes = (width + height) * (2 * 4 + 8);
     return width * height * (12 + 4 + (streaming ? 0 : 6)) + stripeBytes + lookupBytes;
   }
@@ -359,6 +358,7 @@ import type {
     uncovered: number;
     searchCounts: number[];
     neighborCounts: number[];
+    accumulatorStartPixel: number;
   };
 
   function fallbackPixel(
@@ -503,6 +503,7 @@ import type {
       inverseWarpScale, forwardSplatScale, uncovered: 0,
       searchCounts: new Array<number>(STF_SPLAT_HOLE_SEARCH_BUCKET_COUNT).fill(0),
       neighborCounts: new Array<number>(STF_SPLAT_HOLE_NEIGHBOR_BUCKET_COUNT).fill(0),
+      accumulatorStartPixel: 0,
     };
   }
 
@@ -521,8 +522,9 @@ import type {
     const { weights, accum, searchCounts, neighborCounts, usePrevious, useNext } = state;
     for (let pixel = startPixel; pixel < endPixel; pixel++) {
       const out = (pixel - startPixel) * 3;
-      const base = pixel * 3;
-      const weight = weights[pixel];
+      const bandPixel = pixel - state.accumulatorStartPixel;
+      const base = bandPixel * 3;
+      const weight = weights[bandPixel];
       if (weight > 0) {
         output[out] = clampUint16(accum[base] / weight);
         output[out + 1] = clampUint16(accum[base + 1] / weight);
@@ -530,7 +532,7 @@ import type {
       } else {
         state.uncovered++;
         const filled = fillStfSplatHole(output, pixel, width, height, weights, accum,
-          searchCounts, neighborCounts, startPixel);
+          searchCounts, neighborCounts, startPixel, state.accumulatorStartPixel);
         if (!filled) {
           // Last-resort original-source copy; never run inverse warping.
           fallbackPixel(output, pixel - startPixel, previousGamma2Rgb, nextGamma2Rgb,
@@ -548,6 +550,222 @@ import type {
       `inverseScale=${inverseWarpScale ?? "default"}, forwardScale=${forwardSplatScale ?? "default"}` +
       `; fallbackSearch(0=source-copy,1=cardinal4,2=diagonal4,3..9=radius2..8)=[${searchCounts.join(",")}]` +
       `; fallbackNeighborsUsed(count:holes)=[${neighborCounts.map((holes, count) => holes ? `${count}:${holes}` : "").filter(Boolean).join(",")}].`);
+  }
+
+  // Forward splatting normally requires 16 bytes per output pixel (RGB F32
+  // accumulators plus F32 weight). In streaming mode, the source image may
+  // splat outside its original row. Accumulate *destination* bands including
+  // eight untouched FS rows of halo on each side for ring hole filling.
+  // Each band visits source rows in the SAME source/row/column order as the
+  // original full-frame implementation, preserving Float32 summation exactly.
+  //
+  // To exclude unrelated source rows safely, first bound every native Flow
+  // row's |dy|. Bilinear interpolation and the extrapolation norm gate are
+  // convex/bounded, so the bound also covers every full-resolution sample.
+  type SplatRowReach = {
+    displacement: Float64Array;
+    maxDisplacement: number;
+    factors: ReturnType<typeof resolveVariantFactors>;
+    lookup: SplatFlowLookup;
+  };
+
+  function buildSplatRowReach(
+    variant: OpticalFlowVariant, width: number, height: number,
+    forward: Float32Array, backward: Float32Array,
+    flowWidth: number, flowHeight: number, forwardScale?: number,
+  ): SplatRowReach | null {
+    const factors = resolveVariantFactors(variant, forwardScale);
+    const lookup = getSplatFlowLookup(width, height, flowWidth, flowHeight);
+    const forwardMax = new Float64Array(flowHeight);
+    const backwardMax = new Float64Array(flowHeight);
+    const collect = (flow: Float32Array, output: Float64Array): boolean => {
+      for (let y = 0; y < flowHeight; y++) {
+        let maximum = 0;
+        for (let x = 0; x < flowWidth; x++) {
+          const dy = flow[(y * flowWidth + x) * 2 + 1];
+          if (!Number.isFinite(dy)) return false;
+          maximum = Math.max(maximum, Math.abs(dy));
+        }
+        output[y] = maximum;
+      }
+      return true;
+    };
+    if (factors.usePrevious && !collect(forward, forwardMax)) return null;
+    if (factors.useNext && !collect(backward, backwardMax)) return null;
+    const displacement = new Float64Array(height);
+    let maxDisplacement = 0;
+    for (let y = 0; y < height; y++) {
+      const lo = lookup.y0[y] / (flowWidth * 2);
+      const hi = lookup.y1[y] / (flowWidth * 2);
+      const first = factors.usePrevious ?
+        Math.max(forwardMax[lo], forwardMax[hi]) * Math.abs(factors.previousFactor) : 0;
+      const second = factors.useNext ?
+        Math.max(backwardMax[lo], backwardMax[hi]) * Math.abs(factors.nextFactor) : 0;
+      const bound = Math.max(first, second) * lookup.scaleY;
+      if (!Number.isFinite(bound)) return null;
+      // 2px conservatism covers bilinear footprint and floating-point edge
+      // rounding. It does not alter the splat calculation itself.
+      displacement[y] = bound + 2;
+      maxDisplacement = Math.max(maxDisplacement, bound);
+    }
+    return { displacement, maxDisplacement, factors, lookup };
+  }
+
+  function bandSourceRows(reach: Float64Array, bandStartY: number, bandEndY: number): number {
+    let count = 0;
+    for (let y = 0; y < reach.length; y++) {
+      if (y + reach[y] >= bandStartY && y - reach[y] < bandEndY) count++;
+    }
+    return count;
+  }
+
+  function splatSourceIntoBand(
+    source: Uint16Array, flow: Float32Array, factor: number,
+    gate: StfFlowNormGate | null, width: number, height: number,
+    lookup: SplatFlowLookup, reach: Float64Array,
+    bandStartY: number, bandEndY: number,
+    weights: Float32Array, accum: Float32Array,
+  ): void {
+    for (let y = 0; y < height; y++) {
+      if (y + reach[y] < bandStartY || y - reach[y] >= bandEndY) continue;
+      const row0 = lookup.y0[y];
+      const row1 = lookup.y1[y];
+      const flowFy = lookup.fy[y];
+      const oneMinusFy = 1 - flowFy;
+      for (let x = 0; x < width; x++) {
+        const col0 = lookup.x0[x];
+        const col1 = lookup.x1[x];
+        const flowFx = lookup.fx[x];
+        const oneMinusFx = 1 - flowFx;
+        const flowW00 = oneMinusFx * oneMinusFy;
+        const flowW10 = flowFx * oneMinusFy;
+        const flowW01 = oneMinusFx * flowFy;
+        const flowW11 = flowFx * flowFy;
+        const ff00 = row0 + col0;
+        const ff10 = row0 + col1;
+        const ff01 = row1 + col0;
+        const ff11 = row1 + col1;
+        const flowX = flow[ff00] * flowW00 + flow[ff10] * flowW10 +
+          flow[ff01] * flowW01 + flow[ff11] * flowW11;
+        const flowY = flow[ff00 + 1] * flowW00 + flow[ff10 + 1] * flowW10 +
+          flow[ff01 + 1] * flowW01 + flow[ff11 + 1] * flowW11;
+        const gateFactor = gate ? stfFlowNormGateFactor(flowX, flowY, gate) : 1;
+        const tx = clamp(x + factor * flowX * gateFactor * lookup.scaleX, 0, width - 1);
+        const ty = clamp(y + factor * flowY * gateFactor * lookup.scaleY, 0, height - 1);
+        const sourceIndex = (y * width + x) * 3;
+        const r = source[sourceIndex];
+        const g = source[sourceIndex + 1];
+        const b = source[sourceIndex + 2];
+        const x0 = Math.floor(tx);
+        const y0 = Math.floor(ty);
+        const x1 = Math.min(width - 1, x0 + 1);
+        const y1 = Math.min(height - 1, y0 + 1);
+        const fx = tx - x0;
+        const fy = ty - y0;
+        const w00 = (1 - fx) * (1 - fy);
+        const w10 = fx * (1 - fy);
+        const w01 = (1 - fx) * fy;
+        const w11 = fx * fy;
+        // Destination arrays hold only [bandStartY, bandEndY). No splat may
+        // escape the band; source rows that can hit it are processed in the
+        // original source ordering, so every retained pixel is bit-identical.
+        if (y0 >= bandStartY && y0 < bandEndY) {
+          if (w00 > 0) {
+            const index = (y0 - bandStartY) * width + x0;
+            const base = index * 3;
+            weights[index] += w00;
+            accum[base] += r * w00;
+            accum[base + 1] += g * w00;
+            accum[base + 2] += b * w00;
+          }
+          if (w10 > 0) {
+            const index = (y0 - bandStartY) * width + x1;
+            const base = index * 3;
+            weights[index] += w10;
+            accum[base] += r * w10;
+            accum[base + 1] += g * w10;
+            accum[base + 2] += b * w10;
+          }
+        }
+        if (y1 >= bandStartY && y1 < bandEndY) {
+          if (w01 > 0) {
+            const index = (y1 - bandStartY) * width + x0;
+            const base = index * 3;
+            weights[index] += w01;
+            accum[base] += r * w01;
+            accum[base + 1] += g * w01;
+            accum[base + 2] += b * w01;
+          }
+          if (w11 > 0) {
+            const index = (y1 - bandStartY) * width + x1;
+            const base = index * 3;
+            weights[index] += w11;
+            accum[base] += r * w11;
+            accum[base + 1] += g * w11;
+            accum[base + 2] += b * w11;
+          }
+        }
+      }
+    }
+  }
+
+  type SplatTilePlan = {
+    rows: number;
+    bands: number;
+    sourceRowPasses: number;
+    reach: SplatRowReach;
+    scratchBytes: number;
+  };
+
+  function planSplatTiles(
+    variant: OpticalFlowVariant, width: number, height: number,
+    forward: Float32Array, backward: Float32Array,
+    flowWidth: number, flowHeight: number, forwardScale: number | undefined,
+  ): SplatTilePlan | null {
+    const reach = buildSplatRowReach(variant, width, height, forward, backward,
+      flowWidth, flowHeight, forwardScale);
+    if (!reach) return null;
+    // Render several transfer stripes from one destination band, amortizing
+    // rescanning of input rows close to a band boundary.
+    const transferRows = stripeRows(width);
+    const minimumRows = transferRows * Math.ceil(Math.max(transferRows * 4, 512) / transferRows);
+    let rows = 0;
+    let bands = 0;
+    let sourceRowPasses = 0;
+    // Increase band height when Flow moves source pixels far vertically.
+    // Larger bands trade a little memory for fewer repeated source visits.
+    // Keep bands aligned to transfer stripes, so stripe order and size stay
+    // unchanged. In the extreme, retain the original full-frame algorithm.
+    const candidates = [1, 1.5, 2, 3, 4, 6];
+    let previousCandidate = 0;
+    for (const multiplier of candidates) {
+      const candidate = transferRows * Math.ceil(minimumRows * multiplier / transferRows);
+      if (candidate === previousCandidate || candidate >= height) continue;
+      previousCandidate = candidate;
+      let visits = 0;
+      let count = 0;
+      for (let startY = 0; startY < height; startY += candidate) {
+        const endY = Math.min(height, startY + candidate);
+        const haloStart = Math.max(0, startY - STF_SPLAT_HOLE_MAX_RADIUS);
+        const haloEnd = Math.min(height, endY + STF_SPLAT_HOLE_MAX_RADIUS);
+        visits += bandSourceRows(reach.displacement, haloStart, haloEnd);
+        count++;
+      }
+      if (visits <= height * 1.9) {
+        rows = candidate;
+        bands = count;
+        sourceRowPasses = visits;
+        break;
+      }
+    }
+    if (!rows) return null;
+    const bandRows = Math.min(height, rows + STF_SPLAT_HOLE_MAX_RADIUS * 2);
+    const stripeBytes = Math.min(2, Math.ceil(height / transferRows)) *
+      Math.min(height, transferRows) * width * 6;
+    const lookupBytes = (width + height) * 16;
+    const reachBytes = height * 8 + flowHeight * 16;
+    return { rows, bands, sourceRowPasses, reach,
+      scratchBytes: bandRows * width * 16 + stripeBytes + lookupBytes + reachBytes };
   }
 
   function synthesizeFlowVariantForwardSplat(
@@ -581,9 +799,10 @@ import type {
     variantScale: number | undefined, normGate: StfFlowNormGate | null,
     warpMethod: OpticalFlowWarpMethod,
     forwardVariantScale?: number,
-  ): Promise<{ warpMs: number; waitMs: number }> {
+  ): Promise<{ warpMs: number; waitMs: number; scratchBytes: number }> {
     let warpMs = 0;
     let waitMs = 0;
+    let scratchBytes = geometryScratchBytes(width, height, true, warpMethod);
     // Convert each completion into a fulfilled outcome immediately so a fast
     // stripe-abort cannot create an unhandled rejection while another stripe
     // is still being rendered. Never exceed two unacknowledged stripe buffers.
@@ -602,26 +821,94 @@ import type {
     try {
       const rows = stripeRows(width);
       if (warpMethod !== "inverse-warp") {
+        if (variant !== "mid" && !(forwardVariantScale !== undefined &&
+            Number.isFinite(forwardVariantScale) && forwardVariantScale > 0)) {
+          throw new Error("STF forward splatting requires an explicit source-coordinate extrapolation scale.");
+        }
         const started = performance.now();
-        const state = accumulateForwardSplat(variant, previous, next, width, height,
-          forward, backward, flowWidth, flowHeight, variantScale, normGate, forwardVariantScale);
-        warpMs += performance.now() - started;
-        for (let y = 0; y < height; y += rows) {
-          const chunkHeight = Math.min(rows, height - y);
-          const renderStarted = performance.now();
-          const stripe = renderForwardSplatStripe(state, previous, next, width, height, y, chunkHeight);
-          warpMs += performance.now() - renderStarted;
-          await accept(y, chunkHeight, stripe);
+        // The full-frame renderer remains the fallback for unusually large
+        // vertical motions, where source-row rescanning would become slower
+        // than a full-frame accumulator. Non-streaming calls also stay full.
+        const plan = planSplatTiles(variant, width, height, forward, backward,
+          flowWidth, flowHeight, forwardVariantScale);
+        if (!plan) {
+          const state = accumulateForwardSplat(variant, previous, next, width, height,
+            forward, backward, flowWidth, flowHeight, variantScale, normGate, forwardVariantScale);
+          warpMs += performance.now() - started;
+          for (let y = 0; y < height; y += rows) {
+            const chunkHeight = Math.min(rows, height - y);
+            const renderStarted = performance.now();
+            const stripe = renderForwardSplatStripe(state, previous, next, width, height, y, chunkHeight);
+            warpMs += performance.now() - renderStarted;
+            await accept(y, chunkHeight, stripe);
+          }
+          while (pending.length) {
+            const began = performance.now();
+            const error = await pending.shift()!;
+            waitMs += performance.now() - began;
+            if (error) throw error;
+          }
+          logForwardSplatCompletion(state, width, height);
+          console.info(`[LSS STF FS tiled] ${variant}: fallback=full-frame ` +
+            `(source-row rescans too expensive or Flow bounds invalid), ` +
+            `scratch=${(scratchBytes / 1048576).toFixed(1)}MiB.`);
+        } else {
+          scratchBytes = plan.scratchBytes;
+          const { rows: tileRows, reach } = plan;
+          const capacity = Math.min(height, tileRows + STF_SPLAT_HOLE_MAX_RADIUS * 2) * width;
+          // One temporary band per virtual frame, not a persistent worker-
+          // global pool. Memory is released when the request is completed.
+          const weights = new Float32Array(capacity);
+          const accum = new Float32Array(capacity * 3);
+          const state: ForwardSplatState = {
+            variant, weights, accum,
+            usePrevious: reach.factors.usePrevious, useNext: reach.factors.useNext,
+            inverseWarpScale: variantScale, forwardSplatScale: forwardVariantScale,
+            uncovered: 0, accumulatorStartPixel: 0,
+            searchCounts: new Array<number>(STF_SPLAT_HOLE_SEARCH_BUCKET_COUNT).fill(0),
+            neighborCounts: new Array<number>(STF_SPLAT_HOLE_NEIGHBOR_BUCKET_COUNT).fill(0),
+          };
+          warpMs += performance.now() - started;
+          for (let tileStart = 0; tileStart < height; tileStart += tileRows) {
+            const tileEnd = Math.min(height, tileStart + tileRows);
+            const haloStart = Math.max(0, tileStart - STF_SPLAT_HOLE_MAX_RADIUS);
+            const haloEnd = Math.min(height, tileEnd + STF_SPLAT_HOLE_MAX_RADIUS);
+            const bandPixels = (haloEnd - haloStart) * width;
+            const accumulateStarted = performance.now();
+            weights.fill(0, 0, bandPixels);
+            accum.fill(0, 0, bandPixels * 3);
+            if (reach.factors.usePrevious) {
+              splatSourceIntoBand(previous, forward, reach.factors.previousFactor,
+                variant === "mid" ? null : normGate, width, height,
+                reach.lookup, reach.displacement, haloStart, haloEnd, weights, accum);
+            }
+            if (reach.factors.useNext) {
+              splatSourceIntoBand(next, backward, reach.factors.nextFactor,
+                variant === "mid" ? null : normGate, width, height,
+                reach.lookup, reach.displacement, haloStart, haloEnd, weights, accum);
+            }
+            state.accumulatorStartPixel = haloStart * width;
+            warpMs += performance.now() - accumulateStarted;
+            for (let y = tileStart; y < tileEnd; y += rows) {
+              const chunkHeight = Math.min(rows, tileEnd - y);
+              const renderStarted = performance.now();
+              const stripe = renderForwardSplatStripe(state, previous, next, width, height, y, chunkHeight);
+              warpMs += performance.now() - renderStarted;
+              await accept(y, chunkHeight, stripe);
+            }
+          }
+          while (pending.length) {
+            const began = performance.now();
+            const error = await pending.shift()!;
+            waitMs += performance.now() - began;
+            if (error) throw error;
+          }
+          logForwardSplatCompletion(state, width, height);
+          console.info(`[LSS STF FS tiled] ${variant}: bands=${plan.bands} ` +
+            `tileRows=${plan.rows} sourceRowPasses=${plan.sourceRowPasses}/${height} ` +
+            `maxDy=${reach.maxDisplacement.toFixed(1)}px ` +
+            `scratch=${(scratchBytes / 1048576).toFixed(1)}MiB.`);
         }
-        // A complete stream must have every stripe acknowledged before the
-        // worker reports success or releases input/accumulation buffers.
-        while (pending.length) {
-          const began = performance.now();
-          const error = await pending.shift()!;
-          waitMs += performance.now() - began;
-          if (error) throw error;
-        }
-        logForwardSplatCompletion(state, width, height);
       } else {
         for (let y = 0; y < height; y += rows) {
           const chunkHeight = Math.min(rows, height - y);
@@ -638,7 +925,7 @@ import type {
           if (error) throw error;
         }
       }
-      return { warpMs, waitMs };
+      return { warpMs, waitMs, scratchBytes };
     } catch (error) {
       // A rejected stripe may leave a second message outstanding. Abort the
       // request locally; a late main-thread acknowledgement is then ignored.
@@ -716,16 +1003,15 @@ import type {
         const warpMethod = message.warpMethod ?? "inverse-warp";
         const knownSourceFlowBytes = current.source.byteLength + current.flow.byteLength;
         if (message.streamStripes) {
-          const { warpMs, waitMs } = await streamVariant(message.requestId, "primary", message.variant,
+          const { warpMs, waitMs, scratchBytes } = await streamVariant(message.requestId, "primary", message.variant,
             current.source, current.source, geometry.imageWidth, geometry.imageHeight,
             current.flow, current.flow, geometry.width, geometry.height, message.variantScale, current.gate,
             warpMethod, message.forwardVariantScale);
           workerScope.postMessage({ type: "stream-result", requestId: message.requestId,
             width: geometry.imageWidth, height: geometry.imageHeight, warpMs,
             stripeAckWaitMs: waitMs,
-            warpScratchBytes: geometryScratchBytes(geometry.imageWidth, geometry.imageHeight, true, warpMethod),
-            estimatedPeakBytes: knownSourceFlowBytes +
-              geometryScratchBytes(geometry.imageWidth, geometry.imageHeight, true, warpMethod) });
+            warpScratchBytes: scratchBytes,
+            estimatedPeakBytes: knownSourceFlowBytes + scratchBytes });
         } else {
           const output = warpMethod !== "inverse-warp"
             ? synthesizeFlowVariantForwardSplat(message.variant, current.source, current.source,
@@ -947,10 +1233,12 @@ import type {
       totalWorkerMs: performance.now() - workerStartedAt -
         (primaryStream?.waitMs ?? 0) - (additionalStream?.waitMs ?? 0),
       estimatedPeakBytes: estimatePeakBytes(width, height, flowSize.width, flowSize.height, flows.workerCount,
-        geometryScratchBytes(width, height, Boolean(message.streamStripes), warpMethod)),
-      warpScratchBytes: geometryScratchBytes(width, height, Boolean(message.streamStripes), warpMethod),
+        Math.max(primaryStream?.scratchBytes ?? geometryScratchBytes(width, height, false, warpMethod),
+          additionalStream?.scratchBytes ?? 0)),
+      warpScratchBytes: primaryStream?.scratchBytes ?? geometryScratchBytes(width, height, false, warpMethod),
       ...(message.additionalVariant ? {
-        additionalWarpScratchBytes: geometryScratchBytes(width, height, Boolean(message.streamStripes), warpMethod),
+        additionalWarpScratchBytes: additionalStream?.scratchBytes ??
+          geometryScratchBytes(width, height, false, warpMethod),
       } : {}),
       inputGamma2Bytes: previousGamma2Rgb.byteLength + nextGamma2Rgb.byteLength,
       flowFieldBytes: flows.forward.byteLength + flows.backward.byteLength,

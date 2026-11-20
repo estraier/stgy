@@ -15,9 +15,15 @@ type ParentScope = {
   postMessage: (message: OpticalFlowWorkerResponse, transfer?: Transferable[]) => void;
 };
 
-function syntheticField(width: number, height: number, dx: number, norms?: readonly number[]): ArrayBuffer {
+function syntheticField(width: number, height: number, dx: number, norms?: readonly number[], verticalFlow = 0): ArrayBuffer {
   const values = new Float32Array(width * height * 2);
-  for (let i = 0; i < values.length; i += 2) values[i] = norms ? Math.sign(dx) * norms[i / 2] : dx;
+  for (let i = 0; i < values.length; i += 2) {
+    values[i] = norms ? Math.sign(dx) * norms[i / 2] : dx;
+    if (verticalFlow) {
+      const pixel = i / 2;
+      values[i + 1] = verticalFlow * Math.sin((pixel % width) / 7 + Math.floor(pixel / width) / 17);
+    }
+  }
   return values.buffer;
 }
 
@@ -25,7 +31,8 @@ async function runMidpoint(cores: number, memoryGiB: number, additionalVariant?:
   wideImage = false,
   scales?: { main?: number; additional?: number; opening?: number[] },
   norms?: readonly number[], openingVariants: OpticalFlowOpeningVariant[] = [],
-  streaming?: { height?: number; enabled?: boolean }, warpMethod?: OpticalFlowWarpMethod) {
+  streaming?: { height?: number; enabled?: boolean }, warpMethod?: OpticalFlowWarpMethod,
+  verticalFlow = 0, patterned = false) {
   jest.resetModules();
   const originalWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
   const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
@@ -54,7 +61,8 @@ async function runMidpoint(cores: number, memoryGiB: number, additionalVariant?:
         flowComputations++;
         respond({
           type: "result", requestId: message.requestId,
-          flowBuffer: syntheticField(message.width, message.height, this.index === 0 ? 2 : -2, norms),
+          flowBuffer: syntheticField(message.width, message.height, this.index === 0 ? 2 : -2, norms,
+            this.index === 0 ? verticalFlow : -verticalFlow),
           computeMs: 1,
         });
       } else if (message.type === "compute-pair") {
@@ -62,8 +70,8 @@ async function runMidpoint(cores: number, memoryGiB: number, additionalVariant?:
         flowComputations += 2;
         respond({
           type: "pair-result", requestId: message.requestId,
-          forwardBuffer: syntheticField(message.width, message.height, 2, norms),
-          backwardBuffer: syntheticField(message.width, message.height, -2, norms),
+          forwardBuffer: syntheticField(message.width, message.height, 2, norms, verticalFlow),
+          backwardBuffer: syntheticField(message.width, message.height, -2, norms, -verticalFlow),
           forwardMs: 1, backwardMs: 1,
         });
       }
@@ -102,6 +110,12 @@ async function runMidpoint(cores: number, memoryGiB: number, additionalVariant?:
     for (let c = 0; c < 3; c += 1) {
       previous[(width + startPeak) * 3 + c] = 8000;
       next[(width + startPeak + 2) * 3 + c] = 8000;
+    }
+    if (patterned) {
+      for (let i = 0; i < width * height * 3; i++) {
+        previous[i] = (i * 43 + (i % 79) * 311) % 65536;
+        next[i] = (i * 139 + (i % 61) * 177) % 65536;
+      }
     }
     await scope.onmessage({
       data: {
@@ -872,6 +886,43 @@ test("FS streamed midpoint, closing and opening stripes match full RGB16", async
   },
 );
 
+
+test("FS destination-band streaming preserves RGB16 across tile and hole-halo boundaries", async () => {
+  const variants = ["ext1", "ext1-12"] as OpticalFlowOpeningVariant[];
+  const scales = { additional: 0.47, opening: [0.58, 12.83] };
+  const height = 1205;
+  const width = 11;
+  // Nonzero Y Flow crosses transfer stripes and destination-band boundaries.
+  // Pattern every RGB channel, rather than relying on a single bright point,
+  // so ordering-dependent Float32 summation changes are detected.
+  const streamed = await runMidpoint(8, 16, "ext2", false, false, scales, undefined,
+    variants, { height, enabled: true }, "forward-splat", 17.3, true);
+  const whole = await runMidpoint(8, 16, "ext2", false, false, scales, undefined,
+    variants, { height, enabled: false }, "forward-splat", 17.3, true);
+  const streamMain = streamed.messages.find((m) => m.type === "stream-result" && m.requestId === 2);
+  const wholeMain = whole.messages.find((m) => m.type === "result" && m.requestId === 2);
+  expect(streamMain?.type).toBe("stream-result");
+  expect(wholeMain?.type).toBe("result");
+  if (!streamMain || streamMain.type !== "stream-result" ||
+      !wholeMain || wholeMain.type !== "result") return;
+  expect(streamMain.performance?.warpScratchBytes).toBeLessThan(
+    (wholeMain.performance.warpScratchBytes ?? Infinity) * 0.6);
+  expect(restoredStreamPixels(streamed.messages, 2, "primary", width, height))
+    .toEqual(new Uint16Array(wholeMain.gamma2Buffer));
+  expect(restoredStreamPixels(streamed.messages, 2, "additional", width, height))
+    .toEqual(new Uint16Array(wholeMain.additionalGamma2Buffer!));
+  for (const requestId of [3, 4]) {
+    const stream = streamed.messages.find((m) => m.type === "stream-result" && m.requestId === requestId);
+    const original = whole.messages.find((m) => m.type === "warp-result" && m.requestId === requestId);
+    expect(stream?.type).toBe("stream-result");
+    expect(original?.type).toBe("warp-result");
+    if (!stream || stream.type !== "stream-result" ||
+        !original || original.type !== "warp-result") continue;
+    expect(stream.warpScratchBytes).toBeLessThan((original.warpScratchBytes ?? Infinity) * 0.6);
+    expect(restoredStreamPixels(streamed.messages, requestId, "primary", width, height))
+      .toEqual(new Uint16Array(original.gamma2Buffer));
+  }
+});
 
 test("STF Flow releases past Gray8 proxies while retaining the next adjacent image", async () => {
   jest.resetModules();

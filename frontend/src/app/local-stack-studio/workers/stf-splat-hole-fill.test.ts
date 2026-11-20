@@ -111,3 +111,29 @@ test("filled colors cannot become candidates in subsequent calls", () => {
   expect(scene.output[scene.pixel * 3]).toBe(1500);
   expect(scene.searchCounts[3]).toBe(1);
 });
+
+
+test("ring hole filling reads an offset destination band without using filled neighbors", () => {
+  const width = 7;
+  const height = 30;
+  const startY = 9;
+  const bandRows = 15;
+  const weights = new Float32Array(width * bandRows);
+  const accum = new Float32Array(width * bandRows * 3);
+  const output = new Uint16Array(3);
+  const search = new Array<number>(STF_SPLAT_HOLE_SEARCH_BUCKET_COUNT).fill(0);
+  const neighbors = new Array<number>(STF_SPLAT_HOLE_NEIGHBOR_BUCKET_COUNT).fill(0);
+  const globalY = 15;
+  const globalX = 3;
+  const pixel = globalY * width + globalX;
+  const covered = (globalY - 1 - startY) * width + globalX;
+  weights[covered] = 2;
+  accum[covered * 3] = 8000;
+  accum[covered * 3 + 1] = 12000;
+  accum[covered * 3 + 2] = 16000;
+  expect(fillStfSplatHole(output, pixel, width, height, weights, accum,
+    search, neighbors, pixel, startY * width)).toBe(true);
+  expect(Array.from(output)).toEqual([4000, 6000, 8000]);
+  expect(search[1]).toBe(1);
+  expect(neighbors[1]).toBe(1);
+});

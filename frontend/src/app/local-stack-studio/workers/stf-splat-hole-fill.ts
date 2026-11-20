@@ -29,6 +29,8 @@ function clampUint16(value: number): number {
  * Return false if no covered neighbor exists within radius 8; the caller then
  * copies its original same-position source pixel. outputStartPixel is
  * the first global pixel in output (zero for full-image output).
+ * accumulatorStartPixel is the first global pixel in the FS weight/accum
+ * band (zero for original full-image accumulators).
  */
 export function fillStfSplatHole(
   output: Uint16Array,
@@ -40,6 +42,7 @@ export function fillStfSplatHole(
   searchCounts: number[],
   neighborsUsedCounts: number[],
   outputStartPixel = 0,
+  accumulatorStartPixel = 0,
 ): boolean {
   const x = pixel % width;
   const y = Math.floor(pixel / width);
@@ -52,7 +55,8 @@ export function fillStfSplatHole(
   // test). Use original FS accumulators, never the mutable filled output.
   const visit = (nx: number, ny: number): void => {
     if (nx < 0 || nx >= width || ny < 0 || ny >= height) return;
-    const neighbor = ny * width + nx;
+    const neighbor = ny * width + nx - accumulatorStartPixel;
+    if (neighbor < 0 || neighbor >= weights.length) return;
     const weight = weights[neighbor];
     if (!(weight > 0)) return;
     const base = neighbor * 3;
