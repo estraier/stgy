@@ -16,6 +16,29 @@ describe("STF virtual gamma-2 RGB16 numerical domain", () => {
   });
 });
 
+test("fused generated-stripe decode, tone-match and add reproduces the three-stage Float32 result bitwise", () => {
+  const { addStfGeneratedRgb16StripeToAccumulator, applyStfToneMatchInPlace,
+    buildStfToneMatchLut } = jest.requireActual<typeof import("./stf-tone-match")>("./stf-tone-match");
+  const { addWeightedLinearToAccumulator } = jest.requireActual<typeof import("./linear-merge")>("./linear-merge");
+  for (const [gain, scaledLog] of [
+    [1, 0], [0.5, -0.8], [2, 0.5], [5, 4], [0.05, -2], [13, 0],
+  ]) {
+    for (const weight of [0, 0.001, 0.25, 1.75]) {
+      const pixels = Uint16Array.from({ length: 123 }, (_, index) =>
+        index % 23 === 0 ? 0 : index % 19 === 0 ? 65535 : (index * 7919 + 173) % 65536);
+      const lut = buildStfToneMatchLut(gain, scaledLog);
+      const old = Float32Array.from({ length: 165 }, (_, index) => index * 0.017);
+      const fused = old.slice();
+      const decoded = decodeStfGeneratedStripe(pixels, 0, pixels.length);
+      applyStfToneMatchInPlace(decoded, gain, scaledLog, lut);
+      addWeightedLinearToAccumulator(old.subarray(21, 144), decoded, weight);
+      addStfGeneratedRgb16StripeToAccumulator(fused, 21, pixels, pixels.length,
+        weight, gain, scaledLog, lut);
+      expect(new Uint32Array(fused.buffer)).toEqual(new Uint32Array(old.buffer));
+    }
+  }
+});
+
 test("extrapolation attaches opening frames to first pair and one closing to last", () => {
   const real = [2.8, 4, 3.5, 3.2, 2.5, 2.2, 2];
   const frameSet = buildStfFrameSet(real, 1, "extrapolation-2");

@@ -250,6 +250,58 @@ function sampleStfToneMatchLut(lut: StfToneMatchLut, sourceIntensity: number): n
   return lo + (hi - lo) * fraction;
 }
 
+/**
+ * Streamed STF virtual RGB16 hot path: decode gamma-2, tone match, and add to
+ * the destination accumulator without allocating an RGB Float32 stripe.
+ *
+ * Preserve the Float32 rounding at both historical intermediate buffers:
+ * decodeStfGeneratedStripe() and applyStfToneMatchInPlace(). The tone LUT,
+ * intensity weights, normalization, and accumulator order are unchanged.
+ */
+export function addStfGeneratedRgb16StripeToAccumulator(
+  accumulator: Float32Array,
+  start: number,
+  encoded: Uint16Array,
+  length: number,
+  weight: number,
+  gain: number,
+  scaledLog: number,
+  lut: StfToneMatchLut,
+): void {
+  if (!Number.isInteger(start) || start < 0 || !Number.isInteger(length) || length < 0 ||
+      length % 3 !== 0 || length > encoded.length || start + length > accumulator.length) {
+    throw new Error("Invalid generated STF stripe");
+  }
+  if (!(Number.isFinite(gain) && gain > 0 && Number.isFinite(scaledLog))) {
+    throw new Error("STF tone-match parameters are invalid.");
+  }
+  const neutral = Math.abs(gain - 1) <= 1e-8 && Math.abs(scaledLog) <= 1e-8;
+  for (let i = 0; i < length; i += 3) {
+    const er = encoded[i] / 65535;
+    const eg = encoded[i + 1] / 65535;
+    const eb = encoded[i + 2] / 65535;
+    let r = Math.fround(4 * er * er);
+    let g = Math.fround(4 * eg * eg);
+    let b = Math.fround(4 * eb * eb);
+    if (!neutral) {
+      const intensity = toneLinearIntensity(r, g, b);
+      if (intensity > STF_TONE_EPSILON) {
+        const sampled = sampleStfToneMatchLut(lut, intensity);
+        const targetIntensity = sampled ?? transformStfToneIntensity(intensity, gain, scaledLog);
+        if (Number.isFinite(targetIntensity) && targetIntensity >= 0) {
+          const scale = targetIntensity / intensity;
+          r = Math.fround(r * scale);
+          g = Math.fround(g * scale);
+          b = Math.fround(b * scale);
+        }
+      }
+    }
+    accumulator[start + i] += r * weight;
+    accumulator[start + i + 1] += g * weight;
+    accumulator[start + i + 2] += b * weight;
+  }
+}
+
 export function applyStfToneMatchInPlace(
   linear: Float32Array,
   gain: number,

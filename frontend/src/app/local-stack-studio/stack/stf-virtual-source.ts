@@ -1,5 +1,4 @@
-import { addWeightedLinearToAccumulator } from "./linear-merge";
-import { applyStfToneMatchInPlace, buildStfToneMatchLut, type StfToneMatchPlan, type StfToneMatchLut } from "./stf-tone-match";
+import { addStfGeneratedRgb16StripeToAccumulator, buildStfToneMatchLut, type StfToneMatchPlan, type StfToneMatchLut } from "./stf-tone-match";
 import { StfOpticalFlowClient, type StfFlowStripe } from "./stf-optical-flow-client";
 import { stfPairFarnebackWinsize } from "./stf-farneback-winsize";
 import type { AlignedImageReader } from "./aligned-reader";
@@ -26,10 +25,10 @@ function mergeGeneratedStripe(
 ): void {
   const start = stripe.y * width * 3;
   const length = stripe.height * width * 3;
+  // One pass; no intermediate RGB Float32 buffer or accumulator subarray.
   // The client validates size, ordering, and completeness before acking.
-  const linear = decodeStfGeneratedStripe(stripe.pixels, 0, length);
-  applyStfToneMatchInPlace(linear, tone.gain, tone.scaledLog, toneLut);
-  addWeightedLinearToAccumulator(accumulator.subarray(start, start + length), linear, weight);
+  addStfGeneratedRgb16StripeToAccumulator(accumulator, start, stripe.pixels, length,
+    weight, tone.gain, tone.scaledLog, toneLut);
 }
 
 export async function appendStfVirtualSource(
@@ -87,6 +86,9 @@ export async function appendStfVirtualSource(
     ? `${(bytes! / (1024 * 1024)).toFixed(1)}MiB` : "n/a";
   const startedAt = performance.now();
   let virtualWarpMs = 0;
+  let virtualStripeAckWaitMs = 0;
+  let virtualMergeMs = 0;
+  let virtualStripes = 0;
   let peakKnownWorkerBytes = 0;
   let generatedFrames = 0;
 
@@ -120,6 +122,7 @@ export async function appendStfVirtualSource(
       const middleTone = toneForMiddle(middleIndex);
       const closingTone = isLastPair && closingOuterFrame ? toneForOuter(closingOuterFrame) : null;
       const pairStarted = performance.now();
+      const mergeBefore = virtualMergeMs;
       const flowPerformance = await client.generateStripes({
         width: reader.width, height: reader.height,
         previousImageId: middle.previousIndex, nextImageId: middle.nextIndex,
@@ -137,11 +140,17 @@ export async function appendStfVirtualSource(
       }, (stripe) => {
         if (stripe.kind === "additional") {
           if (!closingTone || !closingOuterFrame) throw new Error("Unexpected STF closing outer frame stripe");
+          const mergeStarted = performance.now();
           mergeGeneratedStripe(accumulator, stripe, closingOuterFrame.weight,
             reader.width, closingTone, toneLut(closingTone));
+          virtualMergeMs += performance.now() - mergeStarted;
+          virtualStripes++;
         } else {
+          const mergeStarted = performance.now();
           mergeGeneratedStripe(accumulator, stripe, middle.weight,
             reader.width, middleTone, toneLut(middleTone));
+          virtualMergeMs += performance.now() - mergeStarted;
+          virtualStripes++;
         }
       });
       if (flowPerformance.flowCacheHit) flowCacheHits++;
@@ -150,6 +159,7 @@ export async function appendStfVirtualSource(
       cacheReadMs += flowPerformance.flowCacheReadMs ?? 0;
       flowComputeMs += flowPerformance.flowWallMs ?? 0;
       virtualWarpMs += (flowPerformance.warpMs ?? 0) + (flowPerformance.additionalWarpMs ?? 0);
+      virtualStripeAckWaitMs += flowPerformance.stripeAckWaitMs ?? 0;
       peakKnownWorkerBytes = Math.max(peakKnownWorkerBytes, flowPerformance.estimatedPeakBytes ?? 0);
       generatedFrames += closingTone ? 2 : 1;
       console.info(`[LSS STF timing] mode=${frameSet.mode} method=${frameSet.virtualFrameKernel} ` +
@@ -159,6 +169,8 @@ export async function appendStfVirtualSource(
         `flow=${(flowPerformance.flowWallMs ?? 0).toFixed(1)}ms ` +
         `warp=${(flowPerformance.warpMs ?? 0).toFixed(1)}ms ` +
         `closingWarp=${(flowPerformance.additionalWarpMs ?? 0).toFixed(1)}ms ` +
+        `merge=${(virtualMergeMs - mergeBefore).toFixed(1)}ms ` +
+        `stripeWait=${(flowPerformance.stripeAckWaitMs ?? 0).toFixed(1)}ms ` +
         `workerKnownPeak=${reportMb(flowPerformance.estimatedPeakBytes)} ` +
         `warpScratch=${reportMb(flowPerformance.warpScratchBytes)} ` +
         `cache=${flowPerformance.flowCacheHit ? "hit" : "miss"}.`);
@@ -174,6 +186,7 @@ export async function appendStfVirtualSource(
         const source = firstWarp ? await getImage(outer.previousIndex) : undefined;
         const tone = toneForOuter(outer);
         const outerStarted = performance.now();
+        const mergeBefore = virtualMergeMs;
         const outerPerformance = await client.warpOpeningAverageStripes({
           width: reader.width, height: reader.height,
           sourceImageId: outer.previousIndex, variant: outer.variant,
@@ -183,15 +196,21 @@ export async function appendStfVirtualSource(
           sourceGamma2: source, transferSourceOwnership: firstWarp,
         }, (stripe) => {
           if (stripe.kind !== "primary") throw new Error("Unexpected STF Average Flow stripe kind");
+          const mergeStarted = performance.now();
           mergeGeneratedStripe(accumulator, stripe, outer.weight,
             reader.width, tone, toneLut(tone));
+          virtualMergeMs += performance.now() - mergeStarted;
+          virtualStripes++;
         });
         virtualWarpMs += outerPerformance.warpMs;
+        virtualStripeAckWaitMs += outerPerformance.stripeAckWaitMs ?? 0;
         peakKnownWorkerBytes = Math.max(peakKnownWorkerBytes, outerPerformance.estimatedPeakBytes ?? 0);
         generatedFrames++;
         console.info(`[LSS STF timing] mode=${frameSet.mode} method=${frameSet.virtualFrameKernel} ` +
           `opening=${outer.variant} wall=${(performance.now() - outerStarted).toFixed(1)}ms ` +
           `warp=${outerPerformance.warpMs.toFixed(1)}ms ` +
+          `merge=${(virtualMergeMs - mergeBefore).toFixed(1)}ms ` +
+          `stripeWait=${(outerPerformance.stripeAckWaitMs ?? 0).toFixed(1)}ms ` +
           `workerKnownPeak=${reportMb(outerPerformance.estimatedPeakBytes)} ` +
           `warpScratch=${reportMb(outerPerformance.warpScratchBytes)} ` +
           `inverseScale=${outer.inverseWarpScale.toFixed(5)} ` +
@@ -208,6 +227,8 @@ export async function appendStfVirtualSource(
     console.info(`[LSS STF summary] mode=${frameSet.mode} method=${frameSet.virtualFrameKernel} ` +
       `generated=${generatedFrames} wall=${(performance.now() - startedAt).toFixed(1)}ms ` +
       `warp=${virtualWarpMs.toFixed(1)}ms ` +
+      `merge=${virtualMergeMs.toFixed(1)}ms stripes=${virtualStripes} ` +
+      `stripeWait=${virtualStripeAckWaitMs.toFixed(1)}ms ` +
       `workerKnownPeak=${reportMb(peakKnownWorkerBytes || undefined)} ` +
       `mainAccumulator=${reportMb(accumulator.byteLength)} ` +
       `(estimated known allocations only; excludes native OpenCV/WASM heap, GC and browser overhead).`);

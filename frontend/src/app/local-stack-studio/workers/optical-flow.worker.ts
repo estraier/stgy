@@ -215,25 +215,36 @@ import type {
   let openingAverageWarp: { sourceImageId: number; source: Uint16Array;
     flow: Float32Array; gate: StfFlowNormGate | null } | null = null;
 
-  // One outstanding stripe per request: the main thread acknowledges a stripe
-  // only after applying its tone curve and accumulation. Never queue a whole
-  // image worth of messages or detached allocations in either thread.
-  const awaitingStripe = new Map<number, {
-    y: number; kind: "primary" | "additional";
-    resolve: () => void; reject: (error: Error) => void;
-  }>();
+  // Allow at most two transferred stripes to be in flight. The main thread
+  // may accumulate stripe N while the worker is rendering stripe N+1, but
+  // every stripe is still individually acknowledged after consumption.
+  const MAX_INFLIGHT_STRIPES = 2;
+  type StripeWaiter = { resolve: () => void; reject: (error: Error) => void };
+  const awaitingStripe = new Map<number, Map<string, StripeWaiter>>();
+  const stripeKey = (kind: "primary" | "additional", y: number) => `${kind}:${y}`;
 
-  async function sendStripe(
+  function sendStripe(
     requestId: number, kind: "primary" | "additional", y: number, height: number,
     width: number, rgb: Uint16Array,
   ): Promise<void> {
     const gamma2Buffer = transferableBuffer(rgb);
-    await new Promise<void>((resolve, reject) => {
-      awaitingStripe.set(requestId, { y, kind, resolve, reject });
+    return new Promise<void>((resolve, reject) => {
+      let pending = awaitingStripe.get(requestId);
+      if (!pending) {
+        pending = new Map();
+        awaitingStripe.set(requestId, pending);
+      }
+      const key = stripeKey(kind, y);
+      if (pending.has(key)) {
+        reject(new Error("Duplicate STF Flow stripe"));
+        return;
+      }
+      pending.set(key, { resolve, reject });
       try {
         workerScope.postMessage({ type: "stripe", requestId, kind, y, height, width, gamma2Buffer }, [gamma2Buffer]);
       } catch (error) {
-        awaitingStripe.delete(requestId);
+        pending.delete(key);
+        if (pending.size === 0) awaitingStripe.delete(requestId);
         reject(error instanceof Error ? error : new Error(String(error)));
       }
     });
@@ -246,10 +257,13 @@ import type {
 
   function geometryScratchBytes(width: number, height: number,
     streaming: boolean, method: OpticalFlowWarpMethod): number {
-    const stripeBytes = streaming ? Math.min(height, stripeRows(width)) * width * 6 : 0;
+    // Double-buffered transfer permits one stripe to be consumed while the
+    // next is rendered/sent, so up to two RGB16 stripe buffers can coexist.
+    const stripeBytes = streaming ? Math.min(2, Math.ceil(height / stripeRows(width))) *
+      Math.min(height, stripeRows(width)) * width * 6 : 0;
     if (method === "inverse-warp") return streaming ? stripeBytes : width * height * 6;
-    // Forward-splat RGB accumulators (Float32 x3) and arrival weights (Float32)
-    // remain full-frame. For streaming requests, only the RGB16 stripe exists;
+    // Forward-splat RGB accumulators (Float32 x3) and arrival weights
+    // (Float32) remain full-frame. Streaming holds at most two RGB16 stripes;
     // non-streaming callers still receive one full RGB16 image.
     // Lookup tables: x/y flow indices (2 x Int32) + interpolation fractions (Float64).
     const lookupBytes = (width + height) * (2 * 4 + 8);
@@ -568,50 +582,95 @@ import type {
     warpMethod: OpticalFlowWarpMethod,
     forwardVariantScale?: number,
   ): Promise<{ warpMs: number; waitMs: number }> {
-    if (warpMethod !== "inverse-warp") {
-      const started = performance.now();
-      const state = accumulateForwardSplat(variant, previous, next, width, height,
-        forward, backward, flowWidth, flowHeight, variantScale, normGate, forwardVariantScale);
-      let warpMs = performance.now() - started;
-      let waitMs = 0;
-      const rows = stripeRows(width);
-      for (let y = 0; y < height; y += rows) {
-        const chunkHeight = Math.min(rows, height - y);
-        const renderStarted = performance.now();
-        const stripe = renderForwardSplatStripe(state, previous, next, width, height, y, chunkHeight);
-        warpMs += performance.now() - renderStarted;
-        const waitStarted = performance.now();
-        await sendStripe(requestId, kind, y, chunkHeight, width, stripe);
-        waitMs += performance.now() - waitStarted;
-      }
-      logForwardSplatCompletion(state, width, height);
-      return { warpMs, waitMs };
-    }
     let warpMs = 0;
     let waitMs = 0;
-    const rows = stripeRows(width);
-    for (let y = 0; y < height; y += rows) {
-      const chunkHeight = Math.min(rows, height - y);
-      const started = performance.now();
-      const pixels = synthesizeFlowVariant(variant, previous, next, width, height,
-        forward, backward, flowWidth, flowHeight, variantScale, normGate, y, chunkHeight);
-      warpMs += performance.now() - started;
-      const waitStarted = performance.now();
-      await sendStripe(requestId, kind, y, chunkHeight, width, pixels);
-      waitMs += performance.now() - waitStarted;
+    // Convert each completion into a fulfilled outcome immediately so a fast
+    // stripe-abort cannot create an unhandled rejection while another stripe
+    // is still being rendered. Never exceed two unacknowledged stripe buffers.
+    const pending: Array<Promise<Error | null>> = [];
+    const accept = async (y: number, chunkHeight: number, stripe: Uint16Array): Promise<void> => {
+      pending.push(sendStripe(requestId, kind, y, chunkHeight, width, stripe).then(
+        () => null, (reason: unknown) => reason instanceof Error ? reason : new Error(String(reason)),
+      ));
+      if (pending.length >= MAX_INFLIGHT_STRIPES) {
+        const began = performance.now();
+        const error = await pending.shift()!;
+        waitMs += performance.now() - began;
+        if (error) throw error;
+      }
+    };
+    try {
+      const rows = stripeRows(width);
+      if (warpMethod !== "inverse-warp") {
+        const started = performance.now();
+        const state = accumulateForwardSplat(variant, previous, next, width, height,
+          forward, backward, flowWidth, flowHeight, variantScale, normGate, forwardVariantScale);
+        warpMs += performance.now() - started;
+        for (let y = 0; y < height; y += rows) {
+          const chunkHeight = Math.min(rows, height - y);
+          const renderStarted = performance.now();
+          const stripe = renderForwardSplatStripe(state, previous, next, width, height, y, chunkHeight);
+          warpMs += performance.now() - renderStarted;
+          await accept(y, chunkHeight, stripe);
+        }
+        // A complete stream must have every stripe acknowledged before the
+        // worker reports success or releases input/accumulation buffers.
+        while (pending.length) {
+          const began = performance.now();
+          const error = await pending.shift()!;
+          waitMs += performance.now() - began;
+          if (error) throw error;
+        }
+        logForwardSplatCompletion(state, width, height);
+      } else {
+        for (let y = 0; y < height; y += rows) {
+          const chunkHeight = Math.min(rows, height - y);
+          const started = performance.now();
+          const stripe = synthesizeFlowVariant(variant, previous, next, width, height,
+            forward, backward, flowWidth, flowHeight, variantScale, normGate, y, chunkHeight);
+          warpMs += performance.now() - started;
+          await accept(y, chunkHeight, stripe);
+        }
+        while (pending.length) {
+          const began = performance.now();
+          const error = await pending.shift()!;
+          waitMs += performance.now() - began;
+          if (error) throw error;
+        }
+      }
+      return { warpMs, waitMs };
+    } catch (error) {
+      // A rejected stripe may leave a second message outstanding. Abort the
+      // request locally; a late main-thread acknowledgement is then ignored.
+      const waiting = awaitingStripe.get(requestId);
+      if (waiting) {
+        awaitingStripe.delete(requestId);
+        for (const entry of waiting.values()) entry.reject(error instanceof Error ? error : new Error(String(error)));
+      }
+      throw error;
     }
-    return { warpMs, waitMs };
   }
 
   workerScope.onmessage = async (event: MessageEvent<OpticalFlowWorkerRequest>) => {
     const message = event.data;
     if (message.type === "stripe-ack" || message.type === "stripe-abort") {
-      const waiter = awaitingStripe.get(message.requestId);
-      if (waiter) {
-        awaitingStripe.delete(message.requestId);
-        if (message.type === "stripe-abort") waiter.reject(new Error(message.message));
-        else if (message.y === waiter.y && message.kind === waiter.kind) waiter.resolve();
-        else waiter.reject(new Error("STF Flow stripe acknowledgement mismatch"));
+      const pending = awaitingStripe.get(message.requestId);
+      if (pending) {
+        if (message.type === "stripe-abort") {
+          awaitingStripe.delete(message.requestId);
+          for (const entry of pending.values()) entry.reject(new Error(message.message));
+        } else {
+          const key = stripeKey(message.kind, message.y);
+          const waiter = pending.get(key);
+          if (waiter) {
+            pending.delete(key);
+            if (pending.size === 0) awaitingStripe.delete(message.requestId);
+            waiter.resolve();
+          } else {
+            awaitingStripe.delete(message.requestId);
+            for (const entry of pending.values()) entry.reject(new Error("STF Flow stripe acknowledgement mismatch"));
+          }
+        }
       }
       return;
     }
@@ -657,12 +716,13 @@ import type {
         const warpMethod = message.warpMethod ?? "inverse-warp";
         const knownSourceFlowBytes = current.source.byteLength + current.flow.byteLength;
         if (message.streamStripes) {
-          const { warpMs } = await streamVariant(message.requestId, "primary", message.variant,
+          const { warpMs, waitMs } = await streamVariant(message.requestId, "primary", message.variant,
             current.source, current.source, geometry.imageWidth, geometry.imageHeight,
             current.flow, current.flow, geometry.width, geometry.height, message.variantScale, current.gate,
             warpMethod, message.forwardVariantScale);
           workerScope.postMessage({ type: "stream-result", requestId: message.requestId,
             width: geometry.imageWidth, height: geometry.imageHeight, warpMs,
+            stripeAckWaitMs: waitMs,
             warpScratchBytes: geometryScratchBytes(geometry.imageWidth, geometry.imageHeight, true, warpMethod),
             estimatedPeakBytes: knownSourceFlowBytes +
               geometryScratchBytes(geometry.imageWidth, geometry.imageHeight, true, warpMethod) });
@@ -881,6 +941,7 @@ import type {
       flowWorkerCount: flows.workerCount,
       warmupMs: flows.warmupMs,
       warpMs,
+      stripeAckWaitMs: (primaryStream?.waitMs ?? 0) + (additionalStream?.waitMs ?? 0),
       ...(additionalWarpMs !== undefined ? { additionalWarpMs } : {}),
       // Exclude main-thread acknowledgement waits from Worker execution time.
       totalWorkerMs: performance.now() - workerStartedAt -

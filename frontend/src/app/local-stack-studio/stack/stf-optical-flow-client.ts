@@ -46,6 +46,8 @@ type StripeHandler = {
   additional: boolean;
   nextPrimaryY: number;
   nextAdditionalY: number;
+  // Enforce exactly one consuming callback at a time for pipelined delivery.
+  delivery: Promise<void>;
   onStripe: (stripe: StfFlowStripe) => void | Promise<void>;
 };
 
@@ -62,7 +64,7 @@ export class StfOpticalFlowClient {
 
   constructor(onProgress?: (message: string) => void) {
     const workerUrl = new URL("/generated/local-stack-studio/optical-flow.worker.js", window.location.origin);
-    workerUrl.searchParams.set("revision", "stf-session-flow-20261120-r19-fs-ring-fill");
+    workerUrl.searchParams.set("revision", "stf-session-flow-20261120-r20-stream-pipelining");
     this.worker = new Worker(workerUrl);
     this.worker.onmessage = (event: MessageEvent<OpticalFlowWorkerResponse>) => {
       const message = event.data;
@@ -74,7 +76,14 @@ export class StfOpticalFlowClient {
         return;
       }
       if (message.type === "stripe") {
-        void this.receiveStripe(message, pending);
+        const state = pending.stripes;
+        if (!state) {
+          pending.reject(new Error("Unexpected STF Flow stripe"));
+          this.requests.delete(message.requestId);
+        } else {
+          // Concurrent worker messages cannot reorder callbacks or acks.
+          state.delivery = state.delivery.then(() => this.receiveStripe(message, pending));
+        }
         return;
       }
       this.requests.delete(message.requestId);
@@ -93,6 +102,7 @@ export class StfOpticalFlowClient {
     message: Extract<OpticalFlowWorkerResponse, { type: "stripe" }>, pending: Pending,
   ): Promise<void> {
     const state = pending.stripes;
+    if (this.requests.get(message.requestId) !== pending) return;
     try {
       if (!state || message.width !== state.width || !Number.isInteger(message.height) || message.height <= 0 ||
           (message.kind !== "primary" && message.kind !== "additional")) {
@@ -135,12 +145,12 @@ export class StfOpticalFlowClient {
       Omit<Extract<OpticalFlowWorkerRequest, { type: "warmup" }>, "requestId"> |
       Omit<Extract<OpticalFlowWorkerRequest, { type: "warp-opening-average" }>, "requestId">,
     transfer: Transferable[] = [],
-    stripes?: Omit<StripeHandler, "nextPrimaryY" | "nextAdditionalY">,
+    stripes?: Omit<StripeHandler, "nextPrimaryY" | "nextAdditionalY" | "delivery">,
   ): Promise<OpticalFlowWorkerResponse> {
     const requestId = this.nextRequestId++;
     return new Promise((resolve, reject) => {
       this.requests.set(requestId, { resolve, reject, ...(stripes ? { stripes: {
-        ...stripes, nextPrimaryY: 0, nextAdditionalY: 0,
+        ...stripes, nextPrimaryY: 0, nextAdditionalY: 0, delivery: Promise.resolve(),
       } } : {}) });
       try {
         this.worker.postMessage({ ...message, requestId }, transfer);
@@ -267,7 +277,7 @@ export class StfOpticalFlowClient {
       sourceGamma2?: Uint16Array; transferSourceOwnership?: boolean;
     },
     onStripe: (stripe: StfFlowStripe) => void | Promise<void>,
-  ): Promise<{ warpMs: number; warpScratchBytes?: number; estimatedPeakBytes?: number }> {
+  ): Promise<{ warpMs: number; stripeAckWaitMs?: number; warpScratchBytes?: number; estimatedPeakBytes?: number }> {
     const buffer = args.sourceGamma2
       ? workerInputBuffer(args.sourceGamma2, args.transferSourceOwnership === true) : undefined;
     const response = await this.request({
@@ -283,7 +293,8 @@ export class StfOpticalFlowClient {
         response.height !== args.height || typeof response.warpMs !== "number") {
       throw new Error("Invalid STF streamed opening Average Flow result");
     }
-    return { warpMs: response.warpMs, warpScratchBytes: response.warpScratchBytes,
+    return { warpMs: response.warpMs, stripeAckWaitMs: response.stripeAckWaitMs,
+      warpScratchBytes: response.warpScratchBytes,
       estimatedPeakBytes: response.estimatedPeakBytes };
   }
 

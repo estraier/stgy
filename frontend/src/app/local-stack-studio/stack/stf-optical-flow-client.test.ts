@@ -279,3 +279,61 @@ test("STF streaming rejects incomplete output rather than silently returning par
     else Reflect.deleteProperty(globalThis, "window");
   }
 });
+
+test("STF Flow client serializes two pipelined stripe callbacks and acks only after consumption", async () => {
+  const oldWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  const oldWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const seen: string[] = [];
+  let resumeFirst: (() => void) | null = null;
+  const firstGate = new Promise<void>((resolve) => { resumeFirst = resolve; });
+  class FakeWorker {
+    onmessage: ((event: MessageEvent<OpticalFlowWorkerResponse>) => void) | null = null;
+    onerror = null;
+    onmessageerror = null;
+    private acks = 0;
+    postMessage(request: OpticalFlowWorkerRequest) {
+      if (request.type === "interpolate") {
+        for (let y = 0; y < 2; y++) {
+          queueMicrotask(() => this.onmessage?.({ data: {
+            type: "stripe", requestId: request.requestId, kind: "primary", width: 2, height: 1, y,
+            gamma2Buffer: new Uint16Array(6).fill(100 + y).buffer,
+          } } as MessageEvent<OpticalFlowWorkerResponse>));
+        }
+      } else if (request.type === "stripe-ack") {
+        seen.push(`ack:${request.y}`);
+        if (++this.acks === 2) queueMicrotask(() => this.onmessage?.({ data: {
+          type: "stream-result", requestId: request.requestId, width: 2, height: 2,
+          performance: { flowWorkerCount: 1 },
+        } } as MessageEvent<OpticalFlowWorkerResponse>));
+      }
+    }
+    terminate() {}
+  }
+  Object.defineProperty(globalThis, "Worker", { configurable: true, value: FakeWorker });
+  Object.defineProperty(globalThis, "window", { configurable: true,
+    value: { location: { origin: "https://stgy.example" } } });
+  try {
+    const client = new StfOpticalFlowClient();
+    try {
+      const task = client.generateStripes({
+        width: 2, height: 2, previousImageId: 0, nextImageId: 1,
+        previousGamma2: new Uint16Array(12), nextGamma2: new Uint16Array(12),
+        variant: "mid", sessionId: "s", sessionCreatedAt: 1,
+        alignmentKey: "a", winsize: 31, inputOwnership: {},
+      }, async (stripe) => {
+        seen.push(`consume:${stripe.y}`);
+        if (stripe.y === 0) await firstGate;
+      });
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+      expect(seen).toEqual(["consume:0"]); // Second stripe must not overtake first.
+      resumeFirst!();
+      await task;
+      expect(seen).toEqual(["consume:0", "ack:0", "consume:1", "ack:1"]);
+    } finally { client.terminate(); }
+  } finally {
+    if (oldWorker) Object.defineProperty(globalThis, "Worker", oldWorker);
+    else Reflect.deleteProperty(globalThis, "Worker");
+    if (oldWindow) Object.defineProperty(globalThis, "window", oldWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  }
+});

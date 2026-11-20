@@ -834,11 +834,12 @@ test("FS streamed midpoint, closing and opening stripes match full RGB16", async
     expect(stats?.type).toBe("stream-result");
     if (!full || full.type !== "result" || !stats || stats.type !== "stream-result") return;
     // Streamed FS no longer allocates a full-image RGB16 output: only the
-    // Float32 RGB/weight accumulation, one RGB16 stripe and the two small
+    // Float32 RGB accumulation and separate arrival weights, up to two RGB16
+    // stripes and the two small
     // cached Flow-coordinate lookup arrays remain.
     const lookupBytes = (11 + 257) * (2 * 4 + 8);
     const stripeBytes = 11 * 128 * 6;
-    const streamedScratchBytes = 11 * 257 * (12 + 4) + stripeBytes + lookupBytes;
+    const streamedScratchBytes = 11 * 257 * (12 + 4) + stripeBytes * 2 + lookupBytes;
     const fullScratchBytes = 11 * 257 * (12 + 4 + 6) + lookupBytes;
     expect(stats.performance?.warpScratchBytes).toBe(streamedScratchBytes);
     expect(full.performance.warpScratchBytes).toBe(fullScratchBytes);

@@ -90,6 +90,9 @@ export type OpticalFlowPerformanceStats = {
   warpMs: number;
   additionalWarpMs?: number;
   totalWorkerMs: number;
+  // Time the worker is blocked by the bounded stripe-ack window (excluding
+  // the time spent producing stripes). Useful to diagnose transport overlap.
+  stripeAckWaitMs?: number;
   estimatedPeakBytes: number;
   // Known working allocations specifically for the geometry renderer;
   // excludes native OpenCV/WASM temporaries and GC-retained allocations.
@@ -157,6 +160,7 @@ export type OpticalFlowWorkerStreamResultResponse = {
   height: number;
   performance?: OpticalFlowPerformanceStats;
   warpMs?: number;
+  stripeAckWaitMs?: number;
   warpScratchBytes?: number;
   estimatedPeakBytes?: number;
 };
