@@ -1,5 +1,6 @@
 import type {
   OpticalFlowOpeningVariant,
+  OpticalFlowWarpMethod,
   OpticalFlowWorkerRequest,
   OpticalFlowWorkerResponse,
 } from "./protocols/optical-flow-protocol";
@@ -7,6 +8,7 @@ import type {
   OpticalFlowDirectionRequest,
   OpticalFlowDirectionResponse,
 } from "./protocols/optical-flow-direction-protocol";
+import { buildStfFrameSet } from "../stack/stf-frame-generation";
 
 type ParentScope = {
   onmessage: ((event: MessageEvent<OpticalFlowWorkerRequest>) => Promise<void>) | null;
@@ -23,7 +25,7 @@ async function runMidpoint(cores: number, memoryGiB: number, additionalVariant?:
   wideImage = false,
   scales?: { main?: number; additional?: number; opening?: number[] },
   norms?: readonly number[], openingVariants: OpticalFlowOpeningVariant[] = [],
-  streaming?: { height?: number; enabled?: boolean }) {
+  streaming?: { height?: number; enabled?: boolean }, warpMethod?: OpticalFlowWarpMethod) {
   jest.resetModules();
   const originalWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
   const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
@@ -105,10 +107,14 @@ async function runMidpoint(cores: number, memoryGiB: number, additionalVariant?:
       data: {
         type: "interpolate", requestId: 2, width, height,
         ...(streaming?.enabled ? { streamStripes: true } : {}),
+        ...(warpMethod ? { warpMethod } : {}),
         ...(openingVariants.length ? { openingAverageRadiusSpan: 1, previousImageId: 12, nextImageId: 13 } : {}),
         variant: "mid", ...(additionalVariant ? { additionalVariant } : {}),
         ...(scales?.main !== undefined ? { variantScale: scales.main } : {}),
         ...(scales?.additional !== undefined ? { additionalVariantScale: scales.additional } : {}),
+        ...(warpMethod !== "inverse-warp" && warpMethod && additionalVariant ? {
+          additionalForwardVariantScale: scales?.additional ?? 0.5,
+        } : {}),
         previousGamma2Buffer: previous.buffer, nextGamma2Buffer: next.buffer,
         ...(sharedGray ? {
           previousGrayBuffer: new Uint8Array(width * height).fill(41).buffer,
@@ -120,6 +126,10 @@ async function runMidpoint(cores: number, memoryGiB: number, additionalVariant?:
       await scope.onmessage({ data: {
         type: "warp-opening-average", requestId: 3 + i,
         ...(streaming?.enabled ? { streamStripes: true } : {}),        sourceImageId: 12, variant: openingVariants[i], variantScale: scales?.opening?.[i] ?? (i + 1) * 0.5,
+        ...(warpMethod ? { warpMethod } : {}),
+        ...(warpMethod !== "inverse-warp" && warpMethod ? {
+          forwardVariantScale: scales?.opening?.[i] ?? (i + 1) * 0.5,
+        } : {}),
         ...(i === 0 ? { sourceGamma2Buffer: previous.slice().buffer } : {}),
       } } as MessageEvent<OpticalFlowWorkerRequest>);
     }
@@ -158,6 +168,157 @@ describe("Optical Flow quality-preserving native Flow parallelization", () => {
     for (let c = 0; c < 3; c += 1) expected[(7 + 3) * 3 + c] = 8000;
     expect(Array.from(pixels)).toEqual(Array.from(expected));
   });
+});
+
+test("FS midpoint follows the same translated real-pair peak", async () => {
+    const method = "forward-splat";
+    const { messages } = await runMidpoint(2, 8, undefined, false, false,
+      undefined, undefined, [], undefined, method);
+    const response = messages.find((entry) => entry.type === "result" && entry.requestId === 2);
+    expect(response?.type).toBe("result");
+    if (!response || response.type !== "result") return;
+    const pixels = new Uint16Array(response.gamma2Buffer);
+    for (let c = 0; c < 3; c++) expect(pixels[(7 + 3) * 3 + c]).toBe(8000);
+    expect(response.performance.warpScratchBytes).toBeGreaterThan(7 * 3 * 16);
+    expect(response.performance.estimatedPeakBytes).toBeGreaterThan(response.performance.warpScratchBytes!);
+  },
+);
+
+test("FS mixes converging source pixels and fills holes from its original covered neighbors", async () => {
+  async function run(method: OpticalFlowWarpMethod,
+    scenario: "collision" | "hole" | "corner" | "edge" | "center" = "collision"): Promise<Uint16Array> {
+    jest.resetModules();
+    const oldWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+    const oldNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    const oldOnmessage = Object.getOwnPropertyDescriptor(globalThis, "onmessage");
+    const oldPostMessage = Object.getOwnPropertyDescriptor(globalThis, "postMessage");
+    const responses: OpticalFlowWorkerResponse[] = [];
+    class ConvergingDirectionWorker {
+      onmessage: ((event: MessageEvent<OpticalFlowDirectionResponse>) => void) | null = null;
+      onerror = null;
+      onmessageerror = null;
+      postMessage(message: OpticalFlowDirectionRequest) {
+        const respond = (result: OpticalFlowDirectionResponse) =>
+          queueMicrotask(() => this.onmessage?.({ data: result } as MessageEvent<OpticalFlowDirectionResponse>));
+        if (message.type === "init") {
+          respond({ type: "ready", requestId: message.requestId });
+          return;
+        }
+        if (message.type !== "compute-pair") throw new Error(`Unexpected ${message.type}`);
+        const field = new Float32Array(message.width * message.height * 2);
+        const center = (message.width - 1) / 2;
+        for (let y = 0; y < message.height; y += 1) {
+          for (let x = 0; x < message.width; x += 1) {
+            const index = (y * message.width + x) * 2;
+            field[index] = scenario === "hole" ? -2
+              : scenario === "corner" ? (x === 0 && y === 0 ? -2 : 0)
+                : scenario === "edge" ? (x === 3 && y === 0 ? 2 : 0)
+                  : scenario === "center" ? (x === 3 && y === 1 ? 2 : 0)
+                    : x < center ? -2 : x > center ? 2 : 0;
+            field[index + 1] = 0;
+          }
+        }
+        respond({
+          type: "pair-result", requestId: message.requestId,
+          forwardBuffer: field.buffer.slice(0), backwardBuffer: new Float32Array(field.length).buffer,
+          forwardMs: 0, backwardMs: 0,
+        });
+      }
+      terminate() {}
+    }
+    Object.defineProperty(globalThis, "Worker", { configurable: true, value: ConvergingDirectionWorker });
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true, value: { hardwareConcurrency: 2, deviceMemory: 4 },
+    });
+    Object.defineProperty(globalThis, "postMessage", {
+      configurable: true, value: (message: OpticalFlowWorkerResponse) => responses.push(message),
+    });
+    try {
+      jest.requireActual("./optical-flow.worker");
+      const scope = globalThis as unknown as ParentScope;
+      if (!scope.onmessage) throw new Error("Optical Flow worker request handler missing");
+      const width = 7;
+      const height = scenario === "collision" || scenario === "hole" ? 1 : 3;
+      const previous = new Uint16Array(width * height * 3);
+      if (height === 1) {
+        previous[1 * 3] = 9000;
+        if (scenario === "collision") previous[5 * 3 + 2] = 9000;
+      } else {
+        // Moving exactly one source pixel creates a single uncovered hole;
+        // neighboring FS-covered pixels retain known, distinct RGB16 colors.
+        for (let pixel = 0; pixel < width * height; pixel++) previous[pixel * 3] = 1000 + pixel * 100;
+        const target = scenario === "corner" ? 0 : scenario === "edge" ? 3 : width + 3;
+        previous[target * 3] = 9000;
+      }
+      const next = new Uint16Array(width * height * 3);
+      await scope.onmessage({ data: {
+        type: "interpolate", requestId: 2, width, height, variant: "mid",
+        additionalVariant: "ext1", additionalVariantScale: 1, additionalForwardVariantScale: 1,
+        warpMethod: method,
+        previousGamma2Buffer: previous.buffer, nextGamma2Buffer: next.buffer,
+      } } as MessageEvent<OpticalFlowWorkerRequest>);
+      const result = responses.find((entry) => entry.type === "result" && entry.requestId === 2);
+      expect(result?.type).toBe("result");
+      if (!result || result.type !== "result" || !result.additionalGamma2Buffer) {
+        throw new Error("Missing additional extrapolated image");
+      }
+      return new Uint16Array(result.additionalGamma2Buffer);
+    } finally {
+      for (const [name, descriptor] of [
+        ["Worker", oldWorker], ["navigator", oldNavigator],
+        ["onmessage", oldOnmessage], ["postMessage", oldPostMessage],
+      ] as const) {
+        if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+        else Reflect.deleteProperty(globalThis, name);
+      }
+    }
+  }
+
+  const inverse = await run("inverse-warp");
+  const forward = await run("forward-splat");
+  const center = 3 * 3;
+  expect(inverse[center]).toBe(0);
+  expect(inverse[center + 2]).toBe(0);
+  expect(forward[center]).toBeGreaterThan(0);
+  expect(forward[center + 1]).toBe(0);
+  expect(forward[center + 2]).toBeGreaterThan(0);
+
+  const fsHole = await run("forward-splat", "hole");
+  // x=1 is uncovered and receives its FS-covered neighbor's black color;
+  // x=3 remains the exact red splatted source sample.
+  expect(fsHole[1 * 3]).toBe(0);
+  expect(fsHole[3 * 3]).toBe(9000);
+
+  // Edge and corner holes use only valid in-bounds neighbors; a center hole
+  // averages all four. No inverse Warp or dependent multi-pass filling occurs.
+  const infoSpy = jest.spyOn(console, "info").mockImplementation(() => undefined);
+  try {
+    for (const { scenario, target, expected, neighborCount } of [
+      { scenario: "corner", target: 0, expected: 1400, neighborCount: 2 },
+      { scenario: "edge", target: 3, expected: 1533, neighborCount: 3 },
+      { scenario: "center", target: 10, expected: 2000, neighborCount: 4 },
+    ] as const) {
+      const filled = await run("forward-splat", scenario);
+      expect(filled[target * 3]).toBe(expected);
+      const fsLog = infoSpy.mock.calls.map((args: unknown[]) => String(args[0]))
+        .filter((line: string) => line.startsWith("[LSS STF FS] ext1:"))
+        .pop();
+      const searchHistogram = new Array(10).fill(0);
+      searchHistogram[1] = 1;
+      expect(fsLog).toContain(`fallbackSearch(0=source-copy,1=cardinal4,2=diagonal4,3..9=radius2..8)=[${searchHistogram.join(",")}]`);
+      expect(fsLog).toContain(`fallbackNeighborsUsed(count:holes)=[${neighborCount}:1]`);
+    }
+    // When no cardinal neighbor was covered in the 7x1 test, x=0 is
+    // now reached from a radius-2 covered pixel (x=2), without source copy.
+    await run("forward-splat", "hole");
+    const zeroNeighborLog = infoSpy.mock.calls.map((args: unknown[]) => String(args[0]))
+      .filter((line: string) => line.startsWith("[LSS STF FS] ext1:"))
+      .pop();
+    expect(zeroNeighborLog).toContain("fallbackSearch(0=source-copy,1=cardinal4,2=diagonal4,3..9=radius2..8)=[0,1,0,1,0,0,0,0,0,0]");
+    expect(zeroNeighborLog).toContain("fallbackNeighborsUsed(count:holes)=[1:2]");
+  } finally {
+    infoSpy.mockRestore();
+  }
 });
 
 test("P5-P10 gate protects small-flow pixels in opening and closing extrapolation but not interpolation", async () => {
@@ -532,6 +693,8 @@ test("STF opening extrapolation 12 expands a synthetic disc to its 1/F target ra
       previousGamma2Buffer: disc(radius).buffer,
       nextGamma2Buffer: disc(radius * realRadiusRatio).buffer,
     } } as MessageEvent<OpticalFlowWorkerRequest>);
+    // The first real-pair request computes exactly one bidirectional Flow.
+    expect(bidirectionalComputations).toBe(2);
     for (const step of [4, 9, 12]) {
       const virtualF = firstF * 2 ** (-step / 12);
       const inverseWarpScale = (1 - virtualF / firstF) / (1 - firstF / nextF);
@@ -552,7 +715,52 @@ test("STF opening extrapolation 12 expands a synthetic disc to its 1/F target ra
       // expanded edge may deviate by a few pixels after bilinear sampling.
       expect(Math.abs(measuredRadius - radius * firstF / virtualF)).toBeLessThanOrEqual(3);
     }
+    // Opening-side warps must reuse that Flow without recomputation.
     expect(bidirectionalComputations).toBe(2);
+    const frameSet = buildStfFrameSet([firstF, nextF], 1, "fs-extrapolation-12");
+    const outer = frameSet.outerFrames.find((item) => item.variant === "ext1-12");
+    const closing = frameSet.outerFrames.find((item) => item.variant === "ext2");
+    if (!outer || !closing) throw new Error("Missing ext12/closing variants");
+    for (const [i, method] of (["forward-splat"] as const).entries()) {
+      await scope.onmessage({ data: {
+        type: "warp-opening-average", requestId: 540 + i, sourceImageId: 9,
+        variant: "ext1-12", variantScale: outer.inverseWarpScale,
+        forwardVariantScale: outer.forwardSplatScale, warpMethod: method,
+      } } as MessageEvent<OpticalFlowWorkerRequest>);
+      const result = responses.find((entry) => entry.requestId === 540 + i);
+      expect(result?.type).toBe("warp-result");
+      if (!result || result.type !== "warp-result") continue;
+      const pixels = new Uint16Array(result.gamma2Buffer);
+      let measuredRadius = 0;
+      for (let x = center; x < width; x++) {
+        if (pixels[(center * width + x) * 3] > gamma2Value / 2) measuredRadius = x - center;
+      }
+      expect(Math.abs(measuredRadius - 2 * radius)).toBeLessThanOrEqual(3);
+      expect(result.warpScratchBytes).toBeGreaterThan(width * height * 16);
+      expect(result.estimatedPeakBytes).toBeGreaterThan(result.warpScratchBytes!);
+
+      await scope.onmessage({ data: {
+        type: "interpolate", requestId: 550 + i, width, height, variant: "mid",
+        additionalVariant: "ext2", additionalVariantScale: closing.inverseWarpScale,
+        additionalForwardVariantScale: closing.forwardSplatScale, warpMethod: method,
+        previousGamma2Buffer: disc(radius).buffer,
+        nextGamma2Buffer: disc(radius * realRadiusRatio).buffer,
+      } } as MessageEvent<OpticalFlowWorkerRequest>);
+      const closingResult = responses.find((entry) => entry.requestId === 550 + i && entry.type === "result");
+      expect(closingResult?.type).toBe("result");
+      if (!closingResult || closingResult.type !== "result" || !closingResult.additionalGamma2Buffer) continue;
+      const closingPixels = new Uint16Array(closingResult.additionalGamma2Buffer);
+      let closingRadius = 0;
+      for (let x = center; x < width; x++) {
+        if (closingPixels[(center * width + x) * 3] > gamma2Value / 2) closingRadius = x - center;
+      }
+      expect(Math.abs(closingRadius - radius * firstF / closing.fNumber)).toBeLessThanOrEqual(3);
+      expect(closingResult.performance.warpScratchBytes).toBeGreaterThan(width * height * 16);
+    }
+    // Both opening-side warps reuse the first real-pair Flow. The one
+    // additional interpolate request computes one more bidirectional pair:
+    // two directions per pair * two interpolate requests = four.
+    expect(bidirectionalComputations).toBe(4);
   } finally {
     for (const [name, descriptor] of [
       ["Worker", oldWorker], ["navigator", oldNavigator],
@@ -611,6 +819,57 @@ test("streamed midpoint, closing and opening RGB16 match full-image Warp exactly
       .toEqual(new Uint16Array(whole.gamma2Buffer));
   }
 });
+
+test("FS streamed midpoint, closing and opening stripes match full RGB16", async () => {
+    const warpMethod = "forward-splat";
+    const variants = ["ext1", "ext1-2"] as OpticalFlowOpeningVariant[];
+    const scales = { additional: 1.5, opening: [0.7, 2.1] };
+    const streamed = await runMidpoint(2, 8, "ext2", false, false, scales, undefined,
+      variants, { height: 257, enabled: true }, warpMethod);
+    const whole = await runMidpoint(2, 8, "ext2", false, false, scales, undefined,
+      variants, { height: 257, enabled: false }, warpMethod);
+    const full = whole.messages.find((entry) => entry.type === "result" && entry.requestId === 2);
+    const stats = streamed.messages.find((entry) => entry.type === "stream-result" && entry.requestId === 2);
+    expect(full?.type).toBe("result");
+    expect(stats?.type).toBe("stream-result");
+    if (!full || full.type !== "result" || !stats || stats.type !== "stream-result") return;
+    // Streamed FS no longer allocates a full-image RGB16 output: only the
+    // Float32 RGB/weight accumulation, one RGB16 stripe and the two small
+    // cached Flow-coordinate lookup arrays remain.
+    const lookupBytes = (11 + 257) * (2 * 4 + 8);
+    const stripeBytes = 11 * 128 * 6;
+    const streamedScratchBytes = 11 * 257 * (12 + 4) + stripeBytes + lookupBytes;
+    const fullScratchBytes = 11 * 257 * (12 + 4 + 6) + lookupBytes;
+    expect(stats.performance?.warpScratchBytes).toBe(streamedScratchBytes);
+    expect(full.performance.warpScratchBytes).toBe(fullScratchBytes);
+    expect(stats.performance?.warpScratchBytes).toBeLessThan(fullScratchBytes);
+    expect(stats.performance?.estimatedPeakBytes).toBeGreaterThan(stats.performance?.warpScratchBytes ?? 0);
+    // This is a genuine streamed result, not a precomputed full-size image
+    // later sliced into stripes.
+    const primaryStripes = streamed.messages.filter((entry) =>
+      entry.type === "stripe" && entry.requestId === 2 && entry.kind === "primary");
+    expect(primaryStripes.length).toBe(3);
+    expect(primaryStripes.every((entry) => entry.type === "stripe" &&
+      entry.gamma2Buffer.byteLength <= stripeBytes)).toBe(true);
+    expect(restoredStreamPixels(streamed.messages, 2, "primary", 11, 257))
+      .toEqual(new Uint16Array(full.gamma2Buffer));
+    expect(restoredStreamPixels(streamed.messages, 2, "additional", 11, 257))
+      .toEqual(new Uint16Array(full.additionalGamma2Buffer!));
+    for (const requestId of [3, 4]) {
+      const old = whole.messages.find((entry) => entry.type === "warp-result" && entry.requestId === requestId);
+      if (!old || old.type !== "warp-result") throw new Error("Missing opening RGB16 result");
+      expect(restoredStreamPixels(streamed.messages, requestId, "primary", 11, 257))
+        .toEqual(new Uint16Array(old.gamma2Buffer));
+      const streamedOpening = streamed.messages.find((entry) =>
+        entry.type === "stream-result" && entry.requestId === requestId);
+      expect(streamedOpening?.type).toBe("stream-result");
+      if (streamedOpening?.type === "stream-result") {
+        expect(streamedOpening.warpScratchBytes).toBe(streamedScratchBytes);
+        expect(old.warpScratchBytes).toBe(fullScratchBytes);
+      }
+    }
+  },
+);
 
 
 test("STF Flow releases past Gray8 proxies while retaining the next adjacent image", async () => {

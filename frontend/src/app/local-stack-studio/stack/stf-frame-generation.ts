@@ -3,13 +3,30 @@ import type { OpticalFlowOpeningVariant } from "../workers/protocols/optical-flo
 
 export const STF_EXTRAPOLATION_COUNTS = [1, 2, 3, 4, 5, 6, 9, 12] as const;
 export type StfExtrapolationCount = typeof STF_EXTRAPOLATION_COUNTS[number];
-export type StfFrameGenerationMode = "off" | "interpolation" | `extrapolation-${StfExtrapolationCount}`;
+export type StfStandardFrameGenerationMode = "off" | "interpolation" | `extrapolation-${StfExtrapolationCount}`;
+export type StfForwardSplatFrameGenerationMode = "fs-interpolation" | `fs-extrapolation-${StfExtrapolationCount}`;
+export type StfFrameGenerationMode = StfStandardFrameGenerationMode | StfForwardSplatFrameGenerationMode;
+export type StfFrameGenerationKernel = "inverse-warp" | "forward-splat";
 const STF_EXTRAPOLATION_MODE_SET: ReadonlySet<string> = new Set(
   STF_EXTRAPOLATION_COUNTS.map((count) => `extrapolation-${count}`),
 );
+const STF_FS_EXTRAPOLATION_MODE_SET: ReadonlySet<string> = new Set(
+  STF_EXTRAPOLATION_COUNTS.map((count) => `fs-extrapolation-${count}`),
+);
 
 export function isStfFrameGenerationMode(value: string): value is StfFrameGenerationMode {
-  return value === "off" || value === "interpolation" || STF_EXTRAPOLATION_MODE_SET.has(value);
+  return value === "off" || value === "interpolation" || value === "fs-interpolation" ||
+    STF_EXTRAPOLATION_MODE_SET.has(value) || STF_FS_EXTRAPOLATION_MODE_SET.has(value);
+}
+
+export function stfFrameGenerationKernel(mode: StfFrameGenerationMode): StfFrameGenerationKernel {
+  if (mode.startsWith("fs-")) return "forward-splat";
+  return "inverse-warp";
+}
+
+function normalizeFrameGenerationMode(mode: StfFrameGenerationMode): StfStandardFrameGenerationMode {
+  return mode.startsWith("fs-") ? mode.slice(3) as StfStandardFrameGenerationMode
+    : mode as StfStandardFrameGenerationMode;
 }
 
 export type StfMiddleFrame = {
@@ -23,21 +40,29 @@ export type StfMiddleFrame = {
 export type StfOuterFrame = StfMiddleFrame & (
   | {
       variant: OpticalFlowOpeningVariant;
-      // Outward radius-domain displacement, used only for geometry/diagnostics.
+      // Outward radius-domain displacement. FS uses this as its source-indexed
+      // forward scale; inverse warping uses the separate inverseWarpScale.
       openingFlowScale: number;
       // Reverse sampling scale, not the forward radius-domain displacement.
       inverseWarpScale: number;
+      // Positive factor for source->target splatting along the NEGATIVE of the
+      // first real pair's forward Flow (opening makes a larger blur disc).
+      forwardSplatScale: number;
     }
   | {
       // One half-step beyond the smallest CoC on the maximum-F side.
       variant: "ext2";
       // Reverse sampling of the max-F real frame along backward (last->prev) Flow.
       inverseWarpScale: number;
+      // Positive factor for source->target splatting along the NEGATIVE of
+      // the last->previous Flow (closing makes a smaller blur disc).
+      forwardSplatScale: number;
     }
 );
 
 export type StfFrameSet = {
   mode: StfFrameGenerationMode;
+  virtualFrameKernel: StfFrameGenerationKernel;
   realWeights: Float32Array;
   middleFrames: StfMiddleFrame[];
   outerFrames: StfOuterFrame[];
@@ -57,6 +82,8 @@ export function buildStfFrameSet(
   mode: StfFrameGenerationMode,
 ): StfFrameSet {
   validateMode(mode);
+  const normalizedMode = normalizeFrameGenerationMode(mode);
+  const virtualFrameKernel = stfFrameGenerationKernel(mode);
   if (!isStfRadialAttenuation(radialAttenuation)) {
     throw new Error("STF Radial attenuation is unsupported.");
   }
@@ -64,12 +91,13 @@ export function buildStfFrameSet(
 
   const realFNumbers = fNumbers.map((f) => Number(f));
   const hasOnlyValidPositiveFNumbers = realFNumbers.every((f) => Number.isFinite(f) && f > 0);
-  if (mode === "off" && !hasOnlyValidPositiveFNumbers) {
+  if (normalizedMode === "off" && !hasOnlyValidPositiveFNumbers) {
     // Historical fallback: when any real image lacks a usable F-number,
     // retain every selected image and merge them uniformly.
     const weights = Float32Array.from(realFNumbers, () => 1 / realFNumbers.length);
     return {
       mode,
+      virtualFrameKernel,
       realWeights: weights,
       middleFrames: [],
       outerFrames: [],
@@ -78,7 +106,7 @@ export function buildStfFrameSet(
     };
   }
 
-  if (mode !== "off" && (realFNumbers.length < 2 || !hasOnlyValidPositiveFNumbers)) {
+  if (normalizedMode !== "off" && (realFNumbers.length < 2 || !hasOnlyValidPositiveFNumbers)) {
     throw new Error("STF Frame generation requires at least two inputs with valid EXIF F-numbers.");
   }
 
@@ -86,11 +114,12 @@ export function buildStfFrameSet(
     .map((fNumber, index) => ({ fNumber, index }))
     .sort((a, b) => a.fNumber - b.fNumber);
 
-  if (mode === "off") {
+  if (normalizedMode === "off") {
     if (realFNumbers.length === 1) {
       const weights = new Float32Array([1]);
       return {
         mode,
+        virtualFrameKernel,
         realWeights: weights,
         middleFrames: [],
         outerFrames: [],
@@ -103,6 +132,7 @@ export function buildStfFrameSet(
         const weights = Float32Array.from(realFNumbers, () => 1 / realFNumbers.length);
         return {
           mode,
+          virtualFrameKernel,
           realWeights: weights,
           middleFrames: [],
           outerFrames: [],
@@ -115,7 +145,7 @@ export function buildStfFrameSet(
 
   const middleFrames: StfMiddleFrame[] = [];
   const outerFrames: StfOuterFrame[] = [];
-  if (mode !== "off") {
+  if (normalizedMode !== "off") {
     for (let i = 1; i < sorted.length; i += 1) {
       if (!(sorted[i].fNumber > sorted[i - 1].fNumber)) {
         throw new Error("STF Frame generation requires distinct EXIF F-numbers for every input.");
@@ -129,8 +159,8 @@ export function buildStfFrameSet(
       });
     }
 
-    const openingCount = mode.startsWith("extrapolation-")
-      ? Number.parseInt(mode.slice("extrapolation-".length), 10) : 0;
+    const openingCount = normalizedMode.startsWith("extrapolation-")
+      ? Number.parseInt(normalizedMode.slice("extrapolation-".length), 10) : 0;
     if (openingCount > 0) {
       const first = sorted[0].fNumber;
       const second = sorted[1].fNumber;
@@ -149,6 +179,7 @@ export function buildStfFrameSet(
           variant: (step === 1 ? "ext1" : `ext1-${step}`) as OpticalFlowOpeningVariant,
           openingFlowScale,
           inverseWarpScale: openingInverseWarpScale,
+          forwardSplatScale: openingFlowScale,
         });
       }
       // Retain the original single closing-side half-step for every extrapolation
@@ -161,6 +192,9 @@ export function buildStfFrameSet(
       // x_source / x_target = F_closing/F_last, rather than treating a forward
       // radius multiplier as the sampling scale.
       const closingInverseWarpScale = (closingFNumber / last - 1) / (last / previous - 1);
+      // True source-coordinate shrink: p_target/p_source = F_last/F_closing.
+      // It differs from the inverse sampler's F_closing/F_last factor.
+      const closingForwardSplatScale = (1 - last / closingFNumber) / (last / previous - 1);
       outerFrames.push({
         previousIndex: sorted[sorted.length - 2].index,
         nextIndex: sorted[sorted.length - 1].index,
@@ -169,11 +203,13 @@ export function buildStfFrameSet(
         pairLabel: "last-ext2",
         variant: "ext2",
         inverseWarpScale: closingInverseWarpScale,
+        forwardSplatScale: closingForwardSplatScale,
       });
     }
 
     if (outerFrames.some((frame) => !(Number.isFinite(frame.fNumber) && frame.fNumber > 0 &&
         Number.isFinite(frame.inverseWarpScale) && frame.inverseWarpScale > 0 &&
+        Number.isFinite(frame.forwardSplatScale) && frame.forwardSplatScale > 0 &&
         (frame.variant === "ext2" || (Number.isFinite(frame.openingFlowScale) && frame.openingFlowScale > 0))))) {
       throw new Error("STF extrapolation produced an invalid extended EXIF F-number.");
     }
@@ -206,5 +242,5 @@ export function buildStfFrameSet(
     outerFrames[i].weight = allWeights[realFNumbers.length + middleFrames.length + i];
   }
 
-  return { mode, realWeights, middleFrames, outerFrames, allWeights, allFNumbers };
+  return { mode, virtualFrameKernel, realWeights, middleFrames, outerFrames, allWeights, allFNumbers };
 }

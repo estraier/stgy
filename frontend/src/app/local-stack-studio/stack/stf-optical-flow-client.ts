@@ -3,6 +3,7 @@ import type {
   OpticalFlowOpeningVariant,
   OpticalFlowPerformanceStats,
   OpticalFlowVariant,
+  OpticalFlowWarpMethod,
   OpticalFlowWorkerRequest,
   OpticalFlowWorkerResponse,
 } from "../workers/protocols/optical-flow-protocol";
@@ -61,7 +62,7 @@ export class StfOpticalFlowClient {
 
   constructor(onProgress?: (message: string) => void) {
     const workerUrl = new URL("/generated/local-stack-studio/optical-flow.worker.js", window.location.origin);
-    workerUrl.searchParams.set("revision", "stf-session-flow-20261119-r14-striped-output");
+    workerUrl.searchParams.set("revision", "stf-session-flow-20261120-r19-fs-ring-fill");
     this.worker = new Worker(workerUrl);
     this.worker.onmessage = (event: MessageEvent<OpticalFlowWorkerResponse>) => {
       const message = event.data;
@@ -174,16 +175,22 @@ export class StfOpticalFlowClient {
     openingAverageRadiusSpan?: number,
     winsize = STF_FARNEBACK_BASE_WINSIZE,
     inputOwnership: InputOwnership = {},
+    warpMethod: OpticalFlowWarpMethod = "inverse-warp",
+    forwardVariantScale?: number,
+    additionalForwardVariantScale?: number,
   ): Promise<{ pixels: Uint16Array; additionalPixels?: Uint16Array; performance: OpticalFlowPerformanceStats }> {
     const previousGamma2Buffer = workerInputBuffer(previousGamma2, inputOwnership.previous === true);
     const nextGamma2Buffer = workerInputBuffer(nextGamma2, inputOwnership.next === true);
     const transfer: Transferable[] = [previousGamma2Buffer, nextGamma2Buffer];
     const result = await this.request({
       type: "interpolate",
+      warpMethod,
       variant,
       ...(variantScale !== undefined ? { variantScale } : {}),
+      ...(forwardVariantScale !== undefined ? { forwardVariantScale } : {}),
       ...(additionalVariant ? { additionalVariant } : {}),
       ...(additionalVariantScale !== undefined ? { additionalVariantScale } : {}),
+      ...(additionalForwardVariantScale !== undefined ? { additionalForwardVariantScale } : {}),
       ...(openingAverageRadiusSpan !== undefined ? { openingAverageRadiusSpan } : {}),
       winsize,
       ...(persistFlow ? { persistFlow: true, sessionId, sessionCreatedAt, alignmentKey } : {}),
@@ -214,7 +221,10 @@ export class StfOpticalFlowClient {
       width: number; height: number; previousImageId: number; nextImageId: number;
       previousGamma2: Uint16Array; nextGamma2: Uint16Array;
       variant: OpticalFlowVariant; variantScale?: number;
+      forwardVariantScale?: number;
       additionalVariant?: OpticalFlowVariant; additionalVariantScale?: number;
+      additionalForwardVariantScale?: number;
+      warpMethod?: OpticalFlowWarpMethod;
       sessionId: string; sessionCreatedAt: number; alignmentKey: string;
       openingAverageRadiusSpan?: number; winsize: number; inputOwnership: InputOwnership;
     },
@@ -224,12 +234,16 @@ export class StfOpticalFlowClient {
     const nextGamma2Buffer = workerInputBuffer(args.nextGamma2, args.inputOwnership.next === true);
     const response = await this.request({
       type: "interpolate", streamStripes: true,
+      warpMethod: args.warpMethod ?? "inverse-warp",
       width: args.width, height: args.height,
       previousImageId: args.previousImageId, nextImageId: args.nextImageId,
       previousGamma2Buffer, nextGamma2Buffer, variant: args.variant,
       ...(args.variantScale !== undefined ? { variantScale: args.variantScale } : {}),
+      ...(args.forwardVariantScale !== undefined ? { forwardVariantScale: args.forwardVariantScale } : {}),
       ...(args.additionalVariant ? { additionalVariant: args.additionalVariant } : {}),
       ...(args.additionalVariantScale !== undefined ? { additionalVariantScale: args.additionalVariantScale } : {}),
+      ...(args.additionalForwardVariantScale !== undefined
+        ? { additionalForwardVariantScale: args.additionalForwardVariantScale } : {}),
       ...(args.openingAverageRadiusSpan !== undefined ? { openingAverageRadiusSpan: args.openingAverageRadiusSpan } : {}),
       winsize: args.winsize, persistFlow: true,
       sessionId: args.sessionId, sessionCreatedAt: args.sessionCreatedAt, alignmentKey: args.alignmentKey,
@@ -248,15 +262,19 @@ export class StfOpticalFlowClient {
     args: {
       width: number; height: number; sourceImageId: number;
       variant: OpticalFlowOpeningVariant; variantScale: number;
+      forwardVariantScale?: number;
+      warpMethod?: OpticalFlowWarpMethod;
       sourceGamma2?: Uint16Array; transferSourceOwnership?: boolean;
     },
     onStripe: (stripe: StfFlowStripe) => void | Promise<void>,
-  ): Promise<{ warpMs: number }> {
+  ): Promise<{ warpMs: number; warpScratchBytes?: number; estimatedPeakBytes?: number }> {
     const buffer = args.sourceGamma2
       ? workerInputBuffer(args.sourceGamma2, args.transferSourceOwnership === true) : undefined;
     const response = await this.request({
       type: "warp-opening-average", streamStripes: true,
+      warpMethod: args.warpMethod ?? "inverse-warp",
       sourceImageId: args.sourceImageId, variant: args.variant, variantScale: args.variantScale,
+      ...(args.forwardVariantScale !== undefined ? { forwardVariantScale: args.forwardVariantScale } : {}),
       ...(buffer ? { sourceGamma2Buffer: buffer } : {}),
     }, buffer ? [buffer] : [], {
       width: args.width, height: args.height, additional: false, onStripe,
@@ -265,7 +283,8 @@ export class StfOpticalFlowClient {
         response.height !== args.height || typeof response.warpMs !== "number") {
       throw new Error("Invalid STF streamed opening Average Flow result");
     }
-    return { warpMs: response.warpMs };
+    return { warpMs: response.warpMs, warpScratchBytes: response.warpScratchBytes,
+      estimatedPeakBytes: response.estimatedPeakBytes };
   }
 
   async warpOpeningAverage(
@@ -273,10 +292,13 @@ export class StfOpticalFlowClient {
     variant: OpticalFlowOpeningVariant, variantScale: number,
     sourceGamma2?: Uint16Array,
     transferSourceOwnership = false,
+    warpMethod: OpticalFlowWarpMethod = "inverse-warp",
+    forwardVariantScale?: number,
   ): Promise<{ pixels: Uint16Array; warpMs: number }> {
     const buffer = sourceGamma2 ? workerInputBuffer(sourceGamma2, transferSourceOwnership) : undefined;
     const result = await this.request({
-      type: "warp-opening-average", sourceImageId, variant, variantScale,
+      type: "warp-opening-average", sourceImageId, variant, variantScale, warpMethod,
+      ...(forwardVariantScale !== undefined ? { forwardVariantScale } : {}),
       ...(buffer ? { sourceGamma2Buffer: buffer } : {}),
     }, buffer ? [buffer] : []);
     if (result.type !== "warp-result" || result.width !== width || result.height !== height) {

@@ -83,6 +83,12 @@ export async function appendStfVirtualSource(
   const openingOuterFrames = frameSet.outerFrames.filter((outer) => outer.variant !== "ext2");
   const closingOuterFrame = frameSet.outerFrames.find((outer) => outer.variant === "ext2") ?? null;
   const openingAveragePairCount = Math.min(frameSet.middleFrames.length, 3);
+  const reportMb = (bytes: number | undefined) => Number.isFinite(bytes)
+    ? `${(bytes! / (1024 * 1024)).toFixed(1)}MiB` : "n/a";
+  const startedAt = performance.now();
+  let virtualWarpMs = 0;
+  let peakKnownWorkerBytes = 0;
+  let generatedFrames = 0;
 
   let flowCacheHits = 0;
   let flowCacheMisses = 0;
@@ -113,14 +119,17 @@ export async function appendStfVirtualSource(
       options.progress?.(`Generating STF virtual frame ${middle.pairLabel}...`);
       const middleTone = toneForMiddle(middleIndex);
       const closingTone = isLastPair && closingOuterFrame ? toneForOuter(closingOuterFrame) : null;
-      const performance = await client.generateStripes({
+      const pairStarted = performance.now();
+      const flowPerformance = await client.generateStripes({
         width: reader.width, height: reader.height,
         previousImageId: middle.previousIndex, nextImageId: middle.nextIndex,
         previousGamma2: previous, nextGamma2: next, variant: "mid",
         ...(closingTone && closingOuterFrame ? {
           additionalVariant: closingOuterFrame.variant,
           additionalVariantScale: closingOuterFrame.inverseWarpScale,
+          additionalForwardVariantScale: closingOuterFrame.forwardSplatScale,
         } : {}),
+        warpMethod: frameSet.virtualFrameKernel,
         sessionId: options.sessionId, sessionCreatedAt: options.sessionCreatedAt,
         alignmentKey: options.alignmentKey, openingAverageRadiusSpan,
         winsize: pairWinsize,
@@ -135,11 +144,24 @@ export async function appendStfVirtualSource(
             reader.width, middleTone, toneLut(middleTone));
         }
       });
-      if (performance.flowCacheHit) flowCacheHits++;
+      if (flowPerformance.flowCacheHit) flowCacheHits++;
       else flowCacheMisses++;
-      if (performance.flowCacheSaved) flowCacheWrites++;
-      cacheReadMs += performance.flowCacheReadMs ?? 0;
-      flowComputeMs += performance.flowWallMs ?? 0;
+      if (flowPerformance.flowCacheSaved) flowCacheWrites++;
+      cacheReadMs += flowPerformance.flowCacheReadMs ?? 0;
+      flowComputeMs += flowPerformance.flowWallMs ?? 0;
+      virtualWarpMs += (flowPerformance.warpMs ?? 0) + (flowPerformance.additionalWarpMs ?? 0);
+      peakKnownWorkerBytes = Math.max(peakKnownWorkerBytes, flowPerformance.estimatedPeakBytes ?? 0);
+      generatedFrames += closingTone ? 2 : 1;
+      console.info(`[LSS STF timing] mode=${frameSet.mode} method=${frameSet.virtualFrameKernel} ` +
+        `pair=${middle.pairLabel}${closingTone ? "+closing" : ""} ` +
+        `wall=${(performance.now() - pairStarted).toFixed(1)}ms ` +
+        `worker=${(flowPerformance.totalWorkerMs ?? 0).toFixed(1)}ms ` +
+        `flow=${(flowPerformance.flowWallMs ?? 0).toFixed(1)}ms ` +
+        `warp=${(flowPerformance.warpMs ?? 0).toFixed(1)}ms ` +
+        `closingWarp=${(flowPerformance.additionalWarpMs ?? 0).toFixed(1)}ms ` +
+        `workerKnownPeak=${reportMb(flowPerformance.estimatedPeakBytes)} ` +
+        `warpScratch=${reportMb(flowPerformance.warpScratchBytes)} ` +
+        `cache=${flowPerformance.flowCacheHit ? "hit" : "miss"}.`);
 
       imageCache.delete(middle.previousIndex);
     }
@@ -151,16 +173,29 @@ export async function appendStfVirtualSource(
         options.progress?.(`Generating STF Average Flow frame ${outer.pairLabel}...`);
         const source = firstWarp ? await getImage(outer.previousIndex) : undefined;
         const tone = toneForOuter(outer);
-        await client.warpOpeningAverageStripes({
+        const outerStarted = performance.now();
+        const outerPerformance = await client.warpOpeningAverageStripes({
           width: reader.width, height: reader.height,
           sourceImageId: outer.previousIndex, variant: outer.variant,
           variantScale: outer.inverseWarpScale,
+          forwardVariantScale: outer.forwardSplatScale,
+          warpMethod: frameSet.virtualFrameKernel,
           sourceGamma2: source, transferSourceOwnership: firstWarp,
         }, (stripe) => {
           if (stripe.kind !== "primary") throw new Error("Unexpected STF Average Flow stripe kind");
           mergeGeneratedStripe(accumulator, stripe, outer.weight,
             reader.width, tone, toneLut(tone));
         });
+        virtualWarpMs += outerPerformance.warpMs;
+        peakKnownWorkerBytes = Math.max(peakKnownWorkerBytes, outerPerformance.estimatedPeakBytes ?? 0);
+        generatedFrames++;
+        console.info(`[LSS STF timing] mode=${frameSet.mode} method=${frameSet.virtualFrameKernel} ` +
+          `opening=${outer.variant} wall=${(performance.now() - outerStarted).toFixed(1)}ms ` +
+          `warp=${outerPerformance.warpMs.toFixed(1)}ms ` +
+          `workerKnownPeak=${reportMb(outerPerformance.estimatedPeakBytes)} ` +
+          `warpScratch=${reportMb(outerPerformance.warpScratchBytes)} ` +
+          `inverseScale=${outer.inverseWarpScale.toFixed(5)} ` +
+          `forwardScale=${outer.forwardSplatScale.toFixed(5)}.`);
         if (firstWarp) imageCache.delete(outer.previousIndex);
         firstWarp = false;
       }
@@ -170,6 +205,12 @@ export async function appendStfVirtualSource(
     console.info(`[LSS STF] Flow cache: ${flowCacheHits} hit, ${flowCacheMisses} miss, ` +
       `${flowCacheWrites} saved bidirectional real pair(s); ` +
       `session cache read ${cacheReadMs.toFixed(1)}ms, native Flow ${flowComputeMs.toFixed(1)}ms.`);
+    console.info(`[LSS STF summary] mode=${frameSet.mode} method=${frameSet.virtualFrameKernel} ` +
+      `generated=${generatedFrames} wall=${(performance.now() - startedAt).toFixed(1)}ms ` +
+      `warp=${virtualWarpMs.toFixed(1)}ms ` +
+      `workerKnownPeak=${reportMb(peakKnownWorkerBytes || undefined)} ` +
+      `mainAccumulator=${reportMb(accumulator.byteLength)} ` +
+      `(estimated known allocations only; excludes native OpenCV/WASM heap, GC and browser overhead).`);
   } finally {
     client?.terminate();
   }

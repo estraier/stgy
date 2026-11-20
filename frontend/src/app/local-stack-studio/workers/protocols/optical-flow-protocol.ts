@@ -1,18 +1,26 @@
 
 export type OpticalFlowOpeningVariant = "ext1" | `ext1-${2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12}`;
 export type OpticalFlowVariant = "mid" | OpticalFlowOpeningVariant | "ext2";
+export type OpticalFlowWarpMethod = "inverse-warp" | "forward-splat";
 
 export type OpticalFlowWorkerInterpolateRequest = {
   type: "interpolate";
   // Request stripes instead of full-resolution RGB16 output images.
   streamStripes?: boolean;
   requestId: number;
+  warpMethod?: OpticalFlowWarpMethod;
   width: number;
   height: number;
   variant: OpticalFlowVariant;
+  // Inverse Warp's destination-indexed sampling factor. FS does not
+  // use this for projection or hole filling (FS uses covered neighbors).
   variantScale?: number;
+  // Signed direction is selected by the variant; this is the positive scale
+  // for source->destination splatting, distinct from inverseWarpScale.
+  forwardVariantScale?: number;
   additionalVariant?: OpticalFlowVariant;
   additionalVariantScale?: number;
+  additionalForwardVariantScale?: number;
   // Average opening-side extrapolation reuses up to the first three adjacent
   // real-pair forward fields, normalized by the positive 1/F interval.
   openingAverageRadiusSpan?: number;
@@ -42,11 +50,13 @@ export type OpticalFlowWorkerWarpOpeningAverageRequest = {
   streamStripes?: boolean;
   requestId: number;
   sourceImageId: number;
+  warpMethod?: OpticalFlowWarpMethod;
   // The first request provides the opening-side source RGB16; subsequent
   // ext1-2..12 requests reuse the retained buffer.
   sourceGamma2Buffer?: ArrayBuffer;
   variant: OpticalFlowOpeningVariant;
   variantScale: number;
+  forwardVariantScale?: number;
 };
 
 export type OpticalFlowWorkerStripeAckRequest = {
@@ -81,6 +91,10 @@ export type OpticalFlowPerformanceStats = {
   additionalWarpMs?: number;
   totalWorkerMs: number;
   estimatedPeakBytes: number;
+  // Known working allocations specifically for the geometry renderer;
+  // excludes native OpenCV/WASM temporaries and GC-retained allocations.
+  warpScratchBytes?: number;
+  additionalWarpScratchBytes?: number;
   inputGamma2Bytes: number;
   flowFieldBytes: number;
   flowCacheHit?: boolean;
@@ -122,6 +136,8 @@ export type OpticalFlowWorkerWarpRetainedResponse = {
   height: number;
   gamma2Buffer: ArrayBuffer;
   warpMs: number;
+  warpScratchBytes?: number;
+  estimatedPeakBytes?: number;
 };
 
 export type OpticalFlowWorkerStripeResponse = {
@@ -141,6 +157,8 @@ export type OpticalFlowWorkerStreamResultResponse = {
   height: number;
   performance?: OpticalFlowPerformanceStats;
   warpMs?: number;
+  warpScratchBytes?: number;
+  estimatedPeakBytes?: number;
 };
 
 export type OpticalFlowWorkerErrorResponse = {

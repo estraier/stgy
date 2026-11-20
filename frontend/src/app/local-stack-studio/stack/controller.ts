@@ -3013,12 +3013,20 @@ async function alignAndMergeFilesWithOpenCv(
       toneReferenceIndex: mergePlan.toneReferenceIndex, frameSet: stfFrameSet,
     }) : null;
     const sourceLength = width * height * 3;
+    const currentHeapBytes = () => (performance as Performance & {
+      memory?: { usedJSHeapSize?: number };
+    }).memory?.usedJSHeapSize;
+    const formatHeapBytes = (bytes: number | undefined) => typeof bytes === "number" && Number.isFinite(bytes)
+      ? `${(bytes / (1024 * 1024)).toFixed(1)}MiB` : "n/a";
     // No Flow and no source merge for a cache hit, irrespective of Blur settings.
     const getStfSource = () => stfSourceKey ? stfSourceCache.get(stfSourceKey, sourceLength) : null;
     const buildStfSource = async () => {
+      const stfStartedAt = mergePlan.mode === "stf" ? performance.now() : 0;
+      const initialHeapBytes = mergePlan.mode === "stf" ? currentHeapBytes() : undefined;
       const source = await mergeLinearFromWorkerPool(
         canonicalSession.id, reader, alignmentPlan, matrices, mergePlan, width, height,
       );
+      const realMergeMs = mergePlan.mode === "stf" ? performance.now() - stfStartedAt : 0;
       if (needsStfVirtualFrames) {
         await appendStfVirtualSource(source, {
           frameSet: stfFrameSet,
@@ -3029,14 +3037,28 @@ async function alignAndMergeFilesWithOpenCv(
           progress: setProgress,
         });
       }
+      if (mergePlan.mode === "stf") {
+        const mode = stfFrameSet?.mode ?? "off";
+        console.info(`[LSS STF timing] mode=${mode} sourceCache=miss ` +
+          `realMerge=${realMergeMs.toFixed(1)}ms ` +
+          `sourceWall=${(performance.now() - stfStartedAt).toFixed(1)}ms ` +
+          `sourceBuffer=${(source.byteLength / (1024 * 1024)).toFixed(1)}MiB ` +
+          `heapBefore=${formatHeapBytes(initialHeapBytes)} ` +
+          `heapAfter=${formatHeapBytes(currentHeapBytes())} ` +
+          `(optional JS heap snapshot, not actual browser peak).`);
+      }
       if (stfSourceKey) stfSourceCache.put(stfSourceKey, source);
       return source;
     };
 
     if (mergePlan.mode === "stf" && mergePlan.stfBlurPlan?.enabled) {
       // Gate-only must never start Flow or construct a full Source.
+      const sourceLookupStarted = performance.now();
       let sourceOverride = mergePlan.stfBlurPlan.gateOnly ? null : getStfSource();
-      if (sourceOverride) console.info("STF complete Source cache hit; skipping merge and Optical Flow.");
+      if (sourceOverride) console.info(`STF complete Source cache hit; skipping merge and Optical Flow. ` +
+        `mode=${stfFrameSet?.mode ?? "off"} ` +
+        `cacheLookup=${(performance.now() - sourceLookupStarted).toFixed(1)}ms ` +
+        `sourceBuffer=${(sourceOverride.byteLength / (1024 * 1024)).toFixed(1)}MiB.`);
       // Generated frames must be part of Source before Additional Blur.
       if (!sourceOverride && needsStfVirtualFrames && !mergePlan.stfBlurPlan.gateOnly) {
         sourceOverride = await buildStfSource();
@@ -3058,8 +3080,12 @@ async function alignAndMergeFilesWithOpenCv(
     }
 
     if (mergePlan.mode === "average" || mergePlan.mode === "stf") {
+      const sourceLookupStarted = performance.now();
       const cached = mergePlan.mode === "stf" ? getStfSource() : null;
-      if (cached) console.info("STF complete Source cache hit; skipping merge and Optical Flow.");
+      if (cached) console.info(`STF complete Source cache hit; skipping merge and Optical Flow. ` +
+        `mode=${stfFrameSet?.mode ?? "off"} ` +
+        `cacheLookup=${(performance.now() - sourceLookupStarted).toFixed(1)}ms ` +
+        `sourceBuffer=${(cached.byteLength / (1024 * 1024)).toFixed(1)}MiB.`);
       const accumulator = cached || await buildStfSource();
       // STF final rolloff is in-place. Never alter a cached pre-rolloff
       // Source: the next Process must see exactly the original linear merge.

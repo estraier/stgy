@@ -4,6 +4,9 @@ import type {
   OpticalFlowDirectionResponse,
 } from "./protocols/optical-flow-direction-protocol";
 import { transferableBuffer } from "./transfer-buffer";
+import {
+  fillStfSplatHole, STF_SPLAT_HOLE_NEIGHBOR_BUCKET_COUNT, STF_SPLAT_HOLE_SEARCH_BUCKET_COUNT,
+} from "./stf-splat-hole-fill";
 import { readStfCachedFlow, writeStfCachedFlow, stfFlowSessionKey } from "../stack/stf-flow-cache";
 import { stfFlowWorkingSize, stfGamma2RgbToGray8Resampled } from "../stack/stf-flow-gray";
 import { isStfFarnebackWinsize, STF_FARNEBACK_BASE_WINSIZE } from "../stack/stf-farneback-winsize";
@@ -12,6 +15,7 @@ import { buildStfFlowNormGate, stfFlowNormGateFactor, type StfFlowNormGate } fro
 import type {
   OpticalFlowPerformanceStats,
   OpticalFlowVariant,
+  OpticalFlowWarpMethod,
   OpticalFlowWorkerRequest,
   OpticalFlowWorkerResponse,
 } from "./protocols/optical-flow-protocol";
@@ -240,13 +244,349 @@ import type {
     return Math.max(1, Math.min(128, Math.floor((4 * 1024 * 1024) / (width * 6))));
   }
 
+  function geometryScratchBytes(width: number, height: number,
+    streaming: boolean, method: OpticalFlowWarpMethod): number {
+    const stripeBytes = streaming ? Math.min(height, stripeRows(width)) * width * 6 : 0;
+    if (method === "inverse-warp") return streaming ? stripeBytes : width * height * 6;
+    // Forward-splat RGB accumulators (Float32 x3) and arrival weights (Float32)
+    // remain full-frame. For streaming requests, only the RGB16 stripe exists;
+    // non-streaming callers still receive one full RGB16 image.
+    // Lookup tables: x/y flow indices (2 x Int32) + interpolation fractions (Float64).
+    const lookupBytes = (width + height) * (2 * 4 + 8);
+    return width * height * (12 + 4 + (streaming ? 0 : 6)) + stripeBytes + lookupBytes;
+  }
+
+  function flowSamplingGeometry(width: number, height: number, flowWidth: number, flowHeight: number) {
+    return {
+      scaleX: width / flowWidth,
+      scaleY: height / flowHeight,
+      edgeX: Math.max(0, flowWidth - 1),
+      edgeY: Math.max(0, flowHeight - 1),
+    };
+  }
+
+  function resolveVariantFactors(variant: OpticalFlowVariant, variantScale?: number) {
+    const openingStep = variant === "ext1" ? 1 : variant.startsWith("ext1-") ? Number(variant.slice(5)) : 0;
+    if (openingStep && (!Number.isInteger(openingStep) || openingStep < 1 || openingStep > 12)) {
+      throw new Error("STF Optical Flow received an unsupported opening extrapolation step.");
+    }
+    const defaultScale = openingStep ? openingStep * 0.5 : 0.5;
+    const resolvedScale = variantScale === undefined ? defaultScale : variantScale;
+    if (!Number.isFinite(resolvedScale) || resolvedScale <= 0) {
+      throw new Error("STF Optical Flow extrapolation scale must be finite and positive.");
+    }
+    const previousFactor = openingStep ? -resolvedScale : 0.5;
+    const nextFactor = openingStep ? 1 + resolvedScale : variant === "ext2" ? -resolvedScale : 0.5;
+    return {
+      openingStep,
+      resolvedScale,
+      previousFactor,
+      nextFactor,
+      usePrevious: variant !== "ext2",
+      useNext: !openingStep,
+    };
+  }
+
+  // Flow sampling geometry is invariant across FS variants (and both Flow
+  // directions) for the same image/Flow dimensions. Keep just one small
+  // worker-local lookup, replacing it whenever the geometry changes.
+  type SplatFlowLookup = {
+    width: number; height: number; flowWidth: number; flowHeight: number;
+    scaleX: number; scaleY: number;
+    x0: Int32Array; x1: Int32Array; fx: Float64Array;
+    y0: Int32Array; y1: Int32Array; fy: Float64Array;
+  };
+  let splatFlowLookup: SplatFlowLookup | null = null;
+
+  function getSplatFlowLookup(
+    width: number, height: number, flowWidth: number, flowHeight: number,
+  ): SplatFlowLookup {
+    const existing = splatFlowLookup;
+    if (existing && existing.width === width && existing.height === height &&
+        existing.flowWidth === flowWidth && existing.flowHeight === flowHeight) {
+      return existing;
+    }
+    const { scaleX, scaleY, edgeX, edgeY } = flowSamplingGeometry(width, height, flowWidth, flowHeight);
+    const x0 = new Int32Array(width);
+    const x1 = new Int32Array(width);
+    const fx = new Float64Array(width);
+    for (let x = 0; x < width; x++) {
+      const flowX = flowWidth === 1 ? 0 : ((x + 0.5) * flowWidth / width) - 0.5;
+      const clamped = clamp(flowX, 0, edgeX);
+      const first = Math.floor(clamped);
+      x0[x] = first * 2;
+      x1[x] = Math.min(edgeX, first + 1) * 2;
+      fx[x] = clamped - first;
+    }
+    const y0 = new Int32Array(height);
+    const y1 = new Int32Array(height);
+    const fy = new Float64Array(height);
+    for (let y = 0; y < height; y++) {
+      const flowY = flowHeight === 1 ? 0 : ((y + 0.5) * flowHeight / height) - 0.5;
+      const clamped = clamp(flowY, 0, edgeY);
+      const first = Math.floor(clamped);
+      y0[y] = first * flowWidth * 2;
+      y1[y] = Math.min(edgeY, first + 1) * flowWidth * 2;
+      fy[y] = clamped - first;
+    }
+    const lookup = { width, height, flowWidth, flowHeight, scaleX, scaleY, x0, x1, fx, y0, y1, fy };
+    splatFlowLookup = lookup;
+    return lookup;
+  }
+
+  type ForwardSplatState = {
+    variant: OpticalFlowVariant;
+    weights: Float32Array;
+    accum: Float32Array;
+    usePrevious: boolean;
+    useNext: boolean;
+    inverseWarpScale: number | undefined;
+    forwardSplatScale: number | undefined;
+    uncovered: number;
+    searchCounts: number[];
+    neighborCounts: number[];
+  };
+
+  function fallbackPixel(
+    output: Uint16Array,
+    outputPixelIndex: number,
+    previousGamma2Rgb: Uint16Array,
+    nextGamma2Rgb: Uint16Array,
+    pixelIndex: number,
+    usePrevious: boolean,
+    useNext: boolean,
+  ): void {
+    const base = pixelIndex * 3;
+    const out = outputPixelIndex * 3;
+    if (usePrevious && useNext) {
+      output[out] = clampUint16((previousGamma2Rgb[base] + nextGamma2Rgb[base]) * 0.5);
+      output[out + 1] = clampUint16((previousGamma2Rgb[base + 1] + nextGamma2Rgb[base + 1]) * 0.5);
+      output[out + 2] = clampUint16((previousGamma2Rgb[base + 2] + nextGamma2Rgb[base + 2]) * 0.5);
+    } else if (usePrevious) {
+      output[out] = previousGamma2Rgb[base];
+      output[out + 1] = previousGamma2Rgb[base + 1];
+      output[out + 2] = previousGamma2Rgb[base + 2];
+    } else {
+      output[out] = nextGamma2Rgb[base];
+      output[out + 1] = nextGamma2Rgb[base + 1];
+      output[out + 2] = nextGamma2Rgb[base + 2];
+    }
+  }
+
+  function accumulateForwardSplat(
+    variant: OpticalFlowVariant,
+    previousGamma2Rgb: Uint16Array,
+    nextGamma2Rgb: Uint16Array,
+    width: number,
+    height: number,
+    flowForward: Float32Array,
+    flowBackward: Float32Array,
+    flowWidth: number,
+    flowHeight: number,
+    inverseWarpScale?: number,
+    normGate: StfFlowNormGate | null = null,
+    forwardSplatScale?: number,
+  ): ForwardSplatState {
+    if (variant !== "mid" && !(forwardSplatScale !== undefined &&
+        Number.isFinite(forwardSplatScale) && forwardSplatScale > 0)) {
+      throw new Error("STF forward splatting requires an explicit source-coordinate extrapolation scale.");
+    }
+    const lookup = getSplatFlowLookup(width, height, flowWidth, flowHeight);
+    // A forward splat uses the source-coordinate geometric scale, not the
+    // inverse-warp scale applied to output-position sampling.
+    const { previousFactor, nextFactor, usePrevious, useNext } =
+      resolveVariantFactors(variant, forwardSplatScale ?? inverseWarpScale);
+    const weights = new Float32Array(width * height);
+    const accum = new Float32Array(width * height * 3);
+    const addSource = (
+      source: Uint16Array,
+      flow: Float32Array,
+      factor: number,
+      gate: StfFlowNormGate | null,
+    ) => {
+      for (let y = 0; y < height; y++) {
+        const row0 = lookup.y0[y];
+        const row1 = lookup.y1[y];
+        const flowFy = lookup.fy[y];
+        const oneMinusFy = 1 - flowFy;
+        for (let x = 0; x < width; x++) {
+          const col0 = lookup.x0[x];
+          const col1 = lookup.x1[x];
+          const flowFx = lookup.fx[x];
+          const oneMinusFx = 1 - flowFx;
+          const flowW00 = oneMinusFx * oneMinusFy;
+          const flowW10 = flowFx * oneMinusFy;
+          const flowW01 = oneMinusFx * flowFy;
+          const flowW11 = flowFx * flowFy;
+          const ff00 = row0 + col0;
+          const ff10 = row0 + col1;
+          const ff01 = row1 + col0;
+          const ff11 = row1 + col1;
+          // No allocation of a {x,y} sample object inside the pixel loop.
+          // Keep the same accumulation order as the original bilinear sampler.
+          const flowX = flow[ff00] * flowW00 + flow[ff10] * flowW10 +
+            flow[ff01] * flowW01 + flow[ff11] * flowW11;
+          const flowY = flow[ff00 + 1] * flowW00 + flow[ff10 + 1] * flowW10 +
+            flow[ff01 + 1] * flowW01 + flow[ff11 + 1] * flowW11;
+          const gateFactor = gate ? stfFlowNormGateFactor(flowX, flowY, gate) : 1;
+          const tx = clamp(x + factor * flowX * gateFactor * lookup.scaleX, 0, width - 1);
+          const ty = clamp(y + factor * flowY * gateFactor * lookup.scaleY, 0, height - 1);
+          const sourceIndex = (y * width + x) * 3;
+          const r = source[sourceIndex];
+          const g = source[sourceIndex + 1];
+          const b = source[sourceIndex + 2];
+          const x0 = Math.floor(tx);
+          const y0 = Math.floor(ty);
+          const x1 = Math.min(width - 1, x0 + 1);
+          const y1 = Math.min(height - 1, y0 + 1);
+          const fx = tx - x0;
+          const fy = ty - y0;
+          const w00 = (1 - fx) * (1 - fy);
+          const w10 = fx * (1 - fy);
+          const w01 = (1 - fx) * fy;
+          const w11 = fx * fy;
+          // Inline the four splat contributions: no per-pixel closure,
+          // repeated height calculation or per-pixel helper call.
+          if (w00 > 0) {
+            const index = y0 * width + x0;
+            const base = index * 3;
+            weights[index] += w00;
+            accum[base] += r * w00;
+            accum[base + 1] += g * w00;
+            accum[base + 2] += b * w00;
+          }
+          if (w10 > 0) {
+            const index = y0 * width + x1;
+            const base = index * 3;
+            weights[index] += w10;
+            accum[base] += r * w10;
+            accum[base + 1] += g * w10;
+            accum[base + 2] += b * w10;
+          }
+          if (w01 > 0) {
+            const index = y1 * width + x0;
+            const base = index * 3;
+            weights[index] += w01;
+            accum[base] += r * w01;
+            accum[base + 1] += g * w01;
+            accum[base + 2] += b * w01;
+          }
+          if (w11 > 0) {
+            const index = y1 * width + x1;
+            const base = index * 3;
+            weights[index] += w11;
+            accum[base] += r * w11;
+            accum[base + 1] += g * w11;
+            accum[base + 2] += b * w11;
+          }
+        }
+      }
+    };
+    if (usePrevious) addSource(previousGamma2Rgb, flowForward, previousFactor, variant === "mid" ? null : normGate);
+    if (useNext) addSource(nextGamma2Rgb, flowBackward, nextFactor, variant === "mid" ? null : normGate);
+    return {
+      variant, weights, accum, usePrevious, useNext,
+      inverseWarpScale, forwardSplatScale, uncovered: 0,
+      searchCounts: new Array<number>(STF_SPLAT_HOLE_SEARCH_BUCKET_COUNT).fill(0),
+      neighborCounts: new Array<number>(STF_SPLAT_HOLE_NEIGHBOR_BUCKET_COUNT).fill(0),
+    };
+  }
+
+  function renderForwardSplatStripe(
+    state: ForwardSplatState,
+    previousGamma2Rgb: Uint16Array,
+    nextGamma2Rgb: Uint16Array,
+    width: number,
+    height: number,
+    startY: number,
+    stripeHeight: number,
+  ): Uint16Array {
+    const output = new Uint16Array(width * stripeHeight * 3);
+    const startPixel = startY * width;
+    const endPixel = (startY + stripeHeight) * width;
+    const { weights, accum, searchCounts, neighborCounts, usePrevious, useNext } = state;
+    for (let pixel = startPixel; pixel < endPixel; pixel++) {
+      const out = (pixel - startPixel) * 3;
+      const base = pixel * 3;
+      const weight = weights[pixel];
+      if (weight > 0) {
+        output[out] = clampUint16(accum[base] / weight);
+        output[out + 1] = clampUint16(accum[base + 1] / weight);
+        output[out + 2] = clampUint16(accum[base + 2] / weight);
+      } else {
+        state.uncovered++;
+        const filled = fillStfSplatHole(output, pixel, width, height, weights, accum,
+          searchCounts, neighborCounts, startPixel);
+        if (!filled) {
+          // Last-resort original-source copy; never run inverse warping.
+          fallbackPixel(output, pixel - startPixel, previousGamma2Rgb, nextGamma2Rgb,
+            pixel, usePrevious, useNext);
+        }
+      }
+    }
+    return output;
+  }
+
+  function logForwardSplatCompletion(state: ForwardSplatState, width: number, height: number): void {
+    const { variant, uncovered, searchCounts, neighborCounts, inverseWarpScale, forwardSplatScale } = state;
+    console.info(`[LSS STF FS] ${variant}: uncovered ${uncovered}/${width * height} ` +
+      `(${(100 * uncovered / (width * height)).toFixed(2)}%); ` +
+      `inverseScale=${inverseWarpScale ?? "default"}, forwardScale=${forwardSplatScale ?? "default"}` +
+      `; fallbackSearch(0=source-copy,1=cardinal4,2=diagonal4,3..9=radius2..8)=[${searchCounts.join(",")}]` +
+      `; fallbackNeighborsUsed(count:holes)=[${neighborCounts.map((holes, count) => holes ? `${count}:${holes}` : "").filter(Boolean).join(",")}].`);
+  }
+
+  function synthesizeFlowVariantForwardSplat(
+    variant: OpticalFlowVariant,
+    previousGamma2Rgb: Uint16Array,
+    nextGamma2Rgb: Uint16Array,
+    width: number,
+    height: number,
+    flowForward: Float32Array,
+    flowBackward: Float32Array,
+    flowWidth: number,
+    flowHeight: number,
+    inverseWarpScale?: number,
+    normGate: StfFlowNormGate | null = null,
+    forwardSplatScale?: number,
+  ): Uint16Array {
+    const state = accumulateForwardSplat(variant, previousGamma2Rgb, nextGamma2Rgb,
+      width, height, flowForward, flowBackward, flowWidth, flowHeight,
+      inverseWarpScale, normGate, forwardSplatScale);
+    const output = renderForwardSplatStripe(state, previousGamma2Rgb, nextGamma2Rgb,
+      width, height, 0, height);
+    logForwardSplatCompletion(state, width, height);
+    return output;
+  }
+
   // Calculate the exact old warp pixels, but only for a stripe's y-range.
   async function streamVariant(
     requestId: number, kind: "primary" | "additional", variant: OpticalFlowVariant,
     previous: Uint16Array, next: Uint16Array, width: number, height: number,
     forward: Float32Array, backward: Float32Array, flowWidth: number, flowHeight: number,
     variantScale: number | undefined, normGate: StfFlowNormGate | null,
+    warpMethod: OpticalFlowWarpMethod,
+    forwardVariantScale?: number,
   ): Promise<{ warpMs: number; waitMs: number }> {
+    if (warpMethod !== "inverse-warp") {
+      const started = performance.now();
+      const state = accumulateForwardSplat(variant, previous, next, width, height,
+        forward, backward, flowWidth, flowHeight, variantScale, normGate, forwardVariantScale);
+      let warpMs = performance.now() - started;
+      let waitMs = 0;
+      const rows = stripeRows(width);
+      for (let y = 0; y < height; y += rows) {
+        const chunkHeight = Math.min(rows, height - y);
+        const renderStarted = performance.now();
+        const stripe = renderForwardSplatStripe(state, previous, next, width, height, y, chunkHeight);
+        warpMs += performance.now() - renderStarted;
+        const waitStarted = performance.now();
+        await sendStripe(requestId, kind, y, chunkHeight, width, stripe);
+        waitMs += performance.now() - waitStarted;
+      }
+      logForwardSplatCompletion(state, width, height);
+      return { warpMs, waitMs };
+    }
     let warpMs = 0;
     let waitMs = 0;
     const rows = stripeRows(width);
@@ -314,20 +654,35 @@ import type {
         if (!current || current.sourceImageId !== message.sourceImageId) {
           throw new Error("STF opening Average Flow needs an initialized real source image.");
         }
+        const warpMethod = message.warpMethod ?? "inverse-warp";
+        const knownSourceFlowBytes = current.source.byteLength + current.flow.byteLength;
         if (message.streamStripes) {
           const { warpMs } = await streamVariant(message.requestId, "primary", message.variant,
             current.source, current.source, geometry.imageWidth, geometry.imageHeight,
-            current.flow, current.flow, geometry.width, geometry.height, message.variantScale, current.gate);
+            current.flow, current.flow, geometry.width, geometry.height, message.variantScale, current.gate,
+            warpMethod, message.forwardVariantScale);
           workerScope.postMessage({ type: "stream-result", requestId: message.requestId,
-            width: geometry.imageWidth, height: geometry.imageHeight, warpMs });
+            width: geometry.imageWidth, height: geometry.imageHeight, warpMs,
+            warpScratchBytes: geometryScratchBytes(geometry.imageWidth, geometry.imageHeight, true, warpMethod),
+            estimatedPeakBytes: knownSourceFlowBytes +
+              geometryScratchBytes(geometry.imageWidth, geometry.imageHeight, true, warpMethod) });
         } else {
-          const output = synthesizeFlowVariant(message.variant, current.source, current.source,
-            geometry.imageWidth, geometry.imageHeight, current.flow, current.flow,
-            geometry.width, geometry.height, message.variantScale, current.gate);
+          const output = warpMethod !== "inverse-warp"
+            ? synthesizeFlowVariantForwardSplat(message.variant, current.source, current.source,
+                geometry.imageWidth, geometry.imageHeight, current.flow, current.flow,
+                geometry.width, geometry.height, message.variantScale, current.gate,
+                message.forwardVariantScale)
+            : synthesizeFlowVariant(message.variant, current.source, current.source,
+                geometry.imageWidth, geometry.imageHeight, current.flow, current.flow,
+                geometry.width, geometry.height, message.variantScale, current.gate);
           const gamma2Buffer = transferableBuffer(output);
           workerScope.postMessage({ type: "warp-result", requestId: message.requestId,
             width: geometry.imageWidth, height: geometry.imageHeight,
-            gamma2Buffer, warpMs: performance.now() - started }, [gamma2Buffer]);
+            gamma2Buffer, warpMs: performance.now() - started,
+            warpScratchBytes: geometryScratchBytes(geometry.imageWidth, geometry.imageHeight, false, warpMethod),
+            estimatedPeakBytes: knownSourceFlowBytes +
+              geometryScratchBytes(geometry.imageWidth, geometry.imageHeight, false, warpMethod),
+          }, [gamma2Buffer]);
         }
         return;
       }
@@ -471,16 +826,21 @@ import type {
       : Promise.resolve({ saved: false, durationMs: 0 });
 
     const normGates: NormGateCache = {};
+    const warpMethod = message.warpMethod ?? "inverse-warp";
     postProgress(message.requestId, `Warping Optical Flow ${describeVariant(message.variant)} image...`);
     const warpStartedAt = performance.now();
     const primaryGate = gateForVariant(message.variant, flows.forward, flows.backward, normGates);
-    const output = message.streamStripes ? undefined : synthesizeFlowVariant(
-      message.variant, previousGamma2Rgb, nextGamma2Rgb, width, height,
-      flows.forward, flows.backward, flowSize.width, flowSize.height, message.variantScale, primaryGate);
+    const output = message.streamStripes ? undefined : (warpMethod !== "inverse-warp"
+      ? synthesizeFlowVariantForwardSplat(message.variant, previousGamma2Rgb, nextGamma2Rgb, width, height,
+          flows.forward, flows.backward, flowSize.width, flowSize.height, message.variantScale, primaryGate,
+          message.forwardVariantScale)
+      : synthesizeFlowVariant(message.variant, previousGamma2Rgb, nextGamma2Rgb, width, height,
+          flows.forward, flows.backward, flowSize.width, flowSize.height, message.variantScale, primaryGate));
     const primaryStream = message.streamStripes
       ? await streamVariant(message.requestId, "primary", message.variant,
           previousGamma2Rgb, nextGamma2Rgb, width, height, flows.forward, flows.backward,
-          flowSize.width, flowSize.height, message.variantScale, primaryGate)
+          flowSize.width, flowSize.height, message.variantScale, primaryGate, warpMethod,
+          message.forwardVariantScale)
       : null;
     const warpMs = primaryStream?.warpMs ?? (performance.now() - warpStartedAt);
     // Both frames use the *same* native 4MP forward/backward fields. Never
@@ -489,14 +849,19 @@ import type {
     const extraGate = message.additionalVariant
       ? gateForVariant(message.additionalVariant, flows.forward, flows.backward, normGates) : null;
     const additionalGamma2Rgb = message.additionalVariant && !message.streamStripes
-      ? synthesizeFlowVariant(message.additionalVariant, previousGamma2Rgb, nextGamma2Rgb,
-          width, height, flows.forward, flows.backward, flowSize.width, flowSize.height, message.additionalVariantScale,
-          extraGate)
+      ? (warpMethod !== "inverse-warp"
+        ? synthesizeFlowVariantForwardSplat(message.additionalVariant, previousGamma2Rgb, nextGamma2Rgb,
+            width, height, flows.forward, flows.backward, flowSize.width, flowSize.height, message.additionalVariantScale,
+            extraGate, message.additionalForwardVariantScale)
+        : synthesizeFlowVariant(message.additionalVariant, previousGamma2Rgb, nextGamma2Rgb,
+            width, height, flows.forward, flows.backward, flowSize.width, flowSize.height, message.additionalVariantScale,
+            extraGate))
       : undefined;
     const additionalStream = message.additionalVariant && message.streamStripes
       ? await streamVariant(message.requestId, "additional", message.additionalVariant,
           previousGamma2Rgb, nextGamma2Rgb, width, height, flows.forward, flows.backward,
-          flowSize.width, flowSize.height, message.additionalVariantScale, extraGate)
+          flowSize.width, flowSize.height, message.additionalVariantScale, extraGate, warpMethod,
+          message.additionalForwardVariantScale)
       : null;
     const additionalWarpMs = message.additionalVariant
       ? additionalStream?.warpMs ?? (performance.now() - additionalWarpStartedAt)
@@ -521,7 +886,11 @@ import type {
       totalWorkerMs: performance.now() - workerStartedAt -
         (primaryStream?.waitMs ?? 0) - (additionalStream?.waitMs ?? 0),
       estimatedPeakBytes: estimatePeakBytes(width, height, flowSize.width, flowSize.height, flows.workerCount,
-        message.streamStripes ? Math.min(height, stripeRows(width)) * width * 6 : undefined),
+        geometryScratchBytes(width, height, Boolean(message.streamStripes), warpMethod)),
+      warpScratchBytes: geometryScratchBytes(width, height, Boolean(message.streamStripes), warpMethod),
+      ...(message.additionalVariant ? {
+        additionalWarpScratchBytes: geometryScratchBytes(width, height, Boolean(message.streamStripes), warpMethod),
+      } : {}),
       inputGamma2Bytes: previousGamma2Rgb.byteLength + nextGamma2Rgb.byteLength,
       flowFieldBytes: flows.forward.byteLength + flows.backward.byteLength,
       flowCacheHit: Boolean(cached), flowCacheSaved, flowCacheReadMs, flowCacheWriteMs,

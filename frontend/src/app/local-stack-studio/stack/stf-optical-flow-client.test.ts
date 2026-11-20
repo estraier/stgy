@@ -68,6 +68,28 @@ test("STF Flow client passes geometric inverse-warp scales through active Worker
       expect(sourceBuffer?.byteLength).toBe(prev.byteLength);
       expect(sourceBuffer).not.toBe(prev.buffer);
       expect(new Uint16Array(sourceBuffer)).toEqual(prev);
+
+      // FS never uses the destination-indexed inverse multiplier for
+      // forward projection. The two geometries must survive both API paths.
+      const closingInverse = 0.48556;
+      const closingForward = 0.45831;
+      const openingForward = 9.16579;
+      await client.generate(width, height, 0, 1, prev, next,
+        "mid", undefined, "ext2", closingInverse,
+        true, "session-a", 1700000000000, "align-1", undefined, 31, {},
+        "forward-splat", undefined, closingForward);
+      await client.warpOpeningAverage(width, height, 0, "ext1-12", inverseScale,
+        prev, false, "forward-splat", openingForward);
+      expect(sent).toHaveLength(4);
+      expect(sent[2]).toMatchObject({
+        type: "interpolate", variant: "mid", warpMethod: "forward-splat",
+        additionalVariant: "ext2", additionalVariantScale: closingInverse,
+        additionalForwardVariantScale: closingForward,
+      });
+      expect(sent[3]).toMatchObject({
+        type: "warp-opening-average", warpMethod: "forward-splat",
+        variant: "ext1-12", variantScale: inverseScale, forwardVariantScale: openingForward,
+      });
     } finally {
       client.terminate();
     }

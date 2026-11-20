@@ -1,4 +1,11 @@
-import { buildStfFrameSet, isStfFrameGenerationMode, STF_EXTRAPOLATION_COUNTS, type StfFrameGenerationMode, type StfFrameSet } from "./stf-frame-generation";
+import {
+  buildStfFrameSet,
+  isStfFrameGenerationMode,
+  stfFrameGenerationKernel,
+  STF_EXTRAPOLATION_COUNTS,
+  type StfFrameGenerationMode,
+  type StfFrameSet,
+} from "./stf-frame-generation";
 
 const fNumbers = [2.8, 4, 3.5, 3.2, 2.5, 2.2, 2];
 const radialAttenuationOptions = [-2, -1, 0, 1, 2, 3,
@@ -113,11 +120,13 @@ describe("STF generated-frame radial attenuation and outer-shell apodization", (
     expect(frames.allFNumbers).toEqual([2.8]);
   });
 
-  test.each(["interpolation", "extrapolation-1", "extrapolation-2", "extrapolation-3", "extrapolation-4", "extrapolation-5", "extrapolation-6", "extrapolation-9", "extrapolation-12"] as const)(
+  test.each(["interpolation", "fs-interpolation", "extrapolation-1", "fs-extrapolation-1", "extrapolation-2", "fs-extrapolation-2", "extrapolation-3", "fs-extrapolation-3", "extrapolation-4", "fs-extrapolation-4", "extrapolation-5", "fs-extrapolation-5", "extrapolation-6", "fs-extrapolation-6", "extrapolation-9", "fs-extrapolation-9", "extrapolation-12", "fs-extrapolation-12"] as const)(
     "%s includes real and synthetic frames, preserving their index mapping", (mode: StfFrameGenerationMode) => {
       const frames = buildStfFrameSet(fNumbers, 1, mode);
-      const expectedOuterCount = mode.startsWith("extrapolation-")
-        ? Number(mode.slice("extrapolation-".length)) + 1 : 0;
+      const normalizedMode = mode.startsWith("fs-") ? mode.slice(3) : mode;
+      const expectedOuterCount = normalizedMode.startsWith("extrapolation-")
+        ? Number(normalizedMode.slice("extrapolation-".length)) + 1 : 0;
+      expect(frames.virtualFrameKernel).toBe(stfFrameGenerationKernel(mode));
       expect(frames.middleFrames).toHaveLength(fNumbers.length - 1);
       expect(frames.outerFrames).toHaveLength(expectedOuterCount);
       expect(frames.allWeights).toHaveLength(fNumbers.length * 2 - 1 + expectedOuterCount);
@@ -132,6 +141,7 @@ describe("STF generated-frame radial attenuation and outer-shell apodization", (
       frames.outerFrames.forEach((frame, i) => {
         expect(frame.weight).toBe(frames.allWeights[fNumbers.length + frames.middleFrames.length + i]);
         expect(frame.inverseWarpScale).toBeGreaterThan(0);
+        expect(frame.forwardSplatScale).toBeGreaterThan(0);
         if (frame.variant !== "ext2") expect(frame.openingFlowScale).toBeGreaterThan(0);
       });
     },
@@ -180,6 +190,31 @@ describe("STF generated-frame radial attenuation and outer-shell apodization", (
       const inverseSamplingRatio = 1 - outer.inverseWarpScale * (1 - f0 / f1);
       expect(inverseSamplingRatio).toBeCloseTo(1 / radiusExpansion, 12);
       expect(outer.inverseWarpScale).toBeGreaterThan(0);
+      // Source-indexed forward projection must give the same virtual radius.
+      const k = f0 / f1; // native first->second radius ratio
+      const forwardRadiusRatio = 1 - outer.forwardSplatScale * (k - 1);
+      expect(forwardRadiusRatio).toBeCloseTo(radiusExpansion, 12);
+      expect(outer.forwardSplatScale).toBeCloseTo(outer.openingFlowScale, 12);
+    }
+  });
+
+  test.each(STF_EXTRAPOLATION_COUNTS)("FS extrapolation %i retains original weights and correct forward scales", (count) => {
+    const inputs = Array.from({ length: 7 }, (_, i) => 2 * 2 ** (i / 6));
+    const baseline = buildStfFrameSet(inputs, 1, `extrapolation-${count}` as StfFrameGenerationMode);
+    const frames = buildStfFrameSet(inputs, 1, `fs-extrapolation-${count}` as StfFrameGenerationMode);
+    expect(frames.virtualFrameKernel).toBe("forward-splat");
+    expect(frames.allFNumbers).toEqual(baseline.allFNumbers);
+    expect(frames.allWeights).toEqual(baseline.allWeights);
+    expect(frames.outerFrames).toEqual(baseline.outerFrames);
+    for (const outer of frames.outerFrames) {
+      if (outer.variant !== "ext2") continue;
+      const last = inputs[inputs.length - 1];
+      const prev = inputs[inputs.length - 2];
+      const nativeBackwardRadiusRatio = last / prev;
+      expect(1 - outer.forwardSplatScale * (nativeBackwardRadiusRatio - 1))
+        .toBeCloseTo(last / outer.fNumber, 12);
+      expect(1 + outer.inverseWarpScale * (nativeBackwardRadiusRatio - 1))
+        .toBeCloseTo(outer.fNumber / last, 12);
     }
   });
 
@@ -248,10 +283,18 @@ describe("STF generated-frame radial attenuation and outer-shell apodization", (
     expect(STF_EXTRAPOLATION_COUNTS).toEqual([1, 2, 3, 4, 5, 6, 9, 12]);
     for (const count of STF_EXTRAPOLATION_COUNTS) {
       expect(isStfFrameGenerationMode(`extrapolation-${count}`)).toBe(true);
+      expect(isStfFrameGenerationMode(`fs-extrapolation-${count}`)).toBe(true);
     }
-    for (const invalid of ["extrapolation-0", "extrapolation-7", "extrapolation-8", "extrapolation-10",
+    expect(isStfFrameGenerationMode("fs-interpolation")).toBe(true);
+    for (const invalid of ["hybrid-interpolation", "hybrid-extrapolation-1", "hybrid-extrapolation-12",
+      "extrapolation-0", "extrapolation-7", "extrapolation-8", "extrapolation-10",
       "extrapolation-11", "extrapolation-13", "extrapolation-16", "extrapolation-32",
-      "extrapolation-33", "extrapolation-64", "extrapolation-01"]) {
+      "extrapolation-33", "extrapolation-64", "extrapolation-01", "fs-extrapolation-0",
+      "fs-extrapolation-7", "fs-extrapolation-8", "fs-extrapolation-10", "fs-extrapolation-11",
+      "fs-extrapolation-13", "fs-extrapolation-16", "fs-extrapolation-32", "fs-extrapolation-33",
+      "fs-extrapolation-64", "fs-extrapolation-01",
+      "hybrid-extrapolation-7",
+      "hybrid-extrapolation-11"]) {
       expect(isStfFrameGenerationMode(invalid)).toBe(false);
       expect(() => buildStfFrameSet([2, 4], 1, invalid as StfFrameGenerationMode)).toThrow("Unsupported STF Frame generation");
     }
