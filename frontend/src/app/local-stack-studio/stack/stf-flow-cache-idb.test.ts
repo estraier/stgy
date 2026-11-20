@@ -1,5 +1,5 @@
 import { deleteStfFlowSession, purgeExpiredStfFlowSessions, stfFlowSessionKey,
-  readStfCachedFlow, writeStfCachedFlow } from "./stf-flow-cache";
+  readStfCachedFlow, writeStfCachedFlow, type StfFlowCacheWriteDiagnostics } from "./stf-flow-cache";
 
 /** Minimal async IndexedDB simulation of the two stores this cache uses.
  * Tests actual read/admission/explicit-deletion transactions without a browser or WASM.
@@ -139,7 +139,10 @@ test("IndexedDB retains cached pairs, skips over-budget writes, and frees space 
     const c = stfFlowSessionKey("session-2", 0, 1, "align", 2, 2)!;
     const createdAt = Date.now();
     expect(await readStfCachedFlow("session-1", a, 2, 2)).toBeNull();
-    expect(await writeStfCachedFlow("session-1", a, createdAt, 2, 2, forward, backward, 128)).toBe(true);
+    const savedDiagnostics: StfFlowCacheWriteDiagnostics = {};
+    expect(await writeStfCachedFlow("session-1", a, createdAt, 2, 2,
+      forward, backward, 128, savedDiagnostics)).toBe(true);
+    expect(savedDiagnostics).toEqual({ status: "admitted", retainedBytes: 0, incomingBytes: 64 });
     const recovered = await readStfCachedFlow("session-1", a, 2, 2);
     expect(Array.from(recovered?.forward || [])).toEqual(Array.from(forward));
     expect(Array.from(recovered?.backward || [])).toEqual(Array.from(backward));
@@ -148,7 +151,10 @@ test("IndexedDB retains cached pairs, skips over-budget writes, and frees space 
     expect(await writeStfCachedFlow("session-1", b, createdAt, 2, 2, forward, backward, 128)).toBe(true);
     // The cache is now full. The third pair must not evict either of the two
     // first pairs, even if the first pair was accessed long ago.
-    expect(await writeStfCachedFlow("session-2", c, createdAt, 2, 2, forward, backward, 128)).toBe(false);
+    const capacityDiagnostics: StfFlowCacheWriteDiagnostics = {};
+    expect(await writeStfCachedFlow("session-2", c, createdAt, 2, 2,
+      forward, backward, 128, capacityDiagnostics)).toBe(false);
+    expect(capacityDiagnostics).toEqual({ status: "capacity-limit", retainedBytes: 128, incomingBytes: 64 });
     expect(fake.tables.get("pairs")?.size).toBe(2);
     expect(await readStfCachedFlow("session-1", a, 2, 2)).not.toBeNull();
     expect(await readStfCachedFlow("session-1", b, 2, 2)).not.toBeNull();
@@ -203,7 +209,10 @@ test("invalid Flow vectors are rejected before persistence and corrupt reads are
   const bad = new Float32Array(8);
   bad[7] = Infinity;
   try {
-    expect(await writeStfCachedFlow("s", key, now, 2, 2, bad, good, 128)).toBe(false);
+    const invalidDiagnostics: StfFlowCacheWriteDiagnostics = {};
+    expect(await writeStfCachedFlow("s", key, now, 2, 2,
+      bad, good, 128, invalidDiagnostics)).toBe(false);
+    expect(invalidDiagnostics.status).toBe("invalid");
     expect(fake.tables.get("pairs")?.size).toBe(0);
     expect(await writeStfCachedFlow("s", key, now, 2, 2, good, good, 128)).toBe(true);
     const pair = fake.tables.get("pairs")!.get(key) as { forward: Float32Array };
@@ -327,9 +336,12 @@ test("actual Optical Flow worker hits persisted Flow without spawning Farneback 
       jest.resetModules();
       const responses: Array<{ type: string; gamma2Buffer?: ArrayBuffer; performance?: {
         flowCacheHit?: boolean; flowWorkerCount: number;
+        prepareFlowInputsMs: number; flowCacheSaveStatus?: string;
       } }> = [];
       Object.defineProperty(globalThis, "postMessage", { configurable: true,
         value: (message: unknown) => responses.push(message as typeof responses[number]) });
+      const gray = jest.requireActual<typeof import("./stf-flow-gray")>("./stf-flow-gray");
+      const convertSpy = jest.spyOn(gray, "stfGamma2RgbToGray8Resampled");
       jest.requireActual("../workers/optical-flow.worker");
       const scope = globalThis as unknown as { onmessage: (event: MessageEvent<unknown>) => Promise<void> };
       const previous = new Uint16Array(7 * 3 * 3).fill(10000);
@@ -340,13 +352,21 @@ test("actual Optical Flow worker hits persisted Flow without spawning Farneback 
         previousImageId: 0, nextImageId: 1, linearRangeMax: 4,
         previousGamma2Buffer: previous.buffer, nextGamma2Buffer: next.buffer,
       } } as MessageEvent<unknown>);
-      return responses.find((entry) => entry.type === "result");
+      const result = responses.find((entry) => entry.type === "result");
+      const grayscaleConversions = convertSpy.mock.calls.length;
+      convertSpy.mockRestore();
+      return { ...result, grayscaleConversions };
     };
     const cold = await exercise(1);
+    expect(cold.grayscaleConversions).toBe(2);
+    expect(cold?.performance?.flowCacheSaveStatus).toBe("admitted");
     expect(cold?.performance?.flowCacheHit).toBe(false);
     expect(computes).toBe(1);
     const spawnedBeforeHit = spawned;
     const hot = await exercise(2);
+    expect(hot.grayscaleConversions).toBe(0);
+    expect(hot?.performance?.prepareFlowInputsMs).toBe(0);
+    expect(hot?.performance?.flowCacheSaveStatus).toBe("hit");
     expect(hot?.performance?.flowCacheHit).toBe(true);
     expect(hot?.performance?.flowWorkerCount).toBe(0);
     expect(spawned).toBe(spawnedBeforeHit);
@@ -356,6 +376,7 @@ test("actual Optical Flow worker hits persisted Flow without spawning Farneback 
     // A new Canonical session must NOT reuse any previous session's Flow,
     // even when every input pixel is identical.
     const changed = await exercise(3, "session-b");
+    expect(changed.grayscaleConversions).toBe(2);
     expect(changed?.performance?.flowCacheHit).toBe(false);
     expect(computes).toBe(2);
   } finally {
@@ -364,5 +385,33 @@ test("actual Optical Flow worker hits persisted Flow without spawning Farneback 
       if (descriptor) Object.defineProperty(globalThis, key, descriptor);
       else Reflect.deleteProperty(globalThis, key);
     }
+  }
+});
+
+
+test("Flow cache diagnostics distinguish quota refusal and unavailable IndexedDB", async () => {
+  const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  const originalIdb = Object.getOwnPropertyDescriptor(globalThis, "indexedDB");
+  const flow = new Float32Array(8);
+  const key = stfFlowSessionKey("quota", 0, 1, "align", 2, 2)!;
+  try {
+    Object.defineProperty(globalThis, "navigator", { configurable: true,
+      value: { storage: { estimate: async () => ({ usage: 95, quota: 100 }) } } });
+    const quota: StfFlowCacheWriteDiagnostics = {};
+    expect(await writeStfCachedFlow("quota", key, Date.now(), 2, 2,
+      flow, flow, 128, quota)).toBe(false);
+    expect(quota.status).toBe("quota-limit");
+
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: {} });
+    Reflect.deleteProperty(globalThis, "indexedDB");
+    const unavailable: StfFlowCacheWriteDiagnostics = {};
+    expect(await writeStfCachedFlow("quota", key, Date.now(), 2, 2,
+      flow, flow, 128, unavailable)).toBe(false);
+    expect(unavailable.status).toBe("error");
+  } finally {
+    if (originalNavigator) Object.defineProperty(globalThis, "navigator", originalNavigator);
+    else Reflect.deleteProperty(globalThis, "navigator");
+    if (originalIdb) Object.defineProperty(globalThis, "indexedDB", originalIdb);
+    else Reflect.deleteProperty(globalThis, "indexedDB");
   }
 });

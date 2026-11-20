@@ -7,7 +7,10 @@ import { transferableBuffer } from "./transfer-buffer";
 import {
   fillStfSplatHole, STF_SPLAT_HOLE_MAX_RADIUS, STF_SPLAT_HOLE_NEIGHBOR_BUCKET_COUNT, STF_SPLAT_HOLE_SEARCH_BUCKET_COUNT,
 } from "./stf-splat-hole-fill";
-import { readStfCachedFlow, writeStfCachedFlow, stfFlowSessionKey } from "../stack/stf-flow-cache";
+import {
+  readStfCachedFlow, writeStfCachedFlow, stfFlowSessionKey,
+  type StfFlowCacheWriteDiagnostics,
+} from "../stack/stf-flow-cache";
 import { stfFlowWorkingSize, stfGamma2RgbToGray8Resampled } from "../stack/stf-flow-gray";
 import { isStfFarnebackWinsize, STF_FARNEBACK_BASE_WINSIZE } from "../stack/stf-farneback-winsize";
 import { buildStfAverageFlow, type StfAverageFlowSample } from "../stack/stf-average-flow";
@@ -138,7 +141,9 @@ import type {
     workerCount: number;
     warmupMs: number;
   }> {
+    const coldStart = directionPoolPromise === null;
     const pool = await ensureDirectionPool();
+    const poolWarmupMs = coldStart ? pool.warmupMs : 0;
     const started = performance.now();
     if (pool.clients.length === 1) {
       const previousGrayBuffer = grayCopyBuffer(previousGray);
@@ -155,7 +160,7 @@ import type {
         backwardMs: result.backwardMs,
         wallMs: performance.now() - started,
         workerCount: 1,
-        warmupMs: pool.warmupMs,
+        warmupMs: poolWarmupMs,
       };
     }
 
@@ -183,7 +188,7 @@ import type {
       backwardMs: backwardResult.computeMs,
       wallMs: performance.now() - started,
       workerCount: 2,
-      warmupMs: pool.warmupMs,
+      warmupMs: poolWarmupMs,
     };
   }
 
@@ -1080,11 +1085,23 @@ import type {
       throw new Error("STF Optical Flow requires a valid odd Farneback window.");
     }
     const flowSize = stfFlowWorkingSize(width, height);
-    // Grayscale is only for Farneback; the persistent cache identity is the
-    // Canonical session plus image pair and alignment parameters, never pixels.
-    postProgress(message.requestId, "Preparing Optical Flow grayscale proxies...");
-    const prepareStartedAt = performance.now();
-    const grayScale = message.linearRangeMax === 4 ? 2 : 1;
+    // The cache key depends on the Canonical session, adjacent image IDs,
+    // alignment and Flow geometry. It does NOT depend on Gray8 pixel content.
+    // Check IndexedDB first: cached Flow needs no Gray8 proxy at all.
+    if (message.persistFlow && (!message.sessionId || !message.alignmentKey ||
+        !Number.isSafeInteger(message.sessionCreatedAt) || message.sessionCreatedAt! < 0)) {
+      throw new Error("STF persistent Flow requires a Canonical session identity");
+    }
+    const cacheReadStarted = performance.now();
+    const flowCacheKey = message.persistFlow
+      ? stfFlowSessionKey(message.sessionId!, message.previousImageId!, message.nextImageId!,
+          message.alignmentKey!, flowSize.width, flowSize.height, winsize) : null;
+    const cached = flowCacheKey
+      ? await readStfCachedFlow(message.sessionId!, flowCacheKey, flowSize.width, flowSize.height) : null;
+    const flowCacheReadMs = performance.now() - cacheReadStarted;
+
+    // Validate externally supplied proxies even on a cache hit. No image
+    // conversion, resizing, or Gray8 caching happens when Flow was restored.
     const externalGray = message.previousGrayBuffer !== undefined || message.nextGrayBuffer !== undefined;
     if (externalGray && (!message.previousGrayBuffer || !message.nextGrayBuffer)) {
       throw new Error("STF Flow requires both shared grayscale proxies");
@@ -1096,41 +1113,40 @@ import type {
         (externalNext && externalNext.length !== expectedGrayLength)) {
       throw new Error("STF Flow grayscale proxy has invalid dimensions");
     }
-    const previousGray = externalPrevious ?? (message.previousImageId === undefined ? null : grayCache.get(message.previousImageId));
-    const nextGray = externalNext ?? (message.nextImageId === undefined ? null : grayCache.get(message.nextImageId));
-    const gray0 = previousGray ?? stfGamma2RgbToGray8Resampled(previousGamma2Rgb, width, height, flowSize.width, flowSize.height, grayScale);
-    const gray1 = nextGray ?? stfGamma2RgbToGray8Resampled(nextGamma2Rgb, width, height, flowSize.width, flowSize.height, grayScale);
-    if (!externalGray && message.previousImageId !== undefined && !previousGray) grayCache.set(message.previousImageId, gray0);
-    if (!externalGray && message.nextImageId !== undefined && !nextGray) grayCache.set(message.nextImageId, gray1);
-    const prepareFlowInputsMs = performance.now() - prepareStartedAt;
-
-    const cacheReadStarted = performance.now();
-    if (message.persistFlow && (!message.sessionId || !message.alignmentKey ||
-        !Number.isSafeInteger(message.sessionCreatedAt) || message.sessionCreatedAt! < 0)) {
-      throw new Error("STF persistent Flow requires a Canonical session identity");
+    let prepareFlowInputsMs = 0;
+    let computedNextGray: Uint8Array | null = null;
+    let computedFlows: Awaited<ReturnType<typeof computeBidirectionalFlow>> | null = null;
+    if (!cached) {
+      postProgress(message.requestId, "Preparing Optical Flow grayscale proxies...");
+      const prepareStartedAt = performance.now();
+      const grayScale = message.linearRangeMax === 4 ? 2 : 1;
+      const previousGray = externalPrevious ??
+        (message.previousImageId === undefined ? null : grayCache.get(message.previousImageId));
+      const nextGray = externalNext ??
+        (message.nextImageId === undefined ? null : grayCache.get(message.nextImageId));
+      const gray0 = previousGray ?? stfGamma2RgbToGray8Resampled(previousGamma2Rgb, width, height,
+        flowSize.width, flowSize.height, grayScale);
+      const gray1 = nextGray ?? stfGamma2RgbToGray8Resampled(nextGamma2Rgb, width, height,
+        flowSize.width, flowSize.height, grayScale);
+      prepareFlowInputsMs = performance.now() - prepareStartedAt;
+      postProgress(message.requestId,
+        `Computing bidirectional Optical Flow (${flowSize.width}×${flowSize.height}, winsize=${winsize})...`);
+      computedFlows = await computeBidirectionalFlow(gray0, gray1, flowSize.width, flowSize.height, winsize);
+      if (!externalGray && message.nextImageId !== undefined) computedNextGray = gray1;
     }
-    const flowCacheKey = message.persistFlow
-      ? stfFlowSessionKey(message.sessionId!, message.previousImageId!, message.nextImageId!,
-          message.alignmentKey!, flowSize.width, flowSize.height, winsize) : null;
-    const cached = flowCacheKey
-      ? await readStfCachedFlow(message.sessionId!, flowCacheKey, flowSize.width, flowSize.height) : null;
-    const flowCacheReadMs = performance.now() - cacheReadStarted;
-    if (!cached) postProgress(message.requestId,
-      `Computing bidirectional Optical Flow (${flowSize.width}×${flowSize.height}, winsize=${winsize})...`);
     const flows = cached ? {
       ...cached, forwardMs: 0, backwardMs: 0, wallMs: 0, workerCount: 0, warmupMs: 0,
-    } : await computeBidirectionalFlow(gray0, gray1, flowSize.width, flowSize.height, winsize);
+    } : computedFlows!;
     if (flows.forward.length !== flowSize.width * flowSize.height * 2 ||
         flows.backward.length !== flowSize.width * flowSize.height * 2) {
       throw new Error("Optical Flow direction worker returned an invalid vector field.");
     }
-    // The Flow fields no longer need either grayscale proxy. In the ordered
-    // real-pair pipeline, only the current pair's second image can be reused
-    // by the next pair. Release all older proxies instead of retaining one
-    // 4MP Gray8 buffer per real image for the entire Process.
+    // The next real pair can reuse this pair's second Gray8 only if this
+    // request had to compute it. Hits drop the previous proxy and allocate
+    // no new one; the next miss will regenerate it if needed.
     grayCache.clear();
-    if (!externalGray && message.nextImageId !== undefined) {
-      grayCache.set(message.nextImageId, gray1);
+    if (computedNextGray && message.nextImageId !== undefined) {
+      grayCache.set(message.nextImageId, computedNextGray);
     }
     if (message.openingAverageRadiusSpan !== undefined) {
       if (!(message.openingAverageRadiusSpan > 0) || !Number.isFinite(message.openingAverageRadiusSpan) ||
@@ -1164,12 +1180,16 @@ import type {
     // completion before returning so that terminating this Worker cannot lose
     // a pending IndexedDB transaction.
     const cacheWriteStarted = performance.now();
+    const cacheDiagnostics: StfFlowCacheWriteDiagnostics = {};
     const cacheWrite = flowCacheKey && !cached
       ? writeStfCachedFlow(message.sessionId!, flowCacheKey, message.sessionCreatedAt!,
-          flowSize.width, flowSize.height, flows.forward, flows.backward).then((saved) => ({
-            saved, durationMs: saved ? performance.now() - cacheWriteStarted : 0,
+          flowSize.width, flowSize.height, flows.forward, flows.backward,
+          undefined, cacheDiagnostics).then((saved) => ({
+            saved, durationMs: performance.now() - cacheWriteStarted,
+            status: cacheDiagnostics.status ?? (saved ? "admitted" as const : "error" as const),
           }))
-      : Promise.resolve({ saved: false, durationMs: 0 });
+      : Promise.resolve({ saved: false, durationMs: 0,
+          status: cached ? "hit" as const : "disabled" as const });
 
     const normGates: NormGateCache = {};
     const warpMethod = message.warpMethod ?? "inverse-warp";
@@ -1214,7 +1234,8 @@ import type {
       : undefined;
     // Capture completion when IndexedDB resolves, not after all subsequent
     // Warp stripes have been acknowledged by the main thread.
-    const { saved: flowCacheSaved, durationMs: flowCacheWriteMs } = await cacheWrite;
+    const { saved: flowCacheSaved, durationMs: flowCacheWriteMs,
+      status: flowCacheSaveStatus } = await cacheWrite;
     const performanceStats: OpticalFlowPerformanceStats = {
       sourceWidth: width,
       sourceHeight: height,
@@ -1243,6 +1264,13 @@ import type {
       inputGamma2Bytes: previousGamma2Rgb.byteLength + nextGamma2Rgb.byteLength,
       flowFieldBytes: flows.forward.byteLength + flows.backward.byteLength,
       flowCacheHit: Boolean(cached), flowCacheSaved, flowCacheReadMs, flowCacheWriteMs,
+      flowCacheSaveStatus,
+      ...(cacheDiagnostics.retainedBytes !== undefined ? {
+        flowCacheRetainedBytes: cacheDiagnostics.retainedBytes,
+      } : {}),
+      ...(cacheDiagnostics.incomingBytes !== undefined ? {
+        flowCacheIncomingBytes: cacheDiagnostics.incomingBytes,
+      } : {}),
       outputBytes: width * height * 6 * (message.additionalVariant ? 2 : 1),
     };
     return { width, height, gamma2Rgb: output, additionalGamma2Rgb, flowWidth: flowSize.width, flowHeight: flowSize.height, performance: performanceStats };

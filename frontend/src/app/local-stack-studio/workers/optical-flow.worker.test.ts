@@ -1045,6 +1045,7 @@ test("STF Flow cache write duration excludes subsequent stripe acknowledgement d
     if (result?.type !== "stream-result" || !result.performance) throw new Error("Missing Flow performance");
     expect(writeSpy).toHaveBeenCalledTimes(1);
     expect(result.performance.flowCacheSaved).toBe(true);
+    expect(result.performance.flowCacheSaveStatus).toBe("admitted");
     expect(result.performance.flowCacheWriteMs).toBeLessThan(100);
     expect(clock).toBe(1010); // The main-thread acknowledgement was delayed.
   } finally {

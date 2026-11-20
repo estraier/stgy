@@ -104,6 +104,10 @@ export type OpticalFlowPerformanceStats = {
   flowCacheSaved?: boolean;
   flowCacheReadMs?: number;
   flowCacheWriteMs?: number;
+  // Outcome of best-effort persistence; a miss never fails image generation.
+  flowCacheSaveStatus?: "admitted" | "capacity-limit" | "quota-limit" | "invalid" | "error" | "hit" | "disabled";
+  flowCacheRetainedBytes?: number;
+  flowCacheIncomingBytes?: number;
   outputBytes: number;
 };
 

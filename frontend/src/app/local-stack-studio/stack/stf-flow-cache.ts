@@ -44,6 +44,14 @@ type FlowRecord = {
 };
 type FlowMetadata = { key: string; sessionId: string; bytes: number; createdAt: number };
 export type StfCachedBidirectionalFlow = { forward: Float32Array; backward: Float32Array };
+/** Diagnostics do not change the established best-effort boolean write API. */
+export type StfFlowCacheSaveStatus =
+  "admitted" | "capacity-limit" | "quota-limit" | "invalid" | "error";
+export type StfFlowCacheWriteDiagnostics = {
+  status?: StfFlowCacheSaveStatus;
+  retainedBytes?: number;
+  incomingBytes?: number;
+};
 
 function validateStfCachedFlowShape(
   value: unknown, sessionId: string, width: number, height: number, now = Date.now(),
@@ -142,7 +150,10 @@ export async function readStfCachedFlow(
 // This is an admission policy, not an eviction policy: a full cache retains
 // its existing pairs so repeated left-to-right merges do not continually
 // recompute every pair after replacing the previously cached pair.
-function storeIfSpace(db: IDBDatabase, record: FlowRecord, maxBytes: number): Promise<boolean> {
+function storeIfSpace(
+  db: IDBDatabase, record: FlowRecord, maxBytes: number,
+  diagnostics?: StfFlowCacheWriteDiagnostics,
+): Promise<boolean> {
   return new Promise((resolve, reject) => {
     const tx = db.transaction([FLOW_STORE, META_STORE], "readwrite");
     const flows = tx.objectStore(FLOW_STORE);
@@ -169,17 +180,30 @@ function storeIfSpace(db: IDBDatabase, record: FlowRecord, maxBytes: number): Pr
         return;
       }
       const incomingBytes = record.forward.byteLength + record.backward.byteLength;
-      if (retainedBytes + incomingBytes > maxBytes) return;
+      if (diagnostics) {
+        diagnostics.retainedBytes = retainedBytes;
+        diagnostics.incomingBytes = incomingBytes;
+      }
+      if (retainedBytes + incomingBytes > maxBytes) {
+        if (diagnostics) diagnostics.status = "capacity-limit";
+        return;
+      }
       // Scan the large vector arrays only once admission is possible. This
       // avoids an O(pixels) pass for every rejected write to a full cache.
       // Keep this within the live transaction callback before enqueueing put().
-      if (!validateStfCachedFlow(record, record.sessionId, record.width, record.height)) return;
+      if (!validateStfCachedFlow(record, record.sessionId, record.width, record.height)) {
+        if (diagnostics) diagnostics.status = "invalid";
+        return;
+      }
       flows.put(record);
       metadata.put({ key: record.key, sessionId: record.sessionId,
         bytes: incomingBytes, createdAt: record.createdAt } satisfies FlowMetadata);
       admitted = true;
     };
-    tx.oncomplete = () => resolve(admitted);
+    tx.oncomplete = () => {
+      if (diagnostics && admitted) diagnostics.status = "admitted";
+      resolve(admitted);
+    };
     request.onerror = () => reject(request.error);
     tx.onerror = () => reject(tx.error);
     tx.onabort = () => reject(tx.error);
@@ -191,21 +215,31 @@ export async function writeStfCachedFlow(
   width: number, height: number,
   forward: Float32Array, backward: Float32Array,
   maxBytes = STF_FLOW_CACHE_MAX_BYTES,
+  diagnostics?: StfFlowCacheWriteDiagnostics,
 ): Promise<boolean> {
+  if (diagnostics) diagnostics.status = "invalid";
   if (!sessionId || !key || !Number.isFinite(maxBytes) || maxBytes <= 0) return false;
   const record: FlowRecord = { key, sessionId, width, height,
     forward, backward, createdAt: sessionCreatedAt };
   if (!validateStfCachedFlowShape(record, sessionId, width, height)) return false;
   const bytes = forward.byteLength + backward.byteLength;
-  if (bytes > maxBytes) return false;
+  if (diagnostics) diagnostics.incomingBytes = bytes;
+  if (bytes > maxBytes) {
+    if (diagnostics) diagnostics.status = "capacity-limit";
+    return false;
+  }
   let db: IDBDatabase | null = null;
   try {
     const estimate = await navigator.storage?.estimate?.().catch(() => undefined);
     if (estimate && typeof estimate.quota === "number" && typeof estimate.usage === "number" &&
-        estimate.quota - estimate.usage < bytes * 1.25) return false;
+        estimate.quota - estimate.usage < bytes * 1.25) {
+      if (diagnostics) diagnostics.status = "quota-limit";
+      return false;
+    }
     db = await openDb();
-    return await storeIfSpace(db, record, maxBytes);
+    return await storeIfSpace(db, record, maxBytes, diagnostics);
   } catch {
+    if (diagnostics) diagnostics.status = "error";
     return false;
   } finally {
     db?.close();

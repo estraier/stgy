@@ -97,6 +97,9 @@ export async function appendStfVirtualSource(
   let flowCacheWrites = 0;
   let cacheReadMs = 0;
   let flowComputeMs = 0;
+  let flowInputPrepareMs = 0;
+  let flowCacheWriteMs = 0;
+  const cacheSaveOutcomes = new Map<string, number>();
   let client: Pick<StfOpticalFlowClient,
     "generateStripes" | "warpOpeningAverageStripes" | "releaseRetained" | "terminate"> | null = null;
   try {
@@ -158,6 +161,11 @@ export async function appendStfVirtualSource(
       if (flowPerformance.flowCacheSaved) flowCacheWrites++;
       cacheReadMs += flowPerformance.flowCacheReadMs ?? 0;
       flowComputeMs += flowPerformance.flowWallMs ?? 0;
+      flowInputPrepareMs += flowPerformance.prepareFlowInputsMs ?? 0;
+      flowCacheWriteMs += flowPerformance.flowCacheWriteMs ?? 0;
+      const cacheSaveStatus = flowPerformance.flowCacheSaveStatus ??
+        (flowPerformance.flowCacheHit ? "hit" : flowPerformance.flowCacheSaved ? "admitted" : "unknown");
+      cacheSaveOutcomes.set(cacheSaveStatus, (cacheSaveOutcomes.get(cacheSaveStatus) ?? 0) + 1);
       virtualWarpMs += (flowPerformance.warpMs ?? 0) + (flowPerformance.additionalWarpMs ?? 0);
       virtualStripeAckWaitMs += flowPerformance.stripeAckWaitMs ?? 0;
       peakKnownWorkerBytes = Math.max(peakKnownWorkerBytes, flowPerformance.estimatedPeakBytes ?? 0);
@@ -167,6 +175,16 @@ export async function appendStfVirtualSource(
         `wall=${(performance.now() - pairStarted).toFixed(1)}ms ` +
         `worker=${(flowPerformance.totalWorkerMs ?? 0).toFixed(1)}ms ` +
         `flow=${(flowPerformance.flowWallMs ?? 0).toFixed(1)}ms ` +
+        `flowPrepare=${(flowPerformance.prepareFlowInputsMs ?? 0).toFixed(1)}ms ` +
+        `flowWorkers=${flowPerformance.flowWorkerCount ?? 0} ` +
+        `flowForward=${(flowPerformance.forwardFlowMs ?? 0).toFixed(1)}ms ` +
+        `flowBackward=${(flowPerformance.backwardFlowMs ?? 0).toFixed(1)}ms ` +
+        `flowWarmup=${(flowPerformance.warmupMs ?? 0).toFixed(1)}ms ` +
+        `cacheRead=${(flowPerformance.flowCacheReadMs ?? 0).toFixed(1)}ms ` +
+        `cacheWrite=${(flowPerformance.flowCacheWriteMs ?? 0).toFixed(1)}ms ` +
+        `cacheSave=${cacheSaveStatus} ` +
+        `cacheRetained=${reportMb(flowPerformance.flowCacheRetainedBytes)} ` +
+        `cacheIncoming=${reportMb(flowPerformance.flowCacheIncomingBytes)} ` +
         `warp=${(flowPerformance.warpMs ?? 0).toFixed(1)}ms ` +
         `closingWarp=${(flowPerformance.additionalWarpMs ?? 0).toFixed(1)}ms ` +
         `merge=${(virtualMergeMs - mergeBefore).toFixed(1)}ms ` +
@@ -223,7 +241,10 @@ export async function appendStfVirtualSource(
 
     console.info(`[LSS STF] Flow cache: ${flowCacheHits} hit, ${flowCacheMisses} miss, ` +
       `${flowCacheWrites} saved bidirectional real pair(s); ` +
-      `session cache read ${cacheReadMs.toFixed(1)}ms, native Flow ${flowComputeMs.toFixed(1)}ms.`);
+      `cacheRead=${cacheReadMs.toFixed(1)}ms, cacheWrite=${flowCacheWriteMs.toFixed(1)}ms, ` +
+      `grayPrepare=${flowInputPrepareMs.toFixed(1)}ms, bidirectionalFlowWall=${flowComputeMs.toFixed(1)}ms ` +
+      `(excludes worker startup, includes direction-worker transport); ` +
+      `cacheSaveOutcomes=${JSON.stringify(Object.fromEntries(cacheSaveOutcomes))}.`);
     console.info(`[LSS STF summary] mode=${frameSet.mode} method=${frameSet.virtualFrameKernel} ` +
       `generated=${generatedFrames} wall=${(performance.now() - startedAt).toFixed(1)}ms ` +
       `warp=${virtualWarpMs.toFixed(1)}ms ` +
