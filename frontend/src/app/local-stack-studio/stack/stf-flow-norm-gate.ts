@@ -36,11 +36,10 @@ export function buildStfFlowNormGate(flow: Float32Array): StfFlowNormGate | null
   return { p5, p10, p5Squared: p5 * p5, p10Squared: p10 * p10 };
 }
 
-/** Returns 0 below P5, a cubic Smoothstep from P5 to P10, and 1 above P10. */
+/** Returns 0 below P5, linearly rises to 1 at P10, and stays at 1 above P10. */
 export function stfFlowNormGateFactor(x: number, y: number, gate: StfFlowNormGate): number {
   const squared = x * x + y * y;
   if (squared <= gate.p5Squared) return 0;
   if (squared >= gate.p10Squared) return 1;
-  const t = (Math.sqrt(squared) - gate.p5) / (gate.p10 - gate.p5);
-  return t * t * (3 - 2 * t);
+  return (Math.sqrt(squared) - gate.p5) / (gate.p10 - gate.p5);
 }

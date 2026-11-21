@@ -1478,7 +1478,7 @@ function applyCrossProcessToneRecoveryLinearRgb(
 function filterHueDependenceWeight(saturation: number): number {
   const span = FILTER_HUE_GATE_SATURATION_HIGH - FILTER_HUE_GATE_SATURATION_LOW;
   if (!(span > 0)) return saturation > FILTER_HUE_GATE_SATURATION_LOW ? 1 : 0;
-  return smoothstep01((saturation - FILTER_HUE_GATE_SATURATION_LOW) / span);
+  return clamp01((saturation - FILTER_HUE_GATE_SATURATION_LOW) / span);
 }
 
 function limitFilterLinearRgbToUnitMax(r: number, g: number, b: number): [number, number, number] {
@@ -2951,7 +2951,7 @@ function applyPartColorLinearRgb(
     1e-9,
     PART_COLOR_OUTER_HALF_WIDTH_DEGREES - PART_COLOR_CORE_HALF_WIDTH_DEGREES,
   );
-  const outsideWeight = smoothstep01(
+  const outsideWeight = clamp01(
     (hueDistanceDegrees - PART_COLOR_CORE_HALF_WIDTH_DEGREES) / transitionSpan,
   );
   const hueMaskSaturationScale =
@@ -3484,7 +3484,7 @@ function dichromeSpotPlateDensity(
     1e-9,
     DICHROME_SPOT_HUE_OUTER_HALF_WIDTH_DEGREES - DICHROME_SPOT_HUE_CORE_HALF_WIDTH_DEGREES,
   );
-  const outsideWeight = smoothstep01(
+  const outsideWeight = clamp01(
     (hueDistanceDegrees - DICHROME_SPOT_HUE_CORE_HALF_WIDTH_DEGREES) / transitionSpan,
   );
   const hueMask = 1 - outsideWeight;

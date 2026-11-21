@@ -19,12 +19,14 @@ describe("STF extrapolation P5-P10 Flow norm gate", () => {
     expect(Array.from(flow)).toEqual(Array.from(fromNorms(shuffled))); // Never modify the cached Flow.
   });
 
-  test("suppresses low magnitudes, smoothly transitions between P5/P10 and leaves larger Flow unchanged", () => {
+  test("suppresses low magnitudes, linearly transitions between P5/P10 and leaves larger Flow unchanged", () => {
     const gate = buildStfFlowNormGate(fromNorms(Array.from({ length: 100 }, (_, i) => i / 10)));
     expect(gate).not.toBeNull();
     expect(stfFlowNormGateFactor(0, 0, gate!)).toBe(0);
     expect(stfFlowNormGateFactor(0.3, 0, gate!)).toBe(0);
+    expect(stfFlowNormGateFactor(0.525, 0, gate!)).toBeCloseTo(0.25, 5);
     expect(stfFlowNormGateFactor(0.65, 0, gate!)).toBeCloseTo(0.5, 5);
+    expect(stfFlowNormGateFactor(0.775, 0, gate!)).toBeCloseTo(0.75, 5);
     expect(stfFlowNormGateFactor(0.9, 0, gate!)).toBe(1);
     expect(stfFlowNormGateFactor(4, 5, gate!)).toBe(1);
     // Gate uses norm, not vector orientation; direction is retained.

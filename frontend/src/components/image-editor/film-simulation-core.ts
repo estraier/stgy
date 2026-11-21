@@ -202,7 +202,7 @@ export function applyFilmSimulationCoreLinearRgb(
   const adjustedHueDegrees = normalizeHueDegrees(hue * 360);
   const hslHueShift = interpolateHueControls(adjustedHueDegrees, params.hslHue) * HSL_HUE_SCALE_DEGREES;
   const hslSaturation = interpolateHueControls(adjustedHueDegrees, params.hslSaturation);
-  const hslLuminanceWeight = smoothstep01(
+  const hslLuminanceWeight = clamp01(
     (saturation - HSL_LUMINANCE_SATURATION_LOW)
       / (HSL_LUMINANCE_SATURATION_HIGH - HSL_LUMINANCE_SATURATION_LOW),
   );

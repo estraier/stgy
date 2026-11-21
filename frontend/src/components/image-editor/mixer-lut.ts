@@ -87,15 +87,14 @@ function composeMixerControl(weightedSum: number, strongestAdjustment: number): 
   return combinedWeight * strongestAdjustment;
 }
 
-function smoothstepWeight(value: number, zero: number, full: number): number {
+function linearThresholdWeight(value: number, zero: number, full: number): number {
   const span = full - zero;
   if (!(span > 0)) return value > zero ? 1 : 0;
-  const t = clamp01((value - zero) / span);
-  return t * t * (3 - 2 * t);
+  return clamp01((value - zero) / span);
 }
 
 function mixerSaturationRelativeChromaWeight(relativeChroma: number): number {
-  return smoothstepWeight(
+  return linearThresholdWeight(
     relativeChroma,
     MIXER_SATURATION_RELATIVE_CHROMA_ZERO,
     MIXER_SATURATION_RELATIVE_CHROMA_FULL,
@@ -103,7 +102,7 @@ function mixerSaturationRelativeChromaWeight(relativeChroma: number): number {
 }
 
 function mixerLuminanceRelativeChromaWeight(relativeChroma: number): number {
-  return smoothstepWeight(
+  return linearThresholdWeight(
     relativeChroma,
     MIXER_LUMINANCE_RELATIVE_CHROMA_ZERO,
     MIXER_LUMINANCE_RELATIVE_CHROMA_FULL,

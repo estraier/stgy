@@ -321,7 +321,7 @@ function fillChannelFromBlurFields(
     const smallDen = smallWeight[index]!;
     const nearValue = smallDen > 1e-9 ? smallField[index]! / smallDen : farValue;
     const layer = Math.max(0, distance[index]! - 1);
-    const distanceBlend = smoothstep01(layer / blendSpan);
+    const distanceBlend = Math.min(1, layer / blendSpan);
     // Fade away from the near field before its normalized mask support reaches
     // zero. This prevents a second contour at the edge of the small blur field.
     const supportBlend = 1 - smoothstep01(smallDen / 0.03);

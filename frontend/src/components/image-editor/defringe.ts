@@ -49,9 +49,8 @@ function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value));
 }
 
-function smoothstep(low: number, high: number, value: number): number {
-  const t = clamp01((value - low) / Math.max(1e-12, high - low));
-  return t * t * (3 - 2 * t);
+function linearThresholdWeight(low: number, high: number, value: number): number {
+  return clamp01((value - low) / Math.max(1e-12, high - low));
 }
 
 function hueAxisWeight(
@@ -64,7 +63,7 @@ function hueAxisWeight(
   const magnitude = Math.hypot(gm, by);
   if (!(magnitude > 1e-12)) return 0;
   const alignment = sign * gm / magnitude;
-  return smoothstep(zeroAlignment, fullAlignment, alignment);
+  return linearThresholdWeight(zeroAlignment, fullAlignment, alignment);
 }
 
 function magentaHueWeight(gm: number, by: number): number {
@@ -230,12 +229,12 @@ export function analyzeDefringeSample(sample: LinearRgbSample): DefringeAnalysis
       const gy = ((ySmall[yp * width + x] ?? 0) - (ySmall[ym * width + x] ?? 0)) * 0.5;
       const gradient = Math.hypot(gx, gy);
       const broad = Math.abs((ySmall[pixel] ?? 0) - (yMedium[pixel] ?? 0));
-      const structure = smoothstep(0.002, 0.035, Math.max(gradient, broad * 1.5));
+      const structure = linearThresholdWeight(0.002, 0.035, Math.max(gradient, broad * 1.5));
       const residualGm = (gmPlane[pixel] ?? 0) - (gmBase[pixel] ?? 0);
       const residualBy = (byPlane[pixel] ?? 0) - (byBase[pixel] ?? 0);
       const residualMagnitude = Math.hypot(residualGm, residualBy);
-      const residualConfidence = smoothstep(0.006, 0.06, residualMagnitude);
-      const noiseConfidence = smoothstep(0.015, 0.08, yPlane[pixel] ?? 0);
+      const residualConfidence = linearThresholdWeight(0.006, 0.06, residualMagnitude);
+      const noiseConfidence = linearThresholdWeight(0.015, 0.08, yPlane[pixel] ?? 0);
       const baseConfidence = structure * residualConfidence * noiseConfidence;
       if (!(baseConfidence > 0)) continue;
       magenta[pixel] = Math.round(
