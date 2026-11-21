@@ -1214,8 +1214,9 @@ import type {
     const additionalWarpStartedAt = performance.now();
     const extraGate = message.additionalVariant
       ? gateForVariant(message.additionalVariant, flows.forward, flows.backward, normGates) : null;
+    const additionalWarpMethod = message.additionalWarpMethod ?? warpMethod;
     const additionalGamma2Rgb = message.additionalVariant && !message.streamStripes
-      ? (warpMethod !== "inverse-warp"
+      ? (additionalWarpMethod !== "inverse-warp"
         ? synthesizeFlowVariantForwardSplat(message.additionalVariant, previousGamma2Rgb, nextGamma2Rgb,
             width, height, flows.forward, flows.backward, flowSize.width, flowSize.height, message.additionalVariantScale,
             extraGate, message.additionalForwardVariantScale)
@@ -1226,7 +1227,7 @@ import type {
     const additionalStream = message.additionalVariant && message.streamStripes
       ? await streamVariant(message.requestId, "additional", message.additionalVariant,
           previousGamma2Rgb, nextGamma2Rgb, width, height, flows.forward, flows.backward,
-          flowSize.width, flowSize.height, message.additionalVariantScale, extraGate, warpMethod,
+          flowSize.width, flowSize.height, message.additionalVariantScale, extraGate, additionalWarpMethod,
           message.additionalForwardVariantScale)
       : null;
     const additionalWarpMs = message.additionalVariant
@@ -1234,8 +1235,10 @@ import type {
       : undefined;
     // Capture completion when IndexedDB resolves, not after all subsequent
     // Warp stripes have been acknowledged by the main thread.
+    const cacheTailStartedAt = performance.now();
     const { saved: flowCacheSaved, durationMs: flowCacheWriteMs,
       status: flowCacheSaveStatus } = await cacheWrite;
+    const flowCacheTailWaitMs = performance.now() - cacheTailStartedAt;
     const performanceStats: OpticalFlowPerformanceStats = {
       sourceWidth: width,
       sourceHeight: height,
@@ -1259,11 +1262,16 @@ import type {
       warpScratchBytes: primaryStream?.scratchBytes ?? geometryScratchBytes(width, height, false, warpMethod),
       ...(message.additionalVariant ? {
         additionalWarpScratchBytes: additionalStream?.scratchBytes ??
-          geometryScratchBytes(width, height, false, warpMethod),
+          geometryScratchBytes(width, height, false, additionalWarpMethod),
       } : {}),
       inputGamma2Bytes: previousGamma2Rgb.byteLength + nextGamma2Rgb.byteLength,
       flowFieldBytes: flows.forward.byteLength + flows.backward.byteLength,
       flowCacheHit: Boolean(cached), flowCacheSaved, flowCacheReadMs, flowCacheWriteMs,
+      flowCacheAdmissionMs: cacheDiagnostics.admissionMs ?? 0,
+      flowCacheValidationMs: cacheDiagnostics.validationMs ?? 0,
+      flowCachePutMs: cacheDiagnostics.putMs ?? 0,
+      flowCacheCommitMs: cacheDiagnostics.commitMs ?? 0,
+      flowCacheTailWaitMs,
       flowCacheSaveStatus,
       ...(cacheDiagnostics.retainedBytes !== undefined ? {
         flowCacheRetainedBytes: cacheDiagnostics.retainedBytes,

@@ -18,7 +18,7 @@ function cloneStoredValue<T>(value: T): T {
   ) as T;
 }
 
-function useMemoryIndexedDb(legacyVersion: 0 | 1 | 2 = 0) {
+function useMemoryIndexedDb(legacyVersion: 0 | 1 | 2 = 0, rejectDurabilityOptions = false) {
   const original = Object.getOwnPropertyDescriptor(globalThis, "indexedDB");
   const tables = new Map<string, Map<string, unknown>>();
   if (legacyVersion) {
@@ -26,13 +26,17 @@ function useMemoryIndexedDb(legacyVersion: 0 | 1 | 2 = 0) {
     tables.set("metadata", new Map([["old-content-address", { key: "old-content-address" }]]));
   }
   let upgraded = false;
+  const stats = { getAllCalls: 0, cursorCalls: 0, commits: 0,
+    transactionDurabilities: [] as string[] };
   const database = {
     get objectStoreNames() { return { contains: (name: string) => tables.has(name) }; },
     createObjectStore(name: string) { tables.set(name, new Map()); },
     deleteObjectStore(name: string) { tables.delete(name); },
     close() {},
     onversionchange: null as null | (() => void),
-    transaction(_names: string[], _mode: string) {
+    transaction(_names: string[], _mode: string, options?: IDBTransactionOptions) {
+      stats.transactionDurabilities.push(options?.durability ?? "default");
+      if (rejectDurabilityOptions && options) throw new TypeError("Unsupported transaction options");
       let pending = 0;
       let completed = false;
       const tx = {
@@ -40,6 +44,7 @@ function useMemoryIndexedDb(legacyVersion: 0 | 1 | 2 = 0) {
         onerror: null as null | (() => void),
         onabort: null as null | (() => void),
         error: null,
+        commit() { stats.commits++; },
         objectStore(name: string) {
           const store = tables.get(name);
           if (!store) throw new Error("Unknown fake IndexedDB store");
@@ -55,6 +60,16 @@ function useMemoryIndexedDb(legacyVersion: 0 | 1 | 2 = 0) {
             });
           };
           return {
+            getAll() {
+              stats.getAllCalls++;
+              const request = { result: [] as unknown[], onsuccess: null as null | (() => void),
+                onerror: null as null | (() => void) };
+              schedule(() => {
+                request.result = [...store.values()].map(cloneStoredValue);
+                request.onsuccess?.();
+              });
+              return request;
+            },
             get(key: string) {
               const request = { result: undefined as unknown, onsuccess: null as null | (() => void),
                 onerror: null as null | (() => void) };
@@ -68,6 +83,7 @@ function useMemoryIndexedDb(legacyVersion: 0 | 1 | 2 = 0) {
               schedule(() => { store.delete(key); });
             },
             openCursor() {
+              stats.cursorCalls++;
               const keys = [...store.keys()];
               let i = 0;
               const request = { result: null as null | { value: unknown; continue: () => void; delete: () => void },
@@ -108,7 +124,7 @@ function useMemoryIndexedDb(legacyVersion: 0 | 1 | 2 = 0) {
     },
   });
   return {
-    tables,
+    tables, stats,
     restore() {
       if (original) Object.defineProperty(globalThis, "indexedDB", original);
       else Reflect.deleteProperty(globalThis, "indexedDB");
@@ -142,7 +158,7 @@ test("IndexedDB retains cached pairs, skips over-budget writes, and frees space 
     const savedDiagnostics: StfFlowCacheWriteDiagnostics = {};
     expect(await writeStfCachedFlow("session-1", a, createdAt, 2, 2,
       forward, backward, 128, savedDiagnostics)).toBe(true);
-    expect(savedDiagnostics).toEqual({ status: "admitted", retainedBytes: 0, incomingBytes: 64 });
+    expect(savedDiagnostics).toMatchObject({ status: "admitted", retainedBytes: 0, incomingBytes: 64 });
     const recovered = await readStfCachedFlow("session-1", a, 2, 2);
     expect(Array.from(recovered?.forward || [])).toEqual(Array.from(forward));
     expect(Array.from(recovered?.backward || [])).toEqual(Array.from(backward));
@@ -154,7 +170,7 @@ test("IndexedDB retains cached pairs, skips over-budget writes, and frees space 
     const capacityDiagnostics: StfFlowCacheWriteDiagnostics = {};
     expect(await writeStfCachedFlow("session-2", c, createdAt, 2, 2,
       forward, backward, 128, capacityDiagnostics)).toBe(false);
-    expect(capacityDiagnostics).toEqual({ status: "capacity-limit", retainedBytes: 128, incomingBytes: 64 });
+    expect(capacityDiagnostics).toMatchObject({ status: "capacity-limit", retainedBytes: 128, incomingBytes: 64 });
     expect(fake.tables.get("pairs")?.size).toBe(2);
     expect(await readStfCachedFlow("session-1", a, 2, 2)).not.toBeNull();
     expect(await readStfCachedFlow("session-1", b, 2, 2)).not.toBeNull();
@@ -175,6 +191,45 @@ test("IndexedDB retains cached pairs, skips over-budget writes, and frees space 
   } finally {
     fake.restore();
   }
+});
+
+
+test("Flow write admission reads metadata once and commits relaxed-durability cache transactions", async () => {
+  const fake = useMemoryIndexedDb();
+  const now = Date.now();
+  const forward = Float32Array.from([1, 0, 0, 1, 2, 0, 0, 2]);
+  const backward = Float32Array.from([-1, 0, 0, -1, -2, 0, 0, -2]);
+  try {
+    for (let i = 0; i < 3; i++) {
+      const key = stfFlowSessionKey("single-snapshot", i, i + 1, "align", 2, 2)!;
+      const diagnostic: StfFlowCacheWriteDiagnostics = {};
+      expect(await writeStfCachedFlow("single-snapshot", key, now, 2, 2,
+        forward, backward, 256, diagnostic)).toBe(true);
+      expect(diagnostic.status).toBe("admitted");
+      expect(diagnostic.admissionMs).toBeGreaterThanOrEqual(0);
+      expect(diagnostic.validationMs).toBeGreaterThanOrEqual(0);
+      expect(diagnostic.putMs).toBeGreaterThanOrEqual(0);
+      expect(diagnostic.commitMs).toBeGreaterThanOrEqual(0);
+    }
+    expect(fake.stats.getAllCalls).toBe(3);
+    expect(fake.stats.cursorCalls).toBe(0);
+    expect(fake.stats.commits).toBe(3);
+    expect(fake.stats.transactionDurabilities).toEqual(["relaxed", "relaxed", "relaxed"]);
+    expect(fake.tables.get("pairs")?.size).toBe(3);
+  } finally { fake.restore(); }
+});
+
+test("Flow writes retain the original transaction path when durability options are unsupported", async () => {
+  const fake = useMemoryIndexedDb(0, true);
+  const key = stfFlowSessionKey("legacy-idb", 0, 1, "align", 2, 2)!;
+  const flow = new Float32Array(8);
+  try {
+    expect(await writeStfCachedFlow("legacy-idb", key, Date.now(), 2, 2,
+      flow, flow, 128)).toBe(true);
+    expect(fake.stats.transactionDurabilities).toEqual(["relaxed", "default"]);
+    expect(fake.stats.commits).toBe(1);
+    expect(await readStfCachedFlow("legacy-idb", key, 2, 2)).not.toBeNull();
+  } finally { fake.restore(); }
 });
 
 test("full-cache admission rejects without reading either Flow vector", async () => {

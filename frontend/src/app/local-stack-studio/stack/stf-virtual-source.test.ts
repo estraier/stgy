@@ -486,6 +486,9 @@ test("streaming STF virtual merge exactly matches full-frame tone matching and a
         args: Parameters<StfOpticalFlowClient["generateStripes"]>[0],
         consume: Parameters<StfOpticalFlowClient["generateStripes"]>[1],
       ) => {
+        expect(args.warpMethod).toBe("inverse-warp");
+        expect(args.additionalWarpMethod).toBe("inverse-warp");
+        expect(args.additionalForwardVariantScale).toBeUndefined();
         for (const variant of ["mid", ...(args.additionalVariant ? ["ext2"] : [])]) {
           const pixels = generatedPixels(variant);
           for (let y = 0; y < height; y += 128) {
@@ -502,6 +505,7 @@ test("streaming STF virtual merge exactly matches full-frame tone matching and a
         args: Parameters<StfOpticalFlowClient["warpOpeningAverageStripes"]>[0],
         consume: Parameters<StfOpticalFlowClient["warpOpeningAverageStripes"]>[1],
       ) => {
+        expect(args.warpMethod).toBe("forward-splat");
         const pixels = generatedPixels(args.variant);
         for (let y = 0; y < height; y += 128) {
           const rows = Math.min(128, height - y);

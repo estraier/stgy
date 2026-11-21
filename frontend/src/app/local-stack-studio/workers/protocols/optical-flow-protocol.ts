@@ -21,6 +21,7 @@ export type OpticalFlowWorkerInterpolateRequest = {
   additionalVariant?: OpticalFlowVariant;
   additionalVariantScale?: number;
   additionalForwardVariantScale?: number;
+  additionalWarpMethod?: OpticalFlowWarpMethod;
   // Average opening-side extrapolation reuses up to the first three adjacent
   // real-pair forward fields, normalized by the positive 1/F interval.
   openingAverageRadiusSpan?: number;
@@ -104,6 +105,12 @@ export type OpticalFlowPerformanceStats = {
   flowCacheSaved?: boolean;
   flowCacheReadMs?: number;
   flowCacheWriteMs?: number;
+  flowCacheAdmissionMs?: number;
+  flowCacheValidationMs?: number;
+  flowCachePutMs?: number;
+  flowCacheCommitMs?: number;
+  // Time spent awaiting the cache write after the final Warp/stripe ACK.
+  flowCacheTailWaitMs?: number;
   // Outcome of best-effort persistence; a miss never fails image generation.
   flowCacheSaveStatus?: "admitted" | "capacity-limit" | "quota-limit" | "invalid" | "error" | "hit" | "disabled";
   flowCacheRetainedBytes?: number;

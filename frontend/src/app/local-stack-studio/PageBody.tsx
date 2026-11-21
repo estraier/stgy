@@ -329,23 +329,14 @@ export default function PageBody() {
                   >
                     <option value="off">Off</option>
                     <option value="interpolation">Interpolation</option>
-                    <option value="fs-interpolation">FS interpolation</option>
                     <option value="extrapolation-1">Extrapolation 1</option>
-                    <option value="fs-extrapolation-1">FS extrapolation 1</option>
                     <option value="extrapolation-2">Extrapolation 2</option>
-                    <option value="fs-extrapolation-2">FS extrapolation 2</option>
                     <option value="extrapolation-3">Extrapolation 3</option>
-                    <option value="fs-extrapolation-3">FS extrapolation 3</option>
                     <option value="extrapolation-4">Extrapolation 4</option>
-                    <option value="fs-extrapolation-4">FS extrapolation 4</option>
                     <option value="extrapolation-5">Extrapolation 5</option>
-                    <option value="fs-extrapolation-5">FS extrapolation 5</option>
                     <option value="extrapolation-6">Extrapolation 6</option>
-                    <option value="fs-extrapolation-6">FS extrapolation 6</option>
                     <option value="extrapolation-9">Extrapolation 9</option>
-                    <option value="fs-extrapolation-9">FS extrapolation 9</option>
                     <option value="extrapolation-12">Extrapolation 12</option>
-                    <option value="fs-extrapolation-12">FS extrapolation 12</option>
 
                   </select>
                 </label>

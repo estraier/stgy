@@ -731,7 +731,7 @@ test("STF opening extrapolation 12 expands a synthetic disc to its 1/F target ra
     }
     // Opening-side warps must reuse that Flow without recomputation.
     expect(bidirectionalComputations).toBe(2);
-    const frameSet = buildStfFrameSet([firstF, nextF], 1, "fs-extrapolation-12");
+    const frameSet = buildStfFrameSet([firstF, nextF], 1, "extrapolation-12");
     const outer = frameSet.outerFrames.find((item) => item.variant === "ext1-12");
     const closing = frameSet.outerFrames.find((item) => item.variant === "ext2");
     if (!outer || !closing) throw new Error("Missing ext12/closing variants");

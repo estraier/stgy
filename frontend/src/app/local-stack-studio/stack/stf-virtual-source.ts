@@ -3,6 +3,7 @@ import { StfOpticalFlowClient, type StfFlowStripe } from "./stf-optical-flow-cli
 import { stfPairFarnebackWinsize } from "./stf-farneback-winsize";
 import type { AlignedImageReader } from "./aligned-reader";
 import type { StfOuterFrame } from "./stf-frame-generation";
+import type { OpticalFlowWarpMethod } from "../workers/protocols/optical-flow-protocol";
 import type { StfTonePreparedFrameSet } from "./stf-frame-density";
 
 export function decodeStfGeneratedStripe(pixels: Uint16Array, offset: number, length: number): Float32Array {
@@ -82,6 +83,8 @@ export async function appendStfVirtualSource(
   const openingOuterFrames = frameSet.outerFrames.filter((outer) => outer.variant !== "ext2");
   const closingOuterFrame = frameSet.outerFrames.find((outer) => outer.variant === "ext2") ?? null;
   const openingAveragePairCount = Math.min(frameSet.middleFrames.length, 3);
+  const middleWarpMethod: OpticalFlowWarpMethod = "inverse-warp";
+  const openingWarpMethod: OpticalFlowWarpMethod = "forward-splat";
   const reportMb = (bytes: number | undefined) => Number.isFinite(bytes)
     ? `${(bytes! / (1024 * 1024)).toFixed(1)}MiB` : "n/a";
   const startedAt = performance.now();
@@ -133,9 +136,9 @@ export async function appendStfVirtualSource(
         ...(closingTone && closingOuterFrame ? {
           additionalVariant: closingOuterFrame.variant,
           additionalVariantScale: closingOuterFrame.inverseWarpScale,
-          additionalForwardVariantScale: closingOuterFrame.forwardSplatScale,
+          additionalWarpMethod: middleWarpMethod,
         } : {}),
-        warpMethod: frameSet.virtualFrameKernel,
+        warpMethod: middleWarpMethod,
         sessionId: options.sessionId, sessionCreatedAt: options.sessionCreatedAt,
         alignmentKey: options.alignmentKey, openingAverageRadiusSpan,
         winsize: pairWinsize,
@@ -170,7 +173,7 @@ export async function appendStfVirtualSource(
       virtualStripeAckWaitMs += flowPerformance.stripeAckWaitMs ?? 0;
       peakKnownWorkerBytes = Math.max(peakKnownWorkerBytes, flowPerformance.estimatedPeakBytes ?? 0);
       generatedFrames += closingTone ? 2 : 1;
-      console.info(`[LSS STF timing] mode=${frameSet.mode} method=${frameSet.virtualFrameKernel} ` +
+      console.info(`[LSS STF timing] mode=${frameSet.mode} method=${middleWarpMethod} ` +
         `pair=${middle.pairLabel}${closingTone ? "+closing" : ""} ` +
         `wall=${(performance.now() - pairStarted).toFixed(1)}ms ` +
         `worker=${(flowPerformance.totalWorkerMs ?? 0).toFixed(1)}ms ` +
@@ -182,6 +185,11 @@ export async function appendStfVirtualSource(
         `flowWarmup=${(flowPerformance.warmupMs ?? 0).toFixed(1)}ms ` +
         `cacheRead=${(flowPerformance.flowCacheReadMs ?? 0).toFixed(1)}ms ` +
         `cacheWrite=${(flowPerformance.flowCacheWriteMs ?? 0).toFixed(1)}ms ` +
+        `cacheAdmission=${(flowPerformance.flowCacheAdmissionMs ?? 0).toFixed(1)}ms ` +
+        `cacheValidation=${(flowPerformance.flowCacheValidationMs ?? 0).toFixed(1)}ms ` +
+        `cachePut=${(flowPerformance.flowCachePutMs ?? 0).toFixed(1)}ms ` +
+        `cacheCommit=${(flowPerformance.flowCacheCommitMs ?? 0).toFixed(1)}ms ` +
+        `cacheTailWait=${(flowPerformance.flowCacheTailWaitMs ?? 0).toFixed(1)}ms ` +
         `cacheSave=${cacheSaveStatus} ` +
         `cacheRetained=${reportMb(flowPerformance.flowCacheRetainedBytes)} ` +
         `cacheIncoming=${reportMb(flowPerformance.flowCacheIncomingBytes)} ` +
@@ -210,7 +218,7 @@ export async function appendStfVirtualSource(
           sourceImageId: outer.previousIndex, variant: outer.variant,
           variantScale: outer.inverseWarpScale,
           forwardVariantScale: outer.forwardSplatScale,
-          warpMethod: frameSet.virtualFrameKernel,
+          warpMethod: openingWarpMethod,
           sourceGamma2: source, transferSourceOwnership: firstWarp,
         }, (stripe) => {
           if (stripe.kind !== "primary") throw new Error("Unexpected STF Average Flow stripe kind");
@@ -224,7 +232,7 @@ export async function appendStfVirtualSource(
         virtualStripeAckWaitMs += outerPerformance.stripeAckWaitMs ?? 0;
         peakKnownWorkerBytes = Math.max(peakKnownWorkerBytes, outerPerformance.estimatedPeakBytes ?? 0);
         generatedFrames++;
-        console.info(`[LSS STF timing] mode=${frameSet.mode} method=${frameSet.virtualFrameKernel} ` +
+        console.info(`[LSS STF timing] mode=${frameSet.mode} method=${openingWarpMethod} ` +
           `opening=${outer.variant} wall=${(performance.now() - outerStarted).toFixed(1)}ms ` +
           `warp=${outerPerformance.warpMs.toFixed(1)}ms ` +
           `merge=${(virtualMergeMs - mergeBefore).toFixed(1)}ms ` +
@@ -245,7 +253,7 @@ export async function appendStfVirtualSource(
       `grayPrepare=${flowInputPrepareMs.toFixed(1)}ms, bidirectionalFlowWall=${flowComputeMs.toFixed(1)}ms ` +
       `(excludes worker startup, includes direction-worker transport); ` +
       `cacheSaveOutcomes=${JSON.stringify(Object.fromEntries(cacheSaveOutcomes))}.`);
-    console.info(`[LSS STF summary] mode=${frameSet.mode} method=${frameSet.virtualFrameKernel} ` +
+    console.info(`[LSS STF summary] mode=${frameSet.mode} method=hybrid(mid=${middleWarpMethod},closing=${middleWarpMethod},opening=${openingWarpMethod}) ` +
       `generated=${generatedFrames} wall=${(performance.now() - startedAt).toFixed(1)}ms ` +
       `warp=${virtualWarpMs.toFixed(1)}ms ` +
       `merge=${virtualMergeMs.toFixed(1)}ms stripes=${virtualStripes} ` +

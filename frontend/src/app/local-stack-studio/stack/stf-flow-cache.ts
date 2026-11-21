@@ -51,6 +51,12 @@ export type StfFlowCacheWriteDiagnostics = {
   status?: StfFlowCacheSaveStatus;
   retainedBytes?: number;
   incomingBytes?: number;
+  // Admission and commit timing. The latter includes IndexedDB's asynchronous
+  // clone/write work, not just the synchronous put() call.
+  admissionMs?: number;
+  validationMs?: number;
+  putMs?: number;
+  commitMs?: number;
 };
 
 function validateStfCachedFlowShape(
@@ -146,41 +152,48 @@ export async function readStfCachedFlow(
   }
 }
 
-// Metadata cursor only: never deserialize all the large Flow buffers.
-// This is an admission policy, not an eviction policy: a full cache retains
-// its existing pairs so repeated left-to-right merges do not continually
-// recompute every pair after replacing the previously cached pair.
+// Only inspect the small metadata store. A single getAll() request avoids
+// round-tripping through one IndexedDB cursor callback per cached pair, while
+// never deserializing any of the large Flow records.
 function storeIfSpace(
   db: IDBDatabase, record: FlowRecord, maxBytes: number,
   diagnostics?: StfFlowCacheWriteDiagnostics,
 ): Promise<boolean> {
   return new Promise((resolve, reject) => {
-    const tx = db.transaction([FLOW_STORE, META_STORE], "readwrite");
+    // These vectors are reproducible and the cache is best-effort. Relaxed
+    // durability avoids requesting a synchronous disk flush before completion.
+    // Older IndexedDB implementations may reject the options argument.
+    let tx: IDBTransaction;
+    try {
+      tx = db.transaction([FLOW_STORE, META_STORE], "readwrite", { durability: "relaxed" });
+    } catch {
+      tx = db.transaction([FLOW_STORE, META_STORE], "readwrite");
+    }
     const flows = tx.objectStore(FLOW_STORE);
     const metadata = tx.objectStore(META_STORE);
+    const admissionStarted = performance.now();
     let admitted = false;
-    let retainedBytes = 0;
-    const request = metadata.openCursor();
+    let enqueuedAt: number | undefined;
+    const request = metadata.getAll();
     request.onsuccess = () => {
-      const cursor = request.result;
-      if (cursor) {
-        const entry = cursor.value as FlowMetadata;
-        const now = Date.now();
+      const entries = request.result as FlowMetadata[];
+      let retainedBytes = 0;
+      const now = Date.now();
+      for (const entry of entries) {
         const invalid = !entry.key || !entry.sessionId ||
           !Number.isSafeInteger(entry.createdAt) || entry.createdAt < 0 || entry.createdAt > now ||
           !Number.isSafeInteger(entry.bytes) || entry.bytes <= 0;
         if (invalid) {
           flows.delete(entry.key);
-          cursor.delete();
+          metadata.delete(entry.key);
         } else if (entry.key !== record.key) {
-          // The old size of a key being replaced is not part of its new cost.
+          // Replacing the same key must not count its previous size twice.
           retainedBytes += entry.bytes;
         }
-        cursor.continue();
-        return;
       }
       const incomingBytes = record.forward.byteLength + record.backward.byteLength;
       if (diagnostics) {
+        diagnostics.admissionMs = performance.now() - admissionStarted;
         diagnostics.retainedBytes = retainedBytes;
         diagnostics.incomingBytes = incomingBytes;
       }
@@ -188,20 +201,31 @@ function storeIfSpace(
         if (diagnostics) diagnostics.status = "capacity-limit";
         return;
       }
-      // Scan the large vector arrays only once admission is possible. This
-      // avoids an O(pixels) pass for every rejected write to a full cache.
-      // Keep this within the live transaction callback before enqueueing put().
-      if (!validateStfCachedFlow(record, record.sessionId, record.width, record.height)) {
+      // Reject non-finite vectors before asking IndexedDB to clone tens of MiB.
+      // This remains inside the live readwrite transaction callback.
+      const validationStarted = performance.now();
+      const valid = validateStfCachedFlow(record, record.sessionId, record.width, record.height);
+      if (diagnostics) diagnostics.validationMs = performance.now() - validationStarted;
+      if (!valid) {
         if (diagnostics) diagnostics.status = "invalid";
         return;
       }
+      const putStarted = performance.now();
       flows.put(record);
       metadata.put({ key: record.key, sessionId: record.sessionId,
         bytes: incomingBytes, createdAt: record.createdAt } satisfies FlowMetadata);
+      enqueuedAt = performance.now();
+      if (diagnostics) diagnostics.putMs = enqueuedAt - putStarted;
       admitted = true;
+      // Commit without waiting for the next task/event-loop turn. Browsers
+      // lacking the explicit commit API will auto-commit as before.
+      tx.commit?.();
     };
     tx.oncomplete = () => {
-      if (diagnostics && admitted) diagnostics.status = "admitted";
+      if (diagnostics) {
+        if (admitted) diagnostics.status = "admitted";
+        if (enqueuedAt !== undefined) diagnostics.commitMs = performance.now() - enqueuedAt;
+      }
       resolve(admitted);
     };
     request.onerror = () => reject(request.error);

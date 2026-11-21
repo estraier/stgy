@@ -64,7 +64,7 @@ export class StfOpticalFlowClient {
 
   constructor(onProgress?: (message: string) => void) {
     const workerUrl = new URL("/generated/local-stack-studio/optical-flow.worker.js", window.location.origin);
-    workerUrl.searchParams.set("revision", "stf-session-flow-20261121-r23-gray-coordinate-lookup");
+    workerUrl.searchParams.set("revision", "stf-session-flow-20261121-r24-idb-cache-write");
     this.worker = new Worker(workerUrl);
     this.worker.onmessage = (event: MessageEvent<OpticalFlowWorkerResponse>) => {
       const message = event.data;
@@ -188,6 +188,7 @@ export class StfOpticalFlowClient {
     warpMethod: OpticalFlowWarpMethod = "inverse-warp",
     forwardVariantScale?: number,
     additionalForwardVariantScale?: number,
+    additionalWarpMethod?: OpticalFlowWarpMethod,
   ): Promise<{ pixels: Uint16Array; additionalPixels?: Uint16Array; performance: OpticalFlowPerformanceStats }> {
     const previousGamma2Buffer = workerInputBuffer(previousGamma2, inputOwnership.previous === true);
     const nextGamma2Buffer = workerInputBuffer(nextGamma2, inputOwnership.next === true);
@@ -201,6 +202,7 @@ export class StfOpticalFlowClient {
       ...(additionalVariant ? { additionalVariant } : {}),
       ...(additionalVariantScale !== undefined ? { additionalVariantScale } : {}),
       ...(additionalForwardVariantScale !== undefined ? { additionalForwardVariantScale } : {}),
+      ...(additionalWarpMethod !== undefined ? { additionalWarpMethod } : {}),
       ...(openingAverageRadiusSpan !== undefined ? { openingAverageRadiusSpan } : {}),
       winsize,
       ...(persistFlow ? { persistFlow: true, sessionId, sessionCreatedAt, alignmentKey } : {}),
@@ -234,6 +236,7 @@ export class StfOpticalFlowClient {
       forwardVariantScale?: number;
       additionalVariant?: OpticalFlowVariant; additionalVariantScale?: number;
       additionalForwardVariantScale?: number;
+      additionalWarpMethod?: OpticalFlowWarpMethod;
       warpMethod?: OpticalFlowWarpMethod;
       sessionId: string; sessionCreatedAt: number; alignmentKey: string;
       openingAverageRadiusSpan?: number; winsize: number; inputOwnership: InputOwnership;
@@ -254,6 +257,7 @@ export class StfOpticalFlowClient {
       ...(args.additionalVariantScale !== undefined ? { additionalVariantScale: args.additionalVariantScale } : {}),
       ...(args.additionalForwardVariantScale !== undefined
         ? { additionalForwardVariantScale: args.additionalForwardVariantScale } : {}),
+      ...(args.additionalWarpMethod !== undefined ? { additionalWarpMethod: args.additionalWarpMethod } : {}),
       ...(args.openingAverageRadiusSpan !== undefined ? { openingAverageRadiusSpan: args.openingAverageRadiusSpan } : {}),
       winsize: args.winsize, persistFlow: true,
       sessionId: args.sessionId, sessionCreatedAt: args.sessionCreatedAt, alignmentKey: args.alignmentKey,
