@@ -1,10 +1,4 @@
-import {
-  buildStfFrameSet,
-  isStfFrameGenerationMode,
-  STF_EXTRAPOLATION_COUNTS,
-  type StfFrameGenerationMode,
-  type StfFrameSet,
-} from "./stf-frame-generation";
+import { buildStfFrameSet, isStfFrameGenerationMode, STF_EXTRAPOLATION_COUNTS, type StfFrameGenerationMode, type StfFrameSet } from "./stf-frame-generation";
 
 const fNumbers = [2.8, 4, 3.5, 3.2, 2.5, 2.2, 2];
 const radialAttenuationOptions = [-2, -1, 0, 1, 2, 3,
@@ -47,35 +41,23 @@ function targetRadialLuminance(
   return t ** 4 * (35 - 84 * t + 70 * t * t - 20 * t ** 3);
 }
 
+function expectedVirtualZeroOuterStep(attenuation: typeof radialAttenuationOptions[number]) {
+  if (typeof attenuation !== "number") return 0.8;
+  return attenuation <= 0 ? 0.8 : 0.8 - 0.1 * attenuation;
+}
+
 function expectedDrops(
   ordered: ReturnType<typeof radialDiscContributions>["ordered"],
   attenuation: typeof radialAttenuationOptions[number],
 ): number[] {
   const minR = ordered[0].radius;
   const maxR = ordered[ordered.length - 1].radius;
-  const zeroR = maxR * (maxR / minR) ** (1 / (ordered.length - 1));
+  const zeroR = maxR * (maxR / minR) ** (expectedVirtualZeroOuterStep(attenuation) / (ordered.length - 1));
   const target = ordered.map((frame) => targetRadialLuminance(frame.radius, minR, zeroR, attenuation));
-  const drops = target.map((level, i) => level - (i + 1 < target.length ? target[i + 1] : 0));
-  const last = drops.length - 1;
-  if (drops[last] > 0.8 * drops[last - 1] + 1e-12 * Math.max(drops[last], 0.8 * drops[last - 1])) {
-    // Independently solve the alpha=0.8 constraint in the forward luminance
-    // contributions after redistributing IMAGE weights to all frames.
-    const rawWeights = drops.map((drop, i) => drop / (ordered[i].densityF ** 2));
-    const outerDensity = ordered[last].densityF ** 2;
-    const secondDensity = ordered[last - 1].densityF ** 2;
-    const n = rawWeights.length;
-    const removal = Math.min(rawWeights[last],
-      n * (drops[last] - 0.8 * drops[last - 1]) / ((n - 1) * outerDensity + 0.8 * secondDensity));
-    rawWeights[last] -= removal;
-    for (let i = 0; i < n; i++) rawWeights[i] += removal / n;
-    const brightness = rawWeights.map((weight, i) => weight * ordered[i].densityF ** 2);
-    const total = brightness.reduce((sum, value) => sum + value, 0);
-    return brightness.map((value) => value / total);
-  }
-  return drops;
+  return target.map((level, i) => level - (i + 1 < target.length ? target[i + 1] : 0));
 }
 
-describe("STF generated-frame radial attenuation and outer-shell apodization", () => {
+describe("STF generated-frame radial attenuation and q-dependent virtual zero", () => {
   test.each(radialAttenuationOptions)("off follows the new radial profile for %s", (radialAttenuation) => {
     const frames = buildStfFrameSet(fNumbers, radialAttenuation, "off");
     expect(frames.middleFrames).toHaveLength(0);
@@ -138,7 +120,6 @@ describe("STF generated-frame radial attenuation and outer-shell apodization", (
       frames.outerFrames.forEach((frame, i) => {
         expect(frame.weight).toBe(frames.allWeights[fNumbers.length + frames.middleFrames.length + i]);
         expect(frame.inverseWarpScale).toBeGreaterThan(0);
-        expect(frame.forwardSplatScale).toBeGreaterThan(0);
         if (frame.variant !== "ext2") expect(frame.openingFlowScale).toBeGreaterThan(0);
       });
     },
@@ -168,9 +149,9 @@ describe("STF generated-frame radial attenuation and outer-shell apodization", (
     expected.forEach((drop, i) => expect(drops[i]).toBeCloseTo(drop, 6));
     const minR = ordered[0].radius;
     const maxR = ordered[ordered.length - 1].radius;
-    const zeroR = maxR * (maxR / minR) ** (1 / (ordered.length - 1));
+    const zeroR = maxR * (maxR / minR) ** (expectedVirtualZeroOuterStep(1) / (ordered.length - 1));
     const idealOuter = targetRadialLuminance(maxR, minR, zeroR, 1);
-    expect(drops[drops.length - 1]).toBeLessThan(idealOuter);
+    expect(drops[drops.length - 1]).toBeCloseTo(idealOuter, 6);
   });
 
   test("forward radius expansion and inverse sampling use distinct geometrical multipliers", () => {
@@ -187,26 +168,6 @@ describe("STF generated-frame radial attenuation and outer-shell apodization", (
       const inverseSamplingRatio = 1 - outer.inverseWarpScale * (1 - f0 / f1);
       expect(inverseSamplingRatio).toBeCloseTo(1 / radiusExpansion, 12);
       expect(outer.inverseWarpScale).toBeGreaterThan(0);
-      // Source-indexed forward projection must give the same virtual radius.
-      const k = f0 / f1; // native first->second radius ratio
-      const forwardRadiusRatio = 1 - outer.forwardSplatScale * (k - 1);
-      expect(forwardRadiusRatio).toBeCloseTo(radiusExpansion, 12);
-      expect(outer.forwardSplatScale).toBeCloseTo(outer.openingFlowScale, 12);
-    }
-  });
-
-  test.each(STF_EXTRAPOLATION_COUNTS)("unified extrapolation %i retains correct forward scales", (count) => {
-    const inputs = Array.from({ length: 7 }, (_, i) => 2 * 2 ** (i / 6));
-    const frames = buildStfFrameSet(inputs, 1, `extrapolation-${count}` as StfFrameGenerationMode);
-    for (const outer of frames.outerFrames) {
-      if (outer.variant !== "ext2") continue;
-      const last = inputs[inputs.length - 1];
-      const prev = inputs[inputs.length - 2];
-      const nativeBackwardRadiusRatio = last / prev;
-      expect(1 - outer.forwardSplatScale * (nativeBackwardRadiusRatio - 1))
-        .toBeCloseTo(last / outer.fNumber, 12);
-      expect(1 + outer.inverseWarpScale * (nativeBackwardRadiusRatio - 1))
-        .toBeCloseTo(outer.fNumber / last, 12);
     }
   });
 
@@ -275,19 +236,10 @@ describe("STF generated-frame radial attenuation and outer-shell apodization", (
     expect(STF_EXTRAPOLATION_COUNTS).toEqual([1, 2, 3, 4, 5, 6, 9, 12]);
     for (const count of STF_EXTRAPOLATION_COUNTS) {
       expect(isStfFrameGenerationMode(`extrapolation-${count}`)).toBe(true);
-      expect(isStfFrameGenerationMode(`fs-extrapolation-${count}`)).toBe(false);
     }
-    expect(isStfFrameGenerationMode("interpolation")).toBe(true);
-    expect(isStfFrameGenerationMode("fs-interpolation")).toBe(false);
-    for (const invalid of ["hybrid-interpolation", "hybrid-extrapolation-1", "hybrid-extrapolation-12",
-      "extrapolation-0", "extrapolation-7", "extrapolation-8", "extrapolation-10",
+    for (const invalid of ["extrapolation-0", "extrapolation-7", "extrapolation-8", "extrapolation-10",
       "extrapolation-11", "extrapolation-13", "extrapolation-16", "extrapolation-32",
-      "extrapolation-33", "extrapolation-64", "extrapolation-01", "fs-extrapolation-0",
-      "fs-extrapolation-7", "fs-extrapolation-8", "fs-extrapolation-10", "fs-extrapolation-11",
-      "fs-extrapolation-13", "fs-extrapolation-16", "fs-extrapolation-32", "fs-extrapolation-33",
-      "fs-extrapolation-64", "fs-extrapolation-01",
-      "hybrid-extrapolation-7",
-      "hybrid-extrapolation-11"]) {
+      "extrapolation-33", "extrapolation-64", "extrapolation-01"]) {
       expect(isStfFrameGenerationMode(invalid)).toBe(false);
       expect(() => buildStfFrameSet([2, 4], 1, invalid as StfFrameGenerationMode)).toThrow("Unsupported STF Frame generation");
     }

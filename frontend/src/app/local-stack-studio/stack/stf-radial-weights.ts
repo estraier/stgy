@@ -1,8 +1,8 @@
 /**
  * STF frame weights depend only on (CoC radius, linear-light edge density).
  * Each target profile specifies the ideal cumulative luminance at the sampled
- * disc radii; outer-shell apodization reduces the outermost image weight
- * and redistributes that weight equally over all input images.
+ * disc radii. The virtual zero radius sits a profile-dependent fractional
+ * geometric step outside the largest disc radius.
  */
 export type StfWeightedImage<T = number> = {
   image: T;
@@ -13,7 +13,8 @@ export type StfWeightedImage<T = number> = {
 export const STF_SMOOTHSTEP_ATTENUATIONS = [
   "smoothstep-weak", "smoothstep-medium", "smoothstep-strong",
 ] as const;
-// Post-redistribution luminance of the outer shell relative to the next shell.
+// Legacy export name kept for compatibility. The value is now the default
+// virtual-zero outer-step fraction, not an apodization ratio.
 export const STF_OUTER_SHELL_APODIZATION_RATIO = 0.8;
 export type StfRadialAttenuation = -2 | -1 | 0 | 1 | 2 | 3 |
   typeof STF_SMOOTHSTEP_ATTENUATIONS[number];
@@ -38,7 +39,7 @@ export type StfRadialWeightPlan = {
   rawWeights: Float64Array;
   // In original input order; differences between consecutive target levels.
   idealDrops: Float64Array;
-  // Actual relative luminance contributions after apodization; always sum to one.
+  // Actual relative luminance contributions after weighting; currently equal to idealDrops.
   adjustedDrops: Float64Array;
   virtualZeroRadius: number;
   outerShellApodizationApplied: boolean;
@@ -66,7 +67,7 @@ function orderByRadius<T>(samples: readonly StfWeightedImage<T>[]): OrderedFrame
   return ordered;
 }
 
-/** Target 1 at the smallest real/virtual disc radius; 0 one geometric step outside the largest. */
+/** Target 1 at the smallest real/virtual disc radius; 0 at a profile-dependent outer zero. */
 function radialTarget(
   attenuation: StfRadialAttenuation, radius: number, min: number, zero: number,
 ): number {
@@ -91,14 +92,17 @@ function normalize(raw: Float64Array): Float64Array {
   return Float64Array.from(raw, (x) => x / sum);
 }
 
+function virtualZeroOuterStep(attenuation: StfRadialAttenuation): number {
+  if (typeof attenuation !== "number") return STF_OUTER_SHELL_APODIZATION_RATIO;
+  return attenuation <= 0 ? STF_OUTER_SHELL_APODIZATION_RATIO :
+    STF_OUTER_SHELL_APODIZATION_RATIO - 0.1 * attenuation;
+}
+
 /**
  * Choose the virtual zero from all available radii (real and generated).
  * Match the target exactly at each disc radius, starting outside-in.
- * If the outermost ideal luminance drop exceeds 80% of the second drop,
- * analytically determine the amount of outer IMAGE WEIGHT to redistribute
- * equally across all n images (including the outermost), so that the two
- * resulting luminance contributions have a ratio of 0.8. This is a
- * deliberate departure from the ideal luminance target, not minimax.
+ * The profile-dependent virtual-zero placement replaces the previous
+ * outer-shell apodization step.
  */
 export function calculateStfWeights<T>(
   samples: readonly StfWeightedImage<T>[], attenuation: StfRadialAttenuation,
@@ -116,9 +120,9 @@ export function calculateStfWeights<T>(
 
   const minRadius = ordered[0].radius;
   const maxRadius = ordered[n - 1].radius;
-  // Geometric mean of the n-1 interval ratios, not the first pair's spacing.
   const logStep = Math.log(maxRadius / minRadius) / (n - 1);
-  const virtualZeroRadius = maxRadius * Math.exp(logStep);
+  const zeroStep = virtualZeroOuterStep(attenuation);
+  const virtualZeroRadius = maxRadius * Math.exp(logStep * zeroStep);
   if (!(Number.isFinite(virtualZeroRadius) && virtualZeroRadius > maxRadius)) {
     throw new Error("STF virtual zero radius is invalid.");
   }
@@ -136,45 +140,11 @@ export function calculateStfWeights<T>(
     previous = level;
   }
 
-  const outerIndex = ordered[n - 1].index;
-  const secondIndex = ordered[n - 2].index;
-  // Compare luminance contributions, not image weights. The trigger and the
-  // desired post-redistribution ratio must use the same threshold.
-  const alpha = STF_OUTER_SHELL_APODIZATION_RATIO;
-  const threshold = alpha * idealDrops[secondIndex];
-  const outerShellApodizationApplied =
-    idealDrops[outerIndex] > threshold + 1e-12 * Math.max(idealDrops[outerIndex], threshold);
-
   const rawWeights = new Float64Array(n);
   for (let i = 0; i < n; i++) {
     rawWeights[i] = idealDrops[i] / samples[i].edgeDensity;
   }
-  // Widen the TypedArray buffer type so normalize() can return ArrayBufferLike.
-  let adjustedDrops: Float64Array = idealDrops.slice();
-  if (outerShellApodizationApplied) {
-    const outerDensity = ordered[n - 1].density;
-    const secondDensity = ordered[n - 2].density;
-    // Solve (wOuter - x + x/n)*DOuter = alpha*(wSecond + x/n)*DSecond.
-    // Equal redistribution is in IMAGE WEIGHTS, not luminance. Restrict x
-    // to the available outer weight if arbitrary densities reverse the usual
-    // physical ordering and exact equality becomes impossible.
-    const denominator = (n - 1) * outerDensity + alpha * secondDensity;
-    const requiredRemoval = n * (idealDrops[outerIndex] - alpha * idealDrops[secondIndex]) / denominator;
-    if (!(Number.isFinite(requiredRemoval) && requiredRemoval > 0)) {
-      throw new Error("STF outer-shell apodization removal is invalid.");
-    }
-    const removed = Math.min(requiredRemoval, rawWeights[outerIndex]);
-    const share = removed / n;
-    rawWeights[outerIndex] -= removed;
-    for (let i = 0; i < n; i++) rawWeights[i] += share;
-
-    // Weight redistribution is uniform, but the *luminance* contributions
-    // are not: each source has its own edge density. Report the real profile.
-    const contributions = Float64Array.from(rawWeights, (weight, i) =>
-      weight * samples[i].edgeDensity);
-    adjustedDrops = normalize(contributions);
-  }
   const weights = Float32Array.from(normalize(rawWeights));
-  return { weights, rawWeights, idealDrops, adjustedDrops,
-    virtualZeroRadius, outerShellApodizationApplied };
+  return { weights, rawWeights, idealDrops: normalize(idealDrops), adjustedDrops: normalize(idealDrops),
+    virtualZeroRadius, outerShellApodizationApplied: false };
 }
