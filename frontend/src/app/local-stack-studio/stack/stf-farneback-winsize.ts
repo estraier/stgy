@@ -1,5 +1,5 @@
 /** Fixed aperture-dependent Farneback window at the capped STF Flow resolution. */
-export const STF_FARNEBACK_BASE_WINSIZE = 31;
+export const STF_FARNEBACK_BASE_WINSIZE = 21;
 export const STF_FARNEBACK_MIN_WINSIZE = 11;
 
 /** Defensive validation of the Flow worker protocol. */
@@ -8,9 +8,9 @@ export function isStfFarnebackWinsize(value: number): boolean {
     value <= STF_FARNEBACK_BASE_WINSIZE && value % 2 === 1;
 }
 
-/** F-dependent window: the most-open real pair uses 31, and the remaining
- * pairs scale with their inverse-F interval. Preserve the established odd
- * rounding, lower bound, and ordering checks of the adopted 31 + On mode.
+/** F-dependent window: the most-open real pair uses the configured base window,
+ * and the remaining pairs scale with their inverse-F interval. Preserve the
+ * established odd rounding, lower bound, and ordering checks.
  */
 export function stfPairFarnebackWinsize(
   lowestF: number, secondLowestF: number, pairLowF: number, pairHighF: number,

@@ -48,7 +48,7 @@ test("native Optical Flow worker preserves the exact Farneback settings and dire
     await scope.onmessage({ data: { type: "init", requestId: 1 } } as MessageEvent<OpticalFlowDirectionRequest>);
     await scope.onmessage({
       data: {
-        type: "compute-pair", requestId: 2, width: 2, height: 2, winsize: 31,
+        type: "compute-pair", requestId: 2, width: 2, height: 2, winsize: 21,
         previousGrayBuffer: new Uint8Array([10, 10, 10, 10]).buffer,
         nextGrayBuffer: new Uint8Array([20, 20, 20, 20]).buffer,
       },
@@ -85,8 +85,8 @@ test("native Optical Flow worker preserves the exact Farneback settings and dire
     expect(new Float32Array(result.forwardBuffer)[0]).toBe(2);
     expect(new Float32Array(result.backwardBuffer)[0]).toBe(-2);
     expect(nativeCalls).toEqual([
-      { source: 10, target: 20, settings: [0.5, 5, 31, 3, 7, 1.5, 0] },
-      { source: 20, target: 10, settings: [0.5, 5, 31, 3, 7, 1.5, 0] },
+      { source: 10, target: 20, settings: [0.5, 5, 21, 3, 7, 1.5, 0] },
+      { source: 20, target: 10, settings: [0.5, 5, 21, 3, 7, 1.5, 0] },
       { source: 10, target: 20, settings: [0.5, 5, 17, 3, 7, 1.5, 0] },
       { source: 20, target: 10, settings: [0.5, 5, 17, 3, 7, 1.5, 0] },
     ]);

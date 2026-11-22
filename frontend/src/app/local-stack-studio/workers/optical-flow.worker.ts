@@ -44,7 +44,7 @@ import type {
     : never;
 
   class DirectionClient {
-    private readonly worker = new Worker("/generated/local-stack-studio/optical-flow-direction.worker.js?revision=stf-fixed31-f-dependent-r1");
+    private readonly worker = new Worker("/generated/local-stack-studio/optical-flow-direction.worker.js?revision=stf-base21-f-dependent-r2");
     private readonly pending = new Map<number, {
       resolve: (value: OpticalFlowDirectionResponse) => void;
       reject: (reason: Error) => void;
@@ -284,11 +284,12 @@ import type {
     // next is rendered/sent, so up to two RGB16 stripe buffers can coexist.
     const stripeBytes = streaming ? Math.min(2, Math.ceil(height / stripeRows(width))) *
       Math.min(height, stripeRows(width)) * width * 6 : 0;
-    if (method === "inverse-warp") return streaming ? stripeBytes : width * height * 6;
+    // Inverse Warp and Forward Splat share one persistent Flow-coordinate
+    // lookup: x/y Flow indices (2 x Int32) and fractions (Float64).
+    const lookupBytes = (width + height) * (2 * 4 + 8);
+    if (method === "inverse-warp") return (streaming ? stripeBytes : width * height * 6) + lookupBytes;
     // Full-frame fallback/non-streaming geometry estimate. Normal streamed
     // FS reports its actual destination-band buffer size from streamVariant.
-    // Lookup tables: x/y Flow indices (2 x Int32) + fractions (Float64).
-    const lookupBytes = (width + height) * (2 * 4 + 8);
     return width * height * (12 + 4 + (streaming ? 0 : 6)) + stripeBytes + lookupBytes;
   }
 
@@ -323,21 +324,21 @@ import type {
     };
   }
 
-  // Flow sampling geometry is invariant across FS variants (and both Flow
-  // directions) for the same image/Flow dimensions. Keep just one small
-  // worker-local lookup, replacing it whenever the geometry changes.
-  type SplatFlowLookup = {
+  // Flow sampling geometry is invariant across FS and inverse Warp variants
+  // (and both Flow directions) for the same image/Flow dimensions. Keep just
+  // one small worker-local lookup, replacing it when the geometry changes.
+  type FlowSampleLookup = {
     width: number; height: number; flowWidth: number; flowHeight: number;
     scaleX: number; scaleY: number;
     x0: Int32Array; x1: Int32Array; fx: Float64Array;
     y0: Int32Array; y1: Int32Array; fy: Float64Array;
   };
-  let splatFlowLookup: SplatFlowLookup | null = null;
+  let flowSampleLookup: FlowSampleLookup | null = null;
 
-  function getSplatFlowLookup(
+  function getFlowSampleLookup(
     width: number, height: number, flowWidth: number, flowHeight: number,
-  ): SplatFlowLookup {
-    const existing = splatFlowLookup;
+  ): FlowSampleLookup {
+    const existing = flowSampleLookup;
     if (existing && existing.width === width && existing.height === height &&
         existing.flowWidth === flowWidth && existing.flowHeight === flowHeight) {
       return existing;
@@ -366,7 +367,7 @@ import type {
       fy[y] = clamped - first;
     }
     const lookup = { width, height, flowWidth, flowHeight, scaleX, scaleY, x0, x1, fx, y0, y1, fy };
-    splatFlowLookup = lookup;
+    flowSampleLookup = lookup;
     return lookup;
   }
 
@@ -428,7 +429,7 @@ import type {
         Number.isFinite(forwardSplatScale) && forwardSplatScale > 0)) {
       throw new Error("STF forward splatting requires an explicit source-coordinate extrapolation scale.");
     }
-    const lookup = getSplatFlowLookup(width, height, flowWidth, flowHeight);
+    const lookup = getFlowSampleLookup(width, height, flowWidth, flowHeight);
     // A forward splat uses the source-coordinate geometric scale, not the
     // inverse-warp scale applied to output-position sampling.
     const { previousFactor, nextFactor, usePrevious, useNext } =
@@ -589,7 +590,7 @@ import type {
     displacement: Float64Array;
     maxDisplacement: number;
     factors: ReturnType<typeof resolveVariantFactors>;
-    lookup: SplatFlowLookup;
+    lookup: FlowSampleLookup;
   };
 
   function buildSplatRowReach(
@@ -598,7 +599,7 @@ import type {
     flowWidth: number, flowHeight: number, forwardScale?: number,
   ): SplatRowReach | null {
     const factors = resolveVariantFactors(variant, forwardScale);
-    const lookup = getSplatFlowLookup(width, height, flowWidth, flowHeight);
+    const lookup = getFlowSampleLookup(width, height, flowWidth, flowHeight);
     const forwardMax = new Float64Array(flowHeight);
     const backwardMax = new Float64Array(flowHeight);
     const collect = (flow: Float32Array, output: Float64Array): boolean => {
@@ -645,7 +646,7 @@ import type {
   function splatSourceIntoBand(
     source: Uint16Array, flow: Float32Array, factor: number,
     gate: StfFlowNormGate | null, width: number, height: number,
-    lookup: SplatFlowLookup, reach: Float64Array,
+    lookup: FlowSampleLookup, reach: Float64Array,
     bandStartY: number, bandEndY: number,
     weights: Float32Array, accum: Float32Array,
   ): void {
@@ -992,7 +993,9 @@ import type {
     // remain per stripe; capture their outcomes immediately so an abort
     // cannot create an unhandled rejection while another group is rendered.
     const pendingGroups: Array<Promise<Error | null>> = [];
-    const scratchBytes = geometryScratchBytes(width, height, true, "inverse-warp") * fractions.length;
+    const sharedLookupBytes = (width + height) * (2 * 4 + 8);
+    const scratchBytes = (geometryScratchBytes(width, height, true, "inverse-warp") - sharedLookupBytes) *
+      fractions.length + sharedLookupBytes;
     try {
       for (let y = 0; y < height; y += rows) {
         const chunkHeight = Math.min(rows, height - y);
@@ -1435,10 +1438,9 @@ import type {
       throw new Error("Invalid STF Flow stripe bounds");
     }
     const output = new Uint16Array(width * stripeHeight * 3);
-    const scaleX = width / flowWidth;
-    const scaleY = height / flowHeight;
-    const edgeX = Math.max(0, flowWidth - 1);
-    const edgeY = Math.max(0, flowHeight - 1);
+    const flowLookup = getFlowSampleLookup(width, height, flowWidth, flowHeight);
+    const scaleX = flowLookup.scaleX;
+    const scaleY = flowLookup.scaleY;
     // Opening-side and closing-side variants each use an inverse-warp
     // multiplier derived from the virtual F-number outside the Worker.
     const openingStep = variant === "ext1" ? 1 : variant.startsWith("ext1-") ? Number(variant.slice(5)) : 0;
@@ -1459,27 +1461,19 @@ import type {
     const fromPrevious = 1 - middleFraction;
 
     for (let y = startY; y < startY + stripeHeight; y += 1) {
-      const flowY = flowHeight === 1 ? 0 : ((y + 0.5) * flowHeight / height) - 0.5;
-      const clampedFlowY = clamp(flowY, 0, edgeY);
-      const flowY0 = Math.floor(clampedFlowY);
-      const flowY1 = Math.min(edgeY, flowY0 + 1);
-      const flowFy = clampedFlowY - flowY0;
-      const flowRow00 = flowY0 * flowWidth;
-      const flowRow10 = flowY1 * flowWidth;
+      const flowFy = flowLookup.fy[y];
+      const flowRow00 = flowLookup.y0[y];
+      const flowRow10 = flowLookup.y1[y];
       for (let x = 0; x < width; x += 1) {
-        const flowX = flowWidth === 1 ? 0 : ((x + 0.5) * flowWidth / width) - 0.5;
-        const clampedFlowX = clamp(flowX, 0, edgeX);
-        const flowX0 = Math.floor(clampedFlowX);
-        const flowX1 = Math.min(edgeX, flowX0 + 1);
-        const flowFx = clampedFlowX - flowX0;
+        const flowFx = flowLookup.fx[x];
         const flowW00 = (1 - flowFx) * (1 - flowFy);
         const flowW10 = flowFx * (1 - flowFy);
         const flowW01 = (1 - flowFx) * flowFy;
         const flowW11 = flowFx * flowFy;
-        const ff00 = (flowRow00 + flowX0) * 2;
-        const ff10 = (flowRow00 + flowX1) * 2;
-        const ff01 = (flowRow10 + flowX0) * 2;
-        const ff11 = (flowRow10 + flowX1) * 2;
+        const ff00 = flowRow00 + flowLookup.x0[x];
+        const ff10 = flowRow00 + flowLookup.x1[x];
+        const ff01 = flowRow10 + flowLookup.x0[x];
+        const ff11 = flowRow10 + flowLookup.x1[x];
         // Extrapolation samples only its source direction. Avoid interpolating
         // the unused Flow field for every output pixel; midpoint still needs both.
         const forwardX = usePrevious
@@ -1587,32 +1581,23 @@ import type {
     startY: number, stripeHeight: number, fractions: readonly number[],
   ): Uint16Array[] {
     const outputs = fractions.map(() => new Uint16Array(width * stripeHeight * 3));
-    const scaleX = width / flowWidth;
-    const scaleY = height / flowHeight;
-    const edgeX = Math.max(0, flowWidth - 1);
-    const edgeY = Math.max(0, flowHeight - 1);
+    const flowLookup = getFlowSampleLookup(width, height, flowWidth, flowHeight);
+    const scaleX = flowLookup.scaleX;
+    const scaleY = flowLookup.scaleY;
     for (let y = startY; y < startY + stripeHeight; y++) {
-      const flowY = flowHeight === 1 ? 0 : ((y + 0.5) * flowHeight / height) - 0.5;
-      const clampedFlowY = clamp(flowY, 0, edgeY);
-      const flowY0 = Math.floor(clampedFlowY);
-      const flowY1 = Math.min(edgeY, flowY0 + 1);
-      const flowFy = clampedFlowY - flowY0;
-      const flowRow00 = flowY0 * flowWidth;
-      const flowRow10 = flowY1 * flowWidth;
+      const flowFy = flowLookup.fy[y];
+      const flowRow00 = flowLookup.y0[y];
+      const flowRow10 = flowLookup.y1[y];
       for (let x = 0; x < width; x++) {
-        const flowX = flowWidth === 1 ? 0 : ((x + 0.5) * flowWidth / width) - 0.5;
-        const clampedFlowX = clamp(flowX, 0, edgeX);
-        const flowX0 = Math.floor(clampedFlowX);
-        const flowX1 = Math.min(edgeX, flowX0 + 1);
-        const flowFx = clampedFlowX - flowX0;
+        const flowFx = flowLookup.fx[x];
         const flowW00 = (1 - flowFx) * (1 - flowFy);
         const flowW10 = flowFx * (1 - flowFy);
         const flowW01 = (1 - flowFx) * flowFy;
         const flowW11 = flowFx * flowFy;
-        const ff00 = (flowRow00 + flowX0) * 2;
-        const ff10 = (flowRow00 + flowX1) * 2;
-        const ff01 = (flowRow10 + flowX0) * 2;
-        const ff11 = (flowRow10 + flowX1) * 2;
+        const ff00 = flowRow00 + flowLookup.x0[x];
+        const ff10 = flowRow00 + flowLookup.x1[x];
+        const ff01 = flowRow10 + flowLookup.x0[x];
+        const ff11 = flowRow10 + flowLookup.x1[x];
         const forwardX = forward[ff00] * flowW00 + forward[ff10] * flowW10 + forward[ff01] * flowW01 + forward[ff11] * flowW11;
         const forwardY = forward[ff00 + 1] * flowW00 + forward[ff10 + 1] * flowW10 + forward[ff01 + 1] * flowW01 + forward[ff11 + 1] * flowW11;
         const backwardX = backward[ff00] * flowW00 + backward[ff10] * flowW10 + backward[ff01] * flowW01 + backward[ff11] * flowW11;

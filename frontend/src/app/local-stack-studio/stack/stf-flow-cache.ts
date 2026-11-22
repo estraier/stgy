@@ -1,3 +1,5 @@
+import { STF_FARNEBACK_BASE_WINSIZE, STF_FARNEBACK_MIN_WINSIZE } from "./stf-farneback-winsize";
+
 /** Best-effort persistent bidirectional 4MP Farneback Flow cache.
  * Cache hits never rewrite metadata. Once admitted, valid pairs stay cached
  * until explicit session deletion, 30-minute expiration, or corruption. When
@@ -13,14 +15,15 @@ const FLOW_ALGORITHM_VERSION = "stf-gray4mp-farneback-f-adaptive-winsize-v3";
 /** The alignment identifier describes processing parameters, never image content. */
 export function stfFlowSessionKey(
   sessionId: string, previousImageId: number, nextImageId: number,
-  alignmentKey: string, width: number, height: number, winsize = 31,
+  alignmentKey: string, width: number, height: number, winsize = STF_FARNEBACK_BASE_WINSIZE,
 ): string | null {
   if (!sessionId || !alignmentKey ||
       !Number.isSafeInteger(previousImageId) || previousImageId < 0 ||
       !Number.isSafeInteger(nextImageId) || nextImageId < 0 ||
       previousImageId === nextImageId ||
       !Number.isSafeInteger(width * height) || width <= 0 || height <= 0 ||
-      !Number.isSafeInteger(winsize) || winsize < 11 || winsize > 31 || winsize % 2 === 0) return null;
+      !Number.isSafeInteger(winsize) || winsize < STF_FARNEBACK_MIN_WINSIZE ||
+      winsize > STF_FARNEBACK_BASE_WINSIZE || winsize % 2 === 0) return null;
   return JSON.stringify([sessionId, FLOW_ALGORITHM_VERSION,
     previousImageId, nextImageId, alignmentKey, width, height, winsize]);
 }

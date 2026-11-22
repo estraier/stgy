@@ -278,8 +278,8 @@ test("closing extrapolation uses last real pair once while opening ext1..N reuse
     });
     expect(loaded).toEqual([0, 1, 2, 0]);
     expect(seen).toEqual([
-      `generate:0-1:mid:undefined:${1 / 2 - 1 / 2.5}:31`,
-      `generate:1-2:mid:ext2:${1 / 2.5 - 1 / 3}:21`,
+      `generate:0-1:mid:undefined:${1 / 2 - 1 / 2.5}:21`,
+      `generate:1-2:mid:ext2:${1 / 2.5 - 1 / 3}:15`,
       "average:0:ext1:true", "average:0:ext1-2:false",
       "average:0:ext1-3:false", "average:0:ext1-4:false",
       "release", "terminate",
@@ -436,7 +436,7 @@ test("three real images average the first two opening-side pairs", async () => {
 });
 
 
-test("STF generated pairs always use fixed 31 + F-dependent windows", async () => {
+test("STF generated pairs use base 21 + F-dependent windows", async () => {
   const f = Array.from({ length: 7 }, (_, i) => 2 * 2 ** (i / 6));
   const actual = f.map(() => testPixels(24000));
   const reference = computeCanonicalToneStatisticsFromStoredRgb16(actual[0], 2, 2);
@@ -468,7 +468,7 @@ test("STF generated pairs always use fixed 31 + F-dependent windows", async () =
   } finally {
     infoSpy.mockRestore();
   }
-  expect(passed).toEqual([31, 29, 25, 23, 19, 17]);
+  expect(passed).toEqual([21, 19, 17, 15, 13, 13]);
 });
 
 test("streaming STF virtual merge exactly matches full-frame tone matching and accumulation", async () => {

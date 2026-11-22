@@ -74,7 +74,7 @@ export class StfOpticalFlowClient {
 
   constructor(onProgress?: (message: string) => void) {
     const workerUrl = new URL("/generated/local-stack-studio/optical-flow.worker.js", window.location.origin);
-    workerUrl.searchParams.set("revision", "stf-session-flow-20261122-group-ack-v1");
+    workerUrl.searchParams.set("revision", "stf-inverse-warp-flow-lookup-v1");
     this.worker = new Worker(workerUrl);
     this.worker.onmessage = (event: MessageEvent<OpticalFlowWorkerResponse>) => {
       const message = event.data;

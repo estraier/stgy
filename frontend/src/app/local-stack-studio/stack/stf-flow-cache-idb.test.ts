@@ -134,9 +134,9 @@ function useMemoryIndexedDb(legacyVersion: 0 | 1 | 2 = 0, rejectDurabilityOption
 
 test("Farneback winsize separates session Flow cache keys", () => {
   const base = ["session-1", 0, 1, "align", 2, 2] as const;
-  const oldWindow = stfFlowSessionKey(...base, 21);
-  const openingWindow = stfFlowSessionKey(...base, 31);
-  const nextWindow = stfFlowSessionKey(...base, 29);
+  const oldWindow = stfFlowSessionKey(...base, 11);
+  const openingWindow = stfFlowSessionKey(...base, 21);
+  const nextWindow = stfFlowSessionKey(...base, 19);
   expect(oldWindow).not.toBeNull();
   expect(new Set([oldWindow, openingWindow, nextWindow]).size).toBe(3);
   expect(stfFlowSessionKey(...base, 101)).toBeNull();
@@ -354,7 +354,7 @@ test("v1 content-addressed IndexedDB records are dropped, never reused", async (
 test("v2 cached 21px fields are discarded on adaptive-window upgrade", async () => {
   const fake = useMemoryIndexedDb(2);
   try {
-    const key = stfFlowSessionKey("session", 0, 1, "align", 2, 2, 31)!;
+    const key = stfFlowSessionKey("session", 0, 1, "align", 2, 2, 21)!;
     expect(await readStfCachedFlow("session", key, 2, 2)).toBeNull();
     expect(fake.tables.get("pairs")?.size).toBe(0);
     expect(fake.tables.get("metadata")?.size).toBe(0);
