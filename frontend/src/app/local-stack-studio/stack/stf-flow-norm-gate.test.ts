@@ -19,6 +19,44 @@ describe("STF extrapolation P5-P10 Flow norm gate", () => {
     expect(Array.from(flow)).toEqual(Array.from(fromNorms(shuffled))); // Never modify the cached Flow.
   });
 
+  test("optional profiling reports norm generation and sorting without changing the exact gate", () => {
+    const flow = fromNorms(Array.from({ length: 100 }, (_, index) => (index * 37 % 100) / 10));
+    const timing: { normsMs?: number; sortMs?: number } = {};
+    const measured = buildStfFlowNormGate(flow, timing);
+    expect(measured).toEqual(buildStfFlowNormGate(flow));
+    expect(timing.normsMs).toEqual(expect.any(Number));
+    expect(timing.sortMs).toEqual(expect.any(Number));
+    expect(timing.normsMs).toBeGreaterThanOrEqual(0);
+    expect(timing.sortMs).toBeGreaterThanOrEqual(0);
+  });
+
+  test("exact radix percentiles match Float32Array.sort for duplicate-heavy and irregular fields", () => {
+    let state = 0x12345678;
+    const random = () => { state = (Math.imul(state, 1664525) + 1013904223) >>> 0; return state / 4294967296; };
+    for (const count of [2, 3, 100, 1024, 30001]) {
+      for (const distribution of ["uniform", "duplicates", "tiny", "outliers"] as const) {
+        const flow = new Float32Array(count * 2);
+        const expectedNorms = new Float32Array(count);
+        for (let index = 0; index < count; index++) {
+          const x = distribution === "duplicates" ? Math.floor(random() * 8) :
+            distribution === "tiny" ? random() * 1e-8 :
+              distribution === "outliers" && index === count - 1 ? 1e20 : random() * 80;
+          const y = random() * (distribution === "tiny" ? 1e-8 : 5);
+          flow[index * 2] = x;
+          flow[index * 2 + 1] = y;
+          expectedNorms[index] = Math.hypot(flow[index * 2], flow[index * 2 + 1]);
+        }
+        expectedNorms.sort();
+        const p5 = expectedNorms[Math.floor((count - 1) * 0.05)];
+        const p10 = expectedNorms[Math.floor((count - 1) * 0.10)];
+        const expected = p10 > p5 + Math.max(1e-6, p5 * 1e-5) ? [p5, p10] : null;
+        const gate = buildStfFlowNormGate(flow);
+        if (!expected) expect(gate).toBeNull();
+        else expect([gate?.p5, gate?.p10]).toEqual(expected);
+      }
+    }
+  });
+
   test("suppresses low magnitudes, linearly transitions between P5/P10 and leaves larger Flow unchanged", () => {
     const gate = buildStfFlowNormGate(fromNorms(Array.from({ length: 100 }, (_, i) => i / 10)));
     expect(gate).not.toBeNull();

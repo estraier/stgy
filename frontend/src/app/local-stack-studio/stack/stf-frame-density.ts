@@ -42,18 +42,21 @@ export function createStfSourceTonePlans(
 }
 
 export function interpolateStfTonePlan(
-  previous: StfToneMatchPlan, next: StfToneMatchPlan,
+  previous: StfToneMatchPlan, next: StfToneMatchPlan, fraction = 0.5,
 ): StfToneMatchPlan {
-  if (!(Number.isFinite(previous.gain) && previous.gain > 0 &&
+  if (!(Number.isFinite(fraction) && fraction > 0 && fraction < 1 &&
+      Number.isFinite(previous.gain) && previous.gain > 0 &&
       Number.isFinite(next.gain) && next.gain > 0 &&
       Number.isFinite(previous.scaledLog) && Number.isFinite(next.scaledLog))) {
     throw new Error("STF source tone plans must be finite and positive.");
   }
-  // Equal interpolation weights match the Optical Flow Worker's gamma-2
-  // 50:50 midpoint. Log-gain blending is symmetric for exposure ratios.
+  // Geometric gain interpolation and linear scaledLog interpolation. The
+  // 50% path retains the exact historical midpoint arithmetic.
   return {
-    gain: Math.sqrt(previous.gain * next.gain),
-    scaledLog: (previous.scaledLog + next.scaledLog) / 2,
+    gain: fraction === 0.5 ? Math.sqrt(previous.gain * next.gain) :
+      previous.gain ** (1 - fraction) * next.gain ** fraction,
+    scaledLog: fraction === 0.5 ? (previous.scaledLog + next.scaledLog) / 2 :
+      previous.scaledLog * (1 - fraction) + next.scaledLog * fraction,
   };
 }
 
@@ -105,11 +108,16 @@ export function prepareStfFrameSetForTone(
     transformStfToneIntensity(density, realTonePlans[i].gain, realTonePlans[i].scaledLog));
 
   const midpointTonePlans = frameSet.middleFrames.map((frame) =>
-    interpolateStfTonePlan(realTonePlans[frame.previousIndex], realTonePlans[frame.nextIndex]));
+    interpolateStfTonePlan(realTonePlans[frame.previousIndex], realTonePlans[frame.nextIndex],
+      frame.interpolationFraction));
   for (let i = 0; i < frameSet.middleFrames.length; i += 1) {
     const frame = frameSet.middleFrames[i];
-    const midGamma = (Math.sqrt(rawRealDensities[frame.previousIndex]) +
-      Math.sqrt(rawRealDensities[frame.nextIndex])) / 2;
+    const t = frame.interpolationFraction;
+    const midGamma = t === 0.5
+      ? (Math.sqrt(rawRealDensities[frame.previousIndex]) +
+          Math.sqrt(rawRealDensities[frame.nextIndex])) / 2
+      : (1 - t) * Math.sqrt(rawRealDensities[frame.previousIndex]) +
+        t * Math.sqrt(rawRealDensities[frame.nextIndex]);
     const tone = midpointTonePlans[i];
     edgeDensities.push(transformStfToneIntensity(midGamma * midGamma, tone.gain, tone.scaledLog));
   }

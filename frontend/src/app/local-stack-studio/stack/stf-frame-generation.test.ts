@@ -1,4 +1,5 @@
-import { buildStfFrameSet, isStfFrameGenerationMode, STF_EXTRAPOLATION_COUNTS, type StfFrameGenerationMode, type StfFrameSet } from "./stf-frame-generation";
+import { buildStfFrameSet, isStfFrameGenerationMode, STF_EXTRAPOLATION_COUNTS, STF_INTERPOLATION_COUNTS, type StfFrameGenerationMode, type StfFrameSet } from "./stf-frame-generation";
+import type { StfRadialAttenuation } from "./stf-radial-weights";
 
 const fNumbers = [2.8, 4, 3.5, 3.2, 2.5, 2.2, 2];
 const radialAttenuationOptions = [-2, -1, 0, 1, 2, 3,
@@ -8,7 +9,8 @@ function radialDiscContributions(frames: StfFrameSet, realFNumbers: number[]) {
   const densityFNumbers = [
     ...realFNumbers,
     ...frames.middleFrames.map((frame) =>
-      (realFNumbers[frame.previousIndex] + realFNumbers[frame.nextIndex]) / 2),
+      (1 - frame.interpolationFraction) * realFNumbers[frame.previousIndex] +
+      frame.interpolationFraction * realFNumbers[frame.nextIndex]),
     ...frames.outerFrames.map((frame) => realFNumbers[
       frame.variant === "ext2" ? frame.nextIndex : frame.previousIndex]),
   ];
@@ -81,6 +83,50 @@ describe("STF generated-frame radial attenuation and q-dependent virtual zero", 
       expect(frames.outerFrames).toHaveLength(0);
     },
   );
+
+  test("Interpolation 1 is the prior midpoint and 2-4 add equally spaced log-F frames per real pair", () => {
+    expect(STF_INTERPOLATION_COUNTS).toEqual([1, 2, 3, 4]);
+    const real = Array.from({ length: 7 }, (_, i) => 2 * 2 ** (i / 3)); // F2-F8, 2/3 stop intervals.
+    const legacy = buildStfFrameSet(real, 1, "interpolation");
+    const one = buildStfFrameSet(real, 1, "interpolation-1");
+    expect(one.allFNumbers).toEqual(legacy.allFNumbers);
+    expect(Array.from(one.allWeights)).toEqual(Array.from(legacy.allWeights));
+    for (const count of STF_INTERPOLATION_COUNTS) {
+      const mode = `interpolation-${count}` as StfFrameGenerationMode;
+      expect(isStfFrameGenerationMode(mode)).toBe(true);
+      const frames = buildStfFrameSet(real, 1, mode);
+      expect(frames.middleFrames).toHaveLength(6 * count);
+      expect(frames.allWeights).toHaveLength(7 + 6 * count);
+      expect(frames.outerFrames).toHaveLength(0);
+      for (let pair = 0; pair < 6; pair++) {
+        for (let k = 1; k <= count; k++) {
+          const frame = frames.middleFrames[pair * count + k - 1];
+          const t = k / (count + 1);
+          expect(frame.previousIndex).toBe(pair);
+          expect(frame.nextIndex).toBe(pair + 1);
+          expect(frame.interpolationFraction).toBeCloseTo(t, 12);
+          expect(frame.fNumber).toBeCloseTo(real[pair] * (real[pair + 1] / real[pair]) ** t, 12);
+        }
+      }
+      const { ordered, drops } = radialDiscContributions(frames, real);
+      const expected = expectedDrops(ordered, 1);
+      drops.forEach((drop, i) => expect(drop).toBeCloseTo(expected[i], 6));
+    }
+    for (const invalid of ["interpolation-0", "interpolation-5", "interpolation-01", "interpolation-2.5"]) {
+      expect(isStfFrameGenerationMode(invalid)).toBe(false);
+      expect(() => buildStfFrameSet(real, 1, invalid as StfFrameGenerationMode)).toThrow("Unsupported");
+    }
+  });
+
+  test("extrapolation remains based on Interpolation 1 for every opening count", () => {
+    const f = [2, 2.52, 3.175, 4];
+    for (const count of STF_EXTRAPOLATION_COUNTS) {
+      const frames = buildStfFrameSet(f, 1, `extrapolation-${count}`);
+      expect(frames.middleFrames).toHaveLength(f.length - 1);
+      frames.middleFrames.forEach((frame) => expect(frame.interpolationFraction).toBe(0.5));
+      expect(frames.outerFrames).toHaveLength(count + 1);
+    }
+  });
 
   test("off uses nonuniform radial-profile weights when complete F-numbers are available", () => {
     const frames = buildStfFrameSet([2, 2.8, 4], 1, "off");
@@ -266,8 +312,8 @@ describe("STF generated-frame radial attenuation and q-dependent virtual zero", 
   test("invalid or duplicate apertures and unsupported q are rejected", () => {
     expect(() => buildStfFrameSet([2, 2, 4], 0, "extrapolation-12")).toThrow("distinct");
     expect(() => buildStfFrameSet([2, null, 4], 0, "extrapolation-12")).toThrow("valid EXIF");
-    expect(() => buildStfFrameSet([2, 4], -3, "extrapolation-12")).toThrow("Radial attenuation");
-    expect(() => buildStfFrameSet([2, 4], Number.NaN, "interpolation")).toThrow("Radial attenuation");
+    expect(() => buildStfFrameSet([2, 4], -3 as StfRadialAttenuation, "extrapolation-12")).toThrow("Radial attenuation");
+    expect(() => buildStfFrameSet([2, 4], Number.NaN as StfRadialAttenuation, "interpolation")).toThrow("Radial attenuation");
   });
 });
 

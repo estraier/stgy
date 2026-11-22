@@ -3,6 +3,7 @@ import type { StfOpticalFlowClient } from "./stf-optical-flow-client";
 import { buildStfFrameSet, STF_EXTRAPOLATION_COUNTS, type StfFrameGenerationMode } from "./stf-frame-generation";
 import { encodeStoredRgb16Channel } from "@/image/rgb16-storage";
 import { prepareStfFrameSetForTone } from "./stf-frame-density";
+import type { StfRadialAttenuation } from "./stf-radial-weights";
 
 describe("STF virtual gamma-2 RGB16 numerical domain", () => {
   test("preserves extended highlights through linear 4", () => {
@@ -133,7 +134,7 @@ function virtualHarness(persist = true) {
   const actual = [testPixels(23000), testPixels(25000)];
   const persistedFlowKeys = new Set<string>();
   const stats = computeCanonicalToneStatisticsFromStoredRgb16(actual[0], 2, 2);
-  const prepare = (q: number, mode: StfFrameGenerationMode) =>
+  const prepare = (q: StfRadialAttenuation, mode: StfFrameGenerationMode) =>
     prepareStfFrameSetForTone(buildStfFrameSet([2, 3], q, mode), [2, 3],
       [{ gain: 1, scaledLog: 0 }, { gain: 1, scaledLog: 0 }], stats.p95, q);
   let reads = 0;
@@ -174,7 +175,7 @@ function virtualHarness(persist = true) {
       releaseRetained: () => {}, terminate: () => { active--; },
     };
   };
-  const run = async (q: number, mode: "interpolation" | "extrapolation-2" | "extrapolation-12") => {
+  const run = async (q: StfRadialAttenuation, mode: "interpolation" | "extrapolation-2" | "extrapolation-12") => {
     const accumulator = new Float32Array(12);
     const originalInfo = console.info;
     const infoSpy = jest.spyOn(console, "info").mockImplementation((...args: unknown[]) => {
@@ -545,4 +546,62 @@ test("streaming STF virtual merge exactly matches full-frame tone matching and a
     expect(streamed.seen).toHaveLength(12); // 4 generated frames × 3 stripes
     expect(Math.max(...streamed.seen)).toBe(128 * width * 3);
   } finally { info.mockRestore(); }
+});
+
+test.each([2, 3, 4] as const)("Interpolation %i streams multiple frames per pair with a single Flow request", async (count) => {
+  const f = [2, 2.52, 3.175];
+  const width = 2, height = 3;
+  const real = f.map((_, index) => new Uint16Array(width * height * 3).fill(21000 + index * 3000));
+  const stats = computeCanonicalToneStatisticsFromStoredRgb16(real[0], width, height);
+  const frameSet = prepareStfFrameSetForTone(
+    buildStfFrameSet(f, 1, `interpolation-${count}` as `interpolation-${1 | 2 | 3 | 4}`), f,
+    f.map(() => ({ gain: 1, scaledLog: 0 })), stats.p95, 1);
+  const calls: Array<{ pair: string; fractions: number[] }> = [];
+  let terminated = false;
+  const info = jest.spyOn(console, "info").mockImplementation(() => {});
+  try {
+    const accumulator = new Float32Array(width * height * 3);
+    await appendStfVirtualSource(accumulator, {
+      frameSet, sessionId: "interpolation-multi-test", sessionCreatedAt: 1,
+      alignmentKey: "align", reader: {
+        width, height, readGamma2Image: async (index: number) => real[index],
+      } as never,
+      createFlowClient: (() => ({
+        generateStripes: async (
+          args: Parameters<StfOpticalFlowClient["generateStripes"]>[0],
+          onStripe: Parameters<StfOpticalFlowClient["generateStripes"]>[1],
+        ) => {
+          expect(args.variant).toBe("mid");
+          expect(args.additionalVariant).toBeUndefined();
+          expect(args.warpMethod).toBe("inverse-warp");
+          expect(args.inputOwnership.previous).toBe(true);
+          calls.push({ pair: `${args.previousImageId}-${args.nextImageId}`,
+            fractions: args.middleFractions ?? [0.5] });
+          for (const [middleIndex, t] of (args.middleFractions ?? [0.5]).entries()) {
+            const pixels = new Uint16Array(width * height * 3).fill(24000 + Math.round(t * 12000));
+            for (let y = 0; y < height; y += 2) {
+              const rows = Math.min(2, height - y);
+              await onStripe({ kind: "primary", middleIndex, y, height: rows,
+                pixels: pixels.subarray(y * width * 3, (y + rows) * width * 3) });
+            }
+          }
+          return { flowCacheHit: true, flowCacheSaved: false, flowWallMs: 0,
+            warpMs: 0, totalWorkerMs: 0 } as never;
+        },
+        warpOpeningAverageStripes: async () => { throw new Error("Unexpected opening extrapolation"); },
+        releaseRetained: () => {},
+        terminate: () => { terminated = true; },
+      })) as never,
+    });
+    expect(calls).toHaveLength(2); // One bidirectional Flow request per adjacent real-image pair.
+    expect(calls.map((call) => call.pair)).toEqual(["0-1", "1-2"]);
+    for (const call of calls) {
+      expect(call.fractions).toHaveLength(count);
+      call.fractions.forEach((fraction, i) => expect(fraction).toBeCloseTo((i + 1) / (count + 1), 12));
+    }
+    expect(accumulator.every((value) => Number.isFinite(value) && value > 0)).toBe(true);
+    expect(terminated).toBe(true);
+  } finally {
+    info.mockRestore();
+  }
 });

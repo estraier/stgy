@@ -67,7 +67,7 @@ test("STF Flow client passes geometric inverse-warp scales through active Worker
       expect(Object.prototype.toString.call(sourceBuffer)).toBe("[object ArrayBuffer]");
       expect(sourceBuffer?.byteLength).toBe(prev.byteLength);
       expect(sourceBuffer).not.toBe(prev.buffer);
-      expect(new Uint16Array(sourceBuffer)).toEqual(prev);
+      expect(new Uint16Array(sourceBuffer!)).toEqual(prev);
 
       // FS never uses the destination-indexed inverse multiplier for
       // forward projection. The two geometries must survive both API paths.
@@ -330,6 +330,90 @@ test("STF Flow client serializes two pipelined stripe callbacks and acks only af
       await task;
       expect(seen).toEqual(["consume:0", "ack:0", "consume:1", "ack:1"]);
     } finally { client.terminate(); }
+  } finally {
+    if (oldWorker) Object.defineProperty(globalThis, "Worker", oldWorker);
+    else Reflect.deleteProperty(globalThis, "Worker");
+    if (oldWindow) Object.defineProperty(globalThis, "window", oldWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  }
+});
+
+test("STF Flow multi-interpolation stripes are acknowledged in stripe-major order before optional closing", async () => {
+  const oldWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  const oldWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const width = 2, height = 3;
+  const events: Array<{ kind: string; middleIndex?: number; y: number }> = [];
+  const middleFractions = [0.25, 0.5, 0.75];
+  class FakeWorker {
+    onmessage: ((event: MessageEvent<OpticalFlowWorkerResponse>) => void) | null = null;
+    onerror = null;
+    onmessageerror = null;
+    private step = 0;
+    private requestId = 0;
+    private readonly stripes = [
+      ...[0, 2].flatMap((y) => middleFractions.map((_, middleIndex) =>
+        ({ kind: "primary" as const, middleIndex, y, height: y === 0 ? 2 : 1 }))),
+      { kind: "additional" as const, y: 0, height: 2 },
+      { kind: "additional" as const, y: 2, height: 1 },
+    ];
+    private emitNext() {
+      queueMicrotask(() => {
+        const current = this.stripes[this.step];
+        if (!current) {
+          this.onmessage?.({ data: { type: "stream-result", requestId: this.requestId,
+            width, height, performance: { flowWorkerCount: 2, flowWallMs: 1 } },
+          } as MessageEvent<OpticalFlowWorkerResponse>);
+          return;
+        }
+        this.onmessage?.({ data: { type: "stripe", requestId: this.requestId,
+          ...current, width, gamma2Buffer: new Uint16Array(width * current.height * 3).buffer },
+        } as MessageEvent<OpticalFlowWorkerResponse>);
+      });
+    }
+    postMessage(request: OpticalFlowWorkerRequest) {
+      if (request.type === "interpolate") {
+        expect(request.middleFractions).toEqual(middleFractions);
+        expect(request.streamStripes).toBe(true);
+        this.requestId = request.requestId;
+        this.emitNext();
+      } else if (request.type === "stripe-ack") {
+        const expected = this.stripes[this.step];
+        expect(request.kind).toBe(expected.kind);
+        expect(request.y).toBe(expected.y);
+        if (expected.kind === "primary") expect(request.middleIndex).toBe(expected.middleIndex);
+        this.step++;
+        this.emitNext();
+      }
+    }
+    terminate() {}
+  }
+  Object.defineProperty(globalThis, "Worker", { configurable: true, value: FakeWorker });
+  Object.defineProperty(globalThis, "window", {
+    configurable: true, value: { location: { origin: "https://stgy.example" } },
+  });
+  try {
+    const client = new StfOpticalFlowClient();
+    try {
+      const pixels = new Uint16Array(width * height * 3);
+      const performance = await client.generateStripes({
+        width, height, previousImageId: 0, nextImageId: 1,
+        previousGamma2: pixels, nextGamma2: pixels, variant: "mid", middleFractions,
+        additionalVariant: "ext2", additionalVariantScale: 0.5,
+        winsize: 31, sessionId: "s", sessionCreatedAt: 1, alignmentKey: "k", inputOwnership: {},
+      }, (stripe) => { events.push({ kind: stripe.kind, middleIndex: stripe.middleIndex, y: stripe.y }); });
+      expect(performance.flowWorkerCount).toBe(2);
+      expect(performance.inputClonedBytes).toBe(pixels.byteLength * 2);
+      expect(performance.inputCloneMs).toBeGreaterThanOrEqual(0);
+      expect(performance.inputPostMs).toBeGreaterThanOrEqual(0);
+      expect(events).toEqual([
+        ...[0, 2].flatMap((y) => middleFractions.map((_, middleIndex) =>
+          ({ kind: "primary", middleIndex, y }))),
+        { kind: "additional", middleIndex: undefined, y: 0 },
+        { kind: "additional", middleIndex: undefined, y: 2 },
+      ]);
+    } finally {
+      client.terminate();
+    }
   } finally {
     if (oldWorker) Object.defineProperty(globalThis, "Worker", oldWorker);
     else Reflect.deleteProperty(globalThis, "Worker");

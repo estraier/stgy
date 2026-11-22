@@ -1,5 +1,6 @@
 import {
   applyStfToneMatchInPlace,
+  addStfGeneratedRgb16StripeToAccumulator,
   buildStfToneMatchPlanToReference,
   buildStfToneMatchLut,
   buildStfToneMatchPlans,
@@ -119,6 +120,26 @@ describe("STF tone matching", () => {
 
   test("a completely black image remains invalid for tone matching", () => {
     expect(buildStfToneMatchPlans([stats(0, 0, 0)])).toBeNull();
+  });
+
+  test("RGB16 decode LUT gives bit-identical fused accumulator results", () => {
+    const encoded = new Uint16Array([0, 1, 2, 100, 32767, 32768, 65533, 65534, 65535,
+      3011, 43001, 1500, 20000, 40000, 60000]);
+    for (const [gain, scaledLog] of [[1, 0], [1.1, 0.7], [0.71, -1.2]] as const) {
+      const lut = buildStfToneMatchLut(gain, scaledLog);
+      const accumulator = new Float32Array(encoded.length + 3).fill(0.2345);
+      const expected = accumulator.slice();
+      const decoded = new Float32Array(encoded.length);
+      for (let i = 0; i < encoded.length; i++) {
+        const v = encoded[i] / 65535;
+        decoded[i] = Math.fround(4 * v * v);
+      }
+      applyStfToneMatchInPlace(decoded, gain, scaledLog, lut);
+      for (let i = 0; i < encoded.length; i++) expected[i + 3] += decoded[i] * 0.23;
+      addStfGeneratedRgb16StripeToAccumulator(accumulator, 3, encoded, encoded.length,
+        0.23, gain, scaledLog, lut);
+      expect(accumulator).toEqual(expected);
+    }
   });
 
   test("gamma-2 LUT closely matches the analytic tone mapping", () => {

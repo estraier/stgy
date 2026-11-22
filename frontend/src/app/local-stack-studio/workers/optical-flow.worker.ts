@@ -17,6 +17,7 @@ import { buildStfAverageFlow, type StfAverageFlowSample } from "../stack/stf-ave
 import { buildStfFlowNormGate, stfFlowNormGateFactor, type StfFlowNormGate } from "../stack/stf-flow-norm-gate";
 import type {
   OpticalFlowPerformanceStats,
+  StfFlowGenerationProfile,
   OpticalFlowVariant,
   OpticalFlowWarpMethod,
   OpticalFlowWorkerRequest,
@@ -196,18 +197,28 @@ import type {
   // direction's native Flow percentiles once, never from scaled extrapolation.
   type NormGateCache = { forward?: StfFlowNormGate | null; backward?: StfFlowNormGate | null };
 
+  function measuredNormGate(flow: Float32Array, profile: StfFlowGenerationProfile): StfFlowNormGate | null {
+    const timing: { normsMs?: number; sortMs?: number } = {};
+    const gate = buildStfFlowNormGate(flow, timing);
+    profile.gateNormsMs = (profile.gateNormsMs ?? 0) + (timing.normsMs ?? 0);
+    profile.gateSortMs = (profile.gateSortMs ?? 0) + (timing.sortMs ?? 0);
+    profile.gateBuilds = (profile.gateBuilds ?? 0) + 1;
+    return gate;
+  }
+
   function gateForVariant(
     variant: OpticalFlowVariant,
     forward: Float32Array,
     backward: Float32Array,
     cache: NormGateCache,
+    profile: StfFlowGenerationProfile,
   ): StfFlowNormGate | null {
     if (variant === "mid") return null; // Interpolation must remain unchanged.
     if (variant === "ext2") {
-      if (cache.backward === undefined) cache.backward = buildStfFlowNormGate(backward);
+      if (cache.backward === undefined) cache.backward = measuredNormGate(backward, profile);
       return cache.backward;
     }
-    if (cache.forward === undefined) cache.forward = buildStfFlowNormGate(forward);
+    if (cache.forward === undefined) cache.forward = measuredNormGate(forward, profile);
     return cache.forward;
   }
 
@@ -220,17 +231,22 @@ import type {
   let openingAverageWarp: { sourceImageId: number; source: Uint16Array;
     flow: Float32Array; gate: StfFlowNormGate | null } | null = null;
 
-  // Allow at most two transferred stripes to be in flight. The main thread
-  // may accumulate stripe N while the worker is rendering stripe N+1, but
+  // Single-variant Warp permits two transferred stripes in flight. Shared-
+  // Flow multi-interpolation instead uses two complete row groups below;
   // every stripe is still individually acknowledged after consumption.
   const MAX_INFLIGHT_STRIPES = 2;
+  // Shared-Flow interpolation generates one stripe for every fraction at
+  // the same y. Bound the pipeline by completed row groups instead of
+  // stalling halfway through each group after two individual sends.
+  const MAX_INFLIGHT_MIDDLE_GROUPS = 2;
   type StripeWaiter = { resolve: () => void; reject: (error: Error) => void };
   const awaitingStripe = new Map<number, Map<string, StripeWaiter>>();
-  const stripeKey = (kind: "primary" | "additional", y: number) => `${kind}:${y}`;
+  const stripeKey = (kind: "primary" | "additional", y: number, middleIndex?: number) =>
+    `${kind}:${middleIndex ?? 0}:${y}`;
 
   function sendStripe(
     requestId: number, kind: "primary" | "additional", y: number, height: number,
-    width: number, rgb: Uint16Array,
+    width: number, rgb: Uint16Array, middleIndex?: number,
   ): Promise<void> {
     const gamma2Buffer = transferableBuffer(rgb);
     return new Promise<void>((resolve, reject) => {
@@ -239,14 +255,16 @@ import type {
         pending = new Map();
         awaitingStripe.set(requestId, pending);
       }
-      const key = stripeKey(kind, y);
+      const key = stripeKey(kind, y, middleIndex);
       if (pending.has(key)) {
         reject(new Error("Duplicate STF Flow stripe"));
         return;
       }
       pending.set(key, { resolve, reject });
       try {
-        workerScope.postMessage({ type: "stripe", requestId, kind, y, height, width, gamma2Buffer }, [gamma2Buffer]);
+        workerScope.postMessage({ type: "stripe", requestId, kind,
+          ...(middleIndex !== undefined ? { middleIndex } : {}),
+          y, height, width, gamma2Buffer }, [gamma2Buffer]);
       } catch (error) {
         pending.delete(key);
         if (pending.size === 0) awaitingStripe.delete(requestId);
@@ -726,10 +744,14 @@ import type {
     variant: OpticalFlowVariant, width: number, height: number,
     forward: Float32Array, backward: Float32Array,
     flowWidth: number, flowHeight: number, forwardScale: number | undefined,
+    profile?: StfFlowGenerationProfile,
   ): SplatTilePlan | null {
+    const reachStartedAt = performance.now();
     const reach = buildSplatRowReach(variant, width, height, forward, backward,
       flowWidth, flowHeight, forwardScale);
+    if (profile) profile.fsRowReachMs = (profile.fsRowReachMs ?? 0) + performance.now() - reachStartedAt;
     if (!reach) return null;
+    const searchStartedAt = performance.now();
     // Render several transfer stripes from one destination band, amortizing
     // rescanning of input rows close to a band boundary.
     const transferRows = stripeRows(width);
@@ -763,6 +785,7 @@ import type {
         break;
       }
     }
+    if (profile) profile.fsTileSearchMs = (profile.fsTileSearchMs ?? 0) + performance.now() - searchStartedAt;
     if (!rows) return null;
     const bandRows = Math.min(height, rows + STF_SPLAT_HOLE_MAX_RADIUS * 2);
     const stripeBytes = Math.min(2, Math.ceil(height / transferRows)) *
@@ -804,6 +827,9 @@ import type {
     variantScale: number | undefined, normGate: StfFlowNormGate | null,
     warpMethod: OpticalFlowWarpMethod,
     forwardVariantScale?: number,
+    middleFraction = 0.5,
+    middleIndex?: number,
+    profile?: StfFlowGenerationProfile,
   ): Promise<{ warpMs: number; waitMs: number; scratchBytes: number }> {
     let warpMs = 0;
     let waitMs = 0;
@@ -813,7 +839,7 @@ import type {
     // is still being rendered. Never exceed two unacknowledged stripe buffers.
     const pending: Array<Promise<Error | null>> = [];
     const accept = async (y: number, chunkHeight: number, stripe: Uint16Array): Promise<void> => {
-      pending.push(sendStripe(requestId, kind, y, chunkHeight, width, stripe).then(
+      pending.push(sendStripe(requestId, kind, y, chunkHeight, width, stripe, middleIndex).then(
         () => null, (reason: unknown) => reason instanceof Error ? reason : new Error(String(reason)),
       ));
       if (pending.length >= MAX_INFLIGHT_STRIPES) {
@@ -835,16 +861,22 @@ import type {
         // vertical motions, where source-row rescanning would become slower
         // than a full-frame accumulator. Non-streaming calls also stay full.
         const plan = planSplatTiles(variant, width, height, forward, backward,
-          flowWidth, flowHeight, forwardVariantScale);
+          flowWidth, flowHeight, forwardVariantScale, profile);
+        if (profile) profile.fsPlanMs = (profile.fsPlanMs ?? 0) + performance.now() - started;
         if (!plan) {
+          if (profile) profile.fsFullFrameFallback = true;
+          const splatStartedAt = performance.now();
           const state = accumulateForwardSplat(variant, previous, next, width, height,
             forward, backward, flowWidth, flowHeight, variantScale, normGate, forwardVariantScale);
+          if (profile) profile.fsSplatMs = (profile.fsSplatMs ?? 0) + performance.now() - splatStartedAt;
           warpMs += performance.now() - started;
           for (let y = 0; y < height; y += rows) {
             const chunkHeight = Math.min(rows, height - y);
             const renderStarted = performance.now();
             const stripe = renderForwardSplatStripe(state, previous, next, width, height, y, chunkHeight);
-            warpMs += performance.now() - renderStarted;
+            const renderedMs = performance.now() - renderStarted;
+            if (profile) profile.fsRenderMs = (profile.fsRenderMs ?? 0) + renderedMs;
+            warpMs += renderedMs;
             await accept(y, chunkHeight, stripe);
           }
           while (pending.length) {
@@ -893,12 +925,16 @@ import type {
                 reach.lookup, reach.displacement, haloStart, haloEnd, weights, accum);
             }
             state.accumulatorStartPixel = haloStart * width;
-            warpMs += performance.now() - accumulateStarted;
+            const splatMs = performance.now() - accumulateStarted;
+            if (profile) profile.fsSplatMs = (profile.fsSplatMs ?? 0) + splatMs;
+            warpMs += splatMs;
             for (let y = tileStart; y < tileEnd; y += rows) {
               const chunkHeight = Math.min(rows, tileEnd - y);
               const renderStarted = performance.now();
               const stripe = renderForwardSplatStripe(state, previous, next, width, height, y, chunkHeight);
-              warpMs += performance.now() - renderStarted;
+              const renderedMs = performance.now() - renderStarted;
+              if (profile) profile.fsRenderMs = (profile.fsRenderMs ?? 0) + renderedMs;
+              warpMs += renderedMs;
               await accept(y, chunkHeight, stripe);
             }
           }
@@ -919,7 +955,7 @@ import type {
           const chunkHeight = Math.min(rows, height - y);
           const started = performance.now();
           const stripe = synthesizeFlowVariant(variant, previous, next, width, height,
-            forward, backward, flowWidth, flowHeight, variantScale, normGate, y, chunkHeight);
+            forward, backward, flowWidth, flowHeight, variantScale, normGate, y, chunkHeight, middleFraction);
           warpMs += performance.now() - started;
           await accept(y, chunkHeight, stripe);
         }
@@ -943,6 +979,62 @@ import type {
     }
   }
 
+  async function streamMiddleFractionsSharedFlow(
+    requestId: number, previous: Uint16Array, next: Uint16Array,
+    width: number, height: number, forward: Float32Array, backward: Float32Array,
+    flowWidth: number, flowHeight: number, fractions: readonly number[],
+    profile: StfFlowGenerationProfile,
+  ): Promise<{ warpMs: number; waitMs: number; scratchBytes: number }> {
+    let warpMs = 0;
+    let waitMs = 0;
+    const rows = stripeRows(width);
+    // Each group consists of all fractions at one y. Acknowledgements
+    // remain per stripe; capture their outcomes immediately so an abort
+    // cannot create an unhandled rejection while another group is rendered.
+    const pendingGroups: Array<Promise<Error | null>> = [];
+    const scratchBytes = geometryScratchBytes(width, height, true, "inverse-warp") * fractions.length;
+    try {
+      for (let y = 0; y < height; y += rows) {
+        const chunkHeight = Math.min(rows, height - y);
+        const started = performance.now();
+        const stripes = synthesizeMiddleStripeSharedFlow(previous, next, width, height,
+          forward, backward, flowWidth, flowHeight, y, chunkHeight, fractions);
+        warpMs += performance.now() - started;
+        const acknowledgements = stripes.map((stripe, index) =>
+          sendStripe(requestId, "primary", y, chunkHeight, width, stripe, index).then(
+            () => null, (reason: unknown) => reason instanceof Error ? reason : new Error(String(reason)),
+          ));
+        pendingGroups.push(Promise.all(acknowledgements).then(
+          (results) => results.find((error) => error !== null) ?? null,
+        ));
+        // At most two complete groups (2 * fractions.length stripes) can
+        // remain in flight. The third is never generated before group 1
+        // has been fully consumed, preserving the existing memory estimate.
+        if (pendingGroups.length >= MAX_INFLIGHT_MIDDLE_GROUPS) {
+          const began = performance.now();
+          const error = await pendingGroups.shift()!;
+          waitMs += performance.now() - began;
+          if (error) throw error;
+        }
+      }
+      while (pendingGroups.length) {
+        const began = performance.now();
+        const error = await pendingGroups.shift()!;
+        waitMs += performance.now() - began;
+        if (error) throw error;
+      }
+      profile.middleSharedWarpMs = warpMs;
+      return { warpMs, waitMs, scratchBytes };
+    } catch (error) {
+      const waiting = awaitingStripe.get(requestId);
+      if (waiting) {
+        awaitingStripe.delete(requestId);
+        for (const entry of waiting.values()) entry.reject(error instanceof Error ? error : new Error(String(error)));
+      }
+      throw error;
+    }
+  }
+
   workerScope.onmessage = async (event: MessageEvent<OpticalFlowWorkerRequest>) => {
     const message = event.data;
     if (message.type === "stripe-ack" || message.type === "stripe-abort") {
@@ -952,7 +1044,7 @@ import type {
           awaitingStripe.delete(message.requestId);
           for (const entry of pending.values()) entry.reject(new Error(message.message));
         } else {
-          const key = stripeKey(message.kind, message.y);
+          const key = stripeKey(message.kind, message.y, message.middleIndex);
           const waiter = pending.get(key);
           if (waiter) {
             pending.delete(key);
@@ -987,6 +1079,7 @@ import type {
           throw new Error("STF opening Average Flow source ID mismatch.");
         }
         const started = performance.now();
+        const profile: StfFlowGenerationProfile = {};
         if (message.sourceGamma2Buffer) {
           const source = new Uint16Array(message.sourceGamma2Buffer);
           if (source.length !== geometry.imageWidth * geometry.imageHeight * 3) {
@@ -995,9 +1088,11 @@ import type {
           if (!openingAverage && !openingSamples.length) {
             throw new Error("STF opening Average Flow lacks a source Flow field.");
           }
+          const averageStartedAt = performance.now();
           const flow = openingAverage ?? buildStfAverageFlow(openingSamples, geometry.width, geometry.height);
+          if (!openingAverage) profile.averageFlowMs = performance.now() - averageStartedAt;
           openingAverageWarp = { sourceImageId: geometry.sourceImageId, source, flow,
-            gate: buildStfFlowNormGate(flow) };
+            gate: measuredNormGate(flow, profile) };
           openingSamples.length = 0;
           openingAverage = null;
         }
@@ -1011,9 +1106,10 @@ import type {
           const { warpMs, waitMs, scratchBytes } = await streamVariant(message.requestId, "primary", message.variant,
             current.source, current.source, geometry.imageWidth, geometry.imageHeight,
             current.flow, current.flow, geometry.width, geometry.height, message.variantScale, current.gate,
-            warpMethod, message.forwardVariantScale);
+            warpMethod, message.forwardVariantScale, 0.5, undefined, profile);
           workerScope.postMessage({ type: "stream-result", requestId: message.requestId,
             width: geometry.imageWidth, height: geometry.imageHeight, warpMs,
+            profile,
             stripeAckWaitMs: waitMs,
             warpScratchBytes: scratchBytes,
             estimatedPeakBytes: knownSourceFlowBytes + scratchBytes });
@@ -1078,8 +1174,18 @@ import type {
     if (previousGamma2Rgb.length !== expectedSamples || nextGamma2Rgb.length !== expectedSamples) {
       throw new Error("Optical Flow received an invalid gamma-2 RGB buffer.");
     }
+    const middleFractions = message.middleFractions ?? [0.5];
+    if (message.middleFractions !== undefined &&
+        (message.variant !== "mid" || !message.streamStripes ||
+          !Array.isArray(middleFractions) || middleFractions.length < 1 || middleFractions.length > 4 ||
+          middleFractions.some((fraction, index) =>
+            !(typeof fraction === "number" && Number.isFinite(fraction) && fraction > 0 && fraction < 1 &&
+              (index === 0 || fraction > middleFractions[index - 1]))))) {
+      throw new Error("STF Flow received invalid middle interpolation fractions.");
+    }
 
     const workerStartedAt = performance.now();
+    const profile: StfFlowGenerationProfile = {};
     const winsize = message.winsize ?? STF_FARNEBACK_BASE_WINSIZE;
     if (!isStfFarnebackWinsize(winsize)) {
       throw new Error("STF Optical Flow requires a valid odd Farneback window.");
@@ -1171,7 +1277,9 @@ import type {
         if (openingSamples.length === 3) {
           // Collapse three 32 MiB fields into one before the remaining pairs
           // are processed.
+          const averageStartedAt = performance.now();
           openingAverage = buildStfAverageFlow(openingSamples, flowSize.width, flowSize.height);
+          profile.averageFlowMs = performance.now() - averageStartedAt;
           openingSamples.length = 0;
         }
       }
@@ -1195,7 +1303,7 @@ import type {
     const warpMethod = message.warpMethod ?? "inverse-warp";
     postProgress(message.requestId, `Warping Optical Flow ${describeVariant(message.variant)} image...`);
     const warpStartedAt = performance.now();
-    const primaryGate = gateForVariant(message.variant, flows.forward, flows.backward, normGates);
+    const primaryGate = gateForVariant(message.variant, flows.forward, flows.backward, normGates, profile);
     const output = message.streamStripes ? undefined : (warpMethod !== "inverse-warp"
       ? synthesizeFlowVariantForwardSplat(message.variant, previousGamma2Rgb, nextGamma2Rgb, width, height,
           flows.forward, flows.backward, flowSize.width, flowSize.height, message.variantScale, primaryGate,
@@ -1203,17 +1311,38 @@ import type {
       : synthesizeFlowVariant(message.variant, previousGamma2Rgb, nextGamma2Rgb, width, height,
           flows.forward, flows.backward, flowSize.width, flowSize.height, message.variantScale, primaryGate));
     const primaryStream = message.streamStripes
-      ? await streamVariant(message.requestId, "primary", message.variant,
-          previousGamma2Rgb, nextGamma2Rgb, width, height, flows.forward, flows.backward,
-          flowSize.width, flowSize.height, message.variantScale, primaryGate, warpMethod,
-          message.forwardVariantScale)
+      ? await (async () => {
+          if (message.variant === "mid" && warpMethod === "inverse-warp" && middleFractions.length > 1) {
+            return streamMiddleFractionsSharedFlow(message.requestId, previousGamma2Rgb, nextGamma2Rgb,
+              width, height, flows.forward, flows.backward, flowSize.width, flowSize.height,
+              middleFractions, profile);
+          }
+          let warpMs = 0;
+          let waitMs = 0;
+          let scratchBytes = 0;
+          const frameWarpMs: number[] = [];
+          for (let index = 0; index < middleFractions.length; index++) {
+            const part = await streamVariant(message.requestId, "primary", message.variant,
+              previousGamma2Rgb, nextGamma2Rgb, width, height, flows.forward, flows.backward,
+              flowSize.width, flowSize.height, message.variantScale, primaryGate, warpMethod,
+              message.forwardVariantScale, middleFractions[index],
+              // Preserve the old single-midpoint stripe protocol.
+              message.middleFractions === undefined ? undefined : index, profile);
+            frameWarpMs.push(part.warpMs);
+            warpMs += part.warpMs;
+            waitMs += part.waitMs;
+            scratchBytes = Math.max(scratchBytes, part.scratchBytes);
+          }
+          profile.middleFrameWarpMs = frameWarpMs;
+          return { warpMs, waitMs, scratchBytes };
+        })()
       : null;
     const warpMs = primaryStream?.warpMs ?? (performance.now() - warpStartedAt);
     // Both frames use the *same* native 4MP forward/backward fields. Never
     // start an extra Farneback computation just to synthesize the outer image.
     const additionalWarpStartedAt = performance.now();
     const extraGate = message.additionalVariant
-      ? gateForVariant(message.additionalVariant, flows.forward, flows.backward, normGates) : null;
+      ? gateForVariant(message.additionalVariant, flows.forward, flows.backward, normGates, profile) : null;
     const additionalWarpMethod = message.additionalWarpMethod ?? warpMethod;
     const additionalGamma2Rgb = message.additionalVariant && !message.streamStripes
       ? (additionalWarpMethod !== "inverse-warp"
@@ -1228,7 +1357,7 @@ import type {
       ? await streamVariant(message.requestId, "additional", message.additionalVariant,
           previousGamma2Rgb, nextGamma2Rgb, width, height, flows.forward, flows.backward,
           flowSize.width, flowSize.height, message.additionalVariantScale, extraGate, additionalWarpMethod,
-          message.additionalForwardVariantScale)
+          message.additionalForwardVariantScale, 0.5, undefined, profile)
       : null;
     const additionalWarpMs = message.additionalVariant
       ? additionalStream?.warpMs ?? (performance.now() - additionalWarpStartedAt)
@@ -1251,6 +1380,7 @@ import type {
       flowWorkerCount: flows.workerCount,
       warmupMs: flows.warmupMs,
       warpMs,
+      profile,
       stripeAckWaitMs: (primaryStream?.waitMs ?? 0) + (additionalStream?.waitMs ?? 0),
       ...(additionalWarpMs !== undefined ? { additionalWarpMs } : {}),
       // Exclude main-thread acknowledgement waits from Worker execution time.
@@ -1279,7 +1409,7 @@ import type {
       ...(cacheDiagnostics.incomingBytes !== undefined ? {
         flowCacheIncomingBytes: cacheDiagnostics.incomingBytes,
       } : {}),
-      outputBytes: width * height * 6 * (message.additionalVariant ? 2 : 1),
+      outputBytes: width * height * 6 * (middleFractions.length + (message.additionalVariant ? 1 : 0)),
     };
     return { width, height, gamma2Rgb: output, additionalGamma2Rgb, flowWidth: flowSize.width, flowHeight: flowSize.height, performance: performanceStats };
   }
@@ -1298,6 +1428,7 @@ import type {
     normGate: StfFlowNormGate | null = null,
     startY = 0,
     stripeHeight = height,
+    middleFraction = 0.5,
   ): Uint16Array {
     if (!Number.isInteger(startY) || !Number.isInteger(stripeHeight) ||
         startY < 0 || stripeHeight <= 0 || startY + stripeHeight > height) {
@@ -1319,10 +1450,13 @@ import type {
     if (!Number.isFinite(resolvedScale) || resolvedScale <= 0) {
       throw new Error("STF Optical Flow extrapolation scale must be finite and positive.");
     }
-    const previousFactor = openingStep ? -resolvedScale : 0.5;
-    const nextFactor = openingStep ? 1 + resolvedScale : variant === "ext2" ? -resolvedScale : 0.5;
+    const previousFactor = openingStep ? -resolvedScale : variant === "mid" ? middleFraction : 0.5;
+    const nextFactor = openingStep ? 1 + resolvedScale : variant === "mid" ? 1 - middleFraction :
+      variant === "ext2" ? -resolvedScale : 0.5;
     const usePrevious = variant !== "ext2";
     const useNext = !openingStep;
+    const midpointBlend = middleFraction === 0.5;
+    const fromPrevious = 1 - middleFraction;
 
     for (let y = startY; y < startY + stripeHeight; y += 1) {
       const flowY = flowHeight === 1 ? 0 : ((y + 0.5) * flowHeight / height) - 0.5;
@@ -1419,9 +1553,16 @@ import type {
 
         const out = ((y - startY) * width + x) * 3;
         if (usePrevious && useNext) {
-          output[out] = clampUint16((previousR + nextR) * 0.5);
-          output[out + 1] = clampUint16((previousG + nextG) * 0.5);
-          output[out + 2] = clampUint16((previousB + nextB) * 0.5);
+          if (midpointBlend) {
+            // Preserve exact historical midpoint arithmetic (and its fast path).
+            output[out] = clampUint16((previousR + nextR) * 0.5);
+            output[out + 1] = clampUint16((previousG + nextG) * 0.5);
+            output[out + 2] = clampUint16((previousB + nextB) * 0.5);
+          } else {
+            output[out] = clampUint16(previousR * fromPrevious + nextR * middleFraction);
+            output[out + 1] = clampUint16(previousG * fromPrevious + nextG * middleFraction);
+            output[out + 2] = clampUint16(previousB * fromPrevious + nextB * middleFraction);
+          }
         } else if (usePrevious) {
           output[out] = clampUint16(previousR);
           output[out + 1] = clampUint16(previousG);
@@ -1434,6 +1575,107 @@ import type {
       }
     }
     return output;
+  }
+
+  // Render all midpoint fractions for one stripe while sampling each native
+  // bidirectional Flow field only once per output pixel. Do not round Flow
+  // samples to Float32 (the original sampler accumulates them in Float64).
+  // RGB sampling, rounding, and per-pixel frame order match synthesizeFlowVariant.
+  function synthesizeMiddleStripeSharedFlow(
+    previous: Uint16Array, next: Uint16Array, width: number, height: number,
+    forward: Float32Array, backward: Float32Array, flowWidth: number, flowHeight: number,
+    startY: number, stripeHeight: number, fractions: readonly number[],
+  ): Uint16Array[] {
+    const outputs = fractions.map(() => new Uint16Array(width * stripeHeight * 3));
+    const scaleX = width / flowWidth;
+    const scaleY = height / flowHeight;
+    const edgeX = Math.max(0, flowWidth - 1);
+    const edgeY = Math.max(0, flowHeight - 1);
+    for (let y = startY; y < startY + stripeHeight; y++) {
+      const flowY = flowHeight === 1 ? 0 : ((y + 0.5) * flowHeight / height) - 0.5;
+      const clampedFlowY = clamp(flowY, 0, edgeY);
+      const flowY0 = Math.floor(clampedFlowY);
+      const flowY1 = Math.min(edgeY, flowY0 + 1);
+      const flowFy = clampedFlowY - flowY0;
+      const flowRow00 = flowY0 * flowWidth;
+      const flowRow10 = flowY1 * flowWidth;
+      for (let x = 0; x < width; x++) {
+        const flowX = flowWidth === 1 ? 0 : ((x + 0.5) * flowWidth / width) - 0.5;
+        const clampedFlowX = clamp(flowX, 0, edgeX);
+        const flowX0 = Math.floor(clampedFlowX);
+        const flowX1 = Math.min(edgeX, flowX0 + 1);
+        const flowFx = clampedFlowX - flowX0;
+        const flowW00 = (1 - flowFx) * (1 - flowFy);
+        const flowW10 = flowFx * (1 - flowFy);
+        const flowW01 = (1 - flowFx) * flowFy;
+        const flowW11 = flowFx * flowFy;
+        const ff00 = (flowRow00 + flowX0) * 2;
+        const ff10 = (flowRow00 + flowX1) * 2;
+        const ff01 = (flowRow10 + flowX0) * 2;
+        const ff11 = (flowRow10 + flowX1) * 2;
+        const forwardX = forward[ff00] * flowW00 + forward[ff10] * flowW10 + forward[ff01] * flowW01 + forward[ff11] * flowW11;
+        const forwardY = forward[ff00 + 1] * flowW00 + forward[ff10 + 1] * flowW10 + forward[ff01 + 1] * flowW01 + forward[ff11 + 1] * flowW11;
+        const backwardX = backward[ff00] * flowW00 + backward[ff10] * flowW10 + backward[ff01] * flowW01 + backward[ff11] * flowW11;
+        const backwardY = backward[ff00 + 1] * flowW00 + backward[ff10 + 1] * flowW10 + backward[ff01 + 1] * flowW01 + backward[ff11 + 1] * flowW11;
+        const out = ((y - startY) * width + x) * 3;
+        for (let index = 0; index < fractions.length; index++) {
+          const middleFraction = fractions[index];
+          const previousFactor = middleFraction;
+          const nextFactor = 1 - middleFraction;
+          const previousX = clamp(x - previousFactor * forwardX * scaleX, 0, width - 1);
+          const previousY = clamp(y - previousFactor * forwardY * scaleY, 0, height - 1);
+          const previousX0 = Math.floor(previousX);
+          const previousY0 = Math.floor(previousY);
+          const previousX1 = Math.min(width - 1, previousX0 + 1);
+          const previousY1 = Math.min(height - 1, previousY0 + 1);
+          const previousFx = previousX - previousX0;
+          const previousFy = previousY - previousY0;
+          const previousW00 = (1 - previousFx) * (1 - previousFy);
+          const previousW10 = previousFx * (1 - previousFy);
+          const previousW01 = (1 - previousFx) * previousFy;
+          const previousW11 = previousFx * previousFy;
+          const previousI00 = (previousY0 * width + previousX0) * 3;
+          const previousI10 = (previousY0 * width + previousX1) * 3;
+          const previousI01 = (previousY1 * width + previousX0) * 3;
+          const previousI11 = (previousY1 * width + previousX1) * 3;
+          const previousR = previous[previousI00] * previousW00 + previous[previousI10] * previousW10 + previous[previousI01] * previousW01 + previous[previousI11] * previousW11;
+          const previousG = previous[previousI00 + 1] * previousW00 + previous[previousI10 + 1] * previousW10 + previous[previousI01 + 1] * previousW01 + previous[previousI11 + 1] * previousW11;
+          const previousB = previous[previousI00 + 2] * previousW00 + previous[previousI10 + 2] * previousW10 + previous[previousI01 + 2] * previousW01 + previous[previousI11 + 2] * previousW11;
+
+          const nextX = clamp(x - nextFactor * backwardX * scaleX, 0, width - 1);
+          const nextY = clamp(y - nextFactor * backwardY * scaleY, 0, height - 1);
+          const nextX0 = Math.floor(nextX);
+          const nextY0 = Math.floor(nextY);
+          const nextX1 = Math.min(width - 1, nextX0 + 1);
+          const nextY1 = Math.min(height - 1, nextY0 + 1);
+          const nextFx = nextX - nextX0;
+          const nextFy = nextY - nextY0;
+          const nextW00 = (1 - nextFx) * (1 - nextFy);
+          const nextW10 = nextFx * (1 - nextFy);
+          const nextW01 = (1 - nextFx) * nextFy;
+          const nextW11 = nextFx * nextFy;
+          const nextI00 = (nextY0 * width + nextX0) * 3;
+          const nextI10 = (nextY0 * width + nextX1) * 3;
+          const nextI01 = (nextY1 * width + nextX0) * 3;
+          const nextI11 = (nextY1 * width + nextX1) * 3;
+          const nextR = next[nextI00] * nextW00 + next[nextI10] * nextW10 + next[nextI01] * nextW01 + next[nextI11] * nextW11;
+          const nextG = next[nextI00 + 1] * nextW00 + next[nextI10 + 1] * nextW10 + next[nextI01 + 1] * nextW01 + next[nextI11 + 1] * nextW11;
+          const nextB = next[nextI00 + 2] * nextW00 + next[nextI10 + 2] * nextW10 + next[nextI01 + 2] * nextW01 + next[nextI11 + 2] * nextW11;
+          const output = outputs[index];
+          if (middleFraction === 0.5) {
+            output[out] = clampUint16((previousR + nextR) * 0.5);
+            output[out + 1] = clampUint16((previousG + nextG) * 0.5);
+            output[out + 2] = clampUint16((previousB + nextB) * 0.5);
+          } else {
+            const fromPrevious = 1 - middleFraction;
+            output[out] = clampUint16(previousR * fromPrevious + nextR * middleFraction);
+            output[out + 1] = clampUint16(previousG * fromPrevious + nextG * middleFraction);
+            output[out + 2] = clampUint16(previousB * fromPrevious + nextB * middleFraction);
+          }
+        }
+      }
+    }
+    return outputs;
   }
 
   function describeVariant(variant: OpticalFlowVariant): string {

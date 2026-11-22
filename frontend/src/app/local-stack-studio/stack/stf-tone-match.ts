@@ -250,6 +250,20 @@ function sampleStfToneMatchLut(lut: StfToneMatchLut, sourceIntensity: number): n
   return lo + (hi - lo) * fraction;
 }
 
+// Exactly reproduce the old per-channel Float32 intermediate rounding, but
+// evaluate the 65,536 possible RGB16 codes only once (256KiB read-only LUT).
+let generatedRgb16DecodeLut: Float32Array | null = null;
+function getGeneratedRgb16DecodeLut(): Float32Array {
+  if (generatedRgb16DecodeLut) return generatedRgb16DecodeLut;
+  const lut = new Float32Array(65536);
+  for (let code = 0; code < lut.length; code++) {
+    const encoded = code / 65535;
+    lut[code] = Math.fround(4 * encoded * encoded);
+  }
+  generatedRgb16DecodeLut = lut;
+  return lut;
+}
+
 /**
  * Streamed STF virtual RGB16 hot path: decode gamma-2, tone match, and add to
  * the destination accumulator without allocating an RGB Float32 stripe.
@@ -276,13 +290,11 @@ export function addStfGeneratedRgb16StripeToAccumulator(
     throw new Error("STF tone-match parameters are invalid.");
   }
   const neutral = Math.abs(gain - 1) <= 1e-8 && Math.abs(scaledLog) <= 1e-8;
+  const decode = getGeneratedRgb16DecodeLut();
   for (let i = 0; i < length; i += 3) {
-    const er = encoded[i] / 65535;
-    const eg = encoded[i + 1] / 65535;
-    const eb = encoded[i + 2] / 65535;
-    let r = Math.fround(4 * er * er);
-    let g = Math.fround(4 * eg * eg);
-    let b = Math.fround(4 * eb * eb);
+    let r = decode[encoded[i]];
+    let g = decode[encoded[i + 1]];
+    let b = decode[encoded[i + 2]];
     if (!neutral) {
       const intensity = toneLinearIntensity(r, g, b);
       if (intensity > STF_TONE_EPSILON) {

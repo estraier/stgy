@@ -3,24 +3,34 @@ import type { OpticalFlowOpeningVariant } from "../workers/protocols/optical-flo
 
 export const STF_EXTRAPOLATION_COUNTS = [1, 2, 3, 4, 5, 6, 9, 12] as const;
 export type StfExtrapolationCount = typeof STF_EXTRAPOLATION_COUNTS[number];
-export type StfFrameGenerationMode = "off" | "interpolation" | `extrapolation-${StfExtrapolationCount}`;
+export const STF_INTERPOLATION_COUNTS = [1, 2, 3, 4] as const;
+export type StfInterpolationCount = typeof STF_INTERPOLATION_COUNTS[number];
+export type StfFrameGenerationMode = "off" | "interpolation" | `interpolation-${StfInterpolationCount}` |
+  `extrapolation-${StfExtrapolationCount}`;
+const STF_INTERPOLATION_MODE_SET: ReadonlySet<string> = new Set(
+  STF_INTERPOLATION_COUNTS.map((count) => `interpolation-${count}`),
+);
 const STF_EXTRAPOLATION_MODE_SET: ReadonlySet<string> = new Set(
   STF_EXTRAPOLATION_COUNTS.map((count) => `extrapolation-${count}`),
 );
 
 export function isStfFrameGenerationMode(value: string): value is StfFrameGenerationMode {
-  return value === "off" || value === "interpolation" || STF_EXTRAPOLATION_MODE_SET.has(value);
+  // Accept the previous internal value as an alias for Interpolation 1.
+  return value === "off" || value === "interpolation" ||
+    STF_INTERPOLATION_MODE_SET.has(value) || STF_EXTRAPOLATION_MODE_SET.has(value);
 }
 
 export type StfMiddleFrame = {
   previousIndex: number;
   nextIndex: number;
   fNumber: number;
+  // Position between the two original F-number sources, from 0 to 1.
+  interpolationFraction: number;
   weight: number;
   pairLabel: string;
 };
 
-export type StfOuterFrame = StfMiddleFrame & (
+export type StfOuterFrame = Omit<StfMiddleFrame, "interpolationFraction"> & (
   | {
       variant: OpticalFlowOpeningVariant;
       // Outward radius-domain displacement, used only for geometry/diagnostics.
@@ -120,17 +130,30 @@ export function buildStfFrameSet(
   const middleFrames: StfMiddleFrame[] = [];
   const outerFrames: StfOuterFrame[] = [];
   if (mode !== "off") {
+    // Only interpolation-only modes control the density of intermediate frames.
+    const middleCount = mode.startsWith("interpolation-")
+      ? Number(mode.slice("interpolation-".length)) : 1;
     for (let i = 1; i < sorted.length; i += 1) {
       if (!(sorted[i].fNumber > sorted[i - 1].fNumber)) {
         throw new Error("STF Frame generation requires distinct EXIF F-numbers for every input.");
       }
-      middleFrames.push({
-        previousIndex: sorted[i - 1].index,
-        nextIndex: sorted[i].index,
-        fNumber: Math.sqrt(sorted[i - 1].fNumber * sorted[i].fNumber),
-        weight: 0,
-        pairLabel: `${i}/${sorted.length - 1}`,
-      });
+      // Extrapolation deliberately retains exactly one 50% middle frame per
+      // real pair, independent of the interpolation-only density settings.
+      const previousF = sorted[i - 1].fNumber;
+      const nextF = sorted[i].fNumber;
+      for (let step = 1; step <= middleCount; step += 1) {
+        const t = step / (middleCount + 1);
+        middleFrames.push({
+          previousIndex: sorted[i - 1].index,
+          nextIndex: sorted[i].index,
+          fNumber: middleCount === 1 ? Math.sqrt(previousF * nextF) :
+            previousF * (nextF / previousF) ** t,
+          interpolationFraction: t,
+          weight: 0,
+          pairLabel: middleCount === 1 ? `${i}/${sorted.length - 1}` :
+            `${i}/${sorted.length - 1} (${step}/${middleCount + 1})`,
+        });
+      }
     }
 
     const openingCount = mode.startsWith("extrapolation-")
@@ -200,8 +223,10 @@ export function buildStfFrameSet(
   // the SAME radii and the independently propagated, tone-matched densities.
   const densityFNumbers = [
     ...realFNumbers,
-    ...middleFrames.map((frame) =>
-      (realFNumbers[frame.previousIndex] + realFNumbers[frame.nextIndex]) / 2),
+    ...middleFrames.map((frame) => frame.interpolationFraction === 0.5
+      ? (realFNumbers[frame.previousIndex] + realFNumbers[frame.nextIndex]) / 2
+      : (1 - frame.interpolationFraction) * realFNumbers[frame.previousIndex] +
+        frame.interpolationFraction * realFNumbers[frame.nextIndex]),
     ...outerFrames.map((frame) => realFNumbers[
       frame.variant === "ext2" ? frame.nextIndex : frame.previousIndex]),
   ];

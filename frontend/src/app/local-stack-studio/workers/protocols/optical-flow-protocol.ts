@@ -12,6 +12,9 @@ export type OpticalFlowWorkerInterpolateRequest = {
   width: number;
   height: number;
   variant: OpticalFlowVariant;
+  // Optional streamed midpoint fractions, synthesized in one request using
+  // the same real-pair forward/backward Flow. Omitted means a single 50% frame.
+  middleFractions?: number[];
   // Inverse Warp's destination-indexed sampling factor. FS does not
   // use this for projection or hole filling (FS uses covered neighbors).
   variantScale?: number;
@@ -65,6 +68,7 @@ export type OpticalFlowWorkerStripeAckRequest = {
   requestId: number;
   y: number;
   kind: "primary" | "additional";
+  middleIndex?: number;
 };
 export type OpticalFlowWorkerStripeAbortRequest = {
   type: "stripe-abort";
@@ -77,7 +81,32 @@ export type OpticalFlowWorkerRequest = OpticalFlowWorkerInterpolateRequest | Opt
   OpticalFlowWorkerWarpOpeningAverageRequest | OpticalFlowWorkerReleaseRetainedRequest |
   OpticalFlowWorkerStripeAckRequest | OpticalFlowWorkerStripeAbortRequest;
 
+/** Timings of existing STF generation stages. Overlapping/nested stages are noted
+ * in the console output; no per-pixel clock reads are performed. */
+export type StfFlowGenerationProfile = {
+  gateNormsMs?: number;
+  gateSortMs?: number;
+  gateBuilds?: number;
+  averageFlowMs?: number;
+  fsPlanMs?: number;
+  fsRowReachMs?: number;
+  fsTileSearchMs?: number;
+  fsSplatMs?: number;
+  fsRenderMs?: number;
+  fsFullFrameFallback?: boolean;
+  // One entry for each requested middle frame, in interpolation order.
+  middleFrameWarpMs?: number[];
+  // Multi-interpolation samples the bidirectional Flow once per output pixel
+  // across all requested fractions; timings cannot be separated by frame.
+  middleSharedWarpMs?: number;
+};
+
 export type OpticalFlowPerformanceStats = {
+  profile?: StfFlowGenerationProfile;
+  // Main-thread synchronous input preparation and postMessage timings.
+  inputCloneMs?: number;
+  inputClonedBytes?: number;
+  inputPostMs?: number;
   sourceWidth: number;
   sourceHeight: number;
   flowWidth: number;
@@ -152,12 +181,15 @@ export type OpticalFlowWorkerWarpRetainedResponse = {
   warpMs: number;
   warpScratchBytes?: number;
   estimatedPeakBytes?: number;
+  profile?: StfFlowGenerationProfile;
 };
 
 export type OpticalFlowWorkerStripeResponse = {
   type: "stripe";
   requestId: number;
   kind: "primary" | "additional";
+  // Identifies which of this pair's middle frames the primary stripe belongs to.
+  middleIndex?: number;
   y: number;
   height: number;
   width: number;
@@ -174,6 +206,7 @@ export type OpticalFlowWorkerStreamResultResponse = {
   stripeAckWaitMs?: number;
   warpScratchBytes?: number;
   estimatedPeakBytes?: number;
+  profile?: StfFlowGenerationProfile;
 };
 
 export type OpticalFlowWorkerErrorResponse = {

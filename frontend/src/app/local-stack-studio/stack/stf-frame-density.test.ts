@@ -76,6 +76,33 @@ describe("STF independent edge-density preparation", () => {
     },
   );
 
+  test.each([1, 2, 3, 4] as const)("Interpolation %i propagates per-fraction gamma2 densities and tone plans", (count) => {
+    const f = [2, 3.2, 4.8];
+    const sourceTone = [
+      { gain: 1.2, scaledLog: -0.3 },
+      { gain: 0.8, scaledLog: 0.2 },
+      { gain: 1.5, scaledLog: 0.6 },
+    ];
+    const mode = `interpolation-${count}` as `interpolation-${1 | 2 | 3 | 4}`;
+    const frames = buildStfFrameSet(f, 1, mode);
+    const prepared = prepareStfFrameSetForTone(frames, f, sourceTone, 0.8, 1);
+    expect(prepared.middleFrames).toHaveLength(2 * count);
+    expect(prepared.edgeDensities).toHaveLength(f.length + 2 * count);
+    for (let i = 0; i < prepared.middleFrames.length; i++) {
+      const frame = prepared.middleFrames[i];
+      const t = frame.interpolationFraction;
+      const previousTone = sourceTone[frame.previousIndex];
+      const nextTone = sourceTone[frame.nextIndex];
+      const expectedTone = interpolateStfTonePlan(previousTone, nextTone, t);
+      expect(prepared.virtualTonePlans.middle[i]).toEqual(expectedTone);
+      const scale = 0.8 / (Math.max(...f) ** 2);
+      const gamma2Density = scale * ((1 - t) * f[frame.previousIndex] + t * f[frame.nextIndex]) ** 2;
+      const expectedDensity = transformStfToneIntensity(gamma2Density, expectedTone.gain, expectedTone.scaledLog);
+      expect(prepared.edgeDensities[f.length + i]).toBeCloseTo(expectedDensity, 12);
+    }
+    expect(Array.from(prepared.allWeights).reduce((a, b) => a + b, 0)).toBeCloseTo(1, 6);
+  });
+
   test("real-source tone plan is inherited exactly by opening and closing extrapolations", () => {
     const plans = realF.map((_, i) => ({ gain: 1 + i * 0.12, scaledLog: (i - 3) * 0.05 }));
     const prepared = prepareStfFrameSetForTone(

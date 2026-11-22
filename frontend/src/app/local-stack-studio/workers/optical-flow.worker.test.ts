@@ -31,8 +31,9 @@ async function runMidpoint(cores: number, memoryGiB: number, additionalVariant?:
   wideImage = false,
   scales?: { main?: number; additional?: number; opening?: number[] },
   norms?: readonly number[], openingVariants: OpticalFlowOpeningVariant[] = [],
-  streaming?: { height?: number; enabled?: boolean }, warpMethod?: OpticalFlowWarpMethod,
-  verticalFlow = 0, patterned = false) {
+  streaming?: { height?: number; enabled?: boolean; ackDelayMs?: number;
+    abortAt?: { middleIndex: number; y: number } }, warpMethod?: OpticalFlowWarpMethod,
+  verticalFlow = 0, patterned = false, middleFractions?: number[]) {
   jest.resetModules();
   const originalWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
   const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
@@ -42,6 +43,10 @@ async function runMidpoint(cores: number, memoryGiB: number, additionalVariant?:
   let spawned = 0;
   let flowComputations = 0;
   const seenGrays: number[][] = [];
+  const outstanding = new Map<string, number>();
+  let unacknowledgedStripes = 0;
+  let maxUnacknowledgedStripes = 0;
+  let maxUnacknowledgedGroups = 0;
 
   class FakeDirectionWorker {
     readonly index = spawned++;
@@ -87,10 +92,28 @@ async function runMidpoint(cores: number, memoryGiB: number, additionalVariant?:
     configurable: true, value: (message: OpticalFlowWorkerResponse) => {
       messages.push(message);
       if (streaming?.enabled && message.type === "stripe") {
-        // Emulate the main thread: acknowledge only after each stripe arrives.
-        queueMicrotask(() => void (globalThis as unknown as ParentScope).onmessage?.({ data: {
-          type: "stripe-ack", requestId: message.requestId, kind: message.kind, y: message.y,
-        } } as MessageEvent<OpticalFlowWorkerRequest>));
+        // Emulate the main thread: each stripe is acknowledged individually.
+        const groupKey = `${message.kind}:${message.y}`;
+        outstanding.set(groupKey, (outstanding.get(groupKey) ?? 0) + 1);
+        unacknowledgedStripes++;
+        maxUnacknowledgedStripes = Math.max(maxUnacknowledgedStripes, unacknowledgedStripes);
+        maxUnacknowledgedGroups = Math.max(maxUnacknowledgedGroups, outstanding.size);
+        const reply = () => {
+          unacknowledgedStripes--;
+          const remaining = outstanding.get(groupKey)! - 1;
+          if (remaining) outstanding.set(groupKey, remaining);
+          else outstanding.delete(groupKey);
+          const abort = streaming.abortAt && message.kind === "primary" &&
+            message.y === streaming.abortAt.y && message.middleIndex === streaming.abortAt.middleIndex;
+          void (globalThis as unknown as ParentScope).onmessage?.({ data: abort ? {
+            type: "stripe-abort", requestId: message.requestId, message: "Simulated STF stripe consumer failure",
+          } : {
+            type: "stripe-ack", requestId: message.requestId, kind: message.kind, y: message.y,
+            ...(message.middleIndex !== undefined ? { middleIndex: message.middleIndex } : {}),
+          } } as MessageEvent<OpticalFlowWorkerRequest>);
+        };
+        if (streaming.ackDelayMs !== undefined) setTimeout(reply, streaming.ackDelayMs);
+        else queueMicrotask(reply);
       }
     },
   });
@@ -123,7 +146,8 @@ async function runMidpoint(cores: number, memoryGiB: number, additionalVariant?:
         ...(streaming?.enabled ? { streamStripes: true } : {}),
         ...(warpMethod ? { warpMethod } : {}),
         ...(openingVariants.length ? { openingAverageRadiusSpan: 1, previousImageId: 12, nextImageId: 13 } : {}),
-        variant: "mid", ...(additionalVariant ? { additionalVariant } : {}),
+        variant: "mid", ...(middleFractions ? { middleFractions } : {}),
+        ...(additionalVariant ? { additionalVariant } : {}),
         ...(scales?.main !== undefined ? { variantScale: scales.main } : {}),
         ...(scales?.additional !== undefined ? { additionalVariantScale: scales.additional } : {}),
         ...(warpMethod !== "inverse-warp" && warpMethod && additionalVariant ? {
@@ -147,7 +171,8 @@ async function runMidpoint(cores: number, memoryGiB: number, additionalVariant?:
         ...(i === 0 ? { sourceGamma2Buffer: previous.slice().buffer } : {}),
       } } as MessageEvent<OpticalFlowWorkerRequest>);
     }
-    return { messages, spawned, flowComputations, seenGrays };
+    return { messages, spawned, flowComputations, seenGrays,
+      maxUnacknowledgedStripes, maxUnacknowledgedGroups };
   } finally {
     for (const [key, descriptor] of [
       ["Worker", originalWorker],
@@ -333,6 +358,83 @@ test("FS mixes converging source pixels and fills holes from its original covere
   } finally {
     infoSpy.mockRestore();
   }
+});
+
+test("multiple interpolation fractions reuse one bidirectional Flow and stream tagged frames in order", async () => {
+  const fractions = [0.25, 0.5, 0.75];
+  const { messages, flowComputations } = await runMidpoint(8, 8, undefined, false, false,
+    undefined, undefined, [], { enabled: true }, "inverse-warp", 0, false, fractions);
+  expect(flowComputations).toBe(2); // 1 forward and 1 backward, not per generated frame.
+  const stripes = messages.filter((message) => message.requestId === 2 && message.type === "stripe");
+  expect(stripes).toHaveLength(fractions.length);
+  const peaks: number[] = [];
+  for (let i = 0; i < fractions.length; i++) {
+    const stripe = stripes[i];
+    if (stripe.type !== "stripe") throw new Error("Expected STF stripe");
+    expect(stripe.kind).toBe("primary");
+    expect(stripe.middleIndex).toBe(i);
+    const pixels = new Uint16Array(stripe.gamma2Buffer);
+    let weightedX = 0, total = 0;
+    for (let x = 0; x < 7; x++) {
+      const intensity = pixels[(7 + x) * 3];
+      weightedX += x * intensity;
+      total += intensity;
+    }
+    expect(total).toBeGreaterThan(0);
+    peaks.push(weightedX / total);
+  }
+  expect(peaks[0]).toBeLessThan(peaks[1]);
+  expect(peaks[1]).toBeLessThan(peaks[2]);
+  expect(messages.some((message) => message.requestId === 2 && message.type === "stream-result")).toBe(true);
+});
+
+test("multi-fraction shared-Flow stripes exactly match independently warped fractions", async () => {
+  const fractions = [0.2, 0.4, 0.6, 0.8];
+  const options = { enabled: true, height: 260 };
+  const combined = await runMidpoint(8, 8, undefined, false, false,
+    undefined, undefined, [], options, "inverse-warp", 0.75, true, fractions);
+  const combinedStripes = combined.messages.filter((entry) => entry.type === "stripe" && entry.requestId === 2);
+  expect(combinedStripes).toHaveLength(fractions.length * 3);
+  for (let index = 0; index < fractions.length; index++) {
+    const single = await runMidpoint(8, 8, undefined, false, false,
+      undefined, undefined, [], options, "inverse-warp", 0.75, true, [fractions[index]]);
+    const expected = single.messages.filter((entry) => entry.type === "stripe" && entry.requestId === 2);
+    const actual = combinedStripes.filter((entry) => entry.type === "stripe" && entry.middleIndex === index);
+    expect(actual).toHaveLength(expected.length);
+    for (let stripe = 0; stripe < expected.length; stripe++) {
+      if (expected[stripe].type !== "stripe" || actual[stripe].type !== "stripe") throw Error("Missing STF stripe");
+      expect(actual[stripe].y).toBe(expected[stripe].y);
+      expect(Array.from(new Uint16Array(actual[stripe].gamma2Buffer)))
+        .toEqual(Array.from(new Uint16Array(expected[stripe].gamma2Buffer)));
+    }
+  }
+  const reported = combined.messages.find((entry) => entry.type === "stream-result" && entry.requestId === 2);
+  if (reported?.type !== "stream-result") throw Error("Missing STF multi-fraction result");
+  expect(reported.performance.profile?.middleSharedWarpMs).toEqual(expect.any(Number));
+});
+
+test("shared-Flow interpolation pipelines two complete row groups while bounding unacknowledged stripes", async () => {
+  for (const count of [2, 3, 4]) {
+    const fractions = Array.from({ length: count }, (_, index) => (index + 1) / (count + 1));
+    const { messages, maxUnacknowledgedStripes, maxUnacknowledgedGroups } = await runMidpoint(
+      8, 8, undefined, false, false, undefined, undefined, [],
+      { enabled: true, height: 260, ackDelayMs: 1 }, "inverse-warp", 0, true, fractions,
+    );
+    expect(maxUnacknowledgedGroups).toBe(2);
+    expect(maxUnacknowledgedStripes).toBeGreaterThan(2);
+    expect(maxUnacknowledgedStripes).toBeLessThanOrEqual(2 * count);
+    const stripes = messages.filter((message) => message.type === "stripe" && message.requestId === 2);
+    expect(stripes).toHaveLength(3 * count);
+    expect(messages.some((message) => message.type === "stream-result" && message.requestId === 2)).toBe(true);
+  }
+});
+
+test("shared-Flow interpolation abort rejects both pending row groups without completing the stream", async () => {
+  const { messages } = await runMidpoint(8, 8, undefined, false, false,
+    undefined, undefined, [], { enabled: true, height: 260,
+      abortAt: { y: 0, middleIndex: 1 } }, "inverse-warp", 0, true, [0.25, 0.5, 0.75]);
+  expect(messages.some((message) => message.type === "error" && message.requestId === 2)).toBe(true);
+  expect(messages.some((message) => message.type === "stream-result" && message.requestId === 2)).toBe(false);
 });
 
 test("P5-P10 gate protects small-flow pixels in opening and closing extrapolation but not interpolation", async () => {
@@ -819,6 +921,8 @@ test("streamed midpoint, closing and opening RGB16 match full-image Warp exactly
   expect(streamed.messages.some((item) => item.type === "result" || item.type === "warp-result")).toBe(false);
   expect(streamed.messages.find((item) => item.type === "stream-result" && item.requestId === 2)).toMatchObject({
     type: "stream-result", requestId: 2, width, height: fullHeight,
+    performance: { profile: { middleFrameWarpMs: [expect.any(Number)],
+      gateBuilds: 1, gateNormsMs: expect.any(Number), gateSortMs: expect.any(Number) } },
   });
   for (const kind of ["primary", "additional"] as const) {
     const pixels = restoredStreamPixels(streamed.messages, 2, kind, width, fullHeight);
@@ -856,6 +960,10 @@ test("FS streamed midpoint, closing and opening stripes match full RGB16", async
     const streamedScratchBytes = 11 * 257 * (12 + 4) + stripeBytes * 2 + lookupBytes;
     const fullScratchBytes = 11 * 257 * (12 + 4 + 6) + lookupBytes;
     expect(stats.performance?.warpScratchBytes).toBe(streamedScratchBytes);
+    expect(stats.performance?.profile?.middleFrameWarpMs).toHaveLength(1);
+    expect(stats.performance?.profile?.fsPlanMs).toBeGreaterThanOrEqual(0);
+    expect(stats.performance?.profile?.fsSplatMs).toBeGreaterThanOrEqual(0);
+    expect(stats.performance?.profile?.fsRenderMs).toBeGreaterThanOrEqual(0);
     expect(full.performance.warpScratchBytes).toBe(fullScratchBytes);
     expect(stats.performance?.warpScratchBytes).toBeLessThan(fullScratchBytes);
     expect(stats.performance?.estimatedPeakBytes).toBeGreaterThan(stats.performance?.warpScratchBytes ?? 0);
@@ -880,6 +988,9 @@ test("FS streamed midpoint, closing and opening stripes match full RGB16", async
       expect(streamedOpening?.type).toBe("stream-result");
       if (streamedOpening?.type === "stream-result") {
         expect(streamedOpening.warpScratchBytes).toBe(streamedScratchBytes);
+        expect(streamedOpening.profile?.fsPlanMs).toBeGreaterThanOrEqual(0);
+        expect(streamedOpening.profile?.fsRenderMs).toBeGreaterThanOrEqual(0);
+        if (requestId === 3) expect(streamedOpening.profile?.gateBuilds).toBe(1);
         expect(old.warpScratchBytes).toBe(fullScratchBytes);
       }
     }
