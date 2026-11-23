@@ -4,12 +4,32 @@ import {
   readCanonicalStoredRows,
   getCanonicalLinearDecodeLut,
   type CanonicalReadableSession,
+  type CanonicalReadTiming,
 } from "./canonical-source";
 
 const CENTER_FILL_GRAY_LINEAR = 0.21586050011389926; // sRGB 128 / 255 decoded to linear.
 // Limit the aligned Float32 scratch image to ~6 MiB for typical full-width reads.
 const GAMMA2_IMAGE_STRIPE_PIXELS = 512 * 1024;
 const GAMMA2_IMAGE_MAX_STRIPE_ROWS = 128;
+
+/** Optional STF reader timings. Values are inclusive and are not all additive. */
+export type AlignedGamma2ReadProfile = {
+  canonicalReadMs: number;
+  canonicalChunkMs: number;
+  canonicalCopyMs: number;
+  canonicalDecodeMs: number;
+  resampleMs: number;
+  encodeMs: number;
+  directCopyMs: number;
+  directCopyImages: number;
+};
+
+export function createAlignedGamma2ReadProfile(): AlignedGamma2ReadProfile {
+  return {
+    canonicalReadMs: 0, canonicalChunkMs: 0, canonicalCopyMs: 0, canonicalDecodeMs: 0,
+    resampleMs: 0, encodeMs: 0, directCopyMs: 0, directCopyImages: 0,
+  };
+}
 
 export type NormalizationMode = "feature-match" | "center-crop" | "center-fit" | "center-fill" | "top-left-fill";
 
@@ -142,7 +162,7 @@ export class AlignedImageReader {
   }
 
   private async readLinearRegionInternal(imageIndex: number, x: number, y: number, width: number, height: number,
-    stride: number, offsetX: number, offsetY: number): Promise<Float32Array> {
+    stride: number, offsetX: number, offsetY: number, profile?: AlignedGamma2ReadProfile): Promise<Float32Array> {
     const g = this.geometries[imageIndex];
     const inv = this.inverseMatrices[imageIndex];
     if (!g || !inv) throw new Error(`Aligned input ${imageIndex + 1} is unavailable.`);
@@ -176,36 +196,70 @@ export class AlignedImageReader {
     // canonical source pixel in the region.  Use the same Float32 LUT as
     // readCanonicalLinearRows so interpolated values remain bit-identical.
     const useStored = stride > 1;
+    const timing: CanonicalReadTiming | undefined = profile
+      ? { chunkMs: 0, copyMs: 0, decodeMs: 0 } : undefined;
+    const canonicalStarted = profile ? performance.now() : 0;
     const source = useStored
-      ? await readCanonicalStoredRows(this.session, imageIndex, rowStart, rowEnd - rowStart)
-      : await readCanonicalLinearRows(this.session, imageIndex, rowStart, rowEnd - rowStart);
+      ? await readCanonicalStoredRows(this.session, imageIndex, rowStart, rowEnd - rowStart, timing)
+      : await readCanonicalLinearRows(this.session, imageIndex, rowStart, rowEnd - rowStart, timing);
+    if (profile && timing) {
+      profile.canonicalReadMs += performance.now() - canonicalStarted;
+      profile.canonicalChunkMs += timing.chunkMs;
+      profile.canonicalCopyMs += timing.copyMs;
+      profile.canonicalDecodeMs += timing.decodeMs;
+    }
     const lut = useStored ? getCanonicalLinearDecodeLut() : null;
     const sourceRows = rowEnd - rowStart;
     const output = new Float32Array(sampleWidth * sampleHeight * 3);
+    const resampleStarted = profile ? performance.now() : 0;
+    // Keep projective transforms on the original mapping path. For ordinary
+    // affine transforms, avoid two short-lived coordinate objects per pixel.
+    // The exact-zero/one test keeps perspective division semantics unchanged.
+    const fastAffine = inv[6] === 0 && inv[7] === 0 && inv[8] === 1;
+    const mode = g.mode;
+    // BORDER_REPLICATE is defined against the normalized image/crop bounds.
+    const minXBound = mode === "center-crop" ? g.cropX : 0;
+    const maxXBound = mode === "center-crop" ? g.cropX + g.targetWidth - 1 : g.width - 1;
+    const minYBound = mode === "center-crop" ? g.cropY : 0;
+    const maxYBound = mode === "center-crop" ? g.cropY + g.targetHeight - 1 : g.height - 1;
 
     let out = 0;
     for (let localY = 0; localY < sampleHeight; localY += 1) {
       const dy = firstY + localY * stride;
       for (let localX = 0; localX < sampleWidth; localX += 1) {
         const dx = firstX + localX * stride;
-        const n = mapDestinationToNormalized(inv, dx, dy);
-        const p = normalizedToSource(g, n.x, n.y);
-        if (p.fill || !Number.isFinite(p.x) || !Number.isFinite(p.y)) {
+        let px: number, py: number, fill = false;
+        if (fastAffine) {
+          const nx = inv[0] * dx + inv[1] * dy + inv[2];
+          const ny = inv[3] * dx + inv[4] * dy + inv[5];
+          if (mode === "feature-match") {
+            px = nx; py = ny;
+          } else if (mode === "center-crop") {
+            px = nx + g.cropX; py = ny + g.cropY;
+          } else if (mode === "center-fill" || mode === "top-left-fill") {
+            px = nx - g.dx; py = ny - g.dy;
+            fill = px < 0 || py < 0 || px > g.width - 1 || py > g.height - 1;
+          } else if (mode === "center-fit") {
+            const rx = nx - g.dx;
+            const ry = ny - g.dy;
+            px = (rx + 0.5) / g.scaleX - 0.5;
+            py = (ry + 0.5) / g.scaleY - 0.5;
+          } else {
+            throw new Error(`Unsupported normalization mode: ${mode}`);
+          }
+        } else {
+          const n = mapDestinationToNormalized(inv, dx, dy);
+          const p = normalizedToSource(g, n.x, n.y);
+          px = p.x; py = p.y; fill = p.fill;
+        }
+        if (fill || !Number.isFinite(px) || !Number.isFinite(py)) {
           output[out++] = CENTER_FILL_GRAY_LINEAR;
           output[out++] = CENTER_FILL_GRAY_LINEAR;
           output[out++] = CENTER_FILL_GRAY_LINEAR;
           continue;
         }
-        // BORDER_REPLICATE is defined against the normalized source bounds. For
-        // center-crop, normalizedToSource already offsets into the crop; clamping
-        // here against the crop ROI avoids sampling outside that virtual image.
-        let minXBound = 0, maxXBound = g.width - 1, minYBound = 0, maxYBound = g.height - 1;
-        if (g.mode === "center-crop") {
-          minXBound = g.cropX; maxXBound = g.cropX + g.targetWidth - 1;
-          minYBound = g.cropY; maxYBound = g.cropY + g.targetHeight - 1;
-        }
-        const sx = clamp(p.x, minXBound, maxXBound);
-        const sy = clamp(p.y, minYBound, maxYBound);
+        const sx = clamp(px, minXBound, maxXBound);
+        const sy = clamp(py, minYBound, maxYBound);
         const x0 = Math.floor(sx), y0 = Math.floor(sy);
         const x1 = Math.min(maxXBound, x0 + 1), y1 = Math.min(maxYBound, y0 + 1);
         const fx = sx - x0, fy = sy - y0;
@@ -224,13 +278,17 @@ export class AlignedImageReader {
         }
       }
     }
+    if (profile) profile.resampleMs += performance.now() - resampleStarted;
     return output;
   }
 
-  async readGamma2Region(imageIndex: number, x: number, y: number, width: number, height: number, linearRangeMax: 1 | 4 = 1): Promise<Uint16Array> {
-    const linear = await this.readLinearRegion(imageIndex, x, y, width, height);
+  async readGamma2Region(imageIndex: number, x: number, y: number, width: number, height: number,
+    linearRangeMax: 1 | 4 = 1, profile?: AlignedGamma2ReadProfile): Promise<Uint16Array> {
+    const linear = await this.readLinearRegionInternal(imageIndex, x, y, width, height, 1, x, y, profile);
+    const encodeStarted = profile ? performance.now() : 0;
     const output = new Uint16Array(linear.length);
     for (let i=0;i<linear.length;i+=1) output[i] = encodeStoredRgb16Channel(linear[i], "gamma20", linearRangeMax);
+    if (profile) profile.encodeMs += performance.now() - encodeStarted;
     return output;
   }
 
@@ -238,10 +296,33 @@ export class AlignedImageReader {
     return this.readLinearRegion(imageIndex, 0, 0, this.width, this.height);
   }
 
-  async readGamma2Image(imageIndex: number, linearRangeMax: 1 | 4 = 1): Promise<Uint16Array> {
+  async readGamma2Image(imageIndex: number, linearRangeMax: 1 | 4 = 1,
+    profile?: AlignedGamma2ReadProfile): Promise<Uint16Array> {
     const inv = this.inverseMatrices[imageIndex];
     const geometry = this.geometries[imageIndex];
     const mode = geometry?.mode;
+    // Canonical RGB16 is gamma2/range4 already. For an exact feature-match
+    // identity, a decode -> Float32 resample -> encode round trip is needless.
+    // Only take this path for mathematically identical pixels and transfer.
+    if (linearRangeMax === 4 && geometry && inv && mode === "feature-match" &&
+        geometry.width === this.width && geometry.height === this.height &&
+        inv[0] === 1 && inv[1] === 0 && inv[2] === 0 &&
+        inv[3] === 0 && inv[4] === 1 && inv[5] === 0 &&
+        inv[6] === 0 && inv[7] === 0 && inv[8] === 1) {
+      const copyStarted = profile ? performance.now() : 0;
+      const timing: CanonicalReadTiming | undefined = profile
+        ? { chunkMs: 0, copyMs: 0, decodeMs: 0 } : undefined;
+      const stored = await readCanonicalStoredRows(this.session, imageIndex, 0, this.height, timing);
+      if (profile && timing) {
+        const elapsed = performance.now() - copyStarted;
+        profile.canonicalReadMs += elapsed;
+        profile.canonicalChunkMs += timing.chunkMs;
+        profile.canonicalCopyMs += timing.copyMs;
+        profile.directCopyMs += elapsed;
+        profile.directCopyImages++;
+      }
+      return stored;
+    }
     // Perspective transforms require all source rows for each region. Fill modes
     // may also change sampled source-row bounds across stripe boundaries.
     // Preserve their existing single-read behavior to avoid changing pixels.
@@ -249,7 +330,7 @@ export class AlignedImageReader {
         !Number.isInteger(this.height) || this.height <= 0 ||
         mode === "center-fill" || mode === "top-left-fill" ||
         Math.abs(inv[6]) >= 1e-12 || Math.abs(inv[7]) >= 1e-12) {
-      return this.readGamma2Region(imageIndex, 0, 0, this.width, this.height, linearRangeMax);
+      return this.readGamma2Region(imageIndex, 0, 0, this.width, this.height, linearRangeMax, profile);
     }
     const rowsPerStripe = Math.max(1, Math.min(GAMMA2_IMAGE_MAX_STRIPE_ROWS,
       Math.floor(GAMMA2_IMAGE_STRIPE_PIXELS / this.width)));
@@ -260,16 +341,18 @@ export class AlignedImageReader {
     const sourceRowSpan = Math.abs(
       normalizedToSource(geometry, left.x, left.y).y - normalizedToSource(geometry, right.x, right.y).y);
     if (!Number.isFinite(sourceRowSpan) || sourceRowSpan > rowsPerStripe * 2) {
-      return this.readGamma2Region(imageIndex, 0, 0, this.width, this.height, linearRangeMax);
+      return this.readGamma2Region(imageIndex, 0, 0, this.width, this.height, linearRangeMax, profile);
     }
     const output = new Uint16Array(this.width * this.height * 3);
     for (let y = 0; y < this.height; y += rowsPerStripe) {
       const rows = Math.min(rowsPerStripe, this.height - y);
-      const linear = await this.readLinearRegion(imageIndex, 0, y, this.width, rows);
+      const linear = await this.readLinearRegionInternal(imageIndex, 0, y, this.width, rows, 1, 0, y, profile);
       const offset = y * this.width * 3;
+      const encodeStarted = profile ? performance.now() : 0;
       for (let i = 0; i < linear.length; i += 1) {
         output[offset + i] = encodeStoredRgb16Channel(linear[i], "gamma20", linearRangeMax);
       }
+      if (profile) profile.encodeMs += performance.now() - encodeStarted;
     }
     return output;
   }

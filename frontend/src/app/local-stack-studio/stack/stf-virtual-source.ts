@@ -1,7 +1,7 @@
 import { addStfGeneratedRgb16StripeToAccumulator, buildStfToneMatchLut, type StfToneMatchPlan, type StfToneMatchLut } from "./stf-tone-match";
 import { StfOpticalFlowClient, type StfFlowStripe } from "./stf-optical-flow-client";
 import { stfPairFarnebackWinsize } from "./stf-farneback-winsize";
-import type { AlignedImageReader } from "./aligned-reader";
+import { createAlignedGamma2ReadProfile, type AlignedGamma2ReadProfile, type AlignedImageReader } from "./aligned-reader";
 import type { StfOuterFrame } from "./stf-frame-generation";
 import type { OpticalFlowWarpMethod, StfFlowGenerationProfile } from "../workers/protocols/optical-flow-protocol";
 import type { StfTonePreparedFrameSet } from "./stf-frame-density";
@@ -79,7 +79,7 @@ export async function appendStfVirtualSource(
     const cached = imageCache.get(imageIndex);
     if (cached) return cached;
     const readStartedAt = performance.now();
-    const image = await reader.readGamma2Image(imageIndex, 4);
+    const image = await reader.readGamma2Image(imageIndex, 4, readProfile);
     inputReadMs += performance.now() - readStartedAt;
     inputReadBytes += image.byteLength;
     imageCache.set(imageIndex, image);
@@ -101,6 +101,16 @@ export async function appendStfVirtualSource(
   let virtualStripes = 0;
   let inputReadMs = 0;
   let inputReadBytes = 0;
+  const readProfile: AlignedGamma2ReadProfile = createAlignedGamma2ReadProfile();
+  const formatRead = (p: AlignedGamma2ReadProfile) =>
+    `readCanonical=${ms(p.canonicalReadMs)} readChunk=${ms(p.canonicalChunkMs)} ` +
+    `readCopy=${ms(p.canonicalCopyMs)} readDecode=${ms(p.canonicalDecodeMs)} ` +
+    `readResample=${ms(p.resampleMs)} readEncode=${ms(p.encodeMs)} ` +
+    `readDirect=${ms(p.directCopyMs)} readDirectImages=${p.directCopyImages}`;
+  const snapshotRead = (): AlignedGamma2ReadProfile => ({ ...readProfile });
+  const diffRead = (start: AlignedGamma2ReadProfile): AlignedGamma2ReadProfile =>
+    Object.fromEntries((Object.keys(readProfile) as (keyof AlignedGamma2ReadProfile)[])
+      .map((key) => [key, readProfile[key] - start[key]])) as AlignedGamma2ReadProfile;
   let inputCloneMs = 0;
   let inputClonedBytes = 0;
   let inputPostMs = 0;
@@ -148,6 +158,7 @@ export async function appendStfVirtualSource(
           : new StfOpticalFlowClient(options.progress);
       }
       const readBefore = inputReadMs;
+      const readDetailBefore = snapshotRead();
       const previous = await getImage(middle.previousIndex);
       const next = await getImage(middle.nextIndex);
       const isLastPair = middleIndex + pairFrames.length === frameSet.middleFrames.length;
@@ -251,6 +262,7 @@ export async function appendStfVirtualSource(
         `middleSharedWarp=${ms(detail?.middleSharedWarpMs)} ` +
         `middleFractions=[${pairFrames.map((frame) => frame.interpolationFraction.toFixed(5)).join(",")}] ` +
         `inputRead=${ms(inputReadMs - readBefore)} ` +
+        `${formatRead(diffRead(readDetailBefore))} ` +
         `inputClone=${ms(flowPerformance.inputCloneMs)} ` +
         `inputCloned=${reportMb(flowPerformance.inputClonedBytes)} ` +
         `inputPostSync=${ms(flowPerformance.inputPostMs)} ` +
@@ -274,6 +286,7 @@ export async function appendStfVirtualSource(
       for (const outer of openingOuterFrames) {
         options.progress?.(`Generating STF Average Flow frame ${outer.pairLabel}...`);
         const readBefore = inputReadMs;
+        const readDetailBefore = snapshotRead();
         const source = firstWarp ? await getImage(outer.previousIndex) : undefined;
         const tone = toneForOuter(outer);
         const outerStarted = performance.now();
@@ -314,6 +327,7 @@ export async function appendStfVirtualSource(
         const detail = outerPerformance.profile;
         console.info(`[LSS STF profile] type=opening frame=${outer.variant} ` +
           `inputRead=${ms(inputReadMs - readBefore)} ` +
+          `${formatRead(diffRead(readDetailBefore))} ` +
           `inputClone=${ms(outerPerformance.inputCloneMs)} ` +
           `inputCloned=${reportMb(outerPerformance.inputClonedBytes)} ` +
           `inputPostSync=${ms(outerPerformance.inputPostMs)} ` +
@@ -340,6 +354,7 @@ export async function appendStfVirtualSource(
       `cacheSaveOutcomes=${JSON.stringify(Object.fromEntries(cacheSaveOutcomes))}.`);
     console.info(`[LSS STF profile summary] mode=${frameSet.mode} ` +
       `inputRead=${ms(inputReadMs)} inputReadBytes=${reportMb(inputReadBytes)} ` +
+      `${formatRead(readProfile)} ` +
       `inputClone=${ms(inputCloneMs)} inputCloned=${reportMb(inputClonedBytes)} ` +
       `inputPostSync=${ms(inputPostMs)} ` +
       `gateNorms=${ms(profileTotals.gateNormsMs)} gateSort=${ms(profileTotals.gateSortMs)} ` +

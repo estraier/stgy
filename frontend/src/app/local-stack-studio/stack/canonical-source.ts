@@ -544,7 +544,11 @@ async function readChunk(session: CanonicalReadableSession, imageIndex: number, 
   return data;
 }
 
-export async function readCanonicalStoredRows(session: CanonicalReadableSession, imageIndex: number, startRow: number, rowCount: number): Promise<Uint16Array> {
+/** Optional coarse timings: no clocks are sampled inside per-channel decode loops. */
+export type CanonicalReadTiming = { chunkMs: number; copyMs: number; decodeMs: number };
+
+export async function readCanonicalStoredRows(session: CanonicalReadableSession, imageIndex: number, startRow: number, rowCount: number,
+  timing?: CanonicalReadTiming): Promise<Uint16Array> {
   const meta = session.images[imageIndex];
   if (!meta?.complete) throw new Error(`Canonical input cache is incomplete for image ${imageIndex + 1}.`);
   if (!Number.isInteger(startRow) || !Number.isInteger(rowCount) || startRow < 0 || rowCount < 0 || startRow + rowCount > meta.height) throw new Error("Canonical row request is out of bounds.");
@@ -555,14 +559,18 @@ export async function readCanonicalStoredRows(session: CanonicalReadableSession,
   for (let chunkIndex = firstChunk; chunkIndex <= lastChunk; chunkIndex += 1) {
     const chunkStart = chunkIndex * meta.rowsPerChunk;
     const chunkRows = Math.min(meta.rowsPerChunk, meta.height - chunkStart);
+    const fetchStarted = timing ? performance.now() : 0;
     const chunk = await readChunk(session, imageIndex, chunkIndex);
+    if (timing) timing.chunkMs += performance.now() - fetchStarted;
     if (chunk.length !== chunkRows * meta.width * 3) throw new Error(`Canonical input cache is incomplete for ${meta.fileName}.`);
     const copyStartRow = Math.max(startRow, chunkStart);
     const copyEndRow = Math.min(startRow + rowCount, chunkStart + chunkRows);
     const rows = copyEndRow - copyStartRow;
     const src = (copyStartRow - chunkStart) * meta.width * 3;
     const dst = (copyStartRow - startRow) * meta.width * 3;
+    const copyStarted = timing ? performance.now() : 0;
     output.set(chunk.subarray(src, src + rows * meta.width * 3), dst);
+    if (timing) timing.copyMs += performance.now() - copyStarted;
   }
   return output;
 }
@@ -578,11 +586,14 @@ function canonicalDecodeLut(): Float32Array {
 /** The same Float32 lookup used by full-row decoding, for sparse aligned reads. */
 export function getCanonicalLinearDecodeLut(): Float32Array { return canonicalDecodeLut(); }
 
-export async function readCanonicalLinearRows(session: CanonicalReadableSession, imageIndex: number, startRow: number, rowCount: number): Promise<Float32Array> {
-  const stored = await readCanonicalStoredRows(session, imageIndex, startRow, rowCount);
+export async function readCanonicalLinearRows(session: CanonicalReadableSession, imageIndex: number, startRow: number, rowCount: number,
+  timing?: CanonicalReadTiming): Promise<Float32Array> {
+  const stored = await readCanonicalStoredRows(session, imageIndex, startRow, rowCount, timing);
+  const decodeStarted = timing ? performance.now() : 0;
   const lut = canonicalDecodeLut();
   const output = new Float32Array(stored.length);
   for (let i = 0; i < stored.length; i += 1) output[i] = lut[stored[i]];
+  if (timing) timing.decodeMs += performance.now() - decodeStarted;
   return output;
 }
 

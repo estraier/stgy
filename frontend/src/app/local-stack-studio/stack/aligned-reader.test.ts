@@ -20,8 +20,9 @@ jest.mock("./canonical-source", () => ({
   }),
 }));
 
-import { AlignedImageReader } from "./aligned-reader";
-import { readCanonicalLinearRows } from "./canonical-source";
+import { AlignedImageReader, createAlignedGamma2ReadProfile } from "./aligned-reader";
+import { readCanonicalLinearRows, readCanonicalStoredRows } from "./canonical-source";
+import { decodeStoredRgb16Channel, encodeStoredRgb16Channel } from "@/image/rgb16-storage";
 
 function rgb(values: number[]): Float32Array {
   const out = new Float32Array(values.length * 3);
@@ -156,7 +157,11 @@ describe("AlignedImageReader full RGB16 reads", () => {
         { normalizationMode: variant.mode, targetWidth: variant.width, targetHeight: variant.height },
         { matrices: [variant.matrix] });
       for (const range of [1, 4] as const) {
-        const expected = await reader.readGamma2Region(0, 0, 0, variant.width, variant.height, range);
+        // The test's fake stored codes and Float32 linear values are intentionally
+        // independent. An identity/range4 read must return the raw stored codes.
+        const expected = variant.mode === "feature-match" && variant.matrix === identity && range === 4
+          ? await readCanonicalStoredRows(session(sourceWidth, sourceHeight), 0, 0, sourceHeight)
+          : await reader.readGamma2Region(0, 0, 0, variant.width, variant.height, range);
         const actual = await reader.readGamma2Image(0, range);
         expect(actual).toEqual(expected);
       }
@@ -168,7 +173,7 @@ describe("AlignedImageReader full RGB16 reads", () => {
     sources[0] = rgb(Array.from({ length: width * height }, (_, i) => (i % 17) / 16));
     const reader = new AlignedImageReader(session(width, height),
       { normalizationMode: "feature-match", targetWidth: width, targetHeight: height },
-      { matrices: [identity] });
+      { matrices: [new Float64Array([1, 0, 0.25, 0, 1, -0.25, 0, 0, 1])] });
     const rows = jest.mocked(readCanonicalLinearRows);
     rows.mockClear();
     const result = await reader.readGamma2Image(0, 4);
@@ -195,11 +200,59 @@ describe("AlignedImageReader full RGB16 reads", () => {
     sources[0] = rgb(Array.from({ length: width * height }, (_, i) => (i % 29) / 28));
     const reader = new AlignedImageReader(session(width, height),
       { normalizationMode: "feature-match", targetWidth: width, targetHeight: height },
-      { matrices: [identity] });
+      { matrices: [new Float64Array([1, 0, 0.25, 0, 1, -0.25, 0, 0, 1])] });
     const rows = jest.mocked(readCanonicalLinearRows);
     rows.mockClear();
     await reader.readGamma2Image(0);
     expect(rows.mock.calls.length).toBeGreaterThan(1);
     expect(rows.mock.calls.every((call) => call[3] < height)).toBe(true);
+  });
+});
+
+
+describe("AlignedImageReader gamma2 identity fast path", () => {
+  test("all 65,536 canonical codes survive Float32 decode/re-encode exactly", () => {
+    for (let code = 0; code <= 65535; code++) {
+      const linear = Math.fround(decodeStoredRgb16Channel(code, "gamma20", 4));
+      expect(encodeStoredRgb16Channel(linear, "gamma20", 4)).toBe(code);
+    }
+  });
+
+  test("copies stored RGB16 without decoding only for a true range4 identity", async () => {
+    const width = 3, height = 2;
+    sources[0] = rgb([0.1, 0.2, 0.3, 0.4, 0.5, 0.6]);
+    const reader = new AlignedImageReader(session(width, height),
+      { normalizationMode: "feature-match", targetWidth: width, targetHeight: height },
+      { matrices: [identity] });
+    const stored = jest.mocked(readCanonicalStoredRows);
+    const linear = jest.mocked(readCanonicalLinearRows);
+    stored.mockClear(); linear.mockClear();
+    const profile = createAlignedGamma2ReadProfile();
+    const pixels = await reader.readGamma2Image(0, 4, profile);
+    expect(pixels).toEqual(await readCanonicalStoredRows(session(width, height), 0, 0, height));
+    expect(stored).toHaveBeenCalled();
+    expect(linear).not.toHaveBeenCalled();
+    expect(profile.directCopyImages).toBe(1);
+    expect(profile.canonicalReadMs).toBeGreaterThanOrEqual(0);
+
+    stored.mockClear(); linear.mockClear();
+    await reader.readGamma2Image(0, 1, createAlignedGamma2ReadProfile());
+    expect(linear).toHaveBeenCalled();
+  });
+
+  test("does not bypass alignment for a subpixel translation", async () => {
+    sources[0] = rgb([0.1, 0.2, 0.3, 0.4, 0.5, 0.6]);
+    const reader = new AlignedImageReader(session(3, 2),
+      { normalizationMode: "feature-match", targetWidth: 3, targetHeight: 2 },
+      { matrices: [new Float64Array([1, 0, 0.25, 0, 1, 0, 0, 0, 1])] });
+    const linear = jest.mocked(readCanonicalLinearRows);
+    linear.mockClear();
+    const profile = createAlignedGamma2ReadProfile();
+    const actual = await reader.readGamma2Image(0, 4, profile);
+    expect(actual).toEqual(await reader.readGamma2Region(0, 0, 0, 3, 2, 4));
+    expect(linear).toHaveBeenCalled();
+    expect(profile.directCopyImages).toBe(0);
+    expect(profile.resampleMs).toBeGreaterThanOrEqual(0);
+    expect(profile.encodeMs).toBeGreaterThanOrEqual(0);
   });
 });
