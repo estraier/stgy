@@ -27,8 +27,7 @@ import {
   clampStackClahe,
   clampStackScaledLog,
 } from "./postprocess";
-import { cleanupLssTemporaryCacheOnNewSession } from "./cache-cleanup";
-import { deleteStfFlowSession } from "./stf-flow-cache";
+import { cleanupLssTemporaryCacheOnNewSession, deleteLssSession } from "./cache-cleanup";
 import {
   createStackScratchSessionId as createMedianScratchSessionId,
   createStackScratchSessionId as createStfAdditionalBlurScratchSessionId,
@@ -77,8 +76,6 @@ import {
   canonicalFilesSignature,
   completeCanonicalSession,
   createCanonicalSession,
-  deleteCanonicalSession,
-  estimateCanonicalCapacity,
   materializeCanonicalLinearImage,
   writeCanonicalStoredImage,
 } from "./canonical-source";
@@ -292,6 +289,25 @@ function loadExifMetadataModule() {
 
 let currentCanonicalSession = null;
 let pendingOldSessionDeletion: Promise<void> = Promise.resolve();
+const oldSessionsNeedingDeletion = new Set<string>();
+function queueOldSessionDeletion(session) {
+  oldSessionsNeedingDeletion.add(session.id);
+  pendingOldSessionDeletion = pendingOldSessionDeletion.then(async () => {
+    try {
+      await deleteLssSession(session);
+      oldSessionsNeedingDeletion.delete(session.id);
+    } catch (error) {
+      console.warn("LSS previous-session cleanup failed; retrying before the next Process.", error);
+    }
+  });
+}
+async function finishPendingOldSessionDeletion() {
+  await pendingOldSessionDeletion;
+  for (const sessionId of oldSessionsNeedingDeletion) {
+    await deleteLssSession(sessionId);
+    oldSessionsNeedingDeletion.delete(sessionId);
+  }
+}
 // Keep only one complete STF Source, separate from the real-only Sobel/Gate.
 const stfSourceCache = new StfSourceCache();
 function resetStfProcessCaches() {
@@ -567,10 +583,7 @@ function onInputFileSelection() {
   if (previousCanonicalSession) {
     // Only this tab's prior session is deleted immediately. No other tab IDs
     // are needed; abandoned sessions are reclaimed by 1800s creation age.
-    pendingOldSessionDeletion = Promise.all([
-      deleteCanonicalSession(previousCanonicalSession).catch(() => {}),
-      deleteStfFlowSession(previousCanonicalSession.id).catch(() => {}),
-    ]).then(() => undefined);
+    queueOldSessionDeletion(previousCanonicalSession);
   }
   const count = inputFiles.files ? inputFiles.files.length : 0;
   fileCount.textContent = count === 0
@@ -765,7 +778,7 @@ listen(processButton, "click", async () => {
     // New file selection clears currentCanonicalSession. Repeated Process with
     // no new selection keeps it, regardless of q, Blur, or frame generation.
     if (!currentCanonicalSession) {
-      await pendingOldSessionDeletion;
+      await finishPendingOldSessionDeletion();
       const cleanupStartedAt = performance.now();
       try {
         await cleanupLssTemporaryCacheOnNewSession();
@@ -2886,7 +2899,7 @@ async function alignAndMergeFilesWithOpenCv(
 
     if (mergePlan.mode === "focus") {
       focusScratchDb = await openMedianScratchDb("Focus features");
-      focusScratchSessionId = createMedianScratchSessionId();
+      focusScratchSessionId = createMedianScratchSessionId(canonicalSession.id, canonicalSession.createdAt);
       const focusCanonicalConfig = {
         sessionId: canonicalSession.id,
         alignmentPlan: {
@@ -3065,6 +3078,7 @@ async function alignAndMergeFilesWithOpenCv(
       }
       return await mergeStfWithAdditionalBlur(
         canonicalSession.id,
+        canonicalSession.createdAt,
         reader,
         alignmentPlan,
         matrices,
@@ -3252,7 +3266,7 @@ function finalizeStfBasicGate(values, width, height, outputColorSpace) {
 }
 
 async function mergeStfWithAdditionalBlur(
-  sessionId, reader, alignmentPlan, matrices, inputInfos, mergePlan, width, height, outputColorSpace,
+  sessionId, sessionCreatedAt, reader, alignmentPlan, matrices, inputInfos, mergePlan, width, height, outputColorSpace,
   infoTrace: { previewMs: number; add: (label: string, durationMs: number, includedIn?: string) => void; warnings: string[] } | null = null,
   sourceOverride = null,
   sourceCacheKey = null,
@@ -3342,7 +3356,7 @@ async function mergeStfWithAdditionalBlur(
       await p.configureRelativeChannelFloors(floors);
 
       // Defer opening scratch storage until a stripe exceeds the RAM budget.
-      scratchSessionId = createStfAdditionalBlurScratchSessionId();
+      scratchSessionId = createStfAdditionalBlurScratchSessionId(sessionId, sessionCreatedAt);
       const groupCount = p.ready.groupCount;
       const sharpnessSamples = [];
       // Never synthesize a second real-only source when virtual frames have
@@ -5175,15 +5189,12 @@ async function ensureCanonicalSession(files, inputInfos, existingSession, requir
   }
 
   if (existingSession) {
-    // Rebuild the Canonical layout but keep the file-selection session ID.
-    // Old Flow vectors cannot survive a Canonical layout change.
-    await deleteCanonicalSession(existingSession);
-    await deleteStfFlowSession(existingSession.id).catch(() => {});
+    // Rebuilding is a new session generation. The previous ID must never be
+    // reused: Flow/Scratch deletion tombstones prevent late Worker writes.
+    await deleteLssSession(existingSession);
   }
-  await estimateCanonicalCapacity(files, inputInfos);
   const session = await createCanonicalSession(files, inputInfos,
-    existingSession ? { id: existingSession.id, createdAt: existingSession.createdAt,
-      dataRevision: existingSession.dataRevision + 1 } : undefined);
+    existingSession ? { dataRevision: existingSession.dataRevision + 1 } : undefined);
   try {
     const tasks = files.map((file, imageIndex) => ({ imageIndex, file, inputInfo: inputInfos[imageIndex] }));
     const workerUrl = new URL("/generated/local-stack-studio/canonical-input.worker.js", window.location.origin);
@@ -5222,7 +5233,9 @@ async function ensureCanonicalSession(files, inputInfos, existingSession, requir
     await completeCanonicalSession(session);
     return session;
   } catch (error) {
-    try { await deleteCanonicalSession(session); } catch {}
+    try { await deleteLssSession(session); } catch (cleanupError) {
+      console.warn("LSS failed Canonical session rollback; expiry cleanup will retry.", cleanupError);
+    }
     throw error;
   }
 }
@@ -5656,8 +5669,9 @@ return () => {
   if (currentCanonicalSession) {
     const session = currentCanonicalSession;
     currentCanonicalSession = null;
-    deleteCanonicalSession(session).catch(() => {});
-    deleteStfFlowSession(session.id).catch(() => {});
+    void deleteLssSession(session).catch((error) => {
+      console.warn("LSS session teardown cleanup failed; expiry cleanup will retry.", error);
+    });
   }
 };
 }

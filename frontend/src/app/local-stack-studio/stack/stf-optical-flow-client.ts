@@ -1,3 +1,4 @@
+import { stfFlowWorkingSize, stfGamma2RgbToGray8Resampled } from "./stf-flow-gray";
 import { STF_FARNEBACK_BASE_WINSIZE } from "./stf-farneback-winsize";
 import type {
   OpticalFlowOpeningVariant,
@@ -59,6 +60,8 @@ type StripeHandler = {
   // Enforce exactly one consuming callback at a time for pipelined delivery.
   delivery: Promise<void>;
   onStripe: (stripe: StfFlowStripe) => void | Promise<void>;
+  onFlowConsumed?: () => void;
+  flowConsumed: boolean;
 };
 
 type Pending = {
@@ -71,10 +74,11 @@ export class StfOpticalFlowClient {
   private readonly worker: Worker;
   private readonly requests = new Map<number, Pending>();
   private nextRequestId = 1;
+  private readonly grayPrefetchCache = new Map<number, Uint8Array>();
 
   constructor(onProgress?: (message: string) => void) {
     const workerUrl = new URL("/generated/local-stack-studio/optical-flow.worker.js", window.location.origin);
-    workerUrl.searchParams.set("revision", "stf-fs-inner-loop-v1");
+    workerUrl.searchParams.set("revision", "stf-parallel-two-pairs-rolling-v2");
     this.worker = new Worker(workerUrl);
     this.worker.onmessage = (event: MessageEvent<OpticalFlowWorkerResponse>) => {
       const message = event.data;
@@ -83,6 +87,14 @@ export class StfOpticalFlowClient {
       if (!pending) return;
       if (message.type === "progress") {
         onProgress?.(message.message);
+        return;
+      }
+      if (message.type === "flow-consumed") {
+        const state = pending.stripes;
+        if (state && !state.flowConsumed) {
+          state.flowConsumed = true;
+          state.onFlowConsumed?.();
+        }
         return;
       }
       if (message.type === "stripe") {
@@ -176,16 +188,18 @@ export class StfOpticalFlowClient {
   private request(
     message: Omit<Extract<OpticalFlowWorkerRequest, { type: "interpolate" }>, "requestId"> |
       Omit<Extract<OpticalFlowWorkerRequest, { type: "warmup" }>, "requestId"> |
-      Omit<Extract<OpticalFlowWorkerRequest, { type: "warp-opening-average" }>, "requestId">,
+      Omit<Extract<OpticalFlowWorkerRequest, { type: "warp-opening-average" }>, "requestId"> |
+      Omit<Extract<OpticalFlowWorkerRequest, { type: "prefetch-check" }>, "requestId"> |
+      Omit<Extract<OpticalFlowWorkerRequest, { type: "prefetch-compute" }>, "requestId">,
     transfer: Transferable[] = [],
-    stripes?: Omit<StripeHandler, "nextPrimaryIndex" | "nextPrimaryY" | "nextAdditionalY" | "delivery">,
+    stripes?: Omit<StripeHandler, "nextPrimaryIndex" | "nextPrimaryY" | "nextAdditionalY" | "delivery" | "flowConsumed">,
     postTiming?: { ms: number },
   ): Promise<OpticalFlowWorkerResponse> {
     const requestId = this.nextRequestId++;
     return new Promise((resolve, reject) => {
       this.requests.set(requestId, { resolve, reject, ...(stripes ? { stripes: {
         ...stripes, nextPrimaryIndex: 0, nextPrimaryY: 0,
-        nextAdditionalY: 0, delivery: Promise.resolve(),
+        nextAdditionalY: 0, delivery: Promise.resolve(), flowConsumed: false,
       } } : {}) });
       try {
         const postedAt = performance.now();
@@ -199,6 +213,49 @@ export class StfOpticalFlowClient {
         reject(error instanceof Error ? error : new Error(String(error)));
       }
     });
+  }
+
+  /** Prime at most two adjacent real pairs while another pair is being warped.
+   * A cache hit does not create Gray8 proxies; a miss sends only downsampled
+   * proxies and keeps the full RGB16 buffers untouched for ordered Warp.
+   */
+  async prefetchFlow(args: {
+    width: number; height: number;
+    previousImageId: number; nextImageId: number;
+    previousGamma2: Uint16Array; nextGamma2: Uint16Array;
+    winsize: number; sessionId: string; sessionCreatedAt: number; alignmentKey: string;
+  }): Promise<void> {
+    const identity = {
+      width: args.width, height: args.height,
+      previousImageId: args.previousImageId, nextImageId: args.nextImageId,
+      winsize: args.winsize, sessionId: args.sessionId,
+      sessionCreatedAt: args.sessionCreatedAt, alignmentKey: args.alignmentKey,
+    };
+    const check = await this.request({ type: "prefetch-check", ...identity });
+    if (check.type !== "prefetch-status") throw new Error("Invalid STF Flow prefetch check response");
+    if (!check.needsGray) return;
+    const started = performance.now();
+    const { width, height } = stfFlowWorkingSize(args.width, args.height);
+    const grayFor = (index: number, rgb: Uint16Array): Uint8Array => {
+      const reused = this.grayPrefetchCache.get(index);
+      if (reused) return reused;
+      const gray = stfGamma2RgbToGray8Resampled(rgb, args.width, args.height, width, height, 2);
+      this.grayPrefetchCache.set(index, gray);
+      return gray;
+    };
+    const previousGray = grayFor(args.previousImageId, args.previousGamma2);
+    const nextGray = grayFor(args.nextImageId, args.nextGamma2);
+    const prepareFlowInputsMs = performance.now() - started;
+    // Keep only proxies that an adjacent in-flight pair might use.
+    for (const index of this.grayPrefetchCache.keys()) {
+      if (index !== args.previousImageId && index !== args.nextImageId) this.grayPrefetchCache.delete(index);
+    }
+    const previousGrayBuffer = new Uint8Array(previousGray).buffer;
+    const nextGrayBuffer = new Uint8Array(nextGray).buffer;
+    const result = await this.request({
+      type: "prefetch-compute", ...identity, previousGrayBuffer, nextGrayBuffer, prepareFlowInputsMs,
+    }, [previousGrayBuffer, nextGrayBuffer]);
+    if (result.type !== "prefetch-ready") throw new Error("Invalid STF Flow prefetch compute response");
   }
 
   async warmup(): Promise<{ flowWorkerCount: number; warmupMs: number }> {
@@ -283,6 +340,7 @@ export class StfOpticalFlowClient {
       openingAverageRadiusSpan?: number; winsize: number; inputOwnership: InputOwnership;
     },
     onStripe: (stripe: StfFlowStripe) => void | Promise<void>,
+    onFlowConsumed?: () => void,
   ): Promise<OpticalFlowPerformanceStats> {
     const copying = { copiedBytes: 0 };
     const copyStartedAt = performance.now();
@@ -312,7 +370,7 @@ export class StfOpticalFlowClient {
       width: args.width, height: args.height, additional: Boolean(args.additionalVariant),
       primaryCount: args.middleFractions?.length ?? 1,
       interleavedPrimary: (args.middleFractions?.length ?? 1) > 1 && (args.warpMethod ?? "inverse-warp") === "inverse-warp",
-      onStripe,
+      onStripe, onFlowConsumed,
     }, postTiming);
     if (response.type !== "stream-result" || response.width !== args.width ||
         response.height !== args.height || !response.performance) {
@@ -387,6 +445,7 @@ export class StfOpticalFlowClient {
 
   terminate(): void {
     this.failAll(new Error("STF Optical Flow terminated"));
+    this.grayPrefetchCache.clear();
     this.worker.terminate();
   }
 }

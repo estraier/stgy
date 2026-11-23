@@ -90,13 +90,17 @@ import type {
 
   type DirectionPool = { clients: DirectionClient[]; warmupMs: number };
   let directionPoolPromise: Promise<DirectionPool> | null = null;
+  let extraDirectionPoolPromise: Promise<DirectionPool> | null = null;
 
-  function directionWorkerCount(): number {
+  function supportsTwoDirectionPairs(): boolean {
     const availableCores = navigator.hardwareConcurrency || 1;
     const deviceMemory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
-    // Avoid allocating a second independent native WASM heap on machines that
-    // advertise fewer than four logical cores or less than 8 GiB of RAM.
-    return availableCores >= 4 && !(deviceMemory !== undefined && deviceMemory < 8) ? 2 : 1;
+    // Preserve the legacy fallback for <4 cores or reported RAM below 8 GiB.
+    return availableCores >= 4 && !(deviceMemory !== undefined && deviceMemory < 8);
+  }
+
+  function directionWorkerCount(): number {
+    return supportsTwoDirectionPairs() ? 2 : 1;
   }
 
   function ensureDirectionPool(): Promise<DirectionPool> {
@@ -121,6 +125,36 @@ import type {
     return directionPoolPromise;
   }
 
+  // Spawn the second direction pair lazily, not for a one-pair STF operation.
+  async function ensureDirectionPair(slot: number): Promise<DirectionPool> {
+    const pool = await ensureDirectionPool();
+    if (slot === 0) return pool;
+    if (slot !== 1 || !supportsTwoDirectionPairs()) {
+      throw new Error("STF Flow has no second direction pair available.");
+    }
+    if (extraDirectionPoolPromise) return extraDirectionPoolPromise;
+    extraDirectionPoolPromise = (async () => {
+      const start = performance.now();
+      const clients = [new DirectionClient(), new DirectionClient()];
+      try {
+        const ready = await Promise.all(clients.map((client) => client.request({ type: "init" })));
+        if (ready.some((entry) => entry.type !== "ready")) {
+          throw new Error("Optical Flow second direction pair initialization failed.");
+        }
+        pool.clients.push(...clients);
+        pool.warmupMs += performance.now() - start;
+        return pool;
+      } catch (error) {
+        for (const client of clients) client.terminate();
+        throw error;
+      }
+    })().catch((error) => {
+      extraDirectionPoolPromise = null;
+      throw error;
+    });
+    return extraDirectionPoolPromise;
+  }
+
   function grayCopyBuffer(gray: Uint8Array): ArrayBuffer {
     // Both Flow directions require the same two proxies. Separate copies
     // avoid SharedArrayBuffer / cross-origin-isolation requirements.
@@ -133,6 +167,7 @@ import type {
     width: number,
     height: number,
     winsize: number,
+    pairSlot = 0,
   ): Promise<{
     forward: Float32Array;
     backward: Float32Array;
@@ -143,7 +178,10 @@ import type {
     warmupMs: number;
   }> {
     const coldStart = directionPoolPromise === null;
-    const pool = await ensureDirectionPool();
+    const pool = await ensureDirectionPair(pairSlot);
+    if (pairSlot !== 0 && (pairSlot !== 1 || pool.clients.length < 4)) {
+      throw new Error("STF Flow prefetch requires an available two-direction slot.");
+    }
     const poolWarmupMs = coldStart ? pool.warmupMs : 0;
     const started = performance.now();
     if (pool.clients.length === 1) {
@@ -169,12 +207,13 @@ import type {
     const forwardNext = grayCopyBuffer(nextGray);
     const backwardPrevious = grayCopyBuffer(nextGray);
     const backwardNext = grayCopyBuffer(previousGray);
+    const firstWorker = pairSlot * 2;
     const [forwardResult, backwardResult] = await Promise.all([
-      pool.clients[0].request({
+      pool.clients[firstWorker].request({
         type: "compute", width, height, winsize,
         previousGrayBuffer: forwardPrevious, nextGrayBuffer: forwardNext,
       }, [forwardPrevious, forwardNext]),
-      pool.clients[1].request({
+      pool.clients[firstWorker + 1].request({
         type: "compute", width, height, winsize,
         previousGrayBuffer: backwardPrevious, nextGrayBuffer: backwardNext,
       }, [backwardPrevious, backwardNext]),
@@ -191,6 +230,34 @@ import type {
       workerCount: 2,
       warmupMs: poolWarmupMs,
     };
+  }
+
+  // Prefetched pairs are held only in this per-Process worker. Their results
+  // are consumed in real-pair order by interpolateMiddleFrame, preserving the
+  // opening Average Flow accumulator and all existing Warp/stripe behavior.
+  type ComputedFlow = Awaited<ReturnType<typeof computeBidirectionalFlow>>;
+  type PrefetchedPair = {
+    slot: number;
+    status: "checking" | "needs-gray" | "computing" | "ready";
+    cacheReadMs: number;
+    prepareFlowInputsMs: number;
+    cached: boolean;
+    flows: ComputedFlow | null;
+  };
+  const prefetchedPairs = new Map<string, PrefetchedPair>();
+  function prefetchIdentity(args: {
+    width: number; height: number; previousImageId: number; nextImageId: number;
+    winsize: number; sessionId: string; alignmentKey: string;
+  }): { key: string; width: number; height: number } {
+    if (!Number.isInteger(args.width) || !Number.isInteger(args.height) ||
+        args.width <= 0 || args.height <= 0 || !isStfFarnebackWinsize(args.winsize)) {
+      throw new Error("Invalid STF Flow prefetch geometry or winsize.");
+    }
+    const size = stfFlowWorkingSize(args.width, args.height);
+    const key = stfFlowSessionKey(args.sessionId, args.previousImageId, args.nextImageId,
+      args.alignmentKey, size.width, size.height, args.winsize);
+    if (!key) throw new Error("Invalid STF Flow prefetch session or pair identity.");
+    return { key, width: size.width, height: size.height };
   }
 
   // A pair can be used for multiple opening-side variants. Derive each
@@ -1108,6 +1175,64 @@ import type {
         });
         return;
       }
+      if (message.type === "prefetch-check") {
+        if (!Number.isSafeInteger(message.sessionCreatedAt) || message.sessionCreatedAt < 0) {
+          throw new Error("STF Flow prefetch requires a valid session timestamp.");
+        }
+        const { key, width, height } = prefetchIdentity(message);
+        if (prefetchedPairs.has(key) || prefetchedPairs.size >= 2) {
+          throw new Error("STF Flow permits at most two distinct prefetched pairs.");
+        }
+        const slot = [...prefetchedPairs.values()].some((entry) => entry.slot === 0) ? 1 : 0;
+        const entry: PrefetchedPair = {
+          slot, status: "checking", cacheReadMs: 0, prepareFlowInputsMs: 0,
+          cached: false, flows: null,
+        };
+        prefetchedPairs.set(key, entry);
+        try {
+          const started = performance.now();
+          const cached = await readStfCachedFlow(message.sessionId, key, width, height);
+          entry.cacheReadMs = performance.now() - started;
+          if (cached) {
+            entry.cached = true;
+            entry.flows = { ...cached, forwardMs: 0, backwardMs: 0, wallMs: 0,
+              workerCount: 0, warmupMs: 0 };
+            entry.status = "ready";
+          } else entry.status = "needs-gray";
+          workerScope.postMessage({ type: "prefetch-status", requestId: message.requestId,
+            needsGray: !cached });
+        } catch (error) {
+          prefetchedPairs.delete(key);
+          throw error;
+        }
+        return;
+      }
+      if (message.type === "prefetch-compute") {
+        const { key, width, height } = prefetchIdentity(message);
+        const entry = prefetchedPairs.get(key);
+        if (!entry || entry.status !== "needs-gray" ||
+            !Number.isFinite(message.prepareFlowInputsMs) || message.prepareFlowInputsMs < 0) {
+          throw new Error("STF Flow prefetch has no matching pending cache miss.");
+        }
+        const previousGray = new Uint8Array(message.previousGrayBuffer);
+        const nextGray = new Uint8Array(message.nextGrayBuffer);
+        if (previousGray.length !== width * height || nextGray.length !== width * height) {
+          prefetchedPairs.delete(key);
+          throw new Error("Invalid STF Flow prefetch Gray8 dimensions.");
+        }
+        try {
+          entry.status = "computing";
+          entry.prepareFlowInputsMs = message.prepareFlowInputsMs;
+          entry.flows = await computeBidirectionalFlow(previousGray, nextGray,
+            width, height, message.winsize, entry.slot);
+          entry.status = "ready";
+          workerScope.postMessage({ type: "prefetch-ready", requestId: message.requestId });
+        } catch (error) {
+          prefetchedPairs.delete(key);
+          throw error;
+        }
+        return;
+      }
       if (message.type === "release-retained") {
         openingAverageWarp = null;
         return;
@@ -1242,9 +1367,16 @@ import type {
     const flowCacheKey = message.persistFlow
       ? stfFlowSessionKey(message.sessionId!, message.previousImageId!, message.nextImageId!,
           message.alignmentKey!, flowSize.width, flowSize.height, winsize) : null;
-    const cached = flowCacheKey
-      ? await readStfCachedFlow(message.sessionId!, flowCacheKey, flowSize.width, flowSize.height) : null;
-    const flowCacheReadMs = performance.now() - cacheReadStarted;
+    const prefetched = flowCacheKey ? prefetchedPairs.get(flowCacheKey) : undefined;
+    if (prefetched && (prefetched.status !== "ready" || !prefetched.flows)) {
+      throw new Error("STF Flow attempted to consume an incomplete prefetched pair.");
+    }
+    // Release the pair slot as soon as the ordered consumer acquires its
+    // fields, allowing the next adjacent pair to start in parallel with Warp.
+    if (prefetched && flowCacheKey) prefetchedPairs.delete(flowCacheKey);
+    const cached = prefetched ? (prefetched.cached ? prefetched.flows : null) :
+      (flowCacheKey ? await readStfCachedFlow(message.sessionId!, flowCacheKey, flowSize.width, flowSize.height) : null);
+    const flowCacheReadMs = prefetched ? prefetched.cacheReadMs : performance.now() - cacheReadStarted;
 
     // Validate externally supplied proxies even on a cache hit. No image
     // conversion, resizing, or Gray8 caching happens when Flow was restored.
@@ -1259,10 +1391,10 @@ import type {
         (externalNext && externalNext.length !== expectedGrayLength)) {
       throw new Error("STF Flow grayscale proxy has invalid dimensions");
     }
-    let prepareFlowInputsMs = 0;
+    let prepareFlowInputsMs = prefetched?.prepareFlowInputsMs ?? 0;
     let computedNextGray: Uint8Array | null = null;
-    let computedFlows: Awaited<ReturnType<typeof computeBidirectionalFlow>> | null = null;
-    if (!cached) {
+    let computedFlows: ComputedFlow | null = prefetched && !prefetched.cached ? prefetched.flows : null;
+    if (!cached && !computedFlows) {
       postProgress(message.requestId, "Preparing Optical Flow grayscale proxies...");
       const prepareStartedAt = performance.now();
       const grayScale = message.linearRangeMax === 4 ? 2 : 1;
@@ -1324,6 +1456,10 @@ import type {
         }
       }
     }
+    // Prefetched Flow is now owned by this ordered Warp request, not the
+    // two-slot prefetch queue. Tell the caller to refill that slot while the
+    // current frame is being warped; the release itself occurred above.
+    if (prefetched) workerScope.postMessage({ type: "flow-consumed", requestId: message.requestId });
     // Begin best-effort persistence while the CPU is busy warping. Await its
     // completion before returning so that terminating this Worker cannot lose
     // a pending IndexedDB transaction.
@@ -1332,7 +1468,7 @@ import type {
     const cacheWrite = flowCacheKey && !cached
       ? writeStfCachedFlow(message.sessionId!, flowCacheKey, message.sessionCreatedAt!,
           flowSize.width, flowSize.height, flows.forward, flows.backward,
-          undefined, cacheDiagnostics).then((saved) => ({
+          cacheDiagnostics).then((saved) => ({
             saved, durationMs: performance.now() - cacheWriteStarted,
             status: cacheDiagnostics.status ?? (saved ? "admitted" as const : "error" as const),
           }))
@@ -1437,15 +1573,11 @@ import type {
       inputGamma2Bytes: previousGamma2Rgb.byteLength + nextGamma2Rgb.byteLength,
       flowFieldBytes: flows.forward.byteLength + flows.backward.byteLength,
       flowCacheHit: Boolean(cached), flowCacheSaved, flowCacheReadMs, flowCacheWriteMs,
-      flowCacheAdmissionMs: cacheDiagnostics.admissionMs ?? 0,
       flowCacheValidationMs: cacheDiagnostics.validationMs ?? 0,
       flowCachePutMs: cacheDiagnostics.putMs ?? 0,
       flowCacheCommitMs: cacheDiagnostics.commitMs ?? 0,
       flowCacheTailWaitMs,
       flowCacheSaveStatus,
-      ...(cacheDiagnostics.retainedBytes !== undefined ? {
-        flowCacheRetainedBytes: cacheDiagnostics.retainedBytes,
-      } : {}),
       ...(cacheDiagnostics.incomingBytes !== undefined ? {
         flowCacheIncomingBytes: cacheDiagnostics.incomingBytes,
       } : {}),

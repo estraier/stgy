@@ -43,7 +43,8 @@ export async function appendStfVirtualSource(
     progress?: (message: string) => void;
     // Injectable for deterministic cache/Flow integration tests.
     createFlowClient?: (onProgress?: (message: string) => void) => Pick<StfOpticalFlowClient,
-      "generateStripes" | "warpOpeningAverageStripes" | "releaseRetained" | "terminate">;
+      "generateStripes" | "warpOpeningAverageStripes" | "releaseRetained" | "terminate"> &
+      Partial<Pick<StfOpticalFlowClient, "prefetchFlow">>;
   },
 ): Promise<void> {
   const { frameSet, reader } = options;
@@ -75,15 +76,27 @@ export async function appendStfVirtualSource(
   };
 
   const imageCache = new Map<number, Uint16Array>();
-  const getImage = async (imageIndex: number): Promise<Uint16Array> => {
+  const pendingImages = new Map<number, Promise<Uint16Array>>();
+  // Prefetch requests can overlap. Keep Canonical reads serialized and share
+  // in-flight reads of the middle image common to consecutive pairs.
+  let readTail: Promise<void> = Promise.resolve();
+  const getImage = (imageIndex: number): Promise<Uint16Array> => {
     const cached = imageCache.get(imageIndex);
-    if (cached) return cached;
-    const readStartedAt = performance.now();
-    const image = await reader.readGamma2Image(imageIndex, 4, readProfile);
-    inputReadMs += performance.now() - readStartedAt;
-    inputReadBytes += image.byteLength;
-    imageCache.set(imageIndex, image);
-    return image;
+    if (cached) return Promise.resolve(cached);
+    const pending = pendingImages.get(imageIndex);
+    if (pending) return pending;
+    const read = readTail.then(async () => {
+      const readStartedAt = performance.now();
+      const image = await reader.readGamma2Image(imageIndex, 4, readProfile);
+      inputReadMs += performance.now() - readStartedAt;
+      inputReadBytes += image.byteLength;
+      imageCache.set(imageIndex, image);
+      return image;
+    });
+    readTail = read.then(() => {}, () => {});
+    pendingImages.set(imageIndex, read);
+    void read.finally(() => pendingImages.delete(imageIndex)).catch(() => {});
+    return read;
   };
 
   const openingOuterFrames = frameSet.outerFrames.filter((outer) => outer.variant !== "ext2");
@@ -140,22 +153,77 @@ export async function appendStfVirtualSource(
   let flowInputPrepareMs = 0;
   let flowCacheWriteMs = 0;
   const cacheSaveOutcomes = new Map<string, number>();
-  let client: Pick<StfOpticalFlowClient,
-    "generateStripes" | "warpOpeningAverageStripes" | "releaseRetained" | "terminate"> | null = null;
+  let client: (Pick<StfOpticalFlowClient,
+    "generateStripes" | "warpOpeningAverageStripes" | "releaseRetained" | "terminate"> &
+    Partial<Pick<StfOpticalFlowClient, "prefetchFlow">>) | null = null;
+  // Group the existing middle frames by real-image pair without changing their
+  // order. Only Flow runs ahead; output stripes and merging remain sequential.
+  const pairs: Array<{ middleIndex: number; pairFrames: typeof frameSet.middleFrames }> = [];
+  for (let middleIndex = 0; middleIndex < frameSet.middleFrames.length;) {
+    const middle = frameSet.middleFrames[middleIndex];
+    const pairFrames = [middle];
+    while (middleIndex + pairFrames.length < frameSet.middleFrames.length) {
+      const candidate = frameSet.middleFrames[middleIndex + pairFrames.length];
+      if (candidate.previousIndex !== middle.previousIndex || candidate.nextIndex !== middle.nextIndex) break;
+      pairFrames.push(candidate);
+    }
+    pairs.push({ middleIndex, pairFrames });
+    middleIndex += pairFrames.length;
+  }
+  const deviceMemory = typeof navigator !== "undefined"
+    ? (navigator as Navigator & { deviceMemory?: number }).deviceMemory : undefined;
+  const supportsFourDirectionWorkers = typeof navigator !== "undefined" &&
+    (navigator.hardwareConcurrency || 1) >= 4 && !(deviceMemory !== undefined && deviceMemory < 8);
+  const prefetched = new Map<number, Promise<Error | null>>();
+  let prefetchEnabled = false;
+  const queuePrefetch = (index: number) => {
+    if (!prefetchEnabled || !client?.prefetchFlow || index >= pairs.length || prefetched.has(index)) return;
+    const middle = pairs[index].pairFrames[0];
+    const winsize = stfPairFarnebackWinsize(
+      frameSet.allFNumbers[pairs[0].pairFrames[0].previousIndex],
+      frameSet.allFNumbers[pairs[0].pairFrames[0].nextIndex],
+      frameSet.allFNumbers[middle.previousIndex], frameSet.allFNumbers[middle.nextIndex]);
+    const flowClient = client;
+    // Convert rejection to a value immediately: the second prefetch can
+    // fail before its turn to be consumed, without an unhandled rejection.
+    const request = (async () => {
+      const previousGamma2 = await getImage(middle.previousIndex);
+      const nextGamma2 = await getImage(middle.nextIndex);
+      await flowClient.prefetchFlow!({
+        width: reader.width, height: reader.height,
+        previousImageId: middle.previousIndex, nextImageId: middle.nextIndex,
+        previousGamma2, nextGamma2, winsize,
+        sessionId: options.sessionId, sessionCreatedAt: options.sessionCreatedAt,
+        alignmentKey: options.alignmentKey,
+      });
+    })().then(() => null, (cause: unknown) => cause instanceof Error ? cause : new Error(String(cause)));
+    prefetched.set(index, request);
+  };
+  // Only the ordered consumer can release a prefetch slot. Refill it as soon
+  // as the worker confirms acquisition of its Flow, not after Warp/merge.
+  // Older test clients without the notification retain the prior fallback.
+  const advancePrefetch = (index: number) => {
+    if (prefetched.delete(index)) queuePrefetch(index + 2);
+  };
   try {
-    let pairIndex = 0;
-    for (let middleIndex = 0; middleIndex < frameSet.middleFrames.length;) {
-      const middle = frameSet.middleFrames[middleIndex];
-      const pairFrames = [middle];
-      while (middleIndex + pairFrames.length < frameSet.middleFrames.length) {
-        const candidate = frameSet.middleFrames[middleIndex + pairFrames.length];
-        if (candidate.previousIndex !== middle.previousIndex || candidate.nextIndex !== middle.nextIndex) break;
-        pairFrames.push(candidate);
-      }
+    for (let pairIndex = 0; pairIndex < pairs.length; pairIndex++) {
+      const { middleIndex, pairFrames } = pairs[pairIndex];
+      const middle = pairFrames[0];
       if (!client) {
         client = options.createFlowClient
           ? options.createFlowClient(options.progress)
           : new StfOpticalFlowClient(options.progress);
+        prefetchEnabled = pairs.length > 1 && typeof client.prefetchFlow === "function" &&
+          (Boolean(options.createFlowClient) || supportsFourDirectionWorkers);
+        if (prefetchEnabled) {
+          queuePrefetch(0);
+          queuePrefetch(1);
+          console.info(`[LSS STF] Flow prefetch enabled: 2 real pairs × 2 directions (4 workers).`);
+        }
+      }
+      if (prefetchEnabled) {
+        const error = await prefetched.get(pairIndex);
+        if (error) throw error;
       }
       const readBefore = inputReadMs;
       const readDetailBefore = snapshotRead();
@@ -210,7 +278,7 @@ export async function appendStfVirtualSource(
           virtualMergeMs += performance.now() - mergeStarted;
           virtualStripes++;
         }
-      });
+      }, () => advancePrefetch(pairIndex));
       if (flowPerformance.flowCacheHit) flowCacheHits++;
       else flowCacheMisses++;
       if (flowPerformance.flowCacheSaved) flowCacheWrites++;
@@ -241,13 +309,11 @@ export async function appendStfVirtualSource(
         `flowWarmup=${(flowPerformance.warmupMs ?? 0).toFixed(1)}ms ` +
         `cacheRead=${(flowPerformance.flowCacheReadMs ?? 0).toFixed(1)}ms ` +
         `cacheWrite=${(flowPerformance.flowCacheWriteMs ?? 0).toFixed(1)}ms ` +
-        `cacheAdmission=${(flowPerformance.flowCacheAdmissionMs ?? 0).toFixed(1)}ms ` +
         `cacheValidation=${(flowPerformance.flowCacheValidationMs ?? 0).toFixed(1)}ms ` +
         `cachePut=${(flowPerformance.flowCachePutMs ?? 0).toFixed(1)}ms ` +
         `cacheCommit=${(flowPerformance.flowCacheCommitMs ?? 0).toFixed(1)}ms ` +
         `cacheTailWait=${(flowPerformance.flowCacheTailWaitMs ?? 0).toFixed(1)}ms ` +
         `cacheSave=${cacheSaveStatus} ` +
-        `cacheRetained=${reportMb(flowPerformance.flowCacheRetainedBytes)} ` +
         `cacheIncoming=${reportMb(flowPerformance.flowCacheIncomingBytes)} ` +
         `warp=${(flowPerformance.warpMs ?? 0).toFixed(1)}ms ` +
         `closingWarp=${(flowPerformance.additionalWarpMs ?? 0).toFixed(1)}ms ` +
@@ -276,8 +342,7 @@ export async function appendStfVirtualSource(
         `mergePixels=${reader.width * reader.height * (pairFrames.length + (closingTone ? 1 : 0))}.`);
 
       imageCache.delete(middle.previousIndex);
-      middleIndex += pairFrames.length;
-      pairIndex++;
+      if (prefetchEnabled) advancePrefetch(pairIndex);
     }
 
     if (openingOuterFrames.length > 0) {

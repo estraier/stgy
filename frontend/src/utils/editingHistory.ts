@@ -3,7 +3,6 @@ export const EDITING_HISTORY_PERIODIC_RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
 export const EDITING_HISTORY_SAVED_RETENTION_MS = 10 * 24 * 60 * 60 * 1000;
 export const EDITING_HISTORY_DAILY_FINAL_RETENTION_MS = 45 * 24 * 60 * 60 * 1000;
 export const EDITING_HISTORY_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
-export const EDITING_HISTORY_MAX_BYTES = 50 * 1024 * 1024;
 export const EDITING_HISTORY_PAGE_SIZE = 50;
 
 const DATABASE_VERSION = 2;
@@ -382,15 +381,14 @@ export async function cleanupEditingHistory(options: CleanupOptions = {}): Promi
     readAllSnapshots(),
     readLastCleanupAt(),
   ]);
-  const capacityLimit = Math.max(0, EDITING_HISTORY_MAX_BYTES - reserveBytes);
   const initialTotalBytes = allSnapshots.reduce((sum, snapshot) => sum + snapshotSize(snapshot), 0);
   const scheduledCleanupDue =
     options.forceAgeCleanup === true ||
     lastCleanupAt === null ||
     now - lastCleanupAt >= EDITING_HISTORY_CLEANUP_INTERVAL_MS;
-  const capacityCleanupNeeded =
-    initialTotalBytes > capacityLimit || options.quotaRecovery === true;
-  const runRetentionCleanup = scheduledCleanupDue || capacityCleanupNeeded;
+  // Preserve all snapshots for their retention period. Only an actual browser
+  // quota failure may trigger emergency space recovery; no application byte cap.
+  const runRetentionCleanup = scheduledCleanupDue || options.quotaRecovery === true;
   const runIntegrityCleanup = scheduledCleanupDue || options.quotaRecovery === true;
 
   const deleteIds = new Set<string>();
@@ -417,27 +415,24 @@ export async function cleanupEditingHistory(options: CleanupOptions = {}): Promi
     dailyFinalIds = findEditingHistoryDailyFinalIds(remaining);
   }
 
-  let totalBytes = remaining.reduce((sum, snapshot) => sum + snapshotSize(snapshot), 0);
-  let targetBytes = capacityLimit;
   if (options.quotaRecovery) {
-    const requestedFreeBytes = Math.max(reserveBytes, QUOTA_RECOVERY_MINIMUM_BYTES);
-    targetBytes = Math.min(targetBytes, Math.max(0, initialTotalBytes - requestedFreeBytes));
-  }
-
-  let candidates = buildCapacityCandidates(remaining, dailyFinalIds, now);
-  while (totalBytes > targetBytes && candidates.length > 0) {
-    const candidate = candidates.shift();
-    if (!candidate || deleteIds.has(candidate.id)) continue;
-
-    const wasDailyFinal = dailyFinalIds.has(candidate.id);
-    deleteIds.add(candidate.id);
-    totalBytes -= snapshotSize(candidate);
-    remaining = remaining.filter((snapshot) => snapshot.id !== candidate.id);
-
-    if (wasDailyFinal) {
-      // A previous saved snapshot for the same post and date may now become the daily final.
-      dailyFinalIds = findEditingHistoryDailyFinalIds(remaining);
-      candidates = buildCapacityCandidates(remaining, dailyFinalIds, now);
+    // An actual QuotaExceededError has already occurred. Reclaim enough
+    // recoverable snapshots for one retry, preserving age-based retention otherwise.
+    let totalBytes = remaining.reduce((sum, snapshot) => sum + snapshotSize(snapshot), 0);
+    const targetBytes = Math.max(0, initialTotalBytes -
+      Math.max(reserveBytes, QUOTA_RECOVERY_MINIMUM_BYTES));
+    let candidates = buildCapacityCandidates(remaining, dailyFinalIds, now);
+    while (totalBytes > targetBytes && candidates.length > 0) {
+      const candidate = candidates.shift();
+      if (!candidate || deleteIds.has(candidate.id)) continue;
+      const wasDailyFinal = dailyFinalIds.has(candidate.id);
+      deleteIds.add(candidate.id);
+      totalBytes -= snapshotSize(candidate);
+      remaining = remaining.filter((snapshot) => snapshot.id !== candidate.id);
+      if (wasDailyFinal) {
+        dailyFinalIds = findEditingHistoryDailyFinalIds(remaining);
+        candidates = buildCapacityCandidates(remaining, dailyFinalIds, now);
+      }
     }
   }
 

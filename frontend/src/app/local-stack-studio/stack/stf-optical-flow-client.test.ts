@@ -421,3 +421,111 @@ test("STF Flow multi-interpolation stripes are acknowledged in stripe-major orde
     else Reflect.deleteProperty(globalThis, "window");
   }
 });
+
+test.each([false, true])("STF Flow prefetch checks cache before preparing Gray8 (miss=%s)", async (miss) => {
+  const oldWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  const oldWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const seen: OpticalFlowWorkerRequest[] = [];
+  class FakeWorker {
+    onmessage: ((event: MessageEvent<OpticalFlowWorkerResponse>) => void) | null = null;
+    onerror = null;
+    onmessageerror = null;
+    postMessage(request: OpticalFlowWorkerRequest) {
+      seen.push(request);
+      queueMicrotask(() => {
+        if (request.type === "prefetch-check") {
+          const response: OpticalFlowWorkerResponse = {
+            type: "prefetch-status", requestId: request.requestId, needsGray: miss,
+          };
+          this.onmessage?.({ data: response } as MessageEvent<OpticalFlowWorkerResponse>);
+        } else if (request.type === "prefetch-compute") {
+          const response: OpticalFlowWorkerResponse = {
+            type: "prefetch-ready", requestId: request.requestId,
+          };
+          this.onmessage?.({ data: response } as MessageEvent<OpticalFlowWorkerResponse>);
+        }
+      });
+    }
+    terminate() {}
+  }
+  Object.defineProperty(globalThis, "Worker", { configurable: true, value: FakeWorker });
+  Object.defineProperty(globalThis, "window", {
+    configurable: true, value: { location: { origin: "https://stgy.example" } },
+  });
+  try {
+    const client = new StfOpticalFlowClient();
+    try {
+      const previous = Uint16Array.from({ length: 12 }, (_, i) => i * 5000);
+      const next = Uint16Array.from({ length: 12 }, (_, i) => 65535 - i * 5000);
+      await client.prefetchFlow({ width: 2, height: 2, previousImageId: 0, nextImageId: 1,
+        previousGamma2: previous, nextGamma2: next, winsize: 21,
+        sessionId: "session-a", sessionCreatedAt: 1700000000000, alignmentKey: "align-1" });
+      expect(seen.map((request) => request.type)).toEqual(miss
+        ? ["prefetch-check", "prefetch-compute"] : ["prefetch-check"]);
+      if (miss) {
+        const compute = seen[1];
+        if (compute.type !== "prefetch-compute") throw new Error("Missing Gray8 prefetch");
+        expect(new Uint8Array(compute.previousGrayBuffer)).toHaveLength(4);
+        expect(new Uint8Array(compute.nextGrayBuffer)).toHaveLength(4);
+        expect(compute.prepareFlowInputsMs).toBeGreaterThanOrEqual(0);
+      }
+      // The subsequent sequential Warp still owns the unmodified RGB16 inputs.
+      expect(previous.byteLength).toBe(24);
+      expect(next.byteLength).toBe(24);
+    } finally {
+      client.terminate();
+    }
+  } finally {
+    if (oldWorker) Object.defineProperty(globalThis, "Worker", oldWorker);
+    else Reflect.deleteProperty(globalThis, "Worker");
+    if (oldWindow) Object.defineProperty(globalThis, "window", oldWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  }
+});
+
+test("STF Flow-consumed notification refills prefetch before the first Warp stripe", async () => {
+  const oldWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  const oldWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const events: string[] = [];
+  class FakeWorker {
+    onmessage: ((event: MessageEvent<OpticalFlowWorkerResponse>) => void) | null = null;
+    onerror = null;
+    onmessageerror = null;
+    postMessage(request: OpticalFlowWorkerRequest) {
+      const send = (response: OpticalFlowWorkerResponse) => queueMicrotask(() =>
+        this.onmessage?.({ data: response } as MessageEvent<OpticalFlowWorkerResponse>));
+      if (request.type === "interpolate") {
+        send({ type: "flow-consumed", requestId: request.requestId });
+        // Guard against accidentally treating this event as the final result.
+        send({ type: "flow-consumed", requestId: request.requestId });
+        send({ type: "stripe", requestId: request.requestId, kind: "primary",
+          y: 0, height: 2, width: 2, gamma2Buffer: new Uint16Array(12).buffer });
+      } else if (request.type === "stripe-ack") {
+        send({ type: "stream-result", requestId: request.requestId,
+          width: 2, height: 2, performance: { flowWorkerCount: 2 } as never });
+      }
+    }
+    terminate() {}
+  }
+  Object.defineProperty(globalThis, "Worker", { configurable: true, value: FakeWorker });
+  Object.defineProperty(globalThis, "window", {
+    configurable: true, value: { location: { origin: "https://stgy.example" } },
+  });
+  try {
+    const client = new StfOpticalFlowClient();
+    try {
+      const pixels = new Uint16Array(12);
+      await client.generateStripes({
+        width: 2, height: 2, previousImageId: 0, nextImageId: 1,
+        previousGamma2: pixels, nextGamma2: pixels, variant: "mid", winsize: 21,
+        sessionId: "s", sessionCreatedAt: 1, alignmentKey: "k", inputOwnership: {},
+      }, () => { events.push("stripe"); }, () => { events.push("consumed"); });
+      expect(events).toEqual(["consumed", "stripe"]);
+    } finally { client.terminate(); }
+  } finally {
+    if (oldWorker) Object.defineProperty(globalThis, "Worker", oldWorker);
+    else Reflect.deleteProperty(globalThis, "Worker");
+    if (oldWindow) Object.defineProperty(globalThis, "window", oldWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  }
+});

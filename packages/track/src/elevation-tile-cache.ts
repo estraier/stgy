@@ -1,12 +1,10 @@
 /**
  * Browser-only, best-effort cache for GSI and Mapzen elevation PNG tiles.
- * Providers use disjoint URL namespaces and independent 128-tile quotas in
- * the existing IndexedDB store. Stored PNG bytes expire 24h after retrieval.
+ * Providers use disjoint URL namespaces in the existing IndexedDB store.
+ * There is no application capacity limit; PNG bytes expire after 24 hours.
  * Legacy GSI and Mapzen entries remain readable without migrating the DB.
  */
 export const GSI_TILE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-export const GSI_TILE_CACHE_MAX_ENTRIES = 128;
-export const MAPZEN_TILE_CACHE_MAX_ENTRIES = 128;
 
 // Keep the original database for compatibility with existing 24h GSI cache entries.
 const DATABASE_NAME = 'stgy-track-gsi-elevation-tiles-v1';
@@ -124,7 +122,7 @@ export async function readCachedElevationTile(url: string): Promise<ArrayBuffer 
   });
 }
 
-/** Success-only write. Expired/oldest records are pruned without background timers. */
+/** Success-only write. Expired entries are pruned without background timers. */
 export async function writeCachedElevationTile(url: string, bytes: ArrayBuffer): Promise<void> {
   if (!isCacheableElevationTileUrl(url) || !isPngTile(bytes)) return;
   const db = await openDatabase();
@@ -135,30 +133,13 @@ export async function writeCachedElevationTile(url: string, bytes: ArrayBuffer):
       const transaction = db.transaction(STORE_NAME, 'readwrite');
       const store = transaction.objectStore(STORE_NAME);
       store.put({ url, savedAt: now, bytes } satisfies TileRecord);
-      // Both providers are stored under their exact URLs, with separate
-      // capacity limits. A full GSI cache must not evict useful Mapzen data.
-      // The cursor is sorted oldest-first, so entries beyond the limit are
-      // removed from each provider independently.
+      // No application tile-count quota. Prune only expired records while
+      // keeping all current GSI/Mapzen tiles for repeat lookups.
       const cursorRequest = store.index('savedAt').openCursor();
-      const records: { url: string; savedAt: number }[] = [];
       cursorRequest.onsuccess = () => {
         const cursor = cursorRequest.result;
-        if (!cursor) {
-          const keep = new Map<'gsi' | 'mapzen', number>([['gsi', 0], ['mapzen', 0]]);
-          for (const record of records.reverse()) {
-            const provider = isCacheableGsiElevationUrl(record.url) ? 'gsi'
-              : isCacheableMapzenElevationUrl(record.url) ? 'mapzen' : undefined;
-            const maxEntries = provider === 'gsi' ? GSI_TILE_CACHE_MAX_ENTRIES : MAPZEN_TILE_CACHE_MAX_ENTRIES;
-            const count = provider ? keep.get(provider)! : 0;
-            if (provider && count < maxEntries && record.savedAt <= now && now - record.savedAt < GSI_TILE_CACHE_TTL_MS) {
-              keep.set(provider, count + 1);
-            } else {
-              store.delete(record.url);
-            }
-          }
-          return;
-        }
-        records.push({ url: cursor.value.url, savedAt: cursor.value.savedAt });
+        if (!cursor || cursor.value.savedAt > now - GSI_TILE_CACHE_TTL_MS) return;
+        cursor.delete();
         cursor.continue();
       };
       transaction.oncomplete = () => resolve();

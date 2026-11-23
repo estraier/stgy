@@ -605,3 +605,139 @@ test.each([2, 3, 4] as const)("Interpolation %i streams multiple frames per pair
     info.mockRestore();
   }
 });
+
+test("STF prefetch computes two adjacent pairs ahead, but merges their stripes strictly in order", async () => {
+  const log: string[] = [];
+  const ready = new Set<string>();
+  let active = 0;
+  let maxActive = 0;
+  let releaseFirstTwo: (() => void) | undefined;
+  const firstTwo = new Promise<void>((resolve) => { releaseFirstTwo = resolve; });
+  const frameSet = {
+    mode: "interpolation", allFNumbers: [2, 2.25, 2.52, 2.83],
+    middleFrames: [0, 1, 2].map((i) => ({
+      previousIndex: i, nextIndex: i + 1, pairLabel: `${i}-${i + 1}`,
+      interpolationFraction: 0.5, weight: 0.1,
+    })),
+    outerFrames: [],
+    virtualTonePlans: { middle: Array.from({ length: 3 }, () => ({ gain: 1, scaledLog: 0 })), outer: [] },
+  };
+  const pixels = [testPixels(22000), testPixels(24000), testPixels(26000), testPixels(28000)];
+  const originalInfo = jest.spyOn(console, "info").mockImplementation(() => {});
+  try {
+    const result = new Float32Array(12);
+    await appendStfVirtualSource(result, {
+      frameSet: frameSet as never,
+      sessionId: "parallel", sessionCreatedAt: 1700000000000, alignmentKey: "align-1",
+      reader: { width: 2, height: 2, readGamma2Image: async (index: number) => pixels[index] } as never,
+      createFlowClient: () => ({
+        prefetchFlow: async ({ previousImageId, nextImageId }: { previousImageId: number; nextImageId: number }) => {
+          const key = `${previousImageId}-${nextImageId}`;
+          active++;
+          maxActive = Math.max(maxActive, active);
+          log.push(`prefetch:${key}`);
+          if (previousImageId < 2) {
+            if (log.filter((entry) => entry.startsWith("prefetch:")).length === 2) releaseFirstTwo?.();
+            await firstTwo;
+          }
+          ready.add(key);
+          active--;
+        },
+        generateStripes: async (
+          args: Parameters<StfOpticalFlowClient["generateStripes"]>[0],
+          onStripe: Parameters<StfOpticalFlowClient["generateStripes"]>[1],
+        ) => {
+          const key = `${args.previousImageId}-${args.nextImageId}`;
+          expect(ready.has(key)).toBe(true);
+          log.push(`merge:${key}`);
+          await onStripe({ kind: "primary", y: 0, height: 2, pixels: testPixels(23000) });
+          return { flowCacheHit: true, flowWorkerCount: 2 } as never;
+        },
+        warpOpeningAverageStripes: async () => { throw new Error("Unexpected opening extrapolation"); },
+        releaseRetained: () => {}, terminate: () => { log.push("terminate"); },
+      }) as never,
+    });
+    expect(maxActive).toBe(2);
+    expect(log.filter((entry) => entry.startsWith("merge:"))).toEqual([
+      "merge:0-1", "merge:1-2", "merge:2-3",
+    ]);
+    expect(log.indexOf("prefetch:1-2")).toBeLessThan(log.indexOf("merge:0-1"));
+    expect(log.at(-1)).toBe("terminate");
+    expect(Array.from(result).every((value) => value > 0)).toBe(true);
+  } finally {
+    originalInfo.mockRestore();
+  }
+});
+
+test("STF rolling prefetch refills the freed slot during Warp, with at most two outstanding pairs", async () => {
+  const log: string[] = [];
+  const held = new Set<string>();
+  let maxHeld = 0;
+  let releaseFirstWarp: (() => void) | undefined;
+  let firstWarpStarted: (() => void) | undefined;
+  const warpGate = new Promise<void>((resolve) => { releaseFirstWarp = resolve; });
+  const warpEntered = new Promise<void>((resolve) => { firstWarpStarted = resolve; });
+  const frameSet = {
+    mode: "interpolation", allFNumbers: [2, 2.25, 2.52, 2.83, 3.17],
+    middleFrames: [0, 1, 2, 3].map((i) => ({
+      previousIndex: i, nextIndex: i + 1, pairLabel: `${i}-${i + 1}`,
+      interpolationFraction: 0.5, weight: 0.1,
+    })), outerFrames: [],
+    virtualTonePlans: { middle: Array.from({ length: 4 }, () => ({ gain: 1, scaledLog: 0 })), outer: [] },
+  };
+  const originalInfo = jest.spyOn(console, "info").mockImplementation(() => {});
+  try {
+    const accumulator = new Float32Array(12);
+    const running = appendStfVirtualSource(accumulator, {
+      frameSet: frameSet as never,
+      sessionId: "rolling", sessionCreatedAt: 1700000000000, alignmentKey: "align-1",
+      reader: { width: 2, height: 2,
+        readGamma2Image: async (index: number) => testPixels(20000 + index * 1000) } as never,
+      createFlowClient: () => ({
+        prefetchFlow: async ({ previousImageId, nextImageId }: { previousImageId: number; nextImageId: number }) => {
+          const pair = `${previousImageId}-${nextImageId}`;
+          expect(held.has(pair)).toBe(false);
+          held.add(pair);
+          maxHeld = Math.max(maxHeld, held.size);
+          log.push(`prefetch:${pair}`);
+        },
+        generateStripes: async (
+          args: Parameters<StfOpticalFlowClient["generateStripes"]>[0],
+          onStripe: Parameters<StfOpticalFlowClient["generateStripes"]>[1],
+          onFlowConsumed?: () => void,
+        ) => {
+          const pair = `${args.previousImageId}-${args.nextImageId}`;
+          expect(held.delete(pair)).toBe(true);
+          log.push(`consume:${pair}`);
+          onFlowConsumed?.();
+          if (args.previousImageId === 0) {
+            firstWarpStarted?.();
+            await warpGate;
+          }
+          log.push(`warp:${pair}`);
+          await onStripe({ kind: "primary", y: 0, height: 2, pixels: testPixels(23000) });
+          return { flowCacheHit: true, flowWorkerCount: 2 } as never;
+        },
+        warpOpeningAverageStripes: async () => { throw new Error("Unexpected opening extrapolation"); },
+        releaseRetained: () => {}, terminate: () => { log.push("terminate"); },
+      }) as never,
+    });
+    try {
+      await warpEntered;
+      // Allow the serial Canonical read tail and the next prefetch to settle.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(log).toContain("prefetch:2-3");
+      expect(log).not.toContain("warp:0-1");
+      expect(held.size).toBe(2);  // Pair 1-2 plus the newly launched 2-3.
+    } finally {
+      releaseFirstWarp?.();
+    }
+    await running;
+    expect(maxHeld).toBe(2);
+    expect(log.filter((entry) => entry.startsWith("warp:"))).toEqual([
+      "warp:0-1", "warp:1-2", "warp:2-3", "warp:3-4",
+    ]);
+    expect(log.at(-1)).toBe("terminate");
+    expect(accumulator.every((value) => value > 0 && Number.isFinite(value))).toBe(true);
+  } finally { originalInfo.mockRestore(); }
+});

@@ -1,15 +1,10 @@
 import { STF_FARNEBACK_BASE_WINSIZE, STF_FARNEBACK_MIN_WINSIZE } from "./stf-farneback-winsize";
 
-/** Best-effort persistent bidirectional 4MP Farneback Flow cache.
- * Cache hits never rewrite metadata. Once admitted, valid pairs stay cached
- * until explicit session deletion, 30-minute expiration, or corruption. When
- * the 512MiB budget fills, skip new admissions instead of evicting pairs that
- * the next sequential merge will need again.
- * Every record belongs to a Canonical input session. Re-selecting files starts
- * a new session, even when the files contain identical pixels. No file hash,
- * WebCrypto, or cross-session content-based reuse is involved.
+/** Best-effort session-owned bidirectional 4MP Farneback Flow cache.
+ * Every valid pair remains available until its Canonical session is removed
+ * or expires. IndexedDB's actual quota, not an application byte budget,
+ * determines whether a write succeeds. No LRU or quota preflight is used.
  */
-export const STF_FLOW_CACHE_MAX_BYTES = 512 * 1024 * 1024;
 const FLOW_ALGORITHM_VERSION = "stf-gray4mp-farneback-f-adaptive-winsize-v3";
 
 /** The alignment identifier describes processing parameters, never image content. */
@@ -31,10 +26,12 @@ export function stfFlowSessionKey(
 const DB_NAME = "local-stack-studio-stf-flow";
 // The session key contains the actual winsize, allowing reuse of valid
 // prior Flow fields with the same window. Old v1/v2 fields are incompatible;
-// clear them once on upgrade rather than occupying the no-LRU budget.
-const DB_VERSION = 3;
+// clear them once on upgrade. V4 adds deletion tombstones.
+const DB_VERSION = 4;
 const FLOW_STORE = "pairs";
 const META_STORE = "metadata";
+const REMOVED_SESSION_STORE = "deleted-sessions";
+const SESSION_RETENTION_MS = 1_800_000;
 
 type FlowRecord = {
   key: string;
@@ -49,14 +46,11 @@ type FlowMetadata = { key: string; sessionId: string; bytes: number; createdAt: 
 export type StfCachedBidirectionalFlow = { forward: Float32Array; backward: Float32Array };
 /** Diagnostics do not change the established best-effort boolean write API. */
 export type StfFlowCacheSaveStatus =
-  "admitted" | "capacity-limit" | "quota-limit" | "invalid" | "error";
+  "admitted" | "quota-limit" | "session-deleted" | "invalid" | "error";
 export type StfFlowCacheWriteDiagnostics = {
   status?: StfFlowCacheSaveStatus;
-  retainedBytes?: number;
   incomingBytes?: number;
-  // Admission and commit timing. The latter includes IndexedDB's asynchronous
-  // clone/write work, not just the synchronous put() call.
-  admissionMs?: number;
+  // Commit includes IndexedDB's asynchronous clone/write work.
   validationMs?: number;
   putMs?: number;
   commitMs?: number;
@@ -94,12 +88,15 @@ function openDb(): Promise<IDBDatabase> {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = (event) => {
       const db = request.result;
-      if (event.oldVersion > 0 && event.oldVersion < DB_VERSION) {
+      if (event.oldVersion > 0 && event.oldVersion < 3) {
         if (db.objectStoreNames.contains(FLOW_STORE)) db.deleteObjectStore(FLOW_STORE);
         if (db.objectStoreNames.contains(META_STORE)) db.deleteObjectStore(META_STORE);
       }
       if (!db.objectStoreNames.contains(FLOW_STORE)) db.createObjectStore(FLOW_STORE, { keyPath: "key" });
       if (!db.objectStoreNames.contains(META_STORE)) db.createObjectStore(META_STORE, { keyPath: "key" });
+      if (!db.objectStoreNames.contains(REMOVED_SESSION_STORE)) {
+        db.createObjectStore(REMOVED_SESSION_STORE, { keyPath: "sessionId" });
+      }
     };
     request.onsuccess = () => {
       const db = request.result;
@@ -155,118 +152,87 @@ export async function readStfCachedFlow(
   }
 }
 
-// Only inspect the small metadata store. A single getAll() request avoids
-// round-tripping through one IndexedDB cursor callback per cached pair, while
-// never deserializing any of the large Flow records.
-function storeIfSpace(
-  db: IDBDatabase, record: FlowRecord, maxBytes: number,
+// Save the pair and its session metadata atomically. An IndexedDB quota
+// failure simply makes this best-effort cache a miss on the next Process.
+// Do not scan all metadata or evict other sessions to admit a new pair.
+function storeFlow(
+  db: IDBDatabase, record: FlowRecord,
   diagnostics?: StfFlowCacheWriteDiagnostics,
 ): Promise<boolean> {
   return new Promise((resolve, reject) => {
-    // These vectors are reproducible and the cache is best-effort. Relaxed
-    // durability avoids requesting a synchronous disk flush before completion.
-    // Older IndexedDB implementations may reject the options argument.
     let tx: IDBTransaction;
     try {
-      tx = db.transaction([FLOW_STORE, META_STORE], "readwrite", { durability: "relaxed" });
+      tx = db.transaction([FLOW_STORE, META_STORE, REMOVED_SESSION_STORE], "readwrite", { durability: "relaxed" });
     } catch {
-      tx = db.transaction([FLOW_STORE, META_STORE], "readwrite");
+      tx = db.transaction([FLOW_STORE, META_STORE, REMOVED_SESSION_STORE], "readwrite");
     }
-    const flows = tx.objectStore(FLOW_STORE);
-    const metadata = tx.objectStore(META_STORE);
-    const admissionStarted = performance.now();
     let admitted = false;
-    let enqueuedAt: number | undefined;
-    const request = metadata.getAll();
-    request.onsuccess = () => {
-      const entries = request.result as FlowMetadata[];
-      let retainedBytes = 0;
-      const now = Date.now();
-      for (const entry of entries) {
-        const invalid = !entry.key || !entry.sessionId ||
-          !Number.isSafeInteger(entry.createdAt) || entry.createdAt < 0 || entry.createdAt > now ||
-          !Number.isSafeInteger(entry.bytes) || entry.bytes <= 0;
-        if (invalid) {
-          flows.delete(entry.key);
-          metadata.delete(entry.key);
-        } else if (entry.key !== record.key) {
-          // Replacing the same key must not count its previous size twice.
-          retainedBytes += entry.bytes;
-        }
-      }
-      const incomingBytes = record.forward.byteLength + record.backward.byteLength;
-      if (diagnostics) {
-        diagnostics.admissionMs = performance.now() - admissionStarted;
-        diagnostics.retainedBytes = retainedBytes;
-        diagnostics.incomingBytes = incomingBytes;
-      }
-      if (retainedBytes + incomingBytes > maxBytes) {
-        if (diagnostics) diagnostics.status = "capacity-limit";
+    let enqueuedAt = 0;
+    // Serialized with explicit deletion in the same IDB store transaction:
+    // a late Worker cannot recreate an already deleted session's Flow.
+    const check = tx.objectStore(REMOVED_SESSION_STORE).get(record.sessionId);
+    check.onsuccess = () => {
+      if (check.result) {
+        if (diagnostics) diagnostics.status = "session-deleted";
         return;
       }
-      // Reject non-finite vectors before asking IndexedDB to clone tens of MiB.
-      // This remains inside the live readwrite transaction callback.
-      const validationStarted = performance.now();
-      const valid = validateStfCachedFlow(record, record.sessionId, record.width, record.height);
-      if (diagnostics) diagnostics.validationMs = performance.now() - validationStarted;
-      if (!valid) {
-        if (diagnostics) diagnostics.status = "invalid";
-        return;
-      }
+      const bytes = record.forward.byteLength + record.backward.byteLength;
       const putStarted = performance.now();
-      flows.put(record);
-      metadata.put({ key: record.key, sessionId: record.sessionId,
-        bytes: incomingBytes, createdAt: record.createdAt } satisfies FlowMetadata);
+      tx.objectStore(FLOW_STORE).put(record);
+      tx.objectStore(META_STORE).put({ key: record.key, sessionId: record.sessionId,
+        bytes, createdAt: record.createdAt } satisfies FlowMetadata);
       enqueuedAt = performance.now();
       if (diagnostics) diagnostics.putMs = enqueuedAt - putStarted;
       admitted = true;
-      // Commit without waiting for the next task/event-loop turn. Browsers
-      // lacking the explicit commit API will auto-commit as before.
       tx.commit?.();
     };
     tx.oncomplete = () => {
-      if (diagnostics) {
-        if (admitted) diagnostics.status = "admitted";
-        if (enqueuedAt !== undefined) diagnostics.commitMs = performance.now() - enqueuedAt;
+      if (diagnostics && admitted) {
+        diagnostics.status = "admitted";
+        diagnostics.commitMs = performance.now() - enqueuedAt;
       }
       resolve(admitted);
     };
-    request.onerror = () => reject(request.error);
+    check.onerror = () => reject(check.error);
     tx.onerror = () => reject(tx.error);
     tx.onabort = () => reject(tx.error);
   });
+}
+
+function isQuotaExceeded(error: unknown): boolean {
+  return error instanceof Error && (error.name === "QuotaExceededError" || error.name === "NS_ERROR_DOM_QUOTA_REACHED");
 }
 
 export async function writeStfCachedFlow(
   sessionId: string, key: string, sessionCreatedAt: number,
   width: number, height: number,
   forward: Float32Array, backward: Float32Array,
-  maxBytes = STF_FLOW_CACHE_MAX_BYTES,
   diagnostics?: StfFlowCacheWriteDiagnostics,
 ): Promise<boolean> {
   if (diagnostics) diagnostics.status = "invalid";
-  if (!sessionId || !key || !Number.isFinite(maxBytes) || maxBytes <= 0) return false;
+  if (!sessionId || !key) return false;
+  // Keys must belong to this exact session, never a coincidentally equal image.
+  if (!key.startsWith(`[${JSON.stringify(sessionId)},`)) return false;
   const record: FlowRecord = { key, sessionId, width, height,
     forward, backward, createdAt: sessionCreatedAt };
   if (!validateStfCachedFlowShape(record, sessionId, width, height)) return false;
-  const bytes = forward.byteLength + backward.byteLength;
-  if (diagnostics) diagnostics.incomingBytes = bytes;
-  if (bytes > maxBytes) {
-    if (diagnostics) diagnostics.status = "capacity-limit";
+  // Global cleanup expires even active sessions by their original creation
+  // time. Prevent an old still-running Worker from repopulating an expired one.
+  if (sessionCreatedAt <= Date.now() - SESSION_RETENTION_MS) {
+    if (diagnostics) diagnostics.status = "session-deleted";
     return false;
   }
+  if (diagnostics) diagnostics.incomingBytes = forward.byteLength + backward.byteLength;
+  const validationStarted = performance.now();
+  const valid = validateStfCachedFlow(record, sessionId, width, height);
+  if (diagnostics) diagnostics.validationMs = performance.now() - validationStarted;
+  if (!valid) return false;
   let db: IDBDatabase | null = null;
   try {
-    const estimate = await navigator.storage?.estimate?.().catch(() => undefined);
-    if (estimate && typeof estimate.quota === "number" && typeof estimate.usage === "number" &&
-        estimate.quota - estimate.usage < bytes * 1.25) {
-      if (diagnostics) diagnostics.status = "quota-limit";
-      return false;
-    }
     db = await openDb();
-    return await storeIfSpace(db, record, maxBytes, diagnostics);
-  } catch {
-    if (diagnostics) diagnostics.status = "error";
+    return await storeFlow(db, record, diagnostics);
+  } catch (error) {
+    if (diagnostics) diagnostics.status = isQuotaExceeded(error) ? "quota-limit" : "error";
     return false;
   } finally {
     db?.close();
@@ -276,7 +242,35 @@ export async function writeStfCachedFlow(
 /** Removes only one identified session, regardless of its age. */
 export async function deleteStfFlowSession(sessionId: string): Promise<number> {
   if (!sessionId) return 0;
-  return removeStfFlowRecords((entry) => entry.sessionId === sessionId);
+  // Delete by session-key prefix in BOTH stores. This also removes orphan Flow
+  // records whose small metadata entry is missing or corrupt.
+  const db = await openDb();
+  try {
+    return await new Promise<number>((resolve, reject) => {
+      const tx = db.transaction([FLOW_STORE, META_STORE, REMOVED_SESSION_STORE], "readwrite");
+      tx.objectStore(REMOVED_SESSION_STORE).put({ sessionId, deletedAt: Date.now() });
+      const prefix = `[${JSON.stringify(sessionId)},`;
+      const range = IDBKeyRange.bound(prefix, `${prefix}\uffff`);
+      let removed = 0;
+      const cursorRequest = tx.objectStore(META_STORE).openCursor(range);
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+        if (!cursor) {
+          tx.objectStore(FLOW_STORE).delete(range);
+          tx.objectStore(META_STORE).delete(range);
+          return;
+        }
+        removed++;
+        cursor.continue();
+      };
+      tx.oncomplete = () => resolve(removed);
+      cursorRequest.onerror = () => reject(cursorRequest.error);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  } finally {
+    db.close();
+  }
 }
 
 /** Called on new-session creation. Expire by session creation time, even if active. */
@@ -288,9 +282,22 @@ async function removeStfFlowRecords(predicate: (entry: FlowMetadata) => boolean)
   const db = await openDb();
   try {
     return await new Promise<number>((resolve, reject) => {
-      const tx = db.transaction([FLOW_STORE, META_STORE], "readwrite");
+      const tx = db.transaction([FLOW_STORE, META_STORE, REMOVED_SESSION_STORE], "readwrite");
       const flows = tx.objectStore(FLOW_STORE);
       const metadata = tx.objectStore(META_STORE);
+      const deleted = tx.objectStore(REMOVED_SESSION_STORE);
+      // Prune old tombstones; expired sessions cannot write again because of
+      // their immutable createdAt, even after their tombstone is removed.
+      const tombstones = deleted.openCursor();
+      tombstones.onsuccess = () => {
+        const cursor = tombstones.result;
+        if (!cursor) return;
+        const value = cursor.value as { sessionId: string; deletedAt: number };
+        if (!Number.isFinite(value.deletedAt) || value.deletedAt <= Date.now() - SESSION_RETENTION_MS) {
+          cursor.delete();
+        }
+        cursor.continue();
+      };
       let removed = 0;
       const request = metadata.openCursor();
       request.onsuccess = () => {
@@ -299,6 +306,7 @@ async function removeStfFlowRecords(predicate: (entry: FlowMetadata) => boolean)
         const entry = cursor.value as FlowMetadata;
         if (predicate(entry)) {
           flows.delete(entry.key);
+          deleted.put({ sessionId: entry.sessionId, deletedAt: Date.now() });
           cursor.delete();
           removed++;
         }

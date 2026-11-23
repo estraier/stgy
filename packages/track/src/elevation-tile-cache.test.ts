@@ -2,7 +2,7 @@ import type { TrackActivity } from './activity';
 import { correctTrackActivityAltitudes } from './altitude-correction';
 import type { ElevationSource } from './altitude-correction';
 import {
-  GSI_TILE_CACHE_MAX_ENTRIES, MAPZEN_TILE_CACHE_MAX_ENTRIES, GSI_TILE_CACHE_TTL_MS,
+  GSI_TILE_CACHE_TTL_MS,
   isCacheableGsiElevationUrl, isCacheableMapzenElevationUrl, readCachedGsiElevationTile, writeCachedGsiElevationTile,
   readCachedElevationTile, writeCachedElevationTile,
 } from './elevation-tile-cache';
@@ -47,7 +47,7 @@ class FakeTransaction {
       count() { return request(() => records.size); },
       index(_name: string) {
         return {
-          openCursor() {
+          openCursor(_range?: unknown) {
             const output = new FakeRequest<{
               value: Tile;
               delete(): void;
@@ -164,36 +164,36 @@ describe('GSI IndexedDB elevation tile cache', () => {
     expect(records.size).toBe(0);
   });
 
-  test('prunes expired tiles and keeps no more than 128 most recent entries', async () => {
+  test('retains all tiles regardless of count, then prunes expired entries', async () => {
     const clock = jest.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000);
     try {
-      for (let i = 0; i < GSI_TILE_CACHE_MAX_ENTRIES + 3; i++) {
+      for (let i = 0; i < 131; i++) {
         clock.mockReturnValue(1_800_000_000_000 + i);
         await writeCachedGsiElevationTile(VALID_URL.replace('14501', String(14501 + i)), samplePng(7));
       }
-      expect(records.size).toBe(GSI_TILE_CACHE_MAX_ENTRIES);
-      expect(records.has(VALID_URL)).toBe(false);
+      expect(records.size).toBe(131);
+      expect(records.has(VALID_URL)).toBe(true);
       clock.mockReturnValue(1_800_000_000_000 + GSI_TILE_CACHE_TTL_MS + 500);
       await writeCachedGsiElevationTile(VALID_URL, samplePng(9));
       expect(records.size).toBe(1);
     } finally { clock.mockRestore(); }
   });
 
-  test('GSI and Mapzen retain up to 128 tiles each without evicting the other source', async () => {
+  test('GSI and Mapzen retain more than 128 tiles each without eviction', async () => {
     const clock = jest.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000);
     const mapzenPrefix = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/14/';
     try {
-      for (let i = 0; i < GSI_TILE_CACHE_MAX_ENTRIES + 1; i++) {
+      for (let i = 0; i < 129; i++) {
         clock.mockReturnValue(1_800_000_000_000 + i * 2);
         await writeCachedElevationTile(VALID_URL.replace('14501', String(14501 + i)), samplePng());
         clock.mockReturnValue(1_800_000_000_000 + i * 2 + 1);
         await writeCachedElevationTile(`${mapzenPrefix}${8000 + i}/5636.png`, samplePng());
       }
       const urls = [...records.keys()];
-      expect(urls.filter(isCacheableGsiElevationUrl)).toHaveLength(GSI_TILE_CACHE_MAX_ENTRIES);
-      expect(urls.filter(isCacheableMapzenElevationUrl)).toHaveLength(MAPZEN_TILE_CACHE_MAX_ENTRIES);
-      expect(records.has(VALID_URL)).toBe(false);
-      expect(records.has(`${mapzenPrefix}8000/5636.png`)).toBe(false);
+      expect(urls.filter(isCacheableGsiElevationUrl)).toHaveLength(129);
+      expect(urls.filter(isCacheableMapzenElevationUrl)).toHaveLength(129);
+      expect(records.has(VALID_URL)).toBe(true);
+      expect(records.has(`${mapzenPrefix}8000/5636.png`)).toBe(true);
       expect(await readCachedElevationTile(`${mapzenPrefix}8128/5636.png`)).toBeDefined();
       expect(await readCachedElevationTile(VALID_URL.replace('14501', '14629'))).toBeDefined();
     } finally { clock.mockRestore(); }

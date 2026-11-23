@@ -20,6 +20,9 @@ function cloneStoredValue<T>(value: T): T {
 
 function useMemoryIndexedDb(legacyVersion: 0 | 1 | 2 = 0, rejectDurabilityOptions = false) {
   const original = Object.getOwnPropertyDescriptor(globalThis, "indexedDB");
+  const originalRange = Object.getOwnPropertyDescriptor(globalThis, "IDBKeyRange");
+  Object.defineProperty(globalThis, "IDBKeyRange", { configurable: true,
+    value: { bound: (lower: string, upper: string) => ({ lower, upper }) } });
   const tables = new Map<string, Map<string, unknown>>();
   if (legacyVersion) {
     tables.set("pairs", new Map([["old-content-address", { key: "old-content-address" }]]));
@@ -76,15 +79,21 @@ function useMemoryIndexedDb(legacyVersion: 0 | 1 | 2 = 0, rejectDurabilityOption
               schedule(() => { request.result = cloneStoredValue(store.get(key)); request.onsuccess?.(); });
               return request;
             },
-            put(value: { key: string }) {
-              schedule(() => store.set(value.key, cloneStoredValue(value)));
+            put(value: { key?: string; sessionId?: string }) {
+              schedule(() => store.set(value.key ?? value.sessionId!, cloneStoredValue(value)));
             },
-            delete(key: string) {
-              schedule(() => { store.delete(key); });
+            delete(key: string | { lower: string; upper: string }) {
+              schedule(() => {
+                if (typeof key === "string") store.delete(key);
+                else for (const id of [...store.keys()]) {
+                  if (id >= key.lower && id <= key.upper) store.delete(id);
+                }
+              });
             },
-            openCursor() {
+            openCursor(range?: { lower: string; upper: string }) {
               stats.cursorCalls++;
-              const keys = [...store.keys()];
+              const keys = [...store.keys()].filter((id) => !range ||
+                (id >= range.lower && id <= range.upper));
               let i = 0;
               const request = { result: null as null | { value: unknown; continue: () => void; delete: () => void },
                 onsuccess: null as null | (() => void), onerror: null as null | (() => void) };
@@ -128,6 +137,8 @@ function useMemoryIndexedDb(legacyVersion: 0 | 1 | 2 = 0, rejectDurabilityOption
     restore() {
       if (original) Object.defineProperty(globalThis, "indexedDB", original);
       else Reflect.deleteProperty(globalThis, "indexedDB");
+      if (originalRange) Object.defineProperty(globalThis, "IDBKeyRange", originalRange);
+      else Reflect.deleteProperty(globalThis, "IDBKeyRange");
     },
   };
 }
@@ -145,7 +156,7 @@ test("Farneback winsize separates session Flow cache keys", () => {
   expect(stfFlowSessionKey(...base, 22)).toBeNull();
 });
 
-test("IndexedDB retains cached pairs, skips over-budget writes, and frees space on session deletion", async () => {
+test("every pair is retained irrespective of total bytes, and owner deletion clears all pairs", async () => {
   const fake = useMemoryIndexedDb();
   const forward = Float32Array.from([1.25, -0.5, 0, 0, 2.5, 3, 0, 0]);
   const backward = Float32Array.from([-1.25, 0.5, 0, 0, -2.5, -3, 0, 0]);
@@ -155,46 +166,55 @@ test("IndexedDB retains cached pairs, skips over-budget writes, and frees space 
     const c = stfFlowSessionKey("session-2", 0, 1, "align", 2, 2)!;
     const createdAt = Date.now();
     expect(await readStfCachedFlow("session-1", a, 2, 2)).toBeNull();
-    const savedDiagnostics: StfFlowCacheWriteDiagnostics = {};
+    const diagnostics: StfFlowCacheWriteDiagnostics = {};
     expect(await writeStfCachedFlow("session-1", a, createdAt, 2, 2,
-      forward, backward, 128, savedDiagnostics)).toBe(true);
-    expect(savedDiagnostics).toMatchObject({ status: "admitted", retainedBytes: 0, incomingBytes: 64 });
+      forward, backward, diagnostics)).toBe(true);
+    expect(diagnostics).toMatchObject({ status: "admitted", incomingBytes: 64 });
+    expect(await writeStfCachedFlow("session-1", b, createdAt, 2, 2, forward, backward)).toBe(true);
+    expect(await writeStfCachedFlow("session-2", c, createdAt, 2, 2, forward, backward)).toBe(true);
+    expect(fake.tables.get("pairs")?.size).toBe(3);
     const recovered = await readStfCachedFlow("session-1", a, 2, 2);
     expect(Array.from(recovered?.forward || [])).toEqual(Array.from(forward));
-    expect(Array.from(recovered?.backward || [])).toEqual(Array.from(backward));
     expect(recovered?.forward).not.toBe(forward);
-    expect(fake.tables.get("pairs")?.size).toBe(1);
-    expect(await writeStfCachedFlow("session-1", b, createdAt, 2, 2, forward, backward, 128)).toBe(true);
-    // The cache is now full. The third pair must not evict either of the two
-    // first pairs, even if the first pair was accessed long ago.
-    const capacityDiagnostics: StfFlowCacheWriteDiagnostics = {};
-    expect(await writeStfCachedFlow("session-2", c, createdAt, 2, 2,
-      forward, backward, 128, capacityDiagnostics)).toBe(false);
-    expect(capacityDiagnostics).toMatchObject({ status: "capacity-limit", retainedBytes: 128, incomingBytes: 64 });
-    expect(fake.tables.get("pairs")?.size).toBe(2);
-    expect(await readStfCachedFlow("session-1", a, 2, 2)).not.toBeNull();
-    expect(await readStfCachedFlow("session-1", b, 2, 2)).not.toBeNull();
-    expect(await readStfCachedFlow("session-2", c, 2, 2)).toBeNull();
     expect(await readStfCachedFlow("session-1", c, 2, 2)).toBeNull();
-    // Updating an existing key only accounts for its replacement size.
-    const replacement = Float32Array.from([0, 0, 0, 0, 0, 0, 0, 0]);
-    expect(await writeStfCachedFlow("session-1", a, createdAt, 2, 2,
-      replacement, backward, 128)).toBe(true);
-    expect(Array.from((await readStfCachedFlow("session-1", a, 2, 2))!.forward)).toEqual(Array.from(replacement));
-    expect(await writeStfCachedFlow("session-1", a, createdAt, 2, 2, forward, backward, 32)).toBe(false);
     expect(await deleteStfFlowSession("session-1")).toBe(2);
-    expect(fake.tables.get("pairs")?.size).toBe(0);
-    // Explicit deletion creates space: new pairs may be admitted again.
-    expect(await writeStfCachedFlow("session-2", c, createdAt, 2, 2, forward, backward, 128)).toBe(true);
+    expect(fake.tables.get("pairs")?.size).toBe(1);
+    expect(await readStfCachedFlow("session-2", c, 2, 2)).not.toBeNull();
     expect(await purgeExpiredStfFlowSessions(createdAt)).toBe(1);
     expect(fake.tables.get("pairs")?.size).toBe(0);
-  } finally {
-    fake.restore();
-  }
+  } finally { fake.restore(); }
 });
 
 
-test("Flow write admission reads metadata once and commits relaxed-durability cache transactions", async () => {
+test("session deletion also removes a Flow record without metadata", async () => {
+  const fake = useMemoryIndexedDb();
+  try {
+    const key = stfFlowSessionKey("orphan", 0, 1, "align", 2, 2)!;
+    const flow = new Float32Array(8);
+    expect(await writeStfCachedFlow("orphan", key, Date.now(), 2, 2, flow, flow)).toBe(true);
+    fake.tables.get("metadata")!.delete(key);
+    expect(await deleteStfFlowSession("orphan")).toBe(0);
+    expect(fake.tables.get("pairs")?.size).toBe(0);
+  } finally { fake.restore(); }
+});
+
+test("late Flow writes cannot resurrect a deleted session", async () => {
+  const fake = useMemoryIndexedDb();
+  const now = Date.now();
+  const flow = new Float32Array(8);
+  try {
+    const first = stfFlowSessionKey("deleted", 0, 1, "align", 2, 2)!;
+    const next = stfFlowSessionKey("deleted", 1, 2, "align", 2, 2)!;
+    expect(await writeStfCachedFlow("deleted", first, now, 2, 2, flow, flow)).toBe(true);
+    expect(await deleteStfFlowSession("deleted")).toBe(1);
+    const diagnostic: StfFlowCacheWriteDiagnostics = {};
+    expect(await writeStfCachedFlow("deleted", next, now, 2, 2, flow, flow, diagnostic)).toBe(false);
+    expect(diagnostic.status).toBe("session-deleted");
+    expect(fake.tables.get("pairs")?.size).toBe(0);
+  } finally { fake.restore(); }
+});
+
+test("Flow writes skip metadata scans and commit relaxed-durability cache transactions", async () => {
   const fake = useMemoryIndexedDb();
   const now = Date.now();
   const forward = Float32Array.from([1, 0, 0, 1, 2, 0, 0, 2]);
@@ -204,14 +224,13 @@ test("Flow write admission reads metadata once and commits relaxed-durability ca
       const key = stfFlowSessionKey("single-snapshot", i, i + 1, "align", 2, 2)!;
       const diagnostic: StfFlowCacheWriteDiagnostics = {};
       expect(await writeStfCachedFlow("single-snapshot", key, now, 2, 2,
-        forward, backward, 256, diagnostic)).toBe(true);
+        forward, backward, diagnostic)).toBe(true);
       expect(diagnostic.status).toBe("admitted");
-      expect(diagnostic.admissionMs).toBeGreaterThanOrEqual(0);
       expect(diagnostic.validationMs).toBeGreaterThanOrEqual(0);
       expect(diagnostic.putMs).toBeGreaterThanOrEqual(0);
       expect(diagnostic.commitMs).toBeGreaterThanOrEqual(0);
     }
-    expect(fake.stats.getAllCalls).toBe(3);
+    expect(fake.stats.getAllCalls).toBe(0);
     expect(fake.stats.cursorCalls).toBe(0);
     expect(fake.stats.commits).toBe(3);
     expect(fake.stats.transactionDurabilities).toEqual(["relaxed", "relaxed", "relaxed"]);
@@ -225,34 +244,23 @@ test("Flow writes retain the original transaction path when durability options a
   const flow = new Float32Array(8);
   try {
     expect(await writeStfCachedFlow("legacy-idb", key, Date.now(), 2, 2,
-      flow, flow, 128)).toBe(true);
+      flow, flow)).toBe(true);
     expect(fake.stats.transactionDurabilities).toEqual(["relaxed", "default"]);
     expect(fake.stats.commits).toBe(1);
     expect(await readStfCachedFlow("legacy-idb", key, 2, 2)).not.toBeNull();
   } finally { fake.restore(); }
 });
 
-test("full-cache admission rejects without reading either Flow vector", async () => {
+test("all writes are validated before saving, without an application budget", async () => {
   const fake = useMemoryIndexedDb();
   const now = Date.now();
   const first = stfFlowSessionKey("full", 0, 1, "align", 2, 2)!;
   const second = stfFlowSessionKey("full", 1, 2, "align", 2, 2)!;
   const vector = new Float32Array(8);
-  let indexedReads = 0;
-  // A proxy remains instanceof Float32Array but counts element accesses.
-  const watched = new Proxy(vector, {
-    get(target, property) {
-      if (typeof property === "string" && /^(0|[1-9]\d*)$/.test(property)) indexedReads++;
-      return Reflect.get(target, property, target);
-    },
-  }) as Float32Array;
   try {
-    expect(await writeStfCachedFlow("full", first, now, 2, 2, vector, vector, 64)).toBe(true);
-    expect(await writeStfCachedFlow("full", second, now, 2, 2, watched, watched, 64)).toBe(false);
-    expect(indexedReads).toBe(0);
-    expect(fake.tables.get("pairs")?.size).toBe(1);
-    // Existing cached data is still validated on reads.
-    expect(await readStfCachedFlow("full", first, 2, 2)).not.toBeNull();
+    expect(await writeStfCachedFlow("full", first, now, 2, 2, vector, vector)).toBe(true);
+    expect(await writeStfCachedFlow("full", second, now, 2, 2, vector, vector)).toBe(true);
+    expect(fake.tables.get("pairs")?.size).toBe(2);
   } finally { fake.restore(); }
 });
 
@@ -266,10 +274,10 @@ test("invalid Flow vectors are rejected before persistence and corrupt reads are
   try {
     const invalidDiagnostics: StfFlowCacheWriteDiagnostics = {};
     expect(await writeStfCachedFlow("s", key, now, 2, 2,
-      bad, good, 128, invalidDiagnostics)).toBe(false);
+      bad, good, invalidDiagnostics)).toBe(false);
     expect(invalidDiagnostics.status).toBe("invalid");
-    expect(fake.tables.get("pairs")?.size).toBe(0);
-    expect(await writeStfCachedFlow("s", key, now, 2, 2, good, good, 128)).toBe(true);
+    expect(fake.tables.get("pairs")?.size ?? 0).toBe(0);
+    expect(await writeStfCachedFlow("s", key, now, 2, 2, good, good)).toBe(true);
     const pair = fake.tables.get("pairs")!.get(key) as { forward: Float32Array };
     pair.forward[7] = NaN;
     expect(await readStfCachedFlow("s", key, 2, 2)).toBeNull();
@@ -278,7 +286,7 @@ test("invalid Flow vectors are rejected before persistence and corrupt reads are
   } finally { fake.restore(); }
 });
 
-test("sequential re-merges have stable Flow hits, not cyclic LRU cache misses", async () => {
+test("sequential re-merges reuse every Flow without admission limits", async () => {
   const fake = useMemoryIndexedDb();
   const flow = new Float32Array(8); // Each bidirectional pair is 64 bytes.
   const now = Date.now();
@@ -292,15 +300,15 @@ test("sequential re-merges have stable Flow hits, not cyclic LRU cache misses", 
         if (await readStfCachedFlow("same-session", key, 2, 2)) {
           hits++;
         } else if (await writeStfCachedFlow("same-session", key,
-          now, 2, 2, flow, flow, 192)) {
+          now, 2, 2, flow, flow)) {
           admissions++;
         }
       }
       expect({ hits, admissions }).toEqual(pass === 0
-        ? { hits: 0, admissions: 3 }
-        : { hits: 3, admissions: 0 });
-      expect(fake.tables.get("pairs")?.size).toBe(3);
-      expect([...fake.tables.get("pairs")!.keys()]).toEqual(keys.slice(0, 3));
+        ? { hits: 0, admissions: 5 }
+        : { hits: 5, admissions: 0 });
+      expect(fake.tables.get("pairs")?.size).toBe(5);
+      expect([...fake.tables.get("pairs")!.keys()]).toEqual(keys);
     }
   } finally { fake.restore(); }
 });
@@ -311,7 +319,7 @@ test("reads are read-only, including legacy v2 metadata containing accessedAt", 
   const flow = new Float32Array(8);
   const key = stfFlowSessionKey("same-session", 0, 1, "align", 2, 2)!;
   try {
-    expect(await writeStfCachedFlow("same-session", key, now, 2, 2, flow, flow, 128)).toBe(true);
+    expect(await writeStfCachedFlow("same-session", key, now, 2, 2, flow, flow)).toBe(true);
     const metadata = fake.tables.get("metadata")!;
     expect(metadata.get(key)).toEqual({ key, sessionId: "same-session", bytes: 64, createdAt: now });
     // A real v2 cache can already contain LRU timestamps; never rewrite them.
@@ -333,11 +341,17 @@ test("new-session expiration removes only Flow records at least 1800 seconds old
   const oldKey = stfFlowSessionKey("old", 0, 1, "align", 2, 2)!;
   const newKey = stfFlowSessionKey("new", 0, 1, "align", 2, 2)!;
   try {
-    expect(await writeStfCachedFlow("old", oldKey, now - 1_800_000, 2, 2, vectors, vectors)).toBe(true);
-    expect(await writeStfCachedFlow("new", newKey, now - 1_799_999, 2, 2, vectors, vectors)).toBe(true);
-    expect(await purgeExpiredStfFlowSessions(now - 1_800_000)).toBe(1);
+    // Write while both are active, then expire only the older owner's date.
+    expect(await writeStfCachedFlow("old", oldKey, now - 500, 2, 2, vectors, vectors)).toBe(true);
+    expect(await writeStfCachedFlow("new", newKey, now - 499, 2, 2, vectors, vectors)).toBe(true);
+    expect(await purgeExpiredStfFlowSessions(now - 500)).toBe(1);
     expect(await readStfCachedFlow("old", oldKey, 2, 2)).toBeNull();
     expect(await readStfCachedFlow("new", newKey, 2, 2)).not.toBeNull();
+    // Once expired, a late asynchronous Worker cannot repopulate it.
+    const denied: StfFlowCacheWriteDiagnostics = {};
+    expect(await writeStfCachedFlow("old", oldKey, now - 1_800_000, 2, 2,
+      vectors, vectors, denied)).toBe(false);
+    expect(denied.status).toBe("session-deleted");
   } finally { fake.restore(); }
 });
 
@@ -444,26 +458,26 @@ test("actual Optical Flow worker hits persisted Flow without spawning Farneback 
 });
 
 
-test("Flow cache diagnostics distinguish quota refusal and unavailable IndexedDB", async () => {
+test("storage quota estimates never pre-reject a Flow; IDB unavailability remains best-effort", async () => {
   const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
   const originalIdb = Object.getOwnPropertyDescriptor(globalThis, "indexedDB");
+  const fake = useMemoryIndexedDb();
   const flow = new Float32Array(8);
   const key = stfFlowSessionKey("quota", 0, 1, "align", 2, 2)!;
   try {
     Object.defineProperty(globalThis, "navigator", { configurable: true,
-      value: { storage: { estimate: async () => ({ usage: 95, quota: 100 }) } } });
-    const quota: StfFlowCacheWriteDiagnostics = {};
+      value: { storage: { estimate: () => { throw new Error("Do not estimate quota"); } } } });
+    const diagnostics: StfFlowCacheWriteDiagnostics = {};
     expect(await writeStfCachedFlow("quota", key, Date.now(), 2, 2,
-      flow, flow, 128, quota)).toBe(false);
-    expect(quota.status).toBe("quota-limit");
-
-    Object.defineProperty(globalThis, "navigator", { configurable: true, value: {} });
+      flow, flow, diagnostics)).toBe(true);
+    expect(diagnostics.status).toBe("admitted");
     Reflect.deleteProperty(globalThis, "indexedDB");
     const unavailable: StfFlowCacheWriteDiagnostics = {};
     expect(await writeStfCachedFlow("quota", key, Date.now(), 2, 2,
-      flow, flow, 128, unavailable)).toBe(false);
+      flow, flow, unavailable)).toBe(false);
     expect(unavailable.status).toBe("error");
   } finally {
+    fake.restore();
     if (originalNavigator) Object.defineProperty(globalThis, "navigator", originalNavigator);
     else Reflect.deleteProperty(globalThis, "navigator");
     if (originalIdb) Object.defineProperty(globalThis, "indexedDB", originalIdb);

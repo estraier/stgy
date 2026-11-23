@@ -316,12 +316,35 @@ function chunkKey(sessionId: string, imageIndex: number, chunkIndex: number): st
 
 function idbPut(db: IDBDatabase, storeName: string, value: unknown): Promise<void> {
   return new Promise((resolve, reject) => {
+    const record = value as { sessionId?: string };
+    const hasOwner = storeName !== SESSION_STORE && typeof record?.sessionId === "string";
+    if (storeName !== SESSION_STORE && !hasOwner) {
+      reject(new Error(`Canonical ${storeName} write has no owning session.`));
+      return;
+    }
     let tx: IDBTransaction;
-    try { tx = db.transaction(storeName, "readwrite"); } catch (error) { reject(error); return; }
-    tx.objectStore(storeName).put(value);
+    try {
+      tx = db.transaction(hasOwner ? [SESSION_STORE, storeName] : storeName, "readwrite");
+    } catch (error) { reject(error); return; }
+    if (hasOwner) {
+      // Owner existence and data write are serialized in one transaction with
+      // session deletion. A stale input Worker cannot resurrect deleted chunks.
+      const check = tx.objectStore(SESSION_STORE).get(record.sessionId!);
+      check.onsuccess = () => {
+        const owner = check.result as CanonicalSessionRecord | undefined;
+        if (!owner || owner.createdAt <= Date.now() - 1_800_000) {
+          tx.abort();
+          return;
+        }
+        tx.objectStore(storeName).put(value);
+      };
+      check.onerror = () => reject(check.error);
+    } else {
+      tx.objectStore(storeName).put(value);
+    }
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error || new Error(`Could not write ${storeName}.`));
-    tx.onabort = () => reject(tx.error || new Error(`${storeName} write was aborted.`));
+    tx.onabort = () => reject(tx.error || new Error(`Canonical ${storeName} owner session was deleted or expired.`));
   });
 }
 
@@ -345,32 +368,19 @@ function quotaError(error: unknown): Error {
 export async function createCanonicalSession(
   files: readonly File[],
   _inputInfos: readonly CanonicalInputInfo[],
-  reuseIdentity?: { id: string; createdAt: number; dataRevision: number },
+  options?: { dataRevision: number },
 ): Promise<PreparedCanonicalSession> {
   const db = await openCanonicalSourceDb();
-  // Rebuilding a changed Canonical image layout within one file-selection
-  // session does not create a new logical session. New selection still mints
-  // a unique ID because controller passes no reuseIdentity in that case.
-  const id = reuseIdentity?.id || createSessionId();
-  const createdAt = reuseIdentity?.createdAt ?? Date.now();
-  const dataRevision = reuseIdentity?.dataRevision ?? 0;
+  // Every generation has its own owner ID. Reusing a deleted owner would
+  // allow stale Workers to write into a new session or defeat tombstones.
+  const id = createSessionId();
+  const createdAt = Date.now();
+  const dataRevision = options?.dataRevision ?? 0;
   const record: CanonicalSessionRecord = {
     sessionId: id, formatVersion: 1, createdAt, dataRevision, lastAccessAt: createdAt, imageCount: files.length, complete: false,
   };
   await idbPut(db, SESSION_STORE, record);
   return { id, createdAt, dataRevision, filesSignature: canonicalFilesSignature(files), db, images: [], chunkCache: new CanonicalChunkCache(CANONICAL_MAIN_CACHE_BYTES) };
-}
-
-export async function estimateCanonicalCapacity(_files: readonly File[], inputInfos: readonly CanonicalInputInfo[]): Promise<void> {
-  if (!(navigator.storage && typeof navigator.storage.estimate === "function")) return;
-  const required = inputInfos.reduce((sum, info) => sum + Math.max(0, Number(info?.width) || 0) * Math.max(0, Number(info?.height) || 0) * 6, 0) + 64 * 1024 * 1024;
-  const estimate = await navigator.storage.estimate();
-  if (Number.isFinite(estimate.quota) && Number.isFinite(estimate.usage)) {
-    const available = Number(estimate.quota) - Number(estimate.usage);
-    if (available < required) {
-      throw new Error(`Local Stack Studio canonical inputs need about ${(required / (1024 ** 3)).toFixed(2)} GiB, but only ${(Math.max(0, available) / (1024 ** 3)).toFixed(2)} GiB is available.`);
-    }
-  }
 }
 
 export async function writeCanonicalLinearImage(
@@ -487,8 +497,24 @@ export async function writeCanonicalStoredImage(
 
 export async function completeCanonicalSession(session: PreparedCanonicalSession): Promise<void> {
   if (session.images.length === 0 || session.images.some((image) => !image?.complete)) throw new Error("Canonical input session is incomplete.");
-  const existing = await idbGet<CanonicalSessionRecord>(session.db, SESSION_STORE, session.id);
-  await idbPut(session.db, SESSION_STORE, { ...(existing || {}), sessionId: session.id, formatVersion: 1, createdAt: existing?.createdAt || Date.now(), lastAccessAt: Date.now(), imageCount: session.images.length, complete: true });
+  await new Promise<void>((resolve, reject) => {
+    const tx = session.db.transaction(SESSION_STORE, "readwrite");
+    const store = tx.objectStore(SESSION_STORE);
+    const request = store.get(session.id);
+    request.onsuccess = () => {
+      const existing = request.result as CanonicalSessionRecord | undefined;
+      if (!existing || existing.createdAt <= Date.now() - 1_800_000) {
+        tx.abort();
+        return;
+      }
+      store.put({ ...existing, lastAccessAt: Date.now(),
+        imageCount: session.images.length, complete: true } satisfies CanonicalSessionRecord);
+    };
+    request.onerror = () => reject(request.error);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error || new Error("Canonical session completion failed."));
+    tx.onabort = () => reject(tx.error || new Error("Canonical session was deleted or expired."));
+  });
 }
 
 export async function openCanonicalReadSession(
@@ -693,7 +719,8 @@ export async function purgeExpiredCanonicalSessions(
 export async function deleteCanonicalSession(session: PreparedCanonicalSession | string, dbOverride?: IDBDatabase): Promise<void> {
   const sessionId = typeof session === "string" ? session : session.id;
   const db = dbOverride || (typeof session === "string" ? await openCanonicalSourceDb() : session.db);
-  await new Promise<void>((resolve, reject) => {
+  try {
+    await new Promise<void>((resolve, reject) => {
     let tx: IDBTransaction;
     try { tx = db.transaction([SESSION_STORE, IMAGE_STORE, CHUNK_STORE], "readwrite"); } catch (error) { reject(error); return; }
     tx.objectStore(SESSION_STORE).delete(sessionId);
@@ -704,8 +731,10 @@ export async function deleteCanonicalSession(session: PreparedCanonicalSession |
     tx.onerror = () => reject(tx.error || new Error("Could not clear canonical input session."));
     tx.onabort = () => reject(tx.error || new Error("Canonical input cleanup was aborted."));
   });
-  if (typeof session !== "string") session.chunkCache.clearSession(sessionId);
-  if (!dbOverride) db.close();
+    if (typeof session !== "string") session.chunkCache.clearSession(sessionId);
+  } finally {
+    if (!dbOverride) db.close();
+  }
 }
 
 // Each input Worker uses its own IndexedDB connection to write a different

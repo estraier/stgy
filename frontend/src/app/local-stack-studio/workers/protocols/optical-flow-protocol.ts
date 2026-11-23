@@ -44,6 +44,35 @@ export type OpticalFlowWorkerInterpolateRequest = {
   nextGrayBuffer?: ArrayBuffer;
 };
 
+// Two-phase prefetch: check IndexedDB first, so cached pairs never need
+// grayscale conversion. Misses send only two 4MP Gray8 proxies, not RGB16.
+export type OpticalFlowWorkerPrefetchCheckRequest = {
+  type: "prefetch-check";
+  requestId: number;
+  width: number;
+  height: number;
+  previousImageId: number;
+  nextImageId: number;
+  winsize: number;
+  sessionId: string;
+  sessionCreatedAt: number;
+  alignmentKey: string;
+};
+export type OpticalFlowWorkerPrefetchComputeRequest = {
+  type: "prefetch-compute";
+  requestId: number;
+  width: number;
+  height: number;
+  previousImageId: number;
+  nextImageId: number;
+  winsize: number;
+  sessionId: string;
+  alignmentKey: string;
+  previousGrayBuffer: ArrayBuffer;
+  nextGrayBuffer: ArrayBuffer;
+  prepareFlowInputsMs: number;
+};
+
 export type OpticalFlowWorkerWarmupRequest = {
   type: "warmup";
   requestId: number;
@@ -78,6 +107,7 @@ export type OpticalFlowWorkerStripeAbortRequest = {
 
 export type OpticalFlowWorkerReleaseRetainedRequest = { type: "release-retained"; requestId: number };
 export type OpticalFlowWorkerRequest = OpticalFlowWorkerInterpolateRequest | OpticalFlowWorkerWarmupRequest |
+  OpticalFlowWorkerPrefetchCheckRequest | OpticalFlowWorkerPrefetchComputeRequest |
   OpticalFlowWorkerWarpOpeningAverageRequest | OpticalFlowWorkerReleaseRetainedRequest |
   OpticalFlowWorkerStripeAckRequest | OpticalFlowWorkerStripeAbortRequest;
 
@@ -134,15 +164,13 @@ export type OpticalFlowPerformanceStats = {
   flowCacheSaved?: boolean;
   flowCacheReadMs?: number;
   flowCacheWriteMs?: number;
-  flowCacheAdmissionMs?: number;
   flowCacheValidationMs?: number;
   flowCachePutMs?: number;
   flowCacheCommitMs?: number;
   // Time spent awaiting the cache write after the final Warp/stripe ACK.
   flowCacheTailWaitMs?: number;
   // Outcome of best-effort persistence; a miss never fails image generation.
-  flowCacheSaveStatus?: "admitted" | "capacity-limit" | "quota-limit" | "invalid" | "error" | "hit" | "disabled";
-  flowCacheRetainedBytes?: number;
+  flowCacheSaveStatus?: "admitted" | "quota-limit" | "session-deleted" | "invalid" | "error" | "hit" | "disabled";
   flowCacheIncomingBytes?: number;
   outputBytes: number;
 };
@@ -152,6 +180,22 @@ export type OpticalFlowWorkerReadyResponse = {
   requestId: number;
   flowWorkerCount: number;
   warmupMs: number;
+};
+
+export type OpticalFlowWorkerPrefetchStatusResponse = {
+  type: "prefetch-status";
+  requestId: number;
+  needsGray: boolean;
+};
+export type OpticalFlowWorkerPrefetchReadyResponse = {
+  type: "prefetch-ready";
+  requestId: number;
+};
+// Sent after the ordered consumer takes a prefetched pair out of the
+// two-slot Flow queue. The caller may immediately schedule another pair.
+export type OpticalFlowWorkerFlowConsumedResponse = {
+  type: "flow-consumed";
+  requestId: number;
 };
 
 export type OpticalFlowWorkerProgressResponse = {
@@ -217,6 +261,9 @@ export type OpticalFlowWorkerErrorResponse = {
 
 export type OpticalFlowWorkerResponse =
   | OpticalFlowWorkerReadyResponse
+  | OpticalFlowWorkerPrefetchStatusResponse
+  | OpticalFlowWorkerPrefetchReadyResponse
+  | OpticalFlowWorkerFlowConsumedResponse
   | OpticalFlowWorkerProgressResponse
   | OpticalFlowWorkerWarpRetainedResponse
   | OpticalFlowWorkerStripeResponse
