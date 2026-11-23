@@ -78,11 +78,11 @@ describe("STF aperture weights", () => {
     expect(Math.max(...weights.slice(1))).toBeCloseTo(weights[0], 12);
   });
 
-  test("uses q=1 (linear) as the default radial attenuation", () => {
-    expect(DEFAULT_STF_RADIAL_ATTENUATION).toBe(1);
+  test("uses q=0 (logarithmic) as the default radial attenuation", () => {
+    expect(DEFAULT_STF_RADIAL_ATTENUATION).toBe(0);
     const fNumbers = Array.from({ length: 7 }, (_, index) => 2 * 2 ** (index / 6));
     const implicit = buildStfApertureWeights(fNumbers);
-    const explicit = buildStfApertureWeights(fNumbers, DEFAULT_STF_RADIAL_ATTENUATION);
+    const explicit = buildStfApertureWeights(fNumbers, 0);
     expect(implicit).not.toBeNull();
     expect(explicit).not.toBeNull();
     if (!implicit || !explicit) return;

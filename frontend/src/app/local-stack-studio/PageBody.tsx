@@ -306,7 +306,7 @@ export default function PageBody() {
                   <span className="text-xs font-medium text-gray-500">Radial attenuation</span>
                   <select
                     id="stf-radial-attenuation"
-                    defaultValue="1"
+                    defaultValue="0"
                     className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm"
                   >
                     <option value="-2">Power (inverse-sq)</option>
