@@ -650,13 +650,17 @@ import type {
     bandStartY: number, bandEndY: number,
     weights: Float32Array, accum: Float32Array,
   ): void {
+    const lastX = width - 1;
+    const lastY = height - 1;
+    const sourceRowStride = width * 3;
     for (let y = 0; y < height; y++) {
+      const sourceRowStart = y * sourceRowStride;
       if (y + reach[y] < bandStartY || y - reach[y] >= bandEndY) continue;
       const row0 = lookup.y0[y];
       const row1 = lookup.y1[y];
       const flowFy = lookup.fy[y];
       const oneMinusFy = 1 - flowFy;
-      for (let x = 0; x < width; x++) {
+      for (let x = 0, sourceIndex = sourceRowStart; x < width; x++, sourceIndex += 3) {
         const col0 = lookup.x0[x];
         const col1 = lookup.x1[x];
         const flowFx = lookup.fx[x];
@@ -674,28 +678,60 @@ import type {
         const flowY = flow[ff00 + 1] * flowW00 + flow[ff10 + 1] * flowW10 +
           flow[ff01 + 1] * flowW01 + flow[ff11 + 1] * flowW11;
         const gateFactor = gate ? stfFlowNormGateFactor(flowX, flowY, gate) : 1;
-        const tx = clamp(x + factor * flowX * gateFactor * lookup.scaleX, 0, width - 1);
-        const ty = clamp(y + factor * flowY * gateFactor * lookup.scaleY, 0, height - 1);
-        const sourceIndex = (y * width + x) * 3;
+        const tx = clamp(x + factor * flowX * gateFactor * lookup.scaleX, 0, lastX);
+        const ty = clamp(y + factor * flowY * gateFactor * lookup.scaleY, 0, lastY);
         const r = source[sourceIndex];
         const g = source[sourceIndex + 1];
         const b = source[sourceIndex + 2];
         const x0 = Math.floor(tx);
         const y0 = Math.floor(ty);
-        const x1 = Math.min(width - 1, x0 + 1);
-        const y1 = Math.min(height - 1, y0 + 1);
+        // When fx/fy are positive, their next pixel is necessarily in bounds;
+        // a clamped right/bottom edge has a zero next-pixel weight.
+        const x1 = x0 + 1;
+        const y1 = y0 + 1;
         const fx = tx - x0;
         const fy = ty - y0;
         const w00 = (1 - fx) * (1 - fy);
         const w10 = fx * (1 - fy);
         const w01 = (1 - fx) * fy;
         const w11 = fx * fy;
+        // Most splats touch four valid destinations inside this band. Keep
+        // the same Float32 update order, but avoid six per-corner checks and
+        // repeated row/index calculations on this common interior path.
+        if (y0 >= bandStartY && y1 < bandEndY && x0 < lastX) {
+          const index00 = (y0 - bandStartY) * width + x0;
+          const index10 = index00 + 1;
+          const index01 = index00 + width;
+          const index11 = index01 + 1;
+          const base00 = index00 * 3;
+          const base10 = base00 + 3;
+          const base01 = base00 + sourceRowStride;
+          const base11 = base01 + 3;
+          weights[index00] += w00;
+          accum[base00] += r * w00;
+          accum[base00 + 1] += g * w00;
+          accum[base00 + 2] += b * w00;
+          weights[index10] += w10;
+          accum[base10] += r * w10;
+          accum[base10 + 1] += g * w10;
+          accum[base10 + 2] += b * w10;
+          weights[index01] += w01;
+          accum[base01] += r * w01;
+          accum[base01 + 1] += g * w01;
+          accum[base01 + 2] += b * w01;
+          weights[index11] += w11;
+          accum[base11] += r * w11;
+          accum[base11 + 1] += g * w11;
+          accum[base11 + 2] += b * w11;
+          continue;
+        }
         // Destination arrays hold only [bandStartY, bandEndY). No splat may
         // escape the band; source rows that can hit it are processed in the
         // original source ordering, so every retained pixel is bit-identical.
         if (y0 >= bandStartY && y0 < bandEndY) {
+          const rowIndex = (y0 - bandStartY) * width;
           if (w00 > 0) {
-            const index = (y0 - bandStartY) * width + x0;
+            const index = rowIndex + x0;
             const base = index * 3;
             weights[index] += w00;
             accum[base] += r * w00;
@@ -703,7 +739,7 @@ import type {
             accum[base + 2] += b * w00;
           }
           if (w10 > 0) {
-            const index = (y0 - bandStartY) * width + x1;
+            const index = rowIndex + x1;
             const base = index * 3;
             weights[index] += w10;
             accum[base] += r * w10;
@@ -712,8 +748,9 @@ import type {
           }
         }
         if (y1 >= bandStartY && y1 < bandEndY) {
+          const rowIndex = (y1 - bandStartY) * width;
           if (w01 > 0) {
-            const index = (y1 - bandStartY) * width + x0;
+            const index = rowIndex + x0;
             const base = index * 3;
             weights[index] += w01;
             accum[base] += r * w01;
@@ -721,7 +758,7 @@ import type {
             accum[base + 2] += b * w01;
           }
           if (w11 > 0) {
-            const index = (y1 - bandStartY) * width + x1;
+            const index = rowIndex + x1;
             const base = index * 3;
             weights[index] += w11;
             accum[base] += r * w11;

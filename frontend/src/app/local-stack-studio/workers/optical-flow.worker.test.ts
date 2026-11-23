@@ -1035,6 +1035,34 @@ test("FS destination-band streaming preserves RGB16 across tile and hole-halo bo
   }
 });
 
+test("FS zero-flow corner weights preserve full-frame pixels across destination bands", async () => {
+  // The fast interior path also adds zero-weight corner contributions.
+  // They must be indistinguishable from the original conditional writes,
+  // including at image edges and destination-band boundaries.
+  const height = 513;
+  const variants = ["ext1", "ext1-3"] as OpticalFlowOpeningVariant[];
+  const scales = { additional: 0.7, opening: [0.5, 1.5] };
+  const norms = new Array<number>(11 * height).fill(0);
+  const streamed = await runMidpoint(8, 16, "ext2", false, false, scales,
+    norms, variants, { height, enabled: true }, "forward-splat", 0, true);
+  const whole = await runMidpoint(8, 16, "ext2", false, false, scales,
+    norms, variants, { height, enabled: false }, "forward-splat", 0, true);
+  const full = whole.messages.find((entry) => entry.type === "result" && entry.requestId === 2);
+  expect(full?.type).toBe("result");
+  if (!full || full.type !== "result") return;
+  expect(restoredStreamPixels(streamed.messages, 2, "primary", 11, height))
+    .toEqual(new Uint16Array(full.gamma2Buffer));
+  expect(restoredStreamPixels(streamed.messages, 2, "additional", 11, height))
+    .toEqual(new Uint16Array(full.additionalGamma2Buffer!));
+  for (const requestId of [3, 4]) {
+    const result = whole.messages.find((entry) => entry.type === "warp-result" && entry.requestId === requestId);
+    expect(result?.type).toBe("warp-result");
+    if (result?.type !== "warp-result") continue;
+    expect(restoredStreamPixels(streamed.messages, requestId, "primary", 11, height))
+      .toEqual(new Uint16Array(result.gamma2Buffer));
+  }
+});
+
 test("STF Flow releases past Gray8 proxies while retaining the next adjacent image", async () => {
   jest.resetModules();
   const gray = jest.requireActual<typeof import("../stack/stf-flow-gray")>("../stack/stf-flow-gray");
