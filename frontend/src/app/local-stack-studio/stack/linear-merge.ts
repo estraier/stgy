@@ -9,50 +9,21 @@ export const LINEAR_MERGE_PERCENTILE = 0.998;
 
 export function percentileFromLinearFloatArray(values: Float32Array, q: number): number {
   if (values.length === 0) return 0;
-  const copy = Array.from(values);
-  copy.sort((a, b) => a - b);
-  const index = Math.min(copy.length - 1, Math.max(0, Math.floor((copy.length - 1) * q)));
+  const index = Math.min(values.length - 1, Math.max(0, Math.floor((values.length - 1) * q)));
+  // A typed-array sort avoids boxing every Float32 sample into a JavaScript
+  // number. Preserve the original Array.sort(a - b) behavior for exceptional
+  // values (including signed zero), for which the two comparators differ.
+  for (let i = 0; i < values.length; i += 1) {
+    const value = values[i];
+    if (!Number.isFinite(value) || (value === 0 && 1 / value === -Infinity)) {
+      const historical = Array.from(values);
+      historical.sort((a, b) => a - b);
+      return historical[index];
+    }
+  }
+  const copy = values.slice();
+  copy.sort();
   return copy[index];
-}
-
-export function computeLinearMaxChannelPercentile(
-  linear: Float32Array,
-  q = LINEAR_MERGE_PERCENTILE,
-): number {
-  if (linear.length % 3 !== 0) {
-    throw new Error("Linear RGB buffer length is not divisible by three.");
-  }
-  const pixelCount = linear.length / 3;
-  const maxima = new Float32Array(pixelCount);
-  for (let pixelIndex = 0, sourceIndex = 0; pixelIndex < pixelCount; pixelIndex += 1, sourceIndex += 3) {
-    maxima[pixelIndex] = Math.max(
-      linear[sourceIndex] ?? 0,
-      linear[sourceIndex + 1] ?? 0,
-      linear[sourceIndex + 2] ?? 0,
-    );
-  }
-  return percentileFromLinearFloatArray(maxima, q);
-}
-
-export function computeExposureRolloffMaxP998AfterGain(
-  linear: Float32Array,
-  gain: number,
-): number | null {
-  if (!(Number.isFinite(gain) && gain > 1)) return null;
-  if (linear.length % 3 !== 0) {
-    throw new Error("Linear RGB buffer length is not divisible by three.");
-  }
-  const pixelCount = linear.length / 3;
-  const maxima = new Float32Array(pixelCount);
-  for (let pixelIndex = 0, sourceIndex = 0; pixelIndex < pixelCount; pixelIndex += 1, sourceIndex += 3) {
-    const r = linear[sourceIndex] * gain;
-    const g = linear[sourceIndex + 1] * gain;
-    const b = linear[sourceIndex + 2] * gain;
-    // Match the historical implementation exactly: Math.max is evaluated in
-    // Number precision and then assigned into the Float32 maxima buffer.
-    maxima[pixelIndex] = Math.max(r, g, b);
-  }
-  return percentileFromLinearFloatArray(maxima, LINEAR_MERGE_PERCENTILE);
 }
 
 export function applyExposureAndRolloffInPlace(
