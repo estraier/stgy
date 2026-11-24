@@ -14,6 +14,7 @@ import { getBrowserLocale } from "@/utils/locale";
 import InfoDialog from "./InfoDialog";
 import type { LocalStackStudioInfoReport } from "./stack/info-report";
 import { DEFAULT_PANORAMA_DOWNSCALE_MEGAPIXELS, PANORAMA_DOWNSCALE_MEGAPIXELS } from "./stack/panorama-options";
+import { DEFAULT_STF_RADIAL_ATTENUATION } from "./stack/stf-weights";
 import {
   mountLocalStackStudio,
   type LocalStackStudioEditRequest,
@@ -306,7 +307,7 @@ export default function PageBody() {
                   <span className="text-xs font-medium text-gray-500">Radial attenuation</span>
                   <select
                     id="stf-radial-attenuation"
-                    defaultValue="1"
+                    defaultValue={String(DEFAULT_STF_RADIAL_ATTENUATION)}
                     className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm"
                   >
                     <option value="-2">Power (inverse-sq)</option>
