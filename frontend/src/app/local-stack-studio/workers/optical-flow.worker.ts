@@ -446,7 +446,6 @@ import type {
     useNext: boolean;
     inverseWarpScale: number | undefined;
     forwardSplatScale: number | undefined;
-    uncovered: number;
     searchCounts: number[];
     neighborCounts: number[];
     accumulatorStartPixel: number;
@@ -591,7 +590,7 @@ import type {
     if (useNext) addSource(nextGamma2Rgb, flowBackward, nextFactor, variant === "mid" ? null : normGate);
     return {
       variant, weights, accum, usePrevious, useNext,
-      inverseWarpScale, forwardSplatScale, uncovered: 0,
+      inverseWarpScale, forwardSplatScale,
       searchCounts: new Array<number>(STF_SPLAT_HOLE_SEARCH_BUCKET_COUNT).fill(0),
       neighborCounts: new Array<number>(STF_SPLAT_HOLE_NEIGHBOR_BUCKET_COUNT).fill(0),
       accumulatorStartPixel: 0,
@@ -621,7 +620,6 @@ import type {
         output[out + 1] = clampUint16(accum[base + 1] / weight);
         output[out + 2] = clampUint16(accum[base + 2] / weight);
       } else {
-        state.uncovered++;
         const filled = fillStfSplatHole(output, pixel, width, height, weights, accum,
           searchCounts, neighborCounts, startPixel, state.accumulatorStartPixel);
         if (!filled) {
@@ -632,15 +630,6 @@ import type {
       }
     }
     return output;
-  }
-
-  function logForwardSplatCompletion(state: ForwardSplatState, width: number, height: number): void {
-    const { variant, uncovered, searchCounts, neighborCounts, inverseWarpScale, forwardSplatScale } = state;
-    console.info(`[LSS STF FS] ${variant}: uncovered ${uncovered}/${width * height} ` +
-      `(${(100 * uncovered / (width * height)).toFixed(2)}%); ` +
-      `inverseScale=${inverseWarpScale ?? "default"}, forwardScale=${forwardSplatScale ?? "default"}` +
-      `; fallbackSearch(0=source-copy,1=cardinal4,2=diagonal4,3..9=radius2..8)=[${searchCounts.join(",")}]` +
-      `; fallbackNeighborsUsed(count:holes)=[${neighborCounts.map((holes, count) => holes ? `${count}:${holes}` : "").filter(Boolean).join(",")}].`);
   }
 
   // Forward splatting normally requires 16 bytes per output pixel (RGB F32
@@ -920,7 +909,6 @@ import type {
       inverseWarpScale, normGate, forwardSplatScale);
     const output = renderForwardSplatStripe(state, previousGamma2Rgb, nextGamma2Rgb,
       width, height, 0, height);
-    logForwardSplatCompletion(state, width, height);
     return output;
   }
 
@@ -990,11 +978,7 @@ import type {
             waitMs += performance.now() - began;
             if (error) throw error;
           }
-          logForwardSplatCompletion(state, width, height);
-          console.info(`[LSS STF FS tiled] ${variant}: fallback=full-frame ` +
-            `(source-row rescans too expensive or Flow bounds invalid), ` +
-            `scratch=${(scratchBytes / 1048576).toFixed(1)}MiB.`);
-        } else {
+              } else {
           scratchBytes = plan.scratchBytes;
           const { rows: tileRows, reach } = plan;
           const capacity = Math.min(height, tileRows + STF_SPLAT_HOLE_MAX_RADIUS * 2) * width;
@@ -1006,7 +990,7 @@ import type {
             variant, weights, accum,
             usePrevious: reach.factors.usePrevious, useNext: reach.factors.useNext,
             inverseWarpScale: variantScale, forwardSplatScale: forwardVariantScale,
-            uncovered: 0, accumulatorStartPixel: 0,
+            accumulatorStartPixel: 0,
             searchCounts: new Array<number>(STF_SPLAT_HOLE_SEARCH_BUCKET_COUNT).fill(0),
             neighborCounts: new Array<number>(STF_SPLAT_HOLE_NEIGHBOR_BUCKET_COUNT).fill(0),
           };
@@ -1049,12 +1033,7 @@ import type {
             waitMs += performance.now() - began;
             if (error) throw error;
           }
-          logForwardSplatCompletion(state, width, height);
-          console.info(`[LSS STF FS tiled] ${variant}: bands=${plan.bands} ` +
-            `tileRows=${plan.rows} sourceRowPasses=${plan.sourceRowPasses}/${height} ` +
-            `maxDy=${reach.maxDisplacement.toFixed(1)}px ` +
-            `scratch=${(scratchBytes / 1048576).toFixed(1)}MiB.`);
-        }
+              }
       } else {
         for (let y = 0; y < height; y += rows) {
           const chunkHeight = Math.min(rows, height - y);

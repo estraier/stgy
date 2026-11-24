@@ -177,21 +177,12 @@ function virtualHarness(persist = true) {
   };
   const run = async (q: StfRadialAttenuation, mode: "interpolation" | "extrapolation-2" | "extrapolation-12") => {
     const accumulator = new Float32Array(12);
-    const originalInfo = console.info;
-    const infoSpy = jest.spyOn(console, "info").mockImplementation((...args: unknown[]) => {
-      if (typeof args[0] === "string" && args[0].startsWith("[LSS STF] Flow cache:")) return;
-      originalInfo.apply(console, args);
-    });
-    try {
-      await appendStfVirtualSource(accumulator, {
+    await appendStfVirtualSource(accumulator, {
         frameSet: prepare(q, mode),
         sessionId: "session-a", sessionCreatedAt: 1_700_000_000_000, alignmentKey: "align-1",
         reader: reader as never,
         createFlowClient: adaptLegacyClientFactory(factory) as never,
-      });
-    } finally {
-      infoSpy.mockRestore();
-    }
+    });
     return accumulator;
   };
   return { run, get counts() { return { reads, flowComputations, generations, warps, active }; } };
@@ -260,13 +251,7 @@ test("closing extrapolation uses last real pair once while opening ext1..N reuse
     releaseRetained: () => { seen.push("release"); },
     terminate: () => { seen.push("terminate"); },
   });
-  const originalInfo = console.info;
-  const infoSpy = jest.spyOn(console, "info").mockImplementation((...args: unknown[]) => {
-    if (typeof args[0] === "string" && args[0].startsWith("[LSS STF] Flow cache:")) return;
-    originalInfo.apply(console, args);
-  });
-  try {
-    const accumulator = new Float32Array(12);
+  const accumulator = new Float32Array(12);
     await appendStfVirtualSource(accumulator, {
       frameSet: prepareStfFrameSetForTone(buildStfFrameSet([2, 2.5, 3], 1, "extrapolation-4"),
         [2, 2.5, 3], [{gain:1, scaledLog:0}, {gain:1, scaledLog:0}, {gain:1, scaledLog:0}], reference.p95, 1),
@@ -284,10 +269,7 @@ test("closing extrapolation uses last real pair once while opening ext1..N reuse
       "average:0:ext1-3:false", "average:0:ext1-4:false",
       "release", "terminate",
     ]);
-    expect(accumulator[0]).toBeGreaterThan(0);
-  } finally {
-    infoSpy.mockRestore();
-  }
+  expect(accumulator[0]).toBeGreaterThan(0);
 });
 
 // Pixel-level contract: a constant disc warped without radiometric adjustment
@@ -314,20 +296,14 @@ test("prepared synthetic weights use the exact tone curves applied to gamma2 mid
     releaseRetained: () => {}, terminate: () => {},
   });
   const output = new Float32Array(12);
-  const originalInfo = console.info;
-  console.info = () => {};
-  try {
-    await appendStfVirtualSource(output, {
+  await appendStfVirtualSource(output, {
       frameSet: prepared,
       sessionId: "tone-test", sessionCreatedAt: 1_700_000_000_000,
       alignmentKey: "constant-test", reader: {
         width: 2, height: 2, readGamma2Image: async (i: number) => realPixels[i],
       } as never,
       createFlowClient: adaptLegacyClientFactory(fake) as never,
-    });
-  } finally {
-    console.info = originalInfo;
-  }
+  });
   const realCount = realF.length;
   const expectedVirtualContribution = prepared.edgeDensities.slice(realCount)
     .reduce((sum, density, i) => sum + density * prepared.allWeights[realCount + i], 0);
@@ -370,25 +346,23 @@ test("extrapolation reuses up to the first three real pairs for opening Average 
     releaseRetained: () => requests.push("release"),
     terminate: () => requests.push("terminate"),
   });
-  const info = jest.spyOn(console, "info").mockImplementation(() => {});
-  try {
-    const accumulator = new Float32Array(12);
-    await appendStfVirtualSource(accumulator, {
-      frameSet, sessionId: "average", sessionCreatedAt: 1, alignmentKey: "align",
-      reader: { width: 2, height: 2, readGamma2Image: async (index: number) => actual[index] } as never,
-      createFlowClient: adaptLegacyClientFactory(mock) as never,
-    });
-    expect(seenSpans).toHaveLength(3);
-    expect(seenSpans[0]).toBeCloseTo(1 / f[0] - 1 / f[1]);
-    expect(seenSpans[1]).toBeCloseTo(1 / f[1] - 1 / f[2]);
-    expect(seenSpans[2]).toBeCloseTo(1 / f[2] - 1 / f[3]);
-    expect(requests).toEqual([
-      "pair:0-1:none", "pair:1-2:none", "pair:2-3:ext2",
-      "opening:ext1:0:true", "opening:ext1-2:0:false", "opening:ext1-3:0:false", "opening:ext1-4:0:false",
-      "release", "terminate",
-    ]);
-    expect(accumulator[0]).toBeGreaterThan(0);
-  } finally { info.mockRestore(); }
+  const accumulator = new Float32Array(12);
+  await appendStfVirtualSource(accumulator, {
+    frameSet, sessionId: "average", sessionCreatedAt: 1, alignmentKey: "align",
+    reader: { width: 2, height: 2, readGamma2Image: async (index: number) => actual[index] } as never,
+    createFlowClient: adaptLegacyClientFactory(mock) as never,
+  });
+  expect(seenSpans).toHaveLength(3);
+  expect(seenSpans[0]).toBeCloseTo(1 / f[0] - 1 / f[1]);
+  expect(seenSpans[1]).toBeCloseTo(1 / f[1] - 1 / f[2]);
+  expect(seenSpans[2]).toBeCloseTo(1 / f[2] - 1 / f[3]);
+  expect(requests).toEqual([
+    "pair:0-1:none", "pair:1-2:none", "pair:2-3:ext2",
+    "opening:ext1:0:true", "opening:ext1-2:0:false", "opening:ext1-3:0:false", "opening:ext1-4:0:false",
+    "release", "terminate",
+  ]);
+  expect(accumulator[0]).toBeGreaterThan(0);
+
 });
 
 test("three real images average the first two opening-side pairs", async () => {
@@ -419,20 +393,18 @@ test("three real images average the first two opening-side pairs", async () => {
     releaseRetained: () => events.push("release"),
     terminate: () => events.push("terminate"),
   });
-  const log = jest.spyOn(console, "info").mockImplementation(() => {});
-  try {
-    await appendStfVirtualSource(new Float32Array(12), {
-      frameSet, sessionId: "average", sessionCreatedAt: 1, alignmentKey: "align",
-      reader: { width: 2, height: 2, readGamma2Image: async (index: number) => actual[index] } as never,
-      createFlowClient: adaptLegacyClientFactory(mock) as never,
-    });
-    expect(spans).toEqual([1 / f[0] - 1 / f[1], 1 / f[1] - 1 / f[2]]);
-    expect(events).toEqual([
-      "pair:0-1:none", "pair:1-2:ext2",
-      "opening:0:ext1:true", "opening:0:ext1-2:false",
-      "release", "terminate",
-    ]);
-  } finally { log.mockRestore(); }
+  await appendStfVirtualSource(new Float32Array(12), {
+    frameSet, sessionId: "average", sessionCreatedAt: 1, alignmentKey: "align",
+    reader: { width: 2, height: 2, readGamma2Image: async (index: number) => actual[index] } as never,
+    createFlowClient: adaptLegacyClientFactory(mock) as never,
+  });
+  expect(spans).toEqual([1 / f[0] - 1 / f[1], 1 / f[1] - 1 / f[2]]);
+  expect(events).toEqual([
+    "pair:0-1:none", "pair:1-2:ext2",
+    "opening:0:ext1:true", "opening:0:ext1-2:false",
+    "release", "terminate",
+  ]);
+
 });
 
 
@@ -443,31 +415,27 @@ test("STF generated pairs use base 21 + F-dependent windows", async () => {
   const frameSet = prepareStfFrameSetForTone(buildStfFrameSet(f, 1, "interpolation"), f,
     f.map(() => ({ gain: 1, scaledLog: 0 })), reference.p95, 1);
   const passed: number[] = [];
-  const infoSpy = jest.spyOn(console, "info").mockImplementation(() => {});
-  try {
-    await appendStfVirtualSource(new Float32Array(12), {
-      frameSet,
-      sessionId: "test-session", sessionCreatedAt: 1_700_000_000_000,
-      alignmentKey: "test-alignment",
-      reader: { width: 2, height: 2,
-        readGamma2Image: async (index: number) => actual[index],
-      } as never,
-      createFlowClient: adaptLegacyClientFactory(() => ({
-        warmup: async () => { throw new Error("Unexpected warmup"); },
-        generate: async (...args: unknown[]) => {
-          passed.push(args[15] as number);
-          return { pixels: testPixels(24000), performance: {
-            flowCacheHit: false, flowCacheSaved: true, flowCacheReadMs: 0, flowWallMs: 0,
-          } };
-        },
+  await appendStfVirtualSource(new Float32Array(12), {
+    frameSet,
+    sessionId: "test-session", sessionCreatedAt: 1_700_000_000_000,
+    alignmentKey: "test-alignment",
+    reader: { width: 2, height: 2,
+      readGamma2Image: async (index: number) => actual[index],
+    } as never,
+    createFlowClient: adaptLegacyClientFactory(() => ({
+      warmup: async () => { throw new Error("Unexpected warmup"); },
+      generate: async (...args: unknown[]) => {
+        passed.push(args[15] as number);
+        return { pixels: testPixels(24000), performance: {
+          flowCacheHit: false, flowCacheSaved: true, flowCacheReadMs: 0, flowWallMs: 0,
+        } };
+      },
 
-        warpOpeningAverage: async () => { throw new Error("Unexpected average warp"); },
-        releaseRetained: () => {}, terminate: () => {},
-      })) as never,
-    });
-  } finally {
-    infoSpy.mockRestore();
-  }
+      warpOpeningAverage: async () => { throw new Error("Unexpected average warp"); },
+      releaseRetained: () => {}, terminate: () => {},
+    })) as never,
+  });
+
   expect(passed).toEqual([21, 19, 17, 15, 13, 13]);
 });
 
@@ -536,16 +504,14 @@ test("streaming STF virtual merge exactly matches full-frame tone matching and a
     };
     return { run, seen };
   };
-  const info = jest.spyOn(console, "info").mockImplementation(() => {});
-  try {
-    const old = make(false);
-    const streamed = make(true);
-    const full = await old.run();
-    const chunks = await streamed.run();
-    expect(chunks).toEqual(full);
-    expect(streamed.seen).toHaveLength(12); // 4 generated frames × 3 stripes
-    expect(Math.max(...streamed.seen)).toBe(128 * width * 3);
-  } finally { info.mockRestore(); }
+  const old = make(false);
+  const streamed = make(true);
+  const full = await old.run();
+  const chunks = await streamed.run();
+  expect(chunks).toEqual(full);
+  expect(streamed.seen).toHaveLength(12); // 4 generated frames × 3 stripes
+  expect(Math.max(...streamed.seen)).toBe(128 * width * 3);
+
 });
 
 test.each([2, 3, 4] as const)("Interpolation %i streams multiple frames per pair with a single Flow request", async (count) => {
@@ -558,52 +524,48 @@ test.each([2, 3, 4] as const)("Interpolation %i streams multiple frames per pair
     f.map(() => ({ gain: 1, scaledLog: 0 })), stats.p95, 1);
   const calls: Array<{ pair: string; fractions: number[] }> = [];
   let terminated = false;
-  const info = jest.spyOn(console, "info").mockImplementation(() => {});
-  try {
-    const accumulator = new Float32Array(width * height * 3);
-    await appendStfVirtualSource(accumulator, {
-      frameSet, sessionId: "interpolation-multi-test", sessionCreatedAt: 1,
-      alignmentKey: "align", reader: {
-        width, height, readGamma2Image: async (index: number) => real[index],
-      } as never,
-      createFlowClient: (() => ({
-        generateStripes: async (
-          args: Parameters<StfOpticalFlowClient["generateStripes"]>[0],
-          onStripe: Parameters<StfOpticalFlowClient["generateStripes"]>[1],
-        ) => {
-          expect(args.variant).toBe("mid");
-          expect(args.additionalVariant).toBeUndefined();
-          expect(args.warpMethod).toBe("inverse-warp");
-          expect(args.inputOwnership.previous).toBe(true);
-          calls.push({ pair: `${args.previousImageId}-${args.nextImageId}`,
-            fractions: args.middleFractions ?? [0.5] });
-          for (const [middleIndex, t] of (args.middleFractions ?? [0.5]).entries()) {
-            const pixels = new Uint16Array(width * height * 3).fill(24000 + Math.round(t * 12000));
-            for (let y = 0; y < height; y += 2) {
-              const rows = Math.min(2, height - y);
-              await onStripe({ kind: "primary", middleIndex, y, height: rows,
-                pixels: pixels.subarray(y * width * 3, (y + rows) * width * 3) });
-            }
+  const accumulator = new Float32Array(width * height * 3);
+  await appendStfVirtualSource(accumulator, {
+    frameSet, sessionId: "interpolation-multi-test", sessionCreatedAt: 1,
+    alignmentKey: "align", reader: {
+      width, height, readGamma2Image: async (index: number) => real[index],
+    } as never,
+    createFlowClient: (() => ({
+      generateStripes: async (
+        args: Parameters<StfOpticalFlowClient["generateStripes"]>[0],
+        onStripe: Parameters<StfOpticalFlowClient["generateStripes"]>[1],
+      ) => {
+        expect(args.variant).toBe("mid");
+        expect(args.additionalVariant).toBeUndefined();
+        expect(args.warpMethod).toBe("inverse-warp");
+        expect(args.inputOwnership.previous).toBe(true);
+        calls.push({ pair: `${args.previousImageId}-${args.nextImageId}`,
+          fractions: args.middleFractions ?? [0.5] });
+        for (const [middleIndex, t] of (args.middleFractions ?? [0.5]).entries()) {
+          const pixels = new Uint16Array(width * height * 3).fill(24000 + Math.round(t * 12000));
+          for (let y = 0; y < height; y += 2) {
+            const rows = Math.min(2, height - y);
+            await onStripe({ kind: "primary", middleIndex, y, height: rows,
+              pixels: pixels.subarray(y * width * 3, (y + rows) * width * 3) });
           }
-          return { flowCacheHit: true, flowCacheSaved: false, flowWallMs: 0,
-            warpMs: 0, totalWorkerMs: 0 } as never;
-        },
-        warpOpeningAverageStripes: async () => { throw new Error("Unexpected opening extrapolation"); },
-        releaseRetained: () => {},
-        terminate: () => { terminated = true; },
-      })) as never,
-    });
-    expect(calls).toHaveLength(2); // One bidirectional Flow request per adjacent real-image pair.
-    expect(calls.map((call) => call.pair)).toEqual(["0-1", "1-2"]);
-    for (const call of calls) {
-      expect(call.fractions).toHaveLength(count);
-      call.fractions.forEach((fraction, i) => expect(fraction).toBeCloseTo((i + 1) / (count + 1), 12));
-    }
-    expect(accumulator.every((value) => Number.isFinite(value) && value > 0)).toBe(true);
-    expect(terminated).toBe(true);
-  } finally {
-    info.mockRestore();
+        }
+        return { flowCacheHit: true, flowCacheSaved: false, flowWallMs: 0,
+          warpMs: 0, totalWorkerMs: 0 } as never;
+      },
+      warpOpeningAverageStripes: async () => { throw new Error("Unexpected opening extrapolation"); },
+      releaseRetained: () => {},
+      terminate: () => { terminated = true; },
+    })) as never,
+  });
+  expect(calls).toHaveLength(2); // One bidirectional Flow request per adjacent real-image pair.
+  expect(calls.map((call) => call.pair)).toEqual(["0-1", "1-2"]);
+  for (const call of calls) {
+    expect(call.fractions).toHaveLength(count);
+    call.fractions.forEach((fraction, i) => expect(fraction).toBeCloseTo((i + 1) / (count + 1), 12));
   }
+  expect(accumulator.every((value) => Number.isFinite(value) && value > 0)).toBe(true);
+  expect(terminated).toBe(true);
+
 });
 
 test("STF prefetch computes two adjacent pairs ahead, but merges their stripes strictly in order", async () => {
@@ -623,50 +585,46 @@ test("STF prefetch computes two adjacent pairs ahead, but merges their stripes s
     virtualTonePlans: { middle: Array.from({ length: 3 }, () => ({ gain: 1, scaledLog: 0 })), outer: [] },
   };
   const pixels = [testPixels(22000), testPixels(24000), testPixels(26000), testPixels(28000)];
-  const originalInfo = jest.spyOn(console, "info").mockImplementation(() => {});
-  try {
-    const result = new Float32Array(12);
-    await appendStfVirtualSource(result, {
-      frameSet: frameSet as never,
-      sessionId: "parallel", sessionCreatedAt: 1700000000000, alignmentKey: "align-1",
-      reader: { width: 2, height: 2, readGamma2Image: async (index: number) => pixels[index] } as never,
-      createFlowClient: () => ({
-        prefetchFlow: async ({ previousImageId, nextImageId }: { previousImageId: number; nextImageId: number }) => {
-          const key = `${previousImageId}-${nextImageId}`;
-          active++;
-          maxActive = Math.max(maxActive, active);
-          log.push(`prefetch:${key}`);
-          if (previousImageId < 2) {
-            if (log.filter((entry) => entry.startsWith("prefetch:")).length === 2) releaseFirstTwo?.();
-            await firstTwo;
-          }
-          ready.add(key);
-          active--;
-        },
-        generateStripes: async (
-          args: Parameters<StfOpticalFlowClient["generateStripes"]>[0],
-          onStripe: Parameters<StfOpticalFlowClient["generateStripes"]>[1],
-        ) => {
-          const key = `${args.previousImageId}-${args.nextImageId}`;
-          expect(ready.has(key)).toBe(true);
-          log.push(`merge:${key}`);
-          await onStripe({ kind: "primary", y: 0, height: 2, pixels: testPixels(23000) });
-          return { flowCacheHit: true, flowWorkerCount: 2 } as never;
-        },
-        warpOpeningAverageStripes: async () => { throw new Error("Unexpected opening extrapolation"); },
-        releaseRetained: () => {}, terminate: () => { log.push("terminate"); },
-      }) as never,
-    });
-    expect(maxActive).toBe(2);
-    expect(log.filter((entry) => entry.startsWith("merge:"))).toEqual([
-      "merge:0-1", "merge:1-2", "merge:2-3",
-    ]);
-    expect(log.indexOf("prefetch:1-2")).toBeLessThan(log.indexOf("merge:0-1"));
-    expect(log.at(-1)).toBe("terminate");
-    expect(Array.from(result).every((value) => value > 0)).toBe(true);
-  } finally {
-    originalInfo.mockRestore();
-  }
+  const result = new Float32Array(12);
+  await appendStfVirtualSource(result, {
+    frameSet: frameSet as never,
+    sessionId: "parallel", sessionCreatedAt: 1700000000000, alignmentKey: "align-1",
+    reader: { width: 2, height: 2, readGamma2Image: async (index: number) => pixels[index] } as never,
+    createFlowClient: () => ({
+      prefetchFlow: async ({ previousImageId, nextImageId }: { previousImageId: number; nextImageId: number }) => {
+        const key = `${previousImageId}-${nextImageId}`;
+        active++;
+        maxActive = Math.max(maxActive, active);
+        log.push(`prefetch:${key}`);
+        if (previousImageId < 2) {
+          if (log.filter((entry) => entry.startsWith("prefetch:")).length === 2) releaseFirstTwo?.();
+          await firstTwo;
+        }
+        ready.add(key);
+        active--;
+      },
+      generateStripes: async (
+        args: Parameters<StfOpticalFlowClient["generateStripes"]>[0],
+        onStripe: Parameters<StfOpticalFlowClient["generateStripes"]>[1],
+      ) => {
+        const key = `${args.previousImageId}-${args.nextImageId}`;
+        expect(ready.has(key)).toBe(true);
+        log.push(`merge:${key}`);
+        await onStripe({ kind: "primary", y: 0, height: 2, pixels: testPixels(23000) });
+        return { flowCacheHit: true, flowWorkerCount: 2 } as never;
+      },
+      warpOpeningAverageStripes: async () => { throw new Error("Unexpected opening extrapolation"); },
+      releaseRetained: () => {}, terminate: () => { log.push("terminate"); },
+    }) as never,
+  });
+  expect(maxActive).toBe(2);
+  expect(log.filter((entry) => entry.startsWith("merge:"))).toEqual([
+    "merge:0-1", "merge:1-2", "merge:2-3",
+  ]);
+  expect(log.indexOf("prefetch:1-2")).toBeLessThan(log.indexOf("merge:0-1"));
+  expect(log.at(-1)).toBe("terminate");
+  expect(Array.from(result).every((value) => value > 0)).toBe(true);
+
 });
 
 test("STF rolling prefetch refills the freed slot during Warp, with at most two outstanding pairs", async () => {
@@ -685,59 +643,57 @@ test("STF rolling prefetch refills the freed slot during Warp, with at most two 
     })), outerFrames: [],
     virtualTonePlans: { middle: Array.from({ length: 4 }, () => ({ gain: 1, scaledLog: 0 })), outer: [] },
   };
-  const originalInfo = jest.spyOn(console, "info").mockImplementation(() => {});
+  const accumulator = new Float32Array(12);
+  const running = appendStfVirtualSource(accumulator, {
+    frameSet: frameSet as never,
+    sessionId: "rolling", sessionCreatedAt: 1700000000000, alignmentKey: "align-1",
+    reader: { width: 2, height: 2,
+      readGamma2Image: async (index: number) => testPixels(20000 + index * 1000) } as never,
+    createFlowClient: () => ({
+      prefetchFlow: async ({ previousImageId, nextImageId }: { previousImageId: number; nextImageId: number }) => {
+        const pair = `${previousImageId}-${nextImageId}`;
+        expect(held.has(pair)).toBe(false);
+        held.add(pair);
+        maxHeld = Math.max(maxHeld, held.size);
+        log.push(`prefetch:${pair}`);
+      },
+      generateStripes: async (
+        args: Parameters<StfOpticalFlowClient["generateStripes"]>[0],
+        onStripe: Parameters<StfOpticalFlowClient["generateStripes"]>[1],
+        onFlowConsumed?: () => void,
+      ) => {
+        const pair = `${args.previousImageId}-${args.nextImageId}`;
+        expect(held.delete(pair)).toBe(true);
+        log.push(`consume:${pair}`);
+        onFlowConsumed?.();
+        if (args.previousImageId === 0) {
+          firstWarpStarted?.();
+          await warpGate;
+        }
+        log.push(`warp:${pair}`);
+        await onStripe({ kind: "primary", y: 0, height: 2, pixels: testPixels(23000) });
+        return { flowCacheHit: true, flowWorkerCount: 2 } as never;
+      },
+      warpOpeningAverageStripes: async () => { throw new Error("Unexpected opening extrapolation"); },
+      releaseRetained: () => {}, terminate: () => { log.push("terminate"); },
+    }) as never,
+  });
   try {
-    const accumulator = new Float32Array(12);
-    const running = appendStfVirtualSource(accumulator, {
-      frameSet: frameSet as never,
-      sessionId: "rolling", sessionCreatedAt: 1700000000000, alignmentKey: "align-1",
-      reader: { width: 2, height: 2,
-        readGamma2Image: async (index: number) => testPixels(20000 + index * 1000) } as never,
-      createFlowClient: () => ({
-        prefetchFlow: async ({ previousImageId, nextImageId }: { previousImageId: number; nextImageId: number }) => {
-          const pair = `${previousImageId}-${nextImageId}`;
-          expect(held.has(pair)).toBe(false);
-          held.add(pair);
-          maxHeld = Math.max(maxHeld, held.size);
-          log.push(`prefetch:${pair}`);
-        },
-        generateStripes: async (
-          args: Parameters<StfOpticalFlowClient["generateStripes"]>[0],
-          onStripe: Parameters<StfOpticalFlowClient["generateStripes"]>[1],
-          onFlowConsumed?: () => void,
-        ) => {
-          const pair = `${args.previousImageId}-${args.nextImageId}`;
-          expect(held.delete(pair)).toBe(true);
-          log.push(`consume:${pair}`);
-          onFlowConsumed?.();
-          if (args.previousImageId === 0) {
-            firstWarpStarted?.();
-            await warpGate;
-          }
-          log.push(`warp:${pair}`);
-          await onStripe({ kind: "primary", y: 0, height: 2, pixels: testPixels(23000) });
-          return { flowCacheHit: true, flowWorkerCount: 2 } as never;
-        },
-        warpOpeningAverageStripes: async () => { throw new Error("Unexpected opening extrapolation"); },
-        releaseRetained: () => {}, terminate: () => { log.push("terminate"); },
-      }) as never,
-    });
-    try {
-      await warpEntered;
-      // Allow the serial Canonical read tail and the next prefetch to settle.
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      expect(log).toContain("prefetch:2-3");
-      expect(log).not.toContain("warp:0-1");
-      expect(held.size).toBe(2);  // Pair 1-2 plus the newly launched 2-3.
-    } finally {
-      releaseFirstWarp?.();
-    }
-    await running;
-    expect(maxHeld).toBe(2);
-    expect(log.filter((entry) => entry.startsWith("warp:"))).toEqual([
-      "warp:0-1", "warp:1-2", "warp:2-3", "warp:3-4",
-    ]);
-    expect(log.at(-1)).toBe("terminate");
-    expect(accumulator.every((value) => value > 0 && Number.isFinite(value))).toBe(true);
-  } finally { originalInfo.mockRestore(); }
+    await warpEntered;
+    // Allow the serial Canonical read tail and the next prefetch to settle.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(log).toContain("prefetch:2-3");
+    expect(log).not.toContain("warp:0-1");
+    expect(held.size).toBe(2);  // Pair 1-2 plus the newly launched 2-3.
+  } finally {
+    releaseFirstWarp?.();
+  }
+  await running;
+  expect(maxHeld).toBe(2);
+  expect(log.filter((entry) => entry.startsWith("warp:"))).toEqual([
+    "warp:0-1", "warp:1-2", "warp:2-3", "warp:3-4",
+  ]);
+  expect(log.at(-1)).toBe("terminate");
+  expect(accumulator.every((value) => value > 0 && Number.isFinite(value))).toBe(true);
+
 });

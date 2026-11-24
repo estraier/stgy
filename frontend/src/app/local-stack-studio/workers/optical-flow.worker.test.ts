@@ -330,33 +330,17 @@ test("FS mixes converging source pixels and fills holes from its original covere
 
   // Edge and corner holes use only valid in-bounds neighbors; a center hole
   // averages all four. No inverse Warp or dependent multi-pass filling occurs.
-  const infoSpy = jest.spyOn(console, "info").mockImplementation(() => undefined);
-  try {
-    for (const { scenario, target, expected, neighborCount } of [
-      { scenario: "corner", target: 0, expected: 1400, neighborCount: 2 },
-      { scenario: "edge", target: 3, expected: 1533, neighborCount: 3 },
-      { scenario: "center", target: 10, expected: 2000, neighborCount: 4 },
-    ] as const) {
-      const filled = await run("forward-splat", scenario);
-      expect(filled[target * 3]).toBe(expected);
-      const fsLog = infoSpy.mock.calls.map((args: unknown[]) => String(args[0]))
-        .filter((line: string) => line.startsWith("[LSS STF FS] ext1:"))
-        .pop();
-      const searchHistogram = new Array(10).fill(0);
-      searchHistogram[1] = 1;
-      expect(fsLog).toContain(`fallbackSearch(0=source-copy,1=cardinal4,2=diagonal4,3..9=radius2..8)=[${searchHistogram.join(",")}]`);
-      expect(fsLog).toContain(`fallbackNeighborsUsed(count:holes)=[${neighborCount}:1]`);
-    }
-    // When no cardinal neighbor was covered in the 7x1 test, x=0 is
-    // now reached from a radius-2 covered pixel (x=2), without source copy.
-    await run("forward-splat", "hole");
-    const zeroNeighborLog = infoSpy.mock.calls.map((args: unknown[]) => String(args[0]))
-      .filter((line: string) => line.startsWith("[LSS STF FS] ext1:"))
-      .pop();
-    expect(zeroNeighborLog).toContain("fallbackSearch(0=source-copy,1=cardinal4,2=diagonal4,3..9=radius2..8)=[0,1,0,1,0,0,0,0,0,0]");
-    expect(zeroNeighborLog).toContain("fallbackNeighborsUsed(count:holes)=[1:2]");
-  } finally {
-    infoSpy.mockRestore();
+  // Validate FS hole filling by its RGB16 output, not removed diagnostic logs.
+  // The search order and neighbor counts have dedicated tests in stf-splat-hole-fill.test.ts.
+  for (const { scenario, target, expected } of [
+    { scenario: "corner", target: 0, expected: 1400 },
+    { scenario: "edge", target: 3, expected: 1533 },
+    { scenario: "center", target: 10, expected: 2000 },
+  ] as const) {
+    const filled = await run("forward-splat", scenario);
+    expect(filled[target * 3]).toBe(expected);
+    expect(filled[target * 3 + 1]).toBe(0);
+    expect(filled[target * 3 + 2]).toBe(0);
   }
 });
 

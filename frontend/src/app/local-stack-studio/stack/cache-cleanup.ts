@@ -34,13 +34,11 @@ export function cleanupLssTemporaryCacheOnNewSession(): Promise<void> {
   const cleanup = (async () => {
     const cutoffAt = Date.now() - LSS_CACHE_RETENTION_MS;
     // Do not skip Flow/Scratch if a different store fails its sweep.
-    const [canonicalRemoved, , flowRemoved] = await completeAllCleanup([
+    await completeAllCleanup([
       purgeExpiredCanonicalSessions(cutoffAt),
       purgeExpiredStackScratchSessions(cutoffAt),
       purgeExpiredStfFlowSessions(cutoffAt),
     ]);
-    if (canonicalRemoved || flowRemoved) console.info(
-      `LSS session cleanup: ${canonicalRemoved} expired canonical session(s), ${flowRemoved} Flow pair(s).`);
   })();
   cleanupInProgress = cleanup.finally(() => { cleanupInProgress = null; });
   return cleanupInProgress;

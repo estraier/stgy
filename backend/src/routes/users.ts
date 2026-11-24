@@ -165,7 +165,6 @@ export default function createUsersRouter(
       const users = (await Promise.all(userPromises)).filter((u): u is UserLite => u !== null);
       res.json({ tokens: searchTokens, phrases: searchPhrases, result: users });
     } catch (e: unknown) {
-      console.error("Search error:", e);
       res.status(500).json({ error: (e as Error).message || "Internal server error" });
     }
   });

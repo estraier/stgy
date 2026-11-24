@@ -221,7 +221,6 @@ export default function createPostsRouter(
       const posts = await postsService.listPostsByIds(slicedIds, searchUser.id);
       res.json({ tokens: searchTokens, phrases: searchPhrases, result: posts });
     } catch (e: unknown) {
-      console.error("Search error:", e);
       res.status(500).json({ error: (e as Error).message || "Internal server error" });
     }
   });

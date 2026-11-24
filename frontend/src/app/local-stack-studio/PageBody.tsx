@@ -306,7 +306,7 @@ export default function PageBody() {
                   <span className="text-xs font-medium text-gray-500">Radial attenuation</span>
                   <select
                     id="stf-radial-attenuation"
-                    defaultValue="0"
+                    defaultValue="1"
                     className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm"
                   >
                     <option value="-2">Power (inverse-sq)</option>
@@ -338,8 +338,6 @@ export default function PageBody() {
                     <option value="extrapolation-4">Extrapolation 4</option>
                     <option value="extrapolation-5">Extrapolation 5</option>
                     <option value="extrapolation-6">Extrapolation 6</option>
-                    <option value="extrapolation-9">Extrapolation 9</option>
-                    <option value="extrapolation-12">Extrapolation 12</option>
 
                   </select>
                 </label>

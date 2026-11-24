@@ -962,24 +962,6 @@ import type {
           );
           if (!geometry) throw new Error("Panorama directional geometry check was skipped.");
           const metrics = geometry.metrics;
-          const geometryLog = {
-            pass: pass.label,
-            requestedDirection: direction,
-            selectedProjection: selected.projection,
-            constraintDirection: selected.constraintDirection,
-            primaryMoveMinPercent: Number(metrics.minPrimaryMovePercent.toFixed(2)),
-            crossMoveMaxPercent: Number(metrics.maxCrossMovePercent.toFixed(2)),
-            adjacentRollMaxDegrees: Number(metrics.maxAdjacentRollDegrees.toFixed(2)),
-            adjacentRollImages: metrics.maxRollPair,
-            adjacentRollLimitDegrees: PANORAMA_MAX_ADJACENT_ROLL_DEGREES,
-            medianFocalAtWorkScale: Number(metrics.medianFocal.toFixed(3)),
-            focalDeviationMaxPercent: Number(metrics.maxFocalDeviationPercent.toFixed(2)),
-            focalDeviationImage: metrics.maxFocalDeviationImage,
-            focalDeviationLimitPercent: PANORAMA_MAX_FOCAL_DEVIATION_FRACTION * 100,
-            accepted: geometry.accepted,
-            reason: geometry.reason,
-          };
-          console.info("LSS Panorama geometry", geometryLog);
           postProgress(requestId,
             `${pass.label}: panorama geometry ${direction} → ${selected.projection} (${selected.constraintDirection}), primary ≥${metrics.minPrimaryMovePercent.toFixed(1)}%, `
               + `cross ≤${metrics.maxCrossMovePercent.toFixed(1)}%, roll ≤${metrics.maxAdjacentRollDegrees.toFixed(1)}° (limit ${PANORAMA_MAX_ADJACENT_ROLL_DEGREES}°), `
@@ -992,14 +974,6 @@ import type {
             continue;
           }
         } else {
-          console.info("LSS Panorama geometry", {
-            pass: pass.label,
-            requestedDirection: direction,
-            selectedProjection: selected.projection,
-            constraintDirection: null,
-            accepted: true,
-            reason: "Spherical projection: horizontal/vertical geometry constraints skipped",
-          });
           postProgress(requestId, `${pass.label}: panorama geometry ${direction} → spherical; directional constraints skipped.`);
         }
         const seamEstimationMegapixels = typeof configured.stitcher.seamEstimationResol === "function"
