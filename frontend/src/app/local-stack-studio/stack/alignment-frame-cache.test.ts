@@ -6,11 +6,22 @@ import {
 } from "./alignment-frame-cache";
 
 describe("alignment frame cache", () => {
-  it("shares the 1MP key across algorithms and separates its 8MP refinement", () => {
+  it("separates the ORB 1MP proxy from its 8MP refinement", () => {
     const base = alignmentFrameCacheKey("feature-match", 5000, 4000, 2);
     expect(base).toBe("feature-match:5000x4000:2");
     expect(alignmentFrameCacheKey("feature-match", 5000, 4000, 2, true))
       .toBe(`${base}:refinement-8mp`);
+  });
+
+  it("separates unified 16MP ECC proxies from ORB 1MP proxies and 8MP refinements", () => {
+    const base = alignmentFrameCacheKey("feature-match", 5000, 4000, 2);
+    const orbCoarse = alignmentFrameCacheKey("feature-match", 5000, 4000, 2, false, 1_000_000);
+    const eccCoarse = alignmentFrameCacheKey("feature-match", 5000, 4000, 2, false, 16_000_000);
+    const orbFine = alignmentFrameCacheKey("feature-match", 5000, 4000, 2, true);
+    expect(orbCoarse).toBe(base);
+    expect(eccCoarse).toBe(`${base}:coarse-16000000px`);
+    expect(orbFine).toBe(`${base}:refinement-8mp`);
+    expect(new Set([orbCoarse, eccCoarse, orbFine]).size).toBe(3);
   });
 
   it("retains two resolutions for the same image without copying the bytes", () => {

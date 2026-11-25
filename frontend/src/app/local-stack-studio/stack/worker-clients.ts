@@ -762,8 +762,8 @@ export class EccWorkerClient extends AlignmentWorkerRpcClient {
 export class OrbWorkerClient extends AlignmentWorkerRpcClient {
   private referenceFineLoaded = false;
 
-  constructor(url: URL, private readonly refinementOnly = false) {
-    super(url, refinementOnly ? "ECC ORB refinement" : "ORB");
+  constructor(url: URL) {
+    super(url, "ORB");
   }
 
   initialize(
@@ -777,7 +777,7 @@ export class OrbWorkerClient extends AlignmentWorkerRpcClient {
     const grayBuffer = typedArrayBuffer(grayBytes);
     const fineBuffer = refinement ? copiedGrayArrayBuffer(refinement.grayBytes) : null;
     return this.request<OrbReadyResponse>(
-      { type: "init", width, height, grayBuffer, exposureScalar, refinementOnly: this.refinementOnly,
+      { type: "init", width, height, grayBuffer, exposureScalar,
         ...(fineBuffer && refinement ? { refinement: { width: refinement.width, height: refinement.height, grayBuffer: fineBuffer } } : {}) },
       fineBuffer ? [grayBuffer, fineBuffer] : [grayBuffer],
       "ready",
@@ -827,23 +827,6 @@ export class OrbWorkerClient extends AlignmentWorkerRpcClient {
       refinementCorrectionPx: response.refinementCorrectionPx,
     }));
   }
-  /** Reuse the 8MP ORB refinement with an external 6-DOF ECC transform. */
-  refineExternal(
-    id: number, fileName: string, initialMatrix: ArrayLike<number>,
-    exposureScalar: number | null,
-    refinement: { width: number; height: number; grayBytes: Uint8Array | ArrayBufferLike },
-  ): Promise<OrbAlignmentResult> {
-    if (!this.refinementOnly || !this.referenceFineLoaded || initialMatrix.length !== 9) {
-      return Promise.reject(new AlignmentImplementationError("External ORB refinement is not initialized."));
-    }
-    const initialMatrixBuffer = new Float64Array(Array.from(initialMatrix)).buffer;
-    const fineBuffer = copiedGrayArrayBuffer(refinement.grayBytes);
-    return this.request<OrbResultResponse>({
-      type: "refine-external", id, fileName, initialMatrixBuffer, exposureScalar,
-      refinement: { width: refinement.width, height: refinement.height, grayBuffer: fineBuffer },
-    }, [initialMatrixBuffer, fineBuffer], "result").then((response) => this.decodeResult(response));
-  }
-
   alignCoarse(
     id: number, fileName: string, grayBytes: Uint8Array, exposureScalar: number | null = null,
   ): Promise<OrbAlignmentResult> {

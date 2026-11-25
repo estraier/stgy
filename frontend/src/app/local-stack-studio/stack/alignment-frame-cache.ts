@@ -1,6 +1,6 @@
 /** Session-local grayscale alignment frames, shared across alignment algorithms.
- * A 1MP frame is reused by ECC/ORB; only ORB
- * requests an additional 8MP frame. The cache is LRU and memory bounded.
+ * Coarse frames are keyed by pixel limit so 16MP ECC never reuses the
+ * 1MP ORB proxy. The cache is LRU and memory bounded.
  */
 export const ALIGNMENT_FRAME_CACHE_MAX_BYTES = 128 * 1024 * 1024;
 
@@ -14,9 +14,12 @@ export function alignmentFrameCacheKey(
   targetHeight: number,
   imageIndex: number,
   refinement = false,
+  coarseMaxArea = 1_000_000,
 ): string {
   const base = `${normalizationMode}:${targetWidth}x${targetHeight}:${imageIndex}`;
-  return refinement ? `${base}:refinement-8mp` : base;
+  if (refinement) return `${base}:refinement-8mp`;
+  // A cached 1MP ORB frame must never be passed to 16MP ECC.
+  return coarseMaxArea === 1_000_000 ? base : `${base}:coarse-${coarseMaxArea}px`;
 }
 
 export function getCachedAlignmentFrame<Frame extends AlignmentCachedPixels>(

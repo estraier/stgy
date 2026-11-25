@@ -21,12 +21,43 @@ function computeExifLightValue(inputInfo: AlignmentReferenceInput): number | nul
 export function chooseAlignmentReferenceIndex(
   inputInfos: readonly AlignmentReferenceInput[],
   mergeMode: string,
+  alignmentMode: string = "feature-match-orb",
 ): number {
   const count = inputInfos.length;
   if (count <= 1) return 0;
 
   if (mergeMode === "focus") {
     return Math.floor(count / 2);
+  }
+
+  if (mergeMode === "stf" && alignmentMode === "feature-match-ecc") {
+    // ECC compares image intensities over the entire frame. Choose the real
+    // image closest to the geometric midpoint of the available aperture span;
+    // compare in log F to treat the open and stopped-down ends symmetrically.
+    // Invalid or missing F-numbers are not candidates.
+    let minLogF = Infinity;
+    let maxLogF = -Infinity;
+    for (const info of inputInfos) {
+      const fNumber = Number(info?.fNumber);
+      if (!Number.isFinite(fNumber) || fNumber <= 0) continue;
+      const logF = Math.log(fNumber);
+      minLogF = Math.min(minLogF, logF);
+      maxLogF = Math.max(maxLogF, logF);
+    }
+    if (minLogF === Infinity) return 0;
+    const midpoint = (minLogF + maxLogF) / 2;
+    let bestIndex = 0;
+    let bestDistance = Infinity;
+    for (let index = 0; index < count; index += 1) {
+      const fNumber = Number(inputInfos[index]?.fNumber);
+      if (!Number.isFinite(fNumber) || fNumber <= 0) continue;
+      const distance = Math.abs(Math.log(fNumber) - midpoint);
+      if (distance < bestDistance - 1e-12) {
+        bestDistance = distance;
+        bestIndex = index;
+      }
+    }
+    return bestIndex;
   }
 
   if (mergeMode === "stf") {

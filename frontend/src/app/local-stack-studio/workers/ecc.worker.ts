@@ -48,8 +48,8 @@ import type {
     translationRatio: number;
   };
 
-  // 1MP affine initialization for ECC + 8MP ORB residual alignment.
-  const ECC_BASE_AREA = 1_000_000;
+  // The alignment frame producer supplies up to 16MP grayscale for ECC.
+  // Do not rescale it to 1MP inside this worker.
   const ECC_MAX_PYRAMID_DOWNSAMPLES = 3;
   const ECC_MIN_COARSE_SHORT_SIDE = 96;
   // Final ECC mode favors robust coarse alignment over expensive full convergence.
@@ -164,9 +164,8 @@ import type {
       throw wrapAlignmentImplementationError(error);
     }
     assertEccApis(cv);
-    const dimensions = eccWorkingDimensions(width, height);
-    workingWidth = dimensions.width;
-    workingHeight = dimensions.height;
+    workingWidth = width;
+    workingHeight = height;
     referenceGrayBytes = new Uint8Array(bytes);
     referenceExposureScalar = positiveExposureOrNull(message.exposureScalar);
     ready = true;
@@ -678,16 +677,6 @@ import type {
       rows = nextHeight;
     }
     return levels;
-  }
-
-  function eccWorkingDimensions(imageWidth: number, imageHeight: number): { width: number; height: number } {
-    const area = imageWidth * imageHeight;
-    if (area <= ECC_BASE_AREA) return { width: imageWidth, height: imageHeight };
-    const scale = Math.sqrt(ECC_BASE_AREA / area);
-    return {
-      width: Math.max(1, Math.round(imageWidth * scale)),
-      height: Math.max(1, Math.round(imageHeight * scale)),
-    };
   }
 
   function rescaleAffineWarpInPlace(values: Float32Array, scaleX: number, scaleY: number): void {

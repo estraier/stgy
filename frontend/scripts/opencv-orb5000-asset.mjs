@@ -45,7 +45,8 @@ export async function verifyPanoramaOrbWasm({ binary = wasmPath, manifestFile = 
       !/^[0-9a-f]{64}$/.test(manifest.wasmSha256 ?? "") ||
       !/^[0-9a-f]{64}$/.test(manifest.stitcherSourceSha256 ?? "") ||
       !/^[0-9a-f]{64}$/.test(manifest.stitcherHeaderSha256 ?? "") ||
-      !/^[0-9a-f]{64}$/.test(manifest.customJsSha256 ?? "")) {
+      !/^[0-9a-f]{64}$/.test(manifest.customJsSha256 ?? "") ||
+      !/^[0-9a-f]{64}$/.test(manifest.runtimeJsSha256 ?? "")) {
     throw new Error(`Unexpected Panorama ORB 5000 WASM manifest: ${manifestFile}`);
   }
   let size;
@@ -77,6 +78,16 @@ export async function verifyPanoramaOrbWasm({ binary = wasmPath, manifestFile = 
   }
   if (await sha256File(jsModule) !== manifest.customJsSha256) {
     throw new Error(`STGY Panorama FoV ESM SHA-256 mismatch: ${jsModule}`);
+  }
+  // WASM and the generated Emscripten runtime must have matching heap caps.
+  // The precompiled native binary may have valid 4GiB memory while an old
+  // runtime still clamps growth at 1/2GiB.
+  const runtimeJs = join(dirname(jsModule), "opencv.mjs");
+  try { await stat(runtimeJs); } catch {
+    throw new Error(`Missing Emscripten OpenCV runtime: ${runtimeJs}`);
+  }
+  if (await sha256File(runtimeJs) !== manifest.runtimeJsSha256) {
+    throw new Error(`STGY OpenCV Emscripten runtime SHA-256 mismatch: ${runtimeJs}`);
   }
   if (stockBinary && actualHash === await sha256File(stockBinary)) {
     throw new Error("The vendored WASM is byte-identical to stock @banou/opencv-wasm; the ORB 5000 native patch was not included.");

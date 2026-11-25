@@ -85,6 +85,9 @@ for project in opencv opencv_contrib; do
   fi
 done
 node "$STGY_ROOT/frontend/scripts/patch-opencv-panorama-orb.mjs" "$SRC_DIR/vendor/opencv-5.0.0"
+# Configure the native link, not only the post-link memory maximum. Emscripten
+# must generate unsigned JS pointer operations when the heap exceeds 2GiB.
+node "$STGY_ROOT/frontend/scripts/patch-opencv-cmake-memory.mjs" "$SRC_DIR/vendor/opencv-5.0.0/modules/js/CMakeLists.txt"
 npm ci
 # The pinned glog 0.6.0 build disables threads but probes Threads::Threads
 # unconditionally. Prepare once, then patch only that unsupported probe.
@@ -93,6 +96,8 @@ npm ci
 python3 scripts/prepare-dependencies.py
 node "$STGY_ROOT/frontend/scripts/patch-opencv-glog-threads.mjs" "$SRC_DIR/vendor/dependencies/glog-0.6.0"
 npm run build
+# Verify both WASM and JS were natively linked with the 4GiB memory32 maximum.
+node "$STGY_ROOT/frontend/scripts/patch-opencv-wasm-memory.mjs" "$SRC_DIR/lib" --verify-only
 node "$STGY_ROOT/frontend/scripts/install-panorama-orb-5000-wasm.mjs" "$SRC_DIR"
 cd "$STGY_ROOT"
 # Test the ACTUAL vendored WASM, not the standard npm version.

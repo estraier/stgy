@@ -54,7 +54,6 @@ import {
 import {
   runAlignmentPool,
   runProgressivePipelinedPool,
-  runProgressiveEccPool,
 } from "./alignment-pool";
 import { startProgressiveAlignmentFrames } from "./alignment-frame-worker-pool";
 import { runMedianPool } from "./median-pool";
@@ -104,6 +103,7 @@ import { buildStfSourceCacheKey, buildStfAlignmentCacheKey, prepareStfSourceForF
   StfSourceCache } from "./stf-process-cache";
 import { selectUniqueStfInputs } from "./stf-input-selection";
 import { chooseAlignmentReferenceIndex } from "./alignment-reference";
+import { chooseEcc16WorkerCount, isEccOutOfMemoryError } from "./ecc-memory-budget";
 import { buildStfAdditionalBlurPlan, resolveStfGateExpansionMultiplier, DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS, STF_BLUR_STRENGTH_VALUES, STF_BLUR_AREA_GUARD_VALUES, STF_BLUR_RATIO_VALUES, STF_BLUR_SIGMOID_VALUES } from "./stf-additional-blur-mode";
 import {
   DEFAULT_PANORAMA_DOWNSCALE_MEGAPIXELS,
@@ -895,10 +895,10 @@ listen(processButton, "click", async () => {
     trace.add("Preview preparation and display", trace.previewMs + performance.now() - previewDisplayStartedAt);
     setResultPanelVisible(true);
     const referenceIndex = alignmentPlan && files.length > 1 && isFeatureMatchAlignmentMode(alignmentPlan.effectiveMode)
-      ? chooseAlignmentReferenceIndex(inputInfos, effectiveMergeMode) : null;
+      ? chooseAlignmentReferenceIndex(inputInfos, effectiveMergeMode, alignmentPlan.effectiveMode) : null;
     const actualAlignment = files.length === 1 ? "Not required (single input)" : alignmentPlan?.effectiveMode ?? "Not applicable";
     const alignmentNames: Record<string, string> = {
-      "feature-match-ecc": "ECC (1MP ECC + 8MP ORB)",
+      "feature-match-ecc": "ECC (16MP)",
       "feature-match-orb": "ORB (1MP + 8MP)",
       "center-crop": "Center Crop", "center-fit": "Center Fit", "center-fill": "Center Fill", "top-left-fill": "Top Left Fill",
     };
@@ -2158,6 +2158,8 @@ async function readInputInfos(files) {
   return infos;
 }
 
+const ECC_ALIGNMENT_PROXY_MAX_AREA = 16_000_000;
+
 function isFeatureMatchAlignmentMode(mode) {
   return mode === "feature-match-ecc" || mode === "feature-match-orb";
 }
@@ -2226,10 +2228,10 @@ function createAlignmentWorkerClient(algorithm) {
   throw new Error(`Unsupported alignment algorithm: ${algorithm}`);
 }
 
-function createAlignmentWorkers() {
+function createAlignmentWorkers(allowSecondary = true) {
   return {
     ECC: createAlignmentWorkerClient("ECC"),
-    ORB: createAlignmentWorkerClient("ORB"),
+    ORB: allowSecondary ? createAlignmentWorkerClient("ORB") : null,
   };
 }
 
@@ -2237,9 +2239,12 @@ async function initializeAlignmentReference(
   alignmentWorkers,
   preferredAlgorithm,
   referenceFrame,
+  allowSecondary = true,
 ) {
   const tried = [];
-  for (const algorithm of [preferredAlgorithm, secondaryAlignmentAlgorithm(preferredAlgorithm)]) {
+  const algorithms = allowSecondary
+    ? [preferredAlgorithm, secondaryAlignmentAlgorithm(preferredAlgorithm)] : [preferredAlgorithm];
+  for (const algorithm of algorithms) {
     try {
       const ready = await alignmentWorkers[algorithm].initialize(
         referenceFrame.width,
@@ -2265,9 +2270,12 @@ async function alignWithFallback(
   id,
   fileName,
   targetFrame,
+  allowSecondary = true,
 ) {
   const tried = [];
-  for (const algorithm of [primaryAlgorithm, secondaryAlignmentAlgorithm(primaryAlgorithm)]) {
+  const algorithms = allowSecondary
+    ? [primaryAlgorithm, secondaryAlignmentAlgorithm(primaryAlgorithm)] : [primaryAlgorithm];
+  for (const algorithm of algorithms) {
     try {
       if (algorithm !== referenceContext.algorithm) {
         await alignmentWorkers[algorithm].initialize(
@@ -2598,8 +2606,10 @@ async function alignAndMergeFilesWithOpenCv(
   }
   if (!alignmentPlan) throw new Error("Alignment plan is required for this merge mode.");
   const needsAlignment = files.length > 1 && isFeatureMatchAlignmentMode(alignmentPlan.effectiveMode);
+  const isEcc = alignmentPlan.effectiveMode === "feature-match-ecc";
+  const coarseMaxArea = isEcc ? ECC_ALIGNMENT_PROXY_MAX_AREA : 1_000_000;
   const alignmentReferenceIndex = needsAlignment
-    ? chooseAlignmentReferenceIndex(inputInfos, mergePlan.mode)
+    ? chooseAlignmentReferenceIndex(inputInfos, mergePlan.mode, alignmentPlan.effectiveMode)
     : 0;
   const matrices = new Array(files.length).fill(null);
   const alignmentFrames = new Array(files.length).fill(null);
@@ -2638,7 +2648,7 @@ async function alignAndMergeFilesWithOpenCv(
       const missing = [];
       for (let index = 0; index < files.length; index += 1) {
         const baseKey = alignmentFrameCacheKey(alignmentPlan.normalizationMode,
-          alignmentPlan.targetWidth, alignmentPlan.targetHeight, index);
+          alignmentPlan.targetWidth, alignmentPlan.targetHeight, index, false, coarseMaxArea);
         const fineKey = alignmentFrameCacheKey(alignmentPlan.normalizationMode,
           alignmentPlan.targetWidth, alignmentPlan.targetHeight, index, true);
         const base = getCachedAlignmentFrame(frameCache, baseKey);
@@ -2653,8 +2663,8 @@ async function alignAndMergeFilesWithOpenCv(
       }
       const ordered = missing.sort((a, b) =>
         (a.index === alignmentReferenceIndex ? -1 : b.index === alignmentReferenceIndex ? 1 : a.index - b.index));
-      // The same two CPU workers produce both resolutions. 1MP jobs take
-      // priority, and independent 8MP completions unblock refinement.
+      // The same two CPU workers prepare the requested coarse proxies and,
+      // for ORB modes, 8MP fine frames. Coarse jobs take priority.
       const fineResolvers = [];
       const finePromises = files.map((_, index) => new Promise((resolve) => { fineResolvers[index] = resolve; }));
       const fineMissing = [];
@@ -2668,12 +2678,14 @@ async function alignAndMergeFilesWithOpenCv(
       fineMissing.sort((a, b) =>
         (a.index === alignmentReferenceIndex ? -1 : b.index === alignmentReferenceIndex ? 1 : a.index - b.index));
       const producer = startProgressiveAlignmentFrames({
-        sessionId: canonicalSession.id, coarseJobs: ordered, fineJobs: fineMissing,
+        sessionId: canonicalSession.id, coarseJobs: ordered,
+        // ECC uses a single 16MP proxy; ORB retains its 1MP + 8MP pipeline.
+        fineJobs: isEcc ? [] : fineMissing, coarseMaxArea,
         hardwareConcurrency: typeof navigator === "object" ? navigator.hardwareConcurrency || 4 : 4,
         onCoarse: (index, base) => {
           Object.assign(alignmentFrames[index], base);
           const key = alignmentFrameCacheKey(alignmentPlan.normalizationMode,
-            alignmentPlan.targetWidth, alignmentPlan.targetHeight, index);
+            alignmentPlan.targetWidth, alignmentPlan.targetHeight, index, false, coarseMaxArea);
           putCachedAlignmentFrame(frameCache, key, base);
           resolvers[index]();
         },
@@ -2692,7 +2704,7 @@ async function alignAndMergeFilesWithOpenCv(
         await producer.done;
       };
       coarseReadyByIndex = (index) => Promise.race([coarsePromises[index], producer.coarseDone.then(() => {
-        if (!alignmentFrames[index].grayBytes) throw new Error(`Missing 1MP frame: ${files[index].name}`);
+        if (!alignmentFrames[index].grayBytes) throw new Error(`Missing ${Math.round(coarseMaxArea / 1_000_000)}MP frame: ${files[index].name}`);
       })]);
       fineReadyByIndex = (index) => Promise.race([
         Promise.all([finePromises[alignmentReferenceIndex], finePromises[index]]).then(() => undefined),
@@ -2701,9 +2713,15 @@ async function alignAndMergeFilesWithOpenCv(
             throw new Error(`Missing 8MP frame: ${files[index].name}`);
         }),
       ]);
-      // Begin the 1MP alignment stage as soon as the reference exists. Remaining
-      // 1MP frames continue independently while 8MP frames are prepared.
+      // Begin alignment once the reference proxy is ready. Remaining frames
+      // are generated independently; per-target readiness is checked by the pool.
       await coarseReadyByIndex(alignmentReferenceIndex);
+      if (isEcc) {
+        // The OpenCV affine ECC Jacobian alone needs 24 bytes/pixel.
+        // Finish and terminate the OpenCV-backed proxy producers before
+        // starting the high-memory 16MP ECC stage.
+        await producer.done;
+      }
     }
 
     // Phase D: resolve all transforms. No merge/decode occurs in this phase.
@@ -2711,12 +2729,11 @@ async function alignAndMergeFilesWithOpenCv(
       const alignmentAlgorithm = alignmentAlgorithmFromMode(alignmentPlan.effectiveMode);
       if (!alignmentAlgorithm) throw new Error(`Unsupported feature matching mode: ${alignmentPlan.effectiveMode}`);
       const transformCache = canonicalSession.alignmentTransformCache || (canonicalSession.alignmentTransformCache = new Map());
-      // ECC now refers to the 1MP ECC + 8MP ORB pipeline. Use a versioned
-      // key so retired single-stage ECC results cannot be reused.
-      const eccCacheKey = "feature-match-ecc-1mp6dof-8mp4dof-fastcriteria-v1";
-      const orbCacheKey = "feature-match-orb-1mp8mp-v1";
-      const modeCacheKey = alignmentPlan.effectiveMode === "feature-match-ecc"
-        ? eccCacheKey : orbCacheKey;
+      // Keep the proven pure-16MP ECC cache identity. Never reuse the
+      // retired 1MP/8MP ECC or ECC+ORB transforms.
+      const modeCacheKey = isEcc
+        ? "feature-match-ecc-only-16mp6dof-fastcriteria-v1"
+        : "feature-match-orb-1mp8mp-v1";
       const transformKey = `${modeCacheKey}:${alignmentPlan.normalizationMode}:${alignmentPlan.targetWidth}x${alignmentPlan.targetHeight}:ref=${alignmentReferenceIndex}`;
       const cachedMatrices = transformCache.get(transformKey);
       if (infoTrace) infoTrace.transformCacheReused = Boolean(cachedMatrices && cachedMatrices.length === files.length);
@@ -2743,33 +2760,71 @@ async function alignAndMergeFilesWithOpenCv(
           let started = 0;
           let completed = 0;
           const pipeline = algorithm === "ORB" && phaseLabel === "primary" && prepareProgressiveFine;
-          const hybrid = alignmentPlan.effectiveMode === "feature-match-ecc" &&
-            algorithm === "ECC" && phaseLabel === "primary";
-          const batch = await (hybrid ? runProgressiveEccPool : pipeline ? runProgressivePipelinedPool : runAlignmentPool)({
-            jobs,
-            referenceFrame,
-            createClient: () => createAlignmentWorkerClient(algorithm),
-            ...(hybrid ? { referenceFrameIndex: alignmentReferenceIndex, createFineClient: () => new OrbWorkerClient(
-              new URL("/generated/local-stack-studio/orb.worker.js", window.location.origin), true,
-            ) } : {}),
-            hardwareConcurrency,
-            ...((pipeline || hybrid) ? { prepareRefinement: prepareProgressiveFine, coarseReady: coarseReadyByIndex,
-              refinementReady: fineReadyByIndex, coarsePreparation: coarsePreparation?.done } : {}),
-            onJobStart: (job) => {
-              started += 1;
-              setProgress(
-                `Aligning ${job.fileName} with ${algorithmLabel} feature matching ` +
-                `(${phaseLabel}, ${started}/${jobs.length} started)...`,
-              );
-            },
-            onJobComplete: () => {
-              completed += 1;
-              setProgress(
-                `${algorithmLabel} ${phaseLabel} alignment ${completed}/${jobs.length} completed...`,
-              );
-            },
-          });
-          return batch;
+          const isEcc16 = isEcc && algorithm === "ECC";
+          // Device Memory is only a capacity hint (and may be absent). The
+          // minimum is one worker, the maximum four; the ECC worker itself
+          // keeps the same 16MP input, pyramid and six-DOF algorithm.
+          const proxyBytes = isEcc16 ? alignmentFrames.reduce((sum, entry) =>
+            sum + (entry?.grayBytes?.byteLength || 0), 0) : 0;
+          const memoryHint = typeof navigator === "object"
+            ? (navigator as Navigator & { deviceMemory?: number }).deviceMemory : undefined;
+          let workerLimit = isEcc16 ? chooseEcc16WorkerCount({
+            jobCount: jobs.length, hardwareConcurrency, deviceMemoryGiB: memoryHint, proxyBytes,
+          }) : hardwareConcurrency;
+          const successful = [];
+          const permanentFailures = [];
+          let initializationMs = 0;
+          let jobsMs = 0;
+          let peakWorkers = 0;
+          let ready = [];
+          let remainingJobs = jobs;
+          while (remainingJobs.length > 0) {
+            const pool = await (pipeline ? runProgressivePipelinedPool : runAlignmentPool)({
+              jobs: remainingJobs,
+              referenceFrame,
+              createClient: () => createAlignmentWorkerClient(algorithm),
+              hardwareConcurrency: workerLimit,
+              // Each 16MP ECC target must finish frame preparation before it
+              // can be transferred; this also prevents zero-byte inputs.
+              ...(pipeline ? { prepareRefinement: prepareProgressiveFine, coarseReady: coarseReadyByIndex,
+                refinementReady: fineReadyByIndex, coarsePreparation: coarsePreparation?.done }
+                : { jobReady: coarseReadyByIndex }),
+              onJobStart: (job) => {
+                started += 1;
+                setProgress(
+                  `Aligning ${job.fileName} with ${algorithmLabel} feature matching ` +
+                  `(${phaseLabel}, ${Math.min(started, jobs.length)}/${jobs.length} started; ${workerLimit} workers)...`,
+                );
+              },
+              onJobComplete: () => {
+                completed += 1;
+                setProgress(
+                  `${algorithmLabel} ${phaseLabel} alignment ${Math.min(completed, jobs.length)}/${jobs.length} completed...`,
+                );
+              },
+            });
+            initializationMs += pool.initializationMs;
+            jobsMs += pool.jobsMs;
+            peakWorkers = Math.max(peakWorkers, pool.workerCount);
+            ready = pool.ready;
+            successful.push(...pool.successes);
+            if (!isEcc16 || workerLimit === 1) {
+              permanentFailures.push(...pool.failures);
+              break;
+            }
+            const oom = pool.failures.filter((failure) => isEccOutOfMemoryError(failure.error));
+            permanentFailures.push(...pool.failures.filter((failure) => !isEccOutOfMemoryError(failure.error)));
+            if (oom.length === 0) break;
+            // The prior pool has been terminated; retry only the memory
+            // failures in fresh workers. Never retry a convergence failure.
+            const reduced = Math.max(1, Math.floor(workerLimit / 2));
+            infoTrace?.warnings.push(`16MP ECC memory allocation failed for ${oom.length} image(s); retrying with ${reduced} worker(s).`);
+            setProgress(`Retrying ${oom.length} 16MP ECC alignment(s) after memory exhaustion with ${reduced} worker(s)...`);
+            remainingJobs = oom.map(({ job }) => job);
+            workerLimit = reduced;
+          }
+          return { workerCount: peakWorkers, initializationMs, jobsMs, ready,
+            successes: successful, failures: permanentFailures };
         };
 
         const primaryBatch = await runDirectBatch(alignmentAlgorithm, directJobs, "primary");
@@ -2794,14 +2849,7 @@ async function alignAndMergeFilesWithOpenCv(
           message: `${alignmentAlgorithm}: ${failure.error.message}`,
         }));
 
-        if (alignmentPlan.effectiveMode === "feature-match-ecc" && primaryBatch.failures.length > 0) {
-          const failures = primaryBatch.failures.map((failure) => ({
-            image: failure.job.fileName, message: failure.error.message,
-          }));
-          throw new Error(`ECC failed for ${failures.length} image(s):\n` +
-            failures.map(({ image, message }) => `${image}: ${message}`).join("\n"));
-        }
-        if (primaryBatch.failures.length > 0) {
+        if (primaryBatch.failures.length > 0 && !isEcc) {
           const secondaryAlgorithm = secondaryAlignmentAlgorithm(alignmentAlgorithm);
           const secondaryBatch = await runDirectBatch(
             secondaryAlgorithm,
@@ -2841,7 +2889,7 @@ async function alignAndMergeFilesWithOpenCv(
         }));
 
         if (deferredAlignments.length > 0) {
-          alignmentWorkers = createAlignmentWorkers();
+          alignmentWorkers = createAlignmentWorkers(!isEcc);
           await recoverDeferredAlignments(
             alignmentWorkers,
             files,
@@ -2850,6 +2898,7 @@ async function alignAndMergeFilesWithOpenCv(
             matrices,
             alignedIndices,
             deferredAlignments,
+            !isEcc,
           );
           const unresolved = deferredAlignments.filter((entry) => !matrices[entry.index]);
           if (unresolved.length > 0) {
@@ -3089,7 +3138,7 @@ async function alignAndMergeFilesWithOpenCv(
     coarsePreparation?.stop();
     if (alignmentWorkers) {
       alignmentWorkers.ECC.terminate();
-      alignmentWorkers.ORB.terminate();
+      alignmentWorkers.ORB?.terminate();
     }
     focusWorker?.terminate();
     hdr1StreamWorker?.terminate();
@@ -3659,6 +3708,7 @@ async function recoverDeferredAlignments(
   alignmentMatrices,
   alignedIndices,
   deferredAlignments,
+  allowSecondary = true,
 ) {
   let madeProgress = true;
 
@@ -3698,6 +3748,7 @@ async function recoverDeferredAlignments(
             alignmentWorkers,
             alignmentAlgorithm,
             referenceFrame,
+            allowSecondary,
           );
           const aligned = await alignWithFallback(
             alignmentWorkers,
@@ -3709,6 +3760,7 @@ async function recoverDeferredAlignments(
             entry.index,
             targetFile.name,
             targetFrame,
+            allowSecondary,
           );
           const composedMatrix = multiplyAlignmentMatrices(
             alignmentMatrices[referenceIndex],

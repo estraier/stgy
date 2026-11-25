@@ -42,6 +42,7 @@ const manifest = {
   stitcherSourceSha256: await sha256File(nativeSource),
   stitcherHeaderSha256: await sha256File(nativeHeader),
   customJsSha256: await sha256File(customJs),
+  runtimeJsSha256: await sha256File(join(sourceDir, "lib", "opencv.mjs")),
   upstreamCommit: commit,
 };
 // Stage first, then validate the exact bytes being installed; do not replace

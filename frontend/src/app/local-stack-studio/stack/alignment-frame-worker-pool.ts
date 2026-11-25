@@ -1,5 +1,5 @@
-/** Parallel canonical -> 1MP frame preparation. Workers read from the existing
- * IndexedDB canonical session, so no full-resolution buffers cross threads. */
+/** Parallel canonical -> grayscale alignment proxy preparation. Workers read
+ * from the existing IndexedDB session, without transferring source RGB buffers. */
 export type PreparedAlignmentFrame = {
   width: number; height: number; fullWidth: number; fullHeight: number;
   exposureScalar: number | null; grayBytes: Uint8Array;
@@ -99,16 +99,15 @@ export function startParallelAlignmentFrames({ sessionId, jobs, hardwareConcurre
   return { done, stop };
 }
 
-/** Phase 2: one bounded pool for both resolutions. All missing coarse frames
- * are dispatched before fine frames, but the fine producer starts as soon as
- * a worker finishes its coarse queue; no main-thread 8MP conversion is used.
- * `coarseDone` is independent of `done`, allowing ORB to begin immediately.
+/** One bounded pool for ECC 16MP or ORB 1MP alignment proxies and optional
+ * 8MP ORB refinements. Coarse jobs take priority. `coarseDone` is independent
+ * of `done`, so matching can start before all frames have been produced.
  */
 export function startProgressiveAlignmentFrames({
-  sessionId, coarseJobs, fineJobs, hardwareConcurrency, onCoarse, onFine, onFineStart,
+  sessionId, coarseJobs, fineJobs, hardwareConcurrency, coarseMaxArea = 1_000_000, onCoarse, onFine, onFineStart,
 }: {
   sessionId: string; coarseJobs: FramePreparationJob[]; fineJobs: FramePreparationJob[];
-  hardwareConcurrency: number;
+  hardwareConcurrency: number; coarseMaxArea?: number;
   onCoarse: (index: number, frame: PreparedAlignmentFrame, timing: FrameTiming) => void;
   onFine: (index: number, frame: PreparedAlignmentFrame, timing: FrameTiming) => void;
   onFineStart?: (index: number) => void;
@@ -146,7 +145,7 @@ export function startProgressiveAlignmentFrames({
           const { job, fine } = tasks[cursor++];
           if (fine) onFineStart?.(job.index);
           const started = performance.now();
-          const { frame, timing } = await worker.generate({ ...job, maxArea: fine ? 8_000_000 : 1_000_000 });
+          const { frame, timing } = await worker.generate({ ...job, maxArea: fine ? 8_000_000 : coarseMaxArea });
           const wallMs = performance.now() - started;
           const measured = { ...timing, workerIndex: workerIndex + 1,
             wallMs, queueMs: Math.max(0, wallMs - timing.totalMs) };

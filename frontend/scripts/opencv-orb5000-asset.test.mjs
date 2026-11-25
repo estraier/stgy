@@ -12,21 +12,25 @@ async function fixture(fn) {
   const manifestFile = join(root, "manifest.json");
   const stockBinary = join(root, "stock.wasm");
   const customJs = join(root, "index.js");
+  const runtimeJs = join(root, "opencv.mjs");
   // Small but structurally valid mock WASM; no native execution in this test.
   const bytes = Buffer.alloc(2048);
   Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]).copy(bytes);
   bytes[100] = 42;
   const hash = createHash("sha256").update(bytes).digest("hex");
   const jsContent = "export const customBinding = true;\n";
+  const runtimeJsContent = "export const runtime = true;\n";
   const manifest = {
     schemaVersion: 4,
     fixedPanoramaFovApi: "setStgyFocalLengths",
     stitcherHeaderSha256: "0".repeat(64),
-    customJsSha256: createHash("sha256").update(jsContent).digest("hex"), package: "@banou/opencv-wasm", packageVersion: "0.0.6",
+    customJsSha256: createHash("sha256").update(jsContent).digest("hex"),
+    runtimeJsSha256: createHash("sha256").update(runtimeJsContent).digest("hex"), package: "@banou/opencv-wasm", packageVersion: "0.0.6",
     openCvVersion: "5.0.0", panoramaOrbFeatures: 5000, panoramaMatcherConfidenceLimit: 3.5,
     stitcherSourceSha256: "0".repeat(64), wasmSha256: hash,
   };
   await writeFile(customJs, jsContent);
+  await writeFile(runtimeJs, runtimeJsContent);
   await writeFile(binary, bytes);
   await writeFile(stockBinary, Buffer.from(bytes.map((v, i) => i === 100 ? 44 : v)));
   const writeManifest = () => writeFile(manifestFile, JSON.stringify(manifest));
@@ -72,4 +76,9 @@ test("rejects old WASM manifest without the high-confidence matching fix", async
 test("rejects wrong custom ESM even if the WASM hash matches", async () => fixture(async (f) => {
   await writeFile(f.customJs, "export const customBinding = false;\n");
   await assert.rejects(verifyPanoramaOrbWasm(f), /ESM SHA-256 mismatch/);
+}));
+
+test("rejects mismatched Emscripten memory runtime", async () => fixture(async (f) => {
+  await writeFile(join(f.customJs, "..", "opencv.mjs"), "export const runtime = false;\n");
+  await assert.rejects(verifyPanoramaOrbWasm(f), /runtime SHA-256 mismatch/);
 }));
