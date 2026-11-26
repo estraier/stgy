@@ -14,6 +14,7 @@ import {
 import { stfFlowWorkingSize, stfGamma2RgbToGray8Resampled } from "../stack/stf-flow-gray";
 import { isStfFarnebackWinsize, STF_FARNEBACK_BASE_WINSIZE } from "../stack/stf-farneback-winsize";
 import { buildStfAverageFlow, type StfAverageFlowSample } from "../stack/stf-average-flow";
+import { stfSplatCompressionWeight } from "../stack/stf-splat-geometry";
 import { buildStfFlowNormGate, stfFlowNormGateFactor, type StfFlowNormGate } from "../stack/stf-flow-norm-gate";
 import type {
   OpticalFlowPerformanceStats,
@@ -502,6 +503,7 @@ import type {
       resolveVariantFactors(variant, forwardSplatScale ?? inverseWarpScale);
     const weights = new Float32Array(width * height);
     const accum = new Float32Array(width * height * 3);
+    const compressionEnabled = variant.startsWith("ext1");
     const addSource = (
       source: Uint16Array,
       flow: Float32Array,
@@ -545,10 +547,12 @@ import type {
           const y1 = Math.min(height - 1, y0 + 1);
           const fx = tx - x0;
           const fy = ty - y0;
-          const w00 = (1 - fx) * (1 - fy);
-          const w10 = fx * (1 - fy);
-          const w01 = (1 - fx) * fy;
-          const w11 = fx * fy;
+          const priority = compressionEnabled
+            ? stfSplatCompressionWeight(Math.hypot(tx - x, ty - y)) : 1;
+          const w00 = (1 - fx) * (1 - fy) * priority;
+          const w10 = fx * (1 - fy) * priority;
+          const w01 = (1 - fx) * fy * priority;
+          const w11 = fx * fy * priority;
           // Inline the four splat contributions: no per-pixel closure,
           // repeated height calculation or per-pixel helper call.
           if (w00 > 0) {
@@ -674,13 +678,12 @@ import type {
     if (factors.useNext && !collect(backward, backwardMax)) return null;
     const displacement = new Float64Array(height);
     let maxDisplacement = 0;
+    const maxRows = (values: Float64Array, lo: number, hi: number) => Math.max(values[lo], values[hi]);
     for (let y = 0; y < height; y++) {
       const lo = lookup.y0[y] / (flowWidth * 2);
       const hi = lookup.y1[y] / (flowWidth * 2);
-      const first = factors.usePrevious ?
-        Math.max(forwardMax[lo], forwardMax[hi]) * Math.abs(factors.previousFactor) : 0;
-      const second = factors.useNext ?
-        Math.max(backwardMax[lo], backwardMax[hi]) * Math.abs(factors.nextFactor) : 0;
+      const first = factors.usePrevious ? maxRows(forwardMax, lo, hi) * Math.abs(factors.previousFactor) : 0;
+      const second = factors.useNext ? maxRows(backwardMax, lo, hi) * Math.abs(factors.nextFactor) : 0;
       const bound = Math.max(first, second) * lookup.scaleY;
       if (!Number.isFinite(bound)) return null;
       // 2px conservatism covers bilinear footprint and floating-point edge
@@ -699,12 +702,14 @@ import type {
     return count;
   }
 
+
   function splatSourceIntoBand(
     source: Uint16Array, flow: Float32Array, factor: number,
     gate: StfFlowNormGate | null, width: number, height: number,
     lookup: FlowSampleLookup, reach: Float64Array,
     bandStartY: number, bandEndY: number,
     weights: Float32Array, accum: Float32Array,
+    compressionEnabled = false,
   ): void {
     const lastX = width - 1;
     const lastY = height - 1;
@@ -747,10 +752,12 @@ import type {
         const y1 = y0 + 1;
         const fx = tx - x0;
         const fy = ty - y0;
-        const w00 = (1 - fx) * (1 - fy);
-        const w10 = fx * (1 - fy);
-        const w01 = (1 - fx) * fy;
-        const w11 = fx * fy;
+        const priority = compressionEnabled
+          ? stfSplatCompressionWeight(Math.hypot(tx - x, ty - y)) : 1;
+        const w00 = (1 - fx) * (1 - fy) * priority;
+        const w10 = fx * (1 - fy) * priority;
+        const w01 = (1 - fx) * fy * priority;
+        const w11 = fx * fy * priority;
         // Most splats touch four valid destinations inside this band. Keep
         // the same Float32 update order, but avoid six per-corner checks and
         // repeated row/index calculations on this common interior path.
@@ -887,7 +894,8 @@ import type {
     const lookupBytes = (width + height) * 16;
     const reachBytes = height * 8 + flowHeight * 16;
     return { rows, bands, sourceRowPasses, reach,
-      scratchBytes: bandRows * width * 16 + stripeBytes + lookupBytes + reachBytes };
+      scratchBytes: bandRows * width * 16 +
+        stripeBytes + lookupBytes + reachBytes };
   }
 
   function synthesizeFlowVariantForwardSplat(
@@ -903,12 +911,17 @@ import type {
     inverseWarpScale?: number,
     normGate: StfFlowNormGate | null = null,
     forwardSplatScale?: number,
+    profile?: StfFlowGenerationProfile,
   ): Uint16Array {
+    const splatStartedAt = performance.now();
     const state = accumulateForwardSplat(variant, previousGamma2Rgb, nextGamma2Rgb,
       width, height, flowForward, flowBackward, flowWidth, flowHeight,
       inverseWarpScale, normGate, forwardSplatScale);
+    if (profile) profile.fsSplatMs = (profile.fsSplatMs ?? 0) + performance.now() - splatStartedAt;
+    const renderStartedAt = performance.now();
     const output = renderForwardSplatStripe(state, previousGamma2Rgb, nextGamma2Rgb,
       width, height, 0, height);
+    if (profile) profile.fsRenderMs = (profile.fsRenderMs ?? 0) + performance.now() - renderStartedAt;
     return output;
   }
 
@@ -986,6 +999,7 @@ import type {
           // global pool. Memory is released when the request is completed.
           const weights = new Float32Array(capacity);
           const accum = new Float32Array(capacity * 3);
+          const compressionEnabled = variant.startsWith("ext1");
           const state: ForwardSplatState = {
             variant, weights, accum,
             usePrevious: reach.factors.usePrevious, useNext: reach.factors.useNext,
@@ -1006,12 +1020,12 @@ import type {
             if (reach.factors.usePrevious) {
               splatSourceIntoBand(previous, forward, reach.factors.previousFactor,
                 variant === "mid" ? null : normGate, width, height,
-                reach.lookup, reach.displacement, haloStart, haloEnd, weights, accum);
+                reach.lookup, reach.displacement, haloStart, haloEnd, weights, accum, compressionEnabled);
             }
             if (reach.factors.useNext) {
               splatSourceIntoBand(next, backward, reach.factors.nextFactor,
                 variant === "mid" ? null : normGate, width, height,
-                reach.lookup, reach.displacement, haloStart, haloEnd, weights, accum);
+                reach.lookup, reach.displacement, haloStart, haloEnd, weights, accum, compressionEnabled);
             }
             state.accumulatorStartPixel = haloStart * width;
             const splatMs = performance.now() - accumulateStarted;
@@ -1262,17 +1276,18 @@ import type {
             ? synthesizeFlowVariantForwardSplat(message.variant, current.source, current.source,
                 geometry.imageWidth, geometry.imageHeight, current.flow, current.flow,
                 geometry.width, geometry.height, message.variantScale, current.gate,
-                message.forwardVariantScale)
+                message.forwardVariantScale, profile)
             : synthesizeFlowVariant(message.variant, current.source, current.source,
                 geometry.imageWidth, geometry.imageHeight, current.flow, current.flow,
                 geometry.width, geometry.height, message.variantScale, current.gate);
           const gamma2Buffer = transferableBuffer(output);
+          const warpScratchBytes = geometryScratchBytes(geometry.imageWidth, geometry.imageHeight,
+            false, warpMethod);
           workerScope.postMessage({ type: "warp-result", requestId: message.requestId,
             width: geometry.imageWidth, height: geometry.imageHeight,
             gamma2Buffer, warpMs: performance.now() - started,
-            warpScratchBytes: geometryScratchBytes(geometry.imageWidth, geometry.imageHeight, false, warpMethod),
-            estimatedPeakBytes: knownSourceFlowBytes +
-              geometryScratchBytes(geometry.imageWidth, geometry.imageHeight, false, warpMethod),
+            warpScratchBytes,
+            estimatedPeakBytes: knownSourceFlowBytes + warpScratchBytes,
           }, [gamma2Buffer]);
         }
         return;

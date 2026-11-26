@@ -458,7 +458,7 @@ import type {
     coarse: OrbAlignmentComputationResult,
     fine: { width: number; height: number; grayBuffer: ArrayBuffer } | undefined,
     targetExposure: number | null,
-    fileName: string,
+    _fileName: string,
   ): OrbAlignmentComputationResult {
     const withStatus = (status: string, details: Partial<OrbAlignmentComputationResult> = {}) =>
       ({ ...coarse, refinementStatus: status, ...details });

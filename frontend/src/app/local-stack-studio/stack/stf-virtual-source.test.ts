@@ -697,3 +697,37 @@ test("STF rolling prefetch refills the freed slot during Warp, with at most two 
   expect(accumulator.every((value) => value > 0 && Number.isFinite(value))).toBe(true);
 
 });
+
+test("opening Average Flow uses production Forward Splat without experimental mode options", async () => {
+  const input = [testPixels(23000), testPixels(25000)];
+  const stats = computeCanonicalToneStatisticsFromStoredRgb16(input[0], 2, 2);
+  const frameSet = prepareStfFrameSetForTone(buildStfFrameSet([2, 3], 1, "extrapolation-1"),
+    [2, 3], [{ gain: 1, scaledLog: 0 }, { gain: 1, scaledLog: 0 }], stats.p95, 1);
+    const received: string[] = [];
+    await appendStfVirtualSource(new Float32Array(12), {
+      frameSet,
+      sessionId: "splat-experiment", sessionCreatedAt: 1_700_000_000_000,
+      alignmentKey: "alignment", reader: {
+        width: 2, height: 2, readGamma2Image: async (index: number) => input[index],
+      } as never,
+      createFlowClient: () => ({
+        generateStripes: async (args, onStripe) => {
+          expect(args.warpMethod).toBe("inverse-warp");
+          expect(args.additionalWarpMethod).toBe("inverse-warp");
+          await onStripe({ kind: "primary", y: 0, height: 2, pixels: testPixels(24000) });
+          if (args.additionalVariant) {
+            await onStripe({ kind: "additional", y: 0, height: 2, pixels: testPixels(26000) });
+          }
+          return {} as never;
+        },
+        warpOpeningAverageStripes: async (args, onStripe) => {
+          expect(args.warpMethod).toBe("forward-splat");
+          received.push(args.warpMethod ?? "unspecified");
+          await onStripe({ kind: "primary", y: 0, height: 2, pixels: testPixels(22000) });
+          return { warpMs: 0 };
+        },
+        releaseRetained: () => {}, terminate: () => {},
+      }),
+    });
+    expect(received).toEqual(["forward-splat"]);
+});

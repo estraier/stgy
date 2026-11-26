@@ -1019,6 +1019,28 @@ test("FS destination-band streaming preserves RGB16 across tile and hole-halo bo
   }
 });
 
+test("production Compression 2 matches whole-frame and streamed opening Forward Splat, without console timings", async () => {
+  const width = 11, height = 513;
+  const variants = ["ext1"] as OpticalFlowOpeningVariant[];
+  const info = jest.spyOn(console, "info").mockImplementation(() => undefined);
+  try {
+    const streamed = await runMidpoint(2, 8, undefined, false, false,
+      { opening: [1] }, undefined, variants, { height, enabled: true }, "forward-splat", 1.7, true);
+    const full = await runMidpoint(2, 8, undefined, false, false,
+      { opening: [1] }, undefined, variants, { height, enabled: false }, "forward-splat", 1.7, true);
+    const result = full.messages.find((m) => m.type === "warp-result" && m.requestId === 3);
+    if (!result || result.type !== "warp-result") throw new Error("Missing full-frame opening image");
+    expect(restoredStreamPixels(streamed.messages, 3, "primary", width, height))
+      .toEqual(new Uint16Array(result.gamma2Buffer));
+    const response = streamed.messages.find((m) => m.type === "stream-result" && m.requestId === 3);
+    expect(response?.type).toBe("stream-result");
+    if (response?.type === "stream-result") expect(response.profile?.fsSplatMs).toBeGreaterThan(0);
+    expect(info.mock.calls.some((call) => String(call[0]).includes("[STF Forward Splat]"))).toBe(false);
+  } finally {
+    info.mockRestore();
+  }
+});
+
 test("FS zero-flow corner weights preserve full-frame pixels across destination bands", async () => {
   // The fast interior path also adds zero-weight corner contributions.
   // They must be indistinguishable from the original conditional writes,

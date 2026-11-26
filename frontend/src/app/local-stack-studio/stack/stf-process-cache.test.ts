@@ -75,3 +75,15 @@ describe("STF Source cache isolation", () => {
   });
 });
 
+
+test("opening Extrapolation always uses production Compression 2 Source cache identity", () => {
+  const frameSet = buildStfFrameSet([2, 2.5, 4], 1, "extrapolation-2");
+  const inputs = { ...aligned(), gains: [1, 1, 1], scaledLogs: [0, 0, 0],
+    weights: frameSet.realWeights, frameSet, toneReferenceIndex: 0 };
+  const key = buildStfSourceCacheKey(inputs);
+  expect(key).toContain("extrapolation-2:compression-2:one-pass-v1");
+  const interpolation = buildStfFrameSet([2, 2.5, 4], 1, "interpolation");
+  const other = buildStfSourceCacheKey({ ...inputs, frameSet: interpolation });
+  expect(other).not.toContain("compression-2:one-pass-v1");
+  expect(other).not.toBe(key);
+});

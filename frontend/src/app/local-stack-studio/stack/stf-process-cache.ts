@@ -45,7 +45,8 @@ export function buildStfSourceCacheKey(inputs: StfAlignedCacheInputs & {
     inputs.toneReferenceIndex,
     // Fixed F-dependent Farneback windows are part of the Source algorithm version.
     frameSet ? [
-      frameSet.mode,
+      frameSet.mode.startsWith("extrapolation-")
+        ? `${frameSet.mode}:compression-2:one-pass-v1` : frameSet.mode,
       frameSet.allFNumbers,
       Array.from(frameSet.allWeights),
       frameSet.middleFrames.map((frame) => [frame.previousIndex, frame.nextIndex, frame.fNumber, frame.weight]),

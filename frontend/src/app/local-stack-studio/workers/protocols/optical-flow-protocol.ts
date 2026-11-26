@@ -2,7 +2,6 @@
 export type OpticalFlowOpeningVariant = "ext1" | `ext1-${2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12}`;
 export type OpticalFlowVariant = "mid" | OpticalFlowOpeningVariant | "ext2";
 export type OpticalFlowWarpMethod = "inverse-warp" | "forward-splat";
-
 export type OpticalFlowWorkerInterpolateRequest = {
   type: "interpolate";
   // Request stripes instead of full-resolution RGB16 output images.
