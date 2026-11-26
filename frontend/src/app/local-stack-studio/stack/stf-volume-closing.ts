@@ -8,8 +8,10 @@ const LEVEL_COUNT = 65_536;
  * The lower-level component's rim is all adjacent outside pixels (counted by
  * boundary edge). Its volume is area * arithmeticMean(rim) - sum(interior).
  * A monotone envelope of this cost on the min-tree prevents non-monotone
- * decisions when the rim changes as components merge. Components touching
- * the image boundary are never raised as whole open-background basins.
+ * decisions when the rim changes as components merge. Closing is fully applied
+ * at half the volume threshold and below, and linearly tapers to zero at the
+ * threshold. Components touching the image boundary are never raised as whole
+ * open-background basins.
  *
  * This is a rim-mean variant of grayscale volume closing, NOT a standard
  * volume attribute computed from a component's saddle height. Because
@@ -111,15 +113,21 @@ export function volumeCloseGrayscaleInPlace(
   for (let i = pixels - 1; i >= 0; i--) {
     const p = sorted[i];
     if (parent[p] !== p && cost[p] < volumeThreshold) {
-      // Use the mean of the ORIGINAL exterior rim. Only a genuine rise to a
-      // higher tree level may apply this height; equal-level nodes are bookkeeping.
-      // Equal-level nodes are intermediate union bookkeeping: applying their
-      // partial rim means would hollow out protected deep flat basins.
-      const rimMean = rimEdges[p] > 0 && levels[parent[p]] > levels[p]
-        ? rimSum[p] / rimEdges[p] : values[parent[p]];
-      values[p] = Math.max(values[p], values[parent[p]], rimMean);
+      if (levels[parent[p]] === levels[p]) {
+        // Equal-level nodes are union bookkeeping, not another closing step:
+        // propagate the already blended parent without damping it again.
+        values[p] = Math.max(values[p], values[parent[p]]);
+        continue;
+      }
+      // Use the mean of the ORIGINAL exterior rim only for a true rise.
+      const rimMean = rimEdges[p] > 0 ? rimSum[p] / rimEdges[p] : values[parent[p]];
+      const target = Math.max(values[p], values[parent[p]], rimMean);
+      // 100% for cost <= T/2, zero at T, linear in between.
+      const strength = Math.min(1, 2 * (1 - cost[p] / volumeThreshold));
+      values[p] += strength * (target - values[p]);
     }
   }
+
 }
 
 /**
