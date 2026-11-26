@@ -228,6 +228,64 @@ describe("STF production sharpness and protection gate", () => {
     expect(values[100]).toBe(1);
     for (let i = 1; i < values.length; i++) expect(values[i]).toBeGreaterThanOrEqual(values[i - 1]);
   });
+  test("Scaled Log centers P(Blur ratio) at 0.5 before the existing sigmoid for skewed maps", () => {
+    const size = 1001;
+    // Input values are monotone, so P30, P50 and P70 each coincide with
+    // an actual pixel. Both extreme skews have the same desired area target.
+    const maps = [
+      Array.from({ length: size }, (_, i) => i < 200
+        ? 0.02 + (0.16 * i) / 199 : 0.8 + (0.19 * (i - 200)) / 800),
+      Array.from({ length: size }, (_, i) => i < 800
+        ? 0.02 + (0.16 * i) / 799 : 0.8 + (0.19 * (i - 800)) / 200),
+      Array.from({ length: size }, (_, i) => i / 1000),
+    ];
+    for (const map of maps) {
+      for (const ratio of [0.3, 0.5, 0.7]) {
+        const gate = Float32Array.from(map);
+        const originalThreshold = buildStfSigmoidPlan(gate, ratio).threshold;
+        const result = applyStfSigmoidGateInPlace(gate, size, 1, ratio, 75);
+        // The centered threshold is the percentile of the TRANSFORMED
+        // samples, not the original samples: slope adaptation is preserved.
+        expect(result.threshold).toBeCloseTo(0.5, 5);
+        expect(gate[Math.round(ratio * (size - 1))]).toBeCloseTo(0.5, 5);
+        expect(Number.isFinite(originalThreshold)).toBe(true);
+        for (let i = 0; i < gate.length; i += 1) {
+          expect(Number.isFinite(gate[i])).toBe(true);
+          expect(gate[i]).toBeGreaterThanOrEqual(0);
+          expect(gate[i]).toBeLessThanOrEqual(1);
+          if (i > 0) expect(gate[i]).toBeGreaterThanOrEqual(gate[i - 1]);
+        }
+      }
+    }
+  });
+  test("Scaled Log keeps exact endpoints and handles collapsed or tied percentiles", () => {
+    for (const samples of [
+      [0, 0, 0, 0, 0, 0, 0, 0],
+      [1, 1, 1, 1, 1, 1, 1, 1],
+      [0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8],
+      [0, 1e-30, 0.000001, 0.1, 0.8, 0.99999994, 1],
+      [0, 0, 0, 0, 0, 0.9, 0.9, 1],
+    ]) {
+      const gate = Float32Array.from(samples);
+      applyStfSigmoidGateInPlace(gate, gate.length, 1, 0.5, 75);
+      for (const value of gate) {
+        expect(Number.isFinite(value)).toBe(true);
+        expect(value).toBeGreaterThanOrEqual(0);
+        expect(value).toBeLessThanOrEqual(1);
+      }
+      for (let i = 1; i < gate.length; i += 1) {
+        expect(gate[i]).toBeGreaterThanOrEqual(gate[i - 1]);
+      }
+      if (samples[0] === 0) expect(gate[0]).toBe(0);
+      if (samples[samples.length - 1] === 1) expect(gate[gate.length - 1]).toBe(1);
+    }
+    // Out-of-range pixels must still be rejected even when they are not in
+    // the sparse sample grid used to estimate the transform parameters.
+    const width = 400, height = 400;
+    const invalid = Float32Array.from({ length: width * height }, (_, i) => (i % width) / width);
+    invalid[0] = 1.5;
+    expect(() => applyStfSigmoidGateInPlace(invalid, width, height, 0.5, 75)).toThrow("[0,1]");
+  });
   test("blur radii and 50% gate dilation depend on selected strength", () => {
     expect(resolveStfAdditionalBlurRadius(4000, 4000, 1)).toBe(4);
     expect(resolveStfAdditionalBlurRadius(4000, 4000, 2)).toBe(8);

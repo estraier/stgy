@@ -105,6 +105,8 @@ import { selectUniqueStfInputs } from "./stf-input-selection";
 import { chooseAlignmentReferenceIndex } from "./alignment-reference";
 import { chooseEcc16WorkerCount, isEccOutOfMemoryError } from "./ecc-memory-budget";
 import { buildStfAdditionalBlurPlan, resolveStfGateExpansionMultiplier, DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS, STF_BLUR_STRENGTH_VALUES, STF_BLUR_AREA_GUARD_VALUES, STF_BLUR_RATIO_VALUES, STF_BLUR_SIGMOID_VALUES } from "./stf-additional-blur-mode";
+import { chooseStfFocusDeghostingIndex, blendStfFocusDeghostingStripe, featherStfFocusDeghostingGate } from "./stf-focus-deghosting";
+import { applyStfToneMatchInPlace, buildStfToneMatchLut } from "./stf-tone-match";
 import {
   DEFAULT_PANORAMA_DOWNSCALE_MEGAPIXELS,
   DEFAULT_PANORAMA_FINISH_MODE,
@@ -369,11 +371,11 @@ function captureProcessingSettings(selectedMode: string): StackInfoSetting[] {
   } else if (selectedMode === "stf") {
     settings.push({ label: "Radial attenuation", value: stfRadialAttenuation.selectedOptions[0]?.textContent || stfRadialAttenuation.value });
     settings.push({ label: "Frame generation", value: stfFrameGeneration.selectedOptions[0]?.textContent || stfFrameGeneration.value });
-    settings.push({ label: "Additional blur", value: stfBlurStrength.selectedOptions[0]?.textContent || stfBlurStrength.value });
+    settings.push({ label: "Blur mode", value: stfBlurStrength.selectedOptions[0]?.textContent || stfBlurStrength.value });
     if (stfBlurStrength.value !== "none") {
       settings.push({ label: "Blur ratio", value: `${Math.round(Number(stfBlurRatio.value) * 100)}%` });
       settings.push({ label: "Area guard", value: stfBlurAreaGuard.selectedOptions[0]?.textContent || stfBlurAreaGuard.value });
-      settings.push({ label: "Blur sigmoid", value: `${stfBlurSigmoid.value}%` });
+      settings.push({ label: "Sigmoid", value: `${stfBlurSigmoid.value}%` });
     }
   }
   return settings;
@@ -487,7 +489,6 @@ function updateMergeOptionsVisibility() {
 }
 
 function updateStfBlurOptionsVisibility() {
-  // Only enabled additional-blur modes use the gate tuning controls.
   const active = mergeMode.value === "stf" && stfBlurStrength.value !== "none";
   for (const element of [stfBlurRatioOption, stfBlurAreaGuardOption, stfBlurSigmoidOption]) {
     element.classList.toggle("hidden", !active);
@@ -822,8 +823,12 @@ listen(processButton, "click", async () => {
       // Frame generation is validated separately and still requires real F values.
       // The aperture-dependent Additional Blur gate cannot be computed without
       // those values. Keep the real-only uniform merge and report the omission.
-      const warning = selectedBlurPlan.enabled
-        ? "STF missing EXIF F-number: uniform real-image weights were used; Additional Blur was skipped because its gate requires F-numbers."
+      const skippedGateFeatures = [
+        selectedBlurPlan.blurEnabled ? "Additional Blur" : null,
+        selectedBlurPlan.focusDeghosting === "on" ? "Focus deghosting" : null,
+      ].filter(Boolean);
+      const warning = skippedGateFeatures.length > 0
+        ? `STF missing EXIF F-number: uniform real-image weights were used; ${skippedGateFeatures.join(" and ")} skipped because its protection gate requires F-numbers.`
         : "STF missing EXIF F-number: uniform real-image weights were used.";
       trace.warnings.push(warning);
     }
@@ -3488,11 +3493,11 @@ async function mergeStfWithAdditionalBlur(
         cache.baseKey = baseKey;
       }
     }
-    const blurRadius = algorithm.resolveStfAdditionalBlurRadius(
-      width, height, resolveStfGateExpansionMultiplier(plan));
+    const blurRadius = plan.blurEnabled
+      ? algorithm.resolveStfAdditionalBlurRadius(width, height, resolveStfGateExpansionMultiplier(plan)) : 0;
     const expandedKey = JSON.stringify([baseKey, blurRadius, 0.5, 0.2, 0.7]);
     let expanded = cache.expandedKey === expandedKey ? cache.expanded : null;
-    if (!expanded) {
+    if (!expanded && plan.blurEnabled) {
       const p = await ensurePool();
       const expansionHalo = Math.max(1, Math.round(blurRadius * 0.5));
       const completedGate = new Float32Array(width * height);
@@ -3540,19 +3545,52 @@ async function mergeStfWithAdditionalBlur(
         cache.sourceWeightsKey = sourceWeightsKey;
       }
     }
-    // Store complete real+generated Source independently of the 192MiB Gate
-    // budget. Reuse on Blur strength/guard/ratio/sigmoid changes and Blur off.
+    // Cache only the untouched STF source. Focus deghosting is applied after
+    // this point, so switching it Off never reuses a previously replaced source.
     if (sourceCacheKey) stfSourceCache.put(sourceCacheKey, source);
+    const deghosting = plan.focusDeghosting === "on";
+    const deghostingGate = deghosting ? featherStfFocusDeghostingGate(base, width, height) : null;
+    const referenceIndex = deghosting ? chooseStfFocusDeghostingIndex(fNumbers) : -1;
+    const gain = deghosting ? mergePlan.gains[referenceIndex] : 1;
+    const scaledLog = deghosting ? mergePlan.scaledLogs[referenceIndex] : 0;
+    const referenceLut = deghosting ? buildStfToneMatchLut(gain, scaledLog) : null;
+    const prepareSourceStripe = async (regionY: number, regionHeight: number): Promise<Float32Array> => {
+      const start = regionY * width * 3;
+      const region = source.slice(start, start + regionHeight * width * 3);
+      if (deghosting) {
+        const reference = await reader.readLinearRegion(referenceIndex, 0, regionY, width, regionHeight);
+        applyStfToneMatchInPlace(reference, gain, scaledLog, referenceLut);
+        blendStfFocusDeghostingStripe(region, reference, deghostingGate!, width, regionY);
+      }
+      return region;
+    };
+    if (!plan.blurEnabled) {
+      // Deghosting is independent of Additional Blur. Feather only its own
+      // replacement alpha; do not apply Gaussian blur to the RGB source.
+      const deghosted = source.slice();
+      setProgress(`STF focus deghosting 0/${jobs.length}...`);
+      for (let completed = 0; completed < jobs.length; completed += 1) {
+        const job = jobs[completed];
+        const reference = await reader.readLinearRegion(referenceIndex, 0, job.y, width, job.height);
+        applyStfToneMatchInPlace(reference, gain, scaledLog, referenceLut);
+        const start = job.y * width * 3;
+        blendStfFocusDeghostingStripe(
+          deghosted.subarray(start, start + job.height * width * 3), reference, deghostingGate!, width, job.y);
+        setProgress(`STF focus deghosting ${completed + 1}/${jobs.length}...`);
+      }
+      infoTrace?.add("STF focus deghosting", performance.now() - blurStartedAt, "Merge");
+      return finalizeStoredResult(deghosted, width, height, outputColorSpace, true);
+    }
     const p = await ensurePool();
     const blurred = new Float32Array(source.length);
     setProgress(`STF guarded Gaussian blur 0/${jobs.length}...`);
     await p.runBlurJobs(jobs,
-      (job) => {
+      async (job) => {
         const regionY = Math.max(0, job.y - blurRadius);
         const regionEnd = Math.min(height, job.y + job.height + blurRadius);
         return { regionHeight: regionEnd - regionY, coreOffsetY: job.y - regionY,
           coreHeight: job.height, radius: blurRadius,
-          source: source.slice(regionY * width * 3, regionEnd * width * 3),
+          source: await prepareSourceStripe(regionY, regionEnd - regionY),
           gate: expanded.slice(regionY * width, regionEnd * width) };
       },
       (job, stripe, completed, total) => {

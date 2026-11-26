@@ -540,7 +540,28 @@ export function buildStfSigmoidPlan(unitSamples: ArrayLike<number>, blurRatio: n
     threshold, lowerValue, upperValue, robustScale, strength };
 }
 
-/** Apply the same endpoint-normalized sigmoid to every unit gate, regardless of provenance. */
+/** Scaled Log anchored at P(Blur ratio): f(0)=0, f(t)=0.5, f(1)=1.
+ * Solving log(1+a*t)/log(1+a)=0.5 yields a=(1-2*t)/(t*t).
+ * No finite monotone transform can move a percentile at exactly 0 or 1;
+ * retain the unmodified gate in that degenerate case. */
+function createStfGateScaledLog(threshold: number): { factor: number; logDenominator: number } | null {
+  if (!(threshold > 0 && threshold < 1)) return null;
+  const factor = (1 - 2 * threshold) / (threshold * threshold);
+  if (Math.abs(factor) < 1e-12) return null; // identity at t=0.5
+  if (!Number.isFinite(factor) || !(factor > -1)) return null;
+  const logDenominator = Math.log1p(factor);
+  if (!Number.isFinite(logDenominator) || logDenominator === 0) return null;
+  return { factor, logDenominator };
+}
+
+function applyStfGateScaledLog(value: number, factor: number, logDenominator: number): number {
+  // Preserve the existing sigmoid's strict validation of out-of-range inputs.
+  if (!(value > 0 && value < 1)) return value;
+  return Math.max(0, Math.min(1, Math.log1p(factor * value) / logDenominator));
+}
+
+/** Adaptively center P(Blur ratio) using Scaled Log, then apply the existing
+ * endpoint-normalized sigmoid with its slope re-estimated in that new domain. */
 export function applyStfSigmoidGateInPlace(unitGate: Float32Array, width: number, height: number, blurRatio: number, strengthPercent: number): StfSigmoidPlan {
   if (!(Number.isFinite(strengthPercent) && strengthPercent > 0 && strengthPercent <= 100)) {
     throw new Error("STF Blur sigmoid must be in (0,100].");
@@ -558,12 +579,24 @@ export function applyStfSigmoidGateInPlace(unitGate: Float32Array, width: number
     samples.push(unitGate[0]);
     samples.push(unitGate[Math.max(0, unitGate.length - 1)]);
   }
-  const plan = buildStfSigmoidPlan(samples, blurRatio);
+  const initialPlan = buildStfSigmoidPlan(samples, blurRatio);
+  const scaledLog = createStfGateScaledLog(initialPlan.threshold);
+  if (scaledLog) {
+    // Use the SAME sampled population to re-estimate the existing sigmoid
+    // strength; its threshold and robust spread now reflect the new domain.
+    for (let index = 0; index < samples.length; index += 1) {
+      samples[index] = applyStfGateScaledLog(samples[index], scaledLog.factor, scaledLog.logDenominator);
+    }
+  }
+  const plan = scaledLog ? buildStfSigmoidPlan(samples, blurRatio) : initialPlan;
   // Clamp automatic strength to [1,10] first, then apply the specified percentage.
   const sigmoid = createUnitScaledSigmoid(plan.threshold, plan.robustScale,
     plan.strength * strengthPercent / 100);
   for (let index = 0; index < unitGate.length; index += 1) {
-    unitGate[index] = applyUnitScaledSigmoid(unitGate[index], sigmoid);
+    const value = scaledLog
+      ? applyStfGateScaledLog(unitGate[index], scaledLog.factor, scaledLog.logDenominator)
+      : unitGate[index];
+    unitGate[index] = applyUnitScaledSigmoid(value, sigmoid);
   }
   return plan;
 }

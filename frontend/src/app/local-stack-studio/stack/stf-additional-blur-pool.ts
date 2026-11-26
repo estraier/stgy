@@ -50,9 +50,9 @@ export class StfAdditionalBlurWorkerPool {
     return this.runJobs(jobs, (client, job) => client.expandGateStripe(buildRequest(job)), onComplete);
   }
   runBlurJobs(jobs: readonly LinearMergeStripeJob[],
-    buildRequest: (job: LinearMergeStripeJob) => StfAdditionalBlurBlurRequest,
+    buildRequest: (job: LinearMergeStripeJob) => StfAdditionalBlurBlurRequest | Promise<StfAdditionalBlurBlurRequest>,
     onComplete: (job: LinearMergeStripeJob, result: Float32Array, completed: number, total: number) => void | Promise<void>) {
-    return this.runJobs(jobs, (client, job) => client.blurStripe(buildRequest(job)), onComplete);
+    return this.runJobs(jobs, async (client, job) => client.blurStripe(await buildRequest(job)), onComplete);
   }
   sampleBrightnessStripes(jobs: readonly LinearMergeStripeJob[], grid: StfSampleGrid,
     onComplete: (job: LinearMergeStripeJob, samples: Float32Array, completed: number, total: number) => void | Promise<void>) {

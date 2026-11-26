@@ -18,7 +18,7 @@ export type StfToneMatchResult = {
   plans: StfToneMatchPlan[];
 };
 
-const STF_TONE_MATCH_ITERATIONS = 20;
+const STF_TONE_MATCH_ITERATIONS = 30;
 const STF_TONE_MATCH_SEARCH_STEPS = 24;
 const STF_TONE_MATCH_GAIN_MAX = 1 << 16;
 const STF_TONE_MATCH_LOG_MIN = -2;

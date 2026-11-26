@@ -343,7 +343,7 @@ export default function PageBody() {
                   </select>
                 </label>
                 <label id="stf-blur-strength-option" className="hidden flex-col items-start gap-1.5">
-                  <span className="text-xs font-medium text-gray-500">Blur strength</span>
+                  <span className="text-xs font-medium text-gray-500">Blur mode</span>
                   <select
                     id="stf-blur-strength"
                     defaultValue="none"
@@ -353,6 +353,10 @@ export default function PageBody() {
                     <option value="weak">Weak</option>
                     <option value="medium">Medium</option>
                     <option value="strong">Strong</option>
+                    <option value="restore">Restore</option>
+                    <option value="restore-weak">Restore+W</option>
+                    <option value="deghost">Restore+M</option>
+                    <option value="restore-strong">Restore+S</option>
                     <option value="gate">Gate</option>
                   </select>
                 </label>
@@ -383,7 +387,7 @@ export default function PageBody() {
                   </select>
                 </label>
                 <label id="stf-blur-area-guard-option" className="hidden flex-col items-start gap-1.5">
-                  <span className="text-xs font-medium text-gray-500">Blur area guard</span>
+                  <span className="text-xs font-medium text-gray-500">Area guard</span>
                   <select
                     id="stf-blur-area-guard"
                     defaultValue="medium"
@@ -396,7 +400,7 @@ export default function PageBody() {
                   </select>
                 </label>
                 <label id="stf-blur-sigmoid-option" className="hidden flex-col items-start gap-1.5">
-                  <span className="text-xs font-medium text-gray-500">Blur sigmoid</span>
+                  <span className="text-xs font-medium text-gray-500">Sigmoid</span>
                   <select
                     id="stf-blur-sigmoid"
                     defaultValue="75"

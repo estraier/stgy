@@ -6,7 +6,9 @@ import {
 
 describe("STF Additional Blur production option specification", () => {
   test("only official values and defaults are exposed", () => {
-    expect([...STF_BLUR_STRENGTH_VALUES]).toEqual(["none", "weak", "medium", "strong", "gate"]);
+    expect([...STF_BLUR_STRENGTH_VALUES]).toEqual([
+      "none", "weak", "medium", "strong", "restore", "restore-weak", "deghost", "restore-strong", "gate",
+    ]);
     expect([...STF_BLUR_AREA_GUARD_VALUES]).toEqual(["none", "weak", "medium", "strong"]);
     expect(STF_BLUR_RATIO_VALUES).toHaveLength(17);
     expect(STF_BLUR_RATIO_VALUES[0]).toBeCloseTo(0.1);
@@ -54,6 +56,56 @@ describe("STF Additional Blur production option specification", () => {
     expect(b.effectiveRatio).toBeNull();
     expect(a.areaExponent).toBeNull();
     expect(a.strengthMultiplier).toBe(2);
+  });
+
+  test("Restore only keeps the protected-region replacement but skips Gaussian blur and expansion", () => {
+    const restore = buildStfAdditionalBlurPlan({ ...DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS, strength: "restore" });
+    expect(restore.enabled).toBe(true);
+    expect(restore.blurEnabled).toBe(false);
+    expect(restore.gateOnly).toBe(false);
+    expect(restore.focusDeghosting).toBe("on");
+    expect(restore.strengthMultiplier).toBeNull();
+    expect(restore.areaExponent).toBe(0.85);
+    expect(restore.effectiveRatio).toBe(0.5);
+    expect(() => resolveStfGateExpansionMultiplier(restore)).toThrow();
+  });
+
+  test("Restore+W/M/S use the corresponding blur strength with the same restoration gate", () => {
+    for (const [restoreStrength, blurStrength, multiplier] of [
+      ["restore-weak", "weak", 1],
+      ["deghost", "medium", 2],  // Keep the former Deghost mode as Restore+M.
+      ["restore-strong", "strong", 3],
+    ] as const) {
+      for (const areaGuard of STF_BLUR_AREA_GUARD_VALUES) {
+        for (const sigmoid of [0, 75, 100]) {
+          const settings = { ...DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS, areaGuard, sigmoid, ratio: 0.7 };
+          const regular = buildStfAdditionalBlurPlan({ ...settings, strength: blurStrength });
+          const restore = buildStfAdditionalBlurPlan({ ...settings, strength: restoreStrength });
+          expect(restore.enabled).toBe(true);
+          expect(restore.blurEnabled).toBe(true);
+          expect(restore.gateOnly).toBe(false);
+          expect(restore.focusDeghosting).toBe("on");
+          expect(regular.focusDeghosting).toBe("off");
+          expect(restore.strengthMultiplier).toBe(multiplier);
+          expect(restore.strengthMultiplier).toBe(regular.strengthMultiplier);
+          expect(restore.areaExponent).toBe(regular.areaExponent);
+          expect(restore.effectiveRatio).toBe(regular.effectiveRatio);
+          expect(resolveStfGateExpansionMultiplier(restore)).toBe(multiplier);
+        }
+      }
+    }
+  });
+
+  test("Restore without blur still honors disabled guard and sigmoid settings", () => {
+    const a = buildStfAdditionalBlurPlan({ strength: "restore", ratio: 0.1, areaGuard: "none", sigmoid: 0 });
+    const b = buildStfAdditionalBlurPlan({ strength: "restore", ratio: 0.9, areaGuard: "none", sigmoid: 0 });
+    expect(a.enabled).toBe(true);
+    expect(b.enabled).toBe(true);
+    expect(a.focusDeghosting).toBe("on");
+    expect(a.blurEnabled).toBe(false);
+    expect(a.areaExponent).toBeNull();
+    expect(a.effectiveRatio).toBeNull();
+    expect(b.effectiveRatio).toBeNull();
   });
 
   test("unsupported or invalid options are rejected", () => {
