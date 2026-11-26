@@ -1,8 +1,8 @@
-/** Gate-guided single-real-frame replacement before STF Additional Blur. */
+/** Gate-guided middle-aperture replacement for STF Restore. */
 /** Centered feather radius scales with the image diagonal; no morphological expansion. */
-export function resolveStfFocusDeghostingFeatherRadius(width: number, height: number): number {
+export function resolveStfRestoreFeatherRadius(width: number, height: number): number {
   if (!Number.isInteger(width) || width <= 0 || !Number.isInteger(height) || height <= 0) {
-    throw new Error("STF Focus deghosting dimensions are invalid.");
+    throw new Error("STF Restore dimensions are invalid.");
   }
   return Math.max(1, Math.round(Math.hypot(width, height) * 0.003));
 }
@@ -12,12 +12,12 @@ export function resolveStfFocusDeghostingFeatherRadius(width: number, height: nu
  * centered, normalized, separable Gaussian. The original gate is untouched.
  * Edge pixels are replicated to avoid artificially weakening image borders.
  */
-export function featherStfFocusDeghostingGate(
-  gate: Float32Array, width: number, height: number, radius = resolveStfFocusDeghostingFeatherRadius(width, height),
+export function featherStfRestoreGate(
+  gate: Float32Array, width: number, height: number, radius = resolveStfRestoreFeatherRadius(width, height),
 ): Float32Array {
   if (!Number.isInteger(width) || width <= 0 || !Number.isInteger(height) || height <= 0 ||
       gate.length !== width * height || !Number.isInteger(radius) || radius < 0) {
-    throw new Error("STF Focus deghosting gate geometry is invalid.");
+    throw new Error("STF Restore gate geometry is invalid.");
   }
   if (radius === 0) return gate.slice();
   const sigma = Math.max(0.5, radius / 2);
@@ -38,7 +38,7 @@ export function featherStfFocusDeghostingGate(
       for (let k = -radius; k <= radius; k++) {
         const sample = gate[row + Math.max(0, Math.min(width - 1, x + k))];
         if (!Number.isFinite(sample) || sample < 0 || sample > 1) {
-          throw new Error("STF Focus deghosting gate must be in [0,1].");
+          throw new Error("STF Restore gate must be in [0,1].");
         }
         value += sample * weights[k + radius];
       }
@@ -58,9 +58,9 @@ export function featherStfFocusDeghostingGate(
 }
 
 /** Select the real aperture closest to the geometric midpoint of the bracket. */
-export function chooseStfFocusDeghostingIndex(fNumbers: readonly number[]): number {
+export function chooseStfRestoreIndex(fNumbers: readonly number[]): number {
   if (fNumbers.length === 0 || fNumbers.some((f) => !Number.isFinite(f) || !(f > 0))) {
-    throw new Error("STF Focus deghosting requires valid real-image F-numbers.");
+    throw new Error("STF Restore requires valid real-image F-numbers.");
   }
   let minLog = Infinity;
   let maxLog = -Infinity;
@@ -87,7 +87,7 @@ export function chooseStfFocusDeghostingIndex(fNumbers: readonly number[]): numb
  * aligned real frame and the existing post-Graph-Cut/post-sigmoid gate.
  * Any centered feathering is applied to the gate before this operation.
  */
-export function blendStfFocusDeghostingStripe(
+export function blendStfRestoreStripe(
   source: Float32Array,
   reference: Float32Array,
   gate: Float32Array,
@@ -97,13 +97,13 @@ export function blendStfFocusDeghostingStripe(
   if (!Number.isInteger(width) || width <= 0 || !Number.isInteger(startY) || startY < 0 ||
       source.length !== reference.length || source.length % (3 * width) !== 0 ||
       (startY * width + source.length / 3) > gate.length) {
-    throw new Error("STF Focus deghosting stripe geometry is invalid.");
+    throw new Error("STF Restore stripe geometry is invalid.");
   }
   const firstPixel = startY * width;
   for (let i = 0; i < source.length / 3; i++) {
     const guard = gate[firstPixel + i];
     if (!Number.isFinite(guard) || guard < 0 || guard > 1) {
-      throw new Error("STF Focus deghosting gate must be in [0,1].");
+      throw new Error("STF Restore gate must be in [0,1].");
     }
     if (guard <= 0) continue;
     const o = i * 3;

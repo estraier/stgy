@@ -1,4 +1,5 @@
 import type { LinearMergeWorkerConfig } from "../workers/protocols/linear-merge-protocol";
+import type { StfRestoreSampleStripe } from "./stf-restore-sampling";
 
 export const LINEAR_MERGE_MAX_WORKERS = 4;
 export const LINEAR_MERGE_TARGET_STRIPE_BYTES = 8 * 1024 * 1024;
@@ -9,9 +10,13 @@ export type LinearMergeStripeJob = {
   height: number;
 };
 
+export type LinearMergeStripeResult = Float32Array | {
+  stripe: Float32Array; referenceSample: StfRestoreSampleStripe;
+};
+
 export type LinearMergePoolClient = {
   initialize(config: LinearMergeWorkerConfig): Promise<{ imageCount: number; width: number; height: number }>;
-  mergeStripe(job: LinearMergeStripeJob): Promise<Float32Array>;
+  mergeStripe(job: LinearMergeStripeJob): Promise<LinearMergeStripeResult>;
   terminate(): void;
 };
 
@@ -66,6 +71,7 @@ export async function runLinearMergePool({
     stripe: Float32Array,
     completedCount: number,
     totalCount: number,
+    referenceSample?: StfRestoreSampleStripe,
   ) => void;
 }): Promise<{ workerCount: number }> {
   if (jobs.length === 0) return { workerCount: 0 };
@@ -106,13 +112,18 @@ export async function runLinearMergePool({
         const job = jobs[jobIndex];
         onJobStart?.(job, workerIndex);
         try {
-          const stripe = await client.mergeStripe(job);
+          const result = await client.mergeStripe(job);
+          const stripe = result instanceof Float32Array ? result : result.stripe;
+          const referenceSample = result instanceof Float32Array ? undefined : result.referenceSample;
+          if (config.restoreReferenceIndex !== undefined && !referenceSample) {
+            throw new Error("STF Restore worker did not return a reference sample.");
+          }
           const expectedLength = config.alignmentPlan.targetWidth * job.height * 3;
           if (stripe.length !== expectedLength) {
             throw new Error(`Linear merge worker returned an invalid stripe ${job.index + 1}.`);
           }
           completedCount += 1;
-          onJobComplete?.(job, workerIndex, stripe, completedCount, jobs.length);
+          onJobComplete?.(job, workerIndex, stripe, completedCount, jobs.length, referenceSample);
         } catch (error) {
           if (!firstError) {
             firstError = error instanceof Error ? error : new Error(String(error));

@@ -7,7 +7,7 @@ import {
 describe("STF Additional Blur production option specification", () => {
   test("only official values and defaults are exposed", () => {
     expect([...STF_BLUR_STRENGTH_VALUES]).toEqual([
-      "none", "weak", "medium", "strong", "restore", "restore-weak", "deghost", "restore-strong", "gate",
+      "none", "weak", "medium", "strong", "restore", "restore-weak", "restore-medium", "restore-strong", "gate",
     ]);
     expect([...STF_BLUR_AREA_GUARD_VALUES]).toEqual(["none", "weak", "medium", "strong"]);
     expect(STF_BLUR_RATIO_VALUES).toHaveLength(17);
@@ -63,17 +63,24 @@ describe("STF Additional Blur production option specification", () => {
     expect(restore.enabled).toBe(true);
     expect(restore.blurEnabled).toBe(false);
     expect(restore.gateOnly).toBe(false);
-    expect(restore.focusDeghosting).toBe("on");
+    expect(restore.restoreEnabled).toBe(true);
     expect(restore.strengthMultiplier).toBeNull();
     expect(restore.areaExponent).toBe(0.85);
     expect(restore.effectiveRatio).toBe(0.5);
     expect(() => resolveStfGateExpansionMultiplier(restore)).toThrow();
   });
 
-  test("Restore+W/M/S use the corresponding blur strength with the same restoration gate", () => {
+  test("rejects obsolete experimental mode values", () => {
+    expect(STF_BLUR_STRENGTH_VALUES.some((value) => value === ("legacy-restore" as string))).toBe(false);
+    expect(() => buildStfAdditionalBlurPlan({
+      ...DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS, strength: "legacy-restore" as never,
+    })).toThrow();
+  });
+
+  test("Restore+W/M/S retain the restoration gate and use the corresponding blur strength", () => {
     for (const [restoreStrength, blurStrength, multiplier] of [
       ["restore-weak", "weak", 1],
-      ["deghost", "medium", 2],  // Keep the former Deghost mode as Restore+M.
+      ["restore-medium", "medium", 2],
       ["restore-strong", "strong", 3],
     ] as const) {
       for (const areaGuard of STF_BLUR_AREA_GUARD_VALUES) {
@@ -84,8 +91,8 @@ describe("STF Additional Blur production option specification", () => {
           expect(restore.enabled).toBe(true);
           expect(restore.blurEnabled).toBe(true);
           expect(restore.gateOnly).toBe(false);
-          expect(restore.focusDeghosting).toBe("on");
-          expect(regular.focusDeghosting).toBe("off");
+          expect(restore.restoreEnabled).toBe(true);
+          expect(regular.restoreEnabled).toBe(false);
           expect(restore.strengthMultiplier).toBe(multiplier);
           expect(restore.strengthMultiplier).toBe(regular.strengthMultiplier);
           expect(restore.areaExponent).toBe(regular.areaExponent);
@@ -101,7 +108,7 @@ describe("STF Additional Blur production option specification", () => {
     const b = buildStfAdditionalBlurPlan({ strength: "restore", ratio: 0.9, areaGuard: "none", sigmoid: 0 });
     expect(a.enabled).toBe(true);
     expect(b.enabled).toBe(true);
-    expect(a.focusDeghosting).toBe("on");
+    expect(a.restoreEnabled).toBe(true);
     expect(a.blurEnabled).toBe(false);
     expect(a.areaExponent).toBeNull();
     expect(a.effectiveRatio).toBeNull();

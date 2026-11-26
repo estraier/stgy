@@ -15,6 +15,8 @@ export type LinearMergeWorkerConfig = {
   weights: Float32Array;
   exposureRolloffMaxP998AfterGain: Array<number | null>;
   cacheBytes?: number;
+  /** Image index to collect the tone-matched Restore RGB sample, if any. */
+  restoreReferenceIndex?: number;
 };
 
 export type LinearMergeWorkerInitRequest = LinearMergeWorkerConfig & {
@@ -45,6 +47,8 @@ export type LinearMergeWorkerStripeResponse = {
   y: number;
   height: number;
   linearBuffer: ArrayBuffer;
+  restoreSampleY?: number;
+  restoreSampleBuffer?: ArrayBuffer;
 };
 
 export type LinearMergeWorkerErrorResponse = {

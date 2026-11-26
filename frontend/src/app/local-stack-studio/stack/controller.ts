@@ -105,8 +105,9 @@ import { selectUniqueStfInputs } from "./stf-input-selection";
 import { chooseAlignmentReferenceIndex } from "./alignment-reference";
 import { chooseEcc16WorkerCount, isEccOutOfMemoryError } from "./ecc-memory-budget";
 import { buildStfAdditionalBlurPlan, resolveStfGateExpansionMultiplier, DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS, STF_BLUR_STRENGTH_VALUES, STF_BLUR_AREA_GUARD_VALUES, STF_BLUR_RATIO_VALUES, STF_BLUR_SIGMOID_VALUES } from "./stf-additional-blur-mode";
-import { chooseStfFocusDeghostingIndex, blendStfFocusDeghostingStripe, featherStfFocusDeghostingGate } from "./stf-focus-deghosting";
+import { chooseStfRestoreIndex, blendStfRestoreStripe, featherStfRestoreGate } from "./stf-restore-blend";
 import { applyStfToneMatchInPlace, buildStfToneMatchLut } from "./stf-tone-match";
+import { StfRestoreAreaSampleAccumulator, sampleStfRestoreImage } from "./stf-restore-sampling";
 import {
   DEFAULT_PANORAMA_DOWNSCALE_MEGAPIXELS,
   DEFAULT_PANORAMA_FINISH_MODE,
@@ -312,8 +313,13 @@ async function finishPendingOldSessionDeletion() {
 }
 // Keep only one complete STF Source, separate from the real-only Sobel/Gate.
 const stfSourceCache = new StfSourceCache();
+// Exactly one aligned, tone-matched middle-F RGB sample. Its key depends on
+// image/alignment/tone, not STF weights, frame generation or blur settings.
+// 65,536 RGB Float32 pixels occupy at most 0.75 MiB.
+let stfRestoreReferenceCache: { key: string; pixels: Float32Array } | null = null;
 function resetStfProcessCaches() {
   stfSourceCache.clear();
+  stfRestoreReferenceCache = null;
 }
 let currentPreviewColorSpace = "srgb";
 let currentInputFiles = [];
@@ -825,7 +831,9 @@ listen(processButton, "click", async () => {
       // those values. Keep the real-only uniform merge and report the omission.
       const skippedGateFeatures = [
         selectedBlurPlan.blurEnabled ? "Additional Blur" : null,
-        selectedBlurPlan.focusDeghosting === "on" ? "Focus deghosting" : null,
+        selectedBlurPlan.restoreEnabled
+          ? "Restore"
+          : null,
       ].filter(Boolean);
       const warning = skippedGateFeatures.length > 0
         ? `STF missing EXIF F-number: uniform real-image weights were used; ${skippedGateFeatures.join(" and ")} skipped because its protection gate requires F-numbers.`
@@ -3076,11 +3084,20 @@ async function alignAndMergeFilesWithOpenCv(
       toneReferenceIndex: mergePlan.toneReferenceIndex, frameSet: stfFrameSet,
     }) : null;
     const sourceLength = width * height * 3;
+    const restoreReferenceIndex = stfAlignedInputs
+      ? chooseStfRestoreIndex(inputInfos.map((info) => Number(info?.fNumber))) : -1;
+    const restoreReferenceKey = stfAlignedInputs ? JSON.stringify([
+      "stf-restore-tone-reference-v1", buildStfAlignmentCacheKey(stfAlignedInputs),
+      Array.from(mergePlan.gains), Array.from(mergePlan.scaledLogs), restoreReferenceIndex,
+    ]) : null;
+    const restoreReferenceCapture = restoreReferenceKey
+      ? { key: restoreReferenceKey, index: restoreReferenceIndex } : null;
     // No Flow and no source merge for a cache hit, irrespective of Blur settings.
     const getStfSource = () => stfSourceKey ? stfSourceCache.get(stfSourceKey, sourceLength) : null;
     const buildStfSource = async () => {
       const source = await mergeLinearFromWorkerPool(
         canonicalSession.id, reader, alignmentPlan, matrices, mergePlan, width, height,
+        restoreReferenceCapture,
       );
       if (needsStfVirtualFrames) {
         await appendStfVirtualSource(source, {
@@ -3117,6 +3134,7 @@ async function alignAndMergeFilesWithOpenCv(
         infoTrace,
         sourceOverride,
         stfSourceKey,
+        restoreReferenceCapture,
       );
     }
 
@@ -3200,15 +3218,20 @@ async function mergeLinearFromWorkerPool(
   mergePlan,
   width,
   height,
+  restoreReferenceCapture: { key: string; index: number } | null = null,
 ) {
   const imageCount = matrices.length;
   const exposureRolloffMaxP998AfterGain = new Array(imageCount).fill(null);
   const jobs = buildLinearMergeStripeJobs(width, height);
   const accumulator = new Float32Array(width * height * 3);
+  const captureReference = restoreReferenceCapture &&
+    stfRestoreReferenceCache?.key !== restoreReferenceCapture.key;
+  const sampleStripes = captureReference ? new Array(jobs.length).fill(null) : null;
   const hardwareConcurrency = typeof navigator === "object"
     ? Math.max(1, Math.floor(navigator.hardwareConcurrency || 4))
     : 4;
   const workerUrl = new URL("/generated/local-stack-studio/linear-merge.worker.js", window.location.origin);
+  if (captureReference) workerUrl.searchParams.set("revision", "stf-restore-sampling-20261126");
   const label = mergePlan.mode === "stf" ? "STF" : "Blend";
   const workerCount = resolveLinearMergeWorkerCount(jobs.length, hardwareConcurrency);
   setProgress(
@@ -3229,10 +3252,15 @@ async function mergeLinearFromWorkerPool(
       scaledLogs: new Float32Array(mergePlan.scaledLogs || imageCount),
       weights: new Float32Array(mergePlan.weights),
       exposureRolloffMaxP998AfterGain,
+      ...(captureReference ? { restoreReferenceIndex: restoreReferenceCapture.index } : {}),
     },
     createClient: () => new LinearMergeWorkerClient(workerUrl),
     hardwareConcurrency,
-    onJobComplete: (job, _workerIndex, stripe, completedCount, totalCount) => {
+    onJobComplete: (job, _workerIndex, stripe, completedCount, totalCount, referenceSample) => {
+      if (sampleStripes) {
+        if (!referenceSample) throw new Error("STF Restore merge stripe has no reference sample.");
+        sampleStripes[job.index] = referenceSample;
+      }
       const targetStart = job.y * width * 3;
       accumulator.set(stripe, targetStart);
       setProgress(
@@ -3243,6 +3271,14 @@ async function mergeLinearFromWorkerPool(
   });
   if (result.workerCount !== workerCount) {
     throw new Error(`${label} merge worker count changed unexpectedly.`);
+  }
+  if (sampleStripes && restoreReferenceCapture) {
+    const samples = new StfRestoreAreaSampleAccumulator(width, height);
+    for (const part of sampleStripes) {
+      if (!part) throw new Error("STF Restore reference stripes are incomplete.");
+      samples.add(part);
+    }
+    stfRestoreReferenceCache = { key: restoreReferenceCapture.key, pixels: samples.finish() };
   }
   return accumulator;
 }
@@ -3292,6 +3328,7 @@ async function mergeStfWithAdditionalBlur(
   infoTrace: { previewMs: number; add: (label: string, durationMs: number, includedIn?: string) => void; warnings: string[] } | null = null,
   sourceOverride = null,
   sourceCacheKey = null,
+  restoreReferenceCapture: { key: string; index: number } | null = null,
 ) {
   const plan = mergePlan.stfBlurPlan;
   if (!plan?.enabled) throw new Error("STF Additional blur was invoked while disabled.");
@@ -3328,7 +3365,7 @@ async function mergeStfWithAdditionalBlur(
   const hardwareConcurrency = typeof navigator === "object"
     ? Math.max(1, Math.floor(navigator.hardwareConcurrency || 4)) : 4;
   const workerUrl = new URL("/generated/local-stack-studio/stf-additional-blur.worker.js", window.location.origin);
-  workerUrl.searchParams.set("revision", "stf-per-image-rgb-floor-audit-20261115");
+  workerUrl.searchParams.set("revision", "stf-restore-sampling-20261126");
   let pool = null;
   // Avoid writing temporary Sobel arrays to IndexedDB when a bounded amount
   // of RAM is enough; large images still spill to scratch storage as before.
@@ -3355,6 +3392,8 @@ async function mergeStfWithAdditionalBlur(
         gains: new Float32Array(mergePlan.gains),
         scaledLogs: new Float32Array(mergePlan.scaledLogs),
         weights: new Float32Array(mergePlan.weights), fNumbers,
+        ...(restoreReferenceCapture && stfRestoreReferenceCache?.key !== restoreReferenceCapture.key
+          ? { restoreReferenceIndex: restoreReferenceCapture.index } : {}),
       },
       workerUrl, hardwareConcurrency,
     });
@@ -3384,6 +3423,9 @@ async function mergeStfWithAdditionalBlur(
       // Never synthesize a second real-only source when virtual frames have
       // already been merged into the complete sourceOverride.
       const includeSource = !previewOnly && !sourceOverride;
+      const sampleParts = restoreReferenceCapture &&
+        stfRestoreReferenceCache?.key !== restoreReferenceCapture.key
+        ? new Array(jobs.length).fill(null) : null;
       if (includeSource) source = new Float32Array(width * height * 3);
       setProgress(`STF analyzing Sobel sharpness 0/${jobs.length}...`);
       await p.runAnalysisJobs(jobs, includeSource, async (job, result, completed, total) => {
@@ -3394,6 +3436,10 @@ async function mergeStfWithAdditionalBlur(
           throw new Error("STF Additional blur Worker returned invalid analysis geometry.");
         }
         if (source) source.set(result.linear, job.y * width * 3);
+        if (sampleParts) {
+          if (!result.referenceSample) throw new Error("STF Restore Sobel stripe has no reference sample.");
+          sampleParts[job.index] = result.referenceSample;
+        }
         algorithm.appendPersistentCoarseSamplesFromStripe(sharpnessSamples, result.coarseGroups,
           groupCount, width, job.y, job.height, sampleGrid);
         if (!derivedStaging.put(job.index, result)) {
@@ -3407,6 +3453,14 @@ async function mergeStfWithAdditionalBlur(
         }
         setProgress(`STF analyzing Sobel sharpness ${completed}/${total}...`);
       });
+      if (sampleParts && restoreReferenceCapture) {
+        const samples = new StfRestoreAreaSampleAccumulator(width, height);
+        for (const part of sampleParts) {
+          if (!part) throw new Error("STF Restore Sobel sample stripes are incomplete.");
+          samples.add(part);
+        }
+        stfRestoreReferenceCache = { key: restoreReferenceCapture.key, pixels: samples.finish() };
+      }
       const coarseP50 = algorithm.deriveStfMedianSharpnessC(sharpnessSamples);
       const epsilon = algorithm.deriveStfRatioEpsilon(coarseP50);
       const fineMap = new Float32Array(width * height);
@@ -3539,47 +3593,71 @@ async function mergeStfWithAdditionalBlur(
       setProgress("STF merging source for additional blur...");
       // Re-merging is much cheaper than Sobel analysis and avoids persisting
       // 240MB of linear RGB for 20MP images just to support option switching.
-      source = await mergeLinearFromWorkerPool(sessionId, reader, alignmentPlan, matrices, mergePlan, width, height);
+      source = await mergeLinearFromWorkerPool(sessionId, reader, alignmentPlan, matrices, mergePlan, width, height,
+        restoreReferenceCapture);
       if (cache.ratio && canCacheStfBuffer(cache, source)) {
         cache.source = source;
         cache.sourceWeightsKey = sourceWeightsKey;
       }
     }
-    // Cache only the untouched STF source. Focus deghosting is applied after
-    // this point, so switching it Off never reuses a previously replaced source.
+    // Cache only the untouched STF source. Restore is applied after this
+    // point, so switching modes never reuses a previously replaced source.
     if (sourceCacheKey) stfSourceCache.put(sourceCacheKey, source);
-    const deghosting = plan.focusDeghosting === "on";
-    const deghostingGate = deghosting ? featherStfFocusDeghostingGate(base, width, height) : null;
-    const referenceIndex = deghosting ? chooseStfFocusDeghostingIndex(fNumbers) : -1;
-    const gain = deghosting ? mergePlan.gains[referenceIndex] : 1;
-    const scaledLog = deghosting ? mergePlan.scaledLogs[referenceIndex] : 0;
-    const referenceLut = deghosting ? buildStfToneMatchLut(gain, scaledLog) : null;
+    const restoring = plan.restoreEnabled;
+    const restoreGate = restoring ? featherStfRestoreGate(base, width, height) : null;
+    const referenceIndex = restoring ? chooseStfRestoreIndex(fNumbers) : -1;
+    const gain = restoring ? mergePlan.gains[referenceIndex] : 1;
+    const scaledLog = restoring ? mergePlan.scaledLogs[referenceIndex] : 0;
+    const referenceLut = restoring ? buildStfToneMatchLut(gain, scaledLog) : null;
+    // All Restore variants match the tone-normalized middle-F frame to the
+    // COMPLETE STF merge using the approved 20% middle / 80% STF targets.
+    // The reference RGB sample was captured in the same pass as
+    // either the real-frame merge or the Sobel analysis, before its stripes
+    // were released. The target can be sampled from the in-memory STF source.
+    const restore = restoring ? await import("./stf-restore") : null;
+    let restorePlan = null;
+    if (restore) {
+      const matchStartedAt = performance.now();
+      const realSample = restoreReferenceCapture &&
+        stfRestoreReferenceCache?.key === restoreReferenceCapture.key
+        ? stfRestoreReferenceCache.pixels : null;
+      if (!realSample) throw new Error("STF Restore tone-normalized reference sample is missing.");
+      const targetSample = sampleStfRestoreImage(source, width, height);
+      const { sampleWidth, sampleHeight } = new StfRestoreAreaSampleAccumulator(width, height);
+      setProgress("STF Restore matching tone and saturation...");
+      restorePlan = restore.planStfRestore(
+        realSample, targetSample, sampleWidth, sampleHeight);
+      infoTrace?.add("STF Restore tone and color match", performance.now() - matchStartedAt, "Merge");
+    }
     const prepareSourceStripe = async (regionY: number, regionHeight: number): Promise<Float32Array> => {
       const start = regionY * width * 3;
       const region = source.slice(start, start + regionHeight * width * 3);
-      if (deghosting) {
+      if (restoring) {
         const reference = await reader.readLinearRegion(referenceIndex, 0, regionY, width, regionHeight);
         applyStfToneMatchInPlace(reference, gain, scaledLog, referenceLut);
-        blendStfFocusDeghostingStripe(region, reference, deghostingGate!, width, regionY);
+        if (restorePlan) restore.applyStfRestoreInPlace(reference, restorePlan);
+        blendStfRestoreStripe(region, reference, restoreGate!, width, regionY);
       }
       return region;
     };
     if (!plan.blurEnabled) {
-      // Deghosting is independent of Additional Blur. Feather only its own
-      // replacement alpha; do not apply Gaussian blur to the RGB source.
-      const deghosted = source.slice();
-      setProgress(`STF focus deghosting 0/${jobs.length}...`);
+      // Plain Restore only feathers its replacement alpha; do not apply
+      // Gaussian blur to the RGB source.
+      const restored = source.slice();
+      const restorationLabel = "STF Restore";
+      setProgress(`${restorationLabel} 0/${jobs.length}...`);
       for (let completed = 0; completed < jobs.length; completed += 1) {
         const job = jobs[completed];
         const reference = await reader.readLinearRegion(referenceIndex, 0, job.y, width, job.height);
         applyStfToneMatchInPlace(reference, gain, scaledLog, referenceLut);
+        if (restorePlan) restore.applyStfRestoreInPlace(reference, restorePlan);
         const start = job.y * width * 3;
-        blendStfFocusDeghostingStripe(
-          deghosted.subarray(start, start + job.height * width * 3), reference, deghostingGate!, width, job.y);
-        setProgress(`STF focus deghosting ${completed + 1}/${jobs.length}...`);
+        blendStfRestoreStripe(
+          restored.subarray(start, start + job.height * width * 3), reference, restoreGate!, width, job.y);
+        setProgress(`${restorationLabel} ${completed + 1}/${jobs.length}...`);
       }
-      infoTrace?.add("STF focus deghosting", performance.now() - blurStartedAt, "Merge");
-      return finalizeStoredResult(deghosted, width, height, outputColorSpace, true);
+      infoTrace?.add(restorationLabel, performance.now() - blurStartedAt, "Merge");
+      return finalizeStoredResult(restored, width, height, outputColorSpace, true);
     }
     const p = await ensurePool();
     const blurred = new Float32Array(source.length);

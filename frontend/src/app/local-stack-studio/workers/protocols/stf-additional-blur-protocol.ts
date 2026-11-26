@@ -1,5 +1,5 @@
 /** STF production additional-blur Worker protocol. */
-export const STF_ADDITIONAL_BLUR_PROTOCOL_VERSION = "stf-production-gate-image-p50-20261113";
+export const STF_ADDITIONAL_BLUR_PROTOCOL_VERSION = "stf-production-restore-sampling-20261126";
 
 export type StfAdditionalBlurWorkerAlignmentPlan = {
   normalizationMode: "feature-match" | "center-crop" | "center-fit" | "center-fill" | "top-left-fill";
@@ -16,6 +16,7 @@ export type StfAdditionalBlurWorkerConfig = {
   weights: Float32Array;
   fNumbers: number[];
   cacheBytes?: number;
+  restoreReferenceIndex?: number;
 };
 export type StfAdditionalBlurWorkerRequest =
   | (StfAdditionalBlurWorkerConfig & { type: "init"; requestId: number })
@@ -35,6 +36,7 @@ export type StfAdditionalBlurWorkerReadyResponse = {
 export type StfAdditionalBlurWorkerAnalyzeStripeResponse = {
   type: "analyze-stripe-result"; requestId: number; y: number; height: number; groupCount: number;
   linearBuffer: ArrayBuffer; fineLogSumBuffer: ArrayBuffer; fineZeroBuffer: ArrayBuffer; coarseGroupsBuffer: ArrayBuffer;
+  restoreSampleY?: number; restoreSampleBuffer?: ArrayBuffer;
 };
 export type StfAdditionalBlurWorkerBrightnessSampleResponse = {
   type: "sample-brightness-stripe-result"; requestId: number; samplesBuffer: ArrayBuffer; // image-major, interleaved RGB (no STF-weighted mixing)

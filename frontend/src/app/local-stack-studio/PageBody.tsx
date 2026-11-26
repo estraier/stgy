@@ -355,7 +355,7 @@ export default function PageBody() {
                     <option value="strong">Strong</option>
                     <option value="restore">Restore</option>
                     <option value="restore-weak">Restore+W</option>
-                    <option value="deghost">Restore+M</option>
+                    <option value="restore-medium">Restore+M</option>
                     <option value="restore-strong">Restore+S</option>
                     <option value="gate">Gate</option>
                   </select>

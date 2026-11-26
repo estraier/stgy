@@ -5,7 +5,7 @@ import type {
   LinearMergeWorkerReadyResponse,
   LinearMergeWorkerStripeResponse,
 } from "../workers/protocols/linear-merge-protocol";
-import type { LinearMergeStripeJob } from "./linear-merge-pool";
+import type { LinearMergeStripeJob, LinearMergeStripeResult } from "./linear-merge-pool";
 
 type LinearMergeRequestWithoutId = LinearMergeWorkerRequest extends infer Request
   ? Request extends LinearMergeWorkerRequest
@@ -66,6 +66,7 @@ export class LinearMergeWorkerClient {
         weights: config.weights,
         exposureRolloffMaxP998AfterGain: config.exposureRolloffMaxP998AfterGain,
         cacheBytes: config.cacheBytes,
+        restoreReferenceIndex: config.restoreReferenceIndex,
       },
       [],
       "ready",
@@ -79,14 +80,18 @@ export class LinearMergeWorkerClient {
     });
   }
 
-  mergeStripe(job: LinearMergeStripeJob): Promise<Float32Array> {
+  mergeStripe(job: LinearMergeStripeJob): Promise<LinearMergeStripeResult> {
     return this.request<"merge-stripe-result">(
       { type: "merge-stripe", y: job.y, height: job.height },
       [],
       "merge-stripe-result",
     ).then((message) => {
       const response = message as LinearMergeWorkerStripeResponse;
-      return new Float32Array(asArrayBuffer(response.linearBuffer, "linear merge stripe"));
+      const stripe = new Float32Array(asArrayBuffer(response.linearBuffer, "linear merge stripe"));
+      if (response.restoreSampleBuffer === undefined) return stripe;
+      if (!Number.isInteger(response.restoreSampleY)) throw new Error("STF Restore sample row is invalid.");
+      return { stripe, referenceSample: { firstSampleY: response.restoreSampleY!,
+        sums: new Float64Array(asArrayBuffer(response.restoreSampleBuffer, "Restore sample")) } };
     });
   }
 

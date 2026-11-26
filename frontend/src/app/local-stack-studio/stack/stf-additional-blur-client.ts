@@ -12,10 +12,11 @@ import {
 } from "../workers/protocols/stf-additional-blur-protocol";
 import type { LinearMergeStripeJob } from "./linear-merge-pool";
 import type { StfPerImageChannelFloors, StfSampleGrid } from "./stf-additional-blur";
+import type { StfRestoreSampleStripe } from "./stf-restore-sampling";
 
 export type StfAdditionalBlurAnalyzeResult = {
   linear: Float32Array; fineLogSum: Float32Array; fineZero: Uint8Array;
-  coarseGroups: Float32Array; groupCount: number;
+  coarseGroups: Float32Array; groupCount: number; referenceSample?: StfRestoreSampleStripe;
 };
 export type StfAdditionalBlurExpandGateRequest = {
   regionHeight: number; coreOffsetY: number; coreHeight: number; radius: number; gate: Float32Array;
@@ -65,7 +66,11 @@ export class StfAdditionalBlurWorkerClient {
         fineLogSum: new Float32Array(asBuffer(r.fineLogSumBuffer, "fine log sum")),
         fineZero: new Uint8Array(asBuffer(r.fineZeroBuffer, "fine zero")),
         coarseGroups: new Float32Array(asBuffer(r.coarseGroupsBuffer, "coarse groups")),
-        groupCount: Number(r.groupCount) };
+        groupCount: Number(r.groupCount),
+        ...(r.restoreSampleBuffer !== undefined ? { referenceSample: {
+          firstSampleY: Number(r.restoreSampleY),
+          sums: new Float64Array(asBuffer(r.restoreSampleBuffer, "Restore sample")),
+        } } : {}) };
     });
   }
   sampleBrightnessStripe(job: LinearMergeStripeJob, grid: StfSampleGrid): Promise<Float32Array> {

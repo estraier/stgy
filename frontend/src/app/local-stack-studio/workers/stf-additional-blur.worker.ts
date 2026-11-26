@@ -8,6 +8,7 @@ import {
   createStfSharpnessScratch, resolveStfSharpnessHalo, resolveStfSharpnessScale,
 } from "../stack/stf-additional-blur";
 import { WorkerCanonicalReader } from "../stack/worker-canonical-reader";
+import { sampleStfRestoreStripe, type StfRestoreSampleStripe } from "../stack/stf-restore-sampling";
 import { interpolateStfVolumeUnitRatioInPlace } from "../stack/stf-volume-closing";
 import { buildStfGraphCutMask } from "../stack/stf-graph-cut";
 import {
@@ -31,6 +32,7 @@ let fineScale = 1;
 let coarseScale = 1;
 let analysisHalo = 2;
 let relativeChannelFloors: StfPerImageChannelFloors | null = null;
+let restoreReferenceIndex = -1;
 
 workerScope.onmessage = async (event: MessageEvent<StfAdditionalBlurWorkerRequest>) => {
   const message = event.data;
@@ -45,11 +47,15 @@ workerScope.onmessage = async (event: MessageEvent<StfAdditionalBlurWorkerReques
       gains = new Float32Array(message.gains);
       scaledLogs = new Float32Array(message.scaledLogs);
       weights = new Float32Array(message.weights);
+      restoreReferenceIndex = message.restoreReferenceIndex ?? -1;
       relativeChannelFloors = null;
       const fNumbers = Array.from(message.fNumbers, Number);
       if (gains.length !== reader.imageCount || scaledLogs.length !== reader.imageCount ||
           weights.length !== reader.imageCount || fNumbers.length !== reader.imageCount) {
         throw new Error("STF Additional blur worker configuration length does not match image count.");
+      }
+      if (!Number.isInteger(restoreReferenceIndex) || restoreReferenceIndex < -1 || restoreReferenceIndex >= reader.imageCount) {
+        throw new Error("STF Restore sample reference index is invalid.");
       }
       toneMatchLuts = Array.from({ length: reader.imageCount }, (_, index) => {
         const gain = gains![index], scaledLog = scaledLogs![index];
@@ -89,12 +95,16 @@ workerScope.onmessage = async (event: MessageEvent<StfAdditionalBlurWorkerReques
       if (!relativeChannelFloors) throw new Error("STF Additional blur requires configured RGB floors.");
       if (typeof message.includeSource !== "boolean") throw new Error("STF Worker source flag is invalid.");
       const result = await analyzeStripe(y, height, message.includeSource);
+      const sampleBuffer = result.referenceSample?.sums.buffer as ArrayBuffer | undefined;
       post({ type: "analyze-stripe-result", requestId, y, height, groupCount: groupImageCounts!.length,
+        ...(sampleBuffer ? { restoreSampleY: result.referenceSample!.firstSampleY,
+          restoreSampleBuffer: sampleBuffer } : {}),
         linearBuffer: result.linear.buffer as ArrayBuffer,
         fineLogSumBuffer: result.fineLogSum.buffer as ArrayBuffer,
         fineZeroBuffer: result.fineZero.buffer as ArrayBuffer,
         coarseGroupsBuffer: result.coarseGroups.buffer as ArrayBuffer,
-      }, [result.linear.buffer, result.fineLogSum.buffer, result.fineZero.buffer, result.coarseGroups.buffer] as ArrayBuffer[]);
+      }, [...[result.linear.buffer, result.fineLogSum.buffer, result.fineZero.buffer, result.coarseGroups.buffer],
+        ...(sampleBuffer ? [sampleBuffer] : [])] as ArrayBuffer[]);
       return;
     }
     if (message.type === "volume-close") {
@@ -197,6 +207,7 @@ async function analyzeStripe(y: number, height: number, includeSource: boolean):
   fineLogSum: Float32Array;
   fineZero: Uint8Array;
   coarseGroups: Float32Array;
+  referenceSample: StfRestoreSampleStripe | null;
 }> {
   ensureInitialized();
   const width = reader!.width;
@@ -214,11 +225,21 @@ async function analyzeStripe(y: number, height: number, includeSource: boolean):
   const fineMap = new Float32Array(regionPixels);
   const coarseMap = new Float32Array(regionPixels);
   const scratch = createStfSharpnessScratch(regionPixels);
+  let referenceSample: StfRestoreSampleStripe | null = null;
 
   for (let imageIndex = 0; imageIndex < reader!.imageCount; imageIndex += 1) {
     const linear = await reader!.readLinearRegion(imageIndex, 0, regionY, width, regionHeight);
     const lut = toneMatchLuts![imageIndex];
     if (lut) applyStfToneMatchInPlace(linear, gains![imageIndex], scaledLogs![imageIndex], lut);
+    if (imageIndex === restoreReferenceIndex) {
+      // Sample only the core rows, not the halo read for Sobel. No second
+      // read or full-resolution reference transfer is needed.
+      const core = linear.subarray(coreOffsetY * width * 3, (coreOffsetY + height) * width * 3);
+      const reference = !lut && (gains![imageIndex] !== 1 || scaledLogs![imageIndex] !== 0)
+        ? core.slice() : core;
+      if (reference !== core) applyStfToneMatchInPlace(reference, gains![imageIndex], scaledLogs![imageIndex]);
+      referenceSample = sampleStfRestoreStripe(reference, width, reader!.height, y);
+    }
 
     if (includeSource) {
       const mergeWeight = weights![imageIndex];
@@ -264,7 +285,7 @@ async function analyzeStripe(y: number, height: number, includeSource: boolean):
     }
   }
 
-  return { linear: linearAccumulator, fineLogSum, fineZero, coarseGroups };
+  return { linear: linearAccumulator, fineLogSum, fineZero, coarseGroups, referenceSample };
 }
 
 
