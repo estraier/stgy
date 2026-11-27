@@ -1,4 +1,24 @@
 /** Gate-guided middle-aperture replacement for STF Restore. */
+// A fixed second sigmoid suppresses weak restoration outside the guarded subject
+// while retaining strong restoration inside it. The blur gate is not modified.
+export const STF_RESTORE_SIGMOID_CENTER = 0.7;
+export const STF_RESTORE_SIGMOID_STEEPNESS = 20;
+const restoreSigmoid = (x: number) => 1 / (1 + Math.exp(-STF_RESTORE_SIGMOID_STEEPNESS * (x - STF_RESTORE_SIGMOID_CENTER)));
+const restoreSigmoidLow = restoreSigmoid(0);
+const restoreSigmoidHigh = restoreSigmoid(1);
+
+/** Fixed-endpoint sigmoid with the exact 0.7 -> 0.5 midpoint. */
+export function shapeStfRestoreGateValue(value: number): number {
+  if (!Number.isFinite(value) || value < 0 || value > 1) {
+    throw new Error("STF Restore gate must be in [0,1].");
+  }
+  if (value === 0 || value === 1) return value;
+  const sigmoid = restoreSigmoid(value);
+  return value <= STF_RESTORE_SIGMOID_CENTER
+    ? 0.5 * (sigmoid - restoreSigmoidLow) / (0.5 - restoreSigmoidLow)
+    : 0.5 + 0.5 * (sigmoid - 0.5) / (restoreSigmoidHigh - 0.5);
+}
+
 /** Centered feather radius scales with the image diagonal; no morphological expansion. */
 export function resolveStfRestoreFeatherRadius(width: number, height: number): number {
   if (!Number.isInteger(width) || width <= 0 || !Number.isInteger(height) || height <= 0) {
@@ -8,9 +28,10 @@ export function resolveStfRestoreFeatherRadius(width: number, height: number): n
 }
 
 /**
- * Blur the replacement alpha in place spatially (not the RGB image), with a
- * centered, normalized, separable Gaussian. The original gate is untouched.
- * Edge pixels are replicated to avoid artificially weakening image borders.
+ * Shape the blur gate with a 0.7-centered sigmoid, then feather the resulting
+ * Restore alpha (not the RGB image) with a centered, separable Gaussian.
+ * No dilation is applied; the original blur gate is left untouched.
+ * Edge pixels are replicated to avoid weakening image borders.
  */
 export function featherStfRestoreGate(
   gate: Float32Array, width: number, height: number, radius = resolveStfRestoreFeatherRadius(width, height),
@@ -19,7 +40,10 @@ export function featherStfRestoreGate(
       gate.length !== width * height || !Number.isInteger(radius) || radius < 0) {
     throw new Error("STF Restore gate geometry is invalid.");
   }
-  if (radius === 0) return gate.slice();
+  // Precompute the sigmoid once per pixel rather than inside every Gaussian
+  // tap. Reuse this allocation as the final output to avoid a third image map.
+  const result = Float32Array.from(gate, shapeStfRestoreGateValue);
+  if (radius === 0) return result;
   const sigma = Math.max(0.5, radius / 2);
   const weights = new Float64Array(radius * 2 + 1);
   let sum = 0;
@@ -30,16 +54,12 @@ export function featherStfRestoreGate(
   }
   for (let i = 0; i < weights.length; i++) weights[i] /= sum;
   const horizontal = new Float32Array(gate.length);
-  const result = new Float32Array(gate.length);
   for (let y = 0; y < height; y++) {
     const row = y * width;
     for (let x = 0; x < width; x++) {
       let value = 0;
       for (let k = -radius; k <= radius; k++) {
-        const sample = gate[row + Math.max(0, Math.min(width - 1, x + k))];
-        if (!Number.isFinite(sample) || sample < 0 || sample > 1) {
-          throw new Error("STF Restore gate must be in [0,1].");
-        }
+        const sample = result[row + Math.max(0, Math.min(width - 1, x + k))];
         value += sample * weights[k + radius];
       }
       horizontal[row + x] = value;

@@ -1,4 +1,4 @@
-import { blendStfRestoreStripe, chooseStfRestoreIndex, featherStfRestoreGate, resolveStfRestoreFeatherRadius } from "./stf-restore-blend";
+import { blendStfRestoreStripe, chooseStfRestoreIndex, featherStfRestoreGate, resolveStfRestoreFeatherRadius, shapeStfRestoreGateValue } from "./stf-restore-blend";
 
 describe("STF Restore", () => {
   test("chooses the middle logarithmic F value regardless of file order", () => {
@@ -95,7 +95,41 @@ describe("STF Restore", () => {
       }
     }
     const constant = featherStfRestoreGate(new Float32Array(45).fill(0.6), 9, 5, 3);
-    for (const value of constant) expect(value).toBeCloseTo(0.6, 6);
+    for (const value of constant) expect(value).toBeCloseTo(shapeStfRestoreGateValue(0.6), 6);
+  });
+
+
+  test("secondary sigmoid centers 0.7 while strongly rejecting weak restore coverage", () => {
+    expect(shapeStfRestoreGateValue(0)).toBe(0);
+    expect(shapeStfRestoreGateValue(1)).toBe(1);
+    expect(shapeStfRestoreGateValue(0.7)).toBeCloseTo(0.5, 8);
+    expect(shapeStfRestoreGateValue(0.6)).toBeCloseTo(0.119202, 5);
+    expect(shapeStfRestoreGateValue(0.8)).toBeCloseTo(0.882690, 5);
+    let previous = 0;
+    for (let i = 0; i <= 100; i++) {
+      const shaped = shapeStfRestoreGateValue(i / 100);
+      expect(shaped).toBeGreaterThanOrEqual(previous - 1e-12);
+      previous = shaped;
+    }
+    expect(() => shapeStfRestoreGateValue(NaN)).toThrow();
+  });
+
+  test("Restore gate is sigmoid-shaped before Gaussian, with unchanged source gate", () => {
+    const width = 21, height = 3;
+    const gate = new Float32Array(width * height);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) gate[y * width + x] = x < 10 ? 0.6 : 0.8;
+    }
+    const original = gate.slice();
+    const shaped = featherStfRestoreGate(gate, width, height, 0);
+    expect(shaped[2]).toBeCloseTo(shapeStfRestoreGateValue(0.6), 6);
+    expect(shaped[19]).toBeCloseTo(shapeStfRestoreGateValue(0.8), 6);
+    const feathered = featherStfRestoreGate(gate, width, height, 2);
+    expect(feathered[0]).toBeCloseTo(shaped[0], 6);
+    expect(feathered[width - 1]).toBeCloseTo(shaped[width - 1], 6);
+    expect(feathered[9]).toBeGreaterThan(shaped[9]);
+    expect(feathered[10]).toBeLessThan(shaped[10]);
+    expect(gate).toEqual(original);
   });
 
   test("rejects inconsistent gate and stripe geometry", () => {

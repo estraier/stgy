@@ -1,6 +1,6 @@
 /** Official STF additional-blur configuration (dilated 16MP^1.3 / 0.5MP). */
 export const STF_BLUR_STRENGTH_VALUES = [
-  "none", "weak", "medium", "strong", "restore", "restore-weak", "restore-medium", "restore-strong", "gate",
+  "none", "weak", "medium", "strong", "restore", "restore-weak", "restore-medium", "restore-strong", "gate", "gate-restore",
 ] as const;
 export const STF_BLUR_AREA_GUARD_VALUES = ["none", "weak", "medium", "strong"] as const;
 export const STF_BLUR_RATIO_VALUES = Array.from({ length: 17 }, (_, i) => (10 + i * 5) / 100);
@@ -19,6 +19,7 @@ export type StfAdditionalBlurPlan = StfAdditionalBlurOptions & {
   enabled: boolean;
   blurEnabled: boolean;
   gateOnly: boolean;
+  restoreGateOnly: boolean;
   restoreEnabled: boolean;
   strengthMultiplier: 1 | 2 | 3 | null;
   areaExponent: number | null;
@@ -36,13 +37,15 @@ export function buildStfAdditionalBlurPlan(options: StfAdditionalBlurOptions): S
       !STF_BLUR_SIGMOID_VALUES.includes(options.sigmoid)) {
     throw new Error("STF Additional blur options are invalid.");
   }
-  const gateOnly = options.strength === "gate";
+  const restoreGateOnly = options.strength === "gate-restore";
+  const gateOnly = options.strength === "gate" || restoreGateOnly;
   const restoreEnabled = options.strength === "restore" || options.strength === "restore-weak" ||
     options.strength === "restore-medium" || options.strength === "restore-strong";
   // Restore without a suffix replaces the guarded region without Gaussian blur.
-  // Gate retains its existing expansion-only preview path.
-  const blurEnabled = options.strength !== "none" && options.strength !== "restore";
-  const enabled = blurEnabled || restoreEnabled;
+  // Gate (B) retains the expanded-blur-gate preview; Gate (R) needs only
+  // the shaped and feathered base gate, not blur expansion or the STF source.
+  const blurEnabled = options.strength !== "none" && options.strength !== "restore" && !restoreGateOnly;
+  const enabled = blurEnabled || restoreEnabled || gateOnly;
   const areaExponent = !enabled || options.areaGuard === "none" ? null
     : options.areaGuard === "weak" ? 0.95 : options.areaGuard === "medium" ? 0.85 : 0.75;
   const strengthMultiplier = !blurEnabled || gateOnly ? null
@@ -50,12 +53,12 @@ export function buildStfAdditionalBlurPlan(options: StfAdditionalBlurOptions): S
     : options.strength === "medium" || options.strength === "restore-medium" ? 2 : 3;
   // Neither Graph Cut nor sigmoid reads Blur ratio when both are disabled.
   const effectiveRatio = enabled && (areaExponent !== null || options.sigmoid !== 0) ? options.ratio : null;
-  return { ...options, enabled, blurEnabled, gateOnly, restoreEnabled, strengthMultiplier, areaExponent, effectiveRatio };
+  return { ...options, enabled, blurEnabled, gateOnly, restoreGateOnly, restoreEnabled, strengthMultiplier, areaExponent, effectiveRatio };
 }
 
 /** Gate-only preview uses medium-strength expansion without Gaussian blur. */
 export function resolveStfGateExpansionMultiplier(plan: StfAdditionalBlurPlan): 1 | 2 | 3 {
-  if (!plan.enabled) throw new Error("STF gate expansion is disabled.");
+  if (!plan.enabled || plan.restoreGateOnly) throw new Error("STF gate expansion is disabled.");
   if (plan.gateOnly) return 2;
   if (plan.strengthMultiplier === null) throw new Error("STF blur strength multiplier is missing.");
   return plan.strengthMultiplier;

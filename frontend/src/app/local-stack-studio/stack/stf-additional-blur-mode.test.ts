@@ -7,7 +7,7 @@ import {
 describe("STF Additional Blur production option specification", () => {
   test("only official values and defaults are exposed", () => {
     expect([...STF_BLUR_STRENGTH_VALUES]).toEqual([
-      "none", "weak", "medium", "strong", "restore", "restore-weak", "restore-medium", "restore-strong", "gate",
+      "none", "weak", "medium", "strong", "restore", "restore-weak", "restore-medium", "restore-strong", "gate", "gate-restore",
     ]);
     expect([...STF_BLUR_AREA_GUARD_VALUES]).toEqual(["none", "weak", "medium", "strong"]);
     expect(STF_BLUR_RATIO_VALUES).toHaveLength(17);
@@ -33,6 +33,22 @@ describe("STF Additional Blur production option specification", () => {
     expect(gate.effectiveRatio).toBe(0.5);
     expect(resolveStfGateExpansionMultiplier(gate)).toBe(2);
     expect(() => resolveStfGateExpansionMultiplier(disabled)).toThrow();
+  });
+
+  test("Gate (R) previews the Restore gate with no source or blur expansion", () => {
+    const gateR = buildStfAdditionalBlurPlan({ ...DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS, strength: "gate-restore" });
+    expect(gateR.enabled).toBe(true);
+    expect(gateR.gateOnly).toBe(true);
+    expect(gateR.restoreGateOnly).toBe(true);
+    expect(gateR.restoreEnabled).toBe(false);
+    expect(gateR.blurEnabled).toBe(false);
+    expect(gateR.strengthMultiplier).toBeNull();
+    expect(gateR.areaExponent).toBe(0.85);
+    expect(gateR.effectiveRatio).toBe(0.5);
+    expect(() => resolveStfGateExpansionMultiplier(gateR)).toThrow();
+    const gateB = buildStfAdditionalBlurPlan({ ...DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS, strength: "gate" });
+    expect(gateB.restoreGateOnly).toBe(false);
+    expect(gateB.blurEnabled).toBe(true);
   });
 
   test("official weak/medium/strong have unchanged radius multipliers and Graph Cut guards", () => {

@@ -3577,9 +3577,17 @@ async function mergeStfWithAdditionalBlur(
       }
     }
     infoTrace?.add("STF protection gate", performance.now() - gateStartedAt, "Merge");
-    // Gate-only preview shows exactly the expanded protection mask used by the blur stage.
-    // It does not compute the source merge or apply the Gaussian blur.
-    if (plan.gateOnly) return finalizeStfBasicGate(expanded, width, height, outputColorSpace);
+    // Gate (B) previews the expanded blur-protection mask unchanged.
+    // Gate (R) previews exactly the sigmoid-shaped, Gaussian-feathered
+    // replacement alpha used by all Restore variants. Neither needs the STF
+    // source merge, virtual frames, or the tone/color reference image.
+    if (plan.gateOnly) {
+      const previewGate = plan.restoreGateOnly
+        ? featherStfRestoreGate(base, width, height)
+        : expanded;
+      if (!previewGate) throw new Error("STF gate preview is missing.");
+      return finalizeStfBasicGate(previewGate, width, height, outputColorSpace);
+    }
     const blurStartedAt = performance.now();
     if (sourceOverride) {
       if (sourceOverride.length !== width * height * 3) {

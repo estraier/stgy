@@ -357,7 +357,8 @@ export default function PageBody() {
                     <option value="restore-weak">Restore+W</option>
                     <option value="restore-medium">Restore+M</option>
                     <option value="restore-strong">Restore+S</option>
-                    <option value="gate">Gate</option>
+                    <option value="gate">Gate (B)</option>
+                    <option value="gate-restore">Gate (R)</option>
                   </select>
                 </label>
                 <label id="stf-blur-ratio-option" className="hidden flex-col items-start gap-1.5">
