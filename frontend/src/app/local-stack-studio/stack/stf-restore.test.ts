@@ -29,7 +29,7 @@ describe("STF Restore LIS-style correction", () => {
     expect(Array.from(corrected)).toEqual(Array.from(reference));
   });
 
-  test("30-iteration tone planning converges to 20% original plus 80% STF", () => {
+  test("30-iteration tone planning converges to 10% original plus 90% STF", () => {
     const reference = scene(80, 60);
     // Test exposure adjustments in both directions: do not force the real frame
     // all the way to the composite, and do not change the solver relaxation.
@@ -44,13 +44,13 @@ describe("STF Restore LIS-style correction", () => {
       for (let i = 0; i < target.length; i++) {
         totalDifference += Math.abs(reference[i] - target[i]);
         targetError += Math.abs(corrected[i] - target[i]);
-        const desired = 0.2 * reference[i] + 0.8 * target[i];
+        const desired = 0.1 * reference[i] + 0.9 * target[i];
         desiredError += Math.abs(corrected[i] - desired);
       }
       expect(desiredError).toBeLessThan(totalDifference * 0.06);
-      // It is intentional that 20% of the original difference remains.
-      expect(targetError).toBeGreaterThan(totalDifference * 0.13);
-      expect(targetError).toBeLessThan(totalDifference * 0.27);
+      // It is intentional that 10% of the original difference remains.
+      expect(targetError).toBeGreaterThan(totalDifference * 0.06);
+      expect(targetError).toBeLessThan(totalDifference * 0.16);
     }
   });
 
@@ -109,13 +109,13 @@ describe("STF Restore LIS-style correction", () => {
     for (const p of [0.5, 0.95]) {
       const sourceStat = center(before, p);
       const mergedStat = center(desired, p);
-      const blendedGoal = 0.2 * sourceStat + 0.8 * mergedStat;
+      const blendedGoal = 0.1 * sourceStat + 0.9 * mergedStat;
       const beforeError = Math.abs(sourceStat - blendedGoal);
       const afterError = Math.abs(center(after, p) - blendedGoal);
       expect(afterError).toBeLessThan(beforeError * 0.10);
       // The corrected image should retain a deliberate fraction of the
       // original chroma difference rather than matching the STF 100%.
-      expect(Math.abs(center(after, p) - mergedStat)).toBeGreaterThan(Math.abs(sourceStat - mergedStat) * 0.09);
+      expect(Math.abs(center(after, p) - mergedStat)).toBeGreaterThan(Math.abs(sourceStat - mergedStat) * 0.04);
     }
   });
 
