@@ -105,9 +105,9 @@ import { selectUniqueStfInputs } from "./stf-input-selection";
 import { chooseAlignmentReferenceIndex } from "./alignment-reference";
 import { chooseEcc16WorkerCount, isEccOutOfMemoryError } from "./ecc-memory-budget";
 import { buildStfAdditionalBlurPlan, resolveStfGateExpansionMultiplier, DEFAULT_STF_ADDITIONAL_BLUR_OPTIONS, STF_BLUR_STRENGTH_VALUES, STF_BLUR_AREA_GUARD_VALUES, STF_BLUR_RATIO_VALUES, STF_BLUR_SIGMOID_VALUES } from "./stf-additional-blur-mode";
-import { chooseStfRestoreIndex, blendStfRestoreStripe, featherStfRestoreGate } from "./stf-restore-blend";
+import { chooseStfRestoreReferenceIndex, blendStfRestoreStripe, featherStfRestoreGate } from "./stf-restore-blend";
 import { applyStfToneMatchInPlace, buildStfToneMatchLut } from "./stf-tone-match";
-import { StfRestoreAreaSampleAccumulator, sampleStfRestoreImage } from "./stf-restore-sampling";
+import { StfRestoreAreaSampleAccumulator, sampleStfRestoreImage, sampleStfRestoreStripe } from "./stf-restore-sampling";
 import {
   DEFAULT_PANORAMA_DOWNSCALE_MEGAPIXELS,
   DEFAULT_PANORAMA_FINISH_MODE,
@@ -238,6 +238,8 @@ const stfBlurAreaGuardOption = getElement("stf-blur-area-guard-option");
 const stfBlurAreaGuard = getElement("stf-blur-area-guard");
 const stfBlurSigmoidOption = getElement("stf-blur-sigmoid-option");
 const stfBlurSigmoid = getElement("stf-blur-sigmoid");
+const stfReferenceFrameOption = getElement("stf-reference-frame-option");
+const stfReferenceFrame = getElement("stf-reference-frame");
 const alignmentMode = getElement("alignment-mode");
 const processButton = getElement("process-button");
 const progressPanel = getElement("progress-panel");
@@ -313,13 +315,23 @@ async function finishPendingOldSessionDeletion() {
 }
 // Keep only one complete STF Source, separate from the real-only Sobel/Gate.
 const stfSourceCache = new StfSourceCache();
-// Exactly one aligned, tone-matched middle-F RGB sample. Its key depends on
-// image/alignment/tone, not STF weights, frame generation or blur settings.
-// 65,536 RGB Float32 pixels occupy at most 0.75 MiB.
-let stfRestoreReferenceCache: { key: string; pixels: Float32Array } | null = null;
+// Tone-matched, aligned reference-frame RGB samples. Keys include the selected
+// frame, image/alignment/tone, but not STF weights or frame-generation mode.
+// Each sample is <=0.75 MiB and is cleared with its canonical session.
+const stfRestoreReferenceSamples = new Map<string, Float32Array>();
+const STF_RESTORE_REFERENCE_CACHE_LIMIT = 16;
+function cacheStfRestoreReferenceSample(key: string, pixels: Float32Array): void {
+  // Manual frame switching is usually a handful of choices; cap retained
+  // reference samples independently from the much larger STF Source cache.
+  stfRestoreReferenceSamples.delete(key);
+  stfRestoreReferenceSamples.set(key, pixels);
+  if (stfRestoreReferenceSamples.size > STF_RESTORE_REFERENCE_CACHE_LIMIT) {
+    stfRestoreReferenceSamples.delete(stfRestoreReferenceSamples.keys().next().value!);
+  }
+}
 function resetStfProcessCaches() {
   stfSourceCache.clear();
-  stfRestoreReferenceCache = null;
+  stfRestoreReferenceSamples.clear();
 }
 let currentPreviewColorSpace = "srgb";
 let currentInputFiles = [];
@@ -382,6 +394,9 @@ function captureProcessingSettings(selectedMode: string): StackInfoSetting[] {
       settings.push({ label: "Blur ratio", value: `${Math.round(Number(stfBlurRatio.value) * 100)}%` });
       settings.push({ label: "Area guard", value: stfBlurAreaGuard.selectedOptions[0]?.textContent || stfBlurAreaGuard.value });
       settings.push({ label: "Sigmoid", value: `${stfBlurSigmoid.value}%` });
+      if (isStfRestoreModeSelected() && inputFiles.files?.length > 1) {
+        settings.push({ label: "Reference frame", value: stfReferenceFrame.selectedOptions[0]?.textContent || stfReferenceFrame.value });
+      }
     }
   }
   return settings;
@@ -494,12 +509,40 @@ function updateMergeOptionsVisibility() {
   updateAlignmentAvailability();
 }
 
+function isStfRestoreModeSelected() {
+  return stfBlurStrength.value === "restore" || stfBlurStrength.value === "restore-weak" ||
+    stfBlurStrength.value === "restore-medium" || stfBlurStrength.value === "restore-strong";
+}
+
+function updateStfReferenceFrameOptions(count: number, reset = false) {
+  const previous = reset ? "auto" : stfReferenceFrame.value;
+  stfReferenceFrame.replaceChildren(new Option("Auto", "auto"));
+  for (let rank = 1; rank <= count; rank++) {
+    const suffix = rank === 1 ? " (widest)" : rank === count ? " (narrowest)" : "";
+    stfReferenceFrame.add(new Option(`${rank}${suffix}`, String(rank)));
+  }
+  stfReferenceFrame.value = previous === "auto" ||
+    (/^[1-9]\d*$/.test(previous) && Number(previous) <= count) ? previous : "auto";
+}
+
+function selectedStfReferenceRank(): number | null {
+  const selection = stfReferenceFrame.value;
+  if (selection === "auto") return null;
+  if (!/^[1-9]\d*$/.test(selection)) throw new Error("Invalid STF Reference frame selection.");
+  return Number(selection);
+}
+
 function updateStfBlurOptionsVisibility() {
   const active = mergeMode.value === "stf" && stfBlurStrength.value !== "none";
   for (const element of [stfBlurRatioOption, stfBlurAreaGuardOption, stfBlurSigmoidOption]) {
     element.classList.toggle("hidden", !active);
     element.classList.toggle("flex", active);
   }
+  const referenceActive = mergeMode.value === "stf" && isStfRestoreModeSelected() &&
+    (inputFiles.files?.length || 0) > 1;
+  stfReferenceFrameOption.classList.toggle("hidden", !referenceActive);
+  stfReferenceFrameOption.classList.toggle("flex", referenceActive);
+  stfReferenceFrame.disabled = processingActive || !referenceActive;
   // Without Graph Cut and without sigmoid, Blur ratio is unused.
   stfBlurRatio.disabled = processingActive || !active ||
     (stfBlurAreaGuard.value === "none" && stfBlurSigmoid.value === "0");
@@ -598,6 +641,8 @@ function onInputFileSelection() {
     : count === 1
       ? "1 file selected"
       : `${count} files selected`;
+  updateStfReferenceFrameOptions(count, true);
+  updateStfBlurOptionsVisibility();
   mergeMode.disabled = false;
 }
 listen(inputFiles, "change", onInputFileSelection);
@@ -774,6 +819,9 @@ listen(processButton, "click", async () => {
       files = naturalSortFiles(filtered.files);
       inputInfos = files.map((file) => infoByFile.get(file));
     }
+    // STF may discard duplicate apertures; keep manual ranks consistent with
+    // the real frames that actually enter the merge.
+    if (selectedMergeMode === "stf") updateStfReferenceFrameOptions(files.length);
     trace.add("Input metadata", performance.now() - metadataStartedAt);
     const inputStartedAt = performance.now();
     const { mergeStackMetadata } = await loadExifMetadataModule();
@@ -866,6 +914,10 @@ listen(processButton, "click", async () => {
         referenceToneStatistics?.p95, radialAttenuation, referenceToneStatistics?.mean);
       mergePlan.stfFrameSet = preparedFrameSet;
       mergePlan.weights = preparedFrameSet.realWeights;
+      if (effectiveBlurPlan.restoreEnabled) {
+        mergePlan.stfRestoreReferenceIndex = chooseStfRestoreReferenceIndex(
+          fNumbers.map(Number), selectedStfReferenceRank());
+      }
     }
     const alignmentPlan = effectiveMergeMode === "panorama"
       ? null
@@ -3084,9 +3136,9 @@ async function alignAndMergeFilesWithOpenCv(
       toneReferenceIndex: mergePlan.toneReferenceIndex, frameSet: stfFrameSet,
     }) : null;
     const sourceLength = width * height * 3;
-    const restoreReferenceIndex = stfAlignedInputs
-      ? chooseStfRestoreIndex(inputInfos.map((info) => Number(info?.fNumber))) : -1;
-    const restoreReferenceKey = stfAlignedInputs ? JSON.stringify([
+    const restoreReferenceIndex = stfAlignedInputs && mergePlan.stfBlurPlan?.restoreEnabled
+      ? mergePlan.stfRestoreReferenceIndex : -1;
+    const restoreReferenceKey = stfAlignedInputs && restoreReferenceIndex >= 0 ? JSON.stringify([
       "stf-restore-tone-reference-v1", buildStfAlignmentCacheKey(stfAlignedInputs),
       Array.from(mergePlan.gains), Array.from(mergePlan.scaledLogs), restoreReferenceIndex,
     ]) : null;
@@ -3225,7 +3277,7 @@ async function mergeLinearFromWorkerPool(
   const jobs = buildLinearMergeStripeJobs(width, height);
   const accumulator = new Float32Array(width * height * 3);
   const captureReference = restoreReferenceCapture &&
-    stfRestoreReferenceCache?.key !== restoreReferenceCapture.key;
+    !stfRestoreReferenceSamples.has(restoreReferenceCapture.key);
   const sampleStripes = captureReference ? new Array(jobs.length).fill(null) : null;
   const hardwareConcurrency = typeof navigator === "object"
     ? Math.max(1, Math.floor(navigator.hardwareConcurrency || 4))
@@ -3278,7 +3330,7 @@ async function mergeLinearFromWorkerPool(
       if (!part) throw new Error("STF Restore reference stripes are incomplete.");
       samples.add(part);
     }
-    stfRestoreReferenceCache = { key: restoreReferenceCapture.key, pixels: samples.finish() };
+    cacheStfRestoreReferenceSample(restoreReferenceCapture.key, samples.finish());
   }
   return accumulator;
 }
@@ -3392,7 +3444,7 @@ async function mergeStfWithAdditionalBlur(
         gains: new Float32Array(mergePlan.gains),
         scaledLogs: new Float32Array(mergePlan.scaledLogs),
         weights: new Float32Array(mergePlan.weights), fNumbers,
-        ...(restoreReferenceCapture && stfRestoreReferenceCache?.key !== restoreReferenceCapture.key
+        ...(restoreReferenceCapture && !stfRestoreReferenceSamples.has(restoreReferenceCapture.key)
           ? { restoreReferenceIndex: restoreReferenceCapture.index } : {}),
       },
       workerUrl, hardwareConcurrency,
@@ -3424,7 +3476,7 @@ async function mergeStfWithAdditionalBlur(
       // already been merged into the complete sourceOverride.
       const includeSource = !previewOnly && !sourceOverride;
       const sampleParts = restoreReferenceCapture &&
-        stfRestoreReferenceCache?.key !== restoreReferenceCapture.key
+        !stfRestoreReferenceSamples.has(restoreReferenceCapture.key)
         ? new Array(jobs.length).fill(null) : null;
       if (includeSource) source = new Float32Array(width * height * 3);
       setProgress(`STF analyzing Sobel sharpness 0/${jobs.length}...`);
@@ -3459,7 +3511,7 @@ async function mergeStfWithAdditionalBlur(
           if (!part) throw new Error("STF Restore Sobel sample stripes are incomplete.");
           samples.add(part);
         }
-        stfRestoreReferenceCache = { key: restoreReferenceCapture.key, pixels: samples.finish() };
+        cacheStfRestoreReferenceSample(restoreReferenceCapture.key, samples.finish());
       }
       const coarseP50 = algorithm.deriveStfMedianSharpnessC(sharpnessSamples);
       const epsilon = algorithm.deriveStfRatioEpsilon(coarseP50);
@@ -3613,23 +3665,37 @@ async function mergeStfWithAdditionalBlur(
     if (sourceCacheKey) stfSourceCache.put(sourceCacheKey, source);
     const restoring = plan.restoreEnabled;
     const restoreGate = restoring ? featherStfRestoreGate(base, width, height) : null;
-    const referenceIndex = restoring ? chooseStfRestoreIndex(fNumbers) : -1;
+    const referenceIndex = restoring ? mergePlan.stfRestoreReferenceIndex : -1;
     const gain = restoring ? mergePlan.gains[referenceIndex] : 1;
     const scaledLog = restoring ? mergePlan.scaledLogs[referenceIndex] : 0;
     const referenceLut = restoring ? buildStfToneMatchLut(gain, scaledLog) : null;
-    // All Restore variants match the tone-normalized middle-F frame to the
-    // COMPLETE STF merge using the approved 20% middle / 80% STF targets.
-    // The reference RGB sample was captured in the same pass as
-    // either the real-frame merge or the Sobel analysis, before its stripes
-    // were released. The target can be sampled from the in-memory STF source.
+    // All Restore variants match the tone-normalized selected real frame to the
+    // COMPLETE STF merge using the approved 20% reference / 80% STF targets.
+    // The reference RGB sample is normally captured in the same pass as the
+    // real-frame merge or Sobel analysis. If the STF source is cached but this
+    // reference has not been sampled, only that aligned frame is read once.
+    // The STF target is sampled from the in-memory merged source.
     const restore = restoring ? await import("./stf-restore") : null;
     let restorePlan = null;
     if (restore) {
       const matchStartedAt = performance.now();
-      const realSample = restoreReferenceCapture &&
-        stfRestoreReferenceCache?.key === restoreReferenceCapture.key
-        ? stfRestoreReferenceCache.pixels : null;
-      if (!realSample) throw new Error("STF Restore tone-normalized reference sample is missing.");
+      let realSample = restoreReferenceCapture
+        ? stfRestoreReferenceSamples.get(restoreReferenceCapture.key) : null;
+      if (!realSample) {
+        // Switching Reference frame can reuse the completed STF source and
+        // protection gate. Only the newly selected, tone-matched real frame
+        // must be sampled; never force an entire STF merge/Flow regeneration.
+        if (!restoreReferenceCapture) throw new Error("STF Restore reference capture is missing.");
+        setProgress("STF Restore sampling selected reference frame...");
+        const samples = new StfRestoreAreaSampleAccumulator(width, height);
+        for (const job of jobs) {
+          const stripe = await reader.readLinearRegion(referenceIndex, 0, job.y, width, job.height);
+          applyStfToneMatchInPlace(stripe, gain, scaledLog, referenceLut);
+          samples.add(sampleStfRestoreStripe(stripe, width, height, job.y));
+        }
+        realSample = samples.finish();
+        cacheStfRestoreReferenceSample(restoreReferenceCapture.key, realSample);
+      }
       const targetSample = sampleStfRestoreImage(source, width, height);
       const { sampleWidth, sampleHeight } = new StfRestoreAreaSampleAccumulator(width, height);
       setProgress("STF Restore matching tone and saturation...");
@@ -5588,6 +5654,7 @@ function setProcessing(processing) {
   stfBlurRatio.disabled = processing;
   stfBlurAreaGuard.disabled = processing;
   stfBlurSigmoid.disabled = processing;
+  stfReferenceFrame.disabled = processing;
   if (!processing) updateStfBlurOptionsVisibility();
   outputFormat.disabled = processing;
   outputSize.disabled = processing || !currentStackResult;

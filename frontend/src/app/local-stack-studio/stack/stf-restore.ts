@@ -1,6 +1,6 @@
 /**
- * STF Restore: match the already tone-normalized middle-F real
- * frame toward the COMPLETE STF merge (80% merge, 20% real-frame targets),
+ * STF Restore: match the already tone-normalized selected real
+ * reference frame toward the COMPLETE STF merge (80% merge, 20% real-frame targets),
  * before the existing guarded replacement.
  *
  * The solvers, 30-pass under-relaxation constants, 3:5:2 tone axis, 65,536
@@ -27,7 +27,7 @@ const SIGMOID_MIN = -2;
 const SIGMOID_MAX = 3;
 const SIGMOID_STEP = 0.1;
 const FINAL_RELAXATION_SCALE = 0.5;
-// Converge to an 80% STF / 20% middle-aperture statistical target; this is
+// Converge to an 80% STF / 20% selected-reference statistical target; this is
 // independent of the existing 30-step under-relaxation of solver parameters.
 const MERGE_TARGET_WEIGHT = 0.8;
 
@@ -455,7 +455,7 @@ export function planStfRestore(reference: Float32Array, target: Float32Array, wi
     denoiseChroma(target, width, height),
   );
   // Match P95 (saturation) and P50 (vibrance) to 20% of the unadjusted
-  // middle-aperture statistics plus 80% of the merged STF statistics. Measure
+  // selected-reference statistics plus 80% of the merged STF statistics. Measure
   // both endpoints with the same display-saturation evaluator and population,
   // so the blend is in the actual statistics that the LIS-style solvers fit.
   const colorTargets: ColorStatistics = {

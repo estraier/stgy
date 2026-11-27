@@ -1,7 +1,9 @@
 /**
- * Restore's LIS-compatible area average, sampled while a tone-matched real
- * frame is already resident in a merge worker. The full-resolution reference
- * frame is never transferred to or decoded again by the controller.
+ * Restore's LIS-compatible area average, normally sampled while the selected
+ * tone-matched real frame is already resident in a merge worker. When the
+ * STF source is cached but a different reference frame is selected, the same
+ * stripe accumulator can sample that frame from the aligned reader without
+ * materializing a full-resolution reference image.
  *
  * Each worker sends only the weighted RGB sums for sample rows touched by
  * its core stripe. The controller merges these in image-row order, including

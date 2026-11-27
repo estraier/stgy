@@ -1,4 +1,4 @@
-import { blendStfRestoreStripe, chooseStfRestoreIndex, featherStfRestoreGate, resolveStfRestoreFeatherRadius, shapeStfRestoreGateValue } from "./stf-restore-blend";
+import { blendStfRestoreStripe, chooseStfRestoreIndex, chooseStfRestoreReferenceIndex, featherStfRestoreGate, resolveStfRestoreFeatherRadius, shapeStfRestoreGateValue } from "./stf-restore-blend";
 
 describe("STF Restore", () => {
   test("chooses the middle logarithmic F value regardless of file order", () => {
@@ -6,6 +6,26 @@ describe("STF Restore", () => {
     expect(chooseStfRestoreIndex([2, 2.8, 4, 5.6, 8])).toBe(2);
     expect(chooseStfRestoreIndex([4])).toBe(0);
     expect(() => chooseStfRestoreIndex([2, Number.NaN, 8])).toThrow();
+  });
+
+  test("manual frame rank follows aperture rather than filenames or processing order", () => {
+    const apertures = [5.6, 2.8, 8, 2, 4];
+    expect(chooseStfRestoreReferenceIndex(apertures, null)).toBe(4); // F4 auto
+    expect(chooseStfRestoreReferenceIndex(apertures, 1)).toBe(3); // F2 widest
+    expect(chooseStfRestoreReferenceIndex(apertures, 2)).toBe(1); // F2.8
+    expect(chooseStfRestoreReferenceIndex(apertures, 3)).toBe(4); // F4
+    expect(chooseStfRestoreReferenceIndex(apertures, 4)).toBe(0); // F5.6
+    expect(chooseStfRestoreReferenceIndex(apertures, 5)).toBe(2); // F8 narrowest
+  });
+
+  test("manual reference selections validate bounds and handle equal F values deterministically", () => {
+    expect(chooseStfRestoreReferenceIndex([4, 2, 2, 8], 1)).toBe(1);
+    expect(chooseStfRestoreReferenceIndex([4, 2, 2, 8], 2)).toBe(2);
+    for (const invalid of [-1, 0, 2.5, 5, Number.NaN]) {
+      expect(() => chooseStfRestoreReferenceIndex([2, 4, 8], invalid)).toThrow();
+    }
+    expect(() => chooseStfRestoreReferenceIndex([2, NaN, 8], 1)).toThrow();
+    expect(chooseStfRestoreReferenceIndex([4], 1)).toBe(0);
   });
 
   test("Gate 1 completely replaces all RGB channels", () => {

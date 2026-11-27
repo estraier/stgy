@@ -1,4 +1,4 @@
-/** Gate-guided middle-aperture replacement for STF Restore. */
+/** Gate-guided real-reference-frame replacement for STF Restore. */
 // A fixed second sigmoid suppresses weak restoration outside the guarded subject
 // while retaining strong restoration inside it. The blur gate is not modified.
 export const STF_RESTORE_SIGMOID_CENTER = 0.7;
@@ -100,6 +100,23 @@ export function chooseStfRestoreIndex(fNumbers: readonly number[]): number {
     }
   }
   return closest;
+}
+
+/**
+ * Resolve a manually selected 1-based aperture rank to the source image index.
+ * The order is F-number ascending, not upload order or filename order.
+ * null preserves the established automatic geometric-middle selection.
+ */
+export function chooseStfRestoreReferenceIndex(
+  fNumbers: readonly number[], apertureRank: number | null,
+): number {
+  if (apertureRank === null) return chooseStfRestoreIndex(fNumbers);
+  if (fNumbers.length === 0 || fNumbers.some((f) => !Number.isFinite(f) || !(f > 0)) ||
+      !Number.isInteger(apertureRank) || apertureRank < 1 || apertureRank > fNumbers.length) {
+    throw new Error("STF Restore reference frame selection is invalid.");
+  }
+  return fNumbers.map((fNumber, index) => ({ fNumber, index }))
+    .sort((a, b) => a.fNumber - b.fNumber || a.index - b.index)[apertureRank - 1].index;
 }
 
 /**
