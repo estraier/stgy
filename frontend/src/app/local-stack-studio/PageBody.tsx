@@ -205,7 +205,6 @@ export default function PageBody() {
 
             <div id="merge-options-row" className="hidden w-full basis-full border-t border-gray-200 pt-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:gap-4">
-                <div className="text-xs font-medium uppercase tracking-wide text-gray-500 sm:self-center">Options</div>
                 <label id="hdr-submode-option" className="hidden flex-col items-start gap-1.5">
                   <span className="text-xs font-medium text-gray-500">Submode</span>
                   <select
